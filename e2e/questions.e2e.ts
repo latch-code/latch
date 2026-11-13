@@ -68,6 +68,19 @@ test('keeps text written before a question arrived as the next message, until �
     release()
     const card = page.getByRole('region', { name: 'Harness 提问', exact: true })
     await card.waitFor()
+    await page.locator('.question-card:not([data-arming])').waitFor()
+    let answersWhileCovered = 0
+    const observeAnswer = (request: import('@playwright/test').Request) => {
+      if (request.method() === 'POST' && request.url().includes('/questions/')) answersWhileCovered++
+    }
+    page.on('request', observeAnswer)
+    await page.getByRole('button', { name: '总览', exact: true }).click()
+    await page.keyboard.press('1')
+    await page.getByRole('button', { name: '返回会话', exact: true }).click()
+    await page.locator('.question-card:not([data-arming])').waitFor()
+    expect(answersWhileCovered).toBe(0)
+    expect(seen).toEqual([])
+    page.off('request', observeAnswer)
     // The text stays in the input and the slot still queues; Enter would not have answered.
     await page.getByRole('button', { name: '排队发送', exact: true }).waitFor()
     expect(await page.getByRole('button', { name: '发送', exact: true }).count()).toBe(0)

@@ -11,6 +11,7 @@ import { SettingsGroup, SettingsRow } from './common.tsx'
 import { NotificationSettings } from './NotificationSettings.tsx'
 import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
+import { LayoutTiles } from './LayoutTiles.tsx'
 
 const THEMES: Array<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: '跟随系统' },
@@ -159,6 +160,16 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
           value={preferences.theme}
           onValueChange={value => {
             setPreference('theme', value)
+          }}
+        />
+        <div className="layout-choice-head">
+          <span>布局</span>
+          <span>仅此设备</span>
+        </div>
+        <LayoutTiles
+          value={preferences.workbenchLayout}
+          onValueChange={value => {
+            setPreference('workbenchLayout', value)
           }}
         />
       </SettingsGroup>

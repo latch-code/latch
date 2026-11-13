@@ -1,0 +1,272 @@
+.work-overview {
+  container: work-overview / inline-size;
+  min-width: 0;
+  padding: var(--sp-24) var(--sp-32);
+}
+
+.work-overview-heading,
+.work-overview-actions,
+.work-overview-group-heading,
+.work-overview-row-head,
+.work-overview-row-context {
+  display: flex;
+  align-items: center;
+}
+
+.work-overview-heading {
+  justify-content: space-between;
+  gap: var(--sp-16);
+  margin-bottom: var(--sp-24);
+}
+
+.work-overview-heading h2 {
+  margin: 0;
+  font-size: var(--fs-hero);
+  line-height: var(--lh-hero);
+  font-weight: 600;
+}
+
+.work-overview-actions {
+  gap: var(--sp-8);
+}
+
+.work-overview-connection {
+  margin: 0 0 var(--sp-16);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.work-overview-lanes {
+  display: none;
+}
+
+.work-overview-groups {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--sp-32);
+  align-items: start;
+}
+
+.work-overview-group {
+  min-width: 0;
+}
+
+.work-overview[data-layout='overview'] .work-overview-group[data-group='attention'] {
+  grid-row: span 2;
+}
+
+.work-overview[data-layout='overview'] .work-overview-group[data-group='recent'] {
+  grid-column: 2;
+}
+
+.work-overview-group-heading {
+  gap: var(--sp-8);
+  margin-bottom: var(--sp-12);
+}
+
+.work-overview-group-heading h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-heading);
+  line-height: var(--lh-heading);
+  font-weight: 600;
+}
+
+.work-overview-group-heading > .ui-icon {
+  color: var(--muted);
+}
+
+.work-overview-group[data-group='attention'] > .work-overview-group-heading > .ui-icon {
+  color: var(--amber-icon);
+}
+
+.work-overview-group[data-group='running'] > .work-overview-group-heading > .ui-icon {
+  color: var(--accent-ink);
+}
+
+.work-overview-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.work-overview-list > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.work-overview-row.ui-button {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  align-items: stretch;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding: var(--sp-16) var(--sp-8);
+  border-radius: var(--r-8);
+  text-align: start;
+  white-space: normal;
+}
+
+.work-overview-row[aria-current='page'] {
+  background: var(--hover);
+}
+
+.work-overview-row-head {
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-12);
+  min-width: 0;
+}
+
+.work-overview-row-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 500;
+}
+
+.work-overview-row time {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.work-overview-row-context {
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 400;
+}
+
+.work-overview-row-context > .ui-icon {
+  flex: 0 0 auto;
+}
+
+.work-overview-row-context > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-overview-branch {
+  font-family: var(--mono);
+}
+
+.work-overview-row-status {
+  align-self: start;
+}
+
+.work-overview-row-status[data-tone='running'] > .ui-status-word-glyph {
+  color: var(--accent-ink);
+}
+
+.work-overview-empty {
+  padding: var(--sp-16) var(--sp-8);
+}
+
+.work-overview[data-layout='triage'] .work-overview-groups {
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-24);
+}
+
+.work-overview[data-layout='triage'] .work-overview-group + .work-overview-group {
+  padding-left: var(--sp-24);
+  border-left: 1px solid var(--line);
+}
+
+.work-overview[data-compact] {
+  padding: var(--sp-16) var(--sp-12);
+}
+
+.work-overview[data-compact] .work-overview-heading {
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+  margin-bottom: var(--sp-20);
+}
+
+.work-overview[data-compact] .work-overview-heading h2 {
+  font-size: var(--fs-heading);
+  line-height: var(--lh-heading);
+}
+
+.work-overview[data-compact] .work-overview-actions {
+  gap: 0;
+}
+
+.work-overview[data-compact] .work-overview-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-24);
+}
+
+.work-overview[data-compact] .work-overview-group {
+  width: 100%;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.work-overview[data-compact] .work-overview-row.ui-button {
+  padding: var(--sp-12) var(--sp-8);
+}
+
+.work-overview[data-compact] .work-overview-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-overview[data-compact] .work-overview-row time,
+.work-overview[data-compact] .work-overview-branch {
+  display: none;
+}
+
+@container work-overview (max-width: 700px) {
+  .work-overview-groups,
+  .work-overview[data-layout='triage'] .work-overview-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .work-overview[data-layout='overview'] .work-overview-group[data-group='attention'],
+  .work-overview[data-layout='overview'] .work-overview-group[data-group='recent'] {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .work-overview[data-layout='triage']:not([data-compact]) .work-overview-lanes {
+    display: flex;
+    margin-bottom: var(--sp-20);
+    justify-content: space-between;
+  }
+
+  .work-overview[data-layout='triage']:not([data-compact]) .work-overview-group:not([data-active]) {
+    display: none;
+  }
+
+  .work-overview[data-layout='triage'] .work-overview-group + .work-overview-group {
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-overview {
+    padding: var(--sp-20) var(--sp-16);
+  }
+
+  .work-overview-heading {
+    gap: var(--sp-8);
+  }
+
+  .work-overview-actions {
+    gap: 0;
+  }
+}

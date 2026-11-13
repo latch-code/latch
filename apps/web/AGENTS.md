@@ -34,6 +34,6 @@ browser 环境：不用 Node 全局变量与模块；Host、core、testkit 只�
 
 会话切换只淡入消息内容层：遮罩滚动容器做透明度动画会丢命中。
 
-布局验证覆盖三种宽度与深色（`e2e/design.e2e.ts`）。先读 STREAMING.md 与 DESIGN.md。
+布局先读 DESIGN.md 与 STREAMING.md；切换总览/分拣台保留会话，验证三宽深浅色。
 
 - 附件字节只经专用上传，未知提交保留原请求与引用（ATTACHMENTS.md）。

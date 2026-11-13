@@ -618,16 +618,17 @@ describe('visual capture of the real product', () => {
    * Opens the app as a fresh tab would: no session selected (the selection lives in sessionStorage). Every surface is
    * reached from here, so what it shows never depends on the surface captured before it.
    */
-  async function home(target: Page): Promise<void> {
-    await target.emulateMedia({ reducedMotion: 'no-preference' })
+  async function home(target: Page, reducedMotion: 'reduce' | 'no-preference' = 'no-preference'): Promise<void> {
+    await target.context().setOffline(false)
+    await target.emulateMedia({ reducedMotion })
     await target.evaluate(() => sessionStorage.clear())
     await target.goto(`${host.loopbackOrigin}/link/`)
     await connected(target)
   }
   /** The new-session page uses the same compact controls while empty or drafting. */
   async function newSession(target: Page): Promise<void> {
-    await home(target)
-    await target.emulateMedia({ reducedMotion: 'reduce' })
+    // Set the media before the canvas mounts; its initial frame must not depend on a later media-change event.
+    await home(target, 'reduce')
     await target.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
     if ((await target.locator('.phone-list').count()) > 0) {
       await target.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
@@ -1193,11 +1194,7 @@ describe('visual capture of the real product', () => {
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-running', 'running session selected', sidebar)
 
       await pages.get(viewport.name)!.context.setOffline(true)
-      await target
-        .getByRole('button', { name: /^离线/ })
-        .filter({ visible: true })
-        .first()
-        .waitFor()
+      await target.getByText('这台设备没有联网', { exact: true }).filter({ visible: true }).first().waitFor()
       // The banner at the top of the conversation unfolds like a disclosure.
       await target.locator('.ui-collapse[data-settled] > .ui-collapse-inner > .banner-region').first().waitFor()
       await settleMotion(target)

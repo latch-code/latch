@@ -1,4 +1,5 @@
 import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
+import { useState } from 'react'
 import { FileOpenContext } from '../preview/fileContext.ts'
 
 import { SIDEBAR_MIN } from './panelLayout.ts'
@@ -32,6 +33,9 @@ import { SendingBubble, SetupNotices, SheetComposer } from './SessionComposers.t
 import { useSideQuestionForks, withoutSideForks } from '../conversation/SideQuestion.tsx'
 import { useShellLayout } from './useShellLayout.tsx'
 import { ParticleField } from './ParticleField.tsx'
+import { LayoutDashboard } from 'lucide-react'
+import { WorkOverview } from './WorkOverview.tsx'
+import { LayoutMenu, WorkbenchNav } from './WorkbenchNav.tsx'
 import type { AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 
@@ -40,6 +44,7 @@ type Harness = ReturnType<typeof useHarness>
 /** The signed-in shell. Mounted once per device identity, so per-device state starts fresh. */
 export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const shell = useShellLayout({ harness, snapshot })
+  const [projectList, setProjectList] = useState(false)
   const {
     phoneSession,
     phoneReview,
@@ -145,6 +150,20 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   // The fork behind an open /btw panel is the panel's: it joins the list once opened as a session.
   const sideForks = useSideQuestionForks()
   const listed = withoutSideForks(snapshot, sideForks, selectedId)
+  const overview = route.entry === 'sessions' && route.overview === true
+  const triage = shell.preferences.workbenchLayout === 'triage'
+  const work = {
+    snapshot: listed,
+    layout: shell.preferences.workbenchLayout,
+    connection,
+    now,
+    onSelect: choose,
+    onNew: startNew,
+    onSearch: openSearch,
+    isUnread: unread,
+    cancelling: stopping,
+    selectedId,
+  }
   return (
     <FileOpenContext.Provider value={catalog?.features?.filePreview ? openFile : undefined}>
       <LayerHistory value={phone ? openLayer : null}>
@@ -155,6 +174,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             data-viewport={viewport}
             data-connection={connection}
             data-entry={route.entry}
+            data-workbench-layout={shell.preferences.workbenchLayout}
+            data-overview={overview ? '' : undefined}
             data-folding={folding ? '' : undefined}
             data-sidebar={sidebarColumn ? (sidebarCollapsed ? 'collapsed' : 'open') : undefined}
             data-inspector={columnOpen ? (placement?.kind === 'sheet' ? 'sheet' : 'open') : undefined}
@@ -165,8 +186,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               '--inspector-width': columnOpen && placement?.kind === 'column' ? `${inspectorWidth}px` : '0px',
               '--inspector-open-width': `${inspectorWidth}px`,
             }}>
-            {!phone && <ParticleField />}
-            {!phone && <TitleBar shell={shell} />}
+            {!phone && !overview && !triage && <ParticleField />}
+            {!phone && (triage ? <WorkbenchNav shell={shell} /> : <TitleBar shell={shell} />)}
             <Scrim
               open={drawerMode && drawer.open}
               label="关闭会话列表"
@@ -182,8 +203,18 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 aria-label="会话"
                 data-covered={(phoneSession && !popping) || (phoneReview.present && !phoneReview.leaving) ? '' : undefined}
                 inert={
-                  (phoneSession && !popping) || (phoneReview.present && !phoneReview.leaving) || route.entry !== 'sessions' || undefined
+                  (phoneSession && !popping)
+                  || (phoneReview.present && !phoneReview.leaving)
+                  || route.entry !== 'sessions'
+                  || overview
+                  || undefined
                 }>
+                <div className="phone-overview-link">
+                  <Button variant="ghost" icon={LayoutDashboard} onClick={shell.openOverview}>
+                    总览
+                  </Button>
+                  <LayoutMenu value={shell.preferences.workbenchLayout} />
+                </div>
                 <PhoneSessionList
                   space={entries.includes('agents') ? 'code' : undefined}
                   snapshot={listed}
@@ -226,56 +257,72 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 role={drawerMode && drawer.open ? 'dialog' : undefined}
                 aria-modal={drawerMode && drawer.open ? true : undefined}
                 tabIndex={-1}>
-                <Sidebar
-                  snapshot={listed}
-                  archiveBatch={archiveBatch}
-                  archiveUndo={archiveUndo}
-                  selectedId={selectedId}
-                  isUnread={unread}
-                  cancelling={stopping}
-                  onSearch={openSearch}
-                  onNewWithoutProject={startWithoutProject}
-                  filter={filter}
-                  onFilter={setFilter}
-                  onSelect={choose}
-                  onNew={startNew}
-                  onNewIn={startIn}
-                  onCreateProject={createProjectAndStart}
-                  onSettings={
-                    entries.includes('settings')
-                      ? () => {
-                          goEntry('settings')
-                        }
-                      : undefined
-                  }
-                  spaces={shellSpaces(shell)}
-                  agents={
-                    entries.includes('agents')
-                      ? { primary: <ShellDelegate shell={shell} />, list: <AgentsSpaceList shell={shell} /> }
-                      : undefined
-                  }
-                  hostProblem={hostProblem}
-                  onEditProject={owner ? openProjectSettings : undefined}
-                  onProjectsChanged={() => {
-                    void refresh()
-                  }}
-                  newActive={selectedId === null}
-                  drawer={drawerMode}
-                  onClose={() => {
-                    drawer.setOpen(false)
-                  }}
-                  connection={connection}
-                  onRefresh={() => {
-                    void resync()
-                  }}
-                  sessionMenu={sessionMenu}
-                  now={now}
-                  apps={entries.includes('apps') ? { current: false, onOpen: () => shell.openApp() } : undefined}
-                  onManageComputers={() => {
-                    openSettings('computers')
-                  }}
-                  {...(lifecycle.view?.keepAwake.active ? { keepAwake: keepAwakeLine(lifecycle.view.keepAwake) } : {})}
-                />
+                {triage && shell.space === 'code' && !drawerMode && !projectList ? (
+                  <div className="triage-sidebar">
+                    <WorkOverview {...work} compact />
+                    <Button variant="ghost" onClick={() => setProjectList(true)}>
+                      全部会话与项目
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    {triage && projectList && (
+                      <Button variant="ghost" onClick={() => setProjectList(false)}>
+                        按状态查看
+                      </Button>
+                    )}
+                    <Sidebar
+                      snapshot={listed}
+                      archiveBatch={archiveBatch}
+                      archiveUndo={archiveUndo}
+                      selectedId={selectedId}
+                      isUnread={unread}
+                      cancelling={stopping}
+                      onSearch={openSearch}
+                      onNewWithoutProject={startWithoutProject}
+                      filter={filter}
+                      onFilter={setFilter}
+                      onSelect={choose}
+                      onNew={startNew}
+                      onNewIn={startIn}
+                      onCreateProject={createProjectAndStart}
+                      onSettings={
+                        entries.includes('settings')
+                          ? () => {
+                              goEntry('settings')
+                            }
+                          : undefined
+                      }
+                      spaces={shellSpaces(shell)}
+                      agents={
+                        entries.includes('agents')
+                          ? { primary: <ShellDelegate shell={shell} />, list: <AgentsSpaceList shell={shell} /> }
+                          : undefined
+                      }
+                      hostProblem={hostProblem}
+                      onEditProject={owner ? openProjectSettings : undefined}
+                      onProjectsChanged={() => {
+                        void refresh()
+                      }}
+                      newActive={selectedId === null && !overview}
+                      drawer={drawerMode}
+                      onClose={() => {
+                        drawer.setOpen(false)
+                      }}
+                      connection={connection}
+                      onRefresh={() => {
+                        void resync()
+                      }}
+                      sessionMenu={sessionMenu}
+                      now={now}
+                      apps={entries.includes('apps') ? { current: false, onOpen: () => shell.openApp() } : undefined}
+                      onManageComputers={() => {
+                        openSettings('computers')
+                      }}
+                      {...(lifecycle.view?.keepAwake.active ? { keepAwake: keepAwakeLine(lifecycle.view.keepAwake) } : {})}
+                    />
+                  </>
+                )}
               </aside>
             )}
             {sidebarColumn && (
@@ -300,7 +347,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               {(!phone || phoneSession) && (
                 <main
                   ref={main}
-                  inert={route.entry !== 'sessions' || undefined}
+                  inert={route.entry !== 'sessions' || overview || undefined}
                   onDragEnter={event => {
                     if (
                       catalog?.features?.attachments === true
@@ -335,7 +382,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   )}
                   {/* Under the panel's page the conversation cannot be reached until the page is closed. */}
                   <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
-                    {phone && <ConversationHeader shell={shell} />}
+                    {(phone || triage) && <ConversationHeader shell={shell} />}
                     {/* The conversation's paper: on phones it rises under the header on the ground. */}
                     <ConversationView shell={shell} />
                   </div>
@@ -388,7 +435,10 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 </main>
               )}
               {placement !== null && placement.kind !== 'page' && (
-                <aside className="inspector-column" aria-label="侧边面板" inert={!columnOpen || route.entry !== 'sessions' || undefined}>
+                <aside
+                  className="inspector-column"
+                  aria-label="侧边面板"
+                  inert={!columnOpen || route.entry !== 'sessions' || overview || undefined}>
                   {column.present && (
                     <div className="inspector-column-inner">
                       <RightPanel shell={shell} />
@@ -409,6 +459,20 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 />
               )}
             </LiveChanges>
+            {overview && (
+              <section className="workbench-home" aria-label={triage ? '分拣台' : '总览'}>
+                {phone && (
+                  <div className="phone-overview-link">
+                    <Button variant="ghost" icon={ChevronLeftGlyph} onClick={() => goEntry('sessions')}>
+                      返回会话
+                    </Button>
+                    <LayoutMenu value={shell.preferences.workbenchLayout} />
+                  </div>
+                )}
+                <ConnectionBanners shell={shell} />
+                <WorkOverview {...work} />
+              </section>
+            )}
             {route.entry === 'agents' && <AgentsPage shell={shell} />}
             {route.entry === 'apps' && <AppsPage shell={shell} />}
             {route.entry === 'settings' && (

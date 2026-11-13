@@ -464,6 +464,8 @@ describe('streamed messages in the real workspace', () => {
             },
           },
         })
+        // The fallback is a second real copy path; the failure state requires both writes to be refused.
+        Object.defineProperty(document, 'execCommand', { configurable: true, value: () => false })
       })
       await block.getByRole('button', { name: '复制代码', exact: true }).click()
       await block.getByRole('alert').waitFor()
@@ -651,6 +653,12 @@ describe('a Gemini CLI reply that broke off and was generated again', () => {
       commandDirectories: () => [bin],
     })
     owner = await testHost.enroll({ listener: 'unix' })
+    const preset = AGENT_PRESETS.find(item => item.id === 'gemini')!
+    const saved = await owner.confirmed('agents', {
+      method: 'POST',
+      body: { id: preset.id, name: preset.name, presetId: preset.id, command: preset.command, args: preset.args, env: {} },
+    })
+    expect(saved.status).toBe(201)
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir('test-results/streaming', { recursive: true })
   })

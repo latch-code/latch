@@ -235,11 +235,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setToast({ text, tone: 'error' })
   })
   // Back on the conversation (from a page, or a tab shown again): its approval cards arm again before they take a press.
-  const shownEntry = useRef(route.entry)
+  const conversationVisible = route.entry === 'sessions' && !route.overview
+  const wasConversationVisible = useRef(conversationVisible)
   useLayoutEffect(() => {
-    if (route.entry === 'sessions' && shownEntry.current !== 'sessions') conversationShown()
-    shownEntry.current = route.entry
-  }, [route.entry])
+    if (conversationVisible && !wasConversationVisible.current) conversationShown()
+    wasConversationVisible.current = conversationVisible
+  }, [conversationVisible])
   useEffect(() => {
     const visible = () => {
       if (document.visibilityState === 'visible') conversationShown()
@@ -520,6 +521,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     drawer.setOpen(false)
     setRoute({ entry })
   }
+  const openOverview = () => {
+    setNewSheet(false)
+    drawer.setOpen(false)
+    setRoute({ entry: 'sessions', overview: true })
+  }
   /** Code and 我的 Agent: which one the shell is in, and the way to the other. */
   const { space, goSpace, waits } = useSpaces({
     snapshot,
@@ -647,6 +653,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       && (event.metaKey || event.ctrlKey)
       && selectedId !== null
       && route.entry === 'sessions'
+      && !route.overview
       && !document.querySelector('dialog[open]')
     ) {
       event.preventDefault()
@@ -763,6 +770,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   }
   /** A tablet's drawer is the session list, which a page entry does not show. */
   const toggleSidebar = () => {
+    if (route.overview && preferences.workbenchLayout === 'triage') setRoute({ entry: 'sessions' })
     if (!drawerMode) setSidebarShut(!sidebarCollapsed)
     else if (route.entry === 'sessions') drawer.setOpen(!drawer.open)
   }
@@ -894,7 +902,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       (action === 'files' && only?.classList.contains('new-session-sheet'))
       || (action === 'shortcuts' && only?.classList.contains('shortcuts-overlay'))
     if (dialogs.length && !passes) return
-    if (route.entry !== 'sessions' && !shortcutWorksOnPage(action)) return
+    if ((route.entry !== 'sessions' || route.overview) && !shortcutWorksOnPage(action)) return
     if (typeof action === 'object') {
       // Held outside a field, or where the layout makes no character of it, the key is the app's even where it finds nothing.
       event.preventDefault()
@@ -1291,6 +1299,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     back(instant)
   })
   useBackLayer(pageMode && infoPage, closeInfoPage)
+  useBackLayer(phone && route.overview === true, () => setRoute({ entry: 'sessions' }))
   // Phones: the list a session is pushed over can no longer hold focus (nor the sheet a new one started from, sliding
   // away), so the page takes it at its way back, as a settings page does; focus already on the page, or in a dialog
   // still open, stays where it is.
@@ -1308,6 +1317,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setRoute,
     entries,
     goEntry,
+    openOverview,
     space,
     goSpace,
     waits,

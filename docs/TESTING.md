@@ -356,6 +356,8 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 ## 浏览器 e2e
 
+`workbench-layout.e2e.ts` 验证总览与分拣台的共用会话、草稿与布局偏好，以及手机、平板、桌面的浅深色截图。分类的失败、未知、停止与归档/私有话题边界见 `apps/web/test/work-overview.test.ts`；默认偏好、旧数据和本地存储见 `workbench-preferences.test.ts`。
+
 `transcript-find.e2e.ts` 经真实 Standard 读取本地报告，在三宽验证从未挂载的工具输出可查找、内外折叠展开、逐项 Highlight、清空查询和焦点／草稿保留，不额外发起模型调用。`preview-renderers.e2e.ts` 生成含一万形状的实际 PPTX，检查固定复杂度拒绝、释放 frame 和随后正常打开 DOCX；普通 30 页首屏性能仍独立测量，不用拒绝样本替代正常预览。
 
 - e2e 在同一个 Vitest 进程内用 `startTestHost` 启动 Host，页面来自 `dist/web`（或 `LATCH_E2E_UI_DIR`），所以改客户端后先 `pnpm build`。

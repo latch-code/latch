@@ -74,6 +74,7 @@ body {
  * pointer, so the row stops moving the window while one is open.
  */
 .titlebar {
+  --lead-button-width: 28px;
   grid-area: 1 / 1 / 2 / -1;
   display: flex;
   align-items: center;
@@ -146,7 +147,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .titlebar[data-shut] .titlebar-lead {
   --surface: var(--canvas);
   /* Explicit, so it glides with the track: the left padding, ◧, the gap and ✎, then 等你处理 while something waits. */
-  width: calc(var(--lead-inset) + 68px);
+  width: calc(var(--lead-inset) + 2 * var(--lead-button-width) + var(--sp-4) + var(--sp-8));
   /* Touch targets are larger, and the row's title must not start under them. */
   min-width: max-content;
   align-self: flex-start;
@@ -158,14 +159,19 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   --lead-inset: calc(var(--shell-inset) + var(--sp-12));
 }
 .titlebar[data-shut][data-waiting] .titlebar-lead {
-  width: calc(var(--lead-inset) + 100px);
+  width: calc(var(--lead-inset) + 3 * var(--lead-button-width) + 2 * var(--sp-4) + var(--sp-8));
 }
-/* With two places: Code and 我的 Agent come before the place's primary. */
+/* The space buttons' own 2px gap keeps the closed min-width equal to the animated width, so opening never jumps back. */
 .titlebar[data-shut][data-spaces] .titlebar-lead {
-  width: calc(var(--lead-inset) + 128px);
+  width: calc(var(--lead-inset) + 4 * var(--lead-button-width) + 2 * var(--sp-4) + var(--sp-2) + var(--sp-8));
 }
 .titlebar[data-shut][data-spaces][data-waiting] .titlebar-lead {
-  width: calc(var(--lead-inset) + 160px);
+  width: calc(var(--lead-inset) + 5 * var(--lead-button-width) + 3 * var(--sp-4) + var(--sp-2) + var(--sp-8));
+}
+@media (pointer: coarse) {
+  .titlebar {
+    --lead-button-width: 44px;
+  }
 }
 .titlebar-page {
   flex: 1;

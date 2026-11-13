@@ -3,6 +3,11 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 /** How long new choices take no press, so a click meant for what was there before cannot land on them. */
 const ARMING_MS = 320
 
+/** A document-level key must never act on a conversation covered by another page. */
+export function cardTakesKeys(card: HTMLElement | null): boolean {
+  return card !== null && !card.closest('[inert]') && card.checkVisibility({ visibilityProperty: true })
+}
+
 /** Counts each time the conversation comes back into view (from under a page, from a hidden tab). */
 let shown = 0
 const listeners = new Set<() => void>()

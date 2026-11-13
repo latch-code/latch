@@ -36,6 +36,18 @@ afterEach(() => {
 })
 
 describe('the two places', () => {
+  it('uses Code actions in the overview while preserving a covered Agent session', () => {
+    expect(
+      currentSpace({
+        agents: true,
+        entry: 'sessions',
+        selectedId: 'agent-topic',
+        selected: delegated('agent-topic'),
+        remembered: 'agents',
+        overview: true,
+      }),
+    ).toBe('code')
+  })
   const tasks = [task('c1'), delegated('a2'), task('c3', { archived: true }), delegated('a4', { archived: true })]
 
   it('puts a session in 我的 Agent only when it was delegated to an Agent', () => {

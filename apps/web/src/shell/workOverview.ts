@@ -1,0 +1,64 @@
+import type { TaskSummary } from '@latch/protocol'
+import { activityWords, rowStatus, runningWords, silentWords, spaceOf, waitKind, waitsOnYou } from '../sessions.ts'
+
+export type WorkGroupId = 'attention' | 'running' | 'recent'
+
+export interface WorkGroup {
+  id: WorkGroupId
+  label: string
+  empty: string
+  tasks: TaskSummary[]
+}
+
+/** A navigation projection of the Host's summaries, never an assertion that a change is ready to deliver. */
+export function workGroups(tasks: readonly TaskSummary[], cancelling: ReadonlySet<string> = new Set()): WorkGroup[] {
+  const groups: Record<WorkGroupId, WorkGroup> = {
+    attention: { id: 'attention', label: '等你处理', empty: '没有等你处理的会话', tasks: [] },
+    running: { id: 'running', label: '进行中', empty: '没有进行中的会话', tasks: [] },
+    recent: { id: 'recent', label: '最近会话', empty: '还没有最近会话', tasks: [] },
+  }
+  const visible = tasks
+    .filter(task => !task.archived && spaceOf(task) === 'code')
+    .toSorted((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0) || a.id.localeCompare(b.id))
+  for (const task of visible) {
+    const status = rowStatus(task, { stopping: cancelling.has(task.id) })
+    const live = task.status === 'running' || task.status === 'waiting-approval'
+    const attention = status.kind !== 'stopping' && waitsOnYou(task)
+    const unsettled = !live && (status.kind === 'failed' || (task.runEnd?.unknownResultCount ?? 0) > 0)
+    groups[attention || unsettled ? 'attention' : live ? 'running' : 'recent'].tasks.push(task)
+  }
+  return [groups.attention, groups.running, groups.recent]
+}
+
+export interface WorkStatus {
+  tone: 'neutral' | 'waiting' | 'running' | 'failed' | 'warn'
+  words: string
+}
+
+/** Keep the last known work visible while disconnected, without advancing a timer or drawing a live spinner. */
+export function workStatus(
+  task: TaskSummary,
+  { connected, now, stopping = false, unread = false }: { connected: boolean; now: number; stopping?: boolean; unread?: boolean },
+): WorkStatus {
+  const status = rowStatus(task, { stopping, unread })
+  const live = task.status === 'running' || task.status === 'waiting-approval'
+  const unknown = live ? 0 : (task.runEnd?.unknownResultCount ?? 0)
+  if (!connected && live) {
+    const words = status.kind === 'stopping' ? '正在停止' : waitsOnYou(task) ? '等你处理' : activityWords(task.live)
+    return { tone: 'neutral', words: `上次状态：${words}` }
+  }
+  if (status.kind === 'stopping') return { tone: 'running', words: '正在停止' }
+  if (status.kind === 'waiting' || status.kind === 'silent') {
+    const wait = waitKind(task)
+    return {
+      tone: 'waiting',
+      words: wait?.kind === 'asks' ? wait.words : wait?.kind === 'silent' ? silentWords(task.live, now) : '等你处理',
+    }
+  }
+  if (status.kind === 'running') return { tone: 'running', words: runningWords(task.live, now) }
+  if (status.kind === 'failed') return { tone: 'failed', words: unknown > 0 ? `失败 · ${unknown} 条结果未知` : '失败' }
+  if (unknown > 0) return { tone: 'warn', words: `${unknown} 条结果未知` }
+  if (status.kind === 'ended') return { tone: 'neutral', words: status.word }
+  if (status.kind === 'unread') return { tone: 'neutral', words: '有新内容' }
+  return { tone: 'neutral', words: task.runOutcome === 'completed' ? '本轮已结束' : '会话记录' }
+}

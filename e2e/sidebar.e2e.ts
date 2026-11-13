@@ -201,7 +201,10 @@ describe('resizable sidebar', () => {
     const opening = await titleWhileToggling('展开侧栏')
     await page.locator('.app-shell[data-sidebar="open"]').waitFor()
     expect(opening.at(-1)!).toBeGreaterThan(opening[0])
-    expect(opening.every((left, index) => index === 0 || left >= opening[index - 1] - 1)).toBe(true)
+    expect(
+      opening.every((left, index) => index === 0 || left >= opening[index - 1] - 1),
+      JSON.stringify(opening),
+    ).toBe(true)
     expect(opening.at(-1)).toBe(shutting[0])
     // Open, the top bar's copies are out of the way: hidden from the accessibility tree and not focusable.
     expect(await page.getByRole('button', { name: '展开侧栏', exact: true }).count()).toBe(0)

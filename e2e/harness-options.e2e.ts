@@ -624,6 +624,10 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
   })
 
   it('says it is reading, then offers the modes before the first message', async () => {
+    let releaseRead!: () => void
+    const readReleased = new Promise<void>(resolve => {
+      releaseRead = resolve
+    })
     const context = await browser.newContext({
       viewport: { width: 1280, height: 900 },
       colorScheme: 'dark',
@@ -646,14 +650,15 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
       const chip = page.getByRole('button', { name: /^权限：/u }).first()
       await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：先问你')
       expect(await sent()).toEqual([])
-      // The read takes a moment; until it answers the menu says so.
+      // Keep the read pending until its loading state was observed, even under a busy browser test run.
       await page.route(/\/agents\/[^/]+\/catalogue$/u, async route => {
-        await new Promise(resolve => setTimeout(resolve, 1500))
+        await readReleased
         await route.continue()
       })
       await chip.click()
       await page.locator('.permission-list-note').getByText('正在读取 Gemini CLI 的权限…', { exact: true }).waitFor()
       await shot('permission-reading-1280-dark')
+      releaseRead()
       const rule = page
         .getByRole('menuitemradio', { name: /按规则放行/u })
         .or(page.getByRole('radio', { name: /按规则放行/u }))
@@ -666,6 +671,7 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
       await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：按规则放行')
       await noHorizontalOverflow(page)
     } finally {
+      releaseRead()
       await context.close()
     }
   })

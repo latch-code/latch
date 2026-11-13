@@ -1,6 +1,6 @@
 # @latch/e2e
 
-端到端用例：Vitest 内驱动真实浏览器、Electron 或原生链路，Host 由 `startTestHost` 在测试进程内启动。单模块用例在各项目的 `test/` 与根 `tests/`。
+Vitest 驱动浏览器、Electron、原生链路；`startTestHost` 启动临时 Host。布局切换见 `workbench-layout.e2e.ts`。
 
 | 路径 | 职责 |
 | --- | --- |

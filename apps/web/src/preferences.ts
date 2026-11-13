@@ -11,6 +11,7 @@ import {
 /** Per-viewer conveniences. Browser storage can be missing or throw; every read has a default. */
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type SendKey = 'enter' | 'mod-enter'
+export type WorkbenchLayout = 'overview' | 'triage'
 export interface Preferences {
   autoOpenDocuments: boolean
   diffLayout: 'unified' | 'split'
@@ -22,6 +23,7 @@ export interface Preferences {
   /** 文件树 in the 改动 tab; absent until the person chooses, so it opens by itself where it fits. */
   diffTree?: boolean
   theme: ThemePreference
+  workbenchLayout: WorkbenchLayout
   /** Desktop only; touch keyboards always insert a newline on Enter. */
   sendKey: SendKey
   /** The right panel: whether it is open and its dragged width (local only). */
@@ -42,6 +44,7 @@ const defaults: Preferences = {
   diffMode: 'auto',
   diffWrap: false,
   theme: 'system',
+  workbenchLayout: 'overview',
   sendKey: 'enter',
   rightPanel: { open: false },
   sidebar: { collapsed: false },
@@ -75,6 +78,7 @@ export function parsePreferences(raw: string | null): Preferences {
       diffWrap: item.diffWrap === true,
       ...(typeof item.diffTree === 'boolean' ? { diffTree: item.diffTree } : {}),
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
+      workbenchLayout: item.workbenchLayout === 'triage' ? 'triage' : 'overview',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
       rightPanel: parseRightPanelPreference(item.rightPanel),
       sidebar: parseSidebarPreference(item.sidebar),

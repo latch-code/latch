@@ -26,7 +26,7 @@ import { APPROVAL_COPY, APPROVAL_OPTION_LABELS, CONFIRMATION_COPY, RISK_CLAUSE }
 import { ArgumentList } from '../components/ArgumentList.tsx'
 import { DiffView, PREVIOUS_NOTES } from '../components/DiffView.tsx'
 import { hasHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
-import { useArmed } from './useArmed.ts'
+import { cardTakesKeys, useArmed } from './useArmed.ts'
 
 /**
  * A press on one of the card's choices. `retry`: the same choice sent again after an unknown outcome, with the note a
@@ -120,10 +120,11 @@ const takesKeysAt = (target: EventTarget | null) =>
   !(target instanceof Element && target.closest('input, textarea, [role="menu"], .ui-popover'))
 
 /** Esc refuses once: never while another layer is open or text is being written, and never by a held key. */
-function useEscapeRefuses(active: boolean, refuse: () => void): void {
+function useEscapeRefuses(active: boolean, card: RefObject<HTMLElement | null>, refuse: () => void): void {
   useEffect(() => {
     if (!active) return undefined
     const keydown = (event: globalThis.KeyboardEvent) => {
+      if (!cardTakesKeys(card.current)) return
       if (event.key !== 'Escape' || event.repeat || event.defaultPrevented || event.isComposing) return
       if (escapeIsLeftover(event)) return
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
@@ -135,7 +136,7 @@ function useEscapeRefuses(active: boolean, refuse: () => void): void {
     return () => {
       document.removeEventListener('keydown', keydown)
     }
-  }, [active, refuse])
+  }, [active, card, refuse])
 }
 
 /**
@@ -320,7 +321,7 @@ function ApprovalPanel({
   const offerMore = !hidden && uncertain === undefined
   // ⌘⏎ allows only while the card is ready, and Esc refuses only then.
   const escapes = armed && !running && reject !== undefined
-  useEscapeRefuses(escapes, () => {
+  useEscapeRefuses(escapes, card, () => {
     if (reject) choose(reject)
   })
   const caps = approvalKeyCaps({ phone, shortcut: shortcut && armed && !running, escapes, ...places, rejectLabel })

@@ -194,9 +194,17 @@ describe('the composer status line', () => {
     })
     try {
       // In a column wide enough, every segment; the cost always with who reported it and that it is not a bill.
-      await page.locator('form.composer').evaluate(form => {
-        ;(form.closest('.composer-stack') as HTMLElement).style.maxWidth = '1200px'
-      })
+      const resizeColumn = (width: number | null) =>
+        page.locator('form.composer').evaluate(async (form, px) => {
+          await document.fonts.ready
+          const stack = form.closest('.composer-stack') as HTMLElement
+          if (px === null) stack.style.removeProperty('max-width')
+          else stack.style.maxWidth = `${px}px`
+          // ResizeObserver fits after layout; the preceding column's visible segments can survive until then.
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        }, width)
+      await resizeColumn(1200)
       await segment(page, 'cost').waitFor()
       await expect
         .poll(async () => Object.fromEntries(await shown(page)))
@@ -209,9 +217,7 @@ describe('the composer status line', () => {
       // What gave way is the start of the order: 用时, then the tokens.
       expect((await shown(page)).map(([kind]) => kind)).toEqual(['folder', 'branch', 'route', 'context', 'cost'])
       await shot(page, 'a-statusline-cost-wide--1440--light')
-      await page.locator('form.composer').evaluate(form => {
-        ;(form.closest('.composer-stack') as HTMLElement).style.removeProperty('max-width')
-      })
+      await resizeColumn(null)
       // The branch is cut in the line and whole in its tooltip.
       const name = segment(page, 'branch').locator('.composer-status-value')
       expect(await name.evaluate(item => item.scrollWidth > item.clientWidth)).toBe(true)
@@ -224,13 +230,12 @@ describe('the composer status line', () => {
 
       // Narrower columns let go of 用时, then the tokens and the cost, then the route; the context stays, nothing overflows.
       const order: Array<[number, string[]]> = [
-        [560, ['folder', 'branch', 'route', 'context']],
+        [640, ['folder', 'branch', 'route', 'context']],
+        [560, ['folder', 'branch', 'context']],
         [380, ['folder', 'branch', 'context']],
       ]
       for (const [column, kinds] of order) {
-        await page.locator('form.composer').evaluate((form, px) => {
-          ;(form.closest('.composer-stack') as HTMLElement).style.maxWidth = `${px}px`
-        }, column)
+        await resizeColumn(column)
         await expect.poll(async () => (await shown(page)).map(([kind]) => kind)).toEqual(kinds)
         await noHorizontalOverflow(page, status(page))
         if (column === 560) {

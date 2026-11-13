@@ -1,0 +1,89 @@
+.workbench-nav {
+  gap: var(--sp-8);
+  padding: 0 var(--sp-16);
+}
+.workbench-nav[data-lights] {
+  padding-left: 80px;
+}
+.workbench-brand {
+  font-size: var(--fs-heading);
+  line-height: var(--lh-heading);
+  font-weight: 600;
+  margin-right: var(--sp-12);
+}
+.workbench-nav-spacer {
+  flex: 1;
+}
+.titlebar-views {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  align-self: flex-start;
+  height: 52px;
+  margin-top: var(--shell-inset);
+}
+.titlebar [data-layout-trigger] {
+  flex-shrink: 0;
+  margin-right: var(--sp-8);
+}
+.triage-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.triage-sidebar > .work-overview {
+  flex: 1;
+  overflow: auto;
+}
+.triage-sidebar > .ui-button {
+  flex-shrink: 0;
+  margin: var(--sp-8);
+}
+.workbench-home {
+  grid-area: 2 / 2 / 3 / -1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--canvas);
+  margin: 0 var(--shell-inset) var(--shell-inset) 0;
+  border-radius: var(--r-12);
+}
+.app-shell[data-overview] :is(.workspace, .inspector-column, .inspector-resize) {
+  visibility: hidden;
+}
+.app-shell[data-workbench-layout='triage'][data-overview] .workbench-home {
+  grid-column: 1 / -1;
+  margin-left: var(--shell-inset);
+}
+.app-shell[data-workbench-layout='triage'][data-overview] :is(.sidebar, .sidebar-resize) {
+  visibility: hidden;
+}
+.app-shell[data-workbench-layout='triage'] .workspace-view > .topbar {
+  flex-shrink: 0;
+}
+.phone-overview-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-8) var(--sp-16);
+}
+@media (max-width: 767.98px) {
+  .workbench-home {
+    position: absolute;
+    inset: 0 0 var(--phone-tabs-height);
+    margin: 0;
+    border-radius: 0;
+    z-index: 2;
+  }
+  .app-shell[data-workbench-layout='triage'][data-overview] .workbench-home {
+    margin: 0;
+  }
+  .app-shell[data-overview] .phone-list {
+    visibility: hidden;
+  }
+  .app-shell[data-overview]:has(> .workspace) .phone-tabs {
+    visibility: visible;
+  }
+}

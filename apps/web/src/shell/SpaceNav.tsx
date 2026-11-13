@@ -361,7 +361,7 @@ export function shellSpaces(shell: Pick<ShellState, 'entries' | 'space' | 'goSpa
   if (!shell.entries.includes('agents')) return undefined
   // 应用 and 设置 belong to both places: neither segment is chosen there, and either goes back to its place.
   const shared = shell.route.entry === 'apps' || shell.route.entry === 'settings'
-  return { space: shared ? null : shell.space, onSpace: shell.goSpace, waits: shell.waits }
+  return { space: shared ? null : shell.route.overview ? 'code' : shell.space, onSpace: shell.goSpace, waits: shell.waits }
 }
 
 /** 新对话… as the shell draws it: a choice of Agent, which opens a new topic with it, the input ready. */

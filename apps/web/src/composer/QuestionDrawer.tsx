@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AgentQuestion, QuestionAnswer, QuestionReceipt, QuestionResult, QuestionSubmission } from '@latch/protocol'
 import { Button, InlineNotice, Kbd, Tooltip } from '@latch/ui'
 import { api, inlineError, MessageError } from '../core/api.ts'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
-import { useArmed } from './useArmed.ts'
+import { cardTakesKeys, useArmed } from './useArmed.ts'
 
 export interface QuestionActions {
   deviceId: string
@@ -201,9 +201,11 @@ export function QuestionDrawer({
   const answer = draft.answers[draft.step]!
   const options = current.options
   const armed = useArmed(`${question.id}:${draft.step}`)
+  const card = useRef<HTMLElement>(null)
   useEffect(() => {
     if (locked || !armed) return undefined
     const keydown = (event: KeyboardEvent) => {
+      if (!canAnswer || !cardTakesKeys(card.current)) return
       if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented || event.repeat) return
       if (
         event.target instanceof Element
@@ -219,10 +221,10 @@ export function QuestionDrawer({
     return () => {
       document.removeEventListener('keydown', keydown)
     }
-  }, [locked, armed, options, state])
+  }, [locked, armed, canAnswer, options, state])
   const last = draft.step === question.questions.length - 1
   return (
-    <section className="composer-drawer question-card" data-arming={armed ? undefined : ''} aria-label="Harness 提问">
+    <section ref={card} className="composer-drawer question-card" data-arming={armed ? undefined : ''} aria-label="Harness 提问">
       <div className="question-heading">
         <span>{asker} 想问你</span>
         {question.questions.length > 1 && (

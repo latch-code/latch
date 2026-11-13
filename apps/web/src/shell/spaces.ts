@@ -14,13 +14,16 @@ export function currentSpace({
   selectedId,
   selected,
   remembered,
+  overview = false,
 }: {
   agents: boolean
   entry: ShellEntry
   selectedId: string | null
   selected: Pick<TaskSummary, 'agent' | 'generalChat'> | undefined
   remembered: Space
+  overview?: boolean | undefined
 }): Space {
+  if (overview) return 'code'
   if (!agents) return 'code'
   if (entry === 'agents') return 'agents'
   if (entry === 'sessions') {
@@ -108,7 +111,7 @@ export function useSpaces({
 }) {
   const key = spaceKey(snapshot.device.id)
   const [remembered, setRemembered] = useState<Space>(() => readSpace(key))
-  const space = currentSpace({ agents, entry: route.entry, selectedId, selected, remembered })
+  const space = currentSpace({ agents, entry: route.entry, selectedId, selected, remembered, overview: route.overview })
   // The place shown is the one to keep while a shared page or an unlisted session is open.
   if (agents && space !== remembered) setRemembered(space)
   useEffect(() => {
@@ -116,11 +119,11 @@ export function useSpaces({
   }, [agents, key, space])
   const left = useRef<Record<Space, Left | undefined>>({ code: undefined, agents: undefined })
   useEffect(() => {
-    if (!agents) return
+    if (!agents || route.overview) return
     if (route.entry === 'sessions' && selectedId !== null) left.current[space] = { kind: 'session', id: selectedId }
     else if (route.entry === 'sessions' && space === 'code') left.current.code = undefined
     else if (route.entry === 'agents') left.current.agents = { kind: 'page', myAgent: route.myAgent }
-  }, [agents, space, route.entry, route.myAgent, selectedId])
+  }, [agents, space, route.entry, route.myAgent, route.overview, selectedId])
   const goSpace = (target: Space) => {
     if (target === 'agents' && !agents) return
     leave()
