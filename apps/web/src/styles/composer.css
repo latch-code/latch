@@ -240,8 +240,45 @@
 .composer textarea:disabled {
   color: var(--ink-2);
 }
-.composer-input > textarea {
+.composer-input > textarea,
+.composer-command-mirror {
   padding-inline-start: calc(var(--sp-16) + var(--sp-20));
+}
+.composer-input > textarea {
+  position: relative;
+}
+.composer-input[data-sheet] > textarea,
+.composer-input[data-sheet] > .composer-command-mirror {
+  padding-inline-start: var(--sp-16);
+}
+.composer-command-mirror {
+  position: absolute;
+  inset: 0;
+  padding-block: var(--sp-16) var(--sp-8);
+  padding-inline-end: var(--sp-16);
+  overflow: hidden;
+  color: transparent;
+  font-size: var(--fs-prose);
+  line-height: var(--lh-prose);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  user-select: none;
+}
+.composer-command-chip {
+  border-radius: var(--r-4);
+  background: var(--hover);
+}
+.composer-input[data-command] > textarea,
+.composer-input[data-command] > .composer-command-mirror {
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+}
+.composer-command-hint {
+  color: var(--muted);
+}
+.composer-slash-button {
+  display: none;
 }
 
 .composer-toolbar {
@@ -781,8 +818,26 @@
     font-size: var(--fs-input);
     line-height: var(--lh-input);
   }
-  .composer-input > textarea {
+  .composer-input > textarea,
+  .composer-command-mirror {
     padding-inline-start: calc(var(--sp-12) + var(--sp-20));
+  }
+  .composer-input[data-command] > textarea,
+  .composer-input[data-command] > .composer-command-mirror {
+    font-size: var(--fs-input);
+  }
+  .composer-command-mirror {
+    padding-block: var(--sp-12) var(--sp-4);
+    padding-inline-end: var(--sp-12);
+    font-size: var(--fs-input);
+    line-height: var(--lh-input);
+  }
+  .composer-input[data-sheet] > textarea,
+  .composer-input[data-sheet] > .composer-command-mirror {
+    padding-inline-start: var(--sp-12);
+  }
+  .composer-slash-button {
+    display: inline-flex;
   }
   .composer-prompt {
     top: var(--sp-12);

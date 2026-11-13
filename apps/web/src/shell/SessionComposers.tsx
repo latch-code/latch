@@ -1,5 +1,4 @@
 import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
-import type { ReactNode } from 'react'
 import { Eraser, GitFork } from 'lucide-react'
 import { NOT_ACCEPTED_5XX, type ModelRef, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
 import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph, LaptopGlyph } from '@latch/ui'
@@ -14,6 +13,7 @@ import {
   withLadderMode,
   worktreeProject,
 } from '../composerChoice.ts'
+import { HarnessTile } from '../components/BrandTile.tsx'
 import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, computerName } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
@@ -22,6 +22,8 @@ import { basename } from '../format.ts'
 import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
+import { ComposerControl, openControlWhenShown } from '../composer/ComposerControl.tsx'
+import { composerActions } from './composerActions.ts'
 import { MoreMenu } from '../composer/Footer.tsx'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { BranchSegment, ComposerStatus, FolderSegment, statusRoute } from '../composer/ComposerStatus.tsx'
@@ -102,17 +104,6 @@ const FORK_PROMPT = '请接着这个会话继续。'
  * Opens one of the four controls once the page that holds it is drawn, as its key would: the new-session page mounts
  * its own composer after the session's goes, so the trigger is looked for over the next frames.
  */
-function openControlWhenShown(name: 'harness' | 'model' | 'thinking' | 'permission', frames = 10, newOnly = true) {
-  requestAnimationFrame(() => {
-    const trigger = [...document.querySelectorAll<HTMLElement>(`[data-composer-control="${name}"]`)]
-      .find(
-        control => control.getClientRects().length > 0 && !control.closest('[inert]') && (!newOnly || control.closest('.workspace.is-new')),
-      )
-      ?.querySelector<HTMLButtonElement>('button')
-    if (trigger && !trigger.disabled && trigger.getAttribute('aria-disabled') !== 'true') trigger.click()
-    else if (frames > 1) openControlWhenShown(name, frames - 1, newOnly)
-  })
-}
 
 /**
  * A refused send's own next steps beside its reason, when its code names one this device can take. The text stayed in
@@ -150,13 +141,6 @@ export function takeFailureStep(step: FailureStep, openSettings: (section: 'engi
  * One of the composer's four controls, named for what a key that opens it looks for: the trigger is the button inside.
  * The pickers come from `@latch/ui` and draw their own trigger, so the name sits on this wrapper.
  */
-function ComposerControl({ name, children }: { name: 'harness' | 'model' | 'thinking' | 'permission'; children: ReactNode }) {
-  return (
-    <div className="composer-control" data-composer-control={name}>
-      {children}
-    </div>
-  )
-}
 
 /** The input of the open session, or of the new-session page. */
 export function SessionComposer({ shell: base, home = false }: { shell: ShellState; home?: boolean }) {
@@ -250,26 +234,21 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
           ...(shell.active ? { blocked: FORK_BUSY } : {}),
           onFork: () => {
             const draft = submission.draft.trim() ? submission.draft : FORK_PROMPT
-            choose(null)
-            submission.setFork({
-              taskId: current.summary.id,
-              upToMessageId: lastMessage.id,
-              title: current.summary.title,
-              choice: {
-                harnessId: current.summary.harnessId,
-                workspaceId: projectFor(catalog, current.summary),
-                mode: current.summary.mode ?? 'agent',
-              },
-              source: forkSource(current, harnessInfo),
+            shell.startNewDraft({ draft }, () => {
+              submission.setFork({
+                taskId: current.summary.id,
+                upToMessageId: lastMessage.id,
+                title: current.summary.title,
+                choice: {
+                  harnessId: current.summary.harnessId,
+                  workspaceId: projectFor(catalog, current.summary),
+                  mode: current.summary.mode ?? 'agent',
+                },
+                source: forkSource(current, harnessInfo),
+              })
+              if (phone) requestAnimationFrame(() => sheetComposerRef.current?.focus())
+              else openControlWhenShown('harness')
             })
-            submission.setDraft(draft)
-            if (phone) {
-              setNewSheet(true)
-              requestAnimationFrame(() => sheetComposerRef.current?.focus())
-              return
-            }
-            // The next press is the other Harness: its menu opens on the new-session page.
-            openControlWhenShown('harness')
           },
         }
       : undefined
@@ -383,17 +362,16 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
           phase={submission.pending ? 'unknown' : submission.sending || cancelling.has(current.summary.id) ? 'busy' : 'idle'}
           onFork={(taskId, upToMessageId, workspaceId) => {
             const draft = submission.draft
-            choose(null)
-            submission.setFork({
-              taskId,
-              upToMessageId,
-              title: current.summary.title,
-              choice: { harnessId: current.summary.harnessId, workspaceId, mode: current.summary.mode ?? 'agent' },
-              source: forkSource(current, harnessInfo),
+            shell.startNewDraft({ draft }, () => {
+              submission.setFork({
+                taskId,
+                upToMessageId,
+                title: current.summary.title,
+                choice: { harnessId: current.summary.harnessId, workspaceId, mode: current.summary.mode ?? 'agent' },
+                source: forkSource(current, harnessInfo),
+              })
+              requestAnimationFrame(() => (phone ? sheetComposerRef : composerRef).current?.focus())
             })
-            submission.setDraft(draft)
-            if (phone) setNewSheet(true)
-            requestAnimationFrame(() => (phone ? sheetComposerRef : composerRef).current?.focus())
           }}
         />
       )}
@@ -496,21 +474,19 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
       fileMentions={mentionChoice}
-      commands={shell.active ? current?.commands?.filter(command => !command.idleOnly) : current?.commands}
-      actions={[
-        ...(shell.clearable && !shell.active
-          ? [
-              {
-                name: 'clear',
-                description: '清空上下文',
-                run: () => shell.armClear(true),
-              },
-            ]
-          : []),
-        ...(sideOffered
-          ? [{ name: 'btw', description: '旁支提问，不打断这一轮', text: '/btw ', ...(sideRefusal ? { unavailable: sideRefusal } : {}) }]
-          : []),
-      ]}
+      commands={current?.commands}
+      commandSource={
+        harnessInfo
+          ? {
+              name: harnessName(harnessInfo),
+              media: <HarnessTile harness={harnessInfo} size={16} />,
+              firstTurn: !!seedService || (!!summary?.agent && !current?.messages.some(message => message.role === 'user')),
+            }
+          : undefined
+      }
+      actions={composerActions(shell)}
+      onCreateTemplate={owner ? () => openSettings('general') : undefined}
+      historyScope={{ deviceId: shell.snapshot.device.id, harnessId: selectedId === null ? choice.harnessId : summary?.harnessId }}
       templates={scopedTemplates(
         promptTemplates,
         selectedId === null
@@ -800,6 +776,9 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
       fileMentions={mentionChoice}
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' ? attachmentDraft : undefined}
       templates={scopedTemplates(promptTemplates, choice.workspaceId ?? catalog?.defaults.workspaceId, choice.harnessId)}
+      actions={composerActions(shell)}
+      onCreateTemplate={owner ? () => openSettings('general') : undefined}
+      historyScope={{ deviceId: shell.snapshot.device.id, harnessId: choice.harnessId }}
       variant="sheet"
       label="新会话消息"
       placeholder={phoneWords(placeholder)}

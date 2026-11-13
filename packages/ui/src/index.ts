@@ -3,6 +3,7 @@ export { Button, ButtonLink, IconButton, type ButtonSize, type ButtonVariant, ty
 export { SelectButton, SplitButton } from './split-button.tsx'
 export { LiveChanges, useLiveChange, useLivePrevious } from './changes.ts'
 export { Checkbox, ChoiceList, Radio, type ChoiceOption } from './choice.tsx'
+export { Suggest, SuggestPanel, type SuggestProps, type SuggestPanelProps, type SuggestGroup, type SuggestItem } from './suggest.tsx'
 export { Dialog, DialogSurface, LayerHistory, Sheet, SheetSurface, type DialogSize, type OpenLayer, type SheetDetent } from './dialog.tsx'
 export { SearchField, TextAreaField, TextField } from './field.tsx'
 export { ICON_STROKE, Icon, Spinner, type IconComponent, type IconSize, type SpinnerSize } from './icon.tsx'

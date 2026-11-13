@@ -20,7 +20,6 @@ import {
   MenuFooterLink,
   MenuFooterNote,
   Popover,
-  ValuePicker,
   useLayerClose,
   type PickerGroup,
   ChevronDownGlyph,
@@ -69,6 +68,7 @@ import {
   type AgentConfigState,
 } from './modelReasoning.ts'
 import { BriefHint } from './BriefHint.tsx'
+import { ValuePicker } from './ComposerControl.tsx'
 import { ConfigFeedback, useSlowWrite } from './ThinkingControl.tsx'
 import { CatalogueRows, readOnSelect, readsOnSelect, TypedModelsPanel, useReading } from './harnessCatalogue.tsx'
 

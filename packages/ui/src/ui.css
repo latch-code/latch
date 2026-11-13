@@ -12,6 +12,7 @@
 @import './styles/tabs.css' layer(ui);
 @import './styles/choice.css' layer(ui);
 @import './styles/menu.css' layer(ui);
+@import './styles/suggest.css' layer(ui);
 @import './styles/dialog.css' layer(ui);
 @import './styles/modal.css' layer(ui);
 @import './styles/notice.css' layer(ui);

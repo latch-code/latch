@@ -389,33 +389,6 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-.slash-commands {
-  display: grid;
-  gap: var(--sp-4);
-  padding: var(--sp-8);
-  max-height: 240px;
-  overflow: auto;
-}
-.slash-commands p,
-.slash-commands span {
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-.slash-commands button {
-  display: flex;
-  gap: var(--sp-12);
-  padding: var(--sp-8);
-  text-align: start;
-  border-radius: var(--r-6);
-}
-.slash-commands button:hover,
-.slash-commands button[aria-selected='true'] {
-  background: var(--hover);
-}
-.slash-commands strong {
-  font-weight: 500;
-}
 
 .prompt-template-editor {
   display: grid;
@@ -535,7 +508,4 @@
   gap: var(--sp-8);
   padding: var(--sp-8) var(--sp-16) var(--sp-12);
   border-block-start: 1px solid var(--line);
-}
-.slash-commands [role='option'][aria-disabled='true'] strong {
-  color: var(--muted);
 }

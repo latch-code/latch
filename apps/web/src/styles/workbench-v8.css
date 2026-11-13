@@ -1104,7 +1104,6 @@
   .home-composer-computer {
     display: none;
   }
-  .workbench-home-composer .composer-input {
   .workbench-phone-code-nav {
     display: flex;
     align-items: center;
@@ -1114,6 +1113,7 @@
   .workbench-phone-code-nav > .ui-button {
     min-height: 44px;
   }
+  .workbench-home-composer .composer-input {
     padding: var(--sp-12) var(--sp-48);
   }
   .workbench-home-composer textarea {

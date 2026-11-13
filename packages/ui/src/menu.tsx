@@ -577,6 +577,8 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   width?: number
   /** A search row on top of the menu, for long lists such as models. */
   searchable?: boolean
+  /** A new request opens this picker with an initial search; subsequent typing stays local to the picker. */
+  searchRequest?: { query: string; revision: number }
   /** An explicit choice of the current value is meaningful to the caller. */
   reselect?: boolean
   /** Optional domain-specific match; the default is a literal substring. */
@@ -629,6 +631,7 @@ export function ValuePicker<T extends string>({
   valueText: shownText,
   width,
   searchable = false,
+  searchRequest,
   reselect = false,
   searchMatch,
   disabled = false,
@@ -694,6 +697,11 @@ export function ValuePicker<T extends string>({
     // ordinary polling must leave a surviving row, search field or another control alone.
     if (document.activeElement === document.body && layer.current?.matches(':popover-open')) focusInto(panel.current)
   })
+  useEffect(() => {
+    if (!searchRequest) return
+    setQuery(searchRequest.query)
+    setOpen(true)
+  }, [searchRequest, setOpen])
   useEffect(() => {
     if (open && !sheet && !showingForm) focusInto(panel.current)
   }, [open, sheet, showingForm])
@@ -826,7 +834,19 @@ export function ValuePicker<T extends string>({
             close(true)
           }}>
           <LayerClose.Provider value={closeFromContent}>
-            {form ?? <PickerSheetBody label={label} header={header} groups={all} value={value} footer={footer} onValueChange={choose} />}
+            {form ?? (
+              <>
+                {searchable && <MenuSearch label={label} value={query} onValueChange={setQuery} />}
+                <PickerSheetBody
+                  label={label}
+                  header={header}
+                  groups={visibleGroups}
+                  value={value}
+                  footer={footer}
+                  onValueChange={choose}
+                />
+              </>
+            )}
           </LayerClose.Provider>
         </Sheet>
       </>

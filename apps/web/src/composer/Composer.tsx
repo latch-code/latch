@@ -1,15 +1,17 @@
 import { useFileMentions, type FileMentionChoice } from '../hooks/useFileMentions.tsx'
 import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
-import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { CornerDownRight, ListPlus } from 'lucide-react'
-import type { PromptTemplate, SessionCommand } from '@latch/protocol'
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { CornerDownRight, ListPlus, Slash } from 'lucide-react'
+import { escapeSecurityText, type PromptTemplate, type SessionCommand } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { SlashCommands, useSlashCommands, type SlashAction } from './SlashCommands.tsx'
+import { latchActionOf } from './latchActions.ts'
 import {
   Button,
+  IconButton,
   Collapse,
   EASING,
   ICON_STROKE,
@@ -55,6 +57,18 @@ const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(n
 /** Eight lines of body text plus padding; the transcript keeps the remaining height. */
 const MAX_TEXTAREA = 232
 
+function sizeComposerInput(element: HTMLTextAreaElement | null) {
+  if (!element?.clientWidth) return
+  const from = element.style.height
+  element.style.transition = 'none'
+  element.style.height = 'auto'
+  const next = `${Math.min(element.scrollHeight + 2, MAX_TEXTAREA)}px`
+  element.style.height = from
+  if (from && from !== next) element.getBoundingClientRect()
+  element.style.removeProperty('transition')
+  element.style.height = next
+}
+
 /**
  * The message input, on the new-session page and docked under a conversation, with its drawers joined above the card
  * and the status line as its last row. It starts one line high behind a faint 「>」. The input stays editable while a run is active so the next message can be drafted; a Host that supports queues
@@ -68,6 +82,9 @@ const MAX_TEXTAREA = 232
 export function Composer({
   textareaRef,
   commands,
+  commandSource,
+  historyScope,
+  onCreateTemplate,
   templates,
   actions,
   variant,
@@ -123,6 +140,9 @@ export function Composer({
   attachments?: AttachmentDraftController
   templates?: PromptTemplate[]
   commands?: SessionCommand[]
+  commandSource?: { name: string; media?: ReactNode; firstTurn?: boolean }
+  historyScope?: { deviceId: string; harnessId?: string }
+  onCreateTemplate?: () => void
   /** What Latch itself does from the slash menu in this session. */
   actions?: SlashAction[]
   textareaRef: RefObject<HTMLTextAreaElement | null>
@@ -192,25 +212,53 @@ export function Composer({
   confirmation?: ReactNode
 }) {
   const box = useRef<HTMLDivElement>(null)
+  const commandAnchor = useRef<HTMLFormElement>(null)
+  const [slashCaret, setSlashCaret] = useState<{ draft: string; at: number }>()
+  const [slashSendRevision, refreshSlashSend] = useState(0)
+  const slashToSend = useRef<string | undefined>(undefined)
+  const slashSelection = useRef<{ draft: string; start: number; end: number } | undefined>(undefined)
+  const commandMirror = useRef<HTMLDivElement>(null)
+  const commandHead = /^([/／][^\s/／]+)([ \t]+)([\s\S]*)$/u.exec(draft)
+  const commandName = commandHead?.[1]?.slice(1)
+  const commandDefinition = actions?.find(action => action.name === commandName) ?? commands?.find(command => command.name === commandName)
+  const commandChip = commandHead && commandDefinition ? commandHead[1]! : undefined
+  const argumentHint = commandChip && !commandHead?.[3]?.trim() ? commandDefinition?.inputHint : undefined
   const mentions = useFileMentions(draft, onDraft, textareaRef, fileMentions)
   // The input grows with its content a line at a time, up to eight lines, its height moving over 120ms (composer.css).
   // Measuring needs the height let go for a moment; it is put back without a transition, so the move then starts from
   // the height the input had and not from the measurement.
   useLayoutEffect(() => {
-    const element = textareaRef.current
-    if (!element) return
-    const from = element.style.height
-    element.style.transition = 'none'
-    element.style.height = 'auto'
-    const next = `${Math.min(element.scrollHeight + 2, MAX_TEXTAREA)}px`
-    element.style.height = from
-    if (from && from !== next) element.getBoundingClientRect()
-    element.style.removeProperty('transition')
-    element.style.height = next
+    sizeComposerInput(textareaRef.current)
   }, [draft, textareaRef])
+  useLayoutEffect(() => {
+    const element = textareaRef.current
+    if (!element) return undefined
+    let width = -1
+    let alive = true
+    const measure = () => {
+      if (alive) sizeComposerInput(element)
+    }
+    const observer = new ResizeObserver(entries => {
+      const next = entries[0]?.contentRect.width
+      // Height changes are our own output; observing those would create a resize feedback loop.
+      if (next !== undefined && next !== width) {
+        width = next
+        measure()
+      }
+    })
+    observer.observe(element)
+    void document.fonts.ready.then(measure)
+    document.fonts.addEventListener('loadingdone', measure)
+    return () => {
+      alive = false
+      observer.disconnect()
+      document.fonts.removeEventListener('loadingdone', measure)
+    }
+  }, [textareaRef, readOnly])
 
   const locked = sending || pending !== null || attachments?.preparing === true
   const empty = draft.trim().length === 0 && !attachments?.items.length
+  const typedAction = answer === undefined ? latchActionOf(draft) : undefined
   const queueDraft =
     !!run
     && (queueable || steerable)
@@ -218,25 +266,84 @@ export function Composer({
     && !attachments?.items.length
     && !fileMentions?.refs.length
     && answer === undefined
+    && typedAction === undefined
     && readOnly === undefined
-  const sendable = !locked && readOnly === undefined && (answer !== undefined ? !empty : canSend && !empty && (!run || queueDraft))
-  const submit = answer?.onSubmit ?? onSubmit
+  const localAction = typedAction && actions?.find(action => action.name === typedAction.name)
+  const actionBlock = typedAction ? (localAction?.unavailable ?? (!localAction?.run ? '这个动作在当前页面不可用' : undefined)) : undefined
+  const sendable =
+    !locked
+    && readOnly === undefined
+    && (answer !== undefined ? !empty : typedAction ? !actionBlock : canSend && !empty && (!run || queueDraft))
+  const submit = () => {
+    if (answer) answer.onSubmit()
+    else if (typedAction) {
+      if (!actionBlock) localAction?.run?.(typedAction.argument)
+    } else onSubmit()
+  }
+  useLayoutEffect(() => {
+    const selection = slashSelection.current
+    const input = textareaRef.current
+    slashSelection.current = undefined
+    if (selection && selection.draft === draft && input) {
+      input.setSelectionRange(selection.start, selection.end)
+      setSlashCaret({ draft, at: selection.end })
+    }
+    const command = slashToSend.current
+    if (command === undefined) return
+    // Consume before invoking the existing sender, including Strict Mode's repeated layout effects.
+    slashToSend.current = undefined
+    if (
+      draft === command
+      && sendable
+      && !run
+      && !answer
+      && input?.getClientRects().length
+      && !input.closest('[inert], [hidden], [aria-hidden="true"]')
+    )
+      submit()
+  }, [draft, sendable, submit, textareaRef, slashSendRevision, run, answer])
   const escapeAt = useRef({ at: 0, run: run?.id })
   const slash = useSlashCommands({
     draft,
+    caret: slashCaret?.draft === draft ? slashCaret.at : draft.length,
     commands,
     templates,
+    harnessName: commandSource?.name,
+    harnessMedia: commandSource?.media,
+    running: !!run,
+    firstTurn: commandSource?.firstTurn,
+    session: commands !== undefined,
+    ...(historyScope ? { historyScope } : {}),
     ...(actions ? { actions } : {}),
-    enabled: !locked && readOnly === undefined,
-    onDraft: value => {
+    enabled: !locked && readOnly === undefined && answer === undefined,
+    onDraft: (value, selection) => {
+      slashSelection.current = selection ? { draft: value, ...selection } : undefined
       onDraft(value)
       textareaRef.current?.focus({ preventScroll: true })
+    },
+    onCommand: value => {
+      if (answer || locked || readOnly !== undefined || !canSend || run) return
+      slashToSend.current = value
+      onDraft(value)
+      refreshSlashSend(revision => revision + 1)
     },
   })
   const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (slash.keydown(event)) return
     if (mentions.keydown(event)) return
     if (event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (
+      event.key === 'Backspace'
+      && commandChip
+      && event.currentTarget.selectionStart === event.currentTarget.selectionEnd
+      && [commandChip.length, commandChip.length + 1].includes(event.currentTarget.selectionStart)
+    ) {
+      event.preventDefault()
+      const end = commandChip.length + (commandHead?.[2]?.length ?? 0)
+      slashSelection.current = { draft: draft.slice(end), start: 0, end: 0 }
+      onDraft(draft.slice(end))
+      return
+    }
     if (event.key === 'Escape' && escapeIsLeftover(event)) return
     // Esc belongs to the approval drawer while one waits (it refuses once), or to the text just written.
     if (event.key === 'Escape' && answer?.kind === 'reject') return
@@ -273,11 +380,15 @@ export function Composer({
   }
   const shortcut = sendKey === 'enter' && !coarse ? 'Enter' : `${isMac() ? '⌘' : 'Ctrl'} Enter`
   const sendTip =
-    blockReason ?? (locked ? '等待这次提交完成' : empty ? '输入内容后发送' : queueDraft && !steerable ? '本轮完成后发送' : undefined)
+    actionBlock
+    ?? blockReason
+    ?? (locked ? '等待这次提交完成' : empty ? '输入内容后发送' : queueDraft && !steerable ? '本轮完成后发送' : undefined)
 
   // The slot's control swaps in (from 90%, fading in) when the page sees it change: a run starting or ending.
   const answering = answer?.kind === 'question' && !empty
-  const slot = answering ? 'send' : run && !queueDraft ? 'stop' : queueDraft ? 'queue' : readOnly !== undefined ? 'none' : 'send'
+  const choosing = typedAction !== undefined
+  const slot =
+    answering || choosing ? 'send' : run && !queueDraft ? 'stop' : queueDraft ? 'queue' : readOnly !== undefined ? 'none' : 'send'
   useLiveChange(slot, (_previous, live) => {
     const element = box.current?.querySelector<HTMLElement>('.composer-slot > *')
     if (live && element)
@@ -303,10 +414,17 @@ export function Composer({
       disabled={locked}
       onChange={event => {
         mentions.setCaret(event.target.selectionStart)
+        setSlashCaret({ draft: event.target.value, at: event.target.selectionStart })
         onDraft(event.target.value)
       }}
       onKeyDown={keydown}
-      onSelect={event => mentions.setCaret(event.currentTarget.selectionStart)}
+      onSelect={event => {
+        mentions.setCaret(event.currentTarget.selectionStart)
+        setSlashCaret({ draft: event.currentTarget.value, at: event.currentTarget.selectionStart })
+      }}
+      onScroll={event => {
+        if (commandMirror.current) commandMirror.current.scrollTop = event.currentTarget.scrollTop
+      }}
       onPaste={attachments ? event => pasteAttachments(event, attachments) : undefined}
     />
   )
@@ -325,26 +443,53 @@ export function Composer({
           <span>{readOnly}</span>
         </p>
       )
-    ) : variant === 'sheet' ? (
-      textarea
     ) : (
-      <div className="composer-input">
-        <span className="composer-prompt" aria-hidden="true">
-          &gt;
-        </span>
+      <div className="composer-input" data-sheet={variant === 'sheet' ? '' : undefined} data-command={commandChip ? '' : undefined}>
+        {variant !== 'sheet' && (
+          <span className="composer-prompt" aria-hidden="true">
+            &gt;
+          </span>
+        )}
+        {commandChip && (
+          <div ref={commandMirror} className="composer-command-mirror" aria-hidden="true">
+            <span className="composer-command-chip">{commandChip}</span>
+            {draft.slice(commandChip.length)}
+            {argumentHint && <span className="composer-command-hint">{escapeSecurityText(argumentHint)}</span>}
+          </div>
+        )}
         {textarea}
       </div>
     )
+  const slashButton = readOnly === undefined && (
+    <IconButton
+      className="composer-slash-button"
+      label="插入命令"
+      icon={Slash}
+      disabled={locked || answer !== undefined}
+      onClick={() => {
+        const input = textareaRef.current
+        const start = input?.selectionStart ?? draft.length
+        const end = input?.selectionEnd ?? start
+        const before = draft.slice(0, start)
+        const insert = before && !/\s$/u.test(before) ? ' /' : '/'
+        const value = before + insert + draft.slice(end)
+        slashSelection.current = { draft: value, start: start + insert.length, end: start + insert.length }
+        slash.reopen()
+        onDraft(value)
+        input?.focus({ preventScroll: true })
+      }}
+    />
+  )
   const action = (
     <div className="composer-slot" data-queue-draft={queueDraft ? '' : undefined}>
       {/* Touch has no Esc: stop stays beside 排队 and an answer's send there. */}
-      {(queueDraft || answering) && run && coarse && <StopButton run={run} stepBack={stepBack} />}
+      {(queueDraft || answering || choosing) && run && coarse && <StopButton run={run} stepBack={stepBack} />}
       {attachments?.preparing ? (
         <Button size="sm" onClick={attachments.cancel}>
           <Spinner size={14} />
           取消发送
         </Button>
-      ) : run && !queueDraft && !answering ? (
+      ) : run && !queueDraft && !answering && !choosing ? (
         <StopButton run={run} stepBack={stepBack} />
       ) : queueDraft && steerable ? (
         <Tooltip content={sendTip ?? '加到正在运行的这一轮'} shortcut={sendTip === undefined ? shortcut : undefined}>
@@ -375,11 +520,14 @@ export function Composer({
           </button>
         </Tooltip>
       ) : readOnly !== undefined ? null : (
-        <Tooltip content={sendTip ?? '发送'} shortcut={sendTip === undefined ? shortcut : undefined} describe={sendTip !== undefined}>
+        <Tooltip
+          content={sendTip ?? (choosing ? '运行动作' : '发送')}
+          shortcut={sendTip === undefined ? shortcut : undefined}
+          describe={sendTip !== undefined}>
           <button
             type="submit"
             className="send-button"
-            aria-label="发送"
+            aria-label={choosing ? '运行动作' : '发送'}
             aria-disabled={!sendable || undefined}
             aria-busy={sending || undefined}
             onClick={event => {
@@ -449,6 +597,7 @@ export function Composer({
       )}
       {drawers && <div className="composer-drawers">{drawers}</div>}
       <form
+        ref={commandAnchor}
         className={`composer ${run ? 'is-running' : ''}`}
         data-inline={inline ? '' : undefined}
         data-variant={readOnly !== undefined ? 'read-only' : undefined}
@@ -490,23 +639,27 @@ export function Composer({
         <RunBar run={run} />
         {locationPosition === 'top' && location}
         <ConfigUnknownBar state={configUnknown} />
+        {actionBlock && <InlineNotice>{actionBlock}</InlineNotice>}
         {queueTray}
         {!locked && mentions.menu}
         {attachments && (
           <AttachmentDrafts controller={attachments} locked={locked} onRestore={text => onDraft(draft ? `${draft}\n${text}` : text)} />
         )}
-        <SlashCommands menu={slash} />
+        <SlashCommands menu={slash} anchorRef={commandAnchor} onCreateTemplate={onCreateTemplate} />
         {input}
         {variant === 'sheet' && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+        {variant === 'sheet' && slashButton}
         {variant !== 'sheet' && (
           <div className="composer-toolbar" data-rows={inline ? 'two' : undefined}>
             {locationPosition === 'toolbar' && location}
             <div className="composer-controls">
               {!inline && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+              {!inline && slashButton}
               {controls}
             </div>
             <div className="composer-end">
               {inline && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+              {inline && slashButton}
               {trailing}
               {meta && <div className="composer-meta">{meta}</div>}
               {action}

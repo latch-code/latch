@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "cases": [
+    { "name": "compact", "query": "compact", "score": 0 },
+    { "name": "compact", "query": "COM", "score": 1 },
+    { "name": "project-review", "query": "rev", "score": 2 },
+    { "name": "代码审查", "query": "dmsc", "score": 3 },
+    { "name": "检查改动", "query": "jcgd", "score": 3 },
+    { "name": "compact", "query": "mpa", "score": 4 },
+    { "name": "compact", "query": "cmpt", "score": 5 },
+    { "name": "compact", "query": "压缩", "description": "压缩上下文", "score": 6 },
+    { "name": "compact", "query": "other", "score": null },
+    { "name": "compact", "query": "", "score": 0 }
+  ]
+}

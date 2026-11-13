@@ -1,194 +1,234 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useId, useMemo, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
-import { Kbd } from '@latch/ui'
-
-const RANDOM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
-const slashQuery = (draft: string) => (/^\/[^\s]*$/u.test(draft) ? draft.slice(1).toLocaleLowerCase() : null)
-const rank = (name: string, query: string) => {
-  const value = name.toLocaleLowerCase()
-  if (value === query) return 0
-  if (value.startsWith(query)) return 1
-  if (value.split(/[-_:/. \s]+/u).some(word => word.startsWith(query))) return 2
-  return value.includes(query) ? 3 : 4
-}
-export function slashMatches(draft: string, commands: readonly SessionCommand[]): SessionCommand[] {
-  const query = slashQuery(draft)
-  return query === null
-    ? []
-    : commands
-        .map((command, order) => ({ command, order, rank: rank(command.name, query) }))
-        .filter(item => item.rank < 4)
-        .sort((a, b) => a.rank - b.rank || a.order - b.order)
-        .slice(0, 20)
-        .map(item => item.command)
-}
-
-/**
- * Something Latch does in this session, not text for the Harness: choosing it runs it and empties the input, or, with
- * `text`, puts that in the input for the rest (`/btw ` waits for its question). `unavailable`: listed, says why, does
- * nothing.
- */
-export interface SlashAction {
-  name: string
-  description: string
-  run?(): void
-  text?: string
-  unavailable?: string
-}
-
-export interface SlashOption {
-  id: string
-  kind: 'action' | 'template' | 'command'
-  label: string
-  description: string
-  text: string
-  score: number
-  run?: () => void
-  /** Listed with its reason; choosing it does nothing. */
-  unavailable?: true
-}
-export function slashOptions(
-  draft: string,
-  commands: readonly SessionCommand[],
-  templates: readonly PromptTemplate[],
-  actions: readonly SlashAction[] = [],
-): SlashOption[] {
-  const query = slashQuery(draft)
-  if (query === null) return []
-  const options: SlashOption[] = [
-    ...actions.map(action => ({
-      id: 'action:' + action.name,
-      kind: 'action' as const,
-      label: '/' + action.name,
-      description: action.unavailable ?? action.description,
-      text: action.text ?? '',
-      score: rank(action.name, query),
-      ...(action.run && !action.unavailable ? { run: action.run } : {}),
-      ...(action.unavailable ? { unavailable: true as const } : {}),
-    })),
-    ...templates.map(template => {
-      // A template made in 设置 has a random ID: it is named, and found, by its name alone.
-      const slug = !RANDOM_ID.test(template.id)
-      return {
-        id: 'template:' + template.id,
-        kind: 'template' as const,
-        label: slug ? '/' + template.id + ' · ' + template.name : '/' + template.name,
-        description: '提示模板 · ' + { all: '全部会话', project: '当前项目', agent: '当前 Harness' }[template.scope.kind],
-        text: template.content,
-        score: slug ? Math.min(rank(template.id, query), rank(template.name, query)) : rank(template.name, query),
-      }
-    }),
-    ...commands.map(command => ({
-      id: 'command:' + command.name,
-      kind: 'command' as const,
-      label: '/' + command.name,
-      description: command.description ?? command.inputHint ?? 'Harness 命令',
-      text: '/' + command.name + ' ',
-      score: rank(command.name, query),
-    })),
-  ]
-  const ranked = options
-    .filter(item => item.score < 4)
-    .sort((a, b) => a.score - b.score)
-    .slice(0, 20)
-  return [...new Set(ranked.map(item => item.kind))].flatMap(kind => ranked.filter(item => item.kind === kind))
-}
+import { Button, CodeGlyph, FileGlyph, Icon, Kbd, Suggest } from '@latch/ui'
+import { BrandMark } from '../components/ui.tsx'
+import { matchSlash, slashToken } from './slash-match.ts'
+import { slashOptions, type SlashAction, type SlashContext, type SlashOption } from './slash-options.ts'
+import { SlashHistory } from '../core/slashHistory.ts'
+import { latchActionOf } from './latchActions.ts'
+export { slashMatches, slashOptions, type SlashAction, type SlashOption } from './slash-options.ts'
 
 export function useSlashCommands({
   draft,
+  caret = draft.length,
   commands = [],
   templates = [],
   actions = [],
   enabled,
   onDraft,
+  onCommand,
+  harnessName = '当前 Harness',
+  harnessMedia,
+  running = false,
+  firstTurn = false,
+  session = false,
+  historyScope,
 }: {
   draft: string
+  caret?: number
   commands?: readonly SessionCommand[]
   templates?: readonly PromptTemplate[]
   actions?: readonly SlashAction[]
   enabled: boolean
-  onDraft(text: string): void
-}) {
-  const id = useId(),
-    [dismissed, setDismissed] = useState<string | null>(null),
-    [selection, setSelection] = useState({ draft: '', index: 0 })
-  const options = slashOptions(draft, commands, templates, actions)
-  const open =
-    enabled && slashQuery(draft) !== null && dismissed !== draft && (commands.length > 0 || templates.length > 0 || actions.length > 0)
-  const active = selection.draft === draft ? Math.min(selection.index, Math.max(0, options.length - 1)) : 0
-  const select = (option: SlashOption) => {
-    if (option.unavailable) return
-    onDraft(option.text)
-    option.run?.()
+  onDraft(text: string, selection?: { start: number; end: number }): void
+  onCommand?(text: string): void
+  harnessName?: string
+  harnessMedia?: ReactNode
+  historyScope?: { deviceId: string; harnessId?: string }
+} & SlashContext) {
+  const id = useId()
+  const [dismissed, setDismissed] = useState<string | null>(null)
+  const [selection, setSelection] = useState({ word: '', optionId: '' })
+  const token = slashToken(draft, caret)
+  const word = token ? draft.slice(0, token.end) : ''
+  const history = useMemo(
+    () => (historyScope ? new SlashHistory(location.origin, historyScope.deviceId) : undefined),
+    [historyScope?.deviceId],
+  )
+  const available = slashOptions(word, commands, templates, actions, { running, firstTurn, session })
+  const recent =
+    token && !token.query
+      ? (history
+          ?.ids(historyScope?.harnessId)
+          .flatMap(id => {
+            const option = available.find(item => item.id === id && !item.unavailable)
+            return option ? [{ ...option, id: 'recent:' + option.id, recent: true as const }] : []
+          })
+          .slice(0, 5) ?? [])
+      : []
+  const options = [...recent, ...available]
+  const remember = (option: SlashOption) => {
+    history?.record(option.id.replace(/^recent:/u, ''), historyScope?.harnessId)
+  }
+  const open = enabled && token !== undefined && dismissed !== word
+  const first = token?.query ? options.findIndex(option => !option.unavailable) : -1
+  const active = selection.word === word ? options.findIndex(option => option.id === selection.optionId && !option.unavailable) : first
+  const dismiss = () => setDismissed(word)
+  const select = (option: SlashOption, intent: 'complete' | 'activate' = 'activate') => {
+    if (option.unavailable || !token) return
+    remember(option)
+    if (intent === 'activate' && option.kind === 'action' && option.run) {
+      option.run(draft.slice(token.end).trim())
+    } else {
+      const text = draft.slice(0, token.start) + option.text + draft.slice(token.end)
+      const argument = option.kind === 'template' ? option.text.indexOf('$ARGUMENTS') : -1
+      const start = token.start + (argument >= 0 ? argument : option.text.length)
+      onDraft(text, { start, end: start + (argument >= 0 ? '$ARGUMENTS'.length : 0) })
+    }
+    dismiss()
   }
   const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!open || event.nativeEvent.isComposing || event.keyCode === 229 || event.metaKey || event.ctrlKey || event.altKey) return false
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
-      setDismissed(draft)
+      dismiss()
       return true
     }
-    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && options.length) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const usable = options.map((option, index) => (option.unavailable ? -1 : index)).filter(index => index >= 0)
+      if (!usable.length) return false
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      const at = usable.indexOf(active)
+      const next = at < 0 ? (step > 0 ? 0 : usable.length - 1) : (at + step + usable.length) % usable.length
       event.preventDefault()
       event.stopPropagation()
-      setSelection({ draft, index: (active + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length })
+      setSelection({ word, optionId: options[usable[next]!]!.id })
       return true
     }
-    if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && options[active]) {
-      event.preventDefault()
-      event.stopPropagation()
-      select(options[active])
-      return true
-    }
-    return false
+    const option = options[active]
+    if ((event.key !== 'Enter' && event.key !== 'Tab') || event.shiftKey || !option) return false
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.key === 'Enter' && option.kind === 'command' && !option.inputHint && !running && onCommand) {
+      remember(option)
+      dismiss()
+      onCommand(option.text.trimEnd())
+    } else select(option, event.key === 'Tab' ? 'complete' : 'activate')
+    return true
   }
-  return { id, draft, open, options, active, select, keydown }
+  return {
+    id,
+    draft,
+    query: token?.query ?? '',
+    open,
+    options,
+    active,
+    select,
+    keydown,
+    dismiss,
+    reopen: () => setDismissed(null),
+    harnessName,
+    harnessMedia,
+    reportedCommands: commands.length,
+    setActive: (index: number) => {
+      const option = options[index]
+      if (option && !option.unavailable) setSelection({ word, optionId: option.id })
+    },
+  }
 }
 
-const GROUPS: Record<SlashOption['kind'], string> = { action: '这个会话', template: '提示模板', command: 'Harness 命令' }
+function highlighted(text: string, query: string): ReactNode {
+  const safe = escapeSecurityText(text)
+  const match = matchSlash(safe.replace(/^\//u, ''), query)
+  const offset = safe.startsWith('/') ? 1 : 0
+  const positions = new Set(match?.positions.map(position => position + offset))
+  let index = 0
+  return Array.from(safe).map(character => {
+    const start = index
+    index += character.length
+    return positions.has(start) ? <strong key={start}>{character}</strong> : character
+  })
+}
 
-export function SlashCommands({ menu }: { menu: ReturnType<typeof useSlashCommands> }) {
-  const list = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
-  }, [menu.active, menu.draft])
-  if (!menu.open) return null
+export function SlashCommands({
+  menu,
+  anchorRef,
+  onCreateTemplate,
+}: {
+  menu: ReturnType<typeof useSlashCommands>
+  anchorRef: RefObject<HTMLElement | null>
+  onCreateTemplate?: () => void
+}) {
+  const labels = { recent: '最近', action: 'Latch', template: '提示模板', command: menu.harnessName }
+  const media = {
+    recent: undefined,
+    action: <BrandMark size={16} />,
+    template: <Icon icon={FileGlyph} size={16} />,
+    command: menu.harnessMedia ?? <Icon icon={CodeGlyph} size={16} />,
+  }
+  const groups = menu.query
+    ? ['search' as const]
+    : (['recent', 'command', 'template', 'action'] as const).filter(
+        kind => kind === 'command' || menu.options.some(option => (option.recent ? 'recent' : option.kind) === kind),
+      )
   return (
-    <section className="slash-commands" aria-label="命令与提示模板">
-      <p>
-        <Kbd>↑</Kbd> <Kbd>↓</Kbd> 选择 · <Kbd>Enter</Kbd> 插入
-      </p>
-      {menu.options.length === 0 && <p role="status">没有匹配的命令或提示模板</p>}
-      <div ref={list} id={menu.id} role="listbox" aria-label="命令与提示模板">
-        {[...new Set(menu.options.map(option => option.kind))].map(kind => {
-          const options = menu.options.filter(option => option.kind === kind)
-          return options.length ? (
-            <div key={kind} role="group" aria-label={GROUPS[kind]}>
-              <p>{GROUPS[kind]}</p>
-              {options.map(option => {
-                const index = menu.options.indexOf(option)
-                return (
-                  <button
-                    type="button"
-                    role="option"
-                    id={menu.id + '-' + index}
-                    aria-selected={index === menu.active}
-                    aria-disabled={option.unavailable ? true : undefined}
-                    tabIndex={-1}
-                    key={option.id}
-                    onMouseDown={event => event.preventDefault()}
-                    onClick={() => menu.select(option)}>
-                    <strong>{escapeSecurityText(option.label)}</strong>
-                    <span>{escapeSecurityText(option.description)}</span>
-                  </button>
-                )
-              })}
-            </div>
-          ) : null
-        })}
-      </div>
-    </section>
+    <Suggest
+      id={menu.id}
+      label="命令与提示模板"
+      open={menu.open}
+      anchorRef={anchorRef}
+      activeId={menu.active >= 0 ? menu.id + '-' + menu.active : undefined}
+      onActiveChange={id => menu.setActive(Number(id.slice(menu.id.length + 1)))}
+      onChoose={id => {
+        const option = menu.options[Number(id.slice(menu.id.length + 1))]
+        if (option) menu.select(option)
+      }}
+      onDismiss={menu.dismiss}
+      groups={groups.map(kind => ({
+        id: kind,
+        ...(kind !== 'search' ? { label: labels[kind], media: media[kind] } : {}),
+        ...(kind === 'command' && !menu.reportedCommands
+          ? {
+              empty: (
+                <>
+                  <span>{menu.harnessName} 还没报告命令</span>
+                  {onCreateTemplate && (
+                    <Button size="xs" variant="ghost" onClick={onCreateTemplate}>
+                      新建提示模板
+                    </Button>
+                  )}
+                </>
+              ),
+            }
+          : {}),
+        items: menu.options.flatMap((option, index) =>
+          kind !== 'search' && (option.recent ? 'recent' : option.kind) !== kind
+            ? []
+            : [
+                {
+                  id: menu.id + '-' + index,
+                  label: highlighted(option.label, menu.query),
+                  description: escapeSecurityText(option.description),
+                  ...(option.inputHint ? { hint: escapeSecurityText(option.inputHint) } : {}),
+                  ...(kind === 'search' ? { source: labels[option.kind], media: media[option.kind] } : {}),
+                  disabled: option.unavailable,
+                },
+              ],
+        ),
+      }))}
+      empty={
+        menu.query
+          ? latchActionOf('/' + menu.query)
+            ? '这个动作在当前页面不可用'
+            : `没有「/${escapeSecurityText(menu.query)}」· Enter 原样发给 ${menu.harnessName}`
+          : `${menu.harnessName} 还没报告命令`
+      }
+      footer={
+        <>
+          <span>
+            <Kbd>↑↓</Kbd>
+          </span>
+          <span>
+            <Kbd>Tab</Kbd> 补全
+          </span>
+          <span>
+            <Kbd>⏎</Kbd> 运行
+          </span>
+          <Kbd>Esc</Kbd>
+        </>
+      }
+    />
   )
 }

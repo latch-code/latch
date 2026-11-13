@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react'
-import { ClipboardCopy, FileSearch, FolderTree, ArrowRightToLine, SunMoon } from 'lucide-react'
+import { ClipboardCopy, FileSearch, FolderTree, ArrowRightToLine, SunMoon, Eraser, GitFork, MessageCircle, Shield } from 'lucide-react'
 import {
   Icon,
   type IconComponent,
@@ -14,17 +14,19 @@ import {
   SettingsGlyph,
   NewSessionGlyph,
   HarnessGlyph,
+  ModelGlyph,
+  ReasonGlyph,
 } from '@latch/ui'
 import { HARNESS_MARKS, presetOf } from '../brands.ts'
 import { harnessName } from '../composerChoice.ts'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
-import { APPROVAL_COPY } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { setPreference } from '../preferences.ts'
 import { projectOf } from '../sessions.ts'
 import { sectionLabel, settingsSections } from '../settings/SettingsPage.tsx'
 import { settingsSectionsAt, type SettingsSection } from '../shell/routes.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
+import { composerActions } from '../shell/composerActions.ts'
 import { shortcutKeys, type ShortcutId } from '../workbenchShortcuts.ts'
 import { AgentAvatar, AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { CommandPalette } from './CommandPalette.tsx'
@@ -57,13 +59,10 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     summary,
     selectedId,
     choose,
-    canViewChanges,
-    openChangesTab,
     canBrowser,
     showSurface,
     toggleSidebar,
     togglePanel,
-    startNew,
     openSettings,
     openAgentPage,
     copyTask,
@@ -214,19 +213,31 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
           },
         ]
       : []),
-    { id: 'new', label: '新会话', icon: glyph(NewSessionGlyph), root: true, ...keys('new'), run: startNew },
-    ...(canViewChanges
-      ? [
+    ...composerActions(
+      shell.inputTarget === 'new' ? { ...shell, ...shell.homeComposerState, composerRef: shell.homeComposerRef } : shell,
+      'palette',
+    )
+      .filter(action => !action.unavailable)
+      .map(action => ({
+        id: action.name,
+        label: action.label,
+        keywords: '/' + action.name,
+        icon: glyph(
           {
-            id: 'changes',
-            label: APPROVAL_COPY.openChanges,
-            icon: glyph(DiffGlyph),
-            root: true,
-            ...keys('changes'),
-            run: inSession(openChangesTab),
-          },
-        ]
-      : []),
+            clear: Eraser,
+            btw: MessageCircle,
+            fork: GitFork,
+            new: NewSessionGlyph,
+            model: ModelGlyph,
+            think: ReasonGlyph,
+            permissions: Shield,
+            changes: DiffGlyph,
+          }[action.name],
+        ),
+        root: action.name === 'new' || action.name === 'changes',
+        ...(action.name === 'new' || action.name === 'changes' ? keys(action.name) : {}),
+        run: inSession(() => action.run?.()),
+      })),
     ...(canBrowser
       ? [
           {

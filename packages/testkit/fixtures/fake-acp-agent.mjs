@@ -1735,7 +1735,10 @@ const scenarios = {
     })
     update(sessionId, { sessionUpdate: 'session_info_update', title: 'Fake title' })
     update(sessionId, { sessionUpdate: 'usage_update', used: 10, size: 100 })
-    update(sessionId, { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'init', description: 'init' }] })
+    update(sessionId, {
+      sessionUpdate: 'available_commands_update',
+      availableCommands: env.FAKE_ACP_COMMANDS ? JSON.parse(env.FAKE_ACP_COMMANDS) : [{ name: 'init', description: 'init' }],
+    })
     update(sessionId, { sessionUpdate: 'some_future_kind', anything: true })
     say('planned')
     return { stopReason: 'end_turn', usage: { totalTokens: 30, inputTokens: 10, outputTokens: 20 } }

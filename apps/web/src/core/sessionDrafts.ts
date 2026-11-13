@@ -1,4 +1,5 @@
 import { looksSecret } from '@latch/protocol'
+import { forgetSlashHistory } from './slashHistory.ts'
 
 interface Draft {
   text: string
@@ -68,6 +69,7 @@ let forgotten = 0
  * Storage that throws has nothing to remove.
  */
 export function forgetStoredDrafts(origin: string, keep?: string): void {
+  forgetSlashHistory(origin, keep)
   if (keep === undefined) forgotten++
   try {
     if (keep === undefined) localStorage.setItem(forgottenKey(origin), `${Date.now()}.${Math.random().toString(36).slice(2)}`)

@@ -99,6 +99,21 @@ describe('value picker', () => {
     await expect.element(screen.getByRole('button', { name: '模型：alpha-large' })).toHaveAttribute('aria-expanded', 'false')
   })
 
+  it('opens a requested search, keeps typing local and accepts a later new request', async () => {
+    const request = { query: 'beta', revision: 1 }
+    const picker = (searchRequest = request) => (
+      <ValuePicker label="模型" value="alpha" options={MODELS} onValueChange={() => {}} searchable searchRequest={searchRequest} />
+    )
+    const screen = await render(picker())
+    await expect.element(screen.getByRole('searchbox')).toHaveValue('beta')
+    await expect.element(screen.getByRole('menuitemradio', { name: 'beta-mini' })).toBeVisible()
+    await screen.getByRole('searchbox').fill('delta')
+    await screen.rerender(picker())
+    await expect.element(screen.getByRole('searchbox')).toHaveValue('delta')
+    await screen.rerender(picker({ query: 'alpha', revision: 2 }))
+    await expect.element(screen.getByRole('searchbox')).toHaveValue('alpha')
+  })
+
   it('repairs a removed focused option after a refresh and still closes on Escape', async () => {
     const screen = await render(<ValuePicker label="模型" value="alpha" options={MODELS} onValueChange={() => {}} />)
     await screen.getByRole('button', { name: '模型：alpha-large' }).click()

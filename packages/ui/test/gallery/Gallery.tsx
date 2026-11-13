@@ -46,6 +46,7 @@ import {
   StatusWord,
   StatusWords,
   Swap,
+  SuggestPanel,
   Switch,
   SwitchRow,
   Tabs,
@@ -2002,6 +2003,53 @@ export function Gallery() {
         <Meters />
         <Pickers />
         <Inputs />
+        <Section title="输入建议">
+          <SuggestPanel
+            id="gallery-suggest"
+            label="命令建议"
+            activeId="gallery-compact"
+            onActiveChange={() => {}}
+            onChoose={() => {}}
+            groups={[
+              {
+                id: 'agent',
+                label: 'Agent',
+                items: [
+                  {
+                    id: 'gallery-compact',
+                    label: (
+                      <>
+                        /com<strong>pact</strong>
+                      </>
+                    ),
+                    description: '压缩上下文',
+                    media: <Icon icon={TerminalGlyph} size={16} />,
+                    source: 'Agent',
+                  },
+                  { id: 'gallery-review', label: '/review', description: '检查改动', hint: '<范围>', source: 'Agent' },
+                  { id: 'gallery-unavailable', label: '/clear', description: '这一轮结束后可用', disabled: true },
+                ],
+              },
+            ]}
+            footer={
+              <>
+                <Kbd>↑↓</Kbd>
+                <span>
+                  <Kbd>Tab</Kbd> 补全
+                </span>
+                <Kbd>Esc</Kbd>
+              </>
+            }
+          />
+          <SuggestPanel
+            id="gallery-suggest-empty"
+            label="空建议"
+            groups={[]}
+            onActiveChange={() => {}}
+            onChoose={() => {}}
+            empty="没有匹配的命令"
+          />
+        </Section>
         <Choices />
         <Layers />
         <Notices />
