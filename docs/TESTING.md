@@ -21,6 +21,10 @@ sources:
 
 模型网关的机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。`model-gateway.test.ts` 覆盖四协议入口、头白名单、进程凭据、上游错误脱敏、流式用量与下游取消；`codex-gateway.test.ts` 通过假原生 Codex 真实调用 Host 网关，检查服务独有模型、失败不回退及重启恢复。`codex-environment.test.ts` 检查有效命令环境规则在新建与恢复前读取并保留，未知规则拒绝开线程。
 
+`gateway-translation.test.ts` 覆盖 Responses→Chat 的命名空间、custom 工具、图片结果来源与并行顺序、完整事件、取消、错误、用量、密封思考和分块/JSON 参数脱敏；参数数字词元保留原样，非有限数拒绝。`codex-gateway.test.ts` 同时验证同协议与转换路线的保存、失败和恢复。`codex-model-gateway.e2e.ts` 覆盖两条路线，Chat 菜单另检查 320/390/768/1440 深浅色与损耗说明。
+
+`codex-chat-gateway.live.test.ts` 仅在明确授权并设置 `LATCH_CODEX_GATEWAY_BINARY` 时运行：临时 Host/HOME/CODEX_HOME 与本机假 Chat 上游，核对真实 custom apply_patch、目录外型号经命令工具 apply_patch、思考回放、工具环境只报告凭据存在与否、停止回执与上游连接关闭、失败不回退。测试不读取用户登录文件，不等于真实 BYOK；未知型号的原生工具范围由 Codex 决定。
+
 `e2e/codex-model-gateway.e2e.ts` 默认用假 app-server，验证菜单模型选择与恢复。只有所有者明确授权的验收才设置 `LATCH_CODEX_GATEWAY_BINARY` 使用真实 Codex 并执行夹具提供的无害诊断工具；仍用临时 HOME/CODEX_HOME、临时 Host 与本地假模型，不读取原登录文件，也不把它称为真实 BYOK 成功。
 
 `e2e/harness-model-gateway.e2e.ts` 默认用假 OpenCode/dsh/pi，走三宽模型与思考菜单、深色、Host 重启恢复；只在所有者明确授权后分别设置 `LATCH_OPENCODE_GATEWAY_BINARY`、`LATCH_DSH_GATEWAY_BINARY`、`LATCH_PI_GATEWAY_BINARY`，才使用真实 CLI。`apps/host/test/{opencode,dsh,pi}-gateway.live.test.ts` 默认显式跳过，使用同名变量独立核对四协议、实际工具、凭据不进入工具环境、模型切换、恢复、停止与上游拒绝；Pi 另检查预算拒绝、官方目录、原生压缩及请求钩子失配零出站；dsh 区分精确 Gemini 型号与不支持离散档位的别名，`dsh-gateway-auxiliary.live.test.ts` 另验证真实子 Agent 与自动压缩也走所选服务。全部使用临时 HOME/XDG、临时 Host/项目与本地假模型，不读取用户 CLI 登录文件；真实 CLI、真实图片编码与实际参数都不能代替真实 BYOK 或本人系统确认。
