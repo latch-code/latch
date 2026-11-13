@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { FAKE_ACP_AGENT, fakeConversation, writeFakeHistory, type TestDevice } from '@latch/testkit'
 import { expect, it } from 'vitest'
+import type { AutomationDetail, AutomationList, TaskDetail } from '@latch/protocol'
+import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { clipboardLease, compileClipboardLease } from './helpers/iosClipboardLease.ts'
 import { clipboardGui, validateGuiPairing } from './helpers/iosClipboardValidation.ts'
@@ -15,6 +17,25 @@ const run = promisify(execFile)
 const PREFIX = 'latch-live-'
 const BUNDLE = 'dev.latch.ios.screens'
 const TYPES = ['iPhone-17-Pro', 'iPhone-16-Pro', 'iPhone-17', 'iPhone-16']
+const SCHEDULE_MODEL = { providerId: 'ios-live-schedule', model: 'fixture' }
+/** Scheduled work uses Standard under the existing unattended ceiling, with only a local scripted reply. */
+const scheduledProvider: HarnessPlugin = {
+  id: SCHEDULE_MODEL.providerId,
+  name: 'iOS live schedule fixture',
+  version: '1',
+  description: 'Local replies for manual native UI acceptance.',
+  activate(context) {
+    context.registerProvider({
+      id: SCHEDULE_MODEL.providerId,
+      name: '本地验收模型',
+      model: SCHEDULE_MODEL.model,
+      async *stream({ messages }) {
+        yield { type: 'text', text: `已整理：${messages.findLast(message => message.role === 'user')?.content ?? ''}` }
+        yield { type: 'finish', reason: 'stop' }
+      },
+    })
+  },
+}
 /** Live mode's markers and what only its software keys import; `ios-app.e2e.ts` checks the product has none of them. */
 const MARKERS = ['LatchLive software keys', 'LiveSoftwareKeys', 'LiveIdentityProvider', '-LatchLive']
 const SOFTWARE_KEY_SYMBOLS = ['_SecKeyCreateWithData', '_kSecAttrKeyClassPrivate']
@@ -52,7 +73,7 @@ const DEVICE = process.env.LATCH_IOS_LIVE_DEVICE
 const KEEP = process.env.LATCH_IOS_LIVE_KEEP === '1'
 /** `LATCH_IOS_LIVE_HISTORY=1`: also a project of two folders and the fake agent as Codex with sessions of its own, for 接入已有会话. */
 const HISTORY = process.env.LATCH_IOS_LIVE_HISTORY === '1'
-/** `LATCH_IOS_LIVE_AGENTS=1`: also an Agent of yours on the built-in Harness (demo model) with a daily schedule, for 我的 Agent. */
+/** `LATCH_IOS_LIVE_AGENTS=1`: also a Standard Agent on a local fixture provider with an allowed daily schedule. */
 const AGENTS = process.env.LATCH_IOS_LIVE_AGENTS === '1'
 /**
  * `LATCH_IOS_LIVE_ATTACH=1`: also the fake agent declaring images and text (「Fake Images」), so attachments can be sent; the
@@ -61,14 +82,14 @@ const AGENTS = process.env.LATCH_IOS_LIVE_AGENTS === '1'
  */
 const ATTACH = process.env.LATCH_IOS_LIVE_ATTACH === '1'
 /**
- * `LATCH_IOS_LIVE_ACTIVITY=1`: also 资讯, an Agent on the fake ACP Agent in a project of its own, with a schedule whose run
- * edits a file, for result cards, schedule proposals (`schedule <name> <when> <HH:MM> <input>`), 动态 and 资料库. With
- * hold, `<file>.run` runs that schedule now, as its owner would, and `<file>.fail` runs a second one whose agent exits
+ * `LATCH_IOS_LIVE_ACTIVITY=1`: also 资讯, an Agent on the fake ACP Agent in a project of its own, with a disabled saved task
+ * that edits a file when run manually, for result cards, schedule proposals (`schedule <name> <when> <HH:MM> <input>`),
+ * 动态 and 资料库. With hold, `<file>.run` runs it now, as its owner would, and `<file>.fail` runs a second one whose agent exits
  * mid-run, so its card offers 立即运行.
  */
 const ACTIVITY = process.env.LATCH_IOS_LIVE_ACTIVITY === '1'
 /**
- * `LATCH_IOS_LIVE_COMPUTER=1`: also 晨报助手 on the fake ACP Agent with a daily schedule the Mac "slept" past: the Host's
+ * `LATCH_IOS_LIVE_COMPUTER=1`: also 晨报助手 on Standard and the local fixture provider with a daily schedule the Mac "slept" past: the Host's
  * clock moves past the time between a sleep and a wake report, as `agent-computer.e2e.ts` does, and back before the phone
  * pairs, so its 「电脑」 shows 错过 1 次 with the cause.
  */
@@ -260,7 +281,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
 
       // The Host's native listener is on the LAN from here until `finally`.
       let shift = 0
-      host = await startTestHost({ native: { host: address, port: 0 }, now: () => Date.now() + shift })
+      host = await startTestHost({ native: { host: address, port: 0 }, now: () => Date.now() + shift, plugins: [scheduledProvider] })
       // A project with one commit and the fake ACP Agent, so a session can start, stream and ask for a step.
       /** A Host with one committed project and the fake ACP Agent, and its owner device. */
       const agents = new Map<TestHost, string>()
@@ -293,7 +314,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
       if (AGENTS) await addAgent(owner)
       const scheduled = ACTIVITY ? await addActivityAgent(host, owner) : undefined
       if (COMPUTER)
-        await addMissedAgent(host, owner, agents.get(host)!, value => {
+        await addMissedAgent(host, owner, value => {
           shift = value
         })
       other = HOSTS === 2 ? await startTestHost({ native: { host: address, port: 0 } }) : undefined
@@ -507,7 +528,57 @@ async function addHistory(host: TestHost, owner: TestDevice): Promise<void> {
   expect((await owner.addFolders({ paths: [main, other] })).status).toBe(201)
 }
 
-/** An Agent of yours on the built-in Harness and the demo model, with one daily schedule, for 我的 Agent. */
+it('prepares native manual runs and an allowed missed schedule without touching a simulator', async () => {
+  let shift = 0
+  const host = await startTestHost({ now: () => Date.now() + shift, plugins: [scheduledProvider] })
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    await addAgent(owner)
+    const saved = await addActivityAgent(host, owner)
+    for (const [id, state] of [
+      [saved.edits, 'completed'],
+      [saved.fails, 'interrupted'],
+    ] as const) {
+      const before = await owner.json<AutomationDetail>(`automations/${id}`)
+      expect(before.automation).toMatchObject({ enabled: false, state: 'off' })
+      await owner.json(`automations/${id}/run`, { method: 'POST', body: { requestId: randomUUID() } })
+      await expect
+        .poll(async () => (await owner.json<AutomationDetail>(`automations/${id}`)).runs[0]?.state, { timeout: 20_000 })
+        .toBe(state)
+      const ran = await owner.json<AutomationDetail>(`automations/${id}`)
+      expect(ran.automation.enabled).toBe(false)
+      expect(ran.runs[0]?.trigger).toBe('manual')
+      expect(ran.runs[0]?.sessionId).toBeTypeOf('string')
+      const detail = await owner.json<TaskDetail>(`tasks/${ran.runs[0].sessionId}`)
+      expect(detail.summary).toMatchObject({ automationId: id, harnessId: 'fake-news' })
+    }
+    expect(await readFile(join(host.root, 'news', 'agent-edit.txt'), 'utf8')).toBe('edited by the agent\n')
+    await addMissedAgent(host, owner, value => {
+      shift = value
+    })
+    const all = (await owner.json<AutomationList>('automations')).automations
+    expect(all).toHaveLength(4)
+    const missed = all.find(item => item.name === '晨报')!
+    expect(missed).toMatchObject({ enabled: true, state: 'ready' })
+    const detail = await owner.json<AutomationDetail>(`automations/${missed.id}`)
+    expect(detail.runs.some(attempt => attempt.state === 'missed' && attempt.trigger === 'schedule')).toBe(true)
+    expect(detail.runs.some(attempt => attempt.sessionId)).toBe(false)
+    await owner.json(`automations/${missed.id}/run`, { method: 'POST', body: { requestId: randomUUID() } })
+    await expect
+      .poll(async () => (await owner.json<AutomationDetail>(`automations/${missed.id}`)).runs[0]?.state, { timeout: 20_000 })
+      .toBe('completed')
+    const ran = (await owner.json<AutomationDetail>(`automations/${missed.id}`)).runs[0]
+    expect(ran.trigger).toBe('manual')
+    expect(ran.sessionId).toBeTypeOf('string')
+    const morning = await owner.json<TaskDetail>(`tasks/${ran.sessionId}`)
+    expect(morning.summary.harnessId).toBe('standard')
+    expect(morning.messages.some(message => message.role === 'assistant' && message.text === '已整理：写今天的晨报')).toBe(true)
+  } finally {
+    await host.close()
+  }
+})
+
+/** A Standard Agent with a local fixture provider and one allowed daily schedule, for 我的 Agent. */
 async function addAgent(owner: TestDevice): Promise<void> {
   const agent = await owner.json<{ id: string }>('custom-agents', {
     method: 'POST',
@@ -517,6 +588,7 @@ async function addAgent(owner: TestDevice): Promise<void> {
       description: '只报真实的问题',
       harnessId: 'standard',
       mode: 'chat',
+      model: SCHEDULE_MODEL,
       instructions: '只报真实的问题。',
       skills: [],
     },
@@ -535,11 +607,18 @@ async function addAgent(owner: TestDevice): Promise<void> {
 }
 
 /** 晨报助手 with a daily schedule whose time passed while the Host's clock was moved on between a sleep and a wake report. */
-async function addMissedAgent(host: TestHost, owner: TestDevice, harnessId: string, shift: (ms: number) => void): Promise<void> {
+async function addMissedAgent(host: TestHost, owner: TestDevice, shift: (ms: number) => void): Promise<void> {
   const report = (body: unknown) => host.raw('unix', 'api/host/state', { method: 'POST', body })
   const agent = await owner.json<{ id: string }>('custom-agents', {
     method: 'POST',
-    body: { requestId: randomUUID(), name: '晨报助手', description: '每天早上写一页晨报', harnessId, mode: 'agent' },
+    body: {
+      requestId: randomUUID(),
+      name: '晨报助手',
+      description: '每天早上写一页晨报',
+      harnessId: 'standard',
+      mode: 'chat',
+      model: SCHEDULE_MODEL,
+    },
   })
   const at = new Date(Date.now() + 10 * 60_000)
   const pad = (value: number) => String(value).padStart(2, '0')
@@ -565,7 +644,7 @@ async function addMissedAgent(host: TestHost, owner: TestDevice, harnessId: stri
   shift(0)
 }
 
-/** 资讯 on the fake ACP Agent with a project of its own, a schedule whose run edits files and one whose agent exits. */
+/** Native L3 work stays disabled for background dispatch; a person can run the write and failure tasks now. */
 async function addActivityAgent(host: TestHost, owner: TestDevice): Promise<{ edits: string; fails: string }> {
   const saved = await owner.confirmed('agents', {
     method: 'POST',
@@ -599,6 +678,7 @@ async function addActivityAgent(host: TestHost, owner: TestDevice): Promise<{ ed
         prompt,
         schedule: { kind: 'daily', time },
         notify: false,
+        enabled: false,
       },
     })
   return { edits: (await add('早间精选', 'shell-edit', '08:00')).id, fails: (await add('夜间检查', 'crash', '21:00')).id }
