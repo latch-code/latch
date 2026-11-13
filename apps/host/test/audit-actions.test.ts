@@ -175,6 +175,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'task.model.bypassed': { sessionId },
   'task.approval-auto-rejected': { sessionId, reason: 'persistent-only' },
   'task.subagent.stopped': { sessionId, subagentId: 'subagent:7c9e6679-7425-40de-944b-e07fc1f90ae7' },
+  'task.config.checked': { sessionId, configIdHash: hex, toHash: hex, outcome: 'applied', refSeq: 3 },
   'task.tool.judged': { sessionId, callHash: hex, modeHash: hex, kind: 'execute', outcome: 'approved', source: 'agent-report' },
   'device.enroll.requested': { enrollmentId, listener: 'lan-tls', fingerprint: 'A'.repeat(20), scopes: ['view'], invitationId },
   'device.enrolled': {

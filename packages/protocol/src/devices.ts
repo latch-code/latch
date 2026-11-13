@@ -302,4 +302,6 @@ export interface ApiFailure {
   currentHash?: string
   /** `history-already-imported`: the Latch session that session was brought in as. */
   taskId?: string
+  /** A config change that certainly did not apply (`ConfigRefusal`): refused before it reached the agent, or by the agent. */
+  configOutcome?: 'not-sent' | 'refused'
 }

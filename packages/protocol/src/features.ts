@@ -6,6 +6,8 @@ export interface HostFeatures {
   /** 设置 › MCP: Latch's own MCP servers (`/mcp/servers`). */
   mcp?: true
   configReceipts?: true
+  /** `POST /tasks/:id/config-requests/:requestId/check`: an unknown config change settled from the agent's own reading. */
+  configCheck?: true
   promptTemplates?: true
   fileSearch?: true
   fileTree?: true

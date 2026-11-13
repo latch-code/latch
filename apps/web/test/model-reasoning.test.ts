@@ -154,7 +154,7 @@ describe('Agent model and reasoning controls', () => {
       [thinkingHtml(unknown), '思考', '均衡 · 结果未知'],
     ] as const) {
       expect(named(markup, label)).toBe(value)
-      expect(markup).toContain('刷新当前设置')
+      expect(markup).toContain('核对')
       expect(markup).toContain('保持原请求，结果未知')
       expect(markup).toContain('aria-disabled="true"')
     }

@@ -103,6 +103,14 @@ export const SESSION_ACTIONS = {
   'task.cancelled': z.strictObject({ sessionId: opaqueId, runId: opaqueId.optional() }),
   'task.config.changed': z.strictObject({ sessionId: opaqueId, configIdHash: hex64, toHash: hex64 }),
   'task.mode.widened': z.strictObject({ sessionId: opaqueId, toHash: hex64 }),
+  /** 核对 settled a config change whose outcome was unknown; \`refSeq\` is the change's own entry. */
+  'task.config.checked': z.strictObject({
+    sessionId: opaqueId,
+    configIdHash: hex64,
+    toHash: hex64,
+    outcome: z.enum(['applied', 'failed']),
+    refSeq: z.number().int().min(1).optional(),
+  }),
   'task.permission-drift': z.strictObject({ sessionId: opaqueId, observedHash: hex64 }),
   /** A turn of a session on a gateway route had a reply, and none of its requests came through the gateway. */
   'task.model.bypassed': z.strictObject({ sessionId: opaqueId }),

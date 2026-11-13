@@ -9,6 +9,11 @@ export interface AcpAgentOptions {
   /** Limit for other setup and configuration requests. Default 120 s. */
   requestTimeoutMs?: number
   /**
+   * Limit for the agent's answer to one session config change; an agent that has not answered by then leaves the change
+   * unknown until it is checked. Default 30 s, never more than `requestTimeoutMs`.
+   */
+  configTimeoutMs?: number
+  /**
    * Limit for `initialize`: an agent that has not answered by then is stopped and the start refused
    * (`agent-handshake-timeout`), so a too-old or broken agent never holds a session open. Default 30 s.
    */
@@ -36,6 +41,7 @@ export interface ResolvedOptions {
   cancelGraceMs: number
   idleMs: number
   requestTimeoutMs: number
+  configTimeoutMs: number
   handshakeTimeoutMs: number
   sessionSetupTimeoutMs: number
   stopGraceMs: number
@@ -57,6 +63,7 @@ export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
     cancelGraceMs: pick(options.cancelGraceMs, 30_000),
     idleMs: pick(options.idleMs, 10 * 60_000),
     requestTimeoutMs: pick(options.requestTimeoutMs, 120_000),
+    configTimeoutMs: Math.min(pick(options.configTimeoutMs, 30_000), pick(options.requestTimeoutMs, 120_000)),
     handshakeTimeoutMs: pick(options.handshakeTimeoutMs, 30_000),
     sessionSetupTimeoutMs: pick(options.sessionSetupTimeoutMs, 60_000),
     stopGraceMs: pick(options.stopGraceMs, 5_000),

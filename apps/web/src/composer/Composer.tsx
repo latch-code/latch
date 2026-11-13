@@ -34,6 +34,23 @@ export interface RunState {
   onCancel: () => void
 }
 
+/**
+ * A session config change whose outcome is unknown, said in the bar on top of the input: what was asked for, when,
+ * 结果未知, 核对 and 重试同一请求. Neither sends the change again on its own.
+ */
+export interface ConfigUnknownState {
+  /** 「模型 opencode/Beam Free」 */
+  what: string
+  /** Whose process 核对 restarts. */
+  harness: string
+  at: number
+  checking: boolean
+  onCheck: () => void
+  onRetry: () => void
+  /** Only after 核对 could not settle it. */
+  onAbandon?: () => void
+}
+
 const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 /** Eight lines of body text plus padding; the transcript keeps the remaining height. */
 const MAX_TEXTAREA = 232
@@ -77,6 +94,7 @@ export function Composer({
   controls,
   trailing,
   run,
+  configUnknown,
   readOnly,
   readOnlyReason,
   answer,
@@ -139,6 +157,7 @@ export function Composer({
   /** The toolbar's end, before 「⋯」 and send: how hard and how careful (思考, 权限). */
   trailing?: ReactNode
   run?: RunState
+  configUnknown?: ConfigUnknownState
   /** This device may watch, reject and cancel but not type: the text replaces the input. */
   readOnly?: string
   /** Why it only reads, behind the label's Hint. */
@@ -464,6 +483,7 @@ export function Composer({
           </div>
         )}
         <RunBar run={run} />
+        <ConfigUnknownBar state={configUnknown} />
         {queueTray}
         {!locked && mentions.menu}
         {attachments && (
@@ -517,6 +537,65 @@ function StopButton({ run, stepBack }: { run: RunState; stepBack: boolean }) {
         </Swap>
       </button>
     </Tooltip>
+  )
+}
+
+const clock = (at: number) => new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+
+/** The same bar while a config change's outcome is unknown; the controls keep showing the value the Host confirmed. */
+function ConfigUnknownBar({ state }: { state?: ConfigUnknownState | undefined }) {
+  return (
+    <Collapse open={state !== undefined} className="run-bar-collapse">
+      {state && (
+        <div className="run-bar" data-config-unknown="">
+          <span className="run-bar-what">
+            <span className="run-bar-object">{state.what}</span>
+            <span className="run-bar-dot" aria-hidden="true">
+              ·
+            </span>
+            <time className="run-bar-dot" dateTime={new Date(state.at).toISOString()}>
+              {clock(state.at)}
+            </time>
+            <span className="run-bar-dot" aria-hidden="true">
+              ·
+            </span>
+            <span role="status" className="run-bar-status">
+              {state.checking ? '核对中…' : '结果未知'}
+            </span>
+            <span className="run-bar-dot" aria-hidden="true">
+              ·
+            </span>
+            <button type="button" className="run-bar-action" disabled={state.checking} onClick={state.onCheck}>
+              核对
+            </button>
+            <span className="run-bar-dot" aria-hidden="true">
+              ·
+            </span>
+            <button type="button" className="run-bar-action" disabled={state.checking} onClick={state.onRetry}>
+              重试同一请求
+            </button>
+            {state.onAbandon && (
+              <>
+                <span className="run-bar-dot" aria-hidden="true">
+                  ·
+                </span>
+                <button type="button" className="run-bar-action" disabled={state.checking} onClick={state.onAbandon}>
+                  放弃这次结果
+                </button>
+              </>
+            )}
+          </span>
+          <Hint
+            className="run-bar-hint"
+            lead={<span />}
+            label={<span className="sr-only">核对会重启 {state.harness}</span>}
+            moreLabel="核对说明">
+            核对会先结束这个会话的 {state.harness} 进程，再让它重新打开会话、报告现在的设置；不会再发送一次修改。会话运行中、等你处理或子
+            Agent 可能还在运行时不核对。
+          </Hint>
+        </div>
+      )}
+    </Collapse>
   )
 }
 

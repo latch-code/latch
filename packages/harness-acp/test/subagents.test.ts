@@ -79,3 +79,13 @@ describe("OpenCode 2.x's subagent work on the session that started it", () => {
     expect(end('in_progress', { sessionID: 'ses_child', status: 'completed' })).toBeUndefined()
   })
 })
+
+describe("OpenCode's config read-back", () => {
+  it('counts a model read back with its level appended as the model asked for, and nothing else', () => {
+    const matches = opencodeProfile.configValueMatches!
+    expect(matches('model', 'opencode/beam-free', 'opencode/beam-free/high')).toBe(true)
+    expect(matches('model', 'opencode/beam-free', 'opencode/beam-free-2')).toBe(false)
+    expect(matches('model', 'opencode/beam-free', 'opencode/beam-free/high/x')).toBe(false)
+    expect(matches('effort', 'high', 'high/x')).toBe(false)
+  })
+})

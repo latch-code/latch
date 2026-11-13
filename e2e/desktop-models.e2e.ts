@@ -94,7 +94,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await page.getByRole('button', { name: /模型：.*结果未知/u }).waitFor()
         expect((await owner.json<TaskDetail>('tasks/' + sessionId)).config?.find(item => item.id === 'model')?.currentValue).toBe('large')
         await modelPicker.click()
-        await page.getByRole('button', { name: '刷新当前设置', exact: true }).click()
+        await page.getByRole('button', { name: '核对', exact: true }).first().click()
         await page.getByRole('button', { name: '模型：Large', exact: true }).waitFor()
         await page.getByRole('button', { name: '思考：Low', exact: true }).waitFor()
         expect(await page.evaluate(() => Reflect.get(window, 'configurationChanges').length)).toBe(1)

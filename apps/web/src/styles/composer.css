@@ -114,6 +114,40 @@
   gap: var(--sp-4);
   min-width: 0;
 }
+/* What a config change asked for gives way first on a narrow input; the state and its actions stay whole. */
+.run-bar-object {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-bar-action:disabled {
+  color: var(--muted);
+}
+/* 核对's fine print opens over the conversation, above the bar, so the bar keeps its one line. */
+.run-bar[data-config-unknown] {
+  position: relative;
+}
+.run-bar-hint {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
+.run-bar-hint .ui-hint-lead:empty {
+  display: none;
+}
+.run-bar-hint .ui-hint-detail {
+  position: absolute;
+  inset-inline: 0;
+  bottom: calc(100% + var(--sp-4));
+  z-index: 1;
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+  box-shadow: var(--sh-pop);
+  color: var(--ink-2);
+}
 .run-bar-status {
   flex-shrink: 0;
   font-weight: 500;
@@ -142,6 +176,9 @@
 .run-bar-what > .run-bar-action {
   margin-inline-start: calc(-1 * var(--sp-4));
 }
+.run-bar-what > .run-bar-action:not(:last-child) {
+  margin-inline-end: calc(-1 * var(--sp-4));
+}
 @media (pointer: coarse) {
   .run-bar-action {
     min-height: 36px;
@@ -149,6 +186,9 @@
   }
   .run-bar-what > .run-bar-action {
     margin-inline-start: calc(-1 * var(--sp-8));
+  }
+  .run-bar-what > .run-bar-action:not(:last-child) {
+    margin-inline-end: calc(-1 * var(--sp-8));
   }
   .run-bar {
     min-height: 36px;

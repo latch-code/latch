@@ -176,6 +176,11 @@ export interface HarnessProfile {
   readonly version: number
   /** The protocol the harness speaks. Absent: ACP. */
   readonly wire?: WireKind
+  /**
+   * Whether a value the agent reports for `configId` is the one asked for though written differently (OpenCode 1.4 to
+   * 1.14 reads a model back with its level appended). 核对 counts only such a match, or the same value, as applied.
+   */
+  configValueMatches?(configId: string, asked: string, reported: string): boolean
   readonly permission: AcpPermissionProfile
   /**
    * Set: the driver takes every folder of a project and passes the others this way; the folders it passes are part of

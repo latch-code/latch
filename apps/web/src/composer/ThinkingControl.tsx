@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { HarnessInfo, HostCatalog, ModelRef, SessionConfigOption } from '@latch/protocol'
 import { Button, InlineNotice, MenuFooterLink, ValuePicker, useLayerClose, type PickerOption } from '@latch/ui'
 import type { DeviceAccess } from '../core/permissions.ts'
@@ -14,6 +14,8 @@ import {
   agentConfigValues,
   controlKeyText,
   BUILTIN_THINKING_NOTE,
+  CONFIG_UNKNOWN_REASON,
+  feedbackFor,
   DEFAULT_LEVEL,
   resetModelLabel,
   THINKING_AFTER_START,
@@ -158,6 +160,7 @@ function BuiltinThinking({
  */
 function HarnessThinking({
   option,
+  name = 'Harness',
   note,
   state,
   onRefresh,
@@ -168,6 +171,7 @@ function HarnessThinking({
   onOpenChange,
 }: {
   option: SessionConfigOption | undefined
+  name?: string
   note: string | undefined
   state: AgentConfigState
   onRefresh?: (() => void | Promise<void>) | undefined
@@ -179,7 +183,9 @@ function HarnessThinking({
 }) {
   const { feedback } = state
   const blocked = agentConfigBlocked(state)
-  const notice = feedback && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />
+  const own = feedbackFor(feedback, [option?.id])
+  const slow = useSlowWrite(option !== undefined && state.busy === option.id)
+  const notice = feedback && own && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />
   if (!option)
     return (
       <ThinkingPicker
@@ -206,15 +212,13 @@ function HarnessThinking({
         ...(item.description && item.description.trim().toLowerCase() !== item.name.trim().toLowerCase()
           ? { description: escapeHiddenCharacters(item.description) }
           : {}),
-        ...(blocked
-          ? { disabledReason: feedback?.kind === 'unknown' ? '上次切换的结果未知，请先刷新当前设置。' : '正在切换，请稍后。' }
-          : {}),
+        ...(blocked ? { disabledReason: feedback?.kind === 'unknown' ? CONFIG_UNKNOWN_REASON : '正在切换，请稍后。' } : {}),
       }))}
-      valueText={escapeHiddenCharacters(feedback?.kind === 'unknown' ? `${label} · 结果未知` : label)}
+      valueText={escapeHiddenCharacters(feedback?.kind === 'unknown' && own ? `${label} · 结果未知` : label)}
       note={note}
       footer={notice}
       pending={reading || state.busy === option.id}
-      pendingLabel={reading ? '正在读取…' : '正在切换…'}
+      pendingLabel={reading ? '正在读取…' : slow ? `等 ${name} 回应…` : '正在切换…'}
       disabled={disabled}
       disabledReason={disabledReason}
       onOpenChange={onOpenChange}
@@ -344,6 +348,7 @@ export function SessionThinkingControl({
   return (
     <HarnessThinking
       option={option}
+      name={harness ? harnessName(harness) : 'Harness'}
       note={unreportedThinkingNote(harness ? harnessName(harness) : 'Harness', true, config)}
       state={{ busy, ...(feedback ? { feedback } : {}) }}
       onRefresh={onRefresh}
@@ -371,6 +376,24 @@ export function ConfigFeedback({
   )
 }
 
+/** A config write still unanswered after this long says whose answer it waits for. */
+export const SLOW_WRITE_MS = 2_000
+
+export function useSlowWrite(writing: boolean): boolean {
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    setSlow(false)
+    if (!writing) return
+    const timer = setTimeout(() => {
+      setSlow(true)
+    }, SLOW_WRITE_MS)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [writing])
+  return slow && writing
+}
+
 function RefreshConfig({ refresh }: { refresh: () => void | Promise<void> }) {
   const close = useLayerClose()
   return (
@@ -381,7 +404,7 @@ function RefreshConfig({ refresh }: { refresh: () => void | Promise<void> }) {
           .then(close)
           .catch(() => {})
       }}>
-      刷新当前设置
+      核对
     </Button>
   )
 }
