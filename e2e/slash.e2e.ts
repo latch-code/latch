@@ -93,6 +93,13 @@ describe('slash suggestions in the real composer', () => {
               await page.screenshot({ path: `test-results/slash/parameter-${engine}-${width}-${theme}.png`, animations: 'disabled' })
               await input.press('Backspace')
               expect(await input.inputValue()).toBe('')
+              await input.fill('/command-197')
+              await list.waitFor()
+              await input.press('Tab')
+              expect(await input.inputValue()).toBe('/command-197 ')
+              expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages).toHaveLength(before)
+              await input.press('Backspace')
+              expect(await input.inputValue()).toBe('')
               if (width === 390) {
                 await page.getByRole('button', { name: '插入命令', exact: true }).click()
                 expect(await input.inputValue()).toBe('/')
@@ -136,6 +143,11 @@ describe('slash suggestions in the real composer', () => {
               await input.press('Escape')
               await list.waitFor({ state: 'hidden' })
               expect(await input.inputValue()).toBe('/command')
+              await input.fill('')
+              await input.fill('/command')
+              await list.waitFor()
+              await input.press('Escape')
+              await list.waitFor({ state: 'hidden' })
               if (width === 1440) {
                 let starts = 0
                 page.on('request', request => {

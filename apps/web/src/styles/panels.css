@@ -79,6 +79,12 @@
   padding: var(--sp-12) var(--sp-8) 0;
   border-top: 1px solid var(--line);
 }
+.session-panel-body > .panel-launcher-facts {
+  margin: 0;
+  padding: var(--sp-24);
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+}
 .panel-launcher-empty {
   color: var(--ink-2);
   font-size: var(--fs-ui);

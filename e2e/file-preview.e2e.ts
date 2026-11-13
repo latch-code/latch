@@ -6,7 +6,7 @@ import { strToU8, zipSync } from 'fflate'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { closeActiveFile, openFileFind } from './helpers/layout.ts'
+import { openSession, closeActiveFile, openFileFind } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 describe('authenticated file column', () => {
@@ -104,8 +104,7 @@ describe('authenticated file column', () => {
       const page = await context.newPage()
       try {
         await enrollBrowser(page, host, { name: `预览 ${width}`, scopes: ['admin'] })
-        if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-        await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+        await openSession(page, sessionId)
         const transcript = page.locator('.transcript')
         await transcript.getByRole('button', { name: '预览文件：report.txt', exact: true }).click()
         const preview = page.getByRole('region', { name: '文件预览', exact: true })

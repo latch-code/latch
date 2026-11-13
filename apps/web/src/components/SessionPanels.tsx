@@ -107,7 +107,7 @@ export function SessionPanels({
 }: {
   overview?: ReactNode
   launcherTakesFocus?(): boolean
-  /** Under the launcher's rows: a phone's only home for what the title row's popover holds elsewhere. */
+  /** A phone's only home for the folders and facts held by the title row's popover elsewhere. */
   launcherNote?: ReactNode
   /** The 改动 tab's content, when the session has one. */
   changes?: ReactNode
@@ -354,7 +354,10 @@ export function SessionPanels({
         ) : active && summary ? (
           <PluginPanel key={active.id} panel={active} summary={summary} />
         ) : overview ? (
-          overview
+          <>
+            {launcherNote}
+            {overview}
+          </>
         ) : (
           <PanelLauncher
             {...(changes ? { changes: true } : {})}

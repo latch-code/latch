@@ -176,8 +176,8 @@ it('an Agent proposes, the person decides in the conversation, and 记忆 shows 
             .getByRole('button', { name: /资料助手/u })
             .click()
         } else if (width < 1024) {
-          // A tablet starts with the sidebar shut: the title bar's 我的 Agent, then the Agent's row.
-          await view.locator('.titlebar').getByRole('button', { name: '我的 Agent', exact: true }).click()
+          // A tablet starts with the sidebar shut: the navigation rail's 我的 Agent, then the Agent's row.
+          await view.getByRole('button', { name: '我的 Agent', exact: true }).filter({ visible: true }).click()
           await view
             .getByRole('list', { name: '我的 Agent', exact: true })
             .getByRole('button', { name: /资料助手/u })

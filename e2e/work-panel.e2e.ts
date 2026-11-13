@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { HarnessPlugin, ModelDelta } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
@@ -41,10 +42,12 @@ const fixture: HarnessPlugin = {
         if (prompt === PROMPTS.failed) throw new Error('模型服务返回错误（HTTP 503）：服务暂时不可用')
         if (prompt === PROMPTS.running) {
           yield { type: 'text', text: '先读一下现有的测试，再运行一次。' }
-          await new Promise<void>(done => {
-            if (signal.aborted) done()
-            signal.addEventListener('abort', () => done(), { once: true })
-          })
+          // A live fixture reports activity throughout this multi-width suite; an idle stream would correctly become silent.
+          while (!signal.aborted) {
+            await delay(10_000, undefined, { signal }).catch(() => {})
+            signal.throwIfAborted()
+            yield { type: 'usage', inputTokens: 12, outputTokens: 8 }
+          }
           signal.throwIfAborted()
           return
         }
@@ -70,45 +73,36 @@ interface Rect {
   bottom: number
 }
 
-/** The work panel's box, read from the shell's ::before (the panel is drawn there, under the columns). */
-async function panelRect(page: Page): Promise<Rect & { radius: string; shadow: string }> {
-  return page.locator('.app-shell').evaluate(shell => {
-    const panel = getComputedStyle(shell, '::before')
-    const box = shell.getBoundingClientRect()
-    const columns = getComputedStyle(shell).gridTemplateColumns.split(' ').map(Number.parseFloat)
-    const page = shell.getAttribute('data-entry') !== 'sessions'
-    const start = page ? 0 : columns[0]!
-    const end = page ? box.width : columns[0]! + columns[1]!
-    const px = (value: string) => Number.parseFloat(value)
-    return {
-      left: Math.round(box.left + start + px(panel.marginLeft)),
-      top: Math.round(box.top + px(panel.marginTop)),
-      right: Math.round(box.left + end - px(panel.marginRight)),
-      bottom: Math.round(box.bottom - px(panel.marginBottom)),
-      radius: panel.borderTopLeftRadius,
-      shadow: panel.boxShadow,
-    }
-  })
-}
-
-/** The panel floats: inset 8 from the window's top, right and bottom, rounded 12, with a shadow, inside the window. */
-async function floats(page: Page): Promise<Rect> {
-  const panel = await panelRect(page)
+/** The actual v8 work canvas; the previous decorative pseudo-panel is no longer drawn. */
+async function canvas(page: Page): Promise<Rect> {
+  const shell = page.locator('.app-shell')
+  expect(await shell.evaluate(element => getComputedStyle(element, '::before').display)).toBe('none')
+  const panel = await page
+    .locator('.workbench-home, main.workspace')
+    .filter({ visible: true })
+    .evaluate(element => {
+      const rect = element.getBoundingClientRect()
+      return { left: Math.round(rect.left), top: Math.round(rect.top), right: Math.round(rect.right), bottom: Math.round(rect.bottom) }
+    })
   const window = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
-  expect(panel.radius).toBe('12px')
-  expect(panel.shadow).not.toBe('none')
-  expect(panel.top).toBe(8)
-  expect(panel.bottom).toBe(window.height - 8)
-  expect(panel.left).toBeGreaterThanOrEqual(8)
-  expect(panel.right).toBeLessThanOrEqual(window.width - 8)
-  expect(panel.right).toBeGreaterThan(panel.left)
+  expect(panel.bottom).toBe(window.height)
+  expect(panel.left).toBeGreaterThanOrEqual(0)
+  expect(panel.right).toBeLessThanOrEqual(window.width)
+  expect(panel.right - panel.left).toBeGreaterThanOrEqual(480)
+  expect(panel.top).toBe(
+    (await shell.getAttribute('data-workbench-layout')) === 'triage'
+      ? 56
+      : (await shell.getAttribute('data-sidebar')) === 'collapsed'
+        ? 52
+        : 0,
+  )
   await noHorizontalOverflow(page)
   return panel
 }
 
 /** Every control of the title row's panel half lies inside the panel and can be hit. */
 async function titleRowInside(page: Page, panel: Rect): Promise<void> {
-  const controls = page.locator('.titlebar .topbar :is(button, [role="button"])').filter({ visible: true })
+  const controls = page.locator('main.workspace .topbar :is(button, [role="button"])').filter({ visible: true })
   const count = await controls.count()
   for (let index = 0; index < count; index++) {
     const control = controls.nth(index)
@@ -120,7 +114,7 @@ async function titleRowInside(page: Page, panel: Rect): Promise<void> {
   }
 }
 
-describe('the work panel on the ground', () => {
+describe('the v8 work canvas in both layouts', () => {
   let host: TestHost
   let browser: Browser
   const sessions = {} as Record<keyof typeof PROMPTS, string>
@@ -193,14 +187,19 @@ describe('the work panel on the ground', () => {
   }
 
   async function choose(page: Page, id: string): Promise<void> {
-    const row = page.locator(`[data-task-id="${id}"]`).first()
+    const triage = (await page.locator('.app-shell').getAttribute('data-workbench-layout')) === 'triage'
+    if (triage) {
+      await page.getByRole('button', { name: '全部会话', exact: true }).click()
+      const title = PROMPTS[(Object.keys(sessions) as Array<keyof typeof PROMPTS>).find(key => sessions[key] === id)!]
+      await page.locator('.workbench-session-row').filter({ hasText: title }).click()
+    }
     // Under 1024 the list is a sheet over the ground: open it each time, and click once it has slid in.
-    if ((page.viewportSize()?.width ?? 0) < 1024) {
+    if (!triage && (page.viewportSize()?.width ?? 0) < 1024) {
       await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
       await page.getByRole('dialog', { name: '会话导航', exact: true }).waitFor()
       await settleShell(page)
     }
-    await row.click()
+    if (!triage) await page.locator(`[data-task-id="${id}"]`).first().click()
     await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
     await page.locator('.transcript-content').waitFor()
     await page.locator('.transcript .ui-loading').waitFor({ state: 'detached' })
@@ -210,129 +209,143 @@ describe('the work panel on the ground', () => {
   const shot = (page: Page, name: string, width: number, theme: string) =>
     page.screenshot({ path: `${OUT}/${name}--${width}--${theme}.png`, animations: 'disabled', caret: 'hide' })
 
-  for (const theme of ['light', 'dark'] as const)
-    for (const [width, height] of [
-      [768, 1024],
-      [1024, 768],
-      [1440, 900],
-    ] as const)
-      it(`floats on the ground at ${width} in ${theme}: sidebar open, shut and dragged, the right panel open`, async () => {
-        const page = await open(width, height, theme)
-        const desktop = width >= 1024
-
-        // The new session: the panel holds the page under the title row.
-        let panel = await floats(page)
-        if (desktop) {
-          const sidebar = await page.locator('#session-navigation').evaluate(element => element.getBoundingClientRect().right)
-          expect(panel.left).toBe(Math.round(sidebar))
-        }
-        await shot(page, 'new', width, theme)
-
-        // Each state of a session, its title row in the panel.
-        for (const state of ['running', 'waiting', 'failed', 'done'] as const) {
-          await choose(page, sessions[state])
-          panel = await floats(page)
-          await titleRowInside(page, panel)
-          await shot(page, `session-${state}`, width, theme)
-        }
-        const title = page.locator('.titlebar .topbar')
-        await choose(page, sessions.running)
-        await title.locator('.ui-status-word[data-tone="running"]', { hasText: /[0-9]+:[0-9]{2}$/u }).waitFor()
-        await choose(page, sessions.waiting)
-        await title.locator('.ui-status-word[data-tone="waiting"]', { hasText: '等你处理' }).waitFor()
-        await choose(page, sessions.failed)
-        await title.locator('.ui-status-word[data-tone="failed"]', { hasText: '失败' }).waitFor()
-
-        // 改动 writes no totals until the page has read them; once the panel has, it does.
-        await choose(page, sessions.done)
-        const changes = page.getByRole('button', { name: '改动', exact: true })
-        expect(await title.locator('.topbar-changes-stat').count()).toBe(0)
-        await changes.click()
-        await page.locator('.app-shell[data-inspector]').waitFor()
-        await settleShell(page)
-        await title.locator('.topbar-changes-stat', { hasText: '+3' }).waitFor()
-        panel = await floats(page)
-        await titleRowInside(page, panel)
-        const inspector = await page
-          .locator('.inspector-column-inner')
-          .evaluate(element => element.getBoundingClientRect().toJSON() as Rect)
-        const window = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
-        const placement = await page.locator('.app-shell').getAttribute('data-inspector')
-        expect(Math.round(inspector.right)).toBe(window.width - 8)
-        expect(Math.round(inspector.bottom)).toBe(window.height - 8)
-        expect(Math.round(inspector.top)).toBe(placement === 'sheet' ? 60 : 8)
-        if (placement === 'open') expect(Math.round(inspector.left)).toBe(panel.right + 8)
-        await shot(page, 'session-changes', width, theme)
-        await changes.click()
-        await page.locator('.app-shell[data-inspector]').waitFor({ state: 'detached' })
-        await settleShell(page)
-        await title.locator('.topbar-changes-stat').waitFor()
-        await shot(page, 'session-done-totals', width, theme)
-
-        if (desktop) {
-          // Shut: the panel keeps its inset on the left, and the lead's controls stay in its title row.
-          await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
-          await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
-          await settleShell(page)
-          panel = await floats(page)
-          expect(panel.left).toBe(8)
-          for (const control of await page.locator('.titlebar-lead button').filter({ visible: true }).all()) {
-            const rect = await control.evaluate(element => element.getBoundingClientRect().toJSON() as Rect)
-            expect(rect.left).toBeGreaterThanOrEqual(panel.left)
-            expect(rect.top).toBeGreaterThanOrEqual(panel.top)
+  for (const layout of ['overview', 'triage'] as const)
+    for (const theme of ['light', 'dark'] as const)
+      for (const [width, height] of [
+        [768, 1024],
+        [1024, 768],
+        [1440, 900],
+      ] as const)
+        it(`${layout} at ${width} in ${theme}: Home, live states, sidebar resizing and the right panel`, async () => {
+          const page = await open(width, height, theme)
+          const desktop = width >= 1024
+          if (layout === 'triage') {
+            await page.getByRole('button', { name: '布局', exact: true }).click()
+            await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
+            await page.locator('.app-shell[data-workbench-layout="triage"]').waitFor()
+            await settleShell(page)
           }
-          await shot(page, 'sidebar-shut', width, theme)
-          await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
-          await page.locator('.app-shell[data-sidebar="open"]').waitFor()
-          await settleShell(page)
+          const capture = (name: string) => shot(page, `${layout}-${name}`, width, theme)
 
-          // Dragged wider: the panel follows the sidebar's edge.
-          const handle = (await page.getByRole('separator', { name: '调整侧栏宽度', exact: true }).boundingBox())!
-          await page.mouse.move(handle.x + handle.width / 2, handle.y + 200)
-          await page.mouse.down()
-          await page.mouse.move(handle.x + handle.width / 2 + 40, handle.y + 200, { steps: 4 })
-          await page.mouse.up()
-          await settleShell(page)
-          panel = await floats(page)
-          const sidebar = await page.locator('#session-navigation').evaluate(element => element.getBoundingClientRect().right)
-          expect(panel.left).toBe(Math.round(sidebar))
-          await page.getByRole('separator', { name: '调整侧栏宽度', exact: true }).dblclick()
-          await settleShell(page)
-        } else {
-          // The tablet's list slides over the ground; the panel stays where it is.
-          await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-          await page.getByRole('dialog', { name: '会话导航', exact: true }).waitFor()
-          await settleShell(page)
-          await floats(page)
-          await shot(page, 'sidebar-open', width, theme)
-          await page
-            .getByRole('dialog', { name: '会话导航', exact: true })
-            .getByRole('button', { name: '关闭会话列表', exact: true })
-            .click()
-          await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
-        }
+          // The new session: the panel holds the page under the title row.
+          let panel = await canvas(page)
+          if (desktop && layout === 'overview') {
+            const sidebar = await page.locator('#session-navigation').evaluate(element => element.getBoundingClientRect().right)
+            expect(panel.left).toBe(Math.round(sidebar))
+          }
+          expect(panel.left).toBe(layout === 'triage' ? 0 : desktop ? 264 : 60)
+          await capture('home')
 
-        // A page (设置) sits in the same panel, its list on the ground.
-        await openEntry(page, '设置')
-        await page.locator('.settings-page .settings-content').waitFor()
-        await page.locator('.settings-page .ui-loading').waitFor({ state: 'detached' })
-        await settleShell(page)
-        panel = await floats(page)
-        const nav = await page.locator('.settings-nav-pane').evaluate(element => element.getBoundingClientRect().right)
-        expect(panel.left).toBe(Math.max(8, Math.round(nav)))
-        const content = await page.locator('.settings-panel').evaluate(element => element.getBoundingClientRect().toJSON() as Rect)
-        expect(Math.round(content.right)).toBe(panel.right)
-        expect(Math.round(content.bottom)).toBe(panel.bottom)
-        await shot(page, 'settings', width, theme)
-        await openSessions(page)
-      })
+          // Each state of a session, its title row in the panel.
+          for (const state of ['running', 'waiting', 'failed', 'done'] as const) {
+            await choose(page, sessions[state])
+            panel = await canvas(page)
+            await titleRowInside(page, panel)
+            await capture(`session-${state}`)
+          }
+          const title = page.locator('main.workspace .topbar')
+          await choose(page, sessions.running)
+          await title.locator('.ui-status-word[data-tone="running"]', { hasText: /[0-9]+:[0-9]{2}$/u }).waitFor()
+          await choose(page, sessions.waiting)
+          await title.locator('.ui-status-word[data-tone="waiting"]', { hasText: '等你处理' }).waitFor()
+          await choose(page, sessions.failed)
+          await title.locator('.ui-status-word[data-tone="failed"]', { hasText: '失败' }).waitFor()
+
+          // 改动 writes no totals until the page has read them; once the panel has, it does.
+          await choose(page, sessions.done)
+          const changes = title.getByRole('button', { name: '改动', exact: true })
+          expect(await title.locator('.topbar-changes-stat').count()).toBe(0)
+          await changes.click()
+          await page.locator('.app-shell[data-inspector]').waitFor()
+          await settleShell(page)
+          await title.locator('.topbar-changes-stat', { hasText: '+3' }).waitFor()
+          panel = await canvas(page)
+          const placement = await page.locator('.app-shell').getAttribute('data-inspector')
+          if (placement === 'open') await titleRowInside(page, panel)
+          const inspector = await page
+            .locator('.inspector-column-inner')
+            .evaluate(element => element.getBoundingClientRect().toJSON() as Rect)
+          const window = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
+          expect(Math.round(inspector.right)).toBe(window.width)
+          expect(Math.round(inspector.bottom)).toBe(window.height)
+          expect(Math.round(inspector.top)).toBe(placement === 'sheet' ? (layout === 'triage' ? 108 : 52) : layout === 'triage' ? 56 : 0)
+          if (placement === 'open') expect(Math.round(inspector.left)).toBe(panel.right)
+          const close = page.locator('.inspector-column').getByRole('button', { name: '关闭', exact: true })
+          await close.click({ trial: true })
+          await capture('session-changes')
+          if (placement === 'sheet') await close.click()
+          else await changes.click()
+          await page.locator('.app-shell[data-inspector]').waitFor({ state: 'detached' })
+          await settleShell(page)
+          await title.locator('.topbar-changes-stat').waitFor()
+          await titleRowInside(page, await canvas(page))
+          await capture('session-done-totals')
+
+          if (desktop) {
+            // Shut: the canvas reaches the window edge and the header keeps the navigation controls reachable.
+            await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
+            await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
+            await settleShell(page)
+            panel = await canvas(page)
+            expect(panel.left).toBe(0)
+            for (const control of await page.locator('.titlebar-lead button').filter({ visible: true }).all()) {
+              const rect = await control.evaluate(element => element.getBoundingClientRect().toJSON() as Rect)
+              expect(rect.left).toBeGreaterThanOrEqual(panel.left)
+              expect(rect.top).toBeGreaterThanOrEqual(0)
+              expect(rect.bottom).toBeLessThanOrEqual(panel.top)
+              await control.click({ trial: true })
+            }
+            await capture('sidebar-shut')
+            await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
+            await page.locator('.app-shell[data-sidebar="open"]').waitFor()
+            await settleShell(page)
+
+            // Dragged wider: the panel follows the sidebar's edge.
+            const handle = (await page.getByRole('separator', { name: '调整侧栏宽度', exact: true }).boundingBox())!
+            await page.mouse.move(handle.x + handle.width / 2, handle.y + 200)
+            await page.mouse.down()
+            await page.mouse.move(handle.x + handle.width / 2 + 40, handle.y + 200, { steps: 4 })
+            await page.mouse.up()
+            await settleShell(page)
+            panel = await canvas(page)
+            const sidebar = await page.locator('#session-navigation').evaluate(element => element.getBoundingClientRect().right)
+            expect(panel.left).toBe(Math.round(sidebar))
+            await page.getByRole('separator', { name: '调整侧栏宽度', exact: true }).dblclick()
+            await settleShell(page)
+          } else {
+            // The tablet's list slides over the ground; the panel stays where it is.
+            await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
+            await page.getByRole('dialog', { name: '会话导航', exact: true }).waitFor()
+            await settleShell(page)
+            await canvas(page)
+            await capture('sidebar-open')
+            await page
+              .getByRole('dialog', { name: '会话导航', exact: true })
+              .getByRole('button', { name: '关闭会话列表', exact: true })
+              .click()
+            await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
+          }
+
+          // Settings replaces the work canvas, keeping its own navigation and every content edge in the window.
+          await openEntry(page, '设置')
+          await page.locator('.settings-page .settings-content').waitFor()
+          await page.locator('.settings-page .ui-loading').waitFor({ state: 'detached' })
+          await settleShell(page)
+          const nav = await page.locator('.settings-nav-pane').evaluate(element => element.getBoundingClientRect().right)
+          const content = await page.locator('.settings-panel').evaluate(element => element.getBoundingClientRect().toJSON() as Rect)
+          expect(Math.round(content.left)).toBe(Math.round(nav))
+          expect(Math.round(content.right)).toBe(width)
+          expect(Math.round(content.bottom)).toBe(height)
+          await noHorizontalOverflow(page)
+          await capture('settings')
+          await openSessions(page)
+        })
 
   it('slides no track with reduced motion, and glides it otherwise', async () => {
     for (const reducedMotion of ['reduce', 'no-preference'] as const) {
       const page = await open(1440, 900, 'light', reducedMotion)
       const transitions = await page.locator('.app-shell').evaluate(shell => ({
         shell: getComputedStyle(shell).transitionDuration,
-        panel: getComputedStyle(shell, '::before').transitionDuration,
         workspace: getComputedStyle(shell.querySelector('.workspace')!).transitionDuration,
       }))
       const still = reducedMotion === 'reduce'
@@ -340,10 +353,14 @@ describe('the work panel on the ground', () => {
     }
   })
 
-  it('leaves a phone without the panel', async () => {
+  it('keeps phone Home reachable without a desktop title row or decorative panel', async () => {
     const page = await open(390, 844, 'light')
     expect(await page.locator('.titlebar').count()).toBe(0)
     expect(await page.locator('.app-shell').evaluate(shell => getComputedStyle(shell, '::before').content)).toBe('none')
-    await shot(page, 'phone-list', 390, 'light')
+    await page.locator('.workbench-home').waitFor()
+    await page.getByRole('button', { name: '全部会话', exact: true }).click()
+    await page.locator('.phone-list:not([inert])').waitFor()
+    await noHorizontalOverflow(page)
+    await shot(page, 'phone-history', 390, 'light')
   })
 })

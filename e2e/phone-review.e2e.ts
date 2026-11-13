@@ -7,9 +7,9 @@ import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import type { ReviewNoteList, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
-import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
+import { backToPhoneSessions, noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
 
 const OUT = 'test-results/phone-review'
 const SLOW = { timeout: 30_000 }
@@ -56,7 +56,8 @@ async function phone(
   const id = (await owner.json<{ devices: Array<{ id: string; name: string }> }>('devices')).devices.find(item => item.name === name)!.id
   if (scope === 'all') expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
   await page.reload()
-  await page.locator('.phone-list').waitFor()
+  await connected(page)
+  await backToPhoneSessions(page)
   return { context, page }
 }
 

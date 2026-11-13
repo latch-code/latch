@@ -12,7 +12,7 @@ import { writeHostState } from '@latch/host/host-state'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { closeActiveFile, settleShell } from './helpers/layout.ts'
+import { openSession, closeActiveFile, settleShell } from './helpers/layout.ts'
 
 async function beacon() {
   let requests = 0,
@@ -114,8 +114,7 @@ describe('opaque HTML previews', () => {
         page.setDefaultTimeout(15_000)
         try {
           await enrollBrowser(page, host, { name: `HTML ${width}`, scopes: ['admin'] })
-          if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-          await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+          await openSession(page, sessionId)
           await page.getByRole('button', { name: '预览文件：slides.html', exact: true }).click()
           const preview = page.getByRole('region', { name: '文件预览', exact: true })
           const frame = page.frameLocator('iframe[title="文档预览"]')
@@ -210,7 +209,7 @@ describe('opaque HTML previews', () => {
         await page.getByRole('button', { name: '继续', exact: true }).click()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         expect(host.presence.requests).toHaveLength(0)
-        await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+        await openSession(page, sessionId)
         await page.getByRole('button', { name: '预览文件：slides.html', exact: true }).click()
         const preview = page.getByRole('region', { name: '文件预览', exact: true })
         await page.frameLocator('iframe').getByText('Static content', { exact: true }).waitFor()

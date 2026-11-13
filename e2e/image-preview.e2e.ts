@@ -6,7 +6,7 @@ import { expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { closeActiveFile, openFileFind } from './helpers/layout.ts'
+import { openSession, closeActiveFile, openFileFind } from './helpers/layout.ts'
 
 it('uses true image pixels, retains zoom on refresh, refuses unknown or excessive dimensions and finds across syntax spans', async () => {
   const browser = await chromium.launch(browserLaunchOptions())
@@ -82,8 +82,7 @@ it('uses true image pixels, retains zoom on refresh, refuses unknown or excessiv
       page.setDefaultTimeout(15_000)
       try {
         await enrollBrowser(page, host, { name: `Image ${width}`, scopes: ['admin'] })
-        if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-        await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+        await openSession(page, sessionId)
         const open = (name: string) => page.getByRole('button', { name: `预览文件：${name}`, exact: true }).click()
         await open('large.png')
         const preview = page.getByRole('region', { name: '文件预览', exact: true }),

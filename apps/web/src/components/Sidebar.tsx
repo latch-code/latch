@@ -118,7 +118,8 @@ const SessionItem = memo(function SessionItem({
   const note = unknownNote(task, status)
   // While the connection is down the row says less, not that what it last knew stopped mattering.
   const strong =
-    status.kind === 'waiting'
+    handoffWaits
+    || status.kind === 'waiting'
     || status.kind === 'silent'
     || status.kind === 'failed'
     || showsUnread(status)
@@ -152,6 +153,11 @@ const SessionItem = memo(function SessionItem({
               <FolderGit2 className="session-worktree" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={worktree} />
             )}
             <span className="session-title">{title}</span>
+            {handoffWaits && (
+              <span className="session-handoff" aria-hidden="true">
+                待交回
+              </span>
+            )}
             <SessionStatus
               className="session-status"
               status={status}
@@ -178,7 +184,6 @@ const SessionItem = memo(function SessionItem({
             {wait && <span className="session-meta-rest">{`· ${project ?? '无项目'}`}</span>}
             {note && <span className="session-meta-rest">{`· ${note}`}</span>}
             {from && <span className="session-meta-rest session-from">{`· 来自 ${from}`}</span>}
-            {handoffWaits && <span className="session-handoff">待交回</span>}
             {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
           </span>
           <span className="sr-only">{`，${engine}，${wait?.kind === 'asks' ? wait.words : model}${wait ? `，${project ?? '无项目'}` : ''}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${from ? `，来自 ${from}` : ''}${handoffWaits ? '，待交回' : ''}${status.kind === 'frozen' ? `，${frozen}` : ''}${time ? `，${time}` : ''}`}</span>

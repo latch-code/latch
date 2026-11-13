@@ -6,7 +6,7 @@ import { expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { closeSettings, openSection, openSettings, settleShell } from './helpers/layout.ts'
+import { closeSettings, openSection, openSession, openSettings, settleShell } from './helpers/layout.ts'
 
 it.each([
   { width: 1440, enabled: true, opens: true },
@@ -62,7 +62,7 @@ it.each([
     const page = await browser.newPage({ viewport: { width, height: 1000 }, locale: 'zh-CN' })
     page.setDefaultTimeout(15_000)
     await enrollBrowser(page, host, { name: 'Auto document', scopes: ['admin'] })
-    await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+    await openSession(page, sessionId)
     const settings = await openSettings(page)
     // A phone has no such row: it never opens a second pane.
     if (width >= 768) {
@@ -72,7 +72,7 @@ it.each([
       if (!enabled) await preference.click()
     }
     await closeSettings(settings)
-    if (width < 768) await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+    if (width < 768) await openSession(page, sessionId)
     await settleShell(page)
     expect(await page.locator('.file-preview').count()).toBe(0)
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })

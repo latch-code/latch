@@ -6,6 +6,7 @@ import type { TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { backToPhoneSessions } from './helpers/layout.ts'
 
 test('keeps text written before a question arrived as the next message, until 其他… makes it the answer', async () => {
   let release!: () => void
@@ -169,11 +170,14 @@ test('answers a multi-question wizard, keeps per-device drafts across sessions, 
         }),
         page = await context.newPage()
       await enrollBrowser(page, host, { name: `问答 ${width}` })
-      // A question leaves the run's status alone; the list still says it waits: the phone row in words, the sidebar's
-      // 等你处理 row with the kind of wait on its second line. At 768 the list is an overlay nobody opened.
+      // A question leaves the run's status alone; the explicit phone history says it waits, and the compact project
+      // tree carries its waiting glyph. At 768 the list is an overlay nobody opened.
       const row = page.locator(`[data-task-id="${sessionId}"]`)
-      if (width === 390) await row.getByText('等你处理', { exact: true }).waitFor()
-      if (width === 1440) await row.locator('.session-wait', { hasText: '1 个问题' }).waitFor()
+      if (width === 390) {
+        await backToPhoneSessions(page)
+        await row.getByText('等你处理', { exact: true }).waitFor()
+      }
+      if (width === 1440) await row.locator('.session-row-glyph[data-tone="waiting"]').waitFor()
       const open = async () => {
         await page.keyboard.press('Meta+k')
         const palette = page.getByRole('dialog', { name: '命令面板', exact: true })

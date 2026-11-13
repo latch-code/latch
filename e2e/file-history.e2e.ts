@@ -6,7 +6,7 @@ import { expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { settleShell } from './helpers/layout.ts'
+import { openSession, settleShell } from './helpers/layout.ts'
 
 it('opens every tool edit of a file in the same column and keeps history available after deletion and reload', async () => {
   const plugin: HarnessPlugin = {
@@ -83,8 +83,7 @@ it('opens every tool edit of a file in the same column and keeps history availab
       page.setDefaultTimeout(15_000)
       try {
         await enrollBrowser(page, host, { name: `History ${width}`, scopes: ['admin'] })
-        if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-        await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+        await openSession(page, sessionId)
         // A device that cannot read the changes tab opens a file's recorded edits from the conversation.
         const toggle = page.getByRole('button', { name: '显示文件', exact: true })
         if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
@@ -134,8 +133,9 @@ it('opens every tool edit of a file in the same column and keeps history availab
           await rm(join(host.workspaceRoot, 'report.txt'))
           await page.reload()
           await page.locator('.app-shell[data-connection="connected"]').waitFor()
-          await page.locator(`[data-task-id="${sessionId}"]`).first().click()
-          await page.getByRole('button', { name: '侧边面板', exact: true }).click()
+          await openSession(page, sessionId)
+          const panel = page.getByRole('button', { name: '侧边面板', exact: true })
+          if ((await panel.getAttribute('aria-pressed')) !== 'true') await panel.click()
           await page.getByRole('tab', { name: 'report.txt', exact: true }).click()
           await history.getByText('2 次工具修改', { exact: false }).waitFor()
           await history.getByRole('region', { name: '第 1 次修改', exact: true }).locator('.diff-file-header').click()

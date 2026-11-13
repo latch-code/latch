@@ -42,6 +42,7 @@ import { Overlays } from './Overlays.tsx'
 import { EditLeaveGuard } from '../preview/EditLeaveGuard.tsx'
 import { EditorChooser } from '../components/OpenInEditor.tsx'
 import { RightPanel } from './RightPanel.tsx'
+import { DraftFilePanel } from './DraftFilePanel.tsx'
 import { SendingBubble, SessionComposer, SetupNotices, SheetComposer } from './SessionComposers.tsx'
 import { useSideQuestionForks, withoutSideForks } from '../conversation/SideQuestion.tsx'
 import { useShellLayout } from './useShellLayout.tsx'
@@ -589,7 +590,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               <NewSessionSheet
                 focusComposer={submission.fork ? sheetComposerRef : undefined}
                 open={newInputSheetOpen}
-                onBrowseFiles={canBrowseFiles ? browseFiles : undefined}
+                onBrowseFiles={(overview ? shell.canBrowseDraftFiles : canBrowseFiles) ? browseFiles : undefined}
                 onClose={() => {
                   setNewSheet(false)
                   if (overview) requestAnimationFrame(() => homeOptions.current?.focus({ preventScroll: true }))
@@ -639,6 +640,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 demo={demo}
               />
             )}
+            <DraftFilePanel shell={shell} />
             <Overlays shell={shell} />
             <EditLeaveGuard />
             <EditorChooser />

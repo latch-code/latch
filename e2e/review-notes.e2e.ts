@@ -8,7 +8,7 @@ import type { ReviewNoteList, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { settleShell } from './helpers/layout.ts'
+import { openSession as chooseSession, settleShell } from './helpers/layout.ts'
 
 const OUT = 'test-results/review-notes'
 const SLOW = { timeout: 20_000 }
@@ -25,11 +25,8 @@ const text = (lines: string[]) => `${lines.join('\n')}\n`
 async function openSession(page: Page, sessionId: string) {
   await page.locator('.app-shell').waitFor()
   await settleShell(page)
-  const row = page.locator(`[data-task-id="${sessionId}"]`).first()
   if (!(await page.locator('.workspace.has-task').count())) {
-    if (!(await row.isVisible())) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-    await row.click()
-    await settleShell(page)
+    await chooseSession(page, sessionId)
   }
   await page.getByRole('button', { name: '改动', exact: true }).click()
   return page.locator('.changes-panel')

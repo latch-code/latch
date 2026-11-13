@@ -17,12 +17,12 @@ const cases = [
   { id: 'cursor', width: 390, theme: 'dark' },
 ] as const
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
-const row = (page: Page, name: string) =>
+const row = (page: Page, name: string | RegExp) =>
   page
     .getByRole('menuitemradio', { name, exact: true })
     .or(page.getByRole('radio', { name, exact: true }))
     .or(page.getByRole('option', { name, exact: true }))
-    .first()
+    .filter({ visible: true })
 
 it.each(cases)('$id launch settings keep their provenance in a $width $theme menu', async ({ id, width, theme }) => {
   const root = await mkdtemp(join(tmpdir(), 'latch-launch-options-'))
@@ -79,9 +79,12 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
     ).toBe(201)
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
-    if (width < 600) await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+    if (width < 600) await page.getByRole('button', { name: '新会话选项', exact: true }).click()
     await chip('模型').click()
-    await page.getByText('刷新模型列表', { exact: true }).first().waitFor()
+    await page
+      .getByRole('menuitem', { name: '刷新模型列表', exact: true })
+      .or(page.getByRole('button', { name: '刷新模型列表', exact: true }))
+      .waitFor()
     await page.keyboard.press('Escape')
     await expect.poll(() => chip('模型').getAttribute('aria-expanded')).toBe('false')
     const control = id === 'gemini' ? '思考' : '权限'
@@ -89,9 +92,13 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
     await chip(control).click()
     await row(page, choice).click()
     const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+    const submit = () =>
+      width < 600
+        ? page.locator('.new-session-sheet').getByRole('button', { name: '开始', exact: true }).click()
+        : input.press('Meta+Enter')
     await input.fill('echo first')
-    await input.press('Meta+Enter')
-    const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
+    await submit()
+    const elsewhere = row(page, /^不选项目/u)
     if (
       await elsewhere.waitFor({ timeout: 2_000 }).then(
         () => true,
@@ -99,7 +106,7 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
       )
     ) {
       await elsewhere.click()
-      await input.press('Meta+Enter')
+      await submit()
     }
     await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length).toBe(1)
     const sessionId = (await owner.json<AppSnapshot>('snapshot')).tasks[0]!.id
@@ -111,7 +118,7 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
       source: 'launch',
     })
     await chip(control).click()
-    await page.getByText('启动设置 · 未独立读回', { exact: true }).waitFor()
+    await page.getByText('启动设置 · 未独立读回', { exact: true }).filter({ visible: true }).waitFor()
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${output}/${id}-${width}-${theme}.png`, animations: 'disabled' })
     await row(page, id === 'gemini' ? '高' : 'Agent').click()

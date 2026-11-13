@@ -67,10 +67,10 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     openAgentPage,
     copyTask,
     exportTask,
-    canBrowseFiles,
+    canBrowseFiles: canBrowseReadingFiles,
     browseFiles,
-    fileTabs,
-    fileContext,
+    fileTabs: readingFileTabs,
+    fileContext: readingFileContext,
     openFile,
     setInfoPage,
     setColumnOpen,
@@ -80,6 +80,9 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     commandMode,
     closePalette,
   } = shell
+  const fileContext = route.overview ? shell.draftFileContext : readingFileContext
+  const fileTabs = route.overview ? shell.draftFileTabs : readingFileTabs
+  const canBrowseFiles = route.overview ? shell.canBrowseDraftFiles : canBrowseReadingFiles
   const desktop = currentShell() !== null
   const keys = (id: ShortcutId) => {
     const value = shortcutKeys(id, desktop)
@@ -96,7 +99,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     catalog?.features?.fileSearch === true && catalog.features.filePreview === true && snapshot.device.dataScope === 'all'
   const canDefineAgents = allowed.includes('engines')
 
-  const folders = summary?.folders
+  const folders = route.overview ? catalog?.workspaces.find(item => item.id === shell.choice.workspaceId)?.folders : summary?.folders
   const fileRootName = useCallback(
     (root: string) =>
       folders
@@ -313,7 +316,13 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       : []),
     ...(canBrowseFiles
       ? [
-          { id: 'files', label: '浏览项目文件', icon: glyph(FolderTree), ...keys('files'), run: inSession(browseFiles) },
+          {
+            id: 'files',
+            label: '浏览项目文件',
+            icon: glyph(FolderTree),
+            ...keys('files'),
+            run: route.overview ? browseFiles : inSession(browseFiles),
+          },
           ...(canSearchFiles
             ? [
                 {
@@ -332,11 +341,16 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       id: `file:${tab.id}`,
       label: `切换文件：${tab.file?.name ?? tab.target.reference}`,
       icon: glyph(FileGlyph),
-      run: inSession(() => {
-        fileTabs.select(tab.id)
-        setInfoPage(true)
-        setColumnOpen(true)
-      }),
+      run: route.overview
+        ? () => {
+            fileTabs.select(tab.id)
+            shell.setDraftFilesOpen(true)
+          }
+        : inSession(() => {
+            fileTabs.select(tab.id)
+            setInfoPage(true)
+            setColumnOpen(true)
+          }),
     })),
     ...(['system', 'light', 'dark'] as const).map(theme => ({
       id: `theme:${theme}`,

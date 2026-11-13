@@ -170,9 +170,6 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
       ),
     )
   }, [key, contexts])
-  const currentKey = context ? fileContextKey(context) : undefined
-  const state = currentKey ? contexts[currentKey] : undefined
-  const tabs = state?.tabs ?? []
   const update = (targetContext: FileContext, change: (state: ContextTabs) => ContextTabs) => {
     const id = fileContextKey(targetContext)
     setBank(previous => {
@@ -188,80 +185,86 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
       }
     })
   }
-  return {
-    tabs,
-    active: tabs.find(tab => tab.id === state?.selected),
-    treeView: state?.treeView,
-    setTreeView(treeView: FileTreeView) {
-      if (context) update(context, state => ({ ...state, treeView }))
-    },
-    open(target: PreviewTarget) {
-      const targetContext = contextOf(target)
-      const matches = (tab: FileTab) =>
-        (tab.target.reference === target.reference
-          && tab.target.rootId === target.rootId
-          && tab.target.attachmentId === target.attachmentId)
-        || (tab.file?.path === target.reference && tab.file.root === target.rootId && tab.file.attachmentId === target.attachmentId)
-      const sessionId = targetContext.kind === 'session' ? targetContext.sessionId : undefined
-      const current = contexts[fileContextKey(targetContext)]?.tabs ?? []
-      // A full strip lets go of a tab with no editor open; an open editor is never closed without asking.
-      const room = current.some(matches)
-        ? undefined
-        : eviction(current, tab => sessionId !== undefined && editDraft(sessionId, tabDraftKey(tab)) !== undefined)
-      const go = () =>
-        update(targetContext, state => {
-          const existing = state.tabs.find(matches)
+  const forContext = (context: FileContext | null) => {
+    const currentKey = context ? fileContextKey(context) : undefined
+    const state = currentKey ? contexts[currentKey] : undefined
+    const tabs = state?.tabs ?? []
+    return {
+      tabs,
+      active: tabs.find(tab => tab.id === state?.selected),
+      treeView: state?.treeView,
+      setTreeView(treeView: FileTreeView) {
+        if (context) update(context, state => ({ ...state, treeView }))
+      },
+      open(target: PreviewTarget) {
+        const targetContext = contextOf(target)
+        const matches = (tab: FileTab) =>
+          (tab.target.reference === target.reference
+            && tab.target.rootId === target.rootId
+            && tab.target.attachmentId === target.attachmentId)
+          || (tab.file?.path === target.reference && tab.file.root === target.rootId && tab.file.attachmentId === target.attachmentId)
+        const sessionId = targetContext.kind === 'session' ? targetContext.sessionId : undefined
+        const current = contexts[fileContextKey(targetContext)]?.tabs ?? []
+        // A full strip lets go of a tab with no editor open; an open editor is never closed without asking.
+        const room = current.some(matches)
+          ? undefined
+          : eviction(current, tab => sessionId !== undefined && editDraft(sessionId, tabDraftKey(tab)) !== undefined)
+        const go = () =>
+          update(targetContext, state => {
+            const existing = state.tabs.find(matches)
+            const nextTarget = 'sessionId' in target ? { ...target, view: target.view ?? ('preview' as const) } : target
+            const tab = { id: existing?.id ?? crypto.randomUUID(), ...(existing?.file ? { file: existing.file } : {}), target: nextTarget }
+            const kept = state.tabs.filter(item => item.id !== tab.id && (existing || item.id !== room?.id))
+            return { ...state, tabs: [...kept, tab].slice(-MAX_TABS), selected: tab.id }
+          })
+        const leaving = room && current.find(tab => tab.id === room.id)
+        if (room?.ask && sessionId && leaving && requestDrop(sessionId, [tabDraftKey(leaving)], go)) return
+        go()
+      },
+      /** A second document from the same turn: its tab waits with a dot, behind the one that opened. */
+      offer(target: PreviewTarget) {
+        update(contextOf(target), state => {
           const nextTarget = 'sessionId' in target ? { ...target, view: target.view ?? ('preview' as const) } : target
-          const tab = { id: existing?.id ?? crypto.randomUUID(), ...(existing?.file ? { file: existing.file } : {}), target: nextTarget }
-          const kept = state.tabs.filter(item => item.id !== tab.id && (existing || item.id !== room?.id))
-          return { ...state, tabs: [...kept, tab].slice(-MAX_TABS), selected: tab.id }
+          return { ...state, tabs: offerTab(state.tabs, { id: crypto.randomUUID(), target: nextTarget, fresh: true }) }
         })
-      const leaving = room && current.find(tab => tab.id === room.id)
-      if (room?.ask && sessionId && leaving && requestDrop(sessionId, [tabDraftKey(leaving)], go)) return
-      go()
-    },
-    /** A second document from the same turn: its tab waits with a dot, behind the one that opened. */
-    offer(target: PreviewTarget) {
-      update(contextOf(target), state => {
-        const nextTarget = 'sessionId' in target ? { ...target, view: target.view ?? ('preview' as const) } : target
-        return { ...state, tabs: offerTab(state.tabs, { id: crypto.randomUUID(), target: nextTarget, fresh: true }) }
-      })
-    },
-    select(id?: string) {
-      if (context)
-        update(context, state => ({
-          ...state,
-          selected: id,
-          tabs: state.tabs.map(tab => (tab.id === id ? looked(tab) : tab)),
-        }))
-    },
-    view(id: string, view: 'preview' | 'changes') {
-      if (context?.kind === 'session')
-        update(context, state => ({
-          ...state,
-          selected: id,
-          tabs: state.tabs.map(tab => (tab.id === id && 'sessionId' in tab.target ? { ...tab, target: { ...tab.target, view } } : tab)),
-        }))
-    },
-    /** Closes the tab; one with unsaved text asks first. `then` runs once it is closed. */
-    close(id: string, then?: () => void) {
-      if (!context) return
-      const tab = tabs.find(item => item.id === id)
-      const go = () => {
-        update(context, state => ({ ...state, ...closeTab(state.tabs, state.selected, id) }))
-        then?.()
-      }
-      if (context.kind === 'session' && tab && requestDrop(context.sessionId, [tabDraftKey(tab)], go)) return
-      go()
-    },
-    resolved(id: string, file: FileMetadata) {
-      if (context)
-        update(context, state => ({
-          ...state,
-          tabs: state.tabs.map(tab =>
-            tab.id === id ? { ...tab, file, target: { ...tab.target, reference: file.path, rootId: file.root } } : tab,
-          ),
-        }))
-    },
+      },
+      select(id?: string) {
+        if (context)
+          update(context, state => ({
+            ...state,
+            selected: id,
+            tabs: state.tabs.map(tab => (tab.id === id ? looked(tab) : tab)),
+          }))
+      },
+      view(id: string, view: 'preview' | 'changes') {
+        if (context?.kind === 'session')
+          update(context, state => ({
+            ...state,
+            selected: id,
+            tabs: state.tabs.map(tab => (tab.id === id && 'sessionId' in tab.target ? { ...tab, target: { ...tab.target, view } } : tab)),
+          }))
+      },
+      /** Closes the tab; one with unsaved text asks first. `then` runs once it is closed. */
+      close(id: string, then?: () => void) {
+        if (!context) return
+        const tab = tabs.find(item => item.id === id)
+        const go = () => {
+          update(context, state => ({ ...state, ...closeTab(state.tabs, state.selected, id) }))
+          then?.()
+        }
+        if (context.kind === 'session' && tab && requestDrop(context.sessionId, [tabDraftKey(tab)], go)) return
+        go()
+      },
+      resolved(id: string, file: FileMetadata) {
+        if (context)
+          update(context, state => ({
+            ...state,
+            tabs: state.tabs.map(tab =>
+              tab.id === id ? { ...tab, file, target: { ...tab.target, reference: file.path, rootId: file.root } } : tab,
+            ),
+          }))
+      },
+    }
   }
+  return { ...forContext(context), forContext }
 }

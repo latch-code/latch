@@ -9,6 +9,17 @@ import { latchEnv } from '@latch/host/env'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { backToPhoneSessions, openSession, settleShell } from './helpers/layout.ts'
+
+/** Opens the visible new draft: Home options on a phone, or the history/sidebar entry. */
+async function newDraft(page: Page): Promise<void> {
+  const options = page.getByRole('button', { name: '新会话选项', exact: true })
+  if (await options.isVisible()) await options.click()
+  else {
+    await backToPhoneSessions(page)
+    await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).click()
+  }
+}
 
 /** The test releases each delta; no paid model, token timers, or simulated Host. */
 class ControlledReply {
@@ -151,7 +162,7 @@ describe('streamed messages in the real workspace', () => {
     const reply = new ControlledReply()
     replies.set(prompt, reply)
     // Phones show 新建会话 in their list's header and start from a sheet with 开始; wider layouts in the sidebar or title row.
-    await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+    await newDraft(page)
     await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
     await page.getByRole('textbox', { name: '新会话消息' }).fill(prompt)
     const created = page.waitForResponse(
@@ -190,6 +201,8 @@ describe('streamed messages in the real workspace', () => {
           ).join('\n\n'),
       )
       const { row, messageId } = await liveRow(page, id)
+      // The newly opened inspector changes the line wrapping; begin reading after its grid transition settles.
+      await settleShell(page)
       const originalRow = await row.elementHandle()
       expect(originalRow).not.toBeNull()
       await expect.poll(async () => (await geometry(page)).gap, { interval: 20 }).toBeLessThanOrEqual(4)
@@ -347,7 +360,7 @@ describe('streamed messages in the real workspace', () => {
       await page.evaluate(() => {
         document.documentElement.dataset.seen = ''
       })
-      await page.locator(`[data-task-id="${first.id}"]`).click()
+      await openSession(page, first.id)
       await page.locator(`[data-task-id="${first.id}"][aria-current="page"]`).waitFor({ state: 'attached' })
       await page.locator('[data-message-id]').filter({ hasText: '第一轮。' }).waitFor()
       await expect.poll(seen, { interval: 20 }).toEqual(expect.arrayContaining(['animate:transcript-content']))
@@ -366,7 +379,7 @@ describe('streamed messages in the real workspace', () => {
   it('grows the input a line at a time over the motion tokens, and at once under reduced motion', async () => {
     const { context, page } = await open(1280, 820)
     try {
-      await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+      await newDraft(page)
       const input = page.getByRole('textbox', { name: '新会话消息' })
       await input.waitFor()
       // Each height transition the input starts, as it starts, with the timing it runs on.
@@ -688,11 +701,11 @@ describe('a Gemini CLI reply that broke off and was generated again', () => {
         page.setDefaultTimeout(15_000)
         await enrollBrowser(page, testHost, { name: `重试 ${width}`, scopes: ['view', 'run', 'admin'] })
         await connected(page)
-        await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+        await newDraft(page)
         const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await draft.fill('retry 1500')
         await draft.press('Meta+Enter')
-        const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
+        const elsewhere = page.getByRole('menuitemradio', { name: /^不选项目/u }).or(page.getByRole('radio', { name: /^不选项目/u }))
         if (
           await elsewhere.waitFor({ timeout: 3_000 }).then(
             () => true,

@@ -95,7 +95,9 @@ describe('a start directory inside Latch’s program directory', () => {
       await page.locator('.transcript [data-message-id]').filter({ hasText: '你好' }).first().waitFor()
       if (viewport.name === 'phone') await page.getByRole('button', { name: '侧边面板', exact: true }).click()
       else await page.locator('.topbar-crumb-button').click()
-      await page.getByText(NOTICE, { exact: false }).last().waitFor()
+      const information =
+        viewport.name === 'phone' ? page.getByRole('region', { name: '侧边面板', exact: true }) : page.locator('.ui-popover:popover-open')
+      await information.getByText(NOTICE, { exact: false }).waitFor()
       await page.screenshot({ path: `${OUTPUT}/session-info--${viewport.name}.png`, fullPage: true, animations: 'disabled' })
       await page.emulateMedia({ colorScheme: 'dark' })
       await page.screenshot({ path: `${OUTPUT}/session-info--${viewport.name}--dark.png`, fullPage: true, animations: 'disabled' })

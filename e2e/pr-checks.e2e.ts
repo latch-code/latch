@@ -9,7 +9,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, installFakeGh, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSession, settleShell } from './helpers/layout.ts'
 
 const OUT = 'test-results/pr-checks'
 const SLOW = { timeout: 30_000 }
@@ -39,10 +39,7 @@ async function shots(page: Page, name: string, tablet = false) {
 async function choose(page: Page, sessionId: string) {
   await page.locator('.app-shell').waitFor()
   await settleShell(page)
-  const row = page.locator(`[data-task-id="${sessionId}"]`).first()
-  if (!(await row.isVisible())) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-  await row.click()
-  await settleShell(page)
+  await openSession(page, sessionId)
 }
 
 async function openBrowser(browser: Browser, host: TestHost, owner: TestDevice, sessionId: string, width: number, height: number) {

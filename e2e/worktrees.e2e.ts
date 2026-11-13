@@ -126,7 +126,8 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     await folder.click()
     await expect.poll(() => worktree.innerText()).toContain(`${UNCOMMITTED}从 main 的 ${head}`)
     await worktree.click()
-    const row = page.locator('.composer-status').first()
+    const row = page.locator('.home-composer-location, .composer-status').filter({ visible: true })
+    await expect.poll(() => row.locator('[data-seg="branch"]').count()).toBe(1)
     await expect.poll(() => row.innerText()).toContain(`从 main 的 ${head}`)
     await page.screenshot({ path: `${OUT}/draft-1280.png` })
 

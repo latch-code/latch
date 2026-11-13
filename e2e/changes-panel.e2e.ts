@@ -9,7 +9,7 @@ import type { ChangedFile, ChangeList, ChangeReceipt, FileChangeDetail, TurnChan
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { settleShell } from './helpers/layout.ts'
+import { openSession, settleShell } from './helpers/layout.ts'
 
 const OUT = 'test-results/changes-panel'
 
@@ -67,11 +67,8 @@ function repository(root: string) {
 async function choose(page: Page, sessionId: string) {
   await page.locator('.app-shell').waitFor()
   await settleShell(page)
-  const row = page.locator(`[data-task-id="${sessionId}"]`).first()
   if (await page.locator('.workspace.has-task').count()) return
-  if (!(await row.isVisible())) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-  await row.click()
-  await settleShell(page)
+  await openSession(page, sessionId)
 }
 
 async function reopen(page: Page, sessionId: string) {

@@ -79,25 +79,11 @@ const listSimulators = (): Simulators['devices'][string] =>
     ).devices,
   ).flat()
 /**
- * Simulators with this test's own prefix that a run which did not finish left, read now so the budget counts them;
- * never the given device or the hands-on one, whatever its name.
- */
-const LEFTOVERS: string[] = (() => {
-  if (process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1') return []
-  try {
-    return listSimulators()
-      .filter(item => item.name.startsWith(PREFIX) && item.udid !== DEVICE && item.name !== HANDS_ON)
-      .map(item => item.udid)
-  } catch {
-    return []
-  }
-})()
-/**
  * Every step's own limit, added up, so the test's budget always outlasts them: the build; boot, boot status and install;
- * 13 quick simctl calls in a run, 3 more that can start just before the hold or pairing deadline, 2 per leftover; nm,
+ * 13 quick simctl calls in a run, 3 more that can start just before the hold or pairing deadline; nm,
  * the Host and pauses.
  */
-const BUDGET = STEPS.build + 3 * STEPS.boot + (16 + 2 * LEFTOVERS.length) * STEPS.simctl + 120_000 + PAIR_MS + HOLD_MS
+const BUDGET = STEPS.build + 3 * STEPS.boot + 16 * STEPS.simctl + 120_000 + PAIR_MS + HOLD_MS
 const simctl = (...args: string[]) => run('/usr/bin/xcrun', ['simctl', ...args], { timeout: STEPS.simctl, maxBuffer: 16_777_216 })
 /** A runtime's first boot migrates its data and can take minutes. */
 const simctlSlow = (...args: string[]) => run('/usr/bin/xcrun', ['simctl', ...args], { timeout: STEPS.boot, maxBuffer: 16_777_216 })
@@ -151,20 +137,20 @@ function usage(host: TestHost): number {
 /**
  * Simulator.app's 「Automatically Sync Pasteboard」 (on by default) copies the simulator's clipboard to this Mac's and on
  * to Universal Clipboard, and has no command-line switch; the test runs the simulator headless and writes no code while
- * Simulator.app is open.
+ * Simulator.app or its DeviceHub successor is open.
  */
 async function simulatorAppOpen(): Promise<boolean> {
-  return Boolean((await run('/usr/bin/pgrep', ['-x', 'Simulator']).catch(() => ({ stdout: '' }))).stdout.trim())
+  return Boolean((await run('/usr/bin/pgrep', ['-x', 'Simulator|DeviceHub']).catch(() => ({ stdout: '' }))).stdout.trim())
 }
 const SIMULATOR_APP =
-  'Simulator.app is open: its pasteboard sync would carry the pairing code to this Mac’s clipboard, so no code was written'
+  'Simulator or DeviceHub is open: its pasteboard sync could carry the pairing code to this Mac’s clipboard, so no code was written'
 
 /**
  * Opt-in (`LATCH_IOS_LIVE=1`, macOS with an iOS Simulator runtime): the LatchScreens target in live mode, against a
  * temporary test Host, so an iOS change can be tried by tapping through it. Live mode swaps the Secure Enclave keys,
  * which the simulator lacks, for in-memory software keys (`native/ios/Screens/LiveKeys.swift`); it proves nothing about
- * the Secure Enclave, Face ID or a real device. The test builds the target, deletes `latch-live-` simulators an earlier
- * run left, makes and boots one of its own, installs the App, then starts a Host with the demo model, the fake ACP Agent
+ * the Secure Enclave, Face ID or a real device. The test builds the target, makes and boots its own simulator,
+ * installs the App, then starts a Host with the demo model, the fake ACP Agent
  * (「Fake Agent」), a temporary Git project and test presence, launches the App with `-LatchLive 1` and puts a pairing
  * code on the simulator's clipboard for 「粘贴」, clearing it once the App has used that code. Everything it made is removed at
  * the end. Screenshots go to `LATCH_IOS_LIVE_DIR`, or `test-results/ios-live/`.
@@ -193,11 +179,6 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
     if (!choice?.type) {
       context.skip('No installed iOS Simulator runtime runs an iPhone from the list')
       return
-    }
-    // Only simulators with this test's own prefix, left by a run that did not finish.
-    for (const leftover of LEFTOVERS) {
-      await simctl('shutdown', leftover).catch(() => {})
-      await simctl('delete', leftover).catch(() => {})
     }
     const output = resolve(process.env.LATCH_IOS_LIVE_DIR ?? 'test-results/ios-live')
     await mkdir(output, { recursive: true })

@@ -30,7 +30,7 @@ async function openPage(browser: Browser, viewport: { width: number; height: num
 async function captureBothThemes(page: Page, name: string, banner: string) {
   for (const scheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: scheme })
-    await page.locator('.banner-region').getByText(banner, { exact: true }).waitFor()
+    await page.locator('.banner-region').filter({ visible: true }).getByText(banner, { exact: true }).waitFor()
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `test-results/${name}-${scheme}.png`, animations: 'disabled' })
   }
@@ -73,7 +73,7 @@ describe('the Host announcing it stops answering', () => {
 
   it('shows why and since when, reconnects when the Host said to, and clears the line once it answers', async () => {
     const report = (body: unknown) => testHost.raw('unix', 'api/host/state', { method: 'POST', body })
-    const banner = page.locator('.banner-region')
+    const banner = page.locator('.banner-region').filter({ visible: true })
 
     // The computer goes to sleep: the page drops its stream at once and tries again after the announced 10 seconds.
     requests.length = 0
@@ -96,6 +96,7 @@ describe('the Host announcing it stops answering', () => {
       expect((await report({ state: 'sleeping' })).status).toBe(200)
       const title = await target.page
         .locator('.banner-region')
+        .filter({ visible: true })
         .getByText(/^studio-mini 已休眠（\d{2}:\d{2} 起）$/u)
         .textContent()
       await captureBothThemes(target.page, `host-state-sleeping-${target.label}`, title!)
@@ -105,6 +106,7 @@ describe('the Host announcing it stops answering', () => {
       await connected(target)
       await target
         .locator('.banner-region')
+        .filter({ visible: true })
         .getByText(/^电脑已休眠/u)
         .waitFor({ state: 'detached' })
     }
@@ -129,7 +131,7 @@ describe('the connection line without an announcement', () => {
     try {
       const { context, page } = await openPage(browser, { width: 1440, height: 900 }, false)
       await enrollBrowser(page, testHost, { name: '断网测试浏览器' })
-      const banner = page.locator('.banner-region')
+      const banner = page.locator('.banner-region').filter({ visible: true })
       await context.setOffline(true)
       await banner.getByText('这台设备没有联网', { exact: true }).waitFor()
       // Back on the network, but the computer does not answer and never said why.
@@ -176,7 +178,10 @@ describe('a Host refusing the device after it announced a stop', () => {
       await enrollBrowser(page, testHost, { name: '撤销测试浏览器' })
       const device = testHost.host.security.devices.list().find(item => item.name === '撤销测试浏览器')!
       expect((await testHost.raw('unix', 'api/host/state', { method: 'POST', body: { state: 'sleeping' } })).status).toBe(200)
-      const asleep = page.locator('.banner-region').getByText(/^studio-mini 已休眠（\d{2}:\d{2} 起）$/u)
+      const asleep = page
+        .locator('.banner-region')
+        .filter({ visible: true })
+        .getByText(/^studio-mini 已休眠（\d{2}:\d{2} 起）$/u)
       await asleep.waitFor()
       // Revoked while the page waits out the announced ten seconds: the next stream attempt gets 401 device-revoked.
       expect((await testHost.raw('unix', `api/devices/${device.id}`, { method: 'DELETE' })).status).toBe(200)
@@ -218,10 +223,10 @@ describe('a Host older than the page', () => {
       try {
         await enrollBrowser(page, testHost, { name: `旧版本 ${label}` })
         const title = 'studio-mini 上的 Latch 还是旧版本'
-        const notice = page.locator('.banner-region .ui-notice', { hasText: title })
+        const notice = page.locator('.banner-region .ui-notice', { hasText: title }).filter({ visible: true })
         await notice.waitFor()
         expect(await notice.getAttribute('data-tone')).toBe('warn')
-        expect(await page.getByText(title, { exact: true }).count()).toBe(1)
+        expect(await page.getByText(title, { exact: true }).filter({ visible: true }).count()).toBe(1)
         await notice.getByText('重启 Latch 后才能用新功能', { exact: true }).waitFor()
         expect(await notice.getByRole('button', { name: '重启 Latch' }).count()).toBe(0)
         await notice.getByRole('button', { name: '怎么重启' }).click()

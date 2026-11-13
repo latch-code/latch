@@ -1,11 +1,181 @@
 import { chromium } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
 import { mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import type { WorkspaceInfo } from '@latch/protocol'
+import type { TaskDetail, WorkspaceInfo } from '@latch/protocol'
+import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
-import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { settleShell } from './helpers/layout.ts'
+import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
+import { backToPhoneSessions, settleShell } from './helpers/layout.ts'
+
+it.each([
+  [390, 'light'],
+  [900, 'dark'],
+  [1440, 'light'],
+  [1440, 'dark'],
+] as const)(
+  'browses and quotes the new Home project at %s %s without replacing the retained session draft or file tab',
+  async (width, theme) => {
+    const provider: HarnessPlugin = {
+      id: 'file-targets',
+      name: 'Fixture',
+      version: '1',
+      description: '',
+      activate(ctx) {
+        ctx.registerProvider({
+          id: 'file-targets',
+          name: 'Fixture',
+          model: 'fixture',
+          async *stream({ messages }) {
+            if (messages.findLast(message => message.role === 'user')?.content === '旧项目会话') throw new Error('旧会话的模型响应失败')
+            yield { type: 'text', text: '新项目收到了引用。' }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ demo: false, providerId: provider.id, plugins: [provider] })
+    const browser = await chromium.launch(browserLaunchOptions())
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      reducedMotion: 'reduce',
+      colorScheme: theme,
+      locale: 'zh-CN',
+    })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const oldPath = join(host.root, 'retained-project')
+      const newPath = join(host.root, 'home-project')
+      await Promise.all([mkdir(oldPath), mkdir(newPath)])
+      await writeFile(join(oldPath, 'old.txt'), '旧文件页签保留。\n')
+      await writeFile(join(newPath, 'new.txt'), '新项目的引用内容。\n')
+      const oldProject = ((await (await owner.addFolders({ name: '旧项目', paths: [oldPath] })).json()) as { workspace: WorkspaceInfo })
+        .workspace
+      const newProject = ((await (await owner.addFolders({ name: '新项目', paths: [newPath] })).json()) as { workspace: WorkspaceInfo })
+        .workspace
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: '旧项目会话', requestId: randomUUID(), workspaceId: oldProject.id, mode: 'agent' },
+      })
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('failed')
+      await enrollBrowser(page, host, { name: '首页文件目标', scopes: ['admin'] })
+      const deviceId = host.host.security.devices.list().find(device => device.name === '首页文件目标')!.id
+      expect((await owner.confirmed(`devices/${deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+      await page.reload()
+      await connected(page)
+      const openOld = () => page.locator(`.workbench-home [data-work-session="${sessionId}"] .work-decision-session`).click()
+      await openOld()
+      await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
+      const header = page.locator('.topbar[data-phone]')
+      await header.getByRole('button', { name: '侧边面板', exact: true }).click()
+      await page.getByRole('tab', { name: '文件', exact: true }).click()
+      await page.getByRole('treeitem', { name: 'old.txt', exact: true }).click()
+      await page.getByRole('region', { name: '文件预览', exact: true }).getByText('旧文件页签保留。', { exact: true }).waitFor()
+      await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()
+      await page.locator('.info-page').waitFor({ state: 'detached' })
+      await page.getByRole('textbox', { name: '继续对话', exact: true }).fill('旧会话草稿')
+      await header.getByRole('button', { name: '返回总览', exact: true }).click()
+      await page.locator('.workbench-home').getByRole('button', { name: '新会话选项', exact: true }).click()
+      const sheet = page.getByRole('dialog', { name: '新会话', exact: true })
+      await sheet.getByRole('button', { name: /^项目：/u }).click()
+      await page
+        .getByRole('dialog', { name: '项目', exact: true })
+        .getByRole('radio', { name: /新项目/u })
+        .click()
+      await page.getByRole('dialog', { name: '项目', exact: true }).waitFor({ state: 'hidden' })
+      let input = sheet.getByRole('textbox', { name: '新会话消息', exact: true })
+      await input.fill('给新项目的草稿')
+      // The same Home draft and retained reading survive a resize before the file action.
+      if (width !== 390) {
+        await sheet.locator(':scope > .ui-sheet-surface > .ui-sheet-top').getByRole('button', { name: '取消', exact: true }).click()
+        await sheet.waitFor({ state: 'hidden' })
+        await page.setViewportSize({ width, height: 960 })
+        await settleShell(page)
+        input = page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
+        expect(await input.inputValue()).toBe('给新项目的草稿')
+      }
+      const reads: string[] = []
+      const starts: unknown[] = []
+      page.on('request', request => {
+        const path = new URL(request.url()).pathname
+        if (path.includes('/files/')) reads.push(path)
+        if (path === '/link/api/tasks' && request.method() === 'POST') starts.push(request.postDataJSON())
+      })
+      if (width === 390) await sheet.getByRole('button', { name: '浏览项目文件', exact: true }).click()
+      else {
+        await page.keyboard.press('Meta+k')
+        const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+        await palette.getByRole('searchbox').fill('浏览项目文件')
+        await palette.getByRole('option', { name: /浏览项目文件/u }).click()
+      }
+      await expect
+        .poll(() => reads.some(path => path.startsWith(`/link/api/workspaces/${newProject.id}/files/`)), { timeout: 5000 })
+        .toBe(true)
+      if (width === 390) {
+        const files = page.getByRole('dialog', { name: '项目文件', exact: true })
+        const done = files.getByRole('button', { name: '完成', exact: true })
+        const hit = await done.evaluate(button => {
+          const box = button.getBoundingClientRect()
+          const before = getComputedStyle(button, '::before')
+          return {
+            x: box.x + box.width / 2,
+            y: box.y - 5,
+            height: box.height - parseFloat(before.top) - parseFloat(before.bottom),
+            reachesTop: button.contains(document.elementFromPoint(box.x + box.width / 2, box.y - 5)),
+            reachesBottom: button.contains(document.elementFromPoint(box.x + box.width / 2, box.bottom + 5)),
+          }
+        })
+        expect(hit.height).toBeGreaterThanOrEqual(44)
+        expect(hit.reachesTop && hit.reachesBottom).toBe(true)
+        await page.mouse.click(hit.x, hit.y)
+        await files.waitFor({ state: 'hidden' })
+        expect(await input.inputValue()).toBe('给新项目的草稿')
+        await sheet.getByRole('button', { name: '浏览项目文件', exact: true }).click()
+      }
+      await page.getByRole('treeitem', { name: 'new.txt', exact: true }).click()
+      const preview = page.getByRole('region', { name: '文件预览', exact: true })
+      await preview.getByText('新项目的引用内容。', { exact: true }).evaluate(element => {
+        const range = document.createRange()
+        range.selectNodeContents(element)
+        const selection = document.getSelection()!
+        selection.removeAllRanges()
+        selection.addRange(range)
+        element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      })
+      if (width !== 390) expect((await preview.boundingBox())!.height).toBeGreaterThanOrEqual(400)
+      await mkdir('test-results/file-tree', { recursive: true })
+      await page.screenshot({ path: `test-results/file-tree/home-preview-${width}-${theme}.png`, animations: 'disabled' })
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await preview.getByRole('button', { name: '引用到对话', exact: true }).click()
+      await expect.poll(() => input.inputValue()).toContain(`@${newProject.folders![0]!.id}:new.txt`)
+      expect(await input.inputValue()).toContain('给新项目的草稿')
+      const sender =
+        width === 390
+          ? sheet.getByRole('button', { name: '开始', exact: true })
+          : page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true })
+      await sender.click()
+      await expect.poll(() => starts.length).toBe(1)
+      expect(starts[0]).toMatchObject({ workspaceId: newProject.id, fileRefs: [{ root: newProject.folders![0]!.id, path: 'new.txt' }] })
+      await page.locator('main.workspace:not([inert]) .turn-reply').getByText('新项目收到了引用。', { exact: true }).waitFor()
+      if (width !== 390) {
+        await page.setViewportSize({ width: 390, height: 844 })
+        await settleShell(page)
+      }
+      await header.getByRole('button', { name: '返回总览', exact: true }).click()
+      await openOld()
+      expect(await page.getByRole('textbox', { name: '继续对话', exact: true }).inputValue()).toBe('旧会话草稿')
+      await header.getByRole('button', { name: '侧边面板', exact: true }).click()
+      await page.getByRole('region', { name: '文件预览', exact: true }).getByText('旧文件页签保留。', { exact: true }).waitFor()
+    } finally {
+      await context.close()
+      await browser.close()
+      await host.close()
+    }
+  },
+)
 
 it('browses a saved project before creating a session, previews and quotes real roots, and keeps large directories lazy', async () => {
   const host = await startTestHost()
@@ -51,6 +221,7 @@ it('browses a saved project before creating a session, previews and quotes real 
         expect((await desktop.confirmed(`devices/${deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
         await page.reload()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
+        if (width === 390) await backToPhoneSessions(page)
         if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
         await page
           .getByRole('region', { name: '文件项目', exact: true })
@@ -92,6 +263,14 @@ it('browses a saved project before creating a session, previews and quotes real 
         expect(submissions).toHaveLength(0)
         await page.screenshot({ path: `test-results/file-tree/quoted-draft-${width}-${theme}.png`, animations: 'disabled' })
         await input.fill('保留我的草稿')
+        if (width === 390) {
+          const sheet = page.getByRole('dialog', { name: '新会话', exact: true })
+          await sheet.locator(':scope > .ui-sheet-surface > .ui-sheet-top').getByRole('button', { name: '取消', exact: true }).click()
+          await sheet.waitFor({ state: 'hidden' })
+          expect(await page.locator('.phone-list').getByRole('button', { name: '返回总览', exact: true }).isVisible()).toBe(true)
+          await page.locator('.phone-list').getByRole('button', { name: '新建会话', exact: true }).click()
+          expect(await input.inputValue()).toBe('保留我的草稿')
+        }
         if (width < 1024) await page.getByRole('button', { name: '浏览项目文件', exact: true }).click()
         await page.getByRole('tab', { name: '文件', exact: true }).click()
         await tree.getByRole('treeitem', { name: 'src', exact: true }).focus()

@@ -316,7 +316,12 @@
 .session-handoff {
   flex-shrink: 0;
   color: var(--amber);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
   font-weight: 500;
+}
+.session-item:is(:hover, :has(:focus-visible), :has([aria-expanded='true'])) .session-handoff {
+  opacity: 0;
 }
 
 /* 来自 <来源会话> without a source this device lists is words, not a way. */

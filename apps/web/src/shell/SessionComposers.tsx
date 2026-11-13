@@ -552,7 +552,6 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
         home ? (
           <div className="home-composer-location">
             <NewSessionTitle shell={base} />
-            {worktreeOffer?.branch && <BranchSegment branch={worktreeOffer.branch} base={!!submission.worktree} />}
             {worktreeOffer && (
               <FolderControl
                 project={worktreeOffer}

@@ -5,6 +5,7 @@ import { chromium, type Browser } from '@playwright/test'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { openSession } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64')
 describe('files observed during real Harness runs', () => {
@@ -85,8 +86,7 @@ describe('files observed during real Harness runs', () => {
       })
       try {
         await enrollBrowser(page, host, { name: `产物 ${width}`, scopes: ['admin'] })
-        if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-        await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+        await openSession(page, sessionId)
         const outputs = page.getByRole('region', { name: '这一轮生成的文件', exact: true })
         const changed = page.getByRole('region', { name: '这一轮改动的文件', exact: true })
         await changed.getByRole('button', { name: '显示文件', exact: true }).click()

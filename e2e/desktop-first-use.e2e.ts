@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import type { AppSnapshot, AgentSettings, TaskDetail } from '@latch/protocol'
+import { AGENT_PRESETS, type AppSnapshot, type AgentSettings, type TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { writeHostState } from '@latch/host/host-state'
@@ -78,7 +78,9 @@ async function enroll(page: Page) {
   await page.locator('.app-shell[data-connection="connected"]').waitFor()
 }
 async function startNew(page: Page, width: number) {
-  if (width === 390) await backToPhoneSessions(page)
+  if (width === 390) {
+    await backToPhoneSessions(page)
+  }
   const buttons = page.getByRole('button', { name: '新建会话', exact: true })
   let opened = false
   for (const button of await buttons.all()) {
@@ -257,7 +259,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await codexRow.getByText('已找到', { exact: true }).waitFor()
         // A long path is shortened in the middle; the whole of it is the row's tooltip.
         expect(await codexRow.locator('.harness-found-path').getAttribute('title')).toBe(adapter)
-        const fold = found.getByRole('button', { name: /^还可以装 8 个$/u })
+        const fold = found.getByRole('button', { name: `还可以装 ${AGENT_PRESETS.length - 1} 个`, exact: true })
         expect(await fold.getAttribute('aria-expanded')).toBe('false')
         await fold.click()
         await found.getByRole('button', { name: '怎么装 pi', exact: true }).click()
@@ -287,16 +289,18 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           BrowserWindow.prototype.isFocused = () => true
         }, process.cwd())
         await open.click()
-        await page.getByText(/^没有打开 .*不能作为项目$/u).waitFor()
+        const projectMenu = page.getByRole('menu', { name: '项目', exact: true })
+        expect(await projectMenu.count()).toBe(1)
+        await projectMenu.getByText(/^没有打开 .*不能作为项目$/u).waitFor()
 
         // The chosen folder is a project at once, named in the question; a list asked for earlier stays shut.
         await application.evaluate(({ dialog }, chosen) => {
           dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [chosen] })) as typeof dialog.showOpenDialog
         }, project)
         await open.click()
-        await page.locator('.new-session-title').getByText('rust-learn', { exact: true }).first().waitFor()
+        await page.locator('.home-composer-location').getByText('rust-learn', { exact: true }).first().waitFor()
         // Shut by the choice, not opened again: the title can name the project while the list still fades out.
-        expect(await page.locator('.new-session-title [aria-haspopup]').getAttribute('aria-expanded')).toBe('false')
+        expect(await page.locator('.home-composer-location [aria-haspopup]').first().getAttribute('aria-expanded')).toBe('false')
         await open.waitFor({ state: 'hidden' })
         await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
 
@@ -379,7 +383,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       }
     })
 
-    it('uses actual ACP command updates, template IDs and ranked keyboard insertion without sending at three widths', async () => {
+    it('uses actual ACP command updates and ranked Tab insertion without sending, then executes Enter once', async () => {
       const directory = await mkdtemp(join(tmpdir(), 'latch-electron-slash-')),
         provider = localProvider(),
         host = await startTestHost({ demo: false, providerId: provider.id, plugins: [provider] }),
@@ -424,22 +428,24 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         for (const width of [1440, 900, 390]) {
           await resize(application, page, width)
           const input = page.getByRole('textbox', { name: '继续对话', exact: true }),
-            menu = page.getByRole('region', { name: '命令与提示模板', exact: true }),
+            menu = page.locator('.ui-suggest:popover-open'),
             list = menu.getByRole('listbox', { name: '命令与提示模板', exact: true })
           await input.fill('/init')
           await list.getByRole('option').filter({ hasText: '/init' }).waitFor()
           await input.press('ArrowDown')
           await input.press('ArrowUp')
-          await input.press('Enter')
+          await input.press('Tab')
           expect(await input.inputValue()).toBe('/init ')
-          await menu.waitFor({ state: 'detached' })
+          await menu.waitFor({ state: 'hidden' })
+          await input.fill('')
           await input.fill('/init')
+          await list.getByRole('option').filter({ hasText: '/init' }).waitFor()
           await input.press('Tab')
           expect(await input.inputValue()).toBe('/init ')
           await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
           await input.fill('/review')
           await expect.poll(() => list.getByRole('option').count()).toBe(4)
-          expect(await list.getByRole('option').locator('strong').allTextContents()).toEqual(
+          expect(await list.getByRole('option').locator('.ui-suggest-label').allTextContents()).toEqual(
             templates.map(([id, name]) => '/' + id + ' · ' + name),
           )
           await input.press('ArrowDown')
@@ -454,32 +460,50 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           expect(await input.inputValue()).toBe(templates[0][2])
           await input.fill('/')
           await list.getByRole('group', { name: '提示模板', exact: true }).waitFor()
-          await list.getByRole('group', { name: 'Harness 命令', exact: true }).waitFor()
+          await list.getByRole('group', { name: '命令验收 Harness', exact: true }).waitFor()
           expect(await list.getByRole('group', { name: '提示模板', exact: true }).getByRole('option').count()).toBe(4)
-          expect(await list.getByRole('group', { name: 'Harness 命令', exact: true }).getByRole('option').count()).toBe(1)
-          // The session's own actions come first: a turn on a new context, and a side question (/btw).
-          expect(
-            await list.getByRole('group', { name: '这个会话', exact: true }).getByRole('option').locator('strong').allTextContents(),
-          ).toEqual(['/clear', '/btw'])
+          const native = list.getByRole('group', { name: '命令验收 Harness', exact: true })
+          expect(await native.getByRole('option').locator('.ui-suggest-label').allTextContents()).toEqual(['/init', '/compact'])
+          const compact = native.getByRole('option').filter({ hasText: '/compact' })
+          expect(await compact.getAttribute('aria-disabled')).toBe('true')
+          expect(await compact.locator('.ui-suggest-description').textContent()).toBe('这个 Harness 尚不支持')
+          // Native commands, templates and Latch actions retain their own sources; recent insertions come first.
+          const actions = list.getByRole('group', { name: 'Latch', exact: true }).getByRole('option')
+          expect((await actions.locator('.ui-suggest-label').allTextContents()).toSorted()).toEqual(
+            ['/clear', '/btw', '/fork', '/new', '/model', '/think', '/permissions', '/changes'].toSorted(),
+          )
+          const disabled = await actions.evaluateAll(rows => rows.map(row => row.getAttribute('aria-disabled') === 'true'))
+          expect(disabled).toEqual(disabled.toSorted((a, b) => Number(a) - Number(b)))
           expect(await list.getByRole('group').evaluateAll(groups => groups.map(group => group.getAttribute('aria-label')))).toEqual([
-            '这个会话',
+            '最近',
+            '命令验收 Harness',
             '提示模板',
-            'Harness 命令',
+            'Latch',
           ])
           // /btw is listed where the session cannot fork into a side question, disabled with its reason.
-          for (const option of await list.getByRole('option').all())
-            await reachable(option, { allowDisabled: (await option.textContent())?.includes('/btw') === true })
+          expect(
+            await list
+              .getByRole('group', { name: 'Latch', exact: true })
+              .getByRole('option')
+              .filter({ hasText: '/btw' })
+              .getAttribute('aria-disabled'),
+          ).toBe('true')
+          for (const option of await list.getByRole('option').all()) {
+            const disabled = (await option.getAttribute('aria-disabled')) === 'true'
+            if (disabled) expect((await option.locator('.ui-suggest-description').textContent())?.trim()).not.toBe('')
+            await reachable(option, { allowDisabled: disabled })
+          }
           await noHorizontalOverflow(page, menu)
           await mkdir('test-results/desktop-first-use', { recursive: true })
           await page.screenshot({ path: `test-results/desktop-first-use/slash-${width}.png`, animations: 'disabled' })
           await input.press('Escape')
-          await menu.waitFor({ state: 'detached' })
+          await menu.waitFor({ state: 'hidden' })
           expect(await input.inputValue()).toBe('/')
           await input.fill('/not-a-command-9281')
           await menu.getByRole('status').waitFor()
-          expect(await menu.getByRole('status').textContent()).toBe('没有匹配的命令或提示模板')
+          expect(await menu.getByRole('status').textContent()).toBe('没有「/not-a-command-9281」· Enter 原样发给 命令验收 Harness')
           await input.press('Escape')
-          await menu.waitFor({ state: 'detached' })
+          await menu.waitFor({ state: 'hidden' })
           expect(await input.inputValue()).toBe('/not-a-command-9281')
           expect(await promptCount()).toBe(1)
           expect(
@@ -488,6 +512,17 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
               .map(message => message.text),
           ).toEqual(['plan'])
         }
+        const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+        await input.fill('/init')
+        await page.getByRole('listbox', { name: '命令与提示模板', exact: true }).getByRole('option').filter({ hasText: '/init' }).waitFor()
+        await input.press('Enter')
+        await expect.poll(promptCount).toBe(2)
+        await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + sessionId)).summary.status).toBe('idle')
+        expect(
+          (await owner.json<TaskDetail>('tasks/' + sessionId)).messages
+            .filter(message => message.role === 'user')
+            .map(message => message.text),
+        ).toEqual(['plan', '/init'])
       } finally {
         await application?.close()
         await host.close()

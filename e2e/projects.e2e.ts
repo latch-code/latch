@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AppSnapshot, Device, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeSettings } from './helpers/layout.ts'
+import { backToPhoneSessions, closeSettings } from './helpers/layout.ts'
 
 describe('saved projects', () => {
   let host: TestHost
@@ -55,6 +55,7 @@ describe('saved projects', () => {
         const page = await context.newPage(),
           deviceName = `最近项目设备 ${width}`
         await enrollBrowser(page, host, { name: deviceName, scopes: ['admin'] })
+        if (width === 390) await backToPhoneSessions(page)
         if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
         await page
           .getByRole('region', { name: `最近项目 ${width}`, exact: true })
@@ -116,6 +117,7 @@ describe('saved projects', () => {
       try {
         const page = await context.newPage()
         await enrollBrowser(page, host, { name: `项目验收 ${width}`, scopes: ['admin'] })
+        if (width === 390) await backToPhoneSessions(page)
         if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
         const group = page.getByRole('region', { name: `项目 ${width}`, exact: true })
         await group.waitFor()
@@ -159,6 +161,7 @@ describe('saved projects', () => {
           .toContain('找不到这个文件夹')
         await page.reload()
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
+        if (width === 390) await backToPhoneSessions(page)
         if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
         await page
           .getByRole('region', { name: `服务 ${width}`, exact: true })

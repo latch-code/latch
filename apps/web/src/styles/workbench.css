@@ -89,3 +89,19 @@
     visibility: visible;
   }
 }
+
+.draft-file-panel .ui-dialog-body,
+.draft-file-panel .ui-sheet-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.draft-file-panel .ui-dialog-surface {
+  height: min(700px, calc(100dvh - 2 * var(--sp-32)));
+}
+.draft-file-panel .session-panels {
+  flex: 1;
+  min-height: 0;
+}

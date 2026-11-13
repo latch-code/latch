@@ -8,6 +8,7 @@ import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { openSession } from './helpers/layout.ts'
 
 test('shows immediate text, delays delivery wording and retries an uncertain input with the same identity on three widths', async () => {
   const host = await startTestHost({ uiDir: resolve('dist/web') }),
@@ -52,7 +53,7 @@ test('shows immediate text, delays delivery wording and retries an uncertain inp
       const text = `慢请求 ${width}`
       await input.fill(text)
       await input.press('Enter')
-      const pending = page.locator('.sending-message')
+      const pending = page.locator('.sending-message').filter({ visible: true })
       await expect.poll(() => pending.isVisible()).toBe(true)
       expect(await pending.getByText(text, { exact: true }).isVisible()).toBe(true)
       await expect.poll(() => pending.getByText('发送中…', { exact: true }).isVisible()).toBe(true)
@@ -115,13 +116,13 @@ test('an unconfirmed message says so in another session, opens from there and is
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })
     await input.fill('断线的消息')
     await input.press('Enter')
-    const row = page.locator('.pending-submission')
+    const row = page.locator('.pending-submission').filter({ visible: true })
     await row.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
 
     // Another window of this device reads the same record, and lets go of it when this one settles it.
     const other = await context.newPage()
     await other.goto(page.url())
-    const otherRow = other.locator('.pending-submission')
+    const otherRow = other.locator('.pending-submission').filter({ visible: true })
     await otherRow.waitFor()
 
     await page.locator(`[data-task-id="${elsewhere}"]`).first().click()
@@ -192,7 +193,7 @@ test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of
       const text = `卡住的消息 ${width}`
       await input.fill(text)
       await input.press('Enter')
-      const card = page.locator('.pending-submission')
+      const card = page.locator('.pending-submission').filter({ visible: true })
       await card.getByText('Harness 没有在时限内答复。', { exact: true }).waitFor()
       await card.getByRole('button', { name: '重试这次提交', exact: true }).click()
       await expect.poll(() => requests.length).toBe(2)
@@ -278,9 +279,7 @@ test('a Harness that cannot start is a refusal, not an unconfirmed message: the 
           body: JSON.stringify({ error: 'agent-start-failed', message: 'Flaky Agent 启动失败：进程退出（退出码 1）' }),
         })
       })
-      const row = page.locator(`[data-task-id="${sessionId}"]`).first()
-      if (!(await row.isVisible())) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-      await row.click()
+      await openSession(page, sessionId)
       const input = page.getByRole('textbox', { name: '继续对话', exact: true })
       const text = `发给起不来的 Agent ${width}`
       await input.fill(text)
@@ -289,7 +288,7 @@ test('a Harness that cannot start is a refusal, not an unconfirmed message: the 
       await notice.waitFor()
       await notice.getByRole('button', { name: '打开设置 › Harness', exact: true }).waitFor()
       await notice.getByRole('button', { name: '重试', exact: true }).waitFor()
-      expect(await page.locator('.pending-submission').count()).toBe(0)
+      expect(await page.locator('.pending-submission').filter({ visible: true }).count()).toBe(0)
       expect(await input.inputValue()).toBe(text)
       await page.screenshot({ path: `${SHOTS}/start-failed--${scheme}--${width}.png` })
       const answered = page.waitForResponse(response => response.url().endsWith(`/tasks/${sessionId}/prompt`))
@@ -297,11 +296,11 @@ test('a Harness that cannot start is a refusal, not an unconfirmed message: the 
       await answered
       expect(tries).toBe(2)
       await notice.waitFor()
-      await expect.poll(() => page.locator('.pending-submission').count()).toBe(0)
+      await expect.poll(() => page.locator('.pending-submission').filter({ visible: true }).count()).toBe(0)
       // Nothing is held for later: a reload has no unconfirmed message, here or for the next session.
       await page.reload()
       await page.locator('.app-shell').waitFor()
-      expect(await page.locator('.pending-submission').count()).toBe(0)
+      expect(await page.locator('.pending-submission').filter({ visible: true }).count()).toBe(0)
       await context.close()
     }
   } finally {
@@ -357,7 +356,7 @@ test('only a message the Host lists by this requestId counts as delivered, from 
     })
     await page.locator(`[data-task-id="${home}"]`).first().click()
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })
-    const card = page.locator('.pending-submission')
+    const card = page.locator('.pending-submission').filter({ visible: true })
 
     // Same text, another requestId: never taken for this one.
     await input.fill('同样的文字')
@@ -438,7 +437,7 @@ test('a new full-access session shows what was sent at once, as any other start 
     const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
     await input.fill('echo 完全访问的第一条')
     await input.press('Meta+Enter')
-    const pending = page.locator('.sending-message')
+    const pending = page.locator('.sending-message').filter({ visible: true })
     await expect.poll(() => pending.getByText('echo 完全访问的第一条', { exact: true }).isVisible()).toBe(true)
     await expect.poll(() => pending.getByText('发送中…', { exact: true }).isVisible()).toBe(true)
     expect(starts).toMatchObject([{ prompt: 'echo 完全访问的第一条', harnessId: 'fake' }])

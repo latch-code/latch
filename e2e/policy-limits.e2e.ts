@@ -10,7 +10,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSession, openSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/policy-limits'
 const VIEWPORTS = [
@@ -240,10 +240,10 @@ describe('what this computer can take back', () => {
       const response = await local.request('preferences', { method: 'PUT', body: route.request().postDataJSON() as object })
       await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() })
     })
-    const picker = page.locator('.composer-stack .model-picker')
+    const picker = page.locator('.composer-stack .model-picker').filter({ visible: true })
     await picker.click()
     await page.getByRole('menuitemradio', { name: /model-a/u }).click()
-    const harness = page.locator('.composer-stack .harness-picker')
+    const harness = page.locator('.composer-stack .harness-picker').filter({ visible: true })
     await harness.click()
     await page.getByRole('menuitem', { name: '设为新会话默认' }).click()
     // The pin says itself: 取消新会话默认 and its icon, without a sentence.
@@ -261,9 +261,10 @@ describe('what this computer can take back', () => {
     await expect.poll(() => picker.textContent()).toContain('model-a')
     await picker.click()
     await page.getByRole('menuitemradio', { name: /model-b/u }).click()
-    await page.locator('.composer-stack textarea').fill('这一次用另一个模型')
+    await page.locator('.composer-stack textarea').filter({ visible: true }).fill('这一次用另一个模型')
     await page
       .locator('.composer-stack')
+      .filter({ visible: true })
       .getByRole('button', { name: /发送|开始/u })
       .click()
     await expect
@@ -282,13 +283,13 @@ describe('what this computer can take back', () => {
     const remote = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN' })
     const elsewhere = await remote.newPage()
     await enrollBrowser(elsewhere, host, { name: 'elsewhere', scopes: ['view', 'run', 'approve:standard', 'admin'] })
-    const there = elsewhere.locator('.composer-stack .model-picker')
+    const there = elsewhere.locator('.composer-stack .model-picker').filter({ visible: true })
     await there.click()
     await elsewhere.getByRole('menuitemradio', { name: /model-b/u }).click()
     await elsewhere.reload()
     await connected(elsewhere)
     await expect.poll(() => there.textContent()).toContain('model-b')
-    await elsewhere.locator('.composer-stack .harness-picker').click()
+    await elsewhere.locator('.composer-stack .harness-picker').filter({ visible: true }).click()
     expect(await elsewhere.getByRole('menuitem', { name: /新会话默认/u }).count()).toBe(0)
     await elsewhere.keyboard.press('Escape')
     await remote.close()
@@ -305,7 +306,7 @@ describe('what this computer can take back', () => {
   it('reports a pin that failed in the menu, and leaves the choice unset', async () => {
     const { page, context } = await open(VIEWPORTS[2], 'dark')
     await page.route('**/link/api/preferences', route => route.fulfill({ status: 500, json: { error: 'internal', message: '没有保存' } }))
-    await page.locator('.composer-stack .harness-picker').click()
+    await page.locator('.composer-stack .harness-picker').filter({ visible: true }).click()
     await page.getByRole('menuitem', { name: '设为新会话默认' }).click()
     await page.getByText('没有保存', { exact: false }).waitFor()
     await page.screenshot({ path: `${OUTPUT}/pin-failed--desktop--dark.png` })
@@ -330,15 +331,7 @@ describe('what this computer can take back', () => {
       context.setDefaultTimeout(15_000)
       const page = await context.newPage()
       await enrollBrowser(page, host, { name: `toast-${viewport.name}`, scopes: ['view', 'run', 'approve:standard', 'admin'] })
-      if (viewport.name === 'tablet') {
-        // The session panel is folded at this width; a session started here opens by itself.
-        await page.locator('.composer-stack textarea').fill('再说一句')
-        await page
-          .locator('.composer-stack')
-          .getByRole('button', { name: /发送|开始/u })
-          .click()
-        await page.getByText('再说一句', { exact: true }).first().waitFor()
-      } else await page.locator(`[data-task-id="${created.sessionId}"]:visible`).first().click()
+      await openSession(page, created.sessionId)
       const composer = page.locator('.composer-stack:visible').first()
       await composer.waitFor()
       if (viewport.name === 'phone') {

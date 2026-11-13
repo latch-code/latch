@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { settleShell } from './helpers/layout.ts'
+import { openSession, settleShell } from './helpers/layout.ts'
 
 const slides = (active = ' active') =>
   Array.from({ length: 4 }, (_, index) => `<section class="slide${index === 0 ? active : ''}"><h1>Slide ${index + 1}</h1></section>`).join(
@@ -356,8 +356,7 @@ describe('HTML presentations', () => {
         page.setDefaultTimeout(15_000)
         try {
           await enrollBrowser(page, app, { name: `Deck ${width}`, scopes: ['admin'] })
-          if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-          await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+          await openSession(page, sessionId)
           await page.getByRole('button', { name: '预览文件：deck.html', exact: true }).click()
           const preview = page.getByRole('region', { name: '文件预览', exact: true })
           const element = page.locator('iframe[title="文档预览"]')
@@ -429,7 +428,7 @@ describe('HTML presentations', () => {
             await page.getByRole('menuitem', { name: /按桌面尺寸显示/u }).click()
             await page.reload()
             await page.locator('.app-shell[data-connection="connected"]').waitFor()
-            await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+            await openSession(page, sessionId)
             if ((await page.locator('iframe[title="文档预览"]').count()) === 0)
               await page.getByRole('button', { name: '预览文件：deck.html', exact: true }).click()
             await page.frameLocator('iframe[title="文档预览"]').getByText('Slide 1', { exact: true }).waitFor()

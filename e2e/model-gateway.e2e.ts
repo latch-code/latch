@@ -7,9 +7,11 @@ import { AGENT_PRESETS, type AppSnapshot, type ProviderSettings, type TaskDetail
 import { FAKE_ACP_AGENT, startFakeModels, type FakeModels, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/model-gateway'
+const shownText = (page: Page, text: string | RegExp, options?: { exact?: boolean }) =>
+  page.getByText(text, options).filter({ visible: true })
 const KEY = 'sk-e2e-service-key-0123456789abcdef'
 /** Codex's own list, as its model/list answers before any session: the models it knows. */
 const CODEX_MODELS = JSON.stringify(
@@ -32,7 +34,7 @@ const input = (page: Page) => page.getByRole('textbox', { name: '新会话消息
 const chip = (page: Page, name: string): Locator => page.getByRole('button', { name: new RegExp(`^${name}：`, 'u') }).first()
 /** Words of the model menu, not the same words in the composer's status line or its tooltips. */
 const menuText = (page: Page, text: string): Locator =>
-  page.getByText(text, { exact: true }).and(page.locator(':not(.composer-status, .composer-status *)'))
+  shownText(page, text, { exact: true }).and(page.locator(':not(.composer-status, .composer-status *)'))
 const row = (page: Page, name: RegExp | string) =>
   page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
 
@@ -45,7 +47,7 @@ function savedPreset(id: string) {
 
 async function sendDraft(page: Page): Promise<void> {
   await input(page).press('Meta+Enter')
-  const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
+  const elsewhere = page.getByRole('menuitemradio', { name: /^不选项目/u }).or(page.getByRole('radio', { name: /^不选项目/u }))
   const sent = page.getByRole('textbox', { name: '继续对话', exact: true })
   await elsewhere.or(sent).first().waitFor({ timeout: 20_000 })
   if (await elsewhere.isVisible()) {
@@ -166,17 +168,12 @@ describe('a Harness with its own models on a saved service', () => {
     ] as const) {
       const page = await open(width, theme)
       if (width === 390) {
-        for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
-          if (await button.isVisible()) {
-            await button.click()
-            break
-          }
-        }
+        await page.getByRole('button', { name: '新会话选项', exact: true }).click()
         const sheet = page.locator('.new-session-sheet')
         await sheet.waitFor()
         await sheet.getByRole('button', { name: /^模型/u }).click()
       } else await chip(page, '模型').click()
-      await page.getByText('OpenAI · 实验性 · 经 Latch', { exact: true }).waitFor()
+      await shownText(page, 'OpenAI · 实验性 · 经 Latch', { exact: true }).waitFor()
       await noHorizontalOverflow(page)
       await shot(page, `draft-menu-${width}-${theme}`)
       await row(page, 'fake-model').click()
@@ -197,23 +194,23 @@ describe('a Harness with its own models on a saved service', () => {
   it('lists the service Codex speaks under 经 Latch, starts on its model, and sends the turn through Latch', async () => {
     const page = await open(1440, 'light')
     await chip(page, '模型').click()
-    await page.getByText('OpenAI · 实验性 · 经 Latch', { exact: true }).waitFor()
+    await shownText(page, 'OpenAI · 实验性 · 经 Latch', { exact: true }).waitFor()
     // A service Codex does not speak is not offered: one folded row counts it, and opening it says why; nor is a model it
     // does not know offered.
     const unusable = menuText(page, '1 个服务用不了')
     await unusable.waitFor()
-    expect(await page.getByText('DeepSeek', { exact: true }).count()).toBe(0)
+    expect(await shownText(page, 'DeepSeek', { exact: true }).count()).toBe(0)
     await unusable.click()
     await menuText(page, 'Codex 只说 Responses，这个服务是 Chat Completions').waitFor()
     await menuText(page, 'DeepSeek').waitFor()
-    expect(await page.getByText(/尚未实现/u).count()).toBe(0)
-    await page.getByText('Relay · 实验性 · 经 Latch', { exact: true }).waitFor()
+    expect(await shownText(page, /尚未实现/u).count()).toBe(0)
+    await shownText(page, 'Relay · 实验性 · 经 Latch', { exact: true }).waitFor()
     await expect.poll(() => row(page, 'deepseek-v3').getAttribute('aria-disabled')).toBe('true')
-    await page.getByText('Codex 不认识这个模型', { exact: true }).waitFor()
+    await shownText(page, 'Codex 不认识这个模型', { exact: true }).waitFor()
     // What it promises is what the Host checks: a whole turn that did not reach Latch.
     // A browser names the computer where the Latch app on it says 这台 Mac.
     // A short label; what it means and whose key it uses stays behind its ⓘ.
-    const forwarded = page.locator('.ui-hint', { hasText: '经 Latch 转发' })
+    const forwarded = page.locator('.ui-hint', { hasText: '经 Latch 转发' }).filter({ visible: true })
     await forwarded.getByRole('button', { name: '说明', exact: true }).click()
     await page
       .getByText(/^「经 Latch」表示请求由 Latch 在 \S+ 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。$/u)
@@ -253,12 +250,12 @@ describe('a Harness with its own models on a saved service', () => {
 
     // In the session the service is fixed; the menu says where its requests go.
     await chip(page, '模型').click()
-    const routed = page.locator('.ui-hint', { hasText: '经 Latch 用「OpenAI」' })
+    const routed = page.locator('.ui-hint', { hasText: '经 Latch 用「OpenAI」' }).filter({ visible: true })
     await routed.getByRole('button', { name: '说明', exact: true }).click()
     await routed.getByText(/^请求由 Latch 在 \S+ 上转发，用设置里的密钥。$/u).waitFor()
     // What Codex lists now is that service's; another service it speaks needs a new session.
     await menuText(page, 'OpenAI · 经 Latch').waitFor()
-    await page.getByText('开始后不能换服务', { exact: true }).waitFor()
+    await shownText(page, '开始后不能换服务', { exact: true }).waitFor()
     expect(await menuText(page, 'Codex 自己的模型').count()).toBe(0)
     // The service it cannot use stays folded in the session too.
     await menuText(page, '1 个服务用不了').waitFor()
@@ -275,7 +272,7 @@ describe('a Harness with its own models on a saved service', () => {
     await expect.poll(() => page.locator('.composer-status [data-seg="route"]').innerText()).toBe('OpenAI · 已停用')
     await menuText(page, '这个会话开始时用的「OpenAI」已停用，下一轮会失败。在设置 › 模型里重新打开它，或新开一个会话。').waitFor()
     await expect.poll(() => row(page, 'fake-model-large').getAttribute('aria-disabled')).toBe('true')
-    expect(await page.getByText(/经 Latch 用|openai · /u).count()).toBe(0)
+    expect(await shownText(page, /经 Latch 用|openai · /u).count()).toBe(0)
     await shot(page, 'service-off-menu-1440-light')
     await page.keyboard.press('Escape')
     const composer = page.getByRole('textbox', { name: '继续对话', exact: true })
@@ -390,8 +387,8 @@ describe('Gemini CLI on a saved Gemini service', () => {
     await chip(page, '模型').click()
     await menuText(page, 'MyGemini · 经 Latch').waitFor()
     await row(page, 'fake-model-large').waitFor()
-    expect(await page.getByText('Fake Small', { exact: true }).count()).toBe(0)
-    expect(await page.getByText('vendor/typed', { exact: true }).count()).toBe(0)
+    expect(await shownText(page, 'Fake Small', { exact: true }).count()).toBe(0)
+    expect(await shownText(page, 'vendor/typed', { exact: true }).count()).toBe(0)
     await shot(page, 'gemini-session-menu-1440-light')
     await row(page, 'fake-model-large').click()
     await expect.poll(() => chip(page, '模型').innerText()).toContain('fake-model-large')
@@ -525,15 +522,18 @@ describe('a turn through Latch shows what the service said it used', () => {
     await second.locator('.assistant-meta-chosen').getByText('选的是 fake-model', { exact: true }).waitFor()
     expect(await second.locator('.assistant-meta-model').innerText()).toBe('fake-model-preview')
     await second.hover()
-    await second.locator('.turn-fact', { hasText: '输出 5 tokens' }).hover()
-    const tip = page.locator('.ui-tooltip:popover-open')
-    await tip.getByText('由模型服务在回复里报告，Latch 转发时读取', { exact: true }).waitFor()
-    await tip.getByText('fake-model：1 次，服务说用的是 fake-model-preview · 输入 10 tokens · 输出 5 tokens', { exact: true }).waitFor()
+    await second.getByRole('button', { name: '请求记录', exact: true }).click()
+    const requests = page.locator('.ui-popover:popover-open')
+    await requests
+      .getByText('fake-model：1 次，服务说用的是 fake-model-preview · 输入 10 tokens · 输出 5 tokens', { exact: true })
+      .waitFor()
     await shot(page, 'usage-1440-light')
+    await page.keyboard.press('Escape')
     // The third: the service failed, so there are no tokens to show and the request did not complete.
     const third = turn(page, 2)
     await third.hover()
     await third.locator('.turn-fact', { hasText: '经 Latch 1 次请求' }).hover()
+    const tip = page.locator('.ui-tooltip:popover-open')
     await tip.getByText('fake-model：1 次，1 次没有完成', { exact: true }).waitFor()
     await shot(page, 'usage-failed-1440-light')
     expect(await third.locator('.turn-footer').innerText()).not.toContain('输入')
@@ -544,13 +544,13 @@ describe('a turn through Latch shows what the service said it used', () => {
     const fourth = turn(page, 3)
     await fourth.hover()
     await expect.poll(() => fourth.locator('.turn-footer').innerText(), { timeout: 10_000 }).toContain('输入 10 tokens')
-    await fourth.locator('.turn-fact', { hasText: '输出 5 tokens' }).hover()
-    await tip.getByText('fake-model：1 次 · 输入 10 tokens · 输出 5 tokens', { exact: true }).waitFor()
-    expect(await tip.innerText()).not.toContain('没有')
+    await fourth.getByRole('button', { name: '请求记录', exact: true }).click()
+    await requests.getByText('fake-model：1 次 · 输入 10 tokens · 输出 5 tokens', { exact: true }).waitFor()
+    expect(await requests.innerText()).not.toContain('没有')
     // The session does not wait for the stream the service still holds.
     await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks[0]?.status, { timeout: 10_000 }).toBe('idle')
     // The list shows a status for at least a second, so after a turn this short it says so a moment later.
-    await expect.poll(() => page.getByText('运行中', { exact: true }).count(), { timeout: 10_000 }).toBe(0)
+    await expect.poll(() => shownText(page, '运行中', { exact: true }).count(), { timeout: 10_000 }).toBe(0)
     await shot(page, 'usage-lingering-1440-light')
 
     // The record is the Host's: the same after a reload, and it holds no text of the turns.
@@ -611,7 +611,7 @@ describe('a turn through Latch shows what the service said it used', () => {
       [390, 'dark'],
     ] as const) {
       const view = await open(width, theme)
-      await view.getByText(task!.title, { exact: true }).first().click()
+      await openSession(view, task!.id)
       await turn(view, 1).locator('.assistant-meta-chosen').waitFor()
       await turn(view, 1).click({ position: { x: 4, y: 4 } })
       await noHorizontalOverflow(view)

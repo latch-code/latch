@@ -1,12 +1,14 @@
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
+import { resolve, join } from 'node:path'
+import { readFile, writeFile } from 'node:fs/promises'
+import type { HarnessPlugin } from '@latch/sdk'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { TestDevice } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSession, reachable } from './helpers/layout.ts'
 import { motions, tokens } from './helpers/motion.ts'
 
 /**
@@ -65,10 +67,64 @@ describe('the phone stack', () => {
     context.setDefaultTimeout(15_000)
     const page = await context.newPage()
     await enrollBrowser(page, fixture, { name, ...(admin ? { scopes: ['admin'] } : {}) })
+    await page.locator('.workbench-home').waitFor()
+    await page.getByRole('button', { name: '全部会话', exact: true }).click()
+    await page.locator('.phone-list:not([inert])').waitFor()
     return { context, page }
   }
 
-  it('opens on the session list and pushes a session over it, then slides back to it', async () => {
+  for (const layout of ['overview', 'triage'] as const)
+    for (const width of [320, 390])
+      it(`${layout} ${width}: Code returns Home and history stays an explicit entry, preserving its draft`, async () => {
+        const { context, page } = await phone('reduce', `首页返回 ${layout} ${width}`)
+        try {
+          await page.setViewportSize({ width, height: 844 })
+          if (layout === 'triage') {
+            await page.getByRole('button', { name: '布局', exact: true }).click()
+            await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
+          }
+          await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
+          const home = page.locator('.workbench-home')
+          await home.waitFor()
+          const input = home.getByRole('textbox', { name: '新会话消息', exact: true })
+          await input.fill('首页尚未发送的草稿')
+          const before = (await local.json<{ tasks: unknown[] }>('snapshot')).tasks.length
+          const request = home.locator(`[data-work-session="${sessions[1]}"]`)
+          await request.locator('.work-decision-session').click()
+          await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
+          await settled(page)
+          await expect
+            .poll(() =>
+              page.locator('.phone-list').evaluate(element => ({
+                inert: element instanceof HTMLElement && element.inert,
+                overview: document.querySelector('.app-shell')?.hasAttribute('data-overview'),
+                leaving: document.querySelector('main.workspace')?.hasAttribute('data-leaving'),
+              })),
+            )
+            .toEqual({ inert: true, overview: false, leaving: false })
+          await page.locator('.topbar[data-phone]').getByRole('button', { name: '返回总览', exact: true }).click()
+          await home.waitFor()
+          expect(await input.inputValue()).toBe('首页尚未发送的草稿')
+          expect(await page.locator('main.workspace').getAttribute('inert')).not.toBeNull()
+          await home.getByRole('button', { name: '全部会话', exact: true }).click()
+          const list = page.locator('.phone-list:not([inert])')
+          await list.locator(`[data-task-id="${sessions[0]}"]`).click()
+          await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
+          await page.getByRole('button', { name: '返回会话列表', exact: true }).click()
+          await list.waitFor()
+          await reachable(list.getByRole('searchbox', { name: '搜索会话', exact: true }))
+          await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
+          await home.waitFor()
+          expect(await input.inputValue()).toBe('首页尚未发送的草稿')
+          expect((await local.json<{ tasks: unknown[] }>('snapshot')).tasks.length).toBe(before)
+          await noHorizontalOverflow(page)
+          await page.screenshot({ path: `test-results/phone-home-${layout}-${width}.png`, animations: 'disabled' })
+        } finally {
+          await context.close()
+        }
+      })
+
+  it('opens the session list from Home and pushes a session over it, then slides back to it', async () => {
     const { context, page } = await phone('no-preference', '动效手机')
     try {
       const list = page.locator('#session-navigation')
@@ -107,7 +163,8 @@ describe('the phone stack', () => {
 
       // The header and the conversation share one canvas.
       const header = page.locator('.topbar[data-phone]')
-      expect((await header.boundingBox())!.height).toBe(52)
+      // A 44px touch target, 8px padding on each side, and the 1px divider.
+      expect((await header.boundingBox())!.height).toBe(61)
       await reachable(header.getByRole('button', { name: '返回会话列表', exact: true }))
       await reachable(header.getByRole('button', { name: '侧边面板', exact: true }))
       await reachable(header.locator('.topbar-title-button'))
@@ -293,8 +350,10 @@ describe('the phone stack', () => {
       // The panel, a page over the session: back returns to the conversation. Touch has no keys to name, so its rows name none.
       await header.getByRole('button', { name: '侧边面板', exact: true }).click()
       const info = page.getByRole('region', { name: '侧边面板', exact: true })
-      await reachable(info.locator('.panel-launcher-row').first())
-      expect(await info.locator('.panel-launcher-row .ui-kbd').first().isVisible()).toBe(false)
+      await info.getByRole('tabpanel', { name: '会话概要', exact: true }).waitFor()
+      await reachable(info.getByRole('tab', { name: '概要', exact: true }))
+      await info.getByRole('heading', { name: '这次改动', exact: true }).waitFor()
+      expect(await info.locator('.ui-kbd').filter({ visible: true }).count()).toBe(0)
       await page.goBack()
       await info.waitFor({ state: 'detached' })
       expect(await page.locator('main.workspace').count()).toBe(1)
@@ -325,6 +384,88 @@ describe('the phone stack', () => {
       await reachable(list.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }))
     } finally {
       await context.close()
+    }
+  })
+
+  it('cancels leaving an unsaved file without leaving the conversation in its exit state', async () => {
+    const provider: HarnessPlugin = {
+      id: 'phone-edit-return',
+      name: 'Fixture',
+      version: '1',
+      description: '',
+      activate(ctx) {
+        ctx.registerProvider({
+          id: 'phone-edit-return',
+          name: 'Fixture',
+          model: 'fixture',
+          async *stream() {
+            yield { type: 'text', text: '文件：[phone-return.txt](phone-return.txt)' }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ demo: false, plugins: [provider] })
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      locale: 'zh-CN',
+      reducedMotion: 'no-preference',
+    })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    try {
+      const file = join(host.workspaceRoot, 'phone-return.txt')
+      await writeFile(file, 'saved\n')
+      const { sessionId } = await host.host.bridge.createTask({
+        prompt: '编辑后返回',
+        requestId: randomUUID(),
+        mode: 'agent',
+        model: { providerId: provider.id, model: 'fixture' },
+      })
+      await expect.poll(async () => (await host.host.bridge.detail(sessionId)).summary.status).toBe('idle')
+      await enrollBrowser(page, host, { name: '编辑返回手机', scopes: ['admin'] })
+      const owner = await host.enroll({ listener: 'unix' })
+      const deviceId = host.host.security.devices.list().find(device => device.name === '编辑返回手机')!.id
+      expect((await owner.confirmed(`devices/${deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+      await page.reload()
+      await openSession(page, sessionId)
+      await page.locator('.transcript').getByRole('button', { name: '预览文件：phone-return.txt', exact: true }).click()
+      const preview = page.getByRole('region', { name: '文件预览', exact: true })
+      await preview.getByRole('button', { name: '编辑', exact: true }).click()
+      const editor = page.getByRole('region', { name: '编辑 phone-return.txt', exact: true })
+      const area = editor.getByLabel('phone-return.txt 的内容', { exact: true })
+      await area.fill('unsaved phone edit\n')
+      // Rotate to the tablet layout to change tabs without discarding the edit, then return to the portrait conversation.
+      await page.setViewportSize({ width: 844, height: 390 })
+      await page.locator('.info-page').waitFor({ state: 'detached' })
+      await page.locator('.inspector-column').getByRole('tab', { name: '文件', exact: true }).click()
+      await editor.waitFor({ state: 'detached' })
+      await page.setViewportSize({ width: 390, height: 844 })
+      await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()
+      await page.locator('.info-page').waitFor({ state: 'detached' })
+      await page.locator('.topbar[data-phone]').getByRole('button', { name: '返回会话列表', exact: true }).click()
+      const confirm = page.getByRole('dialog', { name: '放弃你的修改？', exact: true })
+      await confirm.getByRole('button', { name: '取消', exact: true }).click()
+      await confirm.waitFor({ state: 'hidden' })
+      const conversation = page.locator('main.workspace')
+      await expect.poll(() => conversation.getAttribute('data-leaving')).toBeNull()
+      await reachable(page.locator('.topbar[data-phone]').getByRole('button', { name: '侧边面板', exact: true }))
+      await page.locator('.topbar[data-phone]').getByRole('button', { name: '侧边面板', exact: true }).click()
+      await page.getByRole('tab', { name: /phone-return\.txt/u }).click()
+      expect(await area.inputValue()).toBe('unsaved phone edit\n')
+      await editor.getByRole('button', { name: '保存', exact: true }).click()
+      await preview.getByRole('status').filter({ hasText: '已保存' }).waitFor()
+      expect(await readFile(file, 'utf8')).toBe('unsaved phone edit\n')
+      await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()
+      await page.locator('.info-page').waitFor({ state: 'detached' })
+      await page.locator('.topbar[data-phone]').getByRole('button', { name: '返回会话列表', exact: true }).click()
+      await page.locator('.phone-list:not([inert])').waitFor()
+      await reachable(page.locator('.phone-list').locator(`[data-task-id="${sessionId}"]`))
+    } finally {
+      await context.close()
+      await host.close()
     }
   })
 

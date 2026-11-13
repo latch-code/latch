@@ -6,7 +6,7 @@ Vitest 驱动浏览器、Electron、原生链路；`startTestHost` 启动临时 
 | --- | --- |
 | `*.e2e.ts` | 浏览器登记、接管、流式、审批、插件、项目、布局、搜索与文件预览；桌面壳为 `desktop*.e2e.ts`（`LATCH_ELECTRON_E2E=1`，仅 macOS），场景与截图见 [TESTING.md](../docs/TESTING.md) |
 | `helpers/host.ts`、`helpers/browser.ts` | `startTestHost`（经 `@latch/host` 绑定 testkit 的夹具，与 `apps/host/test/helpers/host.ts`、`apps/desktop/test/helpers/host.ts` 保持一致）；`enrollBrowser`、`connected` 与 `browserLaunchOptions` |
-| `helpers/layout.ts`、`helpers/motion.ts`、`helpers/visual.ts`、`helpers/security.ts` | 控件可达、横向溢出、回到手机的会话列表与打开、离开设置（含从分区里的页面一级级返回）；按令牌读出的过渡与动画；视觉截图的视口、固定时钟与冻结的动作（`stillMotion`）、截图、索引与逐像素比较；向页面注入样式并核对安全界面不变 |
+| `helpers/layout.ts`、`helpers/motion.ts`、`helpers/visual.ts`、`helpers/security.ts` | 可达与溢出、按 Host ID 打开会话、手机历史与设置返回；按令牌读出的过渡与动画；视觉截图的视口、固定时钟与冻结的动作（`stillMotion`）、截图、索引与逐像素比较；向页面注入样式并核对安全界面不变 |
 | `vitest.config.ts` | 文件依次运行，用例与钩子超时 120 秒 |
 
 `desktop-native.e2e.ts` 检查 Mac 手机配置、系统确认接线、三宽浅深色和样式覆盖；只截无邀请的设置，生成的二维码不截图。

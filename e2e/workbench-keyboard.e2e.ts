@@ -7,7 +7,7 @@ import type { AppSnapshot, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
+import { backToPhoneSessions, noHorizontalOverflow, openSession, reachable, settleShell } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
 
 async function choose(page: Page, title: string) {
@@ -111,28 +111,33 @@ it.each([
       const draft = `仅保留的键盘草稿 ${width} ${theme}`
       await input.fill(draft)
       const callsBefore = modelCalls
-      const snapshot = await page.evaluate(async () => (await (await fetch('/link/api/snapshot')).json()) as Promise<AppSnapshot>)
-      const ordered = snapshot.tasks.filter(task => active.includes(task.id)).toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      expect(ordered).toHaveLength(3)
+      // Read the actual list at this width; the desktop project tree and phone history have different grouping.
+      if (width < 768) await backToPhoneSessions(page)
+      else {
+        const opener = page.getByRole('button', { name: '打开会话列表', exact: true })
+        if (await opener.isVisible()) await opener.click()
+      }
+      await settleShell(page)
+      const rows = page.locator(width < 768 ? '.phone-list:not([inert]) [data-task-id]' : '.sidebar [data-task-id]')
+      const orderedIds = (await rows.evaluateAll(elements => elements.map(element => element.getAttribute('data-task-id')!))).filter(id =>
+        active.includes(id),
+      )
+      expect(new Set(orderedIds).size).toBe(3)
+      if (width >= 768) {
+        await page.keyboard.press('Escape')
+        await settleShell(page)
+      } else await openSession(page, neutralId)
       const selected = async (id: string) => {
         const detail = details.find(item => item.summary.id === id)!
         const message = detail.messages.find(item => item.role === 'user')!
         await page.locator(`.transcript [data-message-id="${message.id}"]`).waitFor({ state: 'visible' })
       }
-      // The steps follow the rows as drawn: what waits leads the list, so the open session is the last row.
-      const waiting = ordered.filter(task => task.status === 'waiting-approval')
-      expect(waiting).toHaveLength(2)
-      // The digits jump to the Nth row as drawn (waiting, waiting, then the open one); past the list they do nothing.
-      // None of them reaches the draft, which a Mac's ⌥ digits would otherwise type into (⌥9 is ª).
+      // Alt digits follow the drawn rows, and never type into the parked draft.
+      const neutralIndex = orderedIds.indexOf(neutralId)
       const url = page.url()
-      for (const [digit, id] of [
-        ['3', neutralId],
-        ['1', waiting[0]!.id],
-        ['2', waiting[1]!.id],
-        ['3', neutralId],
-      ] as const) {
-        await page.keyboard.press(`Alt+${digit}`)
-        await selected(id)
+      for (const index of [2, 0, 1, neutralIndex]) {
+        await page.keyboard.press(`Alt+${index + 1}`)
+        await selected(orderedIds[index]!)
       }
       await page.keyboard.press('Alt+9')
       await page.waitForTimeout(300)
@@ -141,11 +146,11 @@ it.each([
       expect(page.url()).toBe(url)
       expect(context.pages()).toHaveLength(1)
       await page.keyboard.press('Alt+]')
-      await selected(waiting[0]!.id)
+      await selected(orderedIds[(neutralIndex + 1) % orderedIds.length]!)
       await page.keyboard.press('Alt+[')
       await selected(neutralId)
       await page.keyboard.press('Alt+[')
-      await selected(waiting[1]!.id)
+      await selected(orderedIds[(neutralIndex + orderedIds.length - 1) % orderedIds.length]!)
       await page.keyboard.press('Alt+]')
       await selected(neutralId)
 
@@ -169,7 +174,7 @@ it.each([
       await mkdir('test-results/workbench-keyboard', { recursive: true })
       await page.screenshot({ path: `test-results/workbench-keyboard/approval-${width}-${theme}.png`, animations: 'disabled' })
       // The input of a session waiting on a request is named for what typing does there.
-      expect(await page.locator('.composer textarea').inputValue()).toBe('')
+      expect(await page.locator('.composer textarea').filter({ visible: true }).inputValue()).toBe('')
       await choose(page, neutral.summary.title)
       expect(await input.inputValue()).toBe(draft)
 

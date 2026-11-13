@@ -109,29 +109,29 @@ describe('resizable sidebar', () => {
   }
 
   it('follows a drag, remembers the width and resets on a double click', async () => {
-    expect(await sidebarWidth()).toBe(248)
-    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('248')
+    expect(await sidebarWidth()).toBe(264)
+    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('264')
     await drag(60)
-    await expect.poll(sidebarWidth).toBe(308)
+    await expect.poll(sidebarWidth).toBe(324)
     // The text under the drag is not selected, and the page is no longer marked as resizing once released.
     expect(await page.evaluate(() => getSelection()?.toString() ?? '')).toBe('')
     expect(await page.evaluate(() => document.documentElement.hasAttribute('data-resizing'))).toBe(false)
     await reload()
-    expect(await sidebarWidth()).toBe(308)
+    expect(await sidebarWidth()).toBe(324)
     await drag(400)
     await expect.poll(sidebarWidth).toBe(400)
     await handle().dblclick()
-    await expect.poll(sidebarWidth).toBe(248)
+    await expect.poll(sidebarWidth).toBe(264)
     await reload()
-    expect(await sidebarWidth()).toBe(248)
+    expect(await sidebarWidth()).toBe(264)
   })
 
   it('steps with the arrow keys, goes to the ends with Home and End, and shuts and opens with Enter', async () => {
     await handle().focus()
     await page.keyboard.press('ArrowRight')
-    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('256')
+    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('272')
     await page.keyboard.press('Shift+ArrowLeft')
-    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('224')
+    await expect.poll(() => handle().getAttribute('aria-valuenow')).toBe('240')
     await page.keyboard.press('Home')
     await expect.poll(sidebarWidth).toBe(220)
     await page.keyboard.press('End')
@@ -143,19 +143,19 @@ describe('resizable sidebar', () => {
     await page.keyboard.press('Enter')
     await expect.poll(sidebarWidth).toBe(400)
     await handle().dblclick()
-    await expect.poll(sidebarWidth).toBe(248)
+    await expect.poll(sidebarWidth).toBe(264)
   })
 
   it('snaps shut when dragged past 160 and opens again at its last width, from the top bar or by dragging the edge', async () => {
     await drag(-20)
-    await expect.poll(sidebarWidth).toBe(228)
+    await expect.poll(sidebarWidth).toBe(244)
     await drag(-200)
     await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
     await expect.poll(sidebarWidth).toBe(SHUT)
     await reload()
     await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
     await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
-    await expect.poll(sidebarWidth).toBe(228)
+    await expect.poll(sidebarWidth).toBe(244)
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('收起侧栏')
     await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
     await page.locator('.app-shell[data-sidebar="collapsed"]').waitFor()
@@ -172,11 +172,11 @@ describe('resizable sidebar', () => {
     await expect.poll(sidebarWidth).toBe(250)
     await page.locator('.app-shell[data-sidebar="open"]').waitFor()
     await handle().dblclick()
-    await expect.poll(sidebarWidth).toBe(248)
+    await expect.poll(sidebarWidth).toBe(264)
   })
 
   it('slides shut when a drag passes the snap point and slides open when a drag pulls it out again', async () => {
-    expect(await sidebarWidth()).toBe(248)
+    expect(await sidebarWidth()).toBe(264)
     // Widths that follow the pointer are never under 220, so a frame between the inset and 200 is the column sliding.
     const sliding = (widths: number[]) => widths.filter(width => width > SHUT + 8 && width < 200)
     const shutting = await frames('#session-navigation', () => drag(-200))
@@ -188,7 +188,7 @@ describe('resizable sidebar', () => {
     await expect.poll(sidebarWidth).toBe(300)
     expect(sliding(opening).length).toBeGreaterThan(0)
     await handle().dblclick()
-    await expect.poll(sidebarWidth).toBe(248)
+    await expect.poll(sidebarWidth).toBe(264)
   })
 
   it('moves the top bar title one way while the sidebar shuts and opens, never jumping back', async () => {
@@ -212,9 +212,9 @@ describe('resizable sidebar', () => {
 
   it('keeps one remembered width and the conversation at least 480 wide', async () => {
     await drag(80)
-    await expect.poll(sidebarWidth).toBe(328)
+    await expect.poll(sidebarWidth).toBe(344)
     await page.setViewportSize({ width: 1100, height: 900 })
-    await expect.poll(sidebarWidth).toBe(328)
+    await expect.poll(sidebarWidth).toBe(344)
     await drag(400)
     await expect.poll(sidebarWidth).toBe(400)
     await page.setViewportSize({ width: 1024, height: 900 })
@@ -222,13 +222,13 @@ describe('resizable sidebar', () => {
     expect(await paperWidth()).toBeGreaterThanOrEqual(480)
     await page.setViewportSize({ width: 1440, height: 900 })
     await handle().dblclick()
-    await expect.poll(sidebarWidth).toBe(248)
+    await expect.poll(sidebarWidth).toBe(264)
   })
 })
 
 /**
- * The session panel against a Host whose list says what is really happening: every row on two lines, 等你处理 ahead of the
- * projects with what waits, honest status words, folding, and the row actions. The list is rewritten on its way to the
+ * The v8 project tree against a Host whose list says what is really happening: compact rows, Home attention ahead of
+ * running work, honest accessible status words, folding, and the row actions. The list is rewritten on its way to the
  * page, so a silent run needs no waiting.
  */
 describe('session panel', () => {
@@ -300,52 +300,52 @@ describe('session panel', () => {
   const row = (id: string) => page.locator(`.session-item:has([data-task-id="${id}"])`)
   const height = (id: string) => row(id).evaluate(element => Math.round(element.getBoundingClientRect().height))
 
-  it('gathers what waits ahead of the projects, with a neutral count and what waits in each row', async () => {
-    const shelves = page.locator('nav.session-list .session-group')
-    await expect.poll(() => shelves.first().getAttribute('data-shelf')).toBe('waiting')
-    const waiting = shelves.first()
+  it('gathers work that needs attention on Home while keeping every session in the project tree', async () => {
+    const attention = page.locator('.workbench-home .work-overview-group[data-group="attention"]')
     expect(
-      await waiting.locator('[data-task-id]').evaluateAll(rows => rows.map(item => item.getAttribute('data-task-id')).toSorted()),
-    ).toEqual(['silent', 'waiting'])
-    expect(await waiting.locator('.shelf-count').textContent()).toBe('2')
-    // The tab says what the shelf says.
+      await attention
+        .locator('[data-work-session]')
+        .evaluateAll(rows => rows.map(item => item.getAttribute('data-work-session')).toSorted()),
+    ).toEqual(['failed', 'forced', 'silent', 'waiting'])
+    expect(await attention.locator('.work-overview-group-heading .ui-count').textContent()).toBe('4')
+    // Only the two waiting requests count in the tab; failed and unknown results also need review on Home.
     expect(await page.title()).toBe('(2) Latch')
-    // The shelf says it waits, so the row's first line keeps its time and the second says what waits, in amber.
-    expect(await row('waiting').locator('.ui-status-word').count()).toBe(0)
-    await row('waiting').locator('.ui-status-time').waitFor()
-    expect(await row('waiting').locator('.session-wait').textContent()).toBe('审批')
-    expect(await row('silent').locator('.session-wait').textContent()).toBe('没有动静 3 分钟')
-    expect(
-      await page.locator('.session-group[data-shelf="waiting"] .shelf-count').evaluate(item => getComputedStyle(item).fontVariantNumeric),
-    ).toBe('tabular-nums')
-    // Header rows have no hairline: nothing draws a line under a shelf's head.
-    expect(await waiting.locator('.shelf-head').evaluate(head => getComputedStyle(head).borderBottomStyle)).toBe('none')
+    expect(await attention.locator('[data-work-session="silent"]').textContent()).toContain('没有动静 3 分钟')
+    expect(await attention.locator('[data-work-session="forced"]').textContent()).toContain('2 条结果未知')
+    expect(await attention.locator('[data-work-session="failed"]').textContent()).toContain('失败')
+    const project = page.locator('nav.session-list .session-group[data-shelf="other"]')
+    expect(await project.locator('[data-task-id]').count()).toBe(8)
+    expect(await page.locator('nav.session-list .session-group[data-shelf="waiting"]').count()).toBe(0)
+    expect(await attention.locator('.ui-count').evaluate(item => getComputedStyle(item).fontVariantNumeric)).toBe('tabular-nums')
+    expect(await project.locator('.shelf-head').evaluate(head => getComputedStyle(head).borderBottomStyle)).toBe('none')
   })
 
-  it('gives every session two lines, the second in muted with the Harness mark and the model', async () => {
-    // The status slot's time carries the muted ink, never the fainter one.
-    const muted = await page.evaluate(() => {
+  it('keeps compact project rows readable, with a status glyph and accessible Harness, model and state', async () => {
+    const muted = await row('read').evaluate(item => {
       const probe = document.createElement('span')
       probe.style.color = 'var(--muted)'
-      document.body.append(probe)
+      item.append(probe)
       const value = getComputedStyle(probe).color
       probe.remove()
       return value
     })
     expect(
       await row('read')
-        .locator('.ui-status-time')
+        .locator('.session-row-glyph')
         .evaluate(item => getComputedStyle(item).color),
     ).toBe(muted)
     expect(await row('read').locator('.session-item-main').getAttribute('title')).toContain('main')
-    for (const id of ['read', 'stopped', 'running', 'failed', 'waiting', 'silent', 'stopping', 'forced']) expect(await height(id)).toBe(52)
-    // The built-in Harness is its app icon alone; none of these sessions reported a model.
-    expect(await row('running').locator('.session-meta').textContent()).toBe('默认模型')
-    expect(
-      await row('read')
-        .locator('.session-meta')
-        .evaluate(item => getComputedStyle(item).color),
-    ).toBe(muted)
+    for (const id of ['read', 'stopped', 'running', 'failed', 'waiting', 'silent', 'stopping', 'forced']) {
+      expect(await height(id)).toBe(34)
+      expect(await row(id).locator('.session-row-glyph').isVisible()).toBe(true)
+      expect(await row(id).locator('.session-meta').isVisible()).toBe(false)
+      expect(await row(id).locator('.session-status').isVisible()).toBe(false)
+      expect(await row(id).locator('.session-item-main').ariaSnapshot()).toContain('默认模型')
+    }
+    expect(await row('waiting').locator('.session-row-glyph').getAttribute('data-tone')).toBe('waiting')
+    expect(await row('failed').locator('.session-row-glyph').getAttribute('data-tone')).toBe('failed')
+    expect(await row('running').locator('.session-item-main').ariaSnapshot()).toContain('在等模型')
+    expect(await row('forced').locator('.session-item-main').ariaSnapshot()).toContain('2 条结果未知')
   })
 
   it('says only what the Host said: what the run does on the clock of the whole run, 正在停止 until settled, then 已停止', async () => {
@@ -389,7 +389,7 @@ describe('session panel', () => {
     await row('read').waitFor()
   })
 
-  it('swaps the status for 归档 and ⋯ on hover', async () => {
+  it('reveals 归档 and ⋯ on hover without clipping status text', async () => {
     await row('read').hover()
     await expect
       .poll(() =>
@@ -407,7 +407,7 @@ describe('session panel', () => {
       .toBe('0')
     await row('read').getByRole('button', { name: '归档：已读会话', exact: true }).waitFor()
     await row('read').getByRole('button', { name: '更多操作：已读会话', exact: true }).waitFor()
-    await page.locator('.topbar').hover()
+    await page.locator('.workbench-home').hover()
   })
 
   it('opens the palette from 搜索', async () => {
@@ -421,17 +421,17 @@ describe('session panel', () => {
   it('draws nothing live while the connection is down, only when it last knew', async () => {
     frozen = true
     await page.context().setOffline(true)
-    await row('running').locator('.session-frozen').waitFor()
+    await expect.poll(() => row('running').locator('.session-item-main').ariaSnapshot()).toContain('状态未更新')
     expect(await row('running').locator('.session-frozen').textContent()).toMatch(/^上次确认 \d\d:\d\d$/)
     expect(await row('running').locator('.ui-spinner').count()).toBe(0)
-    expect(await row('waiting').locator('.ui-status-word').count()).toBe(0)
+    expect(await row('waiting').locator('.session-item-main').ariaSnapshot()).toContain('状态未更新')
     // Frozen, what waits still stands out from what merely ran.
     expect(await row('waiting').evaluate(item => item.classList.contains('is-strong'))).toBe(true)
     expect(await row('running').evaluate(item => item.classList.contains('is-strong'))).toBe(false)
-    await row('failed').locator('.ui-status-word', { hasText: '失败' }).waitFor()
+    expect(await row('failed').locator('.session-item-main').ariaSnapshot()).toContain('失败')
     await page.context().setOffline(false)
     frozen = false
-    await row('running').locator('.ui-spinner').waitFor()
+    await row('running').locator('.session-row-glyph .ui-spinner').waitFor()
   })
 })
 

@@ -18,7 +18,7 @@ describe('no project means chat', () => {
       page.setDefaultTimeout(15_000)
       await enrollBrowser(page, host, { name: '不选项目 ' + width })
       const phone = width < 768
-      if (phone) await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+      if (phone) await page.getByRole('button', { name: '新会话选项', exact: true }).click()
       const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
       await input.fill('解释一下什么是 SSE')
       // The switch is gone; the project list is what decides.

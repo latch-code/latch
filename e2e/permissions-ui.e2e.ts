@@ -10,7 +10,7 @@ import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { openSection, openSettings, closeSettings } from './helpers/layout.ts'
+import { openSection, openSession, openSettings, closeSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/permissions'
 
@@ -235,7 +235,7 @@ describe('permission states in a browser', () => {
     try {
       const phone = await context.newPage()
       await enrollBrowser(phone, testHost, { name: '键帽手机' })
-      await phone.locator(`[data-task-id="${sessionId}"]`).click()
+      await openSession(phone, sessionId)
       const narrow = phone.locator('[data-approval-id]')
       await expect.poll(() => narrow.getAttribute('data-arming')).toBeNull()
       await narrow.getByRole('button', { name: '拒绝', exact: true }).focus()
@@ -287,9 +287,7 @@ describe('permission states in a browser', () => {
         await phone.evaluate(() => sessionStorage.clear())
         await phone.reload()
         await connected(phone)
-        const drawer = phone.getByRole('button', { name: '打开会话列表', exact: true })
-        if (width >= 768) await drawer.click()
-        await phone.locator(`[data-task-id="${sessions[0]}"]`).click()
+        await openSession(phone, sessions[0]!)
         await phone.locator('.drawer-backdrop').waitFor({ state: 'detached' })
         const reject = phone.locator('[data-approval-id]').getByRole('button', { name: '拒绝', exact: true })
         // Exercise the actual pointer hit test after the session's entry animation, including a non-scrolling transcript.

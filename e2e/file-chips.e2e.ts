@@ -7,6 +7,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { openSession as chooseSession } from './helpers/layout.ts'
 
 /** A reply that mentions the files it wrote, the way agents do: relative links, a file:// link, an image, a web link. */
 const REPLY = [
@@ -86,12 +87,7 @@ describe('file references with an older Host without content preview', () => {
       await route.fulfill({ response, json: snapshot })
     })
     await enrollBrowser(page, testHost, { name: `文件引用 ${colorScheme} ${width}` })
-    // Tablets use a navigation drawer; phones start on the session list.
-    if (width >= 768 && width < 1024) {
-      await page.getByRole('button', { name: '打开会话列表', exact: true }).filter({ visible: true }).first().click()
-      await page.getByRole('dialog', { name: '会话导航', exact: true }).waitFor()
-    }
-    await page.locator(`[data-task-id="${sessionId}"]`).click()
+    await chooseSession(page, sessionId)
     await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
     await page.locator('[data-file-chip]').first().waitFor()
     await connected(page)

@@ -79,23 +79,53 @@ export async function noHorizontalOverflow(page: Page, region?: Locator): Promis
   }
 }
 
-/**
- * Back to a phone's session list when a session's page is pushed over it; elsewhere, and on the list, nothing happens.
- */
+/** Opens a phone's explicit history page; Code itself always leads to Home. */
 export async function backToPhoneSessions(page: Page): Promise<void> {
-  if ((await page.locator('.phone-list').count()) === 0) return
-  const back = page.locator('.topbar').getByRole('button', { name: '返回会话列表', exact: true })
-  if (await back.isVisible()) {
-    await back.click()
-    await page.locator('main.workspace').waitFor({ state: 'detached' })
+  if ((await page.locator('.phone-tabs').count()) === 0) return
+  if ((await page.locator('.app-shell').getAttribute('data-entry')) !== 'sessions') return
+  const back = page
+    .locator('.topbar')
+    .getByRole('button', { name: /^(返回会话列表|返回总览)$/u })
+    .filter({ visible: true })
+  if ((await back.count()) > 0) await back.click()
+  if (await page.locator('.workbench-home').isVisible()) await page.getByRole('button', { name: '全部会话', exact: true }).click()
+  await page.locator('.phone-list:not([inert])').waitFor()
+  await settleShell(page)
+}
+
+/** Opens an exact Host session through the visible history, project tree or tablet drawer. */
+export async function openSession(page: Page, sessionId: string): Promise<void> {
+  if ((await page.locator('.phone-tabs').count()) > 0) {
+    if ((await page.locator('.app-shell').getAttribute('data-entry')) !== 'sessions')
+      await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
+    await backToPhoneSessions(page)
+    await page.locator('.phone-list:not([inert])').locator(`[data-task-id="${sessionId}"]`).click()
+  } else {
+    const row = page.locator(`[data-task-id="${sessionId}"]`).filter({ visible: true })
+    if ((await row.count()) === 0) {
+      const drawer = page.getByRole('button', { name: '打开会话列表', exact: true })
+      if (await drawer.isVisible()) {
+        await drawer.click()
+        await page.getByRole('dialog', { name: '会话导航', exact: true }).waitFor()
+      } else await page.getByRole('button', { name: '全部会话', exact: true }).click()
+      await settleShell(page)
+    }
+    await row.click()
   }
-  await page.locator('.phone-list:not([data-covered])').waitFor({ state: 'attached' })
-  // The list has slid back into place.
-  await page.locator('.phone-list').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)))
+  await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
+  await settleShell(page)
 }
 
 /** The sidebar's foot, or a phone's tab bar. */
 const mainNavigation = (page: Page) => page.getByRole('navigation', { name: '主导航', exact: true })
+// Persistent desktop / tablet chrome precedes the drawer in DOM order; a closing drawer can still be painted for a frame.
+const entryButton = (page: Page, name: string) =>
+  page
+    .locator('.workbench-nav, .workbench-tablet-rail')
+    .getByRole('button', { name, exact: true })
+    .or(mainNavigation(page).getByRole('button', { name, exact: true }))
+    .filter({ visible: true })
+    .first()
 
 const isPhone = async (page: Page) => (await page.locator('.phone-tabs').count()) > 0
 
@@ -122,9 +152,9 @@ export async function openEntry(page: Page, name: string): Promise<void> {
     await openSection(page.locator('.settings-page'), name)
     return
   }
-  if (!phone && (await page.locator('.settings-page').count()) > 0) return
-  if (!phone) await footInReach(page)
-  const button = mainNavigation(page).getByRole('button', { name, exact: true })
+  if (!phone && (await page.locator('.settings-page[data-entry="settings"]').count()) > 0) return
+  if (!phone && !(await entryButton(page, name).isVisible())) await footInReach(page)
+  const button = entryButton(page, name)
   await reachable(button)
   await button.click()
 }

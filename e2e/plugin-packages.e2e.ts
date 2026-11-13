@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { loadPluginPackage } from '@latch/host'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { backToPhoneSessions, noHorizontalOverflow, reachable } from './helpers/layout.ts'
+import { backToPhoneSessions, noHorizontalOverflow, openSession as chooseSession, reachable } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const OUTPUT = 'test-results/plugin-packages'
@@ -15,10 +15,7 @@ const VIEWS = [
   { width: 1440, height: 960, name: 'desktop', touch: false },
 ]
 async function openSession(page: Page, id: string) {
-  await backToPhoneSessions(page)
-  const drawer = page.getByRole('button', { name: '打开会话列表', exact: true })
-  if (await drawer.isVisible()) await drawer.click()
-  await page.locator(`[data-task-id="${id}"]`).click()
+  await chooseSession(page, id)
   await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
   await page.getByRole('textbox', { name: '继续对话', exact: true }).waitFor()
 }

@@ -8,7 +8,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/config-unknown'
 
@@ -79,13 +79,7 @@ describe('a config change the Harness never answers', () => {
     page.setDefaultTimeout(15_000)
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
-    const row = page.locator(`[data-task-id="${sessionId}"]`).first()
-    if (!(await row.isVisible()))
-      await page
-        .getByRole('button', { name: /会话|打开侧栏/u })
-        .first()
-        .click()
-    await row.click()
+    await openSession(page, sessionId)
     await page.getByRole('textbox', { name: '继续对话', exact: true }).waitFor()
     return page
   }

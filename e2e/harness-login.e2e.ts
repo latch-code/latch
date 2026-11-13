@@ -8,7 +8,7 @@ import type { AppSnapshot } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSession, openSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/harness-login'
 
@@ -91,7 +91,7 @@ describe('logging in to a Harness from a browser', () => {
     const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
     await input.fill('echo 第一轮')
     await input.press('Meta+Enter')
-    await page.getByText(/ 在一个新的空文件夹里开始$/u).click()
+    await page.getByRole('menuitemradio', { name: /^不选项目/u }).click()
     await input.press('Meta+Enter')
     await refusal(page).waitFor()
     const end = page.locator('.run-end')
@@ -125,10 +125,9 @@ describe('logging in to a Harness from a browser', () => {
     const page = await open(390, 'dark')
     const tasks = async () => (await owner.json<AppSnapshot>('snapshot')).tasks
     const before = await tasks()
-    await page
-      .getByRole('button', { name: /echo 第一轮/ })
-      .first()
-      .click()
+    const previous = before.find(task => task.title.includes('echo 第一轮'))
+    expect(previous).toBeDefined()
+    await openSession(page, previous!.id)
     await page.locator('.transcript').waitFor()
 
     await rm(loginFile)

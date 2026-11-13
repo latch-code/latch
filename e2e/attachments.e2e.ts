@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chromium, type Browser, type Route } from '@playwright/test'
+import { chromium, type Browser, type Page, type Route } from '@playwright/test'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -8,7 +8,13 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeActiveFile, openSettings } from './helpers/layout.ts'
+import { closeActiveFile, openSession, openSettings } from './helpers/layout.ts'
+async function newDraft(page: Page) {
+  if ((await page.locator('.phone-tabs').count()) > 0) {
+    await page.getByRole('button', { name: '新会话选项', exact: true }).click()
+    await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
+  } else await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+}
 const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64')
 describe('private attachments through the composer', () => {
   let host: TestHost,
@@ -54,12 +60,11 @@ describe('private attachments through the composer', () => {
       page.setDefaultTimeout(15_000)
       try {
         await enrollBrowser(page, host, { name: `附件 ${width}`, scopes: ['admin'] })
-        if (width === 900 && !(await page.getByRole('button', { name: '新建会话', exact: true }).isVisible()))
-          await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-        await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+        await newDraft(page)
         await expect.poll(() => page.getByRole('button', { name: '添加文件…', exact: true }).isEnabled()).toBe(true)
-        await page.getByLabel('选择附件', { exact: true }).setInputFiles({ name: 'sample.png', mimeType: 'image/png', buffer: image })
-        const drafts = page.getByLabel('消息附件', { exact: true })
+        const composer = width === 390 ? page.getByRole('dialog', { name: '新会话', exact: true }) : page
+        await composer.getByLabel('选择附件', { exact: true }).setInputFiles({ name: 'sample.png', mimeType: 'image/png', buffer: image })
+        const drafts = composer.getByLabel('消息附件', { exact: true })
         await drafts.getByRole('button', { name: 'sample.png', exact: true }).waitFor({ state: 'visible' })
         await expect.poll(() => drafts.getByRole('button', { name: 'sample.png', exact: true }).isEnabled(), { timeout: 10000 }).toBe(true)
         await page.screenshot({ path: `test-results/attachments/${width}-${theme}-ready.png`, animations: 'disabled' })
@@ -93,7 +98,7 @@ describe('private attachments through the composer', () => {
     page.setDefaultTimeout(15_000)
     try {
       await enrollBrowser(page, host, { name: '附件重试', scopes: ['admin'] })
-      await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+      await newDraft(page)
       await page.route(
         '**/link/api/attachments',
         async route => {
@@ -163,7 +168,7 @@ describe('private attachments through the composer', () => {
     let resume: (() => void) | undefined
     try {
       await enrollBrowser(page, host, { name: '附件取消', scopes: ['admin'] })
-      await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+      await newDraft(page)
       const held = new Promise<void>(resolve => {
         resume = resolve
       })
@@ -219,7 +224,7 @@ describe('private attachments through the composer', () => {
       await page.reload()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
 
-      await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+      await openSession(page, sessionId)
       const input = page.getByRole('textbox', { name: '继续对话', exact: true })
       await input.fill('user@example.com')
       expect(await page.getByLabel('引用项目文件').count()).toBe(0)
@@ -260,7 +265,7 @@ describe('private attachments through the composer', () => {
     page.setDefaultTimeout(15000)
     try {
       await enrollBrowser(page, host, { name: '文件拖入', scopes: ['admin'] })
-      await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+      await newDraft(page)
       const surface = page.locator('main.workspace')
       const data = await page.evaluateHandle(base64 => {
         const transfer = new DataTransfer()
@@ -338,7 +343,7 @@ describe('the attach button and @ on every Harness', () => {
         await enrollBrowser(page, host, { name: `附件按钮 ${width} ${theme}`, scopes: ['admin'] })
         // Choosing it would read its lists, which starts it and answers too; held back here to see it unstarted.
         await page.route('**/link/api/agents/*/catalogue', route => route.fulfill({ json: { ran: false, harness: late } }))
-        await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+        await newDraft(page)
         await page
           .getByRole('button', { name: /^Harness：/u })
           .first()
@@ -354,18 +359,22 @@ describe('the attach button and @ on every Harness', () => {
         const add = page.getByRole('button', { name: '添加文件…', exact: true })
         // No hover on a touch screen: pressing says why, in place.
         await add.click()
-        const notice = page.locator('.ui-notice-text')
+        const notice = page
+          .getByRole('dialog', { name: '新会话', exact: true })
+          .locator('.ui-notice-text')
+          .or(page.locator('main.workspace:not([inert]) .ui-notice-text'))
         await notice.getByText('发出第一条消息后可添加文件', { exact: true }).waitFor()
         await page.screenshot({ path: `${shots}/${width}-${theme}-not-started.png`, animations: 'disabled' })
         // Started from another device: this page learns it without a reload.
         await start(late, `已启动 ${width} ${theme}`)
         await expect.poll(() => add.getAttribute('data-unavailable'), { timeout: 15_000 }).toBeNull()
-        await page.getByLabel('选择附件', { exact: true }).setInputFiles({
+        const composer = phone ? page.getByRole('dialog', { name: '新会话', exact: true }) : page
+        await composer.getByLabel('选择附件', { exact: true }).setInputFiles({
           name: 'tool.bin',
           mimeType: 'application/octet-stream',
           buffer: Buffer.from([0, 1, 2, 3, 0, 255]),
         })
-        const drafts = page.getByLabel('消息附件', { exact: true })
+        const drafts = composer.getByLabel('消息附件', { exact: true })
         await drafts.locator('.attachment-draft[data-state="refused"]').waitFor()
         expect(await drafts.getByRole('button', { name: '重试上传', exact: true }).count()).toBe(0)
         await page.screenshot({ path: `${shots}/${width}-${theme}-refused.png`, animations: 'disabled' })
@@ -374,7 +383,7 @@ describe('the attach button and @ on every Harness', () => {
         const plainSession = await start(plain, `不收附件 ${width} ${theme}`)
         if (phone) {
           await page.locator('.new-session-sheet').getByRole('button', { name: '取消', exact: true }).first().click()
-          await page.locator(`.phone-row[data-task-id="${plainSession}"]`).click()
+          await openSession(page, plainSession)
         } else {
           await page.keyboard.press('Meta+k')
           const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
@@ -410,7 +419,7 @@ describe('the attach button and @ on every Harness', () => {
           await page
             .getByLabel('选择附件', { exact: true })
             .setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('notes') })
-          const drafts = page.getByLabel('消息附件', { exact: true })
+          const drafts = composer.getByLabel('消息附件', { exact: true })
           await drafts.locator('.attachment-draft[data-state="ready"]').waitFor()
           await page.route('**/link/api/tasks/*/prompt', route =>
             route.fulfill({

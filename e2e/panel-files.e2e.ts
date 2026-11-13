@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeActiveFile, settleShell } from './helpers/layout.ts'
+import { closeActiveFile, openSession, settleShell } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/panel-files'
 const { word, workbook, presentation, pdf } = documentFixtures(files =>
@@ -87,14 +87,24 @@ describe('the right panel', () => {
     const device = devices.find(item => item.name === name)!
     expect((await owner.confirmed(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
     await page.reload()
-    if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-    await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+    await openSession(page, sessionId)
     await settleShell(page)
     return page
   }
   const shot = (page: Page, name: string, width: number, theme: string) =>
     page.screenshot({ path: `${OUTPUT}/${name}--${width}-${theme}.png`, animations: 'disabled' })
   const row = (page: Page, name: string): Locator => page.getByRole('treeitem', { name, exact: true })
+  const openPanel = async (page: Page) => {
+    const toggle = page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true })
+    if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
+    const tabs = page.getByRole('tablist', { name: '会话面板', exact: true })
+    await tabs.waitFor()
+    return tabs
+  }
+  const openFiles = async (page: Page) => {
+    const tabs = await openPanel(page)
+    await tabs.getByRole('tab', { name: '文件', exact: true }).click()
+  }
 
   for (const [width, theme] of [
     [1440, 'light'],
@@ -104,20 +114,20 @@ describe('the right panel', () => {
     [390, 'light'],
     [390, 'dark'],
   ] as const) {
-    it(`opens surfaces from the launcher and shows each renderer without chrome at ${width} ${theme}`, async () => {
+    it(`opens surfaces from the overview and shows each renderer without chrome at ${width} ${theme}`, async () => {
       const page = await open(width, theme)
       try {
-        await page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true }).click()
-        const launcher = page.locator('.panel-launcher')
-        await launcher.waitFor()
+        const panelTabs = await openPanel(page)
+        await panelTabs.getByRole('tab', { name: '概要', selected: true }).waitFor()
         await settleShell(page)
-        await shot(page, 'launcher', width, theme)
-        // Only what is real: no browser row until it exists, and no terminal row in a browser, which the Host offers none.
-        expect(await launcher.locator('.panel-launcher-row').allTextContents()).toEqual(['改动D', '文件F', '交付'])
+        await shot(page, 'overview', width, theme)
+        // The browser only advertises surfaces that this Host and device can actually use.
+        expect(await panelTabs.getByRole('tab').allTextContents()).toEqual(['概要', '改动', '文件', '交付'])
+        const filesTab = panelTabs.getByRole('tab', { name: '文件', exact: true })
         if (width >= 768) {
-          await expect.poll(() => page.evaluate(() => document.activeElement?.className)).toBe('panel-launcher')
-          await page.keyboard.press('f')
-        } else await launcher.getByRole('button', { name: /^文件/u }).click()
+          await filesTab.focus()
+          await page.keyboard.press('Enter')
+        } else await filesTab.click()
         await row(page, 'guide.md').waitFor()
         await settleShell(page)
 
@@ -221,7 +231,7 @@ describe('the right panel', () => {
         },
         { timeout: 15_000 },
       )
-      await page.locator(`[data-task-id="${other}"]`).first().click()
+      await openSession(page, other)
       await page.getByRole('textbox', { name: '继续对话', exact: true }).fill('生成')
       await page.getByRole('button', { name: '发送', exact: true }).click()
       const tabs = page.getByRole('tablist', { name: '会话面板', exact: true })
@@ -241,8 +251,7 @@ describe('the right panel', () => {
   it('shows its place while a file is being read', async () => {
     const page = await open(1440, 'dark')
     try {
-      await page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).click()
-      await page.keyboard.press('f')
+      await openFiles(page)
       let release = () => {}
       await page.route('**/link/api/tasks/*/files/resolve', async route => {
         await new Promise<void>(done => {
@@ -264,8 +273,7 @@ describe('the right panel', () => {
   it('says when a file can no longer be read', async () => {
     const page = await open(1440, 'light')
     try {
-      await page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).click()
-      await page.keyboard.press('f')
+      await openFiles(page)
       await page.route('**/link/api/tasks/*/files/resolve', route => route.fulfill({ status: 403, json: { error: 'nope' } }))
       await row(page, 'guide.md').click()
       await page.getByRole('region', { name: '文件预览', exact: true }).locator('.ui-notice').waitFor()
@@ -279,8 +287,7 @@ describe('the right panel', () => {
   it('offers another try when a known file fails to read, without a spinner beside the error', async () => {
     const page = await open(1440, 'light')
     try {
-      await page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).click()
-      await page.keyboard.press('f')
+      await openFiles(page)
       let fail = true
       await page.route('**/link/api/files/*', route => (fail ? route.fulfill({ status: 500, json: { error: 'nope' } }) : route.continue()))
       await row(page, 'guide.md').click()
@@ -300,8 +307,7 @@ describe('the right panel', () => {
   it('says when a document page has nothing to quote', async () => {
     const page = await open(1440, 'light')
     try {
-      await page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).click()
-      await page.keyboard.press('f')
+      await openFiles(page)
       await row(page, 'deck.pptx').click()
       const frame = page.frameLocator('iframe[title="文档预览"]')
       await frame.getByText('1 / 6', { exact: true }).waitFor()
@@ -319,8 +325,7 @@ describe('the right panel', () => {
   it('reads a folder from the crumb when the keyboard opens it', async () => {
     const page = await open(1440, 'light')
     try {
-      await page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).click()
-      await page.keyboard.press('f')
+      await openFiles(page)
       await row(page, 'guide.md').click()
       const viewer = page.getByRole('region', { name: '文件预览', exact: true })
       await viewer.getByRole('heading', { name: 'Guide', exact: true }).waitFor()
@@ -338,8 +343,7 @@ describe('the right panel', () => {
   it('keeps keyboard focus on a run of folders as it opens and closes', async () => {
     const page = await open(1440, 'light')
     try {
-      await page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).click()
-      await page.keyboard.press('f')
+      await openFiles(page)
       await row(page, 'packages').focus()
       await page.keyboard.press('ArrowRight')
       const run = row(page, 'packages/web/src')
@@ -370,24 +374,23 @@ describe('the right panel', () => {
       { timeout: 15_000 },
     )
     const page = await open(1440, 'light')
-    const launcherHasFocus = () => page.evaluate(() => document.activeElement?.className === 'panel-launcher')
+    const panelHasFocus = () => page.locator('.session-panels').evaluate(element => element.contains(document.activeElement))
     try {
-      await page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).click()
-      await page.locator('.panel-launcher').waitFor()
-      await expect.poll(launcherHasFocus).toBe(true)
+      await openPanel(page)
+      await page.getByRole('tabpanel', { name: '会话概要', exact: true }).waitFor()
       const composer = page.getByRole('textbox', { name: '继续对话', exact: true })
       await composer.focus()
       const before = await page.locator('.session-panels').evaluateHandle(element => element)
       await page.keyboard.press('Alt+]')
-      // The panel is keyed by its session, so a new element means the launcher mounted again.
+      // The panel is keyed by its session; changing sessions must not steal input focus.
       await expect.poll(() => before.evaluate(element => element.isConnected)).toBe(false)
-      await page.locator('.panel-launcher').waitFor()
+      await page.getByRole('tabpanel', { name: '会话概要', exact: true }).waitFor()
       await settleShell(page)
-      expect(await launcherHasFocus()).toBe(false)
+      expect(await panelHasFocus()).toBe(false)
       await page.reload()
-      await page.locator('.panel-launcher').waitFor()
+      await page.getByRole('tabpanel', { name: '会话概要', exact: true }).waitFor()
       await settleShell(page)
-      expect(await launcherHasFocus()).toBe(false)
+      expect(await panelHasFocus()).toBe(false)
     } finally {
       await page.context().close()
     }
@@ -397,11 +400,7 @@ describe('the right panel', () => {
     const page = await open(390, 'light')
     try {
       const toggle = page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true })
-      await toggle.click()
-      await page
-        .locator('.panel-launcher')
-        .getByRole('button', { name: /^文件/u })
-        .click()
+      await openFiles(page)
       await row(page, 'guide.md').click()
       const viewer = page.getByRole('region', { name: '文件预览', exact: true })
       await viewer.getByRole('heading', { name: 'Guide', exact: true }).waitFor()

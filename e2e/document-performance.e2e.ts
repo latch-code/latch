@@ -311,9 +311,13 @@ describe('real document performance and owner-reference capture', () => {
         } else if (kind === 'pdf') {
           await page.getByRole('status').filter({ hasText: '1 / 200 页' }).waitFor()
           for (let index = 1; index <= 200; index++) {
+            if (index > 1) await page.getByRole('button', { name: '下一页', exact: true }).click()
+            await page
+              .getByRole('status')
+              .filter({ hasText: new RegExp(`^${index} / 200 页$`, 'u') })
+              .waitFor()
             const element = page.locator(`.pdf-page[aria-label="第 ${index} 页"]`)
             await element.waitFor()
-            await element.scrollIntoViewIfNeeded()
             await element.getByText(`Performance PDF page ${String(index).padStart(3, '0')}`, { exact: true }).waitFor()
             const canvases = await page.locator('.pdf-page canvas').count(),
               nodes = await page.locator('*').count()

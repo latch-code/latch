@@ -11,11 +11,7 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 const OUT = 'test-results/sidebar-rows'
 const LONG_MODEL = 'a-very-long-model-identifier-from-a-model-service-2026-11-11-preview'
 
-/**
- * Every sidebar row is two lines: the title with the time or what the run is doing, then the Harness's 12px mark and
- * the model. In 等你处理 the second line says what waits from the summary alone. The list is rewritten on its way to the
- * page around one real session, which the page can open.
- */
+/** The v8 project tree keeps a complete status glyph and title; Home carries live words and attention evidence. */
 describe('sidebar rows', () => {
   let host: TestHost
   let browser: Browser
@@ -56,8 +52,9 @@ describe('sidebar rows', () => {
     { ...base, id: 'failed', title: '失败的会话', harnessId: 'gemini', status: 'failed', model: 'gemini-3-pro' },
     { ...base, id: 'read', title: '已读的会话', status: 'idle', model: 'deepseek-chat', branch: 'main' },
     { ...base, id: 'unread', title: '有新内容的会话', status: 'idle', model: 'deepseek-chat', updatedAt: now() },
+    { ...base, id: 'returning', title: '等待交回的会话', status: 'idle' },
     { ...base, id: 'unreported', title: '还没报告模型的会话', harnessId: 'qwen', status: 'idle' },
-    { ...base, id: 'long', title: '模型名很长的会话', status: 'idle', model: LONG_MODEL },
+    { ...base, id: 'long', title: '模型名很长的会话，包含完整的服务与实验分支名称', status: 'idle', model: LONG_MODEL },
   ]
 
   beforeAll(async () => {
@@ -92,7 +89,24 @@ describe('sidebar rows', () => {
       const snapshot = (await response.json()) as AppSnapshot
       // Before the page has connected the Host answers with an error, which goes through as it is.
       if (!Array.isArray(snapshot.tasks)) return route.fulfill({ response })
-      await route.fulfill({ response, json: { ...snapshot, tasks: [...snapshot.tasks, ...fakes()] } })
+      await route.fulfill({
+        response,
+        json: {
+          ...snapshot,
+          tasks: [...snapshot.tasks, ...fakes()],
+          handoffs: [
+            ...(snapshot.handoffs ?? []),
+            {
+              id: 'handoff-return',
+              sourceSessionId: realId,
+              targetSessionId: 'returning',
+              status: 'started',
+              returnScope: 'summary',
+              updatedAt: now(),
+            },
+          ],
+        },
+      })
     })
     await enrollBrowser(page, host, { name: `侧栏行 ${width} ${colorScheme}` })
     // The first visit sets this device's reading baseline; after a reload the session updated since is unread.
@@ -104,37 +118,45 @@ describe('sidebar rows', () => {
 
   const row = (page: Page, id: string) => page.locator(`.session-item:has([data-task-id="${id}"])`)
 
-  it('draws every row on two lines with the Harness mark and the model', async () => {
+  it('draws complete compact status glyphs while keeping Harness, model and branch accessible', async () => {
     const page = await open(1440, 900, 'light')
     try {
       for (const id of [realId, 'command', 'routed', 'approval', 'asking', 'failed', 'read', 'unread', 'unreported', 'long']) {
-        expect(await row(page, id).evaluate(item => Math.round(item.getBoundingClientRect().height))).toBe(52)
-        expect(await row(page, id).locator('.session-meta .session-mark > *').count()).toBe(1)
+        const item = row(page, id)
+        expect(await item.evaluate(element => Math.round(element.getBoundingClientRect().height))).toBe(34)
+        expect(await item.locator('.session-row-glyph').isVisible()).toBe(true)
+        expect(await item.locator('.session-meta').isVisible()).toBe(false)
+        expect(await item.locator('.session-status').isVisible()).toBe(false)
       }
-      // The mark is 12 on the screen.
-      const mark = await row(page, 'routed')
-        .locator('.session-mark')
-        .evaluate(item => Math.round(item.getBoundingClientRect().height))
-      expect(mark).toBe(12)
-      // The model: the routed one, else the reported one, else 默认模型 until an external Harness reports one.
-      expect(await row(page, 'routed').locator('.session-model').textContent()).toBe('kimi-k2.5')
-      expect(await row(page, 'read').locator('.session-model').textContent()).toBe('deepseek-chat')
-      expect(await row(page, 'unreported').locator('.session-model').textContent()).toBe('默认模型')
-      expect(
-        await row(page, 'read')
-          .locator('.session-model')
-          .evaluate(item => getComputedStyle(item).fontFamily),
-      ).toMatch(/mono|Menlo/iu)
-      // A brand's mark says which Harness; the neutral glyph needs the name beside it.
-      expect(await row(page, 'routed').locator('.session-harness').count()).toBe(0)
-      expect(await row(page, 'read').locator('.session-harness').count()).toBe(0)
-      expect(await row(page, 'approval').locator('.session-harness').textContent()).toBe('claude-agent')
-      // The branch and 「Latch 内置」 left the line; the branch is in the row's tooltip.
-      expect(await row(page, 'read').locator('.session-meta').textContent()).not.toContain('main')
-      expect(await row(page, 'read').locator('.session-meta').textContent()).not.toContain('Latch 内置')
+      const glyph = row(page, 'routed').locator('.session-row-glyph .ui-spinner')
+      expect(Math.round((await glyph.boundingBox())!.height)).toBe(12)
+      // A routed model is authoritative over the Harness-reported default, including in the accessible row name.
+      expect(await row(page, 'routed').locator('.session-item-main').ariaSnapshot()).toContain('kimi-k2.5')
+      expect(await row(page, 'routed').locator('.session-item-main').ariaSnapshot()).not.toContain('gpt-5.5')
+      expect(await row(page, 'read').locator('.session-item-main').ariaSnapshot()).toContain('deepseek-chat')
+      expect(await row(page, 'unreported').locator('.session-item-main').ariaSnapshot()).toContain('默认模型')
       expect(await row(page, 'read').locator('.session-item-main').getAttribute('title')).toContain('main')
-      // The screen reader still hears the Harness, the model, the status and the time.
       expect(await row(page, 'command').locator('.sr-only').textContent()).toMatch(/^，Latch 内置，deepseek-chat，在跑命令，/u)
+      expect(await row(page, 'approval').locator('.session-item-main').ariaSnapshot()).toContain('claude-agent')
+    } finally {
+      await page.context().close()
+    }
+  })
+
+  it.each(['light', 'dark'] as const)('keeps a pending handoff return visible in the compact tree in %s', async theme => {
+    const page = await open(1440, 900, theme)
+    try {
+      const item = row(page, 'returning')
+      const label = item.locator('.session-line .session-handoff')
+      expect(await label.isVisible()).toBe(true)
+      expect(await label.textContent()).toBe('待交回')
+      const line = (await item.locator('.session-line').boundingBox())!
+      const box = (await label.boundingBox())!
+      expect(box.x + box.width).toBeLessThanOrEqual(line.x + line.width)
+      expect(box.y + box.height).toBeLessThanOrEqual(line.y + line.height)
+      expect(await item.locator('.session-item-main').ariaSnapshot()).toContain('待交回')
+      expect(await item.evaluate(element => Math.round(element.getBoundingClientRect().height))).toBe(34)
+      await page.screenshot({ path: `${OUT}/return-${theme}.png`, animations: 'disabled' })
     } finally {
       await page.context().close()
     }
@@ -143,34 +165,38 @@ describe('sidebar rows', () => {
   it('says what the run is doing from the activity in the summary', async () => {
     const page = await open(1440, 900, 'light')
     try {
-      await expect.poll(() => row(page, 'command').locator('.ui-status-word').textContent()).toMatch(/^在跑命令 0:4\d$/u)
-      await expect.poll(() => row(page, 'routed').locator('.ui-status-word').textContent()).toMatch(/^在等模型 0:0\d$/u)
+      const command = page.locator('.workbench-home [data-work-session="command"]')
+      const routed = page.locator('.workbench-home [data-work-session="routed"]')
+      expect(await command.locator('.work-running-action').textContent()).toBe('在跑命令')
+      expect(await routed.locator('.work-running-action').textContent()).toBe('在等模型')
+      await expect.poll(() => command.locator('.work-running-time').textContent()).toMatch(/^0:4\d$/u)
+      await expect.poll(() => routed.locator('.work-running-time').textContent()).toMatch(/^0:0\d$/u)
     } finally {
       await page.context().close()
     }
   })
 
-  it('says in 等你处理 only the kind of wait and the Harness, never a path or what the request does', async () => {
+  it('keeps attention on Home, and never turns an unverified summary path into request evidence', async () => {
     const page = await open(1440, 900, 'light')
     try {
-      const waiting = page.locator('.session-group[data-shelf="waiting"]')
+      const waiting = page.locator('.workbench-home .work-overview-group[data-group="attention"]')
       expect(
-        await waiting.locator('[data-task-id]').evaluateAll(rows => rows.map(item => item.getAttribute('data-task-id')).toSorted()),
-      ).toEqual(['approval', 'asking'])
-      expect(await row(page, 'approval').locator('.session-wait').textContent()).toBe('审批')
-      expect(await row(page, 'asking').locator('.session-wait').textContent()).toBe('2 个问题')
-      expect(await row(page, 'approval').locator('.session-model').count()).toBe(0)
-      expect(await row(page, 'approval').locator('.session-meta').textContent()).not.toContain('secret-place')
-      // The shelf says it waits: the row's first line keeps the time, not a second 等你处理.
-      expect(await row(page, 'approval').locator('.ui-status-word').count()).toBe(0)
-      await row(page, 'approval').locator('.ui-status-time').waitFor()
+        await waiting
+          .locator('[data-work-session]')
+          .evaluateAll(rows => rows.map(item => item.getAttribute('data-work-session')).toSorted()),
+      ).toEqual(['approval', 'asking', 'failed'])
+      expect(await waiting.locator('[data-work-session="asking"]').textContent()).toContain('2 个问题')
+      expect(await waiting.innerText()).not.toContain('secret-place')
+      expect(await row(page, 'approval').locator('.session-item-main').ariaSnapshot()).toContain('等你处理')
+      expect(await row(page, 'asking').locator('.session-item-main').ariaSnapshot()).toContain('等你处理')
+      expect(await row(page, 'approval').locator('.session-row-glyph').getAttribute('data-tone')).toBe('waiting')
       expect(await row(page, 'approval').evaluate(item => item.classList.contains('is-strong'))).toBe(true)
     } finally {
       await page.context().close()
     }
   })
 
-  it('cuts a long model short in the narrowest sidebar without widening the row', async () => {
+  it('keeps long names within the narrowest tree while preserving the full model in its accessible name', async () => {
     const page = await open(1440, 900, 'light')
     try {
       await page.getByRole('separator', { name: '调整侧栏宽度', exact: true }).focus()
@@ -178,8 +204,14 @@ describe('sidebar rows', () => {
       await expect
         .poll(() => page.locator('#session-navigation').evaluate(item => Math.round(item.getBoundingClientRect().width)))
         .toBe(220)
-      const model = row(page, 'long').locator('.session-model')
-      expect(await model.evaluate(item => item.scrollWidth > item.clientWidth)).toBe(true)
+      expect(await row(page, 'long').locator('.session-model').isVisible()).toBe(false)
+      expect(await row(page, 'long').locator('.session-item-main').ariaSnapshot()).toContain(LONG_MODEL)
+      expect(await row(page, 'long').locator('.session-item-main').getAttribute('title')).toContain(LONG_MODEL)
+      expect(
+        await row(page, 'long')
+          .locator('.session-title')
+          .evaluate(item => item.scrollWidth > item.clientWidth),
+      ).toBe(true)
       const [right, list] = await Promise.all([
         row(page, 'long').evaluate(item => item.getBoundingClientRect().right),
         page.locator('nav.session-list').evaluate(item => item.getBoundingClientRect().right),

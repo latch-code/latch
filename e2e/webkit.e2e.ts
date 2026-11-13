@@ -4,7 +4,7 @@ import { webkit } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceInfo } from '@latch/protocol'
 import { connected, enrollBrowser } from './helpers/browser.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { backToPhoneSessions, noHorizontalOverflow } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
 
 describe('WebKit workbench and authorized file rendering', () => {
@@ -40,6 +40,7 @@ describe('WebKit workbench and authorized file rendering', () => {
       expect((await desktop.confirmed('devices/' + deviceId, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
       await page.reload()
       await connected(page)
+      if (width === 390) await backToPhoneSessions(page)
       const navigation = page.getByRole('button', { name: '打开会话列表', exact: true })
       if (await navigation.isVisible()) await navigation.click()
       await page

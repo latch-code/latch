@@ -6,7 +6,7 @@ import type { AppSnapshot } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { backToPhoneSessions, openEntry, openSessions } from './helpers/layout.ts'
+import { backToPhoneSessions, openEntry, openSessions, openSession } from './helpers/layout.ts'
 
 describe('desktop to phone takeover', () => {
   let testHost: TestHost
@@ -51,8 +51,7 @@ describe('desktop to phone takeover', () => {
   }
   /** A phone opens a session from its list, the root page: the session's page is pushed over the list. */
   async function choosePhone(id: string) {
-    await backToPhoneSessions(mobile)
-    await mobile.locator(`.phone-list [data-task-id="${id}"]`).click()
+    await openSession(mobile, id)
     await mobile.locator('.phone-list[data-covered]').waitFor()
     // The page has slid into place.
     await mobile.locator('main.workspace').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)))
@@ -97,11 +96,16 @@ describe('desktop to phone takeover', () => {
       await tablet.keyboard.press('Escape')
       await expect.poll(() => opener.getAttribute('aria-expanded')).toBe('false')
       await expect.poll(() => opener.evaluate(element => element === document.activeElement), { timeout: 2_000 }).toBe(true)
-      expect(await tablet.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(false)
+      await tablet.locator('.workbench-home').waitFor()
+      expect(await tablet.locator('.workbench-home').evaluate(element => element.closest('[inert]') !== null)).toBe(false)
+      expect(await tablet.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(true)
       expect(await tablet.locator('.sidebar').evaluate(element => (element as HTMLElement).inert)).toBe(true)
-      expect(await desktop.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(false)
+      expect(await desktop.locator('.workbench-home').evaluate(element => element.closest('[inert]') !== null)).toBe(false)
+      expect(await desktop.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(true)
       expect(await desktop.locator('.sidebar').evaluate(element => (element as HTMLElement).inert)).toBe(false)
-      // A phone has no drawer: its list is the page, and nothing on it is inert.
+      // A phone starts on Home, then opens history as its own page, with no drawer.
+      expect(await mobile.locator('.workbench-home').evaluate(element => element.closest('[inert]') !== null)).toBe(false)
+      await backToPhoneSessions(mobile)
       expect(await mobile.locator('.sidebar').count()).toBe(0)
       expect(await mobile.locator('#session-navigation').evaluate(element => element instanceof HTMLElement && element.inert)).toBe(false)
     } finally {
@@ -127,7 +131,7 @@ describe('desktop to phone takeover', () => {
         return hit !== null && element.contains(hit)
       }),
     ).toBe(true)
-    const composer = await mobile.locator('.composer').boundingBox()
+    const composer = await mobile.locator('.composer').filter({ visible: true }).boundingBox()
     expect(composer!.y + composer!.height).toBeLessThanOrEqual(844)
     await mobile.screenshot({ path: 'test-results/mobile-approval.png', fullPage: true, animations: 'disabled' })
     await phoneContext.setOffline(true)
@@ -171,7 +175,7 @@ describe('desktop to phone takeover', () => {
       await tablet.locator(`[data-task-id="${approvedTask}"]`).click()
       await tablet.getByText(/审批已通过，报告已写入/).waitFor()
       expect(await tablet.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-      const tabletComposer = await tablet.locator('.composer').boundingBox()
+      const tabletComposer = await tablet.locator('.composer').filter({ visible: true }).boundingBox()
       expect(tabletComposer!.y + tabletComposer!.height).toBeLessThanOrEqual(1024)
       await tablet.screenshot({ path: 'test-results/tablet-result.png', fullPage: true, animations: 'disabled' })
     } finally {

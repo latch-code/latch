@@ -132,6 +132,7 @@ describe('接入已有会话 from the new-session page', () => {
       await page.reload()
       await connected(page)
     }
+    if (width >= 768) await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).click()
     return page
   }
   const shot = (page: Page, name: string) => page.screenshot({ path: `${OUTPUT}/${name}.png`, animations: 'disabled' })
@@ -365,7 +366,7 @@ describe('接入已有会话 from the new-session page', () => {
 
   it('goes through the same pages at 390', async () => {
     const page = await open(390, 'dark')
-    await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
+    await page.getByRole('button', { name: '新会话选项', exact: true }).click()
     const sheet = page.getByRole('dialog', { name: '新会话', exact: true })
     await sheet.getByRole('button', { name: '接入已有会话', exact: true }).click()
     const dialog = dialogOf(page)

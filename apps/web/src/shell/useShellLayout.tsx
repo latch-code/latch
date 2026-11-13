@@ -309,13 +309,19 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const lifecycle = useShellLifecycle()
   const audit = useAuditCheckpoint(host?.hostId, connection === 'connected')
   const draftHarnessId = choice.harnessId ?? catalog?.defaults.harnessId
-  const fileContext: FileContext | null = selectedId
-    ? { kind: 'session', sessionId: selectedId }
-    : choice.workspaceId && choice.workspaceId !== 'default' && draftHarnessId
+  const draftFileContext: FileContext | null =
+    choice.workspaceId && choice.workspaceId !== 'default' && draftHarnessId
       ? { kind: 'workspace', workspaceId: choice.workspaceId, harnessId: draftHarnessId }
       : null
+  const fileContext: FileContext | null = selectedId ? { kind: 'session', sessionId: selectedId } : draftFileContext
   const fileAuthority = JSON.stringify([snapshot.device.dataScope, access.scopes.has('view'), catalog?.features?.filePreview])
   const savedFileTabs = useFileTabs(snapshot.device.id, fileContext, fileAuthority)
+  const draftFileTabs = savedFileTabs.forContext(draftFileContext)
+  const [draftFilesOpen, setDraftFilesOpen] = useState(false)
+  const draftFileKey = draftFileContext ? fileContextKey(draftFileContext) : ''
+  useEffect(() => {
+    setDraftFilesOpen(false)
+  }, [draftFileKey, fileAuthority, route.overview])
   const previewAllowed =
     catalog?.features?.filePreview
     && access.scopes.has('view')
@@ -330,6 +336,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const launcherAsked = useRef(false)
   const canBrowseFiles =
     catalog?.features?.fileTree === true && snapshot.device.dataScope === 'all' && access.scopes.has('view') && fileContext !== null
+  const canBrowseDraftFiles =
+    catalog?.features?.fileTree === true
+    && catalog.features.filePreview === true
+    && snapshot.device.dataScope === 'all'
+    && access.scopes.has('view')
+    && draftFileContext !== null
   const filesVisible = !!fileTabs.active || (filesOpen && canBrowseFiles)
   const contextKey = fileContext ? fileContextKey(fileContext) : ''
   // A device without the data scope still gets the tab: it says why there is nothing to read, instead of a toggle that vanished.
@@ -476,6 +488,19 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     )
       return
     if (!('sessionId' in target)) {
+      if (route.overview) {
+        if (
+          !canBrowseDraftFiles
+          || !draftFileContext
+          || draftFileContext.kind !== 'workspace'
+          || target.workspaceId !== draftFileContext.workspaceId
+          || target.harnessId !== draftFileContext.harnessId
+        )
+          return
+        draftFileTabs.open(target)
+        setDraftFilesOpen(true)
+        return
+      }
       if (
         !fileContext
         || fileContext.kind !== 'workspace'
@@ -502,16 +527,21 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const offerFile = useStableCallback((target: ContextFileOpenTarget) => {
     fileTabs.offer(target)
   })
-  // A wide window opens it where the panel opens, beside the conversation or as a sheet over it.
+  // Measure the document's prospective panel, not the narrower overview currently on screen.
+  const documentPlacement = placeRightPanel({
+    windowWidth,
+    left: panelLeft,
+    ...(preferences.rightPanel.width !== undefined ? { width: preferences.rightPanel.width } : {}),
+  })
   useAutoOpenOutputs({
     detail: current,
     available:
       snapshot.catalog?.features?.filePreview === true
       && sidebarColumn
-      && placed.kind !== 'page'
-      && route.entry === 'sessions'
+      && documentPlacement.kind !== 'page'
+      && conversationVisible
       && !fileExpanded,
-    width: placed.kind !== 'page' ? placed.width : 0,
+    width: documentPlacement.kind !== 'page' ? documentPlacement.width : 0,
     onOpen: openFile,
     onOffer: offerFile,
   })
@@ -1035,11 +1065,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     const dialogs = document.querySelectorAll('dialog[open]')
     const only = dialogs.length === 1 ? dialogs[0]! : null
     // An open dialog keeps the keys, but for the one key of what it is: ⌘/ closes the shortcuts it opened.
-    const passes =
-      (action === 'files' && only?.classList.contains('new-session-sheet'))
-      || (action === 'shortcuts' && only?.classList.contains('shortcuts-overlay'))
+    const draftFilesKey = action === 'files' && only?.classList.contains('new-session-sheet')
+    const passes = draftFilesKey || (action === 'shortcuts' && only?.classList.contains('shortcuts-overlay'))
     if (dialogs.length && !passes) return
-    if ((route.entry !== 'sessions' || route.overview || route.allSessions) && !shortcutWorksOnPage(action)) return
+    if ((route.entry !== 'sessions' || route.overview || route.allSessions) && !shortcutWorksOnPage(action) && !draftFilesKey) return
     if (typeof action === 'object') {
       // Held outside a field, or where the layout makes no character of it, the key is the app's even where it finds nothing.
       event.preventDefault()
@@ -1053,7 +1082,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
           filter,
           search,
           folded,
-          projectTree: preferences.workbenchLayout === 'overview',
+          projectTree: !phone && preferences.workbenchLayout === 'overview',
           ...listSpace,
         })[action.index - 1]
         if (target && target.id !== selectedId) choose(target.id)
@@ -1075,8 +1104,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     }
     if (action === 'files') {
+      if (route.overview) {
+        if (canBrowseDraftFiles) {
+          event.preventDefault()
+          browseFiles()
+        }
+        return
+      }
       if (fileTabs.tabs.length) {
         event.preventDefault()
+        revealDraftFiles()
         const index = fileTabs.tabs.findIndex(tab => tab.id === fileTabs.active?.id)
         fileTabs.select(fileTabs.tabs[(index + 1) % fileTabs.tabs.length]!.id)
         setInfoPage(true)
@@ -1145,7 +1182,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       filter,
       search,
       folded,
-      projectTree: preferences.workbenchLayout === 'overview',
+      projectTree: !phone && preferences.workbenchLayout === 'overview',
       ...listSpace,
     })
     const target = steppedSession(ordered, selectedId, action === 'next' ? 1 : -1)
@@ -1349,8 +1386,21 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const devMode = host?.devMode === true
   const level = current?.permission?.level ?? summary?.level
 
+  const revealDraftFiles = () => {
+    if (!phone || !newSheetRef.current || !routeRef.current.allSessions || session.inputId !== null) return
+    setRoute({ entry: 'sessions' })
+    setNewSheet(false)
+  }
   const browseFiles = () => {
+    if (route.overview) {
+      if (canBrowseDraftFiles) {
+        draftFileTabs.select(undefined)
+        setDraftFilesOpen(true)
+      }
+      return
+    }
     if (!canBrowseFiles) return
+    revealDraftFiles()
     setChangesWanted(false)
     setDeliveryWanted(false)
     setTerminalWanted(false)
@@ -1384,22 +1434,33 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       composer.focus({ preventScroll: true })
     })
   })
+  const returnToFileInput = () => {
+    if (draftFilesOpen && route.overview) {
+      setDraftFilesOpen(false)
+      requestAnimationFrame(() => (phone && newSheet ? sheetComposerRef : homeComposerRef).current?.focus())
+      return
+    }
+    if (placement?.kind === 'sheet') closePanel()
+    else if (pageMode) setInfoPage(false)
+    if (phone && session.inputId === null) setNewSheet(true)
+    requestAnimationFrame(() => (phone && session.inputId === null ? sheetComposerRef : composerRef).current?.focus())
+  }
   const mentionFile = (mention: FileMention) => {
     if (!mentionChoice.enabled || fileMentions.length >= 32) return
     submission.setDraft(previous => `${previous.trimEnd()}${previous.trim() ? ' ' : ''}${mentionMarker(mention)} `)
     setFileMentions(previous => [...previous.filter(ref => ref.root !== mention.root || ref.path !== mention.path), mention])
-    if (pageMode) setInfoPage(false)
-    if (phone && selectedId === null) setNewSheet(true)
-    requestAnimationFrame(() => (phone && selectedId === null ? sheetComposerRef : composerRef).current?.focus())
+    returnToFileInput()
   }
   const quoteFile = (quote: FileQuote) => {
+    const fromDraft = draftFilesOpen && route.overview
+    const context = fromDraft ? draftFileContext : fileContext
     if (
-      !fileContext
-      || quote.contextKey !== fileContextKey(fileContext)
-      || active
+      !context
+      || quote.contextKey !== fileContextKey(context)
+      || (!fromDraft && active)
       || submission.pending
       || submission.sending
-      || gate.kind !== 'open'
+      || (fromDraft ? session.homeComposerState.gate : gate).kind !== 'open'
     )
       return
     const mention =
@@ -1414,9 +1475,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       etag: quote.file.etag,
       marker: formatted.marker,
     })
-    if (pageMode) setInfoPage(false)
-    if (phone && selectedId === null) setNewSheet(true)
-    requestAnimationFrame(() => (phone && selectedId === null ? sheetComposerRef : composerRef).current?.focus())
+    returnToFileInput()
   }
   const workspaceForFiles =
     fileContext?.kind === 'workspace' ? catalog?.workspaces.find(item => item.id === fileContext.workspaceId) : undefined
@@ -1554,6 +1613,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     fileContext,
     fileAuthority,
     savedFileTabs,
+    draftFileContext,
+    draftFileTabs,
+    draftFilesOpen: draftFilesOpen && route.overview === true && canBrowseDraftFiles,
+    setDraftFilesOpen,
+    canBrowseDraftFiles,
     previewAllowed,
     fileTabs,
     fileExpanded,

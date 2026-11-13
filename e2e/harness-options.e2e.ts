@@ -1,4 +1,5 @@
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +11,15 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/harness-options'
+
+const refreshModels = (page: Page) =>
+  page.getByRole('menuitem', { name: '刷新模型列表', exact: true }).or(page.getByRole('button', { name: '刷新模型列表', exact: true }))
+
+async function openNew(page: Page) {
+  const options = page.getByRole('button', { name: '新会话选项', exact: true })
+  if (await options.isVisible()) await options.click()
+  else await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).click()
+}
 
 /** Each level's own sentence, the same in Codex's list and in the sessions the fake agent opens. */
 const LEVELS: Record<string, string> = {
@@ -91,6 +101,25 @@ describe("choosing a Harness's own options before the first message", () => {
     await host?.close()
     await rm(directory, { recursive: true, force: true })
   })
+  afterEach(async context => {
+    try {
+      const snapshot = await owner.json<AppSnapshot>('snapshot')
+      const tasks = snapshot.tasks
+      if (context.task.result?.state === 'fail') {
+        const pages = browser.contexts().flatMap(context => context.pages())
+        await Promise.allSettled(
+          pages.map(async (page, index) => {
+            if (await page.locator('.app-shell').count())
+              await page.screenshot({ path: `${OUTPUT}/failure-${index}.png`, animations: 'disabled' })
+          }),
+        )
+      }
+      for (const task of tasks.filter(task => task.status === 'running' || task.status === 'waiting-approval'))
+        await owner.json(`tasks/${task.id}/cancel`, { method: 'POST', body: { requestId: randomUUID(), runId: task.runId } })
+    } finally {
+      await Promise.all(browser.contexts().map(context => context.close()))
+    }
+  })
 
   const open = async (width: number, theme: 'light' | 'dark'): Promise<Page> => {
     const context = await browser.newContext({
@@ -112,7 +141,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await input(page).fill(text)
     await input(page).press('Meta+Enter')
     // With no project yet, sending asks where; a new empty folder is fine here.
-    const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
+    const elsewhere = page.getByRole('menuitemradio', { name: /^不选项目/u }).or(page.getByRole('radio', { name: /^不选项目/u }))
     if (
       await elsewhere.waitFor({ timeout: 3_000 }).then(
         () => true,
@@ -133,12 +162,7 @@ describe("choosing a Harness's own options before the first message", () => {
       })
   }
   const startNew = async (page: Page) => {
-    for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
-      if (await button.isVisible()) {
-        await button.click()
-        break
-      }
-    }
+    await openNew(page)
     await input(page).waitFor()
   }
   const latest = async () => {
@@ -159,6 +183,7 @@ describe("choosing a Harness's own options before the first message", () => {
       .poll(() =>
         page
           .locator('.composer-stack [data-composer-control]')
+          .filter({ visible: true })
           .evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.composerControl)),
       )
       .toEqual(['harness', 'model', 'thinking', 'permission'])
@@ -177,7 +202,7 @@ describe("choosing a Harness's own options before the first message", () => {
     expect(await agent()).toEqual([])
     // Opening the menu of a Harness nothing is known of reads its list: Codex's own model list, with no session.
     await chip(page, '模型').click()
-    await page.getByText('刷新模型列表', { exact: true }).waitFor()
+    await refreshModels(page).waitFor()
     await row(page, /Large/u).waitFor()
     await shot(page, 'read-1440-light')
     expect((await agent()).filter(line => line.includes('"session/new"'))).toEqual([])
@@ -200,7 +225,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await expect.poll(() => chip(page, '权限').innerText()).toContain('先问你')
     await chip(page, '模型').click()
     await row(page, /Large/u).waitFor()
-    await page.getByText('刷新模型列表', { exact: true }).waitFor()
+    await refreshModels(page).waitFor()
     expect(await page.getByText('发第一条消息后可以换', { exact: true }).count()).toBe(0)
     await shot(page, 'listed-1440-light')
     await row(page, /Large/u).click()
@@ -216,7 +241,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await chip(page, '权限').click()
     await row(page, /由模型判断/u).waitFor()
     expect(await row(page, /按规则放行/u).count()).toBe(0)
-    const more = page.locator('.permission-list-more')
+    const more = page.locator('.permission-list-more').filter({ visible: true })
     await more.click()
     await expect.poll(() => more.getAttribute('aria-expanded')).toBe('true')
     await shot(page, 'permission-more-1440-light')
@@ -277,13 +302,13 @@ describe("choosing a Harness's own options before the first message", () => {
     await row(page, /^High/u).click()
     await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
     await chip(page, '权限').click()
-    await page.locator('.permission-list-more').click()
+    await page.locator('.permission-list-more').filter({ visible: true }).click()
     await row(page, /按规则放行/u).click()
     await page.keyboard.press('Escape')
     await input(page).fill('第三轮')
     await input(page).press('Meta+Enter')
     // With no project yet, sending asks where; a new empty folder is fine here.
-    const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
+    const elsewhere = page.getByRole('menuitemradio', { name: /^不选项目/u }).or(page.getByRole('radio', { name: /^不选项目/u }))
     if (
       await elsewhere.waitFor({ timeout: 3_000 }).then(
         () => true,
@@ -326,7 +351,10 @@ describe("choosing a Harness's own options before the first message", () => {
   it('starts on a model ID typed for the Harness, and forgets it once removed', async () => {
     const page = await open(1280, 'dark')
     await chip(page, '模型').click()
-    await page.getByText('填写模型 ID…', { exact: true }).click()
+    await page
+      .getByRole('menuitem', { name: '填写模型 ID…', exact: true })
+      .or(page.getByRole('button', { name: '填写模型 ID…', exact: true }))
+      .click()
     await page.getByRole('textbox', { name: '模型 ID' }).fill('vendor/typed')
     await shot(page, 'typed-panel-1280-dark')
     await page.getByRole('button', { name: '添加并选用' }).click()
@@ -336,7 +364,10 @@ describe("choosing a Harness's own options before the first message", () => {
     await startNew(page)
     await chip(page, '模型').click()
     await row(page, /vendor\/typed/u).waitFor()
-    await page.getByText('填写模型 ID…', { exact: true }).click()
+    await page
+      .getByRole('menuitem', { name: '填写模型 ID…', exact: true })
+      .or(page.getByRole('button', { name: '填写模型 ID…', exact: true }))
+      .click()
     await page.getByRole('button', { name: '移除 vendor/typed' }).click()
     await expect
       .poll(async () => (await owner.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'codex')?.customModels)
@@ -365,6 +396,7 @@ describe("choosing a Harness's own options before the first message", () => {
     expect(
       await page
         .locator('.composer-stack [data-composer-control]')
+        .filter({ visible: true })
         .evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.composerControl)),
     ).toEqual(['harness', 'model', 'thinking', 'permission'])
     await chip(page, '思考').click()
@@ -428,7 +460,7 @@ describe("choosing a Harness's own options before the first message", () => {
       await writeFile(answer, 'exit-before-take')
       await input(page).fill('中断的草稿')
       await input(page).press('Meta+Enter')
-      const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
+      const elsewhere = page.getByRole('menuitemradio', { name: /^不选项目/u }).or(page.getByRole('radio', { name: /^不选项目/u }))
       if (
         await elsewhere.waitFor({ timeout: 2_000 }).then(
           () => true,
@@ -473,13 +505,7 @@ describe("choosing a Harness's own options before the first message", () => {
   for (const theme of ['light', 'dark'] as const)
     it(`lists the same on a phone, ${theme}`, async () => {
       const page = await open(390, theme)
-      const sheetOpen = page.getByRole('button', { name: '新建会话', exact: true })
-      for (const button of await sheetOpen.all()) {
-        if (await button.isVisible()) {
-          await button.click()
-          break
-        }
-      }
+      await openNew(page)
       const sheet = page.locator('.new-session-sheet')
       await sheet.waitFor()
       await sheet
@@ -489,20 +515,20 @@ describe("choosing a Harness's own options before the first message", () => {
       expect(await sheet.getByText('开始后可以换', { exact: false }).count()).toBe(0)
       await shot(page, `sheet-390-${theme}`)
       await sheet.getByRole('button', { name: /^权限/u }).click()
-      await page.getByText('由模型判断', { exact: true }).waitFor()
-      expect(await page.getByText('按规则放行', { exact: true }).count()).toBe(0)
+      await row(page, '由模型判断').waitFor()
+      expect(await row(page, '按规则放行').count()).toBe(0)
       await page.getByRole('button', { name: '更多', exact: true }).click()
-      await page.getByText('按规则放行', { exact: true }).waitFor()
+      await row(page, '按规则放行').waitFor()
       await shot(page, `sheet-permission-390-${theme}`)
       // Closed with the rest shown, the next opening shows the main rows again.
       const picker = page.getByRole('dialog', { name: '权限' })
       await picker.getByRole('button', { name: '取消', exact: true }).click()
       await picker.waitFor({ state: 'hidden' })
       await sheet.getByRole('button', { name: /^权限/u }).click()
-      await page.getByText('由模型判断', { exact: true }).waitFor()
-      await expect.poll(() => page.getByText('按规则放行', { exact: true }).count()).toBe(0)
+      await row(page, '由模型判断').waitFor()
+      await expect.poll(() => row(page, '按规则放行').count()).toBe(0)
       await page.getByRole('button', { name: '更多', exact: true }).click()
-      await page.getByText('按规则放行', { exact: true }).click()
+      await row(page, '按规则放行').click()
       await expect.poll(() => sheet.getByRole('button', { name: /^权限/u }).innerText()).toContain('按规则放行')
       await noHorizontalOverflow(page)
       await page.context().close()
@@ -580,12 +606,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
   it('reads its modes on a phone and offers them before the first message', async () => {
     const page = await open(390, 'dark')
     try {
-      for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
-        if (await button.isVisible()) {
-          await button.click()
-          break
-        }
-      }
+      await openNew(page)
       const sheet = page.locator('.new-session-sheet')
       await sheet.waitFor()
       expect(await sheet.getByRole('button', { name: /^Harness：/u }).getAttribute('aria-label')).toBe('Harness：Generic')
@@ -802,7 +823,7 @@ describe("choosing one of Codex's own models in a draft", () => {
       await expect.poll(() => chip(page, '模型').innerText(), { timeout: 15_000 }).toContain('GPT Fake')
       expect(await received('model/list')).toHaveLength(1)
       expect(await received('thread/start')).toEqual([])
-      const menu = page.locator('.ui-menu, [role="menu"], [role="listbox"]').filter({ hasText: 'GPT Fake Mini' }).first()
+      const menu = page.locator('.ui-menu, [role="menu"], [role="listbox"]').filter({ hasText: 'GPT Fake Mini', visible: true }).first()
       await menu.waitFor()
       await row(page, /^GPT Fake Mini/u).waitFor()
       await row(page, /^GPT Fake 默认/u).waitFor()
@@ -828,7 +849,7 @@ describe("choosing one of Codex's own models in a draft", () => {
       const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
       await input.fill('第一轮')
       await input.press('Meta+Enter')
-      const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
+      const elsewhere = page.getByRole('menuitemradio', { name: /^不选项目/u }).or(page.getByRole('radio', { name: /^不选项目/u }))
       if (
         await elsewhere.waitFor({ timeout: 3_000 }).then(
           () => true,
@@ -860,12 +881,7 @@ describe("choosing one of Codex's own models in a draft", () => {
       page.setDefaultTimeout(15_000)
       await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
       await connected(page)
-      for (const button of await page.getByRole('button', { name: '新建会话', exact: true }).all()) {
-        if (await button.isVisible()) {
-          await button.click()
-          break
-        }
-      }
+      await openNew(page)
       const sheet = page.locator('.new-session-sheet')
       await sheet.waitFor()
       await sheet.getByRole('button', { name: /^Harness/u }).click()

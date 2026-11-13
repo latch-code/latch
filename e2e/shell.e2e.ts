@@ -45,22 +45,24 @@ describe('the shell', () => {
       return { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) }
     })
 
-  it('lays out the 52px title row and the sidebar from the window edge, and lands a cold start on the new session', async () => {
+  it('lays out the 52px title row and the sidebar from the window edge, and lands a cold start on Home with its new-session input', async () => {
     const page = await open(1440, 900, '壳层桌面')
     expect(await box(page, '.titlebar')).toMatchObject({ left: 0, top: 0, width: 1440, height: 52 })
-    expect(await box(page, '#session-navigation')).toMatchObject({ left: 0, top: 52, width: 248 })
-    expect((await box(page, 'main.workspace')).left).toBe(248)
+    expect(await box(page, '#session-navigation')).toMatchObject({ left: 0, top: 52, width: 264 })
+    expect((await box(page, 'main.workspace')).left).toBe(264)
     // A browser, even over loopback on the Mac, is told which computer it reads; its foot has 设置 alone, with its word.
     const foot = page.getByRole('navigation', { name: '主导航', exact: true })
     expect(await foot.getByRole('button').allTextContents()).toEqual(['设置'])
-    const name = page.locator('#session-navigation .sidebar-top > .sidebar-host')
-    expect((await name.textContent())?.trim()).not.toBe('')
-    // The computer's name is above the switch between Code and 我的 Agent, which leads the sidebar's own rows.
-    expect((await box(page, '.sidebar-host')).top).toBeLessThan((await box(page, '#session-navigation .space-switch')).top)
+    const computer = page.locator('#session-navigation .workbench-computer-button')
+    expect((await computer.textContent())?.trim()).not.toBe('')
+    // A keeps the computer at the sidebar's foot and Code / 我的 Agent above its navigation rows.
+    expect((await computer.boundingBox())!.y).toBeGreaterThan((await box(page, '#session-navigation .space-switch')).top)
     expect((await box(page, '#session-navigation .space-switch')).top).toBeLessThan(
       (await box(page, '#session-navigation .sidebar-top .sidebar-nav-row >> nth=0')).top,
     )
-    expect(await page.locator('main.workspace').getAttribute('class')).toContain('is-new')
+    await page.locator('.workbench-home').waitFor()
+    expect(await page.locator('main.workspace').getAttribute('inert')).not.toBeNull()
+    expect(await page.getByRole('textbox', { name: '新会话消息', exact: true }).count()).toBe(1)
     await noHorizontalOverflow(page)
     await page.context().close()
   })
@@ -139,13 +141,15 @@ describe('the shell', () => {
     await guest.context().close()
   })
 
-  it('has no Agent or 定时任务 entry while neither has a page', async () => {
+  it('opens the implemented schedule page and keeps it out of settings sections', async () => {
     const page = await open(1440, 900, '壳层没有空页')
     await allData(page)
     const sidebar = page.locator('#session-navigation')
-    expect(await sidebar.getByRole('button', { name: 'Agent', exact: true }).count()).toBe(0)
-    expect(await sidebar.getByRole('button', { name: '定时任务', exact: true }).count()).toBe(0)
-    await openEntry(page, '设置')
+    await sidebar.getByRole('button', { name: '定时任务', exact: true }).click()
+    await page.getByRole('region', { name: '通用 的资料', exact: true }).waitFor()
+    await page.locator('.agent-schedules').getByText('没有定时任务', { exact: true }).waitFor()
+    await page.getByRole('region', { name: '通用 的资料', exact: true }).getByRole('button', { name: '关闭资料', exact: true }).click()
+    await page.getByRole('button', { name: '设置', exact: true }).filter({ visible: true }).click()
     const settings = page.locator('.settings-page')
     await settings.getByRole('tab', { name: '通用', exact: true }).waitFor()
     expect(await settings.getByRole('tab', { name: 'Agent', exact: true }).count()).toBe(0)
@@ -181,6 +185,7 @@ describe('the shell', () => {
       const page = await openOnSettings(1440, '壳层快捷键')
       const selected = () => page.locator('#session-navigation [aria-current="true"], #session-navigation [aria-current="page"]').count()
       const before = await selected()
+      const panelBefore = await page.locator('.app-shell').getAttribute('data-inspector')
       const prevented = page.evaluate(
         () =>
           new Promise<boolean>(done => {
@@ -194,11 +199,12 @@ describe('the shell', () => {
         await page.locator('.settings-page').waitFor()
       }
       expect(await page.locator('dialog[open]').count()).toBe(0)
-      expect(await page.locator('.app-shell').getAttribute('data-inspector')).toBeNull()
+      expect(await page.locator('.app-shell').getAttribute('data-inspector')).toBe(panelBefore)
+      expect(await page.locator('.inspector-column').isVisible()).toBe(false)
       expect(await selected()).toBe(before)
       await openSessions(page)
       expect(await findBar(page).count()).toBe(0)
-      expect(await page.locator('.app-shell').getAttribute('data-inspector')).toBeNull()
+      expect(await page.locator('.app-shell').getAttribute('data-inspector')).toBe(panelBefore)
       await page.context().close()
     })
 
@@ -236,8 +242,45 @@ describe('the shell', () => {
       await page.context().close()
     })
 
-    it('stays when a send settles after the person moved to the page', async () => {
-      const page = await open(1440, 900, '壳层发送')
+    it('shows the sent Home message while an older reading session stays retained', async () => {
+      const page = await open(1440, 900, '首页已发消息')
+      const { sessionId } = await host.host.bridge.createTask({ prompt: '保留阅读的会话', requestId: randomUUID(), mode: 'agent' })
+      await page.locator(`[data-task-id="${sessionId}"]`).first().click()
+      await page.locator('.transcript-content').waitFor()
+      await page.getByRole('button', { name: '总览', exact: true }).click()
+      let release: () => void = () => {}
+      const held = new Promise<void>(done => {
+        release = done
+      })
+      let starts = 0
+      await page.route(
+        url => url.pathname.endsWith('/tasks'),
+        async route => {
+          if (route.request().method() === 'POST') {
+            starts++
+            await held
+          }
+          await route.continue()
+        },
+      )
+      const prompt = '从首页发送的新消息'
+      await page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).fill(prompt)
+      await page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }).click()
+      await page.locator('.workbench-home .sending-message').getByText(prompt, { exact: true }).waitFor()
+      expect(await page.locator('main.workspace').getAttribute('inert')).not.toBeNull()
+      expect(await page.locator('main.workspace .sending-message').count()).toBe(0)
+      expect(starts).toBe(1)
+      const created = page.waitForResponse(response => response.url().endsWith('/tasks') && response.request().method() === 'POST')
+      release()
+      await created
+      await page.locator('main.workspace:not([inert]) .user-bubble').getByText(prompt, { exact: true }).waitFor()
+      await page.locator('.sending-message').waitFor({ state: 'detached' })
+      expect(starts).toBe(1)
+      await page.context().close()
+    })
+
+    it('opens the accepted conversation when the person returned to the same pending Home input', async () => {
+      const page = await open(1440, 900, '壳层回到待发送首页')
       let release: () => void = () => {}
       const held = new Promise<void>(done => {
         release = done
@@ -249,17 +292,58 @@ describe('the shell', () => {
           await route.continue()
         },
       )
-      await page.getByRole('textbox', { name: '新会话消息', exact: true }).fill('晚些才回来的消息')
+      const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+      await input.fill('回到原输入后接收结果')
       await page.getByRole('button', { name: '发送', exact: true }).click()
       await openEntry(page, '设置')
-      await page.locator('.settings-page').waitFor()
+      await openSessions(page)
+      await page.getByRole('button', { name: '总览', exact: true }).click()
+      await page.locator('.workbench-home').waitFor()
+      expect(await input.isDisabled()).toBe(true)
       const created = page.waitForResponse(response => response.url().endsWith('/tasks') && response.request().method() === 'POST')
       release()
       await created
-      await page.locator('[data-task-id]').first().waitFor({ state: 'attached' })
+      await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
+      await page.locator('main.workspace .topbar-title-button', { hasText: '回到原输入后接收结果' }).waitFor()
+      await page.getByRole('button', { name: '总览', exact: true }).click()
+      expect(await input.inputValue()).toBe('')
+      await page.context().close()
+    })
+
+    it.each(['settings', 'all-sessions'] as const)('stays on %s when a send settles after the person moved there', async destination => {
+      const page = await open(1440, 900, `壳层发送 ${destination}`)
+      if (destination === 'all-sessions') {
+        await page.getByRole('button', { name: '布局', exact: true }).click()
+        await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
+        await page.locator('.app-shell[data-workbench-layout="triage"]').waitFor()
+      }
+      let release: () => void = () => {}
+      const held = new Promise<void>(done => {
+        release = done
+      })
+      await page.route(
+        url => url.pathname.endsWith('/tasks'),
+        async route => {
+          if (route.request().method() === 'POST') await held
+          await route.continue()
+        },
+      )
+      const prompt = `晚些才回来的消息 ${destination}`
+      await page.getByRole('textbox', { name: '新会话消息', exact: true }).fill(prompt)
+      await page.getByRole('button', { name: '发送', exact: true }).click()
+      if (destination === 'settings') await openEntry(page, '设置')
+      else await page.getByRole('button', { name: '全部会话', exact: true }).click()
+      const destinationPage = page.locator(destination === 'settings' ? '.settings-page' : '.workbench-sessions')
+      await destinationPage.waitFor()
+      const created = page.waitForResponse(response => response.url().endsWith('/tasks') && response.request().method() === 'POST')
+      release()
+      await created
+      if (destination === 'settings') await page.locator('[data-task-id]').first().waitFor({ state: 'attached' })
+      else await page.locator('.workbench-session-row').filter({ hasText: prompt }).waitFor()
       await settleShell(page)
-      await page.locator('.settings-page').waitFor()
-      expect(await page.locator('.app-shell').getAttribute('data-entry')).toBe('settings')
+      await destinationPage.waitFor()
+      if (destination === 'settings') expect(await page.locator('.app-shell').getAttribute('data-entry')).toBe('settings')
+      else expect(await page.locator('.app-shell').getAttribute('data-all-sessions')).not.toBeNull()
       await page.context().close()
     })
   })
@@ -268,10 +352,25 @@ describe('the shell', () => {
     const page = await open(1200, 850, '壳层面板拖动')
     const { sessionId } = await host.host.bridge.createTask({ prompt: '面板拖动的会话', requestId: randomUUID(), mode: 'agent' })
     await page.locator(`[data-task-id="${sessionId}"]`).first().click()
-    await page
-      .getByRole('button', { name: /侧边面板/u })
-      .first()
-      .click()
+    await page.locator('.app-shell[data-inspector="open"]').waitFor()
+    await settleShell(page)
+    // The default summary is a column; make it wider through its real handle before testing a sheet becoming a column.
+    const initialHandle = page.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
+    await initialHandle.click({ trial: true })
+    expect(await initialHandle.getAttribute('aria-valuenow')).toBe('400')
+    const initialEdge = (await initialHandle.boundingBox())!
+    expect(Math.round(initialEdge.x + initialEdge.width / 2)).toBe(800)
+    const initialY = initialEdge.y + initialEdge.height / 2
+    await page.mouse.move(initialEdge.x + initialEdge.width / 2, initialY)
+    await page.mouse.down()
+    await page.mouse.move(1200 - 520, initialY, { steps: 4 })
+    await page.mouse.up()
+    await settleShell(page)
+    expect({
+      width: await initialHandle.getAttribute('aria-valuenow'),
+      placement: await page.locator('.app-shell').getAttribute('data-inspector'),
+      sidebar: await page.getByRole('separator', { name: '调整侧栏宽度', exact: true }).getAttribute('aria-valuenow'),
+    }).toEqual({ width: '520', placement: 'sheet', sidebar: '264' })
     await page.locator('.app-shell[data-inspector="sheet"]').waitFor()
     await settleShell(page)
     const edge = page.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
@@ -282,7 +381,7 @@ describe('the shell', () => {
     await page.mouse.move(handle!.x + handle!.width / 2, y)
     await page.mouse.down()
     await page.mouse.move(1200 - 400, y, { steps: 4 })
-    expect((await box(page, 'main.workspace')).width).toBe(1200 - 248)
+    expect((await box(page, 'main.workspace')).width).toBe(1200 - 264)
     await page.mouse.up()
     await page.locator('.app-shell[data-inspector="open"]').waitFor()
     expect((await box(page, '.inspector-column')).width).toBeGreaterThanOrEqual(399)
@@ -433,8 +532,10 @@ describe('the session menu', () => {
         }
       }
 
-      if (phone) await page.locator(`.phone-row[data-task-id="${shownId}"]`).click()
-      else await (await list()).locator(`[data-task-id="${shownId}"]`).click()
+      if (phone) {
+        await page.getByRole('button', { name: '全部会话', exact: true }).click()
+        await page.locator(`.phone-row[data-task-id="${shownId}"]`).click()
+      } else await (await list()).locator(`[data-task-id="${shownId}"]`).click()
       await page.locator('.transcript').getByText(`echo: echo ${shown}`).waitFor()
       await menus(false)
       // The menu never had 同步最新状态: a healthy connection has nothing to retry.

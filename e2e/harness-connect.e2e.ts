@@ -92,8 +92,7 @@ describe('a Harness that cannot connect yet', () => {
     it(`says what each one needs at ${width} ${theme}`, async () => {
       const page = await open(width, theme)
       if (width === 390) {
-        // A phone opens on its session list; a new session is one step in.
-        await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+        await page.getByRole('button', { name: '新会话选项', exact: true }).click()
         await page.getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
         // DeepSeek Harness is not offered as if it could run.
         expect(await page.getByRole('button', { name: /DeepSeek Harness/u }).count()).toBe(0)

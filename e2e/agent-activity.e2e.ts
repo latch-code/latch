@@ -35,7 +35,7 @@ const resultCard = (page: Page) => page.getByRole('group', { name: '定时结果
 const proposalRow = (page: Page) => page.getByRole('group', { name: '定时提议' })
 const profileOf = (page: Page) => page.getByRole('region', { name: '资讯 的资料', exact: true }).last()
 
-/** Opens the conversation with 资讯 at any width: the phone's tab, the tablet's title bar, or the sidebar. */
+/** Opens the conversation with 资讯 at any width: the phone's tab, the tablet's navigation rail, or the sidebar. */
 async function openConversation(page: Page, width: number, name = '资讯') {
   const agent = new RegExp(name, 'u')
   if (width < 768) {
@@ -43,8 +43,8 @@ async function openConversation(page: Page, width: number, name = '资讯') {
     if (await tab.isVisible().catch(() => false)) await tab.click()
     await page.getByRole('list', { name: '我的 Agent', exact: true }).getByRole('button', { name: agent }).click()
   } else if (width < 1024) {
-    // A tablet starts with the sidebar shut: the title bar's 我的 Agent opens its list.
-    await page.locator('.titlebar').getByRole('button', { name: '我的 Agent', exact: true }).click()
+    // A tablet starts with the sidebar shut: the navigation rail's 我的 Agent opens its list.
+    await page.getByRole('button', { name: '我的 Agent', exact: true }).filter({ visible: true }).click()
     await page.getByRole('list', { name: '我的 Agent', exact: true }).getByRole('button', { name: agent }).first().click()
   } else {
     await page.getByRole('radio', { name: '我的 Agent', exact: true }).first().click()
