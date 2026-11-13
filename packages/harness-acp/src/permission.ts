@@ -124,6 +124,7 @@ export interface LaunchRoute {
   providerId: string
   origin: string
   wire: string
+  upstream?: string
   via: 'providers' | 'launch'
   names: string[]
   templates?: { args?: number; files?: number }

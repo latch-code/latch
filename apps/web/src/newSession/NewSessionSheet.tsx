@@ -24,6 +24,7 @@ import {
   OWN_MODEL,
   ownModelGroups,
   ROUTE_NOTE,
+  translationBrief,
   serviceRef,
   serviceValue,
   unusableServices,
@@ -135,6 +136,7 @@ export function NewSessionSheet({
   const modelOption = known?.config.find(option => option.category === 'model')
   const thought = known?.config.find(option => option.category === 'thought_level')
   const service = servicePick(catalog, harness, choice.config)
+  const translation = catalog && translationBrief(catalog, harness, service?.providerId)
   // With a saved service the model row lists services too, as the composer's menu does: those Latch can forward this
   // Harness's requests to, and the others with why not.
   const services =
@@ -144,7 +146,10 @@ export function NewSessionSheet({
     && catalog.providers.some(provider => provider.kind !== 'demo')
   const forwards =
     services
-    && catalog.providers.some(provider => provider.kind !== 'demo' && pairRoute(harness.capabilities, provider).kind === 'passthrough')
+    && catalog.providers.some(provider => {
+      const route = pairRoute(harness.capabilities, provider)
+      return provider.kind !== 'demo' && (route.kind === 'passthrough' || route.kind === 'translate')
+    })
   // A model of its own replaces a service pick; thinking and the rest are kept either way.
   const pick = (configId: string, value: string) => {
     const base = configId === modelOption?.id ? withServicePick(choice.config, undefined) : choice.config
@@ -311,6 +316,7 @@ export function NewSessionSheet({
                 footer={
                   <div className="model-footer">
                     <UnusableServices services={unusableServices(catalog, harness, computer)} />
+                    {translation && <BriefHint brief={translation} className="model-note" />}
                     {rows(modelOption !== undefined)}
                     {forwards && <BriefHint brief={ROUTE_NOTE(harnessName(harness), computer)} className="model-note" />}
                   </div>

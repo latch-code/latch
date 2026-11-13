@@ -3240,7 +3240,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /**
      * The route a session of `harness` takes to the service of `model`, as the Host computes it from its own records:
-     * only a pair that needs no translation, on a service sessions may use, with a model it lists.
+     * only an implemented pair, on a service sessions may use, with a model it lists.
      */
     function modelRouteFor(harness: HarnessInfo, model: ModelRef): ModelRoute {
       const name = harness.capabilities.display.label
@@ -3248,17 +3248,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const record = effectiveProvider(model.providerId)
       if (!service || !record) throw new AppError(409, 'model-route-unavailable', '这个模型服务现在不能用，会话没有开始。')
       const route = pairRoute(harness.capabilities, { kind: record.kind })
-      if (route.kind !== 'passthrough')
+      if (route.kind !== 'passthrough' && route.kind !== 'translate')
         throw new AppError(
           400,
           'model-route-unavailable',
-          route.kind === 'translate'
+          route.kind === 'incompatible'
             ? `${name} 只说 ${route.speaks.map(wire => WIRE_NAMES[wire]).join('、')} 协议，${record.name} 用 ${WIRE_NAMES[route.from]}，Latch 转换协议尚未实现。`
             : `让 Latch 把 ${name} 的请求转给模型服务，尚未实现。`,
         )
       if (!service.models.includes(model.model))
         throw new AppError(400, 'model-unavailable', `${record.name} 里没有模型「${model.model.slice(0, 64)}」`)
-      return { providerId: record.id, model: model.model, wire: route.wire, origin: originOf(record.baseURL) }
+      return {
+        providerId: record.id,
+        model: model.model,
+        wire: route.wire,
+        origin: originOf(record.baseURL),
+        ...(route.kind === 'translate' ? { upstream: route.upstream } : {}),
+      }
     }
 
     /** Enabled services left out of the catalog, with the reason a page names (at most 20). */

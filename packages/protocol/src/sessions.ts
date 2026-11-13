@@ -6,6 +6,7 @@ import type { PromptQueueItem } from './features.ts'
 import type { AgentQuestion } from './questions.ts'
 import type { ScheduleResult } from './automations.ts'
 import type { AgentBrief, SessionAgentRef } from './custom-agents.ts'
+import type { GatewayLoss } from './gateway-translations.ts'
 
 export interface SessionCommand {
   name: string
@@ -61,6 +62,8 @@ export interface RoutedTurn {
   chosen?: string
   /** By the model the requests named, in the order they first came; at most 16. */
   models: RoutedModel[]
+  /** Closed diagnostic names only; no request, response or tool contents. */
+  dropped?: GatewayLoss[]
 }
 
 export interface RoutedModel {

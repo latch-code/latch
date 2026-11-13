@@ -191,7 +191,9 @@ export function servicePick(
   if (!value || !harness || harness.capabilities.models.owner === 'latch') return undefined
   const [providerId = '', model = ''] = value.split('\u0000')
   const provider = findProvider(catalog, providerId)
-  if (!provider || pairRoute(harness.capabilities, provider).kind !== 'passthrough') return undefined
+  if (!provider) return undefined
+  const route = pairRoute(harness.capabilities, provider)
+  if (route.kind !== 'passthrough' && route.kind !== 'translate') return undefined
   return serviceModels(provider).includes(model) ? { providerId, model } : undefined
 }
 

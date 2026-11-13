@@ -2,7 +2,15 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { isFileChange, type FileChange, isFileMention, type FileMention, isAttachmentRef, type AttachmentRef } from '@latch/protocol'
+import {
+  GATEWAY_LOSSES,
+  isFileChange,
+  type FileChange,
+  isFileMention,
+  type FileMention,
+  isAttachmentRef,
+  type AttachmentRef,
+} from '@latch/protocol'
 import type { ModelRoute } from '@latch/sdk'
 import type {
   AgentBrief,
@@ -172,6 +180,7 @@ const usage = z.object({
 const count = z.number().int().nonnegative()
 const routedTurn = z.object({
   requests: count,
+  dropped: z.array(z.enum(GATEWAY_LOSSES)).max(GATEWAY_LOSSES.length).optional(),
   chosen: z.string().max(200).optional(),
   models: z
     .array(
@@ -389,6 +398,7 @@ const stateSchema = z.object({
             providerId: z.string().min(1).max(128),
             model: z.string().min(1).max(200),
             wire: z.enum(['chat-completions', 'responses', 'anthropic-messages', 'gemini']),
+            upstream: z.enum(['chat-completions', 'responses', 'anthropic-messages', 'gemini']).optional(),
             origin: z.string().min(1).max(300),
           })
           .optional(),

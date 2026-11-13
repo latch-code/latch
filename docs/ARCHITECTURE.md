@@ -45,7 +45,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」与另一台电脑的「复制链接」（主进程申请邀请，写成剪贴板上的隐藏项，10 分钟后仍在就清除；页面看不到链接）、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告）、其他电脑（见「桌面端与其他电脑」） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`remote-proxy.cjs`、`computers.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
 | Host | 监听入口（含 HTTPS 证书热加载）、HTTP/SSE、运行状态通告、流量计数、访问规则、配置读写、插件挂载、密钥文件排除在时间机器之外 | `apps/host/src/server.ts`、`listeners.ts`、`lifecycle.ts`、`traffic.ts`、`access.ts`、`config.ts`、`providers.ts`、`backup.ts` |
 | HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），交付的状态、暂存、提交、推送与 PR 在 `git.ts`（[GIT-DELIVERY.md](GIT-DELIVERY.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
-| 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、工具网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`tool-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
+| 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、工具网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`model-gateway/`、`tool-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
 | 共享安全文本 | 确认内容转义、设备名称规则、「这台电脑」的判定 `isLocalListener`（浏览器可用） | `packages/protocol/src/text.ts`、`listeners.ts` |
 | 本机确认组件 | 核对确认内容，以 macOS 系统表单调用 Touch ID / 登录密码 | `native/macos/LatchPresence.swift`（`pnpm build:presence` 构建到 `dist/native/latch-presence`） |
 | 进程发现 | `host.json`、数据目录锁、经 `host.sock` 核对 Host | `apps/host/src/host-state.ts` |
@@ -137,7 +137,7 @@ Host 模块与 UI 模块都是用户显式加载的可信代码：分别拥有 H
 
 ## 安全模型概览
 
-模型网关使用独立回环临时端口、每进程凭据与固定协议路径，密钥只在 Host 向已确认服务发出请求时注入；四协议透传、进程交付与用量见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。服务模型与能力声明改变时旧租约失效，不能继续沿用已经不成立的能力。
+模型网关使用独立回环临时端口、每进程凭据与固定协议路径，密钥只在 Host 向已确认服务发出请求时注入；四协议透传、Responses→Chat 转换、进程交付与用量见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。服务模型与能力声明改变时旧租约失效，不能继续沿用已经不成立的能力。
 
 Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码的隔离：
 
