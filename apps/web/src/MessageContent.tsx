@@ -1,4 +1,17 @@
-import { createContext, memo, useContext, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import {
+  cloneElement,
+  createContext,
+  isValidElement,
+  memo,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react'
 import Markdown, { type Components, type Options, type UrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -18,6 +31,7 @@ import { useKnownFiles } from './components/FileReferences.tsx'
 import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
 import { codePathCandidate, linkTarget, namesPath, referenceText, urlScheme } from './fileReference.ts'
 import { exceedsMarkdownNesting, MAX_TREE_DEPTH, treeDepth } from './markdownNesting.ts'
+import { createStreamingMarkdown } from './markdown/renderBlocks.tsx'
 import { ICON_STROKE, CheckGlyph, ChevronDownGlyph, ChevronUpGlyph, CopyGlyph, writeClipboard } from '@latch/ui'
 
 export interface MarkdownFiles {
@@ -245,9 +259,19 @@ function ClosedCode({ code, language, start, end }: { code: string; language?: s
   const renderFrame = useContext(FrameRenderer)
   const source = useContext(SourceText),
     settled = useContext(ReplySettled)
-  const closed = settled || (start !== undefined && end !== undefined && codeClosed(source, start, end))
-  if (language === 'mermaid' && closed && renderFrame) return <Diagram key={code} source={code} renderFrame={renderFrame} />
+  const delimited = start !== undefined && end !== undefined && codeClosed(source, start, end)
+  const closed = settled || delimited
+  if (language === 'mermaid' && delimited && renderFrame) return <Diagram key={code} source={code} renderFrame={renderFrame} />
   return <CodeBlock code={code} language={language} closed={closed} />
+}
+
+function ClosedMath({ code, start, end }: { code: string; start?: number; end?: number }) {
+  const source = useContext(SourceText)
+  const block = start === undefined || end === undefined ? '' : source.slice(start, end)
+  const marker = /^\${2,}/u.exec(block)?.[0]
+  const ending = /\n[^\S\n]*(?:>[^\S\n]*)*(\${2,})[^\S\n]*$/u.exec(block.trimEnd())?.[1]
+  const closed = marker !== undefined && ending !== undefined && ending.length >= marker.length
+  return closed ? <MathFormula tex={code.trimEnd()} block /> : <CodeBlock code={code} language="math" closed={false} />
 }
 
 /**
@@ -368,7 +392,8 @@ const components: Components = {
     const code = codeNode.children.map(child => (child.type === 'text' ? child.value : '')).join('')
     const classNames = Array.isArray(codeNode.properties.className) ? codeNode.properties.className.join(' ') : ''
     const language = /(?:^|\s)language-([a-z\d_+#.-]{1,32})(?=[\s,]|$)/i.exec(classNames)?.[1]
-    if (classNames.includes('math-display')) return <MathFormula tex={code.trimEnd()} block />
+    if (classNames.includes('math-display'))
+      return <ClosedMath code={code} start={node?.position?.start.offset} end={node?.position?.end.offset} />
     return <ClosedCode code={code} language={language} start={node?.position?.start.offset} end={node?.position?.end.offset} />
   },
   table({ node: _node, ...props }) {
@@ -446,18 +471,34 @@ export const MessageContent = memo(function MessageContent({
     [id, onOpenFile],
   )
 
-  const rendered = useMemo(
+  const renderer = useMemo(
     () =>
-      renderMarkdown({
-        children: normalized,
-        // A file's preview renders the document and has its source a press away; a reply has no other copy of its words.
-        remarkPlugins: path === undefined ? replyPlugins : remarkPlugins,
-        remarkRehypeOptions,
-        components: messageComponents,
-        urlTransform: safeUrl,
-        skipHtml: true,
-      }),
-    [normalized, path, remarkRehypeOptions, messageComponents],
+      createStreamingMarkdown(
+        source =>
+          renderMarkdown({
+            children: source,
+            // A file's preview renders the document and has its source a press away; a reply has no other copy of its words.
+            remarkPlugins: path === undefined ? replyPlugins : remarkPlugins,
+            remarkRehypeOptions,
+            components: messageComponents,
+            urlTransform: safeUrl,
+            skipHtml: true,
+          }),
+        (source, child, index) => (
+          <SourceText.Provider key={index} value={source}>
+            {isValidElement(child) ? cloneElement(child, { key: 'content' }) : child}
+          </SourceText.Provider>
+        ),
+      ),
+    [path, remarkRehypeOptions, messageComponents],
+  )
+  const rendered = useMemo(
+    () => (exceedsMarkdownNesting(normalized) ? null : renderer(normalized, streaming && path === undefined)),
+    [normalized, streaming, path, renderer],
+  )
+  const files = useMemo(
+    () => ({ path, onOpenFile: effectiveOpenFile, resolveImage: effectiveImage }),
+    [path, effectiveOpenFile, effectiveImage],
   )
   const plain = <PlainText text={text} />
   return (
@@ -467,13 +508,9 @@ export const MessageContent = memo(function MessageContent({
       ) : (
         <ErrorBoundary resetKey={text} fallback={plain}>
           <ReplySettled.Provider value={!streaming}>
-            <SourceText.Provider value={normalized}>
-              <FrameRenderer.Provider value={renderFrame ?? (openFile && session ? renderDocumentFrame : undefined)}>
-                <MarkdownFileContext.Provider value={{ path, onOpenFile: effectiveOpenFile, resolveImage: effectiveImage }}>
-                  {rendered}
-                </MarkdownFileContext.Provider>
-              </FrameRenderer.Provider>
-            </SourceText.Provider>
+            <FrameRenderer.Provider value={renderFrame ?? (openFile && session ? renderDocumentFrame : undefined)}>
+              <MarkdownFileContext.Provider value={files}>{rendered}</MarkdownFileContext.Provider>
+            </FrameRenderer.Provider>
           </ReplySettled.Provider>
         </ErrorBoundary>
       )}

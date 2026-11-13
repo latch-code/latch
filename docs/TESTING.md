@@ -364,6 +364,10 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `transcript-find.e2e.ts` 经真实 Standard 读取本地报告，在三宽验证从未挂载的工具输出可查找、内外折叠展开、逐项 Highlight、清空查询和焦点／草稿保留，不额外发起模型调用。`preview-renderers.e2e.ts` 生成含一万形状的实际 PPTX，检查固定复杂度拒绝、释放 frame 和随后正常打开 DOCX；普通 30 页首屏性能仍独立测量，不用拒绝样本替代正常预览。
 
+流式 Markdown 的切块等价性由 `stream-markdown.test.ts` 在六十篇以上样本的每个前缀检查；`preview-renderers.e2e.ts` 检查代码展开、焦点、表格行身份、未闭合图表与数学，生成 `test-results/stream-markdown/` 的五宽深浅截图；`streaming-render.e2e.ts` 检查真实 Transcript 中的消息身份与结算后原文复制。
+
+耗时基线单独运行 `LATCH_STREAM_BENCH=1 LATCH_STREAM_LABEL=<结果名> pnpm exec vitest run --config e2e/vitest.config.ts e2e/stream-performance.e2e.ts`，默认跳过。用临时 Host、本地固定 Provider、10/100/300 轮历史和两万字回复，CPU 4 倍节流，记录脚本区间、长任务、帧字节、JSON 解析、滚动和内存；输出在 `test-results/stream-performance/`。可用 `LATCH_E2E_UI_DIR` 对照已保存的旧构建，报告记录页面构建指纹；`LATCH_STREAM_PROFILE=1` 额外记录去掉 URL 的 CPU 采样。比较前后应协调无并行构建/e2e的窗口并设置 `LATCH_STREAM_QUIET=1`，保留系统负载与重复样本；heap未强制GC，不能用来宣称泄漏。预算断言由 `LATCH_STREAM_ENFORCE_BUDGET=1` 开启：尾段要有样本，每帧脚本不超过8ms，且没有50ms长任务。未开启断言的基线通过不代表预算达标。
+
 - e2e 在同一个 Vitest 进程内用 `startTestHost` 启动 Host，页面来自 `dist/web`（或 `LATCH_E2E_UI_DIR`），所以改客户端后先 `pnpm build`。
 - Playwright（`@latch/e2e` 的 devDependency）默认使用 `pnpm --filter @latch/e2e exec playwright install chromium` 安装的 Chromium；设置 `LATCH_BROWSER_PATH` 时改用该路径的 Chrome。都以无头模式运行。
 - 每台设备是独立的 BrowserContext，用 `enrollBrowser` 经真实连接页面、带回环邀请在回环地址上登记。手机经 HTTPS 与邀请登记的流程只在 `enrollment.e2e.ts` 覆盖（Host 带 `tls` 选项与命名曲线证书，手机上下文设 `ignoreHTTPSErrors`）。需要本机桌面端或另一台设备时，用 `testHost.enroll({ listener: 'unix' })` 等 API 设备直接驱动 Host（见 `permissions-ui.e2e.ts`）。

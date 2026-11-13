@@ -263,6 +263,89 @@ describe('isolated document renderers', () => {
         .evaluateAll(nodes => nodes.every(node => !node.querySelector('a,img,script,iframe,foreignObject'))),
     ).toBe(true)
   })
+  it('keeps expanded code, focus and existing table rows while streaming and when the original document settles', async () => {
+    const code = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n')
+    const prefix = `\`\`\`text\n${code}\n\`\`\`\n\n`
+    await page.evaluate(text => window.startRichPreview(text, true), `${prefix}**尾部`)
+    const expand = page.getByRole('button', { name: '展开全部 30 行', exact: true })
+    await expand.click()
+    await page.getByRole('button', { name: '收起代码', exact: true }).focus()
+    await page.locator('.message-code').evaluate(element => element.setAttribute('data-owned-node', 'prefix-code'))
+    await page.evaluate(text => window.startRichPreview(text, true), `${prefix}**尾部续写**\n\n下一段`)
+    expect(await page.locator('[data-owned-node="prefix-code"]').count()).toBe(1)
+    expect(await page.getByRole('button', { name: '收起代码', exact: true }).getAttribute('aria-expanded')).toBe('true')
+    expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('收起代码')
+
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+    await page.getByRole('button', { name: '复制代码', exact: true }).click()
+    await page.getByText('代码已复制到剪贴板', { exact: true }).waitFor()
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${code}\n`)
+    await page.getByRole('button', { name: '收起代码', exact: true }).focus()
+    await page.evaluate(text => window.startRichPreview(text, false), `${prefix}**尾部续写**\n\n下一段`)
+    expect(await page.locator('[data-owned-node="prefix-code"]').count()).toBe(1)
+    expect(await page.getByRole('button', { name: '收起代码', exact: true }).getAttribute('aria-expanded')).toBe('true')
+    expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('收起代码')
+    await page.evaluate(() => navigator.clipboard.writeText('stream-copy-sentinel'))
+    await page.getByRole('button', { name: '复制代码', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${code}\n`)
+
+    const table = '| 名称 | 结果 |\n| --- | --- |\n| 第一行 | 完成 |'
+    await page.evaluate(text => window.startRichPreview(text, true), table)
+    await page
+      .locator('tbody tr')
+      .first()
+      .evaluate(element => element.setAttribute('data-owned-node', 'first-row'))
+    await page.evaluate(text => window.startRichPreview(text, true), `${table}\n| 第二行 | 继续 |`)
+    await expect.poll(() => page.locator('tbody tr').count()).toBe(2)
+    expect(await page.locator('[data-owned-node="first-row"]').count()).toBe(1)
+    await page.evaluate(text => window.startRichPreview(text, false), `${table}\n| 第二行 | 继续 |`)
+    expect(await page.locator('[data-owned-node="first-row"]').count()).toBe(1)
+  })
+  it('keeps unfinished diagrams and math inert, then renders only the completed structures', async () => {
+    const diagram = '```mermaid\ngraph TD\n A-->B'
+    await page.evaluate(text => window.startRichPreview(text, true), diagram)
+    await page.locator('.message-code').waitFor()
+    expect(await page.locator('iframe,.message-diagram').count()).toBe(0)
+    await page.evaluate(text => window.startRichPreview(text, false), diagram)
+    expect(await page.locator('iframe,.message-diagram').count()).toBe(0)
+    const math = '$$\n\\frac{1}{2}'
+    await page.evaluate(text => window.startRichPreview(text, true), math)
+    await page.getByText('math', { exact: true }).waitFor()
+    expect(await page.locator('.katex,.katex-error').count()).toBe(0)
+    await page.evaluate(text => window.startRichPreview(text, true), `${math}\n$$`)
+    await page.locator('.message-math .katex').waitFor()
+    expect(await page.locator('.katex-error').count()).toBe(0)
+  })
+  it('shows streaming, settled and inert failed content at phone, tablet and desktop widths in both themes', async () => {
+    const prefix =
+      '# 工作记录\n\n已经检查 **输入**，保留 `原始内容`。\n\n| 项目 | 结果 |\n| --- | --- |\n| 测试 | 通过 |\n\n```ts\nconst value = 42\n```\n\n'
+    await mkdir('test-results/stream-markdown', { recursive: true })
+    for (const width of [320, 390, 768, 1024, 1440])
+      for (const theme of ['light', 'dark']) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.evaluate(theme => {
+          document.documentElement.dataset.theme = theme
+        }, theme)
+        await page.evaluate(text => window.startRichPreview(text, true), `${prefix}接下来：**正在检查`)
+        await page.getByText('正在检查', { exact: true }).waitFor()
+        expect(await page.locator('.message-content').getAttribute('aria-busy')).toBe('true')
+        expect(await page.locator('.message-content').innerText()).not.toContain('**')
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+        await page.screenshot({ path: `test-results/stream-markdown/streaming-${width}-${theme}.png`, animations: 'disabled' })
+        await page.evaluate(
+          text => window.startRichPreview(text, false),
+          `${prefix}接下来：**已经检查**\n\n\`\`\`mermaid\n%%{init:{"securityLevel":"loose"}}%%\ngraph TD;A-->B\n\`\`\``,
+        )
+        await page.getByText('securityLevel', { exact: false }).waitFor()
+        expect(await page.locator('iframe').count()).toBe(0)
+        expect(await page.locator('.message-content').getAttribute('aria-busy')).toBe(null)
+        await page.screenshot({ path: `test-results/stream-markdown/settled-${width}-${theme}.png`, animations: 'disabled' })
+      }
+    await page.setViewportSize({ width: 1000, height: 900 })
+    await page.evaluate(() => {
+      document.documentElement.dataset.theme = 'light'
+    })
+  })
   it('renders Mermaid only through an opaque no-network frame and uses an inert SVG image', async () => {
     const external: string[] = []
     page.on('request', request => {

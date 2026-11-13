@@ -20,6 +20,8 @@ Vitest 驱动浏览器、Electron、原生链路；`startTestHost` 启动临时 
 
 `native-swift-relay.e2e.ts` 用真实双Go与Swift检查单流、旧能力兼容、首块前后取消与App换代；每块复核原权限，测速含子连接握手。
 
+`stream-performance.e2e.ts`：`LATCH_STREAM_BENCH=1`，[说明](../docs/TESTING.md)
+
 运行环境 node；依赖都写在 devDependencies：host、protocol、sdk、testkit 与原生全链的 relay、link-client、link-wire；Playwright、vite 用于界面与原语总览。用例与运行器用根项目的同一份 Vitest，所以本项目不声明 `vitest`。
 
 不变量：
