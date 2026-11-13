@@ -56,12 +56,14 @@ Agent 自己提供官方的机器协议时，Latch 直接说这个协议，ACP �
 | goose | `goose acp` | Apache-2.0 | 见项目文档 |
 | Claude Agent | `claude-agent-acp` | Apache-2.0 适配器；Claude Code 专有（Anthropic 条款） | `npm i -g @agentclientprotocol/claude-agent-acp`；用这个人在 Claude Code 中已有的登录（或它设置里的 API key、Bedrock、Vertex）。名称只用「Claude Agent」，不用 Claude Code 的名称或 logo，图标是中性图形 |
 | Cursor | `cursor-agent acp` | 专有（Cursor 服务条款） | Cursor 官方安装脚本；用这个人自己的 Cursor 账号。安装脚本同时建 `agent` 与 `cursor-agent` 两个链接，预设用后者，因为 `agent` 这个名字可能属于别的程序；图标是中性图形 |
+| Antigravity | `agy acp --disable-telemetry` | Google Antigravity 条款 | 1.5.8 或更高版本；使用本机 CLI 的登录，模型与思考选项由 ACP 报告 |
+| Grok Build | `grok --no-auto-update --permission-mode default agent stdio` | 发布版条款；开源源码 Apache-2.0 | 1.0.77 或更高版本；使用本机 CLI 的登录，模型与推理档位由 ACP 报告，权限档位尚不能经 ACP 读回 |
 
 Claude Agent 与 Cursor 不是开源软件，Latch 只启动这个人自己装好、未经修改的命令。Latch 不提供 Claude 的登录（不写登录命令、不调用 `authenticate`、不声明 terminal auth，所以适配器也不列出登录方法），不读取、保存或转交任何一家的凭据，不调用私有接口；它的登录状态命令只读结论与到期日期（见「登录」）。对外发布并宣传「可用 Claude 订阅」之前，需要先取得 Anthropic 的书面确认；在自己的电脑上个人使用不受影响。
 
 Host 启动时、开始监听之前，用账户的 shell 跑一次 `-ilc`，读出 `PATH` 和下文点名的变量（「进程与环境」），8 秒内没结束就杀掉整个进程组，退回下面这些目录。登录 shell 的 PATH 排在 Host 自己的 PATH 之前。
 
-启动脚本让 Host 在 PATH 以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin`、`~/.local/bin`、`~/.bun/bin` 中查找命令，不经过 shell；含 `/` 的相对路径按找不到处理。从图形界面启动的 Host 通常没有登录 shell 的 PATH，所以还查找用户目录里 Node 版本管理器与包管理器的全局目录：fnm 的 `$FNM_DIR`（或 `~/.local/share/fnm`）下的 `aliases/default/bin`、nvm 的 `~/.nvm/alias/default`（经 `lts/*` 这类别名解析）指向的 `~/.nvm/versions/node/<版本>/bin`、Volta 的 `~/.volta/bin`、asdf 的 `~/.asdf/shims`、mise 的 `~/.local/share/mise/shims`、pnpm 的 `$PNPM_HOME` 与 `~/Library/pnpm`、Yarn 的 `~/.yarn/bin`。来自环境变量的目录只在是绝对路径时使用，只接受可执行的普通文件，查到的绝对路径计入启动指纹；这些目录也追加到 Agent 进程的 PATH 上。找不到时 Agent 在选择器中显示为不可用，并给出安装提示；仍找不到时请填写绝对路径。
+启动脚本让 Host 在 PATH 以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin`、`~/.local/bin`、`~/.bun/bin`、`~/.grok/bin` 中查找命令，不经过 shell；含 `/` 的相对路径按找不到处理。从图形界面启动的 Host 通常没有登录 shell 的 PATH，所以还查找用户目录里 Node 版本管理器与包管理器的全局目录：fnm 的 `$FNM_DIR`（或 `~/.local/share/fnm`）下的 `aliases/default/bin`、nvm 的 `~/.nvm/alias/default`（经 `lts/*` 这类别名解析）指向的 `~/.nvm/versions/node/<版本>/bin`、Volta 的 `~/.volta/bin`、asdf 的 `~/.asdf/shims`、mise 的 `~/.local/share/mise/shims`、pnpm 的 `$PNPM_HOME` 与 `~/Library/pnpm`、Yarn 的 `~/.yarn/bin`。来自环境变量的目录只在是绝对路径时使用，只接受可执行的普通文件，查到的绝对路径计入启动指纹；这些目录也追加到 Agent 进程的 PATH 上。找不到时 Agent 在选择器中显示为不可用，并给出安装提示；仍找不到时请填写绝对路径。
 
 预设可以声明 `agentCommand`：适配器驱动的那个人熟悉的程序；有 `fallback` 适配器的预设由 `fallback.drives` 说（codex-acp 驱动 codex），只用于保存在适配器上的定义。Host 用同样的规则查找它，只装了程序时「设置 → Harness」与选择器写「已安装 codex，还差让 Latch 连接它的适配器 codex-acp」；适配器才是启动的命令，没有它这个 Agent 不可用。Harness 状态里的命令查找结果缓存 5 秒；读取 `GET /link/api/agents`（设置页的「重新检测」，以及窗口重新获得焦点时）会清掉这个缓存，所以刚在终端里装好的命令下一次就能看到。这个列表里的每个预设也带同样的查找结果（`detected`，还没有据它添加 Agent 时也有），新会话页的「添加 Agent」据此在添加之前说出这台电脑上缺的是哪个程序；旧版 Host 不发它，那里只显示安装命令。Latch 不提供一键安装，只显示可复制的安装命令与项目主页。
 
@@ -98,6 +100,12 @@ profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本�
 | pi | 私有 `-e` 扩展 | `ask` | `plan`、`ask`、`rule`、`never` | — | — | 扩展报告当前档位 |
 | Claude Agent | — | `default`（Manual） | `plan`、`default`、`acceptEdits`、`auto`、`bypassPermissions` | — | — | 可读回；适配器新会话默认进 `auto`，Latch 每轮前设回预期模式 |
 | Cursor | `--mode` 或 `--force` 启动参数 | `agent` | `ask`、`plan`、`agent`、`agent-force` | — | `allow-always` | ACP 报告前三档；force 只标启动设置 |
+| Antigravity | — | `default` | `default`、`accept-edits`、`auto`；`plan` 不作为更严格的权限 | — | 仅保留单次选择 | 原生 mode 读回；工具权限规则仍由 CLI 管理 |
+| Grok Build | — | — | — | — | 仅保留单次选择 | 不报告权限模式；不生成虚构的四档选择 |
+
+Antigravity 的 `plan` 只追加规划指令，不能称为「只看不改」。它保留原生名称与说明，未归入权限档位；仅由人显式选择，不参与跨 Harness 的只读档位继承。默认草稿与分叉差异说明采用该 Harness 的实际默认名称。`default` 名称保留为「默认」：本机 `toolPermission`、允许与拒绝规则仍优先，所以默认模式也可能直接改文件。Latch 输入前设定并读回 mode，但不能据此断言每次工具调用都询问；一旦 CLI 请求审批，只提供单次选择。项目 `.agents`、兼容目录 `.agent` / `_agents` / `_agent` 中的 hooks、MCP 与插件，以及 `.gemini/config.json` 的个人定制目录入口计入启动指纹；清单引用这些目录之外的代码不在该指纹覆盖范围内。额外目录通过 ACP 能力协商后传入；创建空会话可能加载扩展，所以模型列表只在用户请求时读取。
+
+Grok Build 的 stdio 模式是独立 Agent 进程，不连接终端使用的共享 leader。Latch 不运行 `grok leader kill`，只停止自己启动的进程。项目 `.grok` 计入启动指纹；继承 `GROK_HOME` 的变量名和路径，不读取其中的登录或历史文件。当前只接 CLI 自己的模型目录，外部模型网关路由尚未实现；Grok 的自定义模型配置能力不等于 Latch 已支持该路由。Antigravity 同样不把 CCPA 地址选项当作 Gemini API 网关地址。
 
 - DeepSeek Harness：Latch 保持 `DSH_TELEMETRY_DISABLED=1`。每次启动在会话私有临时目录写入 0600 的 `--patch` 文件和插件，经公开 `permissionPresets.set/current` 设置与报告当前档位；不读写 dsh 自己的会话文件。报告同时绑定当前进程与 ACP session ID，未知组合拒绝发送。草稿选择计入启动指纹；会话空闲、没有后台子 Agent 时换档，结束旧进程、带选择启动新进程并恢复同一会话，真实读到目标值才完成。核对省略 setter，只报告服务当前值。`workspace-write` 直接允许工作目录及许可临时目录写入，扩大范围才询问。会话仍为 L3，模式不是 Latch 的 OS 隔离。
 - Gemini CLI：每次启动在会话自己的临时目录写 0600 系统设置文件，经 `GEMINI_CLI_SYSTEM_SETTINGS_PATH` 传入；保留关闭永久审批的设置（这些审批键尚未在正式版本上实测）。已知精确模型可选思考：Gemini 3/3.1 的已核对文本模型按其支持的 level，2.5 按 budget，Pro 不提供关闭。选择只写该模型的 `modelConfigs.customAliases`，不借用其他模型的限制、不改人的文件。空闲换档重启恢复；默认不添加思考覆盖。ACP 未独立报告有效值，所以选项带 `source: launch`，界面写「启动设置 · 未独立读回」，核对返回 `unread`。系统设置高于用户与项目同名设置，但 CLI 的 model-config overrides（包括更精确条件与运行时覆盖）在 alias 之后生效，可能覆盖此选择；不能凭文件写入断言 Agent 已采用。原生 ACP 已有思考选项时优先用它。

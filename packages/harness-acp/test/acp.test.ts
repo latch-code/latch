@@ -1055,6 +1055,27 @@ describe('ACP launch fingerprint', () => {
 })
 
 describe('ACP project configuration', () => {
+  it.each(['.agents/hooks.json', '.agent/hooks.json', '_agents/hooks.json', '_agent/hooks.json', '.gemini/config.json'])(
+    'refuses Antigravity input after changing the loaded project configuration %s',
+    async file => {
+      const fixture = await preset('antigravity', {
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_MODES: 'default,auto',
+        FAKE_ACP_INITIAL_MODE: 'default',
+      })
+      const bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({ prompt: 'echo before configuration', requestId: rid() })
+      await settled(bridge, sessionId)
+      const path = join(fixture.workspace, file)
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, '{}')
+      await expect(bridge.prompt(sessionId, 'echo after configuration', rid())).rejects.toMatchObject({
+        status: 409,
+        code: 'project-config-changed',
+      })
+      expect(received(await fixture.log(), 'session/prompt')).toHaveLength(1)
+    },
+  )
   const opencode = (options: AcpAgentOptions = {}, env: Record<string, string> = {}) =>
     preset('opencode', { FAKE_ACP_CONFIG: 'legacy', ...env }, options)
   const definitionHash = (record: AgentRecord) =>
@@ -1718,6 +1739,55 @@ describe('ACP project folders', () => {
 describe('ACP permission mode', () => {
   const qwen = (env: Record<string, string> = {}, options: AcpAgentOptions = {}) =>
     preset('qwen', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: QWEN_MODES, FAKE_ACP_INITIAL_MODE: 'default', ...env }, options)
+
+  it('reads Antigravity default before prompting and treats its instruction-only plan as no narrower permission', async () => {
+    const fixture = await preset('antigravity', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'default,accept-edits,auto,plan',
+      FAKE_ACP_INITIAL_MODE: 'auto',
+    })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo native mode', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('idle')
+    expect(detail.permission).toMatchObject({ expectedMode: 'default', readback: 'mode', modeTiers: { default: { name: '默认' } } })
+    expect(detail.permission?.modeTiers?.plan).toBeUndefined()
+    expect(detail.config?.find(option => option.category === 'mode')?.options.some(option => option.value === 'plan')).toBe(true)
+    expect((await fixture.log()).find(entry => entry.event === 'prompt-mode')?.mode).toBe('default')
+    expect(classifyMode(profileFor('antigravity')!.permission, 'default', 'plan')).toBe('wider')
+    await bridge.setConfig!(sessionId, 'mode', 'plan')
+    await bridge.prompt(sessionId, 'echo chosen plan', rid())
+    expect((await settled(bridge, sessionId)).config?.find(option => option.id === 'mode')?.currentValue).toBe('plan')
+  })
+
+  it('refuses Antigravity input when its reported permission cannot be brought back to default', async () => {
+    const fixture = await preset('antigravity', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'default,accept-edits,auto,plan',
+      FAKE_ACP_INITIAL_MODE: 'auto',
+      FAKE_ACP_STICKY_MODE: '1',
+    })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo refused mode', requestId: rid() })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+    expect(received(await fixture.log(), 'session/prompt')).toEqual([])
+    expect(fixture.events).toContainEqual({ type: 'permission-unverified', sessionId })
+  })
+
+  it('uses Grok model options without inventing permission readback or sending a mode setter', async () => {
+    const fixture = await preset('grok', { FAKE_ACP_CONFIG: 'options' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo grok model', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('idle')
+    expect(detail.permission?.readback).toBe('none')
+    expect(detail.permission?.expectedMode).toBeUndefined()
+    expect(detail.config?.some(option => option.category === 'mode')).toBe(false)
+    await bridge.setConfig!(sessionId, 'model', 'large')
+    await bridge.prompt(sessionId, 'echo changed model', rid())
+    expect((await settled(bridge, sessionId)).config?.find(option => option.category === 'model')?.currentValue).toBe('large')
+    expect(received(await fixture.log(), 'session/set_config_option').map(entry => entry.params?.configId)).toEqual(['model'])
+  })
 
   it('sets the expected mode once when the session starts in another one', async () => {
     const fixture = await qwen({ FAKE_ACP_INITIAL_MODE: 'yolo' })

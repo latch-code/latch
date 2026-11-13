@@ -5,7 +5,7 @@ import { loginShellValues, PROXY_NAMES } from './login-shell.ts'
 import { AppError } from '@latch/sdk'
 
 /** Install locations that a GUI-launched Host often lacks on PATH. */
-const EXTRA_DIRECTORIES = ['/opt/homebrew/bin', '/usr/local/bin', '~/.npm-global/bin', '~/.local/bin', '~/.bun/bin']
+const EXTRA_DIRECTORIES = ['/opt/homebrew/bin', '/usr/local/bin', '~/.npm-global/bin', '~/.local/bin', '~/.bun/bin', '~/.grok/bin']
 
 /** An nvm alias names a version or another alias; only these characters, and never a parent directory. */
 const NVM_ALIAS = /^(?!.*\.\.)[\w*./-]{1,64}$/u

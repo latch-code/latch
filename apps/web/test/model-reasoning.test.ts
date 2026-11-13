@@ -262,8 +262,12 @@ describe('the 权限 chip', () => {
       ['workspace-write', true],
       ['agent', false],
       ['agent-full-access', false],
+      ['permission-profile:x', true],
     ])
-    // A mode Latch has no word for is left out, unless the agent is in it, where it keeps the agent's own name.
+    // Unclassified native modes remain selectable under 更多 without acquiring a permission rank.
+    const own = view('read-only').rows!.find(row => row.value === 'permission-profile:x')!
+    expect(own).toMatchObject({ name: 'Profile X', icon: 'shield', more: true })
+    expect(own.tier).toBeUndefined()
     expect(rows('workspace-write')).toContainEqual(['workspace-write', false])
     expect(view('permission-profile:x')).toMatchObject({ label: 'Profile X', amber: false })
     expect(rows('permission-profile:x').at(-1)).toEqual(['permission-profile:x', false])
@@ -404,6 +408,7 @@ describe('the 权限 chip', () => {
       ['rule', undefined],
       ['model', undefined],
       ['never', undefined],
+      [undefined, undefined],
     ])
   })
 })
