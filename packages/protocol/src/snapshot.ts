@@ -9,6 +9,7 @@ import type { Approval, TaskDetail, TaskSummary } from './sessions.ts'
 import type { CurrentDevice, PermissionLevel, PresenceAvailability } from './devices.ts'
 import type { HarnessInfo } from './harnesses.ts'
 import type { ProviderSummary, SessionDefaults, UnusableProvider, WorkspaceInfo } from './settings.ts'
+import type { TaskStreamStamp } from './task-delta.ts'
 
 export interface HostView {
   hostId: string
@@ -109,6 +110,8 @@ export interface TaskStateEvent {
   detail: TaskDetail
   /** The Host's clock when it sent the event. */
   hostTime?: string
+  /** Full-baseline acknowledgement, only on an explicitly negotiated non-native subscription. */
+  stream?: TaskStreamStamp
 }
 
 /** Why the Host is about to stop answering: restarting, updating, the computer going to sleep, or stopping. */

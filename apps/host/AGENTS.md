@@ -4,7 +4,7 @@ Host 监听、授权与组合根。
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/server.ts`、`routes/`、`listeners.ts`、`access.ts`、`http-util.ts`、`preview-frames.ts`、`traffic.ts`、`not-found.ts` | HTTP/SSE 入口与路由模块（`test/route-guards.test.ts`）、认证、限速、CSP、流量与 404 |
+| `src/server.ts`、`routes/`、`listeners.ts`、`access.ts`、`http-util.ts`、`preview-frames.ts`、`task-delta.ts`、`traffic.ts`、`not-found.ts` | HTTP/SSE 路由（`test/route-guards.test.ts`）、认证、限速、CSP、流量与 404 |
 | `src/native*.ts`、`relay/` | 原生连接、发现、墓碑与目录 |
 | `src/auth.ts`、`presence*.ts`、`agent-probes.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-*.ts`、`model-gateway/`、`risk.ts`、`paths.ts` | 设备与登记；本机确认与理由；审计；`policy.json`；出站与模型网关；风险分级；路径 |
 | `src/host-state.ts`、`crypto.ts`、`identity.ts`、`hub.ts`、`session-meta.ts`、`prompt-queues.ts`、`questions.ts`、`agent-*.ts`、`config.ts`、`providers.ts` | Host 状态与锁、加密、会话路由及回执、Agent 与接力规则、配置与插件（`plugin-packages.ts`） |

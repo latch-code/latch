@@ -480,6 +480,7 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
         }
       })
       if (!audited) res.setHeader('x-latch-audit', 'failed')
+      deps.endDisallowedStreams()
       refresh()
       json(res, { device })
       return true

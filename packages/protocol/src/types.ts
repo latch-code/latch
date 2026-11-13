@@ -10,6 +10,7 @@ export type { AgentQuestion, QuestionAnswer, QuestionSubmission, QuestionReceipt
 
 export type * from './sessions.ts'
 export type * from './snapshot.ts'
+export type * from './task-delta.ts'
 export type * from './devices.ts'
 export type * from './harnesses.ts'
 export type { HarnessMcpReport, HarnessMcpServer, HarnessMcpState, HarnessOwnMcp } from './mcp.ts'

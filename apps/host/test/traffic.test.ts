@@ -85,4 +85,16 @@ describe('traffic meter', () => {
     first.kinds.snapshot.histogram[0] = 99
     expect(meter.summary().kinds.snapshot).toMatchObject({ count: 1, histogram: [1, 0, 0, 0, 0, 0, 0, 0, 0] })
   })
+
+  it('counts negotiated append frames separately while retaining per-session and per-connection totals', () => {
+    const meter = new TrafficMeter(),
+      connection = meter.stream('unix')
+    meter.frame(connection, 'task-state', 100_000, 'session-a')
+    meter.frame(connection, 'task-delta', 900, 'session-a')
+    const summary = meter.summary()
+    expect(summary.kinds['task-state']).toMatchObject({ count: 1, bytes: 100_000 })
+    expect(summary.kinds['task-delta']).toMatchObject({ count: 1, bytes: 900 })
+    expect(summary.sessions[0]).toMatchObject({ sessionId: 'session-a', frames: 2, frameBytes: 100_900 })
+    expect(summary.connections[0]).toMatchObject({ frames: 2, bytes: 100_900 })
+  })
 })

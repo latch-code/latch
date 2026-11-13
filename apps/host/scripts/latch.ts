@@ -527,6 +527,7 @@ function scopesFlag(value: string | true | undefined): DeviceScope[] | undefined
 
 const TRAFFIC_LABELS: Record<TrafficKind, string> = {
   'task-state': '会话状态帧',
+  'task-delta': '正文增量帧',
   'tasks-invalidated': '列表失效帧',
   refresh: '刷新帧',
   'host-state': 'Host 状态帧',
