@@ -17,7 +17,7 @@ export interface WireOptions {
 }
 
 export function openWire(kind: WireKind | undefined, spec: SpawnSpec, handlers: WireHandlers, options: WireOptions = {}): AgentWire {
-  if (kind === 'pi') return PiWire.spawn(spec, handlers)
+  if (kind === 'pi') return PiWire.spawn(spec, handlers, options.route !== undefined)
   if (kind === 'codex') return CodexWire.spawn(spec, handlers, options.route)
   return AcpWire.spawn(spec, handlers)
 }

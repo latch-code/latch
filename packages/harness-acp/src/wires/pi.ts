@@ -11,6 +11,7 @@ import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { FORK_METHOD, RPC, RpcError, STEER_METHOD } from '../protocol.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
 import { GATE_COMMAND, GATE_LEVELS, GATE_MARK, writeGate } from './pi-gate.ts'
+import { PI_GATEWAY_PROVIDER } from '../profiles/pi-gateway.ts'
 import { ForkRefused, type AgentWire, type WireHandlers } from './types.ts'
 
 /** The oldest pi this wire works with: its turns end on `agent_settled`, `message_update` carries deltas and a stop clears the queue. */
@@ -292,6 +293,7 @@ export class PiWire implements AgentWire {
   private constructor(
     spec: SpawnSpec,
     private readonly handlers: WireHandlers,
+    private readonly routed = false,
   ) {
     // In the process's own temporary directory, written afresh: every start loads the gate as Latch wrote it.
     const tmp = spec.env.TMPDIR
@@ -307,8 +309,8 @@ export class PiWire implements AgentWire {
   }
 
   /** Throws for arguments pi must not get; launch failures such as ENOENT arrive as an exit with `reason: 'spawn'`. */
-  static spawn(spec: SpawnSpec, handlers: WireHandlers): PiWire {
-    return new PiWire(spec, handlers)
+  static spawn(spec: SpawnSpec, handlers: WireHandlers, routed = false): PiWire {
+    return new PiWire(spec, handlers, routed)
   }
 
   get closed(): boolean {
@@ -460,11 +462,18 @@ export class PiWire implements AgentWire {
     const listed = readAs(models, await this.send({ type: 'get_available_models' }, timeoutMs, signal), 'get_available_models')
     this.models = listed.models.flatMap(entry => {
       const parsed = model.safeParse(entry)
-      return parsed.success ? [parsed.data] : []
+      return parsed.success && (!this.routed || parsed.data.provider === PI_GATEWAY_PROVIDER) ? [parsed.data] : []
     })
     this.models = this.models.slice(0, MAX_MODELS)
     // pi with no model to use has no login or key for any provider: it cannot answer anything.
-    if (!this.models.length) throw new RpcError(RPC.authRequired, 'pi has no model it can use')
+    if (!this.models.length) {
+      if (this.routed)
+        throw new RpcError(
+          RPC.invalidParams,
+          'Pi 没有可用的网关模型。未知模型需在高级环境中设置 PI_GATEWAY_CONTEXT_TOKENS 和 PI_GATEWAY_OUTPUT_TOKENS；已知模型请检查扩展加载。',
+        )
+      throw new RpcError(RPC.authRequired, 'pi has no model it can use')
+    }
     this.sessionId = read.sessionFile
     this.current = { ...(read.model ? { model: read.model } : {}), ...(read.thinkingLevel ? { thinkingLevel: read.thinkingLevel } : {}) }
     await this.readLevels(timeoutMs, signal)
@@ -731,13 +740,14 @@ export class PiWire implements AgentWire {
       const read = readAs(stats, await this.send({ type: 'get_session_stats' }, STATS_TIMEOUT_MS), 'get_session_stats')
       if (read.tokens) usage = { inputTokens: read.tokens.input, outputTokens: read.tokens.output }
       const used = read.contextUsage?.tokens ?? undefined
-      const size = read.contextUsage?.contextWindow ?? undefined
-      if (used !== undefined || size || read.cost !== undefined)
+      const size = this.routed ? undefined : (read.contextUsage?.contextWindow ?? undefined)
+      const cost = this.routed ? undefined : read.cost
+      if (used !== undefined || size || cost !== undefined)
         this.update({
           sessionUpdate: 'usage_update',
           ...(used !== undefined ? { used } : {}),
           ...(size ? { size } : {}),
-          ...(read.cost !== undefined ? { cost: { amount: read.cost, currency: 'USD' } } : {}),
+          ...(cost !== undefined ? { cost: { amount: cost, currency: 'USD' } } : {}),
         })
     } catch {
       // The turn is over either way; its usage stays unknown.

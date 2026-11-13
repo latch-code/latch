@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { callFakeModel } from './fake-model-client.mjs'
 
 const env = process.env
 /** The real Latch dsh plugin with the public permission service supplied by this deterministic fixture. */
@@ -101,12 +102,58 @@ const selfMode = env.FAKE_ACP_SELF_MODE
 const modeReport = env.FAKE_ACP_MODE_REPORT ?? 'full'
 /** agentInfo.version; 'none' omits it. */
 const version = env.FAKE_ACP_VERSION ?? '1.2.3'
+/** Opt-in launch-route contracts from the real OpenCode and dsh profiles. No public-network fallback. */
+const launchGateway = (() => {
+  if (env.FAKE_ACP_GATEWAY === 'opencode') {
+    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? '{}')
+    const route = config.providers?.latch
+    if (!route) return undefined
+    const wire = route.package.endsWith('/responses')
+      ? 'responses'
+      : route.package.endsWith('/anthropic-compatible')
+        ? 'anthropic-messages'
+        : route.package.endsWith('/google')
+          ? 'gemini'
+          : 'chat-completions'
+    return {
+      wire,
+      baseURL: route.settings.baseURL,
+      values: Object.keys(route.models).map(id => `latch/${id}`),
+      id: value => value.slice('latch/'.length),
+    }
+  }
+  if (env.FAKE_ACP_GATEWAY === 'dsh') {
+    for (let index = 2; index < process.argv.length; index++) {
+      if (process.argv[index] !== '--patch') continue
+      const patch = JSON.parse(readFileSync(process.argv[++index], 'utf8'))
+      const providers = patch.find(item => item.id === 'llm-pi-ai')?.config?.providers
+      if (!providers) continue
+      const [provider, route] = Object.entries(providers)[0]
+      const wire =
+        provider === 'google'
+          ? 'gemini'
+          : route.api === 'openai-responses'
+            ? 'responses'
+            : route.api === 'anthropic-messages'
+              ? 'anthropic-messages'
+              : 'chat-completions'
+      return {
+        wire,
+        baseURL: `${route.baseURL}${wire === 'anthropic-messages' ? '/v1' : ''}`,
+        values: route.models.map(item => JSON.stringify([provider, item.id])),
+        id: value => JSON.parse(value)[1],
+      }
+    }
+  }
+  return undefined
+})()
 /**
  * Comma list of the models offered with FAKE_ACP_CONFIG=options; default small,large. FAKE_ACP_MODELS_FILE, read for
  * every session, lets a later session of the same agent offer others.
  */
 const known = () =>
-  (
+  launchGateway?.values
+  ?? (
     (env.FAKE_ACP_MODELS_FILE && existsSync(env.FAKE_ACP_MODELS_FILE) ? readFileSync(env.FAKE_ACP_MODELS_FILE, 'utf8').trim() : undefined)
     ?? env.FAKE_ACP_MODELS
     ?? (env.FAKE_ACP_SHAPE === 'opencode' ? 'opencode/big-pickle,opencode/beam-free' : 'small,large')
@@ -967,6 +1014,13 @@ async function callModel(session, input, model) {
 }
 
 const scenarios = {
+  'route-alias': async ({ sessionId, session, argument }) => {
+    session.model = JSON.stringify(['google', argument])
+    save()
+    reportMode(sessionId, session)
+    await waitCancel(sessionId)
+    return END
+  },
   echo: ({ input, say }) => {
     say(`echo: ${input}`)
     return END
@@ -979,6 +1033,11 @@ const scenarios = {
   // `model [as:name|helper:alias]`: asks the model service it was pointed at, with that model, the alias's or its own,
   // and says what came back.
   model: async ({ session, input, argument, say }) => {
+    if (launchGateway) {
+      const answer = await callFakeModel({ ...launchGateway, key: env.LMG_TOKEN, model: launchGateway.id(session.model), input })
+      say(answer.status === 200 ? `model: ${answer.text}` : `model error ${answer.status}: ${answer.text}`)
+      return END
+    }
     const chosen = argument?.startsWith('as:')
       ? argument.slice(3)
       : argument?.startsWith('helper:')

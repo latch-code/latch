@@ -98,9 +98,9 @@ export const AGENT_PRESETS: AgentPreset[] = [
     args: [],
     license: 'MIT',
     homepage: 'https://github.com/earendil-works/pi',
-    description: '模型与登录由 pi 管理；执行工具前不询问。',
+    description: '模型与登录由 pi 管理；权限由 Latch 扩展设置。',
     install: 'npm i -g @earendil-works/pi-coding-agent',
-    installNote: '0.84.4 或更高版本',
+    installNote: '原生模型需 0.84.4 或更高；经 Latch 使用服务需 1.5.0 或更高',
     login: { command: 'pi', args: [], note: '进入 pi 后输入 /login，按提示登录。' },
   },
   {
@@ -112,6 +112,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     homepage: 'https://github.com/anomalyco/opencode',
     description: '模型与登录由 OpenCode 管理。',
     install: 'npm i -g @opencode/cli',
+    installNote: '经 Latch 使用服务需 2.2.6 或更高',
     login: { command: 'opencode', args: ['auth', 'login'] },
   },
   {
@@ -123,7 +124,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     homepage: 'https://github.com/deepseek-ai/deepseek-harness',
     description: '按完整消息回复，不逐字流式输出。',
     install: 'npm i -g @deepseek-ai/dsh',
-    installNote: '0.2.1-rc.1 或更高版本',
+    installNote: '0.2.2-rc.1 或更高版本',
   },
   {
     id: 'gemini',

@@ -13,16 +13,24 @@ sources:
   - apps/web/test/model-reasoning.test.ts
   - packages/protocol/src/types.ts
   - packages/harness-acp/src/mapping.ts
+  - packages/harness-acp/src/runtime.ts
+  - packages/harness-acp/src/profiles
 ---
 # 模型与推理选项
 
 模型与推理能力来自会话当前的 `TaskDetail.config`，不从模型名称、选项 ID 或预设猜测。ACP v1 将 `model` 定义为模型选择、`thought_level` 定义为推理级别，而 `model_config` 可以是上下文或速度等普通参数；后者按 Agent 原名放在模型附近。分类缺失和未知分类放在输入框的「⋯」里，不被改造成推理控件。选项名称、顺序、描述和实际值均来自 Agent。[ACP v1 会话配置规范](https://agentclientprotocol.com/protocol/v1/session-config-options)
 
-输入框里模型与思考是两个控件：`SessionModelControl` 在左边，只写模型（等宽的 ID，经服务时前面是服务的标记），菜单里还有 `model_config`；`SessionThinkingControl`（[ThinkingControl.tsx](../apps/web/src/composer/ThinkingControl.tsx)）在右边挨着权限，写小字「思考」与当前一档。思考的菜单每档一行，用 Agent 自己的名字（Codex 写 `Low`、`High`，不翻译），Agent 给档位的普通说明在菜单「档位说明」里按需展开；只重复档名的说明不显示。桌面使用顶层菜单、键盘单选与搜索；手机由同一原语提供底部面板。Harness 的标记为 16px，服务的标记 14px。没有 `thought_level` 时不伪造禁用滑块：思考写「默认」，不画箭头，但仍能点开，菜单里只有「默认」一行和一句话说明 Agent 没有报告。一次写入进行中时只有它所属的控件转圈，2 秒后写「等 <Harness> 回应…」；结果未知时两个控件都挡住后续写入，只有这次修改所属的控件写「· 结果未知」，值仍是 Host 确认过的那个，菜单里给「核对」。输入框上方的一条写出所选的值、时间、「结果未知」、「核对」与「重试同一请求」，不是错误，不出红色横幅。核对由 Host 向 Agent 读取当前设置后结算（[HARNESSES.md](./HARNESSES.md)）：所选值是 `applied`，修改之前的值是 `failed`，第三个值、忙或读不到仍是未知，提示写出原因；「核对」旁的 ⓘ 说明它会重启 Harness 的进程；核对没能结算（读到第三个值、读不到或出错，运行中除外）之后，这一条多一个「放弃这次结果」：只在这个页面上放下它，Host 的回执仍是结果未知、从不再发送，控件显示 Agent 现在报告的值，之后可以作为新请求再选；结算之前不能再选，结算后再选用新的请求编号。重试同一请求只读 Host 的回执，从不再次发送。`model_config` 不改变语义，也不转换成强弱刻度。重复类别按 Agent 顺序取第一个作为主要入口，其余明确的推理和模型参数按原顺序保留；重复值 ID 只保留首个。
+输入框里模型与思考是两个控件：`SessionModelControl` 在左边，只写模型（等宽的 ID，经服务时前面是服务的标记），菜单里还有 `model_config`；`SessionThinkingControl`（[ThinkingControl.tsx](../apps/web/src/composer/ThinkingControl.tsx)）在右边挨着权限，写小字「思考」与当前一档。思考的菜单每档一行，用 Agent 自己的名字（Codex 写 `Low`、`High`，不翻译），菜单常驻只保留档位名称、分组和勾选；真实不可用、未知结果与未独立读回的说明仍可见。桌面使用顶层菜单、键盘单选与搜索；手机由同一原语提供底部面板。Harness 的标记为 16px，服务的标记 14px。没有 `thought_level` 时不伪造禁用滑块：思考写「默认」，不画箭头，但仍能点开，菜单里只有「默认」一行和一句话说明 Agent 没有报告。一次写入进行中时只有它所属的控件转圈，2 秒后写「等 <Harness> 回应…」；结果未知时两个控件都挡住后续写入，只有这次修改所属的控件写「· 结果未知」，值仍是 Host 确认过的那个，菜单里给「核对」。输入框上方的一条写出所选的值、时间、「结果未知」、「核对」与「重试同一请求」，不是错误，不出红色横幅。核对由 Host 向 Agent 读取当前设置后结算（[HARNESSES.md](./HARNESSES.md)）：所选值是 `applied`，修改之前的值是 `failed`，第三个值、忙或读不到仍是未知，提示写出原因；「核对」旁的 ⓘ 说明它会重启 Harness 的进程；核对没能结算（读到第三个值、读不到或出错，运行中除外）之后，这一条多一个「放弃这次结果」：只在这个页面上放下它，Host 的回执仍是结果未知、从不再发送，控件显示 Agent 现在报告的值，之后可以作为新请求再选；结算之前不能再选，结算后再选用新的请求编号。重试同一请求只读 Host 的回执，从不再次发送。`model_config` 不改变语义，也不转换成强弱刻度。重复类别按 Agent 顺序取第一个作为主要入口，其余明确的推理和模型参数按原顺序保留；重复值 ID 只保留首个。
 
 新会话用 Harness 上次会话报告或不开会话读到的选项列表（见 [HARNESSES.md](HARNESSES.md#开始前的选项)），和会话里是同一个组件；还没有列表时也不虚构推理能力：`DraftModelControl` 写「默认模型」、`DraftThinkingControl` 写「默认」，模型菜单里是读取的入口（打开思考也会读取），不能读取时各自说明发第一条消息后可以换。
 
-自己带模型的 Harness 的菜单里，第一组以 Harness 的名字与标记为题，按真实名称列出它报告的模型，新会话不选时用的那个（列表的当前值）名字旁标「默认」；它什么都没报告时这一组只有「默认模型」。之后是保存的模型服务。Latch 能把这个 Harness 的请求转给它的服务（协议相同，见 [HARNESSES.md](HARNESSES.md#经-latch-使用模型服务)）列出它的模型，组名写「<服务> · 经 Latch」（Codex 还写「实验性」），菜单下面一句说明「经 Latch」，并说一整轮没有经过 Latch 时会话里会告诉你；只用自己认识的模型的 Harness（Codex，`models.knownOnly`）读过自己的列表后，服务里它不认识的模型不能选，写「Codex 不认识这个模型」；这个 Harness 用不了的服务不逐个列出，收成菜单末尾一行「N 个服务用不了」，点开后每个写原因：协议不同写「Codex 只说 Responses，这个服务是 Chat Completions」。Latch 不为它转发任何服务的 Harness（`models.wires` 为空：Codex 直连、Claude Agent、Cursor、pi、自定义命令等）只用自己的模型，没有这一行。选中的服务模型是这个 Harness 自己的选择（换 Harness 不带过去，换回来还在），控件写模型 ID，前面是服务的标记，因为同一个模型名可能在两个服务里；这时思考深度开始后才知道，思考写「默认」并说明。手机的新会话面板列出相同的内容。会话开始后服务不能换：菜单的第一组写这个服务的名字，只列网关会转发的这个服务的模型，这个 Harness 能用的其他服务写「换服务要新开会话：开始时确认的是这个服务。」，用不了的仍收在末尾那一行，菜单下面说请求经 Latch 转给哪个服务，有一轮没有经过 Latch 时改为说明这件事。服务名来自 Host 的记录（`modelRoute.name`，停用时还带 `off`，删除后没有名字）；目录里不再提供这个服务时（停用、删除、缺密钥或地址未确认），第一组写「<服务> · 已停用」等原因，它的模型不能选，菜单下面说下一轮会失败以及怎么办，不再说请求经 Latch 转发。
+自己带模型的 Harness 的模型菜单先列它原生报告的模型，未报告时保留「默认模型」。之后按 Host 的 `models.wires` 与 `pairRoute` 列出可转发的已保存服务，分组写「<服务> · 经 Latch」；只有路线声明 `experimental` 时显示实验性。原生 Codex 通过 app-server 使用 Responses 服务，可选服务声明但原生 `model/list` 没有的模型，不带 `knownOnly` 限制。仍走 `codex-acp` 后备适配器的定义保留 `models.knownOnly`：只有适配器认识的服务模型可选。Gemini CLI 使用 Gemini 服务；OpenCode、pi 和 DeepSeek Harness 可以分别使用四种同协议服务。Host 从实际命令所选的 profile 投影能力，客户端不维护另一份预设协议表。协议入口、最低版本与交付见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
+
+当前网关只做同协议转发。用不了的服务收在「N 个服务用不了」，展开显示原因；`models.wires` 为空的 Harness 只用自己的模型。服务选择按 Harness 分别保存，换 Harness 不带过去。控件显示模型 ID 与服务标记，避免同名模型混淆；草稿思考选项仍以该 Harness 对所选模型实际能提供的列表为准，服务声明不会被误当成原生会话读回。手机与桌面使用同一份能力与模型列表，不能以菜单出现代替 Agent 已应用。
+
+经服务的模型 ID 与 Agent 的配置值分别处理：OpenCode 使用 `latch/<模型>`，pi 使用 `latch-gateway/<模型>`，DeepSeek Harness 使用 provider 与模型组成的 JSON 二元组；显示仍取服务模型 ID。Host 按 profile 的精确编码来应用、读回和恢复，不用去前缀或模糊匹配把另一个 provider 的同名模型当成当前服务。pi 只列它实际成功注册的服务模型；官方目录没有明确运行上限、又未配置高级运行预算的模型不能开始，详见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#pi-运行预算)。预算不是服务报告的容量或价格，不显示为上下文上限或费用。
+
+会话开始后不能换服务，只在原服务内换模型。会话模型选项受网关凭据的模型列表约束；已确认的新模型在进程或 Host 重启后继续使用，服务清单删除旧模型而保留当前模型时仍可恢复。Host 保存的服务名通过 `modelRoute.name` 展示，停用、删除、缺密钥或地址未确认时给出不可用原因并阻止继续使用。服务协议或地址变化不自动迁移会话。整轮回复却没有请求经过网关时显示 bypassed 并说明；这不能证明其他辅助调用均经过网关。
 
 ## Latch 内置的思考深度
 

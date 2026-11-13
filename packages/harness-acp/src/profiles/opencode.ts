@@ -1,4 +1,7 @@
 import { z } from 'zod'
+import { dirname } from 'node:path'
+import { bareVersion } from '../version-line.ts'
+import { prefixedModels } from './gateway-model.ts'
 import type { HarnessProfile, ProjectedChild } from './types.ts'
 
 /**
@@ -48,6 +51,28 @@ const CONFIG = JSON.stringify({
     },
   },
 })
+
+const GATEWAY_MODELS = prefixedModels('latch')
+const GATEWAY_ENV_PLUGIN = 'index.ts'
+const GATEWAY_PACKAGES = {
+  'chat-completions': '@opencode/ai/providers/openai-compatible',
+  responses: '@opencode/ai/providers/openai-compatible/responses',
+  'anthropic-messages': '@opencode/ai/providers/anthropic-compatible',
+  gemini: '@opencode/ai/providers/google',
+} as const
+
+/** 2.2.6's spawner overlays its environment: an empty entry also clears a token inherited from the Agent process. */
+const GATEWAY_PLUGIN = `export default {
+  id: 'latch.gateway-environment',
+  async setup(context) {
+    const registration = await context.shell.hook('create.before', invocation => {
+      for (const name of Object.keys(invocation.env)) {
+        if (name.toLowerCase() === 'lmg_token') invocation.env[name] = ''
+      }
+    });
+    return () => registration.dispose();
+  },
+};\n`
 
 /** What 2.x adds to a subagent's update or request it sends on the session that started the subagent. */
 const CHILD_SESSION = 'opencode/child-session'
@@ -120,11 +145,52 @@ function withoutOwnPlugin(text: string): unknown {
 
 export const opencodeProfile: HarnessProfile = {
   presetId: 'opencode',
-  version: 5,
+  version: 6,
   // It lists `effort` only for a model with variants (2.x `config-option.ts`).
   thinkingPerModel: true,
   // An empty session runs no turn and calls no model.
   catalogueRead: { when: 'select' },
+  gateway: {
+    via: 'launch',
+    wires: ['chat-completions', 'responses', 'anthropic-messages', 'gemini'],
+    tokenEnv: 'LMG_TOKEN',
+    envNames: ['OPENCODE_CONFIG_CONTENT'],
+    templates: { files: 1 },
+    models: GATEWAY_MODELS,
+    minimumVersion: { args: ['--version'], read: bareVersion, minimum: '2.2.6', upgrade: 'npm i -g @opencode/cli@latest' },
+    deliver(place, route) {
+      const model = GATEWAY_MODELS.value(route.model)
+      const baseURL = `${place.baseURL}${route.wire === 'gemini' ? '/v1beta' : route.wire === 'anthropic-messages' ? '/v1' : ''}`
+      const config = {
+        ...(JSON.parse(CONFIG) as Record<string, unknown>),
+        model,
+        small_model: model,
+        plugins: [dirname(place.file(GATEWAY_ENV_PLUGIN))],
+        providers: {
+          latch: {
+            name: 'Latch',
+            env: ['LMG_TOKEN'],
+            package: GATEWAY_PACKAGES[route.wire],
+            settings: { baseURL, encoding: 'none' },
+            models: Object.fromEntries(
+              place.models.map(({ id, capabilities }) => [
+                id,
+                {
+                  name: id,
+                  capabilities: {
+                    input: capabilities?.vision ? ['text', 'image'] : ['text'],
+                    output: ['text'],
+                    reasoning: capabilities?.thinking?.length ? { supported: true, effort: capabilities.thinking } : { supported: false },
+                  },
+                },
+              ]),
+            ),
+          },
+        },
+      }
+      return { env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(config) }, files: { [GATEWAY_ENV_PLUGIN]: GATEWAY_PLUGIN } }
+    },
+  },
   permission: {
     approvals: 'prompts',
     defaultEnv: { OPENCODE_CONFIG_CONTENT: CONFIG },

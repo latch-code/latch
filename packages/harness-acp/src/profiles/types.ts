@@ -148,6 +148,8 @@ export interface GatewayPlace {
   thinking?: { model: string; value: string }
   /** The service's model IDs and the owner's declared capabilities, without prices or inferred limits. */
   models: ReadonlyArray<{ id: string; capabilities?: ModelCapabilities }>
+  /** Explicit adapter operating bounds; these are not claimed model capacities. */
+  budget?: { contextTokens: number; outputTokens: number }
   /** The path a file of `files` is written to, in the session's private directory. */
   file(name: string): string
 }
@@ -160,6 +162,14 @@ export interface GatewayLaunch {
   args?: string[]
   /** File name to content: written 0600 and replaced by rename before every spawn; names variables, never holds a value. */
   files?: Record<string, string>
+}
+
+/** The exact value a routed model has in this harness's native configuration, not a suffix or display-name match. */
+export interface GatewayModelValues {
+  value(id: string, wire?: ModelWire): string
+  id(value: string, wire?: ModelWire): string | undefined
+  /** A service model needs native runtime metadata before it can be offered inside the session. */
+  readonly reportedOnly?: true
 }
 
 /**
@@ -181,6 +191,8 @@ type ProfileGateway = {
    * session on a route refuses to start with an older one.
    */
   readonly minimumVersion?: NonNullable<HarnessProfile['minimumVersion']>
+  /** The protocol app reports a separate internal version, so only the installed CLI can prove this minimum. */
+  readonly commandVersionOnly?: true
 } & (
   | { readonly via: 'providers'; readonly providerId: string; readonly apiType: string }
   | {
@@ -194,6 +206,13 @@ type ProfileGateway = {
       readonly envNames: readonly string[]
       /** Versions of what `deliver` puts in the arguments and the files, in the launch fingerprint; bump on a change. */
       readonly templates: { readonly args?: number; readonly files?: number }
+      /** When present, apply and read back this native model value before the first prompt. */
+      readonly models?: GatewayModelValues
+      /** A verified serializer restriction; false removes the control and refuses retained non-default choices. */
+      thinkingAllowed?(model: string, wire: ModelWire, level?: string): boolean
+      runtimeBudget?(environment: Readonly<Record<string, string>>): GatewayPlace['budget']
+      /** Recognizes only a fixed diagnostic marker from the profile's own extension, never forwards arbitrary stderr. */
+      startupFailure?(stderr: string): string | undefined
       deliver(place: GatewayPlace, route: ModelRoute): GatewayLaunch
     }
 )
