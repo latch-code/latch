@@ -16,11 +16,13 @@ import {
   LaptopGlyph,
   StatusGlyph,
   TerminalGlyph,
+  DiffGlyph,
 } from '@latch/ui'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { relativeTime } from '../format.ts'
-import { activityWords, projectOf, spaceOf } from '../sessions.ts'
+import { activityWords, projectOf, rowStatus, spaceOf } from '../sessions.ts'
+import { SessionRowGlyph } from '../components/SessionStatus.tsx'
 import { runClock, runElapsed } from '../conversation.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
@@ -139,6 +141,15 @@ function WorkState({ task, connected, stopping, unread }: { task: TaskSummary; c
       {status.words}
     </StatusWord>
   )
+}
+
+function QueueTime({ task, connected, now }: { task: TaskSummary; connected: boolean; now: number }) {
+  const live = task.status === 'running' ? task.live : undefined
+  useTicker(connected && live ? 'second' : false)
+  const confirmed = useRef(hostNow())
+  if (connected) confirmed.current = hostNow()
+  const elapsed = live ? runElapsed(live, confirmed.current) : undefined
+  return <time dateTime={task.updatedAt}>{elapsed === undefined ? relativeTime(task.updatedAt, new Date(now)) : runClock(elapsed)}</time>
 }
 
 /** Both layouts and the session queue read the same summaries and open the same conversation. */
@@ -272,7 +283,10 @@ export function WorkOverview({
                       unread: isUnread?.(task),
                     })
                     const project = projectOf(task, snapshot.catalog?.workspaces ?? [])
-                    const title = escapeSecurityText(task.title || '未命名会话')
+                    const pullRequest = group.id === 'delivery' ? evidence?.entries.get(task.id)?.pr?.pr : undefined
+                    const title = escapeSecurityText(
+                      pullRequest ? `#${pullRequest.number} ${pullRequest.title}` : task.title || '未命名会话',
+                    )
                     const projectName = project ? escapeSecurityText(project.name) : '无项目'
                     const branch = task.branch && escapeSecurityText(task.branch)
                     return (
@@ -307,8 +321,21 @@ export function WorkOverview({
                             aria-label={`${title}，${projectName}，${status.words}`}
                             onClick={() => onSelect(task.id)}>
                             <span className="work-overview-row-head">
+                              {compact && group.id === 'delivery' ? (
+                                <span className="session-row-glyph" data-tone="neutral">
+                                  <Icon icon={pullRequest ? PullRequestGlyph : DiffGlyph} size={12} />
+                                </span>
+                              ) : compact ? (
+                                <SessionRowGlyph
+                                  status={rowStatus(task, {
+                                    stopping: cancelling?.has(task.id),
+                                    unread: isUnread?.(task),
+                                    frozen: !connected,
+                                  })}
+                                />
+                              ) : null}
                               <span className="work-overview-row-title">{title}</span>
-                              <time dateTime={task.updatedAt}>{relativeTime(task.updatedAt, new Date(now))}</time>
+                              <QueueTime task={task} connected={connected} now={now} />
                             </span>
                             <span className="work-overview-row-context">
                               <Icon icon={FolderGlyph} size={12} />

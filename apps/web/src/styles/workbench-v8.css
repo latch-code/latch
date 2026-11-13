@@ -281,7 +281,15 @@
   margin-top: var(--sp-12);
 }
 .workbench-home-composer .composer-stack {
+  --stack-gap: 0px;
   max-width: none;
+  gap: 0;
+}
+.workbench-home-composer .composer-stack > .ui-collapse {
+  margin-top: 0;
+}
+.workbench-home-composer .composer-stack > :is(.pending-submission, .ui-notice) {
+  margin-bottom: var(--sp-8);
 }
 .workbench-home-composer .composer {
   border-radius: var(--r-14);
@@ -555,6 +563,25 @@
   padding: var(--sp-8) var(--sp-10);
   gap: 0;
   min-height: 36px;
+}
+.triage-sidebar .work-overview-row-head {
+  gap: var(--sp-8);
+}
+.triage-sidebar .work-overview-row-title {
+  flex: 1;
+}
+.triage-sidebar .work-overview[data-compact] .work-overview-row :is(.session-row-glyph, time) {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.triage-sidebar .session-row-glyph[data-tone='running'] {
+  color: var(--work-running);
+}
+.triage-sidebar .session-row-glyph[data-tone='waiting'] {
+  color: var(--amber);
+}
+.triage-sidebar .session-row-glyph[data-tone='failed'] {
+  color: var(--red);
 }
 .triage-sidebar .work-overview-row-context,
 .triage-sidebar .work-overview-row-status {

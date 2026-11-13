@@ -24,6 +24,53 @@ async function shot(page: Page, name: string, width: number, theme: 'light' | 'd
     await expect.poll(() => page.locator('.approval-panel[data-arming], .question-card[data-arming]').count()).toBe(0)
   await noHorizontalOverflow(page)
   await page.screenshot({ path: `${OUT}/${name}--${theme}--${width}.png`, animations: 'disabled', caret: 'hide' })
+  const geometry = await page.evaluate(() =>
+    Object.fromEntries(
+      [
+        '.workbench-home',
+        '.workbench-home-composer',
+        '.workbench-home-composer .composer-stack',
+        '.workbench-home-composer .composer',
+        '.workbench-home-composer .composer-input',
+        '.workbench-home-composer textarea',
+        '.workbench-home-composer .composer-toolbar',
+        '.work-overview',
+      ].map(selector => {
+        const element = document.querySelector(selector)
+        if (!element) return [selector, null]
+        const box = element.getBoundingClientRect()
+        const css = getComputedStyle(element)
+        return [
+          selector,
+          {
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+            padding: css.padding,
+            margin: css.margin,
+            gap: css.gap,
+            borderTop: css.borderTopWidth,
+            borderBottom: css.borderBottomWidth,
+            scrollHeight: element.scrollHeight,
+            clientHeight: element.clientHeight,
+            offsetHeight: element instanceof HTMLElement ? element.offsetHeight : null,
+            ...(selector.endsWith('.composer-stack')
+              ? {
+                  children: [...element.children].map(child => ({
+                    className: child.className,
+                    height: child.getBoundingClientRect().height,
+                    state: child.getAttribute('data-state'),
+                    margin: getComputedStyle(child).margin,
+                  })),
+                }
+              : {}),
+          },
+        ]
+      }),
+    ),
+  )
+  await writeFile(`${OUT}/${name}--${theme}--${width}.json`, JSON.stringify(geometry, null, 2))
 }
 
 it('renders the v8 empty, loading, many, limited, read-only and offline states from the real Host permissions', async () => {
@@ -83,6 +130,10 @@ it('renders the v8 empty, loading, many, limited, read-only and offline states f
     expect(await page.locator('.workbench-home .work-overview-group').count()).toBe(0)
     await page.locator('.workbench-empty').getByRole('heading', { name: '还没有会话' }).waitFor()
     await shot(page, 'overview-empty', 1440, 'dark')
+    const emptyCard = await page.locator('.workbench-home-composer .composer').boundingBox()
+    const emptyStack = await page.locator('.workbench-home-composer .composer-stack').boundingBox()
+    expect(emptyCard!.y).toBe(40)
+    expect(emptyStack!.height).toBe(emptyCard!.height)
     await layout(page, 'triage')
     await shot(page, 'triage-empty', 1440, 'dark')
     await layout(page, 'overview')
