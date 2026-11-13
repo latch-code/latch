@@ -5,6 +5,7 @@ sources:
   - packages/core/src/store.ts
   - packages/sdk/src/bridge.ts
   - packages/protocol/src/types.ts
+  - packages/protocol/src/task-delta.ts
   - packages/harness-acp/src/mapping.ts
   - packages/harness-acp/src/runtime.ts
   - packages/core/src/node-kit/timing.ts
@@ -13,6 +14,7 @@ sources:
   - apps/host/src/run-silence.ts
   - apps/host/src/session-meta.ts
   - apps/host/src/traffic.ts
+  - apps/host/src/task-delta.ts
   - apps/web/src/core
   - apps/web/src/components
   - apps/web/src/conversation.ts
@@ -36,7 +38,7 @@ Provider.stream             Standard Runtime             Host                   
   text 增量 ──────────────> 累计 liveText / 固定消息 ID
                              notify(sessionId) ────────> 约 40ms 合并
                                                        detail(sessionId)
-                                                       task-state 全状态 ───> 版本检查后替换
+                                                       完整基线 / 正文追加 ─> 流基线与版本检查
   finish ─────────────────> 持久化最终消息、工具队列
                              notify(sessionId) ────────> task-state 全状态 ───> 同一消息行结算
   工具/审批/取消结算 ──────> 更新真实状态 ──────────────> 同上
@@ -44,19 +46,20 @@ Provider.stream             Standard Runtime             Host                   
   连接重新打开：浏览器 GET snapshot → GET 当前 detail → 版本检查 → 标记已连接
 ```
 
-模型流与浏览器状态流的协议不同。Provider 的 `text` 与 `reasoning` 是新增片段；浏览器接收的是带累计正文与思考的完整 `TaskDetail`，不是逐 token 追加事件。工具执行目前返回一次 `{ text }` 结果，没有通用 stdout 流或百分比进度 SDK。
+模型流与浏览器状态流的协议不同。Provider 的 `text` 与 `reasoning` 是新增片段；Host 合并变化后给浏览器完整 `TaskDetail`，或在明确协商且其余状态未变时给正文追加帧。追加帧属于 Host 的订阅基线，不直接转发 Provider token。工具执行目前返回一次 `{ text }` 结果，没有通用 stdout 流或百分比进度 SDK。
 
 ## Host 的状态流
 
 源码：[server.ts](../apps/host/src/server.ts)、[hub.ts](../apps/host/src/hub.ts)、[bridge.ts](../packages/sdk/src/bridge.ts)、[types.ts](../packages/protocol/src/types.ts)。多个 Harness 的变化通知先经 HarnessHub 汇合，再进入下面的合并流程。
 
-客户端用 `GET /link/api/events?sessionId=<当前任务>` 订阅，凭据与其他 API 请求相同（浏览器为设备 Cookie，桌面端由主进程附加），设备需要「查看」权限。Host 打开流后先发送一个 `refresh`。不传 sessionId 时只接收整体或列表变化，不接收其他任务正文。这里的“仅选中任务”是订阅与带宽策略，不是任务级权限控制；任何有「查看」权限的设备都可以读取此 Host 的全部任务。
+客户端用 `GET /link/api/events?sessionId=<当前任务>` 订阅，凭据与其他 API 请求相同（浏览器为设备 Cookie，桌面端由主进程附加），设备需要「查看」权限。Host 打开流后先发送一个 `refresh`。不传 sessionId 时只接收整体或列表变化，不接收其他任务正文。这里的“仅选中任务”是订阅与带宽策略，不是任务级权限控制；设备仍按当前数据范围过滤私有会话。
 
 `Bridge.subscribe` 的通知进入待处理集合。Host 自首次待发通知起等待约 40ms，将同一任务的多次变化合并；一轮读取尚未完成时不并发执行另一轮，期间新增通知安排下一轮。该间隔不是严格帧率，也不保证每个中间状态都会发送。
 
 | SSE 事件 | 发送条件 | 客户端动作 |
 | --- | --- | --- |
 | `task-state` | 某任务变化，且此连接选中了该任务 | 校验事件和版本，替换当前 detail；同时合并该任务的摘要和审批 |
+| `task-delta` | 本连接已协商且收到完整基线，同一轮同一消息仅正文/思考前缀延长及有限时间字段变化 | 验证基线与 UTF-8 偏移，重建不可变 detail，再经过原版本门禁 |
 | `tasks-invalidated` | 未选中的任务摘要或审批变化。私有会话（Agent、通用、接入、定时与 `agentPrivate`）的这一帧不发给数据范围不是 `all` 的设备，连不带 ID 的提示也不发（否则能看出私有会话何时有动静）；原生回放同样按读者略过，原生游标只看先后，序号留下空缺没有关系 | HTTP 只同步 snapshot；不逐 token 拉取当前 detail |
 | `refresh` | 设备、配置等整体变化（含 Harness 的版本检测结果变化），流刚打开，或读取任务失败后的回退 | HTTP 同步 snapshot 与选中 detail |
 | `host-state` | Host 宣布它即将不再应答：`stopping`（Host 关闭时，每条流的最后一帧）或 `sleeping`（电脑即将睡眠）；以及电脑醒来后的 `awake` | 见下文「Host 宣布的停止与睡眠」 |
@@ -90,14 +93,28 @@ Provider.stream             Standard Runtime             Host                   
 
 `host-state` 不参与 revision 顺序，也不带 SSE `id`，形状为 `{ type: 'host-state', instanceId, state: 'stopping' | 'sleeping' | 'awake', reason?: 'restart' | 'update' | 'sleep' | 'shutdown', retryAfter?: 秒, at }`；`stopping` 与 `sleeping` 必带原因与 `retryAfter`。谁报告、各原因的默认 `retryAfter` 见 [ARCHITECTURE.md](./ARCHITECTURE.md)「Host 的生命周期」。Host 关闭时先向每条仍被接受的流写出 `stopping`，再结束这些流，最多等 0.5 秒让最后一帧发出；`awake` 之后另发一次 `refresh`。
 
-某个会话的 detail 读取失败时，本轮只向各连接发送一次 `refresh`。Host 每 15 秒发送注释心跳。每次推送与心跳前，Host 检查打开该流的凭据是否仍会被接受，不再被接受时结束该流。若连接已积压超过 256 KiB，断开该慢连接，让客户端重新同步。这是积压保护，不是单个事件或总内存的硬上限。每个 task-state 仍包含该任务完整 messages 与累计 liveText，负载会随会话历史增长；40ms 合并减少发送次数，并没有消除长历史的序列化和带宽成本。同一轮发给多条连接的 task-state 只序列化一次。
+某个会话的 detail 读取失败时，本轮只向各连接发送一次 `refresh`。Host 每 15 秒发送注释心跳。每次推送与心跳前，Host 检查打开该流的凭据是否仍会被接受，不再被接受时结束该流。若连接已积压超过 256 KiB，断开该慢连接，让客户端重新同步。这是积压保护，不是单个事件或总内存的硬上限。每个 task-state 仍包含该任务完整 messages 与累计 liveText，负载会随会话历史增长。未协商的完整帧可共享序列化；带订阅戳的完整帧与追加帧按连接编码，不修改共享事件或原生 replay。
+
+### 协商后的正文追加
+
+浏览器与本机 Electron 的选中会话请求带固定头 `x-latch-state: delta-v1`，不增加 URL 字段或身份信息。Host 只在选中会话、非原生入口上接受；其他电脑的 Electron 页面省略该头，原生入口即使收到它也保持完整帧与现有 replay。新连接的第一个正文帧为完整 `task-state`，增加 `stream: { protocol: 'delta-v1', subscriptionId, stateSeq }`。subscriptionId 每个网络连接随机生成，stateSeq 从 1 开始，只计算该连接实际发送的正文帧；与 revision、cursor、原生重放序号相互独立。未带回执的完整帧按原协议显示，不能用 HTTP 响应猜测追加基线。
+
+`task-delta` 只含实例、会话、runId、liveMessageId、revision、hostTime、stream、baseSeq；正文 `text` 与思考 `reasoning` 各为 `{ offset, append }`。offset 是上一份原文的 UTF-8 字节数；reasoning 为 null 表示前后都没有该字段，空字符串仍表示字段存在。片段必须是 Unicode 标量串，不把未配对 surrogate 替换成另一个字符再继续追加。每帧正文与思考片段合计至多 64 KiB，每个累计串至多 16 MiB，越界或无法验证时发完整状态。有限元数据包括 cursor、summary.updatedAt、detail.lastOutputAt，以及已存在 summary.live 的 lastEventAt/lastOutputAt；可选时间用 null 表示缺省。客户端严格拒绝追加帧中的未知字段。
+
+Host 只在 running、稳定 run/message 身份、正文与思考均为前缀延长时考虑追加。历史、工具、审批、队列、问题、计划、配置、权限、用量、活动阶段、终态或任意未知字段变化都回完整状态。比较基线保存不可变签名与字符串，不保留可能被 Bridge 改写的对象引用。Host 仍可能扫描完整投影，也保留原生完整 replay；带宽减少不代表 Host 所有序列化成本消失。
+
+每个订阅最多缓存一份基线，Host 合计最多 128 份、32 MiB，单份至多 4 MiB；按 UTF-16 字符串占用估算并计固定开销，超过预算只发完整帧，不增加日志。每次编码先按当前设备、凭据和私有数据范围过滤。scopes/dataScope 改变、失去授权、私有事件被省略或连接关闭立即清理该基线；被省略的事件既不推进序号，也不发提示。重新获得可见性后先发完整基线。
+
+客户端为每条连接维护独立的流影子，HTTP 不写它。每次追加校验实例、会话、订阅、精确 baseSeq、run/message 身份和 UTF-8 偏移，重建 detail、summary、sync 与 live 对象，复用只读历史数组和历史消息。即使 HTTP 已发布更高 revision，较旧的流也只推进影子，补齐后的 detail 仍由原 ProjectionGuard 决定能否发布；相同 revision 的来源优先级不变。
+
+重复帧忽略；缺帧、错误订阅/run/message 身份或偏移、无法识别的操作触发修复；其他实例或会话的帧忽略。一个逻辑订阅最多修复一次：真正 abort fetch 并取消 reader，丢弃旧连接缓冲，立即建立完整状态连接，余下重连均不再协商追加。新连接的 onOpen 照常同步；换会话创建新的逻辑订阅。更换设备或权限代次时同步清掉影子、关闭旧流并使旧投影票据失效。读取位置、草稿、唯一 sender 与写请求编号都不参与这个传输优化。
 
 ### 流量计数
 
 Host 从启动起计数自己发出的字节（[traffic.ts](../apps/host/src/traffic.ts)），作为以后改进同步方式时的基线，只在内存中，重启清零：
 
-- **计什么。** 事件流每一帧写出的文本（`task-state`、`tasks-invalidated`、`refresh`、`host-state`、`app.data`、`app.updated` 与心跳），以及客户端重新同步时读取的快照（`GET /snapshot`）与会话详情（`GET /tasks/:id`）的响应体。HTTP 头、分块编码与 TLS 记录不计入：同一份内容经 TLS 发出时，线上字节还要多出记录头与握手。
-- **怎么分。** 每一类有次数、字节数与大小分布（≤256 B、1、4、16、64、256 KiB、1、4 MiB 与更大，共 9 档）；每个会话有点名它的帧（`task-state`、`tasks-invalidated`，所有连接合计）与它的详情响应；每条事件流有入口类别、打开与关闭时间、帧数（含心跳）、字节数与心跳数。会话最多保留 1000 个（最近计入的），已关闭的事件流保留最近 100 条。
+- **计什么。** 事件流每一帧写出的文本（`task-state`、`task-delta`、`tasks-invalidated`、`refresh`、`host-state`、`app.data`、`app.updated` 与心跳），以及客户端重新同步时读取的快照（`GET /snapshot`）与会话详情（`GET /tasks/:id`）的响应体。HTTP 头、分块编码与 TLS 记录不计入：同一份内容经 TLS 发出时，线上字节还要多出记录头与握手。
+- **怎么分。** 每一类有次数、字节数与大小分布（≤256 B、1、4、16、64、256 KiB、1、4 MiB 与更大，共 9 档）；每个会话有点名它的帧（`task-state`、`task-delta`、`tasks-invalidated`，所有连接合计）与它的详情响应；每条事件流有入口类别、打开与关闭时间、帧数（含心跳）、字节数与心跳数。会话最多保留 1000 个（最近计入的），已关闭的事件流保留最近 100 条。
 - **只有数字。** 计数只含次数、字节、时间、入口类别、Host 内的连接序号与会话 ID，不含正文、标题、设备 ID 或设备名。
 - **谁能看。** `GET /link/api/traffic` 只读，需要 `admin`，或 `host.sock` 上的匿名命令行；`pnpm latch traffic` 打印摘要（`--json` 打印原样）。
 
@@ -117,7 +134,7 @@ Host 从启动起计数自己发出的字节（[traffic.ts](../apps/host/src/tra
 
 | 情况 | 行为 |
 | --- | --- |
-| 响应 2xx | 触发 open，之后逐帧派发 `refresh`、`tasks-invalidated`、`task-state`、`host-state` |
+| 响应 2xx | 触发 open，之后逐帧派发 `refresh`、`tasks-invalidated`、`task-state`、`task-delta`、`host-state` |
 | 连接失败、非 2xx、流结束，或 45 秒没有收到任何字节（含等待响应头的时间；Host 每 15 秒发心跳） | 视为断线，按 1、2、4、8 秒退避，之后每 15 秒重连；浏览器重新联网，或页面重新可见且在线时，跳过剩余等待立即重连 |
 | 浏览器 offline | 断开事件流、取消在途 HTTP，并停止重连，直到浏览器重新联网或页面重新可见且在线 |
 | `401 renewal-required` | 先续期凭据；续期成功后立即重连一次。续期失败、正在等待下一次续期（桌面端页面从不自己续期），或续期后流打开前 Host 仍要求续期，都按退避重连 |

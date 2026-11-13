@@ -62,6 +62,62 @@ describe('fetch-based event stream connection', () => {
     })
   }
 
+  it('repairs once by aborting the actual reader, dropping already-buffered old frames and reconnecting without delta negotiation', async () => {
+    const requests: RequestInit[] = []
+    const cancelled = vi.fn()
+    let nextBody: ReadableStreamDefaultController<Uint8Array> | undefined
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(init ?? {})
+      const initial = requests.length === 1
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            if (!initial) nextBody = controller
+            controller.enqueue(
+              new TextEncoder().encode(
+                initial
+                  ? 'event: task-delta\ndata: bad\n\nevent: task-state\ndata: obsolete-buffer\n\n'
+                  : 'event: task-state\ndata: full\n\n',
+              ),
+            )
+          },
+          cancel() {
+            if (initial) cancelled()
+          },
+        }),
+        { headers: { 'content-type': 'text/event-stream' } },
+      )
+    })
+    const events: string[] = [],
+      repaired: boolean[] = []
+    const connection = connectEventStream(
+      '/link/api/events?sessionId=a',
+      {
+        onOpen() {},
+        onError() {},
+        onUnauthorized: () => 'stop',
+        onEvent(event) {
+          events.push(event.data)
+          if (event.event === 'task-delta') repaired.push(connection.repair())
+        },
+      },
+      { fetch: fetchMock, taskDelta: true },
+    )
+    try {
+      await vi.waitFor(() => expect(events).toEqual(['bad', 'full']))
+      expect(cancelled).toHaveBeenCalledTimes(1)
+      expect(requests[0]!.signal?.aborted).toBe(true)
+      expect(new Headers(requests[0]!.headers).get('x-latch-state')).toBe('delta-v1')
+      expect(new Headers(requests[1]!.headers).has('x-latch-state')).toBe(false)
+      nextBody!.enqueue(new TextEncoder().encode('event: task-delta\ndata: bad-again\n\n'))
+      await vi.waitFor(() => expect(repaired).toEqual([true, false]))
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(events).not.toContain('obsolete-buffer')
+    } finally {
+      connection.close()
+    }
+  })
+
   it('renews on 401 renewal-required and reconnects at once, then delivers frames', async () => {
     const responses = [
       new Response(JSON.stringify({ error: 'renewal-required', message: 'x' }), { status: 401 }),
