@@ -82,6 +82,12 @@ type ToastMessage = { text: string; tone: 'ok' | 'error' }
 /** Results of session actions belong to the session they were made in, not whichever is open when they settle. */
 type ActionError = { sessionId: string; text: string }
 
+/** An explicit input action consumes only the draft it was offered for, after every leave guard passes. */
+export interface SessionSelectionIntent {
+  consumeDraft?: { inputId: string | null; text: string }
+  draft?: string
+}
+
 const without = <T>(set: ReadonlySet<T>, value: T): ReadonlySet<T> => {
   const next = new Set(set)
   next.delete(value)
@@ -587,28 +593,41 @@ export function useSessionController({
 
   const [queuedRetry, setQueuedRetry] = useState<{ id: string; runId?: string; updatedAt: string; prompt: string } | null>(null)
   const consumedRetry = useRef<typeof queuedRetry>(null)
-  const choose = useStableCallback((id: string | null, afterSelect?: () => void): void => {
+  const choose = useStableCallback((id: string | null, afterSelect?: () => void, intent?: SessionSelectionIntent): void => {
+    if (intent && (submission.pending !== null || submission.sending)) return
+    if (intent?.consumeDraft && (intent.consumeDraft.inputId !== inputId || intent.consumeDraft.text !== submission.draft)) {
+      setToast({ text: '输入已更改，请重新选择操作。', tone: 'error' })
+      return
+    }
     // An editor's unsaved text in this session: the guard asks first, and comes back here once it may go.
-    if (id !== selectedId && selectedId !== null && requestLeave(selectedId, () => choose(id, afterSelect))) return
+    if (id !== selectedId && selectedId !== null && requestLeave(selectedId, () => choose(id, afterSelect, intent))) return
+    const outgoing = intent?.consumeDraft ? '' : submission.draft
     const handed = id === null ? undefined : takeHandedDraft(id)
     if (handed && id === inputId) submission.setDraft(previous => joinDraft(previous, handed))
     if (id !== inputId || id === null) {
       if (inputId !== null) {
         const hidden = summary === undefined || privateSession(summary) || privateDraftId.current === inputId
         if (!privateVisible && hidden) sessionDrafts.current.remove(inputId)
-        else if (!sessionDrafts.current.save(inputId, submission.draft, hidden)) {
+        else if (!sessionDrafts.current.save(inputId, outgoing, hidden)) {
           setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
           return
         }
-      } else if (id !== null && !sessionDrafts.current.save(NEW_SESSION_DRAFT, submission.draft, false)) {
+      } else if (id !== null && !sessionDrafts.current.save(NEW_SESSION_DRAFT, outgoing, false)) {
         setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
         return
       }
       // 新会话 pressed on 新会话 starts over; coming back from a session finds what was being written.
       if (inputId === null && id === null) sessionDrafts.current.remove(NEW_SESSION_DRAFT)
-      submission.setDraft(joinDraft(sessionDrafts.current.read(id ?? NEW_SESSION_DRAFT, privateVisible), handed))
+      const restored = intent?.draft ?? joinDraft(sessionDrafts.current.read(id ?? NEW_SESSION_DRAFT, privateVisible), handed)
+      restoringDraft.current = restored
+      submission.setDraft(restored)
       draftSessionId.current = id
+    } else if (intent?.consumeDraft || intent?.draft !== undefined) {
+      const restored = intent.draft ?? ''
+      restoringDraft.current = restored
+      submission.setDraft(restored)
     }
+    if (intent?.consumeDraft) setFileMentions([])
     setQueuedRetry(null)
     onBeforeSelect(id)
     select(id)

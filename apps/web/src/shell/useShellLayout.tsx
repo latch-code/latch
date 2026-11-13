@@ -70,7 +70,7 @@ import { ArchiveBatch } from '../components/ArchiveBatch.tsx'
 import type { PanelSurface } from '../components/SessionPanels.tsx'
 import { EASING, MOTION, usePresence, type ResizePhase, EnterGlyph } from '@latch/ui'
 import { settingsSections, type SettingsSection } from '../settings/SettingsPage.tsx'
-import { useSessionController } from './useSessionController.ts'
+import { useSessionController, type SessionSelectionIntent } from './useSessionController.ts'
 import type { ChangesLink, ChangesTarget } from '../conversation/changesLink.ts'
 import { useFrozenAt } from '../conversation/useFrozenAt.ts'
 
@@ -487,21 +487,22 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     onOffer: offerFile,
   })
   /** A new session starts where the person is: in the open session's project, else as last chosen. */
-  const startNew = () => {
-    setRoute({ entry: 'sessions' })
-    submission.setFork(null)
+  const startNewDraft = (intent?: SessionSelectionIntent, afterSelect?: () => void) => {
     const project = selectedId === null ? undefined : projectFor(catalog, summary)
-    // A phone keeps its list under the sheet, and what was being drafted there stays for the next time it opens.
-    if (phone) {
-      if (selectedId !== null) choose(null)
+    const arrived = () => {
+      // choose has already parked the source input; do not save its old render again while changing the route.
+      updateRoute({ entry: 'sessions' })
+      submission.setFork(null)
       if (project) submission.updateChoice({ workspaceId: project })
-      setNewSheet(true)
-      return
+      if (phone) setNewSheet(true)
+      else focusNextFrame(composerRef)
+      afterSelect?.()
     }
-    choose(null)
-    if (project) submission.updateChoice({ workspaceId: project })
-    focusNextFrame(composerRef)
+    // Reopening the phone sheet keeps its existing draft; explicit actions may replace it atomically.
+    if (phone && selectedId === null && !intent) arrived()
+    else choose(null, arrived, intent)
   }
+  const startNew = () => startNewDraft()
   /**
    * Phones: the open session slides back to the list (180ms), then is let go, and focus lands on its row; at once without
    * motion, or when the browser has already drawn the way back (its own edge swipe).
@@ -1541,6 +1542,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     saveSidebar,
     openFile,
     startNew,
+    startNewDraft,
     back,
     openSettings,
     openAgentPage,
