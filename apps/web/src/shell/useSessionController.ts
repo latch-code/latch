@@ -7,11 +7,11 @@ import { useAttachments } from '../hooks/useAttachments.ts'
 import { projectScopeCaption } from '../projects.tsx'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { writeClipboard } from '@latch/ui'
-import type { Approval, TaskDetail, TaskSummary } from '@latch/protocol'
+import type { Approval, SessionConfigOption, TaskDetail, TaskSummary } from '@latch/protocol'
 import { api, ApiError, errorMessage, fromInput, inlineError, isUncertain } from '../core/api.ts'
 import { choiceKind, DecisionRequests, settledOutcome } from '../core/approvalDecision.ts'
 import { cancelAnswer, CancelRequests } from '../core/cancelRequest.ts'
-import { ConfigRequests } from '../core/configRequest.ts'
+import { checkReasonText, ConfigRequests, configUncertain, type ConfigRequest } from '../core/configRequest.ts'
 import { browserDraftStorage, forgetStoredDrafts, listedSessions, SessionDrafts } from '../core/sessionDrafts.ts'
 import { joinDraft, takeHandedDraft } from '../core/draftHandoff.ts'
 import type { SessionConfigFeedback } from '../composer/modelReasoning.ts'
@@ -769,12 +769,33 @@ export function useSessionController({
     }
   })
 
+  /** The Harness's own name for a value of one of the open session's options. */
+  const valueName = (configId: string, value: string) => {
+    const option = current?.config?.find(item => item.id === configId)
+    const word = option?.category === 'thought_level' ? '思考' : option?.category === 'model' ? '模型' : (option?.name ?? configId)
+    const name = option?.options.find(item => item.value === value)?.name ?? value
+    return `${word} ${name}`
+  }
+  const unknownFeedback = (request: ConfigRequest, at: number): SessionConfigFeedback => ({
+    kind: 'unknown',
+    message: '没有收到 Agent 的确认。核对会向它读取当前设置，不会再发送一次。',
+    configId: request.configId,
+    valueName: valueName(request.configId, request.value),
+    at,
+  })
+  // An answer to a change that may take a Harness's process start and its own reply; the Host gives up first.
+  const CONFIG_WRITE_TIMEOUT_MS = 150_000
+
   const setConfig = async (configId: string, value: string) => {
     if (selectedId === null) return
     const id = selectedId
     const request = configRequests.current.begin(id, configId, value)
     if (!request) return
-    setConfigBusy(previous => new Map(previous).set(id, configId))
+    await sendConfig(id, request, Date.now())
+  }
+
+  const sendConfig = async (id: string, request: ConfigRequest, at: number) => {
+    setConfigBusy(previous => new Map(previous).set(id, request.configId))
     setConfigFeedback(previous => {
       const next = new Map(previous)
       next.delete(id)
@@ -789,21 +810,27 @@ export function useSessionController({
     try {
       await api<unknown>(`tasks/${encodeURIComponent(id)}/config`, {
         method: 'POST',
-        body: { configId, value, ...(catalog?.features?.configReceipts === true ? { requestId: request.requestId } : {}) },
+        body: {
+          configId: request.configId,
+          value: request.value,
+          ...(catalog?.features?.configReceipts === true ? { requestId: request.requestId } : {}),
+        },
+        timeoutMs: CONFIG_WRITE_TIMEOUT_MS,
       })
       configRequests.current.settle(id, request)
       await refresh()
     } catch (cause) {
       configRequests.current.settle(id, request, cause)
       stopSession(id, cause, { from: 'config' })
-      const text = cause instanceof ApiError && cause.code === 'permission-unverified' ? CONFIG_UNVERIFIED_TEXT : inlineError(cause)
-      setConfigFeedback(previous =>
-        new Map(previous).set(id, {
-          kind: isUncertain(cause) ? 'unknown' : 'failed',
-          message: isUncertain(cause) ? '切换结果还未确认，请刷新设置查看结果。' : text || '设置未更改，请重新选择。',
-        }),
-      )
-      if (text && !(cause instanceof ApiError && isSessionStopCode(cause.code))) failAction(id, text)
+      // Unknown is not an error: it is said once, in place, with 核对 and 重试同一请求.
+      if (configUncertain(cause)) setConfigFeedback(previous => new Map(previous).set(id, unknownFeedback(request, at)))
+      else {
+        const text = cause instanceof ApiError && cause.code === 'permission-unverified' ? CONFIG_UNVERIFIED_TEXT : inlineError(cause)
+        setConfigFeedback(previous =>
+          new Map(previous).set(id, { kind: 'failed', message: text || '设置未更改，请重新选择。', configId: request.configId }),
+        )
+        if (text && !(cause instanceof ApiError && isSessionStopCode(cause.code))) failAction(id, text)
+      }
     } finally {
       setConfigBusy(previous => {
         const next = new Map(previous)
@@ -815,27 +842,93 @@ export function useSessionController({
     }
   }
 
+  /** 重试同一请求: the same identity and content; the Host answers from its receipt and never sends an unknown change again. */
+  const retryConfig = async () => {
+    if (selectedId === null) return
+    const id = selectedId,
+      request = configRequests.current.get(id)
+    if (!request?.unknown || configFlights.current.has(id)) return
+    await sendConfig(id, request, configFeedback.get(id)?.at ?? Date.now())
+  }
+
+  const settleShown = (id: string, request: ConfigRequest, state: string | undefined, config: readonly SessionConfigOption[]) => {
+    if (!configRequests.current.reconcile(id, request, config, state)) return false
+    setConfigFeedback(previous => {
+      const updated = new Map(previous)
+      if (state === 'failed')
+        updated.set(id, {
+          kind: 'failed',
+          message: `没有切换到「${valueName(request.configId, request.value)}」，可以重新选择。`,
+          configId: request.configId,
+        })
+      else updated.delete(id)
+      return updated
+    })
+    return true
+  }
+
+  /**
+   * 核对: the Host settles the change from the Agent's own reading (`…/check`); an older Host only answers its receipt,
+   * and without receipts only a read-back of the asked value settles it.
+   */
   const refreshConfig = async () => {
     if (selectedId === null) return
     const id = selectedId,
       request = configRequests.current.get(id)
+    const mark = (checking: boolean, abandonable?: boolean) =>
+      setConfigFeedback(previous => {
+        const row = previous.get(id)
+        return row?.kind === 'unknown'
+          ? new Map(previous).set(id, { ...row, checking, ...(abandonable ? { abandonable: true } : {}) })
+          : previous
+      })
+    let stuck = false
+    mark(true)
     try {
-      const next = await api<TaskDetail>(`tasks/${encodeURIComponent(id)}`)
+      const path = request ? `tasks/${encodeURIComponent(id)}/config-requests/${request.requestId}` : undefined
       const receipt =
-        request && catalog?.features?.configReceipts === true
-          ? await api<{ state: string }>(`tasks/${encodeURIComponent(id)}/config-requests/${request.requestId}`)
-          : undefined
-      if (!request || configRequests.current.reconcile(id, request, next.config ?? [], receipt?.state))
-        setConfigFeedback(previous => {
-          const updated = new Map(previous)
-          if (receipt?.state === 'failed') updated.set(id, { kind: 'failed', message: '设置未能切换，当前仍是原来的值。' })
-          else updated.delete(id)
-          return updated
-        })
+        request && path && catalog?.features?.configCheck === true
+          ? await api<{ state: string; reason?: string }>(`${path}/check`, {
+              method: 'POST',
+              body: { configId: request.configId, value: request.value },
+              timeoutMs: CONFIG_WRITE_TIMEOUT_MS,
+            })
+          : request && path && catalog?.features?.configReceipts === true
+            ? await api<{ state: string; reason?: string }>(path)
+            : undefined
+      const next = await api<TaskDetail>(`tasks/${encodeURIComponent(id)}`)
+      if (!request) setConfigFeedback(previous => (previous.has(id) ? new Map([...previous].filter(([key]) => key !== id)) : previous))
+      else if (!settleShown(id, request, receipt?.state, next.config ?? [])) {
+        // A turn that is running ends on its own; anything else may never settle, so the person may set it down.
+        stuck = receipt?.reason !== 'running'
+        // Still unknown is not a failure: no red.
+        setToast({ text: checkReasonText(receipt?.reason, harnessInfo?.capabilities.display.label ?? 'Harness'), tone: 'ok' })
+      }
       await refresh()
     } catch (cause) {
+      stuck = true
       setToast({ text: errorMessage(cause), tone: 'error' })
+    } finally {
+      mark(false, stuck)
     }
+  }
+
+  /**
+   * 放弃这次结果: only on this page. The Host keeps its receipt unknown and never sends it again; the page lets the person
+   * choose anew from what the Agent reports now, with a new requestId.
+   */
+  const abandonConfig = () => {
+    if (selectedId === null) return
+    const id = selectedId,
+      request = configRequests.current.get(id)
+    if (!request || configFlights.current.has(id)) return
+    configRequests.current.abandon(id, request)
+    setConfigFeedback(previous => {
+      const next = new Map(previous)
+      next.delete(id)
+      return next
+    })
+    void refresh()
   }
 
   // A local action says nothing when it works: the row moving or folding away is the feedback. Failures are toasts.
@@ -1250,6 +1343,8 @@ export function useSessionController({
     cancelSession,
     setConfig,
     refreshConfig,
+    retryConfig,
+    abandonConfig,
     patchTask,
     exportTask,
     manageable,

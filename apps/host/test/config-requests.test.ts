@@ -233,3 +233,55 @@ test('bounds same-RID waiters without starting another execution', async () => {
   await Promise.all([first, ...waiting])
   expect(execute).toHaveBeenCalledTimes(1)
 })
+
+test.each(['not-sent', 'refused'] as const)('records a change the driver marks %s as failed, never unknown', async outcome => {
+  const f = await fixture(),
+    request = input()
+  const execute = async (begin: () => Promise<void>) => {
+    await begin()
+    throw new AppError(502, 'agent-error', 'refused', { configOutcome: outcome })
+  }
+  await expect(f.requests.apply('task-a', f.caller, request, execute)).rejects.toMatchObject({ code: 'agent-error' })
+  expect(f.requests.state('task-a', f.caller.deviceId, request.requestId)).toBe('failed')
+})
+
+test('核对 settles only an unknown receipt of the same content: applied when asked, failed only back at the prior value', async () => {
+  const f = await fixture(),
+    lost = (prior?: string) => async (begin: (context?: { prior?: string; auditSeq?: number }) => Promise<void>) => {
+      await begin({ prior, auditSeq: 7 })
+      throw new AppError(504, 'agent-timeout', 'no answer')
+    }
+  const applied = input(),
+    failed = input(),
+    neither = input(),
+    unread = input(),
+    legacy = input()
+  for (const request of [applied, failed, neither, unread])
+    await expect(f.requests.apply('task-a', f.caller, request, lost('OLD VALUE'))).rejects.toMatchObject({ code: 'config-outcome-unknown' })
+  // Written before receipts kept the prior value: only a match settles it.
+  await expect(f.requests.apply('task-a', f.caller, legacy, lost())).rejects.toMatchObject({ code: 'config-outcome-unknown' })
+  const read = vi.fn(async () => ({ kind: 'read' as const, currentValue: `${applied.value}/high`, asked: true }))
+  await expect(f.requests.check('task-a', f.caller, { ...applied, value: 'other' }, read)).rejects.toMatchObject({
+    code: 'request-conflict',
+  })
+  expect(await f.requests.check('task-a', f.caller, applied, read)).toEqual({ state: 'applied', settled: true, auditSeq: 7 })
+  const back = async () => ({ kind: 'read' as const, currentValue: 'OLD VALUE', asked: false })
+  expect(await f.requests.check('task-a', f.caller, failed, back)).toEqual({ state: 'failed', settled: true, auditSeq: 7 })
+  // Neither the asked nor the prior value (another device changed it meanwhile): still unknown.
+  const elsewhere = async () => ({ kind: 'read' as const, currentValue: 'THIRD VALUE', asked: false })
+  expect(await f.requests.check('task-a', f.caller, neither, elsewhere)).toMatchObject({ state: 'unknown', reason: 'neither' })
+  expect(await f.requests.check('task-a', f.caller, unread, async () => ({ kind: 'busy', reason: 'subagents' }))).toMatchObject({
+    state: 'unknown',
+    reason: 'subagents',
+  })
+  expect(await f.requests.check('task-a', f.caller, legacy, back)).toMatchObject({ state: 'unknown', reason: 'neither' })
+  expect(f.requests.state('task-a', f.caller.deviceId, unread.requestId)).toBe('unknown')
+  // A settled receipt is answered without reading again, and another device has nothing to settle.
+  expect(await f.requests.check('task-a', f.caller, applied, read)).toEqual({ state: 'applied', settled: false })
+  expect((await f.requests.check('task-a', { ...actor(), deviceId: 'device-b' }, unread, read)).state).toBe('unknown')
+  expect(read).toHaveBeenCalledTimes(1)
+  // What survives a restart is the settled state; the disk holds hashes only.
+  const restored = new ConfigRequests(await SessionMetaStore.open(f.dir))
+  expect(restored.state('task-a', f.caller.deviceId, failed.requestId)).toBe('failed')
+  expect(await readFile(join(f.dir, SESSION_META_FILE), 'utf8')).not.toContain('OLD VALUE')
+})

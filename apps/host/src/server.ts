@@ -1,4 +1,4 @@
-import { ConfigRequests } from './config-requests.ts'
+import { ConfigRequests, notSentConfig, type ConfigBegin } from './config-requests.ts'
 import {
   HeldPlugins,
   HOST_PROTOCOL,
@@ -409,6 +409,8 @@ const configSchema = z.strictObject({
     .optional(),
 })
 const requestIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
+/** 核对 names what the change asked for; the receipt holds only its hash. */
+const configCheckSchema = z.strictObject({ configId: configSchema.shape.configId, value: configSchema.shape.value })
 const decisionSchema = z.strictObject({
   decision: z.enum(['allow', 'reject']),
   optionId: z.string().min(1).max(128).optional(),
@@ -5499,6 +5501,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(directoryReader.available ? { fileTree: true as const } : {}),
           filePreview: true,
           configReceipts: true,
+          configCheck: true,
           runLiveness: true,
           pinnedDefaults: true,
           worktreeLifecycle: true,
@@ -7266,15 +7269,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const detail = await hub!.detail(id).catch(() => undefined)
           if (!detail || detail.config?.find(item => item.id === input.configId)?.category === 'mode') await hub!.markOriginChanged(id)
         }
-        const execute = async (before: () => Promise<void>) => {
+        // A refusal here comes before anything reaches the Harness, so the change certainly did not apply.
+        const stillAllowed = () => {
+          try {
+            authority()
+          } catch (error) {
+            throw notSentConfig(error)
+          }
+        }
+        const execute = async (before: (context?: ConfigBegin) => Promise<void>) => {
           await authorize()
           const change = await hub!.classifyConfigChange(id, input.configId, input.value)
+          // The value before the change: what 核对 reads back when the change did not apply.
+          let prior: string | undefined
           if (input.requestId) {
             const current = await hub!.detail(id),
               selectedOption = current.config?.find(row => row.id === input.configId)
             if (!selectedOption) throw new AppError(404, 'config-not-found', '该会话没有这个设置项。')
             if (!selectedOption.options.some(row => row.value === input.value))
               throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内。')
+            prior = selectedOption.currentValue
           }
           const apply = async () => {
             await hub!.setConfig(id, input.configId, input.value, { authorize: authority })
@@ -7287,13 +7301,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             }
           }
           if (change !== 'wider') {
-            await audited({
+            const changed = await audited({
               action: 'task.config.changed',
               actor: actorOf(caller),
               detail: { sessionId: id, configIdHash: sha256Hex(input.configId), toHash: sha256Hex(input.value) },
             })
-            await before()
-            authority()
+            await before({ prior, auditSeq: changed })
+            stillAllowed()
             await apply()
             return
           }
@@ -7305,8 +7319,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             detail: { sessionId: id, toHash: sha256Hex(input.value) },
           })
           try {
-            await before()
-            authority()
+            await before({ prior, auditSeq: seq })
+            stillAllowed()
             await apply()
           } catch (error) {
             auditFailed(seq, caller)
@@ -8404,6 +8418,48 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           res.removeListener('close', abort)
           lease.release()
         }
+        return
+      }
+      const configCheck = /^\/link\/api\/tasks\/([^/]+)\/config-requests\/([A-Za-z0-9_-]{8,128})\/check$/u.exec(path)
+      if (configCheck && method === 'POST') {
+        // Reading the agent may end the session's idle process and open the session again, so it takes what a change takes.
+        requireScope(caller, 'run')
+        limits.classC.take(caller.device.id)
+        const id = safeDecode(configCheck[1]!)
+        if (id.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长。')
+        const body = configCheckSchema.parse(await jsonBody(req))
+        const authorize = async () => {
+          recheck(caller, 'run')
+          checkPrivateSession(caller, id, true)
+          await assertSessionAccess(caller, id)
+          await assertSessionWorkspace(id)
+          assertWritable(id)
+        }
+        checkPrivateSession(caller, id)
+        await hub!.harnessOf(id)
+        await authorize()
+        const checked = await configRequests.check(
+          id,
+          { deviceId: caller.device.id, authorize },
+          { requestId: configCheck[2]!, configId: body.configId, value: body.value },
+          () => hub!.readConfig(id, body.configId, body.value),
+        )
+        // Every reading that settles a change is on record, linked to the change's own entry, so an entry that said the
+        // change failed (\`action.failed\` after an unknown outcome) is followed by what it became.
+        if (checked.settled)
+          await audited({
+            action: 'task.config.checked',
+            actor: actorOf(caller),
+            target: id,
+            detail: {
+              sessionId: id,
+              configIdHash: sha256Hex(body.configId),
+              toHash: sha256Hex(body.value),
+              outcome: checked.state === 'applied' ? 'applied' : 'failed',
+              ...(checked.auditSeq !== undefined ? { refSeq: checked.auditSeq } : {}),
+            },
+          })
+        json(res, { state: checked.state, ...(checked.reason ? { reason: checked.reason } : {}) })
         return
       }
       const configRequest = /^\/link\/api\/tasks\/([^/]+)\/config-requests\/([A-Za-z0-9_-]{8,128})$/u.exec(path)

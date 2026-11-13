@@ -351,7 +351,8 @@ Host 把第三方 Harness 插件的会话标为完全访问（L3）：Latch 无�
 | `subscribe` | 状态变化时通知，带 sessionId 时 Host 会合并通知并推送该会话状态 |
 | `liveRuns?` | 可选。同步返回内存中活动的运行 `{ sessionId, live }`，开销只随活动运行数增长：Host 每次变化与阈值到期时都调用，据此发现沉默；不提供时没有沉默通知 |
 | `remove?` | 可选。删除已结束会话的数据；运行中返回 409 `task-running` |
-| `setConfig?` | 可选。修改 `TaskDetail.config` 中的选项，从下一轮生效。Host 提供的 `options.authorize?: () => void` 须在异步准备后、实际外部修改前同步调用；抛错则停止，不能吞掉拒绝继续执行。只在修改还没发给 Agent 时用 409 `task-running` 拒绝（如会话的这一轮还在启动）：Host 把它记为明确失败，其他错误在回执之后都记为结果未知 |
+| `setConfig?` | 可选。修改 `TaskDetail.config` 中的选项，从下一轮生效。Host 提供的 `options.authorize?: () => void` 须在异步准备后、实际外部修改前同步调用；抛错则停止，不能吞掉拒绝继续执行。只在修改还没发给 Agent 时用 409 `task-running` 拒绝（如会话的这一轮还在启动），或在确定没改的错误上带 `details.configOutcome`（`ConfigRefusal`：`not-sent` 还没发出，`refused` Agent 用错误回答）：Host 把它们记为明确失败，其他错误在回执之后都记为结果未知 |
+| `readConfig?(sessionId, configId, value)` | 可选。从 Agent 本身读取一项的当前值（`ConfigReading`：`read` 带 `asked`，表示 Driver 认为这就是所选的 `value`；`busy` 带原因；`unread`），只在会话空闲时读，不用 Driver 自己记下的值，不改任何设置，读取期间拒绝这个会话的发送、追加与修改；先结束收到未回答修改的进程，使那次修改不会在读取之后落地。Host 用它核对结果未知的修改 |
 | `classifyConfigChange?` | 可选。返回修改与会话预期权限模式的关系：`neutral`、`stricter` 或 `wider`。Host 只用它决定是否写放宽模式的审计 |
 | `launchPreview?` | 可选，L3 Driver。描述在某个目录（`{ cwd, workspaceId?, folders? }`）新建会话将启动什么，用于启动指纹与审计；Agent 还会收到的其他文件夹写在返回的 `folders` 中 |
 | `listExternalSessions?`、`loadExternalSession?`、`closeExternalSession?`、`adoptExternalSession?`、`agentSessionIds?` | 可选，与 `HarnessDriver.historyImport` 一起。接入这个 Harness 在 Latch 之前的会话：只列元数据、一次保留重放的加载、以 Host 选定的会话 ID 绑定原会话（删除时不删原会话），以及 Driver 自己的会话用过的 Harness 会话 ID（不列出供接入）；见 [HARNESSES.md](HARNESSES.md#接入已有会话) |

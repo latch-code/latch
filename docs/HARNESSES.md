@@ -338,6 +338,12 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 
 会话选项修改的未知结果通过 Host 配置回执查询，不自动再次发送 `set_config_option`；Agent 超时或连接关闭无法证明没有执行。回执只有请求摘要与状态，不保存自定义选项原值。`SetConfigOptions.authorize` 在准备连接前和实际发送 RPC 前同步复查 Host 授权；详情见 [ARCHITECTURE.md](ARCHITECTURE.md#会话配置修改回执)。
 
+- **确定没改的拒绝。** 请求发出之前的拒绝（启动或恢复会话失败、未登录、启动指纹变了、项目目录不在、授权撤回），以及 Agent 在动手之前就拒绝的回答（没有这个方法时 501 `not-supported`，会话不存在，要先登录）都带 `details.configOutcome`（`not-sent` 或 `refused`），Host 记为失败，页面直接说没有改。其他错误回答一律是结果未知：OpenCode 2.x 先记下选择再让自己的服务切换，切换失败时它已经用上所选值，也不一定发 `config_option_update`。
+- **等待上限。** 一次修改等 Agent 回答最多 30 秒（`AcpAgentOptions.configTimeoutMs`，不超过 `requestTimeoutMs`）；超过后是结果未知。页面等它最多 150 秒（含进程启动与恢复会话），2 秒后控件写「等 <Harness> 回应…」。
+- **核对（`Bridge.readConfig`）。** 只在会话空闲时读：结束这个会话的进程（未回答的那次修改从此不会再落地），再由新进程用 `session/resume` 或 `session/load` 打开会话，取它报告的这一项。运行中、等你处理、另一次修改未结束或子 Agent 可能还在后台运行时不读（`busy`），在结束进程的同一步再查一次；读取期间这个会话的发送、追加与修改都答 409 `config-check-running`。修改在异步启动指纹与项目目录检查后同步复查核对锁，再保留写入占用；改成当前值的请求也不能绕过。读取只读：不设开始前的选择，也不把模式设回去；读到的模式是所选的那一档时，它成为会话的预期模式。Agent 不能恢复会话、没有报告或打开失败时不算读到。Driver 说读到的是不是所选的值（`asked`）：OpenCode 1.4 到 1.14 读回的模型带档位后缀，profile 的 `configValueMatches` 把它算作所选的值。
+
+**OpenCode 的设置。** 按 OpenCode 的公开源码（`anomalyco/opencode`，原 `sst/opencode`）：2.x（`packages/cli/src/acp/`，读到 2.2.7）与 1.15 起的 1.x（`packages/opencode/src/acp/`）实现 `session/set_config_option`，`model`（值 `<provider>/<id>`，名字 `<provider>/<名字>`）、`effort`（类别 `thought_level`，档位随模型变，含 `default`）与 `mode` 三项，立即用完整的 `configOptions` 回答，需要先打开会话，否则答「会话不存在」；1.x 另有 `session/set_model`（`unstable_setSessionModel`）与 `session/set_mode`，1.4 之前没有 `set_config_option`。正常情况下它不迟答；能拖住回答的是它读取模型目录（2.x 首次读取要等插件与模型列表，最多重试 5 秒）和 Latch 自己的冷启动（启动进程、恢复会话）。1.4 到 1.14 的 `model` 带档位后缀（`<provider>/<id>/<档位>`），只选模型时读回的值和所选不同：修改当时是结果未知，核对把它算作所选的模型；Latch 不支持这些版本的思考档位。
+
 **时间。** 时间都由 Host 的时钟（`HarnessHostOptions.clock`）记录，含义见 [STREAMING.md](./STREAMING.md)「时间与用量」。一轮从 Latch 接受提示开始：发出提示之前（启动进程、建立或恢复会话、设置模式）`activity` 是 `starting`，提示发出后是 `model`；`since` 只在阶段或工具变化时更新。正文与思考片段的第一段到达时记下这一段的开始，结算时写入 `completedAt`、`reasoningMs` 与模型（会话里 Agent 报告的当前模型选项的值）；工具第一次被记录时写 `createdAt`，第一次进入 `in_progress` 时写 `startedAt`，Agent 报告完成或失败时写 `completedAt`；一轮结束时 Latch 替它结算的工具，只有运行过的才写 `completedAt`。审批活动的 `since` 与原等待起点 `runWaitingSince` 使用同一个时间戳，跨毫秒取时也不会分裂。询问挂起期间计入这一轮的等待时间；一轮结算时把 `turn` 写在开启它的用户消息上。
 
 `TaskDetail.permission` 描述该会话：`level: 'L3'`、`enforcer: 'NONE'`、能否读回模式、定义是否为已验证的预设、是否请求审批、预期模式、漂移记录、预设说明和定义的说明；不列出项目配置与其他文件夹。

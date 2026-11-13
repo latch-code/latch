@@ -18,6 +18,7 @@ import {
   type Bridge,
   type CancelOptions,
   type ConfigChangeClass,
+  type ConfigReading,
   type CreateTaskInput,
   type DecideOptions,
   type ExternalSessionAdopt,
@@ -28,6 +29,7 @@ import {
   type SetConfigOptions,
   type SteerOutcome,
 } from '@latch/sdk'
+import { notSentConfig } from './config-requests.ts'
 import { harnessFacts, trustOf, type HarnessKind, type HarnessTrust } from './harness-trust.ts'
 import { RUN_ID, SessionMetaStore, type ImportedMeta, type PageOrigin, type SessionReceipts } from './session-meta.ts'
 import { BranchReader } from './branch-reader.ts'
@@ -1047,12 +1049,27 @@ export class HarnessHub implements Bridge {
   }
 
   async setConfig(sessionId: string, configId: string, value: string, options?: SetConfigOptions): Promise<void> {
+    // A refusal before the driver has the change certainly did not apply.
+    let handed = false
+    try {
+      const member = await this.route(sessionId)
+      await this.accept(member, bridge => {
+        options?.authorize?.()
+        if (!bridge.setConfig) throw new AppError(501, 'not-supported', `${member.driver.name} 不支持修改会话选项`)
+        handed = true
+        return options ? bridge.setConfig(sessionId, configId, value, options) : bridge.setConfig(sessionId, configId, value)
+      })
+    } catch (error) {
+      throw handed ? error : notSentConfig(error)
+    }
+  }
+
+  /** What the agent itself reports of one option now; a driver that cannot read it reports nothing. */
+  async readConfig(sessionId: string, configId: string, value: string): Promise<ConfigReading> {
     const member = await this.route(sessionId)
-    await this.accept(member, bridge => {
-      options?.authorize?.()
-      if (!bridge.setConfig) throw new AppError(501, 'not-supported', `${member.driver.name} 不支持修改会话选项`)
-      return options ? bridge.setConfig(sessionId, configId, value, options) : bridge.setConfig(sessionId, configId, value)
-    })
+    return this.accept(member, bridge =>
+      bridge.readConfig ? bridge.readConfig(sessionId, configId, value) : Promise.resolve<ConfigReading>({ kind: 'unread' }),
+    )
   }
 
   /** Applies a Host-level title, pin or archive change and returns the updated summary. */

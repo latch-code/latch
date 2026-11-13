@@ -55,6 +55,8 @@ import {
   type Bridge,
   type CancelOptions,
   type ConfigChangeClass,
+  type ConfigReading,
+  type ConfigRefusal,
   type CreateTaskInput,
   type DecideOptions,
   type ExternalSessionAdopt,
@@ -719,6 +721,10 @@ export class AgentRuntime implements Bridge {
   private readonly spawning = new Map<string, Promise<Live>>()
   /** Requests on a task's process outside a turn or setup, such as a config change; its process must not be stopped. */
   private readonly holds = new Map<string, number>()
+  /** Sessions whose agent 核对 is reading: nothing else may reach their process meanwhile. */
+  private readonly checking = new Set<string>()
+  /** How many times each session's agent has reported its options, from a response or a notification. */
+  private readonly configReports = new Map<string, number>()
   /** Tasks whose ACP session is being set up and first checked; mode reports then are its starting point, not drift. */
   private readonly quiet = new Map<string, number>()
   /** Mode changes Latch has requested per task and not yet seen answered. */
@@ -1961,6 +1967,7 @@ export class AgentRuntime implements Bridge {
     if (this.runs.has(sessionId) || task.summary.status === 'running' || task.summary.status === 'waiting-approval') {
       throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
     }
+    this.assertNotChecking(sessionId)
     let context: string
     try {
       context = fileMentionContext(prompt, fileRefs, task.summary.folders ?? [{ id: 'default', path: task.acp.cwd }])
@@ -2113,6 +2120,7 @@ export class AgentRuntime implements Bridge {
     }
     const task = this.task(sessionId)
     this.assertUsable(task)
+    this.assertNotChecking(sessionId)
     const run = this.runs.get(sessionId)
     if (!run || !this.steerable(run)) {
       // The caller now sends or queues the text as a turn; a retry must get that answer, not steer it into the turn.
@@ -2263,6 +2271,7 @@ export class AgentRuntime implements Bridge {
     this.tools.delete(sessionId)
     this.stray.delete(sessionId)
     this.unconfirmed.delete(sessionId)
+    this.configReports.delete(sessionId)
     this.mark()
     await this.flush()
     this.notify(sessionId)
@@ -2284,7 +2293,25 @@ export class AgentRuntime implements Bridge {
   }
 
   async setConfig(sessionId: string, configId: string, value: string, options: SetConfigOptions = {}): Promise<void> {
+    // Whether the change request has left for the agent: a refusal before that certainly did not apply.
+    const reach = { sent: false }
+    try {
+      await this.writeConfig(sessionId, configId, value, options, reach)
+    } catch (error) {
+      if (!reach.sent) throw refusedConfig(error, 'not-sent')
+      throw error
+    }
+  }
+
+  private async writeConfig(
+    sessionId: string,
+    configId: string,
+    value: string,
+    options: SetConfigOptions,
+    reach: { sent: boolean },
+  ): Promise<void> {
     await this.ready()
+    this.assertNotChecking(sessionId)
     const task = this.task(sessionId)
     const option = task.config?.find(item => item.id === configId)
     if (!option) throw new AppError(404, 'config-not-found', '该会话没有这个设置项')
@@ -2292,6 +2319,7 @@ export class AgentRuntime implements Bridge {
       throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
     this.assertUsable(task)
     await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
+    this.assertNotChecking(sessionId)
     const mode = this.isModeOption(task, option)
     if (option.currentValue === value) {
       const replaced = forgetStartChoice(task, configId)
@@ -2307,6 +2335,8 @@ export class AgentRuntime implements Bridge {
     const run = this.runs.get(sessionId)
     if (run && !run.sent) throw new AppError(409, 'task-running', '会话正在启动，请稍后再修改设置')
     await this.assertWorkspace(task)
+    // Preparation can yield to a config check; reserve the write only while its process is still free.
+    this.assertNotChecking(sessionId)
     this.enter(this.holds, sessionId)
     try {
       options.authorize?.()
@@ -2322,14 +2352,20 @@ export class AgentRuntime implements Bridge {
           : { sessionId: binding.acpSessionId, modeId: value }
       const apply = async (change?: ModeChange): Promise<void> => {
         let result: unknown
+        options.authorize?.()
+        reach.sent = true
         try {
-          options.authorize?.()
-          result = await binding.live.wire.request(method, params, this.limits.requestTimeoutMs)
+          result = await binding.live.wire.request(method, params, this.limits.configTimeoutMs)
         } catch (error) {
           if (this.state.tasks[sessionId]?.acp.drift) throw permissionDrift()
           if (error instanceof RpcError && error.code === RPC.methodNotFound)
-            throw new AppError(501, 'not-supported', `${this.agent.name} 不支持修改该设置`)
-          throw this.publicError(error, binding.live)
+            throw refusedConfig(new AppError(501, 'not-supported', `${this.agent.name} 不支持修改该设置`), 'refused')
+          const failure = this.publicError(error, binding.live)
+          // Only an answer that refuses before acting is a refusal. Any other error may come after the agent took the
+          // value (OpenCode 2.x records the selection before its server switches), so it stays unknown until 核对.
+          if (error instanceof RpcError && (error.code === RPC.notFound || error.code === RPC.authRequired))
+            throw refusedConfig(failure, 'refused')
+          throw failure
         }
         const current = this.state.tasks[sessionId]
         if (!current) return
@@ -2357,6 +2393,72 @@ export class AgentRuntime implements Bridge {
       this.leave(this.holds, sessionId)
       this.scheduleIdle(sessionId)
     }
+  }
+
+  async readConfig(sessionId: string, configId: string, value: string): Promise<ConfigReading> {
+    await this.ready()
+    const task = this.task(sessionId)
+    const busy = (): ConfigReading | undefined => {
+      const current = this.state.tasks[sessionId]
+      if (!current || this.checking.has(sessionId) || this.busy(sessionId) || this.openApprovals(sessionId).length)
+        return { kind: 'busy', reason: 'running' }
+      if (current.summary.status === 'running' || current.summary.status === 'waiting-approval') return { kind: 'busy', reason: 'running' }
+      // A subagent that went on after its turn would end with the process.
+      const live = this.lives.get(sessionId)
+      for (const child of live?.children.values() ?? [])
+        if (child.taskId === sessionId && !child.ended) return { kind: 'busy', reason: 'subagents' }
+      return undefined
+    }
+    const refused = busy()
+    if (refused) return refused
+    if (!task.acp.acpSessionId) return { kind: 'unread' }
+    this.checking.add(sessionId)
+    try {
+      this.assertUsable(task)
+      await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
+      // Again after the wait, in the same step as the stop: a turn reserved meanwhile keeps its process.
+      this.checking.delete(sessionId)
+      const late = busy()
+      this.checking.add(sessionId)
+      if (late) return late
+      const live = this.lives.get(sessionId)
+      if (live) {
+        if (live.initialized && !live.capabilities.resume && !live.capabilities.load) return { kind: 'unread' }
+        // The process an unanswered change went to ends first: that change can no longer land after this reading, and
+        // the next process reports what the session really runs on when it opens the session again.
+        await live.wire.stop('stop', this.limits.stopGraceMs)
+      }
+      const before = this.configReports.get(sessionId) ?? 0
+      await this.attach(sessionId)
+      if ((this.configReports.get(sessionId) ?? 0) === before) return { kind: 'unread' }
+      const current = this.state.tasks[sessionId]
+      const option = current?.config?.find(item => item.id === configId)
+      if (!current || !option) return { kind: 'unread' }
+      const asked =
+        option.currentValue === value || this.selection.profile?.configValueMatches?.(configId, value, option.currentValue) === true
+      // The person chose this mode and the agent runs in it: the next turn keeps it instead of setting the old one back.
+      if (asked && this.isModeOption(current, option) && !current.acp.drift) {
+        current.acp.expectedMode = value
+        this.touch(current)
+        this.mark()
+        await this.flush()
+      }
+      return { kind: 'read', currentValue: option.currentValue, asked }
+    } catch (error) {
+      this.limits.log(`${this.agent.name} 会话 ${sessionId} 读取设置失败：${clip(this.redact(message(error)), 200)}`)
+      return { kind: 'unread' }
+    } finally {
+      this.checking.delete(sessionId)
+      this.scheduleIdle(sessionId)
+    }
+  }
+
+  private assertNotChecking(sessionId: string): void {
+    if (this.checking.has(sessionId)) throw new AppError(409, 'config-check-running', '正在核对设置，核对结束后再试。')
+  }
+
+  private configReported(taskId: string): void {
+    this.configReports.set(taskId, (this.configReports.get(taskId) ?? 0) + 1)
   }
 
   // ---- task state -------------------------------------------------------------------------------------------
@@ -2922,6 +3024,7 @@ export class AgentRuntime implements Bridge {
 
   /** The agent's full option list, from a notification or a set response; its mode is checked like any report. */
   private reportConfig(task: AcpTask, items: unknown[]): void {
+    this.configReported(task.summary.id)
     const prior = this.modeOption(task)
     task.config = this.offered(task, configFromOptions(items))
     task.acp.configSource = 'options'
@@ -3776,6 +3879,9 @@ export class AgentRuntime implements Bridge {
         quiet = true
       }
       const binding = await this.session(taskId, live, signal)
+      // 核对 only reads: no start choice and no mode is set, and no turn can follow until it ends; the next turn's
+      // binding sets and reads back the mode as always.
+      if (this.checking.has(taskId)) return binding
       const unrouted = this.routeModel(taskId)
       const refused = unrouted ?? (await this.applyStart(taskId, binding, signal))
       await this.verifyMode(taskId, binding, signal)
@@ -3981,6 +4087,7 @@ export class AgentRuntime implements Bridge {
     const parsed = sessionState.safeParse(result)
     const folded = parsed.success ? foldConfig(parsed.data) : undefined
     if (folded) {
+      this.configReported(taskId)
       target.config = this.offered(target, folded.options, live.gateway)
       target.acp.configSource = folded.source
       this.applyModel(target)
@@ -4278,7 +4385,14 @@ export class AgentRuntime implements Bridge {
   }
 
   private busy(key: string): boolean {
-    if (this.runs.has(key) || this.attaching.has(key) || this.forgetting.has(key) || this.spawning.has(key) || this.holds.has(key))
+    if (
+      this.runs.has(key)
+      || this.attaching.has(key)
+      || this.forgetting.has(key)
+      || this.spawning.has(key)
+      || this.holds.has(key)
+      || this.checking.has(key)
+    )
       return true
     // A request that came after its turn waits on the person, and stopping the process would answer it.
     for (const permission of this.permissions.values()) if (permission.taskId === key) return true
@@ -5619,4 +5733,11 @@ export function proposalTurn(task: { messages: Message[]; acp: { cwd: string; fo
     return !tool.locations?.length || !tool.locations.every(inside)
   })
   return { ...(start >= 0 ? { messageId: task.messages[start]!.id } : {}), external }
+}
+
+/** The same refusal, marked as one that certainly did not apply (`Bridge.setConfig`). */
+function refusedConfig(error: unknown, outcome: ConfigRefusal): unknown {
+  if (!(error instanceof AppError)) return error
+  if (error.details?.configOutcome !== undefined) return error
+  return new AppError(error.status, error.code, error.message, { ...error.details, configOutcome: outcome })
 }

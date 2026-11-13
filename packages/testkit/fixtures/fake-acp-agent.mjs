@@ -78,7 +78,7 @@ const known = () =>
   (
     (env.FAKE_ACP_MODELS_FILE && existsSync(env.FAKE_ACP_MODELS_FILE) ? readFileSync(env.FAKE_ACP_MODELS_FILE, 'utf8').trim() : undefined)
     ?? env.FAKE_ACP_MODELS
-    ?? 'small,large'
+    ?? (env.FAKE_ACP_SHAPE === 'opencode' ? 'opencode/big-pickle,opencode/beam-free' : 'small,large')
   )
     .split(',')
     .filter(Boolean)
@@ -97,6 +97,30 @@ const effortId = env.FAKE_ACP_EFFORT_ID ?? 'effort'
 /** `1`: each thinking level carries a one-line description, as DeepSeek Harness and Codex send. */
 const described = description => (env.FAKE_ACP_EFFORT_DESCRIPTIONS === '1' ? { description } : {})
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+/**
+ * `opencode`: options shaped as OpenCode's ACP reports them (1.15 and later, 2.x): models valued `<provider>/<id>` and
+ * named `<provider>/<Name>`, thinking as an ungrouped `effort` list with `default` first, and no boolean option.
+ */
+const opencode = env.FAKE_ACP_SHAPE === 'opencode'
+const OPENCODE_EFFORTS = ['default', 'low', 'high']
+const title = id =>
+  id
+    .split(/[_-]/u)
+    .map(part => (part ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(' ')
+/**
+ * How `session/set_config_option` answers: `slow:<ms>` takes the value and answers after that long; `silent` takes it
+ * and never answers; `silent-drop` neither takes it nor answers; `error-after-take` takes it and answers with an
+ * internal error, as OpenCode 2.x does when its server fails the switch; `unsupported` does not have the method, as OpenCode
+ * before 1.4 did not. The value taken is written to FAKE_ACP_STATE, so a later process reads it back.
+ * FAKE_ACP_CONFIG_ANSWER_FILE, read at every request, overrides it while it exists.
+ */
+const configAnswerOf = () => {
+  if (env.FAKE_ACP_CONFIG_ANSWER_FILE && existsSync(env.FAKE_ACP_CONFIG_ANSWER_FILE))
+    return readFileSync(env.FAKE_ACP_CONFIG_ANSWER_FILE, 'utf8').trim()
+  return env.FAKE_ACP_CONFIG_ANSWER ?? ''
+}
+const firstEffort = () => (opencode ? 'default' : 'low')
 
 function log(event, data = {}) {
   if (logFile) appendFileSync(logFile, `${JSON.stringify({ pid: process.pid, event, ...data })}\n`)
@@ -363,7 +387,7 @@ function existing(sessionId) {
   if (!sessions[sessionId]) {
     const earlier = historySession(sessionId)
     if (earlier)
-      sessions[sessionId] = { cwd: earlier.cwd, history: [], model: startModel(), mode: initialMode, effort: 'low', earlier: true }
+      sessions[sessionId] = { cwd: earlier.cwd, history: [], model: startModel(), mode: initialMode, effort: firstEffort(), earlier: true }
   }
   const session = sessions[sessionId]
   if (!session) throw rpcError(-32002, `Session not found: ${sessionId}`)
@@ -388,8 +412,31 @@ function configOptions(session, shape = 'full') {
       category: 'model',
       type: 'select',
       currentValue: session.model,
-      options: models().map(model => ({ value: model, name: model[0].toUpperCase() + model.slice(1) })),
+      options: models().map(model => ({
+        value: model,
+        name: opencode
+          ? `${model.slice(0, model.indexOf('/'))}/${title(model.slice(model.indexOf('/') + 1))}`
+          : model[0].toUpperCase() + model.slice(1),
+      })),
     },
+    ...(opencode
+      ? [
+          {
+            id: 'effort',
+            name: 'Effort',
+            description: 'Available effort levels for this model',
+            category: 'thought_level',
+            type: 'select',
+            currentValue: session.effort,
+            options: OPENCODE_EFFORTS.map(value => ({ value, name: title(value) })),
+          },
+        ]
+      : ownLevels(session)),
+  ]
+}
+
+function ownLevels(session) {
+  return [
     {
       id: effortId,
       name: 'Effort',
@@ -531,7 +578,7 @@ async function handle(method, params) {
       if (slowSetup && Object.keys(readDisk()).length > 0) await delay(slowSetup)
       const sessionId = `sess-${randomUUID()}`
       await mountMcp(sessionId, params.mcpServers ?? [], params.cwd)
-      sessions[sessionId] = { cwd: params.cwd, history: [], model: startModel(), mode: initialMode, effort: 'low' }
+      sessions[sessionId] = { cwd: params.cwd, history: [], model: startModel(), mode: initialMode, effort: firstEffort() }
       touched.add(sessionId)
       save()
       return { sessionId, ...configState(sessions[sessionId]) }
@@ -582,6 +629,8 @@ async function handle(method, params) {
     }
     case 'session/resume': {
       if (!caps.has('resume')) throw rpcError(-32601, 'Method not found')
+      // FAKE_ACP_RESUME_DELAY: milliseconds before a resume answers.
+      if (env.FAKE_ACP_RESUME_DELAY) await delay(Number(env.FAKE_ACP_RESUME_DELAY))
       const session = restored(params.sessionId)
       await mountMcp(params.sessionId, params.mcpServers ?? [], params.cwd)
       return resumeSilent ? {} : configState(session)
@@ -626,6 +675,9 @@ async function handle(method, params) {
       return {}
     }
     case 'session/set_config_option': {
+      const configAnswer = configAnswerOf()
+      if (configAnswer === 'unsupported') throw rpcError(-32601, `Method not found: ${method}`)
+      if (configAnswer === 'silent-drop') return new Promise(() => {})
       const session = existing(params.sessionId)
       const mode = params.configId === 'mode'
       if (env.FAKE_ACP_STRICT_MODELS === '1' && params.configId === 'model' && !models().includes(params.value))
@@ -638,6 +690,10 @@ async function handle(method, params) {
         reportMode(params.sessionId, session)
       }
       save()
+      log('config-taken', { configId: params.configId, value: params.value })
+      if (configAnswer === 'silent') return new Promise(() => {})
+      if (configAnswer === 'error-after-take') throw rpcError(-32603, 'Internal error: switch failed')
+      if (configAnswer.startsWith('slow:')) await delay(Number(configAnswer.slice(5)))
       return { configOptions: configOptions(session) }
     }
     // As codex-acp: a running turn takes the text; with `promptRequired` and no turn, nothing is consumed. FAKE_ACP_STEER:

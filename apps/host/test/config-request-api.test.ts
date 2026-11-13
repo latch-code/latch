@@ -132,7 +132,7 @@ test('widens a mode at once, and the receipt replays it without another change',
   expect(await f.calls()).toBe(1)
 })
 
-test('rechecks revocation after the durable fence before forwarding to the actual ACP process', async () => {
+test('rechecks revocation after the durable fence before forwarding to the actual ACP process, and records that change as failed', async () => {
   const f = await fixture(),
     request = input(),
     real = f.host.host.bridge.setConfig.bind(f.host.host.bridge)
@@ -149,8 +149,10 @@ test('rechecks revocation after the durable fence before forwarding to the actua
   await expect.poll(() => setter.mock.calls.length).toBe(1)
   await f.other.json(`devices/${f.owner.id}`, { method: 'PATCH', body: { scopes: ['view'] } })
   release()
-  expect((await pending).status).toBe(503)
+  // Refused before anything reached the agent: certainly not applied, so failed rather than unknown.
+  expect((await pending).status).toBe(403)
   expect(await f.calls()).toBe(0)
+  expect(await f.owner.json(`${f.path}/config-requests/${request.requestId}`)).toEqual({ state: 'failed' })
   expect((await f.owner.request(`${f.path}/config`, { method: 'POST', body: request })).status).toBe(403)
 })
 

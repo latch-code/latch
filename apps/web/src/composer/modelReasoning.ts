@@ -1,11 +1,54 @@
 import type { ModelRef, ProviderKind, SessionConfigOption } from '@latch/protocol'
 import type { Brief } from '../core/securityCopy.ts'
+import type { ConfigUnknownState } from './Composer.tsx'
 import { currentShell } from '../core/shell.ts'
 import { COMPOSER_CONTROLS, shortcutCaps, shortcutKeys, type ComposerControl } from '../workbenchShortcuts.ts'
 
 export interface SessionConfigFeedback {
   kind: 'failed' | 'unknown'
   message: string
+  /** The option the change was for: only its control says 结果未知. Older feedback names none and marks every control. */
+  configId?: string
+  /** What was asked for, in the Harness's own name for the value. */
+  valueName?: string
+  /** When the change was sent (ms). */
+  at?: number
+  /** 核对 is asking the Host. */
+  checking?: boolean
+  /** 核对 could not settle it in a way that may not change on its own: 放弃这次结果 is offered. */
+  abandonable?: boolean
+}
+
+/** Whether this feedback belongs to a control showing these options. */
+export function feedbackFor(feedback: SessionConfigFeedback | undefined, ids: readonly (string | undefined)[]): boolean {
+  if (!feedback) return false
+  return feedback.configId === undefined || ids.includes(feedback.configId)
+}
+
+export const CONFIG_UNKNOWN_REASON = '上次切换的结果未知，请先核对。'
+
+/** The bar above the input while the open session's config change is unknown. */
+export function configUnknownBar(
+  feedback: SessionConfigFeedback | undefined,
+  harness: string,
+  check: () => Promise<void>,
+  retry: () => Promise<void>,
+  abandon?: () => void,
+): ConfigUnknownState | undefined {
+  if (feedback?.kind !== 'unknown' || feedback.at === undefined || feedback.valueName === undefined) return undefined
+  return {
+    what: feedback.valueName,
+    harness,
+    at: feedback.at,
+    checking: feedback.checking === true,
+    onCheck: () => {
+      void check()
+    },
+    onRetry: () => {
+      void retry()
+    },
+    ...(feedback.abandonable && abandon ? { onAbandon: abandon } : {}),
+  }
 }
 
 export interface AgentConfigState {

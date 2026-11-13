@@ -101,7 +101,7 @@ function withoutOwnPlugin(text: string): unknown {
 
 export const opencodeProfile: HarnessProfile = {
   presetId: 'opencode',
-  version: 3,
+  version: 4,
   // An empty session runs no turn and calls no model.
   catalogueRead: { when: 'select' },
   permission: {
@@ -148,6 +148,9 @@ export const opencodeProfile: HarnessProfile = {
     const { messageId: _part, ...rest } = update
     return rest as typeof update
   },
+  // 1.4 to 1.14 read a model back as `<provider>/<id>/<level>` after a pick of `<provider>/<id>`.
+  configValueMatches: (configId, asked, reported) =>
+    configId === 'model' && reported.startsWith(`${asked}/`) && !reported.slice(asked.length + 1).includes('/'),
   readProjectedChild: projectedChild,
   readChildEnd: childEnd,
 }

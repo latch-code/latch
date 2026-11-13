@@ -56,6 +56,13 @@ const configReceiptSchema = z.strictObject({
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/u),
   state: z.enum(['pending', 'applied', 'failed', 'unknown']),
   at: isoTime,
+  /** Hash of the option's value before the change, as `payloadHash` is of the asked one: 核对 reads it as failed. */
+  priorHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
+  /** The audit entry of the change, for the entry that settles it. */
+  auditSeq: z.number().int().min(1).optional(),
 })
 const oidText = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u)
 const hex64Text = z.string().regex(/^[a-f0-9]{64}$/u)

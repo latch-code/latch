@@ -61,14 +61,16 @@ import {
   agentConfigLabel,
   agentConfigValues,
   controlKeyText,
+  CONFIG_UNKNOWN_REASON,
   DEFAULT_MODEL,
+  feedbackFor,
   resetModelLabel,
   sameModelId,
   unreportedModelNote,
   type AgentConfigState,
 } from './modelReasoning.ts'
 import { BriefHint } from './BriefHint.tsx'
-import { ConfigFeedback } from './ThinkingControl.tsx'
+import { ConfigFeedback, useSlowWrite } from './ThinkingControl.tsx'
 import { CatalogueRows, readOnSelect, readsOnSelect, TypedModelsPanel, useReading } from './harnessCatalogue.tsx'
 
 type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin' | 'scopes'>
@@ -998,9 +1000,7 @@ function HarnessModelPicker({
       label: escapeHiddenCharacters(item.name),
       ...(item.description ? { description: escapeHiddenCharacters(item.description) } : {}),
       ...(option.category === 'model' ? defaultTag(item.value, defaultModel) : {}),
-      ...(blocked
-        ? { disabledReason: feedback?.kind === 'unknown' ? '上次切换的结果未知，请先刷新当前设置。' : '正在切换，请稍后。' }
-        : {}),
+      ...(blocked ? { disabledReason: feedback?.kind === 'unknown' ? CONFIG_UNKNOWN_REASON : '正在切换，请稍后。' } : {}),
     }))
   const name = harness ? harnessName(harness) : 'Harness'
   const reportedOr = modelOption ? agentConfigLabel(modelOption) : reported
@@ -1011,6 +1011,8 @@ function HarnessModelPicker({
   const note = noteOverride === null ? undefined : (noteOverride ?? unreportedModelNote(name, true, config))
   // Writing the model or one of the settings in its menu; thinking and the mode say so on their own controls.
   const writing = busy !== null && (busy === modelOption?.id || others.some(option => option.id === busy))
+  const slow = useSlowWrite(writing)
+  const ownFeedback = feedbackFor(feedback, [modelOption?.id, ...others.map(option => option.id)])
   const session = service && 'session' in service ? { route: service.route } : undefined
   const groups = ownModelGroups(
     catalog,
@@ -1029,7 +1031,7 @@ function HarnessModelPicker({
     <ValuePicker
       label="模型"
       value={picked ? serviceValue(picked) : (modelOption?.currentValue ?? OWN_MODEL)}
-      valueText={escapeHiddenCharacters(feedback?.kind === 'unknown' ? `${text} · 结果未知` : text)}
+      valueText={escapeHiddenCharacters(feedback?.kind === 'unknown' && ownFeedback ? `${text} · 结果未知` : text)}
       {...(pickedProvider ? { leading: <ProviderTile provider={pickedProvider} size={14} /> } : {})}
       groups={groups}
       className={picked || reportedOr !== undefined ? 'model-picker is-id' : 'model-picker'}
@@ -1038,7 +1040,7 @@ function HarnessModelPicker({
       searchable={groups.reduce((sum, group) => sum + group.options.length, 0) >= 8}
       width={360}
       pending={writing || reading}
-      pendingLabel={reading ? '正在读取…' : '正在切换…'}
+      pendingLabel={reading ? '正在读取…' : slow ? `等 ${name} 回应…` : '正在切换…'}
       disabled={locked !== undefined || disabled === true}
       disabledReason={locked}
       {...(panel ? { panel } : {})}
@@ -1077,7 +1079,7 @@ function HarnessModelPicker({
             ) : (
               <BriefHint brief={routeLine.brief} className="model-note" {...(routeLine.tone ? { tone: routeLine.tone } : {})} />
             ))}
-          {feedback && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />}
+          {feedback && ownFeedback && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />}
           {manage}
         </div>
       }

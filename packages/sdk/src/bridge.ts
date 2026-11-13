@@ -124,6 +124,24 @@ export interface SetConfigOptions {
   authorize?: () => void
 }
 
+/**
+ * Where a refused config change stands, in `AppError.details.configOutcome`. `not-sent`: refused before anything reached
+ * the agent. `refused`: the agent answered with an error and the session does not show the value. Either way the
+ * change did not apply, and the Host records it as failed; any other error after the Host's receipt stays unknown.
+ */
+export type ConfigRefusal = 'not-sent' | 'refused'
+
+/**
+ * What the agent itself reports of one option now, for settling a change whose outcome is unknown. `read`: its value,
+ * and `asked` when the driver counts it as the value asked for (the same, or the same written its own way). `busy`: a
+ * turn, a request waiting on the person, another change, or a subagent that may still run holds the session, so
+ * nothing was read. `unread`: the agent could not be asked or gave no value.
+ */
+export type ConfigReading =
+  | { kind: 'read'; currentValue: string; asked: boolean }
+  | { kind: 'busy'; reason: 'running' | 'subagents' }
+  | { kind: 'unread' }
+
 export type ConfigChangeClass = 'neutral' | 'stricter' | 'wider'
 
 /**
@@ -243,10 +261,18 @@ export interface Bridge {
   /** Optional. Delete a settled session's data; reject with 409 `task-running` while it runs. */
   remove?(sessionId: string): Promise<void>
   /**
-   * Optional. Change one of `TaskDetail.config` for later turns. Reject with 409 `task-running` only before anything
-   * reaches the agent: the Host records that change as failed, where any other error after its receipt stays unknown.
+   * Optional. Change one of `TaskDetail.config` for later turns. Reject with 409 `task-running`, or with
+   * `details.configOutcome` (`ConfigRefusal`), only when the change certainly did not apply: the Host records that change
+   * as failed, where any other error after its receipt stays unknown.
    */
   setConfig?(sessionId: string, configId: string, value: string, options?: SetConfigOptions): Promise<void>
+  /**
+   * Optional. Reads one option's current value from the agent itself, never from what the driver last recorded, and only
+   * while the session is idle: a request that never got its answer must not be able to land after the reading, so the
+   * driver may end the process it went to first. It never changes a setting, and refuses turns, additions and changes
+   * of the session while it reads. `value` is what the change asked for, for `asked`.
+   */
+  readConfig?(sessionId: string, configId: string, value: string): Promise<ConfigReading>
   /** Optional. How a config change relates to the session's expected permission mode. */
   classifyConfigChange?(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass>
   /** Optional. What the harness offered when a session of its current definition last started; see `HarnessCatalogue`. */

@@ -27,7 +27,7 @@ import {
 } from '../composer/ModelControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { DraftThinkingControl, SessionThinkingControl } from '../composer/ThinkingControl.tsx'
-import { composerOptions, modelWords, ownModelName } from '../composer/modelReasoning.ts'
+import { composerOptions, configUnknownBar, modelWords, ownModelName } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
@@ -177,6 +177,8 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
     pendingQueued,
     setConfig,
     refreshConfig,
+    retryConfig,
+    abandonConfig,
     block,
     chosenScopeCaption,
     gate,
@@ -581,6 +583,13 @@ export function SessionComposer({ shell }: { shell: ShellState }) {
       sendKey={preferences.sendKey}
       coarse={coarse}
       run={run}
+      configUnknown={configUnknownBar(
+        selectedId === null ? undefined : configFeedback.get(selectedId),
+        harnessInfo ? harnessName(harnessInfo) : 'Harness',
+        refreshConfig,
+        retryConfig,
+        abandonConfig,
+      )}
       queueable={canQueue && !answer}
       steerable={steer && !answer}
       inline={phone && selectedId !== null}
