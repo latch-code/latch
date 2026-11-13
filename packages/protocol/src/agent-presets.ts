@@ -30,7 +30,7 @@ export interface AgentPreset {
    * sentence on how the person signs in themselves.
    */
   signIn?: string
-  /** False: the vendor's terms allow its name in text only, so pages draw the neutral agent glyph, never its logo. */
+  /** False: no verified brand asset is used (including text-only vendor terms); pages draw the neutral agent glyph. */
   brandMark?: false
   /** False when the agent takes no MCP servers over ACP, so it cannot fetch an agent's skills. */
   skillServer?: false
@@ -169,6 +169,31 @@ export const AGENT_PRESETS: AgentPreset[] = [
     description: '运行 Cursor 官方 CLI，使用你自己的 Cursor 账号；模型与登录由 Cursor 管理。',
     install: 'curl https://cursor.com/install -fsS | bash',
     login: { command: 'cursor-agent', args: ['login'] },
+    brandMark: false,
+  },
+  {
+    id: 'antigravity',
+    name: 'Antigravity',
+    command: 'agy',
+    args: ['acp', '--disable-telemetry', '--process-per-session'],
+    license: '专有（Google Antigravity 条款）',
+    homepage: 'https://antigravity.google/docs/ide/extensions/acp/',
+    description: '使用本机 Antigravity CLI 的模型与登录。',
+    installNote: '需要 Antigravity CLI 1.5.8 或更高版本',
+    login: { command: 'agy', args: ['acp', '--login'] },
+    brandMark: false,
+  },
+  {
+    id: 'grok',
+    name: 'Grok Build',
+    command: 'grok',
+    args: ['--no-auto-update', '--permission-mode', 'default', 'agent', 'stdio'],
+    license: 'Grok Build 发布版条款；开源源码 Apache-2.0',
+    homepage: 'https://docs.x.ai/build',
+    description: '使用本机 Grok Build 的模型与登录。',
+    install: 'npm i -g @xai-official/grok',
+    installNote: '1.0.77 或更高版本',
+    login: { command: 'grok', args: ['login'] },
     brandMark: false,
   },
 ]

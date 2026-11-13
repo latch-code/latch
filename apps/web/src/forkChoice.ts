@@ -85,10 +85,10 @@ function tierRow(
   option: SessionConfigOption,
   tiers: Readonly<Record<string, ModeTier>>,
   tier: PermissionTier,
-): { value: string; tier: PermissionTier } | undefined {
+): { value: string; tier: PermissionTier; name: string } | undefined {
   const rows = option.options.flatMap(item => {
-    const known = tiers[item.value]?.tier
-    return known ? [{ value: item.value, tier: known }] : []
+    const known = tiers[item.value]
+    return known ? [{ value: item.value, tier: known.tier, name: known.name ?? MODE_COPY.tierTitles[known.tier] }] : []
   })
   const stricter = rows.filter(row => TIER_ORDER[row.tier] <= TIER_ORDER[tier])
   if (stricter.length) return stricter.reduce((found, row) => (TIER_ORDER[row.tier] > TIER_ORDER[found.tier] ? row : found))
@@ -170,7 +170,7 @@ function carry(catalog: HostCatalog, base: ComposerChoice, source: ForkSource): 
       if (row.tier !== from!.tier)
         permission = {
           optionId: option.id,
-          line: MODE_COPY.forkOtherRow(was!, name, MODE_COPY.tierTitles[row.tier], TIER_ORDER[row.tier] < TIER_ORDER[from!.tier!]),
+          line: MODE_COPY.forkOtherRow(was!, name, row.name, TIER_ORDER[row.tier] < TIER_ORDER[from!.tier!]),
         }
     } else {
       // A source with no row of its own, or one this Harness has no word for, starts where a new session does.

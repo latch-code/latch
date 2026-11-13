@@ -38,7 +38,7 @@ function mainValues(rows: ReadonlyArray<{ value: string; tier?: PermissionTier }
 
 /**
  * The agent's modes as rows. Where Latch knows its modes, each is titled by its tier with the harness's own line, in tier
- * order, and a mode Latch has no word for is left out unless it is the current one, which keeps the agent's own name.
+ * order. Unclassified native choices keep their own names and descriptions without acquiring a permission rank.
  */
 function tierRows(
   option: SessionConfigOption,
@@ -48,7 +48,6 @@ function tierRows(
   const known = tiers !== undefined && Object.keys(tiers).length > 0
   const rows = modeRows(option, locked).flatMap((row, index) => {
     const tier = tiers?.[row.value]
-    if (known && !tier && !row.current) return []
     const icon: ModeIcon = tier ? TIER_ICONS[tier.tier] : !known && index === 0 && option.options.length > 1 ? 'eye' : 'shield'
     return [
       {
@@ -141,15 +140,17 @@ function declaredPermission(harness: PermissionHarness, read?: DraftRead): Permi
       icon: 'shield-alert',
       amber: true,
     }
-  if (declared)
+  if (declared) {
+    const initial = Object.values(declared.modeTiers ?? {}).find(tier => tier.tier === 'ask')
     return {
-      label: MODE_COPY.askFirst,
+      label: initial?.name ?? MODE_COPY.askFirst,
       // A profile's one `ask` mode is the one its sessions start in: the line the session's own row shows.
-      line: Object.values(declared.modeTiers ?? {}).find(tier => tier.tier === 'ask')?.line ?? MODE_COPY.askFirstLine,
+      line: initial?.line ?? MODE_COPY.askFirstLine,
       icon: 'shield',
       amber: false,
       ...modesNote(harness, read),
     }
+  }
   // The title says when the rows come; a line under it would only repeat it.
   if (read === 'reading') return { label: MODE_COPY.reading, line: '', icon: 'shield', amber: false }
   if (read === 'readable') return { label: MODE_COPY.afterRead, line: '', icon: 'shield', amber: false }
