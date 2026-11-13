@@ -8,7 +8,8 @@ Host 在 `/link/` 提供的 React 页面，桌面端共用；构建到 `dist/web
 | `src/shell/` | 壳层：`AppShell`、`routes.ts`、`panelLayout.ts`、`slots.ts`、`useSessionController` |
 | `src/agents/` | 我的 Agent（docs/CUSTOM-AGENTS.md） |
 | `src/handoffs/` | 交接（docs/HANDOFFS.md） |
-| `src/` | `main.tsx` → `App.tsx` → `shell/AppShell.tsx`；组件、设置与样式；品牌见 `brands.ts` |
+| `src/markdown/` | 流式 Markdown |
+| `src/` | `main.tsx` → `App.tsx` → `shell/AppShell.tsx`；品牌 `brands.ts` |
 | `index.html`、`public/`、`vite.config.ts` | 页面入口；图标与 manifest；Vite 配置与 `pnpm dev:web` 的开发代理 |
 | `test/` | `pnpm test --project @latch/web` |
 

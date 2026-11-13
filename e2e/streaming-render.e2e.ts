@@ -220,6 +220,44 @@ describe('streaming render', () => {
     expect(await live.locator('pre code').textContent()).not.toContain('line0 ')
   })
 
+  it('keeps the live reply identity and copies its original Markdown after display completion ends', async () => {
+    await open(390)
+    const user: Message = { id: 'user-copy', role: 'user', text: '写一个重点' }
+    const text = '说明：**未闭合重点'
+    await show(detail([user], { running: true, liveText: text, liveId: 'reply-copy', cursor: 1 }))
+    const reply = page.locator('[data-message-id="reply-copy"]')
+    await reply.locator('strong').waitFor()
+    await reply.evaluate(element => element.setAttribute('data-owned-node', 'reply'))
+    await show(detail([user, { id: 'reply-copy', role: 'assistant', text }], { cursor: 2 }))
+    await expect.poll(() => reply.locator('.message-content').getAttribute('aria-busy')).toBe(null)
+    expect(await reply.getAttribute('data-owned-node')).toBe('reply')
+    expect(await reply.innerText()).toContain('**未闭合重点')
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+    const copy = page.locator('.turn-footer').getByRole('button', { name: '复制', exact: true })
+    await reply.click()
+    await copy.click()
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(text)
+  })
+
+  it('does not rerender completed Markdown blocks while only the live tail changes', async () => {
+    await open()
+    const user: Message = { id: 'user-blocks', role: 'user', text: '写一段说明' }
+    const prefix = '```text\n固定代码\n```\n\n'
+    await show(detail([user], { running: true, liveText: prefix + '尾部', liveId: 'reply-blocks', cursor: 1 }))
+    await page.getByText('固定代码', { exact: true }).waitFor()
+    await page.evaluate(() => {
+      for (const key of Object.keys(window.renders)) delete window.renders[key]
+    })
+    for (let frame = 2; frame <= 12; frame++) {
+      await show(detail([user], { running: true, liveText: prefix + '尾部'.repeat(frame), liveId: 'reply-blocks', cursor: frame }))
+      await expect.poll(() => page.locator('.message-content p').last().textContent()).toBe('尾部'.repeat(frame))
+    }
+    const renders = await page.evaluate(() => window.renders)
+    expect(renders.MessageContent).toBeGreaterThanOrEqual(11)
+    expect(renders.ClosedCode ?? 0).toBe(0)
+    expect(renders.CodeBlock ?? 0).toBe(0)
+  })
+
   it('shows the tail of an open fence, its finished lines coloured, its unfinished line plain, without moving when it closes', async () => {
     await open()
     const liveId = 'reply-live'
