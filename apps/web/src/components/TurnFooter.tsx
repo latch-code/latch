@@ -5,7 +5,7 @@ import { turnRoute, turnText, turnTimes, turnTimeTip, turnUsage, type Turn, type
 import { formatDuration, formatTokens, tokenAmount, tokenParts } from '../format.ts'
 import { TimeLabel } from './MessageRow.tsx'
 import { Menu } from './overlays.tsx'
-import { IconButton, Tooltip, Hint, CopyButton, CopyGlyph, EnterGlyph, MoreGlyph } from '@latch/ui'
+import { Button, IconButton, Tooltip, Popover, InfoGlyph, CopyButton, CopyGlyph, EnterGlyph, MoreGlyph } from '@latch/ui'
 
 /** A fact of the footer with its details in a tooltip; it takes keyboard focus so the details are reachable. */
 function Fact({ tip, className, children }: { tip?: ReactNode; className?: string; children: ReactNode }) {
@@ -48,8 +48,8 @@ function routedSource(route: TurnRoute): string[] {
 
 /**
  * The settled turn's facts: when the reply was sent (its tooltip says when the turn began and ended), how long it worked
- * and its tokens. A turn through Latch has the tokens the service's replies reported, with its requests by model in their
- * tooltips; with no tokens to show, the requests are a fact of their own. How it ended, when it did not simply finish,
+ * and its tokens. A turn through Latch has the tokens the service's replies reported, with its requests by model one
+ * press away; with no tokens to show, the requests are a fact of their own. How it ended, when it did not simply finish,
  * has its own line that stays. Each is a segment of its own, so the dots between them are spaced alike.
  */
 function SettledFacts({ turn, outcome, context, worked }: { turn: Turn; outcome: TurnOutcome; context?: number; worked: boolean }) {
@@ -85,9 +85,21 @@ function SettledFacts({ turn, outcome, context, worked }: { turn: Turn; outcome:
         </Fact>
       )}
       {incomplete && (
-        <Hint label="用量不完整">
+        <Popover
+          label="用量不完整"
+          width={320}
+          trigger={props => (
+            <Button {...props} size="xs" variant="ghost" icon={InfoGlyph}>
+              用量不完整
+            </Button>
+          )}>
           <Lines lines={[...routedSource(routedUsage), ...requests]} />
-        </Hint>
+        </Popover>
+      )}
+      {routedUsage && !incomplete && (
+        <Popover label="请求记录" width={320} trigger={props => <IconButton {...props} icon={InfoGlyph} label="请求记录" size="xs" />}>
+          <Lines lines={requests} />
+        </Popover>
       )}
       {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>经 Latch {route.requests} 次请求</Fact>}
       {!usage && context !== undefined && <Fact>上下文 {tokenAmount(context)}</Fact>}

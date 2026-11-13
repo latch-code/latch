@@ -596,6 +596,13 @@
 .workspace .topbar-crumb-separator {
   display: none;
 }
+.workspace .topbar-crumb {
+  max-width: min(100%, 480px);
+}
+.workspace .topbar-crumb-button {
+  flex-shrink: 0;
+  max-width: 180px;
+}
 .topbar-session-branch,
 .topbar-computer {
   display: inline-flex;
@@ -609,6 +616,8 @@
 .topbar-session-branch {
   margin-left: var(--sp-12);
   font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
 }
 .topbar-computer {
   margin-left: var(--sp-8);
@@ -617,7 +626,7 @@
   align-self: end;
   flex-shrink: 0;
 }
-.workspace.is-new .topbar:has(.topbar-title:empty) {
+.workspace.is-new .topbar:has(.topbar-title:empty):not(:has(.ui-status-word, .connection-pill)) {
   display: none;
 }
 .app-shell[data-workbench-layout='triage'] .workspace .topbar {
@@ -632,6 +641,16 @@
 }
 .workspace .composer {
   border-radius: var(--r-14);
+}
+.workspace .composer-drawers:not(:empty) + .composer {
+  border-start-start-radius: var(--r-14);
+  border-start-end-radius: var(--r-14);
+}
+.workspace .composer-toolbar:not([data-rows='two']) > .composer-end {
+  display: contents;
+}
+.workspace .composer-toolbar:not([data-rows='two']) .composer-slot {
+  margin-inline-start: auto;
 }
 .workspace .composer-dock {
   padding-bottom: var(--sp-24);
@@ -713,7 +732,15 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+.work-decision-compact-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  border-bottom: 1px solid var(--line);
+}
 .work-decision-compact.ui-button {
+  flex: 1;
+  min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--sp-4) var(--sp-12);
@@ -722,7 +749,6 @@
   min-height: 64px;
   padding: var(--sp-12) var(--sp-4);
   text-align: left;
-  border-bottom: 1px solid var(--line);
   border-radius: 0;
 }
 .work-decision-compact-title {
@@ -1079,6 +1105,15 @@
   .workbench-home > .work-overview {
     padding-top: var(--sp-20);
   }
+  .workbench-phone-code-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-12);
+    border-bottom: 1px solid var(--line);
+  }
+  .workbench-phone-code-nav > .ui-button {
+    min-height: 44px;
+  }
   .workbench-home .work-overview-group {
     padding: 0;
     border: 0;
@@ -1098,6 +1133,9 @@
     border-radius: var(--r-full);
     min-height: 50px;
   }
+  .workbench-home-composer .composer-stack {
+    gap: 0;
+  }
   .workbench-home-composer .home-composer-location {
     display: none;
   }
@@ -1105,19 +1143,11 @@
     display: none;
   }
   .workbench-home-composer .composer-input {
-  .workbench-phone-code-nav {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-12);
-    border-bottom: 1px solid var(--line);
-  }
-  .workbench-phone-code-nav > .ui-button {
-    min-height: 44px;
-  }
     padding: var(--sp-12) var(--sp-48);
   }
   .workbench-home-composer textarea {
-    padding-left: 0;
+    padding: 0;
+    min-height: var(--lh-input);
     font-size: var(--fs-input);
     line-height: var(--lh-input);
   }
@@ -1159,7 +1189,7 @@
     position: absolute;
     z-index: 5;
     left: var(--sp-20);
-    bottom: var(--sp-32);
+    bottom: calc(var(--sp-12) + var(--sp-6));
   }
   .app-shell[data-workbench-layout='triage'][data-overview] .phone-tabs {
     display: none;
@@ -1249,7 +1279,8 @@
     min-height: 44px;
   }
 }
-.work-delivery-live {
+.work-delivery-live,
+.work-delivery-changes {
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);

@@ -18,6 +18,7 @@ const commandWords = {
 /** The latest turn's observed changes and commands, followed by the separately observed repository state. */
 export function SessionOverview({ shell, summary }: { shell: ShellState; summary: TaskSummary }) {
   const connected = shell.connection === 'connected'
+  const canReadChanges = shell.canViewChanges && shell.snapshot.device.dataScope === 'all'
   const detail = shell.current?.summary.id === summary.id ? shell.current : null
   const turn = detail ? turnsOf(detail.messages).at(-1) : undefined
   const messages = turn?.replies ?? []
@@ -58,9 +59,9 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
       <section className="session-overview-section">
         <header>
           <h3>这次改动</h3>
-          {shell.canViewChanges && detail && !unavailable && <Count value={distinct.length} />}
+          {canReadChanges && detail && !unavailable && !pending && <Count value={distinct.length} />}
         </header>
-        {!shell.canViewChanges ? (
+        {!canReadChanges ? (
           <p>这台设备不能读取项目改动</p>
         ) : !detail ? (
           <p>正在读取会话…</p>
@@ -170,14 +171,14 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
                     : state.gitOperation
                       ? 'Git 操作尚未结束'
                       : state.files
-                        ? `工作区未提交 ${state.files} 个文件`
+                        ? `目录未提交 ${state.files} 个文件`
                         : state.ahead > 0
                           ? `${state.ahead} 个提交未推送`
-                          : '工作区没有未提交的改动'}
+                          : '目录没有未提交的改动'}
                 </p>
               </>
             ) : (
-              <p>{evidence.loading ? '正在读取工作区…' : '尚未读取工作区状态'}</p>
+              <p>{evidence.loading ? '正在读取目录…' : '尚未读取目录状态'}</p>
             )}
             {pr && (
               <p className="session-overview-pr">

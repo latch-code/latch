@@ -847,9 +847,10 @@ describe('a settled turn', () => {
     const footer = same.slice(same.indexOf('class="turn-footer'))
     expect(footer).toContain('输入 1.2k')
     expect(footer).toContain('输出 300')
-    expect(footer).toContain('输入 1,200 tokens（缓存读取 800）')
-    expect(footer).toContain('由模型服务在回复里报告，Latch 转发时读取')
-    // Its requests by model are in the tokens' tooltips, not a fact of their own beside them.
+    expect(footer).not.toContain('输入 1,200 tokens（缓存读取 800）')
+    expect(footer).not.toContain('由模型服务在回复里报告，Latch 转发时读取')
+    // Requests by model remain reachable on demand without repeating token totals on hover.
+    expect(footer).toContain('aria-label="请求记录"')
     expect(footer).toContain('这一轮经 Latch 3 次请求')
     expect(footer).not.toMatch(/class="turn-fact"[^>]*>经 Latch/u)
     expect(footer).toContain('gpt-x：2 次 · 输入 1.2k tokens · 输出 300 tokens')

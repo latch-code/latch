@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AppSnapshot, TaskDetail, TaskSummary, WorkbenchDelivery, WorkbenchDeliveryEntry } from '@latch/protocol'
-import { api, errorMessage } from '../core/api.ts'
+import { api, ApiError, errorMessage } from '../core/api.ts'
 import { spaceOf } from '../sessions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 
@@ -91,7 +91,10 @@ export function useWorkbenchDelivery(
         if (!controller.signal.aborted)
           setReadState(previous => ({
             scope,
-            entries: previous?.scope === scope ? previous.entries : EMPTY_ENTRIES,
+            entries:
+              previous?.scope === scope && !(cause instanceof ApiError && (cause.status === 401 || cause.status === 403))
+                ? previous.entries
+                : EMPTY_ENTRIES,
             error: errorMessage(cause),
           }))
       } finally {
@@ -195,9 +198,13 @@ export function hasDelivery(entry: WorkbenchDeliveryEntry | undefined): boolean 
 export function deliverySessions(tasks: readonly TaskSummary[], entries: ReadonlyMap<string, WorkbenchDeliveryEntry>): ReadonlySet<string> {
   const trees = new Set<string>()
   const result = new Set<string>()
+  const bound = (task: TaskSummary) => {
+    const entry = entries.get(task.id)
+    return entry?.pr?.pr?.state === 'open' ? 2 : entry?.prError ? 1 : 0
+  }
   for (const task of tasks
     .filter(task => !task.archived && spaceOf(task) === 'code' && task.status !== 'running' && task.status !== 'waiting-approval')
-    .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))) {
+    .toSorted((a, b) => bound(b) - bound(a) || b.updatedAt.localeCompare(a.updatedAt))) {
     if (!hasDelivery(entries.get(task.id))) continue
     const identity = task.cwd && !task.worktree?.removed ? task.cwd : undefined
     if (identity && trees.has(identity)) continue

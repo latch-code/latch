@@ -4,8 +4,10 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 const ARMING_MS = 320
 
 /** A document-level key must never act on a conversation covered by another page. */
-export function cardTakesKeys(card: HTMLElement | null): boolean {
-  return card !== null && !card.closest('[inert]') && card.checkVisibility({ visibilityProperty: true })
+export function cardTakesKeys(card: HTMLElement | null, target?: EventTarget | null): boolean {
+  if (card === null || card.closest('[inert]') || !card.checkVisibility({ visibilityProperty: true })) return false
+  // A workbench's first card can offer page keys, but another card with focus owns its own choices.
+  return !(target instanceof Element && target.closest('.work-decision, .approval-panel, .question-card') && !card.contains(target))
 }
 
 /** Counts each time the conversation comes back into view (from under a page, from a hidden tab). */

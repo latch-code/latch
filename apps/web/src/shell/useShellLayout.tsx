@@ -420,7 +420,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       || deliveryOpen
       || terminalOpen
       || browserOpen
-      || (!!summary && preferences.rightPanel.open))
+      // The remembered desktop column must not cover a tablet's conversation without an explicit open action.
+      || (!!summary && preferences.rightPanel.open && (placement.kind === 'column' || infoPage)))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
   const drawer = useDrawer({
     enabled: drawerMode,
