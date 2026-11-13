@@ -103,7 +103,7 @@ profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本�
 | Antigravity | — | `default` | `default`、`accept-edits`、`auto`；`plan` 不作为更严格的权限 | — | 仅保留单次选择 | 原生 mode 读回；工具权限规则仍由 CLI 管理 |
 | Grok Build | — | — | — | — | 仅保留单次选择 | 不报告权限模式；不生成虚构的四档选择 |
 
-Antigravity 的 `plan` 只追加规划指令，不能称为「只看不改」。它保留原生名称与说明，未归入权限档位；仅由人显式选择，不参与跨 Harness 的只读档位继承。默认草稿与分叉差异说明采用该 Harness 的实际默认名称。`default` 名称保留为「默认」：本机 `toolPermission`、允许与拒绝规则仍优先，所以默认模式也可能直接改文件。Latch 输入前设定并读回 mode，但不能据此断言每次工具调用都询问；一旦 CLI 请求审批，只提供单次选择。项目 `.agents` 中的 hooks、MCP 与插件计入启动指纹，额外目录通过 ACP 能力协商后传入；创建空会话可能加载扩展，所以模型列表只在用户请求时读取。
+Antigravity 的 `plan` 只追加规划指令，不能称为「只看不改」。它保留原生名称与说明，未归入权限档位；仅由人显式选择，不参与跨 Harness 的只读档位继承。默认草稿与分叉差异说明采用该 Harness 的实际默认名称。`default` 名称保留为「默认」：本机 `toolPermission`、允许与拒绝规则仍优先，所以默认模式也可能直接改文件。Latch 输入前设定并读回 mode，但不能据此断言每次工具调用都询问；一旦 CLI 请求审批，只提供单次选择。项目 `.agents`、兼容目录 `.agent` / `_agents` / `_agent` 中的 hooks、MCP 与插件，以及 `.gemini/config.json` 的个人定制目录入口计入启动指纹；清单引用这些目录之外的代码不在该指纹覆盖范围内。额外目录通过 ACP 能力协商后传入；创建空会话可能加载扩展，所以模型列表只在用户请求时读取。
 
 Grok Build 的 stdio 模式是独立 Agent 进程，不连接终端使用的共享 leader。Latch 不运行 `grok leader kill`，只停止自己启动的进程。项目 `.grok` 计入启动指纹；继承 `GROK_HOME` 的变量名和路径，不读取其中的登录或历史文件。当前只接 CLI 自己的模型目录，外部模型网关路由尚未实现；Grok 的自定义模型配置能力不等于 Latch 已支持该路由。Antigravity 同样不把 CCPA 地址选项当作 Gemini API 网关地址。
 

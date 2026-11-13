@@ -1,8 +1,10 @@
 import type { HarnessProfile } from './types.ts'
 
+const CUSTOMIZATIONS = ['.agents', '.agent', '_agents', '_agent', '.gemini/config.json'] as const
+
 export const antigravityProfile: HarnessProfile = {
   presetId: 'antigravity',
-  version: 1,
+  version: 2,
   // Opening a session can load the person's hooks and plugins.
   catalogueRead: { when: 'request' },
   permission: {
@@ -19,8 +21,8 @@ export const antigravityProfile: HarnessProfile = {
     readback: 'mode',
     notes: ['Antigravity 的允许规则与 toolPermission 设置仍然生效；规划模式不保证只读'],
   },
-  folders: { via: 'acp', configPaths: ['.agents'] },
-  projectConfigPaths: ['.agents'],
+  folders: { via: 'acp', configPaths: CUSTOMIZATIONS },
+  projectConfigPaths: CUSTOMIZATIONS,
   minimumVersion: {
     args: ['--version'],
     read: output => /^\s*(\d+\.\d+\.\d+)\s*$/u.exec(output)?.[1],

@@ -1055,6 +1055,27 @@ describe('ACP launch fingerprint', () => {
 })
 
 describe('ACP project configuration', () => {
+  it.each(['.agents/hooks.json', '.agent/hooks.json', '_agents/hooks.json', '_agent/hooks.json', '.gemini/config.json'])(
+    'refuses Antigravity input after changing the loaded project configuration %s',
+    async file => {
+      const fixture = await preset('antigravity', {
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_MODES: 'default,auto',
+        FAKE_ACP_INITIAL_MODE: 'default',
+      })
+      const bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({ prompt: 'echo before configuration', requestId: rid() })
+      await settled(bridge, sessionId)
+      const path = join(fixture.workspace, file)
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, '{}')
+      await expect(bridge.prompt(sessionId, 'echo after configuration', rid())).rejects.toMatchObject({
+        status: 409,
+        code: 'project-config-changed',
+      })
+      expect(received(await fixture.log(), 'session/prompt')).toHaveLength(1)
+    },
+  )
   const opencode = (options: AcpAgentOptions = {}, env: Record<string, string> = {}) =>
     preset('opencode', { FAKE_ACP_CONFIG: 'legacy', ...env }, options)
   const definitionHash = (record: AgentRecord) =>
