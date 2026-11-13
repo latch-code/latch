@@ -1,4 +1,5 @@
 import { looksSecret } from '@latch/protocol'
+import { markStorageDevice, storageDeviceCurrent } from './deviceStorageScope.ts'
 
 interface RecentCommand {
   id: string
@@ -6,7 +7,6 @@ interface RecentCommand {
 }
 const PREFIX = 'latch.slash-recent.'
 const markerKey = (origin: string) => `latch.slash-forgotten.${origin}`
-const deviceKey = (origin: string) => `latch.slash-device.${origin}`
 const contexts = new Map<string, { version: number; keep?: string }>()
 const safeId = (value: unknown): value is string =>
   typeof value === 'string' && value.length <= 256 && !/[\s\p{C}]/u.test(value) && !looksSecret(value)
@@ -31,8 +31,7 @@ export class SlashHistory {
   private current(): boolean {
     const context = contexts.get(this.origin)
     if (context && (context.version !== this.version || (context.keep !== undefined && context.keep !== this.deviceId))) return false
-    const device = localStorage.getItem(deviceKey(this.origin))
-    return (device === null || device === this.deviceId) && localStorage.getItem(markerKey(this.origin)) === this.marker
+    return storageDeviceCurrent(this.origin, this.deviceId) && localStorage.getItem(markerKey(this.origin)) === this.marker
   }
   private read(): RecentCommand[] {
     try {
@@ -74,12 +73,7 @@ export function forgetSlashHistory(origin: string, keep?: string): void {
   contexts.set(origin, { version: (contexts.get(origin)?.version ?? 0) + (keep === undefined ? 1 : 0), keep })
   const marker = keep === undefined ? crypto.randomUUID() : undefined
   const mark = () => {
-    try {
-      // Replacing an existing device ID with an empty string can succeed even when there is no room for a new marker.
-      localStorage.setItem(deviceKey(origin), keep ?? '')
-    } catch {
-      /* The epoch below can still revoke older windows. */
-    }
+    markStorageDevice(origin, keep)
     try {
       if (marker !== undefined) localStorage.setItem(markerKey(origin), marker)
     } catch {

@@ -8,6 +8,9 @@ import { ownTextStart } from '../conversation.ts'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
 import { absoluteTime, formatDuration, messageTime } from '../format.ts'
 import { MarkTile } from './BrandTile.tsx'
+import { AgentAvatar } from '../agents/AgentAvatar.tsx'
+import { THOUGHT_WORDS } from '../agents/personWords.ts'
+import type { AgentAvatar as AgentAvatarValue } from '@latch/protocol'
 import { VisibleText } from './VisibleText.tsx'
 import {
   Button,
@@ -60,6 +63,7 @@ export function ThinkingRow({
   reasoningMs,
   liveTimes,
   frozen = false,
+  person = false,
 }: {
   text: string
   /** Reasoning still streams and no answer text has come yet. */
@@ -70,6 +74,8 @@ export function ThinkingRow({
   liveTimes?: LiveReasoning
   /** The connection is down: nothing is known to move, so it neither shimmers nor counts. */
   frozen?: boolean
+  /** A helper's turn: 「在想」 and 「想了 6 秒」. */
+  person?: boolean
 }) {
   const [choice, setChoice] = useState<boolean | null>(null)
   const open = choice ?? live
@@ -77,8 +83,11 @@ export function ThinkingRow({
   // Re-renders every second while the live reasoning counts up.
   useTicker(live && !frozen && started !== undefined ? 'second' : false)
   const settledMs = streaming ? parseDuration(liveTimes?.ms) : parseDuration(reasoningMs)
-  const thought = settledMs === undefined ? undefined : formatDuration(settledMs)
+  // A helper says whole seconds, as a person would: 想了 3 秒.
+  const thought =
+    settledMs === undefined ? undefined : formatDuration(person ? Math.max(1000, Math.round(settledMs / 1000) * 1000) : settledMs)
   const elapsed = live && !frozen && started !== undefined ? formatDuration(hostNow() - started, true) : undefined
+  const liveWord = person ? THOUGHT_WORDS.live : '思考中'
   return (
     <div className={`thinking ${live && !frozen ? 'is-live' : ''}`}>
       <button
@@ -90,7 +99,23 @@ export function ThinkingRow({
         }}>
         {/* When the answer starts the label cross-fades from the live one to the time it took. */}
         <Swap value={live ? 'live' : 'settled'} effect="fade" className="thinking-label">
-          {live ? frozen ? '思考中' : <Shimmer>思考中</Shimmer> : thought ? `思考了 ${thought}` : '思考过程'}
+          {live ? (
+            frozen ? (
+              liveWord
+            ) : (
+              <Shimmer>{liveWord}</Shimmer>
+            )
+          ) : thought ? (
+            person ? (
+              THOUGHT_WORDS.settled(thought)
+            ) : (
+              `思考了 ${thought}`
+            )
+          ) : person ? (
+            THOUGHT_WORDS.untimed
+          ) : (
+            '思考过程'
+          )}
         </Swap>
         <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         {elapsed && (
@@ -110,6 +135,26 @@ export function ThinkingRow({
           </div>
         </div>
       </Collapse>
+    </div>
+  )
+}
+
+/** Who answers in a conversation of 我的 Agent: the helper's face and name, which stand in for the Harness and the model. */
+export interface Speaker {
+  name: string
+  avatar: AgentAvatarValue | 'general'
+}
+
+/** A helper's turn opens with its face and name, and nothing of the Harness or the model that ran it. */
+export function SpeakerLine({ speaker, demo = false }: { speaker: Speaker; demo?: boolean }) {
+  return (
+    <div className="assistant-meta assistant-meta-person">
+      <AgentAvatar avatar={speaker.avatar} size={16} />
+      <span className="assistant-meta-name">
+        <VisibleText text={speaker.name} />
+      </span>
+      {/* The demo model is never passed off as the helper's own answer. */}
+      {demo && <span className="assistant-meta-model">演示</span>}
     </div>
   )
 }
@@ -172,6 +217,7 @@ function UserMessage({
   arrived,
   delivery,
   harness,
+  voice,
   onEdit,
   onHandoff,
 }: {
@@ -180,6 +226,7 @@ function UserMessage({
   arrived: boolean
   delivery?: string
   harness?: string
+  voice?: string | undefined
   onEdit?: (message: Message) => void
   onHandoff?: (messageIds: string[]) => void
 }) {
@@ -212,12 +259,12 @@ function UserMessage({
       {note && (
         <Tooltip content={note}>
           <p className="message-change-note" tabIndex={0}>
-            已告诉 Harness 改动被撤销了
+            已告诉 {voice ?? 'Harness'} 改动被撤销了
           </p>
         </Tooltip>
       )}
       {message.steered && (
-        <Tooltip content="发送时这一轮还在运行，Harness 收到了；有没有读到，看它后面的回复">
+        <Tooltip content={`发送时这一轮还在运行，${voice ?? 'Harness'} 收到了；有没有读到，看它后面的回复`}>
           <p className="message-change-note message-steered" tabIndex={0}>
             已追加到本轮
           </p>
@@ -318,9 +365,11 @@ function SystemNote({
   message,
   onRetry,
   action,
+  voice,
 }: {
   message: Message
   onRetry?: () => void
+  voice?: string | undefined
   /** The failure's own next step, when it is not 重试. */
   action?: { label: string; run: () => void }
 }) {
@@ -335,7 +384,14 @@ function SystemNote({
       <span className="process-slot" aria-hidden="true">
         <Icon size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
       </span>
-      <p>{message.text}</p>
+      <p>
+        {failed && voice && (
+          <>
+            <VisibleText text={voice} /> 没能回复：
+          </>
+        )}
+        {message.text}
+      </p>
       {failed && action ? (
         <Button size="xs" variant="ghost" onClick={action.run}>
           {action.label}
@@ -365,6 +421,7 @@ export const MessageRow = memo(
     arrived = false,
     delivery,
     harness,
+    voice,
     onEdit,
     onRetry,
     action,
@@ -382,6 +439,8 @@ export const MessageRow = memo(
     delivery?: string
     /** The session's Harness by name, for what its first prompt says about a fork. */
     harness?: string
+    /** A helper's name: who heard an undo or a message added to the running turn, in place of 「Harness」. */
+    voice?: string
     /** Forks before this prompt with its text in the composer. */
     onEdit?: (message: Message) => void
     /** Resends the turn, from a failed note. */
@@ -399,11 +458,12 @@ export const MessageRow = memo(
           arrived={arrived}
           delivery={delivery}
           harness={harness}
+          voice={voice}
           onEdit={onEdit}
           {...(onHandoff ? { onHandoff } : {})}
         />
       )
-    if (message.role === 'system') return <SystemNote message={message} onRetry={onRetry} {...(action ? { action } : {})} />
+    if (message.role === 'system') return <SystemNote message={message} onRetry={onRetry} voice={voice} {...(action ? { action } : {})} />
     return (
       <article
         className={`message message-assistant ${streaming && !frozen ? 'is-live' : ''}`}
@@ -425,6 +485,7 @@ export const MessageRow = memo(
     && a.arrived === b.arrived
     && a.delivery === b.delivery
     && a.harness === b.harness
+    && a.voice === b.voice
     && a.onEdit === b.onEdit
     && a.onRetry === b.onRetry
     && a.action?.label === b.action?.label

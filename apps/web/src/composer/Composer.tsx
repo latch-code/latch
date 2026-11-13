@@ -1,5 +1,6 @@
 import { useFileMentions, type FileMentionChoice } from '../hooks/useFileMentions.tsx'
 import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
+import type { MenuSection } from '../components/overlays.tsx'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { CornerDownRight, ListPlus, Slash } from 'lucide-react'
@@ -88,6 +89,7 @@ export function Composer({
   onCreateTemplate,
   templates,
   actions,
+  showSlashButton = true,
   variant,
   label,
   placeholder,
@@ -129,6 +131,7 @@ export function Composer({
   steerable = false,
   queueTray,
   attachments,
+  attachmentMenu,
   fileMentions,
   lastPrompt,
 }: {
@@ -139,6 +142,8 @@ export function Composer({
   fileMentions?: FileMentionChoice
   lastPrompt?: string
   attachments?: AttachmentDraftController
+  /** Related actions share the attachment button's menu, so a personal topic has one ＋. */
+  attachmentMenu?: MenuSection[]
   templates?: PromptTemplate[]
   commands?: SessionCommand[]
   commandSource?: { name: string; media?: ReactNode; firstTurn?: boolean }
@@ -146,6 +151,8 @@ export function Composer({
   onCreateTemplate?: () => void
   /** What Latch itself does from the slash menu in this session. */
   actions?: SlashAction[]
+  /** The optional insertion shortcut; typing slash commands uses the same sender either way. */
+  showSlashButton?: boolean
   textareaRef: RefObject<HTMLTextAreaElement | null>
   variant: 'new' | 'session' | 'sheet'
   label: string
@@ -461,7 +468,7 @@ export function Composer({
         {textarea}
       </div>
     )
-  const slashButton = readOnly === undefined && (
+  const slashButton = showSlashButton && readOnly === undefined && (
     <IconButton
       className="composer-slash-button"
       label="插入命令"
@@ -648,18 +655,18 @@ export function Composer({
         )}
         <SlashCommands menu={slash} anchorRef={commandAnchor} onCreateTemplate={onCreateTemplate} />
         {input}
-        {variant === 'sheet' && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+        {variant === 'sheet' && attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
         {variant === 'sheet' && slashButton}
         {variant !== 'sheet' && (
           <div className="composer-toolbar" data-rows={inline ? 'two' : undefined}>
             {locationPosition === 'toolbar' && location}
             <div className="composer-controls">
-              {!inline && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+              {!inline && attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
               {!inline && slashButton}
               {controls}
             </div>
             <div className="composer-end">
-              {inline && attachments && <AttachmentButton controller={attachments} disabled={locked} />}
+              {inline && attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
               {inline && slashButton}
               {trailing}
               {meta && <div className="composer-meta">{meta}</div>}

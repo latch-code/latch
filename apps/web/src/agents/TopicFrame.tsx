@@ -7,8 +7,10 @@ import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentFrame, TopicMenu } from './AgentFrame.tsx'
 import { agentTopics } from './chat.ts'
 import { askDelegateFocus } from './delegateFocus.ts'
-import { ACTIVITY_WORDS, agentActivity, dutyLine, scheduleWords, sessionAgent } from './model.ts'
-import { ActivityWord } from './parts.tsx'
+import { draftPermission, permissionView } from '../composer/permission.ts'
+import { ACTIVITY_WORDS, agentActivity, agentLiveWord, dutyLine, generalChoice, scheduleWords, sessionAgent } from './model.ts'
+import { ActivityWord, IsolationNote, PermissionNote } from './parts.tsx'
+import { permissionNote } from './personWords.ts'
 
 /**
  * The frame of a conversation with `owner` as the shell draws it, on a topic (`current`) or on a new one (null): the face
@@ -38,6 +40,30 @@ export function TopicFrame({
   const offline = connection === 'offline'
   const gone = !general && snapshot.customAgents !== undefined && !found
   const schedules = snapshot.automations?.filter(item => (general ? !item.customAgentId : item.customAgentId === owner)) ?? []
+  // The permission chip is not in a helper's input, so what it would warn of is said here: the open topic's own mode
+  // as its session reports it, or on a new topic what the helper's Harness declares.
+  const detail = shell.current
+  const topicHarness =
+    current !== null && detail?.summary.id === current
+      ? shell.catalog?.harnesses.find(item => item.id === detail.summary.harnessId)
+      : undefined
+  const fresh = general ? generalChoice(shell.catalog ?? undefined) : found ? { harnessId: found.harnessId, mode: found.mode } : undefined
+  const freshHarness = fresh && shell.catalog?.harnesses.find(item => item.id === fresh.harnessId)
+  const note = permissionNote(
+    current !== null
+      ? topicHarness && detail
+        ? permissionView({
+            harness: topicHarness,
+            mode: detail.summary.mode,
+            ...(detail.permission ? { permission: detail.permission } : {}),
+            config: detail.config ?? [],
+            access,
+          })
+        : undefined
+      : freshHarness && fresh
+        ? draftPermission(freshHarness, fresh.mode ?? 'agent')
+        : undefined,
+  )
   const canStart = offline
     ? 'Mac 不在线'
     : !access.scopes.has('run')
@@ -54,7 +80,8 @@ export function TopicFrame({
       duty={found ? dutyLine(found) : general ? '没选别的 Agent 的会话都带上它' : undefined}
       avatar={found?.avatar ?? 'general'}
       state={frozen !== null && (state === 'running' || state === 'waiting') ? 'idle' : state}
-      word={frozen === null && ACTIVITY_WORDS[state] ? <ActivityWord state={state} /> : null}
+      word={frozen === null && ACTIVITY_WORDS[state] ? <ActivityWord state={state} live={agentLiveWord(snapshot, owner, current)} /> : null}
+      note={note ? <PermissionNote {...note} /> : (topicHarness ?? freshHarness)?.level === 'L3' ? <IsolationNote name={name} /> : null}
       topic={title}
       phone={phone}
       profileOpen={shell.profileShown !== null}

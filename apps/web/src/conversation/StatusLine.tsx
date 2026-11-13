@@ -6,6 +6,8 @@ import { runEndLine, runStatus, type RunStatus } from '../conversation.ts'
 import { api } from '../core/api.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { HarnessLoginSteps } from '../components/HarnessLogin.tsx'
+import { personStatus } from '../agents/personWords.ts'
+import { silentWords } from '../sessions.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 
 /** The words change at most once a second; waiting on a person and stopping do not wait for that. */
@@ -31,9 +33,26 @@ function useHeldStatus(status: RunStatus): RunStatus {
   return key === shownKey ? status : shown
 }
 
+/**
+ * The same line as a helper says it: the plain line's words from the event that runs (在想, 在跑命令, 在用 …), silence as
+ * 没有动静, and the rest (a request it does not support, a stop) as they are.
+ */
+export function personRunStatus(
+  status: RunStatus,
+  detail: TaskDetail,
+  opts: { cancelling: boolean; approvals: number; hostNow: number },
+): RunStatus {
+  if (status.tone === 'plain' || status.tone === 'quiet') return { ...status, text: personStatus(detail, opts).words }
+  const live = detail.summary.live
+  if (live?.silent) return { ...status, text: silentWords(live, opts.hostNow) }
+  return status
+}
+
 export interface StatusLineProps {
   detail: TaskDetail
   harness: string
+  /** A helper's conversation: what it is doing in a person's words (agents/personWords.ts), never the model. */
+  person?: boolean
   cancelling: boolean
   approvals: number
   fallbackElapsed?: number
@@ -51,6 +70,7 @@ export interface StatusLineProps {
 export function StatusLine({
   detail,
   harness,
+  person = false,
   cancelling,
   approvals,
   fallbackElapsed,
@@ -60,15 +80,15 @@ export function StatusLine({
   onError,
 }: StatusLineProps) {
   useTicker(frozenAt === undefined ? 'second' : false)
-  const status = useHeldStatus(
-    runStatus(detail, {
-      cancelling,
-      approvals,
-      hostNow: hostNow(),
-      harness,
-      ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
-    }),
-  )
+  const now = hostNow()
+  const said = runStatus(detail, {
+    cancelling,
+    approvals,
+    hostNow: now,
+    harness,
+    ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
+  })
+  const status = useHeldStatus(person ? personRunStatus(said, detail, { cancelling, approvals, hostNow: now }) : said)
   const [waiting, setWaiting] = useState(false)
   // Offline, the banner says so and the sidebar row has 上次确认: nothing about the run is claimed here meanwhile.
   if (frozenAt !== undefined) return null

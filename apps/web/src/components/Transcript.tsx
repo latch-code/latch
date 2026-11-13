@@ -46,7 +46,7 @@ import { announceChangesWrite, useChangesRevision, useTurnChanges } from '../con
 import { messageTime } from '../format.ts'
 import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
-import { AuthorLine, MessageRow, ThinkingRow, type LiveReasoning } from './MessageRow.tsx'
+import { AuthorLine, MessageRow, SpeakerLine, ThinkingRow, type LiveReasoning, type Speaker } from './MessageRow.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { SubagentRow, SubagentStop } from './SubagentRow.tsx'
 import { QuestionResultCard } from '../composer/QuestionDrawer.tsx'
@@ -75,6 +75,8 @@ interface RowContext {
   coarse: boolean
   /** The connection is down: rows stop spinning and ticking. */
   frozen: boolean
+  /** A helper's conversation: its reasoning reads 「在想」 and 「想了 N 秒」. */
+  person: boolean
 }
 
 function ToolRow({ message, context, onRetry }: { message: Message; context: RowContext; onRetry?: (() => void) | undefined }) {
@@ -136,6 +138,7 @@ function WorkRow({ item, context, onRetry }: { item: WorkItem; context: RowConte
       reasoningMs={item.message.reasoningMs}
       liveTimes={streaming ? context.liveReasoning : undefined}
       frozen={context.frozen}
+      person={context.person}
     />
   )
 }
@@ -146,6 +149,8 @@ interface TurnViewProps {
   /** Stands in for the Harness in what the status says, and beside it on the author line: only the demo model does. */
   engine?: string
   harnessName: string
+  /** 我的 Agent's conversation: the helper answers, and the Harness and model are not named. */
+  speaker?: Speaker
   /** How to log in to this session's harness, shown when a turn ends for want of it. */
   login?: { harnessId: string; login: HarnessLogin; terminal: boolean } | undefined
   harness?: Pick<HarnessInfo, 'capabilities'> | undefined
@@ -195,7 +200,7 @@ function sameTurnProps(a: TurnViewProps, b: TurnViewProps): boolean {
   if (keys.length !== Object.keys(b).length) return false
   return keys.every(key => {
     if (Object.is(a[key], b[key])) return true
-    if (key === 'harness' || key === 'changes' || key === 'plan' || key === 'login') return sameData(a[key], b[key])
+    if (key === 'harness' || key === 'changes' || key === 'plan' || key === 'login' || key === 'speaker') return sameData(a[key], b[key])
     if (key !== 'context') return false
     const left = a.context,
       right = b.context
@@ -272,6 +277,7 @@ const TurnView = memo(function TurnView({
   turn,
   engine,
   harnessName,
+  speaker,
   harness,
   model,
   provider,
@@ -318,7 +324,10 @@ const TurnView = memo(function TurnView({
   // The reply's author line and first block fade in when the page saw them appear, not after a load or a switch.
   const replyBefore = useLivePrevious(hasReply)
   const replyArrived = hasReply && (arrived || replyBefore === false)
-  const runEnd = summary && !trailingLive && latest ? runEndLine(summary, engine ?? harnessName) : undefined
+  // A helper speaks for itself; only a login, which the person must do in the Harness, names the Harness.
+  const voice = speaker?.name ?? engine ?? harnessName
+  const endVoice = summary?.runEnd?.reason === 'login-required' ? harnessName : voice
+  const runEnd = summary && !trailingLive && latest ? runEndLine(summary, endVoice) : undefined
   const pressRetry = useStableCallback(() => {
     if (retry?.warning) setConfirming(true)
     else retry?.onResend()
@@ -334,13 +343,14 @@ const TurnView = memo(function TurnView({
   return (
     <div className="turn" data-turn={turn.key} data-settled={latest ? undefined : ''}>
       {turn.user?.freshContext && <TimelineDivider icon={Eraser} text="清空了上下文" />}
-      {switched && <TimelineDivider text={switched} />}
+      {switched && !speaker && <TimelineDivider text={switched} />}
       {turn.user && (
         <MessageRow
           message={turn.user}
           coarse={rowContext.coarse}
           arrived={arrived}
-          harness={harnessName}
+          harness={speaker ? speaker.name : harnessName}
+          {...(speaker ? { voice: speaker.name } : {})}
           {...(delivery ? { delivery } : {})}
           {...(onEdit ? { onEdit } : {})}
           {...(onHandoff ? { onHandoff } : {})}
@@ -359,7 +369,11 @@ const TurnView = memo(function TurnView({
                 }
               : undefined
           }>
-          <AuthorLine name={harnessName} engine={engine} harness={harness} model={model} provider={provider} chosen={chosen} />
+          {speaker ? (
+            <SpeakerLine speaker={speaker} demo={engine !== undefined} />
+          ) : (
+            <AuthorLine name={harnessName} engine={engine} harness={harness} model={model} provider={provider} chosen={chosen} />
+          )}
           {!trailingLive && hasWork && (
             <button
               type="button"
@@ -396,6 +410,7 @@ const TurnView = memo(function TurnView({
                   key={block.message.id}
                   message={block.message}
                   coarse={rowContext.coarse}
+                  {...(speaker ? { voice: speaker.name } : {})}
                   {...(onRetry && action?.kind !== 'none' ? { onRetry } : {})}
                   {...(action && action.kind !== 'none' ? { action } : {})}
                 />
@@ -429,7 +444,7 @@ const TurnView = memo(function TurnView({
               record={changes}
               revision={changesRevision}
               enabled={changesEnabled}
-              engine={engine ?? harnessName}
+              engine={voice}
               active={sessionActive}
               outputs={outputs}
               onError={onChangesError}
@@ -439,7 +454,7 @@ const TurnView = memo(function TurnView({
           {runEnd && summary && (
             <RunEndNote
               summary={summary}
-              harness={engine ?? harnessName}
+              harness={endVoice}
               onRetry={onRetry}
               onContinue={onContinue}
               login={login}
@@ -490,6 +505,7 @@ const TurnView = memo(function TurnView({
             pinned={tapped || (latest && rowContext.coarse)}
             context={reportedContext}
             worked={hasWork}
+            person={speaker !== undefined}
             {...(onRetry ? { onRetry } : {})}
             actions={
               end && onCopyUpTo
@@ -535,6 +551,7 @@ export function Transcript({
   detail,
   approvals,
   harnessName,
+  speaker,
   harness,
   demo = false,
   active = false,
@@ -560,6 +577,11 @@ export function Transcript({
   approvals: Approval[]
   /** This device's approval buttons; omitted, every offered option is shown. */
   harnessName: string
+  /**
+   * A conversation of 我的 Agent: each turn opens with the helper's face and name, and the Harness, the model and the
+   * turn's tokens are not shown. Code's sessions pass none.
+   */
+  speaker?: Speaker
   /** How to log in to this session's harness, shown when a turn ends for want of it. */
   login?: { harnessId: string; login: HarnessLogin; terminal: boolean } | undefined
   /** The session's harness, for the tile on each turn's author line. */
@@ -678,7 +700,8 @@ export function Transcript({
   const engine = demo ? '演示' : undefined
   const statusProps: StatusLineProps = {
     detail,
-    harness: engine ?? harnessName,
+    harness: speaker?.name ?? engine ?? harnessName,
+    ...(speaker ? { person: true } : {}),
     cancelling,
     approvals: approvals.length,
     ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
@@ -728,7 +751,9 @@ export function Transcript({
               const stamped = turnModel(turn)
               const route = trailingLive ? undefined : turnRoute(turn)
               const providerId = stamped?.model ? stamped.providerId : trailingLive ? detail.summary.providerId : undefined
-              const delivery = trailingLive && !frozen ? deliveryWords(detail, turn) : undefined
+              const said = trailingLive && !frozen ? deliveryWords(detail, turn) : undefined
+              // A helper has begun on it, not a Harness.
+              const delivery = speaker && said === 'Harness 已开始' ? `${speaker.name} 已开始` : said
               const record = records.get(turn.key)
               return (
                 <Fragment key={turn.key}>
@@ -743,9 +768,11 @@ export function Transcript({
                       ...(streaming ? { liveReasoning: { startedAt: detail.liveReasoningStartedAt, ms: detail.liveReasoningMs } } : {}),
                       coarse,
                       frozen: frozen && trailingLive,
+                      person: speaker !== undefined,
                     }}
                     {...(engine ? { engine } : {})}
                     harnessName={harnessName}
+                    {...(speaker ? { speaker } : {})}
                     login={login}
                     harness={harness}
                     model={route?.differs ? route.answered : (stamped?.model ?? (trailingLive ? detail.summary.model : undefined))}

@@ -270,6 +270,8 @@ private struct NewTopicView: View {
                         ForEach(PhoneStart.projects(catalog)) { project in Button { choice.workspaceId = project.id } label: { check(project.name, on: project.id == choice.workspaceId) } }
                     } label: { chip { Image(systemName: "folder").font(.system(size: 12)); Text(PhoneAgents.worksIn(catalog, projectId: choice.workspaceId)) } }
                 }
+                // An Agent's Harness is fixed once it is created (the Host refuses another); only 通用 picks one here.
+                if general {
                 Menu {
                     ForEach(PhoneAgents.harnesses(catalog)) { engine in
                         Button { choice.harnessId = engine.id; if general { choice.model = PhoneStart.defaultModel(catalog, harnessId: engine.id) } } label: { check(engine.name, on: engine.id == choice.harnessId) }
@@ -279,6 +281,7 @@ private struct NewTopicView: View {
                         if choice.harnessId != nil { EngineTile(mark: PhoneStart.mark(harness), size: 14); Text(PhoneStart.engineName(harness)) }
                         else { Text("先选 Harness") }
                     }
+                }
                 }
                 if PhoneStart.usesServices(harness) {
                     Menu {

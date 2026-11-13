@@ -17,6 +17,7 @@ import {
 } from '@latch/ui'
 import { attachmentLimits, type AttachmentDraftController, type DraftAttachment } from '../hooks/useAttachments.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { Menu, type MenuSection } from '../components/overlays.tsx'
 
 const uploadBytes = (value: number) =>
   value < 1024
@@ -56,10 +57,22 @@ export function attachmentBlock(controller: AttachmentDraftController): string |
   return controller.checking ? '正在确认这个 Harness 能否接收文件…' : '暂时不能添加文件。'
 }
 
-export function AttachmentButton({ controller, disabled = false }: { controller: AttachmentDraftController; disabled?: boolean }) {
+export function AttachmentButton({
+  controller,
+  disabled = false,
+  sections,
+}: {
+  controller: AttachmentDraftController
+  disabled?: boolean
+  sections?: MenuSection[]
+}) {
   const input = useRef<HTMLInputElement>(null)
   const blocked = attachmentBlock(controller)
   const limits = attachmentLimits(controller.caps)
+  const pick = () => {
+    if (blocked !== undefined) controller.explain(blocked, controller.caps?.reason === blocked ? controller.caps.reasonDetail : undefined)
+    else input.current?.click()
+  }
   return (
     <>
       <input
@@ -74,19 +87,38 @@ export function AttachmentButton({ controller, disabled = false }: { controller:
         }}
       />
       {/* Not disabled when it cannot add: pressing it says why, where a touch screen has no hover to tell. */}
-      <IconButton
-        icon={PlusGlyph}
-        label="添加文件…"
-        className="attachment-button"
-        data-unavailable={blocked !== undefined && !disabled ? '' : undefined}
-        disabled={disabled}
-        tooltip={disabled ? '等待这次提交完成' : (blocked ?? (limits ? `添加文件… · ${limits}` : '添加文件…'))}
-        onClick={() => {
-          if (blocked !== undefined)
-            controller.explain(blocked, controller.caps?.reason === blocked ? controller.caps.reasonDetail : undefined)
-          else input.current?.click()
-        }}
-      />
+      {sections ? (
+        <Menu
+          label="更多"
+          placement="top-start"
+          sections={[
+            {
+              id: 'attachments',
+              items: [
+                {
+                  id: 'attach',
+                  label: '添加文件…',
+                  description: blocked ?? limits,
+                  leading: <Icon icon={FileGlyph} size={14} />,
+                  onSelect: pick,
+                },
+              ],
+            },
+            ...sections,
+          ]}
+          trigger={props => <IconButton {...props} icon={PlusGlyph} label="更多" disabled={disabled} className="attachment-button" />}
+        />
+      ) : (
+        <IconButton
+          icon={PlusGlyph}
+          label="添加文件…"
+          className="attachment-button"
+          data-unavailable={blocked !== undefined && !disabled ? '' : undefined}
+          disabled={disabled}
+          tooltip={disabled ? '等待这次提交完成' : (blocked ?? (limits ? `添加文件… · ${limits}` : '添加文件…'))}
+          onClick={pick}
+        />
+      )}
     </>
   )
 }

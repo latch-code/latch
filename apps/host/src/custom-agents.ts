@@ -89,7 +89,7 @@ const avatar = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('face'), bracket: z.enum(AGENT_BRACKETS), eyes: z.enum(AGENT_EYES), hue: z.enum(AGENT_HUES) }),
 ])
 const notifications = z.strictObject({ completed: z.boolean(), failed: z.boolean(), waiting: z.boolean() })
-const createSchema = config.extend({ requestId })
+const createSchema = config.extend({ requestId, avatar: avatar.optional() })
 const patchSchema = z.strictObject({
   name: name.optional(),
   description: z
@@ -251,6 +251,10 @@ function missing(): AppError {
 function changed(): AppError {
   return new AppError(409, 'agent-changed', '这项记录已更新，请刷新后再修改。')
 }
+/** The Harness an Agent was created on is fixed: a change of it, or a start on another, is refused with this. */
+export function harnessFixed(status: 400 | 409 = 409): AppError {
+  return new AppError(status, 'agent-harness-fixed', 'Agent 建好后不能换 Harness，要用别的 Harness 就新建一个 Agent。')
+}
 function keep<K extends string>(receipts: Record<K, unknown>): void {
   const keys = Object.keys(receipts) as K[]
   for (const key of keys.slice(0, Math.max(0, keys.length - MAX_RECEIPTS))) delete receipts[key]
@@ -322,10 +326,10 @@ export class CustomAgents {
     const parsed = createSchema.parse(input)
     return this.mutate('create', 'agent', '', parsed, actor, state => {
       if (state.agents.length >= MAX_AGENTS) throw new AppError(409, 'agent-limit', `最多保存 ${MAX_AGENTS} 个 Agent。`)
-      const { requestId: _, ...definition } = parsed,
+      const { requestId: _, avatar: chosen, ...definition } = parsed,
         at = this.at(),
         id = `agt_${randomUUID()}`
-      state.agents.push({ ...definition, id, avatar: avatarFor(state.agents), revision: 1, createdAt: at, updatedAt: at })
+      state.agents.push({ ...definition, id, avatar: chosen ?? avatarFor(state.agents), revision: 1, createdAt: at, updatedAt: at })
       return { target: id, customAgentId: id }
     }).then(result => ({ ...result, value: this.get(result.value) }))
   }
@@ -337,6 +341,8 @@ export class CustomAgents {
       const found = state.agents.find(agent => agent.id === id)
       if (!found) throw missing()
       if (found.revision !== parsed.baseRevision) throw changed()
+      // A helper is who it is: another Harness is another helper, so the Agent's own is the only one it takes.
+      if (parsed.harnessId !== undefined && parsed.harnessId !== found.harnessId) throw harnessFixed()
       const {
         requestId: _,
         baseRevision: __,
@@ -756,10 +762,15 @@ export class CustomAgents {
     ).then(result => ({ ...result, value: { id } }))
   }
 
-  /**
-   * Fixes what one request starts on, so a retry after an unknown result keeps its engine even if the agent was edited
-   * meanwhile, and so cannot create a second session elsewhere. The first answer stands.
-   */
+  /** The original choice of this device's start, before a retry can confirm or bind any program. */
+  recordedStart(id: string, deviceId: string, rid: string): AgentSessionSelection | undefined {
+    const held = this.journal.read().starts[digest(['start', deviceId, rid])]
+    if (held?.customAgentId !== id) return undefined
+    const { customAgentId: _, ...selection } = held
+    return selection
+  }
+
+  /** A retry keeps its first engine and project even if the Agent was edited meanwhile. */
   async reserveStart(id: string, rid: string, choose: () => AgentSessionSelection, actor: AgentActor): Promise<AgentSessionSelection> {
     agentId.parse(id)
     const key = digest(['start', actor.actor.deviceId, rid])

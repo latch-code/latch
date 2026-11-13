@@ -1,31 +1,35 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { CustomAgent, CustomAgentDetail, CustomAgentList, GeneralAgentDetail, HostCatalog } from '@latch/protocol'
-import { Button, Checkbox, ConfirmDialog, Hint, InlineNotice, TextAreaField, TextField, ValuePicker, TrashGlyph } from '@latch/ui'
+import {
+  Button,
+  Checkbox,
+  ConfirmDialog,
+  Hint,
+  ICON_STROKE,
+  InlineNotice,
+  StatusWord,
+  TextAreaField,
+  TextField,
+  ModelGlyph,
+  ShieldGlyph,
+  TrashGlyph,
+} from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ProjectPicker } from '../components/Pickers.tsx'
 import { harnessName } from '../composerChoice.ts'
+import { MODE_COPY } from '../core/securityCopy.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import {
-  agentHarnesses,
-  draftOf,
-  draftProblem,
-  emptyDraft,
-  normalizedDraft,
-  patchOf,
-  rebaseDraft,
-  saveWaits,
-  usesHostModels,
-  type AgentDraft,
-} from './model.ts'
+import { draftOf, normalizedDraft, patchOf, rebaseDraft, saveWaits, usesHostModels, type AgentDraft } from './model.ts'
+import { isolationBrief } from './helpers.ts'
+import { BeforeActing } from './parts.tsx'
 import { writeFor, type AgentWrites, type WriteState } from './useAgentWrites.ts'
-import { ROLE_TEMPLATES } from './roleTemplates.ts'
 import { MessageError } from '../core/api.ts'
 
 /** When a change reaches the Agent's sessions: the fine print behind ⓘ. */
 export function TakesEffect({ label = '何时生效' }: { label?: string }) {
   return (
-    <Hint label={label} className="agent-effect">
+    <Hint label={label} lead={false} className="agent-effect">
       内置 Harness 从下一轮起按新定义运行；外部 Harness 在会话的第一轮收到指令和记忆，所以只影响之后开始的会话。
     </Hint>
   )
@@ -36,7 +40,7 @@ export function WriteNotice({ state, onRetry, onReload }: { state: WriteState | 
   if (!state || !('kind' in state)) return null
   if (state.kind === 'unknown')
     return (
-      <InlineNotice tone="warn" title="结果未知" action={<Button onClick={onRetry}>重试同一请求</Button>}>
+      <InlineNotice tone="warn" title="结果未知" action={state.unreplayable ? undefined : <Button onClick={onRetry}>重试同一请求</Button>}>
         <span>{state.message}</span> <span className="agent-request-id">{state.write.body.requestId}</span>
       </InlineNotice>
     )
@@ -144,8 +148,7 @@ export function AgentForm({
 }: {
   catalog: HostCatalog
   access: DeviceAccess
-  /** Absent: a new Agent. */
-  agent?: CustomAgentDetail['agent']
+  agent: CustomAgentDetail['agent']
   plugins: CustomAgentList['plugins']
   writes: AgentWrites
   /** Offline or held by another write. */
@@ -156,12 +159,12 @@ export function AgentForm({
   onReload?: () => void
   onManageProviders?: () => void
 }) {
-  const base = useMemo(() => (agent ? draftOf(agent) : emptyDraft(catalog)), [agent, catalog])
+  const base = useMemo(() => draftOf(agent), [agent])
   const [draft, setDraft] = useState<AgentDraft>(base)
   const [deleting, setDeleting] = useState(false)
   // A new revision from the Host (a save, a new avatar, an edit elsewhere) keeps what the person is in the middle of
   // changing, laid over the new definition; a field changed both here and there says so.
-  const revision = agent?.revision
+  const revision = agent.revision
   const shown = useRef(base)
   const [conflicts, setConflicts] = useState<Array<keyof AgentDraft>>([])
   const elsewhere = conflicts.length > 0
@@ -175,13 +178,13 @@ export function AgentForm({
       return rebased.draft
     })
   }, [revision])
-  const harnesses = agentHarnesses(catalog)
   const harness = catalog.harnesses.find(item => item.id === draft.harnessId)
-  const problem = draftProblem(catalog, draft)
+  // The Harness is fixed, so one that cannot run now does not hold back a new name or instructions.
+  const problem = draft.name.trim() ? undefined : '先填名称'
   const normalized = normalizedDraft(catalog, draft)
-  const changes = agent ? patchOf(draftOf(agent), normalized) : undefined
-  const changed = !agent || Object.keys(changes ?? {}).length > 0
-  const key = agent ? `agent:${agent.id}` : 'agent:new'
+  const changes = patchOf(draftOf(agent), normalized)
+  const changed = Object.keys(changes).length > 0
+  const key = `agent:${agent.id}`
   const state = writeFor(writes.state, key)
   const locked = disabled || writes.saving || writes.held
   const update = (patch: Partial<AgentDraft>) => {
@@ -189,12 +192,10 @@ export function AgentForm({
   }
   const save = async () => {
     if (problem || locked || saveWaits(conflicts)) return
-    const saved = agent
-      ? await writes.run<CustomAgent>(key, `custom-agents/${encodeURIComponent(agent.id)}`, 'PATCH', {
-          ...changes,
-          baseRevision: agent.revision,
-        })
-      : await writes.run<CustomAgent>(key, 'custom-agents', 'POST', { ...normalized })
+    const saved = await writes.run<CustomAgent>(key, `custom-agents/${encodeURIComponent(agent.id)}`, 'PATCH', {
+      ...changes,
+      baseRevision: agent.revision,
+    })
     if (saved) {
       setConflicts([])
       onSaved(saved)
@@ -204,37 +205,17 @@ export function AgentForm({
     const saved = await writes.retry<CustomAgent>()
     if (saved) onSaved(saved)
   }
+  const isolation = harness ? isolationBrief(harness) : undefined
   const toolPlugins = plugins.filter(plugin => plugin.capabilities.some(item => item.startsWith('tool:')))
   const builtIn = harness?.agentContext === 'private'
   return (
     <form
       className="agent-form"
-      aria-label={agent ? `${agent.name} 的设置` : '新建 Agent'}
+      aria-label={`${agent.name} 的设置`}
       onSubmit={event => {
         event.preventDefault()
         void save()
       }}>
-      {!agent && (
-        <div className="agent-role-templates" role="group" aria-label="从模板开始">
-          <span>从模板开始</span>
-          {ROLE_TEMPLATES.map(template => (
-            <Button
-              key={template.label}
-              size="sm"
-              variant="ghost"
-              disabled={locked}
-              onClick={() => {
-                update({
-                  ...(draft.name.trim() ? {} : { name: template.label }),
-                  description: template.description,
-                  instructions: template.instructions,
-                })
-              }}>
-              {template.label}
-            </Button>
-          ))}
-        </div>
-      )}
       <TextField
         label="名称"
         value={draft.name}
@@ -266,52 +247,56 @@ export function AgentForm({
         }}
       />
       <Section title="执行方式" aside={<TakesEffect />}>
-        <div className="agent-form-pickers">
-          <ValuePicker
-            label="Harness"
-            placeholder="选择 Harness"
-            value={harness && harnesses.includes(harness) ? harness.id : undefined}
-            valueText={harness && !harnesses.includes(harness) ? `${harnessName(harness)}（不能运行 Agent）` : undefined}
-            options={harnesses.map(item => ({
-              value: item.id,
-              label: harnessName(item),
-              media: <HarnessTile harness={item} size={20} />,
-              ...(item.agentContext === 'first-turn' ? { description: '第一轮收到指令和记忆' } : { description: '每轮读取指令和记忆' }),
-            }))}
-            leading={harness ? <HarnessTile harness={harness} size={16} /> : undefined}
-            menuChevron
-            disabled={locked}
-            onValueChange={harnessId => {
-              update({ harnessId })
-            }}
-          />
-          {usesHostModels(harness) && (
-            <ModelPicker
-              catalog={catalog}
-              value={draft.model}
-              access={access}
-              disabled={locked}
-              {...(onManageProviders ? { onManage: onManageProviders } : {})}
-              onChange={model => {
-                update({ model: { providerId: model.providerId, model: model.model } })
-              }}
-            />
-          )}
-          {usesHostModels(harness) && draft.model && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={locked}
-              onClick={() => {
-                const { model: _model, ...rest } = draft
-                setDraft(rest)
-              }}>
-              用默认模型
-            </Button>
-          )}
-        </div>
-        {harnesses.length === 0 && <p className="agent-form-empty">没有能运行 Agent 的 Harness</p>}
+        <dl className="agent-facts">
+          <dt>由谁运行</dt>
+          <dd>
+            {/* Fixed at creation: another Harness is another Agent. Latch does not isolate it either way. */}
+            <Hint
+              label={`由 ${harness ? harnessName(harness) : draft.harnessId} 运行`}
+              lead={harness ? <HarnessTile harness={harness} size={14} /> : undefined}
+              moreLabel="由谁运行：说明">
+              建好后不能换 Harness，要用别的就新建一个 Agent。
+              {isolation ? ` ${isolation.label}。${isolation.detail}` : ''}
+            </Hint>
+          </dd>
+          <dt>模型</dt>
+          <dd>
+            {usesHostModels(harness) ? (
+              <>
+                <ModelPicker
+                  catalog={catalog}
+                  value={draft.model}
+                  access={access}
+                  disabled={locked}
+                  {...(onManageProviders ? { onManage: onManageProviders } : {})}
+                  onChange={model => {
+                    update({ model: { providerId: model.providerId, model: model.model } })
+                  }}
+                />
+                {draft.model && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={locked}
+                    onClick={() => {
+                      const { model: _model, ...rest } = draft
+                      setDraft(rest)
+                    }}>
+                    用默认模型
+                  </Button>
+                )}
+              </>
+            ) : (
+              <Hint label="它自己的默认" lead={<ModelGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
+                在开始时换它的模型尚未实现。
+              </Hint>
+            )}
+          </dd>
+          <dt>做事前</dt>
+          <dd>{harness ? <BeforeActing harness={harness} mode={draft.mode} /> : <span>{MODE_COPY.askFirst}</span>}</dd>
+        </dl>
       </Section>
+
       <Section title="默认项目">
         <div className="agent-form-pickers">
           <ProjectPicker
@@ -349,7 +334,11 @@ export function AgentForm({
       {builtIn && (
         <Section
           title="可以使用"
-          aside={<Hint label="只收紧">只对内置 Harness 生效：它只能调用勾选的插件的工具，不会因此获得新的能力。</Hint>}>
+          aside={
+            <Hint label="只收紧" lead={<ShieldGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
+              只对内置 Harness 生效：它只能调用勾选的插件的工具，不会因此获得新的能力。
+            </Hint>
+          }>
           <div className="agent-checks">
             <Checkbox
               label="全部已启用的插件"
@@ -418,7 +407,7 @@ export function AgentForm({
           disabled={locked || problem !== undefined || !changed || saveWaits(conflicts)}
           loading={state !== null && 'phase' in state && state.phase === 'saving'}
           title={saveWaits(conflicts) ? '已在别处修改，载入最新后再保存' : problem}>
-          {agent ? '保存' : '创建'}
+          保存
         </Button>
       </div>
       {deleting && agent && onDeleted && (

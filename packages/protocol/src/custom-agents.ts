@@ -24,7 +24,7 @@ export const GENERAL_AGENT_ID = 'general'
 export interface CustomAgentConfig {
   name: string
   description: string
-  /** The engine. A session's engine is fixed once it starts. */
+  /** The engine, chosen once at creation: the Host refuses to change it (409 `agent-harness-fixed`). */
   harnessId: string
   /** Default mode on an engine that has several. */
   mode: TaskMode
@@ -75,7 +75,9 @@ export type CustomAgentSummary = Omit<CustomAgent, 'instructions' | 'skills' | '
   /** Automations run on the built-in engine only. */
   canAutomate: boolean
 }
-export type CustomAgentCreate = CustomAgentConfig & { requestId: string }
+/** `avatar`: the face chosen while creating; absent, the Host assigns an unused one. */
+export type CustomAgentCreate = CustomAgentConfig & { requestId: string; avatar?: AgentAvatar }
+/** `harnessId` may only repeat the Agent's own: another one is refused with 409 `agent-harness-fixed`. */
 export type CustomAgentPatch = Partial<Omit<CustomAgentConfig, 'model' | 'tools' | 'defaultProjectId' | 'engineOptions'>> & {
   requestId: string
   baseRevision: number

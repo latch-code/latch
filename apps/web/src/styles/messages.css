@@ -1401,3 +1401,8 @@ button.summary-file:hover {
 .harness-login-card {
   gap: var(--sp-8);
 }
+
+/* A helper's turn opens with its 16px face and its name, as the person knows it; nothing of the Harness or the model. */
+.assistant-meta-person > .agent-avatar {
+  flex-shrink: 0;
+}

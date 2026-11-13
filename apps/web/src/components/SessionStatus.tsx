@@ -16,11 +16,17 @@ import { hostNow, useTicker } from '../core/hostClock.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { useSteady } from '../hooks/useSteady.ts'
 import { activityWords, runningWords, silentWords, type RowStatus, type WaitKind } from '../sessions.ts'
+import { personActivity } from '../agents/personWords.ts'
 
-/** The clock's leaf: only this re-renders each second, and the shared ticker stops while the page is hidden. */
-function RunningWords({ live }: { live: RunLive | undefined }) {
+/**
+ * The clock's leaf: only this re-renders each second, and the shared ticker stops while the page is hidden. A topic of
+ * 我的 Agent says it as the helper does (在想, 在跑命令), never 在等模型.
+ */
+function RunningWords({ live, person }: { live: RunLive | undefined; person: boolean }) {
   useTicker('second')
-  return <>{runningWords(live, hostNow())}</>
+  const words = runningWords(live, hostNow())
+  const said = person ? personActivity(live)?.words : undefined
+  return <>{said ? words.replace(activityWords(live), said) : words}</>
 }
 
 function SilentWords({ live }: { live: RunLive | undefined }) {
@@ -85,9 +91,12 @@ export function SessionStatus({
   time,
   dateTime,
   className,
+  person = false,
 }: {
   status: RowStatus
   live: RunLive | undefined
+  /** A topic of 我的 Agent: its running words are a person's. */
+  person?: boolean
   inWaitingShelf: boolean
   time: string
   dateTime: string
@@ -100,7 +109,7 @@ export function SessionStatus({
     <StatusSlot
       className={className}
       status={shelved ? 'time' : shown.kind === 'ended' && shown.unknown > 0 ? 'attention' : SLOT[shown.kind]}
-      running={shown.kind === 'stopping' ? '正在停止' : <RunningWords live={live} />}
+      running={shown.kind === 'stopping' ? '正在停止' : <RunningWords live={live} person={person} />}
       attention={attention}
       ended={shown.kind === 'ended' ? shown.word : undefined}
       time={time}
@@ -110,7 +119,7 @@ export function SessionStatus({
 }
 
 /** The row's status for a screen reader, which the slot leaves out. */
-export function statusLabel(status: RowStatus, live: RunLive | undefined): string {
+export function statusLabel(status: RowStatus, live: RunLive | undefined, person = false): string {
   switch (status.kind) {
     case 'waiting':
       return '等你处理'
@@ -119,7 +128,7 @@ export function statusLabel(status: RowStatus, live: RunLive | undefined): strin
     case 'stopping':
       return '正在停止'
     case 'running':
-      return activityWords(live)
+      return (person ? personActivity(live)?.words : undefined) ?? activityWords(live)
     case 'failed':
       return '失败'
     case 'unread':

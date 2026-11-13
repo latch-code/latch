@@ -26,14 +26,26 @@ export function CarryResults({
   disabled,
   phone,
   onCarry,
+  asked,
+  onClosed,
 }: {
   sessions: readonly TaskSummary[]
   disabled: boolean
   /** A phone chooses in the bottom sheet, as its other choices. */
   phone: boolean
   onCarry: (results: CarriedResult[]) => void
+  /** Opened from elsewhere (a helper's ＋ menu), which draws no button of its own; it closes through `onClosed`. */
+  asked?: boolean
+  onClosed?: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  const [own, setOwn] = useState(false)
+  const controlled = asked !== undefined
+  const open = controlled ? asked : own
+  const setOpen = (value: boolean) => {
+    if (controlled) {
+      if (!value) onClosed?.()
+    } else setOwn(value)
+  }
   const [picks, setPicks] = useState<ReadonlyMap<string, Pick>>(new Map())
   const [reads, setReads] = useState<ReadonlyMap<string, Read>>(new Map())
   const shown = sessions.slice(0, SHOWN)
@@ -169,16 +181,18 @@ export function CarryResults({
   )
   return (
     <>
-      <Button
-        variant="ghost"
-        size="sm"
-        icon={HistoryGlyph}
-        disabled={disabled || sessions.length === 0}
-        onClick={() => {
-          setOpen(true)
-        }}>
-        带入上次成果
-      </Button>
+      {!controlled && (
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={HistoryGlyph}
+          disabled={disabled || sessions.length === 0}
+          onClick={() => {
+            setOpen(true)
+          }}>
+          带入上次成果
+        </Button>
+      )}
       {phone ? (
         <Sheet open={open} onClose={close} detent="large" title="带入上次成果" action={carry}>
           <div className="agent-carry-sheet">{list}</div>

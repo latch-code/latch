@@ -9,7 +9,7 @@ import {
   UpdateWindow,
   updateWindowInputSchema,
 } from './update-window.ts'
-import { CustomAgents, rememberRequest, type AgentActor } from './custom-agents.ts'
+import { CustomAgents, harnessFixed, rememberRequest, type AgentActor } from './custom-agents.ts'
 import { Automations, automationSummary, type AutomationStartInput } from './automations.ts'
 import { Handoffs } from './handoffs.ts'
 import { HistoryImports, HistoryReceipts } from './history-import.ts'
@@ -6385,7 +6385,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         input.customAgentId && input.customAgentId !== GENERAL_AGENT_ID
           ? customAgents.list().find(agent => agent.id === input.customAgentId)?.harnessId
           : undefined
-      await bindUnconfirmedHarness(req, caller as DeviceCaller, input.harnessId ?? agentHarness ?? config.settings().defaults.harnessId)
+      const recorded = agentHarness ? customAgents.recordedStart(input.customAgentId!, caller.device.id, input.requestId) : undefined
+      // An Agent's start on another Harness is refused before anything else: no confirmation is asked and nothing is
+      // written for a Harness it will not run on. A retry of a start recorded before this rule keeps its receipt below.
+      if (agentHarness && input.harnessId && input.harnessId !== agentHarness && !recorded) throw harnessFixed(400)
+      await bindUnconfirmedHarness(
+        req,
+        caller as DeviceCaller,
+        recorded?.harnessId ?? agentHarness ?? input.harnessId ?? config.settings().defaults.harnessId,
+      )
       const started = await startSession(caller, input, res)
       // A new topic of 我的 Agent keeps the result cards that waited for one.
       if (input.customAgentId && !input.forkOf)
@@ -6452,13 +6460,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const start = await customAgents.reserveStart(
           customAgentId,
           input.requestId,
-          () =>
-            agentPlans.selection(saved, {
+          () => {
+            // Checked when the start is first chosen; a retry of a recorded start gets the choice recorded then.
+            if (harnessId !== undefined && harnessId !== saved.harnessId) throw harnessFixed(400)
+            return agentPlans.selection(saved, {
               ...(harnessId ? { harnessId } : {}),
               ...(workspaceId ? { workspaceId } : {}),
               ...(mode ? { mode } : {}),
               ...(model ? { model } : {}),
-            }),
+            })
+          },
           actor,
         )
         const { model: startModel, workspaceId: startWorkspace, ...choice } = start

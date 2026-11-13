@@ -163,17 +163,43 @@ test('notifications and keep-awake are stored per Agent, audited, outside the de
   expect(() => store.patch(id, { requestId: randomUUID(), baseRevision: 3, notifications: { completed: true } } as never, actor)).toThrow()
 })
 
-test('a start keeps its first selection even if the agent moves to another engine', async () => {
+test('a start keeps its first selection even if the agent changes since', async () => {
   const { store } = await fixture()
   const { id } = (await store.create(definition(), actor)).value
   const rid = randomUUID()
   const first = await store.reserveStart(id, rid, () => ({ harnessId: 'standard', mode: 'agent' }), actor)
-  await store.patch(id, { requestId: randomUUID(), baseRevision: 1, harnessId: 'codex' }, actor)
-  expect(await store.reserveStart(id, rid, () => ({ harnessId: 'codex', mode: 'agent' }), actor)).toEqual(first)
+  await store.patch(id, { requestId: randomUUID(), baseRevision: 1, mode: 'chat' }, actor)
+  expect(await store.reserveStart(id, rid, () => ({ harnessId: 'standard', mode: 'chat' }), actor)).toEqual(first)
   const other = (await store.create(definition(), actor)).value
   await expect(store.reserveStart(other.id, rid, () => ({ harnessId: 'standard', mode: 'agent' }), actor)).rejects.toMatchObject({
     code: 'request-conflict',
   })
+})
+
+test('the Harness is fixed once created: another is refused, its own passes, and a retry answers from its receipt', async () => {
+  const { store, audit } = await fixture()
+  const { id } = (await store.create(definition(), actor)).value
+  const calls = audit.append.mock.calls.length
+  await expect(store.patch(id, { requestId: randomUUID(), baseRevision: 1, harnessId: 'codex' }, actor)).rejects.toMatchObject({
+    status: 409,
+    code: 'agent-harness-fixed',
+  })
+  // Refused before anything is written or audited.
+  expect(audit.append.mock.calls.length).toBe(calls)
+  expect(store.get(id)).toMatchObject({ harnessId: 'standard', revision: 1 })
+  // Naming its own Harness again changes nothing about it, as any other field may be sent unchanged.
+  const same = { requestId: randomUUID(), baseRevision: 1, harnessId: 'standard', name: '审阅' }
+  const renamed = await store.patch(id, same, actor)
+  expect(renamed.value).toMatchObject({ harnessId: 'standard', name: '审阅', revision: 2 })
+  expect((await store.patch(id, same, actor)).value.revision).toBe(2)
+})
+
+test('a new Agent takes the face chosen while creating it, and the Host assigns one otherwise', async () => {
+  const { store } = await fixture()
+  const face = { kind: 'face' as const, bracket: 'angle' as const, eyes: 'oval' as const, hue: 'moss' as const }
+  expect((await store.create({ ...definition(), avatar: face }, actor)).value.avatar).toEqual(face)
+  expect((await store.create(definition(), actor)).value.avatar).toEqual({ kind: 'face', bracket: 'round', eyes: 'dot', hue: 'ink' })
+  expect(() => store.create({ ...definition(), avatar: { ...face, hue: 'red' } } as never, actor)).toThrow()
 })
 
 test('通用 starts empty, takes instructions, skills and memories, and cannot be deleted through the store', async () => {

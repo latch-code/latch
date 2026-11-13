@@ -1583,3 +1583,210 @@ button.agent-library-file:focus-visible {
 .agent-mcp-empty {
   margin: 0;
 }
+
+/*
+ * Creating a helper: 「你想让谁成为你的帮手？」 in the question size, then one card per candidate in the raised list,
+ * its face, name and mark, one line and its abilities as small tags; 不先问你 in amber. The ones not ready fold below,
+ * greyed. The second step is the form under a one-line 「选了 … · 换」.
+ */
+.helper-create {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+  max-width: 640px;
+}
+.helper-create-question {
+  font-size: var(--fs-question);
+  line-height: var(--lh-question);
+  font-weight: 600;
+}
+.helper-cards {
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+  list-style: none;
+}
+.helper-cards > li + li {
+  border-top: 1px solid var(--line);
+}
+.helper-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-12);
+  width: 100%;
+  min-width: 0;
+  padding: var(--sp-12) var(--sp-16);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.helper-card.ui-button {
+  height: auto;
+  justify-content: flex-start;
+  white-space: normal;
+  border-radius: 0;
+}
+button.helper-card:hover:not(:disabled) {
+  background: var(--hover);
+}
+button.helper-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.helper-card[data-waiting] {
+  align-items: center;
+  color: var(--muted);
+}
+.helper-card-text {
+  display: grid;
+  gap: var(--sp-4);
+  flex: 1;
+  min-width: 0;
+}
+.helper-card-name {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+.helper-card[data-waiting] .helper-card-name {
+  font-weight: 500;
+}
+.helper-card-line {
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.helper-abilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4) var(--sp-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.helper-ability {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.helper-waiting {
+  display: grid;
+  gap: var(--sp-8);
+}
+.helper-chosen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.helper-chosen strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+.helper-who {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-16);
+  min-width: 0;
+}
+.helper-who > .ui-field {
+  flex: 1;
+  min-width: 0;
+}
+.helper-fold {
+  display: grid;
+  gap: var(--sp-8);
+}
+.helper-more {
+  align-items: center;
+}
+
+/* A new topic's place, when it works in a project: the folder, its name and the way back out. */
+.agent-delegate-place {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-chat-greeting {
+  max-width: 36ch;
+}
+
+/*
+ * 不先问你 or 权限没确认 beside a helper's name: amber, with its ⓘ; a mode Latch has no word for, in the quiet colour. On
+ * every width the words stay; a narrow frame cuts them with an ellipsis.
+ */
+.agent-permission-note.ui-hint {
+  flex-shrink: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-permission-note.is-warn.ui-hint {
+  color: var(--amber);
+}
+.agent-permission-note.is-warn .ui-hint-lead {
+  color: var(--amber-icon);
+}
+.agent-permission-note .ui-hint-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-boundary-trigger {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.agent-boundary-trigger.is-warn {
+  color: var(--amber);
+}
+.agent-boundary-detail {
+  margin: 0;
+  padding: var(--sp-16);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+@media (max-width: 767px) {
+  .helper-create-question {
+    font-size: var(--fs-hero);
+    line-height: var(--lh-hero);
+  }
+  .agent-frame[data-phone]:has(.agent-boundary-trigger) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 0;
+  }
+  .agent-frame[data-phone] > .agent-boundary-trigger {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
+  }
+  .agent-frame[data-phone]:has(.agent-boundary-trigger) > .agent-frame-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .topbar-frame[data-phone]:has(.agent-boundary-trigger) {
+    height: auto;
+    min-height: var(--topbar-height);
+    padding-block: var(--sp-4);
+  }
+}

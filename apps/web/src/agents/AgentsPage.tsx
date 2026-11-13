@@ -14,32 +14,19 @@ import {
   PlusGlyph,
   OfflineGlyph,
 } from '@latch/ui'
-import { HarnessTile } from '../components/BrandTile.tsx'
 import { useBackLayer } from '../hooks/backStack.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { NavTop, shellSpaces, ShellDelegate, ShellNavFoot } from '../shell/SpaceNav.tsx'
 import { AgentsSpaceList, Delegations } from './AgentsSpaceList.tsx'
 import { useLastConfirmed } from '../components/SessionStatus.tsx'
 import { askDelegateFocus } from './delegateFocus.ts'
-import { AgentForm } from './AgentForm.tsx'
+import { HelperCreate } from './HelperCreate.tsx'
 import { AgentChat } from './AgentChat.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
-import { agentActivity, agentEntries, dutyLine, GENERAL_NAME, runsWith, worksIn, type AgentEntry } from './model.ts'
+import { agentActivity, agentEntries, agentLiveWord, dutyLine, GENERAL_NAME, worksIn, type AgentEntry } from './model.ts'
 import { ActivityWord, Availability, LockedAgents } from './parts.tsx'
 import { useAgentList, type AgentRead } from './useAgentData.ts'
 import { useAgentWrites } from './useAgentWrites.ts'
-
-const NO_PLUGINS: CustomAgentList['plugins'] = []
-
-/** The second line of an Agent's row: how it runs, or for 通用 that sessions pick their own. */
-function entryLine(shell: ShellState, entry: AgentEntry): string {
-  return entry.kind === 'general' ? '内置 · 每个会话自己选 Harness' : runsWith(shell.catalog ?? undefined, entry.summary)
-}
-
-function EntryMark({ shell, entry }: { shell: ShellState; entry: AgentEntry }) {
-  const harness = entry.kind === 'custom' ? shell.catalog?.harnesses.find(item => item.id === entry.summary.harnessId) : undefined
-  return harness ? <HarnessTile harness={harness} size={14} /> : null
-}
 
 /** The face of an entry and what it shows now; 通用 rests in grey and has no state of its own. */
 function EntryAvatar({ shell, entry, size }: { shell: ShellState; entry: AgentEntry; size: number }) {
@@ -50,7 +37,8 @@ function EntryAvatar({ shell, entry, size }: { shell: ShellState; entry: AgentEn
 /** The word beside a face: 等你处理 or 运行中 first, then why it cannot start, then a failure. */
 function EntryState({ shell, summary, offline }: { shell: ShellState; summary: CustomAgentSummary; offline: boolean }) {
   const state = agentActivity(shell.snapshot, summary)
-  if (!offline && (state === 'waiting' || state === 'running')) return <ActivityWord state={state} />
+  if (!offline && (state === 'waiting' || state === 'running'))
+    return <ActivityWord state={state} live={agentLiveWord(shell.snapshot, summary.id)} />
   if (offline || !summary.available)
     return <Availability available={summary.available} reason={summary.unavailableReason} offline={offline} />
   return <ActivityWord state={state} />
@@ -108,7 +96,7 @@ function AgentList({
         <div>
           <h1 className="settings-title">我的 Agent</h1>
           <Hint label="长期替你办事" lead={<span />} className="agents-intro">
-            每个 Agent 有职责、执行方式和默认项目；和它对话的每个话题都是一个属于它的会话。
+            每个 Agent 有名字、职责和默认项目；和它对话的每个话题都是一个属于它的会话。
           </Hint>
         </div>
         {target && target.kind === 'custom' && canRun && (
@@ -155,14 +143,12 @@ function AgentList({
                       {entry.kind === 'general' && <span className="agent-builtin">内置</span>}
                     </span>
                     {duty && <span className="agents-list-duty">{duty}</span>}
-                    <span className="agents-list-meta">
-                      <EntryMark shell={shell} entry={entry} />
-                      <span>
-                        {entry.kind === 'custom'
-                          ? `${entryLine(shell, entry)} · ${worksIn(shell.catalog ?? undefined, entry.summary.defaultProjectId)}`
-                          : entryLine(shell, entry)}
+                    {/* Who it is and where it works; how it runs is its 设置's, not the list's. */}
+                    {entry.kind === 'custom' && (
+                      <span className="agents-list-meta">
+                        <span>{worksIn(shell.catalog ?? undefined, entry.summary.defaultProjectId)}</span>
                       </span>
-                    </span>
+                    )}
                   </span>
                   {entry.kind === 'custom' && <EntryState shell={shell} summary={entry.summary} offline={offline} />}
                 </button>
@@ -225,19 +211,23 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
   const chat = id !== undefined && id !== 'new'
   const { read, reload } = useAgentList(snapshot)
   const frozen = useLastConfirmed(connection, snapshot)
-  const writes = useAgentWrites(reload)
+  const writes = useAgentWrites(reload, {
+    origin: location.origin,
+    deviceId: snapshot.device.id,
+    allowed: snapshot.device.dataScope === 'all' && shell.access.scopes.has('view') && shell.access.scopes.has('run'),
+  })
   // The Agent last opened is the list's selection, for its primary.
   const [selected, setSelected] = useState<string | undefined>(chat ? id : undefined)
   useEffect(() => {
     if (chat && id !== GENERAL_AGENT_ID) setSelected(id)
   }, [chat, id])
   const back = () => {
+    if (writes.saving || writes.held) return
     writes.clear()
     shell.setRoute({ entry: 'agents' })
   }
   const pushed = phone && id !== undefined
   useBackLayer(pushed, back)
-  const list = 'value' in read ? read.value : undefined
   const escape = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Escape' || !phone || !pushed || event.defaultPrevented) return
     if (event.target instanceof Element && event.target.closest('dialog, [popover]')) return
@@ -251,6 +241,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
       selected={selected}
       offline={offline}
       onOpen={next => {
+        if (writes.saving || writes.held) return
         writes.clear()
         shell.openMyAgent({ id: next })
       }}
@@ -267,23 +258,24 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
   const panel = (
     <>
       {id === undefined && agentList}
-      {id === 'new' && snapshot.catalog && (
+      {id === 'new' && locked && <LockedAgents />}
+      {id === 'new' && !locked && snapshot.catalog && (
         <div className="agent-page">
-          {!phone && <h1 className="settings-title">新建 Agent</h1>}
-          <AgentForm
+          <HelperCreate
+            key={snapshot.device.id}
             catalog={snapshot.catalog}
             access={shell.access}
-            plugins={list?.plugins ?? NO_PLUGINS}
+            agents={snapshot.customAgents ?? []}
             writes={writes}
             disabled={offline || locked}
-            onSaved={agent => {
+            onCreated={agent => {
               writes.clear()
               void shell.refresh()
               askDelegateFocus()
               shell.setRoute({ entry: 'agents', myAgent: { id: agent.id, topic: 'new' } })
             }}
             onCancel={back}
-            {...(shell.owner ? { onManageProviders: shell.manageProviders } : {})}
+            {...(shell.owner ? { onSettings: () => shell.openSettings('engines'), onManageProviders: shell.manageProviders } : {})}
           />
         </div>
       )}
@@ -296,6 +288,14 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
       data-entry="agents"
       data-chat={chat ? '' : undefined}
       onKeyDown={escape}>
+      {!locked && id !== 'new' && writes.held && writes.state?.write.key === 'agent:new' && (
+        <InlineNotice
+          tone="warn"
+          title="创建结果未知"
+          action={<Button onClick={() => shell.openMyAgent({ id: 'new' })}>继续确认创建</Button>}>
+          上一次创建还没有确认结果，原请求仍然保留。
+        </InlineNotice>
+      )}
       {!phone
         && titleSlot
         && !chat

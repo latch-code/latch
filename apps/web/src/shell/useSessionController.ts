@@ -13,6 +13,7 @@ import { choiceKind, DecisionRequests, settledOutcome } from '../core/approvalDe
 import { cancelAnswer, CancelRequests } from '../core/cancelRequest.ts'
 import { checkReasonText, ConfigRequests, configUncertain, type ConfigRequest } from '../core/configRequest.ts'
 import { browserDraftStorage, forgetStoredDrafts, listedSessions, SessionDrafts } from '../core/sessionDrafts.ts'
+import { forgetPrivateAgentCreation } from '../core/agentCreation.ts'
 import { joinDraft, takeHandedDraft } from '../core/draftHandoff.ts'
 import type { SessionConfigFeedback } from '../composer/modelReasoning.ts'
 import {
@@ -310,6 +311,7 @@ export function useSessionController({
     submission.setError('')
   }, [inputId])
   useLayoutEffect(() => {
+    if (!privateVisible || !access.scopes.has('run')) forgetPrivateAgentCreation(location.origin, snapshot.device.id)
     if (draftDevice.current !== snapshot.device.id) {
       sessionDrafts.current.clear()
       draftDevice.current = snapshot.device.id
@@ -323,7 +325,7 @@ export function useSessionController({
       sessionDrafts.current.clearPrivate()
       if (privateDraftId.current !== null && privateDraftId.current === inputId) submission.setDraft('')
     }
-  }, [snapshot.device.id, privateVisible, access.scopes.has('view')])
+  }, [snapshot.device.id, privateVisible, access.scopes.has('view'), access.scopes.has('run')])
   const choice = submission.choice
   const [sessionMentions, setSessionMentions] = useState<FileMention[]>([])
   const [newMentions, setNewMentions] = useState<FileMention[]>([])

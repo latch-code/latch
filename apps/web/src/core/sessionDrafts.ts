@@ -1,5 +1,7 @@
 import { looksSecret } from '@latch/protocol'
 import { forgetSlashHistory } from './slashHistory.ts'
+import { forgetAgentCreations } from './agentCreation.ts'
+import { storageDeviceCurrent } from './deviceStorageScope.ts'
 
 interface Draft {
   text: string
@@ -52,8 +54,9 @@ export function browserDraftStorage(origin: string, deviceId: string): DraftStor
   const key = draftsKey(origin, deviceId)
   return {
     marker: () => localStorage.getItem(forgottenKey(origin)),
-    read: () => localStorage.getItem(key),
+    read: () => (storageDeviceCurrent(origin, deviceId) ? localStorage.getItem(key) : null),
     write: value => {
+      if (!storageDeviceCurrent(origin, deviceId)) throw new Error('Draft storage belongs to another device')
       if (value === null) localStorage.removeItem(key)
       else localStorage.setItem(key, value)
     },
@@ -70,6 +73,7 @@ let forgotten = 0
  */
 export function forgetStoredDrafts(origin: string, keep?: string): void {
   forgetSlashHistory(origin, keep)
+  forgetAgentCreations(origin, keep)
   if (keep === undefined) forgotten++
   try {
     if (keep === undefined) localStorage.setItem(forgottenKey(origin), `${Date.now()}.${Math.random().toString(36).slice(2)}`)

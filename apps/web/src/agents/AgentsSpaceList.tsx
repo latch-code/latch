@@ -8,7 +8,7 @@ import { relativeTime } from '../format.ts'
 import { delegationRows, rowStatus, RECENT_DELEGATIONS } from '../sessions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
-import { agentActivity, GENERAL_NAME, readsAgents } from './model.ts'
+import { agentActivity, agentLiveWord, GENERAL_NAME, readsAgents } from './model.ts'
 import { ownerName, topicOwner } from './chat.ts'
 import { ActivityWord, LockedAgents } from './parts.tsx'
 
@@ -25,7 +25,7 @@ function AgentWord({ shell, agent, frozen }: { shell: ShellState; agent: CustomA
         不可用
       </StatusWord>
     )
-  return <ActivityWord state={state} />
+  return <ActivityWord state={state} live={agentLiveWord(shell.snapshot, agent.id)} />
 }
 
 /**
@@ -249,6 +249,7 @@ function Delegation({
           className="space-delegation-status"
           status={status}
           live={task.live}
+          person
           inWaitingShelf={false}
           time={relativeTime(task.updatedAt, new Date(now))}
           dateTime={task.updatedAt}

@@ -10,14 +10,11 @@ import {
   delegationChoice,
   delegationSubmission,
   draftOf,
-  draftProblem,
   dutyLine,
-  emptyDraft,
   normalizedDraft,
   patchOf,
   rebaseDraft,
   saveWaits,
-  runsWith,
   scheduleWords,
   sessionAgent,
   agentActivity,
@@ -90,16 +87,10 @@ describe('我的 Agent model', () => {
     expect(agentHarnesses(offered)).toEqual([])
   })
 
-  it('says the duty, how it runs and where it works in one line each', () => {
+  it('says the duty and where it works in one line each', () => {
     expect(dutyLine({ description: '  一页摘要\n多余', instructions: 'x' })).toBe('一页摘要')
     expect(dutyLine({ description: '', instructions: '\n  查资料  \n写摘要' })).toBe('查资料')
     expect(dutyLine({})).toBe('')
-    expect(runsWith(catalog(), { harnessId: 'standard', model: { providerId: 'deepseek', model: 'deepseek-chat' } })).toBe(
-      'Latch 内置 · deepseek-chat',
-    )
-    expect(runsWith(catalog(), { harnessId: 'standard' })).toBe('Latch 内置 · 默认模型')
-    expect(runsWith(catalog(), { harnessId: 'codex', model: { providerId: 'deepseek', model: 'x' } })).toBe('Codex')
-    expect(runsWith(catalog(), { harnessId: 'gone' })).toBe('gone · 默认模型')
     expect(worksIn(catalog(), 'notes')).toBe('notes')
     expect(worksIn(catalog(), undefined)).toBe('默认文件夹')
     expect(worksIn(catalog({ sessionFolders: true }), 'default')).toBe('各自的文件夹')
@@ -170,19 +161,15 @@ describe('我的 Agent model', () => {
     expect(patchOf(base, { ...base, skills: ['p:s'] })).toEqual({ skills: ['p:s'] })
   })
 
-  it('keeps a model only on a Harness that runs on Latch’s models, and checks the form', () => {
+  it('keeps a model only on a Harness that runs on Latch’s models', () => {
     const draft = {
-      ...emptyDraft(catalog()),
+      ...draftOf(detail()),
       name: '  周报 ',
       harnessId: 'codex',
       model: { providerId: 'deepseek', model: 'deepseek-chat' },
     }
     expect(normalizedDraft(catalog(), draft)).not.toHaveProperty('model')
     expect(normalizedDraft(catalog(), draft).name).toBe('周报')
-    expect(draftProblem(catalog(), { ...draft, name: ' ' })).toBe('先填名称')
-    expect(draftProblem(catalog(), { ...draft, harnessId: 'plain' })).toBe('这个 Harness 现在不能运行 Agent')
-    expect(draftProblem(catalog(), draft)).toBeUndefined()
-    expect(emptyDraft(catalog())).toMatchObject({ harnessId: 'standard', mode: 'agent', skills: [] })
     expect(delegationMode({ modes: ['chat'] }, 'agent')).toBe('chat')
     expect(delegationMode({ modes: ['chat', 'agent'] }, 'agent')).toBe('agent')
   })

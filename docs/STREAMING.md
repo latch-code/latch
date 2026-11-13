@@ -109,6 +109,8 @@ Host 从启动起计数自己发出的字节（[traffic.ts](../apps/host/src/tra
 
 源码：[useHarness.ts](../apps/web/src/core/useHarness.ts)、[eventStream.ts](../apps/web/src/core/eventStream.ts)、[credentials.ts](../apps/web/src/core/credentials.ts)、[api.ts](../apps/web/src/core/api.ts)、[projection.ts](../apps/web/src/core/projection.ts)。
 
+创建 Agent 的未知请求独立于消息草稿，沿用创建控制器与原请求编号；跨窗口先取得 Web Lock，再核对同一记录。创建、草稿与 Slash 最近项共用当前设备归属，换设备后旧句柄不能重新落盘。创建正文的私有权限、敏感内容只留内存、存储故障与明确放弃规则见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#创建的待确认请求)。
+
 ### 基于 fetch 的事件流
 
 客户端不使用 `EventSource`：`eventStream.ts` 用 `fetch(url, { credentials: 'same-origin', cache: 'no-store' })` 读取同一个 `text/event-stream` 响应，自带解析器处理 CR、LF、CRLF（包括跨数据块的行尾）、多行 `data`、`event`、`id`、注释与字节序标记。这样能看到 HTTP 状态：`401` 不会被当作“断线后无限重试”，而是交给认证处理；桌面端的事件流也经过主进程转发，与其他 API 请求一样。

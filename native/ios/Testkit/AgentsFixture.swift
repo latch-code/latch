@@ -9,8 +9,12 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     let agents = snapshot["customAgents"].array
     let choices = agents.map { PhoneAgents.choice(catalog, agent: $0) }
     var fields: [Any] = []
+    var changedHarness: [Any] = []
     for (agent, choice) in zip(agents, choices) {
         fields.append((try? fieldValue(.object(PhoneAgents.fields(catalog, agent: agent, choice: choice, prompt: "看一下")))) ?? NSNull())
+        var changed = choice
+        changed.harnessId = choice.harnessId == "standard" ? "codex" : "standard"
+        changedHarness.append((try? fieldValue(.object(PhoneAgents.fields(catalog, agent: agent, choice: changed, prompt: "看一下")))) ?? NSNull())
     }
     let memoryOwner = value["memoryOwner"].string ?? ""
     func write(_ make: () throws -> NativePendingWrite) -> Any {
@@ -21,6 +25,7 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     }
     let memory = value["memory"]
     return [
+        "changedHarness": changedHarness,
         "tabs": value["snapshots"].array.map { PhoneTabs.entries($0).map(\.label) },
         "dots": value["snapshots"].array.map { [PhoneTabs.codeDot($0, current: .agents), PhoneTabs.codeDot($0, current: .code)] },
         "agentDots": value["snapshots"].array.map { [PhoneTabs.agentsDot($0, current: .code), PhoneTabs.agentsDot($0, current: .agents)] },

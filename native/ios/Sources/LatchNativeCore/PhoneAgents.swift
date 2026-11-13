@@ -252,9 +252,14 @@ public enum PhoneAgents {
         let wanted = agentMode ?? "agent"
         return modes.isEmpty || modes.contains(wanted) ? wanted : modes[0]
     }
-    /** A new topic's start request: the Agent, then what was picked for this session. */
+    /**
+     * A new topic's start request: the Agent, then what was picked for this session. The Harness is always the Agent's own:
+     * the Host refuses another (`agent-harness-fixed`).
+     */
     public static func fields(_ catalog: NativeJSON, agent: NativeJSON, choice: PhoneStartChoice, prompt: String) throws -> [String: NativeJSON] {
-        guard let id = agent["id"].string, validId(id), id != generalId, let harnessId = choice.harnessId else { throw NativeFailure.invalidRecord }
+        guard let id = agent["id"].string, validId(id), id != generalId, let harnessId = agent["harnessId"].string, choice.harnessId != nil else {
+            throw NativeFailure.invalidRecord
+        }
         var result: [String: NativeJSON] = ["prompt": .string(prompt), "customAgentId": .string(id), "harnessId": .string(harnessId),
             "mode": .string(mode(catalog, harnessId: harnessId, agentMode: agent["mode"].string))]
         // The folder as picked, as the web sends it: the Agent's project, another one, or the start folder ('default'), which

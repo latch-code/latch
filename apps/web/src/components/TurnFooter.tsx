@@ -52,12 +52,25 @@ function routedSource(route: TurnRoute): string[] {
  * press away; with no tokens to show, the requests are a fact of their own. How it ended, when it did not simply finish,
  * has its own line that stays. Each is a segment of its own, so the dots between them are spaced alike.
  */
-function SettledFacts({ turn, outcome, context, worked }: { turn: Turn; outcome: TurnOutcome; context?: number; worked: boolean }) {
+function SettledFacts({
+  turn,
+  outcome,
+  context,
+  worked,
+  person,
+}: {
+  turn: Turn
+  outcome: TurnOutcome
+  context?: number
+  worked: boolean
+  /** A helper's turn: when and how long only; tokens, requests and the context are the model's, kept to 设置 › 用量. */
+  person: boolean
+}) {
   const times = turnTimes(turn)
-  const route = turnRoute(turn)
+  const route = person ? undefined : turnRoute(turn)
   // Steps the harness reported come first; a turn through Latch without them has the tokens its replies reported.
-  const stepUsage = turnUsage(turn)
-  const usage = stepUsage ?? route?.usage
+  const stepUsage = person ? undefined : turnUsage(turn)
+  const usage = person ? undefined : (stepUsage ?? route?.usage)
   const routedUsage = !stepUsage && route?.usage ? route : undefined
   const requests = route ? [`这一轮经 Latch ${route.requests} 次请求`, ...route.models.map(modelLine)] : []
   const incomplete = routedUsage && (routedUsage.unmeasured > 0 || routedUsage.open > 0)
@@ -102,7 +115,7 @@ function SettledFacts({ turn, outcome, context, worked }: { turn: Turn; outcome:
         </Popover>
       )}
       {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>经 Latch {route.requests} 次请求</Fact>}
-      {!usage && context !== undefined && <Fact>上下文 {tokenAmount(context)}</Fact>}
+      {!usage && !person && context !== undefined && <Fact>上下文 {tokenAmount(context)}</Fact>}
     </>
   )
 }
@@ -126,12 +139,15 @@ export function TurnFooter({
   pinned = false,
   context,
   worked = false,
+  person = false,
   onRetry,
   actions,
 }: {
   turn: Turn
   live?: boolean
   outcome?: TurnOutcome
+  /** A helper's turn: no tokens. */
+  person?: boolean
   /** The turn shows its 「已工作 …」 fold, which says how long it worked. */
   worked?: boolean
   /** Always visible: the newest turn on a touch screen, or one the person tapped. */
@@ -148,7 +164,7 @@ export function TurnFooter({
       <div className="turn-footer-row">
         {!live && (
           <span className="turn-facts">
-            <SettledFacts turn={turn} outcome={outcome} context={context} worked={worked} />
+            <SettledFacts turn={turn} outcome={outcome} context={context} worked={worked} person={person} />
           </span>
         )}
         {text && <CopyButton text={text} label="复制" size="xs" />}

@@ -34,7 +34,7 @@ async function openProfile(page: Page, width: number) {
       .getByRole('button', { name: /晨报助手/u })
       .click()
   } else if (width < 1024) {
-    await page.locator('.titlebar').getByRole('button', { name: '我的 Agent', exact: true }).click()
+    await page.getByRole('button', { name: '我的 Agent', exact: true }).filter({ visible: true }).first().click()
     await page
       .getByRole('list', { name: '我的 Agent', exact: true })
       .getByRole('button', { name: /晨报助手/u })
@@ -176,10 +176,12 @@ it('「电脑」 shows the computer as the Host recorded it, a missed time with 
 
     // 职责模板 only fill the text of a new Agent; nothing is created until 创建.
     await page.getByRole('navigation', { name: '我的 Agent', exact: true }).getByRole('button', { name: '新建 Agent' }).first().click()
+    await page.getByRole('list', { name: '候选' }).getByRole('button').first().click()
     const form = page.getByRole('form', { name: '新建 Agent' })
     await form.getByRole('group', { name: '从模板开始' }).getByRole('button', { name: '周报', exact: true }).click()
-    await expect.poll(() => form.getByRole('textbox', { name: '名称' }).inputValue()).toBe('周报')
+    await expect.poll(() => form.getByRole('textbox', { name: '名字' }).inputValue()).toBe('周报')
     await expect.poll(() => form.getByRole('textbox', { name: '职责' }).inputValue()).toBe('把这周做过的事写成一页周报')
+    await form.getByRole('button', { name: '多说几句' }).click()
     await expect.poll(() => form.getByRole('textbox', { name: '指令' }).inputValue()).toMatch(/^根据我给你的记录/u)
     await still(page)
     await page.screenshot({ path: `${OUT}/templates-1440.png` })
