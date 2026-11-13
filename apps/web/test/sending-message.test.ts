@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest'
 import type { AppSnapshot, TaskDetail } from '@latch/protocol'
-import { ApiError, ApiTimeoutError, fromInput, readPending, writePending, type PendingSubmission } from '../src/core/api.ts'
+import { ApiError, ApiTimeoutError, NoAnswerError, fromInput, readPending, writePending, type PendingSubmission } from '../src/core/api.ts'
 import {
   abandonSubmission,
   deliveredSubmission,
@@ -106,7 +106,7 @@ test('an uncertain retry keeps the submission and says why; a definitive answer 
   expect(unconfirmedReason(new ApiTimeoutError())).toBe(new ApiTimeoutError().message)
   expect(unconfirmedReason(new ApiError(502, 'harness-unavailable', 'Harness 没有答复。'))).toBe('Harness 没有答复。')
   expect(unconfirmedReason(new ApiError(408, 'timeout', '请求超时。'))).toBe('请求超时。')
-  expect(unconfirmedReason(new TypeError('Failed to fetch'))).toBe('连接暂时不可用，请检查网络后重试。')
+  expect(unconfirmedReason(new NoAnswerError())).toBe('连不上 Mac 上的 Latch')
   expect(unconfirmedReason(new ApiError(503, 'agent-busy', '忙'))).toBeNull()
   expect(unconfirmedReason(new ApiError(409, 'request-conflict', '冲突'))).toBeNull()
 })

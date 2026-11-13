@@ -18,7 +18,7 @@ import { useKnownFiles } from './components/FileReferences.tsx'
 import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
 import { codePathCandidate, linkTarget, namesPath, referenceText, urlScheme } from './fileReference.ts'
 import { exceedsMarkdownNesting, MAX_TREE_DEPTH, treeDepth } from './markdownNesting.ts'
-import { ICON_STROKE, CheckGlyph, ChevronDownGlyph, ChevronUpGlyph, CopyGlyph } from '@latch/ui'
+import { ICON_STROKE, CheckGlyph, ChevronDownGlyph, ChevronUpGlyph, CopyGlyph, writeClipboard } from '@latch/ui'
 
 export interface MarkdownFiles {
   path?: string
@@ -143,8 +143,7 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
     setCopyResult(null)
     clearTimeout(resetTimer.current)
     try {
-      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable')
-      await navigator.clipboard.writeText(code)
+      await writeClipboard(code)
       if (!mounted.current) return
       setCopyResult({ status: 'copied', value: code })
       resetTimer.current = setTimeout(() => setCopyResult(null), 2500)

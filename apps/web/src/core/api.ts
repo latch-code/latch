@@ -27,6 +27,17 @@ export class ApiTimeoutError extends Error {
 }
 
 /**
+ * A request that got no answer at all: fetch itself failed (the Host stopped, the network is down, or the desktop app's
+ * proxy gave up on the connection). Unlike a bug in the page, this really is the connection.
+ */
+export class NoAnswerError extends Error {
+  constructor(options?: ErrorOptions) {
+    super('No answer', options)
+    this.name = 'NoAnswerError'
+  }
+}
+
+/**
  * A failure decided in this page with a message for the user, such as a local
  * confirmation that was denied. `definitive`: the request was not executed.
  * `handled`: the message is already on screen (e.g. in the confirmation dialog).
@@ -45,6 +56,19 @@ export class ClientError extends Error {
   }
   get handled(): boolean {
     return this.options.handled ?? false
+  }
+}
+
+/**
+ * Text written for the person, thrown by the page itself (a refusal, an invalid answer, a dialog's own reason): shown as
+ * it is, never as 「页面出错了」. Whether a write behind it ran stays as unknown as for any error that is not the Host's.
+ * `pnpm lint` keeps `new Error` in apps/web/src to ASCII literals (scripts/oxlint-rules.ts).
+ */
+export class MessageError extends ClientError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 'message', { definitive: false })
+    this.name = 'MessageError'
+    if (options && 'cause' in options) this.cause = options.cause
   }
 }
 
@@ -113,28 +137,38 @@ async function failureOf(response: Response): Promise<ApiError> {
 /** Cookie-authenticated API (the desktop shell adds its own header). Credentials never enter a URL or browser storage. */
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const controller = new AbortController()
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (options.body !== undefined) headers['Content-Type'] = 'application/json'
+  if (options.confirmation !== undefined) headers['x-latch-confirmation'] = options.confirmation
+  if (options.range) headers.Range = `bytes=${options.range.start}-${options.range.end ?? ''}`
+  if (options.ifMatch) headers['if-match'] = options.ifMatch
+  // Checked before anything is sent, so what the page got wrong (a header that is not Latin-1, a body that cannot be
+  // serialised) throws here as the page's own error, never as a request without an answer.
+  // The constructor rejects any value fetch would, before anything is sent.
+  // oxlint-disable-next-line no-new
+  new Headers(headers)
+  const init: RequestInit = {
+    method: options.method ?? 'GET',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers,
+    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+    signal: controller.signal,
+  }
   const forwardAbort = () => controller.abort(options.signal?.reason)
   if (options.signal?.aborted) forwardAbort()
   else options.signal?.addEventListener('abort', forwardAbort, { once: true })
   const timer = setTimeout(() => controller.abort(new ApiTimeoutError()), options.timeoutMs ?? 15_000)
   let failure: ApiError | undefined
+  // A throw from the caller's own onHeaders is the page's, not the connection's.
+  let inCaller = false
   try {
-    const headers: Record<string, string> = { Accept: 'application/json' }
-    if (options.body !== undefined) headers['Content-Type'] = 'application/json'
-    if (options.confirmation !== undefined) headers['x-latch-confirmation'] = options.confirmation
-    if (options.range) headers.Range = `bytes=${options.range.start}-${options.range.end ?? ''}`
-    if (options.ifMatch) headers['if-match'] = options.ifMatch
-    const response = await fetch(`/link/api/${path}`, {
-      method: options.method ?? 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      headers,
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      signal: controller.signal,
-    })
+    const response = await fetch(`/link/api/${path}`, init)
     if (!response.ok) failure = await failureOf(response)
     else {
+      inCaller = true
       options.onHeaders?.(response.headers)
+      inCaller = false
       if (response.status === 204 || options.discardBody) {
         void response.body?.cancel().catch(() => {})
         return undefined as T
@@ -143,6 +177,8 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     }
   } catch (error) {
     if (controller.signal.reason instanceof ApiTimeoutError) throw controller.signal.reason
+    // fetch, and reading a body, reject with a TypeError only for the network; the request or its answer never arrived.
+    if (error instanceof TypeError && !controller.signal.aborted && !inCaller) throw new NoAnswerError({ cause: error })
     throw error
   } finally {
     clearTimeout(timer)
@@ -263,10 +299,30 @@ export function fileBytes(
   })
 }
 
+/** The computer the page talks to, as `computerLabel` names it; the shell sets it once the snapshot says. */
+let computer = 'Mac'
+export function setErrorComputer(label: string): void {
+  computer = label
+}
+
+const logged = new WeakSet<object>()
+
+/**
+ * What a failure says, never blaming the network for anything but a request without an answer: the Host's and the
+ * page's own messages as they are, 「连不上 … 上的 Latch」 for no answer, and for anything else (a bug in this page)
+ * its name, with the stack in the console, since nothing is reported anywhere.
+ */
 export function errorMessage(error: unknown): string {
-  return error instanceof ApiError || error instanceof ApiTimeoutError || error instanceof ClientError
-    ? error.message
-    : '连接暂时不可用，请检查网络后重试。'
+  if (error instanceof ApiError || error instanceof ApiTimeoutError || error instanceof ClientError) return error.message
+  if (error instanceof NoAnswerError) return `连不上 ${computer} 上的 Latch`
+  const name = error instanceof Error || error instanceof DOMException ? error.name : ''
+  if (name === 'ClipboardError') return (error as Error).message
+  if (name === 'AbortError') return '已取消'
+  if (error !== null && typeof error === 'object' && !logged.has(error)) {
+    logged.add(error)
+    console.error('[Latch] 页面出错', error)
+  } else if (error === null || typeof error !== 'object') console.error('[Latch] 页面出错', error)
+  return `页面出错了（${/^[A-Za-z][A-Za-z0-9_]{0,39}$/u.test(name) ? name : 'Error'}）· 刷新`
 }
 
 /**

@@ -20,6 +20,7 @@ import { executionBuildRevision } from './execution-build.ts'
 import { GENERAL_AGENT_ID, type AgentExecutionContext, type AutomationConfig } from '@latch/protocol'
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
 import { readAppFrame } from './app-frame.ts'
+import { readUiBuild } from './ui-build.ts'
 import { PromptQueues, type QueueActor } from './prompt-queues.ts'
 import { Questions } from './questions.ts'
 import { createQuestionsPlugin } from './plugins/tools/questions/index.ts'
@@ -1115,6 +1116,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     log(text)
   }
   const startedAt = new Date().toISOString()
+  const uiBuild = await readUiBuild(resolve(options.uiDir))
   const dataDir = resolve(options.dataDir)
   const workspaceRoot = resolve(options.workspaceRoot)
   await prepareDataDir(dataDir)
@@ -8107,6 +8109,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           catalog: await catalog(caller),
           ...agentSummaries(caller, tasks),
           version: LATCH_VERSION,
+          ...(uiBuild ? { build: uiBuild } : {}),
           hostTime: hostTime(),
         }
         recheck(caller, 'view')

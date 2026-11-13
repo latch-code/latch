@@ -19,7 +19,7 @@ import {
   EditGlyph,
   RefreshGlyph,
 } from '@latch/ui'
-import { api, ApiError, errorMessage, fileBytes } from '../core/api.ts'
+import { api, ApiError, errorMessage, fileBytes, MessageError } from '../core/api.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
 import { editorLabel, openInEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { describeFailure, fileRefusalText } from '../core/securityCopy.ts'
@@ -132,7 +132,7 @@ export function FilePreview({
           method: 'POST',
           ...(signal ? { signal } : {}),
         })
-        if (!isFileMetadata(result.file) || result.file.source !== 'attachment') throw new Error('附件响应无效。')
+        if (!isFileMetadata(result.file) || result.file.source !== 'attachment') throw new MessageError('附件响应无效。')
         if (signal?.aborted) return
         setFile(result.file)
         resolved.current(result.file)
@@ -152,7 +152,7 @@ export function FilePreview({
       })
       const answer = result.files[0]
       if (!answer || answer.status !== 'ok' || !isFileMetadata(answer.file))
-        throw new Error(answer?.code ? describeFailure(403, answer.code, '无法读取这个文件。') : '无法读取这个文件。')
+        throw new MessageError(answer?.code ? describeFailure(403, answer.code, '无法读取这个文件。') : '无法读取这个文件。')
       if (signal?.aborted) return
       setFile(answer.file)
       if (announce) {

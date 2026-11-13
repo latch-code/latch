@@ -20,7 +20,7 @@ import {
   DevicesGlyph,
   ShieldGlyph,
 } from '@latch/ui'
-import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
+import { api, inlineError, isUncertain, newRequestId, type ApiOptions, MessageError } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
@@ -199,7 +199,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
     if (tab === 'manifest') {
       try {
         bundle = readPluginBundle(JSON.stringify({ manifest: JSON.parse(manifestText), files: bundle.files }))
-        if (bundle.manifest.id !== editor.bundle.manifest.id) throw new Error('插件标识不能在高级编辑中更改。')
+        if (bundle.manifest.id !== editor.bundle.manifest.id) throw new MessageError('插件标识不能在高级编辑中更改。')
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : '插件声明格式无效。')
         return
@@ -400,7 +400,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                   if (tab === 'manifest') {
                     try {
                       const next = readPluginBundle(JSON.stringify({ manifest: JSON.parse(manifestText), files: editor.bundle.files }))
-                      if (next.manifest.id !== editor.bundle.manifest.id) throw new Error('插件标识不能更改。')
+                      if (next.manifest.id !== editor.bundle.manifest.id) throw new MessageError('插件标识不能更改。')
                       editBundle(next)
                     } catch (cause) {
                       setError(cause instanceof Error ? cause.message : '声明格式无效。')

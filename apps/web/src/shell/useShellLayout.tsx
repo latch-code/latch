@@ -39,13 +39,14 @@ import { openAgent, topicOwner, type ProfileSection } from '../agents/chat.ts'
 import type { SchedulePrefill } from '../agents/activity.ts'
 import { useSessionHandoffs } from '../handoffs/useHandoffs.ts'
 import { writeFailure } from '../handoffs/model.ts'
-import { api, newRequestId } from '../core/api.ts'
+import { api, newRequestId, setErrorComputer } from '../core/api.ts'
 import type { Handoff } from '@latch/protocol'
 
 import type { PaletteLevel } from '../palette/model.ts'
 import { projectOf, listedSessions, readFolded, shelvesKey, steppedSession, type SessionFilter } from '../sessions.ts'
 import { connectionWords, hostNoticeCopy } from '../core/hostState.ts'
 import { computerLabel } from '../core/securityCopy.ts'
+import { hostIsOlder, oldHostWords } from '../core/build.ts'
 import { hostLine, useShellLifecycle } from '../core/shellLifecycle.ts'
 import { currentShell, shellBrowser, shellFolders } from '../core/shell.ts'
 import { useDrawer } from '../hooks/useDrawer.ts'
@@ -1177,6 +1178,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const shellHost = lifecycle.view?.host
   const hostProblem = shellHost && shellHost.status !== 'running' ? hostLine(shellHost) : null
   const computer = computerLabel(access.local, snapshot.hostName)
+  useEffect(() => {
+    setErrorComputer(computer)
+  }, [computer])
+  // The Host started before this page was built: it may lack what the page calls (core/build.ts).
+  const oldHost = hostIsOlder(snapshot.build) ? oldHostWords(computer) : null
   const notice = harness.hostNotice ? hostNoticeCopy(harness.hostNotice, computer) : null
   // The title and 重试 say it; only a reason of the Host's own, or how it comes back, adds a line.
   const { title: connectionTitle, text: connectionText } = connectionWords(connection, notice, hostProblem, harness.failure, computer)
@@ -1486,6 +1492,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     notice,
     connectionTitle,
     connectionText,
+    oldHost,
     devMode,
     level,
     browseFiles,

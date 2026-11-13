@@ -4,7 +4,7 @@ import type { AppSnapshot, Device } from '@latch/protocol'
 import { InlineNotice, Menu, Toast } from '@latch/ui'
 import { ConfirmDialog } from '../../components/overlays.tsx'
 import { VisibleText } from '../../components/VisibleText.tsx'
-import { api, errorMessage } from '../../core/api.ts'
+import { api, errorMessage, MessageError } from '../../core/api.ts'
 import type { DeviceAccess } from '../../core/permissions.ts'
 import { computerName, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
 import { currentShell } from '../../core/shell.ts'
@@ -209,7 +209,7 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
             try {
               await api(self ? 'devices/current' : `devices/${encodeURIComponent(removing.id)}`, { method: 'DELETE' })
             } catch (cause) {
-              throw new Error(errorMessage(cause), { cause })
+              throw new MessageError(errorMessage(cause), { cause })
             }
             setRemovedName(deviceLabel(removing.name))
             if (chosen === removing.id) setChosen(null)

@@ -9,7 +9,7 @@ import {
   type ProviderPreset,
   type ProviderSettings,
 } from '@latch/protocol'
-import { api, errorMessage, inlineError } from '../core/api.ts'
+import { api, errorMessage, inlineError, MessageError } from '../core/api.ts'
 import { keepWhileAway } from '../core/blocking.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { hostView } from '../core/permissions.ts'
@@ -1458,7 +1458,7 @@ function ProviderPage({
           }}
           onConfirm={async () => {
             const text = await update({ apiKey: null })
-            if (text) throw new Error(text)
+            if (text) throw new MessageError(text)
           }}
         />
       )}
@@ -1475,7 +1475,7 @@ function ProviderPage({
             try {
               await api(`providers/${encodeURIComponent(provider.id)}`, { method: 'DELETE' })
             } catch (cause) {
-              throw new Error(errorMessage(cause), { cause })
+              throw new MessageError(errorMessage(cause), { cause })
             }
             onDeleted()
           }}
@@ -1901,7 +1901,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
             try {
               await api(`providers/${encodeURIComponent(removing.id)}`, { method: 'DELETE' })
             } catch (cause) {
-              throw new Error(errorMessage(cause), { cause })
+              throw new MessageError(errorMessage(cause), { cause })
             }
             deleted()
           }}

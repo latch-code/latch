@@ -31,6 +31,7 @@ export {
   type PickerOption,
   type ValuePickerProps,
 } from './menu.tsx'
+export { ClipboardError, writeClipboard } from './clipboard.ts'
 export { CopyButton, useCopy } from './copy.tsx'
 export { Group, Row } from './group.tsx'
 export { Hint, InlineNotice, Toast, type NoticeTone, type ToastTone } from './notice.tsx'

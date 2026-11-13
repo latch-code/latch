@@ -6,6 +6,7 @@ import type { FileMention } from '@latch/protocol'
 import { useAttachments } from '../hooks/useAttachments.ts'
 import { projectScopeCaption } from '../projects.tsx'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { writeClipboard } from '@latch/ui'
 import type { Approval, TaskDetail, TaskSummary } from '@latch/protocol'
 import { api, ApiError, errorMessage, fromInput, inlineError, isUncertain } from '../core/api.ts'
 import { choiceKind, DecisionRequests, settledOutcome } from '../core/approvalDecision.ts'
@@ -871,7 +872,7 @@ export function useSessionController({
   const copyTask = useStableCallback(async (task: TaskSummary) => {
     try {
       const data = task.id === current?.summary.id ? current : await api<TaskDetail>(`tasks/${encodeURIComponent(task.id)}`)
-      await navigator.clipboard.writeText(transcriptMarkdown(data))
+      await writeClipboard(transcriptMarkdown(data))
       setToast({ text: '已复制 Markdown', tone: 'ok' })
     } catch (cause) {
       setToast({ text: errorMessage(cause), tone: 'error' })

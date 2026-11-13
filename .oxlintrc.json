@@ -4,6 +4,8 @@
   // the globals and built-in modules each environment lacks. Every other rule is a warning for now: `pnpm lint`
   // reports those findings without failing.
   "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "react"],
+  // Latch's own rules (scripts/oxlint-rules.ts), turned on per directory below.
+  "jsPlugins": ["./scripts/oxlint-rules.ts"],
   "categories": { "correctness": "warn", "suspicious": "warn" },
   // Type-aware rules run through oxlint-tsgolint, which reads the environments of tsconfig.json.
   "options": { "typeAware": true },
@@ -113,6 +115,13 @@
     ]
   },
   "overrides": [
+    {
+      "files": ["apps/web/src/**"],
+      "rules": {
+        // Text for the person is a MessageError; a plain Error there would read as 「页面出错了」.
+        "latch/page-error-text": "error"
+      }
+    },
     {
       "files": ["apps/web/src/**", "packages/ui/src/**", "packages/app-sdk/src/**"],
       "rules": {

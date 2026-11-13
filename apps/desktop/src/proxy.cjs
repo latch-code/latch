@@ -199,6 +199,52 @@ function isAppUrl(raw, home = LOCAL_HOME) {
   return url.protocol === 'latch:' && url.hostname === home && !url.port && !url.username && !url.password
 }
 
+/** How long after a native press another computer's page may still write the clipboard. */
+const CLIPBOARD_GESTURE_MS = 5000
+
+/**
+ * The one browser permission an app page gets: `clipboard-sanitized-write`, which the async Clipboard API
+ * (`navigator.clipboard.writeText`) asks the session's request and check handlers for. Only the top-level page of a
+ * window on its own computer; never `clipboard-read`, a subframe, a plugin page or a document frame. These handlers
+ * govern only that API: `execCommand('copy')` after a press is Chromium's own and does not reach them.
+ */
+function allowsAppPermission(permission, details, pageUrl, home = LOCAL_HOME) {
+  return (
+    permission === 'clipboard-sanitized-write'
+    && details?.isMainFrame === true
+    && isAppUrl(details.requestingUrl ?? '', home)
+    && isAppUrl(pageUrl ?? '', home)
+  )
+}
+
+/**
+ * The request and check handlers for a window's session; everything but `allowsAppPermission` is refused. The asking
+ * contents must be the window's own page (`fromWebContents`), of this computer (`homeOf`), not a preview tab
+ * (`isPreviewTab`). Another computer's page (`h-<hostId>`) also needs a native press within five seconds (`gestureOf`,
+ * not consumed); this Mac's own page does not.
+ * @param {string} home
+ * @param {{
+ *   fromWebContents(contents: any): { webContents: any } | null,
+ *   homeOf(contents: any): string,
+ *   isPreviewTab(contents: any): boolean,
+ *   gestureOf(contents: any): { recent(ms: number): boolean } | undefined,
+ * }} window
+ */
+function appPermissionHandlers(home, window) {
+  const pageOf = contents =>
+    Boolean(contents)
+    && !contents.isDestroyed()
+    && !window.isPreviewTab(contents)
+    && window.homeOf(contents) === home
+    && window.fromWebContents(contents)?.webContents === contents
+    && (home === LOCAL_HOME || window.gestureOf(contents)?.recent(CLIPBOARD_GESTURE_MS) === true)
+  const allow = (contents, permission, details) => pageOf(contents) && allowsAppPermission(permission, details, contents.getURL(), home)
+  return {
+    request: (contents, permission, callback, details) => callback(allow(contents, permission, details)),
+    check: (contents, permission, _origin, details) => allow(contents, permission, details),
+  }
+}
+
 /**
  * Requested web/mail links use the system handler; unprompted requests are HTTPS-only with a confirmation.
  * The serialized URL is printable ASCII, without credentials or privileged system protocols.
@@ -219,22 +265,34 @@ function externalUrl(raw, userGesture = false) {
 /** Native input is observed in main; document scripts cannot mint or reuse this one-shot allowance. */
 function createExternalGesture(now = () => performance.now()) {
   let until = 0
+  let last = -Infinity
   return {
     /** @param {Electron.MouseInputEvent} input */
     mouse(input) {
-      if (input.type === 'mouseUp' && (input.button === 'left' || input.button === 'middle')) until = now() + 1000
+      if (input.type === 'mouseUp' && (input.button === 'left' || input.button === 'middle')) {
+        last = now()
+        until = last + 1000
+      }
     },
     /** @param {Electron.Input} input */
     key(input) {
-      if (input.type === 'keyDown' && !input.isAutoRepeat && ['Enter', ' ', 'Space'].includes(input.key)) until = now() + 1000
+      if (input.type === 'keyDown' && !input.isAutoRepeat && ['Enter', ' ', 'Space'].includes(input.key)) {
+        last = now()
+        until = last + 1000
+      }
     },
     take() {
       const allowed = until > now()
       until = 0
       return allowed
     },
+    /** Whether a press came within `ms`, without using it up (a clipboard write does not spend a link's gesture). */
+    recent(ms) {
+      return now() - last <= ms
+    },
     clear() {
       until = 0
+      last = -Infinity
     },
   }
 }
@@ -1328,6 +1386,7 @@ module.exports = {
   appFrameCsp,
   previewFrameCsp,
   isAppUrl,
+  appPermissionHandlers,
   externalUrl,
   externalLinkDialog,
   createDialogGate,

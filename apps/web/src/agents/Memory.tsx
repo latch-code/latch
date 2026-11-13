@@ -20,6 +20,7 @@ import { TakesEffect, WriteNotice } from './AgentForm.tsx'
 import { ProposalRow } from './ProposalRow.tsx'
 import { originWords } from './proposals.ts'
 import { writeFor, type AgentWrites } from './useAgentWrites.ts'
+import { MessageError } from '../core/api.ts'
 
 /** A memory saved from a proposal: who it came from, its topic (a link while the topic is listed) and when. */
 function MemorySource({
@@ -352,7 +353,7 @@ export function MemoryTab({
           }}
           onConfirm={async () => {
             const done = await writes.run(`memory:${deleting.id}`, `${base}/${deleting.id}`, 'DELETE', {})
-            if (done === undefined) throw new Error('没有删除，原因见页面上的说明。')
+            if (done === undefined) throw new MessageError('没有删除，原因见页面上的说明。')
           }}
         />
       )}

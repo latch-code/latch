@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { isFileMetadata, type FileMention, type Handoff, type HandoffCreate, type HandoffList, type HandoffSummary } from '@latch/protocol'
-import { api, fileBytes } from '../core/api.ts'
+import { api, fileBytes, MessageError } from '../core/api.ts'
 import { sha256Hex } from './model.ts'
 
 /** The Host hashes a file material whole and refuses larger ones. */
@@ -70,12 +70,12 @@ export async function fileHash(sessionId: string, file: FileMention, signal?: Ab
     { method: 'POST', body: { paths: [file.path], rootId: file.root }, ...(signal ? { signal } : {}) },
   )
   const answer = result.files[0]
-  if (!answer || answer.status !== 'ok' || !isFileMetadata(answer.file)) throw new Error('读不到这个文件')
+  if (!answer || answer.status !== 'ok' || !isFileMetadata(answer.file)) throw new MessageError('读不到这个文件')
   const meta = answer.file
-  if (meta.size > FILE_LIMIT) throw new Error('超过 4 MB')
-  if (meta.secret || meta.truncated || meta.size > meta.limit) throw new Error('这台设备读不到整个文件')
+  if (meta.size > FILE_LIMIT) throw new MessageError('超过 4 MB')
+  if (meta.secret || meta.truncated || meta.size > meta.limit) throw new MessageError('这台设备读不到整个文件')
   const bytes = await fileBytes(meta.handle, undefined, undefined, signal)
-  if (bytes.byteLength !== meta.size) throw new Error('文件在读取时变化了')
+  if (bytes.byteLength !== meta.size) throw new MessageError('文件在读取时变化了')
   return sha256Hex(bytes)
 }
 

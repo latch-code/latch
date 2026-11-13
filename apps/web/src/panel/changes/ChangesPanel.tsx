@@ -23,9 +23,10 @@ import {
   InfoGlyph,
   WarningGlyph,
   UndoGlyph,
+  writeClipboard,
 } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from '../../components/VisibleText.tsx'
-import { errorMessage } from '../../core/api.ts'
+import { errorMessage, MessageError } from '../../core/api.ts'
 import { computerName, SETUP_COPY } from '../../core/securityCopy.ts'
 import { setPreference, usePreferences } from '../../preferences.ts'
 import { ChangesFile } from './ChangesFile.tsx'
@@ -600,10 +601,10 @@ function ReadableChanges({
         { root: file.root, path: file.path },
         new AbortController().signal,
       )
-      if (meta.actions.editor !== true) throw new Error(fileRefusalText(meta.refused?.editor ?? 'file-type-refused'))
+      if (meta.actions.editor !== true) throw new MessageError(fileRefusalText(meta.refused?.editor ?? 'file-type-refused'))
       const result = await openInEditor(summary.id, { handle: meta.handle })
-      if (result.status === 'refused' || result.status === 'failed') throw new Error(fileRefusalText(result.code))
-      if (result.status === 'busy') throw new Error('上一个文件操作还没有完成，请稍后重试。')
+      if (result.status === 'refused' || result.status === 'failed') throw new MessageError(fileRefusalText(result.code))
+      if (result.status === 'busy') throw new MessageError('上一个文件操作还没有完成，请稍后重试。')
     } catch (cause) {
       setEditorError(errorMessage(cause))
     }
@@ -727,7 +728,7 @@ function ReadableChanges({
           onToast(patch.omitted ? `这 ${patch.omitted} 个文件不能进入补丁` : '没有可以复制的改动')
           return
         }
-        await navigator.clipboard.writeText(patch.text)
+        await writeClipboard(patch.text)
         const left = patch.omitted ? `，${patch.omitted} 个文件没有进入补丁` : ''
         onToast(patch.truncated ? `已复制补丁的前一部分：补丁太大${left}` : `已复制补丁${left}`, 'ok')
       },

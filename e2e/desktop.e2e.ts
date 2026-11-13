@@ -1,6 +1,6 @@
 import { _electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer as createHttpServer, type Server } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { createServer, type Socket } from 'node:net'
@@ -1371,6 +1371,191 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     } finally {
       await application?.close()
       await counter.close()
+      await testHost.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('copies a reply from the message footer through the page’s own clipboard write', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-electron-copy-'))
+    // The page as just built beside a Host that started with an earlier build: the app offers to restart it.
+    const ui = join(root, 'web')
+    await cp(resolve('dist/web'), ui, { recursive: true })
+    await writeFile(join(ui, 'build.json'), JSON.stringify({ build: '20261107T080000Z-0a1b2c' }))
+    const testHost = await startTestHost({ demo: true, uiDir: ui, presenceMode: 'manual' })
+    const { host } = testHost
+    let application: ElectronApplication | undefined
+    let saved: string | undefined
+    try {
+      await writeHostState(testHost.dataDir, {
+        version: 2,
+        pid: process.pid,
+        hostId: host.hostId,
+        instanceId: host.instanceId,
+        socketPath: host.socketPath,
+        loopbackOrigin: host.loopbackOrigin,
+        tlsOrigin: null,
+        startedAt: new Date().toISOString(),
+        dataDir: testHost.dataDir,
+      })
+      await mkdir('test-results', { recursive: true })
+      application = await _electron.launch({
+        args: [
+          resolve('apps/desktop/src/main.cjs'),
+          `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
+          `--latch-user-data=${join(root, 'electron')}`,
+          '--use-mock-keychain',
+        ],
+        cwd: process.cwd(),
+        env: shellEnvironment(),
+        timeout: 30_000,
+      })
+      const page = await application.firstWindow()
+      page.setDefaultTimeout(20_000)
+      await enrollShell(page, testHost)
+      const oldHost = page.locator('.banner-region .ui-notice', { hasText: '这台 Mac 上的 Latch 还是旧版本' })
+      await oldHost.getByRole('button', { name: '重启 Latch', exact: true }).waitFor()
+      await captureThemes(page, 'desktop-old-host')
+      // The permission as Chromium asks main's handlers for it; nothing here touches the system clipboard.
+      const state = (frame: string, name: string) =>
+        page.evaluate(
+          async ([where, permission]) => {
+            if (where === 'top') return (await navigator.permissions.query({ name: permission as PermissionName })).state
+            const iframe = document.createElement('iframe')
+            // An initial about:blank frame: the page's own origin, with no request to block.
+            document.body.append(iframe)
+            try {
+              return (await iframe.contentWindow!.navigator.permissions.query({ name: permission as PermissionName })).state
+            } finally {
+              iframe.remove()
+            }
+          },
+          [frame, name] as const,
+        )
+      expect(await state('top', 'clipboard-write')).toBe('granted')
+      expect(await state('top', 'clipboard-read')).toBe('denied')
+      expect(await state('subframe', 'clipboard-write')).toBe('denied')
+      // A tab laid over the window (as a preview tab is), even on this computer's own origin, is not the window's page.
+      const tabState = await application.evaluate(async ({ BrowserWindow, WebContentsView }) => {
+        const window = BrowserWindow.getAllWindows()[0]!
+        const view = new WebContentsView()
+        window.contentView.addChildView(view)
+        try {
+          await view.webContents.loadURL('latch://app/link/no-such-page.html').catch(() => {})
+          return (await view.webContents.executeJavaScript(
+            "navigator.permissions.query({ name: 'clipboard-write' }).then(result => result.state)",
+          )) as string
+        } finally {
+          window.contentView.removeChildView(view)
+          view.webContents.close()
+        }
+      })
+      expect(tabState).toBe('denied')
+      // What Electron hands the handlers for this permission, seen from a probe window in a partition of its own whose
+      // handlers record and refuse (so nothing reaches the clipboard): the check carries isMainFrame and requestingUrl,
+      // which main's rule needs to grant anything, so the grant above is the async API's and not the fallback's.
+      const probe = createHttpServer((_request, response) => {
+        response.writeHead(200, { 'content-type': 'text/html' })
+        response.end('<!doctype html><title>probe</title>')
+      })
+      await new Promise<void>(done => probe.listen(0, '127.0.0.1', done))
+      try {
+        const origin = `http://127.0.0.1:${(probe.address() as { port: number }).port}/`
+        const seen = await application.evaluate(async ({ BrowserWindow, session }, url) => {
+          const records: { handler: string; permission: string; isMainFrame?: boolean; requestingUrl?: string }[] = []
+          const probeSession = session.fromPartition('latch-e2e-permission-probe')
+          probeSession.setPermissionCheckHandler((_contents, permission, _origin, details) => {
+            records.push({ handler: 'check', permission, isMainFrame: details.isMainFrame, requestingUrl: details.requestingUrl })
+            return false
+          })
+          probeSession.setPermissionRequestHandler((_contents, permission, callback, details) => {
+            records.push({ handler: 'request', permission, isMainFrame: details.isMainFrame, requestingUrl: details.requestingUrl })
+            callback(false)
+          })
+          const window = new BrowserWindow({ show: false, webPreferences: { partition: 'latch-e2e-permission-probe' } })
+          try {
+            await window.loadURL(url)
+            await window.webContents.executeJavaScript(
+              `(async () => {
+                await navigator.permissions.query({ name: 'clipboard-write' })
+                const frame = document.createElement('iframe')
+                document.body.append(frame)
+                await frame.contentWindow.navigator.permissions.query({ name: 'clipboard-write' })
+              })()`,
+            )
+          } finally {
+            window.destroy()
+          }
+          return records
+        }, origin)
+        const checks = seen.filter(record => record.handler === 'check' && record.permission === 'clipboard-sanitized-write')
+        expect(checks).toContainEqual({
+          handler: 'check',
+          permission: 'clipboard-sanitized-write',
+          isMainFrame: true,
+          requestingUrl: origin,
+        })
+        expect(checks).toContainEqual({
+          handler: 'check',
+          permission: 'clipboard-sanitized-write',
+          isMainFrame: false,
+          requestingUrl: 'about:blank',
+        })
+      } finally {
+        probe.close()
+      }
+      // Only with LATCH_E2E_CLIPBOARD=1 does the copy reach the real clipboard; otherwise the page's write is recorded.
+      const realClipboard = latchEnv(process.env, 'E2E_CLIPBOARD') === '1'
+      if (realClipboard) {
+        saved = await application.evaluate(({ clipboard }) => {
+          const before = clipboard.readText()
+          clipboard.writeText('latch-e2e-before-copy')
+          return before
+        })
+        await page.evaluate(() => {
+          const copy = document.execCommand.bind(document)
+          Object.assign(globalThis, { fallbackCopies: 0 })
+          document.execCommand = (command: string, ...rest: [boolean?, string?]) => {
+            if (command === 'copy') (globalThis as unknown as { fallbackCopies: number }).fallbackCopies++
+            return copy(command, ...rest)
+          }
+        })
+      } else
+        await page.evaluate(() => {
+          const written: string[] = []
+          Object.assign(globalThis, { written })
+          navigator.clipboard.writeText = async text => {
+            written.push(text)
+          }
+        })
+      await page.getByRole('textbox', { name: '新会话消息' }).fill('你好')
+      await page.getByRole('button', { name: '发送', exact: true }).click()
+      await waitFor(async () => (await host.bridge.listTasks()).length === 1)
+      const task = (await host.bridge.listTasks())[0]!
+      await waitFor(async () =>
+        (await host.bridge.detail(task.id)).messages.some(message => message.role === 'assistant' && message.state === 'completed'),
+      )
+      const reply = (await host.bridge.detail(task.id)).messages.filter(message => message.role === 'assistant').at(-1)!
+      const turn = page
+        .locator('[data-message-id]')
+        .filter({ hasText: reply.text.slice(0, 8) })
+        .last()
+      await turn.hover()
+      // The user's message and the reply each have one; the reply's comes last once its turn has settled.
+      await expect.poll(() => page.getByRole('button', { name: '复制', exact: true }).count()).toBeGreaterThanOrEqual(2)
+      const copy = page.getByRole('button', { name: '复制', exact: true }).last()
+      await copy.click()
+      await page.getByRole('status').filter({ hasText: '已复制' }).first().waitFor()
+      expect(await page.getByText('复制不可用，请手动选择', { exact: true }).count()).toBe(0)
+      if (realClipboard) {
+        await expect.poll(() => application!.evaluate(({ clipboard }) => clipboard.readText())).toBe(reply.text)
+        // The async API wrote it: the selection fallback never ran.
+        expect(await page.evaluate(() => (globalThis as unknown as { fallbackCopies: number }).fallbackCopies)).toBe(0)
+      } else expect(await page.evaluate(() => (globalThis as unknown as { written: string[] }).written)).toEqual([reply.text])
+      await captureThemes(page, 'desktop-copy-reply')
+    } finally {
+      if (saved !== undefined) await application?.evaluate(({ clipboard }, text) => clipboard.writeText(text), saved)
+      await application?.close()
       await testHost.close()
       await rm(root, { recursive: true, force: true })
     }

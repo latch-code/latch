@@ -14,7 +14,7 @@ import {
   PlusGlyph,
   SettingsGlyph,
 } from '@latch/ui'
-import { api, errorMessage } from '../core/api.ts'
+import { api, errorMessage, MessageError } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
 import { projectFolders, projectName } from '../projects.tsx'
 import { VisibleText } from './VisibleText.tsx'
@@ -138,10 +138,10 @@ export function ProjectGroupHeading({
                         onSelect: () => {
                           void operation(async () => {
                             const result = await folders.pick(project.id)
-                            if (result.status === 'failed') throw new Error('没有完成文件夹操作，请在项目设置中重试。')
-                            if (result.status === 'busy') throw new Error('另一个系统对话框还没结束。')
+                            if (result.status === 'failed') throw new MessageError('没有完成文件夹操作，请在项目设置中重试。')
+                            if (result.status === 'busy') throw new MessageError('另一个系统对话框还没结束。')
                             if (result.status === 'added' && result.refused.length)
-                              throw new Error(`${result.refused.length} 个文件夹没有加入。请在项目设置中查看文件夹。`)
+                              throw new MessageError(`${result.refused.length} 个文件夹没有加入。请在项目设置中查看文件夹。`)
                           })
                         },
                       },

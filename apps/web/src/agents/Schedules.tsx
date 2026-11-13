@@ -32,7 +32,7 @@ import {
   TrashGlyph,
 } from '@latch/ui'
 import { ProjectPicker } from '../components/Pickers.tsx'
-import { api, errorMessage } from '../core/api.ts'
+import { api, errorMessage, MessageError } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { WriteNotice } from './AgentForm.tsx'
 import { RUN_WORDS, scheduleWords } from './model.ts'
@@ -637,7 +637,7 @@ export function SchedulesTab({
           }}
           onConfirm={async () => {
             const done = await writes.run(`automation:${deleting.id}`, `automations/${encodeURIComponent(deleting.id)}`, 'DELETE', {})
-            if (done === undefined) throw new Error('没有删除，原因见页面上的说明。')
+            if (done === undefined) throw new MessageError('没有删除，原因见页面上的说明。')
           }}
         />
       )}

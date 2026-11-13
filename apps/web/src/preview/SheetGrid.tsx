@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { InlineNotice } from '@latch/ui'
+import { ClipboardError, InlineNotice, writeClipboard } from '@latch/ui'
 import { useViewerMenu, useViewerQuote } from './viewerActions.tsx'
 import type { GridCell, SheetInfo } from './types.ts'
 import { boundedQuoteText, columnLabel, type PreviewQuote } from './quote.ts'
+import { MessageError } from '../core/api.ts'
 export type LoadRows = (start: number, count: number, signal?: AbortSignal) => Promise<GridCell[][]>
 const PAGE_ROWS = 64
 export interface SheetView {
@@ -116,7 +117,7 @@ export function SheetGrid({
       b = Math.max(active.row, anchor.row),
       c = Math.min(active.col, anchor.col),
       d = Math.max(active.col, anchor.col)
-    if ((b - a + 1) * (d - c + 1) > limit) throw new Error('请缩小选区后重试。')
+    if ((b - a + 1) * (d - c + 1) > limit) throw new MessageError('请缩小选区后重试。')
     const values: GridCell[][] = []
     for (let start = Math.floor(a / PAGE_ROWS) * PAGE_ROWS; start <= b; start += PAGE_ROWS) {
       const page = cache.get(start) ?? (await load(start, PAGE_ROWS, signal))
@@ -130,7 +131,7 @@ export function SheetGrid({
           .join('\t'),
       )
       .join('\n')
-    if (text.length > 1_000_000) throw new Error('选区文字过多，请缩小选区。')
+    if (text.length > 1_000_000) throw new MessageError('选区文字过多，请缩小选区。')
     return { text, cells: { sheet: sheet.name, start: [a, c] as [number, number], end: [b, d] as [number, number] } }
   }
   const useSelection = async (action: 'copy' | 'quote') => {
@@ -141,15 +142,18 @@ export function SheetGrid({
     try {
       const result = await selectionText(action === 'copy' ? 10_000 : 2000, controller.signal)
       if (controller.signal.aborted) return
-      if (action === 'copy') await navigator.clipboard.writeText(result.text)
+      if (action === 'copy') await writeClipboard(result.text)
       else if (result.text.trim()) onQuote?.({ text: boundedQuoteText(result.text), cells: result.cells })
       else {
         setError('选区没有文字内容。')
         return
       }
       setError('')
-    } catch {
-      if (!controller.signal.aborted) setError('暂时无法读取选区，请缩小选区后重试。')
+    } catch (cause) {
+      if (controller.signal.aborted) return
+      // A copy that failed both ways, or the selection's own limit, says so; anything else is the read.
+      if (cause instanceof ClipboardError || cause instanceof MessageError) setError(cause.message)
+      else setError('暂时无法读取选区，请缩小选区后重试。')
     } finally {
       if (!controller.signal.aborted) setBusy(false)
       if (operation.current === controller) operation.current = undefined

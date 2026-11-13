@@ -54,7 +54,7 @@ import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { transcriptMarkdown } from '../exportMarkdown.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
-import { Button, Collapse, ICON_STROKE, useLivePrevious, ChevronRightGlyph, CloseGlyph } from '@latch/ui'
+import { Button, Collapse, ICON_STROKE, useLivePrevious, ChevronRightGlyph, CloseGlyph, writeClipboard } from '@latch/ui'
 
 /** What resending the latest turn takes, when this device may send now. */
 export interface RetryAccess {
@@ -607,10 +607,9 @@ export function Transcript({
   const forkFrom = useStableCallback((messageId: string) => onFork?.(messageId))
   const copyUpTo = useStableCallback((messageId: string) => {
     const index = detail.messages.findIndex(message => message.id === messageId)
-    void (async () => {
-      if (!navigator.clipboard?.writeText) throw new Error('此浏览器不能复制，请手动选择记录')
-      await navigator.clipboard.writeText(transcriptMarkdown({ ...detail, messages: detail.messages.slice(0, index + 1), liveText: '' }))
-    })().catch(error => onCopyError?.(error))
+    writeClipboard(transcriptMarkdown({ ...detail, messages: detail.messages.slice(0, index + 1), liveText: '' })).catch(error =>
+      onCopyError?.(error),
+    )
   })
   const editFrom = useStableCallback((message: Message) => {
     const index = detail.messages.findIndex(item => item.id === message.id)

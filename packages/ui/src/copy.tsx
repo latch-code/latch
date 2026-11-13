@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { CheckGlyph, CopyGlyph } from './glyphs/index.tsx'
 import { IconButton } from './button.tsx'
+import { writeClipboard } from './clipboard.ts'
 import { pinLayer, setPopover } from './internal.ts'
 
 /** How long a copy says 「已复制」; a failure, which has more words, stays longer. */
 const COPIED_MS = 1000
 const FAILED_MS = 1500
 
-/** Clipboard can be unavailable on LAN HTTP; failure is reported instead of a false success. */
+/** Copies through `writeClipboard`; a failure of both ways is reported instead of a false success. */
 export function useCopy(copiedMs: number = COPIED_MS): { state: 'idle' | 'copied' | 'failed'; copy: (text: string) => Promise<void> } {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -21,8 +22,7 @@ export function useCopy(copiedMs: number = COPIED_MS): { state: 'idle' | 'copied
     clearTimeout(timer.current)
     let result: 'copied' | 'failed'
     try {
-      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable')
-      await navigator.clipboard.writeText(text)
+      await writeClipboard(text)
       result = 'copied'
     } catch {
       result = 'failed'

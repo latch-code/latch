@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { ShieldCheck, ShieldQuestion } from 'lucide-react'
 import type { AgentPresetSettings, AgentSettings, AppSnapshot, AgentPreset, HarnessInfo } from '@latch/protocol'
-import { api, errorMessage, inlineError } from '../core/api.ts'
+import { api, errorMessage, inlineError, MessageError } from '../core/api.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
 import { computerName, RUNS_AS_YOU_COPY, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
@@ -734,7 +734,7 @@ function AgentPage({
             try {
               await api(`agents/${id}`, { method: 'DELETE' })
             } catch (cause) {
-              throw new Error(errorMessage(cause), { cause })
+              throw new MessageError(errorMessage(cause), { cause })
             }
             onDeleted()
           }}

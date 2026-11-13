@@ -20,6 +20,7 @@ import {
 } from './model.ts'
 import { writeFor, type AgentWrites, type WriteState } from './useAgentWrites.ts'
 import { ROLE_TEMPLATES } from './roleTemplates.ts'
+import { MessageError } from '../core/api.ts'
 
 /** When a change reaches the Agent's sessions: the fine print behind ⓘ. */
 export function TakesEffect({ label = '何时生效' }: { label?: string }) {
@@ -431,7 +432,7 @@ export function AgentForm({
           }}
           onConfirm={async () => {
             const done = await writes.run(`agent:${agent.id}`, `custom-agents/${encodeURIComponent(agent.id)}`, 'DELETE', {})
-            if (done === undefined) throw new Error('没有删除，原因见页面下方。')
+            if (done === undefined) throw new MessageError('没有删除，原因见页面下方。')
             onDeleted()
           }}
         />

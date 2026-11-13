@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { build as bundle } from 'esbuild'
@@ -170,38 +170,54 @@ export async function buildAppFrame(directory = resolve('dist/web/app-frame')): 
   await writeFile(resolve(directory, 'runtime.json'), JSON.stringify({ file: 'runtime.html', scriptHash }))
 }
 
-export default defineConfig(async ({ command }): Promise<UserConfig> => ({
-  // The page lives in this directory, whichever working directory Vite starts in; the Host serves the build from the
-  // repository root's dist/web, the path every Host build reads.
-  plugins: [
-    {
-      name: 'latch-office-frame',
-      apply: 'build',
-      closeBundle: async () => {
-        await buildOfficeFrame()
-        await buildDiagramFrame()
-        await buildHtmlFrames()
-        await buildAppFrame()
+/**
+ * This build's ID: its UTC time, then a random part. The page carries it (`__LATCH_BUILD__`) and `build.json` next to the
+ * page records it; a Host reads that file when it starts, so a page newer than the running Host knows (core/build.ts).
+ */
+function newBuildId(now = new Date()): string {
+  return `${now
+    .toISOString()
+    .replace(/[-:]/gu, '')
+    .replace(/\.\d+Z$/u, 'Z')}-${randomBytes(3).toString('hex')}`
+}
+
+export default defineConfig(async ({ command }): Promise<UserConfig> => {
+  const build = command === 'build' ? newBuildId() : ''
+  return {
+    define: { __LATCH_BUILD__: JSON.stringify(build) },
+    // The page lives in this directory, whichever working directory Vite starts in; the Host serves the build from the
+    // repository root's dist/web, the path every Host build reads.
+    plugins: [
+      {
+        name: 'latch-office-frame',
+        apply: 'build',
+        closeBundle: async () => {
+          await writeFile(resolve(import.meta.dirname, '../../dist/web/build.json'), JSON.stringify({ build }))
+          await buildOfficeFrame()
+          await buildDiagramFrame()
+          await buildHtmlFrames()
+          await buildAppFrame()
+        },
+      },
+    ],
+    root: import.meta.dirname,
+    base: '/link/',
+    worker: { format: 'es' },
+    build: {
+      outDir: resolve(import.meta.dirname, '../../dist/web'),
+      emptyOutDir: true,
+      rolldownOptions: {
+        // Icon modules carry a "use client" directive that has no meaning in this single-page bundle.
+        onwarn(warning, warn) {
+          if (warning.code !== 'MODULE_LEVEL_DIRECTIVE') warn(warning)
+        },
       },
     },
-  ],
-  root: import.meta.dirname,
-  base: '/link/',
-  worker: { format: 'es' },
-  build: {
-    outDir: resolve(import.meta.dirname, '../../dist/web'),
-    emptyOutDir: true,
-    rolldownOptions: {
-      // Icon modules carry a "use client" directive that has no meaning in this single-page bundle.
-      onwarn(warning, warn) {
-        if (warning.code !== 'MODULE_LEVEL_DIRECTIVE') warn(warning)
-      },
+    server: {
+      host: '127.0.0.1',
+      // Model-written Markdown never loads images; this keeps the dev page as strict as the Host's own CSP.
+      headers: { 'Content-Security-Policy': "img-src 'self' data:" },
+      proxy: command === 'serve' ? { '/link/api': await hostProxy() } : {},
     },
-  },
-  server: {
-    host: '127.0.0.1',
-    // Model-written Markdown never loads images; this keeps the dev page as strict as the Host's own CSP.
-    headers: { 'Content-Security-Policy': "img-src 'self' data:" },
-    proxy: command === 'serve' ? { '/link/api': await hostProxy() } : {},
-  },
-}))
+  }
+})

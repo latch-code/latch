@@ -82,6 +82,11 @@ export interface AppSnapshot {
   /** Line feedback counts of sessions among `tasks` that have any; the notes themselves need data scope `all`. */
   reviewNotes?: ReviewNoteCounts[]
   version?: string
+  /**
+   * The build of the page that was beside the Host when it started (`build.json` in its page directory), which a newer
+   * page compares with its own to say the Host needs a restart; absent from older Hosts and without that file.
+   */
+  build?: string
   /** The Host's clock when it answered. */
   hostTime?: string
 }

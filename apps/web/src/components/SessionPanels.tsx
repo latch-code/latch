@@ -32,7 +32,7 @@ import {
   GlobeGlyph,
   CloseGlyph,
 } from '@latch/ui'
-import { api, errorMessage } from '../core/api.ts'
+import { api, errorMessage, MessageError } from '../core/api.ts'
 import { VisibleText } from './VisibleText.tsx'
 import { ClientPluginPanel } from './ClientPluginPanel.tsx'
 import { PanelLauncher } from '../panel/PanelLauncher.tsx'
@@ -454,7 +454,7 @@ function PluginPanel({ panel, summary }: { panel: UiPanelInfo; summary: TaskSumm
     })
       .then(data => {
         if (controller.signal.aborted) return
-        if (!isUiPanelDocument(data.panel)) throw new Error('扩展面板返回了不支持的内容。')
+        if (!isUiPanelDocument(data.panel)) throw new MessageError('扩展面板返回了不支持的内容。')
         setResult({ key, document: data.panel })
       })
       .catch(cause => {

@@ -5,7 +5,7 @@ import { Button, AlertGlyph, CircleCheckGlyph, RefreshGlyph } from '@latch/ui'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import { HarnessLoginSteps, loginDoubted, loginEndDay, loginEndsSoon, useLoginStatus } from '../components/HarnessLogin.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { api, errorMessage } from '../core/api.ts'
+import { api, errorMessage, MessageError } from '../core/api.ts'
 import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
 
 /**
@@ -121,7 +121,7 @@ export function LoginGroup({
             try {
               await api(`harnesses/${encodeURIComponent(harness.id)}/logout`, { method: 'POST', body: {} })
             } catch (cause) {
-              throw new Error(errorMessage(cause), { cause })
+              throw new MessageError(errorMessage(cause), { cause })
             }
             setLeft(true)
             await check(true)

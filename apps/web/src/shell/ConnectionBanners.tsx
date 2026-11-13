@@ -2,7 +2,7 @@ import { AUDIT_ROLLBACK_TEXT } from '../core/auditCheckpoint.ts'
 import { LEGACY_HOST_TEXT } from '../core/permissions.ts'
 import { hostNeedsStart } from '../core/shellLifecycle.ts'
 import { Banner } from '../components/Banner.tsx'
-import { Button, IconButton, InlineNotice, CloseGlyph } from '@latch/ui'
+import { Button, Hint, Icon, IconButton, InlineNotice, CloseGlyph, RefreshGlyph } from '@latch/ui'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** The connection and the Host itself: over the open conversation, or at the top of a phone's list. */
@@ -19,6 +19,7 @@ export function ConnectionBanners({ shell }: { shell: ShellState }) {
     connectionText,
     resync,
     connection,
+    oldHost,
   } = shell
   return (
     <>
@@ -49,6 +50,31 @@ export function ConnectionBanners({ shell }: { shell: ShellState }) {
           }>
           {connectionText}
         </InlineNotice>
+      </Banner>
+      <Banner show={oldHost !== null && !connectionProblem}>
+        {oldHost && (
+          <InlineNotice
+            tone="warn"
+            title={oldHost.title}
+            action={
+              // Only the Latch app on that Mac starts its Host; anywhere else the person does it there.
+              shellHost ? (
+                <Button
+                  size="xs"
+                  onClick={() => {
+                    void lifecycle.restartHost().then(message => {
+                      if (message) setToast({ text: message, tone: 'error' })
+                    })
+                  }}>
+                  重启 Latch
+                </Button>
+              ) : undefined
+            }>
+            <Hint lead={<Icon icon={RefreshGlyph} size={12} />} label={oldHost.label} moreLabel="怎么重启">
+              {oldHost.detail}
+            </Hint>
+          </InlineNotice>
+        )}
       </Banner>
       <Banner show={audit.rollback}>
         <InlineNotice

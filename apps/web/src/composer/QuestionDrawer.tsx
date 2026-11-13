@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AgentQuestion, QuestionAnswer, QuestionReceipt, QuestionResult, QuestionSubmission } from '@latch/protocol'
 import { Button, InlineNotice, Kbd, Tooltip } from '@latch/ui'
-import { api, inlineError } from '../core/api.ts'
+import { api, inlineError, MessageError } from '../core/api.ts'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { useArmed } from './useArmed.ts'
 
@@ -121,7 +121,7 @@ export function useQuestionDrawer(
         { method: 'POST', body: submission },
       )
       if (!receipt.answered || receipt.requestId !== submission.requestId || receipt.questionId !== question.id)
-        throw new Error('回答回执不匹配，请重试这次提交')
+        throw new MessageError('回答回执不匹配，请重试这次提交')
       localStorage.removeItem(storageKey)
       await actions.onChanged()
     } catch (cause) {

@@ -1,5 +1,5 @@
 import { useLayoutEffect } from 'react'
-import { api, errorMessage } from '../core/api.ts'
+import { api, errorMessage, MessageError } from '../core/api.ts'
 import { ShellPalette } from '../palette/ShellPalette.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
 import { toolRowId } from '../conversation.ts'
@@ -144,7 +144,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
             try {
               await api<unknown>(`tasks/${encodeURIComponent(renaming.id)}`, { method: 'PATCH', body: { title } })
             } catch (cause) {
-              throw new Error(errorMessage(cause))
+              throw new MessageError(errorMessage(cause))
             }
             await refresh()
           }}
@@ -163,7 +163,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
             try {
               await api<unknown>(`tasks/${encodeURIComponent(deleting.id)}`, { method: 'DELETE' })
             } catch (cause) {
-              throw new Error(errorMessage(cause))
+              throw new MessageError(errorMessage(cause))
             }
             setStopped(previous => {
               if (!previous.has(deleting.id)) return previous

@@ -5,6 +5,7 @@ import { ConfirmDialog } from '../components/overlays.tsx'
 import { computerState } from '../core/computers.ts'
 import { shellComputers, type ComputersView, type ComputerView } from '../core/shell.ts'
 import { IconTile, Loading, NoteLine, ObjectRow, SettingsGroup } from './common.tsx'
+import { MessageError } from '../core/api.ts'
 
 /** The address of a computer as a person reads it: host and port. */
 function host(origin: string): string {
@@ -194,7 +195,7 @@ export function ComputersSettings() {
           }}
           onConfirm={async () => {
             const result = await api.remove!(removing.hostId)
-            if (!result.ok) throw new Error(result.message || '无法移除这台电脑，请重试。')
+            if (!result.ok) throw new MessageError(result.message || '无法移除这台电脑，请重试。')
             if (!result.revokedThere) setNotice(`在 ${removing.name} 的 设置 › 设备 里移除这台设备。`)
           }}
         />

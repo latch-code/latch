@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { isFileMention, type FileContext } from '@latch/protocol'
-import { api, errorMessage } from '../core/api.ts'
+import { api, errorMessage, MessageError } from '../core/api.ts'
 import { fileContextBody, fileContextKey, fileRoute } from '../preview/fileContext.ts'
 interface FileResults {
   files: Array<{ name: string; path: string; root: string }>
@@ -34,7 +34,7 @@ export function useFileSearch(query: string, context: FileContext | undefined) {
             || typeof result.truncated !== 'boolean'
             || result.files.some(file => typeof file.name !== 'string' || !isFileMention({ root: file.root, path: file.path }))
           )
-            throw new Error('文件搜索响应无效。')
+            throw new MessageError('文件搜索响应无效。')
           if (!controller.signal.aborted) setState({ ...result, loading: false, error: '' })
         })
         .catch(cause => {

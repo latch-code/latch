@@ -88,6 +88,7 @@ const {
   isAppFrameUrl,
   isAppSender,
   isAppUrl,
+  appPermissionHandlers,
   LOCAL_HOME,
   unexpectedArguments,
 } = require('./proxy.cjs')
@@ -257,8 +258,15 @@ function fatal(message) {
 }
 
 async function hardenSession(target, home = LOCAL_HOME) {
-  target.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  target.setPermissionCheckHandler(() => false)
+  // Only clipboard writes from the window's own top-level page (proxy.cjs); everything else stays refused.
+  const permissions = appPermissionHandlers(home, {
+    fromWebContents: contents => BrowserWindow.fromWebContents(contents),
+    homeOf,
+    isPreviewTab: contents => previewBrowser.owns(contents),
+    gestureOf: contents => gestures.get(contents),
+  })
+  target.setPermissionRequestHandler(permissions.request)
+  target.setPermissionCheckHandler(permissions.check)
   target.setDevicePermissionHandler(() => false)
   // The renderer has no network of its own; every Host connection goes through main, and only to its own computer.
   target.webRequest.onBeforeRequest((details, callback) => {

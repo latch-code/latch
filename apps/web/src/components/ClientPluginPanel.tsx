@@ -2,7 +2,7 @@ import * as React from 'react'
 import { Component, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { Button, Checkbox, InlineNotice, Loading, StatusPill, TextAreaField, TextField, type PluginPanelProps } from '@latch/ui'
 import type { TaskSummary, UiPanelInfo } from '@latch/protocol'
-import { api } from '../core/api.ts'
+import { api, MessageError } from '../core/api.ts'
 
 const ui = { Button, Checkbox, TextField, TextAreaField, InlineNotice, StatusPill, Loading }
 type Panel = ComponentType<PluginPanelProps<TaskSummary>>
@@ -101,7 +101,8 @@ export function ClientPluginPanel({
           if (mounted.current && canCompose && typeof text === 'string' && text.trim() && text.length <= 16_000) onCompose(text)
         }}
         readData={(id, signal) => {
-          if (!/^[a-zA-Z0-9_-]{1,64}$/u.test(id) || !lifetime.current || !mounted.current) return Promise.reject(new Error('面板已关闭。'))
+          if (!/^[a-zA-Z0-9_-]{1,64}$/u.test(id) || !lifetime.current || !mounted.current)
+            return Promise.reject(new MessageError('面板已关闭。'))
           return api(`tasks/${encodeURIComponent(summary.id)}/ui-panels/${encodeURIComponent(`${panel.pluginId}:${id}`)}`, {
             signal: signal ? AbortSignal.any([signal, lifetime.current.signal]) : lifetime.current.signal,
           })

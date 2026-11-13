@@ -12,7 +12,7 @@ import {
   type Message,
   type TaskSummary,
 } from '@latch/protocol'
-import { ApiError, isUncertain } from '../core/api.ts'
+import { ApiError, isUncertain, MessageError } from '../core/api.ts'
 
 /** 回传: what the target may hand back. The Host keeps three scopes, so the page offers three. */
 export const RETURN_SCOPES: ReadonlyArray<{ value: HandoffReturnScope; label: string }> = [
@@ -105,7 +105,7 @@ export async function sha256Hex(
   input: string | ArrayBuffer,
   subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle,
 ): Promise<string> {
-  if (!subtle) throw new Error('这个页面不能核对文件版本，请用 HTTPS 或这台电脑上的 Latch 打开。')
+  if (!subtle) throw new MessageError('这个页面不能核对文件版本，请用 HTTPS 或这台电脑上的 Latch 打开。')
   const data = typeof input === 'string' ? utf8.encode(input) : new Uint8Array(input)
   const digest = new Uint8Array(await subtle.digest('SHA-256', data))
   return Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('')

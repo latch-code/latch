@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { FolderPlus } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type WorkspaceInfo } from '@latch/protocol'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { api, errorMessage } from '../core/api.ts'
+import { api, errorMessage, MessageError } from '../core/api.ts'
 import { computerName, describeFailure, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFolders, type FolderResult, type ShellFolders } from '../core/shell.ts'
 import { basename } from '../format.ts'
@@ -400,7 +400,7 @@ export function WorkspacesSettings({
             try {
               await api(`workspaces/${encodeURIComponent(removing.id)}`, { method: 'DELETE' })
             } catch (cause) {
-              throw new Error(errorMessage(cause), { cause })
+              throw new MessageError(errorMessage(cause), { cause })
             }
             onChanged()
             await load()

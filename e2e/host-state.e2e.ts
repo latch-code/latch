@@ -1,5 +1,7 @@
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -185,4 +187,49 @@ describe('a Host refusing the device after it announced a stop', () => {
       await context.close()
     }
   }, 60_000)
+})
+
+describe('a Host older than the page', () => {
+  let browser: Browser
+  let testHost: TestHost
+  let ui: string
+
+  beforeAll(async () => {
+    // The page as just built, beside a Host that started with an earlier build of it.
+    ui = await mkdtemp(join(tmpdir(), 'latch-old-host-'))
+    await cp(resolve('dist/web'), ui, { recursive: true })
+    const { build } = JSON.parse(await readFile(join(ui, 'build.json'), 'utf8')) as { build: string }
+    expect(build).toMatch(/^\d{8}T\d{6}Z-[0-9a-f]{6}$/u)
+    await writeFile(join(ui, 'build.json'), JSON.stringify({ build: '20261107T080000Z-0a1b2c' }))
+    testHost = await startTestHost({ demo: true, hostName: 'studio-mini', uiDir: ui })
+    browser = await chromium.launch(browserLaunchOptions())
+    await mkdir('test-results', { recursive: true })
+  })
+
+  afterAll(async () => {
+    await browser?.close()
+    await testHost?.close()
+    await rm(ui, { recursive: true, force: true })
+  })
+
+  it('says once, in amber, that the computer’s Latch needs a restart, with how behind ⓘ and no restart button off the Mac', async () => {
+    for (const { label, viewport, touch } of [{ label: 'desktop', viewport: { width: 1440, height: 900 }, touch: false }, NARROW[0]]) {
+      const { context, page } = await openPage(browser, viewport, touch)
+      try {
+        await enrollBrowser(page, testHost, { name: `旧版本 ${label}` })
+        const title = 'studio-mini 上的 Latch 还是旧版本'
+        const notice = page.locator('.banner-region .ui-notice', { hasText: title })
+        await notice.waitFor()
+        expect(await notice.getAttribute('data-tone')).toBe('warn')
+        expect(await page.getByText(title, { exact: true }).count()).toBe(1)
+        await notice.getByText('重启 Latch 后才能用新功能', { exact: true }).waitFor()
+        expect(await notice.getByRole('button', { name: '重启 Latch' }).count()).toBe(0)
+        await notice.getByRole('button', { name: '怎么重启' }).click()
+        await notice.getByText(/pnpm latch presence repin/u).waitFor()
+        await captureBothThemes(page, `old-host-${label}`, title)
+      } finally {
+        await context.close()
+      }
+    }
+  }, 90_000)
 })

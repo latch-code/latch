@@ -22,7 +22,7 @@ import {
   RefreshGlyph,
   SearchGlyph,
 } from '@latch/ui'
-import { api, errorMessage } from '../core/api.ts'
+import { api, errorMessage, MessageError } from '../core/api.ts'
 import { fileRefusalText } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFiles } from '../core/shell.ts'
 import { referenceIcon } from '../fileReference.ts'
@@ -171,7 +171,7 @@ export function FileTree({
           || result.rootId !== root
           || result.dir !== path
         )
-          throw new Error('文件夹响应无效，请重试。')
+          throw new MessageError('文件夹响应无效，请重试。')
         if (!controller.signal.aborted) {
           loadedBranches.current.add(key)
           setBranches(previous => ({ ...previous, [key]: { listing: result, shown: previous[key]?.shown ?? PAGE_SIZE } }))
@@ -207,7 +207,7 @@ export function FileTree({
     void api<unknown>(`${fileRoute(contextRef.current, 'list')}?${params}`, { signal: controller.signal })
       .then(result => {
         if (controller.signal.aborted) return
-        if (!isFileDirectoryListing(result) || fileContextKey(result.context) !== contextKey) throw new Error('项目文件响应无效。')
+        if (!isFileDirectoryListing(result) || fileContextKey(result.context) !== contextKey) throw new MessageError('项目文件响应无效。')
         setRoots(result.roots)
         const first = result.roots[0]
         if (first) {
@@ -273,7 +273,7 @@ export function FileTree({
       if (!nativeLocal.current || fileContextKey(contextRef.current) !== contextKey) return
       if (kind === 'copy') {
         const path = treeFullPath(file, folders, cwd)
-        if (!path) throw new Error('找不到这个文件所属的冻结文件夹，请重新同步会话。')
+        if (!path) throw new MessageError('找不到这个文件所属的冻结文件夹，请重新同步会话。')
         await copy.copy(path)
       } else {
         const shell = shellFiles()
@@ -285,13 +285,13 @@ export function FileTree({
               : kind === 'editor'
                 ? file.actions.editor === true
                 : file.actions.quicklook
-        if (!shell || shell.protocolVersion !== 2 || !allowed) throw new Error('当前桌面端无法这样打开这个文件。')
+        if (!shell || shell.protocolVersion !== 2 || !allowed) throw new MessageError('当前桌面端无法这样打开这个文件。')
         const owner = context.kind === 'session' ? context.sessionId : { workspaceId: context.workspaceId, harnessId: context.harnessId }
         const result =
           kind === 'editor' ? await openInEditor(owner, { handle: file.handle }) : await shell[kind](owner, { handle: file.handle })
         if (result.status === 'canceled') return
-        if (result.status === 'busy') throw new Error('上一个文件操作还没有完成，请稍后重试。')
-        if (result.status === 'refused' || result.status === 'failed') throw new Error(fileRefusalText(result.code))
+        if (result.status === 'busy') throw new MessageError('上一个文件操作还没有完成，请稍后重试。')
+        if (result.status === 'refused' || result.status === 'failed') throw new MessageError(fileRefusalText(result.code))
       }
     } catch (cause) {
       if (!controller.signal.aborted) setNotice(errorMessage(cause))

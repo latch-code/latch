@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReservedAttachments as Reserved } from '@latch/protocol'
 import { Button, ConfirmDialog, Hint } from '@latch/ui'
-import { api, ApiError, errorMessage, newRequestId, readPending } from '../../core/api.ts'
+import { api, ApiError, errorMessage, newRequestId, readPending, MessageError } from '../../core/api.ts'
 import { sizeText } from '../../hooks/useAttachments.ts'
 import { heldSubmission } from '../../hooks/useSubmission.ts'
 import { SettingsGroup, SettingsRow } from '../common.tsx'
@@ -79,7 +79,7 @@ export function ReservedAttachments({ deviceId }: { deviceId: string }) {
               })
               setReleased(`已释放 ${result.released.count} 个`)
             } catch (cause) {
-              throw new Error(errorMessage(cause))
+              throw new MessageError(errorMessage(cause))
             } finally {
               // Read again either way: an answer that did not arrive may still have released them.
               await load().catch(() => {})

@@ -3,7 +3,7 @@ import type { FileContext, FileMetadata } from '@latch/protocol'
 import { api } from '../src/core/api.ts'
 import { readTreeFile, treeChanges, treeFullPath, treeKey, treeLocation } from '../src/preview/treeFiles.ts'
 
-vi.mock('../src/core/api.ts', () => ({ api: vi.fn() }))
+vi.mock('../src/core/api.ts', async importOriginal => ({ ...(await importOriginal<typeof import('../src/core/api.ts')>()), api: vi.fn() }))
 const file: FileMetadata = {
   handle: 'A'.repeat(22),
   name: 'readme.md',

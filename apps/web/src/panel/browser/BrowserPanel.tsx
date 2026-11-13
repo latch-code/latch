@@ -27,7 +27,7 @@ import {
   ShieldGlyph,
 } from '@latch/ui'
 import { AgentsGlyph } from '../../agents/AgentAvatar.tsx'
-import { api } from '../../core/api.ts'
+import { api, MessageError } from '../../core/api.ts'
 import type {
   BrowserColorScheme,
   BrowserConsoleEntry,
@@ -929,7 +929,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
           confirmLabel="清除"
           onConfirm={async () => {
             const answer = await shell.clearData(projectId)
-            if (!answer.ok) throw new Error('没有清除，请重试')
+            if (!answer.ok) throw new MessageError('没有清除，请重试')
             browser.say('已清除这个项目的浏览数据')
           }}
           onClose={() => setClearing(false)}

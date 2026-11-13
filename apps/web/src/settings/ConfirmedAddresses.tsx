@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button, ConfirmDialog, InlineNotice } from '@latch/ui'
-import { errorMessage } from '../core/api.ts'
+import { errorMessage, MessageError } from '../core/api.ts'
 import { addressRows, readPolicy, removeFromPolicy, type PolicyView } from '../core/policyView.ts'
 import { AUDIT_NOT_RECORDED_TEXT, PROVIDER_COPY } from '../core/securityCopy.ts'
 import { NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
@@ -119,7 +119,7 @@ export function ConfirmedAddresses({
             } catch (cause) {
               // A removal that timed out may have happened, so what is listed comes from the Host either way.
               void load()
-              throw new Error(errorMessage(cause), { cause })
+              throw new MessageError(errorMessage(cause), { cause })
             }
             await load()
             onChanged()

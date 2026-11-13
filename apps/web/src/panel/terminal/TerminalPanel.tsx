@@ -20,7 +20,7 @@ import {
   PlusGlyph,
   TerminalGlyph,
 } from '@latch/ui'
-import { errorMessage } from '../../core/api.ts'
+import { errorMessage, MessageError } from '../../core/api.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { draftText, endedText, keyLeavesTerminal, serviceLabel, tabLabel, type TerminalTab } from './model.ts'
 import { TerminalLink } from './link.ts'
@@ -253,7 +253,7 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
           danger
           onConfirm={async () => {
             const result = await terminals.close(confirm.tab.id, true)
-            if (result.kind === 'failed') throw new Error(result.text)
+            if (result.kind === 'failed') throw new MessageError(result.text)
           }}
           onClose={() => setConfirm(undefined)}
         />

@@ -59,8 +59,30 @@ describe('CopyButton', () => {
     }
   })
 
-  it('never looks like a success when the clipboard refuses', async () => {
+  it('copies through a selection when the Clipboard API refuses, and gives focus back', async () => {
     const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'))
+    const copied: string[] = []
+    const execCommand = vi.spyOn(document, 'execCommand').mockImplementation(command => {
+      copied.push(`${command}:${(document.activeElement as HTMLTextAreaElement).value}`)
+      return true
+    })
+    try {
+      const screen = await render(<CopyButton text="路径" />)
+      const button = screen.getByRole('button', { name: '复制' })
+      await button.click()
+      await expect.element(screen.getByRole('status')).toHaveTextContent('已复制')
+      expect(copied).toEqual(['copy:路径'])
+      expect(document.querySelector('textarea')).toBeNull()
+      expect(document.activeElement).toBe(button.element())
+    } finally {
+      writeText.mockRestore()
+      execCommand.mockRestore()
+    }
+  })
+
+  it('never looks like a success when both ways of copying fail', async () => {
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'))
+    const execCommand = vi.spyOn(document, 'execCommand').mockReturnValue(false)
     try {
       const screen = await render(<CopyButton text="路径" />)
       await screen.getByRole('button', { name: '复制' }).click()
@@ -69,6 +91,7 @@ describe('CopyButton', () => {
       expect(screen.container.querySelector('.latch-glyph-check')).toBeNull()
     } finally {
       writeText.mockRestore()
+      execCommand.mockRestore()
     }
   })
 })

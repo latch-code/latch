@@ -71,7 +71,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 pnpm build:presence                          # 只重新构建 macOS 确认组件（源码比产物新时才重新编译）
 ```
 
-e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）、`LATCH_E2E_UI_DIR`（浏览器 e2e 的页面目录，默认 `dist/web`）、`LATCH_ELECTRON_E2E=1`（运行原生窗口用例），都经 `@latch/host/env` 的 `latchEnv` 读取；视觉截图另有 `LATCH_VISUAL_BASELINE`、`LATCH_VISUAL_STRICT` 与 `LATCH_VISUAL_BOARDS`（见[视觉截图](#视觉截图)）。
+e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）、`LATCH_E2E_UI_DIR`（浏览器 e2e 的页面目录，默认 `dist/web`）、`LATCH_ELECTRON_E2E=1`（运行原生窗口用例）、`LATCH_E2E_CLIPBOARD=1`（`desktop.e2e.ts` 的复制用例改为写入并读回真实的系统剪贴板，先保存、结束后写回；默认只检查权限，页面的写入被记录，不碰系统剪贴板），都经 `@latch/host/env` 的 `latchEnv` 读取；视觉截图另有 `LATCH_VISUAL_BASELINE`、`LATCH_VISUAL_STRICT` 与 `LATCH_VISUAL_BOARDS`（见[视觉截图](#视觉截图)）。
 
 命令都在仓库根目录运行，并显式给出 `--config`：Vitest 不会到上级目录查找配置文件。
 
