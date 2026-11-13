@@ -5,6 +5,7 @@ import {
   AGENT_EYES,
   AGENT_HUES,
   GENERAL_AGENT_ID,
+  MODEL_EFFORT,
   type AgentAvatar,
   type AgentBrief,
   type AgentExecutionContext,
@@ -29,6 +30,7 @@ import { canonicalJson, containsSecret, redactSecrets, sha256Hex, type AtomicWri
 import { AgentJournal } from './agent-journal.ts'
 import type { AuditActor, AuditLog } from './audit.ts'
 import { scheduleSchema } from './schedule.ts'
+import { HELPER_HOME_NAME } from './session-folders.ts'
 
 export const CUSTOM_AGENT_ID = /^agt_[a-f0-9-]{36}$/u
 const MAX_AGENTS = 64
@@ -64,7 +66,11 @@ const projectId = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
 const unique = <T extends string>(value: T[]) => new Set(value).size === value.length
 const printable = (value: string) => !/[\p{Cc}\p{Cf}]/u.test(value)
 const name = z.string().trim().min(1).max(80).refine(printable)
-const model = z.strictObject({ providerId: harnessId, model: z.string().trim().min(1).max(256) })
+const model = z.strictObject({
+  providerId: harnessId,
+  model: z.string().trim().min(1).max(256),
+  effort: z.string().regex(MODEL_EFFORT).optional(),
+})
 const engineOptions = z.record(z.string().min(1).max(128), z.string().max(1024)).refine(value => Object.keys(value).length <= 8)
 const instructions = z.string().max(32_000)
 const skills = z.array(skillId).max(64).refine(unique)
@@ -140,6 +146,7 @@ const undoSchema = z.strictObject({ requestId, baseRevision: revision })
 const memoryPatchSchema = memoryCreateSchema.extend({ baseRevision: revision })
 const agentSchema = config.extend({
   id: agentId,
+  home: z.string().regex(HELPER_HOME_NAME).optional(),
   avatar,
   notifications: notifications.optional(),
   keepAwakeForSchedules: z.literal(true).optional(),
@@ -188,13 +195,23 @@ const proposalSchema = z
 const changeSchema = z.strictObject({ memoryId, operation: z.enum(['update', 'delete']), at: stamp, previous: memorySchema })
 const generalSchema = z.strictObject({
   id: z.literal(GENERAL_AGENT_ID),
+  home: z.literal('helpers/general').optional(),
   instructions,
   skills: skills.optional(),
   revision,
   updatedAt: stamp.optional(),
 })
-const selection = z.strictObject({ harnessId, mode: z.enum(['chat', 'agent']), model: model.optional(), workspaceId: projectId.optional() })
-const startSchema = selection.extend({ customAgentId: agentId })
+const selection = z.strictObject({
+  harnessId,
+  mode: z.enum(['chat', 'agent']),
+  model: model.optional(),
+  workspaceId: projectId.optional(),
+  config: z
+    .array(z.strictObject({ configId: z.string().min(1).max(128), value: z.string().max(1024) }))
+    .max(8)
+    .optional(),
+})
+const startSchema = selection.extend({ customAgentId: memoryOwner })
 export type AgentSessionSelection = z.infer<typeof selection>
 
 const stateSchema = z
@@ -212,6 +229,8 @@ const stateSchema = z
     if (Buffer.byteLength(JSON.stringify(state.agents)) > 2 * 1024 * 1024) ctx.addIssue({ code: 'custom', message: 'Definition capacity' })
     if (new Set(state.agents.map(agent => agent.id)).size !== state.agents.length)
       ctx.addIssue({ code: 'custom', message: 'Duplicate identity' })
+    if (state.agents.some(agent => agent.home !== undefined && agent.home !== `helpers/${agent.id}`))
+      ctx.addIssue({ code: 'custom', message: 'Home owner mismatch' })
     for (const rows of Object.values(state.memories)) {
       if (rows.reduce((size, row) => size + Buffer.byteLength(row.content), 0) > 256 * 1024)
         ctx.addIssue({ code: 'custom', message: 'Memory capacity' })
@@ -299,6 +318,33 @@ export class CustomAgents {
   general(): GeneralAgent {
     return this.journal.read().general as GeneralAgent
   }
+  /** Only the Host's allocator calls this, after verifying the directory and the caller's current authority. */
+  async recordHome(owner: string, home: string, actor: { actor: AuditActor; authorize(): void }): Promise<void> {
+    memoryOwner.parse(owner)
+    if (!HELPER_HOME_NAME.test(home) || home !== `helpers/${owner}`)
+      throw new AppError(409, 'helper-home-unavailable', 'Agent 的家无法确认。')
+    await this.journal.change(
+      digest(['home', owner]),
+      digest(home),
+      async state => {
+        const target = owner === GENERAL_AGENT_ID ? state.general : state.agents.find(agent => agent.id === owner)
+        if (!target) throw missing()
+        if (target.home !== undefined) {
+          if (target.home !== home) throw new AppError(409, 'helper-home-unavailable', 'Agent 的家已改变，原文件已保留。')
+          return { value: null, changed: false }
+        }
+        await this.options.audit.append({
+          action: 'agent.home.assigned',
+          actor: actor.actor,
+          target: owner,
+          detail: { homeHash: digest(home) },
+        })
+        target.home = home
+        return { value: null }
+      },
+      actor.authorize,
+    )
+  }
   memories(owner: string): AgentMemory[] {
     const state = this.journal.read()
     if (owner !== GENERAL_AGENT_ID && !state.agents.some(agent => agent.id === owner)) throw missing()
@@ -311,8 +357,27 @@ export class CustomAgents {
       const { instructions: text, skills: chosen } = this.general()
       return digest({ instructions: text, skills: chosen ?? null, memories })
     }
-    const { id, instructions: text, skills: chosen, tools: allowed, harnessId: harness, mode, model: selected } = this.get(owner)
-    return digest({ id, instructions: text, skills: chosen, tools: allowed ?? null, harness, mode, model: selected ?? null, memories })
+    const {
+      id,
+      instructions: text,
+      skills: chosen,
+      tools: allowed,
+      harnessId: harness,
+      mode,
+      model: selected,
+      engineOptions,
+    } = this.get(owner)
+    return digest({
+      id,
+      instructions: text,
+      skills: chosen,
+      tools: allowed ?? null,
+      harness,
+      mode,
+      model: selected ?? null,
+      ...(engineOptions ? { engineOptions } : {}),
+      memories,
+    })
   }
   hasPending(): boolean {
     return this.journal.hasPending()
@@ -772,7 +837,7 @@ export class CustomAgents {
 
   /** A retry keeps its first engine and project even if the Agent was edited meanwhile. */
   async reserveStart(id: string, rid: string, choose: () => AgentSessionSelection, actor: AgentActor): Promise<AgentSessionSelection> {
-    agentId.parse(id)
+    memoryOwner.parse(id)
     const key = digest(['start', actor.actor.deviceId, rid])
     return this.journal.change(
       key,
@@ -784,7 +849,7 @@ export class CustomAgents {
           const { customAgentId: _, ...chosen } = held
           return { value: chosen, changed: false }
         }
-        if (!state.agents.some(agent => agent.id === id)) throw missing()
+        this.assertOwner(state, id)
         this.prune(state)
         const chosen = selection.parse(choose())
         state.starts[key] = { ...chosen, customAgentId: id }

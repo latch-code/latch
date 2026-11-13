@@ -21,7 +21,7 @@ import type {
   TaskDetail,
   TaskMode,
 } from '@latch/protocol'
-import { GENERAL_AGENT_ID } from '@latch/protocol'
+import { GENERAL_AGENT_ID, MODEL_EFFORT } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, type AtomicWriteFs } from '@latch/core/node-kit'
 import { AgentJournal } from './agent-journal.ts'
@@ -78,7 +78,11 @@ const prompt = z
   .max(16_000)
   .refine(value => value.trim().length > 0)
 const customAgentId = z.string().regex(CUSTOM_AGENT_ID)
-const model = z.strictObject({ providerId: z.string().min(1).max(128), model: z.string().min(1).max(256) })
+const model = z.strictObject({
+  providerId: z.string().min(1).max(128),
+  model: z.string().min(1).max(256),
+  effort: z.string().regex(MODEL_EFFORT).optional(),
+})
 const projectId = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
 const config = z.strictObject({
   name,
@@ -178,6 +182,7 @@ const stateSchema = z
   })
 const createSchema = config.extend({
   requestId: rid,
+  enabled: z.boolean().optional(),
   proposalId: z
     .string()
     .regex(/^prp_[a-f0-9-]{36}$/u)
@@ -218,6 +223,7 @@ export interface AutomationPlan {
   mode: TaskMode
   /** Absent for a Harness that chooses its own model. */
   model?: ModelRef
+  config?: Array<{ configId: string; value: string }>
   agentContext?: AgentExecutionContext
 }
 /** Clears from cards what they took from deleted sessions, and lets cards of a deleted topic wait for the next. */
@@ -279,9 +285,9 @@ interface Options {
   atomicFs?: AtomicWriteFs
   /** The Mac's IANA zone, read again on every check, since it can change. */
   timeZone?: () => string
-  plan(config: AutomationConfig): AutomationPlan
-  /** Whether this device may have such a run start while nobody is looking. */
-  authorize(deviceId: string, config: AutomationConfig): void
+  plan(config: AutomationConfig, trigger: AutomationRun['trigger']): AutomationPlan
+  /** The source is chosen by the Host's route or scheduler, never by request data. */
+  authorize(deviceId: string, config: AutomationConfig, trigger: AutomationRun['trigger']): void
   start(input: AutomationStartInput): Promise<{ sessionId: string }>
   detail(sessionId: string): Promise<TaskDetail>
   cancel(sessionId: string, runId?: string): Promise<unknown>
@@ -532,7 +538,7 @@ export class Automations {
 
   async create(input: AutomationCreate, actor: AgentActor): Promise<{ value: Automation; audited: boolean }> {
     const data = createSchema.parse(input)
-    const { requestId: _, proposalId: __, ...definition } = data
+    const { requestId: _, proposalId: __, enabled = true, ...definition } = data
     const result = await this.mutate('create', '', data, actor, state => {
       // A proposal saves one schedule. Checked in the same write as the create: two saves at once, or a save after one
       // whose proposal mark failed, find the first and create nothing. A retry of the same request replays its receipt.
@@ -544,13 +550,17 @@ export class Automations {
           ...definition,
           id: `auto_${randomUUID()}`,
           revision: 1,
-          enabled: true,
-          state: 'ready',
+          enabled,
+          state: enabled ? 'ready' : 'off',
           createdAt: stamp,
           updatedAt: stamp,
         },
         item: Row = { automation: value, runs: [], ...(data.proposalId ? { proposalId: data.proposalId } : {}) }
-      this.grant(item, actor)
+      if (enabled) this.grant(item, actor)
+      else {
+        this.options.authorize(actor.actor.deviceId, definition, 'manual')
+        this.options.plan(definition, 'manual')
+      }
       state.rows.push(item)
       return value.id
     })
@@ -648,8 +658,8 @@ export class Automations {
         if (this.atLimit(state))
           throw new AppError(409, 'automation-limit-running', `已有 ${MAX_ATTEMPTS} 个定时任务在运行，请等它们结束。`)
         const definition = configOf(item.automation)
-        this.options.authorize(actor.actor.deviceId, definition)
-        plan = this.options.plan(definition)
+        this.options.authorize(actor.actor.deviceId, definition, 'manual')
+        plan = this.options.plan(definition, 'manual')
         item.attempt = { requestId }
         this.record(item, { at: this.stamp(), state: 'running', trigger: 'manual' })
         item.automation.state = 'running'
@@ -676,7 +686,7 @@ export class Automations {
     const current = this.find(this.journal.read(), key)
     await this.startAttempt(current, plan, requestId, () => {
       actor.authorize()
-      this.options.authorize(actor.actor.deviceId, configOf(this.find(this.journal.read(), key).automation))
+      this.options.authorize(actor.actor.deviceId, configOf(this.find(this.journal.read(), key).automation), 'manual')
     })
     return { value: this.get(key), audited: result.audited }
   }
@@ -722,8 +732,8 @@ export class Automations {
           const target = this.find(state, key)
           let plan: AutomationPlan
           try {
-            this.options.authorize(actor.actor.deviceId, configOf(target.automation))
-            plan = this.options.plan(configOf(target.automation))
+            this.options.authorize(actor.actor.deviceId, configOf(target.automation), 'schedule')
+            plan = this.options.plan(configOf(target.automation), 'schedule')
           } catch {
             this.pause(target, 'agent-unavailable')
             return { value: true }
@@ -787,8 +797,8 @@ export class Automations {
     const definition = configOf(item.automation)
     let plan: AutomationPlan
     try {
-      this.options.authorize(item.grant.deviceId, definition)
-      plan = this.options.plan(definition)
+      this.options.authorize(item.grant.deviceId, definition, 'schedule')
+      plan = this.options.plan(definition, 'schedule')
     } catch (error) {
       if (passing(error)) return
       await this.markPaused(item, error instanceof AppError && error.status === 403 ? 'owner-unavailable' : 'agent-unavailable')
@@ -835,10 +845,10 @@ export class Automations {
       deviceId = item.grant!.deviceId,
       authorize = () => {
         const current = this.find(this.journal.read(), key)
-        this.options.authorize(deviceId, configOf(current.automation))
+        this.options.authorize(deviceId, configOf(current.automation), 'schedule')
         if (!current.automation.enabled || current.grant?.basis !== expected || current.grant.deviceId !== deviceId)
           throw new AppError(409, 'automation-changed', '定时任务已关闭或已修改。')
-        if (this.basis(configOf(current.automation), this.options.plan(configOf(current.automation))) !== expected)
+        if (this.basis(configOf(current.automation), this.options.plan(configOf(current.automation), 'schedule')) !== expected)
           throw new AppError(409, 'automation-changed', '定时任务的执行配置已改变。')
       }
     let auditing = false
@@ -939,7 +949,11 @@ export class Automations {
     }
     if (detail) {
       const status = detail.summary.status
-      if (status === 'waiting-approval' && this.now() - Date.parse(item.automation.lastRun!.at) >= this.options.approvalTtlMs()) {
+      if (
+        status === 'waiting-approval'
+        && item.automation.lastRun!.trigger === 'schedule'
+        && this.now() - Date.parse(item.automation.lastRun!.at) >= this.options.approvalTtlMs()
+      ) {
         await this.options.cancel(detail.summary.id, detail.summary.runId)
         return
       }
@@ -1066,8 +1080,8 @@ export class Automations {
   }
   private grant(item: Row, actor: AgentActor): void {
     const definition = configOf(item.automation)
-    this.options.authorize(actor.actor.deviceId, definition)
-    const plan = this.options.plan(definition)
+    this.options.authorize(actor.actor.deviceId, definition, 'schedule')
+    const plan = this.options.plan(definition, 'schedule')
     item.grant = { deviceId: actor.actor.deviceId, basis: this.basis(definition, plan), persistent: plan.persistent }
     item.automation.enabled = true
     delete item.automation.pause

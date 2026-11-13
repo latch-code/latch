@@ -65,10 +65,10 @@ export function scheduleProposalLine(proposal: Pick<MemoryProposal, 'schedule'>)
 }
 
 /**
- * The editor's form for a schedule proposal: its name, when and input, in the Agent's default project when it has one
- * (otherwise chosen by hand, as for any new schedule), and no notification until the person turns it on.
+ * The editor's form for a schedule proposal: its name, when and input, at home unless the person chooses a project,
+ * and no notification until the person turns it on.
  */
-export function proposalDraft(proposal: Pick<MemoryProposal, 'schedule' | 'content'>, defaultProjectId: string | undefined): ScheduleDraft {
+export function proposalDraft(proposal: Pick<MemoryProposal, 'schedule' | 'content'>): ScheduleDraft {
   const plan = proposal.schedule?.plan
   return {
     ...NEW_SCHEDULE,
@@ -77,7 +77,6 @@ export function proposalDraft(proposal: Pick<MemoryProposal, 'schedule' | 'conte
     day: plan?.kind === 'weekly' ? plan.day : NEW_SCHEDULE.day,
     time: plan?.time ?? NEW_SCHEDULE.time,
     prompt: proposal.content,
-    ...(defaultProjectId ? { location: defaultProjectId } : {}),
   }
 }
 

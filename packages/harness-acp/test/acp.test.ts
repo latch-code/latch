@@ -6982,18 +6982,18 @@ describe('the browser tools for ACP sessions', () => {
     expect(systemText(stopped)).toContain('浏览器调用结果未知')
   })
 
-  it('gives none to a session of 我的 Agent, whose server is latch-skills alone', async () => {
+  it('gives 我的 Agent both its memory server and the same session-bound browser gateway', async () => {
     const gateway = await recordingToolGateway()
     const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { toolGateway: gateway.toolGateway, proposeMemory: async () => {} })
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({
-      prompt: 'echo hi',
+      prompt: 'browser [{"tool":"browser_tabs"}]',
       requestId: rid(),
       agentContext: { agent: { customAgentId: `agt_${randomUUID()}` }, instructions: '', revision: 'a'.repeat(64), proposals: true },
     })
-    await settled(bridge, sessionId)
-    expect(gateway.leases).toEqual([])
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe(`browser_tabs: ok: tab ${TAB}`)
+    expect(gateway.leases).toHaveLength(1)
     const servers = (received(await fixture.log(), 'session/new')[0]!.params as { mcpServers: Array<{ name: string }> }).mcpServers
-    expect(servers.map(server => server.name)).toEqual(['latch-skills'])
+    expect(servers.map(server => server.name).sort()).toEqual(['latch-browser', 'latch-skills'])
   })
 })

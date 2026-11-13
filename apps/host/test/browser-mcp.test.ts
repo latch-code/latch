@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { TaskDetail } from '@latch/protocol'
+import type { CustomAgent, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -84,7 +84,7 @@ async function audit(t: TestHost): Promise<Array<{ action: string; detail: Recor
 }
 
 describe('the browser tools of an external harness, through latch-browser and the tool gateway', () => {
-  it('runs reads and actions of a full-access session through the broker, audits them as mcp, and refuses typing into a sensitive field', async () => {
+  it.each([false, true])('runs full-access reads/actions through the broker and refuses sensitive typing, helper %s', async helper => {
     const logs: string[] = []
     const t = await startTestHost({ demo: false, log: text => void logs.push(text) })
     cleanups.push(() => t.close())
@@ -100,7 +100,23 @@ describe('the browser tools of an external harness, through latch-browser and th
     })
     // The desktop app is the browser provider when the session opens, so its agent gets latch-browser.
     const provider = await openProvider(desktop)
-    const created = await desktop.confirmed('tasks', { body: { prompt: 'echo hi', requestId: randomUUID(), harnessId: 'browser-agent' } })
+    const agent = helper
+      ? await desktop.json<CustomAgent>('custom-agents', {
+          method: 'POST',
+          body: {
+            requestId: randomUUID(),
+            name: 'Browser helper',
+            description: '',
+            harnessId: 'browser-agent',
+            mode: 'agent',
+            instructions: '',
+            skills: [],
+          },
+        })
+      : undefined
+    const created = await desktop.confirmed('tasks', {
+      body: { prompt: 'echo hi', requestId: randomUUID(), harnessId: 'browser-agent', ...(agent ? { customAgentId: agent.id } : {}) },
+    })
     expect(created.status).toBe(201)
     const { sessionId } = (await created.json()) as { sessionId: string }
     await settled(desktop, sessionId)

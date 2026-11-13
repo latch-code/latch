@@ -46,7 +46,6 @@ export function useTopicProposals(
   const effect = effectWords(shell.catalog?.harnesses.find(harness => harness.id === detail.summary.harnessId))
   const disabled = shell.connection === 'offline' || !shell.access.scopes.has('run')
   const schedulesOn = shell.catalog?.features?.automations === true
-  const defaultProject = shell.snapshot.customAgents?.find(agent => agent.id === owner)?.defaultProjectId
   return turns =>
     new Map(
       [...placeProposals([...proposals, ...refusals], sessionId, detail.messages, turns)].map(([key, items]) => [
@@ -65,7 +64,7 @@ export function useTopicProposals(
                       onOpen: () => {
                         shell.openProfile(owner, 'schedules', {
                           proposalId: proposal.id,
-                          draft: proposalDraft(proposal, defaultProject),
+                          draft: proposalDraft(proposal),
                           external: proposal.external,
                         })
                       },

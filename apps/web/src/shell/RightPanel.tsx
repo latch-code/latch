@@ -1,5 +1,5 @@
 import { fileContextKey } from '../preview/fileContext.ts'
-import { AgentProfile } from '../agents/AgentProfile.tsx'
+import { ProfileSlot } from '../agents/AgentProfile.tsx'
 import { SessionPanels } from '../components/SessionPanels.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
@@ -77,17 +77,7 @@ export function RightPanel({ shell }: { shell: ShellState }) {
     topHarness,
   } = shell
   if (!(summary || filesVisible)) return null
-  if (shell.profileColumn && shell.profileShown)
-    return (
-      <AgentProfile
-        shell={shell}
-        owner={shell.profileShown.owner}
-        section={shell.profileShown.section}
-        nonce={shell.profileShown.nonce}
-        prefill={shell.profileShown.prefill}
-        onClose={shell.closeProfile}
-      />
-    )
+  if (shell.profileColumn && shell.profileShown) return <ProfileSlot owner={shell.profileShown.owner} />
   const folderShell = access.local && access.admin ? shellFolders() : null
   const project = summary ? (catalog ? projectOf(summary, catalog.workspaces) : undefined) : workspaceForFiles
   // The title row's crumb holds these facts; a session without one keeps them under the launcher.

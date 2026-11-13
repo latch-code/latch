@@ -32,7 +32,7 @@ import { TitleBar } from './TitleBar.tsx'
 import { RIGHT_PANEL_MIN, rightPanelMax } from './panelLayout.ts'
 import { SettingsPage } from '../settings/SettingsPage.tsx'
 import { AgentsPage } from '../agents/AgentsPage.tsx'
-import { ProfileSheet } from '../agents/AgentProfile.tsx'
+import { ProfileLayer } from '../agents/AgentProfile.tsx'
 import { AppsPage } from '../plugin-pages/AppsPage.tsx'
 import { AgentsSpaceList } from '../agents/AgentsSpaceList.tsx'
 import { ShellDelegate, SpaceSwitch, shellSpaces } from './SpaceNav.tsx'
@@ -585,7 +585,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               />
             )}
             {phone && <PhoneTabBar shell={shell} />}
-            {phone && entries.includes('agents') && <ProfileSheet shell={shell} />}
+            {entries.includes('agents') && <ProfileLayer shell={shell} />}
             {phone && (
               <NewSessionSheet
                 focusComposer={submission.fork ? sheetComposerRef : undefined}

@@ -10,7 +10,7 @@ import { draftPermission, permissionView } from '../src/composer/permission.ts'
 import { firstFace, helperCandidates, helperCard, helperMode } from '../src/agents/helpers.ts'
 import { helperRequest, HelperCreate } from '../src/agents/HelperCreate.tsx'
 import { speakerOf } from '../src/agents/model.ts'
-import { mcpServer, permissionNote, personActivity, personStatus, toolWord } from '../src/agents/personWords.ts'
+import { helperPermissionBlocked, mcpServer, permissionNote, personActivity, personStatus, toolWord } from '../src/agents/personWords.ts'
 import type { AgentWrites } from '../src/agents/useAgentWrites.ts'
 
 const builtin = { ...testHarness('standard', { kind: 'builtin', label: 'Latch 内置' }), agentContext: 'private' as const }
@@ -270,7 +270,7 @@ describe('creating a helper: 「你想让谁成为你的帮手？」', () => {
 })
 
 describe('a helper’s frame on an open topic', () => {
-  const frame = (harness: typeof pi | typeof codex, permission?: TaskDetail['permission']) => {
+  const frame = (harness: typeof pi | typeof codex, permission?: TaskDetail['permission'], config?: TaskDetail['config']) => {
     const summary = {
       harnessId: harness.id,
       id: 's1',
@@ -301,7 +301,15 @@ describe('a helper’s frame on an open topic', () => {
       phone: false,
       preferences: { workbenchLayout: 'overview' },
       access: { scopes: new Set(['run']), local: true, legacy: false },
-      current: { summary, messages: [], approvals: [], liveText: '', cursor: 1, ...(permission ? { permission } : {}) },
+      current: {
+        summary,
+        messages: [],
+        approvals: [],
+        liveText: '',
+        cursor: 1,
+        ...(permission ? { permission } : {}),
+        ...(config ? { config } : {}),
+      },
       profileShown: null,
       selectedId: 's1',
       toggleProfile: () => {},
@@ -330,5 +338,23 @@ describe('a helper’s frame on an open topic', () => {
     const html = frame(codex, { level: 'L3', enforcer: 'NONE', notes: [], approvals: 'prompts', readback: 'mode' })
     expect(html).toContain('Latch 不隔离 小抄')
     expect(html).toContain('Latch 不隔离 小抄：说明')
+  })
+
+  it('warns and blocks a helper only when the Host expected a readback and the actual mode does not match', () => {
+    const permission = {
+      level: 'L3' as const,
+      enforcer: 'NONE' as const,
+      notes: [],
+      approvals: 'prompts' as const,
+      readback: 'mode' as const,
+      expectedMode: 'read-only',
+    }
+    const config = [{ id: 'mode', name: 'Mode', category: 'mode', currentValue: 'workspace-write', options: [] }]
+    const detail = { summary: { agent: { customAgentId: 'agt_1' }, mode: 'agent' }, permission, config } as unknown as TaskDetail
+    expect(helperPermissionBlocked(detail)).toBe(true)
+    expect(frame(codex, permission, config)).toContain('权限没确认')
+    expect(helperPermissionBlocked({ ...detail, config: [{ ...config[0]!, currentValue: 'read-only' }] })).toBe(false)
+    expect(helperPermissionBlocked({ ...detail, permission: { ...permission, readback: 'none' } })).toBe(false)
+    expect(helperPermissionBlocked({ ...detail, summary: { ...detail.summary, agent: undefined } })).toBe(false)
   })
 })

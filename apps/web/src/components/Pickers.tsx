@@ -259,6 +259,7 @@ export function ProjectPicker({
   openRequest,
   notice,
   onClosed,
+  defaultLocation,
 }: {
   catalog: HostCatalog
   harness?: HarnessInfo | undefined
@@ -277,6 +278,8 @@ export function ProjectPicker({
   /** Why the folder just chosen did not become a project, in the Host's words. */
   notice?: string | undefined
   onClosed?: (() => void) | undefined
+  /** Agent forms use the same default ID for the Host-allocated home, never for the public start folder. */
+  defaultLocation?: { label: string; description: string }
 }) {
   const workspaces = catalog.workspaces
   const start = workspaces.find(workspace => workspace.id === 'default')
@@ -318,10 +321,11 @@ export function ProjectPicker({
             id: 'start',
             options: [
               {
-                ...option(start, NO_PROJECT),
+                ...option(start, defaultLocation?.label ?? NO_PROJECT),
                 tag: undefined,
                 // The Host's own start directory gives each session a new folder; one the owner set is used as it is.
-                description: catalog.sessionFolders ? noProjectLine(harness) : middleEllipsis(start.path, 44),
+                description:
+                  defaultLocation?.description ?? (catalog.sessionFolders ? noProjectLine(harness) : middleEllipsis(start.path, 44)),
               },
             ],
           },

@@ -36,7 +36,7 @@ const ARCHIVED =
 
 /**
  * Why a gateway call of `summary`'s session is refused before anything else, or undefined: only a session of a project
- * (not archived, not of 我的 Agent, not personal, not a conversation with 通用), on an ACP harness at full access (L3),
+ * (not archived, personal or chat-only), including a helper's own workspace, on an ACP harness at full access (L3),
  * during a turn that is running and not being stopped.
  */
 export function gatewayRefusal(
@@ -44,8 +44,7 @@ export function gatewayRefusal(
   trust: { kind: string; level: string } | undefined,
   turn: ToolGatewayCallContext['turn'],
 ): 'no-project' | 'not-full-access' | 'no-turn' | 'stopping' | undefined {
-  if (!summary || summary.personal || summary.agent || summary.generalChat || summary.mode === 'chat' || summary.archived)
-    return 'no-project'
+  if (!summary || summary.personal || summary.mode === 'chat' || summary.archived) return 'no-project'
   if (trust?.kind !== 'acp' || trust.level !== 'L3') return 'not-full-access'
   if (turn === 'stopping') return 'stopping'
   if (turn !== 'running' || (summary.status !== 'running' && summary.status !== 'waiting-approval')) return 'no-turn'

@@ -212,14 +212,13 @@ describe('which gateway calls are refused before the broker', () => {
     expect(gatewayRefusal(summary, acp, 'running')).toBeUndefined()
     expect(gatewayRefusal({ status: 'waiting-approval' }, acp, 'running')).toBeUndefined()
     expect(gatewayRefusal(undefined, acp, 'running')).toBe('no-project')
-    for (const flag of [
-      { archived: true },
-      { agent: { customAgentId: 'agt_1' } },
-      { personal: { assistantId: 'a' } },
-      { generalChat: true as const },
-      { mode: 'chat' as const },
-    ])
+    for (const flag of [{ archived: true }, { personal: { assistantId: 'a' } }, { mode: 'chat' as const }])
       expect(gatewayRefusal({ ...summary, ...flag } as never, acp, 'running'), JSON.stringify(flag)).toBe('no-project')
+    for (const owner of [{ agent: { customAgentId: 'agt_1' } }, { generalChat: true as const }]) {
+      expect(gatewayRefusal({ ...summary, ...owner }, acp, 'running')).toBeUndefined()
+      expect(gatewayRefusal({ ...summary, ...owner }, acp, 'stopping')).toBe('stopping')
+      expect(gatewayRefusal({ ...summary, ...owner, mode: 'chat' }, acp, 'running')).toBe('no-project')
+    }
     expect(gatewayRefusal(summary, { kind: 'builtin', level: 'L1' }, 'running')).toBe('not-full-access')
     expect(gatewayRefusal(summary, { kind: 'plugin', level: 'L3' }, 'running')).toBe('not-full-access')
     expect(gatewayRefusal(summary, undefined, 'running')).toBe('not-full-access')

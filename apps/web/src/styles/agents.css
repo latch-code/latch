@@ -898,6 +898,13 @@ button.agent-memory-topic:hover {
 }
 
 /* The profile: in the right panel's place on wide windows, in a bottom sheet on phones. */
+.agent-profile-slot,
+.agent-profile-mount {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
 .agent-profile {
   display: flex;
   flex-direction: column;

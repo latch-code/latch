@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { HarnessInfo, TaskSummary } from '@latch/protocol'
+import type { TaskSummary } from '@latch/protocol'
 import {
   agentTopics,
   currentTopic,
@@ -118,35 +118,28 @@ describe('links into 我的 Agent', () => {
 })
 
 describe('a new topic with 通用', () => {
-  const harness = (id: string, modes: HarnessInfo['modes'], owner: 'latch' | 'harness') =>
-    ({ id, modes, capabilities: { models: { owner } } }) as unknown as HarnessInfo
-
-  it('starts a conversation without a project, marked as 通用’s, in talk mode where the Harness has it', () => {
+  it('starts a new 通用 topic in Standard Agent mode, independently of other Harness choices', () => {
     const submission = generalSubmission({
-      harness: harness('standard', ['chat', 'agent'], 'latch'),
       model: { providerId: 'p', model: 'm' },
       prompt: '你好',
     })
     expect(submission).toEqual({
       customAgentId: 'general',
       prompt: '你好',
-      mode: 'chat',
+      mode: 'agent',
       harnessId: 'standard',
       workspaceId: 'default',
       model: { providerId: 'p', model: 'm' },
     })
-    expect(submissionRequest({ ...submission, requestId: 'r1' }).body).toMatchObject({ customAgentId: 'general', mode: 'chat' })
-    // A Harness with its own models takes none; one without talk mode keeps its own.
-    expect(
-      generalSubmission({ harness: harness('acp', ['agent'], 'harness'), model: { providerId: 'p', model: 'm' }, prompt: 'x' }),
-    ).toEqual({
+    expect(submissionRequest({ ...submission, requestId: 'r1' }).body).toMatchObject({ customAgentId: 'general', mode: 'agent' })
+    expect(generalSubmission({ model: undefined, prompt: 'x' })).toEqual({
       customAgentId: 'general',
       prompt: 'x',
       mode: 'agent',
-      harnessId: 'acp',
+      harnessId: 'standard',
       workspaceId: 'default',
     })
-    expect(generalMode(undefined)).toBe('chat')
+    expect(generalMode()).toBe('agent')
   })
 })
 

@@ -11,20 +11,18 @@ import {
   StatusWord,
   TextAreaField,
   TextField,
-  ModelGlyph,
   ShieldGlyph,
   TrashGlyph,
 } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
-import { ModelPicker, ProjectPicker } from '../components/Pickers.tsx'
+import { ProjectPicker } from '../components/Pickers.tsx'
 import { harnessName } from '../composerChoice.ts'
-import { MODE_COPY } from '../core/securityCopy.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { draftOf, normalizedDraft, patchOf, rebaseDraft, saveWaits, usesHostModels, type AgentDraft } from './model.ts'
+import { draftOf, normalizedDraft, patchOf, rebaseDraft, saveWaits, type AgentDraft } from './model.ts'
 import { isolationBrief } from './helpers.ts'
-import { BeforeActing } from './parts.tsx'
 import { writeFor, type AgentWrites, type WriteState } from './useAgentWrites.ts'
 import { MessageError } from '../core/api.ts'
+import { AgentDefaults } from './AgentDefaults.tsx'
 
 /** When a change reaches the Agent's sessions: the fine print behind ⓘ. */
 export function TakesEffect({ label = '何时生效' }: { label?: string }) {
@@ -145,6 +143,8 @@ export function AgentForm({
   onCancel,
   onReload,
   onManageProviders,
+  onOptionsRead,
+  homePath,
 }: {
   catalog: HostCatalog
   access: DeviceAccess
@@ -158,6 +158,8 @@ export function AgentForm({
   onCancel?: () => void
   onReload?: () => void
   onManageProviders?: () => void
+  onOptionsRead?: () => void | Promise<void>
+  homePath?: string | undefined
 }) {
   const base = useMemo(() => draftOf(agent), [agent])
   const [draft, setDraft] = useState<AgentDraft>(base)
@@ -259,41 +261,15 @@ export function AgentForm({
               {isolation ? ` ${isolation.label}。${isolation.detail}` : ''}
             </Hint>
           </dd>
-          <dt>模型</dt>
-          <dd>
-            {usesHostModels(harness) ? (
-              <>
-                <ModelPicker
-                  catalog={catalog}
-                  value={draft.model}
-                  access={access}
-                  disabled={locked}
-                  {...(onManageProviders ? { onManage: onManageProviders } : {})}
-                  onChange={model => {
-                    update({ model: { providerId: model.providerId, model: model.model } })
-                  }}
-                />
-                {draft.model && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={locked}
-                    onClick={() => {
-                      const { model: _model, ...rest } = draft
-                      setDraft(rest)
-                    }}>
-                    用默认模型
-                  </Button>
-                )}
-              </>
-            ) : (
-              <Hint label="它自己的默认" lead={<ModelGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
-                在开始时换它的模型尚未实现。
-              </Hint>
-            )}
-          </dd>
-          <dt>做事前</dt>
-          <dd>{harness ? <BeforeActing harness={harness} mode={draft.mode} /> : <span>{MODE_COPY.askFirst}</span>}</dd>
+          <AgentDefaults
+            catalog={catalog}
+            draft={draft}
+            access={access}
+            disabled={locked}
+            onDraft={setDraft}
+            {...(onOptionsRead ? { onRead: onOptionsRead } : {})}
+            {...(onManageProviders ? { onManage: onManageProviders } : {})}
+          />
         </dl>
       </Section>
 
@@ -301,6 +277,7 @@ export function AgentForm({
         <div className="agent-form-pickers">
           <ProjectPicker
             catalog={catalog}
+            defaultLocation={{ label: '家', description: '没有选项目时，在家里做' }}
             harness={harness}
             access={access}
             value={draft.defaultProjectId ?? 'default'}
@@ -415,7 +392,7 @@ export function AgentForm({
           title={`删除「${agent.name}」？`}
           danger
           confirmLabel="删除"
-          message="它的记忆一并删除，已有会话保留。它在内置 Harness 上的会话不再接受输入。"
+          message={`它的记忆一并删除，已有会话保留。它在内置 Harness 上的会话不再接受输入。它的文件夹留着${homePath ? `：${homePath}` : ''}。`}
           onClose={() => {
             setDeleting(false)
           }}

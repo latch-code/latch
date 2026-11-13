@@ -6,7 +6,7 @@ import { Composer } from '../composer/Composer.tsx'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { worktreeProject, type ComposerChoice } from '../composerChoice.ts'
+import { startBlock, worktreeProject, type ComposerChoice } from '../composerChoice.ts'
 import { useMounted } from '../hooks/useMounted.ts'
 import { useAttachments } from '../hooks/useAttachments.ts'
 import { projectFolders, projectName } from '../projects.tsx'
@@ -138,7 +138,7 @@ export function NewTopic({
   useEffect(() => {
     if (agent) setChoice(delegationChoice(agent))
   }, [agent?.id, agent?.revision])
-  // The helper's own Harness (通用's is the Host's default that can take it), never one picked here.
+  // The helper's own Harness (Standard for new 通用 topics), never one picked here.
   const harness = agentHarnesses(catalog ?? undefined).find(item => item.id === (agent ? agent.harnessId : choice.harnessId))
   const pending = delegation.pending
   const mine = pending?.customAgentId === owner
@@ -164,14 +164,17 @@ export function NewTopic({
   const project = general ? undefined : worktreeProject(catalog, choice, false)
   const place = general ? undefined : catalog.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
   const sessions = agentSessions(snapshot.tasks, owner)
-  const available = agent ? agent.available : true
+  const generalBlock = general ? startBlock(snapshot, generalChoice(catalog)) : null
+  const available = agent ? agent.available : generalBlock === null
   const canStart = !offline && available && harness !== undefined && access.scopes.has('run')
   const blockReason = offline
     ? 'Mac 不在线，恢复后再发'
     : !access.scopes.has('run')
       ? '这台设备不能开始会话'
       : !available
-        ? (agent?.unavailableReason ?? '现在不能开始')
+        ? (agent?.unavailableReason
+          ?? (generalBlock?.kind === 'model-required' ? '先在这台 Mac 的 设置 › 模型服务 接上一个' : generalBlock?.message)
+          ?? '现在不能开始')
         : !harness
           ? general
             ? '先在这台 Mac 的 设置 › Harness 里准备一个'
@@ -189,7 +192,7 @@ export function NewTopic({
     const prompt = draft.trim()
     const submission = agent
       ? delegationSubmission({ agent, harness, choice, prompt, worktree, inProject: project !== undefined })
-      : generalSubmission({ harness, model: choice.model, prompt })
+      : generalSubmission({ model: choice.model ?? catalog.defaults.model, prompt })
     const ids = await attachments.wait()
     if (!ids || !mounted.current) return
     opened(await delegation.start({ ...submission, ...(ids.length ? { attachmentIds: ids } : {}) }))

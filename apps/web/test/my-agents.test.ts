@@ -10,6 +10,7 @@ import {
   delegationChoice,
   delegationSubmission,
   draftOf,
+  generalChoice,
   dutyLine,
   normalizedDraft,
   patchOf,
@@ -18,6 +19,8 @@ import {
   scheduleWords,
   sessionAgent,
   agentActivity,
+  agentDefaultChoice,
+  withAgentDefaultChoice,
   worksIn,
   writeOutcome,
 } from '../src/agents/model.ts'
@@ -87,13 +90,22 @@ describe('我的 Agent model', () => {
     expect(agentHarnesses(offered)).toEqual([])
   })
 
+  it('keeps 通用 on Standard Agent even when another Harness is the Code default', () => {
+    expect(generalChoice(catalog({ defaults: { harnessId: 'codex', mode: 'chat', workspaceId: 'notes' } }))).toMatchObject({
+      harnessId: 'standard',
+      mode: 'agent',
+      workspaceId: 'default',
+    })
+    expect(generalChoice(catalog({ harnesses: [testHarness('codex', { kind: 'agent' })] }))).toMatchObject({ harnessId: 'standard' })
+  })
+
   it('says the duty and where it works in one line each', () => {
     expect(dutyLine({ description: '  一页摘要\n多余', instructions: 'x' })).toBe('一页摘要')
     expect(dutyLine({ description: '', instructions: '\n  查资料  \n写摘要' })).toBe('查资料')
     expect(dutyLine({})).toBe('')
     expect(worksIn(catalog(), 'notes')).toBe('notes')
-    expect(worksIn(catalog(), undefined)).toBe('默认文件夹')
-    expect(worksIn(catalog({ sessionFolders: true }), 'default')).toBe('各自的文件夹')
+    expect(worksIn(catalog(), undefined)).toBe('家')
+    expect(worksIn(catalog({ sessionFolders: true }), 'default')).toBe('家')
     expect(worksIn(catalog(), 'removed')).toBe('项目已移除')
   })
 
@@ -161,17 +173,37 @@ describe('我的 Agent model', () => {
     expect(patchOf(base, { ...base, skills: ['p:s'] })).toEqual({ skills: ['p:s'] })
   })
 
-  it('keeps a model only on a Harness that runs on Latch’s models', () => {
+  it('keeps an explicit service model for Host validation, including a native Harness route', () => {
     const draft = {
       ...draftOf(detail()),
       name: '  周报 ',
       harnessId: 'codex',
       model: { providerId: 'deepseek', model: 'deepseek-chat' },
     }
-    expect(normalizedDraft(catalog(), draft)).not.toHaveProperty('model')
+    expect(normalizedDraft(catalog(), draft).model).toEqual(draft.model)
     expect(normalizedDraft(catalog(), draft).name).toBe('周报')
     expect(delegationMode({ modes: ['chat'] }, 'agent')).toBe('chat')
     expect(delegationMode({ modes: ['chat', 'agent'] }, 'agent')).toBe('agent')
+  })
+
+  it('keeps native defaults through editing and rebasing, and stores no synthetic service option', () => {
+    const current = catalog()
+    const base = draftOf(detail({ harnessId: 'codex', engineOptions: { model: 'native', effort: 'high', '~mode': 'read-only' } }))
+    expect(base.engineOptions).toEqual({ model: 'native', effort: 'high', '~mode': 'read-only' })
+    const choice = agentDefaultChoice(current, base)
+    expect(choice.config).toEqual(base.engineOptions)
+    const next = withAgentDefaultChoice(current, base, { config: { ...choice.config, effort: 'low' } })
+    expect(patchOf(base, next)).toEqual({ engineOptions: { model: 'native', effort: 'low', '~mode': 'read-only' } })
+    expect(rebaseDraft(base, { ...base, engineOptions: { model: 'native', effort: 'max' } }, next).conflicts).toContain('engineOptions')
+    const service = { providerId: 'removed-service', model: 'still-intended' }
+    const routed = { ...base, model: service }
+    const shown = agentDefaultChoice(current, routed)
+    const permission = withAgentDefaultChoice(current, routed, { config: { ...shown.config, '~mode': 'workspace-write' } })
+    expect(permission.model).toEqual(service)
+    expect(Object.keys(permission.engineOptions ?? {})).not.toContain('~service')
+    const native = withAgentDefaultChoice(current, routed, { config: { model: 'other-native' } })
+    expect(native.model).toBeUndefined()
+    expect(native.engineOptions).toEqual({ model: 'other-native' })
   })
 
   it('tells a conflict, an unknown result and a refusal apart', () => {

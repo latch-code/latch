@@ -1,4 +1,4 @@
-import { GENERAL_AGENT_ID, type CustomAgentSummary, type HarnessInfo, type TaskMode, type TaskSummary } from '@latch/protocol'
+import { GENERAL_AGENT_ID, type CustomAgentSummary, type ModelRef, type TaskMode, type TaskSummary } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import { rowStatus } from '../sessions.ts'
 import { personActivity, WAITS_ON_YOU } from './personWords.ts'
@@ -55,26 +55,23 @@ export function openAgent(target: MyAgentTarget | undefined, tasks: readonly Tas
   return { kind: 'page', target: { id: target.id, topic: 'new' }, ...(section ? { section } : {}) }
 }
 
-/** The mode of a conversation with 通用: only talk where the Harness has it, else its first mode. */
-export function generalMode(harness: Pick<HarnessInfo, 'modes'> | undefined): TaskMode {
-  return harness?.modes.includes('chat') ? 'chat' : (harness?.modes[0] ?? 'chat')
+/** The mode of a new 通用 topic; existing topics retain their recorded mode. */
+export function generalMode(): TaskMode {
+  return 'agent'
 }
 
-/** A new topic with 通用: no project, on the Harness and model picked for it, marked as 我的 Agent's by `general`. */
+/** A new 通用 topic: Standard Agent and a Host model, with the Host choosing its private home. */
 export function generalSubmission(input: {
-  harness: Pick<HarnessInfo, 'id' | 'modes' | 'capabilities'>
-  model: { providerId: string; model: string } | undefined
+  model: ModelRef | undefined
   prompt: string
 }): Omit<PendingSubmission, 'requestId'> & { customAgentId: string } {
   return {
     customAgentId: GENERAL_AGENT_ID,
     prompt: input.prompt,
-    mode: generalMode(input.harness),
-    harnessId: input.harness.id,
+    mode: generalMode(),
+    harnessId: 'standard',
     workspaceId: 'default',
-    ...(input.harness.capabilities.models.owner === 'latch' && input.model
-      ? { model: { providerId: input.model.providerId, model: input.model.model } }
-      : {}),
+    ...(input.model ? { model: input.model } : {}),
   }
 }
 

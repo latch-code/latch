@@ -14,7 +14,7 @@ import {
   type WorktreeStart,
 } from '@latch/protocol'
 import { ApiError, ApiTimeoutError, ClientError, isUncertain, type PendingSubmission } from '../core/api.ts'
-import { findProvider, type ComposerChoice } from '../composerChoice.ts'
+import { findProvider, servicePick, withServicePick, type ComposerChoice } from '../composerChoice.ts'
 import { projectName } from '../projects.tsx'
 import { rowStatus, waitsOnYou } from '../sessions.ts'
 import type { AvatarState } from './avatarFace.ts'
@@ -42,16 +42,13 @@ export function agentHarnesses(catalog: HostCatalog | undefined): HarnessInfo[] 
 }
 
 /**
- * 通用's picks for a new topic: the Host's default Harness where it can take 通用, else the first that can; only talk
- * where it has that, no project, and the Host's default model.
+ * New 通用 topics use Standard Agent in their fixed home, independently of Code's current default Harness.
  */
 export function generalChoice(catalog: HostCatalog | undefined): ComposerChoice {
-  const harnesses = agentHarnesses(catalog)
-  const harness = harnesses.find(item => item.id === catalog?.defaults.harnessId) ?? harnesses[0]
   return {
-    mode: harness && !harness.modes.includes('chat') ? (harness.modes[0] ?? 'chat') : 'chat',
+    mode: 'agent',
     workspaceId: 'default',
-    ...(harness ? { harnessId: harness.id } : {}),
+    harnessId: 'standard',
     ...(catalog?.defaults.model ? { model: catalog.defaults.model } : {}),
   }
 }
@@ -76,9 +73,9 @@ export function modelName(catalog: HostCatalog | undefined, model: ModelRef): st
   return provider ? model.model : `${model.model}（服务已移除）`
 }
 
-/** Where a new session of the Agent works: its project, or each session's own folder. */
+/** Where a new topic works: the selected project, or the Agent's fixed home. */
 export function worksIn(catalog: HostCatalog | undefined, projectId: string | undefined): string {
-  if (!projectId || projectId === 'default') return catalog?.sessionFolders ? '各自的文件夹' : '默认文件夹'
+  if (!projectId || projectId === 'default') return '家'
   const project = catalog?.workspaces.find(item => item.id === projectId)
   return project ? projectName(project) : '项目已移除'
 }
@@ -170,6 +167,7 @@ export interface AgentDraft {
   harnessId: string
   mode: TaskMode
   model?: ModelRef
+  engineOptions?: Record<string, string>
   defaultProjectId?: string
   skills: string[]
   /** Absent: every enabled plugin (no extra limit). */
@@ -184,13 +182,14 @@ export function draftOf(agent: CustomAgentDetail['agent']): AgentDraft {
     harnessId: agent.harnessId,
     mode: agent.mode,
     ...(agent.model ? { model: agent.model } : {}),
+    ...(agent.engineOptions ? { engineOptions: { ...agent.engineOptions } } : {}),
     ...(agent.defaultProjectId ? { defaultProjectId: agent.defaultProjectId } : {}),
     skills: agent.skills,
     ...(agent.tools ? { tools: agent.tools } : {}),
   }
 }
 
-/** A draft as the Host takes it: a model only for a Harness on Latch's models, a mode the Harness has. */
+/** A draft as the Host takes it: explicit model intent stays for route validation, with a mode the Harness has. */
 export function normalizedDraft(catalog: HostCatalog | undefined, draft: AgentDraft): AgentDraft {
   const harness = catalog?.harnesses.find(item => item.id === draft.harnessId)
   const { model, ...rest } = draft
@@ -200,7 +199,39 @@ export function normalizedDraft(catalog: HostCatalog | undefined, draft: AgentDr
     name: draft.name.trim(),
     description: draft.description.trim(),
     mode,
-    ...(model && (!harness || usesHostModels(harness)) ? { model } : {}),
+    ...(model ? { model } : {}),
+  }
+}
+
+/** The existing start controls edit an Agent's defaults; synthetic service selection stays only in the view. */
+export function agentDefaultChoice(catalog: HostCatalog, draft: AgentDraft): ComposerChoice {
+  const harness = catalog.harnesses.find(item => item.id === draft.harnessId)
+  return {
+    harnessId: draft.harnessId,
+    workspaceId: draft.defaultProjectId ?? 'default',
+    mode: draft.mode,
+    ...(usesHostModels(harness)
+      ? { model: draft.model ?? catalog.defaults.model }
+      : {
+          config: withServicePick(
+            draft.engineOptions,
+            draft.model,
+            harness?.catalogue?.options.find(option => option.category === 'model')?.id,
+          ),
+        }),
+  }
+}
+
+export function withAgentDefaultChoice(catalog: HostCatalog, draft: AgentDraft, patch: Partial<ComposerChoice>): AgentDraft {
+  const harness = catalog.harnesses.find(item => item.id === draft.harnessId)
+  const choice = { ...agentDefaultChoice(catalog, draft), ...patch }
+  if (usesHostModels(harness)) return { ...draft, model: choice.model }
+  const prior = draft.model && withServicePick(undefined, draft.model)
+  const retained = prior && Object.entries(prior).every(([key, value]) => choice.config?.[key] === value)
+  return {
+    ...draft,
+    model: servicePick(catalog, harness, choice.config) ?? (retained ? draft.model : undefined),
+    engineOptions: withServicePick(choice.config, undefined),
   }
 }
 
@@ -215,13 +246,25 @@ export function patchOf(base: AgentDraft, next: AgentDraft): Omit<CustomAgentPat
   if (base.harnessId !== next.harnessId) patch.harnessId = next.harnessId
   if (base.mode !== next.mode) patch.mode = next.mode
   if (!same(base.model, next.model)) patch.model = next.model ?? null
+  if (!same(base.engineOptions, next.engineOptions)) patch.engineOptions = next.engineOptions ?? null
   if (!same(base.defaultProjectId, next.defaultProjectId)) patch.defaultProjectId = next.defaultProjectId ?? null
   if (!same(base.skills, next.skills)) patch.skills = next.skills
   if (!same(base.tools, next.tools)) patch.tools = next.tools ?? null
   return patch
 }
 
-const DRAFT_FIELDS = ['name', 'description', 'instructions', 'harnessId', 'mode', 'model', 'defaultProjectId', 'skills', 'tools'] as const
+const DRAFT_FIELDS = [
+  'name',
+  'description',
+  'instructions',
+  'harnessId',
+  'mode',
+  'model',
+  'engineOptions',
+  'defaultProjectId',
+  'skills',
+  'tools',
+] as const
 
 /**
  * A new revision from the Host under a form being edited: the person's edits stay, laid over the new definition. A field

@@ -4,7 +4,7 @@ import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { Button, EmptyState, IconButton, ChevronLeftGlyph } from '@latch/ui'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
-import { AgentProfile } from './AgentProfile.tsx'
+import { ProfileSlot } from './AgentProfile.tsx'
 import { agentTopics } from './chat.ts'
 import { takeDelegateFocus } from './delegateFocus.ts'
 import { NewTopic } from './NewTopic.tsx'
@@ -88,14 +88,7 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
       </div>
       {!phone && shell.profileShown && (
         <aside className="agent-chat-profile">
-          <AgentProfile
-            shell={shell}
-            owner={owner}
-            section={shell.profileShown.section}
-            nonce={shell.profileShown.nonce}
-            prefill={shell.profileShown.prefill}
-            onClose={shell.closeProfile}
-          />
+          <ProfileSlot owner={owner} />
         </aside>
       )}
     </div>

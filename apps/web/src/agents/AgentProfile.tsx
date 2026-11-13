@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { GENERAL_AGENT_ID, type AutomationSummary, type CustomAgentList } from '@latch/protocol'
 import {
@@ -17,6 +18,7 @@ import {
 } from '@latch/ui'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
+import { AgentHome } from './AgentHome.tsx'
 import { AgentForm, GeneralForm, WriteNotice } from './AgentForm.tsx'
 import { AvatarPicker } from './AvatarPicker.tsx'
 import { type ProfileSection } from './chat.ts'
@@ -27,7 +29,7 @@ import { agentActivity, dutyLine, GENERAL_NAME, scheduleWords, worksIn } from '.
 import { Availability, LockedAgents } from './parts.tsx'
 import { SchedulesTab } from './Schedules.tsx'
 import { scheduleBlock, whenWords } from './scheduleModel.ts'
-import { useAgentComputer, useAgentDetail, useAgentList, useProposals } from './useAgentData.ts'
+import { useAgentComputer, useAgentDetail, useAgentHome, useAgentList, useProposals } from './useAgentData.ts'
 import { ComputerSection, NotificationSection } from './Computer.tsx'
 import { McpSection } from './McpSection.tsx'
 import { builtinHarness } from '../composerChoice.ts'
@@ -131,6 +133,7 @@ export function AgentProfile({
   const general = owner === GENERAL_AGENT_ID
   const { read: listRead, reload: reloadList } = useAgentList(snapshot)
   const detail = useAgentDetail(snapshot, owner)
+  const home = useAgentHome(snapshot, owner)
   const { read: proposalRead, reload: reloadProposals } = useProposals(snapshot, owner)
   const { read: computerRead, reload: reloadComputer } = useAgentComputer(snapshot, owner)
   const refreshShell = shell.refresh
@@ -139,8 +142,9 @@ export function AgentProfile({
     detail.reload()
     reloadProposals()
     reloadComputer()
+    home.reload()
     void refreshShell()
-  }, [reloadList, detail.reload, reloadProposals, reloadComputer, refreshShell])
+  }, [reloadList, detail.reload, reloadProposals, reloadComputer, home.reload, refreshShell])
   const writes = useAgentWrites(settle)
   const scheduleWrites = useAgentWrites(
     useCallback(() => {
@@ -177,7 +181,7 @@ export function AgentProfile({
   // 通用's schedules are the ones that name no Agent.
   const automations = snapshot.automations?.filter(item => (general ? item.customAgentId === undefined : item.customAgentId === owner))
   const canRun = access.scopes.has('run')
-  const harness = summary && catalog?.harnesses.find(item => item.id === summary.harnessId)
+  const harness = catalog?.harnesses.find(item => item.id === (general ? 'standard' : summary?.harnessId))
   const plugins = 'value' in listRead && listRead.value ? listRead.value.plugins : NO_PLUGINS
   const skills = value?.kind === 'custom' ? value.detail.agent.skills : value?.kind === 'general' ? value.detail.general.skills : undefined
   const tools = value?.kind === 'custom' ? value.detail.agent.tools : undefined
@@ -324,14 +328,15 @@ export function AgentProfile({
               schedulesOn={schedulesOn}
               canRun={canRun}
               disabled={held}
-              runBlock={scheduleBlock({ offline, canRun, agent: summary })}
+              runBlock={scheduleBlock({ offline, canRun, agent: summary, trigger: 'manual' })}
               writes={writes}
               scheduleWrites={scheduleWrites}
             />
             {summary && <NotificationSection agent={summary} canRun={canRun} disabled={held} writes={writes} />}
-            {summary && catalog?.features?.mcp === true && (
+            {(summary || general) && catalog?.features?.mcp === true && (
               <McpSection
-                agentId={summary.id}
+                agentId={owner}
+                assignable={!general}
                 harness={harness}
                 builtin={harness !== undefined && harness.id === builtinHarness(catalog ?? undefined)?.id}
                 access={access}
@@ -341,7 +346,7 @@ export function AgentProfile({
             <dl className="agent-facts agent-profile-section">
               <dt>工作位置</dt>
               <dd>
-                <span>{summary ? worksIn(catalog ?? undefined, summary.defaultProjectId) : '不带项目'}</span>
+                <span>{summary ? worksIn(catalog ?? undefined, summary.defaultProjectId) : '家'}</span>
               </dd>
               {value && (
                 <>
@@ -372,6 +377,7 @@ export function AgentProfile({
           </>
         )}
         {!locked && view === 'settings' && !value && detail.read.state === 'loading' && <Loading label="正在读取" />}
+        {!locked && view === 'settings' && value && <AgentHome key={owner} home={home.value} local={access.local} admin={access.admin} />}
         {!locked && view === 'settings' && value?.kind === 'custom' && catalog && (
           <AgentForm
             catalog={catalog}
@@ -381,6 +387,8 @@ export function AgentProfile({
             writes={writes}
             disabled={held}
             onSaved={settle}
+            onOptionsRead={settle}
+            homePath={home.value?.path}
             onDeleted={() => {
               onClose()
               shell.openMyAgent()
@@ -415,38 +423,95 @@ export function AgentProfile({
   )
 }
 
-/** A phone's profile: the same content in a bottom sheet over the conversation, closed by 完成 or a drag down. */
-export function ProfileSheet({ shell }: { shell: ShellState }) {
+/** The responsive layout supplies a place, not another profile or another write controller. */
+export function ProfileSlot({ owner, phone = false }: { owner: string; phone?: boolean }) {
+  return <div className="agent-profile-slot" data-agent-profile-slot={phone ? 'phone' : 'desktop'} data-agent-profile-owner={owner} />
+}
+
+/**
+ * One profile for both desktop placements and the phone's existing Sheet. The portal target never changes: only its
+ * container moves, so forms, pending writes, scroll and focused controls keep their React and DOM identities.
+ */
+export function ProfileLayer({ shell }: { shell: ShellState }) {
   const shown = shell.profileShown
+  const [container] = useState(() => {
+    if (typeof document === 'undefined') return null
+    const element = document.createElement('div')
+    element.className = 'agent-profile-mount'
+    return element
+  })
+  const focused = useRef<HTMLElement | null>(null)
+  const readable = shell.snapshot.device.dataScope === 'all' && shell.access.scopes.has('view')
+  useLayoutEffect(() => {
+    if (!container) return
+    const remember = (event: FocusEvent) => {
+      if (event.target instanceof HTMLElement) focused.current = event.target
+    }
+    container.addEventListener('focusin', remember)
+    return () => {
+      container.removeEventListener('focusin', remember)
+      container.remove()
+    }
+  }, [container])
+  useLayoutEffect(() => {
+    if (!container) return
+    const slot =
+      shown && readable
+        ? document.querySelector(
+            `[data-agent-profile-slot="${shell.phone ? 'phone' : 'desktop'}"][data-agent-profile-owner="${CSS.escape(shown.owner)}"]`,
+          )
+        : null
+    if (!slot) {
+      container.remove()
+      focused.current = null
+      return
+    }
+    if (container.parentElement === slot) return
+    // Opening a modal first moves focus to its empty body. Restore the control after it joins that active dialog.
+    const target = container.contains(document.activeElement) ? document.activeElement : focused.current
+    slot.append(container)
+    if (target instanceof HTMLElement && target.isConnected && !target.closest('[inert]') && target.checkVisibility())
+      target.focus({ preventScroll: true })
+  })
   const name = !shown
     ? ''
     : shown.owner === GENERAL_AGENT_ID
       ? GENERAL_NAME
       : (shell.snapshot.customAgents?.find(agent => agent.id === shown.owner)?.name ?? 'Agent')
   return (
-    <Sheet
-      open={shown !== null}
-      title={name}
-      detent="large"
-      cancelLabel={null}
-      action={
-        <Button variant="ghost" onClick={shell.closeProfile}>
-          完成
-        </Button>
-      }
-      className="agent-profile-sheet"
-      onClose={shell.closeProfile}>
-      {shown && (
-        <AgentProfile
-          shell={shell}
-          owner={shown.owner}
-          section={shown.section}
-          nonce={shown.nonce}
-          prefill={shown.prefill}
-          phone
-          onClose={shell.closeProfile}
-        />
-      )}
-    </Sheet>
+    <>
+      <Sheet
+        open={shell.phone && shown !== null && readable}
+        title={name}
+        detent="large"
+        cancelLabel={null}
+        action={
+          <Button variant="ghost" onClick={shell.closeProfile}>
+            完成
+          </Button>
+        }
+        className="agent-profile-sheet"
+        onClose={() => {
+          if (shell.phone) shell.closeProfile()
+        }}>
+        {shown && <ProfileSlot owner={shown.owner} phone />}
+      </Sheet>
+      {container
+        && shown
+        && readable
+        && createPortal(
+          <AgentProfile
+            key={`${shell.snapshot.device.id}:${shown.owner}`}
+            shell={shell}
+            owner={shown.owner}
+            section={shown.section}
+            nonce={shown.nonce}
+            prefill={shown.prefill}
+            phone={shell.phone}
+            onClose={shell.closeProfile}
+          />,
+          container,
+        )}
+    </>
   )
 }

@@ -141,19 +141,17 @@ describe('a schedule proposal row', () => {
     expect(inputRows('x\n'.repeat(40))).toBe(14)
   })
 
-  it('fills the editor from the proposal, in the default project when the Agent has one', () => {
-    expect(proposalDraft(proposal(), 'web')).toEqual({
+  it('fills the editor from the proposal with home as the initial location', () => {
+    expect(proposalDraft(proposal())).toEqual({
       name: '早间精选',
       kind: 'weekly',
       day: 1,
       time: '08:30',
-      location: 'web',
+      location: 'default',
       prompt: '整理 AI 新闻',
       notify: false,
     })
-    expect(proposalDraft(proposal({ schedule: { name: '每天', plan: { kind: 'daily', time: '07:00' } } }), undefined)).not.toHaveProperty(
-      'location',
-    )
+    expect(proposalDraft(proposal({ schedule: { name: '每天', plan: { kind: 'daily', time: '07:00' } } })).location).toBe('default')
   })
 })
 

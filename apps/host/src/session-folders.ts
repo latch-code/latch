@@ -17,6 +17,26 @@ import { canonicalPath } from './paths.ts'
  */
 
 export const SESSION_FOLDER_NAME = /^\d{8}-[0-9a-f]{4}$/u
+const HELPER_OWNER = /^(?:general|agt_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/u
+export const HELPER_HOME_NAME = /^helpers\/(?:general|agt_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/u
+const directoryIdentitySchema = z.object({ dev: z.string().regex(/^\d+$/u), ino: z.string().regex(/^\d+$/u) }).strict()
+const helperFolderSchema = z
+  .object({
+    rootHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    root: directoryIdentitySchema,
+    parent: directoryIdentitySchema,
+    directory: directoryIdentitySchema,
+  })
+  .strict()
+
+async function directoryIdentity(path: string): Promise<z.infer<typeof directoryIdentitySchema>> {
+  const info = await lstat(path, { bigint: true })
+  if (!info.isDirectory() || info.isSymbolicLink()) throw helperUnavailable()
+  return { dev: String(info.dev), ino: String(info.ino) }
+}
+
+const sameDirectory = (left: z.infer<typeof directoryIdentitySchema>, right: z.infer<typeof directoryIdentitySchema>) =>
+  left.dev === right.dev && left.ino === right.ino
 
 /** How long a folder made for a start that has not created its session yet (one that may be retried under its request ID) is kept. */
 const PENDING_TTL_MS = 10 * 60_000
@@ -27,7 +47,11 @@ const ATTEMPTS = 16
 const RECORD_FILE = 'session-folders.json'
 const storedFolderSchema = z.object({ name: z.string().regex(SESSION_FOLDER_NAME), rootHash: z.string().regex(/^[a-f0-9]{64}$/u) }).strict()
 const recordsSchema = z
-  .object({ version: z.literal(1), folders: z.record(z.string().regex(/^[a-f0-9]{64}$/u), storedFolderSchema) })
+  .object({
+    version: z.literal(1),
+    folders: z.record(z.string().regex(/^[a-f0-9]{64}$/u), storedFolderSchema),
+    helpers: z.record(z.string().regex(HELPER_OWNER), helperFolderSchema).optional(),
+  })
   .strict()
 
 /** The folder's name: the Host's local date and four hex characters. */
@@ -39,6 +63,8 @@ export function sessionFolderName(at: Date, suffix: string): string {
 function unavailable(): AppError {
   return new AppError(409, 'session-folder-unavailable', '没能在默认文件夹中为这个会话新建文件夹，会话没有开始。请重试。')
 }
+const helperUnavailable = () =>
+  new AppError(409, 'helper-home-unavailable', 'Agent 的家无法确认，原文件已保留；请在这台 Mac 上检查工作文件夹。')
 
 interface RequestFolder {
   at: number
@@ -72,13 +98,26 @@ export class SessionFolders {
   /** Folders sessions were created in during this run, listed even when the session metadata could not be written. */
   private readonly made = new Set<string>()
   private recorded = new Map<string, z.infer<typeof storedFolderSchema>>()
+  private helpers = new Map<string, z.infer<typeof helperFolderSchema>>()
+  private readonly makingHelpers = new Map<string, Promise<{ name: string; path: string }>>()
+  /** A failed durable write can retry the directory this process made, without adopting an unrelated existing entry. */
+  private readonly unrecordedHelpers = new Map<string, z.infer<typeof helperFolderSchema>>()
   private loading?: Promise<void>
+  private rootIdentity?: z.infer<typeof directoryIdentitySchema>
   private writes = Promise.resolve()
+
+  /** Relative homes reserved by this allocator, including an allocation whose durable write is still pending. */
+  helperNames(): string[] {
+    return [...new Map([...this.helpers, ...this.unrecordedHelpers])]
+      .filter(([, record]) => record.rootHash === sha256Hex(this.options.canonicalRoot))
+      .map(([owner]) => `helpers/${owner}`)
+  }
 
   constructor(private readonly options: SessionFolderOptions) {}
 
   start(): Promise<void> {
     return (this.loading ??= (async () => {
+      this.rootIdentity = await directoryIdentity(this.options.root).catch(() => undefined)
       if (!this.options.dataDir) return
       let text: string
       try {
@@ -90,10 +129,137 @@ export class SessionFolders {
       try {
         const record = recordsSchema.parse(JSON.parse(text))
         this.recorded = new Map(Object.entries(record.folders))
+        this.helpers = new Map(Object.entries(record.helpers ?? {}))
       } catch {
         throw new AppError(500, 'config-corrupt', '会话文件夹的请求记录无法读取，原文件已保留。')
       }
     })())
+  }
+
+  /** A fixed home for an Agent, independent of the requests and topics that use it. The Host supplies the current policy. */
+  async helperHome(owner: string, guard: (path: string) => Promise<void>): Promise<{ name: string; path: string }> {
+    if (!HELPER_OWNER.test(owner)) throw helperUnavailable()
+    await this.start()
+    if (!this.rootIdentity || !sameDirectory(this.rootIdentity, await directoryIdentity(this.options.root))) throw helperUnavailable()
+    const folder = { name: `helpers/${owner}`, path: join(this.options.root, 'helpers', owner) }
+    await guard(folder.path)
+    const saved = this.helpers.get(owner)
+    if (saved) {
+      if (saved.rootHash !== sha256Hex(this.options.canonicalRoot) || !(await this.verifyHelper(folder.path))) throw helperUnavailable()
+      await guard(folder.path)
+      return folder
+    }
+    let making = this.makingHelpers.get(owner)
+    if (!making) {
+      making = this.makeHelper(owner, folder, guard)
+      this.makingHelpers.set(owner, making)
+    }
+    try {
+      const made = await making
+      await guard(made.path)
+      if (!(await this.verifyHelper(made.path))) throw helperUnavailable()
+      return made
+    } finally {
+      if (this.makingHelpers.get(owner) === making) this.makingHelpers.delete(owner)
+    }
+  }
+
+  private async makeHelper(owner: string, folder: { name: string; path: string }, guard: (path: string) => Promise<void>) {
+    const { root, canonicalRoot } = this.options
+    if ((await canonicalPath(root).catch(() => undefined)) !== canonicalRoot) throw helperUnavailable()
+    if (!this.rootIdentity || !sameDirectory(this.rootIdentity, await directoryIdentity(root))) throw helperUnavailable()
+    if (!this.unrecordedHelpers.has(owner)) {
+      const parent = join(root, 'helpers')
+      try {
+        await mkdir(parent, { mode: 0o700 })
+        const handle = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+        try {
+          await handle.chmod(0o700)
+        } finally {
+          await handle.close()
+        }
+      } catch (error) {
+        if (codeOf(error) !== 'EEXIST') throw helperUnavailable()
+      }
+      if (!(await this.helperParent())) throw helperUnavailable()
+      await guard(folder.path)
+      try {
+        // An unknown entry is never adopted, even if it is empty and named after this Agent.
+        await mkdir(folder.path, { mode: 0o700 })
+        const handle = await open(folder.path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+        try {
+          await handle.chmod(0o700)
+        } finally {
+          await handle.close()
+        }
+      } catch {
+        throw helperUnavailable()
+      }
+      this.unrecordedHelpers.set(owner, {
+        rootHash: sha256Hex(canonicalRoot),
+        root: await directoryIdentity(root),
+        parent: await directoryIdentity(parent),
+        directory: await directoryIdentity(folder.path),
+      })
+    }
+    if (!(await this.verifyHelper(folder.path))) throw helperUnavailable()
+    await guard(folder.path)
+    const write = this.writes.then(async () => {
+      const next = new Map(this.helpers)
+      const identity = this.unrecordedHelpers.get(owner)
+      if (!identity || !(await this.verifyHelper(folder.path))) throw helperUnavailable()
+      next.set(owner, identity)
+      if (this.options.dataDir)
+        await writeFileAtomic(
+          join(this.options.dataDir, RECORD_FILE),
+          `${JSON.stringify({ version: 1, folders: Object.fromEntries(this.recorded), helpers: Object.fromEntries(next) })}\n`,
+        )
+      this.helpers = next
+      this.unrecordedHelpers.delete(owner)
+    })
+    this.writes = write.catch(() => {})
+    await write
+    return folder
+  }
+
+  private async helperParent(): Promise<boolean> {
+    try {
+      const parent = join(this.options.root, 'helpers')
+      const info = await lstat(parent)
+      return (
+        info.isDirectory()
+        && !info.isSymbolicLink()
+        && !(info.mode & 0o077)
+        && (process.getuid === undefined || info.uid === process.getuid())
+        && (await canonicalPath(parent)) === join(this.options.canonicalRoot, 'helpers')
+      )
+    } catch {
+      return false
+    }
+  }
+
+  private async verifyHelper(path: string): Promise<boolean> {
+    const owner = basename(path)
+    const saved = this.helpers.get(owner) ?? this.unrecordedHelpers.get(owner)
+    if (!HELPER_OWNER.test(owner) || !saved || saved.rootHash !== sha256Hex(this.options.canonicalRoot)) return false
+    try {
+      const info = await lstat(path)
+      return (
+        info.isDirectory()
+        && !info.isSymbolicLink()
+        && !(info.mode & 0o077)
+        && (process.getuid === undefined || info.uid === process.getuid())
+        && this.rootIdentity !== undefined
+        && sameDirectory(this.rootIdentity, await directoryIdentity(this.options.root))
+        && sameDirectory(saved.root, await directoryIdentity(this.options.root))
+        && sameDirectory(saved.parent, await directoryIdentity(join(this.options.root, 'helpers')))
+        && sameDirectory(saved.directory, await directoryIdentity(path))
+        && (await this.helperParent())
+        && (await canonicalPath(path)) === join(this.options.canonicalRoot, 'helpers', owner)
+      )
+    } catch {
+      return false
+    }
   }
 
   /** The folder for a start request: made on the first ask, the same one for a retry with the same request ID. */
@@ -144,7 +310,7 @@ export class SessionFolders {
       if (this.options.dataDir)
         await writeFileAtomic(
           join(this.options.dataDir, RECORD_FILE),
-          `${JSON.stringify({ version: 1, folders: Object.fromEntries(next) })}\n`,
+          `${JSON.stringify({ version: 1, folders: Object.fromEntries(next), helpers: Object.fromEntries(this.helpers) })}\n`,
         )
       this.recorded = next
     })
@@ -184,7 +350,7 @@ export class SessionFolders {
         if (this.options.dataDir)
           await writeFileAtomic(
             join(this.options.dataDir, RECORD_FILE),
-            `${JSON.stringify({ version: 1, folders: Object.fromEntries(next) })}\n`,
+            `${JSON.stringify({ version: 1, folders: Object.fromEntries(next), helpers: Object.fromEntries(this.helpers) })}\n`,
           )
         this.recorded = next
       })
@@ -198,6 +364,8 @@ export class SessionFolders {
   /** Directories a driver may accept as a new or existing session's `cwd`: the ones made here and those `recorded`. */
   paths(recorded: Iterable<string>): string[] {
     const paths = new Set<string>(this.made)
+    for (const [owner, home] of this.helpers)
+      if (home.rootHash === sha256Hex(this.options.canonicalRoot)) paths.add(join(this.options.root, 'helpers', owner))
     for (const folder of this.recorded.values())
       if (folder.rootHash === sha256Hex(this.options.canonicalRoot)) paths.add(join(this.options.root, folder.name))
     for (const entry of this.requests.values()) if (entry.path) paths.add(entry.path)
@@ -210,6 +378,7 @@ export class SessionFolders {
    * start directory. A folder replaced by a link to somewhere else no longer counts.
    */
   async verify(path: string | undefined): Promise<boolean> {
+    if (typeof path === 'string' && basename(dirname(path)) === 'helpers') return this.verifyHelper(path)
     if (typeof path !== 'string' || !SESSION_FOLDER_NAME.test(basename(path))) return false
     try {
       const info = await lstat(path)

@@ -9,11 +9,11 @@ export type AutomationSchedule =
 
 export interface AutomationConfig {
   name: string
-  /** One of 我的 Agent on the built-in engine. Absent: 通用. */
+  /** One of 我的 Agent. Absent: 通用; unattended execution still obeys the Host's level ceiling. */
   customAgentId?: string
   /** Absent: the agent's model, or for 通用 the Host's default. */
   model?: ModelRef
-  /** Absent: each run gets a folder of its own in the start directory. */
+  /** Absent: runs use this Agent's fixed home. */
   projectId?: string
   /** 要做的事. */
   prompt: string
@@ -73,7 +73,7 @@ export interface AutomationDetail {
   runs: AutomationRun[]
 }
 /** `proposalId`: saved from the Agent's schedule proposal, which the Host then marks saved. Never stored on the schedule. */
-export type AutomationCreate = AutomationConfig & { requestId: string; proposalId?: string }
+export type AutomationCreate = AutomationConfig & { requestId: string; proposalId?: string; enabled?: boolean }
 export type AutomationPatch = Partial<Omit<AutomationConfig, 'customAgentId' | 'model' | 'projectId'>> & {
   requestId: string
   baseRevision: number

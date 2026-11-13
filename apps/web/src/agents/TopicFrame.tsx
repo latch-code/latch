@@ -10,7 +10,8 @@ import { askDelegateFocus } from './delegateFocus.ts'
 import { draftPermission, permissionView } from '../composer/permission.ts'
 import { ACTIVITY_WORDS, agentActivity, agentLiveWord, dutyLine, generalChoice, scheduleWords, sessionAgent } from './model.ts'
 import { ActivityWord, IsolationNote, PermissionNote } from './parts.tsx'
-import { permissionNote } from './personWords.ts'
+import { helperPermissionBlocked, permissionNote } from './personWords.ts'
+import { draftConfig, startBlock, withLadderMode, type ComposerChoice } from '../composerChoice.ts'
 
 /**
  * The frame of a conversation with `owner` as the shell draws it, on a topic (`current`) or on a new one (null): the face
@@ -36,7 +37,8 @@ export function TopicFrame({
   const found = general ? undefined : snapshot.customAgents?.find(agent => agent.id === owner)
   const named = sessionAgent(snapshot, general ? { generalChat: true } : { agent: { customAgentId: owner } })
   const name = named?.name ?? 'Agent'
-  const state = agentActivity(snapshot, found ?? { id: owner, available: true })
+  const generalBlock = general ? startBlock(snapshot, generalChoice(shell.catalog ?? undefined)) : null
+  const state = agentActivity(snapshot, found ?? { id: owner, available: generalBlock === null })
   const offline = connection === 'offline'
   const gone = !general && snapshot.customAgents !== undefined && !found
   const schedules = snapshot.automations?.filter(item => (general ? !item.customAgentId : item.customAgentId === owner)) ?? []
@@ -47,7 +49,11 @@ export function TopicFrame({
     current !== null && detail?.summary.id === current
       ? shell.catalog?.harnesses.find(item => item.id === detail.summary.harnessId)
       : undefined
-  const fresh = general ? generalChoice(shell.catalog ?? undefined) : found ? { harnessId: found.harnessId, mode: found.mode } : undefined
+  const fresh: ComposerChoice | undefined = general
+    ? generalChoice(shell.catalog ?? undefined)
+    : found
+      ? { harnessId: found.harnessId, mode: found.mode, config: found.engineOptions }
+      : undefined
   const freshHarness = fresh && shell.catalog?.harnesses.find(item => item.id === fresh.harnessId)
   const note = permissionNote(
     current !== null
@@ -61,8 +67,13 @@ export function TopicFrame({
           })
         : undefined
       : freshHarness && fresh
-        ? draftPermission(freshHarness, fresh.mode ?? 'agent')
+        ? draftPermission(
+            freshHarness,
+            fresh.mode ?? 'agent',
+            withLadderMode(freshHarness, draftConfig(freshHarness, fresh.config)?.config, fresh.config),
+          )
         : undefined,
+    current !== null && detail?.summary.id === current && helperPermissionBlocked(detail),
   )
   const canStart = offline
     ? 'Mac 不在线'
@@ -72,7 +83,7 @@ export function TopicFrame({
         ? '这个 Agent 已删除'
         : found && !found.available
           ? (found.unavailableReason ?? '现在不能开始')
-          : undefined
+          : generalBlock?.message
   return (
     <AgentFrame
       name={name}
@@ -92,7 +103,7 @@ export function TopicFrame({
         <>
           {!phone && shell.catalog?.features?.automations && (
             <Button variant="ghost" size="sm" icon={ScheduleGlyph} onClick={() => shell.openMyAgent({ id: owner, tab: 'schedules' })}>
-              {schedules.length === 1
+              {schedules.length === 1 && schedules[0].enabled
                 ? scheduleWords(schedules[0].schedule)
                 : schedules.length
                   ? `${schedules.length} 个定时任务`
