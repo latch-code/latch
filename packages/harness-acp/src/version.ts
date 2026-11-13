@@ -215,7 +215,7 @@ export function versionRefusal(record: AgentRecord, verdict: VersionVerdict | un
  * since a shim (Volta, asdf, mise) stays the same file when the program behind it is upgraded. An unreadable version
  * blocks nothing.
  */
-export async function assertVersion(record: AgentRecord, path: string, own?: Gate, use?: string): Promise<void> {
+export async function assertVersion(record: AgentRecord, path: string, own?: Gate, use?: string): Promise<VersionVerdict | undefined> {
   const reused = cached(record, path, own)
   const entry = reused ?? entryFor(record, path, false, own)
   if (!entry) return
@@ -223,4 +223,5 @@ export async function assertVersion(record: AgentRecord, path: string, own?: Gat
   if (verdict.tooOld && reused) verdict = (await entryFor(record, path, true, own)?.read) ?? verdict
   const refused = versionRefusal(record, verdict, own, use)
   if (refused) throw refused
+  return verdict
 }

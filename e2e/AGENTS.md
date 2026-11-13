@@ -18,7 +18,7 @@ Vitest 驱动浏览器、Electron、原生链路；`startTestHost` 启动临时 
 
 `webkit.e2e.ts` 用 Playwright WebKit 检查三宽、授权文件与引用发送；不称为真机 Safari 验收。`desktop-models.e2e.ts` 在隔离 Electron 和假 ACP 中检查真实配置读回、失回执不重发及三宽菜单；不调用真实 Agent 或模型。
 
-`codex-model-gateway.e2e.ts` 真验须授权（[说明](../docs/TESTING.md)）。
+网关 e2e 的真实 CLI 验收须授权（[TESTING](../docs/TESTING.md)）。
 
 `native-swift-relay.e2e.ts` 用真实双Go与Swift检查单流、旧能力兼容、首块前后取消与App换代；每块复核原权限，测速含子连接握手。
 

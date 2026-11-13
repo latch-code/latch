@@ -1,0 +1,277 @@
+import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { afterEach, expect, it, vi } from 'vitest'
+import type { AgentPreset, AttachmentRef, CancelReceipt, ModelWire, ProviderKind, ProviderSettings, TaskDetail } from '@latch/protocol'
+import { startFakeModels } from '@latch/testkit'
+import { startTestHost } from './helpers/host.ts'
+import { assertNoGatewayCredentials } from './helpers/gateway-evidence.ts'
+
+const binary = process.env.LATCH_DSH_GATEWAY_BINARY
+afterEach(() => vi.unstubAllEnvs())
+
+function toolOutputs(input: unknown): string[] {
+  const body = input as {
+    input?: Array<{ type?: string; output?: unknown }>
+    messages?: Array<{ role?: string; content?: unknown }>
+    contents?: Array<{ parts?: Array<{ functionResponse?: { response?: unknown } }> }>
+  }
+  return [
+    ...(body.input ?? []).filter(item => item.type === 'function_call_output').map(item => item.output),
+    ...(body.messages ?? []).flatMap(message =>
+      message.role === 'tool'
+        ? [message.content]
+        : Array.isArray(message.content)
+          ? message.content
+              .filter((item: { type?: string }) => item.type === 'tool_result')
+              .map((item: { content?: unknown }) => item.content)
+          : [],
+    ),
+    ...(body.contents ?? []).flatMap(content =>
+      (content.parts ?? []).flatMap(part => (part.functionResponse ? [part.functionResponse.response] : [])),
+    ),
+  ].map(value => JSON.stringify(value))
+}
+
+it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire; knownGemini?: boolean }>([
+  { kind: 'openai-responses', wire: 'responses' },
+  { kind: 'openai-compatible', wire: 'chat-completions' },
+  { kind: 'anthropic', wire: 'anthropic-messages' },
+  { kind: 'gemini', wire: 'gemini' },
+  { kind: 'gemini', wire: 'gemini', knownGemini: true },
+])(
+  'runs a real dsh $wire tool through the gateway without exposing the token to its shell (known Gemini: $knownGemini)',
+  async ({ kind, wire, knownGemini }) => {
+    const modelA = knownGemini ? 'gemini-3.8-flash' : 'service-only-model'
+    const modelB = knownGemini ? 'gemini-4-argon' : 'service-only-next'
+    const hasThinking = wire !== 'gemini' || knownGemini
+    const providerName = wire === 'gemini' ? 'google' : 'latch-gateway'
+    const root = await mkdtemp(join(tmpdir(), 'latch-dsh-gateway-live-'))
+    for (const [name, directory] of Object.entries({
+      HOME: 'home',
+      DSH_HOME: 'dsh-home',
+      XDG_CONFIG_HOME: 'config',
+      XDG_DATA_HOME: 'data',
+      XDG_CACHE_HOME: 'cache',
+      XDG_STATE_HOME: 'state',
+    })) {
+      const path = join(root, directory)
+      await mkdir(path, { recursive: true })
+      vi.stubEnv(name, path)
+    }
+    const diagnostic = 'if [ -z "$LMG_TOKEN" ]; then printf gateway-token-hidden; else printf gateway-token-present; fi'
+    let phase: 'tools' | 'restored' | 'slow' | 'failure' = 'tools'
+    let slowSent = false
+    const upstream = await startFakeModels({
+      replyFor: request => {
+        if (phase === 'failure') return { error: { status: 400, message: 'planned gateway refusal' } }
+        if (phase === 'slow') {
+          if ((request.body as { tools?: unknown[] }).tools?.length) slowSent = true
+          return { text: 'late answer must not arrive', delayMs: 5_000 }
+        }
+        if (phase === 'restored') return { text: 'restored gateway answer' }
+        const hasResult = toolOutputs(request.body).length > 0
+        return hasResult
+          ? { text: 'native gateway done' }
+          : {
+              tool: { name: /^(shell|bash)$/u, input: { command: diagnostic, description: 'Check temporary gateway environment' } },
+              text: 'diagnostic',
+            }
+      },
+    })
+    const hostOptions = {
+      demo: false,
+      dataDir: join(root, 'host'),
+      workspaceRoot: join(root, 'workspace'),
+      commandDirectories: () => [dirname(binary!)],
+      loginPrograms: (name: string) => (name === 'dsh' ? binary : undefined),
+      detectPreset: (preset: AgentPreset) => (preset.id === 'dsh' ? { found: true, path: binary! } : { found: false }),
+    }
+    let host = await startTestHost(hostOptions)
+    try {
+      let owner = await host.enroll({ listener: 'unix' })
+      const added = await owner.confirmed('providers', {
+        method: 'POST',
+        body: {
+          name: 'Temporary service',
+          kind,
+          baseURL: `${upstream.origin}/${wire === 'gemini' ? 'v1beta' : 'v1'}`,
+          apiKey: 'sk-test-dsh-gateway-0123456789',
+          models: [modelA, modelB],
+          defaultModel: modelA,
+          modelCapabilities: {
+            [modelA]: { vision: true, thinking: ['low', 'high'] },
+            [modelB]: { vision: true, thinking: ['low', 'high'] },
+          },
+          confirmOrigin: true,
+        },
+      })
+      expect(added.status).toBe(201)
+      const provider = ((await added.json()) as { provider: ProviderSettings }).provider
+      expect(
+        (
+          await owner.confirmed('agents', {
+            method: 'POST',
+            body: { id: 'dsh', name: 'DeepSeek Harness', presetId: 'dsh', command: 'dsh', args: ['--profile', 'acp'], env: {} },
+          })
+        ).status,
+      ).toBe(201)
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+      const withImage = false
+      const probe = await owner.confirmed('agents/dsh/probe', { body: { requestId: randomUUID() } })
+      expect(probe.status).toBe(200)
+      expect(await probe.json()).toMatchObject({ capabilities: { images: false } })
+      const attachment = withImage
+        ? await owner.json<{ attachment: AttachmentRef }>('attachments', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/octet-stream',
+              'x-latch-attachment': Buffer.from(
+                JSON.stringify({
+                  requestId: randomUUID(),
+                  name: 'pixel.png',
+                  size: png.length,
+                  selection: { harnessId: 'dsh', model: { providerId: provider.id, model: modelA } },
+                }),
+              ).toString('base64url'),
+            },
+            rawBody: png,
+          })
+        : undefined
+      const started = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: {
+          harnessId: 'dsh',
+          prompt: 'Run the supplied harmless diagnostic, then answer.',
+          ...(attachment ? { attachmentIds: [attachment.attachment.id] } : {}),
+          requestId: randomUUID(),
+          model: { providerId: provider.id, model: modelA },
+        },
+      })
+      let detail: TaskDetail | undefined
+      await vi.waitFor(
+        async () => {
+          detail = await owner.json<TaskDetail>(`tasks/${started.sessionId}`)
+          for (const approval of detail.approvals)
+            await owner.json(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'allow', requestId: randomUUID() } })
+          expect(['running', 'waiting-approval']).not.toContain(detail.summary.status)
+        },
+        { timeout: 60_000, interval: 100 },
+      )
+      if (detail!.summary.status !== 'idle') {
+        throw new Error(
+          detail!.messages
+            .filter(message => message.role === 'system')
+            .map(message => message.text)
+            .join('\n'),
+        )
+      }
+      if (withImage) expect(upstream.requests.some(request => JSON.stringify(request.body).includes(png.toString('base64')))).toBe(true)
+      const outputs = upstream.requests.flatMap(request => toolOutputs(request.body))
+      expect(outputs.some(output => output.includes('gateway-token-hidden'))).toBe(true)
+      expect(outputs.some(output => output.includes('gateway-token-present'))).toBe(false)
+      expect(upstream.requests.every(request => request.model === modelA && request.wire === wire)).toBe(true)
+      expect(detail!.config?.find(option => option.category === 'model')?.currentValue).toBe(JSON.stringify([providerName, modelA]))
+      const sessionId = started.sessionId
+      const modelId = detail!.config!.find(option => option.category === 'model')!.id
+      await owner.json(`tasks/${sessionId}/config`, {
+        method: 'POST',
+        body: { configId: modelId, value: JSON.stringify([providerName, modelB]), requestId: randomUUID() },
+      })
+      const changed = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+      const thought = changed.config?.find(option => option.category === 'thought_level')
+      if (hasThinking) {
+        expect(thought?.options.some(option => option.value === 'low')).toBe(true)
+        await owner.json(`tasks/${sessionId}/config`, {
+          method: 'POST',
+          body: { configId: thought!.id, value: 'low', requestId: randomUUID() },
+        })
+      } else {
+        expect(thought).toBeUndefined()
+        expect(
+          (
+            await owner.request(`tasks/${sessionId}/config`, {
+              method: 'POST',
+              body: { configId: 'reasoning_effort', value: 'low', requestId: randomUUID() },
+            })
+          ).ok,
+        ).toBe(false)
+      }
+      await host.close()
+      host = await startTestHost(hostOptions)
+      owner = await host.enroll({ listener: 'unix' })
+      phase = 'restored'
+      await owner.json(`tasks/${sessionId}/prompt`, {
+        method: 'POST',
+        body: { prompt: 'Continue after recovery.', requestId: randomUUID() },
+      })
+      const current = () => owner.json<TaskDetail>(`tasks/${sessionId}`)
+      await vi.waitFor(async () => expect((await current()).summary.status).toBe('idle'), { timeout: 30_000 })
+      expect(upstream.requests.at(-1)).toMatchObject({ model: modelB, wire })
+      expect((await current()).config?.find(option => option.category === 'model')?.currentValue).toBe(
+        JSON.stringify([providerName, modelB]),
+      )
+      expect(toolOutputs(upstream.requests.at(-1)!.body).some(output => output.includes('gateway-token-hidden'))).toBe(true)
+      const body = upstream.requests.at(-1)!.body as Record<string, unknown>
+      const evidence = {
+        wire,
+        thought: (await current()).config?.find(option => option.category === 'thought_level')?.currentValue,
+        request: {
+          reasoning: body.reasoning,
+          reasoning_effort: body.reasoning_effort,
+          thinking: body.thinking,
+          output_config: body.output_config,
+          generationConfig: body.generationConfig,
+        },
+      }
+      expect(evidence.thought).toBe(hasThinking ? 'low' : undefined)
+      if (wire === 'gemini' && hasThinking) {
+        expect(body).toMatchObject({ generationConfig: { thinkingConfig: { thinkingLevel: 'LOW', includeThoughts: true } } })
+        expect((body.generationConfig as { thinkingConfig: object }).thinkingConfig).not.toHaveProperty('thinkingBudget')
+      }
+      if (process.env.LATCH_GATEWAY_EVIDENCE_DIR) {
+        await mkdir(process.env.LATCH_GATEWAY_EVIDENCE_DIR, { recursive: true })
+        await writeFile(
+          join(process.env.LATCH_GATEWAY_EVIDENCE_DIR, `${wire}${knownGemini ? '-known' : ''}.json`),
+          JSON.stringify(evidence, null, 2),
+        )
+      }
+
+      phase = 'slow'
+      await owner.json(`tasks/${sessionId}/prompt`, {
+        method: 'POST',
+        body: { prompt: 'Wait for a reply we will stop.', requestId: randomUUID() },
+      })
+      await vi.waitFor(() => expect(slowSent).toBe(true), { timeout: 15_000 })
+      const runId = (await current()).summary.runId
+      const stopped = await owner.json<{ receipt: CancelReceipt }>(`tasks/${sessionId}/cancel`, {
+        method: 'POST',
+        body: { requestId: randomUUID(), runId },
+      })
+      expect(stopped.receipt).toMatchObject({ outcome: 'stopped', status: 'cancelled' })
+      expect((await current()).messages.some(message => message.text.includes('late answer must not arrive'))).toBe(false)
+
+      phase = 'failure'
+      await owner.json(`tasks/${sessionId}/prompt`, {
+        method: 'POST',
+        body: { prompt: 'Report the service refusal.', requestId: randomUUID() },
+      })
+      await vi.waitFor(async () => expect((await current()).summary.status).toBe('failed'), { timeout: 30_000 })
+      expect((await current()).messages.map(message => message.text).join('\n')).toContain('planned gateway refusal')
+      await writeFile(
+        join(root, 'result.json'),
+        JSON.stringify({ requests: upstream.requests.length, tokenHidden: true, restored: true, stopped: true, failed: true }),
+      )
+    } finally {
+      await host.close()
+      await upstream.close()
+      try {
+        await assertNoGatewayCredentials(root)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  },
+  90_000,
+)

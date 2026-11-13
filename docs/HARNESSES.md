@@ -29,7 +29,7 @@ ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱�
 2. 新会话直接列出命令已经装好的预设（`catalog.harnesses` 中带 `offer` 的项，只发给有 `admin` 的设备），不用先添加；第一次发送时页面先保存它的定义，再开始会话，保存不运行任何东西。`startServer` 只有收到 `detectPreset`（启动脚本传入）才找命令，测试不传，所以运行测试的电脑上装的 Agent 不会被选中。也可以在「设置 → Harness」选择预设或填写自定义命令（可执行文件名或绝对路径、参数、环境变量）；新增定义、改命令、参数或任何变量（新增、修改或移除：移除 `CODEX_PATH` 或 `DISABLE_*` 同样改变运行的程序）只在这台 Mac 的桌面端（`host.sock`），并要本机确认 `harness.command.apply`（系统表单写「让 Harness 运行 <命令>（「名称」）」，确认绑定名称与命令解析出的路径，完全访问的会话运行或等你处理时被挡），因为它决定运行哪个程序。确认时记下解析出的路径（`confirmedCommand`）：之后同一个命令解析到别的程序时 Harness 不可用、会话不启动（409 `harness-command-moved`），在这台 Mac 上再保存一次命令即重新确认；在确认之前保存的旧定义没有这条记录，照旧启动。改名、开关、删除、模型与权限预设照旧，有 `admin` 的设备都能改。每次改动都有 `agent.defined` 审计（确认过的带 `lpc-local`），变量的值不返回。Host 只为确认过、且仍解析到同一路径的定义运行 `--version`：新增的定义在确认之后才读版本（太旧时那时拒绝，什么都不保存）。在这个改动之前保存的定义没有记下路径：在这台 Mac 上第一次用它开始会话时先确认一次并记下（`agent.defined` 带 `lpc-local`），在此之前其他设备开始它会被拒绝（409 `harness-unconfirmed`），它的版本也不读；升级后请在这台 Mac 上用每个 Harness 开始一次会话。新会话里直接列出的预设（`offer`）也只给这台 Mac 的桌面端：第一次发送时页面保存它的定义，同样先确认。可以先「测试启动」，不发送内容地核对程序能否运行。
 3. 新建会话时默认用这台设备上次的 Harness，否则按预设顺序用第一个能开始的，Latch 内置最后，不提问。项目在标题里选；Harness 没有项目、启动目录又是 Host 自己选的（`catalog.sessionFolders`）时，按发送打开项目列表、保留草稿、不开始；选「不选项目」就在新的空文件夹里开始。 发送就开始，没有确认。
 
-   这个启动指纹在这台 Host 上第一次启动时，`sessions-meta.json` 记 `firstStart`，摘要带 `firstStart: true`，会话记录最上面显示一行，带 Harness 的标记：「Latch 不隔离 Codex」，ⓘ 后是「Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置。」；执行工具前不询问的 Harness 写「pi 不询问，Latch 不隔离它」，ⓘ 后是「pi 执行工具前不询问，只有扩展要求确认时才问你；Latch 不限制它。」。Driver 不会收到这一项。
+   这个启动指纹在这台 Host 上第一次启动时，`sessions-meta.json` 记 `firstStart`，摘要带 `firstStart: true`，会话记录最上面显示一行，带 Harness 的标记：「Latch 不隔离 Codex」，ⓘ 后是「Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置。」；执行工具前不询问的 Harness 写明它不询问，ⓘ 解释实际询问来源；pi 的权限扩展会在工具前询问，不能沿用未接扩展时的「pi 不询问」说明。Driver 不会收到这一项。
 4. 会话头部显示 Agent 提供的模型、模式等选项，修改后从下一轮生效；任何档位都能直接选，也包括由模型代为批准和不再询问的模式。权限菜单的写法见「权限菜单」。
 
 ### 直连优先
@@ -215,6 +215,9 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 | Codex 直连 | Responses | 自定义 provider 的启动参数；LMG_TOKEN 环境变量；config/read 保留原命令环境规则后在线程配置中额外排除令牌 |
 | codex-acp | Responses（实验性） | ACP providers/set；仅使用适配器声明且列出的 provider/API，模型限于适配器认识的服务模型 |
 | Gemini CLI | Gemini，至少 0.44.0 | 环境变量与 0600 会话私有系统设置，合并思考启动设置，不声称独立读回 |
+| OpenCode | 四种同协议服务，至少 2.2.6 | 私有 provider 配置与官方 shell hook；工具环境清空令牌值 |
+| DeepSeek Harness | 四种同协议服务，至少 0.2.2-rc.1 | 私有 Cordis patch 与原生 llm provider；未知 Gemini 别名不提供离散思考档位 |
+| pi | 四种同协议服务，至少 1.5.0 | 官方 provider 扩展；精确目录上限或显式运行预算；凭据仅在进程内存 |
 
 Codex 直连使用服务的模型列表，可以选择原生目录之外的模型；codex-acp 保留其已知模型限制。经网关的会话不能换服务，同服务内的模型可选。服务停用、删除、密钥或地址不再可用时明确失败，不回退到 Harness 自己的登录或演示模型。整轮没有经过网关时会如实提示和审计；这不证明每个辅助请求都经过它。订阅仍由各 Harness 自己使用，不借给网关。
 
@@ -499,7 +502,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 | ACP 的原生分叉（`session/fork`） | 未实现；Codex 等 Agent 声明的 `session/fork` 只能分叉整个会话（从某一轮分叉的位置在其他客户端的私有 `_meta` 里，Latch 不借用），新进程能否分叉另一个进程的会话还没有用真实 Agent 核对。现在 pi 以外的 Harness 的分叉都由 Host 以背景文本开启新会话 |
 | 回答 pi 扩展的选择题与输入框 | 未实现；它们回答「已取消」并写进会话 |
 | 只有主文件夹的 Codex 会话计入 `.agents/skills/` | 未实现；需要提高 Codex profile 的版本，已有 Codex 会话届时要新建 |
-| Qwen Code、goose、OpenCode、pi、DeepSeek Harness、Claude Agent 经 Latch 使用模型服务 | 未实现；它们各自要改选择服务的配置，还没有核对与测试，模型菜单收起的那一行点开后写「尚未实现」 |
+| Qwen Code、goose、Claude Agent 经 Latch 使用模型服务 | 未实现；尚未接好各自选择服务的配置，模型菜单收起的那一行点开后写「尚未实现」 |
 | 协议翻译（例如 Codex 用 Chat Completions 的服务） | 未实现；协议不同的一对列出但不能选，并说明协议 |
 
 ## 测试

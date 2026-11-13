@@ -345,7 +345,13 @@ const GEMINI_CALL = /^\/v1(?:beta)?\/models\/([^/:]+):(streamGenerateContent|gen
  * Starts every service on one port. Each request takes the next reply of `replies`; once they run out, the last one
  * repeats, and without any the reply is the text `ok`.
  */
-export async function startFakeModels(options: { replies?: FakeReply[] } = {}): Promise<FakeModels> {
+export async function startFakeModels(
+  options: {
+    replies?: FakeReply[]
+    /** A deterministic reply based on the recorded request, for harnesses that also make auxiliary model calls. */
+    replyFor?: (request: FakeModelRequest) => FakeReply
+  } = {},
+): Promise<FakeModels> {
   const replies = [...(options.replies ?? [])]
   const requests: FakeModelRequest[] = []
   let served = 0
@@ -406,7 +412,7 @@ export async function startFakeModels(options: { replies?: FakeReply[] } = {}): 
         ...(typeof key === 'string' ? { key } : {}),
         headerNames: Object.keys(request.headers).sort(),
       })
-      const reply = named(next(), body)
+      const reply = named(options.replyFor?.(requests.at(-1)!) ?? next(), body)
       if (reply.delayMs) await new Promise(resolve => setTimeout(resolve, reply.delayMs))
       if (reply.error)
         return json(

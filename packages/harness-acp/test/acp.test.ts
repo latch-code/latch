@@ -26,7 +26,7 @@ import type {
   ProjectFolder,
 } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
-import { FAKE_ACP_AGENT, startFakeModels, type FakeModels } from '@latch/testkit'
+import { FAKE_ACP_AGENT, FAKE_PI_AGENT, startFakeModels, type FakeModels } from '@latch/testkit'
 import { AcpWire } from '../src/wires/acp.ts'
 import { PROPOSAL_LIMITS, readProposals, skillsServer } from '../src/skills-server.ts'
 import { ownTool, proposalTurn } from '../src/runtime.ts'
@@ -39,6 +39,7 @@ import {
   personCommandDirectories,
   resolveCommand,
   setCommandSearch,
+  setLoginPrograms,
   type AcpAgentOptions,
   type AgentRecord,
 } from '../src/index.ts'
@@ -56,6 +57,7 @@ const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
   setCommandSearch(undefined)
+  setLoginPrograms(undefined)
   forgetCommandLookups()
 })
 
@@ -5855,8 +5857,21 @@ describe('sessions on a model service through the gateway', () => {
   const GEMINI = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'plan,default,autoEdit,yolo', FAKE_ACP_INITIAL_MODE: 'default' }
   const CODEX = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'read-only,workspace-write', FAKE_ACP_INITIAL_MODE: 'read-only' }
 
+  async function dshCommand(): Promise<Partial<AgentRecord>> {
+    const bin = await mkdtemp(join(tmpdir(), 'latch-dsh-gateway-version-'))
+    cleanups.push(() => rm(bin, { recursive: true, force: true }))
+    const command = join(bin, 'dsh')
+    await writeFile(
+      command,
+      `#!/bin/sh\nif [ "$1" = --version ]; then echo 0.2.2-rc.1; exit 0; fi\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"\n`,
+    )
+    await chmod(command, 0o755)
+    setLoginPrograms(name => (name === 'dsh' ? command : undefined))
+    return { command, args: [] }
+  }
+
   /** Stands in for the Host's gateway: the fake service itself, with a token that only it is told to expect. */
-  function gateway(models: FakeModels) {
+  function gateway(models: FakeModels, allowedModels = ['fake-model', 'fake-model-large']) {
     const leases: Array<{ sessionId: string; token: string; closed: boolean; closes: number }> = []
     let usable = true
     /** Requests of the next turn taken still under way, as the gateway counts them when a turn ends before its replies. */
@@ -5868,7 +5883,7 @@ describe('sessions on a model service through the gateway', () => {
         const mine = () => models.requests.filter(request => request.key === lease.token)
         let taken = 0
         return {
-          baseURL: route.wire === 'responses' ? `${models.origin}/v1` : models.origin,
+          baseURL: route.wire === 'responses' || route.wire === 'chat-completions' ? `${models.origin}/v1` : models.origin,
           token: lease.token,
           requests: () => mine().length,
           // By the model each request named, as the gateway counts them; what the replies said is the gateway's own test.
@@ -5881,7 +5896,7 @@ describe('sessions on a model service through the gateway', () => {
             if (fresh.length) open = 0
             return { requests: fresh.length, models }
           },
-          models: ['fake-model', 'fake-model-large'],
+          models: allowedModels,
           active: () => usable && !lease.closed,
           close: () => {
             lease.closes++
@@ -5910,13 +5925,298 @@ describe('sessions on a model service through the gateway', () => {
     const fixture = await setup(
       { ...env, FAKE_ACP_DUMP_ENV: '1' },
       { idleMs: 60_000, ...options },
-      { presetId },
+      { presetId, ...(presetId === 'dsh' ? await dshCommand() : {}) },
       { modelGateway: stub.access, securityEvent: event => void events.push(event) },
     )
     return { fixture, models, stub, events, route: { ...route, origin: models.origin } satisfies ModelRoute }
   }
 
   const envOf = (log: LogEntry[]) => log.filter(entry => entry.event === 'env').map(entry => entry.env as Record<string, string>)
+
+  it('refuses a gateway on an older OpenCode report while its native model route remains usable', async () => {
+    const { fixture, stub, route, models } = await routed(
+      'opencode',
+      {
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_VERSION: '1.15.5',
+        FAKE_ACP_MODES: 'plan,build',
+        FAKE_ACP_INITIAL_MODE: 'build',
+      },
+      { providerId: 'svc', model: 'fake-model', wire: 'chat-completions' },
+    )
+    const bridge = await fixture.open()
+    const native = await bridge.createTask({ prompt: 'echo native', requestId: rid() })
+    expect((await settled(bridge, native.sessionId)).summary.status).toBe('idle')
+    const attempted = await bridge.createTask({ prompt: 'model must not run', requestId: rid(), modelRoute: route })
+    const refused = await settled(bridge, attempted.sessionId)
+    expect(refused.summary.status).toBe('failed')
+    expect(systemText(refused)).toContain('需要 2.2.6 或更高版本')
+    expect(models.requests).toHaveLength(0)
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(1)
+    await bridge.close()
+    expect(stub.leases.every(lease => lease.closed)).toBe(true)
+  })
+
+  it('refuses a pi gateway wrapper whose version neither the official command nor its RPC can verify', async () => {
+    const models = await startFakeModels({ replies: [{ text: 'must not be requested' }] })
+    cleanups.push(() => models.close())
+    const stub = gateway(models)
+    const fixture = await setup(
+      { FAKE_PI_GATEWAY: '1', PI_GATEWAY_CONTEXT_TOKENS: '32768', PI_GATEWAY_OUTPUT_TOKENS: '4096' },
+      {},
+      { presetId: 'pi', args: [FAKE_PI_AGENT] },
+      { modelGateway: stub.access },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'model must not run',
+      requestId: rid(),
+      modelRoute: { providerId: 'svc', model: 'fake-model', wire: 'responses', origin: models.origin },
+    })
+    const refused = await settled(bridge, sessionId)
+    expect(refused.summary.status).toBe('failed')
+    expect(systemText(refused)).toContain('当前版本无法确认')
+    expect(models.requests).toHaveLength(0)
+    await bridge.close()
+    expect(stub.leases.every(lease => lease.closed)).toBe(true)
+  })
+
+  it('requires a dsh CLI version for the gateway even when a wrapper reports an ACP application version', async () => {
+    const models = await startFakeModels({ replies: [{ text: 'must not be requested' }] })
+    cleanups.push(() => models.close())
+    const stub = gateway(models)
+    const fixture = await setup(
+      {
+        FAKE_ACP_PROCESS_MODE: '1',
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_VERSION: '0.2.2-rc.1',
+        FAKE_ACP_MODES: 'read-only,workspace-write,danger-full-access',
+        FAKE_ACP_INITIAL_MODE: 'read-only',
+      },
+      {},
+      { presetId: 'dsh' },
+      { modelGateway: stub.access },
+    )
+    const bridge = await fixture.open()
+    const native = await bridge.createTask({ prompt: 'echo native', requestId: rid() })
+    expect((await settled(bridge, native.sessionId)).summary.status).toBe('idle')
+    const attempted = await bridge.createTask({
+      prompt: 'model must not run',
+      requestId: rid(),
+      modelRoute: { providerId: 'svc', model: 'fake-model', wire: 'responses', origin: models.origin },
+    })
+    const refused = await settled(bridge, attempted.sessionId)
+    expect(refused.summary.status).toBe('failed')
+    expect(systemText(refused)).toContain('当前版本无法确认')
+    expect(models.requests).toHaveLength(0)
+    await bridge.close()
+    expect(stub.leases.every(lease => lease.closed)).toBe(true)
+  })
+
+  it('never offers or silently restores a dsh Gemini alias thinking level that its serializer cannot apply', async () => {
+    const models = await startFakeModels({ replies: [{ text: 'from the service' }] })
+    cleanups.push(() => models.close())
+    const stub = gateway(models, ['gemini-3.8-flash', 'private-alias'])
+    const fixture = await setup(
+      {
+        FAKE_ACP_GATEWAY: 'dsh',
+        FAKE_ACP_PROCESS_MODE: '1',
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_CAPS: 'resume',
+        FAKE_ACP_MODES: 'read-only,workspace-write,danger-full-access',
+        FAKE_ACP_INITIAL_MODE: 'read-only',
+        FAKE_ACP_VERSION: '0.2.2-rc.1',
+      },
+      {},
+      { presetId: 'dsh', ...(await dshCommand()) },
+      { modelGateway: stub.access },
+    )
+    let bridge = await fixture.open()
+    const route: ModelRoute = { providerId: 'svc', model: 'gemini-3.8-flash', wire: 'gemini', origin: models.origin }
+    const known = await bridge.createTask({ prompt: 'model known', requestId: rid(), modelRoute: route })
+    const knownDetail = await settled(bridge, known.sessionId)
+    expect(knownDetail.config?.find(item => item.category === 'thought_level')?.currentValue).toBe('low')
+    await expect(bridge.setConfig!(known.sessionId, 'model', JSON.stringify(['google', 'private-alias']))).rejects.toMatchObject({
+      code: 'gateway-thinking-unsupported',
+    })
+    expect((await bridge.detail(known.sessionId)).config?.find(item => item.category === 'model')?.currentValue).toBe(
+      JSON.stringify(['google', 'gemini-3.8-flash']),
+    )
+    await bridge.prompt(known.sessionId, 'route-alias private-alias', rid())
+    expect((await settled(bridge, known.sessionId)).summary.status).toBe('cancelled')
+    await bridge.prompt(known.sessionId, 'model must not degrade after a notification', rid())
+    expect((await settled(bridge, known.sessionId)).summary.status).toBe('failed')
+    expect(models.requests).toHaveLength(1)
+    await bridge.setConfig!(known.sessionId, 'model', JSON.stringify(['google', 'gemini-3.8-flash']))
+    expect((await bridge.detail(known.sessionId)).config?.find(item => item.category === 'model')?.currentValue).toBe(
+      JSON.stringify(['google', 'gemini-3.8-flash']),
+    )
+    const unknown = await bridge.createTask({ prompt: 'model alias', requestId: rid(), modelRoute: { ...route, model: 'private-alias' } })
+    const detail = await settled(bridge, unknown.sessionId)
+    expect(detail.summary.status).toBe('idle')
+    expect(detail.config?.some(item => item.category === 'thought_level')).toBe(false)
+    await expect(bridge.setConfig!(unknown.sessionId, 'effort', 'low')).rejects.toMatchObject({ code: 'config-not-found' })
+    const drafted = await bridge.createTask({
+      prompt: 'model must not run',
+      requestId: rid(),
+      modelRoute: { ...route, model: 'private-alias' },
+      config: [{ configId: 'effort', value: 'low' }],
+    })
+    expect((await settled(bridge, drafted.sessionId)).summary.status).toBe('failed')
+    expect(models.requests).toHaveLength(2)
+    await bridge.close()
+    const path = join(fixture.dataDir, 'acp.json')
+    const saved = JSON.parse(await readFile(path, 'utf8')) as { tasks: Record<string, { config: SessionConfigOption[] }> }
+    saved.tasks[unknown.sessionId]!.config.push(knownDetail.config!.find(item => item.category === 'thought_level')!)
+    await writeFile(path, JSON.stringify(saved))
+    bridge = await fixture.open()
+    await bridge.prompt(unknown.sessionId, 'model must not degrade', rid())
+    expect((await settled(bridge, unknown.sessionId)).summary.status).toBe('failed')
+    expect(models.requests).toHaveLength(2)
+  })
+
+  it.each(['responses', 'chat-completions', 'anthropic-messages', 'gemini'] as const)(
+    'keeps pi gateway model identity and hides operating budgets from reported usage over %s',
+    async wire => {
+      const models = await startFakeModels({ replies: [{ text: 'pi service answer' }] })
+      cleanups.push(() => models.close())
+      const stub = gateway(models)
+      const sessions = await mkdtemp(join(tmpdir(), 'latch-pi-routed-'))
+      cleanups.push(() => rm(sessions, { recursive: true, force: true }))
+      const command = join(sessions, 'pi')
+      await writeFile(
+        command,
+        `#!/bin/sh\nif [ "$1" = --version ]; then echo 1.5.0; exit 0; fi\nexec '${process.execPath}' '${FAKE_PI_AGENT}' "$@"\n`,
+      )
+      await chmod(command, 0o755)
+      setLoginPrograms(name => (name === 'pi' ? command : undefined))
+      const fixture = await setup(
+        { FAKE_PI_GATEWAY: '1', FAKE_PI_SESSIONS: sessions, PI_GATEWAY_CONTEXT_TOKENS: '32768', PI_GATEWAY_OUTPUT_TOKENS: '4096' },
+        {},
+        { presetId: 'pi', command, args: [] },
+        { modelGateway: stub.access },
+      )
+      const route: ModelRoute = { providerId: 'svc', model: 'fake-model', wire, origin: models.origin }
+      let bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+      let detail = await settled(bridge, sessionId)
+      expect(detail.summary.status).toBe('idle')
+      expect(assistants(detail).at(-1)?.text).toBe('model: pi service answer')
+      const option = detail.config?.find(item => item.category === 'model')
+      expect(option?.options.map(item => item.value)).toEqual(['latch-gateway/fake-model', 'latch-gateway/fake-model-large'])
+      expect(detail.usageReport?.contextSize).toBeUndefined()
+      expect(detail.usageReport?.cost).toBeUndefined()
+      await expect(bridge.setConfig!(sessionId, option!.id, 'openai/fake-model-large')).rejects.toMatchObject({ status: 400 })
+      await bridge.setConfig!(sessionId, option!.id, 'latch-gateway/fake-model-large')
+      await bridge.close()
+      bridge = await fixture.open()
+      await bridge.prompt(sessionId, 'model restored', rid())
+      detail = await settled(bridge, sessionId)
+      expect(detail.config?.find(item => item.category === 'model')?.currentValue).toBe('latch-gateway/fake-model-large')
+      expect(assistants(detail).at(-1)?.text).toBe('model: pi service answer')
+      expect(models.requests.map(request => ({ model: request.model, wire: request.wire }))).toEqual([
+        { model: 'fake-model', wire },
+        { model: 'fake-model-large', wire },
+      ])
+      await bridge.close()
+      if (wire === 'gemini') {
+        const path = join(fixture.dataDir, 'acp.json')
+        const saved = JSON.parse(await readFile(path, 'utf8')) as { tasks: Record<string, { acp: { routeThinking?: string } }> }
+        saved.tasks[sessionId]!.acp.routeThinking = 'xhigh'
+        await writeFile(path, JSON.stringify(saved))
+        bridge = await fixture.open()
+        await bridge.prompt(sessionId, 'model must not silently lower xhigh', rid())
+        expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+        expect(models.requests).toHaveLength(2)
+        await bridge.setConfig!(sessionId, 'thought_level', 'off')
+        await bridge.prompt(sessionId, 'model after an explicit valid selection', rid())
+        expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+        expect(models.requests).toHaveLength(3)
+        await bridge.close()
+        const unknownWrite = JSON.parse(await readFile(path, 'utf8')) as typeof saved
+        unknownWrite.tasks[sessionId]!.acp.routeThinking = 'xhigh'
+        await writeFile(path, JSON.stringify(unknownWrite))
+        bridge = await fixture.open()
+        expect(await bridge.readConfig!(sessionId, 'thought_level', 'off')).toMatchObject({
+          kind: 'read',
+          currentValue: 'off',
+          asked: true,
+        })
+        await bridge.prompt(sessionId, 'model after a verified late choice', rid())
+        expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+        expect(models.requests).toHaveLength(4)
+        await bridge.close()
+        // The deterministic fake's own record changes independently of the Host, as an unsolicited native report can.
+        for (const file of (await readdir(sessions)).filter(name => name.endsWith('.jsonl'))) {
+          const path = join(sessions, file)
+          const entries = (await readFile(path, 'utf8'))
+            .split('\n')
+            .filter(Boolean)
+            .map(line => JSON.parse(line) as Record<string, unknown>)
+          for (const entry of entries) if (entry.type === 'thinking_level_change') entry.thinkingLevel = 'xhigh'
+          await writeFile(path, `${entries.map(entry => JSON.stringify(entry)).join('\n')}\n`)
+        }
+        bridge = await fixture.open()
+        await bridge.prompt(sessionId, 'model must not trust a newly unsupported native report', rid())
+        expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+        expect(models.requests).toHaveLength(4)
+        await bridge.close()
+      }
+      expect(stub.leases.every(lease => lease.closed)).toBe(true)
+    },
+  )
+
+  it.each(['opencode', 'dsh'])(
+    'keeps %s on its declared service model through changes and process restoration over every supported wire',
+    async presetId => {
+      for (const wire of ['responses', 'chat-completions', 'anthropic-messages', 'gemini'] as const) {
+        const env: Record<string, string> =
+          presetId === 'dsh'
+            ? {
+                FAKE_ACP_PROCESS_MODE: '1',
+                FAKE_ACP_MODES: 'read-only,workspace-write,danger-full-access',
+                FAKE_ACP_INITIAL_MODE: 'read-only',
+              }
+            : { FAKE_ACP_MODES: 'plan,build,auto-edit,yolo', FAKE_ACP_INITIAL_MODE: 'build' }
+        const { fixture, models, stub, route } = await routed(
+          presetId,
+          {
+            ...env,
+            FAKE_ACP_CONFIG: 'options',
+            FAKE_ACP_CAPS: 'resume',
+            FAKE_ACP_VERSION: presetId === 'dsh' ? '0.2.2-rc.1' : '2.2.6',
+            FAKE_ACP_GATEWAY: presetId,
+          },
+          { providerId: 'svc', model: 'fake-model', wire },
+        )
+        const value = (id: string) =>
+          presetId === 'opencode' ? `latch/${id}` : JSON.stringify([wire === 'gemini' ? 'google' : 'latch-gateway', id])
+        let bridge = await fixture.open()
+        const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+        let detail = await settled(bridge, sessionId)
+        expect(detail.summary.status).toBe('idle')
+        expect(assistants(detail).at(-1)?.text).toBe('model: from the service')
+        const model = detail.config?.find(option => option.category === 'model')
+        expect(model?.currentValue).toBe(value('fake-model'))
+        expect(model?.options.map(option => option.value)).toEqual([value('fake-model'), value('fake-model-large')])
+        await expect(bridge.setConfig!(sessionId, model!.id, 'other/fake-model-large')).rejects.toMatchObject({ status: 400 })
+        await bridge.setConfig!(sessionId, model!.id, value('fake-model-large'))
+        await bridge.close()
+        bridge = await fixture.open()
+        await bridge.prompt(sessionId, 'model restored', rid())
+        detail = await settled(bridge, sessionId)
+        expect(detail.config?.find(option => option.category === 'model')?.currentValue).toBe(value('fake-model-large'))
+        expect(assistants(detail).at(-1)?.text).toBe('model: from the service')
+        expect(models.requests.map(request => ({ model: request.model, wire: request.wire }))).toEqual([
+          { model: 'fake-model', wire },
+          { model: 'fake-model-large', wire },
+        ])
+        expect(models.requests.map(request => request.key)).toEqual(stub.leases.map(lease => lease.token))
+        await bridge.close()
+        expect(stub.leases.every(lease => lease.closed)).toBe(true)
+      }
+    },
+  )
 
   it('revokes a newly prepared gateway credential exactly once when all process slots are busy', async () => {
     const { fixture, stub, route } = await routed(

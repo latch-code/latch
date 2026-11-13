@@ -138,6 +138,7 @@ import {
   type ProfileSelection,
 } from './permission.ts'
 import type { AcpPermissionProfile, ExtensionRequest, ProjectedChild, RetryReport, ToolDenial } from './profiles/index.ts'
+import type { GatewayModelValues } from './profiles/types.ts'
 import { fingerprintProjectConfig, type ProjectConfig } from './project-config.ts'
 import {
   AUTH_STATUS_METHOD,
@@ -206,7 +207,7 @@ import {
 } from './history.ts'
 import { createAcpStore, emptyAcpState, type AcpRecord, type AcpState, type AcpStore, type AcpTask, type StartChoice } from './store.ts'
 import type { AgentHealth, AgentRecord, ResolvedOptions } from './types.ts'
-import { assertVersion } from './version.ts'
+import { assertVersion, compareVersions } from './version.ts'
 
 export const CLIENT_VERSION = '0.1.0'
 const CANCELLED_OUTCOME = { outcome: { outcome: 'cancelled' } }
@@ -513,13 +514,23 @@ function listedModel(option: SessionConfigOption, model: string): string | undef
  * launch (`launch`) takes any of the service's models, whatever it lists itself; one that narrows its own list to the
  * gateway's (`providers`) keeps those of its options the service has, under its own values.
  */
-function routedOptions(options: SessionConfigOption[], served: readonly string[], via: 'launch' | 'providers'): SessionConfigOption[] {
+function routedOptions(
+  options: SessionConfigOption[],
+  served: readonly string[],
+  via: 'launch' | 'providers',
+  values?: GatewayModelValues,
+  wire?: ModelRoute['wire'],
+): SessionConfigOption[] {
   const keys = new Set(served.map(modelIdKey))
   return options.map(option => {
     if (option.category !== 'model') return option
     const kept =
       via === 'launch'
-        ? served.slice(0, 500).map(id => option.options.find(item => item.value === id) ?? { value: id, name: clip(id, 200) })
+        ? served.slice(0, 500).flatMap(id => {
+            const value = values?.value(id, wire) ?? id
+            const reported = option.options.find(item => item.value === value)
+            return values?.reportedOnly && !reported ? [] : [{ ...reported, value, name: clip(id, 200) }]
+          })
         : option.options.filter(item => keys.has(modelIdKey(item.value)) || keys.has(modelIdKey(item.name)))
     return { ...option, options: kept }
   })
@@ -2475,6 +2486,15 @@ export class AgentRuntime implements Bridge {
     if (typeof value !== 'string' || !(option.options.some(item => item.value === value) || this.isCustomModel(task, option, value)))
       throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
     this.assertUsable(task)
+    const checkThinking = () => {
+      if (option.category === 'model' || option.category === 'thought_level')
+        this.assertGatewayThinking(
+          task,
+          option.category === 'model' ? value : undefined,
+          option.category === 'thought_level' ? value : undefined,
+        )
+    }
+    checkThinking()
     await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
     this.assertNotChecking(sessionId)
     const mode = this.isModeOption(task, option)
@@ -2491,7 +2511,10 @@ export class AgentRuntime implements Bridge {
     }
     if (option.currentValue === value) {
       const replaced = forgetStartChoice(task, configId, mode)
-      if ((mode && task.acp.expectedMode !== value) || replaced) {
+      const thinkingReplaced =
+        option.category === 'thought_level' && task.acp.routeThinking !== undefined && task.acp.routeThinking !== value
+      if (thinkingReplaced) task.acp.routeThinking = value
+      if ((mode && task.acp.expectedMode !== value) || replaced || thinkingReplaced) {
         if (mode) task.acp.expectedMode = value
         this.touch(task)
         this.mark()
@@ -2522,6 +2545,7 @@ export class AgentRuntime implements Bridge {
       const apply = async (change?: ModeChange): Promise<void> => {
         let result: unknown
         options.authorize?.()
+        checkThinking()
         reach.sent = true
         try {
           result = await binding.live.wire.request(method, params, this.limits.configTimeoutMs)
@@ -2545,6 +2569,12 @@ export class AgentRuntime implements Bridge {
           if (target) target.currentValue = value
         }
         if (mode && !current.acp.drift) current.acp.expectedMode = value
+        if (
+          option.category === 'thought_level'
+          && current.acp.routeThinking !== undefined
+          && current.config?.find(item => item.id === configId)?.currentValue === value
+        )
+          current.acp.routeThinking = value
         this.applyModel(current)
         this.touch(current)
         this.mark()
@@ -2615,8 +2645,15 @@ export class AgentRuntime implements Bridge {
       const asked =
         option.currentValue === value || this.selection.profile?.configValueMatches?.(configId, value, option.currentValue) === true
       // The person chose this mode and the agent runs in it: the next turn keeps it instead of setting the old one back.
-      if (asked && this.isModeOption(current, option) && !current.acp.drift) {
-        current.acp.expectedMode = value
+      const modeRead = asked && this.isModeOption(current, option) && !current.acp.drift
+      const thinkingRead =
+        asked
+        && option.category === 'thought_level'
+        && current.acp.routeThinking !== undefined
+        && this.gatewayThinkingAllowed(current, undefined, value)
+      if (modeRead || thinkingRead) {
+        if (modeRead) current.acp.expectedMode = value
+        if (thinkingRead) current.acp.routeThinking = value
         this.touch(current)
         this.mark()
         await this.flush()
@@ -3105,10 +3142,12 @@ export class AgentRuntime implements Bridge {
     const gateway = this.selection.profile?.gateway
     if (gateway?.via !== 'launch') return undefined
     const directory = join(sessionTmpDir, 'gateway')
+    const budget = gateway.runtimeBudget?.(this.agent.env)
     const launch = gateway.deliver(
       {
         baseURL: lease.baseURL,
         models: lease.models.map(id => ({ id, ...(lease.modelCapabilities?.[id] ? { capabilities: lease.modelCapabilities[id] } : {}) })),
+        ...(budget ? { budget } : {}),
         ...(thinking ? { thinking } : {}),
         file: name => {
           if (!/^[a-z0-9][a-z0-9.-]{0,63}$/u.test(name)) throw new Error(`invalid gateway file name ${clip(name, 64)}`)
@@ -3165,16 +3204,19 @@ export class AgentRuntime implements Bridge {
   private routeModel(taskId: string): AppError | undefined {
     const task = this.task(taskId)
     const route = task.acp.route
-    if (!route || task.acp.routeModelSet || this.selection.profile?.gateway?.via !== 'providers') return undefined
+    const gateway = this.selection.profile?.gateway
+    if (!route || task.acp.routeModelSet || !gateway || (gateway.via !== 'providers' && !gateway.models)) return undefined
     const option = task.config?.find(item => item.category === 'model')
-    const value = option && listedModel(option, route.model)
-    if (!option || value === undefined)
+    const value = option && (gateway.via === 'launch' ? gateway.models?.value(route.model, route.wire) : listedModel(option, route.model))
+    if (!option || value === undefined || !option.options.some(item => item.value === value))
       return new AppError(
         409,
         'model-unavailable',
         `${this.agent.name} 没有列出模型「${clip(route.model, 64)}」：经 Latch 时它只用自己认识的模型。这条消息没有发出。`,
       )
     task.acp.routeModelSet = true
+    // Initial native model reports are provisional until this route's model is selected.
+    delete task.acp.routeThinking
     const others = (task.acp.startConfig ?? []).filter(choice => choice.configId !== option.id)
     task.acp.startConfig =
       option.currentValue === value ? others : [...others, { configId: option.id, value, category: 'model', label: route.model }]
@@ -3210,8 +3252,14 @@ export class AgentRuntime implements Bridge {
     if (!turn.requests) return undefined
     const option = task.config?.find(item => item.category === 'model')
     const current = option?.options.find(item => item.value === option.currentValue)
+    const gateway = this.selection.profile?.gateway
+    const exact =
+      gateway?.via === 'launch' && gateway.models && option ? gateway.models.id(option.currentValue, task.acp.route.wire) : undefined
     const keys = [option?.currentValue, current?.name].flatMap(value => (value ? [modelIdKey(value)] : []))
-    const chosen = lease.models.find(model => keys.includes(modelIdKey(model))) ?? option?.currentValue ?? task.acp.route.model
+    const chosen =
+      (gateway?.via === 'launch' && gateway.models ? exact : lease.models.find(model => keys.includes(modelIdKey(model))))
+      ?? option?.currentValue
+      ?? task.acp.route.model
     // Cut, not clipped with a note: the store reads back at most 200 characters.
     return { ...turn, chosen: chosen.slice(0, 200) }
   }
@@ -3219,11 +3267,63 @@ export class AgentRuntime implements Bridge {
   /** The options an agent reported, as its session offers them: on a route, only models its process's token may use. */
   private offered(task: AcpTask, options: SessionConfigOption[], lease = this.lives.get(task.summary.id)?.gateway): SessionConfigOption[] {
     const gateway = this.selection.profile?.gateway
-    const modes = this.withProcessMode(this.lives.get(task.summary.id), task.acp.acpSessionId, options)
+    const modelValue = options.find(option => option.category === 'model')?.currentValue
+    const allowed = this.gatewayThinkingAllowed(task, modelValue ?? null)
+    const selectingInitialModel = task.acp.startConfig?.some(
+      choice => choice.category === 'model' || choice.configId === options.find(option => option.category === 'model')?.id,
+    )
+    if (task.acp.routeModelSet && !selectingInitialModel && task.acp.route && gateway?.via === 'launch' && gateway.thinkingAllowed) {
+      const reported = options.find(option => option.category === 'thought_level')
+      const prior = task.acp.routeThinking ?? task.config?.find(option => option.category === 'thought_level')?.currentValue
+      if (allowed && reported && !this.gatewayThinkingAllowed(task, modelValue ?? null, reported.currentValue))
+        task.acp.routeThinking = clip(reported.currentValue, 200)
+      else if (prior && !this.gatewayThinkingAllowed(task, modelValue ?? null, prior)) task.acp.routeThinking = prior
+      else if (
+        allowed
+        && reported?.options.some(item => item.value === reported.currentValue)
+        && this.gatewayThinkingAllowed(task, modelValue ?? null, reported.currentValue)
+      )
+        task.acp.routeThinking = reported.currentValue
+    }
+    const modes = this.withProcessMode(
+      this.lives.get(task.summary.id),
+      task.acp.acpSessionId,
+      options.flatMap(option => {
+        if (option.category !== 'thought_level') return [option]
+        if (!allowed) return []
+        const choices = option.options.filter(item => this.gatewayThinkingAllowed(task, modelValue ?? null, item.value))
+        return choices.length ? [{ ...option, options: choices }] : []
+      }),
+    )
     return this.withLaunchThinking(
-      task.acp.route && gateway && lease ? routedOptions(modes, lease.models, gateway.via) : modes,
+      task.acp.route && gateway && lease
+        ? routedOptions(modes, lease.models, gateway.via, gateway.via === 'launch' ? gateway.models : undefined, task.acp.route.wire)
+        : modes,
       this.launchThinkingChanges.get(task.summary.id)?.selected ?? task.acp.launchThinking,
     )
+  }
+
+  private gatewayThinkingAllowed(task: AcpTask, value?: string | null, level?: string): boolean {
+    const route = task.acp.route
+    const gateway = this.selection.profile?.gateway
+    if (!route || gateway?.via !== 'launch' || !gateway.thinkingAllowed) return true
+    if (value === null) return false
+    const current = value ?? task.config?.find(option => option.category === 'model')?.currentValue
+    const model = current && gateway.models ? gateway.models.id(current, route.wire) : current
+    if (current !== undefined && model === undefined) return false
+    if (!model && task.acp.routeModelSet) return false
+    return gateway.thinkingAllowed(model ?? route.model, route.wire, level)
+  }
+
+  private assertGatewayThinking(task: AcpTask, value?: string, thinking?: string): void {
+    const retained = thinking ?? task.acp.routeThinking ?? task.config?.find(option => option.category === 'thought_level')?.currentValue
+    if (this.gatewayThinkingAllowed(task, value, retained)) return
+    if (retained && retained !== 'off' && retained !== 'default')
+      throw new AppError(
+        409,
+        'gateway-thinking-unsupported',
+        `${this.agent.name} 无法把已记录的思考档位「${clip(this.redact(retained), 64)}」应用到这个服务模型。请重新选择有效档位或支持它的模型，也可新建会话。`,
+      )
   }
 
   private withProcessMode(live: Live | undefined, sessionId: string | undefined, options: SessionConfigOption[]): SessionConfigOption[] {
@@ -3413,6 +3513,19 @@ export class AgentRuntime implements Bridge {
       if (same) same.category = 'mode'
     }
     this.applyModel(task)
+    const run = this.runs.get(task.summary.id)
+    if (run?.sent) {
+      try {
+        this.assertGatewayThinking(task)
+      } catch (error) {
+        if (!(error instanceof AppError)) throw error
+        if (!run.cancelRequested) {
+          run.notes.push(`${error.message} 已请求停止本轮。`)
+          run.live?.gateway?.close()
+          this.requestCancel(run, true)
+        }
+      }
+    }
     const after = this.modeOption(task)?.currentValue
     if (after !== undefined) {
       this.unconfirmed.delete(task.summary.id)
@@ -3639,6 +3752,7 @@ export class AgentRuntime implements Bridge {
         status = 'cancelled'
         return
       }
+      this.assertGatewayThinking(task)
       run.sent = true
       if (binding.live.gateway) {
         run.gatewayMark = binding.live.gateway.requests()
@@ -4033,12 +4147,21 @@ export class AgentRuntime implements Bridge {
     // below, which stays the last await before the spawn.
     await assertVersion(this.agent, first.command)
     const gatewayVersion = confirmed.route ? this.selection.profile?.gateway?.minimumVersion : undefined
-    if (gatewayVersion) await assertVersion(this.agent, first.command, gatewayVersion, '经 Latch 使用模型服务')
+    const gatewayVerdict = gatewayVersion
+      ? await assertVersion(this.agent, first.command, gatewayVersion, '经 Latch 使用模型服务')
+      : undefined
     const wait = this.health.restartDelay(this.limits.restartDelayMs)
     if (wait) await sleep(wait, undefined, { signal: this.lifetime.signal, ref: false }).catch(() => {})
     this.assertOpen()
     const sessionTmpDir = await this.prepareTmpDir(key)
-    const savedModel = this.state.tasks[key]?.config?.find(option => option.category === 'model')?.currentValue
+    const savedValue = this.state.tasks[key]?.config?.find(option => option.category === 'model')?.currentValue
+    const gatewayProfile = this.selection.profile?.gateway
+    const savedModel =
+      confirmed.route && gatewayProfile?.via === 'launch' && gatewayProfile.models && savedValue
+        ? gatewayProfile.models.id(savedValue, confirmed.route.wire)
+        : savedValue
+    if (confirmed.route && savedValue && savedModel === undefined)
+      throw new AppError(409, 'model-route-changed', `${this.agent.name} 没有报告这个模型服务的模型，不能恢复本轮。请核对模型设置。`)
     // Launch routes expose service IDs directly. A later confirmed model is also the one a renewed lease must admit.
     const route =
       confirmed.route && savedModel && this.selection.profile?.gateway?.via === 'launch'
@@ -4162,6 +4285,16 @@ export class AgentRuntime implements Bridge {
         throw new Error(`Harness 使用 ACP 协议版本 ${result.data.protocolVersion}，Latch 仅支持版本 ${PROTOCOL_VERSION}`)
       }
       const reported = result.data.agentInfo?.version ?? undefined
+      if (gatewayVersion) {
+        const actual = (this.selection.profile?.gateway?.commandVersionOnly ? undefined : reported) ?? gatewayVerdict?.version
+        const compared = actual ? compareVersions(actual, gatewayVersion.minimum) : undefined
+        if (compared === undefined || compared < 0)
+          throw new AppError(
+            409,
+            'harness-version-unsupported',
+            `${name} 经 Latch 使用模型服务需要 ${gatewayVersion.minimum} 或更高版本；当前版本${actual ? `为 ${clip(this.redact(actual), 64)}` : '无法确认'}。请使用受支持的官方命令后重试。`,
+          )
+      }
       const rule = this.profile?.versionRule
       if (rule && (typeof reported !== 'string' || !new RegExp(rule.pattern).test(reported))) {
         throw new AppError(
@@ -4201,6 +4334,9 @@ export class AgentRuntime implements Bridge {
         this.health.lastError = clip(error.message, 300)
         throw error
       }
+      const profileGateway = route ? this.selection.profile?.gateway : undefined
+      const refusal = profileGateway?.via === 'launch' ? profileGateway.startupFailure?.(info.stderr ?? '') : undefined
+      if (refusal) throw new AppError(409, 'model-route-unavailable', refusal)
       const exited = error instanceof ConnectionClosed || error instanceof ConnectionStopping ? info : undefined
       if (this.closed) throw new AppError(503, 'runtime-closed', '运行节点已关闭')
       if (error instanceof RequestTimeout) {
@@ -4670,7 +4806,10 @@ export class AgentRuntime implements Bridge {
         }
       }
       const now = live(choice.configId)
-      if (now?.currentValue === choice.value) continue
+      if (now?.currentValue === choice.value) {
+        if (option.category === 'thought_level' && task.acp.routeThinking !== undefined) task.acp.routeThinking = choice.value
+        continue
+      }
       if (kind === 'model') {
         await this.dropStartChoice(taskId, choice.configId)
         refused ??= new AppError(

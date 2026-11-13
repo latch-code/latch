@@ -1,10 +1,30 @@
 import { bareVersion } from '../version-line.ts'
 import type { HarnessProfile } from './types.ts'
+import { prefixedModels } from './gateway-model.ts'
+import { deliverPiGateway, PI_GATEWAY_PROVIDER, piGatewayBudget, piGatewayStartupFailure, piGatewayThinking } from './pi-gateway.ts'
 
 export const piProfile: HarnessProfile = {
   presetId: 'pi',
-  version: 3,
+  version: 4,
   wire: 'pi',
+  gateway: {
+    via: 'launch',
+    wires: ['chat-completions', 'responses', 'anthropic-messages', 'gemini'],
+    tokenEnv: 'LMG_TOKEN',
+    envNames: [],
+    templates: { args: 1, files: 1 },
+    models: { ...prefixedModels(PI_GATEWAY_PROVIDER), reportedOnly: true },
+    thinkingAllowed: piGatewayThinking,
+    runtimeBudget: piGatewayBudget,
+    startupFailure: piGatewayStartupFailure,
+    minimumVersion: {
+      args: ['--version'],
+      read: bareVersion,
+      minimum: '1.5.0',
+      upgrade: 'npm i -g @earendil-works/pi-coding-agent@latest',
+    },
+    deliver: deliverPiGateway,
+  },
   // pi itself never asks; Latch's own pi extension (`wires/pi-gate.ts`) asks or blocks before a tool runs, holds the
   // level and reports it, and only the wire can change it.
   permission: {

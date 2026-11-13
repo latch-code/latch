@@ -18,7 +18,8 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
+import { callFakeModel } from './fake-model-client.mjs'
 
 const env = process.env
 const log = event => {
@@ -27,6 +28,11 @@ const log = event => {
 log({ event: 'start', argv: process.argv.slice(2), cwd: process.cwd() })
 
 const argv = process.argv.slice(2)
+const gatewayPath =
+  env.FAKE_PI_GATEWAY === '1'
+    ? argv.flatMap((arg, at) => (arg === '-e' && basename(argv[at + 1] ?? '') === 'pi-gateway.ts' ? [argv[at + 1]] : []))[0]
+    : undefined
+const gateway = gatewayPath ? JSON.parse(readFileSync(join(dirname(gatewayPath), 'pi-gateway.json'), 'utf8')) : undefined
 const gatePath = argv.flatMap((arg, at) =>
   arg === '-e' && basename(argv[at + 1] ?? '') === 'latch-permission.ts' ? [argv[at + 1]] : [],
 )[0]
@@ -62,19 +68,28 @@ async function gated(current, call, tool, input) {
 const MODELS =
   env.FAKE_PI_NO_MODELS === '1'
     ? []
-    : [
-        {
-          id: 'claude-sonnet-4-5',
-          name: 'Claude Sonnet 4.5',
-          provider: 'anthropic',
-          api: 'anthropic-messages',
-          reasoning: true,
-          contextWindow: 200000,
-        },
-        { id: 'gpt-5.5', name: 'GPT-5.5', provider: 'openai', api: 'openai-responses', reasoning: true, contextWindow: 400000 },
-      ]
+    : gateway
+      ? gateway.models.map(item => ({
+          id: item.id,
+          name: item.id,
+          provider: 'latch-gateway',
+          api: gateway.api,
+          reasoning: Boolean(item.capabilities?.thinking?.length),
+          contextWindow: gateway.budget.contextTokens,
+        }))
+      : [
+          {
+            id: 'claude-sonnet-4-5',
+            name: 'Claude Sonnet 4.5',
+            provider: 'anthropic',
+            api: 'anthropic-messages',
+            reasoning: true,
+            contextWindow: 200000,
+          },
+          { id: 'gpt-5.5', name: 'GPT-5.5', provider: 'openai', api: 'openai-responses', reasoning: true, contextWindow: 400000 },
+        ]
 const LEVELS = { anthropic: ['off', 'minimal', 'low', 'medium', 'high'], openai: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] }
-let model = MODELS[0]
+let model = MODELS.find(item => item.id === gateway?.selected) ?? MODELS[0]
 let thinkingLevel = 'medium'
 let sessions = 0
 const newFile = () => join(env.FAKE_PI_SESSIONS ?? tmpdir(), `fake-pi-${process.pid}-${++sessions}.jsonl`)
@@ -108,6 +123,11 @@ function load(path) {
     : []
   entries = lines.map(line => JSON.parse(line)).filter(item => item.type !== 'session')
   leafId = entries.at(-1)?.id ?? null
+  if (gateway) {
+    const selected = entries.findLast(item => item.type === 'model_change')
+    model = MODELS.find(item => item.id === selected?.modelId && item.provider === selected?.provider) ?? model
+    thinkingLevel = entries.findLast(item => item.type === 'thinking_level_change')?.thinkingLevel ?? thinkingLevel
+  }
 }
 
 function branch(to = leafId) {
@@ -139,7 +159,12 @@ const send = record => process.stdout.write(`${JSON.stringify(record)}\n`)
 const ok = (command, id, data) => send({ id, type: 'response', command, success: true, ...(data === undefined ? {} : { data }) })
 const refuse = (command, id, error) => send({ id, type: 'response', command, success: false, error })
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
-const levels = () => (model ? LEVELS[model.provider] : ['off'])
+const levels = () =>
+  gateway
+    ? (gateway.models.find(item => item.id === model?.id)?.capabilities?.thinking ?? ['off'])
+    : model
+      ? LEVELS[model.provider]
+      : ['off']
 const state = () => ({
   ...(model ? { model } : {}),
   thinkingLevel,
@@ -269,7 +294,22 @@ async function play(message) {
   send({ type: 'message_start', message: user })
   send({ type: 'message_end', message: user })
   let ended = 'stop'
-  if (/confirm/u.test(message)) {
+  if (gateway && message.startsWith('model ')) {
+    const wire = {
+      'openai-responses': 'responses',
+      'openai-completions': 'chat-completions',
+      'anthropic-messages': 'anthropic-messages',
+      'google-generative-ai': 'gemini',
+    }[gateway.api]
+    const answer = await callFakeModel({
+      wire,
+      baseURL: `${gateway.baseURL}${wire === 'anthropic-messages' ? '/v1' : ''}`,
+      key: env.LMG_TOKEN,
+      model: model.id,
+      input: message,
+    })
+    await reply(`model: ${answer.text}`)
+  } else if (/confirm/u.test(message)) {
     const answer = await Promise.race([confirm('Go on with the fake task?'), current.stopped.then(() => ({ cancelled: true }))])
     if (!current.aborted) await reply(answer.confirmed ? 'confirmed: yes' : 'confirmed: no')
   } else if (/fail/u.test(message)) {
@@ -370,12 +410,14 @@ function handle(record) {
       const chosen = MODELS.find(item => item.provider === record.provider && item.id === record.modelId)
       if (!chosen) return refuse(type, id, `Model not found: ${record.provider}/${record.modelId}`)
       model = chosen
-      if (!levels().includes(thinkingLevel)) thinkingLevel = 'medium'
+      if (!levels().includes(thinkingLevel)) thinkingLevel = gateway ? (levels()[0] ?? 'off') : 'medium'
+      if (gateway) append('model_change', { provider: model.provider, modelId: model.id })
       return ok(type, id, model)
     }
     case 'set_thinking_level':
       if (!levels().includes(record.level)) return refuse(type, id, `Thinking level not available: ${record.level}`)
       thinkingLevel = record.level
+      if (gateway) append('thinking_level_change', { thinkingLevel })
       return ok(type, id)
     case 'switch_session':
       load(record.sessionPath)

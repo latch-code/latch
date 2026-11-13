@@ -77,6 +77,8 @@ export interface AcpRecord {
   route?: ModelRoute
   /** The route's model was chosen on the agent's session; until then the next bind chooses it. */
   routeModelSet?: true
+  /** A route's thinking value requiring continuity; an unsupported report cannot silently replace it with a default. */
+  routeThinking?: string
   /** A prompt asked for a new context and no user message has been recorded on the agent's new session yet. */
   contextCleared?: true
   /** The agent's sessions from before each new context, which removing the task deletes too. */
@@ -391,6 +393,7 @@ const stateSchema = z.object({
           })
           .optional(),
         routeModelSet: z.literal(true).optional(),
+        routeThinking: z.string().max(200).optional(),
         contextCleared: z.literal(true).optional(),
         earlierSessionIds: z.array(z.string()).optional(),
         fork: z
