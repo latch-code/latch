@@ -63,9 +63,13 @@ struct EngineTile: View {
     var size: CGFloat = 16
     @Environment(\.colorScheme) private var scheme
     private static let marks: [String: (light: String, dark: String, mono: Bool)] = [
-        "codex": ("brand-codex", "brand-codex", true), "pi": ("brand-pi", "brand-pi", false),
+        "codex": ("brand-codex", "brand-codex", false), "pi": ("brand-pi", "brand-pi", false),
         "opencode": ("brand-opencode-light", "brand-opencode-dark", false), "dsh": ("brand-deepseek-harness", "brand-deepseek-harness", true),
         "gemini": ("brand-gemini", "brand-gemini", false), "qwen": ("brand-qwen-code", "brand-qwen-code", false), "goose": ("brand-goose", "brand-goose", true),
+        "claude-agent": ("brand-claude", "brand-claude", false),
+        "cursor": ("brand-cursor-light", "brand-cursor-dark", false),
+        "grok": ("brand-grok-dark", "brand-grok-light", false),
+        "antigravity": ("brand-antigravity", "brand-antigravity", false),
     ]
     var body: some View {
         Group {

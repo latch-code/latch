@@ -4,12 +4,18 @@ import type { ProviderSummary } from '@latch/protocol'
 import type { IconComponent, TileMark } from '@latch/ui'
 import anthropic from './assets/brands/anthropic.svg?no-inline'
 import bailian from './assets/brands/bailian.svg?no-inline'
-import codex from './assets/brands/codex.svg?no-inline'
+import antigravity from './assets/brands/antigravity.svg?no-inline'
+import claude from './assets/brands/claude.svg?no-inline'
+import codex from './assets/brands/codex.png?no-inline'
+import cursorDark from './assets/brands/cursor-dark.svg?no-inline'
+import cursorLight from './assets/brands/cursor-light.svg?no-inline'
 import deepseekHarness from './assets/brands/deepseek-harness.svg?no-inline'
 import deepseek from './assets/brands/deepseek.svg?no-inline'
 import geminiCli from './assets/brands/gemini-cli.png?no-inline'
 import gemini from './assets/brands/gemini.svg?no-inline'
-import goose from './assets/brands/goose.png?no-inline'
+import grokDark from './assets/brands/grok-dark.svg?no-inline'
+import grokLight from './assets/brands/grok-light.svg?no-inline'
+import goose from './assets/brands/goose.svg?no-inline'
 import lmstudio from './assets/brands/lmstudio.svg?no-inline'
 import moonshot from './assets/brands/moonshot.svg?no-inline'
 import ollama from './assets/brands/ollama.svg?no-inline'
@@ -32,13 +38,17 @@ export type BrandArt = { kind: 'mark'; mark: TileMark } | { kind: 'app' } | { ki
 
 /** Every harness preset (agent-presets.ts) but those marked `brandMark: false`, which draw the neutral agent glyph; the brand test checks both. */
 export const HARNESS_MARKS: Record<string, TileMark> = {
-  codex: { src: codex, mono: true },
+  codex: { src: codex, margin: true },
+  'claude-agent': { src: claude },
+  cursor: { src: cursorLight, dark: cursorDark, tile: true },
+  antigravity: { src: antigravity, margin: true },
   pi: { src: pi, margin: true },
   opencode: { src: opencodeLight, dark: opencodeDark },
   dsh: { src: deepseekHarness, mono: true },
   gemini: { src: geminiCli, tile: true },
   qwen: { src: qwenCode },
   goose: { src: goose, mono: true },
+  grok: { src: grokDark, dark: grokLight, margin: true },
 }
 
 /**

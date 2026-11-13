@@ -2,12 +2,28 @@ Brand icons
 
 The web client shows the icon of each agent and model service it can use, from the files in
 apps/web/src/assets/brands/. They are copied unmodified from the sources below; native/ios/App/Brands.xcassets holds the same
-engine-mark files, unmodified, for the iPhone app (SVG kept as vectors; codex.svg, whose 1em size the system SVG
-renderer cannot draw, as a PDF printed from it with no change to the drawing and its title and creator left blank). The
+engine-mark files, unmodified, for the iPhone app (SVG kept as vectors; official PNG assets retained as PNG). The
 app shows this file and the licences under 设置 › 关于 › 开源许可. The marks are trademarks of their
 respective owners and are used only to identify the service or tool; their use does not imply endorsement.
 
-From the project's own repository or site:
+From the project's own repository, site or signed application:
+
+- Codex: codex.png, the unmodified webview/assets/codex-app-ga-logo.dfddfb85d7.png asset in the official
+  com.openai.codex application 26.1106.51428 (build 26605), published by OpenAI. Product: https://openai.com/codex/.
+  SHA-256: 8e82b26c98a10e45798ce48124515720657f7735fb8d0853b3f087eaa8a6b74e.
+  Brand terms: https://openai.com/brand/. This is the supplied raster artwork, not a traced SVG.
+- Claude: claude.svg, https://claude.com/icon.svg, retrieved 2026-11-13.
+  Brand terms: https://www.anthropic.com/legal/trademark-guidelines. These marks belong to Anthropic;
+  the Claude ACP adapter's Apache-2.0 license does not license the mark.
+- Cursor: cursor-light.svg and cursor-dark.svg, https://cursor.com/marketing-static/favicon-light.svg and
+  https://cursor.com/marketing-static/favicon.svg, linked by https://cursor.com/, retrieved 2026-11-13.
+  Official brand assets and usage: https://cursor.com/brand.
+- Antigravity: antigravity.svg, https://antigravity.google/assets/image/brand/antigravity-icon__full-color.svg,
+  linked by https://antigravity.google/press, retrieved 2026-11-13. The CLI uses the same product brand.
+- Grok Build: grok-dark.svg and grok-light.svg, Grok_Logomark_Dark.svg and Grok_Logomark_Light.svg from
+  https://data.x.ai/logos/SpaceXAI_Grok_Assets.zip, linked by https://x.ai/legal/brand-guidelines, retrieved 2026-11-13.
+  These are the official Grok product symbols (dark artwork on light surfaces, light artwork on dark surfaces).
+  The CLI source code license does not license trademarks.
 
 - pi: pi.svg, https://pi.dev/logo-auto.svg (the logo linked from the README of github.com/earendil-works/pi,
   MIT), retrieved 2026-10-25.
@@ -21,15 +37,14 @@ From the project's own repository or site:
   cd1b45c2db0a5ea7b7fc3b67c1ba5879601d6005, packages/vscode-ide-companion/assets/icon.png.
 - Qwen Code: qwen-code.svg, github.com/QwenLM/qwen-code (Apache-2.0) at commit
   e4eb0183ff56becfc6913ccb67cad8587e8ba6b0, packages/desktop/bootstrap/qwen-code-logo.svg.
-- goose: goose.png, github.com/aaif-goose/goose (Apache-2.0) at commit 0276d567aa00d426161c51e9c0f52baabe5958ea,
-  documentation/static/img/logo_light.png.
+- goose: goose.svg, github.com/aaif-goose/goose (Apache-2.0) at commit 0276d567aa00d426161c51e9c0f52baabe5958ea,
+  documentation/static/img/goose.svg.
 - Ollama: ollama.svg, github.com/ollama/ollama (MIT) at commit 675150d6ad2747df1e218ef59de9194bc4a7e538,
   docs/favicon.svg.
 
 From the icon set LobeHub Icons, github.com/lobehub/lobe-icons at commit 8a1b2821bb768c484fe8da20c5e1838b6bf551a9,
 packages/static-svg/icons/:
 
-- Codex: codex.svg (codex.svg)
 - OpenAI: openai.svg (openai.svg)
 - Anthropic: anthropic.svg (anthropic.svg)
 - DeepSeek: deepseek.svg (deepseek-color.svg)

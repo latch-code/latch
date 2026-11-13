@@ -4,13 +4,25 @@ Each mark below is shipped unmodified (see SOURCES.txt). For each project this f
 its LICENSE at the commit SOURCES.txt names, and any NOTICE file. Read on 2026-11-12 from the github.com pages linked;
 "no NOTICE" means the top-level file listing at that commit showed none (GitHub's listing may be partial).
 
+Official product marks (separate from source code licenses)
+
+- Codex: OpenAI. https://openai.com/brand/
+- Claude: Anthropic. https://www.anthropic.com/legal/trademark-guidelines
+  The guidelines require permission for use; no trademark permission is inferred from the ACP adapter license.
+- Cursor: Anysphere. https://cursor.com/brand
+- Antigravity: Google. https://antigravity.google/press
+- Grok Build / SpaceXAI: SpaceX Super Intelligence LLC. https://x.ai/legal/brand-guidelines
+
+These assets identify their respective products. No endorsement is implied. Their trademark rights are reserved by
+the respective owners; the software licenses below do not grant trademark rights.
+
 Apache License 2.0 (full text in LICENSE-Apache-2.0.txt)
 
 - Gemini CLI (gemini-cli.png)
   https://github.com/google-gemini/gemini-cli/blob/cd1b45c2db0a5ea7b7fc3b67c1ba5879601d6005/LICENSE
   Copyright: the LICENSE has no copyright line; its appendix keeps the template "Copyright [yyyy] [name of copyright owner]".
   NOTICE: none at that commit.
-- goose (goose.png)
+- goose (goose.svg)
   https://github.com/aaif-goose/goose/blob/0276d567aa00d426161c51e9c0f52baabe5958ea/LICENSE
   Copyright 2024 Block, Inc.
   NOTICE: none at that commit.
@@ -34,7 +46,7 @@ MIT License (terms below)
   https://github.com/deepseek-ai/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/LICENSE
   Copyright (c) 2026 DeepSeek
   NOTICE: none at that commit (the repository has a THIRD_PARTY_NOTICES.md about its own dependencies).
-- LobeHub Icons (Codex and the other icon-set marks listed in SOURCES.txt)
+- LobeHub Icons (the model-service icon-set marks listed in SOURCES.txt)
   https://github.com/lobehub/lobe-icons/blob/8a1b2821bb768c484fe8da20c5e1838b6bf551a9/LICENSE
   Copyright (c) 2023 LobeHub
   NOTICE: none at that commit. Full licence in LICENSE-lobe-icons.txt.
