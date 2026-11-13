@@ -405,7 +405,7 @@ describe('the attach button and @ on every Harness', () => {
         }
         // A browser sees work data only: @ says so instead of staying silent.
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
-        expect(await input.getAttribute('placeholder')).toContain('这台设备看不到项目文件')
+        expect(await input.getAttribute('placeholder')).toBe('想让 Agent 做什么？')
         await input.fill('看看 @app')
         await page.locator('.file-mentions').getByText('这台设备看不到项目文件', { exact: true }).waitFor()
         await page.screenshot({ path: `${shots}/${width}-${theme}-at-hidden.png`, animations: 'disabled' })

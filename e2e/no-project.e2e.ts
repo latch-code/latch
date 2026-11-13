@@ -1,5 +1,6 @@
 import { chromium } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
+import type { TaskDetail, TaskSummary } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
@@ -48,13 +49,12 @@ describe('no project means chat', () => {
             (await owner.json<{ tasks: Array<{ mode?: string; workspaceId?: string; sessionFolder?: boolean }> }>('snapshot')).tasks,
         )
         .toMatchObject([{ mode: 'chat', workspaceId: 'default' }])
-      const [task] = (await owner.json<{ tasks: Array<{ sessionFolder?: boolean }> }>('snapshot')).tasks
+      const [task] = (await owner.json<{ tasks: TaskSummary[] }>('snapshot')).tasks
       expect(task?.sessionFolder).toBeUndefined()
-      await page
-        .getByPlaceholder(/不读写文件、不运行命令/)
-        .filter({ visible: true })
-        .first()
-        .waitFor()
+      const continued = page.getByRole('textbox', { name: '继续对话', exact: true })
+      await expect.poll(() => continued.getAttribute('placeholder')).toBe('写下问题或想法…')
+      const detail = await owner.json<TaskDetail>(`tasks/${task!.id}`)
+      expect(detail.messages.filter(message => message.role === 'tool')).toEqual([])
     } finally {
       await browser.close()
       await host.close()

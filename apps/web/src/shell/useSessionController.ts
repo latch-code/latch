@@ -73,7 +73,6 @@ import { failureAction } from '../conversation/failureAction.ts'
 
 /** Session IDs are never empty. */
 const NEW_SESSION_DRAFT = ''
-const NO_PROJECT_FILES = '这台设备看不到项目文件'
 /** Text only a device that may read every kind of data sees: an agent's session, or one an assistant ran. */
 const privateSession = (task: TaskSummary | undefined): boolean =>
   task !== undefined && (task.personal !== undefined || task.agent !== undefined || task.agentPrivate === true)
@@ -388,7 +387,7 @@ export function useSessionController({
     catalog?.features?.fileMentions === true
     && (inputId === null ? choice.mode === 'agent' : summary?.mode !== 'chat')
     && mentionHarness?.capabilities.tools.fileMentions === true
-  // @ would find files, but this device may not list them: the input and the @ menu say so instead of staying silent.
+  // A restricted device gets the reason when it asks for files with @.
   const mentionsHidden = mentionable && snapshot.device.dataScope !== 'all'
   const mentionChoice = {
     enabled: mentionable && !mentionsHidden,
@@ -1307,7 +1306,7 @@ export function useSessionController({
     void resend(queuedRetry.prompt)
   }, [queuedRetry, inputId, current, retry, harness.connection])
   const askedQuestion = current?.questions?.[0]?.state === 'answering' ? undefined : current?.questions?.[0]
-  const startWords = mode === 'chat' ? '写下问题或想法…' : mentionsHidden ? `${NO_PROJECT_FILES}，/ 命令` : '@ 文件，/ 命令'
+  const startWords = mode === 'chat' ? '写下问题或想法…' : '想让 Agent 做什么？'
   // A topic of a conversation in 我的 Agent says whom the message goes to.
   const topicName = selectedId !== null && summary ? sessionAgent(snapshot, summary)?.name : undefined
   const placeholder =
@@ -1325,9 +1324,7 @@ export function useSessionController({
                 : '可以先写，本轮结束后发送…'
               : topicName
                 ? `给${topicName}发消息…`
-                : mode === 'chat'
-                  ? '不读写文件、不运行命令'
-                  : startWords
+                : startWords
 
   return {
     parkInputDraft: () => {
@@ -1379,7 +1376,7 @@ export function useSessionController({
           : { kind: 'read-only' as const, text: '此设备没有「发起和继续会话」权限', reason: undefined },
       sessionBlock: undefined,
       pendingQueued: null,
-      placeholder: mentionsHidden ? `想让 Agent 做什么？  ${NO_PROJECT_FILES}，/ 命令` : '想让 Agent 做什么？  @ 文件，/ 命令',
+      placeholder: '想让 Agent 做什么？',
       newChoicesLocked:
         submission.pending !== null || submission.sending || newAttachments.preparing || !(access.legacy || access.scopes.has('run')),
     },
