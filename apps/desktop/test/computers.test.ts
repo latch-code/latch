@@ -578,7 +578,10 @@ describe('another computer’s Host over HTTPS', () => {
       },
       onChange: () => changes.push(1),
     })
-    cleanups.push(async () => registry.stop())
+    cleanups.push(async () => {
+      registry.stop()
+      await registry.settled()
+    })
     await registry.start()
     expect(registry.view().computers).toEqual([{ hostId: a.host.hostId, name: 'studio', local: true, state: 'online' }])
 
@@ -1078,7 +1081,11 @@ describe('what waits on other computers', () => {
         timer.cleared = true
       },
     })
-    cleanups.push(async () => reg.stop())
+    cleanups.push(async () => {
+      reg.stop()
+      // Stopping probes does not finish the last atomic metadata write; keep its directory until it settles.
+      await reg.settled()
+    })
     return {
       reg,
       snapshots,
