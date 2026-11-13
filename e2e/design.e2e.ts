@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings, reachable, closeSettings } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSettings, reachable, closeSettings, backToPhoneSessions } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/design'
 const VIEWPORTS = [
@@ -50,8 +50,7 @@ describe('responsive workspace controls', () => {
       const page = await context.newPage()
       await enrollBrowser(page, testHost, { name: `输入框 ${label}` })
       if (touch) {
-        await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
-        await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
+        await page.locator('.workbench-home').getByRole('button', { name: '新会话选项', exact: true }).click()
         await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
       }
       const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
@@ -85,7 +84,10 @@ describe('responsive workspace controls', () => {
         await page.locator('.workbench-empty').getByText('还没有会话', { exact: true }).waitFor()
         await reachable(page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
         await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
-        // The Code tab still reaches history from Home, with its search and new-session sheet.
+        // Code stays at Home; the explicit history entry keeps search and the new-session sheet reachable.
+        await reachable(page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
+        await reachable(page.getByRole('button', { name: '全部会话', exact: true }))
+        await backToPhoneSessions(page)
         const head = page.locator('.phone-list-head')
         await reachable(page.locator('.phone-tabs').getByRole('button', { name: '设置', exact: true }))
         await reachable(head.getByRole('button', { name: '新建会话', exact: true }))
@@ -197,7 +199,10 @@ describe('responsive workspace controls', () => {
       await noHorizontalOverflow(page, devices)
       await capture(page, `${label}-devices`)
       await closeSettings(devices)
-      if (phone) await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
+      if (phone) {
+        await backToPhoneSessions(page)
+        await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
+      }
       await reachable(composer)
       expect((await testHost.host.bridge.listTasks()).length).toBe(0)
       await rm(`${OUTPUT}/${label}-failure.png`, { force: true })
