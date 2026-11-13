@@ -390,6 +390,16 @@ async function closeDetails(target: Page, viewport: VisualViewport): Promise<voi
     await target.locator('.info-page').waitFor({ state: 'detached' })
     return
   }
+  if (viewport.name === 'tablet') {
+    const panel = target.getByRole('complementary', { name: '侧边面板', exact: true })
+    if (await panel.isVisible()) {
+      const close = panel.getByRole('button', { name: '关闭', exact: true })
+      await reachable(close)
+      await close.click()
+      await panel.waitFor({ state: 'hidden' })
+    }
+    return
+  }
   const toggle = target.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true })
   if ((await toggle.getAttribute('aria-pressed')) === 'true') await toggle.click()
   await settleMotion(target)
@@ -556,9 +566,11 @@ describe('visual capture of the real product', () => {
 
   afterAll(async () => {
     await recorder.writeIndex()
-    // Assigned only once the scenario has been built.
-    if (local && sessions)
-      for (const id of [sessions.running, sessions.thinking]) await local.request(`tasks/${id}/cancel`, { method: 'POST' }).catch(() => {})
+    releaseArrivingCode?.()
+    // A failed setup may not have assigned sessions yet; settle every run this fixture started before closing its Host.
+    if (host)
+      for (const task of await host.bridge.listTasks())
+        if (task.status === 'running' || task.status === 'waiting-approval') await host.bridge.cancel(task.id).catch(() => {})
     for (const { context } of [...pages.values(), ...readOnlyPages.values()]) await context.close().catch(() => {})
     await browser?.close()
     await testHost?.close()
@@ -627,8 +639,13 @@ describe('visual capture of the real product', () => {
   }
   /** The new-session page uses the same compact controls while empty or drafting. */
   async function newSession(target: Page): Promise<void> {
-    // Set the media before the canvas mounts; its initial frame must not depend on a later media-change event.
+    // Each capture starts with the Host's default choice, not a model selected by an earlier surface.
+    await target.evaluate(() => {
+      for (const key of Object.keys(localStorage)) if (key.startsWith('latch.composer.')) localStorage.removeItem(key)
+    })
     await home(target, 'reduce')
+    if ((await target.locator('.phone-tabs').count()) > 0)
+      await target.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
     await target.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
     if ((await target.locator('.phone-list').count()) > 0) {
       await target.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
@@ -641,6 +658,7 @@ describe('visual capture of the real product', () => {
   /** A session from the list: the sidebar, the tablet's drawer, or a phone's list (the session's page pushed over it). */
   async function openSession(target: Page, viewport: VisualViewport, id: string): Promise<void> {
     await home(target)
+    if (viewport.name === 'phone') await target.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
     if (viewport.name === 'tablet') await openDrawer(target)
     await target.locator(`[data-task-id="${id}"]`).click()
     await target.locator('.drawer-backdrop').waitFor({ state: 'detached' })
@@ -658,6 +676,7 @@ describe('visual capture of the real product', () => {
    */
   async function capturePhoneSessions(target: Page, viewport: VisualViewport): Promise<void> {
     await home(target)
+    await target.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
     const list = target.locator('#session-navigation')
     const head = list.locator('.phone-list-head')
     await reachable(head.getByRole('button', { name: '新建会话', exact: true }))
@@ -833,10 +852,9 @@ describe('visual capture of the real product', () => {
       await target.getByRole('heading', { name: '在 Mac 上确认', exact: true }).waitFor()
       testHost.presence.approveNext()
       await connected(target)
-      await target.getByText('会话会保存在这里').first().waitFor({ state: 'attached' })
-      // A phone opens on its empty session list; wider screens on the new-session page.
-      if (viewport.name === 'phone') await reachable(target.locator('.phone-empty').getByRole('button', { name: '新建会话', exact: true }))
-      else await reachable(target.getByRole('textbox', { name: '新会话消息', exact: true }))
+      await target.locator('.workbench-empty').getByText('还没有会话', { exact: true }).waitFor()
+      await reachable(target.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
+      if (viewport.name === 'phone') await reachable(target.getByRole('button', { name: '新会话选项', exact: true }))
       if (viewport.name !== 'phone') {
         await target.emulateMedia({ reducedMotion: 'reduce' })
         await target.evaluate(() => new Promise(done => setTimeout(done, 400)))
@@ -959,13 +977,15 @@ describe('visual capture of the real product', () => {
 
     const hidden = await start(PROMPTS.hidden)
     await pendingApproval(hidden)
-    // The first approval to arrive while the pages watch: 等你处理 appears (the title row's button on tablets, with its count,
-    // which fades in because the page saw it arrive).
+    // The first approval joins the already failed session in Home's attention group; the live count changes from one to two.
     await pages
       .get('desktop')!
-      .page.locator('.session-group[data-shelf="waiting"] .shelf-count', { hasText: '1' })
+      .page.locator('.workbench-home [data-group="attention"] .ui-count[data-shift]', { hasText: /^2$/u })
       .waitFor({ state: 'attached' })
-    await pages.get('tablet')!.page.locator('.titlebar .ui-count[data-shift]', { hasText: '1' }).waitFor({ state: 'attached' })
+    await pages
+      .get('tablet')!
+      .page.locator('.workbench-home [data-group="attention"] .ui-count[data-shift]', { hasText: /^2$/u })
+      .waitFor({ state: 'attached' })
     const r2 = await start(PROMPTS.r2)
     await pendingApproval(r2)
     expect((await detail(r2)).approvals[0].risk).toBe('R2')
@@ -1089,6 +1109,8 @@ describe('visual capture of the real product', () => {
         await route.fulfill({ response, json: { ...snapshot, ...(catalog ? { catalog } : {}) } })
       })
       await newSession(target)
+      await target.getByRole('button', { name: /^Harness：/ }).click()
+      await target.getByRole(viewport.name === 'phone' ? 'radio' : 'menuitemradio', { name: /Latch 内置/ }).click()
       const setup = target.locator('.setup-card')
       await setup.getByText('还没有模型服务。', { exact: true }).waitFor()
       await reachable(setup.getByRole('button', { name: '添加模型服务', exact: true }))
@@ -1117,6 +1139,8 @@ describe('visual capture of the real product', () => {
         await route.fulfill({ response, json: { ...snapshot, ...(catalog ? { catalog } : {}) } })
       })
       await newSession(target)
+      await target.getByRole('button', { name: /^Harness：/ }).click()
+      await target.getByRole(viewport.name === 'phone' ? 'radio' : 'menuitemradio', { name: /Latch 内置/ }).click()
       await target
         .getByText(/^演示/u)
         .filter({ visible: true })
@@ -1188,7 +1212,8 @@ describe('visual capture of the real product', () => {
       await target.locator('.tool-card .ui-spinner').first().waitFor()
       await target.locator('.status-line .status-clock').waitFor()
       expect(await target.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
-      if (sidebar) expect(await sidebar.locator(`[data-task-id="${sessions.running}"] .ui-spinner`).count()).toBe(1)
+      if (sidebar)
+        expect(await sidebar.locator(`[data-task-id="${sessions.running}"] .ui-spinner`).filter({ visible: true }).count()).toBe(1)
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-running', 'tool running')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-running', 'running session selected', sidebar)
@@ -1250,19 +1275,20 @@ describe('visual capture of the real product', () => {
       await openSession(target, viewport, sessions.done)
       await shows(target, /建议再补一条/)
       if (sidebar) {
-        // Each row's status slot shows one thing in status words: what the run is doing with its spinner, 失败, 已停止,
-        // the unread check or the time. In 等你处理 the shelf says that the row waits and its second line on what (审批,
-        // in amber), so the slot keeps the time.
+        // The project tree uses a complete glyph instead of clipping status words; its accessible name retains the state.
         const row = (id: string) => sidebar.locator(`[data-task-id="${id}"]`)
-        await row(sessions.running).locator('.ui-status-word[data-tone="running"] .ui-spinner').waitFor()
+        await row(sessions.running).locator('.session-row-glyph[data-tone="running"] .ui-spinner').waitFor()
         for (const id of [sessions.r1, sessions.r2, sessions.hidden, sessions.advisory]) {
-          await row(id).locator('.ui-status-time').waitFor()
-          await row(id).locator('.session-wait', { hasText: '审批' }).waitFor()
+          await row(id).locator('.session-row-glyph[data-tone="waiting"]').waitFor()
+          expect(await row(id).locator('.sr-only').textContent()).toContain('等你处理')
         }
-        await row(sessions.failed).locator('.ui-status-word[data-tone="failed"]', { hasText: '失败' }).waitFor()
-        await row(sessions.cancelled).locator('.ui-status-word', { hasText: '已停止' }).waitFor()
-        await row(sessions.unread).locator('.ui-status-unread').waitFor()
-        await row(sessions.plan).locator('.ui-status-time').waitFor()
+        await row(sessions.failed).locator('.session-row-glyph[data-tone="failed"]').waitFor()
+        expect(await row(sessions.failed).locator('.sr-only').textContent()).toContain('失败')
+        expect(await row(sessions.cancelled).locator('.sr-only').textContent()).toContain('已停止')
+        await row(sessions.unread).locator('.session-row-glyph[data-tone="neutral"]').waitFor()
+        expect(await row(sessions.unread).locator('..').getAttribute('class')).toContain('is-unread')
+        expect(await row(sessions.unread).locator('.sr-only').textContent()).toContain('有新内容')
+        await row(sessions.plan).locator('.session-row-glyph[data-tone="neutral"]').waitFor()
         // The rows above the list are ghost rows: the open session's neutral selection is the column's only resting fill.
         const fills = await sidebar
           .locator('.sidebar-nav-row[aria-label="搜索"], .shelf-head')
@@ -1334,6 +1360,8 @@ describe('visual capture of the real product', () => {
       await recorder.capture(target, viewport, 'session-done-fold', 'the folded process opened')
 
       // The write is one row; it opens to a short preview, coloured, with the way to the whole change.
+      // A's default overview column routes file rows to the panel; close it to exercise the inline preview.
+      if (viewport.name === 'desktop') await closeDetails(target, viewport)
       const write = target.locator('.tool-card[data-kind="edit"] .tool-card-header').last()
       await reachable(write)
       await write.click()
@@ -1369,7 +1397,7 @@ describe('visual capture of the real product', () => {
       await target.locator('.topbar').getByText('已停止', { exact: true }).waitFor()
       if (sidebar) {
         // The top bar and its row say the same word, now that the run has settled.
-        await sidebar.locator(`[data-task-id="${sessions.cancelled}"]`).locator('.ui-status-word', { hasText: '已停止' }).waitFor()
+        expect(await sidebar.locator(`[data-task-id="${sessions.cancelled}"] .sr-only`).textContent()).toContain('已停止')
       }
       await recorder.capture(target, viewport, 'session-cancelled', 'cancelled')
       if (sidebar) await recorder.capture(target, viewport, 'sidebar-cancelled', 'cancelled session selected', sidebar)
@@ -1406,9 +1434,12 @@ describe('visual capture of the real product', () => {
       await target.keyboard.press('Escape')
       await target.getByRole('menuitem', { name: /这个会话都允许这类操作/ }).waitFor({ state: 'hidden' })
 
-      // What it will do unfolds in place from 查看改动; the input and the buttons stay where they are.
+      // Evidence starts expanded in v8. Collapsing and reopening keeps the controls in the same card.
       const toggle = r1.locator('.approval-see')
       await reachable(toggle)
+      expect(await toggle.getAttribute('aria-expanded')).toBe('true')
+      await toggle.click()
+      await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('false')
       await toggle.click()
       await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('true')
       if (viewport.name === 'phone') {
@@ -1587,8 +1618,8 @@ describe('visual capture of the real product', () => {
         await home(target)
         const drawer = await openDrawer(target)
         for (const name of ['新建会话', '关闭会话列表']) await reachable(drawer.getByRole('button', { name, exact: true }))
-        // The tablet's sliding sidebar says its states in status words.
-        await drawer.locator(`[data-task-id="${sessions.running}"] .ui-status-word[data-tone="running"] .ui-spinner`).waitFor()
+        // The tablet's sliding project tree uses the same complete state glyphs as the desktop.
+        await drawer.locator(`[data-task-id="${sessions.running}"] .session-row-glyph[data-tone="running"] .ui-spinner`).waitFor()
         await noHorizontalOverflow(target, drawer)
         await settleMotion(target)
         await recorder.capture(target, viewport, 'navigation', 'session list drawer')
@@ -1927,12 +1958,14 @@ describe('visual capture of the real product', () => {
         async () => {
           await openSession(target, viewport, sessions.done)
           await shows(target, /建议再补一条/)
+          await openDetails(target, viewport)
         },
       ],
       [
         'approval-r1',
         async () => {
           await openSession(target, viewport, sessions.r1)
+          await closeDetails(target, viewport)
           await target.locator('[data-approval-id]').getByRole('button', { name: '允许', exact: true }).waitFor()
         },
       ],

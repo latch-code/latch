@@ -50,6 +50,7 @@ describe('responsive workspace controls', () => {
       const page = await context.newPage()
       await enrollBrowser(page, testHost, { name: `输入框 ${label}` })
       if (touch) {
+        await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
         await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
         await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
       }
@@ -81,9 +82,10 @@ describe('responsive workspace controls', () => {
       await enrollBrowser(page, testHost, { name: `布局 ${label}`, scopes: ['view', 'run', 'approve:standard', 'admin'] })
       const phone = width < 768
       if (phone) {
-        // A phone opens on its session list: the title with a new session, then its search; a new session is a sheet
-        // over the list. With no session yet the list says so and offers to start one; the computer it reads is named
-        // above the title, and the list no longer ends with a way to sync (the connection's notices have 重试).
+        await page.locator('.workbench-empty').getByText('还没有会话', { exact: true }).waitFor()
+        await reachable(page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
+        await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
+        // The Code tab still reaches history from Home, with its search and new-session sheet.
         const head = page.locator('.phone-list-head')
         await reachable(page.locator('.phone-tabs').getByRole('button', { name: '设置', exact: true }))
         await reachable(head.getByRole('button', { name: '新建会话', exact: true }))
@@ -98,8 +100,21 @@ describe('responsive workspace controls', () => {
         await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
       }
       const composer = page.getByRole('textbox', { name: '新会话消息', exact: true })
-      // A responsive composition may move the form, but must not duplicate it.
-      expect(await page.locator('textarea[aria-label="新会话消息"]').count()).toBe(1)
+      // Home can cover a parked input; exactly one target may accept editing, and the other is inert.
+      const targets = await page.locator('textarea[aria-label="新会话消息"]').evaluateAll(elements => {
+        const modal = document.querySelector('dialog:modal')
+        return elements.map(element => ({
+          visible: element.checkVisibility({ visibilityProperty: true }),
+          inert: !!element.closest('[inert]') || (modal !== null && !modal.contains(element)),
+          parent: element.parentElement?.className,
+          main: element.closest('main')?.outerHTML.slice(0, 180),
+        }))
+      })
+      expect(targets.filter(target => target.visible && !target.inert)).toHaveLength(1)
+      expect(
+        targets.filter(target => !target.visible).every(target => target.inert),
+        JSON.stringify(targets),
+      ).toBe(true)
       await reachable(composer)
       await composer.fill('这是一条未提交的布局验收草稿。')
       await noHorizontalOverflow(page)
