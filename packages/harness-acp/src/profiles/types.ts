@@ -162,6 +162,8 @@ export interface GatewayLaunch {
   args?: string[]
   /** File name to content: written 0600 and replaced by rename before every spawn; names variables, never holds a value. */
   files?: Record<string, string>
+  /** Public model settings for ACP session creation/restoration; never a token or another credential. */
+  sessionMeta?: Record<string, unknown>
 }
 
 /** The exact value a routed model has in this harness's native configuration, not a suffix or display-name match. */
@@ -193,6 +195,8 @@ type ProfileGateway = {
   readonly minimumVersion?: NonNullable<HarnessProfile['minimumVersion']>
   /** The protocol app reports a separate internal version, so only the installed CLI can prove this minimum. */
   readonly commandVersionOnly?: true
+  /** This harness guesses model capacity and price on custom routes; retain only its reported context token count. */
+  readonly usage?: 'tokens-only'
 } & (
   | { readonly via: 'providers'; readonly providerId: string; readonly apiType: string }
   | {
@@ -205,7 +209,7 @@ type ProfileGateway = {
       /** The other variables `deliver` sets, for the launch fingerprint and preview; values never enter either. */
       readonly envNames: readonly string[]
       /** Versions of what `deliver` puts in the arguments and the files, in the launch fingerprint; bump on a change. */
-      readonly templates: { readonly args?: number; readonly files?: number }
+      readonly templates: { readonly args?: number; readonly files?: number; readonly session?: number }
       /** When present, apply and read back this native model value before the first prompt. */
       readonly models?: GatewayModelValues
       /** A verified serializer restriction; false removes the control and refuses retained non-default choices. */

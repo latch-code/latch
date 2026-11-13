@@ -213,13 +213,26 @@ export function versionRefusal(record: AgentRecord, verdict: VersionVerdict | un
 /**
  * Before a process starts: refuses a command older than the profile's minimum. A cached "too old" is read once more,
  * since a shim (Volta, asdf, mise) stays the same file when the program behind it is upgraded. An unreadable version
- * blocks nothing.
+ * blocks nothing unless a route requires fresh command evidence. An adapter's bundled binary may change without its
+ * entry point changing, so those routes read again and refuse missing evidence before a credential is issued.
  */
-export async function assertVersion(record: AgentRecord, path: string, own?: Gate, use?: string): Promise<VersionVerdict | undefined> {
-  const reused = cached(record, path, own)
-  const entry = reused ?? entryFor(record, path, false, own)
-  if (!entry) return
-  let verdict = await entry.read
+export async function assertVersion(
+  record: AgentRecord,
+  path: string,
+  own?: Gate,
+  use?: string,
+  requireFresh = false,
+): Promise<VersionVerdict | undefined> {
+  const reused = requireFresh ? undefined : cached(record, path, own)
+  const entry = reused ?? entryFor(record, path, requireFresh, own)
+  if (!entry && !requireFresh) return
+  let verdict = (await entry?.read) ?? { tooOld: false }
+  if (requireFresh && verdict.version === undefined)
+    throw new AppError(
+      409,
+      'harness-version-unsupported',
+      `${record.name} ${use ?? ''}需要 ${own!.minimum} 或更高版本；当前版本无法确认。请使用受支持的官方命令后重试。`,
+    )
   if (verdict.tooOld && reused) verdict = (await entryFor(record, path, true, own)?.read) ?? verdict
   const refused = versionRefusal(record, verdict, own, use)
   if (refused) throw refused

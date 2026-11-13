@@ -127,7 +127,7 @@ export interface LaunchRoute {
   upstream?: string
   via: 'providers' | 'launch'
   names: string[]
-  templates?: { args?: number; files?: number }
+  templates?: { args?: number; files?: number; session?: number }
 }
 
 /**

@@ -24,11 +24,11 @@ sources:
 
 新会话用 Harness 上次会话报告或不开会话读到的选项列表（见 [HARNESSES.md](HARNESSES.md#开始前的选项)），和会话里是同一个组件；还没有列表时也不虚构推理能力：`DraftModelControl` 写「默认模型」、`DraftThinkingControl` 写「默认」，模型菜单里是读取的入口（打开思考也会读取），不能读取时各自说明发第一条消息后可以换。
 
-自己带模型的 Harness 的模型菜单先列它原生报告的模型，未报告时保留「默认模型」。之后按 Host 的 `models.wires` 与 `pairRoute` 列出可转发的已保存服务，分组写「<服务> · 经 Latch」；只有路线声明 `experimental` 时显示实验性。原生 Codex 通过 app-server 使用 Responses 服务，可选服务声明但原生 `model/list` 没有的模型，不带 `knownOnly` 限制。仍走 `codex-acp` 后备适配器的定义保留 `models.knownOnly`：只有适配器认识的服务模型可选。Gemini CLI 使用 Gemini 服务；OpenCode、pi 和 DeepSeek Harness 可以分别使用四种同协议服务。Host 从实际命令所选的 profile 投影能力，客户端不维护另一份预设协议表。协议入口、最低版本与交付见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
+自己带模型的 Harness 的模型菜单先列它原生报告的模型，未报告时保留「默认模型」。之后按 Host 的 `models.wires` 与 `pairRoute` 列出可转发的已保存服务，分组写「<服务> · 经 Latch」；只有路线声明 `experimental` 时显示实验性。原生 Codex 通过 app-server 使用 Responses 服务，可选服务声明但原生 `model/list` 没有的模型，不带 `knownOnly` 限制。仍走 `codex-acp` 后备适配器的定义保留 `models.knownOnly`：只有适配器认识的服务模型可选。Claude Agent 使用 Anthropic 同协议服务，公开会话设置中的 modelPicker 保留服务的原始模型 ID；Gemini CLI 使用 Gemini 服务；OpenCode、pi 和 DeepSeek Harness 可以分别使用四种同协议服务。Host 从实际命令所选的 profile 投影能力，客户端不维护另一份预设协议表。协议入口、最低版本与交付见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
 
 网关优先同协议转发；只有已实现的 Responses→Chat 互译可选，分组标「实验性」，菜单末尾的「协议转换」说明可能略去的能力。其他方向仍不可选。用不了的服务收在「N 个服务用不了」，展开显示原因；`models.wires` 为空的 Harness 只用自己的模型。服务选择按 Harness 分别保存，换 Harness 不带过去。控件显示模型 ID 与服务标记，避免同名模型混淆；草稿思考选项仍以该 Harness 对所选模型实际能提供的列表为准，服务声明不会被误当成原生会话读回。手机与桌面使用同一份能力与模型列表，不能以菜单出现代替 Agent 已应用。
 
-经服务的模型 ID 与 Agent 的配置值分别处理：OpenCode 使用 `latch/<模型>`，pi 使用 `latch-gateway/<模型>`，DeepSeek Harness 使用 provider 与模型组成的 JSON 二元组；显示仍取服务模型 ID。Host 按 profile 的精确编码来应用、读回和恢复，不用去前缀或模糊匹配把另一个 provider 的同名模型当成当前服务。pi 只列它实际成功注册的服务模型；官方目录没有明确运行上限、又未配置高级运行预算的模型不能开始，详见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#pi-运行预算)。预算不是服务报告的容量或价格，不显示为上下文上限或费用。
+经服务的模型 ID 与 Agent 的配置值分别处理：OpenCode 使用 `latch/<模型>`，pi 使用 `latch-gateway/<模型>`，DeepSeek Harness 使用 provider 与模型组成的 JSON 二元组；显示仍取服务模型 ID。Host 按 profile 的精确编码来应用、读回和恢复，不用去前缀或模糊匹配把另一个 provider 的同名模型当成当前服务。pi 只列它实际成功注册的服务模型；官方目录没有明确运行上限、又未配置高级运行预算的模型不能开始，详见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#pi-运行预算)。预算不是服务报告的容量或价格，不显示为上下文上限或费用。Claude 网关会话同样隐藏 CLI 对自定义模型推测的容量与价格，只显示它报告的已用上下文 token 与上游真实用量。
 
 会话开始后不能换服务，只在原服务内换模型。会话模型选项受网关凭据的模型列表约束；已确认的新模型在进程或 Host 重启后继续使用，服务清单删除旧模型而保留当前模型时仍可恢复。Host 保存的服务名通过 `modelRoute.name` 展示，停用、删除、缺密钥或地址未确认时给出不可用原因并阻止继续使用。服务协议或地址变化不自动迁移会话。整轮回复却没有请求经过网关时显示 bypassed 并说明；这不能证明其他辅助调用均经过网关。
 

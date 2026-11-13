@@ -5933,6 +5933,77 @@ describe('sessions on a model service through the gateway', () => {
 
   const envOf = (log: LogEntry[]) => log.filter(entry => entry.event === 'env').map(entry => entry.env as Record<string, string>)
 
+  it('checks the Claude binary behind the adapter on every gateway spawn and leaves its own model route usable', async () => {
+    const bin = await mkdtemp(join(tmpdir(), 'latch-claude-gateway-version-'))
+    cleanups.push(() => rm(bin, { recursive: true, force: true }))
+    const command = join(bin, 'claude-agent-acp')
+    const version = join(bin, 'version')
+    await writeFile(version, '2.1.318 (Claude Code)')
+    await writeFile(
+      command,
+      `#!/bin/sh\nif [ "$1" = --cli ] && [ "$2" = --version ]; then cat '${version}'; exit 0; fi\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"\n`,
+    )
+    await chmod(command, 0o755)
+    setLoginPrograms(name => (name === 'claude-agent-acp' ? command : undefined))
+    const models = await startFakeModels({ replies: [{ text: 'must not be requested' }] })
+    cleanups.push(() => models.close())
+    const stub = gateway(models)
+    const fixture = await setup(
+      {
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_VERSION: '0.101.0',
+        FAKE_ACP_MODELS: 'fake-model,fake-model-large',
+        FAKE_ACP_MODES: 'default,plan,acceptEdits,auto,bypassPermissions',
+        FAKE_ACP_INITIAL_MODE: 'default',
+      },
+      {},
+      { presetId: 'claude-agent', command, args: [] },
+      { modelGateway: stub.access },
+    )
+    const bridge = await fixture.open()
+    const modelRoute = { providerId: 'svc', model: 'fake-model', wire: 'anthropic-messages' as const, origin: models.origin }
+    const accepted = await bridge.createTask({ prompt: 'plan', requestId: rid(), modelRoute })
+    const acceptedDetail = await settled(bridge, accepted.sessionId)
+    expect(acceptedDetail.summary.status, systemText(acceptedDetail)).toBe('idle')
+    expect(acceptedDetail.usageReport?.contextUsed).toBe(10)
+    expect(acceptedDetail.usageReport?.contextSize).toBeUndefined()
+    expect(acceptedDetail.usageReport?.cost).toBeUndefined()
+    const settings = received(await fixture.log(), 'session/new')[0]!.params?._meta
+    expect(settings).toEqual({
+      claudeCode: {
+        options: {
+          settings: {
+            apiKeyHelper: '',
+            availableModels: ['fake-model', 'fake-model-large'],
+            modelPicker: {
+              replaceBuiltInOptions: true,
+              options: [
+                { model: 'fake-model', label: 'fake-model' },
+                { model: 'fake-model-large', label: 'fake-model-large' },
+              ],
+            },
+          },
+        },
+      },
+    })
+    expect(JSON.stringify(settings)).not.toContain('lmg1.')
+    // Replacing the SDK's binary need not change the adapter entry point: a cached success cannot prove it still works.
+    for (const value of ['2.1.317 (Claude Code)', '0.101.0']) {
+      await writeFile(version, value)
+      const attempted = await bridge.createTask({ prompt: 'model must not run', requestId: rid(), modelRoute })
+      const refused = await settled(bridge, attempted.sessionId)
+      expect(refused.summary.status).toBe('failed')
+      expect(systemText(refused)).toContain('需要 2.1.318 或更高版本')
+    }
+    const native = await bridge.createTask({ prompt: 'echo native', requestId: rid() })
+    expect((await settled(bridge, native.sessionId)).summary.status).toBe('idle')
+    expect(received(await fixture.log(), 'session/new').at(-1)?.params).not.toHaveProperty('_meta')
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(2)
+    expect(models.requests).toHaveLength(0)
+    await bridge.close()
+    expect(stub.leases.every(lease => lease.closed)).toBe(true)
+  })
+
   it('refuses a gateway on an older OpenCode report while its native model route remains usable', async () => {
     const { fixture, stub, route, models } = await routed(
       'opencode',

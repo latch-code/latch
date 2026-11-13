@@ -21,6 +21,7 @@ import {
 } from '../src/index.ts'
 import { agentProbePreview, probeAgent } from '../src/probe.ts'
 import { bareVersion } from '../src/version-line.ts'
+import { readClaudeVersion } from '../src/profiles/claude-agent.ts'
 import { compareVersions } from '../src/version.ts'
 
 const FAST: AcpAgentOptions = { cancelGraceMs: 300, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: 5_000, log: () => {} }
@@ -157,6 +158,15 @@ describe('version order', () => {
 })
 
 describe('reading a version line', () => {
+  it.each([
+    ['2.1.318 (Claude Code)\n', '2.1.318'],
+    ['0.101.0\n', undefined],
+    ['Claude Code 2.1.318\n', undefined],
+    ['Update available: 2.1.317 → 2.1.318\n2.1.317 (Claude Code)\n', undefined],
+  ])('reads only the native Claude Code version from %j', (output, version) => {
+    expect(readClaudeVersion(output)).toBe(version)
+  })
+
   it.each([
     ['0.2.1-rc.2\n', '0.2.1-rc.2'],
     ['v0.2.2\n', '0.2.2'],
