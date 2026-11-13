@@ -93,6 +93,57 @@ describe('authenticated file column', () => {
     await browser?.close()
     await host?.close()
   })
+  it('keeps the chosen line input when deferred find focus runs', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' })
+    const page = await context.newPage()
+    try {
+      await enrollBrowser(page, host, { name: '查找焦点', scopes: ['admin'] })
+      await openSession(page, sessionId)
+      await page.getByRole('button', { name: '预览文件：report.txt', exact: true }).click()
+      const preview = page.getByRole('region', { name: '文件预览', exact: true })
+      await preview.getByText('second line', { exact: true }).waitFor()
+      await preview.getByRole('button', { name: '文件操作', exact: true }).click()
+      await page.evaluate(() => {
+        const schedule = window.requestAnimationFrame
+        const cancel = window.cancelAnimationFrame
+        const held = new Map<number, FrameRequestCallback>()
+        let id = 1_000_000
+        window.requestAnimationFrame = callback => {
+          held.set(++id, callback)
+          return id
+        }
+        window.cancelAnimationFrame = id => {
+          if (!held.delete(id)) cancel(id)
+        }
+        Object.assign(window, {
+          releaseTextFindFrames() {
+            window.requestAnimationFrame = schedule
+            window.cancelAnimationFrame = cancel
+            for (const callback of held.values()) callback(performance.now())
+            held.clear()
+          },
+        })
+      })
+      // Hold the page's next frame so the person can move focus before the requested autofocus runs.
+      await page.getByRole('menuitem', { name: '查找', exact: true }).dispatchEvent('click')
+      const line = preview.getByLabel('跳到行', { exact: true })
+      await line.focus()
+      await page.keyboard.press('Meta+a')
+      await page.evaluate(() => (window as unknown as { releaseTextFindFrames(): void }).releaseTextFindFrames())
+      await page.keyboard.type('2')
+      await expect.poll(() => line.inputValue()).toBe('2')
+      expect(await preview.getByRole('searchbox', { name: '查找文件内容', exact: true }).inputValue()).toBe('')
+      expect(await line.evaluate(element => document.activeElement === element)).toBe(true)
+      await page.keyboard.press('Meta+f')
+      await expect
+        .poll(() =>
+          preview.getByRole('searchbox', { name: '查找文件内容', exact: true }).evaluate(element => document.activeElement === element),
+        )
+        .toBe(true)
+    } finally {
+      await context.close()
+    }
+  })
   for (const [width, height, theme] of [
     [390, 844, 'light'],
     [900, 1000, 'dark'],
