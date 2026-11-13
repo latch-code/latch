@@ -6,7 +6,11 @@ import { realpathSync, statSync } from 'node:fs'
 import { AppError } from '@latch/sdk'
 import { locateProgram, readOwnVersion } from './login.ts'
 import { selectProfile } from './permission.ts'
+import type { HarnessProfile } from './profiles/index.ts'
 import type { AgentRecord } from './types.ts'
+
+/** A minimum a command must reach: the profile's own, or another one for a use of it (the gateway's). */
+type Gate = NonNullable<HarnessProfile['minimumVersion']>
 
 const READ_MS = 10_000
 
@@ -81,9 +85,9 @@ function stampOf(path: string): string | undefined {
 }
 
 /** The command's gate, when this record's command is the preset's own and the Host may run it. */
-function gateOf(record: AgentRecord, path: string) {
+function gateOf(record: AgentRecord, path: string, own?: Gate): Gate | undefined {
   const { preset, profile } = selectProfile(record)
-  const gate = profile?.minimumVersion
+  const gate = own ?? profile?.minimumVersion
   if (!gate || !preset) return undefined
   // Only the preset's own program, the file a login check runs: its bare name, or a path to that same file. Any other
   // command (`node …/cli.js`, a copy in a project folder) is never run for its version and blocks nothing.
@@ -104,8 +108,8 @@ function sameFile(a: string, b: string): boolean {
 const keyOf = (path: string, minimum: string) => `${path}\0${minimum}`
 
 /** The cached read of this file, when it is still this file and no re-check came since. Starts nothing. */
-function cached(record: AgentRecord, path: string): Entry | undefined {
-  const gate = gateOf(record, path)
+function cached(record: AgentRecord, path: string, own?: Gate): Entry | undefined {
+  const gate = gateOf(record, path, own)
   const known = gate ? cache.get(keyOf(path, gate.minimum)) : undefined
   return known && known.epoch === epoch && known.stamp === stampOf(path) ? known : undefined
 }
@@ -114,8 +118,8 @@ function cached(record: AgentRecord, path: string): Entry | undefined {
  * The read of this file, started when there is none still valid or `fresh` asks for one. Bounded as a whole: a command
  * that never answers is unreadable, which blocks nothing.
  */
-function entryFor(record: AgentRecord, path: string, fresh = false): Entry | undefined {
-  const gate = gateOf(record, path)
+function entryFor(record: AgentRecord, path: string, fresh = false, own?: Gate): Entry | undefined {
+  const gate = gateOf(record, path, own)
   const stamp = stampOf(path)
   if (!gate || stamp === undefined) return undefined
   const key = keyOf(path, gate.minimum)
@@ -131,7 +135,7 @@ function entryFor(record: AgentRecord, path: string, fresh = false): Entry | und
   const entry: Entry = {
     stamp,
     epoch,
-    read: Promise.race([readOwnVersion(record, path, { timeoutMs: READ_MS }), deadline]).then(
+    read: Promise.race([readOwnVersion(record, path, { timeoutMs: READ_MS }, gate), deadline]).then(
       version => {
         clearTimeout(timer)
         const order = version === undefined ? undefined : compareVersions(version, gate.minimum)
@@ -184,22 +188,26 @@ export async function settleVersions(
 }
 
 /** What a too-old command needs, and the command that upgrades it. */
-export function tooOld(record: AgentRecord, verdict: VersionVerdict | undefined): { need: string; upgrade: string } | undefined {
-  const gate = selectProfile(record).profile?.minimumVersion
+export function tooOld(
+  record: AgentRecord,
+  verdict: VersionVerdict | undefined,
+  own?: Gate,
+): { need: string; upgrade: string } | undefined {
+  const gate = own ?? selectProfile(record).profile?.minimumVersion
   if (!gate || !verdict?.tooOld) return undefined
   return { need: `需要 ${gate.minimum} 或更高版本（当前 ${verdict.version ?? '未知'}）`, upgrade: gate.upgrade }
 }
 
 /** The line a too-old command gets, with the command that upgrades it. */
-export function tooOldText(record: AgentRecord, verdict: VersionVerdict | undefined): string | undefined {
-  const found = tooOld(record, verdict)
+export function tooOldText(record: AgentRecord, verdict: VersionVerdict | undefined, own?: Gate): string | undefined {
+  const found = tooOld(record, verdict, own)
   return found && `${found.need}。升级：${found.upgrade}`
 }
 
-/** The refusal a too-old command gets, wherever a start is refused: the same code and words. */
-export function versionRefusal(record: AgentRecord, verdict: VersionVerdict | undefined): AppError | undefined {
-  const text = tooOldText(record, verdict)
-  return text ? new AppError(409, 'harness-version-unsupported', `${record.name} ${text}`) : undefined
+/** The refusal a too-old command gets, wherever a start is refused: the same code and words; `use` names what needs it. */
+export function versionRefusal(record: AgentRecord, verdict: VersionVerdict | undefined, own?: Gate, use?: string): AppError | undefined {
+  const text = tooOldText(record, verdict, own)
+  return text ? new AppError(409, 'harness-version-unsupported', `${record.name} ${use ? `${use}` : ''}${text}`) : undefined
 }
 
 /**
@@ -207,12 +215,12 @@ export function versionRefusal(record: AgentRecord, verdict: VersionVerdict | un
  * since a shim (Volta, asdf, mise) stays the same file when the program behind it is upgraded. An unreadable version
  * blocks nothing.
  */
-export async function assertVersion(record: AgentRecord, path: string): Promise<void> {
-  const reused = cached(record, path)
-  const entry = reused ?? entryFor(record, path)
+export async function assertVersion(record: AgentRecord, path: string, own?: Gate, use?: string): Promise<void> {
+  const reused = cached(record, path, own)
+  const entry = reused ?? entryFor(record, path, false, own)
   if (!entry) return
   let verdict = await entry.read
-  if (verdict.tooOld && reused) verdict = (await entryFor(record, path, true)?.read) ?? verdict
-  const refused = versionRefusal(record, verdict)
+  if (verdict.tooOld && reused) verdict = (await entryFor(record, path, true, own)?.read) ?? verdict
+  const refused = versionRefusal(record, verdict, own, use)
   if (refused) throw refused
 }

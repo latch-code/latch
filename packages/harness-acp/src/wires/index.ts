@@ -8,9 +8,17 @@ import type { AgentWire, WireHandlers } from './types.ts'
 /** The protocol a harness speaks, by its profile: ACP unless it says otherwise. */
 export type WireKind = 'acp' | 'pi' | 'codex'
 
-export function openWire(kind: WireKind | undefined, spec: SpawnSpec, handlers: WireHandlers): AgentWire {
+/**
+ * What a wire that chooses the model itself is told of a session on a route: the model it starts on and the only ones it
+ * may offer, which the gateway forwards. A wire that speaks ACP leaves this to the agent.
+ */
+export interface WireOptions {
+  route?: { model: string; models: readonly string[] }
+}
+
+export function openWire(kind: WireKind | undefined, spec: SpawnSpec, handlers: WireHandlers, options: WireOptions = {}): AgentWire {
   if (kind === 'pi') return PiWire.spawn(spec, handlers)
-  if (kind === 'codex') return CodexWire.spawn(spec, handlers)
+  if (kind === 'codex') return CodexWire.spawn(spec, handlers, options.route)
   return AcpWire.spawn(spec, handlers)
 }
 

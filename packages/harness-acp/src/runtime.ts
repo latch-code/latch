@@ -75,7 +75,16 @@ import {
   type SetConfigOptions,
   type SteerOutcome,
 } from '@latch/sdk'
-import { canonicalJson, isoTime, maskKnownSecretsIn, ReasoningTimer, redactKnownSecrets, RunClock, sha256Hex } from '@latch/core/node-kit'
+import {
+  canonicalJson,
+  isoTime,
+  maskKnownSecretsIn,
+  ReasoningTimer,
+  redactKnownSecrets,
+  RunClock,
+  sha256Hex,
+  writeFileAtomic,
+} from '@latch/core/node-kit'
 import { errorCodeOf, interruptedNote, runEndRecord } from '@latch/core/run-end'
 import {
   catalogueReadOf,
@@ -500,16 +509,16 @@ function listedModel(option: SessionConfigOption, model: string): string | undef
 }
 
 /**
- * The model choices of a session on a route: only models the gateway forwards. An agent given its model by name (`env`)
- * takes any of the service's models, whatever it lists itself; one that narrows its own list to the gateway's
- * (`providers`) keeps those of its options the service has, under its own values.
+ * The model choices of a session on a route: only models the gateway forwards. An agent given its model by name at
+ * launch (`launch`) takes any of the service's models, whatever it lists itself; one that narrows its own list to the
+ * gateway's (`providers`) keeps those of its options the service has, under its own values.
  */
-function routedOptions(options: SessionConfigOption[], served: readonly string[], via: 'env' | 'providers'): SessionConfigOption[] {
+function routedOptions(options: SessionConfigOption[], served: readonly string[], via: 'launch' | 'providers'): SessionConfigOption[] {
   const keys = new Set(served.map(modelIdKey))
   return options.map(option => {
     if (option.category !== 'model') return option
     const kept =
-      via === 'env'
+      via === 'launch'
         ? served.slice(0, 500).map(id => option.options.find(item => item.value === id) ?? { value: id, name: clip(id, 200) })
         : option.options.filter(item => keys.has(modelIdKey(item.value)) || keys.has(modelIdKey(item.name)))
     return { ...option, options: kept }
@@ -3082,10 +3091,47 @@ export class AgentRuntime implements Bridge {
     return lease
   }
 
-  /** The variables of an `env` route with their values, the token among them. */
-  private gatewayEnv(lease: ModelGatewayLease, route: ModelRoute): Record<string, string> {
+  /**
+   * What a `launch` route gives the process: its variables with the token under `tokenEnv`, its arguments, and its files
+   * written 0600 by rename into the session's private directory. The profile never sees the token, and nothing it wrote
+   * may hold one: a file, an argument or another variable that does is refused before anything starts.
+   */
+  private async deliverGateway(
+    lease: ModelGatewayLease,
+    route: ModelRoute,
+    sessionTmpDir: string,
+    thinking?: AcpRecord['launchThinking'],
+  ): Promise<{ env: Record<string, string>; args: string[] } | undefined> {
     const gateway = this.selection.profile?.gateway
-    return gateway?.via === 'env' ? gateway.env({ baseURL: lease.baseURL, token: lease.token }, route) : {}
+    if (gateway?.via !== 'launch') return undefined
+    const directory = join(sessionTmpDir, 'gateway')
+    const launch = gateway.deliver(
+      {
+        baseURL: lease.baseURL,
+        models: lease.models.map(id => ({ id, ...(lease.modelCapabilities?.[id] ? { capabilities: lease.modelCapabilities[id] } : {}) })),
+        ...(thinking ? { thinking } : {}),
+        file: name => {
+          if (!/^[a-z0-9][a-z0-9.-]{0,63}$/u.test(name)) throw new Error(`invalid gateway file name ${clip(name, 64)}`)
+          return join(directory, name)
+        },
+      },
+      route,
+    )
+    const env = launch.env ?? {}
+    const args = launch.args ?? []
+    const files = Object.entries(launch.files ?? {})
+    const named = new Set(gateway.envNames)
+    const holds = (text: string) => text.includes(lease.token) || text.includes('lmg1.')
+    if (
+      Object.keys(env).some(name => !named.has(name))
+      || [...Object.values(env), ...args, ...files.flatMap(([name, text]) => [name, text])].some(holds)
+    )
+      throw new AppError(500, 'model-route-refused', `${this.agent.name} 的转发设置会把凭据写进参数或文件，Latch 没有启动它。`)
+    if (files.length) {
+      await mkdir(directory, { recursive: true, mode: 0o700 })
+      for (const [name, text] of files) await writeFileAtomic(join(directory, name), text)
+    }
+    return { env: { ...env, [gateway.tokenEnv]: lease.token }, args }
   }
 
   /**
@@ -3201,10 +3247,10 @@ export class AgentRuntime implements Bridge {
       : other
   }
 
-  /** The variables an `env` route sets, without their values, for what a launch shows. */
+  /** The variables a `launch` route sets, the token's among them, without their values, for what a launch shows. */
   private gatewayNames(): Record<string, string> {
     const gateway = this.selection.profile?.gateway
-    return gateway?.via === 'env' ? Object.fromEntries(gateway.envNames.map(name => [name, ''])) : {}
+    return gateway?.via === 'launch' ? Object.fromEntries([gateway.tokenEnv, ...gateway.envNames].map(name => [name, ''])) : {}
   }
 
   /** What a launch on `route` records of it, or a refusal when this harness cannot be pointed at the gateway that way. */
@@ -3213,13 +3259,9 @@ export class AgentRuntime implements Bridge {
     const gateway = this.selection.profile?.gateway
     if (!gateway?.wires.includes(route.wire))
       throw new AppError(400, 'model-route-unsupported', `${this.agent.name} 不能经 Latch 使用这个模型服务`)
-    return {
-      providerId: route.providerId,
-      origin: route.origin,
-      wire: route.wire,
-      via: gateway.via,
-      names: gateway.via === 'env' ? [...gateway.envNames].sort() : [gateway.providerId, gateway.apiType],
-    }
+    const base = { providerId: route.providerId, origin: route.origin, wire: route.wire }
+    if (gateway.via === 'providers') return { ...base, via: 'providers', names: [gateway.providerId, gateway.apiType] }
+    return { ...base, via: 'launch', names: [gateway.tokenEnv, ...gateway.envNames].sort(), templates: { ...gateway.templates } }
   }
 
   private assertConfirmed(confirmed: Confirmed): asserts confirmed is Confirmed & { launchHash: string } {
@@ -3990,11 +4032,18 @@ export class AgentRuntime implements Bridge {
     // runs. Not recorded as the harness's last error: it says so itself, and an upgrade ends it. Before the re-check
     // below, which stays the last await before the spawn.
     await assertVersion(this.agent, first.command)
+    const gatewayVersion = confirmed.route ? this.selection.profile?.gateway?.minimumVersion : undefined
+    if (gatewayVersion) await assertVersion(this.agent, first.command, gatewayVersion, '经 Latch 使用模型服务')
     const wait = this.health.restartDelay(this.limits.restartDelayMs)
     if (wait) await sleep(wait, undefined, { signal: this.lifetime.signal, ref: false }).catch(() => {})
     this.assertOpen()
     const sessionTmpDir = await this.prepareTmpDir(key)
-    const { route } = confirmed
+    const savedModel = this.state.tasks[key]?.config?.find(option => option.category === 'model')?.currentValue
+    // Launch routes expose service IDs directly. A later confirmed model is also the one a renewed lease must admit.
+    const route =
+      confirmed.route && savedModel && this.selection.profile?.gateway?.via === 'launch'
+        ? { ...confirmed.route, model: savedModel }
+        : confirmed.route
     const materializedEnv = await this.selection.profile?.materialize?.({
       dataDir: this.options.dataDir,
       ...(route ? { route: { route, directory: sessionTmpDir } } : {}),
@@ -4008,23 +4057,40 @@ export class AgentRuntime implements Bridge {
       this.processModeChanges.get(key)?.value ?? (this.checking.has(key) ? undefined : (confirmed.launchMode ?? this.profile?.expectedMode))
     const processSettings = await processMode?.prepare(sessionTmpDir, mode)
     this.assertOpen()
-    // Checked again after the awaits: the command found on PATH or the project configuration may have changed meanwhile.
-    const { command } = await this.assertLaunch(cwd, confirmed)
-    this.assertOpen()
-    // A mode setter will run as this process opens its session; recheck after every preparation await, before spawn.
-    this.processModeChanges.get(key)?.authorize?.()
-    this.launchThinkingChanges.get(key)?.authorize?.()
-    this.makeRoom()
-    // Opened last, so that nothing before the spawn can fail while a token is out.
+    // Opened as late as it can be: the route's files name the gateway's address. Closed again if anything before the
+    // spawn fails.
     const gateway = route ? this.openGateway(key, route) : undefined
+    let delivered: { env: Record<string, string>; args: string[] } | undefined
+    let command: string
+    try {
+      delivered = gateway
+        ? await this.deliverGateway(
+            gateway,
+            route!,
+            sessionTmpDir,
+            this.launchThinkingChanges.get(key)?.selected ?? this.state.tasks[key]?.acp.launchThinking,
+          )
+        : undefined
+      this.assertOpen()
+      // Checked again after the awaits: the command found on PATH or the project configuration may have changed meanwhile.
+      ;({ command } = await this.assertLaunch(cwd, confirmed))
+      this.assertOpen()
+      this.processModeChanges.get(key)?.authorize?.()
+      this.launchThinkingChanges.get(key)?.authorize?.()
+      this.makeRoom()
+    } catch (error) {
+      gateway?.close()
+      throw error
+    }
     let live!: Live
     let wire: AgentWire
+    const selectedModel = savedModel && gateway?.models.includes(savedModel) ? savedModel : route?.model
     try {
       wire = openWire(
         this.selection.profile?.wire,
         {
           command,
-          args: [...this.agent.args, ...this.folderArgs(confirmed.folders), ...(processSettings?.args ?? [])],
+          args: [...this.agent.args, ...this.folderArgs(confirmed.folders), ...(processSettings?.args ?? []), ...(delivered?.args ?? [])],
           cwd,
           env: agentEnvironment({
             resolvedCommand: command,
@@ -4032,7 +4098,7 @@ export class AgentRuntime implements Bridge {
             materializedEnv: { ...materializedEnv, ...processSettings?.env },
             definitionEnv: this.agent.env,
             sessionTmpDir,
-            ...(gateway ? { gatewayEnv: this.gatewayEnv(gateway, route!) } : {}),
+            ...(delivered ? { gatewayEnv: delivered.env } : {}),
           }),
           maxLineBytes: this.limits.maxLineBytes,
           redact: this.redact,
@@ -4042,6 +4108,7 @@ export class AgentRuntime implements Bridge {
           notification: (method, params) => this.onNotification(live, method, params),
           exit: info => this.onExit(live, info),
         },
+        gateway ? { route: { model: selectedModel!, models: gateway.models } } : {},
       )
     } catch (error) {
       gateway?.close()

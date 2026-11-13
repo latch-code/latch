@@ -1,6 +1,6 @@
 /**
  * Local model services that answer like OpenAI's Chat Completions (`/v1/chat/completions`) and Responses
- * (`/v1/responses`), Anthropic's Messages (`/v1/messages`) and Gemini's generateContent
+ * (`/v1/responses`), Anthropic's Messages (`/v1/messages`, and `/v1/messages/count_tokens`) and Gemini's generateContent
  * (`/v1beta/models/<model>:streamGenerateContent`, `:generateContent`, also under `/v1`), streamed or not, from a script of replies. No
  * model and no network: they listen on 127.0.0.1, accept any key, and keep every request they get, which is how a test
  * proves an agent reached them and not a real service.
@@ -18,8 +18,15 @@ export interface FakeReply {
   text?: string
   /** One tool call; the reply ends asking for it. A pattern names the first tool the request offers that matches it. */
   tool?: { name: string | RegExp; input: Record<string, unknown> }
-  /** Refuse the request with this HTTP status and message, in the protocol's error shape. */
-  error?: { status: number; message: string }
+  /**
+   * Refuse the request with this HTTP status and message, in the protocol's error shape (Anthropic's type follows the
+   * status: 401, 402, 429, 529…), with a `retry-after` header when given.
+   */
+  error?: { status: number; message: string; retryAfter?: number }
+  /** Waits this long before the first byte of the answer, as a slow service does. */
+  delayMs?: number
+  /** A streamed reply stops after its first event and the connection is dropped, as a service that fails mid-reply. */
+  cut?: true
   /** The model the reply says answered, where the protocol names one; otherwise the model the request named. */
   answeredBy?: string
   /** A streamed reply's stream stays open this long after its last event, as behind a proxy or with keep-alive. */
@@ -61,18 +68,19 @@ function readBody(request: IncomingMessage): Promise<string> {
   })
 }
 
-function sse(response: ServerResponse, events: Array<{ event?: string; data: unknown }>, lingerMs = 0): void {
-  response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
-  for (const item of events)
+function sse(response: ServerResponse, events: Array<{ event?: string; data: unknown }>, lingerMs = 0, cut = false): void {
+  response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-request-id': 'req_fake' })
+  for (const item of cut ? events.slice(0, 1) : events)
     response.write(
       `${item.event ? `event: ${item.event}\n` : ''}data: ${typeof item.data === 'string' ? item.data : JSON.stringify(item.data)}\n\n`,
     )
-  if (lingerMs > 0) setTimeout(() => response.end(), lingerMs).unref()
+  if (cut) setTimeout(() => response.destroy(), 10).unref()
+  else if (lingerMs > 0) setTimeout(() => response.end(), lingerMs).unref()
   else response.end()
 }
 
-function json(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, { 'content-type': 'application/json' })
+function json(response: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  response.writeHead(status, { 'content-type': 'application/json', ...headers })
   response.end(JSON.stringify(body))
 }
 
@@ -311,10 +319,22 @@ function gemini(reply: FakeReply, model: string, stream: boolean, served: number
   }
 }
 
+/** Anthropic's error types by status. */
+const ANTHROPIC_TYPES: Record<number, string> = {
+  401: 'authentication_error',
+  402: 'billing_error',
+  403: 'permission_error',
+  404: 'not_found_error',
+  429: 'rate_limit_error',
+  500: 'api_error',
+  529: 'overloaded_error',
+}
+
 /** The error a protocol answers with: OpenAI's and Anthropic's `error.message`, Gemini's `error.status` as well. */
 function failure(wire: FakeModelRequest['wire'], error: NonNullable<FakeReply['error']>): unknown {
   if (wire === 'gemini') return { error: { code: error.status, message: error.message, status: 'INVALID_ARGUMENT' } }
-  if (wire === 'anthropic-messages') return { type: 'error', error: { type: 'invalid_request_error', message: error.message } }
+  if (wire === 'anthropic-messages')
+    return { type: 'error', error: { type: ANTHROPIC_TYPES[error.status] ?? 'invalid_request_error', message: error.message } }
   return { error: { message: error.message, type: 'invalid_request_error', code: null } }
 }
 
@@ -342,6 +362,19 @@ export async function startFakeModels(options: { replies?: FakeReply[] } = {}): 
             { name: 'models/fake-embedding', supportedGenerationMethods: ['embedContent'] },
           ],
         })
+      if (request.method === 'POST' && path === '/v1/messages/count_tokens') {
+        const body = JSON.parse(await readBody(request)) as Record<string, unknown>
+        requests.push({
+          wire: 'anthropic-messages',
+          path,
+          ...(typeof body.model === 'string' ? { model: body.model } : {}),
+          stream: false,
+          body,
+          ...(typeof request.headers['x-api-key'] === 'string' ? { key: request.headers['x-api-key'] } : {}),
+          headerNames: Object.keys(request.headers).sort(),
+        })
+        return json(response, 200, { input_tokens: 10 })
+      }
       const geminiCall = GEMINI_CALL.exec(path)
       const wire: FakeModelRequest['wire'] | undefined = geminiCall
         ? 'gemini'
@@ -374,7 +407,14 @@ export async function startFakeModels(options: { replies?: FakeReply[] } = {}): 
         headerNames: Object.keys(request.headers).sort(),
       })
       const reply = named(next(), body)
-      if (reply.error) return json(response, reply.error.status, failure(wire, reply.error))
+      if (reply.delayMs) await new Promise(resolve => setTimeout(resolve, reply.delayMs))
+      if (reply.error)
+        return json(
+          response,
+          reply.error.status,
+          failure(wire, reply.error),
+          reply.error.retryAfter !== undefined ? { 'retry-after': String(reply.error.retryAfter) } : {},
+        )
       const made =
         wire === 'chat-completions'
           ? chat(reply, model, stream, requests.length)
@@ -389,7 +429,7 @@ export async function startFakeModels(options: { replies?: FakeReply[] } = {}): 
             : wire === 'gemini'
               ? gemini(reply, reply.answeredBy ?? model, stream, requests.length)
               : anthropic(reply, model, stream, requests.length)
-      if (made.events) sse(response, made.events, reply.lingerMs)
+      if (made.events) sse(response, made.events, reply.lingerMs, reply.cut === true)
       else json(response, 200, made.body)
     })().catch(() => {
       if (!response.headersSent) json(response, 500, { error: { message: 'fake model failed' } })

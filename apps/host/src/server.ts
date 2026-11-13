@@ -3211,20 +3211,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /**
      * A saved service as the gateway may forward to it now: enabled, its plugin running, and offered to sessions. The
-     * fingerprint changes with its protocol, address, key and where requests to it may go, never with its name or models.
+     * fingerprint changes with its protocol, address, key, models, capabilities and where requests may go, never its name.
      */
     function gatewayService(id: string): GatewayService | undefined {
       const record = effectiveProvider(id)
       const plugin = pluginInfo(id)
       if (!record?.enabled || plugin?.managed !== 'provider' || !plugin.enabled || unusableReason(record) !== undefined) return undefined
       const apiKey = usableKey(record)
+      const models = record.models.length ? [...record.models] : [record.defaultModel]
       return {
         kind: record.kind,
         baseURL: record.baseURL,
         apiKey,
-        models: record.models.length ? [...record.models] : [record.defaultModel],
+        models,
+        ...(record.modelCapabilities ? { modelCapabilities: structuredClone(record.modelCapabilities) } : {}),
         fingerprint: sha256Hex(
-          canonicalJson({ kind: record.kind, baseURL: record.baseURL, key: sha256Hex(apiKey), destination: recordDestination(record) }),
+          canonicalJson({
+            kind: record.kind,
+            baseURL: record.baseURL,
+            key: sha256Hex(apiKey),
+            destination: recordDestination(record),
+            models,
+            modelCapabilities: record.modelCapabilities ?? {},
+          }),
         ),
       }
     }

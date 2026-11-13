@@ -33,6 +33,11 @@
 // 0.167 does. Once a thread opens, each of its own servers reports `starting`, then `ready`, or `failed` for one
 // whose runtimeStatus is `failed` (with `reauthenticationRequired` for `authenticationRequired`). FAKE_CODEX_MCP_LIMIT
 // makes its pages smaller and FAKE_CODEX_MCP_PAGE_MS answers each page that much later.
+//
+// A model provider of its own: `-c model_provider="<id>"` with `-c model_providers.<id>.base_url=…` and `.env_key=…`
+// (TOML values, as Codex reads them) makes it the process's provider, as Codex does. account/read then says no OpenAI
+// login is needed, and every turn calls `<base_url>/responses` for real, streamed, with the variable `env_key` names as
+// its bearer token, replying with the text the service streamed; a failed call fails the turn with the service's words.
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
@@ -87,6 +92,49 @@ const models = env.FAKE_CODEX_MODELS
     ]
 
 log('start', { cwd: process.cwd(), argv: args, mode: 'app-server', codexPath: env.CODEX_PATH ?? null })
+
+/** The `-c key=value` overrides, values read as TOML scalars (a quoted string, a number or a boolean). */
+const overrides = {}
+for (let index = 0; index < args.length; index++) {
+  if (args[index] !== '-c' && args[index] !== '--config') continue
+  const setting = args[++index] ?? ''
+  const equals = setting.indexOf('=')
+  if (equals < 0) continue
+  const raw = setting.slice(equals + 1).trim()
+  let value = raw
+  try {
+    value = JSON.parse(raw)
+  } catch {}
+  overrides[setting.slice(0, equals).trim()] = value
+}
+const providerId = typeof overrides.model_provider === 'string' ? overrides.model_provider : undefined
+const provider = providerId && {
+  id: providerId,
+  baseURL: overrides[`model_providers.${providerId}.base_url`],
+  envKey: overrides[`model_providers.${providerId}.env_key`],
+}
+
+/** One turn through the process's own provider: a streamed Responses call, its text deltas joined. */
+async function viaProvider(model, text) {
+  const token = provider.envKey ? env[provider.envKey] : undefined
+  const response = await fetch(`${String(provider.baseURL).replace(/\/+$/u, '')}/responses`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ model, input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], stream: true }),
+  })
+  const body = await response.text()
+  log('provider', { status: response.status, model })
+  if (!response.ok) return { status: 'failed', error: { message: `unexpected status ${response.status}: ${body.slice(0, 300)}` } }
+  let said = ''
+  for (const line of body.split('\n')) {
+    if (!line.startsWith('data:')) continue
+    try {
+      const event = JSON.parse(line.slice(5))
+      if (event.type === 'response.output_text.delta') said += event.delta
+    } catch {}
+  }
+  return reply(said)
+}
 const send = message => process.stdout.write(`${JSON.stringify(message)}\n`)
 const notify = (method, params) => send({ method, params })
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -114,7 +162,7 @@ const shown = thread => ({
   preview: thread.preview ?? '',
   createdAt: thread.createdAt,
   updatedAt: thread.updatedAt,
-  modelProvider: 'openai',
+  modelProvider: thread.provider ?? 'openai',
   model: thread.model,
   status: { type: 'idle' },
   turns: [],
@@ -510,6 +558,7 @@ async function runTurn(input) {
     // A login gone since the thread started fails the turn as Codex reports an expired login.
     if (env.FAKE_ACP_LOGIN_FILE && !existsSync(env.FAKE_ACP_LOGIN_FILE))
       outcome = { status: 'failed', error: { message: 'unexpected status 401 Unauthorized', codexErrorInfo: 'unauthorized' } }
+    else if (provider) outcome = await viaProvider(thread.model, text)
     else outcome = await play(text)
     while (outcome === undefined && turn.steered.length) outcome = await reply(`steered: ${turn.steered.shift()}`)
   } catch (error) {
@@ -558,7 +607,7 @@ function opened(record) {
   return {
     thread: shown(record),
     model: record.model,
-    modelProvider: 'openai',
+    modelProvider: record.provider ?? 'openai',
     serviceTier: null,
     reasoningEffort: record.effort,
     sandbox: {},
@@ -633,11 +682,20 @@ async function handle(method, params) {
       if (env.FAKE_ACP_INIT_AUTH === '1') throw Object.assign(new Error('Authentication required'), { code: -32000 })
       return { userAgent: `latch/${VERSION} (fake)`, codexHome: '/nonexistent', platformFamily: 'unix', platformOs: 'macos' }
     case 'config/read':
-      return { config: { model: env.FAKE_CODEX_MODEL ?? null, model_reasoning_effort: null }, origins: {}, layers: null }
+      return {
+        config: {
+          model: env.FAKE_CODEX_MODEL ?? null,
+          model_reasoning_effort: null,
+          shell_environment_policy: JSON.parse(env.FAKE_CODEX_SHELL_ENVIRONMENT ?? '{}'),
+        },
+        origins: {},
+        layers: null,
+      }
     case 'account/logout':
       if (env.FAKE_ACP_LOGIN_FILE && existsSync(env.FAKE_ACP_LOGIN_FILE)) rmSync(env.FAKE_ACP_LOGIN_FILE)
       return {}
     case 'account/read':
+      if (provider) return { account: null, requiresOpenaiAuth: false }
       return env.FAKE_CODEX_LOGGED_OUT === '1' || (env.FAKE_ACP_LOGIN_FILE && !existsSync(env.FAKE_ACP_LOGIN_FILE))
         ? { account: null, requiresOpenaiAuth: true }
         : { account: { type: 'chatgpt', email: 'person@example.com', planType: 'plus' }, requiresOpenaiAuth: true }
@@ -658,6 +716,7 @@ async function handle(method, params) {
         id: `thread-${randomUUID()}`,
         cwd: params.cwd,
         model: params.model ?? env.FAKE_CODEX_MODEL ?? 'gpt-fake',
+        provider: providerId ?? 'openai',
         effort: 'medium',
         createdAt: now(),
         updatedAt: now(),
@@ -674,6 +733,10 @@ async function handle(method, params) {
       if (!found) throw Object.assign(new Error(`no rollout found for thread id ${params.threadId}`), { code: -32600 })
       if (env.FAKE_CODEX_RESUME_ERROR) throw Object.assign(new Error(env.FAKE_CODEX_RESUME_ERROR), { code: -32600 })
       thread = found
+      if (params.model) {
+        thread.model = params.model
+        save(thread)
+      }
       threadMcp = Object.keys(params.config?.mcp_servers ?? {})
       announceMcp(found.id)
       return opened(found)
@@ -683,8 +746,12 @@ async function handle(method, params) {
       if (!found) throw Object.assign(new Error(`thread not loaded: ${params.threadId}`), { code: -32600 })
       return { thread: { ...shown(found), turns: params.includeTurns ? found.turns : [] } }
     }
-    case 'thread/list':
-      return { data: Object.values(threads()).map(shown), nextCursor: null, backwardsCursor: null }
+    // As Codex: only the process's provider's threads, unless `modelProviders` names others (`[]`: every provider's).
+    case 'thread/list': {
+      const wanted = Array.isArray(params.modelProviders) ? params.modelProviders : [providerId ?? 'openai']
+      const data = Object.values(threads()).filter(item => !wanted.length || wanted.includes(item.provider ?? 'openai'))
+      return { data: data.map(shown), nextCursor: null, backwardsCursor: null }
+    }
     case 'turn/start': {
       if (!thread || params.threadId !== thread.id) throw Object.assign(new Error('thread not loaded'), { code: -32600 })
       if (turn) throw Object.assign(new Error('a turn is already running'), { code: -32600 })

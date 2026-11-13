@@ -25,6 +25,7 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
     'HARNESSES',
     'MCP',
     'MODEL-CONFIGURATION',
+    'MODEL-GATEWAY',
     'NOTIFICATIONS',
     'PLUGIN-DEVELOPMENT',
     'PREVIEW-BROWSER',

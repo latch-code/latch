@@ -10,6 +10,7 @@ import { redactKnownSecrets } from '@latch/core/node-kit'
 import { CODEX_EFFORT_ID, CODEX_MODEL_ID, codexModel, codexOptions, type CodexModels } from '../codex-models.ts'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
+import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
 import { MCP_STATUS_METHOD, MCP_STATUS_UPDATE, RPC, RpcError, STEER_METHOD, type RpcId } from '../protocol.ts'
 import {
   AgentProcess,
@@ -346,6 +347,11 @@ export class CodexWire implements AgentWire {
   private constructor(
     spec: SpawnSpec,
     private readonly handlers: WireHandlers,
+    /**
+     * A session on a route: Codex runs on Latch's provider (`profiles/codex.ts`), whose models are the service's. Codex's
+     * `model/list` would give its built-in presets for such a provider, so the wire offers these instead.
+     */
+    private readonly route?: { model: string; models: readonly string[] },
   ) {
     this.process = AgentProcess.spawn(
       { ...spec, args: codexArgs(spec.args) },
@@ -355,8 +361,8 @@ export class CodexWire implements AgentWire {
   }
 
   /** Throws for arguments Codex must not get; launch failures such as ENOENT arrive as an exit with `reason: 'spawn'`. */
-  static spawn(spec: SpawnSpec, handlers: WireHandlers): CodexWire {
-    return new CodexWire(spec, handlers)
+  static spawn(spec: SpawnSpec, handlers: WireHandlers, route?: { model: string; models: readonly string[] }): CodexWire {
+    return new CodexWire(spec, handlers, route)
   }
 
   get closed(): boolean {
@@ -507,9 +513,25 @@ export class CodexWire implements AgentWire {
     this.cwd = parsed.data.cwd
     this.folders = parsed.data.additionalDirectories ?? []
     await this.assertLogin(timeoutMs, signal)
-    await this.readModels(timeoutMs, signal)
+    if (this.route) {
+      this.models = { models: this.route.models.slice(0, 500).map(id => ({ id, displayName: id })) }
+      this.model ??= this.route.model
+    } else await this.readModels(timeoutMs, signal)
     const settings = threadSettings(this.mode, this.cwd, this.servers)
+    if (this.route) {
+      let environment: Record<string, unknown> | undefined
+      try {
+        environment = codexGatewayEnvironment(await this.send('config/read', { cwd: this.cwd, includeLayers: false }, timeoutMs, signal))
+      } catch {
+        // A configuration error may quote private values. Only the fact that no safe policy was read leaves this wire.
+      }
+      if (!environment) throw new RpcError(RPC.internal, '无法读取 Codex 的命令环境规则，未打开会话。')
+      settings.config = { ...(isRecord(settings.config) ? settings.config : {}), shell_environment_policy: environment }
+      // A model chosen in Latch is durable even before the next turn records it in Codex's own thread.
+      settings.model = this.route.model
+    }
     let answer: unknown
+    // A new thread on a route starts on the route's model; every turn names its model after that.
     if (kind === undefined) answer = await this.send('thread/start', settings, timeoutMs, signal)
     else {
       const threadId = parsed.data.sessionId ?? ''
@@ -520,7 +542,10 @@ export class CodexWire implements AgentWire {
     const read = opened.safeParse(answer)
     if (!read.success) throw new RpcError(RPC.internal, 'Codex answered a thread request in a shape Latch does not read')
     this.threadId = read.data.thread.id
-    this.model = read.data.model ?? this.model
+    // On a route, only a model of the service: a resumed thread that last ran another goes on with the route's.
+    const reported = read.data.model ?? undefined
+    if (this.route && reported !== this.route.model) throw new RpcError(RPC.internal, 'Codex 没有采用所选模型，未发送本轮输入。')
+    this.model = this.route ? (reported && this.route.models.includes(reported) ? reported : this.model) : (reported ?? this.model)
     this.effort = read.data.reasoningEffort ?? this.effort
     this.reportMcp(timeoutMs)
     return { sessionId: this.threadId, configOptions: this.options() }
@@ -640,7 +665,11 @@ export class CodexWire implements AgentWire {
 
   private async list(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
     const cursor = isRecord(params) && typeof params.cursor === 'string' ? params.cursor : undefined
-    const read = listing.safeParse(await this.send('thread/list', { ...(cursor ? { cursor } : {}), limit: MAX_THREADS }, timeoutMs, signal))
+    // Every provider's threads: Codex lists only the process's provider's by default, so those started through Latch
+    // and those on the person's own login both show.
+    const read = listing.safeParse(
+      await this.send('thread/list', { ...(cursor ? { cursor } : {}), limit: MAX_THREADS, modelProviders: [] }, timeoutMs, signal),
+    )
     if (!read.success) throw new RpcError(RPC.internal, 'Codex answered thread/list in a shape Latch does not read')
     const sessions = read.data.data.flatMap(row => {
       const parsed = thread.safeParse(row)

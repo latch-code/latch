@@ -145,7 +145,7 @@ describe('a Harness with its own models on a saved service', () => {
     const page = await open(1440, 'dark')
     await chip(page, '模型').click()
     // Opening the menu first reads Codex's own list.
-    await page.getByText(/^读取于 /u).waitFor()
+    await row(page, /GPT Own/u).waitFor()
     await row(page, 'fake-model-large').click()
     await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model-large')
     await chip(page, '模型').click()

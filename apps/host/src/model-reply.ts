@@ -2,6 +2,8 @@
 // tokens it reports. Only those fields are kept; the reply's text never is. A streamed reply is read one line at a time
 // and only the events that carry them are held, so a long reply is never held whole.
 import type { ModelWire, TokenUsage } from '@latch/protocol'
+import { AnthropicUsage } from './plugins/providers/anthropic-wire.ts'
+import { chatUsage } from './plugins/providers/chat-wire.ts'
 import { geminiUsage } from './plugins/providers/gemini-wire.ts'
 import { responsesUsage } from './plugins/providers/responses-wire.ts'
 
@@ -9,12 +11,12 @@ export interface ReplyFacts {
   /** The model the reply says answered. */
   model?: string
   usage?: TokenUsage
-  /** The reply said the request failed (a Responses `response.failed` or `error` event, a Gemini `error`). */
+  /** The reply said the request failed: an `error` event or object, a Responses `response.failed`. */
   failed?: true
   /**
    * The reply said it is over, whether or not the stream has closed yet: a Responses `response.completed`,
-   * `response.incomplete`, `response.failed` or `error` event, a Gemini `error` or a candidate's `finishReason`, or a
-   * reply that was not streamed.
+   * `response.incomplete`, `response.failed` or `error` event, a Chat Completions `[DONE]`, an Anthropic `message_stop`,
+   * any protocol's error, a Gemini candidate's `finishReason`, or a reply that was not streamed.
    */
   ended?: true
 }
@@ -36,7 +38,8 @@ const RESPONSE_EVENTS = new Set([
   'response.incomplete',
   'response.failed',
 ])
-const HELD_EVENTS = new Set([...RESPONSE_EVENTS, 'error'])
+/** Named events whose data is read: Responses' and Anthropic's that carry the model, usage, the end or a failure. */
+const HELD_EVENTS = new Set([...RESPONSE_EVENTS, 'error', 'message_start', 'message_delta', 'message_stop'])
 const FINAL_EVENTS = new Set(['response.completed', 'response.incomplete', 'response.failed', 'error'])
 const NEWLINE = 0x0a
 
@@ -87,6 +90,45 @@ function geminiFacts(facts: ReplyFacts, value: unknown): void {
   }
 }
 
+/** Facts from one Chat Completions chunk, or a whole reply: usage comes in the last chunk when the request asked for it. */
+function chatFacts(facts: ReplyFacts, value: unknown): void {
+  const chunk = record(value)
+  if (!chunk) return
+  if (chunk.error !== undefined) {
+    facts.failed = true
+    facts.ended = true
+  }
+  const model = text(chunk.model)
+  if (model) facts.model = model
+  const usage = chatUsage(chunk.usage)
+  if (usage) facts.usage = usage
+}
+
+/** Facts from one Anthropic event, or a whole message; `usage` sums what its `message_start` and `message_delta` said. */
+function anthropicFacts(facts: ReplyFacts, usage: AnthropicUsage, value: unknown, event?: string): void {
+  const parsed = record(value)
+  if (!parsed) return
+  const type = text(parsed.type) ?? event
+  if (type === 'error') {
+    facts.failed = true
+    facts.ended = true
+    return
+  }
+  if (type === 'message_stop') facts.ended = true
+  // A streamed reply starts with the message; a reply that was not streamed is the message.
+  const message = type === 'message_start' ? record(parsed.message) : type === 'message' ? parsed : undefined
+  if (type === 'message') facts.ended = true
+  const model = text(message?.model)
+  if (model) facts.model = model
+  if (message) usage.record(message.usage)
+  if (type === 'message_delta') usage.record(parsed.usage)
+  const total = usage.delta()
+  if (total) {
+    const { type: _, ...tokens } = total
+    facts.usage = tokens
+  }
+}
+
 /** Server-sent events, line by line: a line is held only while it may belong to an event worth reading. */
 class StreamReader implements ReplyReader {
   private readonly read: ReplyFacts = {}
@@ -101,6 +143,7 @@ class StreamReader implements ReplyReader {
   private event: string | undefined
   private data: string[] = []
   private heldBytes = 0
+  private readonly anthropic = new AnthropicUsage()
 
   constructor(private readonly wire: ModelWire) {}
 
@@ -112,7 +155,7 @@ class StreamReader implements ReplyReader {
       if (stop > start) {
         if (this.length === 0) {
           this.first = chunk[start]
-          // Only Responses names its events; the data of one Latch does not read is never held.
+          // Responses and Anthropic name their events; the data of one Latch does not read is never held.
           this.skipping = this.dropped || (this.event !== undefined && !HELD_EVENTS.has(this.event))
         }
         this.length += stop - start
@@ -172,7 +215,14 @@ class StreamReader implements ReplyReader {
     this.dropped = false
     this.event = undefined
     if (!data) return
-    if (this.wire === 'gemini') {
+    if (this.wire === 'chat-completions') {
+      if (data === '[DONE]') this.read.ended = true
+      // Every chunk names the model: only the first is parsed for it, then only one that may report usage or fail.
+      else if (['"usage"', '"error"'].some(key => data.includes(key)) || (!this.read.model && data.includes('"model"')))
+        chatFacts(this.read, parse(data))
+    } else if (this.wire === 'anthropic-messages') {
+      if (event !== undefined || data.includes('"error"')) anthropicFacts(this.read, this.anthropic, parse(data), event)
+    } else if (this.wire === 'gemini') {
       // Every chunk may name the model and carry usage so far, the last says why it finished; any other is text only.
       if (['"usageMetadata"', '"modelVersion"', '"finishReason"', '"error"'].some(key => data.includes(key)))
         geminiFacts(this.read, parse(data))
@@ -207,7 +257,13 @@ class DocumentReader implements ReplyReader {
     const value = parse(Buffer.concat(this.chunks).toString('utf8'))
     this.chunks = []
     if (this.wire === 'gemini') geminiFacts(facts, value)
-    else responsesFacts(facts, value)
+    else if (this.wire === 'chat-completions') {
+      chatFacts(facts, value)
+      facts.ended = true
+    } else if (this.wire === 'anthropic-messages') {
+      anthropicFacts(facts, new AnthropicUsage(), value)
+      facts.ended = true
+    } else responsesFacts(facts, value)
     return facts
   }
 }

@@ -116,13 +116,17 @@ export interface LaunchFolders {
   paths: string[]
 }
 
-/** What a launch says of a gateway route: `names` are the variables an `env` route sets, `providerId` what `providers/set` names. */
+/**
+ * What a launch says of a gateway route: for `launch`, the variables it sets (the token's among them) and the versions
+ * of its argument and file templates; for `providers`, what `providers/set` names. Never a port, a path or a value.
+ */
 export interface LaunchRoute {
   providerId: string
   origin: string
   wire: string
-  via: 'providers' | 'env'
+  via: 'providers' | 'launch'
   names: string[]
+  templates?: { args?: number; files?: number }
 }
 
 /**

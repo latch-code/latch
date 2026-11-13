@@ -205,6 +205,8 @@ export const GLOBAL_RESERVED_ENV: readonly string[] = [
   'CODEX_HOME',
   'CLAUDE_CONFIG_DIR',
   'GEMINI_CLI_SYSTEM_SETTINGS_PATH',
+  // The gateway token's variable: only the Host sets it, for a session on a route.
+  'LMG_TOKEN',
 ]
 
 /** `LATCH_*` are the Host's own settings, a model key among them. */
