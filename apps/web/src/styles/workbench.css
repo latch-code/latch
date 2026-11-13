@@ -52,6 +52,8 @@
 }
 .app-shell:is([data-overview], [data-all-sessions]) :is(.workspace, .inspector-column, .inspector-resize) {
   visibility: hidden;
+  /* Protected approval descendants set their own visibility; hide the whole retained surface without changing its layout. */
+  opacity: 0;
 }
 .app-shell[data-workbench-layout='triage'][data-overview] .workbench-home {
   grid-column: 1 / -1;
