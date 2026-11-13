@@ -349,6 +349,8 @@ describe('composer choice', () => {
       'qwen',
       'goose',
       'cursor',
+      'antigravity',
+      'grok',
     ])
   })
 
@@ -583,7 +585,18 @@ describe('harness entries', () => {
         testHarness('opencode-2', { kind: 'agent', label: 'OpenCode' }),
       ],
     })
-    expect(presetsToAdd(more).map(preset => preset.id)).toEqual(['codex', 'claude-agent', 'pi', 'dsh', 'gemini', 'qwen', 'goose', 'cursor'])
+    expect(presetsToAdd(more).map(preset => preset.id)).toEqual([
+      'codex',
+      'claude-agent',
+      'pi',
+      'dsh',
+      'gemini',
+      'qwen',
+      'goose',
+      'cursor',
+      'antigravity',
+      'grok',
+    ])
     expect(presetsToAdd(undefined)).toHaveLength(AGENT_PRESETS.length)
   })
 
