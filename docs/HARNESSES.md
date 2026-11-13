@@ -217,6 +217,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 | Gemini CLI | Gemini，至少 0.44.0 | 环境变量与 0600 会话私有系统设置，合并思考启动设置，不声称独立读回 |
 | OpenCode | 四种同协议服务，至少 2.2.6 | 私有 provider 配置与官方 shell hook；工具环境清空令牌值 |
 | DeepSeek Harness | 四种同协议服务，至少 0.2.2-rc.1 | 私有 Cordis patch 与原生 llm provider；未知 Gemini 别名不提供离散思考档位 |
+| Claude Agent | Anthropic 同协议服务，实际 Claude Code 至少 2.1.318 | 官方环境变量与会话 modelPicker；逐次核对适配器自带 CLI 版本，精确模型 ID 与子进程凭据清理 |
 | pi | 四种同协议服务，至少 1.5.0 | 官方 provider 扩展；精确目录上限或显式运行预算；凭据仅在进程内存 |
 
 Codex 直连使用服务的模型列表，可以选择原生目录之外的模型；codex-acp 保留其已知模型限制。经网关的会话不能换服务，同服务内的模型可选。服务停用、删除、密钥或地址不再可用时明确失败，不回退到 Harness 自己的登录或演示模型。整轮没有经过网关时会如实提示和审计；这不证明每个辅助请求都经过它。订阅仍由各 Harness 自己使用，不借给网关。
@@ -502,7 +503,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 | ACP 的原生分叉（`session/fork`） | 未实现；Codex 等 Agent 声明的 `session/fork` 只能分叉整个会话（从某一轮分叉的位置在其他客户端的私有 `_meta` 里，Latch 不借用），新进程能否分叉另一个进程的会话还没有用真实 Agent 核对。现在 pi 以外的 Harness 的分叉都由 Host 以背景文本开启新会话 |
 | 回答 pi 扩展的选择题与输入框 | 未实现；它们回答「已取消」并写进会话 |
 | 只有主文件夹的 Codex 会话计入 `.agents/skills/` | 未实现；需要提高 Codex profile 的版本，已有 Codex 会话届时要新建 |
-| Qwen Code、goose、Claude Agent 经 Latch 使用模型服务 | 未实现；尚未接好各自选择服务的配置，模型菜单收起的那一行点开后写「尚未实现」 |
+| Qwen Code、goose 经 Latch 使用模型服务 | 未实现；尚未接好各自选择服务的配置，模型菜单收起的那一行点开后写「尚未实现」 |
 | 协议翻译（例如 Codex 用 Chat Completions 的服务） | 未实现；协议不同的一对列出但不能选，并说明协议 |
 
 ## 测试

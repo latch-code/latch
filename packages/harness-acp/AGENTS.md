@@ -24,4 +24,4 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 文件产物只表示运行时间窗口中的观察；范围与预算见 [FILE-OUTPUTS.md](../../docs/FILE-OUTPUTS.md)。
 - 配置修改准备前和发 RPC 前调用 Host `authorize`；超时结果未知，核对时拒绝写入。
 
-- 私有设置 0600；模式报告绑定进程与 session，核对不用 setter；`source: launch` 不算读回；pi 只认完整私有扩展路径，拒绝提示换档。见 HARNESSES.md；网关精确模型值、版本证据和运行预算见 MODEL-GATEWAY.md。
+- 私有设置 0600；模式报告绑定进程与 session，核对不用 setter；`source: launch` 不算读回；pi 只认完整私有扩展路径，拒绝提示换档。见 HARNESSES.md；网关见 MODEL-GATEWAY.md；命令版本门逐次重读，未知先拒绝；Claude 只认 `--cli --version`。

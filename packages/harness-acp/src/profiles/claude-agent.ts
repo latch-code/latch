@@ -2,6 +2,41 @@ import type { HarnessProfile, LoginCheck, SessionUpdate, ToolDenial } from './ty
 
 const DAY_MS = 24 * 60 * 60_000
 
+/** The adapter's `--cli --version` reports the same native binary its SDK sessions run. */
+export function readClaudeVersion(output: string): string | undefined {
+  const first = output.split(/\r?\n/u).find(line => line.trim()) ?? ''
+  return /^\s*(\d+\.\d+\.\d+) \(Claude Code\)\s*$/u.exec(first)?.[1]
+}
+
+const GATEWAY_DEFAULTS = {
+  ANTHROPIC_API_KEY: '',
+  ANTHROPIC_CUSTOM_HEADERS: '',
+  ANTHROPIC_DEFAULT_MODEL: '',
+  ANTHROPIC_DEFAULT_OPUS_MODEL: '',
+  ANTHROPIC_DEFAULT_SONNET_MODEL: '',
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: '',
+  ANTHROPIC_DEFAULT_FABLE_MODEL: '',
+  ANTHROPIC_SMALL_FAST_MODEL: '',
+  CLAUDE_CODE_OAUTH_TOKEN: '',
+  CLAUDE_CODE_USE_ANTHROPIC_AWS: '',
+  CLAUDE_CODE_USE_BEDROCK: '',
+  CLAUDE_CODE_USE_MANTLE: '',
+  CLAUDE_CODE_USE_VERTEX: '',
+  CLAUDE_CODE_USE_FOUNDRY: '',
+  CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1',
+  CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1',
+  CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
+  CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP: '1',
+}
+const GATEWAY_MODEL_NAMES = [
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_CUSTOM_MODEL_OPTION',
+  'CLAUDE_CODE_SUBAGENT_MODEL',
+  'CLAUDE_CODE_AUTO_MODE_MODEL',
+]
+
 /** A date a sign-in ends, as seconds or milliseconds since the epoch or a date string; anything implausible is dropped. */
 function loginEnds(value: unknown): string | undefined {
   const at = typeof value === 'number' ? (value < 1e11 ? value * 1000 : value) : typeof value === 'string' ? Date.parse(value) : Number.NaN
@@ -56,8 +91,47 @@ function readClaudeDenial(update: SessionUpdate): ToolDenial | undefined {
 
 export const claudeAgentProfile: HarnessProfile = {
   presetId: 'claude-agent',
-  version: 1,
-  ownModelsOnly: true,
+  version: 2,
+  gateway: {
+    via: 'launch',
+    wires: ['anthropic-messages'],
+    tokenEnv: 'ANTHROPIC_AUTH_TOKEN',
+    envNames: ['ANTHROPIC_BASE_URL', ...Object.keys(GATEWAY_DEFAULTS), ...GATEWAY_MODEL_NAMES],
+    templates: { session: 1 },
+    models: { value: id => id, id: value => value || undefined, reportedOnly: true },
+    minimumVersion: {
+      args: ['--cli', '--version'],
+      read: readClaudeVersion,
+      minimum: '2.1.318',
+      upgrade: 'npm i -g @agentclientprotocol/claude-agent-acp@latest',
+    },
+    // ACP reports the adapter version, not the Claude Code version that owns provider routing and subprocesses.
+    commandVersionOnly: true,
+    usage: 'tokens-only',
+    deliver(place, route) {
+      return {
+        env: {
+          ...GATEWAY_DEFAULTS,
+          ANTHROPIC_BASE_URL: place.baseURL,
+          ...Object.fromEntries(GATEWAY_MODEL_NAMES.map(name => [name, route.model])),
+        },
+        sessionMeta: {
+          claudeCode: {
+            options: {
+              settings: {
+                apiKeyHelper: '',
+                availableModels: place.models.map(model => model.id),
+                modelPicker: {
+                  replaceBuiltInOptions: true,
+                  options: place.models.map(model => ({ model: model.id, label: model.id })),
+                },
+              },
+            },
+          },
+        },
+      }
+    },
+  },
   // Starting Claude Code runs the person's SessionStart hooks and loads their plugins, so its lists are read only on
   // request, as pi's are.
   catalogueRead: { when: 'request' },

@@ -49,11 +49,12 @@ Chat 的 `reasoning_content` 以 `latch1.` 封装在 Responses 的 `encrypted_co
 | Gemini CLI | 至少 0.44.0；GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY 与会话私有系统设置 |
 | OpenCode | 经网关至少 2.2.6；私有 `providers.latch` 配置与 shell hook；四种同协议服务 |
 | DeepSeek Harness | 至少 0.2.2-rc.1；私有 Cordis patch 配置 llm provider、ACP 与默认模型；四种同协议服务 |
+| Claude Agent | 适配器实际运行的 Claude Code 至少 2.1.318；Anthropic 同协议服务；官方环境变量控制路由、模型发现与子进程凭据清理 |
 | pi | 经网关至少 1.5.0；私有扩展调用官方 `registerProvider`，只在当前进程注册模型；四种同协议服务 |
 
-Qwen Code、goose 与 Claude Agent 的接线尚未实现，不在模型菜单中承诺转发。Cursor 与未知自定义命令只用自己的模型。订阅登录不进入网关；使用 Harness 自己的登录时仍由它原生处理。
+Qwen Code 与 goose 的接线尚未实现，不在模型菜单中承诺转发。Cursor 与未知自定义命令只用自己的模型。订阅登录不进入网关；使用 Harness 自己的登录时仍由它原生处理。
 
-Profile 的 launch 交付统一返回环境变量、参数和私有文件；文件以 0600 原子替换，只能写地址、模型、公开配置和变量名，不能含网关令牌。令牌只由 runtime 注入允许的环境变量。启动指纹覆盖 profile 版本、交法、变量名及参数/文件模板版本，不含临时端口或令牌。新进程仍在全部异步准备后复查命令、项目与授权；准备失败会撤销已经创建的凭据。模式换档参数、权限插件与网关参数共同传入。网关声明最低版本时，初始化后还核对 Agent 报告的版本；没有协议版本报告时取官方命令的版本读数，两者都无法确认就拒绝开始。dsh 的 ACP 固定报告应用内部版本 0.0.1，与发行版本无关，所以它只接受已核对的官方命令版本证据。自定义包装命令不能靠跳过官方版本查询绕过网关门槛；普通原生模型路线保持原有版本策略。
+Profile 的 launch 交付统一返回环境变量、参数、私有文件与公开的会话 metadata；文件以 0600 原子替换，只能写地址、模型、公开配置和变量名，不能含网关令牌。令牌只由 runtime 注入允许的环境变量。启动指纹覆盖 profile 版本、交法、变量名及参数/文件/会话模板版本，不含临时端口或令牌。新进程仍在全部异步准备后复查命令、项目与授权；准备失败会撤销已经创建的凭据。模式换档参数、权限插件与网关参数共同传入。网关声明最低版本时，初始化后还核对 Agent 报告的版本；没有协议版本报告时取官方命令的版本读数，两者都无法确认就拒绝开始。dsh 的 ACP 固定报告应用内部版本 0.0.1，与发行版本无关，所以它只接受已核对的官方命令版本证据。自定义包装命令不能靠跳过官方版本查询绕过网关门槛；普通原生模型路线保持原有版本策略。
 
 Codex 在开线程和恢复线程前，以相同 cwd 调用官方 `config/read`，只投影有效的命令环境过滤规则。旧 exclude/include_only 与新 filters 保持原表示，只额外排除 LMG_TOKEN；大小写冲突、混合表示、畸形或读取失败均拒绝开线程。不复制 set 或其他配置值，不读写 Codex 私有文件。规则通过线程 config 覆盖，既有规则不会被启动参数的数组替换。每次 turn/start 仍给出当前模型与权限。经网关的模型列表取服务声明，允许 Codex 原生目录之外的模型；导入历史仍经 thread/list/read，并包含自定义 provider 的线程。
 
@@ -64,6 +65,14 @@ OpenCode 的公开启动配置同时设置主模型与小模型，保留原权�
 DeepSeek Harness 的网关 patch 与权限服务 patch 同时交付。Chat、Responses、Anthropic 使用私有 `latch-gateway` provider；0.2.2-rc.1 的自定义 API 注册仅有这三种，Gemini 复用官方 `google` provider 的实现并替换该进程的地址和模型列表。会话日志与包清单遥测插件在这条路线关闭；工具子进程的敏感变量清除由 dsh 自身提供。配置值严格解码为该协议指定的 provider 与模型二元组，恢复不接受其他 provider 的同名模型。0.2.2-rc.1 的 Google 序列化器按型号决定发送 thinkingLevel 还是 token 预算；当前仅为已核对的官方目录精确型号提供人声明的离散档位。未知 Gemini 别名不显示和接受离散思考选项；已有非默认档位时换入这类别名、或恢复含该旧档位的状态，都明确拒绝，不能静默变成自动预算。私有会话字段 routeThinking 保留需要保持或核对的档位，不能被一次不支持的模型报告抹掉；Agent 在运行中主动报告这种变化时，Host 作废该进程凭据并取消本轮。重新选中支持的模型或明确选中有效档位后可继续，核对回执只有真正读到所请求的有效值才结清这项记录。通用别名的离散档位桥尚未实现。该版本 ACP initialize 不声明图片输入，所以模型支持图片也不等于可以经这个 ACP 入口发送图片。
 
 工具与原生能力仍由 Codex 决定。0.167 的目录外模型使用它自己的后备描述，不提供独立的 custom apply_patch；它仍可沿原生命令工具执行 apply_patch。Latch 不改模型 ID 来套用另一个型号的能力，不把后备描述中的容量当作服务声明。可直接使用 Responses 的服务优先透传，不能把某一家服务固定视为必须转换。
+
+### Claude Agent
+
+版本门运行适配器自己的 `--cli --version`，只接受它所启动的 Claude Code 版本；不以 ACP 报告的适配器版本或 PATH 上另一个 `claude` 代替。每次新进程都重新读取，无法确认或低于 2.1.318 时在发放凭据之前拒绝；使用它自己的模型不受这条网关门槛影响。
+
+`ANTHROPIC_BASE_URL` 指向会话网关，runtime 单独将令牌放进 `ANTHROPIC_AUTH_TOKEN`，不写参数、私有文件或 CLI 设置。清空其他 provider 开关、API key、OAuth token 与自定义头；设置官方 `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`，使 Claude Code 忽略设置文件中的 provider 地址与认证覆盖。通过适配器官方 `_meta.claudeCode.options.settings` 为新建、载入、恢复及分叉请求交付 `availableModels` 与 `modelPicker`，每个模型 ID 原样传入，不提供 `behavesAs`、价格或推测容量。原生发现只保留 ID 含 `claude` 或 `anthropic` 的模型，因此不能单靠发现来列服务模型；显式 picker 支持服务自己的 ID，Host 仍只保留 Agent 实际报告的精确值。会话设置含公开模型字段与禁用的 `apiKeyHelper`，不含令牌，不写用户 CLI 设置。主模型、自定义模型项、自动模式分类器与子 Agent 默认值在启动时指向所选模型；其他默认别名清空，避免恢复时把精确 ID 报成某个别名；网关仍拒绝列表之外的请求，不承诺未知辅助调用都遵守配置。
+
+同时开启官方 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`；2.1.318 的实际 Bash、SessionStart hook 和 stdio MCP 子进程均不继承 `ANTHROPIC_AUTH_TOKEN`，即使用户设置覆盖了泛化 scrub 开关。泛化 scrub 可被设置文件覆盖，不能据此承诺用户自行配置的所有秘密都被清除。这个进程环境清理不是 OS 沙箱；原有 hooks、插件与 MCP 仍是可信本机代码。Claude 对自定义模型假定的上下文容量与价格不作为服务事实显示；只保留它报告的已用上下文 token，实际输入输出用量仍来自网关上游。未接入的跨协议方向继续不可选。
 
 ### pi 运行预算
 

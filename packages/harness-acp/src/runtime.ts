@@ -266,6 +266,7 @@ interface Live {
   heldNotes?: string[]
   /** The process's token to the Host's gateway, for a session on a route; revoked when the process ends. */
   gateway?: ModelGatewayLease
+  gatewayMeta?: Record<string, unknown>
   /**
    * The token of the session's `latch-browser` server to the Host's tool gateway: a fresh one each time the session is
    * opened, resumed, loaded or forked on a process; revoked when the next is issued, when the process ends and when the
@@ -3150,7 +3151,7 @@ export class AgentRuntime implements Bridge {
     route: ModelRoute,
     sessionTmpDir: string,
     thinking?: AcpRecord['launchThinking'],
-  ): Promise<{ env: Record<string, string>; args: string[] } | undefined> {
+  ): Promise<{ env: Record<string, string>; args: string[]; sessionMeta?: Record<string, unknown> } | undefined> {
     const gateway = this.selection.profile?.gateway
     if (gateway?.via !== 'launch') return undefined
     const directory = join(sessionTmpDir, 'gateway')
@@ -3176,13 +3177,14 @@ export class AgentRuntime implements Bridge {
     if (
       Object.keys(env).some(name => !named.has(name))
       || [...Object.values(env), ...args, ...files.flatMap(([name, text]) => [name, text])].some(holds)
+      || (launch.sessionMeta !== undefined && holds(JSON.stringify(launch.sessionMeta)))
     )
       throw new AppError(500, 'model-route-refused', `${this.agent.name} 的转发设置会把凭据写进参数或文件，Latch 没有启动它。`)
     if (files.length) {
       await mkdir(directory, { recursive: true, mode: 0o700 })
       for (const [name, text] of files) await writeFileAtomic(join(directory, name), text)
     }
-    return { env: { ...env, [gateway.tokenEnv]: lease.token }, args }
+    return { env: { ...env, [gateway.tokenEnv]: lease.token }, args, ...(launch.sessionMeta ? { sessionMeta: launch.sessionMeta } : {}) }
   }
 
   /**
@@ -4165,7 +4167,13 @@ export class AgentRuntime implements Bridge {
     await assertVersion(this.agent, first.command)
     const gatewayVersion = confirmed.route ? this.selection.profile?.gateway?.minimumVersion : undefined
     const gatewayVerdict = gatewayVersion
-      ? await assertVersion(this.agent, first.command, gatewayVersion, '经 Latch 使用模型服务')
+      ? await assertVersion(
+          this.agent,
+          first.command,
+          gatewayVersion,
+          '经 Latch 使用模型服务',
+          this.selection.profile?.gateway?.commandVersionOnly === true,
+        )
       : undefined
     const wait = this.health.restartDelay(this.limits.restartDelayMs)
     if (wait) await sleep(wait, undefined, { signal: this.lifetime.signal, ref: false }).catch(() => {})
@@ -4200,7 +4208,7 @@ export class AgentRuntime implements Bridge {
     // Opened as late as it can be: the route's files name the gateway's address. Closed again if anything before the
     // spawn fails.
     const gateway = route ? this.openGateway(key, route) : undefined
-    let delivered: { env: Record<string, string>; args: string[] } | undefined
+    let delivered: { env: Record<string, string>; args: string[]; sessionMeta?: Record<string, unknown> } | undefined
     let command: string
     try {
       delivered = gateway
@@ -4264,6 +4272,7 @@ export class AgentRuntime implements Bridge {
       key,
       wire,
       ...(gateway ? { gateway } : {}),
+      ...(delivered?.sessionMeta ? { gatewayMeta: delivered.sessionMeta } : {}),
       initialized: false,
       capabilities: {
         resume: false,
@@ -4604,7 +4613,8 @@ export class AgentRuntime implements Bridge {
     const setup = (method: string, params: unknown): Promise<unknown> => {
       this.processModeChanges.get(taskId)?.authorize?.()
       this.launchThinkingChanges.get(taskId)?.authorize?.()
-      return wire.request(method, params, setupMs, signal).catch(async (error: unknown) => {
+      const request = live.gatewayMeta && params && typeof params === 'object' ? { ...params, _meta: live.gatewayMeta } : params
+      return wire.request(method, request, setupMs, signal).catch(async (error: unknown) => {
         if (!(error instanceof RequestTimeout)) throw error
         // The turn fails once the process is gone, as after an initialize that timed out: stdin closed, then signals.
         await wire.stop('stop', this.limits.stopGraceMs)
@@ -5495,10 +5505,11 @@ export class AgentRuntime implements Bridge {
         if (!parsed.success) return
         const { used, size, cost } = parsed.data
         if (used === undefined && size === undefined && !cost) return
+        const tokensOnly = task.acp.route && this.selection.profile?.gateway?.usage === 'tokens-only'
         task.usageReport = {
           ...(used !== undefined ? { contextUsed: used } : {}),
-          ...(size !== undefined ? { contextSize: size } : {}),
-          ...(cost ? { cost: { amount: cost.amount, currency: cost.currency } } : {}),
+          ...(!tokensOnly && size !== undefined ? { contextSize: size } : {}),
+          ...(!tokensOnly && cost ? { cost: { amount: cost.amount, currency: cost.currency } } : {}),
           at: this.now(),
         }
         break
