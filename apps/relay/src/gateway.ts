@@ -26,11 +26,15 @@ const event = z.discriminatedUnion('event', [
     })
     .strict(),
 ])
-export async function checkGateway(binary: string): Promise<void> {
+/**
+ * `timeoutMs`: the build waits longer, because macOS scans a freshly linked executable on its first run and a busy
+ * machine can take several seconds before the binary prints anything.
+ */
+export async function checkGateway(binary: string, timeoutMs = 3000): Promise<void> {
   if (!isAbsolute(binary)) throw new Error('Gateway executable must be absolute')
   const info = await lstat(binary)
   if (!info.isFile() || info.isSymbolicLink() || info.mode & 0o022 || !(info.mode & 0o111)) throw new Error('Invalid gateway executable')
-  const output = await execute(binary, ['version'], { timeout: 3000, maxBuffer: 1024, env: {} })
+  const output = await execute(binary, ['version'], { timeout: timeoutMs, maxBuffer: 1024, env: {} })
   const version = z
     .object({ protocol: z.literal(2), go: z.string() })
     .strict()

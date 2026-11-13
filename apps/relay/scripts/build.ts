@@ -44,6 +44,6 @@ await execute(
   },
 )
 const { checkGateway } = await import('../src/gateway.ts')
-await checkGateway(gatewayPath)
+await checkGateway(gatewayPath, 30_000)
 
 await copyFile(resolve(root, 'apps/relay/gateway/GO-LICENSE'), `${gatewayPath}.LICENSE`)
