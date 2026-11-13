@@ -94,7 +94,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await page.getByRole('button', { name: /模型：.*结果未知/u }).waitFor()
         expect((await owner.json<TaskDetail>('tasks/' + sessionId)).config?.find(item => item.id === 'model')?.currentValue).toBe('large')
         await modelPicker.click()
-        await page.getByRole('button', { name: '核对', exact: true }).first().click()
+        await page.getByRole('menu', { name: '模型', exact: true }).getByRole('button', { name: '核对', exact: true }).click()
         await page.getByRole('button', { name: '模型：Large', exact: true }).waitFor()
         await page.getByRole('button', { name: '思考：Low', exact: true }).waitFor()
         expect(await page.evaluate(() => Reflect.get(window, 'configurationChanges').length)).toBe(1)
@@ -189,7 +189,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         const asked = host.presence.requests.length
 
-        await page.locator('.composer-stack .harness-picker').click()
+        await page.getByRole('button', { name: /^Harness：/u }).click()
         await page.getByRole('menuitem', { name: '设为新会话默认' }).click()
         await page.getByRole('menuitem', { name: '取消新会话默认' }).waitFor()
         expect((await owner.json<AppSnapshot>('snapshot')).catalog!.defaults.pinned).toBe(true)
