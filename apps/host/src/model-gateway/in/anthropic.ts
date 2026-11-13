@@ -92,7 +92,7 @@ export function decodeAnthropic(
   const parsed = schema.safeParse(value)
   if (!parsed.success) throw invalidRequest('Anthropic 请求字段格式无效')
   const body = parsed.data
-  if (body.thinking?.display === 'omitted') throw invalidRequest('Chat 转换尚不能隐藏思考文字：回放封装不是加密，Latch 没有转发')
+  if (body.thinking?.display === 'omitted') throw invalidRequest('协议转换尚不能隐藏思考文字：回放封装不是加密，Latch 没有转发')
   for (const field of ['container', 'mcp_servers', 'context_management', 'conversation'])
     if (body[field] != null) throw invalidRequest('转换不支持服务端执行、会话或压缩状态，请发送完整对话')
   const exact = object(exactJson(source))!
@@ -122,7 +122,6 @@ export function decodeAnthropic(
         if (message.role !== 'user' || !pending.delete(id)) throw invalidRequest('工具结果没有对应的未完成调用')
         if (block.is_error !== undefined && typeof block.is_error !== 'boolean') throw invalidRequest('工具结果状态无效')
         const parts = content(block.content ?? '', dropped)
-        if (parts.some(part => part.type === 'image')) dropped.add('tool-image-location')
         input.push({ type: 'result', id, content: block.is_error ? [{ type: 'text', text: '[工具执行失败]\n' }, ...parts] : parts })
       } else if (block.type === 'tool_use') {
         if (message.role !== 'assistant') throw invalidRequest('工具调用必须来自助手')
@@ -137,7 +136,8 @@ export function decodeAnthropic(
         input.push({ type: 'call', kind: 'function', id, name: name(block.name), arguments: args })
       } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
         if (message.role !== 'assistant') throw invalidRequest('思考必须来自助手')
-        const thought = typeof block.signature === 'string' ? openReasoning(block.signature) : undefined
+        const signature = block.type === 'redacted_thinking' ? block.data : block.signature
+        const thought = typeof signature === 'string' ? openReasoning(signature) : undefined
         if (thought !== undefined) input.push({ type: 'reasoning', state: thought })
         else dropped.add('reasoning-state')
       } else {
@@ -191,7 +191,7 @@ export function decodeAnthropic(
     ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
     ...(body.top_p !== undefined ? { topP: body.top_p } : {}),
     ...(body.stop_sequences?.length ? { stop: body.stop_sequences } : {}),
-    ...(format ? { format: { ...format, name: 'response' } } : {}),
+    ...(format ? { format: { ...format, name: 'response', ...(format.type === 'json_schema' ? { strict: true } : {}) } } : {}),
   }
 }
 
@@ -280,6 +280,25 @@ export class AnthropicOutput {
       return []
     }
     if (this.stop) throw invalidReply('模型在结束标记之后继续发送内容')
+    if (delta.type === 'reasoning-state') {
+      this.bytes += JSON.stringify(delta.state).length
+      if (this.bytes > 8 * 1024 * 1024) throw invalidReply('模型回复超出转换大小限制')
+      const events = this.close()
+      const readable = delta.state.item.content?.length ? delta.state.item.content : delta.state.item.summary
+      const text = this.redact(readable.map(part => part.text).join('\n\n'))
+      const signature = this.seal(delta.state)
+      const index = this.blocks.length
+      const block = text ? { type: 'thinking', thinking: text, signature } : { type: 'redacted_thinking', data: signature }
+      this.blocks.push(block)
+      events.push({ type: 'content_block_start', index, content_block: text ? { type: 'thinking', thinking: '' } : block })
+      if (text)
+        events.push(
+          { type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking: text } },
+          { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature } },
+        )
+      events.push({ type: 'content_block_stop', index })
+      return events
+    }
     this.bytes += delta.type === 'tool' ? (delta.arguments?.length ?? 0) + (delta.name?.length ?? 0) : delta.text.length
     if (this.bytes > 8 * 1024 * 1024) throw invalidReply('模型回复超出转换大小限制')
     if (delta.type === 'tool') {

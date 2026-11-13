@@ -4,6 +4,7 @@ import type { ModelWire } from './harnesses.ts'
 export const TRANSLATED_PAIRS: ReadonlyArray<{ entry: ModelWire; upstream: ModelWire }> = [
   { entry: 'responses', upstream: 'chat-completions' },
   { entry: 'anthropic-messages', upstream: 'chat-completions' },
+  { entry: 'anthropic-messages', upstream: 'responses' },
 ]
 
 export const GATEWAY_LOSSES = [
@@ -50,5 +51,6 @@ export function canTranslate(entry: ModelWire, upstream: ModelWire): boolean {
 
 /** Potential losses, not a claim that a particular request contained all of them. */
 export function lossesOf(entry: ModelWire, upstream: ModelWire): readonly GatewayLoss[] {
-  return canTranslate(entry, upstream) ? GATEWAY_LOSSES : []
+  if (!canTranslate(entry, upstream)) return []
+  return upstream === 'responses' ? GATEWAY_LOSSES.filter(loss => loss !== 'tool-image-location') : GATEWAY_LOSSES
 }

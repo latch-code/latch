@@ -161,7 +161,6 @@ export function decodeResponses(
         })
       } else if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') {
         const parts = content(item.output, dropped)
-        if (parts.some(part => part.type === 'image')) dropped.add('tool-image-location')
         input.push({ type: 'result', id: name(item.call_id), content: parts })
       } else if (item.type === 'message' || item.type === undefined) {
         if (!['system', 'developer', 'user', 'assistant'].includes(String(item.role))) throw invalidRequest('消息角色无法转换')
@@ -278,6 +277,7 @@ export class ResponsesOutput {
   }
 
   push(delta: GatewayDelta): Event[] {
+    if (delta.type === 'reasoning-state') throw invalidReply('这种原生思考输出尚不能转换为 Responses')
     if (delta.type === 'loss') return []
     if (this.status !== 'in_progress') throw invalidReply('模型在回复完成后继续发送内容')
     if (delta.type === 'usage') {
