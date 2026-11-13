@@ -347,7 +347,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
                   throw new Error('Could not verify simulator clipboard')
                 }
               },
-              writeDevice: value => toClipboard(udid!, value, 1000),
+              // simctl startup can exceed a second; the proof still expires ten seconds after the code window starts.
+              writeDevice: value => toClipboard(udid!, value, 5000),
               stage: text => writeFile(`${HOLD}.clipboard-info`, text + '\n', { mode: 0o600 }),
             },
             () => pairingCode(by),
