@@ -448,6 +448,8 @@ Host 约每 40ms 合并一次变化，把选中会话的完整 `task-state` 推�
 | `POST /providers/:id/models`、`POST /provider-checks` | `admin` | 经出站策略获取模型列表、检测连接；用已保存的密钥时只发往已确认的地址 |
 | `GET/POST /agents`、`PUT/DELETE /agents/:id` | `admin`；新增与改命令、参数、变量要 `host.sock` 与本机确认 `harness.command.apply` | ACP Agent 定义；环境变量只返回名称，预设带命令检测结果，`started` 说明是否已以当前定义开启过 L3 会话 |
 | `GET /mcp/servers`；`POST /mcp/servers`、`PATCH`/`DELETE /mcp/servers/:id`、`POST /mcp/servers/:id/test` | 读：`view`；写：`host.sock` 的 `admin`（停用任何 `admin` 设备） | Latch 的 MCP 服务器，值从不返回；新增与放宽要本机确认 `mcp.server.apply`，见 [MCP.md](./MCP.md) |
+| `GET /mcp/import?project=<ID>` | `host.sock` 的 `admin` | 从项目导入：读项目的 `.mcp.json` 作数据，什么都不运行，见 [MCP.md](./MCP.md#从项目导入) |
+| `POST /agents/:id/mcp` | `run` | 读取 Harness 自己的 MCP（现在只有 Codex 直连），结果在 `HarnessInfo.ownMcp`，见 [MCP.md](./MCP.md#harness-自己的-mcp) |
 | `POST /agents/:id/catalogue`、`PUT /agents/:id/models` | `run` | 不开始会话读一次 Harness 的模型与选项 `{ auto? }`，返回 `{ ran, catalogueRead }`；保存自己填写的模型 ID `{ models }`。见 [HARNESSES.md](./HARNESSES.md#开始前的选项) |
 | `POST /harnesses/:id/login-status`、`POST /harnesses/:id/logout`、`POST /harnesses/:id/login-terminal` | `run`；打开终端只在桌面端 | 登录状态 `{ status, label?, expiresAt? }`、请 Harness 退出登录、在这台电脑的终端里运行它的登录 `{ method? }`。见 [HARNESSES.md](./HARNESSES.md#登录) |
 | `GET /enrollments` | 桌面端 `admin` | 仍在等待的登记及其指纹与系统表单的理由；以及会挡住新配对的完全访问会话。页面已不读取它，配对表单跟随 `GET /native/pairings/:id` |

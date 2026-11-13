@@ -11,6 +11,7 @@ import type {
   DriverTaskSummary,
   ModelWire,
   HarnessCatalogue,
+  HarnessOwnMcp,
   CatalogueRead,
 } from '@latch/protocol/types'
 
@@ -263,6 +264,16 @@ export interface Bridge {
    * `before` runs once, just before a process starts, and its failure stops the read.
    */
   readCatalogue?(options: { auto: boolean; before?: () => Promise<void> }): Promise<{ ran: boolean }>
+  /**
+   * Optional. The harness's own MCP servers as it reports them over its protocol (`HarnessInfo.ownMcp`); undefined for a
+   * harness that does not report them.
+   */
+  ownMcp?(): HarnessOwnMcp | undefined
+  /**
+   * Optional, with `ownMcp`. 读取: asks the harness, in a process with no session, for every MCP server it has
+   * configured, which it starts to answer; one read at a time. `before` runs once, just before the process starts.
+   */
+  readOwnMcp?(options?: { before?: () => Promise<void> }): Promise<void>
   /**
    * Optional, with `HarnessLogin.logout`. Asks the harness to log out, so that a person can sign in with another account.
    * Refused while one of its sessions runs.

@@ -6,15 +6,16 @@
 // retry after an unknown outcome is answered without doing it twice. A remote server (Streamable HTTP) is confirmed for
 // its address and header names, with the outbound allowance it needs in the same confirmation; see docs/MCP.md.
 import { homedir } from 'node:os'
-import { realpath } from 'node:fs/promises'
+import { lstat, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-import { isMcpServerName, type McpFailure, type McpServerView } from '@latch/protocol'
+import { isMcpServerName, type McpFailure, type McpImportCandidate, type McpImportFile, type McpServerView } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { StepupMethod } from '../audit.ts'
 import { json, jsonBody, safeDecode } from '../http-util.ts'
+import { parseProjectMcp, readProjectMcpText } from '../mcp-import.ts'
 import { middleSlot } from '../presence-reason.ts'
 import {
   envInput,
@@ -50,9 +51,15 @@ import { CONFIG_BODY_LIMIT, type Caller, type DeviceCaller, type PreviewLine, ty
 
 const requestId = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
 const revision = z.number().int().min(0)
+/** The project a definition came from (从项目导入), kept only in the audit record of its addition. */
+const importedFrom = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$/u)
+  .optional()
 const createSchema = z.strictObject({
   requestId,
   baseRevision: revision,
+  importedFrom,
   transport: z.literal('stdio').optional(),
   ...specInput,
   env: envInput,
@@ -63,6 +70,7 @@ const remoteUrl = z.string().min(1).max(2048)
 const createRemoteSchema = z.strictObject({
   requestId,
   baseRevision: revision,
+  importedFrom,
   transport: z.literal('http'),
   name: specInput.name,
   url: remoteUrl,
@@ -88,6 +96,7 @@ const patchSchema = z.strictObject({
 const testSchema = z.strictObject({ requestId })
 const SERVER_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)$/u
 const TEST_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)\/test$/u
+const IMPORT_PATH = '/link/api/mcp/import'
 
 export interface McpRouteDeps {
   store: McpStore
@@ -121,6 +130,8 @@ export interface McpRouteDeps {
   allowanceOf: (serverId: string) => string | undefined
   /** Takes an allowance out of the policy; it only narrows, so it is asked for nobody, and is on record. */
   removeAllowance: (caller: Caller, target: string, res: Parameters<typeof json>[0]) => Promise<void>
+  /** A saved project's folders, for 从项目导入; undefined for an unknown project or the default workspace. */
+  projectFolders: (workspaceId: string) => Array<{ id: string; path: string }> | undefined
   /** 测试 of a remote server: `initialize` and `tools/list` from the Host, within 20 s, then the session ends. */
   testRemote: (record: McpHttpRecord) => Promise<{ status: 'ok'; tools: string[] } | { status: 'failed'; reason: McpFailure }>
 }
@@ -219,6 +230,69 @@ function nodeOptionPaths(value: string): string[] {
     const next = attached ?? words[index + 1]
     return next ? [next] : []
   })
+}
+
+/**
+ * Whether any of `paths` (a command, or what `namedPaths` found) is at or inside one of `roots`, compared segment by
+ * segment, as written and as its real path: the rule 测试 refuses by, which 从项目导入 flags by too.
+ */
+async function pointsInto(paths: readonly string[], roots: readonly string[]): Promise<boolean> {
+  const real = await Promise.all(roots.map(root => realpath(root).catch(() => root)))
+  for (const candidate of paths) {
+    const found = await realpath(candidate).catch(() => candidate)
+    if ([...roots, ...real].some(root => within(root, candidate) || within(root, found))) return true
+  }
+  return false
+}
+
+/** The paths a program's arguments and plain variables name, as it would see them from `cwd`. */
+function namedByDefinition(args: readonly string[], env: Readonly<Record<string, string>>, cwd: string): string[] {
+  const values = [
+    ...args,
+    ...Object.values(env),
+    ...Object.entries(env).flatMap(([name, value]) => (name.toUpperCase() === 'NODE_OPTIONS' ? nodeOptionPaths(value) : [])),
+  ]
+  return namedPaths(values, cwd)
+}
+
+/** What 从项目导入 may ask of the file system: only about paths already under a root. */
+export interface ImportFs {
+  lstat(path: string): Promise<unknown>
+}
+
+/**
+ * 测试's rule for an imported command: `repository-command` when its command is under one of `roots`,
+ * `repository-path` when an argument or plain variable names a file that is there (a package such as `@scope/server`
+ * has a separator but is no path). Paths are compared as text first; only one already under a root is looked up, so a
+ * path elsewhere (an automounted `/net/…`, a network volume) is never touched.
+ */
+export async function repositoryFlags(
+  server: Pick<McpImportCandidate, 'transport' | 'command' | 'args' | 'env'>,
+  folder: string,
+  roots: readonly string[],
+  fs: ImportFs = { lstat },
+): Promise<Array<'repository-command' | 'repository-path'>> {
+  if (server.transport !== 'stdio' || server.command === undefined) return []
+  const under = (path: string) => roots.some(root => within(root, path))
+  const flags: Array<'repository-command' | 'repository-path'> = []
+  const command = server.command
+  const commandPaths =
+    !command.includes('${') && (isAbsolute(command) || /[/\\]/u.test(command) || command.startsWith('~/'))
+      ? namedPaths([command], folder)
+      : []
+  if (commandPaths.some(under)) flags.push('repository-command')
+  const plain = Object.fromEntries((server.env ?? []).flatMap(item => (item.value !== undefined ? [[item.name, item.value]] : [])))
+  for (const path of namedByDefinition(server.args ?? [], plain, folder).filter(under))
+    if (
+      await fs.lstat(path).then(
+        () => true,
+        () => false,
+      )
+    ) {
+      flags.push('repository-path')
+      break
+    }
+  return flags
 }
 
 export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): RouteModule {
@@ -348,24 +422,39 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
     if (record.args.some(value => value.includes('${workspaceFolder}')))
       throw new AppError(409, 'mcp-test-repository', '它的参数指向会话的项目文件夹：测试只运行不在项目里的程序，请在会话里使用它')
     const roots = await deps.testForbiddenRoots()
-    const real = await Promise.all(roots.map(root => realpath(root).catch(() => root)))
     // Relative paths as the program sees them: from 测试's own empty folder, one level inside the temporary directory.
     const cwd = join(deps.tmpRoot, 'mcp-test-folder')
-    const values = [
-      ...record.args,
-      ...Object.values(record.env),
-      ...Object.entries(record.env).flatMap(([name, value]) => (name.toUpperCase() === 'NODE_OPTIONS' ? nodeOptionPaths(value) : [])),
-    ]
-    const candidates = [record.command, ...namedPaths(values, cwd)]
-    for (const candidate of candidates) {
-      const found = await realpath(candidate).catch(() => candidate)
-      if ([...roots, ...real].some(root => within(root, candidate) || within(root, found)))
-        throw new AppError(
-          409,
-          'mcp-test-repository',
-          '它的命令、参数或变量指向项目、工作树、会话文件夹或 Latch 的数据与程序：测试不运行仓库里的程序，请在会话里使用它',
-        )
+    if (await pointsInto([record.command, ...namedByDefinition(record.args, record.env, cwd)], roots))
+      throw new AppError(
+        409,
+        'mcp-test-repository',
+        '它的命令、参数或变量指向项目、工作树、会话文件夹或 Latch 的数据与程序：测试不运行仓库里的程序，请在会话里使用它',
+      )
+  }
+
+  /**
+   * 从项目导入: each folder's `.mcp.json` as candidates. Relative paths are read from that folder, where a tool reading
+   * the file starts its servers; a command or a path inside a project, worktree, session folder or Latch's own files is
+   * flagged by 测试's rule (`pointsInto`), and such a command is never saved (`locateCommand`).
+   */
+  async function importFrom(workspaceId: string): Promise<McpImportFile[]> {
+    const folders = deps.projectFolders(workspaceId)
+    if (!folders) throw new AppError(404, 'workspace-not-found', '找不到该项目')
+    const listed = await deps.testForbiddenRoots()
+    // The roots' own real paths, read once: they are this Mac's folders. Nothing outside them is ever looked up.
+    const roots = [...new Set([...listed, ...(await Promise.all(listed.map(root => realpath(root).catch(() => root))))])]
+    const files: McpImportFile[] = []
+    for (const folder of folders) {
+      const read = await readProjectMcpText(folder.path)
+      if (read.status !== 'ok') {
+        files.push({ folderId: folder.id, ...read, servers: [], skipped: [] })
+        continue
+      }
+      const parsed = parseProjectMcp(read.text, name => sameName(name))
+      for (const server of parsed.servers) server.flags.push(...(await repositoryFlags(server, folder.path, roots)))
+      files.push({ folderId: folder.id, ...parsed })
     }
+    return files
   }
 
   /**
@@ -387,6 +476,8 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
     if (!url) throw badUrl()
     const spec: McpHttpSpec = { url, headerNames: Object.keys(input.headers) }
     checkHeaderNames(spec.headerNames)
+    if (input.importedFrom !== undefined && !deps.projectFolders(input.importedFrom))
+      throw new AppError(400, 'workspace-not-found', '找不到导入来源的项目')
     const reach = await deps.egressFor(url)
     const stepup = await confirmRemote(req, caller, input.name, spec, input.scope, input.headers, reach)
     const id = await context.serial(caller, 'admin', async () => {
@@ -406,6 +497,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
           scope: input.scope.all ? 'all' : 'chosen',
           projectCwd: false,
           transport: 'http',
+          ...(input.importedFrom ? { importedFrom: input.importedFrom } : {}),
         },
       })
       const undo = reach.egress ? await deps.allowEgress(caller, reach.egress, stepup) : async () => {}
@@ -566,6 +658,15 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         })
         return true
       }
+      // 从项目导入: only where adding is, the desktop app on this Mac.
+      if (path === IMPORT_PATH && method === 'GET') {
+        context.requireScope(caller, 'admin')
+        context.requireLocal(caller)
+        const workspaceId = new URL(req.url ?? '/', 'http://latch.invalid').searchParams.get('project') ?? ''
+        context.recheck(caller, 'admin')
+        json(res, { workspaceId, files: await importFrom(workspaceId) })
+        return true
+      }
       if (path === '/link/api/mcp/servers' && method === 'POST') {
         context.requireScope(caller, 'admin')
         context.requireLocal(caller)
@@ -584,6 +685,8 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         if (input.baseRevision !== store.revision()) throw changed()
         if (sameName(input.name)) throw new AppError(409, 'mcp-name-taken', `已有名为 ${input.name} 的 MCP 服务器`)
         checkSecrets(input.secrets)
+        if (input.importedFrom !== undefined && !deps.projectFolders(input.importedFrom))
+          throw new AppError(400, 'workspace-not-found', '找不到导入来源的项目')
         if (Object.keys(input.secrets).some(name => Object.hasOwn(input.env, name)))
           throw new AppError(400, 'mcp-env-twice', '同一个变量不能既是普通变量又是秘密变量')
         if (Object.keys(input.env).length + Object.keys(input.secrets).length > 32)
@@ -614,6 +717,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
               envCount: Object.keys(spec.env).length + spec.secretNames.length,
               scope: input.scope.all ? 'all' : 'chosen',
               projectCwd: spec.projectCwd,
+              ...(input.importedFrom ? { importedFrom: input.importedFrom } : {}),
             },
           })
           return store.change({ deviceId: caller.device.id, requestId: input.requestId, payload: input }, ({ servers, secrets, stamp }) => {

@@ -18,6 +18,8 @@ export const MCP_ACTIONS = {
     projectCwd: z.boolean(),
     /** Absent for a local command (`stdio`), as before remote addresses. */
     transport: z.literal('http').optional(),
+    /** 从项目导入: the project whose `.mcp.json` prefilled it, by ID. */
+    importedFrom: opaqueId.optional(),
   }),
   'mcp.server.changed': z.strictObject({
     serverId,

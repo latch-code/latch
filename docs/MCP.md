@@ -3,26 +3,31 @@ description: Latch 的 MCP 服务器：本机命令与远程地址的定义与�
 sources:
   - apps/host/src/mcp.ts
   - apps/host/src/mcp-remote.ts
+  - apps/host/src/mcp-import.ts
   - apps/host/src/routes/mcp.ts
   - apps/host/src/audit-actions/mcp.ts
   - apps/host/src/tool-gateway.ts
   - packages/harness-acp/src/mcp-bridge.ts
   - packages/protocol/src/mcp.ts
   - apps/web/src/settings/McpSettings.tsx
+  - apps/web/src/settings/HarnessMcp.tsx
+  - apps/web/src/settings/McpImport.tsx
+  - packages/harness-acp/src/wires/codex.ts
   - apps/web/src/agents/McpSection.tsx
   - packages/testkit/fixtures/fake-mcp-stdio.mjs
   - packages/testkit/src/fake-mcp-http.ts
   - apps/host/test/mcp.test.ts
   - apps/host/test/mcp-remote.test.ts
+  - apps/host/test/mcp-import.test.ts
   - packages/harness-acp/test/mcp-bridge.test.ts
   - e2e/mcp.e2e.ts
 ---
 
 # MCP 服务器
 
-MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务器。Latch 只管前一半，经 Latch 的调用有记录；Harness 自己的服务器（以及完全访问的 Agent 自己启动的任何程序）Latch 一次也看不到。**这不是沙箱**：本机命令以你的身份运行，Latch 不隔离它。
+MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务器。Latch 只管前一半，经 Latch 的调用有记录；Harness 自己的服务器只显示它经协议报告的（现在只有 Codex 直连，见「Harness 自己的 MCP」），它们的调用（以及完全访问的 Agent 自己启动的任何程序）Latch 一次也看不到。**这不是沙箱**：本机命令以你的身份运行，Latch 不隔离它。
 
-两种服务器：本机命令（stdio，Agent 一侧经桥启动）与远程地址（Streamable HTTP，Host 是它唯一的客户端，见「远程地址」）。OAuth（需要登录的远程服务器显示「需要登录 · 尚未实现」）、旧的 HTTP+SSE 传输（MCP 规范已弃用）、Harness 自己的 MCP 的状态与「从项目导入」尚未实现。
+两种服务器：本机命令（stdio，Agent 一侧经桥启动）与远程地址（Streamable HTTP，Host 是它唯一的客户端，见「远程地址」）。OAuth（需要登录的远程服务器显示「需要登录 · 尚未实现」）与旧的 HTTP+SSE 传输（MCP 规范已弃用）尚未实现。
 
 ## 定义与秘密
 
@@ -42,13 +47,15 @@ MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务�
 | `PATCH /mcp/servers/:id` | `host.sock` 的 `admin`；`{ enabled: false }` 任何 `admin` 设备 | `{ requestId, baseRevision, …改动 }`，`baseRevision` 是这个服务器的修订号；远程地址的改动是 `url` 与 `headers`（值为 `null` 即移除），给另一种服务器的字段 400 `mcp-transport`；放宽时本机确认 |
 | `DELETE /mcp/servers/:id` | `host.sock` 的 `admin` | 连同它的值一起删除 |
 | `POST /mcp/servers/:id/test` | `host.sock` 的 `admin` | `{ requestId }`；见「测试」 |
+| `GET /mcp/import?project=<项目 ID>` | `host.sock` 的 `admin` | 项目每个文件夹的 `.mcp.json`；见「从项目导入」 |
+| `POST /agents/:id/mcp` | `run` | 「读取」这个 Harness 自己的 MCP；见「Harness 自己的 MCP」 |
 
 - 同一设备的同一 `requestId` 带同样的请求体：按回执回答，不再确认、不再执行；带不同的请求体：409 `request-conflict`。修订号不对：409 `mcp-changed`。
 - **要本机确认**：新增；换命令、参数或工作目录方式；新增、修改或移除普通变量；新的秘密变量名。由 `widens` 一处判断（`spec`）。标题「添加 MCP 服务器」，系统表单的句子是「让 Agent 运行 <命令的绝对路径>（MCP 服务器「<名称>」）」。命令是 `npx`、`pnpx`、`uvx`、`pipx`、`bunx`、`node`、`python`、`python3`、`deno` 或 `ruby` 时（`mcp.server.apply-runner`）句子是「让 Agent 运行 <程序的文件名> <它运行的包或脚本>（<四位哈希>，MCP「<名称>」）」：包或脚本按各程序的选项解析（`--package`/`-p`、`--from`、`--spec`、`-m`，跳过 `--with`、`-r` 等带值的选项与 `run` 子命令），只在中间截断，后面是整串的 SHA-256 前四位，所以 `evilmodelcontextprotocol/server-github` 与 `@modelcontextprotocol/server-github` 不会看起来一样；选项说不清时（`-e`、`-c` 等内联代码、不认识的选项）显示原样的第一个参数加哈希。路径在前，人起的名字只能在它后面。卡片上的行列出命令、参数、普通变量（含值）、秘密变量名、工作目录与「用在」；秘密的值只以哈希绑定在确认上。保存时记下 `confirmed`；测试与每次启动之前都核对定义与它一致（`isConfirmed`）。
 - **远程地址要本机确认**：新增；换源或路径；新的请求头名字（同样由 `widens` 判断）。表单 `mcp.server.apply-remote` 的句子是「让 Latch 连接 <host:port>（MCP 服务器「<名称>」）」，地址在前、保留结尾的域名。卡片上的行列出地址、请求头的名字（「值只发往这个地址」）、出站许可（需要时）与「用在」；请求头的值只以哈希绑定在确认上。换请求头的值、移除请求头不要确认（`use`）。
 - **不要确认，但先审计、写不进就不生效**（`widens` 的 `use`）：秘密变量换值、「用在」多了 Agent、项目或所有会话、关掉的工具重新打开、启用。移除秘密变量也算这一类。**只收窄**（审计失败照常执行，响应带 `x-latch-audit: failed`）：改名、「用在」变少、关工具、停用、移除服务器。代码与去向确认过一次，挂到更多会话是使用，不是新边界。
 - 有完全访问会话在运行或等你处理时，放宽与其他本机确认一样返回 409 `presence-blocked`；停用、移除从不被挡。
-- 审计（detail 只有 ID、哈希、枚举、布尔与计数，没有名称、命令、值）：`mcp.server.added`（先于保存，写不进就不保存）、`mcp.server.changed`（`kinds`：`spec`、`secret`、`scope`、`tools`、`enabled`、`name`；只收窄的改动在审计失败时照常执行，响应带 `x-latch-audit: failed`）、`mcp.server.removed`、`mcp.server.test`。
+- 审计（detail 只有 ID、哈希、枚举、布尔与计数，没有名称、命令、值）：`mcp.server.added`（先于保存，写不进就不保存；从项目导入的带来源项目的 ID `importedFrom`）、`mcp.server.changed`（`kinds`：`spec`、`secret`、`scope`、`tools`、`enabled`、`name`；只收窄的改动在审计失败时照常执行，响应带 `x-latch-audit: failed`）、`mcp.server.removed`、`mcp.server.test`。
 
 ## 测试
 
@@ -96,9 +103,26 @@ MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务�
 
 `HarnessInfo.skills === 'server'` 的 Harness 接收 Latch 的服务器；页面据此说明。真实的 Agent 是否真的启动并调用桥，测试不能代替：只在假 Agent 与回放上验证。
 
+## Harness 自己的 MCP
+
+- 只显示 Harness 经协议报告的，从不读写任何 CLI 的配置（`~/.codex/config.toml`、`~/.claude.json`、`~/.cursor/mcp.json` 等），也不代它登录：现在只有 Codex 直连报告（app-server 的 `mcpServerStatus/list` 与 `mcpServer/startupStatus/updated`，0.156.0 与 0.167.0 都有；wire 的做法见 [HARNESSES.md](HARNESSES.md#codex-的-app-server)）。`HarnessInfo.ownMcp` 只在报告的 Harness 上有：`last`（服务器、时间、来自会话还是读取）、`running`、`failed`；只在 Host 内存里，定义变了就作废。
+- 设置 › MCP 与这个 Harness 的页（设置 › Harness）都列出它们，只读。每个服务器是名字、状态（可用、正在启动、需要登录、失败、已取消、已停用、未启动、状态未知）、工具数与远程服务器的源。Codex 报告需要登录时给出它自己的 `codex mcp login <名字>`（名字只有字母、数字、`-`、`_`、不以 `-` 开头时；否则不给），Latch 不调用它的 OAuth。
+- 会话里的状态随 Codex 的启动通知更新，不启动任何东西；「读取」在空的私有文件夹里启动一次 `codex app-server`（整个读取连同进程启动与翻页共 60 秒），不开 thread，Codex 这时会启动它配置的服务器，所以只由人按下，ⓘ 写明。线程配置里 Latch 自己的服务器不算 Codex 的。与 Latch 的服务器同名的写「会话里用 Latch 的同名服务器」：线程配置覆盖 Codex 自己的。
+- 其他 Harness（经 ACP 的各预设、codex-acp、pi）在设置 › MCP 与它的 Harness 页写「这个 Harness 不报告自己的 MCP」。
+
+## 从项目导入
+
+- 只在添加的地方（这台 Mac 的桌面端，`host.sock`）：「添加 MCP 服务器」表单下的「从项目导入…」选一个项目，Host 读它每个文件夹里的 `.mcp.json`（`mcp-import.ts`），只读这一个文件：`.cursor/mcp.json`、`.codex/config.toml` 是各家工具自己的配置，不读。什么都不运行，不经 Agent，也不随会话交给 Agent。
+- 读法：不跟随链接（`O_NOFOLLOW`，链接可能指向你的任何文件），必须是只有一个名字的普通文件（硬链接同样可能是你的任何文件），最多 64 KiB，从检查过的同一个描述符读；否则整份拒绝（`not-file`、`too-large`）。JSON 必须恰好是 `{ "mcpServers": { … } }`（`not-json`、`invalid`）；每个服务器按 strict schema 单独判断：本机命令 `{ type?: "stdio", command, args?, env? }`，远程地址 `{ type?: "http" | "streamable-http", url, headers? }`，未知字段、`__proto__` 之类的键、`escapeSecurityText` 要写出来的字符（控制字符、C1、改变方向的字符、行与段落分隔符、不可见字符）都按「格式不对」跳过，`type: "sse"` 写「旧的 HTTP+SSE 传输尚未实现」，最多列出 32 个。
+- `${…}` 一律按原样显示，从不用 Host 的环境展开，标「含 ${…}」；`${workspaceFolder}` 是 Latch 自己的参数写法，不算。
+- 秘密的值不导入：请求头只给名字；变量值是 `${…}`、名字像凭据（`KEY`、`TOKEN`、`SECRET`、`PASS`、`AUTH` 等）、形如已知的密钥或一长串字母数字的，只给名字，作空的秘密字段等人填；其余作普通变量带值（它们会出现在确认里）。参数里像秘密的值（整个参数、`--x=值` 的值、`--token` 这类参数之后的那个）与地址里的账号、像秘密的查询都留空，标「像秘密的值已留空」，由人作为秘密变量填写。
+- 命令或参数落在项目里时按「测试」的同一规则标出（相对路径从那个文件夹算起，按路径段与各根目录及其 `realpath` 比较）；只有文字上已在某个根目录下的路径才去查文件系统，`/net/…` 这类自动挂载或别处的路径从不触碰：命令在项目、工作树、会话文件夹或 Latch 自己的目录里写「命令在项目里：不能添加」（保存本来就拒绝，`mcp-command-forbidden`）；参数或普通变量指向那里、且那里真有这个文件时（`@scope/server` 这样的包名有分隔符，但不是路径）写「参数指向项目里的文件：测试会拒绝」。
+- 选一个后预填表单（名称在合规且没人用时才填），然后是正常的添加：本机确认 `mcp.server.apply`，审计 `mcp.server.added` 带 `importedFrom`（项目 ID）。导入后是 Latch 自己的一份，仓库以后怎么改都不影响它。
+- 添加表单的命令与参数里有控制字符、改变方向的字符、行或段落分隔符或不可见字符时拒绝保存（「含不可见或改变方向的字符」），与导入的规则相同。
+
 ## 界面
 
-- **设置 › MCP**（`admin` 设备可见）：「Latch 的 MCP 服务器」，每行是传输图标（本机命令是终端，远程地址是地球）、名称、「用在」与状态词（已停用、未测试、可用 · N 个工具、琥珀的「需要登录 · 尚未实现」、红色的失败，原因在悬停里）。「添加…」先分段选「命令 | 远程地址」；远程地址的页列出 URL（「编辑…」）与请求头的名字和「已设置」（更换值、移除、添加），值从不显示。点开是这个服务器的页：状态与读取时间，「测试」「停用 / 启用」「移除」；命令、参数与工作目录；变量只列名字与「已设置」，可以更换值或移除；工具逐个开关；「用在」。`npx`、`uvx` 等没写版本时一行琥珀色「每次启动可能下载新版本」。「添加…」与除停用以外的改动只在这台 Mac 的桌面端出现；其他设备只看、只能停用。
+- **设置 › MCP**（`admin` 设备可见）：下半是各外部 Harness 自己的 MCP（见「Harness 自己的 MCP」）：Codex 直连一组「<名称> 自己的 MCP」带「读取」，其他 Harness 一行灰字。上半「Latch 的 MCP 服务器」，每行是传输图标（本机命令是终端，远程地址是地球）、名称、「用在」与状态词（已停用、未测试、可用 · N 个工具、琥珀的「需要登录 · 尚未实现」、红色的失败，原因在悬停里）。「添加…」先分段选「命令 | 远程地址」；远程地址的页列出 URL（「编辑…」）与请求头的名字和「已设置」（更换值、移除、添加），值从不显示。点开是这个服务器的页：状态与读取时间，「测试」「停用 / 启用」「移除」；命令、参数与工作目录；变量只列名字与「已设置」，可以更换值或移除；工具逐个开关；「用在」。`npx`、`uvx` 等没写版本时一行琥珀色「每次启动可能下载新版本」。「添加…」与除停用以外的改动只在这台 Mac 的桌面端出现；其他设备只看、只能停用。
 - **我的 Agent › 资料面板 › MCP**：这个 Agent 的会话拿到的服务器（「所有会话」的标出来）；这台 Mac 的桌面端可以用开关把已有的服务器挂上或取下，改的是服务器的「用在」，不要确认。内置 Harness 的 Agent 写「内置 Harness 尚未支持 MCP 命令」，pi 写「这个 Harness 不接收 MCP 服务器」。
 
 ## 测试替身

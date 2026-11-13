@@ -1,5 +1,6 @@
 import type { AgentPreset } from './agent-presets.ts'
 import type { AgentProbeResult } from './features.ts'
+import type { HarnessOwnMcp } from './mcp.ts'
 import type { ModeTier, SessionConfigOption, TaskMode } from './sessions.ts'
 
 /** How a person logs in to a harness: its own program, in a terminal on the computer that runs it. */
@@ -191,6 +192,11 @@ export interface HarnessInfo {
   catalogueRead?: CatalogueRead
   /** Model IDs a person typed for this harness, offered with its own models; a session sends one even when not listed. */
   customModels?: string[]
+  /**
+   * Its own MCP servers, as it reports them over its protocol (Codex's app-server), with 读取 to ask again. Absent: it
+   * does not report them, so Latch cannot say which it has.
+   */
+  ownMcp?: HarnessOwnMcp
   /** Absent: Latch knows no login command for it. */
   login?: HarnessLogin
   /**

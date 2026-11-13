@@ -1302,7 +1302,9 @@ export class HarnessHub implements Bridge {
     let catalogueRead: HarnessInfo['catalogueRead']
     let customModels: string[] | undefined
     let reported: HarnessInfo['attachmentsReported']
+    let ownMcp: HarnessInfo['ownMcp']
     try {
+      ownMcp = entry.bridge?.ownMcp?.()
       reported = entry.bridge?.promptCapabilities?.()
       catalogue = entry.bridge?.catalogue?.()
       catalogueRead = entry.bridge?.readCatalogue ? entry.bridge.catalogueRead?.() : undefined
@@ -1330,6 +1332,7 @@ export class HarnessHub implements Bridge {
       ...(catalogue ? { catalogue: structuredClone(catalogue) } : {}),
       ...(catalogueRead ? { catalogueRead: structuredClone(catalogueRead) } : {}),
       ...(customModels?.length ? { customModels: [...customModels] } : {}),
+      ...(ownMcp ? { ownMcp: structuredClone(ownMcp) } : {}),
       ...(driver.historyImport || driver.seededStart
         ? {
             history: {
@@ -1347,6 +1350,14 @@ export class HarnessHub implements Bridge {
     if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
     if (!member.bridge.readCatalogue) throw new AppError(409, 'catalogue-unsupported', '这个 Harness 不能在开始前读取可选项。')
     return member.bridge.readCatalogue({ auto, before })
+  }
+
+  /** 读取 of a harness's own MCP servers; see `Bridge.readOwnMcp`. */
+  async readHarnessMcp(id: string, before: () => Promise<void>): Promise<void> {
+    const member = this.member(id)
+    if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
+    if (!member.bridge.readOwnMcp || !member.bridge.ownMcp?.()) throw new AppError(409, 'mcp-not-reported', '这个 Harness 不报告自己的 MCP')
+    await member.bridge.readOwnMcp({ before })
   }
 
   /** Logs a harness out; see `Bridge.logout`. */

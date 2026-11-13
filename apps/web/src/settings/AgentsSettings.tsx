@@ -41,6 +41,7 @@ import { IconTile, Loading, MiddleEllipsis, NavRow, NoteLine, ObjectRow, Section
 import { FieldDialog } from './dialogs.tsx'
 import { AgentProbe } from './AgentProbe.tsx'
 import { LoginGroup } from './LoginGroup.tsx'
+import { HarnessMcpGroup } from './HarnessMcp.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 
 interface AgentsResponse {
@@ -678,6 +679,7 @@ function AgentPage({
         {preset && <InstallRows preset={preset} />}
       </SettingsGroup>
       {harness?.login && <LoginGroup harness={harness} allowed={run} terminal={loginTerminal} probe={agent.lastProbe} />}
+      {harness && <HarnessMcpGroup harness={harness} title="MCP" run={run} />}
       {probe && <AgentProbe agent={agent} disabled={busy} disabledReason={probeDisabledReason} onSaved={onSaved} />}
       <SettingsGroup>
         <SettingsRow

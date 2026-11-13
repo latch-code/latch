@@ -2346,6 +2346,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(await hub!.listTasks()).flatMap(task => sessionFolders(task, workspaceRoot)),
         ],
         commandDirectories: () => [...(options.commandDirectories?.() ?? [])],
+        projectFolders: workspaceId =>
+          config
+            .settings()
+            .workspaces.find(record => record.id === workspaceId)
+            ?.folders.map(folder => ({ id: folder.id, path: folder.path })),
         tmpRoot: runtime.tmpRoot,
         revoke: serverId => {
           toolGateway?.revokeMcp(serverId)
@@ -7803,6 +7808,44 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             detail: { agentId: id, ok: read?.last?.ok === true },
           })
         json(res, { ran, ...(read ? { catalogueRead: read } : {}), harness: harness.id })
+        return true
+      }
+      // 读取 of a Harness's own MCP servers: the same gate as starting a session, since it starts the same program, which
+      // then starts the servers it has configured. Only a person asks; never on a timer.
+      const ownMcpMatch = path.match(/^\/link\/api\/agents\/([^/]+)\/mcp$/)
+      if (ownMcpMatch && method === 'POST') {
+        requireScope(caller, 'run')
+        z.object({})
+          .strict()
+          .parse(await jsonBody(req))
+        recheck(caller, 'run')
+        const id = safeDecode(ownMcpMatch[1]!)
+        editableHarness(id)
+        let ok = false
+        try {
+          await hub!.readHarnessMcp(id, async () => {
+            if (closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
+            recheck(caller, 'run')
+            await audited({
+              action: 'agent.mcp.requested',
+              actor: actorOf(caller),
+              target: id,
+              stepup: 'none',
+              detail: { agentId: id },
+            })
+          })
+          ok = true
+        } finally {
+          await audited({
+            action: 'agent.mcp.read',
+            actor: actorOf(caller),
+            target: id,
+            stepup: 'none',
+            detail: { agentId: id, ok },
+          }).catch(() => {})
+          refresh()
+        }
+        json(res, { ownMcp: hub!.info(id)?.ownMcp ?? {} })
         return true
       }
       const modelsMatch = path.match(/^\/link\/api\/agents\/([^/]+)\/models$/)

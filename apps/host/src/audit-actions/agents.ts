@@ -27,6 +27,9 @@ export const AGENT_ACTIONS = {
   /** A harness started only to say what it offers: an empty session with no prompt, or its own model list. */
   'agent.catalogue.requested': z.strictObject({ agentId: opaqueId, auto: z.boolean() }),
   'agent.catalogue.read': z.strictObject({ agentId: opaqueId, ok: z.boolean() }),
+  /** 读取 of a Harness's own MCP servers (Codex's app-server): it starts the servers it has configured to answer. */
+  'agent.mcp.requested': z.strictObject({ agentId: opaqueId }),
+  'agent.mcp.read': z.strictObject({ agentId: opaqueId, ok: z.boolean() }),
   'agent.models.changed': z.strictObject({ agentId: opaqueId, count: z.number().int().min(0).max(32) }),
   /** The program's status command is about to run. */
   'agent.login.requested': z.strictObject({ agentId: opaqueId }),

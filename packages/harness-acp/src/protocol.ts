@@ -258,6 +258,29 @@ export const STEER_METHOD = '_session/steering'
  * before }`, answered like `session/new`; `ForkRefused` when the agent cannot, with the process left ready for one.
  */
 export const FORK_METHOD = '_latch/session/fork'
+/**
+ * Latch's own request to a wire whose harness reports its own MCP servers (Codex's app-server): params `{ sessionId? }`,
+ * answered `{ servers, truncated? }` as `HarnessMcpServer`s. With the session's ID it reads that session's servers as they
+ * are, starting nothing; without one, in a process with no session, the harness starts the servers it has configured.
+ */
+export const MCP_STATUS_METHOD = '_latch/mcp/status'
+/** The session update such a wire sends as the session's servers start: `{ sessionUpdate, servers }`, all of them. */
+export const MCP_STATUS_UPDATE = '_latch_mcp_status'
+/** What such a wire answers and sends, as the runtime keeps it: names, states, counts and origins only. */
+export const ownMcpStatus = z.object({
+  servers: z
+    .array(
+      z.strictObject({
+        name: z.string().min(1).max(1024),
+        state: z.enum(['starting', 'ready', 'needs-login', 'failed', 'cancelled', 'disabled', 'not-started', 'unknown']),
+        tools: z.number().int().min(0).max(100_000).optional(),
+        origin: z.string().max(2048).optional(),
+        login: z.string().max(128).optional(),
+      }),
+    )
+    .max(200),
+  truncated: z.literal(true).optional(),
+})
 
 export const cancelRequest = z.object({ requestId: z.union([z.string(), z.number()]) })
 

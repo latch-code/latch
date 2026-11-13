@@ -19,6 +19,12 @@
 // FAKE_CODEX_INTERRUPT_MS delays the end of an interrupted turn; FAKE_CODEX_INTERRUPT_NEVER=1 never ends it; a `sleep
 // late` turn asks for a command once interrupted. Anything else is echoed as `echo: <text>`, as the fake ACP agent
 // does. Text added with turn/steer is replied to in the same turn.
+//
+// Its own MCP servers: FAKE_CODEX_MCP is a JSON array of `McpServerStatus` (default none), which mcpServerStatus/list
+// pages (by `limit`) together with the thread's `config.mcp_servers`, as Codex lists both; with no thread it says the
+// servers start first. Once a thread opens, each of its own servers reports `starting`, then `ready`, or `failed` for one
+// whose runtimeStatus is `failed` (with `reauthenticationRequired` for `authenticationRequired`). FAKE_CODEX_MCP_LIMIT
+// makes its pages smaller and FAKE_CODEX_MCP_PAGE_MS answers each page that much later.
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 
@@ -481,8 +487,43 @@ function opened(record) {
   }
 }
 
+const ownMcp = env.FAKE_CODEX_MCP ? JSON.parse(env.FAKE_CODEX_MCP) : []
+/** The thread's Latch servers, which Codex lists beside its own. */
+let threadMcp = []
+
+function announceMcp(threadId) {
+  setTimeout(() => {
+    for (const server of ownMcp) notify('mcpServer/startupStatus/updated', { threadId, name: server.name, status: 'starting', error: null })
+    setTimeout(() => {
+      for (const server of ownMcp) {
+        const failed = server.runtimeStatus === 'failed' || server.runtimeStatus === 'authenticationRequired'
+        notify('mcpServer/startupStatus/updated', {
+          threadId,
+          name: server.name,
+          status: failed ? 'failed' : 'ready',
+          error: failed ? 'start failed' : null,
+          ...(server.runtimeStatus === 'authenticationRequired' ? { failureReason: 'reauthenticationRequired' } : {}),
+        })
+      }
+    }, 30)
+  }, 10)
+}
+
 async function handle(method, params) {
   switch (method) {
+    case 'mcpServerStatus/list': {
+      if (!params.threadId) log('mcp-started', { names: ownMcp.map(server => server.name) })
+      else if (!thread || params.threadId !== thread.id) throw Object.assign(new Error('thread not loaded'), { code: -32600 })
+      const listed = [
+        ...ownMcp,
+        ...(params.threadId ? threadMcp.map(name => ({ name, runtimeStatus: 'connected', tools: {}, authStatus: 'unsupported' })) : []),
+      ]
+      const start = params.cursor ? Number(params.cursor) : 0
+      const limit = Number(env.FAKE_CODEX_MCP_LIMIT ?? params.limit ?? 100)
+      if (env.FAKE_CODEX_MCP_PAGE_MS) await sleep(Number(env.FAKE_CODEX_MCP_PAGE_MS))
+      const next = start + limit < listed.length ? String(start + limit) : null
+      return { data: listed.slice(start, start + limit), nextCursor: next }
+    }
     case 'initialize':
       if (env.FAKE_ACP_INIT_AUTH === '1') throw Object.assign(new Error('Authentication required'), { code: -32000 })
       return { userAgent: `latch/${VERSION} (fake)`, codexHome: '/nonexistent', platformFamily: 'unix', platformOs: 'macos' }
@@ -519,6 +560,8 @@ async function handle(method, params) {
         preview: '',
       }
       save(thread)
+      threadMcp = Object.keys(params.config?.mcp_servers ?? {})
+      announceMcp(thread.id)
       return opened(thread)
     }
     case 'thread/resume': {
@@ -526,6 +569,8 @@ async function handle(method, params) {
       if (!found) throw Object.assign(new Error(`no rollout found for thread id ${params.threadId}`), { code: -32600 })
       if (env.FAKE_CODEX_RESUME_ERROR) throw Object.assign(new Error(env.FAKE_CODEX_RESUME_ERROR), { code: -32600 })
       thread = found
+      threadMcp = Object.keys(params.config?.mcp_servers ?? {})
+      announceMcp(found.id)
       return opened(found)
     }
     case 'thread/read': {

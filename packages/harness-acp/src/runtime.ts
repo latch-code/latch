@@ -41,6 +41,8 @@ import type {
   TaskStatus,
   DriverTaskSummary,
   HarnessCatalogue,
+  HarnessMcpReport,
+  HarnessOwnMcp,
   CatalogueRead,
   ToolDecision,
   UnknownResult,
@@ -149,6 +151,9 @@ import {
   RpcError,
   sessionState,
   FORK_METHOD,
+  MCP_STATUS_METHOD,
+  MCP_STATUS_UPDATE,
+  ownMcpStatus,
   STEER_METHOD,
   steerResult,
   toolFields,
@@ -253,6 +258,9 @@ interface Live {
   /** The tokens of the session's own MCP servers' `latch-mcp` bridges on this process, renewed as `tools` is. */
   mcp?: McpServerLease[]
 }
+
+/** How long 读取 of a harness's own MCP servers waits: the harness starts each one, `npx` downloads included. */
+const MCP_READ_MS = 60_000
 
 /** Why a Latch MCP server did not start, as the session says it. */
 const MCP_FAILURE_TEXT: Readonly<Record<McpStartFailure, string>> = {
@@ -725,6 +733,10 @@ export class AgentRuntime implements Bridge {
   /** The catalogue read in progress; every request while it runs shares it. */
   private reading?: Promise<{ ran: boolean }>
   private readingNow = false
+  /** The harness's own MCP servers as it last reported them, for the definition it reported them under. Memory only. */
+  private ownMcpState?: { definitionHash: string; last?: HarnessMcpReport; failed?: { at: string; message: string } }
+  /** 读取 of the harness's own MCP servers in progress; a second request shares it. */
+  private mcpReading?: Promise<void>
   private started?: Promise<void>
   private closing?: Promise<void>
   private closed = false
@@ -1067,6 +1079,94 @@ export class AgentRuntime implements Bridge {
       this.notify()
     })
     this.reading = reading
+    return reading
+  }
+
+  /** Whether this harness reports its own MCP servers over its protocol: Codex's app-server does; ACP does not. */
+  private reportsOwnMcp(): boolean {
+    return this.selection.profile?.wire === 'codex'
+  }
+
+  /** Its own MCP servers as it last reported them for its current definition; undefined when it never reports them. */
+  ownMcp(): HarnessOwnMcp | undefined {
+    if (!this.reportsOwnMcp()) return undefined
+    const known = this.ownMcpState && this.ownMcpState.definitionHash === this.definitionNow() ? this.ownMcpState : undefined
+    return {
+      ...(this.mcpReading ? { running: true as const } : {}),
+      ...(known?.last ? { last: structuredClone(known.last) } : {}),
+      ...(known?.failed ? { failed: { ...known.failed } } : {}),
+    }
+  }
+
+  private noteOwnMcp(reported: unknown, via: HarnessMcpReport['via']): void {
+    const parsed = ownMcpStatus.safeParse(reported)
+    const definitionHash = this.definitionNow()
+    if (!parsed.success || !definitionHash) return
+    this.ownMcpState = {
+      definitionHash,
+      last: {
+        servers: parsed.data.servers.map(server => ({ ...server, name: clip(this.redact(server.name), 128) })),
+        at: this.now(),
+        via,
+        ...(parsed.data.truncated ? { truncated: true as const } : {}),
+      },
+    }
+    this.notify()
+  }
+
+  /**
+   * 读取: the harness's own MCP servers from a process with no session, in a private empty folder, so that no project's
+   * configuration is read. The harness then starts the servers it has configured, which is why only a person asks.
+   */
+  readOwnMcp(options: { before?: () => Promise<void> } = {}): Promise<void> {
+    if (this.mcpReading) return this.mcpReading
+    const reading = (async () => {
+      await this.ready()
+      this.assertOpen()
+      if (!this.reportsOwnMcp()) throw new AppError(409, 'mcp-not-reported', `${this.agent.name} 不报告自己的 MCP`)
+      const { definitionHash } = this.currentLaunch()
+      await options.before?.()
+      // One deadline for the whole read, the process's start included.
+      const deadline = Date.now() + MCP_READ_MS
+      this.notify()
+      const key = `mcp-read-${randomUUID()}`
+      await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
+      const cwd = await realpath(await mkdtemp(join(this.tmpRoot(), 'mcp-')))
+      let answer: unknown
+      try {
+        const launch = this.currentLaunch(await this.projectConfig(cwd))
+        const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
+        this.enter(this.holds, key)
+        try {
+          const left = deadline - Date.now()
+          if (left <= 0) throw new RequestTimeout(MCP_STATUS_METHOD)
+          answer = await live.wire.request(MCP_STATUS_METHOD, {}, left, this.lifetime.signal)
+        } catch (error) {
+          throw this.publicError(error, live)
+        } finally {
+          this.leave(this.holds, key)
+        }
+      } catch (error) {
+        if (this.definitionNow(true) === definitionHash)
+          this.ownMcpState = {
+            ...(this.ownMcpState?.definitionHash === definitionHash ? this.ownMcpState : {}),
+            definitionHash,
+            failed: { at: this.now(), message: clip(this.publicError(error, undefined).message, 300) },
+          }
+        throw error
+      } finally {
+        await this.discardProcess(key)
+        await rm(cwd, { recursive: true, force: true }).catch(() => {})
+      }
+      if (this.definitionNow(true) !== definitionHash) return
+      this.noteOwnMcp(answer, 'read')
+      if (this.ownMcpState?.definitionHash !== definitionHash || this.ownMcpState.last?.via !== 'read')
+        throw new AppError(502, 'agent-protocol', `${this.agent.name} 的 MCP 状态无效`)
+    })().finally(() => {
+      if (this.mcpReading === reading) this.mcpReading = undefined
+      this.notify()
+    })
+    this.mcpReading = reading
     return reading
   }
 
@@ -4558,6 +4658,11 @@ export class AgentRuntime implements Bridge {
     // What the agent says and its tools print may hold a Latch MCP server's secret (a server echoing its environment):
     // masked before anything is stored or sent to a device.
     const update = maskKnownSecretsIn(this.selection.profile?.normalizeUpdate?.(envelope.data.update) ?? envelope.data.update)
+    // The harness's own MCP servers starting: a report about the harness, not output of the session.
+    if (update.sessionUpdate === MCP_STATUS_UPDATE) {
+      if (this.reportsOwnMcp()) this.noteOwnMcp(update, 'session')
+      return
+    }
     const candidate = this.runs.get(taskId)
     const run = candidate?.sent && candidate.live === live ? candidate : undefined
     if (run) run.lastEventAt = this.clock()

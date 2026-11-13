@@ -159,3 +159,78 @@ export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/gu, '').toLowerCase()
   return host === 'localhost' || host === '::1' || /^127(?:\.\d{1,3}){3}$/u.test(host)
 }
+
+/**
+ * A Harness's own MCP server as the Harness itself reports it over its protocol (Codex's app-server). Latch shows it
+ * and never changes it: its definition, its login and its tokens stay the Harness's.
+ */
+export type HarnessMcpState = 'starting' | 'ready' | 'needs-login' | 'failed' | 'cancelled' | 'disabled' | 'not-started' | 'unknown'
+
+export interface HarnessMcpServer {
+  name: string
+  state: HarnessMcpState
+  /** How many tools it listed. Absent: not reported. */
+  tools?: number
+  /** A remote server's origin as the Harness reports it: no path, query or credentials. */
+  origin?: string
+  /** The Harness's own command that logs in to it, given only when the Harness reports that it needs a login. */
+  login?: string
+}
+
+/** The latest report: from a session of the Harness (live, as its servers start) or from 读取 in settings. */
+export interface HarnessMcpReport {
+  servers: HarnessMcpServer[]
+  at: string
+  via: 'session' | 'read'
+  /** More servers than Latch lists. */
+  truncated?: true
+}
+
+/** On a Harness that reports its own MCP servers (`HarnessInfo.ownMcp`); absent on every other. */
+export interface HarnessOwnMcp {
+  running?: true
+  last?: HarnessMcpReport
+  /** The last 读取 failed, with the Host's own words. */
+  failed?: { at: string; message: string }
+}
+
+/** A server in a project's `.mcp.json`, offered as a prefilled 添加 form; never run, never expanded. */
+export interface McpImportCandidate {
+  /** Its key in the file, clipped and with hidden characters shown. */
+  key: string
+  /** The key when it is a name a server may have here and no server has; otherwise empty, for the person to type. */
+  name: string
+  transport: 'stdio' | 'http'
+  command?: string
+  args?: string[]
+  /** A plain variable keeps its value; a secret one (or one written `${…}`) only its name, for the person to fill. */
+  env?: Array<{ name: string; secret: boolean; value?: string }>
+  url?: string
+  /** Request headers by name only: every value is secret and is typed again. */
+  headers?: string[]
+  /**
+   * `expansion`: it writes `${…}`, which Latch shows as written and never expands. `repository-command`: its command is
+   * inside a project or Latch's data, which Latch never saves. `repository-path`: its arguments or variables name a file
+   * there, so 测试 refuses it. `secret`: an argument, or the address's account or query, looked like a credential and
+   * was left blank, for the person to type as a secret.
+   */
+  flags: Array<'expansion' | 'repository-command' | 'repository-path' | 'secret'>
+}
+
+export type McpImportSkip = 'invalid' | 'unsupported' | 'legacy-sse'
+
+/** One folder's `.mcp.json`. */
+export interface McpImportFile {
+  folderId: string
+  /** `missing`: no file. `refused`: not a regular file, over 64 KiB, or not the shape of `.mcp.json`. */
+  status: 'ok' | 'missing' | 'refused'
+  reason?: 'not-file' | 'too-large' | 'not-json' | 'invalid'
+  servers: McpImportCandidate[]
+  skipped: Array<{ key: string; reason: McpImportSkip }>
+  truncated?: true
+}
+
+export interface McpImportResponse {
+  workspaceId: string
+  files: McpImportFile[]
+}

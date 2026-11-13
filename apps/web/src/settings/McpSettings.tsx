@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Cable } from 'lucide-react'
 import {
+  escapeSecurityText,
   isLoopbackHost,
   isMcpHeaderName,
   isMcpServerName,
@@ -40,6 +41,8 @@ import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { dateTime } from '../format.ts'
 import { IconTile, Loading, MiddleEllipsis, NoteLine, ObjectRow, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
+import { HarnessesMcp } from './HarnessMcp.tsx'
+import { ImportDialog, importedForm } from './McpImport.tsx'
 
 export const MCP_ICON = Cable
 
@@ -151,6 +154,13 @@ export function remoteUrl(value: string): boolean {
     return false
   }
 }
+/**
+ * Text a confirmation would have to escape (controls, bidi, line separators, invisible characters): a command or an
+ * argument holding one reads differently than it runs, so the form refuses it.
+ */
+export const hiddenCharacters = (text: string) => escapeSecurityText(text) !== text
+const HIDDEN = '含不可见或改变方向的字符'
+
 const lines = (text: string) =>
   text
     .split('\n')
@@ -180,20 +190,27 @@ function AddServer({
   const [scope, setScope] = useState<McpScope>({ all: true, agents: [], projects: [] })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [importing, setImporting] = useState(false)
+  /** The project whose `.mcp.json` filled the form, named in the record of the addition. */
+  const [importedFrom, setImportedFrom] = useState<string | undefined>(undefined)
   const write = useWrite()
   const nameError = name && !isMcpServerName(name) ? '字母、数字、- 与 _，不连写 __，不以 latch 开头' : undefined
   const badEnv = env.find(row => row.key.trim() && !ENV_NAME.test(row.key.trim()))
   const badHeader = headers.find(row => row.key.trim() && !HEADER.test(row.key.trim()))
   const remote = transport === 'http'
   const urlError = url.trim() && !remoteUrl(url.trim()) ? 'https:// 地址，或这台 Mac 上的 http://localhost' : undefined
-  const ready = remote ? !!url.trim() && !urlError && !badHeader : !!command.trim() && !badEnv
+  const commandError = hiddenCharacters(command) ? HIDDEN : undefined
+  const argsError = args.split('\n').some(hiddenCharacters) ? HIDDEN : undefined
+  const ready = remote ? !!url.trim() && !urlError && !badHeader : !!command.trim() && !badEnv && !commandError && !argsError
   const save = async (event: FormEvent) => {
     event.preventDefault()
     if (!name.trim() || !ready || nameError || busy) return
     setBusy(true)
     setError('')
+    const from = importedFrom ? { importedFrom } : {}
     const body = remote
       ? {
+          ...from,
           baseRevision: revision,
           transport: 'http',
           name: name.trim(),
@@ -202,6 +219,7 @@ function AddServer({
           scope,
         }
       : {
+          ...from,
           baseRevision: revision,
           name: name.trim(),
           command: command.trim(),
@@ -304,6 +322,7 @@ function AddServer({
                   label="值"
                   type="password"
                   value={row.value}
+                  placeholder="填写值"
                   spellCheck={false}
                   autoComplete="new-password"
                   onChange={event => {
@@ -345,6 +364,7 @@ function AddServer({
                 spellCheck={false}
                 autoComplete="off"
                 placeholder="例如 npx 或 /usr/local/bin/server"
+                error={commandError}
                 onChange={event => {
                   setCommand(event.target.value)
                 }}
@@ -354,6 +374,7 @@ function AddServer({
                 hint="每行一个；${workspaceFolder} 是会话的项目文件夹"
                 rows={3}
                 value={args}
+                error={argsError}
                 spellCheck={false}
                 onChange={event => {
                   setArgs(event.target.value)
@@ -394,6 +415,7 @@ function AddServer({
                   label="值"
                   type={row.secret ? 'password' : 'text'}
                   value={row.value}
+                  placeholder={row.secret ? '填写值' : undefined}
                   spellCheck={false}
                   autoComplete={row.secret ? 'new-password' : 'off'}
                   onChange={event => {
@@ -426,6 +448,42 @@ function AddServer({
         </>
       )}
       <ScopeGroup snapshot={snapshot} scope={scope} onChange={setScope} />
+      <div className="settings-note">
+        {importedFrom && (
+          <span>{`来自 ${projectLabel(
+            snapshot.catalog?.workspaces.find(project => project.id === importedFrom),
+            importedFrom,
+          )} 的 .mcp.json`}</span>
+        )}
+        <Button
+          variant="link"
+          size="xs"
+          disabled={busy}
+          onClick={() => {
+            setImporting(true)
+          }}>
+          从项目导入…
+        </Button>
+      </div>
+      <ImportDialog
+        open={importing}
+        snapshot={snapshot}
+        onClose={() => {
+          setImporting(false)
+        }}
+        onPick={(candidate, workspaceId) => {
+          const form = importedForm(candidate)
+          setTransport(form.transport)
+          setName(form.name)
+          setCommand(form.command)
+          setArgs(form.args)
+          setEnv(form.env)
+          setUrl(form.url)
+          setHeaders(form.headers)
+          setImportedFrom(workspaceId)
+          setError('')
+        }}
+      />
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <InlineConfirm active={busy} rank={1} />
       <div className="settings-actions">
@@ -1143,7 +1201,8 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
   const [data, setData] = useState<McpServersResponse | null>(null)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState<null | { kind: 'new' } | { kind: 'server'; id: string }>(null)
-  const local = deviceAccess(snapshot, currentShell()).local
+  const access = deviceAccess(snapshot, currentShell())
+  const local = access.local
   const load = useCallback(async () => {
     try {
       setData(await api<McpServersResponse>('mcp/servers'))
@@ -1203,6 +1262,11 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
           />
         ))}
       </SettingsGroup>
+      <HarnessesMcp
+        harnesses={snapshot.catalog?.harnesses ?? []}
+        run={access.scopes.has('run')}
+        latchNames={data.servers.map(server => server.name)}
+      />
       {!local && (
         <div className="settings-note">
           <Hint label="只在这台 Mac 上添加和修改">停用可以在任何能管理这台 Mac 的设备上做；添加、修改与移除只在这台 Mac 的 Latch 里。</Hint>

@@ -5,12 +5,12 @@
  * unchanged. Types follow `codex app-server generate-ts` of Codex 0.167.
  */
 import { z } from 'zod'
-import { escapeSecurityText } from '@latch/protocol'
+import { escapeSecurityText, type HarnessMcpServer, type HarnessMcpState } from '@latch/protocol'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { CODEX_EFFORT_ID, CODEX_MODEL_ID, codexModel, codexOptions, type CodexModels } from '../codex-models.ts'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
-import { RPC, RpcError, STEER_METHOD, type RpcId } from '../protocol.ts'
+import { MCP_STATUS_METHOD, MCP_STATUS_UPDATE, RPC, RpcError, STEER_METHOD, type RpcId } from '../protocol.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
 import type { AgentWire, WireHandlers } from './types.ts'
 
@@ -92,6 +92,76 @@ const sessionParams = z.object({
   mcpServers: z.array(z.unknown()).optional(),
   additionalDirectories: z.array(text.max(4096)).max(64).optional(),
 })
+
+/** Pages and servers of Codex's own MCP servers Latch reads at most. */
+const MCP_PAGES = 4
+const MCP_MAX = 200
+/** A name `codex mcp login <name>` can be given as one word that no shell, nor Codex, reads as anything else (no leading `-`). */
+const LOGIN_NAME = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/u
+/** `McpServerStatus.runtimeStatus` (0.156, 0.167) in Latch's words. */
+const RUNTIME_STATE: Readonly<Record<string, HarnessMcpState>> = {
+  notStarted: 'not-started',
+  starting: 'starting',
+  connected: 'ready',
+  authenticationRequired: 'needs-login',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  disabled: 'disabled',
+}
+/** `mcpServer/startupStatus/updated`'s `status`. */
+const STARTUP_STATE: Readonly<Record<string, HarnessMcpState>> = {
+  starting: 'starting',
+  ready: 'ready',
+  failed: 'failed',
+  cancelled: 'cancelled',
+}
+const mcpStatusEntry = z.object({
+  name: text.min(1).max(256),
+  runtimeStatus: text.max(64).nullish().catch(undefined),
+  httpOrigin: text.max(2048).nullish().catch(undefined),
+  tools: z.unknown().optional(),
+})
+const mcpStatusPage = z.object({ data: z.array(z.unknown()).max(1000), nextCursor: text.max(1024).nullish().catch(undefined) })
+const startupUpdate = z.object({
+  name: text.min(1).max(256),
+  status: text.max(64),
+  failureReason: text.max(64).nullish().catch(undefined),
+})
+
+/** A remote server's origin as Codex reports it, kept only when it is one: never a path, a query or credentials. */
+function mcpOrigin(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  try {
+    const origin = new URL(value).origin
+    return origin === 'null' ? undefined : origin
+  } catch {
+    return undefined
+  }
+}
+
+/** How many tools Codex lists for it: its `tools` is a map by name (an array in older shapes). */
+function toolCount(tools: unknown): number | undefined {
+  const count = Array.isArray(tools) ? tools.length : isRecord(tools) ? Object.keys(tools).length : undefined
+  return count === undefined ? undefined : Math.min(count, 100_000)
+}
+
+/**
+ * One of Codex's own MCP servers as Latch shows it: its name with hidden characters shown, and Codex's own login command
+ * for it only when Codex reports it needs one and the name is one word a shell reads as written.
+ */
+export function codexMcpServer(
+  name: string,
+  state: HarnessMcpState,
+  facts: { tools?: number | undefined; origin?: string | undefined } = {},
+): HarnessMcpServer {
+  return {
+    name: escapeSecurityText(clip(name, 128)),
+    state,
+    ...(facts.tools !== undefined ? { tools: facts.tools } : {}),
+    ...(facts.origin ? { origin: facts.origin } : {}),
+    ...(state === 'needs-login' && LOGIN_NAME.test(name) ? { login: `codex mcp login ${name}` } : {}),
+  }
+}
 
 /** An MCP elicitation that is Codex asking to run a server's tool, not a question of the server's own. */
 function isToolApproval(params: Record<string, unknown>): boolean {
@@ -220,6 +290,10 @@ export class CodexWire implements AgentWire {
   private readonly toolAnswers = new Set<string>()
   /** Calls Codex's review model denied, with its reason. */
   private readonly denied = new Map<string, string>()
+  /** Codex's own MCP servers on this thread, by the name Codex gives them; Latch's own are never among them. */
+  private readonly ownMcp = new Map<string, HarnessMcpServer>()
+  /** Names whose start Codex reported while a list was being read: the report is newer than the list. */
+  private mcpSeen?: Set<string>
 
   private constructor(
     spec: SpawnSpec,
@@ -268,6 +342,8 @@ export class CodexWire implements AgentWire {
         return this.steer(params, timeoutMs, signal)
       case 'logout':
         return this.send('account/logout', undefined, timeoutMs, signal)
+      case MCP_STATUS_METHOD:
+        return this.mcpStatus(params, timeoutMs, signal)
       default:
         return Promise.reject(new RpcError(RPC.methodNotFound, `Method not found: ${clip(method, 200)}`))
     }
@@ -398,7 +474,93 @@ export class CodexWire implements AgentWire {
     this.threadId = read.data.thread.id
     this.model = read.data.model ?? this.model
     this.effort = read.data.reasoningEffort ?? this.effort
+    this.reportMcp(timeoutMs)
     return { sessionId: this.threadId, configOptions: this.options() }
+  }
+
+  /**
+   * Codex's own MCP servers, as `mcpServerStatus/list` reports them: for the thread, reusing its connections and starting
+   * nothing; without one, Codex connects to the servers it has configured. Latch's own servers on the thread are left
+   * out: they are Latch's to show.
+   */
+  private async readMcp(
+    threadId: string | undefined,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<{ servers: Map<string, HarnessMcpServer>; truncated?: true }> {
+    const latch = new Set(this.servers.map(server => server.name))
+    const servers = new Map<string, HarnessMcpServer>()
+    // One deadline for every page: a slow Codex cannot stretch the read by answering each page just in time.
+    const deadline = timeoutMs ? Date.now() + timeoutMs : undefined
+    let truncated = false
+    let cursor: string | null | undefined = null
+    for (let pages = 0; ; pages++) {
+      if (pages >= MCP_PAGES) {
+        truncated = true
+        break
+      }
+      const left = deadline === undefined ? undefined : deadline - Date.now()
+      if (left !== undefined && left <= 0) throw new RequestTimeout('mcpServerStatus/list')
+      const page = mcpStatusPage.safeParse(
+        await this.send(
+          'mcpServerStatus/list',
+          { cursor, limit: 100, detail: 'toolsAndAuthOnly', ...(threadId ? { threadId } : {}) },
+          left,
+          signal,
+        ),
+      )
+      if (!page.success) throw new RpcError(RPC.internal, 'Codex answered mcpServerStatus/list in a shape Latch does not read')
+      for (const entry of page.data.data) {
+        const item = mcpStatusEntry.safeParse(entry)
+        if (!item.success || latch.has(item.data.name) || servers.has(item.data.name)) continue
+        if (servers.size >= MCP_MAX) {
+          truncated = true
+          break
+        }
+        const state = RUNTIME_STATE[item.data.runtimeStatus ?? ''] ?? 'unknown'
+        servers.set(
+          item.data.name,
+          codexMcpServer(item.data.name, state, { tools: toolCount(item.data.tools), origin: mcpOrigin(item.data.httpOrigin) }),
+        )
+      }
+      cursor = page.data.nextCursor
+      if (!cursor || truncated) break
+    }
+    return { servers, ...(truncated ? { truncated: true as const } : {}) }
+  }
+
+  /** `_latch/mcp/status`: the session's servers when it names one, or, in a process with no thread, all Codex has. */
+  private async mcpStatus(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+    const sessionId = isRecord(params) && typeof params.sessionId === 'string' ? params.sessionId : undefined
+    if (sessionId !== undefined) this.assertSession(sessionId)
+    else if (this.threadId) throw new RpcError(RPC.invalidParams, 'This process runs a session')
+    const read = await this.readMcp(sessionId, timeoutMs, signal)
+    return { servers: [...read.servers.values()], ...(read.truncated ? { truncated: true } : {}) }
+  }
+
+  /** Once a thread is open: its servers as Codex lists them, then as each start is reported. Never fails the thread. */
+  private reportMcp(timeoutMs?: number): void {
+    const threadId = this.threadId
+    if (!threadId) return
+    const seen = new Set<string>()
+    this.mcpSeen = seen
+    void this.readMcp(threadId, timeoutMs)
+      .then(read => {
+        if (this.threadId !== threadId) return
+        for (const [name, server] of read.servers) {
+          const newer = seen.has(name) ? this.ownMcp.get(name) : undefined
+          this.ownMcp.set(name, newer ? codexMcpServer(name, newer.state, { tools: server.tools, origin: server.origin }) : server)
+        }
+        this.sendMcp(read.truncated)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (this.mcpSeen === seen) this.mcpSeen = undefined
+      })
+  }
+
+  private sendMcp(truncated?: true): void {
+    this.update({ sessionUpdate: MCP_STATUS_UPDATE, servers: [...this.ownMcp.values()], ...(truncated ? { truncated } : {}) })
   }
 
   /** A thread's turns as the updates a session would have had: what the person said, Codex's replies and its calls. */
@@ -849,6 +1011,18 @@ export class CodexWire implements AgentWire {
         const size = count(usage.modelContextWindow)
         if (used !== undefined || size)
           this.update({ sessionUpdate: 'usage_update', ...(used !== undefined ? { used } : {}), ...(size ? { size } : {}) })
+        return
+      }
+      case 'mcpServer/startupStatus/updated': {
+        const read = startupUpdate.safeParse(params)
+        if (!read.success || !this.threadId || this.servers.some(server => server.name === read.data.name)) return
+        const before = this.ownMcp.get(read.data.name)
+        if (!before && this.ownMcp.size >= MCP_MAX) return
+        const state =
+          read.data.failureReason === 'reauthenticationRequired' ? 'needs-login' : (STARTUP_STATE[read.data.status] ?? 'unknown')
+        this.ownMcp.set(read.data.name, codexMcpServer(read.data.name, state, { tools: before?.tools, origin: before?.origin }))
+        this.mcpSeen?.add(read.data.name)
+        this.sendMcp()
         return
       }
       case 'error': {

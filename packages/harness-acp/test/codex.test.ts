@@ -17,7 +17,9 @@ import {
   type AcpAgentOptions,
   type AgentRecord,
 } from '../src/index.ts'
-import { codexVersion } from '../src/wires/codex.ts'
+import { CodexWire, codexMcpServer, codexVersion } from '../src/wires/codex.ts'
+import { MCP_STATUS_METHOD } from '../src/protocol.ts'
+import { RequestTimeout } from '../src/wires/process.ts'
 
 const FAST: AcpAgentOptions = { cancelGraceMs: 2_000, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: 5_000, log: () => {} }
 const cleanups: Array<() => Promise<void> | void> = []
@@ -569,5 +571,107 @@ describe('Codex over its app-server', () => {
     await rm(join(t.bin, 'codex'))
     forgetCommandLookups()
     expect(presetRoute('codex')).toMatchObject({ command: 'codex-acp', args: [] })
+  })
+
+  describe('Codex’s own MCP servers', () => {
+    const OWN = JSON.stringify([
+      {
+        name: 'github',
+        runtimeStatus: 'connected',
+        httpOrigin: 'https://api.github.com/mcp?x=1',
+        tools: { a: {}, b: {} },
+        authStatus: 'bearerToken',
+      },
+      { name: 'linear', runtimeStatus: 'authenticationRequired', tools: {}, authStatus: 'notLoggedIn' },
+    ])
+
+    it('reads the thread’s servers without starting any, leaves Latch’s own out, and follows each start Codex reports', async () => {
+      const toolGateway: ToolGateway = {
+        open: () => undefined,
+        openMcp: async () => [
+          {
+            name: 'files',
+            socketPath: '/tmp/latch-test/tools/gateway.sock',
+            tokenFile: '/tmp/latch-test/tools/f.lbt',
+            token: `lbt1.${'f'.repeat(43)}`,
+            close() {},
+          },
+        ],
+      }
+      const t = await computer({ FAKE_CODEX_MCP: OWN }, [], {}, { toolGateway })
+      const bridge = await t.open()
+      expect(bridge.ownMcp?.()).toEqual({})
+      await settled(bridge, await start(bridge, t.main, 'echo hi'))
+      await vi.waitFor(() => expect(bridge.ownMcp?.()?.last?.servers.find(server => server.name === 'github')?.state).toBe('ready'))
+      await vi.waitFor(() => expect(bridge.ownMcp?.()?.last?.servers.find(server => server.name === 'linear')?.state).toBe('needs-login'))
+      const last = bridge.ownMcp!()!.last!
+      expect(last.via).toBe('session')
+      expect(last.servers.map(server => server.name).sort()).toEqual(['github', 'linear'])
+      expect(last.servers.find(server => server.name === 'github')).toMatchObject({ tools: 2, origin: 'https://api.github.com' })
+      expect(last.servers.find(server => server.name === 'github')?.login).toBeUndefined()
+      expect(last.servers.find(server => server.name === 'linear')?.login).toBe('codex mcp login linear')
+      const log = await t.log()
+      expect(sent(log, 'mcpServerStatus/list')[0]!.params).toMatchObject({ detail: 'toolsAndAuthOnly', threadId: expect.any(String) })
+      expect(log.some(entry => entry.event === 'mcp-started')).toBe(false)
+    })
+
+    it('读取 asks a process with no thread, in an empty folder of its own, which starts what Codex has configured', async () => {
+      const t = await computer({ FAKE_CODEX_MCP: OWN })
+      const bridge = await t.open()
+      await bridge.readOwnMcp!()
+      const read = bridge.ownMcp!()!
+      expect(read.running).toBeUndefined()
+      expect(read.last).toMatchObject({ via: 'read' })
+      expect(read.last!.servers.map(server => [server.name, server.state])).toEqual([
+        ['github', 'ready'],
+        ['linear', 'needs-login'],
+      ])
+      const log = await t.log()
+      const listed = sent(log, 'mcpServerStatus/list')
+      expect(listed).toHaveLength(1)
+      expect(listed[0]!.params).not.toHaveProperty('threadId')
+      expect(log.some(entry => entry.event === 'mcp-started')).toBe(true)
+      const started = log.filter(entry => entry.event === 'start').at(-1) as LogEntry & { cwd: string }
+      expect(started.cwd).not.toBe(t.main)
+      expect(sent(log, 'thread/start')).toHaveLength(0)
+    })
+
+    it('shows a name with hidden characters written out, and gives a login command only for a plain one Codex says needs it', () => {
+      expect(codexMcpServer('evil\u202eserver', 'needs-login').name).not.toContain('\u202e')
+      expect(codexMcpServer('evil\u202eserver', 'needs-login').login).toBeUndefined()
+      expect(codexMcpServer('a;rm -rf ~', 'needs-login').login).toBeUndefined()
+      expect(codexMcpServer('ok-name', 'failed').login).toBeUndefined()
+      expect(codexMcpServer('ok-name', 'needs-login').login).toBe('codex mcp login ok-name')
+      // A leading `-` would read as one of Codex's own options.
+      expect(codexMcpServer('-h', 'needs-login').login).toBeUndefined()
+      expect(codexMcpServer('--help', 'needs-login').login).toBeUndefined()
+    })
+
+    it('gives the whole read one deadline, not one per page', async () => {
+      const cwd = await realpath(await mkdtemp(join(tmpdir(), 'latch-codex-deadline-')))
+      cleanups.push(() => rm(cwd, { recursive: true, force: true }))
+      const servers = JSON.stringify([1, 2, 3].map(at => ({ name: `s${at}`, runtimeStatus: 'connected', tools: {} })))
+      const wire = (pageMs: string) =>
+        CodexWire.spawn(
+          {
+            command: process.execPath,
+            args: [FAKE_CODEX_APP_SERVER],
+            cwd,
+            env: { ...process.env, FAKE_CODEX_MCP: servers, FAKE_CODEX_MCP_LIMIT: '1', FAKE_CODEX_MCP_PAGE_MS: pageMs },
+            maxLineBytes: 1 << 20,
+            redact: text => text,
+          },
+          { request: async () => ({}), notification: () => {}, exit: () => {} },
+        )
+      const slow = wire('150')
+      cleanups.push(() => void slow.stop('kill', 100))
+      await slow.request('initialize', {}, 5_000)
+      // Each page alone is well within 300 ms; the three together are not.
+      await expect(slow.request(MCP_STATUS_METHOD, {}, 300)).rejects.toBeInstanceOf(RequestTimeout)
+      const quick = wire('10')
+      cleanups.push(() => void quick.stop('kill', 100))
+      await quick.request('initialize', {}, 5_000)
+      expect(((await quick.request(MCP_STATUS_METHOD, {}, 300)) as { servers: unknown[] }).servers).toHaveLength(3)
+    })
   })
 })

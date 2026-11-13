@@ -1,10 +1,10 @@
 import { chromium } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { AppSnapshot, McpServerView, TaskDetail } from '@latch/protocol'
+import type { AppSnapshot, McpServersResponse, McpServerView, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, FAKE_MCP_STDIO, startFakeMcpHttp, startFakeModels, type TestDevice } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
@@ -207,6 +207,99 @@ describe('Latch’s MCP servers, end to end', () => {
       await testHost.close()
       await remote.close()
       await models.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('从项目导入: reads a project’s .mcp.json on this Mac, prefills 添加 without the secret, and adds it with the confirmation', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-mcp-import-e2e-')))
+    const project = join(root, 'repo')
+    const uiDir = resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web')
+    const browser = await chromium.launch(browserLaunchOptions())
+    const testHost = await startTestHost({ demo: false, uiDir, dataDir: join(root, 'data'), workspaceRoot: join(root, 'workspace') })
+    try {
+      const desktop = await testHost.enroll({ listener: 'unix', name: '本机桌面端' })
+      await mkdir(project)
+      await writeFile(
+        join(project, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            tools: { command: process.execPath, args: ['--version'], env: { API_TOKEN: '${API_TOKEN}', LOG_LEVEL: 'debug' } },
+          },
+        }),
+      )
+      const { workspace } = (await (await desktop.addFolders({ paths: [project], name: 'repo' })).json()) as { workspace: { id: string } }
+
+      // The desktop app on this Mac: its shell, its device on host.sock, the confirmation by the test backend.
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', deviceScaleFactor: 1 })
+      context.setDefaultTimeout(15_000)
+      const page = await context.newPage()
+      await enrollBrowser(page, testHost, { name: 'MCP 电脑', scopes: ['view', 'run', 'approve:standard', 'admin'] })
+      await page.addInitScript(() => {
+        Object.defineProperty(window, 'latchShell', { value: { kind: 'electron', devMode: false, platform: 'darwin' } })
+      })
+      await page.route('**/link/api/snapshot', async route => {
+        const response = await route.fetch()
+        const snapshot: AppSnapshot = await response.json()
+        await route.fulfill({ response, json: { ...snapshot, device: { ...snapshot.device, listener: 'unix' } } })
+      })
+      await page.route('**/link/api/mcp/**', async route => {
+        const request = route.request()
+        const url = new URL(request.url())
+        const answer = await desktop.confirmed(`${url.pathname.replace('/link/api/', '')}${url.search}`, {
+          method: request.method(),
+          ...(request.postData() ? { body: request.postDataJSON() } : {}),
+        })
+        await route.fulfill({ status: answer.status, contentType: 'application/json', body: await answer.text() })
+      })
+      await page.reload()
+      await connected(page)
+      const settings = await openSettings(page)
+      await openSection(settings, 'MCP')
+      await settings.getByRole('button', { name: '添加…', exact: true }).click()
+      await settings.getByRole('button', { name: '从项目导入…', exact: true }).click()
+      const dialog = page.getByRole('dialog')
+      await dialog.getByRole('button', { name: '读取 repo 的 .mcp.json', exact: true }).click()
+      await dialog.getByText('含 ${…}：按原样显示，不展开', { exact: true }).waitFor()
+      await dialog.getByRole('button', { name: '导入 tools', exact: true }).click()
+
+      // Prefilled: the name, the command as written, the plain variable with its value, the secret one empty.
+      await expect.poll(() => settings.getByRole('textbox', { name: '名称', exact: true }).inputValue()).toBe('tools')
+      expect(await settings.getByRole('textbox', { name: '命令', exact: true }).inputValue()).toBe(process.execPath)
+      const names = settings.getByRole('textbox', { name: '变量名', exact: true })
+      expect(await names.count()).toBe(2)
+      expect(await names.nth(0).inputValue()).toBe('API_TOKEN')
+      const values = settings.locator('.mcp-env-row').getByLabel('值', { exact: true })
+      expect(await values.nth(0).inputValue()).toBe('')
+      expect(await values.nth(0).getAttribute('type')).toBe('password')
+      expect(await values.nth(1).inputValue()).toBe('debug')
+      await settings.getByText('来自 repo 的 .mcp.json', { exact: true }).waitFor()
+      await values.nth(0).fill('typed-on-this-mac-123')
+      const before = testHost.presence.requests.length
+      await settings.getByRole('button', { name: '添加', exact: true }).click()
+      await settings.locator('.mcp-heading').waitFor()
+      expect(testHost.presence.requests.length).toBe(before + 1)
+      expect(testHost.presence.requests.at(-1)?.preview.action).toBe('mcp.server.apply')
+
+      const listed = await desktop.json<McpServersResponse>('mcp/servers')
+      const added = listed.servers[0] as McpServerView & { env: Array<{ name: string; secret: boolean; value?: string }> }
+      expect(added).toMatchObject({ name: 'tools', transport: 'stdio' })
+      expect(added.env).toEqual(
+        expect.arrayContaining([
+          { name: 'API_TOKEN', set: true, secret: true },
+          { name: 'LOG_LEVEL', set: true, secret: false, value: 'debug' },
+        ]),
+      )
+      const audit = (await readFile(join(root, 'data', 'audit', 'audit.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as { action: string; detail: Record<string, unknown> })
+      expect(audit.find(record => record.action === 'mcp.server.added')?.detail).toMatchObject({ importedFrom: workspace.id })
+      expect(JSON.stringify(audit)).not.toContain('typed-on-this-mac-123')
+      await context.close()
+    } finally {
+      await browser.close()
+      await testHost.close()
       await rm(root, { recursive: true, force: true })
     }
   })

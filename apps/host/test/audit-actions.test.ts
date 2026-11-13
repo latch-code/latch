@@ -210,6 +210,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'agent.probed': { agentId: 'codex', launchHash: hex, status: 'authentication-required' },
   'agent.catalogue.requested': { agentId: 'codex', auto: true },
   'agent.catalogue.read': { agentId: 'codex', ok: false },
+  'agent.mcp.requested': { agentId: 'codex' },
+  'agent.mcp.read': { agentId: 'codex', ok: true },
   'agent.models.changed': { agentId: 'codex', count: 2 },
   'agent.login.requested': { agentId: 'codex' },
   'agent.login.checked': { agentId: 'codex', status: 'unauthenticated' },
