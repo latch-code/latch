@@ -413,6 +413,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const columnOpen =
     placement !== null
     && placement.kind !== 'page'
+    && !(findOpen && placement.kind === 'sheet')
     && (profileColumn
       || filesVisible
       || changesOpen
@@ -421,7 +422,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       || browserOpen
       || (!!summary && preferences.rightPanel.open))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
-  const drawer = useDrawer({ enabled: drawerMode, navigation, inertWhenOpen: [main, titlebar], shut: sidebarCollapsed })
+  const drawer = useDrawer({
+    enabled: drawerMode,
+    navigation,
+    inertWhenOpen: [
+      { ref: main, base: route.entry !== 'sessions' || route.overview === true || route.allSessions === true },
+      { ref: titlebar },
+    ],
+    shut: sidebarCollapsed,
+  })
   /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
   const focusAfterToggle = useRef<{ target: RefObject<HTMLElement | null>; shut: boolean } | null>(null)
   useEffect(() => {

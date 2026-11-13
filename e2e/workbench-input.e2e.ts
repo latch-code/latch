@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { chromium, type Page } from '@playwright/test'
+import { chromium, webkit, type Page } from '@playwright/test'
 import { expect, it } from 'vitest'
 import type { Device, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
@@ -16,187 +16,205 @@ async function choose(page: Page, title: string) {
   await palette.waitFor({ state: 'hidden' })
 }
 
-it('keeps the conversation, files, attachments and independent home draft through a new submission with an unknown result', async () => {
-  let calls = 0
-  const plugin: HarnessPlugin = {
-    id: 'home-input',
-    name: '首页输入验收',
-    version: '1',
-    description: 'Local fixture only.',
-    activate(context) {
-      context.registerProvider({
-        id: 'home-model',
-        name: '本地验收模型',
-        model: 'fixture',
-        async *stream() {
-          calls++
-          yield { type: 'text', text: '工作记录已保留。\n\n'.repeat(80) }
-          yield { type: 'finish', reason: 'stop' }
+it.each([
+  { name: 'chromium', engine: chromium },
+  { name: 'webkit', engine: webkit },
+])(
+  '$name keeps the conversation, files, attachments and independent home draft through a new submission with an unknown result',
+  async ({ engine }) => {
+    let calls = 0
+    const plugin: HarnessPlugin = {
+      id: 'home-input',
+      name: '首页输入验收',
+      version: '1',
+      description: 'Local fixture only.',
+      activate(context) {
+        context.registerProvider({
+          id: 'home-model',
+          name: '本地验收模型',
+          model: 'fixture',
+          async *stream() {
+            calls++
+            yield { type: 'text', text: '工作记录已保留。\n\n'.repeat(80) }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ demo: false, plugins: [plugin], providerId: 'home-model' })
+    const browser = await engine.launch(engine === chromium ? browserLaunchOptions() : undefined)
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const folder = join(host.root, 'home-project')
+      await mkdir(folder)
+      await writeFile(join(folder, 'home-reading.txt'), '文件预览在总览背后保留。')
+      const added = await owner.addFolders({ name: '首页项目', paths: [folder] })
+      const { workspace } = (await added.json()) as { workspace: { id: string } }
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          prompt: '原会话',
+          workspaceId: workspace.id,
+          model: { providerId: 'home-model', model: 'fixture' },
         },
       })
-    },
-  }
-  const host = await startTestHost({ demo: false, plugins: [plugin], providerId: 'home-model' })
-  const browser = await chromium.launch(browserLaunchOptions())
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN', reducedMotion: 'reduce' })
-  const page = await context.newPage()
-  page.setDefaultTimeout(15_000)
-  try {
-    const owner = await host.enroll({ listener: 'unix' })
-    const folder = join(host.root, 'home-project')
-    await mkdir(folder)
-    await writeFile(join(folder, 'home-reading.txt'), '文件预览在总览背后保留。')
-    const added = await owner.addFolders({ name: '首页项目', paths: [folder] })
-    const { workspace } = (await added.json()) as { workspace: { id: string } }
-    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
-      method: 'POST',
-      body: {
-        requestId: randomUUID(),
-        prompt: '原会话',
-        workspaceId: workspace.id,
-        model: { providerId: 'home-model', model: 'fixture' },
-      },
-    })
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
-    await owner.json(`tasks/${sessionId}`, { method: 'PATCH', body: { title: '原会话' } })
-    await enrollBrowser(page, host, { name: '输入目标验收', scopes: ['admin'] })
-    const { devices } = await owner.json<{ devices: Device[] }>('devices')
-    const device = devices.find(item => item.name === '输入目标验收')!
-    await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })
-    await page.reload()
-    await connected(page)
-    await choose(page, '原会话')
-    const input = page.locator('.workspace textarea').first()
-    await input.fill('只属于原会话的草稿')
-    await page
-      .locator('.workspace')
-      .getByLabel('选择附件', { exact: true })
-      .setInputFiles({ name: 'session.txt', mimeType: 'text/plain', buffer: Buffer.from('session attachment') })
-    await expect.poll(() => page.locator('.workspace').getByRole('button', { name: 'session.txt', exact: true }).isEnabled()).toBe(true)
-    await page.keyboard.press('Alt+p')
-    const files = page.getByRole('dialog', { name: '搜索文件', exact: true })
-    await files.getByRole('searchbox').fill('home-reading.txt')
-    await files.getByRole('option', { name: 'home-reading.txt', exact: true }).click()
-    const preview = page.getByRole('region', { name: '文件预览', exact: true })
-    await preview.getByText('文件预览在总览背后保留。', { exact: true }).waitFor()
-    await preview.getByRole('button', { name: '编辑', exact: true }).click()
-    const edit = page.getByLabel('home-reading.txt 的内容', { exact: true })
-    await edit.fill('尚未保存的原会话编辑。')
-    const transcript = page.locator('.transcript').first()
-    await transcript.hover()
-    const bottom = await transcript.evaluate(element => element.scrollTop)
-    await page.mouse.wheel(0, -1500)
-    await expect.poll(() => transcript.evaluate(element => element.scrollTop)).toBeLessThan(bottom)
-    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-    const position = await transcript.evaluate(element => element.scrollTop)
-    const mounted = await transcript.elementHandle()
-    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    const home = page.locator('.workbench-home')
-    const draft = home.getByRole('textbox', { name: '新会话消息', exact: true })
-    expect(await draft.inputValue()).toBe('')
-    await draft.fill('只属于首页的新任务')
-    await home
-      .getByLabel('选择附件', { exact: true })
-      .setInputFiles({ name: 'home.txt', mimeType: 'text/plain', buffer: Buffer.from('home attachment') })
-    await expect.poll(() => home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
-    expect(await home.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
-    // Starting a new input from Home still honors the hidden reading session's editor guard.
-    // Cancelling it must not change the Home route, its draft or its attachment target.
-    await page.locator('.sidebar').getByRole('button', { name: '新建会话', exact: true }).click()
-    const leave = page.getByRole('dialog', { name: '放弃你的修改？', exact: true })
-    await leave.waitFor()
-    await leave.getByRole('button', { name: '取消', exact: true }).click()
-    expect(await home.isVisible()).toBe(true)
-    expect(await draft.inputValue()).toBe('只属于首页的新任务')
-    expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
-    await page.setViewportSize({ width: 390, height: 844 })
-    await page.keyboard.press('Alt+n')
-    const newSheet = page.getByRole('dialog', { name: '新会话', exact: true })
-    await newSheet.waitFor()
-    expect(await newSheet.getByRole('textbox', { name: '新会话消息', exact: true }).inputValue()).toBe('只属于首页的新任务')
-    expect(await newSheet.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
-    expect(await newSheet.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
-    expect(await page.getByRole('dialog', { name: '放弃你的修改？', exact: true }).count()).toBe(0)
-    await page.keyboard.press('Escape')
-    await newSheet.waitFor({ state: 'hidden' })
-    expect(await home.isVisible()).toBe(true)
-    await page.setViewportSize({ width: 1440, height: 1000 })
-    await page.locator('.titlebar').getByRole('button', { name: '返回会话', exact: true }).click()
-    expect(await input.inputValue()).toBe('只属于原会话的草稿')
-    expect(await mounted!.evaluate(element => element.isConnected)).toBe(true)
-    expect(await transcript.evaluate(element => element.scrollTop)).toBe(position)
-    expect(await edit.isVisible()).toBe(true)
-    expect(await edit.inputValue()).toBe('尚未保存的原会话编辑。')
-    await edit.fill('文件预览在总览背后保留。')
-    expect(await page.locator('.workspace').getByRole('button', { name: 'session.txt', exact: true }).isEnabled()).toBe(true)
-    expect(await page.locator('.workspace').getByRole('button', { name: 'home.txt', exact: true }).count()).toBe(0)
-    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    expect(await draft.inputValue()).toBe('只属于首页的新任务')
-    for (const width of [320, 390]) {
-      await page.setViewportSize({ width, height: 844 })
-      await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').click()
-      await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
-      const navigation = home.getByRole('navigation', { name: '会话导航', exact: true })
-      for (const label of ['全部会话', '搜索'])
-        expect((await navigation.getByRole('button', { name: label, exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
-      await navigation.getByRole('button', { name: '搜索', exact: true }).click()
-      const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
-      await palette.getByRole('searchbox').fill('原会话')
-      await page.keyboard.press('Escape')
-      expect(await palette.getByRole('searchbox').inputValue()).toBe('')
-      await page.keyboard.press('Escape')
-      await palette.waitFor({ state: 'hidden' })
-      expect(await draft.inputValue()).toBe('只属于首页的新任务')
-      await navigation.getByRole('button', { name: '全部会话', exact: true }).click()
-      const history = page.getByRole('region', { name: '全部会话', exact: true })
-      await history.locator('.workbench-session-row').filter({ hasText: '原会话' }).click()
-      await page.locator('.workspace .topbar').getByRole('button', { name: '返回会话列表', exact: true }).click()
-      await history.getByRole('button', { name: '返回总览', exact: true }).click()
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+      await owner.json(`tasks/${sessionId}`, { method: 'PATCH', body: { title: '原会话' } })
+      await enrollBrowser(page, host, { name: '输入目标验收', scopes: ['admin'] })
+      const { devices } = await owner.json<{ devices: Device[] }>('devices')
+      const device = devices.find(item => item.name === '输入目标验收')!
+      await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })
+      await page.reload()
+      await connected(page)
+      let releaseDetail!: () => void
+      const detailGate = new Promise<void>(resolve => {
+        releaseDetail = resolve
+      })
+      await page.route(`**/link/api/tasks/${sessionId}`, async route => {
+        await detailGate
+        await route.continue()
+      })
+      await choose(page, '原会话')
+      const input = page.locator('.workspace textarea').first()
+      await input.fill('只属于原会话的草稿')
+      releaseDetail()
+      await page.locator('.transcript').getByText('工作记录已保留。', { exact: true }).first().waitFor()
+      expect(await input.inputValue()).toBe('只属于原会话的草稿')
+      await page.unroute(`**/link/api/tasks/${sessionId}`)
+      await page
+        .locator('.workspace')
+        .getByLabel('选择附件', { exact: true })
+        .setInputFiles({ name: 'session.txt', mimeType: 'text/plain', buffer: Buffer.from('session attachment') })
+      await expect.poll(() => page.locator('.workspace').getByRole('button', { name: 'session.txt', exact: true }).isEnabled()).toBe(true)
+      await page.keyboard.press('Alt+p')
+      const files = page.getByRole('dialog', { name: '搜索文件', exact: true })
+      await files.getByRole('searchbox').fill('home-reading.txt')
+      await files.getByRole('option', { name: 'home-reading.txt', exact: true }).click()
+      const preview = page.getByRole('region', { name: '文件预览', exact: true })
+      await preview.getByText('文件预览在总览背后保留。', { exact: true }).waitFor()
+      await preview.getByRole('button', { name: '编辑', exact: true }).click()
+      const edit = page.getByLabel('home-reading.txt 的内容', { exact: true })
+      await edit.fill('尚未保存的原会话编辑。')
+      const transcript = page.locator('.transcript').first()
+      await transcript.hover()
+      const bottom = await transcript.evaluate(element => element.scrollTop)
+      await page.mouse.wheel(0, -1500)
+      await expect.poll(() => transcript.evaluate(element => element.scrollTop)).toBeLessThan(bottom)
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+      const position = await transcript.evaluate(element => element.scrollTop)
+      const mounted = await transcript.elementHandle()
+      await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
+      const home = page.locator('.workbench-home')
+      const draft = home.getByRole('textbox', { name: '新会话消息', exact: true })
+      expect(await draft.inputValue()).toBe('')
+      await draft.fill('只属于首页的新任务')
+      await home
+        .getByLabel('选择附件', { exact: true })
+        .setInputFiles({ name: 'home.txt', mimeType: 'text/plain', buffer: Buffer.from('home attachment') })
+      await expect.poll(() => home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
+      expect(await home.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
+      // Starting a new input from Home still honors the hidden reading session's editor guard.
+      // Cancelling it must not change the Home route, its draft or its attachment target.
+      await page.locator('.sidebar').getByRole('button', { name: '新建会话', exact: true }).click()
+      const leave = page.getByRole('dialog', { name: '放弃你的修改？', exact: true })
+      await leave.waitFor()
+      await leave.getByRole('button', { name: '取消', exact: true }).click()
+      expect(await home.isVisible()).toBe(true)
       expect(await draft.inputValue()).toBe('只属于首页的新任务')
       expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
-    }
-    await page.setViewportSize({ width: 1440, height: 1000 })
-    await home.getByRole('button', { name: /^项目：/u }).click()
-    await page.getByRole('menuitemradio', { name: '首页项目', exact: true }).click()
-    const requests: string[] = []
-    let rejected = false
-    await page.route('**/link/api/tasks', async route => {
-      if (route.request().method() !== 'POST') return route.continue()
-      const body = route.request().postDataJSON() as { requestId: string; sessionId?: string; prompt: string }
-      requests.push(body.requestId)
-      expect(body.sessionId).toBeUndefined()
-      expect(body.prompt).toBe('只属于首页的新任务')
-      if (!rejected) {
-        rejected = true
-        return route.fulfill({
-          status: 503,
-          contentType: 'application/json',
-          body: JSON.stringify({ code: 'submission-unknown', message: '测试发送结果未知' }),
-        })
+      await page.setViewportSize({ width: 390, height: 844 })
+      await page.keyboard.press('Alt+n')
+      const newSheet = page.getByRole('dialog', { name: '新会话', exact: true })
+      await newSheet.waitFor()
+      expect(await newSheet.getByRole('textbox', { name: '新会话消息', exact: true }).inputValue()).toBe('只属于首页的新任务')
+      expect(await newSheet.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
+      expect(await newSheet.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
+      expect(await page.getByRole('dialog', { name: '放弃你的修改？', exact: true }).count()).toBe(0)
+      await page.keyboard.press('Escape')
+      await newSheet.waitFor({ state: 'hidden' })
+      expect(await home.isVisible()).toBe(true)
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await page.locator('.titlebar').getByRole('button', { name: '返回会话', exact: true }).click()
+      expect(await input.inputValue()).toBe('只属于原会话的草稿')
+      expect(await mounted!.evaluate(element => element.isConnected)).toBe(true)
+      expect(await transcript.evaluate(element => element.scrollTop)).toBe(position)
+      expect(await edit.isVisible()).toBe(true)
+      expect(await edit.inputValue()).toBe('尚未保存的原会话编辑。')
+      await edit.fill('文件预览在总览背后保留。')
+      expect(await page.locator('.workspace').getByRole('button', { name: 'session.txt', exact: true }).isEnabled()).toBe(true)
+      expect(await page.locator('.workspace').getByRole('button', { name: 'home.txt', exact: true }).count()).toBe(0)
+      await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
+      expect(await draft.inputValue()).toBe('只属于首页的新任务')
+      for (const width of [320, 390]) {
+        await page.setViewportSize({ width, height: 844 })
+        await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').click()
+        await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
+        const navigation = home.getByRole('navigation', { name: '会话导航', exact: true })
+        for (const label of ['全部会话', '搜索'])
+          expect((await navigation.getByRole('button', { name: label, exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
+        await navigation.getByRole('button', { name: '搜索', exact: true }).click()
+        const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+        await palette.getByRole('searchbox').fill('原会话')
+        await page.keyboard.press('Escape')
+        expect(await palette.getByRole('searchbox').inputValue()).toBe('')
+        await page.keyboard.press('Escape')
+        await palette.waitFor({ state: 'hidden' })
+        expect(await draft.inputValue()).toBe('只属于首页的新任务')
+        await navigation.getByRole('button', { name: '全部会话', exact: true }).click()
+        const history = page.getByRole('region', { name: '全部会话', exact: true })
+        await history.locator('.workbench-session-row').filter({ hasText: '原会话' }).click()
+        await page.locator('.workspace .topbar').getByRole('button', { name: '返回会话列表', exact: true }).click()
+        await history.getByRole('button', { name: '返回总览', exact: true }).click()
+        expect(await draft.inputValue()).toBe('只属于首页的新任务')
+        expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       }
-      return route.continue()
-    })
-    await home.getByRole('button', { name: '发送', exact: true }).click()
-    await home.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
-    await home.getByRole('button', { name: '重试这次提交', exact: true }).click()
-    await expect.poll(() => calls).toBe(2)
-    expect(requests).toHaveLength(2)
-    expect(new Set(requests).size).toBe(1)
-    await expect.poll(() => home.count()).toBe(0)
-    const tasks = await host.host.bridge.listTasks()
-    expect(tasks).toHaveLength(2)
-    const created = await owner.json<TaskDetail>(`tasks/${tasks.find(task => task.id !== sessionId)!.id}`)
-    expect(created.messages.find(message => message.role === 'user')?.attachments?.map(item => item.name)).toEqual(['home.txt'])
-    await choose(page, '原会话')
-    expect(await input.inputValue()).toBe('只属于原会话的草稿')
-    await mkdir('test-results/workbench-input', { recursive: true })
-    await page.screenshot({ path: 'test-results/workbench-input/restored-session.png', animations: 'disabled' })
-  } finally {
-    await context.close()
-    await browser.close()
-    await host.close()
-  }
-})
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await home.getByRole('button', { name: /^项目：/u }).click()
+      await page.getByRole('menuitemradio', { name: '首页项目', exact: true }).click()
+      const requests: string[] = []
+      let rejected = false
+      await page.route('**/link/api/tasks', async route => {
+        if (route.request().method() !== 'POST') return route.continue()
+        const body = route.request().postDataJSON() as { requestId: string; sessionId?: string; prompt: string }
+        requests.push(body.requestId)
+        expect(body.sessionId).toBeUndefined()
+        expect(body.prompt).toBe('只属于首页的新任务')
+        if (!rejected) {
+          rejected = true
+          return route.fulfill({
+            status: 503,
+            contentType: 'application/json',
+            body: JSON.stringify({ code: 'submission-unknown', message: '测试发送结果未知' }),
+          })
+        }
+        return route.continue()
+      })
+      await home.getByRole('button', { name: '发送', exact: true }).click()
+      await home.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
+      await home.getByRole('button', { name: '重试这次提交', exact: true }).click()
+      await expect.poll(() => calls).toBe(2)
+      expect(requests).toHaveLength(2)
+      expect(new Set(requests).size).toBe(1)
+      await expect.poll(() => home.count()).toBe(0)
+      const tasks = await host.host.bridge.listTasks()
+      expect(tasks).toHaveLength(2)
+      const created = await owner.json<TaskDetail>(`tasks/${tasks.find(task => task.id !== sessionId)!.id}`)
+      expect(created.messages.find(message => message.role === 'user')?.attachments?.map(item => item.name)).toEqual(['home.txt'])
+      await choose(page, '原会话')
+      expect(await input.inputValue()).toBe('只属于原会话的草稿')
+      await mkdir('test-results/workbench-input', { recursive: true })
+      await page.screenshot({ path: 'test-results/workbench-input/restored-session.png', animations: 'disabled' })
+    } finally {
+      await context.close()
+      await browser.close()
+      await host.close()
+    }
+  },
+)
 
 it('retries a failed session through the one sender while preserving the home draft and attachment', async () => {
   let calls = 0

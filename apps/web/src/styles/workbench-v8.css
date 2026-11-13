@@ -255,6 +255,9 @@
 .workbench-home-composer {
   max-width: 1088px;
 }
+.workbench-home-demo {
+  margin: 0 0 var(--sp-12);
+}
 .workbench-empty {
   margin-top: var(--sp-40);
 }
@@ -1102,6 +1105,15 @@
     display: none;
   }
   .workbench-home-composer .composer-input {
+  .workbench-phone-code-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-12);
+    border-bottom: 1px solid var(--line);
+  }
+  .workbench-phone-code-nav > .ui-button {
+    min-height: 44px;
+  }
     padding: var(--sp-12) var(--sp-48);
   }
   .workbench-home-composer textarea {

@@ -377,6 +377,7 @@ export function useSessionController({
     if (submission.pending === null) setSessionMentions([])
   }, [selectedId, snapshot.device.dataScope])
   const setSubmissionDraft = (text: string) => {
+    restoringDraft.current = undefined
     submission.setDraft(text)
     setFileMentions(previous => previous.filter(ref => hasFileMention(text, ref)))
   }

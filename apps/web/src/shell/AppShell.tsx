@@ -6,7 +6,7 @@ import { keepAwakeLine } from '../core/shellLifecycle.ts'
 import { openLayer } from '../hooks/backStack.ts'
 import { NewSessionSheet } from '../newSession/NewSessionSheet.tsx'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
-import { worktreeProject } from '../composerChoice.ts'
+import { worktreeProject, usesDemoModel } from '../composerChoice.ts'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
 import { ConversationHeader } from './ConversationHeader.tsx'
@@ -21,6 +21,7 @@ import {
   PlusGlyph,
   SearchGlyph,
   SettingsGlyph,
+  StatusPill,
 } from '@latch/ui'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { PhoneTabBar } from './PhoneTabBar.tsx'
@@ -494,15 +495,22 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     <LayoutMenu value={shell.preferences.workbenchLayout} />
                   </header>
                 )}
-                {phone && triage && (
+                {phone && (
                   <nav className="workbench-phone-code-nav" aria-label="会话导航">
                     <Button variant="ghost" onClick={shell.openAllSessions}>
                       全部会话
                     </Button>
-                    <Button variant="ghost" onClick={openSearch}>
-                      搜索
-                    </Button>
+                    {triage && (
+                      <Button variant="ghost" onClick={openSearch}>
+                        搜索
+                      </Button>
+                    )}
                   </nav>
+                )}
+                {usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId) && (
+                  <p className="workbench-home-demo">
+                    <StatusPill tone="warn">演示模型</StatusPill>
+                  </p>
                 )}
                 <ConnectionBanners shell={shell} />
                 <div className="workbench-home-composer">

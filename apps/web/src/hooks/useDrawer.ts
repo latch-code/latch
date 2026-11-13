@@ -13,11 +13,12 @@ export function useDrawer({
 }: {
   enabled: boolean
   navigation: RefObject<HTMLElement | null>
-  inertWhenOpen: Array<RefObject<HTMLElement | null>>
+  inertWhenOpen: Array<{ ref: RefObject<HTMLElement | null>; base?: boolean }>
   /** Wide layouts: the sidebar is collapsed, so it is inert as a closed drawer is. */
   shut?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const inertBase = inertWhenOpen.map(target => !!target.base).join(':')
   const initialFocus = useRef<HTMLElement | null>(null)
   useEffect(() => {
     if (!enabled) setOpen(false)
@@ -30,16 +31,16 @@ export function useDrawer({
 
   useEffect(() => {
     const sidebar = navigation.current
-    if (sidebar === null) return
-    const others = inertWhenOpen.map(ref => ref.current).filter((element): element is HTMLElement => element !== null)
+    const others = inertWhenOpen.flatMap(({ ref, base }) => (ref.current ? [{ element: ref.current, base: !!base }] : []))
     const modalOpen = enabled && open
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    for (const { element, base } of others) element.inert = modalOpen || base
+    if (sidebar === null) return
     sidebar.inert = enabled ? !open : shut
-    for (const element of others) element.inert = modalOpen
     if (!modalOpen)
       return () => {
         sidebar.inert = false
-        for (const element of others) element.inert = false
+        for (const { element, base } of others) element.inert = base
       }
 
     const focusable = () =>
@@ -90,12 +91,12 @@ export function useDrawer({
       cancelAnimationFrame(focusFrame)
       document.removeEventListener('keydown', keydown, true)
       sidebar.inert = false
-      for (const element of others) element.inert = false
+      for (const { element, base } of others) element.inert = base
       if (previousFocus?.isConnected && (sidebar.contains(document.activeElement) || document.activeElement === document.body))
         previousFocus.focus()
     }
     // The refs are stable for the shell's lifetime.
-  }, [open, enabled, shut])
+  }, [open, enabled, shut, inertBase])
 
   return { open, setOpen, show }
 }
