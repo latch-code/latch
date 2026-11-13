@@ -1,6 +1,6 @@
 # @latch/e2e
 
-Vitest 驱动浏览器、Electron 与原生；`startTestHost` 启动临时 Host。布局见 `workbench-layout.e2e.ts`。
+Vitest 驱动浏览器、Electron 与原生；剪贴板回归用独立命名板。`startTestHost` 启动临时 Host。布局见 `workbench-layout.e2e.ts`。
 
 | 路径 | 职责 |
 | --- | --- |

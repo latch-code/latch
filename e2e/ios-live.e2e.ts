@@ -8,6 +8,8 @@ import { promisify } from 'node:util'
 import { FAKE_ACP_AGENT, fakeConversation, writeFakeHistory, type TestDevice } from '@latch/testkit'
 import { expect, it } from 'vitest'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { clipboardLease, compileClipboardLease } from './helpers/iosClipboardLease.ts'
+import { clipboardGui, validateGuiPairing } from './helpers/iosClipboardValidation.ts'
 
 const run = promisify(execFile)
 const PREFIX = 'latch-live-'
@@ -23,6 +25,8 @@ const P256_PRIVATE_KEY = 'CryptoKit4P256O7SigningO10PrivateKeyV'
  * pass; `<file>.pair` puts a fresh code on the clipboard; `<file>.info` names the simulator once the App is ready.
  */
 const HOLD = process.env.LATCH_IOS_LIVE_HOLD
+/** Only a controlled manual run may validate the official GUI's ON/OFF behavior before one ten-second code. */
+const GUI_CLIPBOARD = process.env.LATCH_IOS_LIVE_GUI_CLIPBOARD === '1'
 /**
  * `LATCH_IOS_LIVE_HOSTS=2`: a second test Host on the same private address, with its own data, the fake ACP Agent and a
  * project, for several computers; with hold, `<file>.pair2` puts a fresh code for it on the clipboard.
@@ -107,11 +111,15 @@ async function lanAddress(): Promise<string | undefined> {
 }
 
 /** The code goes to the simulator's clipboard through stdin only: never an argument, the environment, a file or a log. */
-function toClipboard(udid: string, payload: string): Promise<void> {
+function toClipboard(udid: string, payload: string, timeoutMs = STEPS.simctl): Promise<void> {
   return new Promise((done, fail) => {
     const child = spawn('/usr/bin/xcrun', ['simctl', 'pbcopy', udid], { stdio: ['pipe', 'ignore', 'ignore'] })
-    const timer = setTimeout(() => child.kill('SIGKILL'), STEPS.simctl)
-    child.once('error', fail)
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs)
+    child.stdin.on('error', () => fail(new Error('Simulator clipboard input closed')))
+    child.once('error', () => {
+      clearTimeout(timer)
+      fail(new Error('Could not start simulator clipboard writer'))
+    })
     child.once('exit', code => {
       clearTimeout(timer)
       if (code === 0) done()
@@ -140,7 +148,7 @@ function usage(host: TestHost): number {
  * Simulator.app or its DeviceHub successor is open.
  */
 async function simulatorAppOpen(): Promise<boolean> {
-  return Boolean((await run('/usr/bin/pgrep', ['-x', 'Simulator|DeviceHub']).catch(() => ({ stdout: '' }))).stdout.trim())
+  return (await clipboardGui()).kind !== 'closed'
 }
 const SIMULATOR_APP =
   'Simulator or DeviceHub is open: its pasteboard sync could carry the pairing code to this Mac’s clipboard, so no code was written'
@@ -158,7 +166,9 @@ const SIMULATOR_APP =
 it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
   'runs the App in live mode on a simulator of its own against a temporary test Host, ready to pair',
   async context => {
-    if (await simulatorAppOpen()) {
+    if (GUI_CLIPBOARD && (!HOLD || (KEEP && !DEVICE)))
+      throw new Error('GUI clipboard validation needs HOLD and a new or explicitly owned DEVICE; implicit hands-on reuse is not allowed')
+    if (!GUI_CLIPBOARD && (await simulatorAppOpen())) {
       context.skip(SIMULATOR_APP)
       return
     }
@@ -290,11 +300,41 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
       const otherOwner = other ? await prepare(other) : undefined
 
       await simctl('launch', '--terminate-running-process', udid, BUNDLE, '-LatchLive', '1')
+      const clipboardBinary = GUI_CLIPBOARD ? await compileClipboardLease(derived) : undefined
       /** The Host whose code is on the clipboard and its usage count when it was written; undefined when none is. */
       let written: number | undefined
       let writtenFor: TestHost = host
       /** Puts a fresh code on the clipboard, unless Simulator.app is open; returns why not. */
       const place = async (target: TestHost = host!, by: TestDevice = owner): Promise<string | undefined> => {
+        if (GUI_CLIPBOARD) {
+          if (!HOLD || !clipboardBinary || (!owned && !DEVICE)) throw new Error('GUI clipboard validation has no owned target')
+          const before = usage(target)
+          await validateGuiPairing(
+            {
+              device: udid!,
+              clipboard: () => clipboardLease(clipboardBinary),
+              hold: HOLD,
+              guiPid: async () => {
+                const gui = await clipboardGui()
+                return gui.kind === 'open' ? gui.pid : undefined
+              },
+              guiClosed: async () => (await clipboardGui()).kind === 'closed',
+              readDevice: async () => {
+                try {
+                  return (await run('/usr/bin/xcrun', ['simctl', 'pbpaste', udid!], { timeout: 1000, maxBuffer: 32_768 })).stdout
+                } catch {
+                  throw new Error('Could not verify simulator clipboard')
+                }
+              },
+              writeDevice: value => toClipboard(udid!, value, 1000),
+              stage: text => writeFile(`${HOLD}.clipboard-info`, text + '\n', { mode: 0o600 }),
+            },
+            () => pairingCode(by),
+            () => usage(target) > before,
+            () => target.close(),
+          )
+          return undefined
+        }
         if (await simulatorAppOpen()) return SIMULATOR_APP
         const before = usage(target)
         await toClipboard(udid!, await pairingCode(by))
@@ -309,7 +349,9 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
           written = undefined
         }
       }
-      const refused = await place()
+      const refused = GUI_CLIPBOARD
+        ? 'GUI clipboard validation has not run. Prepare the normal Paste page, then request one code through the hold control.'
+        : await place()
       if (refused && !HOLD) throw new Error(refused)
       await pause(3000)
       await simctl('io', udid, 'screenshot', join(output, 'ready.png'))
@@ -321,6 +363,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
           `simulator ${udid}`,
           `stop: touch ${HOLD}`,
           `fresh code: touch ${HOLD}.pair`,
+          ...(GUI_CLIPBOARD ? [`clipboard validation stage: ${HOLD}.clipboard-info`] : []),
           ...(other ? [`fresh code for the second computer: touch ${HOLD}.pair2`] : []),
         ]
         await writeFile(`${HOLD}.info`, [...info, ...(refused ? [refused] : [])].join('\n') + '\n')
@@ -329,7 +372,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
           await watch()
           if (existsSync(`${HOLD}.pair`) && Date.now() < deadline) {
             await rm(`${HOLD}.pair`, { force: true })
-            await toClipboard(udid, '')
+            if (!GUI_CLIPBOARD) await toClipboard(udid, '')
             written = undefined
             const why = await place()
             await writeFile(`${HOLD}.info`, [...info, ...(why ? [why] : [])].join('\n') + '\n')
@@ -337,10 +380,13 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
           if (other && otherOwner && existsSync(`${HOLD}.pair2`) && Date.now() < deadline) {
             for (const name of ['pair2', 'wait1', 'wait2', 'revoke1', 'revoke2', 'stop1', 'stop2'])
               await rm(`${HOLD}.${name}`, { force: true })
-            await toClipboard(udid, '')
+            if (!GUI_CLIPBOARD) await toClipboard(udid, '')
             written = undefined
             // A Host with a session waiting on the person makes no new code; that is said, and the hold goes on.
-            const why = await place(other, otherOwner).catch((error: unknown) => `no code: ${String(error).slice(0, 200)}`)
+            const why = await place(other, otherOwner).catch((error: unknown) => {
+              if (GUI_CLIPBOARD) throw error
+              return `no code: ${String(error).slice(0, 200)}`
+            })
             await writeFile(`${HOLD}.info`, [...info, ...(why ? [why] : [])].join('\n') + '\n')
           }
           for (const [flag, id] of scheduled
@@ -399,6 +445,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         await rm(`${HOLD}.received.json`, { force: true })
         await rm(`${HOLD}.run`, { force: true })
         await rm(`${HOLD}.fail`, { force: true })
+        if (GUI_CLIPBOARD) await rm(`${HOLD}.clipboard-info`, { force: true })
       } else if (PAIR_MS) {
         const deadline = Date.now() + PAIR_MS
         while (host.host.security.devices.nativeCandidates().length === 0 && Date.now() < deadline) {
@@ -414,7 +461,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
     } finally {
       // The clipboard is emptied and the App stopped on any device; only a simulator this run made is shut down and deleted.
       if (udid) {
-        await toClipboard(udid, '').catch(() => {})
+        // The validated workflow clears its own clipboard. Never send an unguarded clear through an unknown GUI.
+        if (!GUI_CLIPBOARD) await toClipboard(udid, '').catch(() => {})
         await simctl('terminate', udid, BUNDLE).catch(() => {})
         if (owned) {
           await simctl('shutdown', udid).catch(() => {})
