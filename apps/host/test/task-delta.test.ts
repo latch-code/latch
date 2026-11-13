@@ -243,11 +243,12 @@ describe('scoped text delta encoding', () => {
 
   it('agrees with the portable Unicode vectors and the platform byte count for scalar strings', async () => {
     const vectors = JSON.parse(await readFile('packages/testkit/vectors/task-delta-v1.json', 'utf8')) as {
-      strings: Array<{ text: string; bytes: number | null }>
+      strings: Array<{ text?: string; rawJSON?: string; bytes: number | null }>
     }
     for (const vector of vectors.strings) {
-      expect(scalarUtf8Length(vector.text)).toBe(vector.bytes ?? undefined)
-      if (vector.bytes !== null) expect(Buffer.byteLength(vector.text)).toBe(vector.bytes)
+      const value = vector.text ?? (JSON.parse(vector.rawJSON!) as string)
+      expect(scalarUtf8Length(value)).toBe(vector.bytes ?? undefined)
+      if (vector.bytes !== null) expect(Buffer.byteLength(value)).toBe(vector.bytes)
     }
   })
 })

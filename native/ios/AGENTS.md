@@ -1,6 +1,6 @@
 # Latch iOS
 
-`Sources/LatchNativeCore` 提供 iOS/macOS 协议、密码学、传输、验证窗口与资料库。`App` 和 `Latch.xcodeproj` 是 SwiftUI 应用，UIKit/TextKit 2 承载对话与输入。`Testkit` 只由 Vitest 驱动，不进产品。
+`Sources/LatchNativeCore` 支持 iOS/macOS；`TaskStreamProjection` 尚未接入 App。界面在 `App` / `Latch.xcodeproj`（SwiftUI、UIKit/TextKit 2），Vitest 的 `Testkit` 不进产品。
 
 - Host 是设备、权限、会话与执行结果的唯一权威；地址、Bonjour 与中继不是身份。
 - 先验证敲门的服务端 HMAC，再发设备证书；TLS 1.3、固定 SNI/ALPN、禁恢复，根证明通过前不交付业务数据。内层身份不从网络学习或替换。

@@ -1,17 +1,4583 @@
 {
   "version": "delta-v1",
-  "encoding": "UTF-8 scalar strings; unpaired UTF-16 surrogates are invalid",
+  "encoding": "UTF-8 scalar strings; invalid JSON strings are carried as rawJSON so this outer file is portable",
   "strings": [
-    { "text": "", "bytes": 0 },
-    { "text": "hello", "bytes": 5 },
-    { "text": "中文", "bytes": 6 },
-    { "text": "🙂", "bytes": 4 },
-    { "text": "é", "bytes": 3 },
-    { "text": "a\r\nb\nc", "bytes": 6 },
-    { "text": "👨‍👩‍👧‍👦", "bytes": 25 },
-    { "text": "\u0000", "bytes": 1 },
-    { "text": "\ud800", "bytes": null },
-    { "text": "\udfff", "bytes": null },
-    { "text": "before\ud800after", "bytes": null }
+    {
+      "text": "",
+      "bytes": 0
+    },
+    {
+      "text": "hello",
+      "bytes": 5
+    },
+    {
+      "text": "中文",
+      "bytes": 6
+    },
+    {
+      "text": "🙂",
+      "bytes": 4
+    },
+    {
+      "text": "é",
+      "bytes": 3
+    },
+    {
+      "text": "a\r\nb\nc",
+      "bytes": 6
+    },
+    {
+      "text": "👨‍👩‍👧‍👦",
+      "bytes": 25
+    },
+    {
+      "text": "\u0000",
+      "bytes": 1
+    },
+    {
+      "rawJSON": "\"\\ud800\"",
+      "bytes": null
+    },
+    {
+      "rawJSON": "\"\\udfff\"",
+      "bytes": null
+    },
+    {
+      "rawJSON": "\"before\\ud800after\"",
+      "bytes": null
+    }
+  ],
+  "streams": [
+    {
+      "name": "scalar append with immutable history",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 12,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 3
+            },
+            "baseSeq": 2,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 10,
+              "append": "\r\né👨‍👩‍👧‍👦"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文\r\né👨‍👩‍👧‍👦",
+              "sync": {
+                "revision": 12
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing base sequence",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 3
+            },
+            "baseSeq": 2,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "wrong UTF8 offset",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 3,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "wrong reasoning offset",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 1,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "different subscription",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-b",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "different run",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-b",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "different live identity",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-b",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "older revision",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 9,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unsafe integer",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 9007199254740992,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "negative offset",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": -1,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unknown top-level field",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            },
+            "replace": true
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unknown append field",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文",
+              "replace": true
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unknown live field",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z",
+              "activity": "tool"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "reasoning removed without a full state",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": null,
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "live removed without a full state",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": null
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid timestamp",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "not a timestamp",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing field",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicates do not append twice",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "ignore"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 12,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 3
+            },
+            "baseSeq": 2,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 10,
+              "append": "!"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文!",
+              "sync": {
+                "revision": 12
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "other host",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a-other",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "ignore"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "other session",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a-other",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "ignore"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "canonically equivalent run ID",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-é",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-é",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-é",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "canonically equivalent message ID",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-é",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-é",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "256 UTF16 units remain a legal identity",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "258 UTF16 units exceed identity bound",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "absent optional fields remain absent",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z"
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "cursor": 2
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            },
+            "reasoningPresent": false,
+            "livePresent": false,
+            "outputPresent": false
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": null,
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": null,
+            "live": null
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            },
+            "reasoningPresent": false,
+            "livePresent": false,
+            "outputPresent": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "present empty reasoning and removed clocks",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            },
+            "reasoningPresent": true
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 0,
+              "append": "想🙂"
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": null,
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": null
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "liveReasoning": "想🙂",
+              "sync": {
+                "revision": 11
+              }
+            },
+            "outputPresent": false,
+            "liveOutputPresent": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "full unknown facts are preserved on append",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z",
+                  "future": "retained"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done",
+                  "future": 42
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z",
+              "future": {
+                "flag": true
+              }
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "future": {
+                "flag": true
+              },
+              "summary": {
+                "live": {
+                  "future": "retained"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "future": 42
+                }
+              ],
+              "liveText": "中🙂文"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "terminal idle stays complete",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 12,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 3
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "idle",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z"
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                },
+                {
+                  "id": "live-a",
+                  "role": "assistant",
+                  "text": "中🙂文"
+                }
+              ],
+              "approvals": [],
+              "liveText": "",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "summary": {
+                "status": "idle"
+              },
+              "messages": [
+                {
+                  "id": "history"
+                },
+                {
+                  "id": "live-a",
+                  "text": "中🙂文"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 13,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 4
+            },
+            "baseSeq": 3,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 0,
+              "append": "bad"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "terminal failed stays complete",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 12,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 3
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "failed",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z"
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                },
+                {
+                  "id": "live-a",
+                  "role": "assistant",
+                  "text": "中🙂文"
+                }
+              ],
+              "approvals": [],
+              "liveText": "",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "summary": {
+                "status": "failed"
+              },
+              "messages": [
+                {
+                  "id": "history"
+                },
+                {
+                  "id": "live-a",
+                  "text": "中🙂文"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 13,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 4
+            },
+            "baseSeq": 3,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 0,
+              "append": "bad"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "terminal cancelled stays complete",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 12,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 3
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "cancelled",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z"
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                },
+                {
+                  "id": "live-a",
+                  "role": "assistant",
+                  "text": "中🙂文"
+                }
+              ],
+              "approvals": [],
+              "liveText": "",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "summary": {
+                "status": "cancelled"
+              },
+              "messages": [
+                {
+                  "id": "history"
+                },
+                {
+                  "id": "live-a",
+                  "text": "中🙂文"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 13,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 4
+            },
+            "baseSeq": 3,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 0,
+              "append": "bad"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "terminal interrupted stays complete",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 12,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 3
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "interrupted",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z"
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                },
+                {
+                  "id": "live-a",
+                  "role": "assistant",
+                  "text": "中🙂文"
+                }
+              ],
+              "approvals": [],
+              "liveText": "",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "summary": {
+                "status": "interrupted"
+              },
+              "messages": [
+                {
+                  "id": "history"
+                },
+                {
+                  "id": "live-a",
+                  "text": "中🙂文"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 13,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 4
+            },
+            "baseSeq": 3,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 0,
+              "append": "bad"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "legacy full never invents a baseline",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a reset needs a fresh full acknowledgement",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "reset": true,
+          "expect": {
+            "kind": "reset"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "repair"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 12,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-b",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "完整🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "完整🙂",
+              "sync": {
+                "revision": 12
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "native clocks require ISO time rather than JS legacy date-only parsing",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 11,
+            "hostTime": "2026-11-14",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂文",
+              "sync": {
+                "revision": 11
+              }
+            }
+          },
+          "nativeExpect": {
+            "kind": "repair"
+          }
+        }
+      ],
+      "difference": "Native reuses ISO clock parsing; Web Date.parse also accepts a date without time."
+    },
+    {
+      "name": "unpaired escape in delta",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "event": "task-delta",
+          "raw": "{\"type\":\"task-delta\",\"instanceId\":\"host-a\",\"sessionId\":\"session-a\",\"revision\":11,\"hostTime\":\"2026-11-14T00:00:00.000Z\",\"stream\":{\"protocol\":\"delta-v1\",\"subscriptionId\":\"subscription-a\",\"stateSeq\":2},\"baseSeq\":1,\"runId\":\"run-a\",\"liveMessageId\":\"live-a\",\"text\":{\"offset\":7,\"append\":\"\\ud800\"},\"reasoning\":{\"offset\":3,\"append\":\"\"},\"cursor\":3,\"updatedAt\":\"2026-11-14T00:00:00.000Z\",\"lastOutputAt\":\"2026-11-14T00:00:00.000Z\",\"live\":{\"lastEventAt\":\"2026-11-14T00:00:00.000Z\",\"lastOutputAt\":\"2026-11-14T00:00:00.000Z\"}}",
+          "expect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unpaired escape in full",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "detail": {
+              "liveText": "中🙂",
+              "sync": {
+                "revision": 10
+              }
+            }
+          }
+        },
+        {
+          "event": "task-state",
+          "raw": "{\"type\":\"task-state\",\"instanceId\":\"host-a\",\"sessionId\":\"session-a\",\"revision\":11,\"hostTime\":\"2026-11-14T00:00:00.000Z\",\"stream\":{\"protocol\":\"delta-v1\",\"subscriptionId\":\"subscription-a\",\"stateSeq\":2},\"detail\":{\"summary\":{\"id\":\"session-a\",\"harnessId\":\"standard\",\"title\":\"Fixture\",\"status\":\"running\",\"runId\":\"run-a\",\"updatedAt\":\"2026-11-14T00:00:00.000Z\",\"live\":{\"runId\":\"run-a\",\"activity\":\"model\",\"since\":\"2026-11-14T00:00:00.000Z\",\"lastEventAt\":\"2026-11-14T00:00:00.000Z\",\"lastOutputAt\":\"2026-11-14T00:00:00.000Z\"}},\"messages\":[{\"id\":\"history\",\"role\":\"assistant\",\"text\":\"Already done\"}],\"approvals\":[],\"liveText\":\"\\ud800\",\"liveMessageId\":\"live-a\",\"liveReasoning\":\"想\",\"cursor\":2,\"lastOutputAt\":\"2026-11-14T00:00:00.000Z\"}}",
+          "expect": {
+            "kind": "detail"
+          },
+          "nativeExpect": {
+            "kind": "repair"
+          }
+        }
+      ]
+    },
+    {
+      "name": "HTTP ahead does not replace the shadow; source priority still decides publication",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "http": {
+            "summary": {
+              "id": "session-a",
+              "harnessId": "standard",
+              "title": "Fixture",
+              "status": "running",
+              "runId": "run-a",
+              "updatedAt": "2026-11-14T00:00:00.000Z",
+              "live": {
+                "runId": "run-a",
+                "activity": "model",
+                "since": "2026-11-14T00:00:00.000Z",
+                "lastEventAt": "2026-11-14T00:00:00.000Z",
+                "lastOutputAt": "2026-11-14T00:00:00.000Z"
+              }
+            },
+            "messages": [
+              {
+                "id": "history",
+                "role": "assistant",
+                "text": "Already done"
+              }
+            ],
+            "approvals": [],
+            "liveText": "newer HTTP",
+            "liveMessageId": "live-a",
+            "liveReasoning": "想",
+            "cursor": 2,
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "sync": {
+              "instanceId": "host-a",
+              "revision": 20
+            }
+          },
+          "expect": {
+            "kind": "http",
+            "published": true,
+            "displayedText": "newer HTTP"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "published": false,
+            "displayedText": "newer HTTP"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 15,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 2
+            },
+            "baseSeq": 1,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 7,
+              "append": "文"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "published": false,
+            "displayedText": "newer HTTP"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 20,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 3
+            },
+            "baseSeq": 2,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 10,
+              "append": "字"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "published": true,
+            "displayedText": "中🙂文字"
+          }
+        },
+        {
+          "http": {
+            "summary": {
+              "id": "session-a",
+              "harnessId": "standard",
+              "title": "Fixture",
+              "status": "running",
+              "runId": "run-a",
+              "updatedAt": "2026-11-14T00:00:00.000Z",
+              "live": {
+                "runId": "run-a",
+                "activity": "model",
+                "since": "2026-11-14T00:00:00.000Z",
+                "lastEventAt": "2026-11-14T00:00:00.000Z",
+                "lastOutputAt": "2026-11-14T00:00:00.000Z"
+              }
+            },
+            "messages": [
+              {
+                "id": "history",
+                "role": "assistant",
+                "text": "Already done"
+              }
+            ],
+            "approvals": [],
+            "liveText": "newer HTTP",
+            "liveMessageId": "live-a",
+            "liveReasoning": "想",
+            "cursor": 2,
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "sync": {
+              "instanceId": "host-a",
+              "revision": 20
+            }
+          },
+          "expect": {
+            "kind": "http",
+            "published": false,
+            "displayedText": "中🙂文字"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 20,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 4
+            },
+            "baseSeq": 3,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 13,
+              "append": "!"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "published": false,
+            "displayedText": "中🙂文字"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-delta",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 21,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 5
+            },
+            "baseSeq": 4,
+            "runId": "run-a",
+            "liveMessageId": "live-a",
+            "text": {
+              "offset": 14,
+              "append": "?"
+            },
+            "reasoning": {
+              "offset": 3,
+              "append": ""
+            },
+            "cursor": 3,
+            "updatedAt": "2026-11-14T00:00:00.000Z",
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "live": {
+              "lastEventAt": "2026-11-14T00:00:00.000Z",
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "published": true,
+            "displayedText": "中🙂文字!?"
+          }
+        }
+      ]
+    },
+    {
+      "name": "old selection tickets and candidates cannot republish after A B A",
+      "instanceId": "host-a",
+      "sessionId": "session-a",
+      "actions": [
+        {
+          "capture": "old",
+          "expect": {
+            "kind": "capture"
+          }
+        },
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "published": true
+          },
+          "saveCandidate": "old"
+        },
+        {
+          "bind": {
+            "instanceId": "host-a",
+            "sessionId": "session-b"
+          },
+          "expect": {
+            "kind": "bind"
+          }
+        },
+        {
+          "bind": {
+            "instanceId": "host-a",
+            "sessionId": "session-a"
+          },
+          "expect": {
+            "kind": "bind"
+          }
+        },
+        {
+          "http": {
+            "summary": {
+              "id": "session-a",
+              "harnessId": "standard",
+              "title": "Fixture",
+              "status": "running",
+              "runId": "run-a",
+              "updatedAt": "2026-11-14T00:00:00.000Z",
+              "live": {
+                "runId": "run-a",
+                "activity": "model",
+                "since": "2026-11-14T00:00:00.000Z",
+                "lastEventAt": "2026-11-14T00:00:00.000Z",
+                "lastOutputAt": "2026-11-14T00:00:00.000Z"
+              }
+            },
+            "messages": [
+              {
+                "id": "history",
+                "role": "assistant",
+                "text": "Already done"
+              }
+            ],
+            "approvals": [],
+            "liveText": "newer HTTP",
+            "liveMessageId": "live-a",
+            "liveReasoning": "想",
+            "cursor": 2,
+            "lastOutputAt": "2026-11-14T00:00:00.000Z",
+            "sync": {
+              "instanceId": "host-a",
+              "revision": 20
+            }
+          },
+          "ticket": "old",
+          "expect": {
+            "kind": "http",
+            "published": false,
+            "displayedText": null
+          }
+        },
+        {
+          "publishCandidate": "old",
+          "ticket": "old",
+          "expect": {
+            "kind": "publish",
+            "published": false,
+            "displayedText": null
+          }
+        },
+        {
+          "frame": {
+            "type": "task-state",
+            "instanceId": "host-a",
+            "sessionId": "session-a",
+            "revision": 10,
+            "hostTime": "2026-11-14T00:00:00.000Z",
+            "stream": {
+              "protocol": "delta-v1",
+              "subscriptionId": "subscription-a",
+              "stateSeq": 1
+            },
+            "detail": {
+              "summary": {
+                "id": "session-a",
+                "harnessId": "standard",
+                "title": "Fixture",
+                "status": "running",
+                "runId": "run-a",
+                "updatedAt": "2026-11-14T00:00:00.000Z",
+                "live": {
+                  "runId": "run-a",
+                  "activity": "model",
+                  "since": "2026-11-14T00:00:00.000Z",
+                  "lastEventAt": "2026-11-14T00:00:00.000Z",
+                  "lastOutputAt": "2026-11-14T00:00:00.000Z"
+                }
+              },
+              "messages": [
+                {
+                  "id": "history",
+                  "role": "assistant",
+                  "text": "Already done"
+                }
+              ],
+              "approvals": [],
+              "liveText": "中🙂",
+              "liveMessageId": "live-a",
+              "liveReasoning": "想",
+              "cursor": 2,
+              "lastOutputAt": "2026-11-14T00:00:00.000Z"
+            }
+          },
+          "expect": {
+            "kind": "detail",
+            "published": true,
+            "displayedText": "中🙂"
+          }
+        }
+      ]
+    }
   ]
 }

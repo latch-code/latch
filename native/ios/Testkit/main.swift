@@ -73,6 +73,8 @@ do {
         stage = "workspace"
         result = try await runNativeWorkspace(input)
     case "phoneProjection": result = try phoneProjectionFixture(input)
+    case "taskStreamProjection": result = try taskStreamFixture(input)
+    case "taskStreamBoundary": result = try taskStreamBoundaryFixture(input)
     case "phoneAgents": result = try phoneAgentsFixture(input)
     case "phoneAgentPages": result = try phoneAgentPagesFixture(input)
     case "phoneAgentActivity": result = try phoneAgentActivityFixture(input)

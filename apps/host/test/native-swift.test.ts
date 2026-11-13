@@ -107,6 +107,52 @@ async function invoke(input: unknown, timeoutMs = 15_000): Promise<Record<string
 }
 
 describe.skipIf(process.platform !== 'darwin')('Swift native core interoperability', () => {
+  it('projects the shared task stream vectors without mixing HTTP into the stream shadow or weakening source priority', async () => {
+    const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/task-delta-v1.json'), 'utf8')) as {
+      strings: Array<{ bytes: number | null }>
+      streams: Array<{ name: string; actions: Array<{ expect: Record<string, unknown>; nativeExpect?: Record<string, unknown> }> }>
+    }
+    const result = await invoke({ operation: 'taskStreamProjection', ...vectors })
+    expect(result.strings).toEqual(vectors.strings.map(value => value.bytes))
+    expect(result.priorValuesUnchanged).toBe(true)
+    const streams = result.streams as Array<{ name: string; steps: Array<Record<string, unknown>> }>
+    expect(streams).toHaveLength(vectors.streams.length)
+    for (const [index, vector] of vectors.streams.entries()) {
+      expect(streams[index]?.name).toBe(vector.name)
+      expect(streams[index]?.steps).toHaveLength(vector.actions.length)
+      for (const [step, action] of vector.actions.entries())
+        expect(streams[index]!.steps[step], `${vector.name}: ${step}`).toMatchObject(action.nativeExpect ?? action.expect)
+    }
+  })
+
+  it('keeps native task candidates inside one MiB and rejects old connection tickets without resetting the revision floor', async () => {
+    const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/task-delta-v1.json'), 'utf8')) as {
+      streams: Array<{ actions: Array<{ frame: unknown }> }>
+    }
+    const result = await invoke({
+      operation: 'taskStreamBoundary',
+      frame: vectors.streams[0]!.actions[0]!.frame,
+      delta: vectors.streams[0]!.actions[1]!.frame,
+    })
+    expect(result.initialBytes).toBeLessThanOrEqual(1_048_576)
+    expect(result.oversizedInputBytes).toBeGreaterThan(1_048_576)
+    expect(result).toMatchObject({
+      inputLimit: 'repair',
+      candidateGrowth: 'repair',
+      validAfterRefusal: 'detail',
+      objectWidthLimit: 'repair',
+      combinedSuffixLimit: 'repair',
+      priorValueUnchanged: true,
+      staleConnectionRejected: true,
+      staleHTTPRejectedBeforeDecode: true,
+      connectionKeepsRevisionFloor: true,
+      newerHTTPAccepted: true,
+      otherInstanceRejected: true,
+      invalidUTF8Rejected: true,
+      surrogateUTF8Rejected: true,
+    })
+  })
+
   it('uses the same bounded first-flight bucket grid in Swift without waiting for a future handshake flight', async () => {
     const first = Buffer.from(encodeFrame({ opcode: 2, payload: new Uint8Array([0, 4]) }, new Uint8Array([1, 2, 3, 4]))).toString('hex')
     const second = Buffer.from(encodeFrame({ opcode: 2, payload: new Uint8Array([0, 5]) }, new Uint8Array([1, 2, 3, 4]))).toString('hex')

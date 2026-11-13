@@ -20,6 +20,7 @@ sources:
   - apps/web/src/conversation.ts
   - apps/web/src/MessageContent.tsx
   - apps/desktop/src/proxy.cjs
+  - native/ios/Sources/LatchNativeCore/TaskStreamProjection.swift
 ---
 # Latch 流式执行与阅读界面
 
@@ -108,6 +109,10 @@ Host 只在 running、稳定 run/message 身份、正文与思考均为前缀延
 客户端为每条连接维护独立的流影子，HTTP 不写它。每次追加校验实例、会话、订阅、精确 baseSeq、run/message 身份和 UTF-8 偏移，重建 detail、summary、sync 与 live 对象，复用只读历史数组和历史消息。即使 HTTP 已发布更高 revision，较旧的流也只推进影子，补齐后的 detail 仍由原 ProjectionGuard 决定能否发布；相同 revision 的来源优先级不变。
 
 重复帧忽略；缺帧、错误订阅/run/message 身份或偏移、无法识别的操作触发修复；其他实例或会话的帧忽略。一个逻辑订阅最多修复一次：真正 abort fetch 并取消 reader，丢弃旧连接缓冲，立即建立完整状态连接，余下重连均不再协商追加。新连接的 onOpen 照常同步；换会话创建新的逻辑订阅。更换设备或权限代次时同步清掉影子、关闭旧流并使旧投影票据失效。读取位置、草稿、唯一 sender 与写请求编号都不参与这个传输优化。
+
+原生核心的 `NativeTaskStreamProjection` 只提供同一契约的纯值投影，尚未接到 `NativeWorkspace`、`PhoneModel` 或 Host 协商，原生仍传完整帧。它不接受 HTTP 更新影子；`NativeTaskPublicationGate` 单独按实例、会话、选择/连接票据及 revision/source priority 筛选 HTTP 与流候选，替换连接使旧票据失效但不降低版本地板。候选和票据都不是正文 lease，也不证明消费者已经应用事件；它们不更新 fetched/detailRevisions，不确认原生游标。
+
+Swift 的身份按 UTF-8 字节精确比较，长度按 UTF-16 单元与 Web 对齐。JSONDecoder 拒绝非法 UTF-8 与未配对 surrogate，不以替换字符继续追加。原生输入及重建候选仍受 `NativeJSON` 的 1MiB、深度、数组和对象宽度限制；候选经编码再读回确认这些约束，保留 O(history) 成本，不能称为常数 CPU。原生时钟只接受完整 ISO 时间，Web 的 `Date.parse` 还接受日期但没有时间的旧格式；共享向量明确这一区别，以及原生不能表示非法 surrogate 全量正文的边界。完整帧中的未知事实保持，追加帧的未知字段拒绝。
 
 ### 流量计数
 

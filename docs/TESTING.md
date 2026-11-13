@@ -406,7 +406,9 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `streaming-render.e2e.ts` 还在真实 DOM 中给已结算消息的字段读取计数，验证 300 轮历史的正文追加不重复投影；计数是工作量，不代表毫秒预算。回归覆盖尾轮晋升后的同节点/展开/文字选择、共享展示与未知 prop、审批/提问、文件记录刷新和权限撤回、空历史合成回复的记录与插入索引、已提交 live ID 的空值切换。`conversation.test.ts` 核对同 ID/新字段重写、运行事实清空与时间/状态的即时变化；正文与状态均不依赖缓存的旧权限。
 
-`stream-delta.e2e.ts` 经真实临时 Host 和正常输入框验证大历史的增量正文、同一消息节点、最终原文与草稿；测试传输故障只在 Host 已授权的响应之后注入，检查真正中断旧 reader、一次完整状态修复和换网后的新基线。远程壳标记的浏览器用例只验证前端省略协商头，不冒充真实原生链路；`native.test.ts` 另验证真实原生连接仍发送完整帧与 replay。共享 UTF-8 标量向量是 `packages/testkit/vectors/task-delta-v1.json`，尚未实现 Swift 增量解码。
+`stream-delta.e2e.ts` 经真实临时 Host 和正常输入框验证大历史的增量正文、同一消息节点、最终原文与草稿；测试传输故障只在 Host 已授权的响应之后注入，检查真正中断旧 reader、一次完整状态修复和换网后的新基线。远程壳标记的浏览器用例只验证前端省略协商头，不冒充真实原生链路；`native.test.ts` 另验证真实原生连接仍发送完整帧与 replay。共享 UTF-8 标量与事件向量是 `packages/testkit/vectors/task-delta-v1.json`；Swift 纯值解码尚未接入原生流。
+
+同一向量文件还包含 full/delta、HTTP/source priority 与旧选择序列，`task-stream-vectors.test.ts` 和现有 Swift Testkit 的 `taskStreamProjection` 操作共同消费。无效字符串以外层合法的 `rawJSON` 保存，不使 Foundation 在读取整份夹具时先失败。`native-swift.test.ts` 另验证原生 1MiB 候选、补字段后的对象宽度、合计追加上限、旧连接票据与版本地板。这里只测试纯值核心，未启用原生协商或 App 消费，也不替代 lease、实际取消、padding 与游标确认的后续互操作验收。
 
 耗时基线单独运行 `LATCH_STREAM_BENCH=1 LATCH_STREAM_LABEL=<结果名> pnpm exec vitest run --config e2e/vitest.config.ts e2e/stream-performance.e2e.ts`，默认跳过。用临时 Host、本地固定 Provider、10/100/300 轮历史和两万字回复，CPU 4 倍节流，记录脚本区间、长任务、帧字节、JSON 解析、滚动和内存；完整帧与追加帧各自计数，同时保留合计；输出在 `test-results/stream-performance/`。同一构建的协议对照用 `LATCH_STREAM_TRANSPORT=full` 在测试浏览器内仅移除固定增量协商头，默认 `delta`；两组使用不同 `LATCH_STREAM_LABEL` 保留结果，报告核对相同页面/传输源码指纹与实际帧类别。可用 `LATCH_E2E_UI_DIR` 对照已保存的旧构建，报告记录页面构建指纹；`LATCH_STREAM_PROFILE=1` 额外记录去掉 URL 的 CPU 采样。比较前后应协调无并行构建/e2e的窗口并设置 `LATCH_STREAM_QUIET=1`，保留系统负载与重复样本；heap未强制GC，不能用来宣称泄漏。预算断言由 `LATCH_STREAM_ENFORCE_BUDGET=1` 开启：尾段要有样本，每帧脚本不超过8ms，且没有50ms长任务。未开启断言的基线通过不代表预算达标。
 
