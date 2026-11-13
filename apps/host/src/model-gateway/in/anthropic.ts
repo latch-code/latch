@@ -11,6 +11,7 @@ import {
   type GatewayItem,
   type GatewayLoss,
   type GatewayRequest,
+  type GatewayReasoning,
   type GatewayUsage,
 } from '../ir.ts'
 import { assertToolSelection, safeToolIdentity, type ToolNames } from '../tools.ts'
@@ -83,7 +84,10 @@ function content(value: unknown, dropped: Set<GatewayLoss>): Content[] {
 }
 
 /** Full Anthropic history only. Execution state that cannot be represented is refused, never removed. */
-export function decodeAnthropic(source: string, openReasoning: (value: string) => string | undefined = () => undefined): GatewayRequest {
+export function decodeAnthropic(
+  source: string,
+  openReasoning: (value: string) => GatewayReasoning | undefined = () => undefined,
+): GatewayRequest {
   const value: unknown = JSON.parse(source)
   const parsed = schema.safeParse(value)
   if (!parsed.success) throw invalidRequest('Anthropic 请求字段格式无效')
@@ -134,7 +138,7 @@ export function decodeAnthropic(source: string, openReasoning: (value: string) =
       } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
         if (message.role !== 'assistant') throw invalidRequest('思考必须来自助手')
         const thought = typeof block.signature === 'string' ? openReasoning(block.signature) : undefined
-        if (thought !== undefined) input.push({ type: 'reasoning', text: thought })
+        if (thought !== undefined) input.push({ type: 'reasoning', state: thought })
         else dropped.add('reasoning-state')
       } else {
         if (message.role !== 'assistant' && pending.size) throw invalidRequest('工具结果尚未完整返回')
@@ -212,7 +216,7 @@ export class AnthropicOutput {
   constructor(
     private readonly request: GatewayRequest,
     private readonly tools: ToolNames,
-    private readonly seal: (text: string) => string,
+    private readonly seal: (state: GatewayReasoning) => string,
     private readonly redact: (text: string) => string = text => text,
   ) {}
   private usageValue() {
@@ -256,7 +260,7 @@ export class AnthropicOutput {
     const block = this.blocks[active.index]!
     const events: Event[] = []
     if (active.type === 'thinking') {
-      const signature = this.seal(active.text)
+      const signature = this.seal({ wire: 'chat-completions', text: active.text })
       block.signature = signature
       events.push({ type: 'content_block_delta', index: active.index, delta: { type: 'signature_delta', signature } })
     }

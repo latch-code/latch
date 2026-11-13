@@ -10,7 +10,7 @@ const base = (fields: Record<string, unknown> = {}) =>
   JSON.stringify({ model: 'alias', max_tokens: 1024, stream: true, messages: [{ role: 'user', content: 'hello' }], ...fields })
 const tool = { name: 'inspect', input_schema: { type: 'object', properties: {} } }
 const usage = { input: 12, output: 5, cacheRead: 3 }
-const scope = { providerId: 'service', model: 'alias' }
+const scope = { providerId: 'service', model: 'alias', wire: 'chat-completions' as const }
 
 describe.each([
   ['Anthropic', AnthropicOutput],
@@ -20,7 +20,7 @@ describe.each([
     const request = decodeAnthropic(
       base({ tools: [tool], tool_choice: { type: 'tool', name: 'inspect', disable_parallel_tool_use: true } }),
     )
-    const output = new Output(request, encodeChat(request).tools, text => text)
+    const output = new Output(request, encodeChat(request).tools, () => 'unused-test-signature')
     output.push({ type: 'tool', index: 0, id: 'a', name: 'inspect', arguments: '{}' })
     output.push({ type: 'usage', usage })
     output.push({ type: 'finish', reason: 'tools' })
@@ -31,7 +31,7 @@ describe.each([
     const request = decodeAnthropic(base({ tools: [tool, { ...tool, name: 'other' }] }))
     request.choice = scenario === 'none' ? 'none' : scenario === 'required' ? 'required' : { kind: 'function', name: 'inspect' }
     if (scenario === 'parallel') request.parallel = false
-    const output = new Output(request, encodeChat(request).tools, text => text)
+    const output = new Output(request, encodeChat(request).tools, () => 'unused-test-signature')
     const count = scenario === 'required' || scenario === 'named-empty' ? 0 : scenario === 'parallel' ? 2 : 1
     for (let i = 0; i < count; i++)
       output.push({ type: 'tool', index: i, id: `call-${i}`, name: scenario === 'named' ? 'other' : 'inspect', arguments: '{}' })
@@ -42,7 +42,7 @@ describe.each([
 
   it.each(['length', 'filter'] as const)('keeps required-tool truncation incomplete without releasing calls: %s', reason => {
     const request = decodeAnthropic(base({ tools: [tool], tool_choice: { type: 'any' } }))
-    const output = new Output(request, encodeChat(request).tools, text => text)
+    const output = new Output(request, encodeChat(request).tools, () => 'unused-test-signature')
     output.push({ type: 'tool', index: 0, id: 'a', name: 'inspect', arguments: '{' })
     output.push({ type: 'usage', usage })
     output.push({ type: 'finish', reason })
@@ -77,7 +77,7 @@ it.each(['namespace', 'kind'] as const)('checks namespace and custom identity fo
     name: 'patch',
     namespace: mismatch === 'namespace' ? 'other' : 'files',
   }
-  const output = new ResponsesOutput(request, tools, text => text)
+  const output = new ResponsesOutput(request, tools, () => 'unused-test-signature')
   output.push({
     type: 'tool',
     index: 0,
@@ -98,7 +98,7 @@ it('accepts the exact namespaced custom tool requested by a Responses client', (
     tool_choice: { type: 'custom', name: 'patch', namespace: 'files' },
   })
   const { tools } = encodeChat(request)
-  const output = new ResponsesOutput(request, tools, text => text)
+  const output = new ResponsesOutput(request, tools, () => 'unused-test-signature')
   output.push({
     type: 'tool',
     index: 0,
@@ -238,12 +238,15 @@ describe('Anthropic to Chat translation', () => {
       {
         role: 'assistant',
         content: [
-          { type: 'thinking', thinking: 'tampered text', signature: seals.seal(scope, 'original') },
+          { type: 'thinking', thinking: 'tampered text', signature: seals.seal(scope, { wire: 'chat-completions', text: 'original' }) },
           { type: 'text', text: 'answer' },
         ],
       },
     ]
-    expect(decodeAnthropic(base({ messages }), text => seals.open(scope, text)).input[0]).toEqual({ type: 'reasoning', text: 'original' })
+    expect(decodeAnthropic(base({ messages }), text => seals.open(scope, text)).input[0]).toEqual({
+      type: 'reasoning',
+      state: { wire: 'chat-completions', text: 'original' },
+    })
     const stale = decodeAnthropic(base({ messages }), text => seals.open({ ...scope, model: 'other' }, text))
     expect(stale.dropped).toContain('reasoning-state')
     expect(stale.input).toHaveLength(1)
@@ -262,7 +265,7 @@ describe('Anthropic to Chat translation', () => {
     const output = new Output(
       request,
       encodeChat(request).tools,
-      text => text,
+      () => 'unused-test-signature',
       text => text.replaceAll('secret', '[redacted]'),
     )
     output.push({ type: 'tool', index: 0, id: 'secret', name: 'inspect', arguments: '{}' })
@@ -290,14 +293,14 @@ describe('Anthropic to Chat translation', () => {
     expect(result.usage).toEqual({ input_tokens: 9, output_tokens: 5, cache_read_input_tokens: 3 })
     expect(result.content.filter(item => item.type === 'tool_use').map(item => item.id)).toEqual(['a', 'b'])
     expect(JSON.stringify(result)).toContain('9007199254740993')
-    expect(seals.open(scope, result.content[0]!.signature as string)).toBe('thought')
+    expect(seals.open(scope, result.content[0]!.signature as string)).toEqual({ wire: 'chat-completions', text: 'thought' })
   })
 
   it.each(['malformed', 'missing-usage', 'duplicate-id', 'changed-id', 'length', 'filter'] as const)(
     'never emits executable tools for an unverified reply (%s)',
     scenario => {
       const request = decodeAnthropic(base({ tools: [tool] }))
-      const output = new AnthropicOutput(request, encodeChat(request).tools, text => text)
+      const output = new AnthropicOutput(request, encodeChat(request).tools, () => 'unused-test-signature')
       output.push({ type: 'tool', index: 0, id: 'a', name: 'inspect', arguments: scenario === 'malformed' ? '{' : '{}' })
       if (scenario === 'changed-id') {
         expect(() => output.push({ type: 'tool', index: 0, id: 'b' })).toThrow()

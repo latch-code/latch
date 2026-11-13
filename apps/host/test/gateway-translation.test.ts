@@ -4,7 +4,7 @@ import { decodeResponses, ResponsesOutput } from '../src/model-gateway/in/respon
 import { encodeChat, decodeChat } from '../src/model-gateway/out/chat.ts'
 import { ModelGatewayServer, type GatewayService } from '../src/model-gateway.ts'
 
-const scope = { providerId: 'service', model: 'alias' }
+const scope = { providerId: 'service', model: 'alias', wire: 'chat-completions' as const }
 const input = (overrides: Record<string, unknown> = {}) => ({ model: 'alias', input: 'hello', stream: true, ...overrides })
 const textStream = (text: string, size = 1) =>
   new ReadableStream<Uint8Array>({
@@ -95,9 +95,9 @@ describe('Responses to Chat gateway translation', () => {
 
   it('authenticates reasoning by service and model, rejects tampering and does not survive a new Host key', () => {
     const seals = new ReasoningSeals()
-    const sealed = seals.seal(scope, '中文 reasoning')
-    expect(sealed.startsWith('latch1.')).toBe(true)
-    expect(seals.open(scope, sealed)).toBe('中文 reasoning')
+    const sealed = seals.seal(scope, { wire: 'chat-completions', text: '中文 reasoning' })
+    expect(sealed.startsWith('latch2.')).toBe(true)
+    expect(seals.open(scope, sealed)).toEqual({ wire: 'chat-completions', text: '中文 reasoning' })
     expect(seals.open({ ...scope, model: 'other' }, sealed)).toBeUndefined()
     expect(seals.open({ ...scope, providerId: 'other' }, sealed)).toBeUndefined()
     expect(seals.open(scope, sealed.slice(0, -3) + 'xyz')).toBeUndefined()
@@ -106,7 +106,7 @@ describe('Responses to Chat gateway translation', () => {
     expect(seals.open(scope, noncanonical)).toBeUndefined()
     expect(new ReasoningSeals().open(scope, sealed)).toBeUndefined()
     expect(seals.open(scope, 'foreign encrypted text')).toBeUndefined()
-    expect(seals.open(scope, 'latch1.' + 'A'.repeat(2 * 1024 * 1024))).toBeUndefined()
+    expect(seals.open(scope, 'latch2.' + 'A'.repeat(2 * 1024 * 1024))).toBeUndefined()
   })
 
   it('keeps parallel tool results contiguous and follows them with labelled image content', () => {
@@ -152,10 +152,14 @@ describe('Responses to Chat gateway translation', () => {
       decodeResponses(
         input({
           input: [
-            { type: 'reasoning', encrypted_content: seals.seal(scope, 'first reasoning'), summary: [] },
+            { type: 'reasoning', encrypted_content: seals.seal(scope, { wire: 'chat-completions', text: 'first reasoning' }), summary: [] },
             { role: 'assistant', content: [{ type: 'output_text', text: 'first answer' }] },
             { role: 'user', content: 'continue' },
-            { type: 'reasoning', encrypted_content: seals.seal({ ...scope, model: 'other' }, 'do not replay'), summary: [] },
+            {
+              type: 'reasoning',
+              encrypted_content: seals.seal({ ...scope, model: 'other' }, { wire: 'chat-completions', text: 'do not replay' }),
+              summary: [],
+            },
             { type: 'function_call', name: 'read', call_id: 'call', arguments: '{}' },
             { type: 'function_call_output', call_id: 'call', output: 'result' },
           ],
@@ -233,7 +237,7 @@ describe('Responses to Chat gateway translation', () => {
   it('does not finish tools from a truncated stream or a malformed custom call', async () => {
     const request = decodeResponses(input({ tools: [{ type: 'custom', name: 'patch' }] }))
     const { tools } = encodeChat(request)
-    const output = new ResponsesOutput(request, tools, value => value)
+    const output = new ResponsesOutput(request, tools, () => 'unused-test-signature')
     output.start()
     output.push({ type: 'tool', index: 0, id: 'call', name: 'patch', arguments: '{"content":3}' })
     output.push({ type: 'finish', reason: 'tools' })
@@ -248,7 +252,7 @@ describe('Responses to Chat gateway translation', () => {
 
   it('never publishes an executable tool done when the service stops for output length', () => {
     const request = decodeResponses(input({ tools: [{ type: 'function', name: 'write', parameters: { type: 'object' } }] }))
-    const output = new ResponsesOutput(request, encodeChat(request).tools, value => value)
+    const output = new ResponsesOutput(request, encodeChat(request).tools, () => 'unused-test-signature')
     output.start()
     output.push({ type: 'tool', index: 0, id: 'call', name: 'write', arguments: '{"path":"file"' })
     output.push({ type: 'finish', reason: 'length' })
@@ -262,11 +266,11 @@ describe('Responses to Chat gateway translation', () => {
     const request = decodeResponses(
       input({ tools: ['read', 'delete', 'readdelete'].map(name => ({ type: 'function', name, parameters: { type: 'object' } })) }),
     )
-    const output = new ResponsesOutput(request, encodeChat(request).tools, value => value)
+    const output = new ResponsesOutput(request, encodeChat(request).tools, () => 'unused-test-signature')
     output.start()
     output.push({ type: 'tool', index: 0, id: 'call', name: 'read', arguments: '{' })
     expect(() => output.push({ type: 'tool', index: 0, name: 'delete', arguments: '}' })).toThrow()
-    const repeated = new ResponsesOutput(request, encodeChat(request).tools, value => value)
+    const repeated = new ResponsesOutput(request, encodeChat(request).tools, () => 'unused-test-signature')
     repeated.push({ type: 'tool', index: 0, id: 'call', name: 'read', arguments: '{' })
     repeated.push({ type: 'tool', index: 0, id: 'call', name: 'read', arguments: '}' })
     repeated.push({ type: 'finish', reason: 'tools' })
@@ -279,12 +283,12 @@ describe('Responses to Chat gateway translation', () => {
     const request = decodeResponses(input({ tools: [{ type: 'function', name: 'read', parameters: { type: 'object' } }] }))
     const tools = encodeChat(request).tools
     const raw = '{ "id": 9007199254740993, "zero": -0, "fraction": 0.10000000000000000001 }'
-    const output = new ResponsesOutput(request, tools, value => value)
+    const output = new ResponsesOutput(request, tools, () => 'unused-test-signature')
     output.push({ type: 'tool', index: 0, id: 'call', name: 'read', arguments: raw })
     output.push({ type: 'finish', reason: 'tools' })
     output.finish()
     expect(output.result().output[0]?.arguments).toBe(raw)
-    const overflow = new ResponsesOutput(request, tools, value => value)
+    const overflow = new ResponsesOutput(request, tools, () => 'unused-test-signature')
     overflow.push({ type: 'tool', index: 0, id: 'call', name: 'read', arguments: '{"id":1e400}' })
     overflow.push({ type: 'finish', reason: 'tools' })
     expect(() => overflow.finish()).toThrow()

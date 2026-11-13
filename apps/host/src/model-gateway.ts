@@ -30,7 +30,7 @@ import { ReasoningSeals } from './model-gateway/reasoning.ts'
 import { decodeResponses, ResponsesOutput } from './model-gateway/in/responses.ts'
 import { decodeAnthropic, AnthropicOutput } from './model-gateway/in/anthropic.ts'
 import { decodeChat, decodeChatReply, encodeChat } from './model-gateway/out/chat.ts'
-import type { GatewayRequest, GatewayDelta } from './model-gateway/ir.ts'
+import type { GatewayRequest, GatewayDelta, GatewayReasoning } from './model-gateway/ir.ts'
 import type { ToolNames } from './model-gateway/tools.ts'
 
 /** A saved service as the gateway may use it now: undefined from `service` when sessions may not use it. */
@@ -554,7 +554,7 @@ export class ModelGatewayServer implements ModelGateway {
     let translated: { request: GatewayRequest; tools: ToolNames } | undefined
     if (binding.entry !== binding.upstream) {
       try {
-        const scope = { providerId: binding.providerId, model }
+        const scope = { providerId: binding.providerId, model, wire: binding.upstream }
         const openReasoning = (value: string) => this.reasoning.open(scope, value)
         const converted =
           binding.entry === 'anthropic-messages'
@@ -726,8 +726,8 @@ export class ModelGatewayServer implements ModelGateway {
   ): Promise<void> {
     const { request: input, tools } = translated
     const safe = (text: string) => withoutKey(text, service.apiKey)
-    const scope = { providerId: binding.providerId, model: input.model }
-    const seal = (text: string) => this.reasoning.seal(scope, safe(text))
+    const scope = { providerId: binding.providerId, model: input.model, wire: binding.upstream }
+    const seal = (state: GatewayReasoning) => this.reasoning.seal(scope, state, safe)
     const output =
       binding.entry === 'anthropic-messages' ? new AnthropicOutput(input, tools, seal, safe) : new ResponsesOutput(input, tools, seal, safe)
     const reply = replyReader(binding.upstream, response.headers.get('content-type'))

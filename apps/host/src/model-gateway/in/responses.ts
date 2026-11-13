@@ -9,6 +9,7 @@ import {
   type GatewayItem,
   type GatewayTool,
   type GatewayRequest,
+  type GatewayReasoning,
   type GatewayLoss,
   type GatewayDelta,
   type GatewayUsage,
@@ -116,7 +117,10 @@ function readTools(values: unknown[], dropped: Set<GatewayLoss>, namespace?: str
   })
 }
 
-export function decodeResponses(value: unknown, openReasoning: (value: string) => string | undefined = () => undefined): GatewayRequest {
+export function decodeResponses(
+  value: unknown,
+  openReasoning: (value: string) => GatewayReasoning | undefined = () => undefined,
+): GatewayRequest {
   const parsed = requestSchema.safeParse(value)
   if (!parsed.success) throw invalidRequest('Responses 请求字段格式无效')
   const body = parsed.data
@@ -144,7 +148,7 @@ export function decodeResponses(value: unknown, openReasoning: (value: string) =
       if (!item) throw invalidRequest('Responses 输入条目格式无效')
       if (item.type === 'reasoning') {
         const sealed = typeof item.encrypted_content === 'string' ? openReasoning(item.encrypted_content) : undefined
-        if (sealed !== undefined) input.push({ type: 'reasoning', text: sealed })
+        if (sealed !== undefined) input.push({ type: 'reasoning', state: sealed })
         else dropped.add('reasoning-state')
       } else if (item.type === 'function_call' || item.type === 'custom_tool_call') {
         input.push({
@@ -232,7 +236,7 @@ export class ResponsesOutput {
   constructor(
     private readonly request: GatewayRequest,
     private readonly tools: ToolNames,
-    private readonly seal: (text: string) => string,
+    private readonly seal: (state: GatewayReasoning) => string,
     private readonly redact: (text: string) => string = text => text,
   ) {}
 
@@ -390,7 +394,7 @@ export class ResponsesOutput {
       if (item === this.thoughtItem) {
         const part = { type: 'summary_text', text: this.thought }
         item.summary = [part]
-        item.encrypted_content = this.seal(this.thought)
+        item.encrypted_content = this.seal({ wire: 'chat-completions', text: this.thought })
         events.push(
           this.event('response.reasoning_summary_text.done', { output_index, item_id: item.id, summary_index: 0, text: this.thought }),
         )

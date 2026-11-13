@@ -46,9 +46,10 @@ export function encodeChat(request: GatewayRequest): { body: Record<string, unkn
   for (const item of request.input) {
     if (item.type !== 'result') flushImages()
     if (item.type === 'reasoning') {
+      if (item.state.wire !== 'chat-completions') throw invalidRequest('思考状态与上游协议不一致')
       if (assistant?.content != null || assistant?.tool_calls) assistant = undefined
       const current = getAssistant()
-      current.reasoning_content = String(current.reasoning_content ?? '') + item.text
+      current.reasoning_content = String(current.reasoning_content ?? '') + item.state.text
     } else if (item.type === 'call') {
       const current = getAssistant()
       const calls = current.tool_calls as unknown[] | undefined

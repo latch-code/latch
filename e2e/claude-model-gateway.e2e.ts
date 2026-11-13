@@ -138,6 +138,14 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible'] as const)(
       await expect.poll(async () => service.requests.some(request => request.model === names[1]), { timeout: 60_000 }).toBe(true)
       await expect.poll(async () => (await detail()).summary.status).toBe('idle')
       expect((await detail()).config?.find(option => option.category === 'model')?.currentValue).toBe(nativeValue(names[1]!))
+      await expect
+        .poll(() =>
+          page
+            .locator('.transcript')
+            .getByText(/gateway menu answer/u)
+            .count(),
+        )
+        .toBe(2)
       await noHorizontalOverflow(page)
       await page.screenshot({ path: `${output}/restored.png`, animations: 'disabled' })
       await writeFile(
