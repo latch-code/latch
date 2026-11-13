@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { settleShell } from './helpers/layout.ts'
+import { openSession, settleShell } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
 
 const OUT = 'test-results/side-question'
@@ -66,16 +66,7 @@ describe('/btw', () => {
         await enrollBrowser(page, host, { name: `旁支 ${width}`, scopes: ['admin'] })
         await page.locator('.app-shell').waitFor()
         await settleShell(page)
-        const row = page.locator(`#session-navigation [data-task-id="${sessionId}"]`)
-        if (await row.isVisible()) await row.click()
-        else if (await page.getByRole('button', { name: '打开会话列表', exact: true }).isVisible()) {
-          await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
-          await row.click()
-        } else {
-          const history = page.getByRole('region', { name: '全部会话', exact: true })
-          await page.getByRole('button', { name: '全部会话', exact: true }).locator('visible=true').click()
-          await history.getByRole('button', { name: /^第一句：介绍一下项目/u }).click()
-        }
+        await openSession(page, sessionId)
         await settleShell(page)
         await page.getByRole('textbox', { name: '继续对话', exact: true }).waitFor()
         return page
