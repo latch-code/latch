@@ -1,4 +1,4 @@
-import { execFile, execFileSync, spawn } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { networkInterfaces, tmpdir } from 'node:os'
@@ -12,6 +12,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { clipboardLease, compileClipboardLease } from './helpers/iosClipboardLease.ts'
 import { clipboardGui, validateGuiPairing } from './helpers/iosClipboardValidation.ts'
+import { readDeviceClipboard, writeDeviceClipboard } from './helpers/iosDeviceClipboard.ts'
 
 const run = promisify(execFile)
 const PREFIX = 'latch-live-'
@@ -132,23 +133,7 @@ async function lanAddress(): Promise<string | undefined> {
 }
 
 /** The code goes to the simulator's clipboard through stdin only: never an argument, the environment, a file or a log. */
-function toClipboard(udid: string, payload: string, timeoutMs = STEPS.simctl): Promise<void> {
-  return new Promise((done, fail) => {
-    const child = spawn('/usr/bin/xcrun', ['simctl', 'pbcopy', udid], { stdio: ['pipe', 'ignore', 'ignore'] })
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs)
-    child.stdin.on('error', () => fail(new Error('Simulator clipboard input closed')))
-    child.once('error', () => {
-      clearTimeout(timer)
-      fail(new Error('Could not start simulator clipboard writer'))
-    })
-    child.once('exit', code => {
-      clearTimeout(timer)
-      if (code === 0) done()
-      else fail(new Error(`simctl pbcopy exited ${code}`))
-    })
-    child.stdin.end(payload)
-  })
-}
+const toClipboard = writeDeviceClipboard
 
 async function pairingCode(owner: TestDevice): Promise<string> {
   const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
@@ -340,14 +325,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
                 return gui.kind === 'open' ? gui.pid : undefined
               },
               guiClosed: async () => (await clipboardGui()).kind === 'closed',
-              readDevice: async () => {
-                try {
-                  return (await run('/usr/bin/xcrun', ['simctl', 'pbpaste', udid!], { timeout: 1000, maxBuffer: 32_768 })).stdout
-                } catch {
-                  throw new Error('Could not verify simulator clipboard')
-                }
-              },
-              // simctl startup can exceed a second; the proof still expires ten seconds after the code window starts.
+              readDevice: () => readDeviceClipboard(udid!),
+              // Process startup can exceed a second; the proof still expires ten seconds after the code window starts.
               writeDevice: value => toClipboard(udid!, value, 5000),
               stage: text => writeFile(`${HOLD}.clipboard-info`, text + '\n', { mode: 0o600 }),
             },

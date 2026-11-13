@@ -2,10 +2,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { setTimeout as pause } from 'node:timers/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { writeFile } from 'node:fs/promises'
-import { validateGuiPairing } from './helpers/iosClipboardValidation.ts'
+import { clipboardGui, validateGuiPairing } from './helpers/iosClipboardValidation.ts'
+import { readDeviceClipboard, writeDeviceClipboard } from './helpers/iosDeviceClipboard.ts'
 import {
   clipboardLease,
   ClipboardProof,
@@ -13,6 +16,30 @@ import {
   PAIR_CLIPBOARD_MS,
   publicClipboardMarker,
 } from './helpers/iosClipboardLease.ts'
+
+const clipboardDevice = process.env.LATCH_IOS_CLIPBOARD_TEST_DEVICE
+it.skipIf(process.platform !== 'darwin' || !clipboardDevice)(
+  'round trips a public marker and clears only the explicitly owned simulator with both GUIs closed',
+  async () => {
+    if (!clipboardDevice || (await clipboardGui()).kind !== 'closed') throw new Error('Owned simulator clipboard test needs closed GUIs')
+    const result = await promisify(execFile)('/usr/bin/xcrun', ['simctl', 'list', 'devices', '-j'], { timeout: 10_000 })
+    const devices = JSON.parse(result.stdout) as { devices: Record<string, Array<{ udid: string; name: string; state: string }>> }
+    const device = Object.values(devices.devices)
+      .flat()
+      .find(item => item.udid === clipboardDevice)
+    if (!device?.name.startsWith('latch-live-root-') || device.state !== 'Booted')
+      throw new Error('The selected device is not an owned test simulator')
+    const marker = publicClipboardMarker()
+    try {
+      await writeDeviceClipboard(clipboardDevice, marker)
+      // A failed read never prints arbitrary previous pasteboard content in an assertion diff.
+      expect((await readDeviceClipboard(clipboardDevice)) === marker).toBe(true)
+    } finally {
+      await writeDeviceClipboard(clipboardDevice, '')
+    }
+    expect((await readDeviceClipboard(clipboardDevice)) === '').toBe(true)
+  },
+)
 
 describe.skipIf(process.platform !== 'darwin')('clipboard restoration on an isolated named pasteboard', () => {
   let directory = '',
