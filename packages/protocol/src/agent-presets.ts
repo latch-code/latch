@@ -88,7 +88,6 @@ export const AGENT_PRESETS: AgentPreset[] = [
     install: 'npm i -g @agentclientprotocol/claude-agent-acp',
     installNote: '还要在 Claude Code 中登录',
     signIn: '在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。',
-    brandMark: false,
   },
   {
     id: 'pi',
@@ -169,7 +168,6 @@ export const AGENT_PRESETS: AgentPreset[] = [
     description: '运行 Cursor 官方 CLI，使用你自己的 Cursor 账号；模型与登录由 Cursor 管理。',
     install: 'curl https://cursor.com/install -fsS | bash',
     login: { command: 'cursor-agent', args: ['login'] },
-    brandMark: false,
   },
   {
     id: 'antigravity',
@@ -181,7 +179,6 @@ export const AGENT_PRESETS: AgentPreset[] = [
     description: '使用本机 Antigravity CLI 的模型与登录。',
     installNote: '需要 Antigravity CLI 1.5.8 或更高版本',
     login: { command: 'agy', args: ['acp', '--login'] },
-    brandMark: false,
   },
   {
     id: 'grok',
@@ -194,7 +191,6 @@ export const AGENT_PRESETS: AgentPreset[] = [
     install: 'npm i -g @xai-official/grok',
     installNote: '1.0.77 或更高版本',
     login: { command: 'grok', args: ['login'] },
-    brandMark: false,
   },
 ]
 

@@ -64,6 +64,7 @@ const SCENES = [
   'history-seed',
   'history-lost',
   'brands',
+  'harness-menu',
   'about',
   'licenses',
   'computers',
@@ -87,6 +88,7 @@ const DEVICES = [
  * and never creates, shuts down, erases or deletes; its light or dark appearance is put back at the end.
  */
 const DEVICE = process.env.LATCH_IOS_SCREENS_DEVICE
+const KEEP_RUNNING = process.env.LATCH_IOS_SCREENS_KEEP_RUNNING === '1'
 type Listed = { devices: Record<string, Array<{ name: string; udid: string; state?: string; deviceTypeIdentifier?: string }>> }
 
 /**
@@ -168,6 +170,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
             .find(item => item.udid === DEVICE)
         : undefined
       if (DEVICE && !given) throw new Error('LATCH_IOS_SCREENS_DEVICE names no simulator on this Mac')
+      if (KEEP_RUNNING && !given) throw new Error('Keeping the fixture app open requires an explicit screenshot device')
       const targets = given ? [{ name: given.deviceTypeIdentifier?.includes('iPad') ? 'ipad' : 'iphone', types: [] as string[] }] : DEVICES
       let used = 0
       for (const device of targets) {
@@ -198,8 +201,14 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
             await simctl('io', udid, 'screenshot', join(output, `${scene}--${theme}--${device.name}.png`))
           }
         }
-        await simctl('terminate', udid, 'dev.latch.ios.screens').catch(() => {})
+        if (!KEEP_RUNNING) await simctl('terminate', udid, 'dev.latch.ios.screens').catch(() => {})
         if (before === 'light' || before === 'dark') await simctl('ui', udid, 'appearance', before)
+        if (!given) {
+          // Fresh runtimes consume several GB each; release our completed device before booting the next.
+          await simctl('shutdown', udid).catch(() => {})
+          await simctl('delete', udid)
+          created.splice(created.indexOf(udid), 1)
+        }
       }
       expect(used).toBeGreaterThan(0)
     } finally {

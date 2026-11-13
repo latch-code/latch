@@ -54,8 +54,8 @@ Agent 自己提供官方的机器协议时，Latch 直接说这个协议，ACP �
 | Gemini CLI | `gemini --acp --approval-mode default` | Apache-2.0 | `npm i -g @google/gemini-cli` |
 | Qwen Code | `qwen --acp` | Apache-2.0 | `npm i -g @qwen-code/qwen-code` |
 | goose | `goose acp` | Apache-2.0 | 见项目文档 |
-| Claude Agent | `claude-agent-acp` | Apache-2.0 适配器；Claude Code 专有（Anthropic 条款） | `npm i -g @agentclientprotocol/claude-agent-acp`；用这个人在 Claude Code 中已有的登录（或它设置里的 API key、Bedrock、Vertex）。名称只用「Claude Agent」，不用 Claude Code 的名称或 logo，图标是中性图形 |
-| Cursor | `cursor-agent acp` | 专有（Cursor 服务条款） | Cursor 官方安装脚本；用这个人自己的 Cursor 账号。安装脚本同时建 `agent` 与 `cursor-agent` 两个链接，预设用后者，因为 `agent` 这个名字可能属于别的程序；图标是中性图形 |
+| Claude Agent | `claude-agent-acp` | Apache-2.0 适配器；Claude Code 专有（Anthropic 条款） | `npm i -g @agentclientprotocol/claude-agent-acp`；用这个人在 Claude Code 中已有的登录（或它设置里的 API key、Bedrock、Vertex）。名称只用「Claude Agent」，图标使用官方 Claude 品牌资源；来源与商标使用条件见界面的开源许可 |
+| Cursor | `cursor-agent acp` | 专有（Cursor 服务条款） | Cursor 官方安装脚本；用这个人自己的 Cursor 账号。安装脚本同时建 `agent` 与 `cursor-agent` 两个链接，预设用后者，因为 `agent` 这个名字可能属于别的程序；图标使用官方 Cursor 品牌资源 |
 | Antigravity | `agy acp --disable-telemetry` | Google Antigravity 条款 | 1.5.8 或更高版本；使用本机 CLI 的登录，模型与思考选项由 ACP 报告 |
 | Grok Build | `grok --no-auto-update --permission-mode default agent stdio` | 发布版条款；开源源码 Apache-2.0 | 1.0.77 或更高版本；使用本机 CLI 的登录，模型与推理档位由 ACP 报告，权限档位尚不能经 ACP 读回 |
 

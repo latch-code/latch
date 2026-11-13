@@ -38,6 +38,25 @@ import UIKit
         model.connected = true
         model.verifiedUntil = .distantFuture
         switch name {
+        case "harness-menu":
+            creating = true
+            let names = [("standard", "Latch 内置"), ("codex", "Codex"), ("claude-agent", "Claude Agent"),
+                ("gemini", "Gemini CLI"), ("qwen", "Qwen Code"), ("goose", "goose"), ("cursor", "Cursor"),
+                ("pi", "pi"), ("dsh", "DeepSeek Harness"), ("opencode", "OpenCode"), ("grok", "Grok Build"), ("antigravity", "Antigravity")]
+            model.snapshot = patched(model.snapshot) { object in
+                var catalog = object["catalog"]!.object
+                let original = catalog["harnesses"]!.array
+                let prototype = original.first { $0["id"].string == "codex" } ?? original[0]
+                catalog["harnesses"] = .array(names.map { id, name in
+                    patched(prototype) { harness in
+                        harness["id"] = .string(id); harness["name"] = .string(name)
+                        var capabilities = harness["capabilities"]!.object
+                        capabilities["display"] = .object(["label": .string(name), "mark": .string(id == "standard" ? "latch" : id)])
+                        harness["capabilities"] = .object(capabilities)
+                    }
+                })
+                object["catalog"] = .object(catalog)
+            }
         case "conversation":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()
         case "conversation-actions":
