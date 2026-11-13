@@ -200,6 +200,12 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         }
         await simctl('terminate', udid, 'dev.latch.ios.screens').catch(() => {})
         if (before === 'light' || before === 'dark') await simctl('ui', udid, 'appearance', before)
+        if (!given) {
+          // Fresh runtimes consume several GB each; release our completed device before booting the next.
+          await simctl('shutdown', udid).catch(() => {})
+          await simctl('delete', udid)
+          created.splice(created.indexOf(udid), 1)
+        }
       }
       expect(used).toBeGreaterThan(0)
     } finally {
