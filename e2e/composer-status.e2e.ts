@@ -120,7 +120,13 @@ describe('the composer status line', () => {
       )
     }
     try {
-      await enrollBrowser(page, host, { name: `状态行 ${width} ${theme} ${randomUUID().slice(0, 4)}` })
+      const name = `状态行 ${width} ${theme} ${randomUUID().slice(0, 4)}`
+      await enrollBrowser(page, host, { name })
+      // It sees project files, so the draft offers @ mentions; a narrower device says it cannot.
+      const devices = await owner.json<{ devices: Array<{ id: string; name: string }> }>('devices')
+      const id = devices.devices.find(item => item.name === name)!.id
+      expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+      await page.reload()
       await connected(page)
     } catch (error) {
       await shot(page, `failed-enroll-${width}-${theme}`)

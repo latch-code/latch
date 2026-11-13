@@ -46,6 +46,12 @@ describe('logging in to a Harness from a browser', () => {
       loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
       commandDirectories: () => [bin],
     })
+    // Saved on this Mac with its confirmation, on the adapter the Host finds: a page elsewhere is offered no preset.
+    const owner = await host.enroll({ listener: 'unix' })
+    const saved = await owner.confirmed('agents', {
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex-acp', args: [], env: {} },
+    })
+    expect(saved.status).toBe(201)
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })

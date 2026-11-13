@@ -47,6 +47,9 @@ describe('pi over its own RPC mode', () => {
       commandDirectories: () => [bin],
     })
     owner = await host.enroll({ listener: 'unix' })
+    // Saved on this Mac with its confirmation: a page elsewhere is offered no preset, only saved definitions.
+    const saved = await owner.confirmed('agents', { body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi', args: [], env: {} } })
+    expect(saved.status).toBe(201)
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })
@@ -228,7 +231,7 @@ describe('pi over its own RPC mode', () => {
       .toBe(true)
     // pi stops what it is doing to compact, so the command is not offered meanwhile, and refused when typed.
     await composer(page).fill('/')
-    await expect.poll(() => menu.isVisible()).toBe(false)
+    await expect.poll(() => menu.getByRole('option', { name: /^\/compact/u }).count()).toBe(0)
     await composer(page).fill('/compact')
     await composer(page).press('Meta+Enter')
     const refusal = page.getByText('/compact 不能排队或追加，请等本轮结束后发送。', { exact: true })
@@ -371,7 +374,7 @@ describe('pi over its own RPC mode', () => {
       } else await chip(page, '模型').click()
       // The menu's group, not the status line under the input, which names the same thing.
       const inMenu = (text: string) => page.getByText(text, { exact: true }).and(page.locator(':not(.composer-status, .composer-status *)'))
-      await inMenu('读取 pi 的模型列表').waitFor()
+      await inMenu('刷新模型列表').waitFor()
       // Latch forwards pi to no service, so no service is listed or folded into a row of ones it cannot use.
       for (const gone of ['pi 自己的模型', '服务用不了', 'Relay']) expect(await inMenu(gone).count()).toBe(0)
       // Nothing here goes through Latch, so the menu does not explain 「经 Latch」.

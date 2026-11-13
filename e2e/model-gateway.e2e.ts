@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { AppSnapshot, ProviderSettings, TaskDetail } from '@latch/protocol'
+import { AGENT_PRESETS, type AppSnapshot, type ProviderSettings, type TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, startFakeModels, type FakeModels, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -37,6 +37,12 @@ const row = (page: Page, name: RegExp | string) =>
   page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
 
 /** Sends the draft, starting in a new empty folder when the page asks where, however late it asks. */
+/** A preset as a new session's first send saves it: its own command, which the Host finds in the test's directory. */
+function savedPreset(id: string) {
+  const preset = AGENT_PRESETS.find(item => item.id === id)!
+  return { id: preset.id, name: preset.name, presetId: preset.id, command: preset.command, args: preset.args, env: {} }
+}
+
 async function sendDraft(page: Page): Promise<void> {
   await input(page).press('Meta+Enter')
   const elsewhere = page.getByText(/ 在一个新的空文件夹里开始$/u)
@@ -85,6 +91,8 @@ describe('a Harness with its own models on a saved service', () => {
       commandDirectories: () => [bin],
     })
     owner = await host.enroll({ listener: 'unix' })
+    // Saved on this Mac with its confirmation: a page elsewhere is offered no preset, only saved definitions.
+    expect((await owner.confirmed('agents', { body: savedPreset('codex') })).status).toBe(201)
     const add = async (name: string, kind: string, baseURL: string, served = ['fake-model', 'fake-model-large']) => {
       const created = await owner.confirmed('providers', {
         method: 'POST',
@@ -196,7 +204,7 @@ describe('a Harness with its own models on a saved service', () => {
     await unusable.waitFor()
     expect(await page.getByText('DeepSeek', { exact: true }).count()).toBe(0)
     await unusable.click()
-    await menuText(page, 'Codex 不说这个服务的协议').waitFor()
+    await menuText(page, 'Codex 只说 Responses，这个服务是 Chat Completions').waitFor()
     await menuText(page, 'DeepSeek').waitFor()
     expect(await page.getByText(/尚未实现/u).count()).toBe(0)
     await page.getByText('Relay · 实验性 · 经 Latch', { exact: true }).waitFor()
@@ -327,6 +335,8 @@ describe('Gemini CLI on a saved Gemini service', () => {
       commandDirectories: () => [bin],
     })
     owner = await host.enroll({ listener: 'unix' })
+    // Saved on this Mac with its confirmation: a page elsewhere is offered no preset, only saved definitions.
+    expect((await owner.confirmed('agents', { body: savedPreset('gemini') })).status).toBe(201)
     const created = await owner.confirmed('providers', {
       method: 'POST',
       body: {
@@ -446,6 +456,8 @@ describe('a turn through Latch shows what the service said it used', () => {
       commandDirectories: () => [bin],
     })
     owner = await host.enroll({ listener: 'unix' })
+    // Saved on this Mac with its confirmation: a page elsewhere is offered no preset, only saved definitions.
+    expect((await owner.confirmed('agents', { body: savedPreset('gemini') })).status).toBe(201)
     const created = await owner.confirmed('providers', {
       method: 'POST',
       body: {
