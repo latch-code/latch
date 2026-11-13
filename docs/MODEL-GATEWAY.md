@@ -13,7 +13,7 @@ Host 为经 Latch 使用模型服务的 Harness 提供单独的回环临时端�
 
 ## 协议与请求
 
-四种入口优先同协议透传；Responses 与 Anthropic Messages 入口另可转换到 Chat Completions，Anthropic Messages 还可转换到 Responses。其他跨协议方向、备选调度、价格账本和费用预算尚未实现：
+四种入口优先同协议透传；Responses 与 Anthropic Messages 入口另可转换到 Chat Completions，两者之间也可互转。其他跨协议方向、备选调度、价格账本和费用预算尚未实现：
 
 | 入口 | 模型请求 | 模型列表 |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ Chat 流强制请求末尾用量。每条流独立维护有界状态，处理 UT
 
 Chat 的 `reasoning_content` 以 `latch2.` 封装在 Responses 的 `encrypted_content` 中。它是带 HMAC 的来源封装，不是加密；签名 key 只在当前 Host 内存，签名绑定同一上游协议、服务和模型。合法回放覆盖历史中的各个助手步骤，跨协议、跨服务、跨模型、篡改、外来封装与 Host 重启前的封装都剥离并记录损耗。重启后不能承诺仍满足要求完整旧思考的服务；这样的服务可能拒绝旧上下文，须重新开始或清空上下文。封装前先脱敏，函数参数先核对对象、嵌套上限和有限数值，再逐个解码并脱敏 JSON 字符串词元；数字与未修改的词元保留原样。错误也在增加 JSON 转义层之前脱敏，避免编码隐藏密钥。不会持久化签名 key 或正文账本来恢复封装。
 
-网关 IR 分开表示 Chat 可读思考与 Responses 原生推理项（原生 ID、加密内容、摘要、可读思考与完成状态）；原生加密状态不能转换成 Chat 的文字思考。不透明内容命中脱敏规则时拒绝封装，不通过改写生成无效密文。封装版本只在当前 Host 生命周期内有效，重启前的旧版本同样剥离。
+网关 IR 分开表示 Chat 可读思考、Responses 原生推理项（原生 ID、加密内容、摘要、可读思考与完成状态）和 Anthropic 原生 thinking/signature、redacted_thinking/data。原生状态不能转换成 Chat 的文字思考。不透明内容命中脱敏规则时拒绝封装，不通过改写生成无效密文；Anthropic 的可读思考也在原生签名覆盖范围内，命中脱敏时同样拒绝。封装版本只在当前 Host 生命周期内有效，重启前的旧版本同样剥离。
 
 ### Anthropic Messages 转 Chat
 
@@ -62,13 +62,23 @@ CLI 使用这条转换时启用官方 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`�
 
 Responses 的文字增量与最终内容前缀、输出项身份和索引逐项核对；未完成、被过滤、缺少用量或矛盾的输出都不能释放可执行工具。原生思考保留 id、encrypted_content、summary、可选 content 和状态，经同协议的来源封装放进 Anthropic signature；没有可读文字时用 redacted_thinking.data。封装只验证来源，不把摘要当作原生思考状态，也不伪造加密。密文迟至 response.completed 才到时，有界暂存其后的输出以保留顺序；正常完成却没有原生状态时拒绝，不能悄悄丢掉工具循环依赖的思考。到达完成事件后结束读取并取消仍保持连接的上游；下游取消也中止上游，不重试。
 
-服务端工具、异步/程序触发的调用与未请求的命名空间不会被误认为本地工具。回复和入站历史继续使用共用的工具身份、参数、选择约束、数字词元保真与秘密脱敏规则。Responses→Anthropic 仍未实现。
+服务端工具、异步/程序触发的调用与未请求的命名空间不会被误认为本地工具。回复和入站历史继续使用共用的工具身份、参数、选择约束、数字词元保真与秘密脱敏规则。
+
+### Responses 转 Anthropic Messages
+
+出站使用与内置 Provider 相同的 `anthropic-version: 2023-06-01`。完整历史转换成 Messages：开头的系统说明放入 `system`，中途的系统说明保留原来位置，不挪到开头；目标模型不支持时由上游拒绝。相邻助手条目合成一个有序内容块列表，保留空文字块、原生思考、调用顺序；工具结果中的文字和图片留在对应 `tool_result`。命名空间与 custom 工具沿用同一个确定性名称映射和 JSON content 包装，数字词元保留原样。
+
+明确的 `max_output_tokens` 转为 `max_tokens`，没给时采用有界的 8192 默认值。`none` 思考转为 disabled，其余已由服务声明的 effort 转为 adaptive 与 output_config.effort；不猜测固定思考预算，也不因强制工具和思考组合被模型拒绝而放宽约束。temperature 大于 1、json_object 输出格式在出站前拒绝；JSON Schema 转为原生结构化输出。图片的明确精度选项没有对应字段，计入协议专用选项损耗，不移动图片。
+
+流按 message_start、逐块 start/delta/stop、message_delta 和 message_stop 验证身份、索引、类型与完成顺序。原生思考直到签名完整才封装进 Responses encrypted_content；它仍是来源封装而不是加密，完整 thinking/signature 和 redacted_thinking/data 在同服务、同模型、同 Host 生命周期中原样回放。正常完成缺少签名时拒绝；截断时记录思考状态损耗，不伪造签名。输出上限、上下文窗口耗尽或过滤保留 incomplete，全部工具都不发布；服务端执行块、pause_turn 与未知事件拒绝。
+
+完成必须有上游最终累计用量：输入总数是 input_tokens、cache_read_input_tokens 与 cache_creation_input_tokens 之和，缓存读写仍分别保留，输出使用最终 output_tokens。用量倒退、溢出、缺失、断流或任何工具身份/参数/选择约束失败时，不发布可执行的工具 done。message_stop 后取消仍保持连接的上游；下游取消同样中止上游，不重试或回退。
 
 ## Harness 交付
 
 | Harness | 当前网关路线 |
 | --- | --- |
-| Codex 直连 | 至少 0.167.0；自定义 `latch` provider 使用 Responses 入口，可接同协议服务或转换到 Chat；凭据从 `LMG_TOKEN` 读取，参数只有地址、变量名和公开选项 |
+| Codex 直连 | 至少 0.167.0；自定义 `latch` provider 使用 Responses 入口，可接同协议服务或转换到 Chat、Anthropic；凭据从 `LMG_TOKEN` 读取，参数只有地址、变量名和公开选项 |
 | codex-acp | `providers/set`，仅在适配器声明并列出对应 provider/API 类型时使用；凭据经 ACP 头字段 |
 | Gemini CLI | 至少 0.44.0；GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY 与会话私有系统设置 |
 | OpenCode | 经网关至少 2.2.6；私有 `providers.latch` 配置与 shell hook；四种同协议服务 |

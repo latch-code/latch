@@ -13,10 +13,10 @@ import { noHorizontalOverflow } from './helpers/layout.ts'
 const live = process.env.LATCH_CODEX_GATEWAY_BINARY
 afterEach(() => vi.unstubAllEnvs())
 
-it.each(['openai-responses', 'openai-compatible'] as const)(
+it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
   'chooses a native Codex %s service model and preserves it through Host recovery',
   async kind => {
-    const wire = kind === 'openai-compatible' ? 'chat-completions' : 'responses'
+    const wire = kind === 'openai-compatible' ? 'chat-completions' : kind === 'anthropic' ? 'anthropic-messages' : 'responses'
     const root = await mkdtemp(join(tmpdir(), 'latch-ui-codex-gateway-'))
     const bin = join(root, 'bin')
     const home = join(root, 'home')
@@ -105,7 +105,7 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
       await connected(page)
       await chip().click()
       await modelRow(names[0]!).waitFor()
-      if (wire === 'chat-completions') {
+      if (wire !== 'responses') {
         await modelSurface.getByText('协议转换 · 实验性', { exact: true }).waitFor()
         await page.keyboard.press('Escape')
         for (const width of [320, 390, 768, 1440]) {
@@ -161,11 +161,16 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
       if (live) {
         const body = service.requests.at(-1)?.body as {
           input?: Array<{ type?: string; output?: string }>
-          messages?: Array<{ role: string; content?: string }>
+          messages?: Array<{ role: string; content?: string | Array<{ type: string; content?: unknown }> }>
         }
         const outputs = [
           ...(body.input ?? []).filter(item => item.type === 'function_call_output').map(item => item.output ?? ''),
-          ...(body.messages ?? []).filter(item => item.role === 'tool').map(item => item.content ?? ''),
+          ...(body.messages ?? []).filter(item => item.role === 'tool').map(item => String(item.content ?? '')),
+          ...(body.messages ?? []).flatMap(item =>
+            Array.isArray(item.content)
+              ? item.content.filter(block => block.type === 'tool_result').map(block => JSON.stringify(block.content))
+              : [],
+          ),
         ]
         expect(outputs.some(output => output.includes('gateway-tool-ok'))).toBe(true)
         expect((await detail()).messages.some(message => message.role === 'tool' && message.state === 'completed')).toBe(true)

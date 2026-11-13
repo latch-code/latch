@@ -10,6 +10,32 @@ const sealedSchema = z.discriminatedUnion('wire', [
   z.object({ wire: z.literal('chat-completions'), text: z.string().max(MAX_TEXT) }).strict(),
   z
     .object({
+      wire: z.literal('anthropic-messages'),
+      block: z.discriminatedUnion('type', [
+        z
+          .object({
+            type: z.literal('thinking'),
+            thinking: z.string().max(MAX_TEXT),
+            signature: z
+              .string()
+              .min(1)
+              .max(4 * MAX_TEXT),
+          })
+          .strict(),
+        z
+          .object({
+            type: z.literal('redacted_thinking'),
+            data: z
+              .string()
+              .min(1)
+              .max(4 * MAX_TEXT),
+          })
+          .strict(),
+      ]),
+    })
+    .strict(),
+  z
+    .object({
       wire: z.literal('responses'),
       item: z
         .object({
@@ -45,7 +71,12 @@ export class ReasoningSeals {
     if (!checked.success || checked.data.wire !== scope.wire) throw invalidReply('思考状态与上游协议不一致')
     let clean: GatewayReasoning
     if (checked.data.wire === 'chat-completions') clean = { ...checked.data, text: redact(checked.data.text) }
-    else {
+    else if (checked.data.wire === 'anthropic-messages') {
+      // The native signature authenticates the entire thinking block, including its readable text.
+      if (Object.values(checked.data.block).some(value => redact(value) !== value))
+        throw invalidReply('模型思考状态包含敏感内容，不能安全回放')
+      clean = checked.data
+    } else {
       const { item } = checked.data
       // Rewriting an opaque state would invalidate it. Reject a secret-bearing state before wrapping it in base64.
       if (redact(item.id) !== item.id || redact(item.encrypted_content) !== item.encrypted_content)

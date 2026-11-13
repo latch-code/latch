@@ -137,7 +137,7 @@ Host 模块与 UI 模块都是用户显式加载的可信代码：分别拥有 H
 
 ## 安全模型概览
 
-模型网关使用独立回环临时端口、每进程凭据与固定协议路径，密钥只在 Host 向已确认服务发出请求时注入；四协议透传、Responses/Anthropic→Chat 与 Anthropic→Responses 转换、进程交付与用量见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。服务模型与能力声明改变时旧租约失效，不能继续沿用已经不成立的能力。
+模型网关使用独立回环临时端口、每进程凭据与固定协议路径，密钥只在 Host 向已确认服务发出请求时注入；四协议透传、Responses/Anthropic→Chat 与 Responses↔Anthropic 转换、进程交付与用量见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。服务模型与能力声明改变时旧租约失效，不能继续沿用已经不成立的能力。
 
 Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码的隔离：
 

@@ -5,6 +5,7 @@ export const TRANSLATED_PAIRS: ReadonlyArray<{ entry: ModelWire; upstream: Model
   { entry: 'responses', upstream: 'chat-completions' },
   { entry: 'anthropic-messages', upstream: 'chat-completions' },
   { entry: 'anthropic-messages', upstream: 'responses' },
+  { entry: 'responses', upstream: 'anthropic-messages' },
 ]
 
 export const GATEWAY_LOSSES = [
@@ -52,5 +53,5 @@ export function canTranslate(entry: ModelWire, upstream: ModelWire): boolean {
 /** Potential losses, not a claim that a particular request contained all of them. */
 export function lossesOf(entry: ModelWire, upstream: ModelWire): readonly GatewayLoss[] {
   if (!canTranslate(entry, upstream)) return []
-  return upstream === 'responses' ? GATEWAY_LOSSES.filter(loss => loss !== 'tool-image-location') : GATEWAY_LOSSES
+  return upstream === 'chat-completions' ? GATEWAY_LOSSES : GATEWAY_LOSSES.filter(loss => loss !== 'tool-image-location')
 }

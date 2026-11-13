@@ -21,9 +21,11 @@ sources:
 
 模型网关的机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。`model-gateway.test.ts` 覆盖四协议入口、头白名单、进程凭据、上游错误脱敏、流式用量与下游取消；`codex-gateway.test.ts` 通过假原生 Codex 真实调用 Host 网关，检查服务独有模型、失败不回退及重启恢复。`codex-environment.test.ts` 检查有效命令环境规则在新建与恢复前读取并保留，未知规则拒绝开线程。
 
-`gateway-history.test.ts` 以真实回环 HTTP 核对非法 Responses 调用图与非有限 schema/参数均在出站前 400、零上游调用，同时保留合法并行历史及数字词元。`gateway-responses.test.ts` 验证 Anthropic→Responses 的完整历史、工具内图片、原生思考回放、流与最终内容核对、终态用量、HTTP 前置拒绝和凭据密文拒绝。`gateway-reasoning.test.ts` 检查思考封装的协议绑定、原生加密状态完整保留、跨协议拒绝和封装前脱敏。`gateway-translation.test.ts` 覆盖 Responses→Chat 的命名空间、custom 工具、图片结果来源与并行顺序、完整事件、取消、错误、用量、密封思考和分块/JSON 参数脱敏；参数数字词元保留原样，非有限数拒绝。`codex-gateway.test.ts` 同时验证同协议与转换路线的保存、失败和恢复。`codex-model-gateway.e2e.ts` 覆盖两条路线，Chat 菜单另检查 320/390/768/1440 深浅色与损耗说明。
+`gateway-history.test.ts` 以真实回环 HTTP 核对非法 Responses 调用图与非有限 schema/参数均在出站前 400、零上游调用，同时保留合法并行历史及数字词元。`gateway-responses.test.ts` 验证 Anthropic→Responses 的完整历史、工具内图片、原生思考回放、流与最终内容核对、终态用量、HTTP 前置拒绝和凭据密文拒绝。`gateway-anthropic-upstream.test.ts` 验证 Responses→Anthropic 的签名思考完整回放、文字块边界、工具内图片、精确数字、累计用量与流顺序拒绝；真实 HTTP 核对服务密钥与 API 版本、两轮历史、零出站拒绝和秘密思考状态拒绝。`gateway-reasoning.test.ts` 检查思考封装的协议绑定、原生加密状态完整保留、跨协议拒绝和封装前脱敏。`gateway-translation.test.ts` 覆盖 Responses→Chat 的命名空间、custom 工具、图片结果来源与并行顺序、完整事件、取消、错误、用量、密封思考和分块/JSON 参数脱敏；参数数字词元保留原样，非有限数拒绝。`codex-gateway.test.ts` 同时验证同协议与转换路线的保存、失败和恢复。`codex-model-gateway.e2e.ts` 覆盖三条路线，Chat、Anthropic 菜单另检查 320/390/768/1440 深浅色与损耗说明。
 
 `codex-chat-gateway.live.test.ts` 仅在明确授权并设置 `LATCH_CODEX_GATEWAY_BINARY` 时运行：临时 Host/HOME/CODEX_HOME 与本机假 Chat 上游，核对真实 custom apply_patch、目录外型号经命令工具 apply_patch、思考回放、工具环境只报告凭据存在与否、停止回执与上游连接关闭、失败不回退。测试不读取用户登录文件，不等于真实 BYOK；未知型号的原生工具范围由 Codex 决定。
+
+`codex-anthropic-gateway.live.test.ts` 使用同一 opt-in 和隔离规则，把真实 Codex 的目录内型号及服务自定义型号接到本地假 Anthropic 上游；实际执行 custom 或命令工具的 apply_patch、读取结果，逐块核对原生 thinking/signature 和 redacted_thinking/data 的两轮回放，确认工具环境无网关凭据、取消关闭上游、服务失败不回退。它不证明真实模型提供商接受这些请求或真实 BYOK 成功。
 
 `e2e/codex-model-gateway.e2e.ts` 默认用假 app-server，验证菜单模型选择与恢复。只有所有者明确授权的验收才设置 `LATCH_CODEX_GATEWAY_BINARY` 使用真实 Codex 并执行夹具提供的无害诊断工具；仍用临时 HOME/CODEX_HOME、临时 Host 与本地假模型，不读取原登录文件，也不把它称为真实 BYOK 成功。
 

@@ -47,12 +47,12 @@ function content(value: unknown, dropped: Set<GatewayLoss>): Content[] {
     if (part.type === 'input_image') {
       const url = requiredText(part.image_url, '图片地址', 32 * 1024 * 1024)
       if (part.file_id !== undefined || !/^(?:https?:\/\/|data:image\/(?:png|jpeg|gif|webp);base64,)/iu.test(url))
-        throw invalidRequest('这个图片引用不能转换为 Chat 图片')
+        throw invalidRequest('这个图片引用尚不能转换')
       if (part.detail !== undefined && !['low', 'high', 'auto', 'original'].includes(String(part.detail)))
         throw invalidRequest('图片精度无效')
       return { type: 'image', url, ...(part.detail ? { detail: String(part.detail) } : {}) }
     }
-    throw invalidRequest('这类文件或消息内容尚不能转换为 Chat')
+    throw invalidRequest('这类文件或消息内容尚不能转换')
   })
 }
 
@@ -84,7 +84,7 @@ function readTools(values: unknown[], dropped: Set<GatewayLoss>, namespace?: str
       return readTools(tool.tools, dropped, name(tool.name))
     }
     if (tool.type !== 'function' && tool.type !== 'custom') {
-      if (typeof tool.type !== 'string' || !HOSTED_TOOLS.has(tool.type)) throw invalidRequest('这类工具尚不能转换为 Chat')
+      if (typeof tool.type !== 'string' || !HOSTED_TOOLS.has(tool.type)) throw invalidRequest('这类工具尚不能转换')
       dropped.add('hosted-tools')
       return []
     }
@@ -134,8 +134,8 @@ export function decodeResponses(
     || body.prompt != null
     || body.context_management != null
   )
-    throw invalidRequest('Chat 转换不支持服务端会话、已存回复或压缩状态，请发送完整对话')
-  if (body.n !== undefined && body.n !== 1) throw invalidRequest('Chat 转换只接受一个候选')
+    throw invalidRequest('协议转换不支持服务端会话、已存回复或压缩状态，请发送完整对话')
+  if (body.n !== undefined && body.n !== 1) throw invalidRequest('协议转换只接受一个候选')
   const dropped = new Set<GatewayLoss>()
   if (body.prompt_cache_key !== undefined || body.prompt_cache_retention !== undefined) dropped.add('prompt-cache')
   if (body.logprobs || body.top_logprobs) dropped.add('logprobs')
@@ -241,8 +241,9 @@ export class ResponsesOutput {
   private readonly omitted = new Set<OutputItem>()
   private readonly calls = new Map<number, PendingCall>()
   private textItem?: OutputItem
+  private readonly textItems = new Map<OutputItem, string>()
+  private readonly nativeThoughts = new Map<OutputItem, { text: string; sealed: string }>()
   private thoughtItem?: OutputItem
-  private text = ''
   private thought = ''
   private bytes = 0
   private stop?: Extract<GatewayDelta, { type: 'finish' }>['reason']
@@ -295,7 +296,6 @@ export class ResponsesOutput {
   }
 
   push(delta: GatewayDelta): Event[] {
-    if (delta.type === 'reasoning-state') throw invalidReply('这种原生思考输出尚不能转换为 Responses')
     if (delta.type === 'loss') return []
     if (this.status !== 'in_progress') throw invalidReply('模型在回复完成后继续发送内容')
     if (delta.type === 'usage') {
@@ -308,11 +308,41 @@ export class ResponsesOutput {
       return []
     }
     if (this.stop) throw invalidReply('模型在结束标记之后继续发送内容')
+    if (delta.type === 'text-end') {
+      const events = this.textItem ? [] : this.push({ type: 'text', text: '' })
+      this.textItem = undefined
+      return events
+    }
+    if (delta.type === 'reasoning-state') {
+      if (delta.state.wire !== 'anthropic-messages') throw invalidReply('这种原生思考输出尚不能转换为 Responses')
+      this.bytes += JSON.stringify(delta.state).length
+      if (this.bytes > MAX_OUTPUT) throw invalidReply('模型回复超出转换大小限制')
+      const sealed = this.seal(delta.state)
+      const text = delta.state.block.type === 'thinking' ? this.redact(delta.state.block.thinking) : ''
+      this.textItem = undefined
+      const item: OutputItem = { id: `rs_${randomUUID()}`, type: 'reasoning', summary: [] }
+      const output_index = this.items.length
+      this.items.push(item)
+      this.nativeThoughts.set(item, { text, sealed })
+      const events = [this.event('response.output_item.added', { output_index, item: { ...item } })]
+      if (text)
+        events.push(
+          this.event('response.reasoning_summary_part.added', {
+            output_index,
+            item_id: item.id,
+            summary_index: 0,
+            part: { type: 'summary_text', text: '' },
+          }),
+          this.event('response.reasoning_summary_text.delta', { output_index, item_id: item.id, summary_index: 0, delta: text }),
+        )
+      return events
+    }
     this.bytes += delta.type === 'tool' ? (delta.arguments?.length ?? 0) + (delta.name?.length ?? 0) : delta.text.length
     if (this.bytes > MAX_OUTPUT) throw invalidReply('模型回复超出转换大小限制')
     if (delta.type === 'tool') {
       let call = this.calls.get(delta.index)
       if (!call) {
+        this.textItem = undefined
         if (this.calls.size >= 128) throw invalidReply('模型请求的工具过多')
         call = { index: delta.index, id: '', name: '', arguments: '', output: this.items.length }
         this.calls.set(delta.index, call)
@@ -340,7 +370,10 @@ export class ResponsesOutput {
         : { id: `msg_${randomUUID()}`, type: 'message', role: 'assistant', status: 'in_progress', content: [] }
       this.items.push(item)
       if (thought) this.thoughtItem = item
-      else this.textItem = item
+      else {
+        this.textItem = item
+        this.textItems.set(item, '')
+      }
       const output_index = this.items.indexOf(item)
       events.push(this.event('response.output_item.added', { output_index, item: { ...item } }))
       events.push(
@@ -354,7 +387,7 @@ export class ResponsesOutput {
       )
     }
     if (thought) this.thought += delta.text
-    else this.text += delta.text
+    else this.textItems.set(item, this.textItems.get(item)! + delta.text)
     if (this.thought.length > 1024 * 1024) throw invalidReply('模型思考超出回放大小限制')
     events.push(
       this.event(thought ? 'response.reasoning_summary_text.delta' : 'response.output_text.delta', {
@@ -417,11 +450,22 @@ export class ResponsesOutput {
           this.event('response.reasoning_summary_text.done', { output_index, item_id: item.id, summary_index: 0, text: this.thought }),
         )
         events.push(this.event('response.reasoning_summary_part.done', { output_index, item_id: item.id, summary_index: 0, part }))
-      } else if (item === this.textItem) {
-        const part = { type: 'output_text', text: this.text, annotations: [] }
+      } else if (this.nativeThoughts.has(item)) {
+        const { text, sealed } = this.nativeThoughts.get(item)!
+        const part = { type: 'summary_text', text }
+        item.summary = text ? [part] : []
+        item.encrypted_content = sealed
+        if (text)
+          events.push(
+            this.event('response.reasoning_summary_text.done', { output_index, item_id: item.id, summary_index: 0, text }),
+            this.event('response.reasoning_summary_part.done', { output_index, item_id: item.id, summary_index: 0, part }),
+          )
+      } else if (this.textItems.has(item)) {
+        const text = this.textItems.get(item)!
+        const part = { type: 'output_text', text, annotations: [] }
         item.content = [part]
         item.status = this.status === 'incomplete' ? 'incomplete' : 'completed'
-        events.push(this.event('response.output_text.done', { output_index, item_id: item.id, content_index: 0, text: this.text }))
+        events.push(this.event('response.output_text.done', { output_index, item_id: item.id, content_index: 0, text }))
         events.push(this.event('response.content_part.done', { output_index, item_id: item.id, content_index: 0, part }))
       } else {
         const custom = item.type === 'custom_tool_call'

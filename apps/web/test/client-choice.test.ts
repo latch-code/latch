@@ -645,9 +645,11 @@ describe('a model service for a Harness with its own models', () => {
       losses: GATEWAY_LOSSES,
     })
     expect(pairRoute(codex.capabilities, { kind: 'anthropic' })).toEqual({
-      kind: 'incompatible',
-      from: 'anthropic-messages',
-      speaks: ['responses'],
+      kind: 'translate',
+      wire: 'responses',
+      upstream: 'anthropic-messages',
+      experimental: true,
+      losses: GATEWAY_LOSSES.filter(loss => loss !== 'tool-image-location'),
     })
     expect(pairRoute(codex.capabilities, { kind: 'demo' })).toEqual({ kind: 'unavailable', reason: 'not-a-service' })
     expect(pairRoute(testHarness('goose').capabilities, { kind: 'gemini' })).toEqual({ kind: 'unavailable', reason: 'not-forwarded' })

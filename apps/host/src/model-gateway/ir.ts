@@ -21,6 +21,10 @@ export interface GatewayTool extends ToolIdentity {
 export type GatewayReasoning =
   | { wire: 'chat-completions'; text: string }
   | {
+      wire: 'anthropic-messages'
+      block: { type: 'thinking'; thinking: string; signature: string } | { type: 'redacted_thinking'; data: string }
+    }
+  | {
       wire: 'responses'
       item: {
         type: 'reasoning'
@@ -65,7 +69,8 @@ export interface GatewayUsage {
 
 export type GatewayDelta =
   | { type: 'text' | 'reasoning' | 'refusal'; text: string }
-  | { type: 'reasoning-state'; state: Extract<GatewayReasoning, { wire: 'responses' }> }
+  | { type: 'reasoning-state'; state: Exclude<GatewayReasoning, { wire: 'chat-completions' }> }
+  | { type: 'text-end' }
   | { type: 'tool'; index: number; id?: string; name?: string; arguments?: string }
   | { type: 'usage'; usage: GatewayUsage }
   | { type: 'loss'; loss: GatewayLoss }

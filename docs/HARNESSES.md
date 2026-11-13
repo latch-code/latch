@@ -208,12 +208,12 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 ## 经 Latch 使用模型服务
 
-模型菜单同时保留 Harness 自己的模型与可经 Latch 使用的已保存服务。Host 根据实际协议能力和自己的服务记录重新核对每次开始，客户端不能决定转发地址或密钥。当前四种入口优先同协议透传，另支持实验性的 Responses→Chat、Anthropic→Chat 与 Anthropic→Responses 转换；其余组合明确不可选；模型、能力、令牌、用量和安全机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
+模型菜单同时保留 Harness 自己的模型与可经 Latch 使用的已保存服务。Host 根据实际协议能力和自己的服务记录重新核对每次开始，客户端不能决定转发地址或密钥。当前四种入口优先同协议透传，另支持实验性的 Responses/Anthropic→Chat，以及 Responses↔Anthropic 转换；其余组合明确不可选；模型、能力、令牌、用量和安全机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
 
 | Harness | 当前支持 | 交给 Agent 的方式 |
 | --- | --- | --- |
-| Codex 直连 | Responses；Chat 需实验性转换 | 自定义 provider 的启动参数；LMG_TOKEN 环境变量；config/read 保留原命令环境规则后在线程配置中额外排除令牌 |
-| codex-acp | Responses；Chat 需转换（实验性） | ACP providers/set；仅使用适配器声明且列出的 provider/API，模型限于适配器认识的服务模型 |
+| Codex 直连 | Responses；Chat、Anthropic 需实验性转换 | 自定义 provider 的启动参数；LMG_TOKEN 环境变量；config/read 保留原命令环境规则后在线程配置中额外排除令牌 |
+| codex-acp | Responses；Chat、Anthropic 需转换（实验性） | ACP providers/set；仅使用适配器声明且列出的 provider/API，模型限于适配器认识的服务模型 |
 | Gemini CLI | Gemini，至少 0.44.0 | 环境变量与 0600 会话私有系统设置，合并思考启动设置，不声称独立读回 |
 | OpenCode | 四种同协议服务，至少 2.2.6 | 私有 provider 配置与官方 shell hook；工具环境清空令牌值 |
 | DeepSeek Harness | 四种同协议服务，至少 0.2.2-rc.1 | 私有 Cordis patch 与原生 llm provider；未知 Gemini 别名不提供离散思考档位 |
@@ -505,7 +505,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 | 回答 pi 扩展的选择题与输入框 | 未实现；它们回答「已取消」并写进会话 |
 | 只有主文件夹的 Codex 会话计入 `.agents/skills/` | 未实现；需要提高 Codex profile 的版本，已有 Codex 会话届时要新建 |
 | Qwen Code、goose 经 Latch 使用模型服务 | 未实现；尚未接好各自选择服务的配置，模型菜单收起的那一行点开后写「尚未实现」 |
-| 协议翻译（例如 Codex 用 Chat Completions 的服务） | 未实现；协议不同的一对列出但不能选，并说明协议 |
+| 其他协议翻译方向 | 未实现；当前只开放 Responses/Anthropic→Chat 与 Responses↔Anthropic，其余组合列出但不能选 |
 
 ## 测试
 

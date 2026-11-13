@@ -32,6 +32,8 @@ import { decodeAnthropic, AnthropicOutput } from './model-gateway/in/anthropic.t
 import { decodeChat, decodeChatReply, encodeChat } from './model-gateway/out/chat.ts'
 import { encodeResponses } from './model-gateway/out/responses.ts'
 import { decodeResponsesReply, decodeResponsesStream } from './model-gateway/out/responses-reply.ts'
+import { encodeAnthropic } from './model-gateway/out/anthropic.ts'
+import { decodeAnthropicReply, decodeAnthropicStream } from './model-gateway/out/anthropic-reply.ts'
 import type { GatewayRequest, GatewayDelta, GatewayReasoning } from './model-gateway/ir.ts'
 import type { ToolNames } from './model-gateway/tools.ts'
 
@@ -291,7 +293,12 @@ function targetOf(entry: ModelWire, upstream: ModelWire, method: string, url: UR
   if (method !== 'POST' && entry !== 'gemini') return undefined
   if (entry === 'responses')
     return path === '/v1/responses'
-      ? { upstream: base => chatEndpoint(base, upstream === 'chat-completions' ? '/chat/completions' : '/responses') }
+      ? {
+          upstream: base =>
+            upstream === 'anthropic-messages'
+              ? anthropicEndpoint(base, '/messages')
+              : chatEndpoint(base, upstream === 'chat-completions' ? '/chat/completions' : '/responses'),
+        }
       : undefined
   if (entry === 'chat-completions')
     return path === '/v1/chat/completions' ? { upstream: base => chatEndpoint(base, '/chat/completions') } : undefined
@@ -569,7 +576,12 @@ export class ModelGatewayServer implements ModelGateway {
         const allowed = service.modelCapabilities?.[model]?.thinking
         if (converted.effort && !allowed?.includes(converted.effort))
           throw new AppError(400, 'effort-unavailable', '这个模型服务没有声明所请求的思考档位')
-        const encoded = binding.upstream === 'responses' ? encodeResponses(converted) : encodeChat(converted)
+        const encoded =
+          binding.upstream === 'responses'
+            ? encodeResponses(converted)
+            : binding.upstream === 'anthropic-messages'
+              ? encodeAnthropic(converted)
+              : encodeChat(converted)
         body = Buffer.from(JSON.stringify(encoded.body))
         if (body.length > MAX_BODY_BYTES) throw new AppError(413, 'body-too-large', '转换后的请求内容过大，Latch 没有转发')
         translated = { request: converted, tools: encoded.tools }
@@ -767,7 +779,12 @@ export class ModelGatewayServer implements ModelGateway {
         // Decode before redaction so a key split across two logical deltas cannot evade the rolling scrubber.
         const scrubbers = { text: replyRedactor(service.apiKey), reasoning: replyRedactor(service.apiKey) }
         const encoder = new TextEncoder()
-        const deltas = binding.upstream === 'responses' ? decodeResponsesStream(body, signal) : decodeChat(body, signal)
+        const deltas =
+          binding.upstream === 'responses'
+            ? decodeResponsesStream(body, signal)
+            : binding.upstream === 'anthropic-messages'
+              ? decodeAnthropicStream(body, signal)
+              : decodeChat(body, signal)
         for await (const delta of deltas) {
           if (delta.type === 'loss') {
             request?.tally.dropped.add(delta.loss)
@@ -777,7 +794,7 @@ export class ModelGatewayServer implements ModelGateway {
             const text = scrubbers[delta.type].feed(encoder.encode(delta.text))
             if (text) await write(output.push({ ...delta, text }))
           } else {
-            if (delta.type === 'reasoning-state') {
+            if (delta.type === 'reasoning-state' || delta.type === 'text-end') {
               const text = scrubbers.text.end()
               if (text) await write(output.push({ type: 'text', text }))
               scrubbers.text = replyRedactor(service.apiKey)
@@ -810,7 +827,11 @@ export class ModelGatewayServer implements ModelGateway {
           await reader.cancel().catch(() => {})
         }
         const deltas: GatewayDelta[] =
-          binding.upstream === 'responses' ? decodeResponsesReply(JSON.parse(text)) : decodeChatReply(JSON.parse(text))
+          binding.upstream === 'responses'
+            ? decodeResponsesReply(JSON.parse(text))
+            : binding.upstream === 'anthropic-messages'
+              ? decodeAnthropicReply(text)
+              : decodeChatReply(JSON.parse(text))
         for (const delta of deltas) {
           if (delta.type === 'loss') request?.tally.dropped.add(delta.loss)
           else output.push(delta)

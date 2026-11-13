@@ -280,7 +280,9 @@ export class AnthropicOutput {
       return []
     }
     if (this.stop) throw invalidReply('模型在结束标记之后继续发送内容')
+    if (delta.type === 'text-end') return this.close()
     if (delta.type === 'reasoning-state') {
+      if (delta.state.wire !== 'responses') throw invalidReply('这种原生思考输出尚不能转换为 Anthropic')
       this.bytes += JSON.stringify(delta.state).length
       if (this.bytes > 8 * 1024 * 1024) throw invalidReply('模型回复超出转换大小限制')
       const events = this.close()
