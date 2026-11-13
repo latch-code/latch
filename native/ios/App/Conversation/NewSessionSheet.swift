@@ -5,6 +5,7 @@ import SwiftUI
 struct NewSessionSheet: View {
     @EnvironmentObject private var model: PhoneModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
     /** 从这里分叉: the same sheet, keeping the source up to the turn it was opened from. */
     var fork: PhoneForkDraft? = nil
     @State private var choice = PhoneStartChoice()
@@ -165,9 +166,14 @@ struct NewSessionSheet: View {
     }
     private var engineRow: some View {
         Menu {
-            ForEach(PhoneStart.engines(catalog)) { engine in
-                Button { choice.harnessId = engine.id } label: { menuLabel(engine.name, line: nil, on: engine.id == choice.harnessId) }
+            Picker("Harness", selection: $choice.harnessId) {
+                ForEach(PhoneStart.engines(catalog)) { engine in
+                    let info = catalog["harnesses"].array.first { $0["id"].string == engine.id } ?? .null
+                    Label { Text(engine.name) } icon: { EngineTile.menuImage(PhoneStart.mark(info), scheme: scheme) }
+                        .tag(Optional(engine.id))
+                }
             }
+            .pickerStyle(.inline)
         } label: {
             row("Harness") {
                 HStack(spacing: 6) {

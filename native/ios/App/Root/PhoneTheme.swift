@@ -71,14 +71,20 @@ struct EngineTile: View {
         "grok": ("brand-grok-dark", "brand-grok-light", false),
         "antigravity": ("brand-antigravity", "brand-antigravity", false),
     ]
+    /** Native menus require an Image label, not the tile's composed View. */
+    static func menuImage(_ mark: String?, scheme: ColorScheme) -> Image {
+        if mark == "latch" { return bundled("LatchMark").renderingMode(.original) }
+        guard let art = mark.flatMap({ marks[$0] }) else { return Image(systemName: "cpu") }
+        return bundled(scheme == .dark ? art.dark : art.light).renderingMode(art.mono ? .template : .original)
+    }
     var body: some View {
         Group {
             if mark == "latch" {
                 bundled("LatchMark").resizable().interpolation(.high).clipShape(RoundedRectangle(cornerRadius: size * 0.22))
                     // Its charcoal tile would merge with a dark ground.
                     .overlay { if scheme == .dark { RoundedRectangle(cornerRadius: size * 0.22).stroke(PhoneTheme.lineStrong, lineWidth: 0.5) } }
-            } else if let mark = mark.flatMap({ Self.marks[$0] }) {
-                bundled(scheme == .dark ? mark.dark : mark.light).resizable().renderingMode(mark.mono ? .template : .original).interpolation(.high)
+            } else if mark.flatMap({ Self.marks[$0] }) != nil {
+                Self.menuImage(mark, scheme: scheme).resizable().interpolation(.high)
                     .foregroundStyle(PhoneTheme.ink)
             } else {
                 Image(systemName: "cpu").resizable().scaledToFit().foregroundStyle(PhoneTheme.muted)
