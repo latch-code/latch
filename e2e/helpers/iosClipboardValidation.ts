@@ -45,7 +45,6 @@ export async function validateGuiPairing(
   const proof = new ClipboardProof(pid, io.device)
   const lease = io.clipboard()
   let restored = false
-  let offVerified = false
   let failure: unknown
   const stable = async () => {
     if ((await io.guiPid()) !== pid || existsSync(io.hold)) throw new Error('GUI clipboard validation interrupted')
@@ -123,7 +122,6 @@ export async function validateGuiPairing(
     await lease.request({ op: 'write', marker: publicClipboardMarker() })
     await negative()
     proof.off(false, false, performance.now())
-    offVerified = true
     proof.take((await io.guiPid()) ?? -1, io.device, performance.now())
     await stable()
     // The invitation is created only after both controls. It is never a public marker or helper command.
@@ -168,8 +166,8 @@ export async function validateGuiPairing(
     }
   }
   try {
-    // Clearing the device while sharing is ON would itself overwrite the Mac's clipboard.
-    if (!(await io.guiClosed()) && (!offVerified || lease.failure || (await io.guiPid()) !== pid)) {
+    // Restoration always waits for the GUI, including a failure after OFF was proved. Announce that wait too.
+    if (!(await io.guiClosed())) {
       await io.stage(
         'Validation stopped. Use Device Hub > Quit and Keep Simulators Running; clipboard cleanup waits for both GUIs to exit.',
       )

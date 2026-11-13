@@ -14,8 +14,8 @@ function args(operation: 'copy' | 'paste', device: string, timeoutMs: number): s
     operation,
     '--device',
     device,
-    '--type',
-    TYPE,
+    // The official default writes the standard text UTIs for native text-transfer compatibility.
+    ...(operation === 'paste' ? ['--type', TYPE] : []),
     '--quiet',
     '--timeout',
     String(timeoutMs / 1000),

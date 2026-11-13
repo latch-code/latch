@@ -228,7 +228,11 @@ describe.skipIf(process.platform !== 'darwin')('clipboard restoration on an isol
     expect((await f.inspect()).originalMatches).toBe(true)
   })
 
-  it.each([true, false])('runs the real guard protocol with a named clipboard and working synchronization=%s', async working => {
+  it.each([
+    ['success', true, false],
+    ['unavailable synchronization', false, false],
+    ['interruption after OFF', true, true],
+  ] as const)('runs the real guard protocol with a named clipboard: %s', async (_name, working, interrupted) => {
     const f = await fixture(),
       hold = join(directory, randomUUID()),
       device = randomUUID()
@@ -268,7 +272,10 @@ describe.skipIf(process.platform !== 'darwin')('clipboard restoration on an isol
           } else if (text.startsWith('Validation stopped.') || text.startsWith('Pairing code consumed.')) {
             closed = true
             sharing = false
-          } else if (text.startsWith('Clipboard controls passed.')) used = true
+          } else if (text.startsWith('Clipboard controls passed.')) {
+            if (interrupted) throw new Error('Public fixture interrupted after OFF')
+            used = true
+          }
         },
       },
       async () => {
@@ -280,7 +287,13 @@ describe.skipIf(process.platform !== 'darwin')('clipboard restoration on an isol
         revoked++
       },
     )
-    if (working) {
+    if (interrupted) {
+      await expect(result).rejects.toThrow('Public fixture interrupted after OFF')
+      expect(issued).toBe(1)
+      expect(revoked).toBe(1)
+      expect(closed).toBe(true)
+      expect(deviceText).toBe('')
+    } else if (working) {
       await result
       expect(issued).toBe(1)
       expect(revoked).toBe(0)
