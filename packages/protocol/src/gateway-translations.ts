@@ -17,6 +17,20 @@ export const GATEWAY_LOSSES = [
   'unsupported-options',
 ] as const
 export type GatewayLoss = (typeof GATEWAY_LOSSES)[number]
+/**
+ * How a harness reaches one model service. `own`: no service, the harness's own models. `direct`: the built-in harness
+ * calls the service. `passthrough`: the harness speaks the service's protocol, and Latch forwards its requests on this
+ * computer with the service's key. `translate`: an implemented experimental conversion. `incompatible`: no implemented
+ * conversion. `unavailable`: Latch cannot route this harness to any service, or this is not a saved service.
+ */
+export type PairRoute =
+  | { kind: 'own' }
+  | { kind: 'direct' }
+  | { kind: 'passthrough'; wire: ModelWire; experimental?: true }
+  | { kind: 'translate'; wire: ModelWire; upstream: ModelWire; experimental: true; losses: readonly GatewayLoss[] }
+  | { kind: 'incompatible'; from: ModelWire; speaks: ModelWire[] }
+  | { kind: 'unavailable'; reason: 'not-forwarded' | 'not-a-service' }
+
 export const GATEWAY_LOSS_NAMES: Readonly<Record<GatewayLoss, string>> = {
   'tool-grammar': '工具语法约束',
   'tool-image-location': '工具图片的原始消息位置',

@@ -1,6 +1,7 @@
 import type { HarnessCapabilities, ModelWire } from './harnesses.ts'
 import type { ProviderKind, ProviderSummary } from './settings.ts'
-import { canTranslate, lossesOf, type GatewayLoss } from './gateway-translations.ts'
+import { canTranslate, lossesOf, type PairRoute } from './gateway-translations.ts'
+export type { PairRoute } from './gateway-translations.ts'
 
 /** The protocol each kind of model service speaks. */
 export const PROVIDER_WIRES: Readonly<Record<ProviderKind, ModelWire>> = {
@@ -17,20 +18,6 @@ export const WIRE_NAMES: Readonly<Record<ModelWire, string>> = {
   'anthropic-messages': 'Anthropic Messages',
   gemini: 'Gemini',
 }
-
-/**
- * How a harness reaches one model service. `own`: no service, the harness's own models. `direct`: the built-in harness
- * calls the service. `passthrough`: the harness speaks the service's protocol, and Latch forwards its requests on this
- * computer with the service's key. `translate`: an implemented experimental conversion. `incompatible`: no implemented
- * conversion. `unavailable`: Latch cannot route this harness to any service, or this is not a saved service.
- */
-export type PairRoute =
-  | { kind: 'own' }
-  | { kind: 'direct' }
-  | { kind: 'passthrough'; wire: ModelWire; experimental?: true }
-  | { kind: 'translate'; wire: ModelWire; upstream: ModelWire; experimental: true; losses: readonly GatewayLoss[] }
-  | { kind: 'incompatible'; from: ModelWire; speaks: ModelWire[] }
-  | { kind: 'unavailable'; reason: 'not-forwarded' | 'not-a-service' }
 
 /** A model ID as agents that narrow their list to a service's compare them: lower case, without a vendor prefix or a date suffix. */
 export const modelIdKey = (id: string): string =>

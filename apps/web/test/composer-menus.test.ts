@@ -28,6 +28,8 @@ const service = (id: string, name: string, kind: ProviderSummary['kind']): Provi
 const openai = service('openai', 'OpenAI', 'openai-responses')
 const deepseek = service('deepseek', 'DeepSeek', 'openai-compatible')
 const ollama = service('ollama', 'Ollama 本地', 'openai-compatible')
+const anthropic = service('anthropic', 'Anthropic', 'anthropic')
+const gemini = service('gemini', 'Gemini', 'gemini')
 
 /** Codex as its profile declares it: Latch forwards its Responses requests. */
 const codex = (): HarnessInfo => {
@@ -40,7 +42,7 @@ const opencode = (): HarnessInfo => testHarness('opencode', { label: 'OpenCode' 
 const builtin = (): HarnessInfo => testHarness('standard', { kind: 'builtin', label: 'Latch 内置' })
 const catalogOf = (harness: HarnessInfo, extra: Partial<HostCatalog> = {}): HostCatalog => ({
   harnesses: [harness],
-  providers: [openai, deepseek, ollama],
+  providers: [openai, deepseek, ollama, anthropic, gemini],
   workspaces: [],
   defaults: { harnessId: harness.id, mode: 'agent', workspaceId: 'default' },
   ...extra,
@@ -55,13 +57,30 @@ describe('the services a Harness cannot use, folded into one row', () => {
     const info = codex()
     const off = unusableServices(catalogOf(info), info)
     expect(off.map(item => [item.name, item.reason])).toEqual([
-      ['DeepSeek', 'Codex 只说 Responses，这个服务是 Chat Completions'],
-      ['Ollama 本地', 'Codex 只说 Responses，这个服务是 Chat Completions'],
+      ['Anthropic', 'Codex 只说 Responses，这个服务是 Anthropic Messages'],
+      ['Gemini', 'Codex 只说 Responses，这个服务是 Gemini'],
     ])
-    // The one it can use is listed with its models, not folded; the Harness's own models are under its name.
+    // Supported services are listed with their models; the Harness's own models remain under its name.
     const groups = ownModelGroups(catalogOf(info), info, [{ value: 'own', label: 'gpt-5.5' }])
-    expect(groups.map(group => group.label)).toEqual(['Codex', 'OpenAI · 实验性 · 经 Latch'])
+    expect(groups.map(group => group.label)).toEqual([
+      'Codex',
+      'OpenAI · 实验性 · 经 Latch',
+      'DeepSeek · 实验性 · 经 Latch',
+      'Ollama 本地 · 实验性 · 经 Latch',
+    ])
     expect(JSON.stringify(groups)).not.toContain('尚未实现')
+  })
+
+  it('offers translated Chat models as selectable choices alongside same-protocol Responses models', () => {
+    const info = codex()
+    const catalog = catalogOf(info, { providers: [openai, deepseek, ollama] })
+    const groups = ownModelGroups(catalog, info, [])
+    expect(unusableServices(catalog, info)).toEqual([])
+    expect(groups.slice(1).map(group => group.options.map(option => [option.label, option.disabledReason]))).toEqual([
+      [['openai-model', undefined]],
+      [['deepseek-model', undefined]],
+      [['ollama-model', undefined]],
+    ])
   })
 
   it('has no such row for a Harness Latch forwards to no service: it uses its own models, and nothing else applies', () => {
@@ -77,14 +96,17 @@ describe('the services a Harness cannot use, folded into one row', () => {
     const info = codex()
     const route = { providerId: 'openai', model: 'openai-model', name: 'OpenAI' }
     const other = service('relay', 'Relay', 'openai-responses')
-    const catalog = catalogOf(info, { providers: [openai, other, deepseek] })
+    const catalog = catalogOf(info, { providers: [openai, other, deepseek, anthropic, gemini] })
     const groups = ownModelGroups(catalog, info, [{ value: 'openai-model', label: 'openai-model' }], { route })
     expect(groups.at(-1)).toMatchObject({
       label: '模型服务',
-      options: [{ label: 'Relay', disabledReason: '开始后不能换服务' }],
+      options: [
+        { label: 'Relay', disabledReason: '开始后不能换服务' },
+        { label: 'DeepSeek', disabledReason: '开始后不能换服务' },
+      ],
     })
     // The session's own service is never among the ones it cannot use.
-    expect(unusableServices(catalog, info, undefined, { route }).map(item => item.name)).toEqual(['DeepSeek'])
+    expect(unusableServices(catalog, info, undefined, { route }).map(item => item.name)).toEqual(['Anthropic', 'Gemini'])
   })
 
   it('lists for the built-in Harness the saved services held back, naming the computer only away from it', () => {
@@ -105,7 +127,8 @@ describe('the services a Harness cannot use, folded into one row', () => {
   it('draws one folded row with the count, and no service until it is opened', () => {
     const html = renderToStaticMarkup(createElement(UnusableServices, { services: unusableServices(catalogOf(codex()), codex()) }))
     expect(html).toContain('2 个服务用不了')
-    expect(html).not.toContain('DeepSeek')
+    expect(html).not.toContain('Anthropic')
+    expect(html).not.toContain('Gemini')
     expect(renderToStaticMarkup(createElement(UnusableServices, { services: [] }))).toBe('')
   })
 
