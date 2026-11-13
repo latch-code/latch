@@ -30,7 +30,7 @@ interface Probe {
   start: number
   end: number
   frames: number[]
-  parses: Array<{ at: number; ms: number; chars: number; live: number }>
+  parses: Array<{ at: number; ms: number; chars: number; live: number; type: 'task-state' | 'task-delta' }>
   longTasks: Array<{ at: number; ms: number }>
 }
 declare global {
@@ -74,13 +74,24 @@ async function instrument(page: Page) {
     const probe: Probe = { active: false, start: 0, end: 0, frames: [], parses: [], longTasks: [] }
     window.latchStreamProbe = probe
     const parse = JSON.parse.bind(JSON)
+    const lengths = new Map<string, number>()
     JSON.parse = (text, reviver) => {
       const start = performance.now()
       const result: unknown = parse(text, reviver)
       const elapsed = performance.now() - start
-      if (probe.active && result && typeof result === 'object' && 'type' in result && result.type === 'task-state') {
-        const event = result as { detail?: { liveText?: string } }
-        probe.parses.push({ at: start, ms: elapsed, chars: text.length, live: event.detail?.liveText?.length ?? 0 })
+      if (result && typeof result === 'object' && 'type' in result && (result.type === 'task-state' || result.type === 'task-delta')) {
+        const event = result as {
+          type: 'task-state' | 'task-delta'
+          sessionId: string
+          detail?: { liveText?: string }
+          text?: { append: string }
+          stream?: { subscriptionId: string }
+        }
+        const key = `${event.sessionId}:${event.stream?.subscriptionId ?? 'full'}`
+        const live =
+          event.type === 'task-state' ? (event.detail?.liveText?.length ?? 0) : (lengths.get(key) ?? 0) + (event.text?.append.length ?? 0)
+        lengths.set(key, live)
+        if (probe.active) probe.parses.push({ at: start, ms: elapsed, chars: text.length, live, type: event.type })
       }
       return result
     }
@@ -142,6 +153,8 @@ async function wireMeter(cdp: CDPSession) {
   let active = false,
     supported = true
   const frames: number[] = []
+  const full: number[] = [],
+    delta: number[] = []
   const streams = new Map<string, { decoder: StringDecoder; text: string }>()
   const accept = (id: string, data: string) => {
     const stream = streams.get(id)
@@ -153,7 +166,15 @@ async function wireMeter(cdp: CDPSession) {
       if (at < 0) break
       const frame = stream.text.slice(0, at + 2)
       stream.text = stream.text.slice(at + 2)
-      if (active && frame.slice(0, 200).includes('event: task-state\n')) frames.push(Buffer.byteLength(frame))
+      if (active) {
+        const head = frame.slice(0, 200)
+        const group = head.includes('event: task-state\n') ? full : head.includes('event: task-delta\n') ? delta : undefined
+        if (group) {
+          const bytes = Buffer.byteLength(frame)
+          frames.push(bytes)
+          group.push(bytes)
+        }
+      }
     }
   }
   cdp.on('Network.responseReceived', event => {
@@ -179,7 +200,7 @@ async function wireMeter(cdp: CDPSession) {
     },
     end: () => {
       active = false
-      return { supported, frames }
+      return { supported, frames, full, delta }
     },
   }
 }
@@ -316,8 +337,19 @@ describe.runIf(enabled)('stream performance baseline', () => {
         }
         const after = await metrics(cdp)
         const trafficAfter = await owner.json<Traffic>('traffic')
-        const first = trafficBefore.kinds['task-state']!,
-          last = trafficAfter.kinds['task-state']!
+        const perKind = (kind: string) => {
+          const first = trafficBefore.kinds[kind],
+            last = trafficAfter.kinds[kind]
+          return {
+            frames: (last?.count ?? 0) - (first?.count ?? 0),
+            bytes: (last?.bytes ?? 0) - (first?.bytes ?? 0),
+            histogram: (last?.histogram ?? []).map((value, i) => value - (first?.histogram[i] ?? 0)),
+          }
+        }
+        const fullTraffic = perKind('task-state'),
+          deltaTraffic = perKind('task-delta')
+        const frameCount = fullTraffic.frames + deltaTraffic.frames,
+          frameBytes = fullTraffic.bytes + deltaTraffic.bytes
         const scripts = scriptFrames(trace, probe)
         const lateStart = probe.parses.find(item => item.live >= 15_000)?.at ?? probe.end
         const lastLive = probe.parses.findLast(item => item.live > 0)?.at ?? probe.start
@@ -375,14 +407,22 @@ describe.runIf(enabled)('stream performance baseline', () => {
           },
           durationMs,
           hostTraffic: {
-            frames: last.count - first.count,
-            bytes: last.bytes - first.bytes,
-            bytesPerFrame: (last.bytes - first.bytes) / Math.max(1, last.count - first.count),
-            histogram: last.histogram.map((value, i) => value - first.histogram[i]!),
-            framesPerSecond: ((last.count - first.count) / durationMs) * 1000,
+            frames: frameCount,
+            bytes: frameBytes,
+            bytesPerFrame: frameBytes / Math.max(1, frameCount),
+            histogram: fullTraffic.histogram.map((value, i) => value + (deltaTraffic.histogram[i] ?? 0)),
+            framesPerSecond: (frameCount / durationMs) * 1000,
+            full: fullTraffic,
+            delta: deltaTraffic,
             connectionsOpened: trafficAfter.connections.length - trafficBefore.connections.length,
           },
-          wire: { supported: wire.supported, bytes: distribution(wire.frames), samples: wire.frames },
+          wire: {
+            supported: wire.supported,
+            bytes: distribution(wire.frames),
+            samples: wire.frames,
+            full: distribution(wire.full),
+            delta: distribution(wire.delta),
+          },
           jsonParseMs: distribution(probe.parses.map(item => item.ms)),
           parseSamples: probe.parses,
           scriptMsPerAnimationFrame: distribution(scripts.map(item => item.ms)),
