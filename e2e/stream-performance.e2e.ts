@@ -333,6 +333,14 @@ describe.runIf(enabled)('stream performance baseline', () => {
           await writeFile(
             join(output, `${rounds}-turns-profile.json`),
             JSON.stringify({
+              timing: {
+                startTime: profile.startTime,
+                endTime: profile.endTime,
+                marker: trace.find(event => event.name === 'latch-stream-start')?.ts,
+                probeStart: probe.start,
+                lateStart: probe.parses.find(item => item.live >= 15_000)?.at,
+                lastLive: probe.parses.findLast(item => item.live > 0)?.at,
+              },
               nodes: profile.nodes.map(node => ({
                 id: node.id,
                 children: node.children,
