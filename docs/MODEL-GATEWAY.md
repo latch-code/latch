@@ -30,6 +30,8 @@ Host 为经 Latch 使用模型服务的 Harness 提供单独的回环临时端�
 
 ### Responses 转 Chat
 
+Responses 入站先核对完整调用图：call_id 不得复用，每个 function/custom 调用必须有且只有一个同种类结果，结果未齐前不得开始用户或系统消息。孤儿结果、漏结果、错配种类、畸形或非有限参数在出站前以 400 拒绝。函数参数以及工具和输出 schema 的有限数字保留原始 JSON 词元，不改写大整数、长小数或 -0。
+
 入口和上游分别绑定在凭据上。`ModelRoute.wire` 是 Harness 入口；可选的 `upstream` 是服务协议，旧记录缺省时与入口相同。Host 通过 `pairRoute` 重算，网关再次核对已实现的 `TRANSLATED_PAIRS` 与服务协议、来源；不会把一个入口的凭据开放给另一个入口。转换路线始终标记实验性。
 
 转换使用网关自己的类型化条目，不改变 Standard 的 `ModelMessage`。保留系统说明、消息、图片、函数定义、工具调用与结果、并行与指定工具选择、明确的思考档位和输出上限。命名空间与长工具名在 Chat 中编码为稳定名称，回来时恢复原名称和 namespace；自定义工具改成只含 `content: string` 的函数，再恢复原始 `custom_tool_call.input`。语法约束只作为说明传给服务，不能声称仍被强制执行。网关自己不执行工具。

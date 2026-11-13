@@ -565,7 +565,7 @@ export class ModelGatewayServer implements ModelGateway {
         const converted =
           binding.entry === 'anthropic-messages'
             ? decodeAnthropic(body.toString('utf8'), openReasoning)
-            : decodeResponses(fields, openReasoning)
+            : decodeResponses(fields, openReasoning, body.toString('utf8'))
         const allowed = service.modelCapabilities?.[model]?.thinking
         if (converted.effort && !allowed?.includes(converted.effort))
           throw new AppError(400, 'effort-unavailable', '这个模型服务没有声明所请求的思考档位')
