@@ -4,6 +4,7 @@ import {
   HOST_PROTOCOL,
   PLUGIN_PACKAGE_FORMATS,
   RequestRecords,
+  TurnReceipts,
   UPDATE_COMMIT_TTL_MS,
   UpdateWindow,
   updateWindowInputSchema,
@@ -2129,6 +2130,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /** Session starts and turns by device and request ID: in flight, their outcome is not known yet; accepted, a retry gets its answer. */
     const startRequests = new RequestRecords()
     const turnRequests = new RequestRecords()
+    /** Turns accepted, by session, device and request, with what was sent: see `sendPromptChecked`. */
+    const turnReceipts = new TurnReceipts()
+    /** What a turn's retry must repeat to be the same request. */
+    const turnBodyHash = (input: z.infer<typeof queuedPromptSchema>) =>
+      sha256Hex(
+        canonicalJson({
+          prompt: input.prompt,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
+          ...(input.fileRefs?.length ? { fileRefs: input.fileRefs } : {}),
+          ...(input.freshContext ? { freshContext: true } : {}),
+        }),
+      )
     /**
      * Runs a start or a turn as in flight until it has really finished, whether or not a client still waits for it:
      * accepted when it succeeds (its route then answers 2xx), forgotten when it fails, so its retry counts as new.
@@ -6835,6 +6849,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     ): Promise<'steered' | 'accepted' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       recheck(caller, 'run')
       await assertSessionAccess(caller, id)
+      checkPrivateSession(caller, id, true)
+      // A retry of a turn this Host accepted from this device gets its answer before any check that may have changed since
+      // (the project, the Harness's version, the model, the data scope): a refusal now would tell the client a delivered
+      // message was not, and it would send it again. Only the same device with the same body: another body under the
+      // same ID is a conflict, and anything else (another device, a Host that restarted since) goes through as before.
+      // Its attachments are bound once more, as the first answer would have.
+      const turnKey = `${id}:${caller.device.id}:${input.requestId}`,
+        taken = input.queue || input.steer ? undefined : turnReceipts.get(turnKey)
+      if (taken !== undefined) {
+        if (taken !== turnBodyHash(input)) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
+        if (input.attachmentIds?.length)
+          await attachmentStore.bind(caller.device.id, input.attachmentIds, id).catch(() => {
+            throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
+          })
+        return 'accepted'
+      }
       await assertSessionWorkspace(id)
       if (input.model) {
         const harness = hub!.info(await hub!.harnessOf(id))
@@ -6902,6 +6932,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           await attachmentStore.releaseClaim(caller.device.id, input.attachmentIds!, input.requestId, id)
         throw cause
       }
+      // The driver resolved only once the turn was durable: from now on a retry is answered from this receipt.
+      turnReceipts.set(turnKey, turnBodyHash(input))
       if (attachments.length)
         await attachmentStore
           .bind(

@@ -81,10 +81,27 @@ describe('explicit file choices', () => {
     expect(
       JSON.parse(await readFile(join(host.dataDir, 'sessions', 'runtime.json'), 'utf8')).tasks[created.sessionId].messages[0].fileRefs,
     ).toEqual(fileRefs)
+    // A turn that names the file, taken before the file went away.
+    const turn = { prompt: 'again', requestId: randomUUID(), fileRefs }
+    expect((await owner.request(`tasks/${created.sessionId}/prompt`, { body: turn })).status).toBe(200)
+    await vi.waitFor(async () => expect((await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status).toBe('idle'))
     await rm(join(paths[1]!, 'report.txt'))
     expect(
       (await owner.request(`tasks/${created.sessionId}/prompt`, { body: { prompt: 'again', requestId: randomUUID(), fileRefs } })).status,
     ).toBe(403)
+    // Its retry is answered as taken, not refused by the check that now fails: the client would send it twice.
+    const retried = await owner.request(`tasks/${created.sessionId}/prompt`, { body: turn })
+    expect(retried.status).toBe(200)
+    expect(
+      (await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).messages.filter(message => message.requestId === turn.requestId),
+    ).toHaveLength(1)
+    // Another body under the same ID is still a conflict.
+    const changed = await owner.request(`tasks/${created.sessionId}/prompt`, { body: { ...turn, prompt: 'something else' } })
+    expect(changed.status).toBe(409)
+    expect(((await changed.json()) as { error: string }).error).toBe('request-conflict')
+    // Another device that saw the ID in the session gets no shortcut: the ordinary checks answer it.
+    const other = await host.enroll({ listener: 'unix' })
+    expect((await other.request(`tasks/${created.sessionId}/prompt`, { body: turn })).status).toBe(403)
   })
   it('does not traverse symlinks or private directories and refuses forged roots and duplicate choices', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-mentions-bounds-'))

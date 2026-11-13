@@ -144,6 +144,28 @@ export class RequestRecords {
   }
 }
 
+/**
+ * Turns this Host accepted, by session, device and request ID, with the hash of what was sent: a retry from the same
+ * device with the same body is answered as accepted before checks that may have changed since; another body under the
+ * same ID is a conflict. Recorded only once the session holds the turn durably (the driver's prompt resolved). In memory
+ * only, the newest 4096: after a restart a retry goes through the ordinary checks.
+ */
+export class TurnReceipts {
+  private readonly receipts = new Map<string, string>()
+
+  constructor(private readonly limit = 4096) {}
+
+  get(key: string): string | undefined {
+    return this.receipts.get(key)
+  }
+
+  set(key: string, hash: string): void {
+    this.receipts.delete(key)
+    this.receipts.set(key, hash)
+    if (this.receipts.size > this.limit) this.receipts.delete(this.receipts.keys().next().value!)
+  }
+}
+
 const heldSchema = z.strictObject({
   version: z.literal(1),
   /**

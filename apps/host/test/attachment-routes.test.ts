@@ -265,13 +265,17 @@ describe('authenticated attachment routes', () => {
       release!()
     }
     await vi.waitFor(async () => expect((await desktop.json<TaskDetail>(`tasks/${existing.sessionId}`)).summary.status).toBe('idle'))
-    expect(
-      (
-        await desktop.request(`tasks/${existing.sessionId}/prompt`, {
-          body: { prompt: 'now', requestId: randomUUID(), attachmentIds: [uploaded.attachment.id] },
-        })
-      ).status,
-    ).toBe(200)
+    const now = { prompt: 'now', requestId: randomUUID(), attachmentIds: [uploaded.attachment.id] }
+    expect((await desktop.request(`tasks/${existing.sessionId}/prompt`, { body: now })).status).toBe(200)
+    // Its retry from this device is answered as taken and binds the same upload again, a no-op once bound.
+    expect((await desktop.request(`tasks/${existing.sessionId}/prompt`, { body: now })).status).toBe(200)
+    const sent = (await desktop.json<TaskDetail>(`tasks/${existing.sessionId}`)).messages.filter(
+      message => message.requestId === now.requestId,
+    )
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.attachments?.map(ref => ref.id)).toEqual([uploaded.attachment.id])
+    const index = JSON.parse(await readFile(join(host.dataDir, 'attachments', 'index.json'), 'utf8'))
+    expect(index.entries[uploaded.attachment.id].taskId).toBe(existing.sessionId)
   })
   it('releases a prompt claim when the Harness could not start: a 503 that says nothing was accepted', async () => {
     let failing = false
