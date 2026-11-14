@@ -186,6 +186,9 @@ export class HostRelayController {
         .filter(item => item.acknowledged || Date.now() - item.revokedAt >= 7 * 86400_000),
       relayId = Buffer.from(profile.relayId, 'hex')
     for (const [id, member] of members) {
+      // A day's passes end 15 minutes into the next day, and the node keeps no denial past that: yesterday's route stays
+      // registered but admits nothing, and a denial sent for it is refused by closing this control connection.
+      if (Date.now() / 1000 > (member.day + 1) * UTC_DAY + 900) continue
       const batch: Array<{ deviceId: string; tag: Uint8Array }> = []
       for (const device of revoked) {
         if (delivered.has(`${id}:${device.id}`)) continue

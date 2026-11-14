@@ -246,6 +246,14 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         expect(detail.messages.find(message => message.requestId === requestId)?.text).toBe('Swift relay fixture `notes.txt`')
       }
       await vi.waitFor(() => expect(relay.status().connections).toBe(1), { timeout: 3000 })
+      if (operation === 'nativeRelayLifecycle') {
+        // The phone acknowledged its removal, so the Host's next pass hands the node its denial: for today's and
+        // tomorrow's routes, and for yesterday's only while its passes last. The node closes a control connection that
+        // sends one it will not keep, so the connection has to be there after the denials are.
+        await vi.waitFor(() => expect(relay.status().denials.tags).toBeGreaterThanOrEqual(2), { timeout: 5000 })
+        for (const until = Date.now() + 1500; Date.now() < until; await new Promise(done => setTimeout(done, 50)))
+          expect(relay.status()).toMatchObject({ connections: 1, controls: 1 })
+      }
     } finally {
       responseSpy.mockRestore()
       bulkSpy.mockRestore()
