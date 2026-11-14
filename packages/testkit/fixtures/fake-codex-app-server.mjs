@@ -207,6 +207,12 @@ async function allowed(method, params) {
 
 async function play(text) {
   const word = text.trim().split(/\s+/u)[0]
+  if (word === 'auto-compact-complete' || word === 'auto-compact-unsettled') {
+    const item = { type: 'contextCompaction', id: `auto-compact-${randomUUID()}` }
+    notify('item/started', { threadId: thread.id, turnId: turn.id, item })
+    if (word === 'auto-compact-complete') notify('item/completed', { threadId: thread.id, turnId: turn.id, item })
+    return reply('Ordinary turn completed.')
+  }
   if (word === 'echo') return reply(`echo: ${text}`)
   if (word === 'think') {
     const id = `think-${randomUUID()}`

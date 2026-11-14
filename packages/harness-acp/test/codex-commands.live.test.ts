@@ -22,7 +22,7 @@ it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
       upstream = await startFakeModels({
         replyFor: () => ({ text: 'The public plan is retained.', ...(hold ? { delayMs: 30_000 } : {}) }),
       })
-      const updates: unknown[] = []
+      const updates: Array<{ method: string; params: unknown }> = []
       wire = CodexWire.spawn(
         {
           command: binary!,
@@ -99,6 +99,12 @@ it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
       expect(settled).toBe(false)
       wire.notify('session/cancel')
       expect(await pending).toMatchObject({ stopReason: 'cancelled' })
+      const compactions = updates.flatMap(({ params }) => {
+        const update = (params as { update?: { sessionUpdate?: string; status?: string } }).update
+        return update?.sessionUpdate === 'compaction_update' ? [update.status] : []
+      })
+      expect(compactions.filter(status => status === 'completed')).toHaveLength(3)
+      expect(compactions.filter(status => status === 'cancelled')).toHaveLength(1)
       await mkdir('test-results/native-slash/codex', { recursive: true })
       await writeFile(
         'test-results/native-slash/codex/compact-events.json',

@@ -876,7 +876,14 @@ export class CodexWire implements AgentWire {
       this.update({
         sessionUpdate: 'compaction_update',
         compactionId: id,
-        status: turn.cancelled || status === 'interrupted' ? 'cancelled' : status === 'completed' ? 'completed' : 'failed',
+        // Only a dedicated manual compaction owns the whole turn's outcome.
+        status: !turn.compact
+          ? 'unknown'
+          : turn.cancelled || status === 'interrupted'
+            ? 'cancelled'
+            : status === 'completed'
+              ? 'completed'
+              : 'failed',
         ...(isRecord(error) && typeof error.message === 'string' ? { error: error.message } : {}),
       })
     const usage = turn.usage ? { usage: turn.usage } : {}
@@ -980,13 +987,6 @@ export class CodexWire implements AgentWire {
   }
 
   private answer(turn: Turn, status: unknown, error: unknown): void {
-    for (const id of turn.compactions ?? [])
-      this.update({
-        sessionUpdate: 'compaction_update',
-        compactionId: id,
-        status: turn.cancelled || status === 'interrupted' ? 'cancelled' : status === 'completed' ? 'completed' : 'failed',
-        ...(isRecord(error) && typeof error.message === 'string' ? { error: error.message } : {}),
-      })
     const usage = turn.usage ? { usage: turn.usage } : {}
     if (status === 'failed') {
       // Codex's own word for a login the service no longer takes: the session asks for a login, as ACP's refusal does.

@@ -288,6 +288,20 @@ describe('Codex over its app-server', () => {
     expect(sent(await t.log(), 'thread/compact/start')).toHaveLength(0)
   })
 
+  it.each([
+    ['auto-compact-unsettled', 'Codex 压缩上下文结果未知'],
+    ['auto-compact-complete', 'Codex 已压缩上下文'],
+  ])('uses the automatic compaction item outcome for %s, independently of the ordinary turn', async (prompt, expected) => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, prompt!)
+    const done = await settled(bridge, id)
+    expect(done.summary.status).toBe('idle')
+    expect(said(done, 'assistant')).toBe('Ordinary turn completed.')
+    const notes = done.messages.filter(message => message.role === 'system' && message.text.includes('压缩上下文'))
+    expect(notes.map(message => message.text)).toEqual([expected])
+  })
+
   it('gives the thread latch-browser as Codex config with paths only, and a fresh token file when it resumes', async () => {
     const leases: Array<{ token: string; tokenFile: string; closed: boolean }> = []
     const toolGateway: ToolGateway = {

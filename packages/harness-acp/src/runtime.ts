@@ -5637,9 +5637,11 @@ export class AgentRuntime implements Bridge {
           ? `${name} 压缩上下文失败${state.error ? `：${clip(this.redact(state.error), 500)}` : ''}`
           : state.status === 'cancelled'
             ? `${name} 已取消压缩上下文`
-            : state.status === 'in_progress'
-              ? `${name} 正在压缩上下文…`
-              : `${name} 压缩上下文：${clip(this.redact(state.status), 64)}`
+            : state.status === 'unknown'
+              ? `${name} 压缩上下文结果未知`
+              : state.status === 'in_progress'
+                ? `${name} 正在压缩上下文…`
+                : `${name} 压缩上下文：${clip(this.redact(state.status), 64)}`
     // What a failed compaction sends may be the service's error rather than a summary.
     const summary = state.status === 'failed' ? this.redact(state.summary) : state.summary
     message.text = summary ? `${head}\n${clip(summary, TOOL_TEXT_LIMIT)}` : head
