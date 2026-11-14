@@ -262,29 +262,68 @@ async function play(text) {
     log('answered', { method: 'applyPatchApproval', answer: patch })
     return reply('asked legacy')
   }
-  if (word === 'tool') {
+  if (
+    [
+      'tool',
+      'tool-fail',
+      'tool-unsettled',
+      'tool-parallel',
+      'tool-ambiguous',
+      'tool-wrong-turn',
+      'tool-child',
+      'tool-missing-fields',
+      'tool-not-started',
+    ].includes(word)
+  ) {
     // Codex starts the MCP call, then asks whether to run it, as the server's elicitation it marks as an approval.
-    const id = `mcp-${randomUUID()}`
-    const call = { type: 'mcpToolCall', id, server: 'docs', tool: 'search', arguments: { q: 'latch' }, status: 'inProgress' }
-    notify('item/started', { threadId: thread.id, turnId: turn.id, startedAtMs: Date.now(), item: call })
-    const answer = await ask('mcpServer/elicitation/request', {
-      threadId: thread.id,
-      turnId: turn.id,
-      serverName: 'docs',
-      mode: 'form',
-      message: 'Allow the docs tool?',
-      requestedSchema: { type: 'object', properties: {} },
-      _meta: { codex_approval_kind: 'mcp_tool_call', tool_name: 'search', tool_params: { q: 'latch' } },
-    })
-    log('answered', { method: 'tool', answer })
-    const ran = answer?.action === 'accept'
-    notify('item/completed', {
-      threadId: thread.id,
-      turnId: turn.id,
-      completedAtMs: Date.now(),
-      item: { ...call, status: ran ? 'completed' : 'declined', result: ran ? { content: [] } : null, error: null },
-    })
-    return reply(ran ? 'tool ran' : 'tool not run')
+    const calls = (['tool-parallel', 'tool-ambiguous', 'tool-child'].includes(word) ? [0, 1] : [0]).map(index => ({
+      type: 'mcpToolCall',
+      id: `mcp-${randomUUID()}`,
+      server: 'docs',
+      tool: 'search',
+      arguments: { q: word === 'tool-parallel' ? `latch-${index}` : 'latch' },
+      status: 'inProgress',
+    }))
+    if (word === 'tool-child') calls[1].id = calls[0].id
+    if (word === 'tool-missing-fields') {
+      delete calls[0].server
+      delete calls[0].tool
+    }
+    const callThread = call => (word === 'tool-child' && call === calls[1] ? 'thread-mcp-child' : thread.id)
+    if (word !== 'tool-not-started')
+      for (const call of calls) notify('item/started', { threadId: callThread(call), turnId: turn.id, startedAtMs: Date.now(), item: call })
+    const answers = await Promise.all(
+      calls.map(call =>
+        ask('mcpServer/elicitation/request', {
+          threadId: callThread(call),
+          turnId: word === 'tool-wrong-turn' ? 'another-turn' : turn.id,
+          serverName: call.server,
+          mode: 'form',
+          message: 'Allow the docs tool?',
+          requestedSchema: { type: 'object', properties: {} },
+          _meta: { codex_approval_kind: 'mcp_tool_call', tool_name: call.tool, tool_params: call.arguments },
+        }),
+      ),
+    )
+    for (let index = calls.length - 1; index >= 0; index--) {
+      const answer = answers[index],
+        call = calls[index]
+      log('answered', { method: 'tool', answer })
+      const ran = answer?.action === 'accept'
+      if (word !== 'tool-unsettled')
+        notify('item/completed', {
+          threadId: callThread(call),
+          turnId: turn.id,
+          completedAtMs: Date.now(),
+          item: {
+            ...call,
+            status: !ran ? 'declined' : word === 'tool-fail' ? 'failed' : 'completed',
+            result: ran && word !== 'tool-fail' ? { content: [] } : null,
+            error: ran && word === 'tool-fail' ? { message: 'Fixture MCP failure' } : null,
+          },
+        })
+    }
+    return reply(answers.some(answer => answer?.action === 'accept') ? 'tool ran' : 'tool not run')
   }
   if (word === 'fetch') {
     const id = `cmd-${randomUUID()}`

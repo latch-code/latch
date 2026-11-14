@@ -636,10 +636,191 @@ describe('Codex over its app-server', () => {
     await bridge.decide(approval!.id, 'allow')
     const done = await settled(bridge, id)
     expect(said(done, 'assistant')).toContain('tool ran')
+    expect(done.messages.filter(message => message.role === 'tool')).toHaveLength(1)
+    expect(done.messages.find(message => message.role === 'tool')).toMatchObject({ state: 'completed' })
+    expect(done.summary.runEnd?.unknownResults ?? []).toEqual([])
     expect((await t.log()).find(entry => entry.event === 'answered' && entry.method === 'tool')?.answer).toEqual({
       action: 'accept',
       content: {},
     })
+  })
+
+  it.each([
+    { prompt: 'tool-fail', action: 'allow', state: 'failed', unknown: 0 },
+    { prompt: 'tool', action: 'reject', state: 'failed', unknown: 0 },
+    { prompt: 'tool-unsettled', action: 'allow', state: 'failed', unknown: 1 },
+  ] as const)('settles MCP $prompt only from its own native result after $action', async ({ prompt, action, state, unknown }) => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, prompt)
+    const waiting = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+    await bridge.decide(waiting.approvals[0]!.id, action)
+    const done = await settled(bridge, id)
+    const tools = done.messages.filter(message => message.role === 'tool')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]!.state).toBe(state)
+    expect(done.summary.runEnd?.unknownResults ?? []).toHaveLength(unknown)
+  })
+
+  it('keeps opposite decisions for parallel same-name MCP calls with different arguments and reverse completion', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'tool-parallel')
+    const waiting = await until(bridge, id, detail => detail.approvals.length === 2)
+    const first = waiting.approvals.find(item => item.arguments?.includes('latch-0'))!
+    const second = waiting.approvals.find(item => item.arguments?.includes('latch-1'))!
+    await bridge.decide(second.id, 'reject')
+    await bridge.decide(first.id, 'allow')
+    const done = await settled(bridge, id)
+    const tools = done.messages.filter(message => message.role === 'tool')
+    expect(tools).toHaveLength(2)
+    expect(tools.find(item => item.tool?.input?.includes('latch-0'))).toMatchObject({
+      state: 'completed',
+      tool: { decision: { outcome: 'allowed' } },
+    })
+    expect(tools.find(item => item.tool?.input?.includes('latch-1'))).toMatchObject({
+      state: 'failed',
+      tool: { decision: { outcome: 'rejected' } },
+    })
+    expect(done.summary.runEnd?.unknownResults ?? []).toEqual([])
+  })
+
+  it.each([
+    { prompt: 'tool-ambiguous', count: 2 },
+    { prompt: 'tool-wrong-turn', count: 1 },
+    { prompt: 'tool-missing-fields', count: 1 },
+    { prompt: 'tool-not-started', count: 1 },
+  ])('does not attach an MCP approval to $prompt without unique same-turn evidence', async ({ prompt, count }) => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, prompt)
+    const waiting = await until(bridge, id, detail => detail.approvals.length === count)
+    for (const approval of waiting.approvals) await bridge.decide(approval.id, 'allow')
+    const done = await settled(bridge, id)
+    const tools = done.messages.filter(message => message.role === 'tool')
+    expect(tools).toHaveLength(count * 2)
+    expect(tools.filter(item => item.state === 'completed')).toHaveLength(count)
+    expect(done.summary.runEnd?.unknownResults ?? []).toHaveLength(count)
+  })
+
+  it('keeps parent and child MCP approvals separate even when their native IDs and arguments match', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-codex-child-mcp-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const asks: Array<{ toolCall: { toolCallId: string; _meta?: Record<string, unknown> } }> = []
+    const updates: Array<{ update?: { toolCallId?: string; status?: string; _meta?: Record<string, unknown> } }> = []
+    const wire = CodexWire.spawn(
+      {
+        command: process.execPath,
+        args: [FAKE_CODEX_APP_SERVER],
+        cwd: root,
+        env: { PATH: process.env.PATH },
+        maxLineBytes: 1 << 20,
+        redact: text => text,
+      },
+      {
+        request: async (_method, params) => {
+          asks.push(params as (typeof asks)[number])
+          return { outcome: { outcome: 'selected', optionId: 'accept' } }
+        },
+        notification: (_method, params) => {
+          updates.push(params as (typeof updates)[number])
+        },
+        exit: () => {},
+      },
+    )
+    cleanups.push(() => void wire.stop('kill', 100))
+    await wire.request('initialize', {}, 5_000)
+    const opened = (await wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000)) as { sessionId: string }
+    await wire.request('session/prompt', { sessionId: opened.sessionId, prompt: [{ type: 'text', text: 'tool-child' }] }, 5_000)
+    expect(asks).toHaveLength(2)
+    expect(asks[0]!.toolCall.toolCallId).toBe(asks[1]!.toolCall.toolCallId)
+    expect(asks[0]!.toolCall.toolCallId).not.toContain('approval')
+    expect(asks[0]!.toolCall._meta?.['latch/codexChild']).toBeUndefined()
+    expect(asks[1]!.toolCall._meta?.['latch/codexChild']).toMatchObject({ id: 'thread-mcp-child', parentID: opened.sessionId })
+    const completed = updates.filter(item => item.update?.status === 'completed')
+    expect(completed).toHaveLength(2)
+    expect(completed[0]!.update?._meta?.['latch/codexChild']).toMatchObject({ id: 'thread-mcp-child' })
+    expect(completed[1]!.update?._meta?.['latch/codexChild']).toBeUndefined()
+  })
+
+  it('does not let a late MCP answer from a stopped turn approve the next same-name call', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-codex-late-mcp-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const logFile = join(root, 'codex.jsonl')
+    const answers: Array<(value: unknown) => void> = []
+    const wire = CodexWire.spawn(
+      {
+        command: process.execPath,
+        args: [FAKE_CODEX_APP_SERVER],
+        cwd: root,
+        env: { PATH: process.env.PATH, FAKE_ACP_LOG: logFile },
+        maxLineBytes: 1 << 20,
+        redact: text => text,
+      },
+      { request: () => new Promise(resolve => answers.push(resolve)), notification: () => {}, exit: () => {} },
+    )
+    cleanups.push(() => void wire.stop('kill', 100))
+    await wire.request('initialize', {}, 5_000)
+    const opened = (await wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000)) as { sessionId: string }
+    const prompt = () => wire.request('session/prompt', { sessionId: opened.sessionId, prompt: [{ type: 'text', text: 'tool' }] }, 5_000)
+    const old = prompt().catch(error => error)
+    await vi.waitFor(() => expect(answers).toHaveLength(1))
+    wire.notify('session/cancel')
+    await expect(old).resolves.toMatchObject({ stopReason: 'cancelled' })
+    const next = prompt().catch(error => error)
+    await vi.waitFor(() => expect(answers).toHaveLength(2))
+    answers[0]!({ outcome: { outcome: 'selected', optionId: 'accept' } })
+    await vi.waitFor(async () => {
+      const rows = (await readFile(logFile, 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line) as LogEntry)
+      expect(
+        rows.find(entry => entry.event === 'recv' && entry.result && (entry.result as { action?: string }).action === 'cancel'),
+      ).toBeDefined()
+    })
+    answers[1]!({ outcome: { outcome: 'selected', optionId: 'accept' } })
+    await expect(next).resolves.toMatchObject({ stopReason: 'end_turn' })
+  })
+
+  it('cancels a late MCP allow while the same turn is cancelling but has not settled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-codex-cancelling-mcp-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const logFile = join(root, 'codex.jsonl')
+    let answer: ((value: unknown) => void) | undefined
+    const wire = CodexWire.spawn(
+      {
+        command: process.execPath,
+        args: [FAKE_CODEX_APP_SERVER],
+        cwd: root,
+        env: { PATH: process.env.PATH, FAKE_ACP_LOG: logFile, FAKE_CODEX_INTERRUPT_MS: '2000' },
+        maxLineBytes: 1 << 20,
+        redact: text => text,
+      },
+      {
+        request: () =>
+          new Promise(resolve => {
+            answer = resolve
+          }),
+        notification: () => {},
+        exit: () => {},
+      },
+    )
+    cleanups.push(() => void wire.stop('kill', 100))
+    await wire.request('initialize', {}, 5_000)
+    const opened = (await wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000)) as { sessionId: string }
+    const run = wire
+      .request('session/prompt', { sessionId: opened.sessionId, prompt: [{ type: 'text', text: 'tool' }] }, 5_000)
+      .catch(error => error)
+    await vi.waitFor(() => expect(answer).toBeDefined())
+    wire.notify('session/cancel')
+    answer!({ outcome: { outcome: 'selected', optionId: 'accept' } })
+    await expect(run).resolves.toMatchObject({ stopReason: 'cancelled' })
+    const rows = (await readFile(logFile, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line) as LogEntry)
+    expect(rows.find(entry => entry.event === 'answered' && entry.method === 'tool')?.answer).toEqual({ action: 'cancel' })
   })
 
   it('answers the two old-style approval requests itself, and says so', async () => {

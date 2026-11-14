@@ -4,6 +4,7 @@
  * requests and turns Codex's item notifications into ACP session updates, so every check of the runtime applies to it
  * unchanged. Types follow `codex app-server generate-ts` of Codex 0.167.
  */
+import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { escapeSecurityText, type HarnessMcpServer, type HarnessMcpState } from '@latch/protocol'
 import { redactKnownSecrets } from '@latch/core/node-kit'
@@ -310,6 +311,18 @@ interface Turn {
   ending?: () => void
 }
 
+interface McpCall {
+  thread: string
+  turn: string
+  id: string
+  server: unknown
+  tool: unknown
+  arguments: unknown
+  claimed: boolean
+  answered: boolean
+  ended: boolean
+}
+
 export class CodexWire implements AgentWire {
   readonly exited: Promise<ExitInfo>
   private readonly process: AgentProcess
@@ -335,8 +348,8 @@ export class CodexWire implements AgentWire {
   private readonly allowed = new Set<string>()
   /** Commands whose ask was declined or went unanswered: they never run, so a stop does not wait for them. */
   private readonly notRun = new Set<string>()
-  /** MCP tools (`server\0tool`) a person answered about this turn: such a call reported declined was their choice. */
-  private readonly toolAnswers = new Set<string>()
+  /** Native MCP calls, including ended IDs, scoped to this turn; an ambiguous approval keeps its own unknown row. */
+  private readonly mcpCalls = new Map<string, McpCall>()
   /** Calls Codex's review model denied, with its reason. */
   private readonly denied = new Map<string, string>()
   /** Codex's own MCP servers on this thread, by the name Codex gives them; Latch's own are never among them. */
@@ -831,7 +844,7 @@ export class CodexWire implements AgentWire {
     this.answered.clear()
     this.allowed.clear()
     this.notRun.clear()
-    this.toolAnswers.clear()
+    this.mcpCalls.clear()
     this.denied.clear()
     answer()
   }
@@ -949,7 +962,7 @@ export class CodexWire implements AgentWire {
    * allows it: one Codex refuses first (its review model, its rules) never ran, and its refusal says so
    * (`latch/codexDenied`). Every command started in a turn is waited for when the turn is stopped (`endCommands`).
    */
-  private item(sessionId: string, item: Record<string, unknown>, phase: 'started' | 'completed', child?: string): void {
+  private item(sessionId: string, item: Record<string, unknown>, phase: 'started' | 'completed', child?: string, mcp?: McpCall): void {
     const id = typeof item.id === 'string' ? clip(item.id, 512) : undefined
     if (!id) return
     const done = phase === 'completed'
@@ -1043,7 +1056,7 @@ export class CodexWire implements AgentWire {
           })
         const ran = item.type === 'webSearch' || item.result != null || (item.error != null && item.status !== 'declined')
         if (ran && item.status !== 'declined') emit({ sessionUpdate: 'tool_call_update', toolCallId: id, status: 'in_progress' })
-        const asked = item.type === 'mcpToolCall' && this.toolAnswers.has(`${String(item.server)}\0${String(item.tool)}`)
+        const asked = item.type === 'mcpToolCall' && mcp?.answered
         return emit({
           sessionUpdate: 'tool_call_update',
           toolCallId: id,
@@ -1113,14 +1126,51 @@ export class CodexWire implements AgentWire {
     })
   }
 
+  private trackMcp(method: string, params: Record<string, unknown>): McpCall | undefined {
+    if (!this.turn || (method !== 'item/started' && method !== 'item/completed')) return undefined
+    const item = params.item
+    if (!isRecord(item) || item.type !== 'mcpToolCall') return undefined
+    if (typeof item.server !== 'string' || !item.server || typeof item.tool !== 'string' || !item.tool || !isRecord(item.arguments))
+      return undefined
+    const thread = params.threadId,
+      turn = params.turnId,
+      id = item.id
+    if ([thread, turn, id].some(value => typeof value !== 'string' || !value || value.length > 512)) return undefined
+    if (thread === this.threadId && turn !== this.turn.id) return undefined
+    const key = JSON.stringify([thread, turn, id])
+    const known = this.mcpCalls.get(key)
+    if (method === 'item/started') {
+      if (known) known.ended = true
+      if (!known && this.mcpCalls.size < 1024)
+        this.mcpCalls.set(key, {
+          thread: thread as string,
+          turn: turn as string,
+          id: id as string,
+          server: item.server,
+          tool: item.tool,
+          arguments: item.arguments,
+          claimed: false,
+          answered: false,
+          ended: false,
+        })
+      return undefined
+    }
+    if (!known || known.ended) return undefined
+    known.ended = true
+    return known.server === item.server && known.tool === item.tool && isDeepStrictEqual(known.arguments, item.arguments)
+      ? known
+      : undefined
+  }
+
   private onNotification(method: string, params: Record<string, unknown>): void {
+    const mcp = this.trackMcp(method, params)
     // Codex may run its subagents' threads in this process: their calls reach the session marked as theirs.
     const thread = typeof params.threadId === 'string' ? params.threadId : undefined
     const child = thread !== undefined && thread !== this.threadId ? thread : undefined
     if (child) {
       if (!this.threadId) return
       if ((method === 'item/started' || method === 'item/completed') && isRecord(params.item))
-        this.item(this.threadId, params.item, method === 'item/started' ? 'started' : 'completed', child)
+        this.item(this.threadId, params.item, method === 'item/started' ? 'started' : 'completed', child, mcp)
       // Its review model's decisions on the subagent's calls are rows of the subagent's, recorded as any review is.
       if (method === 'item/autoApprovalReview/started' || method === 'item/autoApprovalReview/completed')
         this.review(params, method.endsWith('completed'), child)
@@ -1167,7 +1217,7 @@ export class CodexWire implements AgentWire {
       case 'item/started':
       case 'item/completed':
         if (isRecord(params.item) && this.threadId)
-          this.item(this.threadId, params.item, method === 'item/started' ? 'started' : 'completed')
+          this.item(this.threadId, params.item, method === 'item/started' ? 'started' : 'completed', undefined, mcp)
         return
       case 'item/autoApprovalReview/started':
       case 'item/autoApprovalReview/completed':
@@ -1319,9 +1369,27 @@ export class CodexWire implements AgentWire {
    * `codex_approval_kind: mcp_tool_call`: a card like any approval, answered `accept`, `decline` or, with no answer, `cancel`.
    */
   private async toolApproval(params: Record<string, unknown>, id: RpcId): Promise<unknown> {
+    const active = this.turn
     const meta = isRecord(params._meta) ? params._meta : {}
     const thread = typeof params.threadId === 'string' ? params.threadId : undefined
     const child = thread !== undefined && thread !== this.threadId ? thread : undefined
+    // App-server 0.167 omits the native call ID here. Reuse only one complete, unclaimed in-flight match;
+    // neither server/tool alone nor the end of a model turn proves which parallel call the person answered.
+    const matches =
+      meta.tool_params === undefined
+        ? []
+        : [...this.mcpCalls.values()].filter(
+            call =>
+              !call.ended
+              && !call.claimed
+              && call.thread === thread
+              && call.turn === params.turnId
+              && call.server === params.serverName
+              && call.tool === meta.tool_name
+              && isDeepStrictEqual(call.arguments, meta.tool_params),
+          )
+    const call = matches.length === 1 ? matches[0] : undefined
+    if (call) call.claimed = true
     const safe = (value: unknown, limit: number) =>
       typeof value === 'string' && value ? escapeSecurityText(clip(value, limit)) : undefined
     const server = safe(params.serverName, 200) ?? 'MCP'
@@ -1334,7 +1402,7 @@ export class CodexWire implements AgentWire {
           sessionId: this.threadId,
           toolCall: this.marked(
             {
-              toolCallId: `mcp-approval-${String(id)}`,
+              toolCallId: call?.id ?? `mcp-approval-${String(id)}`,
               title: clip(`调用 ${server}.${tool}`, 500),
               kind: 'other',
               status: 'pending',
@@ -1353,12 +1421,10 @@ export class CodexWire implements AgentWire {
         id,
       )
       .catch(() => undefined)
+    if (!active || active.cancelled || this.turn !== active) return { action: 'cancel' }
     const outcome = isRecord(answer) && isRecord(answer.outcome) ? answer.outcome : {}
     const chosen = outcome.outcome === 'selected' ? outcome.optionId : undefined
-    if (chosen === 'accept' || chosen === 'decline')
-      this.toolAnswers.add(
-        `${typeof params.serverName === 'string' ? params.serverName : ''}\0${typeof meta.tool_name === 'string' ? meta.tool_name : ''}`,
-      )
+    if (call && (chosen === 'accept' || chosen === 'decline')) call.answered = true
     return chosen === 'accept' ? { action: 'accept', content: {} } : { action: chosen === 'decline' ? 'decline' : 'cancel' }
   }
 

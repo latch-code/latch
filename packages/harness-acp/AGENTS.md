@@ -11,7 +11,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 会话只启动与开始时记录的 `launchHash` 一致的进程（`test/acp.test.ts#starts a session only with a launch fingerprint on record`）；指纹覆盖命令、参数、定义的环境变量、预设、profile 版本、profile 列出的项目配置、`inheritEnv` 的名字（不含值）与 `programEnv` 的路径（`test/acp.test.ts`）。
 - 只有 profile 声明了 `folders` 的预设收到项目的其他文件夹（Codex 经 ACP `additionalDirectories`，只在 Agent 声明支持时；Gemini CLI、Qwen Code 经 `--include-directories`）；它们计入 `launchHash`，没有其他文件夹时指纹不变（`test/acp.test.ts`）。
 - 权限行为只写在 `src/profiles/`；改变 profile 行为时提高其 `version`，它计入 `launchHash`。Agent 放宽自己的权限模式时停止该轮（`test/acp.test.ts#cancels the turn, rejects pending asks and stops input when the agent widens its own mode`）。
-- 取消须等执行结算；带 `runId` 只取消本轮，恢复启动时也显示本轮 ID（`test/acp.test.ts`）。Codex 中断不等于命令结束，归属或结算不明时保持结果未知（`test/codex.test.ts`）。子 Agent 请求不宽于会话模式，一轮后仍给人答，只单独停止宣告 `cancel` 的。
+- 取消须等执行结算；带 `runId` 只取消本轮，恢复启动时也显示本轮 ID（`test/acp.test.ts`）。Codex 中断不等于命令结束，归属或结算不明时保持结果未知（`test/codex.test.ts`）。子 Agent 请求不宽于会话模式，一轮后仍给人答，只单独停止宣告 `cancel` 的。MCP 审批只关联同轮唯一调用。
 - 探测只做 initialize（`loginStatus`、`programVersion` 另跑），经过同一命令、环境和配置指纹检查，20 秒内结束并等待进程停止；不发提示词，authMethods 不算未登录证据（`test/probe.test.ts`）。
 - 终端登录只跑会话的程序；登录推送只读 `kind`、`label`（`test/auth.test.ts`）。
 - 新的持久化字段以可选字段加入 `src/store.ts` 的 zod schema。

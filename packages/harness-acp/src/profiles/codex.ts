@@ -124,7 +124,7 @@ export const codexProfile: HarnessProfile = {
   presetId: 'codex',
   // 2: Codex's reviews and refusals reach the session, the wire's own refusals are said and recorded. 3: sessions on a
   // Responses service through the gateway.
-  version: 3,
+  version: 4,
   wire: 'codex',
   permission: {
     approvals: 'prompts',
