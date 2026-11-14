@@ -22,6 +22,8 @@ const TITLE = '春日计划'
 afterEach(() => vi.unstubAllEnvs())
 
 async function personOnly(page: Page) {
+  expect(await page.locator('.agent-frame .agent-boundary-trigger').filter({ visible: true }).count()).toBe(1)
+  expect(await page.locator('.transcript .session-start-note').filter({ hasText: '不隔离' }).count()).toBe(0)
   const text = await page.evaluate(() =>
     [...document.querySelectorAll<HTMLElement>('.topbar, .agent-chat-title, .transcript, .composer, .agent-delegate')]
       .filter(element => element.checkVisibility() && !element.closest('[inert], [aria-hidden="true"]'))

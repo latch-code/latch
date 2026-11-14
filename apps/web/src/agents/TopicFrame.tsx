@@ -11,6 +11,7 @@ import { draftPermission, permissionView } from '../composer/permission.ts'
 import { ACTIVITY_WORDS, agentActivity, agentLiveWord, dutyLine, generalChoice, scheduleWords, sessionAgent } from './model.ts'
 import { ActivityWord, IsolationNote, PermissionNote } from './parts.tsx'
 import { helperPermissionBlocked, permissionNote } from './personWords.ts'
+import { MODE_COPY } from '../core/securityCopy.ts'
 import { draftConfig, startBlock, withLadderMode, type ComposerChoice } from '../composerChoice.ts'
 
 /**
@@ -75,6 +76,7 @@ export function TopicFrame({
         : undefined,
     current !== null && detail?.summary.id === current && helperPermissionBlocked(detail),
   )
+  const boundary = (topicHarness ?? freshHarness)?.level === 'L3' ? MODE_COPY.firstStart(name).detail : undefined
   const canStart = offline
     ? 'Mac 不在线'
     : !access.scopes.has('run')
@@ -92,7 +94,13 @@ export function TopicFrame({
       avatar={found?.avatar ?? 'general'}
       state={frozen !== null && (state === 'running' || state === 'waiting') ? 'idle' : state}
       word={frozen === null && ACTIVITY_WORDS[state] ? <ActivityWord state={state} live={agentLiveWord(snapshot, owner, current)} /> : null}
-      note={note ? <PermissionNote {...note} /> : (topicHarness ?? freshHarness)?.level === 'L3' ? <IsolationNote name={name} /> : null}
+      note={
+        note ? (
+          <PermissionNote {...note} detail={boundary ? `${note.detail} ${boundary}` : note.detail} />
+        ) : boundary ? (
+          <IsolationNote name={name} />
+        ) : null
+      }
       topic={title}
       phone={phone}
       profileOpen={shell.profileShown !== null}

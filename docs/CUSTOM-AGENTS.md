@@ -182,6 +182,8 @@ Agent 模式的话题使用原有工具、审批与浏览器分级。Standard �
 
 工作台可在总览与分拣台之间切换（见 DESIGN.md）。从 Agent 话题打开总览时，覆盖层属于 Code，新建动作也按 Code 处理；下面的话题与草稿保留，返回后仍属于我的 Agent。分拣台中的我的 Agent 继续使用「新对话…」选择 Agent，布局选择不改变话题的执行方式。
 
+网页与桌面的帮手话题只在页头保留一处权限/不隔离说明，时间线不重复首启提示。新话题、已有话题与重开都可展开查看；「权限没确认」或「不先问你」的说明同样保留能读写本机文件、运行命令和权限由 Agent 自己设置的事实。没有帮手页头的兼容界面与 Code 会话保留原首启提示，Host 的 firstStart 记录不变。
+
 网页与桌面端分成两个大空间：Code 与我的 Agent，只在 `catalog.features.customAgents` 存在时分开（没有时只有 Code，和以前一样）。宽窗口的侧栏最上方（电脑菜单与电脑名之下）是整宽的两段开关「Code | 我的 Agent」（`SpaceSwitch`，[SpaceNav.tsx](../apps/web/src/shell/SpaceNav.tsx)），它切换空间而不是筛选：主操作、列表与主区的首页一起换掉，底部的「应用」与「设置」两边共用。手机仍是底部标签栏里的一个标签。
 
 - **会话属于哪边**：只看 `TaskSummary.agent` 与 `TaskSummary.generalChat`：某个 Agent 的会话与在我的 Agent 里和「通用」的对话只在我的 Agent，其余（包括在 Code 开始、带上「通用」的会话）在 Code。过滤在共享的会话列表模型里（[sessions.ts](../apps/web/src/sessions.ts) 的 `spaceOf`、`inSpace`，`filterSessions`、`listedSessions` 与 `waitingCount` 的空间参数），组件不各写一份；Host 没有我的 Agent 时不传空间，所有会话都在 Code。

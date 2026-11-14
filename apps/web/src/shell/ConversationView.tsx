@@ -94,6 +94,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
   // A topic of 我的 Agent is a conversation with the helper: it answers, under its own face and name.
   const speaker = current ? speakerOf(snapshot, current.summary) : undefined
+  const helperBoundary = speaker && shell.entries.includes('agents') && summary?.id === current?.summary.id && harnessInfo?.level === 'L3'
   const placeProposals = useTopicProposals(shell, current)
   const placeResults = useTopicResults(shell, current)
   const [handoffRequest, setHandoffRequest] = useState<HandoffRequest | null>(null)
@@ -284,8 +285,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                   </>
                 ) : (
                   <ChangesLinkContext.Provider value={changesLink}>
-                    {/* In a helper's topic the same fact names the helper, not its Harness. */}
-                    {current.summary.firstStart && harnessInfo && (
+                    {/* A helper's frame already keeps this boundary reachable, including its permission warning. */}
+                    {current.summary.firstStart && harnessInfo && !helperBoundary && (
                       <FirstStartNote harness={harnessInfo} {...(speaker ? { who: speaker.name } : {})} />
                     )}
                     {current.summary.worktree?.unfiltered !== undefined && (
