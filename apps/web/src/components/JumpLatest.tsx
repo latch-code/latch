@@ -3,9 +3,10 @@ import { ArrowDown } from 'lucide-react'
 import { ICON_STROKE, MOTION, usePresence } from '@latch/ui'
 
 /**
- * Back to the latest output: a 32px round button while the reader is away from it, with how many blocks have arrived since
- * they left. When something waits for the person and no card of it is in view, the same button takes them to it and
- * says so, because nothing else on the screen would.
+ * Back to the latest output, while the reader is away from it: a pill centred in a strip of its own right above the
+ * input, where the conversation fades out under it. It says what pressing it does, 「回到最新」, or what arrived since the
+ * reader left, 「3 条新内容」. When something waits for the person and no card of it is in view, the same pill takes them
+ * to it and says so, because nothing else on the screen would.
  */
 export function JumpLatest({
   show,
@@ -40,13 +41,12 @@ export function JumpLatest({
   return (
     <button
       type="button"
-      className={`jump-latest ${fresh > 0 ? 'has-count' : ''}`}
+      className="jump-latest"
       data-leaving={leaving ? '' : undefined}
       aria-label={fresh > 0 ? `回到最新，${fresh} 条新内容` : '回到最新'}
-      title="回到最新"
       onClick={onJump}>
       <ArrowDown size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-      {fresh > 0 && <span className="jump-latest-count">{fresh}</span>}
+      {fresh > 0 ? `${fresh} 条新内容` : '回到最新'}
     </button>
   )
 }

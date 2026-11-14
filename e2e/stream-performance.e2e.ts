@@ -19,6 +19,8 @@ const transport = process.env.LATCH_STREAM_TRANSPORT === 'full' ? 'full' : 'delt
 const label = process.env.LATCH_STREAM_LABEL ?? 'baseline'
 const output = join('test-results', 'stream-performance', /^[a-z0-9-]{1,48}$/u.test(label) ? label : 'baseline')
 const uiDir = resolve(process.env.LATCH_E2E_UI_DIR ?? 'dist/web')
+// With motion the page paces the reply's newest text every animation frame; the default keeps the earlier runs comparable.
+const motion = process.env.LATCH_STREAM_MOTION === '1'
 const paragraph = '这是一段固定的中文分析，说明实现、验证和结果。内容需要完整保留，消息身份不随流式更新改变。'
 const section = `### 可重复的工作记录\n\n${paragraph.repeat(8)}\n\n- 检查输入与上下文\n- 保留原始内容\n- 验证实际结果\n\n| 项目 | 结果 |\n| --- | --- |\n| 身份 | 稳定 |\n| 状态 | 已核对 |\n\n\`\`\`ts\nconst value = 1\nconst twice = value * 2\nconsole.log(twice)\n\`\`\`\n\n${paragraph.repeat(4)}\n\n`
 const liveText = Array.from({ length: Math.ceil(20_000 / section.length) }, () => section)
@@ -246,7 +248,11 @@ describe.runIf(enabled)('stream performance baseline', () => {
       }
       const host = await startTestHost({ demo: false, plugins: [plugin], hostName: '性能基线', uiDir })
       const browser = await chromium.launch(browserLaunchOptions())
-      const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+      const context = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+        locale: 'zh-CN',
+        reducedMotion: motion ? 'no-preference' : 'reduce',
+      })
       const page = await context.newPage()
       page.setDefaultTimeout(30_000)
       let tracing = false
@@ -423,7 +429,7 @@ describe.runIf(enabled)('stream performance baseline', () => {
           cpu: cpus()[0]?.model,
           viewport: { width: 390, height: 844 },
           cpuSlowdown: 4,
-          reducedMotion: true,
+          reducedMotion: !motion,
           concurrentLoad: { coordinatedQuietWindow: process.env.LATCH_STREAM_QUIET === '1', loadBefore, loadAfter: loadavg() },
           fixture: {
             liveCharacters: liveText.length,

@@ -5,6 +5,7 @@ import { api, ApiError, errorMessage, setAuthHooks } from './api.ts'
 import { browserRenewal, RenewalScheduler } from './credentials.ts'
 import type { EnrolledResult } from './enrollment.ts'
 import { connectEventStream, type EventStreamConnection } from './eventStream.ts'
+import { frameGate } from './frameGate.ts'
 import { connectionFailure, noticeOf, parseHostState, type ConnectionFailure, type HostNotice } from './hostState.ts'
 import { hostView } from './permissions.ts'
 import { observeHostTime } from './hostClock.ts'
@@ -44,6 +45,9 @@ export function authStateFor(error: ApiError, renewalFailure: EnrollmentReason |
   if (error.code === 'renewal-required') return { reason: renewalFailure ?? 'unauthorized' }
   return { reason: ENROLLMENT_CODES.has(error.code) ? (error.code as EnrollmentReason) : 'unauthorized' }
 }
+
+/** How often, at most, text-only frames redraw the session list (its times are all they change there). */
+const BODY_LIST_PACE_MS = 1000
 
 /**
  * HTTP establishes authority; streamed state replaces only the selected slice. A tab opens on the session it last showed
@@ -108,6 +112,35 @@ export function useHarness() {
     setSnapshot(next)
     if (resync) setResyncs(count => count + 1)
   }, [])
+  /**
+   * A frame in which only the reply's text grew is accepted at once and drawn at most once per animation frame: several
+   * that arrive within one frame draw as the last of them, and a hidden page draws none until it is shown again. What is
+   * drawn is always the newest accepted state, so a drawing can never bring an older one back. Such a frame changes the
+   * session's entry in the list only in its times, so the list's copy is drawn at most once a second while they come.
+   * Every other frame (a status, a tool, an approval, a settled turn) is published at once, list and all: notices and
+   * counts depend on it while hidden.
+   */
+  const listTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [drawBody] = useState(() =>
+    frameGate(() => {
+      if (!alive.current) return
+      setDetail(latestDetail.current)
+      if (listTimer.current !== null) return
+      setSnapshot(latestSnapshot.current)
+      listTimer.current = setTimeout(() => {
+        listTimer.current = null
+        if (alive.current) setSnapshot(latestSnapshot.current)
+      }, BODY_LIST_PACE_MS)
+    }),
+  )
+  const publishBody = useCallback(
+    (next: TaskDetail, merged: AppSnapshot | null) => {
+      latestDetail.current = next
+      if (merged) latestSnapshot.current = merged
+      drawBody()
+    },
+    [drawBody],
+  )
   const storeSelection = useCallback((id: string | null) => {
     if (restoredDevice.current === null) return
     const key = `latch.selected.${location.origin}.${restoredDevice.current}`
@@ -424,8 +457,12 @@ export function useHarness() {
             if (result?.kind !== 'detail') return
             observeHostTime(result.detail.sync?.hostTime)
             if (!guard.current.accept(ticket, result.detail, 'stream')) return
-            publishDetail(result.detail)
-            if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, result.detail), false)
+            const merged = latestSnapshot.current ? mergeTaskSnapshot(latestSnapshot.current, result.detail) : null
+            if (message.event === 'task-delta') publishBody(result.detail, merged)
+            else {
+              publishDetail(result.detail)
+              if (merged) publishSnapshot(merged, false)
+            }
           } else if (message.event === 'refresh' || message.event === 'tasks-invalidated') invalidate(message.data)
           else if (message.event === 'host-state') hostState(message.data)
           else if (message.event === 'app.data') publishAppData(message.data, guard.current.instanceId ?? undefined)
@@ -489,7 +526,7 @@ export function useHarness() {
       window.removeEventListener('online', online)
       document.removeEventListener('visibilitychange', visible)
     }
-  }, [identity, selectedId, synchronize, publishDetail, publishSnapshot, publishNotice, renew])
+  }, [identity, selectedId, synchronize, publishDetail, publishSnapshot, publishBody, publishNotice, renew])
 
   return {
     snapshot,

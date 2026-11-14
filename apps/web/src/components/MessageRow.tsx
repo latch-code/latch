@@ -7,6 +7,7 @@ import { MessageContent, ReasoningContent } from '../MessageContent.tsx'
 import { ownTextStart, reasoningSections } from '../conversation.ts'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
 import { absoluteTime, formatDuration, messageTime } from '../format.ts'
+import { usePacedText } from '../hooks/usePacedText.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { THOUGHT_WORDS } from '../agents/personWords.ts'
@@ -442,6 +443,27 @@ function SystemNote({
 }
 
 /**
+ * An answer block's prose. While it is the live reply its newest text shows at an even pace (`usePacedText`); the
+ * message keeps its whole text, and once it settles the whole text is what is drawn.
+ */
+function AssistantMessage({ message, streaming, frozen }: { message: Message; streaming: boolean; frozen: boolean }) {
+  const text = usePacedText(message.text, streaming && !frozen)
+  return (
+    <article
+      className={`message message-assistant ${streaming && !frozen ? 'is-live' : ''}`}
+      data-message-id={message.id}
+      aria-label={streaming ? '正在生成的回复' : undefined}>
+      <MessageAttachments attachments={message.attachments} />
+      {message.text && (
+        <div className="message-text">
+          <MessageContent text={text} streaming={streaming} />
+        </div>
+      )}
+    </article>
+  )
+}
+
+/**
  * One message row: the person's bubble (with its time, copy and 从这里编辑), an answer block's prose, or a note. The
  * author line opens the reply, a block's reasoning is a work row and the footer follows the last row (Transcript).
  */
@@ -497,19 +519,7 @@ export const MessageRow = memo(
         />
       )
     if (message.role === 'system') return <SystemNote message={message} onRetry={onRetry} voice={voice} {...(action ? { action } : {})} />
-    return (
-      <article
-        className={`message message-assistant ${streaming && !frozen ? 'is-live' : ''}`}
-        data-message-id={message.id}
-        aria-label={streaming ? '正在生成的回复' : undefined}>
-        <MessageAttachments attachments={message.attachments} />
-        {message.text && (
-          <div className="message-text">
-            <MessageContent text={message.text} streaming={streaming} />
-          </div>
-        )}
-      </article>
-    )
+    return <AssistantMessage message={message} streaming={streaming} frozen={frozen} />
   },
   (a, b) =>
     a.streaming === b.streaming

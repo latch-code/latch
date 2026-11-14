@@ -12,6 +12,7 @@ import {
 import {
   deliveryWords,
   foldWords,
+  quietGroupWords,
   isBlocked,
   isLive,
   liveMessageId,
@@ -91,9 +92,10 @@ function QuestionRow({ message, context }: { message: Message; context: RowConte
   return <ToolRow message={message} context={context} />
 }
 
-/** A settled turn's finished reads as one row; opening it lists them as the rows they were. */
+/** A run of finished reads, listings and searches as one row; opening it lists them as the rows they were. */
 function ReadsRow({ messages, context }: { messages: Message[]; context: RowContext }) {
   const [open, setOpen] = useState(false)
+  const words = useMemo(() => quietGroupWords(messages), [messages])
   return (
     <div className="reads-row" data-open={open ? '' : undefined}>
       <button
@@ -104,7 +106,7 @@ function ReadsRow({ messages, context }: { messages: Message[]; context: RowCont
           setOpen(!open)
         }}>
         <span className="process-label">
-          <span className="process-verb">读取</span> <span className="process-object">{messages.length} 个文件</span>
+          <span className="process-object">{words}</span>
         </span>
         <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>
@@ -328,7 +330,7 @@ const TurnView = memo(function TurnView({
   const [tapped, setTapped] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [foldChoice, setFoldChoice] = useState<boolean | null>(null)
-  const blocks = useMemo(() => turnBlocks(turn, !trailingLive), [turn, trailingLive])
+  const blocks = useMemo(() => turnBlocks(turn), [turn])
   const folds = !trailingLive && workFolds(turn, outcome)
   const hasWork = blocks.some(block => block.kind === 'work' && block.items.some(item => item.kind !== 'thinking'))
   // The rows stay in one tree from the first to the last, so the fold is seen to happen when the turn settles.

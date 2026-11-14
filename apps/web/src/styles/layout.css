@@ -641,23 +641,27 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   max-width: 100%;
 }
 /*
- * 「回到最新」: a 32 round button 16 above the input, with how many blocks arrived while the reader was away. It rises as it
- * fades in (--m-enter) and fades out as the reader arrives. When something waits for the person and no card of it is in
- * view it says so, in a pill.
+ * 「回到最新」: a 32 pill centred in the last 40 of the conversation, right above the input, saying 「回到最新」 or how many
+ * blocks arrived while the reader was away. While it shows, the conversation fades out over that strip, so the pill
+ * never lies on words or rows. It rises as it fades in (--m-enter) and fades out as the reader arrives. When something
+ * waits for the person and no card of it is in view it says so.
  */
+.workspace .transcript-shell:has(> .jump-latest) > .transcript {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px, #000 calc(100% - 56px), transparent calc(100% - 20px));
+  mask-image: linear-gradient(to bottom, transparent 0, #000 16px, #000 calc(100% - 56px), transparent calc(100% - 20px));
+}
 .jump-latest {
   position: absolute;
   left: 50%;
-  bottom: 16px;
+  bottom: 4px;
   z-index: 2;
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--sp-4);
-  min-width: 32px;
   height: 32px;
-  padding: 0 var(--sp-8);
+  padding: 0 var(--sp-12);
   border: 0;
   border-radius: var(--r-full);
   background: var(--raised);

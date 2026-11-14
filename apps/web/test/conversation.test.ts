@@ -15,6 +15,7 @@ import {
   runEndLine,
   runStatus,
   turnBlocks,
+  quietGroupWords,
   workFolds,
   foldWords,
   failureReason,
@@ -308,14 +309,7 @@ describe("a turn's blocks and its fold", () => {
     )
 
   it("keeps prose in reading order between the work, a block's reasoning before its prose", () => {
-    expect(shape(turnBlocks(firstTurn(messages), true))).toEqual([
-      ['thinking:a1'],
-      'a1',
-      ['tool:tool:read'],
-      'a2',
-      ['tool:tool:write'],
-      'a3',
-    ])
+    expect(shape(turnBlocks(firstTurn(messages)))).toEqual([['thinking:a1'], 'a1', ['tool:tool:read'], 'a2', ['tool:tool:write'], 'a3'])
   })
 
   it('folds a turn that finished, worked and answered; never a failed or stopped one, or one that ended without a word', () => {
@@ -390,32 +384,70 @@ describe("a turn's blocks and its fold", () => {
     expect(shownToolState(tool('f', { state: 'failed', text: 'x', tool: { kind: 'edit' } }))).toBe('failed')
   })
 
-  it("joins a settled turn's finished reads into one row, and a live turn's never", () => {
-    const reads = firstTurn([
-      user('u'),
-      tool('r1', { tool: { kind: 'read' } }),
-      tool('r2', { tool: { kind: 'read' } }),
-      tool('e', { tool: { kind: 'edit' } }),
+  it('joins three or more consecutive finished quiet steps into one row, in a running turn as in a settled one', () => {
+    const read = (id: string, extra: Partial<Message> = {}) => tool(id, { tool: { kind: 'read' }, ...extra })
+    const turn = (...replies: Message[]) => turnBlocks(firstTurn([user('u'), ...replies]))
+    expect(shape(turn(read('r1'), read('r2'), tool('e', { tool: { kind: 'edit' } })))).toEqual([['tool:r1', 'tool:r2', 'tool:e']])
+    expect(shape(turn(read('r1'), read('r2'), tool('s', { tool: { kind: 'search' } }), tool('e', { tool: { kind: 'edit' } })))).toEqual([
+      ['reads:3', 'tool:e'],
     ])
-    expect(shape(turnBlocks(reads, true))).toEqual([['reads:2', 'tool:e']])
-    expect(shape(turnBlocks(reads, false))).toEqual([['tool:r1', 'tool:r2', 'tool:e']])
-    const failedRead = firstTurn([
-      user('u'),
-      tool('r1', { tool: { kind: 'read' } }),
-      tool('r2', { state: 'failed', text: 'x', tool: { kind: 'read' } }),
+    // The step still running stays out, and joins once it finishes.
+    expect(shape(turn(read('r1'), read('r2'), read('r3'), read('r4', { state: 'running' })))).toEqual([['reads:3', 'tool:r4']])
+    expect(shape(turn(read('r1'), read('r2'), read('r3'), read('r4')))).toEqual([['reads:4']])
+    // A failed step in the middle keeps both sides apart; neither side reaches three.
+    expect(shape(turn(read('r1'), read('r2'), read('f', { state: 'failed', text: 'x' }), read('r3'), read('r4')))).toEqual([
+      ['tool:r1', 'tool:r2', 'tool:f', 'tool:r3', 'tool:r4'],
     ])
-    expect(shape(turnBlocks(failedRead, true))).toEqual([['tool:r1', 'tool:r2']])
+    // Commands, edits, decided, refused, interrupted and unknown steps, and steps with pictures never join.
+    const never = [
+      tool('c', { tool: { kind: 'execute', input: '{"command":"ls"}' } }),
+      tool('d', { tool: { kind: 'read', decision: { outcome: 'allowed', at: at(0) } } }),
+      tool('b', { tool: { kind: 'read', judged: { by: 'Codex', outcome: 'unasked' } } }),
+      tool('i', { tool: { kind: 'read' }, state: 'failed', interrupted: true }),
+      tool('p', {
+        tool: { kind: 'read' },
+        attachments: [{ id: 'a', name: 'shot.png', mime: 'image/png', kind: 'image', size: 1, sha256: 'x' }],
+      }),
+    ]
+    for (const step of never)
+      expect(shape(turn(read('r1'), read('r2'), step, read('r3')))).toEqual([['tool:r1', 'tool:r2', `tool:${step.id}`, 'tool:r3']])
+    // A command its Harness classified joins as what it does; one it did not classify does not.
+    const acted = (id: string, actions: NonNullable<Message['tool']>['actions']) =>
+      tool(id, { tool: { kind: 'execute', input: '{"command":"x"}', ...(actions ? { actions } : {}) } })
+    const mixed = [
+      acted('a1', [{ kind: 'read', path: 'a' }]),
+      acted('a2', [{ kind: 'list', path: 'docs' }]),
+      acted('a3', [
+        { kind: 'read', path: 'b' },
+        { kind: 'search', query: 'x' },
+      ]),
+      read('r'),
+    ]
+    expect(shape(turn(...mixed, acted('u', undefined)))).toEqual([['reads:4', 'tool:u']])
+    // The words count what the steps themselves say, nothing else.
+    expect(quietGroupWords(mixed)).toBe('读取 3 个文件，列出 1 个文件夹，搜索 1 次')
+    expect(quietGroupWords([read('r1'), read('r2'), read('r3')])).toBe('读取 3 个文件')
+  })
+
+  it('keeps a growing group under its first step, so it keeps its place and whether it is open', () => {
+    const read = (id: string, extra: Partial<Message> = {}) => tool(id, { tool: { kind: 'read' }, ...extra })
+    const key = (...replies: Message[]) => {
+      const block = turnBlocks(firstTurn([user('u'), ...replies]))[0]!
+      return block.kind === 'work' ? [block.key, block.items[0]!.kind === 'reads' ? block.items[0]!.messages[0]!.id : undefined] : []
+    }
+    expect(key(read('r1'), read('r2'), read('r3'))).toEqual(['work:r1', 'r1'])
+    expect(key(read('r1'), read('r2'), read('r3'), read('r4'), read('r5', { state: 'running' }))).toEqual(['work:r1', 'r1'])
   })
 
   it("keeps the work block's key from its first row, so rows join it without remounting it", () => {
-    const before = turnBlocks(firstTurn([user('u'), tool('t1')]), false)
-    const after = turnBlocks(firstTurn([user('u'), tool('t1'), tool('t2')]), false)
+    const before = turnBlocks(firstTurn([user('u'), tool('t1')]))
+    const after = turnBlocks(firstTurn([user('u'), tool('t1'), tool('t2')]))
     expect(before[0]).toMatchObject({ key: 'work:t1' })
     expect(after[0]).toMatchObject({ key: 'work:t1' })
   })
 
   it('keeps a question out of the fold: it is what the person said', () => {
-    const blocks = turnBlocks(firstTurn([user('u'), tool('q', { toolName: 'ask_user' }), tool('t'), reply('a', '好')]), true)
+    const blocks = turnBlocks(firstTurn([user('u'), tool('q', { toolName: 'ask_user' }), tool('t'), reply('a', '好')]))
     expect(shape(blocks)).toEqual(['q', ['tool:t'], 'a'])
     expect(workFolds(firstTurn([user('u'), tool('q', { toolName: 'ask_user' }), reply('a', '好')]), 'completed')).toBe(false)
   })

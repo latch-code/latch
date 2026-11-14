@@ -104,6 +104,7 @@ turns.reads = async ({ cwd, say, tool }) => {
   run('act_12', 'cat slow.txt', [{ kind: 'read', path: cwd + '/slow.txt' }], '', 'in_progress')
   await reached(1)
   tool({ toolCallId: 'act_12', status: 'completed', content: [text('slow')] }, 'tool_call_update')
+  await reached(2)
   say('\\n\\n读完了。')
 }
 turns.thinking = async ({ say, think }) => {
@@ -310,7 +311,7 @@ describe('how a turn of work is drawn', () => {
     }
   })
 
-  it('draws the commands a Harness classified as reads, listings and searches as those rows', async () => {
+  it('draws the commands a Harness classified as reads, listings and searches as quiet rows, three or more as one', async () => {
     const id = await start('reads', '读取的会话')
     await poll(async () => (await detail(id)).messages.some(message => message.id.endsWith('act_12')), 'the running read')
     for (const [width, height] of SIZES)
@@ -318,31 +319,132 @@ describe('how a turn of work is drawn', () => {
         const page = await open(width, height, theme, id)
         try {
           const row = (kind: string, words: string) => page.locator(`.tool-card[data-kind="${kind}"]`).filter({ hasText: words })
+          const groups = page.locator('.reads-row')
+          // Four finished quiet steps are one row that says what they were; two are still two rows.
+          expect(await groups.locator('> .process-row').allInnerTexts()).toEqual([
+            '读取 2 个文件，列出 1 个文件夹，搜索 1 次',
+            '读取 3 个文件',
+          ])
+          expect(await row('read', 'a.txt').isVisible()).toBe(true)
+          expect(await row('read', 'b.txt').isVisible()).toBe(true)
+          // What the Harness did not classify is still a command; a failed read and the one still running stay rows.
+          expect(await page.locator('.tool-card.is-command').filter({ hasText: 'echo ok' }).count()).toBe(1)
+          expect(await row('read', 'missing.txt').getAttribute('class')).toContain('tool-failed')
+          expect(await row('read', 'slow.txt').isVisible()).toBe(true)
+          expect(await row('read', 'SKILL.md').isVisible()).toBe(false)
+          await noHorizontalOverflow(page)
+          await shot(page, 'reads-grouped', width, theme)
+          // Opened, the group lists its steps as the rows they were.
+          await groups.first().locator('> .process-row').click()
           const skill = row('read', 'SKILL.md')
+          await skill.waitFor()
           expect(await skill.locator('.process-verb').innerText()).toBe('读取')
           expect(await skill.locator('.process-folder').innerText()).toBe('notes/')
           expect(await skill.getAttribute('class')).not.toContain('is-command')
           expect(await skill.locator('.tool-card-header').getAttribute('title')).toContain("/bin/zsh -lc 'cat ")
           expect(await row('search', 'docs').locator('.process-verb').innerText()).toBe('列出')
           expect(await row('search', 'AGENTS').first().locator('.process-verb').innerText()).toBe('搜索')
-          // What the Harness did not classify is still a command; a failed read is a failed row with its reason.
-          expect(await page.locator('.tool-card.is-command').filter({ hasText: 'echo ok' }).count()).toBe(1)
-          expect(await row('read', 'missing.txt').getAttribute('class')).toContain('tool-failed')
           await noHorizontalOverflow(page)
-          await shot(page, 'reads-running', width, theme)
+          await shot(page, 'reads-opened', width, theme)
         } catch (error) {
           await page.screenshot({ path: `${OUTPUT}/failed-reads-${width}-${theme}.png` })
           throw error
         }
       }
-    // Opened, the row has the command as it was reported and what it printed.
-    const page = await open(1440, 900, 'light', id)
+    // Opened, a row has the command as it was reported and what it printed.
+    const page = await open(1440, 420, 'light', id)
+    await page.locator('.reads-row').first().locator('> .process-row').click()
     const skill = page.locator('.tool-card[data-kind="read"]').filter({ hasText: 'SKILL.md' })
     await skill.locator('.tool-card-header').click()
     await skill.locator('.argument-list').getByText("/bin/zsh -lc 'cat ", { exact: false }).waitFor()
     await shot(page, 'read-opened', 1440, 'light')
+    // The reader looks at the first rows; the running read joining its group below must not move them.
+    await page.locator('.transcript').hover()
+    await page.mouse.wheel(0, -400)
+    await expect.poll(() => page.locator('.jump-latest').count()).toBeGreaterThan(0)
+    const anchor = page.locator('.tool-card[data-kind="read"]').filter({ hasText: 'a.txt' })
+    const before = await anchor.evaluate(element => element.getBoundingClientRect().top)
+    // On the other device the reader follows the latest output and stays at its end.
+    const follower = await open(390, 844, 'light', id)
     await advance(1)
+    await expect.poll(() => page.locator('.reads-row').last().locator('> .process-row').innerText()).toBe('读取 4 个文件')
+    expect(Math.abs((await anchor.evaluate(element => element.getBoundingClientRect().top)) - before)).toBeLessThanOrEqual(1)
+    await follower.locator('.reads-row').last().getByText('读取 4 个文件', { exact: true }).waitFor()
+    const live = await follower
+      .locator('main.workspace:not([inert]) .transcript')
+      .evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)
+    expect(Math.abs(live)).toBeLessThanOrEqual(2)
+    await advance(2)
     await settled(id)
+    await follower.locator('.work-fold').first().waitFor()
+    const gap = await follower
+      .locator('main.workspace:not([inert]) .transcript')
+      .evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)
+    expect(Math.abs(gap)).toBeLessThanOrEqual(2)
+  })
+
+  it('offers the way back to the latest output in a strip of its own, in words', async () => {
+    const id = await start('thinking', '回到最新的会话')
+    await poll(async () => ((await detail(id)).liveReasoning ?? '').endsWith('**Plann'), 'the first thought')
+    for (const [width, height] of [
+      [390, 640],
+      [768, 640],
+      [1440, 640],
+    ] as const)
+      for (const theme of THEMES) {
+        const page = await open(width, height, theme, id)
+        try {
+          const scroller = page.locator('main.workspace:not([inert]) .transcript')
+          await scroller.evaluate(element => element.dispatchEvent(new WheelEvent('wheel', { deltaY: -300, bubbles: true })))
+          await scroller.evaluate(element => element.scrollBy(0, -300))
+          const pill = page.locator('.jump-latest')
+          await pill.waitFor()
+          expect(await pill.innerText()).toBe('回到最新')
+          // The pill stands within the last 40 of the conversation, and the words there are faded out under it.
+          const place = await pill.evaluate(element => {
+            const shell = element.closest('.transcript-shell')!.getBoundingClientRect()
+            const own = element.getBoundingClientRect()
+            const mask = getComputedStyle(element.closest('.transcript-shell')!.querySelector('.transcript')!).maskImage
+            return {
+              fromBottom: shell.bottom - own.top,
+              centre: Math.abs((own.left + own.right) / 2 - (shell.left + shell.right) / 2),
+              mask,
+            }
+          })
+          expect(place.fromBottom).toBeLessThanOrEqual(40)
+          expect(place.centre).toBeLessThanOrEqual(1)
+          expect(place.mask).toContain('calc(100% - 56px)')
+          await noHorizontalOverflow(page)
+          await shot(page, 'jump-latest', width, theme)
+        } catch (error) {
+          await page.screenshot({ path: `${OUTPUT}/failed-jump-${width}-${theme}.png` })
+          throw error
+        }
+      }
+    await advance(3)
+    await settled(id)
+    // Blocks that arrive while the reader is away are counted in words; pressing it returns to the end.
+    const busy = await start('commands', '新内容的会话')
+    await poll(
+      async () => (await detail(busy)).messages.some(message => message.id.endsWith('run_5') && !!message.tool?.output),
+      'the running command',
+    )
+    const page = await open(1440, 420, 'light', busy)
+    const scroller = page.locator('main.workspace:not([inert]) .transcript')
+    await page.locator('.transcript').hover()
+    await page.mouse.wheel(0, -300)
+    const pill = page.locator('.jump-latest')
+    await pill.waitFor()
+    expect(await pill.innerText()).toBe('回到最新')
+    await advance(1)
+    await settled(busy)
+    await expect.poll(() => pill.innerText()).toMatch(/^\d+ 条新内容$/u)
+    await shot(page, 'jump-latest-new', 1440, 'light')
+    await pill.click()
+    await expect
+      .poll(() => scroller.evaluate(element => Math.abs(element.scrollHeight - element.scrollTop - element.clientHeight)))
+      .toBeLessThanOrEqual(2)
+    await pill.waitFor({ state: 'hidden' })
   })
 
   it('shows the current title while it thinks, folds with a height transition that keeps the place, and opens as restricted Markdown', async () => {
@@ -368,17 +470,35 @@ describe('how a turn of work is drawn', () => {
           await shot(sized, 'thinking-live-titled', width, theme)
         }
       // The reader scrolls up to the words above; the thought folding away below must not move them.
-      const reader = await open(1440, 700, 'light', id)
+      const reader = await open(1440, 900, 'light', id)
       await reader.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
       const body = reader.locator('.thinking').last().locator('.ui-collapse')
       await reader.locator('.thinking-title').last().waitFor()
-      await reader.locator('.transcript').hover()
-      await reader.mouse.wheel(0, -160)
+      // Over the words at the top: the thought below scrolls in a box of its own and would take the wheel.
+      const view = (await reader.locator('main.workspace:not([inert]) .transcript').boundingBox())!
+      await reader.mouse.move(view.x + view.width / 2, view.y + 48)
+      await reader.mouse.wheel(0, -430)
       await expect.poll(() => reader.locator('.jump-latest').count()).toBeGreaterThan(0)
-      const anchor = reader.locator('.message-assistant').first().locator('p').nth(9)
-      const before = await anchor.evaluate(element => element.getBoundingClientRect().top)
       const open0 = await body.evaluate(element => element.getBoundingClientRect().height)
       expect(open0).toBeGreaterThan(100)
+      // Far enough from the end that the thought folding away cannot pull the page's end above the reader.
+      await expect
+        .poll(() =>
+          reader
+            .locator('main.workspace:not([inert]) .transcript')
+            .evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight),
+        )
+        .toBeGreaterThan(open0 + 40)
+      // The first paragraph wholly in view is what the reader looks at.
+      const anchorIndex = await reader.evaluate(() => {
+        const view = document.querySelector('main.workspace:not([inert]) .transcript')!.getBoundingClientRect()
+        return [...document.querySelectorAll('.message-assistant')[0]!.querySelectorAll('p')].findIndex(
+          paragraph => paragraph.getBoundingClientRect().top >= view.top + 24,
+        )
+      })
+      expect(anchorIndex).toBeGreaterThanOrEqual(0)
+      const anchor = reader.locator('.message-assistant').first().locator('p').nth(anchorIndex)
+      const before = await anchor.evaluate(element => element.getBoundingClientRect().top)
       // On the other device the reader follows the latest output: the fold must leave them at its end.
       const follower = await open(390, 844, 'light', id)
       await follower.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
@@ -386,25 +506,28 @@ describe('how a turn of work is drawn', () => {
       // Sample the fold as it happens: heights between open and shut prove it is a transition, not a jump.
       const sample = (target: Page) =>
         target.evaluate(
-          () =>
-            new Promise<Array<{ height: number; top: number; gap: number }>>(done => {
+          index =>
+            new Promise<Array<{ height: number; top: number; gap: number; chars: number }>>(done => {
               const all = document.querySelectorAll('.thinking .ui-collapse')
               const collapse = all[all.length - 1]!
-              const anchor = document.querySelectorAll('.message-assistant')[0]!.querySelectorAll('p')[9]!
+              const anchor = document.querySelectorAll('.message-assistant')[0]!.querySelectorAll('p')[index]!
               const scroller = document.querySelector('main.workspace:not([inert]) .transcript')!
-              const seen: Array<{ height: number; top: number; gap: number }> = []
+              const seen: Array<{ height: number; top: number; gap: number; chars: number }> = []
               const started = performance.now()
               const frame = () => {
                 seen.push({
                   height: collapse.getBoundingClientRect().height,
                   top: anchor.getBoundingClientRect().top,
                   gap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+                  // The answer is the second block of prose; the first is the words above the thought.
+                  chars: document.querySelectorAll('.message-assistant')[1]?.querySelector('.message-text')?.textContent?.length ?? 0,
                 })
                 if (performance.now() - started < 1500) requestAnimationFrame(frame)
                 else done(seen)
               }
               requestAnimationFrame(frame)
             }),
+          anchorIndex,
         )
       const reading = sample(reader)
       const following = sample(follower)
@@ -413,6 +536,15 @@ describe('how a turn of work is drawn', () => {
       expect(seen.at(-1)!.height).toBeLessThan(2)
       expect(seen.some(frame => frame.height > 4 && frame.height < open0 - 4)).toBe(true)
       for (const frame of seen) expect(Math.abs(frame.top - before)).toBeLessThanOrEqual(1)
+      // The answer came in one piece and is shown at an even pace: over several frames, only ever growing, and whole
+      // within the reveal time and a little.
+      const lengths = seen.map(frame => frame.chars)
+      const arrived = lengths.findIndex(chars => chars > 0)
+      const whole = lengths.indexOf(lengths.at(-1)!)
+      expect(lengths.at(-1)).toBeGreaterThan(200)
+      for (const [index, chars] of lengths.entries()) if (index > 0) expect(chars).toBeGreaterThanOrEqual(lengths[index - 1]!)
+      expect(new Set(lengths.slice(arrived, whole + 1)).size).toBeGreaterThanOrEqual(4)
+      expect(whole - arrived).toBeLessThanOrEqual(30)
       const followed = await following
       expect(followed.at(-1)!.height).toBeLessThan(2)
       expect(Math.abs(followed.at(-1)!.gap)).toBeLessThanOrEqual(2)

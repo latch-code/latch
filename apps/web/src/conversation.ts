@@ -670,7 +670,7 @@ export function reasoningSections(text: string, live = false): ReasoningSection[
 
 // ---- A turn's blocks and its fold --------------------------------------------------------------------------------
 
-/** A row of the work: a tool, a block's reasoning, or the finished reads of a settled turn as one row. */
+/** A row of the work: a tool, a block's reasoning, or a run of finished quiet steps (reads, listings, searches) as one row. */
 export type WorkItem = { kind: 'tool'; message: Message } | { kind: 'thinking'; message: Message } | { kind: 'reads'; messages: Message[] }
 
 /**
@@ -687,19 +687,44 @@ const isQuestion = (message: Message) => message.toolName === 'ask_user'
 
 const itemKey = (item: WorkItem) => (item.kind === 'reads' ? item.messages[0]!.id : item.message.id)
 
-/** Reads run together while nothing is decided about them; a read that failed or waited stays a row of its own. */
-const plainRead = (message: Message) => message.state === 'completed' && toolKind(message) === 'read' && !message.tool?.decision
+/** How many consecutive finished quiet steps run together into one row. */
+export const QUIET_GROUP_MIN = 3
 
-function joinReads(items: WorkItem[]): WorkItem[] {
+/**
+ * A step that runs together with its neighbours: a read, a listing or a search that finished and that nobody had to
+ * decide about. A command, an edit, a step that failed, was refused, was interrupted or has an unknown result, one
+ * with pictures, a subagent and anything still running always stays a row of its own.
+ */
+function quietStep(message: Message): boolean {
+  if (message.state !== 'completed' || shownToolState(message) !== 'completed') return false
+  const tool = message.tool
+  if (message.subagent || message.attachments?.length || tool?.decision || tool?.judged || tool?.blocked || tool?.diffs?.length)
+    return false
+  const kind = rowKind(message)
+  return kind === 'read' || kind === 'search'
+}
+
+/** What a run of quiet steps did, counted from the steps themselves: 「读取 3 个文件，搜索 2 次」. */
+export function quietGroupWords(messages: readonly Message[]): string {
+  const counts = { read: 0, list: 0, search: 0 }
+  for (const message of messages) {
+    const actions = shownActions(message)
+    if (actions) for (const action of actions) counts[action.kind]++
+    else counts[rowKind(message) === 'read' ? 'read' : 'search']++
+  }
+  return quietWords(counts)
+}
+
+function joinQuiet(items: WorkItem[]): WorkItem[] {
   const out: WorkItem[] = []
-  let reads: Message[] = []
+  let run: Message[] = []
   const flush = () => {
-    if (reads.length > 1) out.push({ kind: 'reads', messages: reads })
-    else if (reads[0]) out.push({ kind: 'tool', message: reads[0] })
-    reads = []
+    if (run.length >= QUIET_GROUP_MIN) out.push({ kind: 'reads', messages: run })
+    else for (const message of run) out.push({ kind: 'tool', message })
+    run = []
   }
   for (const item of items) {
-    if (item.kind === 'tool' && plainRead(item.message)) reads.push(item.message)
+    if (item.kind === 'tool' && quietStep(item.message)) run.push(item.message)
     else {
       flush()
       out.push(item)
@@ -710,16 +735,17 @@ function joinReads(items: WorkItem[]): WorkItem[] {
 }
 
 /**
- * The turn's blocks. `settled`: a turn that no longer runs joins its consecutive reads into 「读取 4 个文件」; a live turn
- * keeps each read on its own row, so rows do not jump as they finish.
+ * The turn's blocks. Three or more consecutive finished quiet steps are one row, 「读取 4 个文件」, in a running turn as
+ * in a settled one: the step still running stays below it and joins it once it finishes. The group is keyed by its
+ * first step, so it keeps its place and whether it is open while it grows.
  */
-export function turnBlocks(turn: Turn, settled: boolean): TurnBlock[] {
+export function turnBlocks(turn: Turn): TurnBlock[] {
   const blocks: TurnBlock[] = []
   let work: WorkItem[] = []
   const flush = () => {
     if (work.length === 0) return
-    const items = settled ? joinReads(work) : work
-    blocks.push({ kind: 'work', key: `work:${itemKey(items[0]!)}`, items })
+    const items = joinQuiet(work)
+    blocks.push({ kind: 'work', key: `work:${itemKey(work[0]!)}`, items })
     work = []
   }
   for (const message of turn.replies) {
