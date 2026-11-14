@@ -319,6 +319,8 @@ interface Turn {
   resolve(result: unknown): void
   reject(error: Error): void
   cancelled: boolean
+  /** `turn/interrupt` went out: the turn's ID can arrive twice (the `turn/start` answer and `turn/started`) after a stop. */
+  interrupted?: true
   error?: string
   usage?: { inputTokens: number; outputTokens: number }
   /** Commands started in this turn that Codex has not reported ended, by item ID. */
@@ -459,7 +461,7 @@ export class CodexWire implements AgentWire {
     if (method !== 'session/cancel' || !turn || turn.cancelled) return
     turn.cancelled = true
     // A turn whose ID is not known yet is interrupted as soon as `turn/start` answers.
-    if (turn.id) this.interrupt(turn.id)
+    this.interrupt(turn)
   }
 
   stop(reason: 'stop' | 'kill', graceMs: number, cause?: string): Promise<ExitInfo> {
@@ -470,9 +472,10 @@ export class CodexWire implements AgentWire {
     return this.process.stderrTail(limit)
   }
 
-  private interrupt(turnId: string): void {
-    if (!this.threadId) return
-    void this.send('turn/interrupt', { threadId: this.threadId, turnId }).catch(() => {})
+  private interrupt(turn: Turn): void {
+    if (!this.threadId || !turn.id || turn.interrupted) return
+    turn.interrupted = true
+    void this.send('turn/interrupt', { threadId: this.threadId, turnId: turn.id }).catch(() => {})
   }
 
   private send(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
@@ -981,7 +984,7 @@ export class CodexWire implements AgentWire {
     // A completion may have arrived before this answer was read; it named the turn then.
     if (this.turn === turn) {
       turn.id ??= read.data.turn.id
-      if (turn.cancelled) this.interrupt(turn.id)
+      if (turn.cancelled) this.interrupt(turn)
     }
     return done
   }
@@ -1418,7 +1421,7 @@ export class CodexWire implements AgentWire {
       case 'turn/started':
         if (turn && isRecord(params.turn) && typeof params.turn.id === 'string') {
           turn.id ??= params.turn.id
-          if (turn.cancelled) this.interrupt(turn.id)
+          if (turn.cancelled) this.interrupt(turn)
         }
         return
       case 'turn/completed': {

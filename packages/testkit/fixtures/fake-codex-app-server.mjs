@@ -858,6 +858,8 @@ async function handle(method, params) {
       thread.policy = params
       save(thread)
       const id = turn.id
+      // A slow answer: a stop sent meanwhile learns the turn's ID from this answer and again from `turn/started`.
+      if (env.FAKE_CODEX_START_MS) await new Promise(resolve => setTimeout(resolve, Number(env.FAKE_CODEX_START_MS)))
       setImmediate(() => void runTurn(params.input))
       return { turn: { id, status: 'inProgress', items: [], error: null } }
     }

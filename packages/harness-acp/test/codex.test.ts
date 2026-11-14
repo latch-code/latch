@@ -579,7 +579,10 @@ describe('Codex over its app-server', () => {
     const t = await computer({ FAKE_CODEX_CONTEXT_MS: '250' })
     const bridge = await t.open()
     const id = await start(bridge, t.main, '/compact')
-    await vi.waitFor(async () => expect(sent(await t.log(), 'thread/resume').some(entry => entry.params?.cwd === undefined)).toBe(true))
+    // The app-server is started for this prompt: that took 0.1 to 1.3 seconds here, past the default wait of one.
+    await vi.waitFor(async () => expect(sent(await t.log(), 'thread/resume').some(entry => entry.params?.cwd === undefined)).toBe(true), {
+      timeout: 5_000,
+    })
     await bridge.cancel(id)
     expect((await settled(bridge, id)).summary.status).toBe('cancelled')
     expect(sent(await t.log(), 'thread/compact/start')).toHaveLength(0)
@@ -647,7 +650,7 @@ describe('Codex over its app-server', () => {
     const t = await computer()
     const bridge = await t.open()
     const id = await start(bridge, t.main, 'sleep until told')
-    await vi.waitFor(async () => expect(sent(await t.log(), 'turn/start')).toHaveLength(1))
+    await vi.waitFor(async () => expect(sent(await t.log(), 'turn/start')).toHaveLength(1), { timeout: 5_000 })
     await expect(bridge.steer!(id, '/review the public plan', rid())).rejects.toThrow('没有接受这条追加')
     expect(sent(await t.log(), 'turn/steer')).toHaveLength(0)
     expect(sent(await t.log(), 'review/start')).toHaveLength(0)
@@ -849,6 +852,18 @@ describe('Codex over its app-server', () => {
     expect(sent(await t.log(), 'turn/interrupt')).toHaveLength(1)
   })
 
+  it('interrupts once when the stop comes before Codex has named the turn', async () => {
+    // The answer to `turn/start` and `turn/started` both name the turn after the stop.
+    const t = await computer({ FAKE_CODEX_START_MS: '300', FAKE_CODEX_INTERRUPT_MS: '300' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'sleep until told')
+    await vi.waitFor(async () => expect(sent(await t.log(), 'turn/start')).toHaveLength(1), { timeout: 5_000 })
+    await bridge.cancel(id)
+    await vi.waitFor(async () => expect((await bridge.detail(id)).summary.status).toBe('cancelled'), { timeout: 5_000 })
+    expect((await t.log()).some(entry => entry.event === 'completed')).toBe(true)
+    expect(sent(await t.log(), 'turn/interrupt')).toHaveLength(1)
+  })
+
   it('stops a process whose interrupted turn never ends, and says so', async () => {
     const t = await computer({ FAKE_CODEX_INTERRUPT_NEVER: '1' }, [], { cancelGraceMs: 500 })
     const bridge = await t.open()
@@ -995,9 +1010,10 @@ describe('Codex over its app-server', () => {
     })
 
     describe('never confirmed while it may still run: left to the cancel limit', () => {
-      async function unconfirmed(prompt: string, env: Record<string, string>) {
+      async function unconfirmed(prompt: string, env: Record<string, string>, ready?: (pid: number) => Promise<void>) {
         quick({ commandMs: 200 })
         const found = await holding(prompt, { FAKE_CODEX_TERMINALS: 'ignore', ...env }, { cancelGraceMs: 2_000 })
+        await ready?.(found.pid)
         const { detail, ms } = await stop(found.bridge, found.id)
         expect(ms).toBeGreaterThanOrEqual(1_900)
         expect(detail.summary.status).toBe('interrupted')
@@ -1022,7 +1038,11 @@ describe('Codex over its app-server', () => {
       })
 
       it('when the command’s group outlives its leader', async () => {
-        const { pid } = await unconfirmed('hold orphan', {})
+        // The shell in front has to be gone first: while it still leads the group, the stop rightly ends the whole group
+        // and answers at once (seen once, at 343 ms, with the Mac busy).
+        const { pid } = await unconfirmed('hold orphan', {}, leader =>
+          vi.waitFor(() => expect(alive(leader)).toBe(false), { timeout: 5_000 }),
+        )
         expect(alive(pid)).toBe(false)
       })
     })
