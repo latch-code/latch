@@ -20,6 +20,8 @@ const PREFIX = 'latch-live-'
 const BUNDLE = 'dev.latch.ios.screens'
 const TYPES = ['iPhone-17-Pro', 'iPhone-16-Pro', 'iPhone-17', 'iPhone-16']
 const SCHEDULE_MODEL = { providerId: 'ios-live-schedule', model: 'fixture' }
+/** The fake Agent really reports these ACP options; no fixture fills permission or model DTOs by hand. */
+const LIVE_AGENT_ENV = { FAKE_ACP_CONFIG: 'legacy' }
 /** Scheduled work uses Standard under the existing unattended ceiling, with only a local scripted reply. */
 const scheduledProvider: HarnessPlugin = {
   id: SCHEDULE_MODEL.providerId,
@@ -286,28 +288,35 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
       // A project with one commit and the fake ACP Agent, so a session can start, stream and ask for a step.
       /** A Host with one committed project and the fake ACP Agent, and its owner device. */
       const agents = new Map<TestHost, string>()
-      const prepare = async (target: TestHost): Promise<TestDevice> => {
+      const prepare = async (target: TestHost, label: 'A' | 'B'): Promise<TestDevice> => {
         const git = (...args: string[]) =>
           execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], {
             cwd: target.workspaceRoot,
             stdio: 'pipe',
           })
         git('init', '-q', '-b', 'main')
-        git('commit', '-q', '--allow-empty', '-m', 'first')
+        await writeFile(join(target.workspaceRoot, 'computer.txt'), `Temporary computer ${label}\n`)
+        git('add', '--', 'computer.txt')
+        git('commit', '-q', '-m', 'first')
         const enrolled = await target.enroll({ listener: 'unix' })
         const saved = await enrolled.confirmed('agents', {
           method: 'POST',
-          body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT] },
+          body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: LIVE_AGENT_ENV },
         })
         expect(saved.status).toBe(201)
         agents.set(target, ((await saved.json()) as { agent: { id: string } }).agent.id)
         return enrolled
       }
-      const owner = await prepare(host)
+      const owner = await prepare(host, 'A')
       if (ATTACH) {
         const images = await owner.confirmed('agents', {
           method: 'POST',
-          body: { name: 'Fake Images', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CAPS: 'images,embedded' } },
+          body: {
+            name: 'Fake Images',
+            command: process.execPath,
+            args: [FAKE_ACP_AGENT],
+            env: { ...LIVE_AGENT_ENV, FAKE_ACP_CAPS: 'images,embedded' },
+          },
         })
         expect(images.status).toBe(201)
       }
@@ -328,7 +337,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
               },
             })
           : undefined
-      const otherOwner = other ? await prepare(other) : undefined
+      const otherOwner = other ? await prepare(other, 'B') : undefined
 
       const launched = await simctl('launch', '--terminate-running-process', udid, BUNDLE, '-LatchLive', '1')
       appPid = /: ([0-9]+)\s*$/u.exec(launched.stdout)?.[1]
@@ -589,6 +598,47 @@ async function addHistory(host: TestHost, owner: TestDevice): Promise<void> {
   expect(codex.status).toBe(201)
   expect((await owner.addFolders({ paths: [main, other] })).status).toBe(201)
 }
+
+it('reads the live fake Agent configuration and continues its same session without touching a simulator', async () => {
+  const host = await startTestHost()
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const response = await owner.confirmed('agents', {
+      method: 'POST',
+      body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: LIVE_AGENT_ENV },
+    })
+    expect(response.status).toBe(201)
+    const harnessId = ((await response.json()) as { agent: { id: string } }).agent.id
+    const first = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { harnessId, mode: 'agent', prompt: 'first', requestId: randomUUID() },
+    })
+    const detail = () => owner.json<TaskDetail>(`tasks/${first.sessionId}`)
+    await expect.poll(async () => (await detail()).summary.status).toBe('idle')
+    const ready = await detail()
+    expect(ready.config).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'mode',
+          currentValue: 'build',
+          options: expect.arrayContaining([expect.objectContaining({ value: 'build' }), expect.objectContaining({ value: 'plan' })]),
+        }),
+        expect.objectContaining({ id: 'model', currentValue: 'small' }),
+      ]),
+    )
+    const requestId = randomUUID()
+    await owner.json(`tasks/${first.sessionId}/prompt`, { method: 'POST', body: { prompt: 'second', requestId } })
+    await expect.poll(async () => (await detail()).messages.filter(message => message.role === 'user').length).toBe(2)
+    await expect.poll(async () => (await detail()).summary.status).toBe('idle')
+    const continued = await detail()
+    expect(
+      continued.messages.some(message => message.role === 'user' && message.text === 'second' && message.requestId === requestId),
+    ).toBe(true)
+    expect(continued.permission?.drift).toBeUndefined()
+  } finally {
+    await host.close()
+  }
+})
 
 it('prepares native manual runs and an allowed missed schedule without touching a simulator', async () => {
   let shift = 0

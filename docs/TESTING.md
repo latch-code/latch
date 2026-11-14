@@ -645,6 +645,8 @@ pnpm latch presence test --data-dir <临时目录>
 
 `ios-live` 的 Screens-only 连接诊断仅记固定阶段、单调毫秒和租约/连接布尔值，不记地址、窗口回执、正文或错误说明。结束时只读取本次 App PID 的专用日志，配对与连接记录分开保存；真实 App 二进制拒绝这些诊断标记。
 
+Live 的 Fake Agent 与 Fake Images 通过假 ACP 自己的 legacy 配置响应提供模型和 mode；预检读取真实 Host 投影，并在同一个会话发送第二条消息。不手填能力 DTO，不把显示出的模式名称当作隔离或扩大授权。两台临时电脑的初始 Git 提交各含同名 `computer.txt`，只有公开的 A/B 标记，供从正常文件入口核对当前电脑。普通 `ios-live` 预检不操作模拟器与剪贴板；真实双 Host 的往返仍需在配对提示有效期内验证，超过该窗口的同机 Bonjour 地址会被正常 peer 检查拒绝，不能代替物理设备跨网络验收。
+
 客户端的 `workspace-recovery.e2e.ts` 真实删除原会话目录，验证三宽的项目选择、草稿、焦点与显式提交；`webkit.e2e.ts` 用实际 WebKit 检查三宽授权文件读取和引用发送。`desktop-models.e2e.ts` 在隔离 Electron 中更改假 ACP 的真实模型与推理选项，模拟执行后丢回复，确认只读恢复、没有重复写入和额外认证。配对回归另检查默认收起公开指纹后，展开仍与系统确认的原身份一致。以上夹具不代替真机 Safari、真实 Agent、Touch ID 或公网验收。
 
 配置回执：`apps/host/test/config-requests.test.ts` 覆盖原子前置标记、终态落盘未知、重启与容量；`config-request-api.test.ts` 使用真实假 ACP 验证并发合并、相同编号冲突、失回执不重发、只读查询、真实模式放宽确认、异步撤权，以及这一轮还在启动时被拒绝的修改记为失败；`e2e/harness-options.e2e.ts` 验证刚选的思考深度在消息与重试之前送达。`native.test.ts` 验证已接受请求不改绑新的 App 验证窗口，窗口到期后查询也被拒绝。
