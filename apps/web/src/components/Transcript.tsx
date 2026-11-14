@@ -43,6 +43,7 @@ import { PlanRow } from '../conversation/PlanRow.tsx'
 import { TurnSummaryOptions, type TurnSummaryOptionsValue } from '../conversation/summaryOptions.ts'
 import { announceChangesWrite, useChangesRevision, useTurnChanges } from '../conversation/useTurnChanges.ts'
 import { messageTime } from '../format.ts'
+import { usePreferences } from '../preferences.ts'
 import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
 import { AuthorLine, MessageRow, SpeakerLine, ThinkingRow, type LiveReasoning, type Speaker } from './MessageRow.tsx'
@@ -125,7 +126,47 @@ function ReadsRow({ messages, context }: { messages: Message[]; context: RowCont
   )
 }
 
+const workItemKey = (item: WorkItem): string =>
+  item.kind === 'reads'
+    ? `reads:${item.messages[0]!.id}`
+    : item.kind === 'steps'
+      ? `steps:${workItemKey(item.items[0]!)}`
+      : `${item.kind}:${item.message.id}`
+
+/** The work a reader keeps folded: one row that says how many steps it holds and opens to them. */
+function StepsRow({ items, count, context }: { items: WorkItem[]; count: number; context: RowContext }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="reads-row steps-row" data-open={open ? '' : undefined}>
+      <button
+        type="button"
+        className="process-row"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(!open)
+        }}>
+        <span className="process-label">
+          <span className="process-object">工作过程 · {count} 步</span>
+        </span>
+        <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+      </button>
+      <Collapse
+        open={open}
+        onReveal={() => {
+          setOpen(true)
+        }}>
+        <div className="reads-rows">
+          {items.map(item => (
+            <WorkRow key={workItemKey(item)} item={item} context={context} />
+          ))}
+        </div>
+      </Collapse>
+    </div>
+  )
+}
+
 function WorkRow({ item, context, onRetry }: { item: WorkItem; context: RowContext; onRetry?: (() => void) | undefined }) {
+  if (item.kind === 'steps') return <StepsRow items={item.items} count={item.count} context={context} />
   if (item.kind === 'reads') return <ReadsRow messages={item.messages} context={context} />
   if (item.kind === 'tool' && item.message.subagent) return <SubagentRow message={item.message} frozen={context.frozen} />
   if (item.kind === 'tool') return <ToolRow message={item.message} context={context} onRetry={onRetry} />
@@ -330,7 +371,9 @@ const TurnView = memo(function TurnView({
   const [tapped, setTapped] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [foldChoice, setFoldChoice] = useState<boolean | null>(null)
-  const blocks = useMemo(() => turnBlocks(turn), [turn])
+  // 工作过程, this device's choice: what always shows (approvals, failures, unknown results) is never among what it hides.
+  const level = usePreferences().workDisplay
+  const blocks = useMemo(() => turnBlocks(turn, level), [turn, level])
   const folds = !trailingLive && workFolds(turn, outcome)
   const hasWork = blocks.some(block => block.kind === 'work' && block.items.some(item => item.kind !== 'thinking'))
   // The rows stay in one tree from the first to the last, so the fold is seen to happen when the turn settles.
@@ -448,7 +491,7 @@ const TurnView = memo(function TurnView({
                 <div className="work-rows">
                   {block.items.map(item => (
                     <WorkRow
-                      key={item.kind === 'reads' ? `reads:${item.messages[0]!.id}` : `${item.kind}:${item.message.id}`}
+                      key={workItemKey(item)}
                       item={item}
                       context={rowContext}
                       onRetry={!runEnd && item.kind === 'tool' && item.message.id === lastFailed ? onRetry : undefined}

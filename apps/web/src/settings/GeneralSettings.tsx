@@ -6,7 +6,7 @@ import { deviceAccess } from '../core/permissions.ts'
 import { computerLabel } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { keepAwakeLine, loginItemNote, useShellLifecycle } from '../core/shellLifecycle.ts'
-import { setPreference, usePreferences, type SendKey, type ThemePreference } from '../preferences.ts'
+import { setPreference, usePreferences, type SendKey, type ThemePreference, type WorkDisplay } from '../preferences.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
 import { NotificationSettings } from './NotificationSettings.tsx'
 import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
@@ -173,8 +173,8 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
           }}
         />
       </SettingsGroup>
-      {usage && (
-        <SettingsGroup title="使用">
+      <SettingsGroup title="使用">
+        {usage && (
           <SettingsRow
             title="发送消息"
             trailing={
@@ -191,16 +191,34 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
               />
             }
           />
-          {snapshot.catalog?.features?.filePreview && (
-            <SwitchRow
-              className="settings-row"
-              title="新文档生成后自动打开"
-              checked={preferences.autoOpenDocuments}
-              onCheckedChange={enabled => setPreference('autoOpenDocuments', enabled)}
+        )}
+        {/* What the conversation shows of a turn's work, on this device. Approvals, questions and failures show at every level. */}
+        <SettingsRow
+          title="工作过程"
+          trailing={
+            <SegmentedControl<WorkDisplay>
+              label="工作过程"
+              value={preferences.workDisplay}
+              options={[
+                { value: 'all', label: '全部显示' },
+                { value: 'failures', label: '只留失败' },
+                { value: 'folded', label: '收起' },
+              ]}
+              onValueChange={value => {
+                setPreference('workDisplay', value)
+              }}
             />
-          )}
-        </SettingsGroup>
-      )}
+          }
+        />
+        {usage && snapshot.catalog?.features?.filePreview && (
+          <SwitchRow
+            className="settings-row"
+            title="新文档生成后自动打开"
+            checked={preferences.autoOpenDocuments}
+            onCheckedChange={enabled => setPreference('autoOpenDocuments', enabled)}
+          />
+        )}
+      </SettingsGroup>
       <NotificationSettings />
       <ThisMac hostName={snapshot.hostName} local={deviceAccess(snapshot, currentShell()).local} />
       {admin && snapshot.catalog?.features?.promptTemplates && <PromptTemplatesSettings snapshot={snapshot} onChanged={onChanged} />}

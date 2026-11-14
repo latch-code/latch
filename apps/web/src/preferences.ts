@@ -12,6 +12,8 @@ import {
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type SendKey = 'enter' | 'mod-enter'
 export type WorkbenchLayout = 'overview' | 'triage'
+/** How much of a turn's work the conversation shows: every row, only what went wrong, or one folded row. */
+export type WorkDisplay = 'all' | 'failures' | 'folded'
 export interface Preferences {
   autoOpenDocuments: boolean
   diffLayout: 'unified' | 'split'
@@ -24,6 +26,8 @@ export interface Preferences {
   diffTree?: boolean
   theme: ThemePreference
   workbenchLayout: WorkbenchLayout
+  /** 工作过程: this device only. Approvals, questions, failures and unknown results show at every level. */
+  workDisplay: WorkDisplay
   /** Desktop only; touch keyboards always insert a newline on Enter. */
   sendKey: SendKey
   /** The right panel: whether it is open and its dragged width (local only). */
@@ -45,6 +49,7 @@ const defaults: Preferences = {
   diffWrap: false,
   theme: 'system',
   workbenchLayout: 'overview',
+  workDisplay: 'all',
   sendKey: 'enter',
   rightPanel: { open: true },
   sidebar: { collapsed: false },
@@ -79,6 +84,7 @@ export function parsePreferences(raw: string | null): Preferences {
       ...(typeof item.diffTree === 'boolean' ? { diffTree: item.diffTree } : {}),
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
       workbenchLayout: item.workbenchLayout === 'triage' ? 'triage' : 'overview',
+      workDisplay: item.workDisplay === 'failures' || item.workDisplay === 'folded' ? item.workDisplay : 'all',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
       rightPanel: item.rightPanel === undefined ? { open: item.workbenchLayout !== 'triage' } : parseRightPanelPreference(item.rightPanel),
       sidebar: parseSidebarPreference(item.sidebar),

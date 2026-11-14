@@ -16,6 +16,7 @@ import {
   runStatus,
   turnBlocks,
   quietGroupWords,
+  alwaysShown,
   workFolds,
   foldWords,
   failureReason,
@@ -304,7 +305,13 @@ describe("a turn's blocks and its fold", () => {
   const shape = (blocks: TurnBlock[]) =>
     blocks.map(block =>
       block.kind === 'work'
-        ? block.items.map(item => (item.kind === 'reads' ? `reads:${item.messages.length}` : `${item.kind}:${item.message.id}`))
+        ? block.items.map(item =>
+            item.kind === 'reads'
+              ? `reads:${item.messages.length}`
+              : item.kind === 'steps'
+                ? `steps:${item.count}`
+                : `${item.kind}:${item.message.id}`,
+          )
         : block.message.id,
     )
 
@@ -427,6 +434,63 @@ describe("a turn's blocks and its fold", () => {
     // The words count what the steps themselves say, nothing else.
     expect(quietGroupWords(mixed)).toBe('读取 3 个文件，列出 1 个文件夹，搜索 1 次')
     expect(quietGroupWords([read('r1'), read('r2'), read('r3')])).toBe('读取 3 个文件')
+  })
+
+  it('leaves every row, only what always shows, or those with the rest folded, by the level the reader chose', () => {
+    const read = (id: string, extra: Partial<Message> = {}) => tool(id, { tool: { kind: 'read' }, ...extra })
+    const replies = [
+      reply('a1', '', { reasoning: '想' }),
+      read('r1'),
+      read('r2'),
+      read('r3'),
+      tool('f', { state: 'failed', text: 'boom', tool: { kind: 'execute', input: '{"command":"x"}' } }),
+      tool('e', { tool: { kind: 'edit', diffs: [{ path: 'a.ts', newText: 'x' }] } }),
+      tool('w', { state: 'awaiting-approval', tool: { kind: 'execute', input: '{"command":"y"}' } }),
+      tool('run', { state: 'running', tool: { kind: 'execute', input: '{"command":"z"}' } }),
+      reply('a2', '说明'),
+      read('r4'),
+      tool('q', { toolName: 'ask_user' }),
+      { id: 'n', role: 'system', state: 'failed', text: '模型服务出错' } satisfies Message,
+    ]
+    const turn = firstTurn([user('u'), ...replies])
+    expect(shape(turnBlocks(turn, 'all'))).toEqual([
+      ['thinking:a1', 'reads:3', 'tool:f', 'tool:e', 'tool:w', 'tool:run'],
+      'a2',
+      ['tool:r4'],
+      'q',
+      'n',
+    ])
+    // Only what went wrong or waits; a block with nothing left is gone. Prose, questions and failure notes are untouched.
+    expect(shape(turnBlocks(turn, 'failures'))).toEqual([['tool:f', 'tool:w'], 'a2', 'q', 'n'])
+    // The rest folded between the rows that always show, counted by the steps it holds.
+    expect(shape(turnBlocks(turn, 'folded'))).toEqual([['steps:4', 'tool:f', 'steps:1', 'tool:w', 'steps:1'], 'a2', ['steps:1'], 'q', 'n'])
+    // The block keeps its key at every level, so a change of level remounts nothing above it.
+    for (const level of ['all', 'failures', 'folded'] as const) expect(turnBlocks(turn, level)[0]).toMatchObject({ key: 'work:a1' })
+  })
+
+  it('never hides a call that waits, went wrong, has an unknown result or contradicts its approval, nor a subagent that can be stopped', () => {
+    const base = { tool: { kind: 'execute' as const, input: '{"command":"x"}' } }
+    const shown = [
+      tool('a', { ...base, state: 'awaiting-approval' }),
+      tool('b', { ...base, state: 'failed', text: 'x' }),
+      tool('c', { ...base, state: 'cancelled' }),
+      tool('d', { ...base, state: 'failed', interrupted: true }),
+      tool('e', { ...base, state: 'failed', text: 'TOOL_OUTCOME_UNKNOWN: 结果未知' }),
+      tool('f', { state: 'failed', tool: { ...base.tool, decision: { outcome: 'rejected', at: at(0) } } }),
+      tool('g', { state: 'failed', tool: { ...base.tool, blocked: { by: 'Codex', source: 'rule' } } }),
+      tool('h', { state: 'completed', startedAt: at(0), tool: { ...base.tool, decision: { outcome: 'rejected', at: at(0) } } }),
+      tool('i', { state: 'running', subagent: { title: 'Runner', steps: [], stoppable: true } }),
+      tool('j', { state: 'completed', subagent: { title: 'Runner', steps: [tool('s', { ...base, state: 'failed', text: 'x' })] } }),
+    ]
+    for (const message of shown) expect([message.id, alwaysShown(message)]).toEqual([message.id, true])
+    const hidden = [
+      tool('k', base),
+      tool('l', { ...base, state: 'running' }),
+      tool('m', { ...base, state: 'queued' }),
+      tool('n', { state: 'completed', subagent: { title: 'Runner', steps: [tool('s', base)], status: 'done' } }),
+      tool('o', { state: 'completed', tool: { ...base.tool, decision: { outcome: 'allowed', at: at(0) } } }),
+    ]
+    for (const message of hidden) expect([message.id, alwaysShown(message)]).toEqual([message.id, false])
   })
 
   it('keeps a growing group under its first step, so it keeps its place and whether it is open', () => {

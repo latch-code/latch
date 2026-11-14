@@ -8,7 +8,7 @@ import type { TaskDetail } from '@latch/protocol'
 import type { TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession, reachable } from './helpers/layout.ts'
+import { closeSettings, noHorizontalOverflow, openSection, openSession, openSettings, reachable } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/stream-render'
 const SIZES = [
@@ -106,6 +106,33 @@ turns.reads = async ({ cwd, say, tool }) => {
   tool({ toolCallId: 'act_12', status: 'completed', content: [text('slow')] }, 'tool_call_update')
   await reached(2)
   say('\\n\\n读完了。')
+}
+turns.levels = async ({ sessionId, cwd, say, think, tool }) => {
+  think('**Looking around**\\n\\nRead the notes first.', 'look')
+  const run = (id, inner, actions, output, status = 'completed') => {
+    const command = zsh(inner)
+    tool({ toolCallId: id, title: command, kind: 'execute', status: 'in_progress', rawInput: { command, cwd }, ...(actions ? { actions } : {}) })
+    tool({ toolCallId: id, status, content: [text(output)] }, 'tool_call_update')
+  }
+  run('lv_1', 'cat a.txt', [{ kind: 'read', path: cwd + '/a.txt' }], 'a')
+  run('lv_2', 'ls docs', [{ kind: 'list', path: 'docs' }], 'guide.md')
+  run('lv_3', 'rg -n x .', [{ kind: 'search', query: 'x', path: '.' }], './a.txt:1:x')
+  run('lv_4', 'pnpm test', undefined, ' × one test failed', 'failed')
+  run('lv_5', 'echo ok', undefined, 'ok')
+  say('需要你允许一条命令。', 'ask')
+  const command = zsh('rm -rf build')
+  const toolCall = { toolCallId: 'lv_6', title: command, kind: 'execute', status: 'pending', rawInput: { command, cwd } }
+  tool(toolCall)
+  await request('session/request_permission', {
+    sessionId,
+    toolCall,
+    options: [
+      { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+    ],
+  })
+  tool({ toolCallId: 'lv_6', status: 'failed', content: [text('not run')] }, 'tool_call_update')
+  say('\\n\\n没有运行。', 'ask')
 }
 turns.thinking = async ({ say, think }) => {
   say(Array.from({ length: 14 }, (_, index) => '第 ' + (index + 1) + ' 段：先把要做的事说清楚，再开始动手。').join('\\n\\n'), 'intro')
@@ -577,6 +604,85 @@ describe('how a turn of work is drawn', () => {
       await page.screenshot({ path: `${OUTPUT}/failed-thinking.png` })
       throw error
     }
+  })
+
+  it('shows all of the work, only what went wrong, or the work folded, as the reader chose in settings', async () => {
+    const id = await start('levels', '工作过程的会话')
+    await poll(async () => (await detail(id)).approvals.length === 1, 'the approval')
+    const choose = async (page: Page, label: string) => {
+      const settings = await openSettings(page)
+      await openSection(settings, '通用')
+      const control = settings.getByRole('radiogroup', { name: '工作过程', exact: true })
+      await control.scrollIntoViewIfNeeded()
+      await reachable(control.getByRole('radio', { name: label, exact: true }))
+      await control.getByRole('radio', { name: label, exact: true }).click()
+      return settings
+    }
+    const rows = (page: Page) => ({
+      group: page.locator('.reads-row:not(.steps-row)'),
+      steps: page.locator('.steps-row'),
+      thinking: page.locator('.thinking'),
+      failed: page.locator('.tool-card.tool-failed').filter({ hasText: 'pnpm test' }),
+      done: page.locator('.tool-card.is-command').filter({ hasText: 'echo ok' }),
+      waiting: page.locator('.tool-card').filter({ hasText: 'rm -rf build' }),
+      card: page.locator('.approval-panel'),
+    })
+    for (const [width, height] of SIZES)
+      for (const theme of THEMES) {
+        const page = await open(width, height, theme, id)
+        try {
+          // 全部显示, as every device starts.
+          let settings = await choose(page, '全部显示')
+          await shot(page, 'levels-setting', width, theme)
+          await closeSettings(settings)
+          await openSession(page, id)
+          let seen = rows(page)
+          await seen.failed.waitFor()
+          expect([await seen.group.count(), await seen.thinking.count(), await seen.done.count(), await seen.steps.count()]).toEqual([
+            1, 1, 1, 0,
+          ])
+          await shot(page, 'levels-all', width, theme)
+          // 只留失败: the failed command, the call that waits and its card; nothing that went well.
+          settings = await choose(page, '只留失败')
+          await closeSettings(settings)
+          await openSession(page, id)
+          seen = rows(page)
+          await seen.failed.waitFor()
+          expect([await seen.group.count(), await seen.thinking.count(), await seen.done.count(), await seen.steps.count()]).toEqual([
+            0, 0, 0, 0,
+          ])
+          expect(await seen.waiting.count()).toBe(1)
+          expect(await seen.card.count()).toBe(1)
+          await page.getByText('需要你允许一条命令。', { exact: true }).waitFor()
+          await noHorizontalOverflow(page)
+          await shot(page, 'levels-failures', width, theme)
+          // 收起: the same rows stay, and the rest is one row between them that opens to what it holds.
+          settings = await choose(page, '收起')
+          await closeSettings(settings)
+          await openSession(page, id)
+          seen = rows(page)
+          await seen.failed.waitFor()
+          expect(await seen.steps.locator('> .process-row').allInnerTexts()).toEqual(['工作过程 · 4 步', '工作过程 · 1 步'])
+          expect([await seen.waiting.count(), await seen.card.count()]).toEqual([1, 1])
+          expect(await seen.done.isVisible()).toBe(false)
+          await noHorizontalOverflow(page)
+          await shot(page, 'levels-folded', width, theme)
+          await seen.steps.first().locator('> .process-row').click()
+          await seen.thinking.waitFor()
+          await seen.group.waitFor()
+          await shot(page, 'levels-folded-opened', width, theme)
+        } catch (error) {
+          await page.screenshot({ path: `${OUTPUT}/failed-levels-${width}-${theme}.png` })
+          throw error
+        }
+      }
+    // The choice is this device's and stays across a reload; every device ends on the default again.
+    const page = await open(1440, 900, 'light', id)
+    expect(await rows(page).steps.count()).toBe(2)
+    for (const device of [wide, phone]) await closeSettings(await choose(device, '全部显示'))
+    const approval = (await detail(id)).approvals[0]!
+    await owner.json(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'reject', requestId: randomUUID() } })
+    await settled(id)
   })
 
   it('puts the whole wrapped command on the approval card and names the wrapper', async () => {

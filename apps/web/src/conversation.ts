@@ -670,8 +670,18 @@ export function reasoningSections(text: string, live = false): ReasoningSection[
 
 // ---- A turn's blocks and its fold --------------------------------------------------------------------------------
 
-/** A row of the work: a tool, a block's reasoning, or a run of finished quiet steps (reads, listings, searches) as one row. */
-export type WorkItem = { kind: 'tool'; message: Message } | { kind: 'thinking'; message: Message } | { kind: 'reads'; messages: Message[] }
+/**
+ * A row of the work: a tool, a block's reasoning, a run of finished quiet steps (reads, listings, searches) as one row,
+ * or, where the reader chose to keep the work folded, the steps between the rows that always show.
+ */
+export type WorkItem =
+  | { kind: 'tool'; message: Message }
+  | { kind: 'thinking'; message: Message }
+  | { kind: 'reads'; messages: Message[] }
+  | { kind: 'steps'; items: WorkItem[]; count: number }
+
+/** How much of the work a reader keeps in view (设置 › 通用 › 工作过程). */
+export type WorkLevel = 'all' | 'failures' | 'folded'
 
 /**
  * A turn in reading order. The work is what folds; prose and notes never do, so they are blocks of their own, and an
@@ -685,7 +695,45 @@ export type TurnBlock =
 /** A question stays in reading order: its card or its record 「你选了…」 is what the person said, not the agent's work. */
 const isQuestion = (message: Message) => message.toolName === 'ask_user'
 
-const itemKey = (item: WorkItem) => (item.kind === 'reads' ? item.messages[0]!.id : item.message.id)
+const itemKey = (item: WorkItem): string =>
+  item.kind === 'reads' ? item.messages[0]!.id : item.kind === 'steps' ? itemKey(item.items[0]!) : item.message.id
+
+/**
+ * A row that shows whatever the reader chose to hide: a call that waits for them, one that failed, was refused,
+ * cancelled or interrupted, one whose result is unknown or contradicts its approval, and a subagent that can still be
+ * stopped or that holds such a step. Questions and failure notes are not work and are never hidden at all.
+ */
+export function alwaysShown(message: Message): boolean {
+  if (message.state === 'awaiting-approval') return true
+  const shown = shownToolState(message)
+  if (shown !== 'completed' && shown !== 'running' && shown !== 'queued') return true
+  if (ranDespite(message)) return true
+  const subagent = message.subagent
+  if (!subagent) return false
+  return subagent.stoppable === true || subagent.status === 'failed' || subagent.status === 'unknown' || subagent.steps.some(alwaysShown)
+}
+
+const itemSteps = (item: WorkItem): number => (item.kind === 'reads' ? item.messages.length : item.kind === 'steps' ? item.count : 1)
+
+/** The rows a level leaves: every one, only those that always show, or those with the rest folded between them. */
+function atLevel(items: WorkItem[], level: WorkLevel): WorkItem[] {
+  if (level === 'all') return items
+  const out: WorkItem[] = []
+  let rest: WorkItem[] = []
+  const flush = () => {
+    if (level === 'folded' && rest.length > 0)
+      out.push({ kind: 'steps', items: rest, count: rest.reduce((sum, item) => sum + itemSteps(item), 0) })
+    rest = []
+  }
+  for (const item of items) {
+    if (item.kind === 'tool' && alwaysShown(item.message)) {
+      flush()
+      out.push(item)
+    } else rest.push(item)
+  }
+  flush()
+  return out
+}
 
 /** How many consecutive finished quiet steps run together into one row. */
 export const QUIET_GROUP_MIN = 3
@@ -737,15 +785,16 @@ function joinQuiet(items: WorkItem[]): WorkItem[] {
 /**
  * The turn's blocks. Three or more consecutive finished quiet steps are one row, 「读取 4 个文件」, in a running turn as
  * in a settled one: the step still running stays below it and joins it once it finishes. The group is keyed by its
- * first step, so it keeps its place and whether it is open while it grows.
+ * first step, so it keeps its place and whether it is open while it grows. `level` then leaves every row, only the rows
+ * that always show (`alwaysShown`), or those with the rest folded between them; a block it leaves nothing of is gone.
  */
-export function turnBlocks(turn: Turn): TurnBlock[] {
+export function turnBlocks(turn: Turn, level: WorkLevel = 'all'): TurnBlock[] {
   const blocks: TurnBlock[] = []
   let work: WorkItem[] = []
   const flush = () => {
     if (work.length === 0) return
-    const items = joinQuiet(work)
-    blocks.push({ kind: 'work', key: `work:${itemKey(work[0]!)}`, items })
+    const items = atLevel(joinQuiet(work), level)
+    if (items.length > 0) blocks.push({ kind: 'work', key: `work:${itemKey(work[0]!)}`, items })
     work = []
   }
   for (const message of turn.replies) {
