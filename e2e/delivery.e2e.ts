@@ -20,6 +20,8 @@ const SLOW = { timeout: 30_000 }
  * elsewhere (load average over 200): that ordinary push then read as unknown too.
  */
 const PUSH_LIMIT = 12_000
+/** The same for creating a pull request, in place of the product's minute: the fake `gh` answers at once unless told to wait. */
+const PR_LIMIT = 9_000
 
 async function shot(page: Page, name: string) {
   await mkdir(OUT, { recursive: true })
@@ -465,7 +467,7 @@ it('keeps a retried push and PR unknown on a refusal, shows it, and lets the pag
       home,
       hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: scratch },
       shell: gh.shell,
-      timeouts: { push: PUSH_LIMIT, prCreate: 3_000 },
+      timeouts: { push: PUSH_LIMIT, prCreate: PR_LIMIT },
     },
   })
   const browser = await chromium.launch(browserLaunchOptions())
@@ -575,14 +577,14 @@ it('keeps a retried push and PR unknown on a refusal, shows it, and lets the pag
 
       // A PR whose answer never came (gh made it, then took longer than the Host waits): the same, for 创建 PR.
       await gh.update(state => {
-        state.createDelayMs = 8_000
+        state.createDelayMs = 30_000
       })
       const createPr = panel.getByRole('button', { name: '创建 PR', exact: true })
       await createPr.waitFor()
       await expect.poll(() => createPr.getAttribute('aria-disabled'), SLOW).not.toBe('true')
       await createPr.click()
       const prUnknown = panel.locator('.delivery-line', { hasText: 'PR 结果未知' })
-      await prUnknown.waitFor({ timeout: 20_000 })
+      await prUnknown.waitFor(SLOW)
       await gh.update(state => {
         delete state.createDelayMs
       })

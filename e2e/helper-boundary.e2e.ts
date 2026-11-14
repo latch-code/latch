@@ -92,7 +92,9 @@ it.each([true, false])('keeps one accessible helper boundary before and after it
     await page.getByRole('textbox', { name: '给小林发消息', exact: true }).fill('echo ready')
     await page.getByRole('button', { name: '发送', exact: true }).filter({ visible: true }).click()
     const topic = async () => (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.agent?.customAgentId === agent.id)
-    await expect.poll(async () => (await topic())?.status).toBe('idle')
+    // The Harness process is started for this message: the topic was idle 0.2 to 3.3 seconds after the send here, and the
+    // default wait is one second.
+    await expect.poll(async () => (await topic())?.status, { timeout: 15_000 }).toBe('idle')
     const id = (await topic())!.id
     expect((await owner.json<TaskDetail>(`tasks/${id}`)).summary.firstStart).toBe(true)
     await check('topic')
