@@ -1128,8 +1128,7 @@ public actor NativeWorkspace {
             cursors = next; appliedRevisions[selected] = applied
             if appliedRevisions.count > 16 { appliedRevisions = Dictionary(uniqueKeysWithValues: cursors.map { ($0.selection, $0.revision) }) }
         }
-        state.pending.removeAll { $0.ordinal <= last.ordinal }
-        state.pruneOffers()
+        state.persisted(through: last.ordinal)
     }
 
     public func events(sessionId: String? = nil, expectedLease: BodyLease? = nil) async throws -> NativeWorkspaceEvents {

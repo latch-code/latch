@@ -107,10 +107,34 @@ final class NativeBodyState {
     }
 
     func record(ordinal: UInt64, cursor: NativeEventCursor?, requirement: NativeBodyRequirement) throws -> NativeBodyPosition {
+        if pending.count == Self.pendingLimit { coalesceAppliedBodies() }
         guard pending.count < Self.pendingLimit else { throw NativeFailure.eventOverflow }
         let position = NativeBodyPosition(ordinal: ordinal, cursor: cursor, requirement: requirement)
         pending.append(position)
         return position
+    }
+
+    /** Applied body proofs may wait on storage; they need one ordered position, not one slot per frame.
+     * Snapshot positions retain their notice identity. Persistence still removes only its captured ordinal prefix.
+     */
+    private func coalesceAppliedBodies() {
+        func mergeable(_ position: NativeBodyPosition) -> Bool {
+            if case .snapshot = position.requirement { return false }
+            return covered(position)
+        }
+        var compacted: [NativeBodyPosition] = []
+        for position in pending {
+            if let previous = compacted.last, mergeable(previous), mergeable(position) {
+                compacted[compacted.count - 1] = NativeBodyPosition(ordinal: position.ordinal,
+                    cursor: position.cursor ?? previous.cursor, requirement: position.requirement)
+            } else { compacted.append(position) }
+        }
+        pending = compacted
+    }
+
+    func persisted(through ordinal: UInt64) {
+        pending.removeAll { $0.ordinal <= ordinal }
+        pruneOffers()
     }
 
     func offer(_ update: NativeBodyUpdate, priority: Int) throws -> NativeBodyUpdate {

@@ -711,3 +711,5 @@ Harness 选项回归：`acp.test.ts` 覆盖草稿严格应用、按模型读取�
 原生大历史发布节拍的可选诊断用 `LATCH_NATIVE_CADENCE=1 pnpm exec vitest run --config vitest.config.ts apps/host/test/native-swift.test.ts -t "large-history publication cadence"`：真实临时 Host、假 ACP、10×20KB 历史、6000 片段及 100ms 合并发布，结果写 `test-results/native-cadence/result.json`。它不包含 SwiftUI 渲染，不能替代真实 App 的性能验收。Screens 的修复诊断仅记录固定类别、有界账本计数及单调耗时，不记录正文、身份或任意错误字符串；正常 App 不包含该日志。
 
 `e2e/slash-skills.e2e.ts` 在 Chromium/WebKit 的三宽深浅色中从真实 Host 目录列出 200 个技能，验证原生名称、来源、末项可达、截断提示、句中补全、点击与 Enter 不发送、草稿缓存标记与正常手动发送。通过假 Codex 的官方目录变更通知核对旧技能和最近项撤下、私有路径不进页面；真实 CLI 的同路径验收由上面的显式 opt-in 用例另行证明。
+
+原生正文证明账本的 `vault-covered` / `metadata-covered` 用真实 HTTP/2 和仅存在于 Testkit 的缓存 actor 阻塞／延迟快照回答，区分已应用前缀与首部元数据屏障。定向检查合并后的最终持久游标、屏障前不确认、真实未应用的八槽仍溢出；纯状态补充覆盖旧写入捕获前缀后的新尾、空 cursor 保留 epoch、HTTP 同版本优先级、重置与撤销。此回归不代表实际 App 的布局、主线程或流量验收通过。

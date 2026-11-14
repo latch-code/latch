@@ -44,6 +44,7 @@ import {
   NOT_ACCEPTED_5XX,
   pairRoute,
   type AppSnapshot,
+  type TaskDetail,
   type CustomAgent,
   type HarnessInfo,
   type HostCatalog,
@@ -77,6 +78,7 @@ const nativeBodyScripts = vi.hoisted(
         snapshotFailures?: number
         snapshotReads?: number
         delays?: number[]
+        frameInterval?: number
         beforeSnapshot?: (deviceId: string) => Promise<void>
         closedBeforeData?: boolean[]
         delayedMetadata?: { started: number; delivered: number }
@@ -175,7 +177,7 @@ vi.mock('../src/native.ts', async importOriginal => {
                             write(frame)
                           }
                         },
-                        delay + index * 10,
+                        delay + index * (script.frameInterval ?? 10),
                       ),
                     ),
                   )
@@ -2410,6 +2412,95 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 30_000)
+
+  it.each(['vault-covered', 'metadata-covered', 'ledger-state'] as const)(
+    'retains eight unapplied slots while body proofs await %s',
+    async mode => {
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+      let sessionId = ''
+      try {
+        const owner = await host.enroll({ listener: 'unix' })
+        ;({ sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+          method: 'POST',
+          body: {
+            mode: 'chat',
+            prompt: 'Body backlog fixture',
+            requestId: randomUUID(),
+          },
+        }))
+        await expect.poll(async () => (await host.host.bridge.summary(sessionId)).status).toBe('idle')
+        const actual = await owner.json<TaskDetail>(`tasks/${sessionId}`),
+          snapshot = await owner.json<AppSnapshot>('snapshot')
+        const revision = snapshot.revision
+        if (revision === undefined) throw new Error('Current Host omitted its snapshot revision')
+        const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/task-delta-v1.json'), 'utf8')) as {
+          streams: Array<{
+            actions: Array<{
+              frame: Record<string, unknown> & { detail: { summary: Record<string, unknown> }; stream: Record<string, unknown> }
+            }>
+          }>
+        }
+        const base = vectors.streams[0]!.actions[0]!.frame,
+          instanceId = actual.sync!.instanceId
+        base.detail.summary.id = sessionId
+        const full = (sequence: number) => ({
+          ...base,
+          instanceId,
+          sessionId,
+          revision: revision + 20 + sequence,
+          stream: { ...base.stream, stateSeq: sequence },
+        })
+        const frames: Array<Record<string, unknown>> =
+          mode === 'metadata-covered'
+            ? [{ type: 'refresh', instanceId, revision }, ...Array.from({ length: 8 }, (_, i) => full(i + 1))]
+            : Array.from({ length: 9 }, (_, i) => full(i + 1))
+        const script = {
+          details: [{ ...base.detail, sync: { instanceId, revision: actual.sync!.revision } }],
+          streams: [frames.map((frame, i) => `id: ${instanceId}:${i + 1}\nevent: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`)],
+          opened: [] as Array<{ delta: string | string[] | undefined; resume: boolean }>,
+          closed: 0,
+          frameInterval: 70,
+          ...(mode === 'metadata-covered' ? { snapshotDelay: 1300 } : {}),
+        }
+        nativeBodyScripts.set(sessionId, script)
+        const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+        const result = await invoke({
+          operation: 'nativeWorkspace',
+          bodyScript: mode,
+          sessionId,
+          payload: invitation.payload,
+          port: host.host.nativePort,
+        })
+        const output = join(root, 'test-results/native-ledger')
+        await mkdir(output, { recursive: true })
+        await writeFile(join(output, `${mode}.json`), JSON.stringify(result, null, 2))
+        if (mode === 'ledger-state') {
+          expect(result).toEqual({
+            tailSurvivesOldWrite: true,
+            tailCursorKept: true,
+            nilKeepsLastCursor: true,
+            metadataBarrierKept: true,
+            appliedNoticeIdentityKept: true,
+            httpDoesNotCoverSameRevisionStream: true,
+            streamReceiptCovers: true,
+            metadataStillBounded: true,
+            resetClearsProof: true,
+            closedRefused: true,
+          })
+          return
+        }
+        expect(result.storageTimedOut).toBe(false)
+        expect(result.repaired).toBe(false)
+        expect(result.receiptRefused).toBe(false)
+        expect(result.cursor).toBe(9)
+        if (mode === 'metadata-covered') expect(result.cursorHeldBeforeMetadata).toBe(true)
+      } finally {
+        nativeBodyScripts.delete(sessionId)
+        await host.close()
+      }
+    },
+    30_000,
+  )
 
   it.each([
     'metadata',

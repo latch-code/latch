@@ -53,6 +53,12 @@ import LatchNativeCore
         if input["bodyScript"] as? String == "cadence", let id = input["sessionId"] as? String {
             return try await bodyCadenceFixture(workspace, id: id)
         }
+        if let mode = input["bodyScript"] as? String, ["vault-covered", "metadata-covered"].contains(mode), let id = input["sessionId"] as? String {
+            return try await bodyBacklogFixture(workspace, vault: vault, id: id, mode: mode)
+        }
+        if input["bodyScript"] as? String == "ledger-state", let id = input["sessionId"] as? String {
+            return try await bodyLedgerFixture(workspace, lease: lease, id: id)
+        }
         if input["bodyScript"] as? String == "shadow", let id = input["sessionId"] as? String {
             return try await bodyShadowFixture(workspace, vault: vault, id: id)
         }
