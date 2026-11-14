@@ -17,7 +17,9 @@ export interface FakeReply {
   reasoning?: string
   text?: string
   /** One tool call; the reply ends asking for it. A pattern names the first tool the request offers that matches it. */
-  tool?: { name: string | RegExp; input: Record<string, unknown> }
+  tool?: { name: string | RegExp; namespace?: string; input: Record<string, unknown> }
+  /** A Responses client-executed search call. The real client must discover and return its own tool catalog. */
+  search?: { input: Record<string, unknown> }
   /**
    * Refuse the request with this HTTP status and message, in the protocol's error shape (Anthropic's type follows the
    * status: 401, 402, 429, 529…), with a `retry-after` header when given.
@@ -251,10 +253,19 @@ function responses(
     id: `fc_fake_${served}`,
     call_id: `call_fake_${served}`,
     name: String(reply.tool.name),
+    ...(reply.tool.namespace ? { namespace: reply.tool.namespace } : {}),
     arguments: JSON.stringify(reply.tool.input),
     status: 'completed',
   }
-  const output = [reasoning, message, call].filter(item => !!item) as Array<Record<string, unknown>>
+  const search = reply.search && {
+    type: 'tool_search_call',
+    id: `ts_fake_${served}`,
+    call_id: `call_fake_${served}`,
+    execution: 'client',
+    status: 'completed',
+    arguments: reply.search.input,
+  }
+  const output = [reasoning, message, call, search].filter(item => !!item) as Array<Record<string, unknown>>
   const response = (status: string, items: unknown[]) => ({
     id: 'resp_fake',
     object: 'response',

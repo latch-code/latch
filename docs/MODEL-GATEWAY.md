@@ -44,6 +44,8 @@ Chat 的 `reasoning_content` 以 `latch2.` 封装在 Responses 的 `encrypted_co
 
 网关 IR 分开表示 Chat 可读思考、Responses 原生推理项（原生 ID、加密内容、摘要、可读思考与完成状态）和 Anthropic 原生 thinking/signature、redacted_thinking/data。原生状态不能转换成 Chat 的文字思考。不透明内容命中脱敏规则时拒绝封装，不通过改写生成无效密文；Anthropic 的可读思考也在原生签名覆盖范围内，命中脱敏时同样拒绝。封装版本只在当前 Host 生命周期内有效，重启前的旧版本同样剥离。
 
+Responses 的 `tool_search` 尚未转换，包括 `execution:client` 的本机工具发现；当前与服务端工具一样略去定义并记录 `hosted-tools` 损耗，不能据此声称 MCP 工具可用。Codex 0.167.0 可把 MCP 工具延迟到这一步才提供，所以即使服务已连接，Responses 转 Chat 或 Anthropic 的路线也可能无法发现这些工具；同协议 Responses 透传保留原生发现调用与目录，仍需上游支持这个协议。命令工具可用不等于提议、技能或浏览器 MCP 已验证。
+
 ### Anthropic Messages 转 Chat
 
 入口使用同一份网关类型化条目与 Chat 编解码器。保留系统和会话中途的系统文字、用户图片、完整的工具调用与结果、错误结果标记、工具选择、并行开关、输出上限、stop sequences 与明确的 effort；effort 仍须在服务的声明中。工具结果图片沿用有归属说明的移动规则。PDF、未知内容块、服务端工具、缺少对应调用或结果的历史、服务端容器和压缩状态明确拒绝。缓存、引用和协议专用选项的实际损耗沿用闭合枚举；固定 thinking token 预算不能变成 Chat 的离散 effort，计入协议专用选项损耗。

@@ -371,6 +371,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）、Responses（`/v1/responses`）、Anthropic Messages（`/v1/messages`）与 Gemini（`/v1beta/models/<模型>:streamGenerateContent`，也接受 `/v1`；模型列表 `/v1beta/models`），流式或不流式，按脚本给出思考、文本、一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具）或一个协议格式的错误（`answeredBy` 让回复说另一个模型回答了它：Responses 的 `model`、Gemini 的 `modelVersion`；不写时是请求点名的模型。`lingerMs` 让流式回复在最后一个事件之后再保持连接这么久，像经过代理或保持连接时那样），并记下每个请求（不含头的值，只有带来的密钥 `key` 与头的名字）。第 n 个请求的工具调用 ID 带上 n，所以一轮可以连续调用工具；Anthropic 的思考签名是 `fake-signature-<n>`，Responses 在请求了 `reasoning.encrypted_content` 时给推理项 `fake-encrypted-<n>`，测试据此看出后来的请求带回了哪一次回复的推理（`server.test.ts` 的 `carries … reasoning back through one tool loop`）。`apps/host/test/providers.test.ts` 与 `provider-protocols.test.ts` 用 Host 自己的客户端读它，`model-gateway.test.ts` 用它检查网关转发的是服务的密钥，以及每轮记下的模型与令牌（回复的读法另见 `model-reply.test.ts`）。
 
+`startFakeModels` 的 `search.input` 只产生 Responses 的客户端 `tool_search_call`，目录必须由真实客户端返回；`tool.namespace` 保留后续函数调用的命名空间，不由夹具猜工具目录。`fake-models.test.ts` 核对流式与非流式的调用 ID 和完成事件，真实 CLI 接线另用上述 opt-in 验证。
+
 `pnpm harness:record -- --harness <预设> --scenario <场景>` 由这台电脑的所有者手动运行，录制已安装的真实 Agent（`src/record.ts`、`fixtures/record-tee.mjs`、`packages/harness-acp/test/record-harness.ts`）：真实驱动按场景操作，Agent 经 `record-tee.mjs` 在 `sandbox-exec` 中启动，网络只放行到假模型服务端口的连接（本机其他端口可能是通往外网的本地代理，一并挡住；本机套接字不挡），挡住真实家目录中的钥匙串文件和各 Agent 的登录目录，并拒绝钥匙串服务的查找（这一项没有对真实钥匙串验证过）；环境只留白名单和 `--env` 给的变量，`HOME` 与 `XDG_*` 是新的临时目录；每次启动前先确认沙箱挡住了一次对外连接和一次到本机另一个端口的连接，否则不启动 Agent；自己在本机另开端口通信的 Agent 因此无法这样录制。Agent 要经 `--env` 或 `--home-file` 配置成使用假模型服务（`{{MODEL_ORIGIN}}`），各家的配置方式还没有用真实 Agent 验证过。结果把工作区、家目录、数据与临时路径、UUID、时间与邮箱规范化，再经 `redactSecrets`，仍含本机家目录或用户名时不写出；写到临时目录，由人读过后移入 fixtures。只支持 macOS。`record.test.ts` 只用假 ACP Agent 运行它：检查 Agent 的环境、规范化、录下的文件能回放，以及沙箱挡住外连、本机其他端口和钥匙串文件，不挡时拒绝启动。测试从不运行真实 Agent。
 
 ## 启动脚本的子进程用例
@@ -395,6 +397,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 `helper-home.e2e.ts` 通过临时 Host 与假 ACP 的正常创建、资料设置和新话题入口核对固定家、模型/思考/权限的真实读回，未确认权限时不发送；截图覆盖三宽深浅。跨桌面与手机检查同一表单 DOM、未保存默认项、活动焦点、未知写入同一 requestId 与关闭后的焦点归还，避免只检查重新入场后的画面。
 
 `helper-live.e2e.ts` 默认跳过；只有所有者明确授权、设置 `LATCH_HELPER_LIVE=1` 和对应 `LATCH_PI_GATEWAY_BINARY`、`LATCH_CODEX_GATEWAY_BINARY` 或 `LATCH_OPENCODE_GATEWAY_BINARY` 才启动真实 CLI。它使用临时 HOME/XDG、临时 Host 与本地脚本化 Chat 服务，经正常页面创建帮手、资料选择服务、实际审批，在 0700 的家写 `notes.md`，用 CLI 自有命令工具读取受控本地网页标题；停止只验证模型请求期间的 Host 取消回执，恢复固定原话题并核对上游收到原工具历史。三宽深浅截图与分项证据写入 `test-results/helper-live/`。测试不读取用户 CLI 登录存储，不验证真实模型或 BYOK，也没有桌面浏览器 provider；命令读取网页不计为 `latch-browser` MCP 调用，提议与其他 MCP 能力另行验证。
+
+`helper-proposals.e2e.ts` 另需 `LATCH_HELPER_PROPOSALS_LIVE=1` 和上述 Codex / OpenCode 的命令路径，沿相同临时目录规则验证真实 `latch-skills`。Codex 使用同协议假 Responses 服务，由客户端 `tool_search` 发现其 MCP 目录；OpenCode 使用假 Chat 服务，经实际提供的 `execute` 搜索并调用目录里的工具。帮手由夹具创建，提示、原生审批、记忆保存与日程「保存为关闭」经页面完成；提议须为 `origin:agent`，人保存前不产生记忆或日程，保存后 L3 日程仍为关闭状态。三宽深浅提议卡与表单在 `test-results/helper-proposals/`。它不验证付费模型、后台定时执行或浏览器 MCP；pi 不支持 MCP，不加入此用例。`codex-skills.live.test.ts` 在相同 opt-in 下向新建的自有线程读取官方 MCP 状态，再用本地假模型驱动一次成功提议和一次非法空提议，保存原生完成/失败事件；这个诊断用例的审批由夹具回答，页面审批另由 e2e 验证，不访问 CLI 存储。跨协议的工具发现限制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#responses-转-chat)。
 
 `workbench-layout.e2e.ts` 验证总览与分拣台的共用会话、草稿与布局偏好，以及手机、平板、桌面的浅深色截图。分类的失败、未知、停止与归档/私有话题边界见 `apps/web/test/work-overview.test.ts`；默认偏好、旧数据和本地存储见 `workbench-preferences.test.ts`。
 

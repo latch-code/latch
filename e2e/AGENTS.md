@@ -18,7 +18,7 @@ Vitest 驱动浏览器、Electron 与原生；剪贴板回归用独立命名板�
 
 `webkit.e2e.ts` 用 Playwright WebKit 检查三宽、授权文件与引用发送；不称为真机 Safari 验收。`desktop-models.e2e.ts` 在隔离 Electron 和假 ACP 中检查真实配置读回、失回执不重发及三宽菜单；不调用真实 Agent 或模型。
 
-网关和 `helper-live` 验收须授权 opt-in（[TESTING](../docs/TESTING.md)）。
+网关与帮手实测须授权 opt-in（[TESTING](../docs/TESTING.md)）。
 
 `native-swift-relay.e2e.ts` 用真实双Go与Swift检查单流、旧能力兼容、首块前后取消与App换代；每块复核原权限，测速含子连接握手。
 
