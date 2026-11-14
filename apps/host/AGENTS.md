@@ -21,7 +21,7 @@
 - 同项目的变更与启动串行、跨项目不等，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。分支与工作树规则见 [BRANCHES.md](../../docs/BRANCHES.md)。
 - 本机确认只经 `PresenceService` 的系统表单（`PRESENCE_ACTIONS`），没有设备签名批准的路径。
 - 终端限 `host.sock`、数据范围 `all`，环境只经 `terminalEnvironment`（[TERMINAL.md](../../docs/TERMINAL.md)）。
-- 构建拒绝测试代码（security.test）。
+- 构建禁测试代码；目录组件自检。
 - work剥文件差异；输出投影不改执行参数、回执和终态（STREAMING）。
 - `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`），供 Vite 与 Vitest 配置直接加载。
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。

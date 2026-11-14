@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { copyFile, link, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -102,6 +102,28 @@ describe.skipIf(process.platform !== 'darwin')('descriptor-relative macOS file l
     expect(file?.mtime).toBeGreaterThan(Date.now() - 60_000)
     expect((await invoke(request('子目录'))).result).toEqual({ entries: [], truncated: false })
     expect((await invoke(request('outside-link'))).code).toBe(1)
+  })
+
+  it('keeps the previous artifact when a newly signed helper fails its real protocol self-check', async () => {
+    const candidate = join(directory, 'candidate')
+    await mkdir(join(candidate, 'native/macos'), { recursive: true })
+    await mkdir(join(candidate, 'dist/native'), { recursive: true })
+    const previous = join(candidate, 'dist/native/latch-files')
+    await writeFile(previous, 'previous artifact')
+    await writeFile(
+      join(candidate, 'native/macos/LatchFiles.swift'),
+      `
+import Foundation
+@main struct InvalidListing {
+  static func main() {
+    FileHandle.standardOutput.write(Data(#"{"entries":[],"truncated":true}"#.utf8))
+  }
+}
+`,
+    )
+    await expect(buildFilesHelper(candidate)).rejects.toThrow('Directory helper self-check failed')
+    expect(await readFile(previous, 'utf8')).toBe('previous artifact')
+    expect(await readdir(join(candidate, 'dist/native'))).toEqual(['latch-files'])
   })
 
   it('hides generated and dot entries by default, with the same protections when hidden entries are shown', async () => {

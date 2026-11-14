@@ -106,6 +106,8 @@ Provider 负责模型协议转换；Tool 执行一种操作；HarnessDriver 提�
 
 Host 构建把 workspace 包打进 bundle（它们导出 TypeScript 源码），根 `package.json` 声明的已安装依赖保持为外部导入，运行时从根 `node_modules` 解析，选项在 `apps/host/scripts/host-bundle.ts`，测试中打包 Host 入口时使用同一份选项。这份选项带一个 esbuild 插件：入口引到 `@latch/testkit`，或加载 `packages/testkit/`、`tests/`、`e2e/`、`apps/*/test/`、`packages/*/test/` 下的文件时构建失败。所以 workspace 项目运行时用到的已安装依赖（如 `@latch/core` 的 `cordis`、Host 的 `undici`）也由根项目声明；只由包声明的依赖会被打进 bundle。Vite 打包 `apps/web/vite.config.ts` 时则把 workspace 包留作外部导入，由 Node 只剥离类型后直接加载，所以 `tsconfig.isomorphic.json`、`tsconfig.sdk.json` 与 `tsconfig.core.json` 开启 `erasableSyntaxOnly`：包内不用 enum、namespace 与构造函数参数属性。`vite.config.ts` 经 `@latch/host/paths` 与 `@latch/host/host-state` 读取数据目录，这两个文件也这样加载，由 `tsconfig.strip.json` 对它们开启同一选项；Host 的其他文件不受此限。`latchCodeRoot()` 从模块所在目录向上找名为 `latch`（改名前的检出中为旧包名）的 `package.json`，越过各 workspace 项目自己的 `package.json`，始终得到仓库根。
 
+macOS 目录组件 `latch-files` 构建到独立临时文件，签名并验证后，以自有空临时目录运行真实 JSON 输入/输出自检；只有精确返回空列表且未截断才原子替换旧产物，自检失败保留旧版本并清理本次临时文件。自检沿用构建验证的30秒上限，不改变运行时组件内部2秒与 Host 外层3秒的读取预算，也不保证分发到另一台电脑后的首次启动耗时。
+
 ### 插件与能力组合
 
 插件是用户组合并启停功能的单位。Host 的本地加载器 `src/plugin-packages.ts` 把 `latch-plugin.json` 中的多个 Host 模块、技能与客户端入口合成一个插件；原 `.mjs` 插件继续兼容。一个包可以同时注册 Provider、Tool、HarnessDriver、技能、数据面板与 React 会话面板，Cordis fiber 仍是统一的生命周期拥有者。激活失败撤回整个包；运行租约固定旧代，替换提交后新请求使用新代。

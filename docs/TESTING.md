@@ -63,6 +63,8 @@ sources:
 
 Host、host-swift、link-client 与 relay 四个 Node project 的 globalSetup 会从本地产品源码构建原生 TLS 组件，UI project 不触发它。需要修复过 TLS 安全问题的 Go 1.26.x ≥1.26.10 或 1.27.x ≥1.27.3；`LATCH_RELAY_GO` 只选择构建编译器，不传运行时密钥。配置与清单约束直接读文件，不为它们添加字面断言。
 
+`files-helper.test.ts` 通过真实编译签名的组件核对空目录自检，并用返回错误协议结果的候选产物验证构建失败不会覆盖旧版本。`file-tree.test.ts` 与 `native.test.ts` 继续在原有请求预算内验证真实目录读取和正文窗口到期后的拒绝。
+
 ```sh
 pnpm check:quick                             # fmt:check、lint、typecheck、check:boundaries、check:agents，见下方「仓库检查」
 pnpm check                                   # check:quick 加 knip 与 test；每项都运行，最后逐项汇报
