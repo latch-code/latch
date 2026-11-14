@@ -2,6 +2,7 @@
 import CryptoKit
 import Foundation
 import LatchNativeCore
+import OSLog
 import Security
 
 /**
@@ -13,6 +14,18 @@ import Security
  */
 enum PhoneLive {
     static let marker = "LatchLive software keys"
+    enum PairingStage: String {
+        case accepted, keysStarted, keysReady, draftSaved, dialStarted, dialReady, lanReady, beginStarted, beginReady, approved, completeReady, failed
+    }
+    private static let pairingStart = ContinuousClock.now
+    private static let pairingLog = Logger(subsystem: "dev.latch.ios.screens", category: "pairing-timing")
+    /** Fixed milestones only: no invitation, address, identifier or error description enters the diagnostic. */
+    static func pairingCheckpoint(_ stage: PairingStage) {
+        guard isOn else { return }
+        let time = pairingStart.duration(to: .now).components
+        let milliseconds = time.seconds * 1000 + time.attoseconds / 1_000_000_000_000_000
+        pairingLog.notice("LatchLive pairing-stage \(stage.rawValue, privacy: .public) elapsed-ms \(milliseconds, privacy: .public)")
+    }
     /** Only an explicit `-LatchLive 1` launch argument: no default, file or environment turns it on. */
     static let isOn: Bool = {
         let arguments = ProcessInfo.processInfo.arguments

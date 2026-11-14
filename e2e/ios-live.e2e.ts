@@ -13,6 +13,7 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { clipboardLease, compileClipboardLease } from './helpers/iosClipboardLease.ts'
 import { clipboardGui, validateGuiPairing } from './helpers/iosClipboardValidation.ts'
 import { readDeviceClipboard, writeDeviceClipboard } from './helpers/iosDeviceClipboard.ts'
+import { pairingStagePage } from './helpers/iosPairingStage.ts'
 
 const run = promisify(execFile)
 const PREFIX = 'latch-live-'
@@ -38,7 +39,7 @@ const scheduledProvider: HarnessPlugin = {
   },
 }
 /** Live mode's markers and what only its software keys import; `ios-app.e2e.ts` checks the product has none of them. */
-const MARKERS = ['LatchLive software keys', 'LiveSoftwareKeys', 'LiveIdentityProvider', '-LatchLive']
+const MARKERS = ['LatchLive software keys', 'LatchLive pairing-stage', 'LiveSoftwareKeys', 'LiveIdentityProvider', '-LatchLive']
 const SOFTWARE_KEY_SYMBOLS = ['_SecKeyCreateWithData', '_kSecAttrKeyClassPrivate']
 /** Any use of a CryptoKit P-256 signing private key: its type, methods and metadata all carry this mangled name. */
 const P256_PRIVATE_KEY = 'CryptoKit4P256O7SigningO10PrivateKeyV'
@@ -198,6 +199,12 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
     }
     const output = resolve(process.env.LATCH_IOS_LIVE_DIR ?? 'test-results/ios-live')
     await mkdir(output, { recursive: true })
+    const status = GUI_CLIPBOARD ? await pairingStagePage() : undefined
+    const phases: Array<{ phase: string; host: number; at: number }> = []
+    const record = (phase: string, host: number) => {
+      phases.push({ phase, host, at: Date.now() })
+    }
+    const savePhases = () => writeFile(join(output, 'pairing-phases.json'), JSON.stringify(phases, null, 2) + '\n')
     let derived: string | undefined
     let udid: string | undefined
     /** Whether this run made the simulator and so shuts it down and deletes it. */
@@ -266,7 +273,15 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
 
       // The Host's native listener is on the LAN from here until `finally`.
       let shift = 0
-      host = await startTestHost({ native: { host: address, port: 0 }, now: () => Date.now() + shift, plugins: [scheduledProvider] })
+      host = await startTestHost({
+        native: { host: address, port: 0 },
+        now: () => Date.now() + shift,
+        plugins: [scheduledProvider],
+        nativeNearby: () => {
+          record('native-nearby', 1)
+          return true
+        },
+      })
       // A project with one commit and the fake ACP Agent, so a session can start, stream and ask for a step.
       /** A Host with one committed project and the fake ACP Agent, and its owner device. */
       const agents = new Map<TestHost, string>()
@@ -302,7 +317,16 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         await addMissedAgent(host, owner, value => {
           shift = value
         })
-      other = HOSTS === 2 ? await startTestHost({ native: { host: address, port: 0 } }) : undefined
+      other =
+        HOSTS === 2
+          ? await startTestHost({
+              native: { host: address, port: 0 },
+              nativeNearby: () => {
+                record('native-nearby', 2)
+                return true
+              },
+            })
+          : undefined
       const otherOwner = other ? await prepare(other) : undefined
 
       await simctl('launch', '--terminate-running-process', udid, BUNDLE, '-LatchLive', '1')
@@ -315,6 +339,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         if (GUI_CLIPBOARD) {
           if (!HOLD || !clipboardBinary || (!owned && !DEVICE)) throw new Error('GUI clipboard validation has no owned target')
           const before = usage(target)
+          const index = target === host ? 1 : 2
           await validateGuiPairing(
             {
               device: udid!,
@@ -328,9 +353,30 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
               readDevice: () => readDeviceClipboard(udid!),
               // Process startup can exceed a second; the proof still expires ten seconds after the code window starts.
               writeDevice: value => toClipboard(udid!, value, 5000),
-              stage: text => writeFile(`${HOLD}.clipboard-info`, text + '\n', { mode: 0o600 }),
+              stage: async text => {
+                const phase = text.includes('Clipboard ON,')
+                  ? 'on-control'
+                  : text.includes('Clipboard OFF,')
+                    ? 'off-control'
+                    : text.startsWith('Clipboard controls passed.')
+                      ? 'paste-ready'
+                      : text.startsWith('Pairing code consumed.')
+                        ? 'consumed'
+                        : text.startsWith('Pairing code consumed and')
+                          ? 'restored'
+                          : 'cleanup'
+                record(phase, index)
+                status?.show(phase)
+                await savePhases()
+                await writeFile(`${HOLD}.clipboard-info`, text + '\n', { mode: 0o600 })
+              },
             },
-            () => pairingCode(by),
+            async () => {
+              record('invitation-start', index)
+              const value = await pairingCode(by)
+              record('invitation-ready', index)
+              return value
+            },
             () => usage(target) > before,
             () => target.close(),
           )
@@ -365,6 +411,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
           `stop: touch ${HOLD}`,
           `fresh code: touch ${HOLD}.pair`,
           ...(GUI_CLIPBOARD ? [`clipboard validation stage: ${HOLD}.clipboard-info`] : []),
+          ...(status ? [`read-only public stage: ${status.url}`] : []),
           ...(other ? [`fresh code for the second computer: touch ${HOLD}.pair2`] : []),
         ]
         await writeFile(`${HOLD}.info`, [...info, ...(refused ? [refused] : [])].join('\n') + '\n')
@@ -460,8 +507,31 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         await simctl('io', udid, 'screenshot', join(output, 'paired.png'))
       }
     } finally {
+      await status?.close().catch(() => {})
+      await savePhases().catch(() => {})
       // The clipboard is emptied and the App stopped on any device; only a simulator this run made is shut down and deleted.
       if (udid) {
+        // This dedicated Screens-only subsystem emits fixed milestones and elapsed time, never pairing inputs.
+        const timing = await simctl(
+          'spawn',
+          udid,
+          'log',
+          'show',
+          '--style',
+          'compact',
+          '--last',
+          '15m',
+          '--predicate',
+          'subsystem == "dev.latch.ios.screens" AND category == "pairing-timing"',
+        ).catch(() => undefined)
+        if (timing)
+          await writeFile(
+            join(output, 'pairing-app-timing.log'),
+            timing.stdout
+              .split('\n')
+              .filter(line => line.includes('LatchLive pairing-stage '))
+              .join('\n') + '\n',
+          ).catch(() => {})
         // The validated workflow clears its own clipboard. Never send an unguarded clear through an unknown GUI.
         if (!GUI_CLIPBOARD) await toClipboard(udid, '').catch(() => {})
         await simctl('terminate', udid, BUNDLE).catch(() => {})

@@ -42,16 +42,28 @@ extension PhoneModel {
     /** A scanned QR, from the scanner or a universal link. The same QR rescanned keeps its keys, so it is not contention. */
     func beginPairing(payload: String) async {
         guard let store, pairingTask == nil else { return }
+        #if LATCH_SCREENS
+        PhoneLive.pairingCheckpoint(.accepted)
+        #endif
         let current = generation
         do {
             _ = try PairingInvitation.parse(payload)
             if let draft, draft.payload != payload { try await store.abandonDraft(); self.draft = nil }
             if draft == nil {
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.keysStarted)
+                #endif
                 let keys = try PhoneKeys.create(), next = PairingDraft(payload: payload, keys: keys, name: "Mac")
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.keysReady)
+                #endif
                 do { try await store.saveDraft(next) }
                 catch { PhoneKeys.remove(keys); throw error }
                 guard current == generation else { return }
                 draft = next
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.draftSaved)
+                #endif
             }
             resumePairing()
         } catch { await endPairing(failure(error, invitation: nil), keepDraft: false, keys: nil) }
@@ -68,14 +80,29 @@ extension PhoneModel {
             do {
                 let parsed = try PairingInvitation.parseStored(draft.payload), keys = PhoneKeys.provider(draft.keys)
                 invitation = parsed
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.dialStarted)
+                #endif
                 let (connection, peer) = try await pairingTransport(parsed)
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.dialReady)
+                #endif
                 owned = connection
                 guard generation == current, !Task.isCancelled else { await connection.close(); return }
                 pairingConnection = connection
                 let flow = try NativePairing(invitation: parsed, keys: keys)
                 let paths = await NativeDiscoveryWire.lanPaths() + (currentNetworkPath.map { [$0] } ?? [])
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.lanReady)
+                #endif
                 guard let gateway = NativeDiscoveryWire.pairingGatewayHash(peer: peer, paths: paths) else { throw NativePairingFailure.notNearby }
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.beginStarted)
+                #endif
                 var enrollment = try await flow.begin(on: connection, name: UIDevice.current.name, gatewayHash: gateway)
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.beginReady)
+                #endif
                 guard current == generation, !Task.isCancelled else {
                     if pairingConnection === connection || generation != current { await connection.close() }
                     return
@@ -94,9 +121,15 @@ extension PhoneModel {
                 case "denied", "cancelled": throw enrollment.contended ? NativePairingFailure.contended : NativePairingFailure.cancelled
                 default: throw NativePairingFailure.timedOut
                 }
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.approved)
+                #endif
                 let device = try await flow.complete(on: connection) { device in
                     try await store.save(RegisteredHost(name: draft.name, device: device, keys: draft.keys, prepared: true))
                 }
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.completeReady)
+                #endif
                 let name = Self.hostLabel(await flow.hostName)
                 let saved = RegisteredHost(name: name, device: device, keys: draft.keys, prepared: false)
                 try await store.save(saved); try await store.clearDraft(matching: draft.payload)
@@ -114,6 +147,9 @@ extension PhoneModel {
                 pairing = nil; busy = false
                 await connect(saved)
             } catch {
+                #if LATCH_SCREENS
+                PhoneLive.pairingCheckpoint(.failed)
+                #endif
                 // 取消 takes the connection over to tell the Host first, so an ordinary cancel and rescan is not contention.
                 if generation != current || error is CancellationError {
                     if pairingConnection === owned || generation != current { await owned?.close() }
