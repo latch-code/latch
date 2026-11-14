@@ -176,6 +176,18 @@ export const harnessName = (harness: Pick<HarnessInfo, 'capabilities'>): string 
  * Harness's alone. Never an option an agent offers: agents' option IDs do not start with `~`.
  */
 const SERVICE_PICK = '~service'
+/** In the same place: the person chose the Harness's own default model, which no service model, a project's 默认模型 included, replaces. */
+const OWN_DEFAULT = '~own'
+
+/** Whether the picks say the Harness's own default model was chosen. */
+export const pickedOwnDefault = (picks: Record<string, string> | undefined): boolean => picks?.[SERVICE_PICK] === OWN_DEFAULT
+
+/** The picks with the Harness's own default chosen: no service model, and none of its own models either. */
+export function withOwnDefault(picks: Record<string, string> | undefined, modelOptionId?: string): Record<string, string> {
+  const { [SERVICE_PICK]: _service, ...rest } = picks ?? {}
+  if (modelOptionId) delete rest[modelOptionId]
+  return { ...rest, [SERVICE_PICK]: OWN_DEFAULT }
+}
 
 /** The models a service offers a session: its list, else its default. */
 export const serviceModels = (provider: Pick<ProviderSummary, 'models' | 'defaultModel'>): string[] =>
@@ -340,7 +352,44 @@ export function draftStart(
   access?: PinAccess,
 ): Partial<ComposerChoice> | null {
   const pin = pinnedChoice(catalog, access)
-  return pin ? { ...memory, ...pin, ...pick } : memory
+  const base = pin ? { ...memory, ...pin } : memory
+  const project = projectStart(catalog, base, pick)
+  return pin || project || pick ? { ...base, ...project, ...pick } : memory
+}
+
+/**
+ * The project's 默认模型 for the draft `stored` resolves to, while that model can be used now. It stands in only where
+ * nothing was picked: a model this device picked, on Latch 内置 or for a Harness with its own models, is remembered and
+ * comes first, as it did before projects had a default.
+ */
+export function projectDefault(catalog: HostCatalog | undefined, stored: Partial<ComposerChoice> | null): ModelRef | undefined {
+  if (!catalog) return undefined
+  const { workspaceId } = resolveChoice(catalog, stored)
+  return validModel(catalog, catalog.workspaces.find(workspace => workspace.id === workspaceId)?.defaultModel)
+}
+
+function projectStart(
+  catalog: HostCatalog | undefined,
+  base: Partial<ComposerChoice> | null,
+  pick: DraftPick | null,
+): Partial<ComposerChoice> | undefined {
+  const model = pick?.model ? undefined : projectDefault(catalog, base)
+  if (!catalog || !model) return undefined
+  const resolved = resolveChoice(catalog, { ...base, ...pick })
+  const harness = findHarness(catalog, resolved.harnessId)
+  if (!harness) return undefined
+  // Latch 内置: only a device that has no model of its own yet.
+  if (harness.capabilities.models.owner === 'latch') return validModel(catalog, base?.model) ? undefined : { model }
+  // A Harness with its own models: only while nothing was picked for it, and Latch can forward the pair.
+  const modelOption = draftConfig(harness, resolved.config)?.config.find(option => option.category === 'model')
+  if (
+    pickedOwnDefault(resolved.config)
+    || servicePick(catalog, harness, resolved.config)
+    || (modelOption && resolved.config?.[modelOption.id] !== undefined)
+  )
+    return undefined
+  const config = withServicePick(resolved.config, { providerId: model.providerId, model: model.model }, modelOption?.id)
+  return servicePick(catalog, harness, config) ? { harnessId: harness.id, config: config! } : undefined
 }
 
 /** Whether the draft shows exactly the pinned start. An engine with its own models is the engine alone. */
@@ -405,6 +454,8 @@ export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<
   const own = harness && (harness.id === stored?.harnessId ? stored?.config : stored?.otherPicks?.[harness.id])
   const service = servicePick(catalog, harness, own)
   const picks = harness ? startConfig(harness, own) : []
+  // Chosen, not merely absent: it stays through a repair of the picks, as a service pick does.
+  const ownDefault = !service && harness?.capabilities.models.owner !== 'latch' && pickedOwnDefault(own)
   // A remembered Harness that cannot start now keeps its picks for when it can.
   const away = stored?.harnessId && stored.harnessId !== harness?.id && stored.config ? { [stored.harnessId]: stored.config } : {}
   const others = Object.entries({ ...stored?.otherPicks, ...away }).filter(([id]) => id !== harness?.id)
@@ -413,8 +464,12 @@ export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<
     ...(harness ? { harnessId: harness.id } : {}),
     ...(workspace ? { workspaceId: workspace.id } : {}),
     ...(model ? { model } : {}),
-    ...(picks.length || service
-      ? { config: withServicePick(Object.fromEntries(picks.map(pick => [pick.configId, pick.value])), service)! }
+    ...(picks.length || service || ownDefault
+      ? {
+          config: ownDefault
+            ? withOwnDefault(Object.fromEntries(picks.map(pick => [pick.configId, pick.value])))
+            : withServicePick(Object.fromEntries(picks.map(pick => [pick.configId, pick.value])), service)!,
+        }
       : {}),
     ...(others.length ? { otherPicks: Object.fromEntries(others) } : {}),
     ...(skipped && workspace?.id === 'default' ? { projectSkipped: true } : {}),

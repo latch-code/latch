@@ -183,6 +183,10 @@ export interface TurnRoute {
   unmeasured: number
   /** Requests still under way when the turn ended, so `usage` leaves them out too. */
   open: number
+  /** A 「出错时改用」 service answered requests of the turn: the one whose reply came back last, and the model it said. */
+  fallback?: { providerId: string; model?: string }
+  /** The built-in harness: nothing went through the gateway, and only `fallback` says anything. */
+  direct: boolean
 }
 
 export function turnRoute(turn: Turn): TurnRoute | undefined {
@@ -196,7 +200,10 @@ export function turnRoute(turn: Turn): TurnRoute | undefined {
   const answered = main ? (main.used ?? main.model) : undefined
   const usages = models.flatMap(entry => (entry.usage ? [entry.usage] : []))
   const total = (count: (entry: RoutedModel) => number) => models.reduce((sum, entry) => sum + count(entry), 0)
+  const moved = main?.fallback && main.provider ? main : models.find(entry => entry.fallback && entry.provider)
   return {
+    direct: routed.direct === true,
+    ...(moved ? { fallback: { providerId: moved.provider!, ...(moved.used ? { model: moved.used } : {}) } } : {}),
     requests: routed.requests,
     models,
     ...(chosen ? { chosen } : {}),

@@ -208,7 +208,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 ## 经 Latch 使用模型服务
 
-模型菜单同时保留 Harness 自己的模型与可经 Latch 使用的已保存服务。Host 根据实际协议能力和自己的服务记录重新核对每次开始，客户端不能决定转发地址或密钥。当前四种入口优先同协议透传，另支持实验性的 Responses/Anthropic→Chat，以及 Responses↔Anthropic 转换；其余组合明确不可选；模型、能力、令牌、用量和安全机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
+模型菜单同时保留 Harness 自己的模型与可经 Latch 使用的已保存服务。Host 根据实际协议能力和自己的服务记录重新核对每次开始，客户端不能决定转发地址或密钥。当前四种入口优先同协议透传，另支持实验性的 Responses/Anthropic→Chat，以及 Responses↔Anthropic 转换；其余组合明确不可选；模型、能力、令牌、用量和安全机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。会话开始时还定下所选服务各模型的「出错时改用」候选，计入路由与启动指纹；回复开始前的故障切换、健康与排队见[调度](MODEL-GATEWAY.md#调度)。
 
 | Harness | 当前支持 | 交给 Agent 的方式 |
 | --- | --- | --- |

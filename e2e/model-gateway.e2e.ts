@@ -428,6 +428,9 @@ describe('a turn through Latch shows what the service said it used', () => {
       replies: [
         { text: '第一轮的回复' },
         { text: '换了模型的回复', answeredBy: 'fake-model-preview' },
+        // A 5xx is tried twice more at the same service before the turn fails: the service stays down for all three.
+        { error: { status: 500, message: 'upstream down' } },
+        { error: { status: 500, message: 'upstream down' } },
         { error: { status: 500, message: 'upstream down' } },
         // The service keeps the stream open after the last event; the agent ends its turn without waiting for it.
         { text: '流还开着的回复', lingerMs: 60_000 },
@@ -508,7 +511,7 @@ describe('a turn through Latch shows what the service said it used', () => {
     await page
       .locator('.transcript')
       .getByText(/^model error 500/u)
-      .waitFor({ timeout: 20_000 })
+      .waitFor({ timeout: 30_000 })
 
     // The first turn: the service's tokens and one request, no second model named.
     await turn(page, 0).hover()

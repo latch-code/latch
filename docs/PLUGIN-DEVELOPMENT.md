@@ -278,7 +278,7 @@ interface ModelProvider {
   name: string
   model: string            // 默认模型
   models?: string[]        // 可选模型；缺省时只有 model
-  stream(request: { messages: ModelMessage[]; tools: ToolDefinition[]; signal: AbortSignal; model?: string; effort?: string }): AsyncIterable<ModelDelta>
+  stream(request: { messages: ModelMessage[]; tools: ToolDefinition[]; signal: AbortSignal; model?: string; effort?: string; run?: { sessionId: string; runId: string } }): AsyncIterable<ModelDelta>
 }
 ```
 
@@ -409,6 +409,8 @@ pnpm test:e2e
 ### 附件声明与读取
 
 `HarnessDriver.capabilities.attachments?: { images?: boolean; text?: boolean; textBytes?: number }` 声明接收能力，缺少即不展示；能力要等 Harness 启动后才知道的 Driver 另实现可选的 `Bridge.promptCapabilities()`，返回它最近一次为当前定义启动时报告的 `{ images, text }`，之前返回 `undefined`；返回了就以它为准（使用 Latch 模型服务的 Harness 也一样，图片仍要模型声明视觉），没返回时用声明。`CreateTaskInput.attachments?` 与 `PromptOptions.attachments?` 是 `AttachmentRef[]`；`HarnessHostOptions.readAttachment?(ref, signal?)` 返回本轮的 `AttachmentContent`（`{type:'image',mimeType,data}` 或 `{type:'text',name,text}`），`saveAttachment?({sessionId,mime,data})` 保存 Agent 输出图片。持久化只保存引用，不保存物化内容，不把附件复制到项目目录。Host 仍验证设备、会话、文件类型和限额。
+
+`stream()` 的可选 `run` 是内置 Harness 传入的会话与本轮 ID，供 Host 自己的服务按轮调度，插件 Provider 可以忽略；`ModelDelta` 的 `{ type: 'route', providerId, model }` 只由 Host 的调度层在「出错时改用」的服务回答前发出，插件 Provider 不发。
 
 `ModelProvider.modelCapabilities?: Readonly<Record<string,{vision?:boolean;thinking?:string[]}>>` 按模型显式声明视觉输入与可接受的思考深度（上线值，由弱到强）；`stream()` 的 `effort` 只会是该模型声明过的一项，未声明的必须拒绝（`effort-unavailable`），不发 `effort` 时用模型自己的默认值。`ModelMessage.attachments?` 承载执行前物化的内容块。没有声明视觉能力的模型收到图片时应拒绝，不能忽略或偷偷换模型。内置适配器保持原出站 fetch 与密钥边界。完整协议与限额见 [ATTACHMENTS.md](ATTACHMENTS.md)。
 

@@ -125,6 +125,7 @@ export interface LaunchRoute {
   origin: string
   wire: string
   upstream?: string
+  fallbacks?: Record<string, Array<{ providerId: string; model: string; upstream: string; origin: string }>>
   via: 'providers' | 'launch'
   names: string[]
   templates?: { args?: number; files?: number; session?: number }

@@ -390,7 +390,7 @@ describe('Anthropic to Chat translation', () => {
       models: ['alias'],
       fingerprint: 'one',
     }
-    let next = new Response('quota private-key-value', { status: 429, headers: { 'retry-after': '7' } })
+    let next = new Response('quota private-key-value', { status: 429, headers: { 'retry-after': '30' } })
     const server = new ModelGatewayServer({ service: () => service, log: () => {}, fetchFor: () => async () => next })
     await server.start()
     try {
@@ -412,7 +412,7 @@ describe('Anthropic to Chat translation', () => {
         })
       const limited = await ask()
       expect(limited.status).toBe(429)
-      expect(limited.headers.get('retry-after')).toBe('7')
+      expect(limited.headers.get('retry-after')).toBe('30')
       expect(await limited.json()).toMatchObject({ type: 'error', error: { type: 'rate_limit_error', message: 'quota [redacted]' } })
       next = new Response('data: {"choices":[{"index":0,"delta":{"content":"prefix"},"finish_reason":null}]}\n\n', {
         headers: { 'content-type': 'text/event-stream' },

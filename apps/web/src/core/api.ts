@@ -365,6 +365,8 @@ export interface PendingSubmission {
   attachmentIds?: string[]
   /** A new session's picks from the Harness's own options. */
   config?: Array<{ configId: string; value: string }>
+  /** A new session on the Harness's own default model, chosen as such: the project's 默认模型 does not replace it. */
+  ownModel?: true
   /** A new session starts in a worktree of its project: `true` from the folder's HEAD, or another start point. */
   worktree?: true | WorktreeStart
   /** A new session of one of 我的 Agent (a delegation); the Host fills what the request leaves out from the Agent. */
@@ -457,6 +459,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(item.steer === true ? { steer: true as const } : {}),
       ...(item.resent === true ? { resent: true as const } : {}),
       ...(item.freshContext === true ? { freshContext: true as const } : {}),
+      ...(item.ownModel === true && item.sessionId === undefined ? { ownModel: true as const } : {}),
       ...(worktreeStartOf(item.worktree) ? { worktree: worktreeStartOf(item.worktree)! } : {}),
       ...(fork ? { forkOf: { taskId: fork.taskId as string, upToMessageId: fork.upToMessageId as string } } : {}),
       ...(Array.isArray(item.fileRefs) ? { fileRefs: item.fileRefs as FileMention[] } : {}),
@@ -508,6 +511,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
       ...(submission.workspaceId ? { workspaceId: submission.workspaceId } : {}),
       ...(submission.forkOf ? { forkOf: submission.forkOf } : {}),
       ...(submission.config?.length ? { config: submission.config } : {}),
+      ...(submission.ownModel && !model ? { ownModel: true } : {}),
       ...(submission.worktree ? { worktree: submission.worktree } : {}),
       ...(submission.customAgentId ? { customAgentId: submission.customAgentId } : {}),
     },

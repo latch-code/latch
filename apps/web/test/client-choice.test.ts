@@ -29,8 +29,11 @@ import {
   startBlock,
   usesDemoModel,
   isPinnedChoice,
+  pickedOwnDefault,
   pinnedChoice,
+  projectDefault,
   servicePick,
+  withOwnDefault,
   withServicePick,
   type ComposerChoice,
   type DraftPick,
@@ -258,6 +261,89 @@ describe('composer choice', () => {
     expect(nothingInstalled(missing, onlyBuiltin, { ...owner, admin: false })).toBe(false)
     expect(nothingInstalled(null, onlyBuiltin, owner)).toBe(false)
     expect(nothingInstalled(missing, catalog(), owner)).toBe(false)
+  })
+
+  it("starts a draft on its project's default model only where this device picked none, and remembers a pick as before", () => {
+    const remote = { legacy: false, local: false }
+    const withDefault = catalog({
+      workspaces: [
+        { id: 'default', name: 'app', path: '/work/app' },
+        { id: 'docs', name: 'docs', path: '/work/docs', defaultModel: { providerId: 'local', model: 'qwen3' } },
+        { id: 'old', name: 'old', path: '/work/old', defaultModel: { providerId: 'gone', model: 'removed' } },
+      ],
+    })
+    const started = (memory: Partial<ComposerChoice> | null, pick: DraftPick | null = null) =>
+      resolveChoice(withDefault, draftStart(withDefault, memory, pick, remote))
+    const picked = { providerId: 'deepseek', model: 'deepseek-reasoner' }
+    // No model picked on this device yet: the project's, not the Host's own default; another project has none.
+    expect(started({ harnessId: 'standard', workspaceId: 'docs' }).model).toEqual({ providerId: 'local', model: 'qwen3' })
+    expect(started({ harnessId: 'standard', workspaceId: 'default' }).model).toEqual(catalog().defaults.model)
+    // A model this device picked is remembered and comes first, in a project with a default like anywhere else:
+    // the memory is returned untouched, so nothing of the pick is held back from it.
+    const memory = { harnessId: 'standard', workspaceId: 'docs', model: picked }
+    expect(draftStart(withDefault, memory, null, remote)).toBe(memory)
+    expect(started(memory).model).toEqual(picked)
+    // A remembered model that is gone counts as none.
+    expect(started({ harnessId: 'standard', workspaceId: 'docs', model: { providerId: 'gone', model: 'x' } }).model).toEqual({
+      providerId: 'local',
+      model: 'qwen3',
+    })
+    // A default that cannot be used now is no default.
+    const stale = { harnessId: 'standard', workspaceId: 'old' }
+    expect(projectDefault(withDefault, stale)).toBeUndefined()
+    expect(draftStart(withDefault, stale, null, remote)).toBe(stale)
+    // A Harness with its own models takes it as a service pick while nothing was picked for it.
+    const routed = started({ harnessId: 'codex', workspaceId: 'docs' })
+    const codex = withDefault.harnesses.find(harness => harness.id === 'codex')!
+    const offered = servicePick(withDefault, codex, routed.config)
+    if (codex.capabilities.models.wires.length) expect(offered).toEqual({ providerId: 'local', model: 'qwen3' })
+    else expect(offered).toBeUndefined()
+    const chosen = withServicePick(undefined, { providerId: 'deepseek', model: 'deepseek-chat' })!
+    const kept = servicePick(withDefault, codex, started({ harnessId: 'codex', workspaceId: 'docs', config: chosen }).config)
+    if (codex.capabilities.models.wires.length) expect(kept).toEqual({ providerId: 'deepseek', model: 'deepseek-chat' })
+  })
+
+  it("keeps the Harness's own default once it is chosen, before the project's default model, and remembers it", () => {
+    const remote = { legacy: false, local: false }
+    const gemini = testHarness('gemini', { kind: 'agent', label: 'Gemini CLI' })
+    const routable: HostCatalog = {
+      ...catalog(),
+      harnesses: [
+        {
+          ...gemini,
+          capabilities: {
+            ...gemini.capabilities,
+            models: { ...gemini.capabilities.models, owner: 'harness', wires: ['chat-completions'] },
+          },
+        },
+      ],
+      workspaces: [
+        { id: 'default', name: 'app', path: '/work/app' },
+        { id: 'docs', name: 'docs', path: '/work/docs', defaultModel: { providerId: 'local', model: 'qwen3' } },
+      ],
+    }
+    const harness = routable.harnesses[0]!
+    const started = (memory: Partial<ComposerChoice> | null) => resolveChoice(routable, draftStart(routable, memory, null, remote))
+    // Nothing picked for this Harness: the project's model, as a service pick the menu shows and the start sends.
+    const untouched = started({ harnessId: 'gemini', workspaceId: 'docs' })
+    expect(servicePick(routable, harness, untouched.config)).toEqual({ providerId: 'local', model: 'qwen3' })
+    expect(pickedOwnDefault(untouched.config)).toBe(false)
+    // 「默认」 chosen in the menu: a pick like any other, kept through a repair of the picks and into the next draft.
+    const chosen = withOwnDefault(untouched.config)
+    expect(servicePick(routable, harness, chosen)).toBeUndefined()
+    const next = started({ harnessId: 'gemini', workspaceId: 'docs', config: chosen })
+    expect(pickedOwnDefault(next.config)).toBe(true)
+    expect(servicePick(routable, harness, next.config)).toBeUndefined()
+    expect(pickedOwnDefault(started(next).config)).toBe(true)
+    // Picking a service model afterwards replaces it; so does going back to nothing picked in another project.
+    const again = withServicePick(next.config, { providerId: 'deepseek', model: 'deepseek-chat' })
+    expect(pickedOwnDefault(again)).toBe(false)
+    expect(servicePick(routable, harness, started({ harnessId: 'gemini', workspaceId: 'docs', config: again! }).config)).toEqual({
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+    })
+    // It is the Harness's alone: Latch 内置 never carries it.
+    expect(pickedOwnDefault(resolveChoice(catalog(), { harnessId: 'standard', config: chosen }).config)).toBe(false)
   })
 
   it('starts from a pinned engine and model on the devices that can use it, a pick in the draft winning until it starts', () => {

@@ -15,6 +15,7 @@ import { PROJECT_ICONS, ProjectIcon, projectFolders } from '../projects.tsx'
 import { basename, middleEllipsis } from '../format.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { ProviderTile } from './BrandTile.tsx'
+import { HealthDot, menuHealth, nameWithHealth } from './ServiceHealth.tsx'
 import type { MenuSection } from './overlays.tsx'
 import { CODE_ROOT_COPY, computerName, SETUP_COPY } from '../core/securityCopy.ts'
 import { ProviderSetupPanel } from './SetupPanels.tsx'
@@ -79,8 +80,14 @@ export function modelGroups(
     pinned ? pinned.providerId === providerId && pinned.model === model : model === serviceDefault
   const groups: Array<PickerGroup<string>> = catalog.providers.map(provider => ({
     id: provider.id,
-    label: provider.name,
-    media: <ProviderTile provider={provider} size={16} />,
+    // Only what stops the service now, as the Host's real requests showed it: the word in the name, a dot beside the tile.
+    label: nameWithHealth(provider.name, menuHealth(provider)),
+    media: (
+      <>
+        <ProviderTile provider={provider} size={16} />
+        {menuHealth(provider) && <HealthDot words={menuHealth(provider)!} />}
+      </>
+    ),
     options: (provider.models.length ? provider.models : [provider.defaultModel])
       .filter(Boolean)
       .map(model => ({

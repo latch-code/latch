@@ -31,6 +31,8 @@ interface Options {
   /** The revision each plugin runs at, and whether those revisions can be trusted across a restart. */
   revisions(ids: string[]): { revisions: Record<string, string>; hashed: unknown; persistent: boolean }
   projectUsable(projectId: string): boolean
+  /** The project's 默认模型 while this harness can use it now. */
+  projectModel(projectId: string | undefined, harnessId: string): ModelRef | undefined
   automationAllowed(harnessId: string): boolean
   /** What a run's folders depend on: the policy, the start directory and the project's folders. */
   environment(projectId: string | undefined): unknown
@@ -146,7 +148,15 @@ export class AgentPlans {
     if (workspaceId && !this.options.projectUsable(workspaceId))
       throw new AppError(409, 'workspace-unavailable', '找不到所选项目，或它暂不可用。')
     const hostModel = harness.capabilities.models.owner === 'latch'
-    const model = config.model ?? agent?.model ?? (hostModel ? this.options.defaultModel() : undefined)
+    // The run's own choice, the Agent's, the project's 默认模型, then the Host's default where the harness has none of its own.
+    // An Agent on a Harness with its own models may have picked one of those among its options: that is the Agent's
+    // choice too, so the project's default stays out of its way, as it does when a session sends start options.
+    const ownOptions = !hostModel && Object.keys(agent?.engineOptions ?? {}).length > 0
+    const model =
+      config.model
+      ?? agent?.model
+      ?? (ownOptions ? undefined : this.options.projectModel(workspaceId, harnessId))
+      ?? (hostModel ? this.options.defaultModel() : undefined)
     if (hostModel && (!model || !this.options.modelAvailable(model))) throw new AppError(409, 'provider-unavailable', '请先配置模型服务。')
     const provider = model ? this.options.providerOwner(model.providerId) : undefined
     if (hostModel && !provider) throw new AppError(409, 'provider-unavailable', '模型服务不可用。')

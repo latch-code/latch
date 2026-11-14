@@ -31,6 +31,8 @@ export interface ModelMessage {
 }
 export type ModelDelta =
   | { type: 'text'; text: string }
+  /** Another service answered than the one asked: a 「出错时改用」 candidate, by ID and model. Sent before its reply. */
+  | { type: 'route'; providerId: string; model: string }
   /** Reasoning the model reported, shown to the user. This text is never sent back; a signed copy may be, in `ToolCall.signature`. */
   | { type: 'reasoning'; text: string }
   | { type: 'tool-call'; call: ToolCall }
@@ -145,6 +147,8 @@ export interface ModelProvider {
     signal: AbortSignal
     model?: string
     effort?: string
+    /** The run asking, for a provider that schedules its requests by session and turn; never a credential. */
+    run?: { sessionId: string; runId: string }
   }): AsyncIterable<ModelDelta>
 }
 export interface PluginContext {

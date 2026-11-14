@@ -18,13 +18,15 @@ export class ModelRequestQueue {
 
   constructor(private readonly limits = { active: 32, waiting: 128, bytes: 64 * 1024 * 1024, waitMs: 30_000 }) {}
 
-  async acquire(signal: AbortSignal, bytes: number): Promise<() => void> {
+  /** `waiting`: called when the request has to wait, and its result when it waits no longer, admitted or not. */
+  async acquire(signal: AbortSignal, bytes: number, waiting?: () => () => void): Promise<() => void> {
     signal.throwIfAborted()
     if (this.closed) throw this.stopped()
     if (!Number.isSafeInteger(bytes) || bytes < 0) throw new AppError(400, 'invalid-model-request', '模型请求大小无效。')
     if (this.active < this.limits.active) return this.permit()
     if (this.waiting.size >= this.limits.waiting || bytes > this.limits.bytes - this.queuedBytes) throw this.busy()
-    return new Promise((resolve, reject) => {
+    const waited = waiting?.()
+    return new Promise<() => void>((resolve, reject) => {
       const remove = (reason: unknown) => {
         if (!this.remove(request)) return
         reject(reason)
@@ -41,7 +43,7 @@ export class ModelRequestQueue {
       this.waiting.add(request)
       this.queuedBytes += bytes
       signal.addEventListener('abort', request.abort, { once: true })
-    })
+    }).finally(() => waited?.())
   }
 
   close(): void {

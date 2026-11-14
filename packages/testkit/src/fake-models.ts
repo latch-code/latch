@@ -29,10 +29,14 @@ export interface FakeReply {
   delayMs?: number
   /** A streamed reply stops after its first event and the connection is dropped, as a service that fails mid-reply. */
   cut?: true
+  /** A streamed reply answers with its headers and drops the connection before any byte of its body. */
+  dropped?: true
   /** The model the reply says answered, where the protocol names one; otherwise the model the request named. */
   answeredBy?: string
   /** A streamed reply's stream stays open this long after its last event, as behind a proxy or with keep-alive. */
   lingerMs?: number
+  /** A streamed reply answers with its headers at once and says nothing for this long, as a model that thinks first. */
+  silentMs?: number
 }
 
 export interface FakeModelRequest {
@@ -70,8 +74,24 @@ function readBody(request: IncomingMessage): Promise<string> {
   })
 }
 
-function sse(response: ServerResponse, events: Array<{ event?: string; data: unknown }>, lingerMs = 0, cut = false): void {
+async function sse(
+  response: ServerResponse,
+  events: Array<{ event?: string; data: unknown }>,
+  lingerMs = 0,
+  cut = false,
+  silentMs = 0,
+): Promise<void> {
   response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-request-id': 'req_fake' })
+  if (silentMs < 0) {
+    // Headers, then nothing: the connection goes before the body begins.
+    response.flushHeaders()
+    setTimeout(() => response.destroy(), 10).unref()
+    return
+  }
+  if (silentMs > 0) {
+    response.flushHeaders()
+    await new Promise(resolve => setTimeout(resolve, silentMs).unref())
+  }
   for (const item of cut ? events.slice(0, 1) : events)
     response.write(
       `${item.event ? `event: ${item.event}\n` : ''}data: ${typeof item.data === 'string' ? item.data : JSON.stringify(item.data)}\n\n`,
@@ -424,7 +444,8 @@ export async function startFakeModels(
         headerNames: Object.keys(request.headers).sort(),
       })
       const reply = named(options.replyFor?.(requests.at(-1)!) ?? next(), body)
-      if (reply.delayMs) await new Promise(resolve => setTimeout(resolve, reply.delayMs))
+      // Unreferenced: a test that gives up on a slow service does not wait for it to answer.
+      if (reply.delayMs) await new Promise(resolve => setTimeout(resolve, reply.delayMs).unref())
       if (reply.error)
         return json(
           response,
@@ -446,7 +467,7 @@ export async function startFakeModels(
             : wire === 'gemini'
               ? gemini(reply, reply.answeredBy ?? model, stream, requests.length)
               : anthropic(reply, model, stream, requests.length)
-      if (made.events) sse(response, made.events, reply.lingerMs, reply.cut === true)
+      if (made.events) await sse(response, made.events, reply.lingerMs, reply.cut === true, reply.dropped ? -1 : reply.silentMs)
       else json(response, 200, made.body)
     })().catch(() => {
       if (!response.headersSent) json(response, 500, { error: { message: 'fake model failed' } })

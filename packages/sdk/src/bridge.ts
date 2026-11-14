@@ -33,6 +33,19 @@ export interface ModelRoute {
   /** Absent on existing same-protocol routes; then equal to wire. */
   upstream?: ModelWire
   origin: string
+  /**
+   * 「出错时改用」 as the settings had it when the session started, by a model of the route's service, in order. A request
+   * the first service fails before its reply begins goes to these; one that is gone or changed since is passed over.
+   */
+  fallbacks?: Record<string, ModelRouteFallback[]>
+}
+
+/** One 「出错时改用」 candidate: another service's model, the protocol that service speaks and its `scheme://host:port`. */
+export interface ModelRouteFallback {
+  providerId: string
+  model: string
+  upstream: ModelWire
+  origin: string
 }
 
 export interface CreateTaskInput {

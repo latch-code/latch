@@ -12,6 +12,7 @@ import type {
   ModelRef,
   AgentExecutionContext,
   RiskLevel,
+  RoutedTurn,
   RunLive,
   DriverTaskDetail,
   TaskMode,
@@ -212,6 +213,8 @@ interface PendingApproval {
   signal: AbortSignal
 }
 interface Run {
+  /** Steps of this turn that a 「出错时改用」 service answered, for the turn's record; absent when none did. */
+  routed?: RoutedTurn
   /** The approval the person gave the call about to run, for its own record (the browser's audit). */
   approved?: { callId: string; approvalId: string }
   instructions?: string
@@ -1573,11 +1576,21 @@ class HarnessRuntime implements Bridge {
           signal,
           model: run.model,
           ...(run.effort ? { effort: run.effort } : {}),
+          run: { sessionId: run.sessionId, runId: run.id },
         })) {
           run.lastEventAt = this.clock()
           signal.throwIfAborted()
           if (finished) throw new AppError(502, 'provider-protocol', '模型在结束事件之后继续发送内容')
-          if (delta.type === 'text' || delta.type === 'reasoning') {
+          if (delta.type === 'route') {
+            // Another service answers this step: the turn says so, by ID and model only.
+            const routed = (run.routed ??= { requests: 0, models: [{ model: run.model.slice(0, 200), requests: 0 }], direct: true })
+            const entry = routed.models[0]!
+            routed.requests++
+            entry.requests++
+            entry.fallback = (entry.fallback ?? 0) + 1
+            entry.provider = delta.providerId.slice(0, 128)
+            entry.used = delta.model.slice(0, 200)
+          } else if (delta.type === 'text' || delta.type === 'reasoning') {
             live[delta.type === 'text' ? 'text' : 'reasoning'] += delta.text
             if (live.text.length + live.reasoning.length > MAX_OUTPUT)
               throw new AppError(502, 'response-too-large', '模型输出超过本次运行限制')
@@ -1690,7 +1703,7 @@ class HarnessRuntime implements Bridge {
               createdAt: at,
             })
           const prompt = task.messages.find(message => message.id === run.userMessageId)
-          if (prompt) prompt.turn = run.clock.turn()
+          if (prompt) prompt.turn = { ...run.clock.turn(), ...(run.routed ? { routed: run.routed } : {}) }
           const result = this.fileTracking.capture(run.id)
           if (result) {
             const turn = task.messages.slice(

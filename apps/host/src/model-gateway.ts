@@ -8,9 +8,11 @@ import { createHash, randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import {
+  MAX_MODEL_FALLBACKS,
   PROVIDER_WIRES,
   canTranslate,
   type GatewayLoss,
+  type ModelFailureClass,
   type ModelCapabilities,
   type ModelWire,
   type ProviderKind,
@@ -38,6 +40,7 @@ import type { GatewayRequest, GatewayDelta, GatewayReasoning } from './model-gat
 import type { ToolNames } from './model-gateway/tools.ts'
 import { exactJson } from './model-gateway/json.ts'
 import { ModelRequestQueue } from './model-request-queue.ts'
+import { ModelScheduler, classifyStatus, retryAfterMs, type AttemptResult, type AttemptTimer } from './model-scheduler.ts'
 
 /** A saved service as the gateway may use it now: undefined from `service` when sessions may not use it. */
 export interface GatewayService {
@@ -57,6 +60,48 @@ export interface ModelGatewayDeps {
   fetchFor(baseURL: string): FetchLike
   log(text: string): void
   queue?: ModelRequestQueue
+  /** Shared with the built-in harness, so both read one health of each service. */
+  scheduler?: ModelScheduler
+  /**
+   * Called before a request goes to another candidate than the one that failed or is held back: the Host puts it on
+   * record, and a throw keeps the request where it is.
+   */
+  fallback?(event: { sessionId: string; providerId: string; candidate: number; reason: ModelFailureClass }): Promise<void>
+}
+
+/** One service a request may go to: the session's own first, then what the model falls back to. */
+interface Candidate {
+  providerId: string
+  upstream: ModelWire
+  /** The model as this service names it. */
+  model: string
+  fingerprint: string
+  /** Its service changed or went away since the token was issued; only this candidate stops. */
+  dead?: true
+}
+
+/** A request as one candidate gets it. */
+interface Prepared {
+  body: Buffer
+  translated?: { request: GatewayRequest; tools: ToolNames }
+}
+
+/** An answer the gateway writes itself, complete: a refusal, or a service's error with the key taken out. */
+interface Reply {
+  status: number
+  headers: Record<string, string>
+  body: string
+}
+
+/** A reply that began: the service, its response and what was read of it so far. */
+interface Opened {
+  candidate: Candidate
+  service: GatewayService
+  prepared: Prepared
+  response: Response
+  returned: Record<string, string>
+  reader?: ReadableStreamDefaultReader<Uint8Array>
+  first?: Uint8Array
 }
 
 interface Binding {
@@ -67,6 +112,8 @@ interface Binding {
   /** The protocol the service speaks. */
   upstream: ModelWire
   models: Set<string>
+  /** By a model of the session's service: what it falls back to, in order. */
+  fallbacks: Map<string, Candidate[]>
   fingerprint: string
   count: number
   /** What the requests since the last `takeTurn` did. */
@@ -81,6 +128,8 @@ interface Tally {
   /** Forwarded requests whose result is not counted yet. */
   open: Set<OpenRequest>
   dropped: Set<GatewayLoss>
+  /** By model: the candidate this turn moved to, so the rest of the turn stays with it. */
+  moved: Map<string, number>
 }
 
 /** A forwarded request until its result is counted: its reply, once the service answers, is read as it passes. */
@@ -119,7 +168,7 @@ const GEMINI_METHODS = new Set(['generateContent', 'streamGenerateContent', 'cou
 const hashOf = (token: string) => createHash('sha256').update(token).digest('hex')
 const bareModel = (model: string) => model.replace(/^models\//u, '')
 const serviceModel = (wire: ModelWire, model: string) => (wire === 'gemini' ? bareModel(model) : model)
-const newTally = (): Tally => ({ requests: 0, models: new Map(), open: new Set(), dropped: new Set() })
+const newTally = (): Tally => ({ requests: 0, models: new Map(), open: new Set(), dropped: new Set(), moved: new Map() })
 
 /** Adds a reply's tokens; a part stays only while every reply added reported it, so it never claims tokens it does not cover. */
 function addUsage(total: TokenUsage | undefined, usage: TokenUsage): TokenUsage {
@@ -259,18 +308,112 @@ const anthropicPath = (path: string) => path === '/v1/messages' || path.startsWi
  * An error in the shape the harness's protocol reads: Anthropic's `{type: 'error', error: {type, message}}`, else
  * `error.message`, which the OpenAI and Gemini protocols both read.
  */
-function refuse(res: ServerResponse, status: number, code: string, message: string, shape: 'anthropic' | 'openai' = 'openai'): void {
+function refusal(status: number, code: string, message: string, shape: 'anthropic' | 'openai' = 'openai'): Reply {
+  return {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    body: JSON.stringify(
+      shape === 'anthropic'
+        ? { type: 'error', error: { type: ANTHROPIC_ERRORS[status] ?? 'api_error', message, ...(code === 'gateway-busy' ? { code } : {}) } }
+        : { error: { code, message } },
+    ),
+  }
+}
+
+function answer(res: ServerResponse, reply: Reply): void {
   if (res.headersSent) {
     res.destroy()
     return
   }
-  const body = JSON.stringify(
-    shape === 'anthropic'
-      ? { type: 'error', error: { type: ANTHROPIC_ERRORS[status] ?? 'api_error', message, ...(code === 'gateway-busy' ? { code } : {}) } }
-      : { error: { code, message } },
+  res.writeHead(reply.status, reply.headers)
+  res.end(reply.body)
+}
+
+function refuse(res: ServerResponse, status: number, code: string, message: string, shape: 'anthropic' | 'openai' = 'openai'): void {
+  answer(res, refusal(status, code, message, shape))
+}
+
+/**
+ * What a stream that broke after it began ends with, in the protocol the harness reads: the turn failed, and nothing
+ * says otherwise. The blank line first ends whatever event the service left unfinished.
+ */
+function streamError(entry: ModelWire, message: string): string {
+  const frame = (data: unknown, event?: string) => `${event ? `event: ${event}\n` : ''}data: ${JSON.stringify(data)}\n\n`
+  if (entry === 'anthropic-messages') return `\n\n${frame({ type: 'error', error: { type: 'api_error', message } }, 'error')}`
+  if (entry === 'responses')
+    return `\n\n${frame(
+      { type: 'response.failed', response: { object: 'response', status: 'failed', error: { code: 'gateway-upstream', message } } },
+      'response.failed',
+    )}`
+  if (entry === 'gemini') return `\n\n${frame({ error: { code: 502, message, status: 'UNAVAILABLE' } })}`
+  return `\n\n${frame({ error: { message, type: 'server_error', code: 'gateway-upstream' } })}data: [DONE]\n\n`
+}
+
+/**
+ * Whether a request leans on what the service itself keeps (an earlier response, a stored conversation): another
+ * service knows nothing of it, so such a request never leaves the session's own.
+ */
+function keepsState(fields: Record<string, unknown>): boolean {
+  return (
+    (fields.previous_response_id !== undefined && fields.previous_response_id !== null)
+    || fields.store === true
+    || (fields.conversation !== undefined && fields.conversation !== null)
+    || (fields.container !== undefined && fields.container !== null)
   )
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-  res.end(body)
+}
+
+const CLIENT_TOOL_TYPES = new Set(['function', 'custom', 'namespace'])
+/** Anthropic's tools that run in the harness though they carry a type: the service only names them. */
+const ANTHROPIC_CLIENT_TOOLS = /^(?:custom|bash_|text_editor_|computer_|memory_)/u
+
+/**
+ * Whether the service itself would act on the request (a tool it runs, such as a web search or code execution): sent
+ * twice, that could happen twice, so a 5xx is not tried again in place.
+ */
+function runsOnService(fields: Record<string, unknown>): boolean {
+  if (fields.web_search_options !== undefined || fields.mcp_servers !== undefined) return true
+  const tools = Array.isArray(fields.tools) ? fields.tools : []
+  return tools.some(item => {
+    if (typeof item !== 'object' || item === null) return false
+    const tool = item as Record<string, unknown>
+    if (typeof tool.type === 'string') return !CLIENT_TOOL_TYPES.has(tool.type) && !ANTHROPIC_CLIENT_TOOLS.test(tool.type)
+    // Gemini: anything but the functions the harness declared is run by the service.
+    return Object.keys(tool).some(key => key !== 'functionDeclarations' && key !== 'function_declarations' && key !== 'function')
+  })
+}
+
+const NEVER_CONNECTED = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT'])
+
+/**
+ * Whether a failed fetch never reached the service: no address, or no connection. Anything else, a connection that was
+ * reset or closed among them, may have delivered the request.
+ */
+function neverConnected(error: unknown): boolean {
+  for (let cause: unknown = error, depth = 0; cause instanceof Error && depth < 4; cause = cause.cause, depth++) {
+    const code = (cause as { code?: unknown }).code
+    if (typeof code === 'string' && NEVER_CONNECTED.has(code)) return true
+    // The Host's outbound policy refused the address: nothing was sent.
+    if (code === 'egress-denied') return true
+  }
+  return false
+}
+
+/** A body that goes on from what was already read of it. */
+function resumed(first: Uint8Array | undefined, reader: ReadableStreamDefaultReader<Uint8Array>): ReadableStream<Uint8Array> {
+  let pending = first
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (pending) {
+        controller.enqueue(pending)
+        pending = undefined
+        return
+      }
+      const next = await reader.read()
+      if (next.done) controller.close()
+      else controller.enqueue(next.value)
+    },
+    cancel: reason => reader.cancel(reason),
+  })
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -289,33 +432,33 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
  * What one request asks the gateway for, by the fixed paths of the protocol its token speaks; undefined for any other
  * path. `count`: a token count, forwarded but no model reply to read.
  */
-type Target = { list: true } | { list?: false; model?: string; count?: true; upstream: (baseURL: string) => string }
+type Target =
+  | { list: true }
+  | {
+      list?: false
+      model?: string
+      count?: true
+      /** Gemini says in its path whether the answer streams; the other protocols say it in the body. */
+      stream?: boolean
+      upstream: (baseURL: string, wire: ModelWire, model: string) => string
+    }
+
+/** Where a request of `entry` goes at a service that speaks `wire`. */
+function endpointOf(wire: ModelWire, base: string): string {
+  return wire === 'anthropic-messages'
+    ? anthropicEndpoint(base, '/messages')
+    : chatEndpoint(base, wire === 'chat-completions' ? '/chat/completions' : '/responses')
+}
 
 function targetOf(entry: ModelWire, upstream: ModelWire, method: string, url: URL): Target | undefined {
   const path = url.pathname
   if (entry !== 'gemini' && method === 'GET' && path === '/v1/models') return { list: true }
   if (method !== 'POST' && entry !== 'gemini') return undefined
-  if (entry === 'responses')
-    return path === '/v1/responses'
-      ? {
-          upstream: base =>
-            upstream === 'anthropic-messages'
-              ? anthropicEndpoint(base, '/messages')
-              : chatEndpoint(base, upstream === 'chat-completions' ? '/chat/completions' : '/responses'),
-        }
-      : undefined
+  if (entry === 'responses') return path === '/v1/responses' ? { upstream: (base, wire) => endpointOf(wire, base) } : undefined
   if (entry === 'chat-completions')
     return path === '/v1/chat/completions' ? { upstream: base => chatEndpoint(base, '/chat/completions') } : undefined
   if (entry === 'anthropic-messages') {
-    if (path === '/v1/messages')
-      return {
-        upstream: base =>
-          upstream === 'chat-completions'
-            ? chatEndpoint(base, '/chat/completions')
-            : upstream === 'responses'
-              ? chatEndpoint(base, '/responses')
-              : anthropicEndpoint(base, '/messages'),
-      }
+    if (path === '/v1/messages') return { upstream: (base, wire) => endpointOf(wire, base) }
     // Only an Anthropic service counts tokens the way Anthropic's clients ask.
     if (path === '/v1/messages/count_tokens' && upstream === 'anthropic-messages')
       return { count: true, upstream: base => anthropicEndpoint(base, '/messages/count_tokens') }
@@ -334,8 +477,9 @@ function targetOf(entry: ModelWire, upstream: ModelWire, method: string, url: UR
     const alt = url.searchParams.get('alt')
     return {
       model,
-      upstream: base => {
-        const target = geminiEndpoint(base, `/models/${encodeURIComponent(model)}:${match[2]}`)
+      stream: match[2] === 'streamGenerateContent',
+      upstream: (base, _wire, name) => {
+        const target = geminiEndpoint(base, `/models/${encodeURIComponent(name)}:${match[2]}`)
         if (alt === 'sse') target.searchParams.set('alt', 'sse')
         return target.toString()
       },
@@ -391,9 +535,11 @@ export class ModelGatewayServer implements ModelGateway {
   private server?: Server
   private port?: number
   private readonly queue: ModelRequestQueue
+  private readonly scheduler: ModelScheduler
 
   constructor(private readonly deps: ModelGatewayDeps) {
     this.queue = deps.queue ?? new ModelRequestQueue()
+    this.scheduler = deps.scheduler ?? new ModelScheduler({ fingerprint: id => deps.service(id)?.fingerprint })
   }
 
   async start(): Promise<void> {
@@ -444,6 +590,23 @@ export class ModelGatewayServer implements ModelGateway {
     const models = new Set(service.models.map(model => serviceModel(upstream, model)))
     if (!models.has(serviceModel(upstream, route.model)))
       throw new AppError(409, 'model-unavailable', `模型服务里已经没有「${route.model}」，这个会话不能再经 Latch 用它。`)
+    // What a model falls back to, as the session fixed it: a candidate that is gone, off or changed by now is left out
+    // of this token, never a reason to refuse the session.
+    const fallbacks = new Map<string, Candidate[]>()
+    for (const [name, listed] of Object.entries(route.fallbacks ?? {})) {
+      const key = serviceModel(upstream, name)
+      if (!models.has(key)) continue
+      const usable = listed.slice(0, MAX_MODEL_FALLBACKS).flatMap((item): Candidate[] => {
+        const other = this.deps.service(item.providerId)
+        if (!other || PROVIDER_WIRES[other.kind] !== item.upstream || originOf(other.baseURL) !== item.origin) return []
+        if (item.upstream !== route.wire && !canTranslate(route.wire, item.upstream)) return []
+        const model = serviceModel(item.upstream, item.model)
+        if (item.providerId === route.providerId && model === key) return []
+        if (!other.models.some(id => serviceModel(item.upstream, id) === model)) return []
+        return [{ providerId: item.providerId, upstream: item.upstream, model, fingerprint: other.fingerprint }]
+      })
+      if (usable.length) fallbacks.set(key, usable)
+    }
     const token = `${TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`
     const hash = hashOf(token)
     const binding: Binding = {
@@ -452,6 +615,7 @@ export class ModelGatewayServer implements ModelGateway {
       entry: route.wire,
       upstream: PROVIDER_WIRES[service.kind],
       models,
+      fallbacks,
       fingerprint: service.fingerprint,
       count: 0,
       turn: newTally(),
@@ -520,6 +684,56 @@ export class ModelGatewayServer implements ModelGateway {
     binding.closed = true
     this.bindings.delete(hash)
     return undefined
+  }
+
+  /** A fallback's service while it is what the token bound; once it changed or went away, that candidate stays out. */
+  private candidateService(candidate: Candidate): GatewayService | undefined {
+    if (candidate.dead) return undefined
+    const service = this.deps.service(candidate.providerId)
+    if (service && service.fingerprint === candidate.fingerprint) return service
+    candidate.dead = true
+    return undefined
+  }
+
+  /**
+   * The request as `candidate` gets it: converted when its service speaks another protocol than the harness, and naming
+   * the model as that service does. Throws what the harness is told when the request cannot be put that way.
+   */
+  private prepare(
+    binding: Binding,
+    candidate: Candidate,
+    service: GatewayService,
+    asked: { model: string; body: Buffer; fields: Record<string, unknown>; inPath: boolean },
+  ): Prepared {
+    const first = candidate.providerId === binding.providerId && candidate.model === asked.model
+    if (binding.entry === candidate.upstream) {
+      if (first || asked.inPath) return { body: asked.body }
+      const exact = exactJson(asked.body.toString('utf8')) as Record<string, unknown>
+      exact.model = candidate.model
+      return { body: Buffer.from(JSON.stringify(exact)) }
+    }
+    const scope = { providerId: candidate.providerId, model: candidate.model, wire: candidate.upstream }
+    const openReasoning = (value: string) => this.reasoning.open(scope, value)
+    const converted =
+      binding.entry === 'anthropic-messages'
+        ? decodeAnthropic(asked.body.toString('utf8'), openReasoning)
+        : decodeResponses(asked.fields, openReasoning, asked.body.toString('utf8'))
+    converted.model = candidate.model
+    const allowed = service.modelCapabilities?.[candidate.model]?.thinking
+    if (converted.effort && !allowed?.includes(converted.effort)) {
+      if (first) throw new AppError(400, 'effort-unavailable', '这个模型服务没有声明所请求的思考档位')
+      // Another model has its own levels: it runs with its default rather than not at all.
+      delete converted.effort
+    }
+    const encoded =
+      candidate.upstream === 'responses'
+        ? encodeResponses(converted)
+        : candidate.upstream === 'anthropic-messages'
+          ? encodeAnthropic(converted)
+          : encodeChat(converted)
+    const body = Buffer.from(JSON.stringify(encoded.body))
+    if (body.length > MAX_BODY_BYTES) throw new AppError(413, 'body-too-large', '转换后的请求内容过大，Latch 没有转发')
+    return { body, translated: { request: converted, tools: encoded.tools } }
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -606,38 +820,20 @@ export class ModelGatewayServer implements ModelGateway {
         }
       }
     }
-    let translated: { request: GatewayRequest; tools: ToolNames } | undefined
-    if (binding.entry !== binding.upstream) {
-      try {
-        const scope = { providerId: binding.providerId, model, wire: binding.upstream }
-        const openReasoning = (value: string) => this.reasoning.open(scope, value)
-        const converted =
-          binding.entry === 'anthropic-messages'
-            ? decodeAnthropic(body.toString('utf8'), openReasoning)
-            : decodeResponses(fields, openReasoning, body.toString('utf8'))
-        const allowed = service.modelCapabilities?.[model]?.thinking
-        if (converted.effort && !allowed?.includes(converted.effort))
-          throw new AppError(400, 'effort-unavailable', '这个模型服务没有声明所请求的思考档位')
-        const encoded =
-          binding.upstream === 'responses'
-            ? encodeResponses(converted)
-            : binding.upstream === 'anthropic-messages'
-              ? encodeAnthropic(converted)
-              : encodeChat(converted)
-        body = Buffer.from(JSON.stringify(encoded.body))
-        if (body.length > MAX_BODY_BYTES) throw new AppError(413, 'body-too-large', '转换后的请求内容过大，Latch 没有转发')
-        translated = { request: converted, tools: encoded.tools }
-        for (const loss of converted.dropped) tally.dropped.add(loss)
-      } catch (error) {
-        failed(entry)
-        return refuse(
-          res,
-          400,
-          'gateway-translation-input',
-          error instanceof AppError ? error.message : '请求不能转换为这个服务的协议',
-          shape,
-        )
-      }
+    const asked = { model, body, fields, inPath: target.model !== undefined }
+    const own: Candidate = { providerId: binding.providerId, upstream: binding.upstream, model, fingerprint: binding.fingerprint }
+    let prepared: Prepared
+    try {
+      prepared = this.prepare(binding, own, service, asked)
+    } catch (error) {
+      failed(entry)
+      return refuse(
+        res,
+        400,
+        'gateway-translation-input',
+        error instanceof AppError ? error.message : '请求不能转换为这个服务的协议',
+        shape,
+      )
     }
     // The body may have arrived over many awaits: a closed process or a changed service must not send its old key.
     service = this.current(hash, binding)
@@ -645,77 +841,181 @@ export class ModelGatewayServer implements ModelGateway {
       failed(entry)
       return refuse(res, 401, 'gateway-token', '模型服务的设置已经变了，这个凭据不再有效。下一条消息会重新连接。', shape)
     }
+    // A token count belongs to the session's own service; a model's reply may come from what it falls back to. So does a
+    // request that leans on what the service itself keeps: a stored conversation means nothing to another service.
+    const stateful = keepsState(fields)
+    const listed = [own, ...(target.count ? [] : (binding.fallbacks.get(model) ?? []))]
+    // Each with its place among the session's candidates, which is what the record of a switch names. A candidate whose
+    // service changed or went away is left out here, before anything is scheduled: it never reaches the scheduler.
+    const candidates = listed
+      .map((candidate, place) => ({ candidate, place }))
+      .filter(
+        ({ candidate, place }) =>
+          place === 0 || ((!stateful || candidate.providerId === own.providerId) && this.candidateService(candidate) !== undefined),
+      )
+    const revoked = (): Reply => refusal(401, 'gateway-token', '模型服务的设置已经变了，这个凭据不再有效。下一条消息会重新连接。', shape)
     const controller = new AbortController()
     const disconnected = () => {
       if (!res.writableFinished) controller.abort()
     }
     res.once('close', disconnected)
     if (res.destroyed) controller.abort()
-    let release: (() => void) | undefined
-    let started = false
+    const { signal } = controller
+    let request: OpenRequest | undefined
+    /** The Host-wide permit of the reply that began; a try that failed gave its own back already. */
+    let permit: (() => void) | undefined
     try {
-      release = await this.queue.acquire(controller.signal, body.length)
-      controller.signal.throwIfAborted()
-      // Waiting is not authorization: the process and service must still match when its permit arrives.
-      service = this.current(hash, binding)
-      if (!service) {
-        failed(entry)
-        return refuse(res, 401, 'gateway-token', '模型服务的设置已经变了，这个凭据不再有效。下一条消息会重新连接。', shape)
-      }
-      const request: OpenRequest | undefined = entry ? { tally, entry, apiKey: service.apiKey } : undefined
-      started = true
+      signal.throwIfAborted()
+      request = entry ? { tally, entry, apiKey: service.apiKey } : undefined
       if (request) tally.open.add(request)
+      const moved = tally.moved.get(model)
+      const start = moved === undefined ? -1 : candidates.findIndex(item => item.place === moved)
+      const result = await this.scheduler.dispatch<Opened, Reply>({
+        sessionId: binding.sessionId,
+        candidates: candidates.map(item => item.candidate),
+        ...(start > 0 ? { start } : {}),
+        signal,
+        // An answer that comes whole may rightly take longer than any first-byte limit.
+        firstByte: target.stream ?? fields.stream === true,
+        retryServer: !stateful && !runsOnService(fields),
+        attempt: async (index, attemptSignal, timer) => {
+          const { candidate } = candidates[index]!
+          const usable = () => (index === 0 ? this.current(hash, binding) : this.candidateService(candidate))
+          if (!usable()) return index === 0 ? { ok: false, class: 'request', reply: revoked() } : { skip: true }
+          let body = prepared
+          if (index > 0) {
+            try {
+              body = this.prepare(binding, candidate, usable()!, asked)
+            } catch {
+              return { skip: true }
+            }
+          }
+          // The service's own place is held by now; the Host-wide permit comes second, on this path as on the built-in
+          // harness's, and waiting for it is not the service's silence.
+          const held = await timer.waiting(this.queue.acquire(signal, body.body.length, () => this.scheduler.waiting(binding.sessionId)))
+          let kept = false
+          try {
+            attemptSignal.throwIfAborted()
+            // Waiting is not authorization: the process and service must still match when its permit arrives.
+            const current = usable()
+            if (!current) return index === 0 ? { ok: false, class: 'request', reply: revoked() } : { skip: true }
+            const sent = await this.send(
+              req,
+              binding,
+              candidate,
+              current,
+              body,
+              target.upstream(current.baseURL, candidate.upstream, candidate.model),
+              attemptSignal,
+              timer,
+            )
+            // A try that lost to its time limit answers nobody: its permit goes back with it.
+            if ('ok' in sent && sent.ok && !attemptSignal.aborted) {
+              kept = true
+              permit?.()
+              permit = held
+            }
+            return sent
+          } finally {
+            if (!kept) held()
+          }
+        },
+        timedOut: () => refusal(504, 'gateway-timeout', '模型服务没有在时限内开始回复', shape),
+        beforeSwitch: async (from, to, reason) => {
+          await this.deps.fallback?.({
+            sessionId: binding.sessionId,
+            providerId: candidates[from]!.candidate.providerId,
+            candidate: candidates[to]!.place,
+            reason,
+          })
+          // A position and a class: never a model, a key or anything of the request.
+          this.deps.log(`模型请求改用候选 ${candidates[to]!.place}（${reason}）`)
+        },
+      })
+      if (!result.ok) {
+        finish(request)
+        if (result.failure) return answer(res, result.failure.reply)
+        // The session's own service is not what this token was issued for any more: as before, the token is what fails.
+        if (result.changed) return answer(res, revoked())
+        const wait = Math.ceil((result.retryAfterMs ?? 1000) / 1000)
+        res.setHeader('retry-after', String(wait))
+        return refuse(res, 503, 'gateway-circuit-open', '这个模型服务一直出错，Latch 暂时没有向它发送请求。', shape)
+      }
+      const opened = result.value
+      const { place } = candidates[result.index]!
+      // The rest of the turn stays where this request was answered; the next turn starts from the first candidate again.
+      if (place > 0) tally.moved.set(model, place)
+      else tally.moved.delete(model)
+      if (request) {
+        request.apiKey = opened.service.apiKey
+        if (place > 0) {
+          request.entry.provider = opened.candidate.providerId
+          request.entry.fallback = (request.entry.fallback ?? 0) + 1
+        }
+      }
+      for (const loss of opened.prepared.translated?.request.dropped ?? []) tally.dropped.add(loss)
+      let end: 'complete' | 'broken' | 'aborted' = 'broken'
       try {
-        await this.forward(req, res, binding, service, target.upstream(service.baseURL), body, request, controller.signal, translated)
+        end = await this.relay(res, binding, opened, request, signal)
       } finally {
         finish(request)
+        result.done(signal.aborted ? 'aborted' : end)
       }
     } catch (error) {
-      if (!started) failed(entry)
-      if (controller.signal.aborted) return
+      if (request) finish(request)
+      else failed(entry)
+      if (signal.aborted) return
       if (!(error instanceof AppError)) throw error
       if (error.code === 'gateway-busy') res.setHeader('retry-after', '1')
       refuse(res, error.status, error.code, error.message, shape)
     } finally {
-      release?.()
+      permit?.()
       res.off('close', disconnected)
     }
   }
 
-  private async forward(
+  /** One try at one candidate: resolves when its reply's first bytes are here, or with how it failed before that. */
+  private async send(
     req: IncomingMessage,
-    res: ServerResponse,
     binding: Binding,
+    candidate: Candidate,
     service: GatewayService,
+    prepared: Prepared,
     upstream: string,
-    body: Buffer,
-    request: OpenRequest | undefined,
     signal: AbortSignal,
-    translated?: { request: GatewayRequest; tools: ToolNames },
-  ): Promise<void> {
-    const wire = binding.upstream
+    timer: AttemptTimer,
+  ): Promise<AttemptResult<Opened, Reply>> {
+    const wire = candidate.upstream
     const shape = binding.entry === 'anthropic-messages' ? 'anthropic' : 'openai'
+    const { translated } = prepared
     const headers: Record<string, string> = { 'content-type': 'application/json', ...authHeaders(wire, service.apiKey) }
     // Named protocol headers only, never a credential: what the harness says of its protocol replaces Latch's default.
-    const passed = binding.entry === binding.upstream && wire === 'anthropic-messages'
+    const passed = binding.entry === wire && wire === 'anthropic-messages'
     for (const name of [...(translated ? ['accept'] : FORWARDED_HEADERS[binding.entry]), ...(passed ? ANTHROPIC_HEADERS : [])]) {
       const value = req.headers[name]
       if (typeof value === 'string') headers[name] = value
+    }
+    const unreachable = (error: unknown, unsent = false): AttemptResult<Opened, Reply> => {
+      const detail = error instanceof Error ? error.message : String(error)
+      return {
+        ok: false,
+        class: 'network',
+        ...(unsent ? { unsent: true as const } : {}),
+        reply: refusal(502, 'gateway-upstream', `连不上模型服务：${withoutKey(detail, service.apiKey).slice(0, 300)}`, shape),
+      }
     }
     let response: Response
     try {
       response = await this.deps.fetchFor(service.baseURL)(upstream, {
         method: 'POST',
         headers,
-        body: new Uint8Array(body),
+        body: new Uint8Array(prepared.body),
         redirect: 'error',
         signal,
       })
     } catch (error) {
-      finish(request)
-      if (signal.aborted) return
-      const detail = error instanceof Error ? error.message : String(error)
-      return refuse(res, 502, 'gateway-upstream', `连不上模型服务：${withoutKey(detail, service.apiKey).slice(0, 300)}`, shape)
+      if (signal.aborted) throw error
+      return unreachable(error, neverConnected(error))
     }
     const returned: Record<string, string> = { 'cache-control': 'no-store' }
     for (const name of RETURNED_HEADERS) {
@@ -723,21 +1023,30 @@ export class ModelGatewayServer implements ModelGateway {
       if (value) returned[name] = withoutKey(value, service.apiKey)
     }
     if (!response.ok) {
-      finish(request)
       const text = response.body ? await errorText(response.body) : ''
       const safe = withoutKey(text, service.apiKey)
-      if (translated) {
-        const status = response.status >= 500 ? 503 : response.status
-        const code = /context_length_exceeded|maximum context|context window|prompt is too long/iu.test(safe)
-          ? 'context_length_exceeded'
-          : status === 429
-            ? 'rate_limit_exceeded'
-            : status === 503
-              ? 'server_is_overloaded'
-              : 'gateway-upstream'
-        res.writeHead(status, { ...returned, 'content-type': 'application/json; charset=utf-8' })
-        res.end(
-          JSON.stringify({
+      const failure = {
+        ok: false as const,
+        class: classifyStatus(response.status, safe) as Exclude<ModelFailureClass, 'unavailable' | 'circuit-open'>,
+        ...(retryAfterMs(response.headers.get('retry-after'), this.scheduler.clock.now()) !== undefined
+          ? { retryAfterMs: retryAfterMs(response.headers.get('retry-after'), this.scheduler.clock.now())! }
+          : {}),
+      }
+      if (!translated) return { ...failure, reply: { status: response.status, headers: returned, body: safe } }
+      const status = response.status >= 500 ? 503 : response.status
+      const code = /context_length_exceeded|maximum context|context window|prompt is too long/iu.test(safe)
+        ? 'context_length_exceeded'
+        : status === 429
+          ? 'rate_limit_exceeded'
+          : status === 503
+            ? 'server_is_overloaded'
+            : 'gateway-upstream'
+      return {
+        ...failure,
+        reply: {
+          status,
+          headers: { ...returned, 'content-type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({
             ...(shape === 'anthropic' ? { type: 'error' } : {}),
             error: {
               type:
@@ -752,69 +1061,113 @@ export class ModelGatewayServer implements ModelGateway {
               message: safe.slice(0, 1000) || '模型服务拒绝了请求',
             },
           }),
-        )
-      } else {
-        res.writeHead(response.status, returned)
-        res.end(safe)
+        },
       }
-      return
     }
-    if (translated) {
-      await this.translateReply(response, res, binding, service, request, translated, returned, signal)
-      return
+    const opened: Opened = { candidate, service, prepared, response, returned }
+    // The service answered: a model may think for a long while before its first event, and that is not its silence.
+    timer.began()
+    if (!response.body) return { ok: true, value: opened }
+    // Until the first bytes are here nothing was given to the harness, so a service that accepts and then drops the
+    // connection is still one the request may leave. No time limit applies any more.
+    const reader = response.body.getReader()
+    try {
+      const next = await reader.read()
+      return { ok: true, value: { ...opened, reader, ...(next.done ? {} : { first: next.value }) } }
+    } catch (error) {
+      await reader.cancel().catch(() => {})
+      if (signal.aborted) throw error
+      return unreachable(error)
     }
+  }
+
+  /** Gives a reply that began to the harness, as it came or converted, and says how it ended. */
+  private async relay(
+    res: ServerResponse,
+    binding: Binding,
+    opened: Opened,
+    request: OpenRequest | undefined,
+    signal: AbortSignal,
+  ): Promise<'complete' | 'broken' | 'aborted'> {
+    const { candidate, service, response, returned, reader } = opened
+    const gone = () => signal.aborted || res.destroyed
+    if (opened.prepared.translated)
+      return this.translateReply(
+        response,
+        reader ? resumed(opened.first, reader) : undefined,
+        res,
+        binding,
+        candidate,
+        service,
+        request,
+        opened.prepared.translated,
+        returned,
+        signal,
+      )
     res.writeHead(response.status, returned)
     const reply = replyReader(binding.entry, response.headers.get('content-type'))
     if (request) request.reply = reply
-    if (!response.body) {
+    if (!reader) {
       finish(request, reply.end())
       res.end()
-      return
+      return 'complete'
     }
-    const reader = response.body.getReader()
     const redactor = replyRedactor(service.apiKey)
     let complete = false
+    let ended = false
     try {
+      let chunk = opened.first
       for (;;) {
-        const next = await reader.read()
-        if (next.done) {
-          complete = true
-          break
+        if (!chunk) {
+          const next = await reader.read()
+          if (next.done) {
+            complete = true
+            break
+          }
+          chunk = next.value
         }
-        reply.feed(next.value)
-        const safe = redactor.feed(next.value)
+        reply.feed(chunk)
+        const safe = redactor.feed(chunk)
+        chunk = undefined
         if (safe && !res.write(safe)) await new Promise<void>(resolve => res.once('drain', resolve).once('close', resolve))
         if (res.destroyed) break
       }
     } catch {
-      // The service or the harness went away mid-stream; neither can be told more.
+      // The service or the harness went away mid-stream; what the harness is told follows.
     } finally {
       // Read before the reply ends, so the turn that waits on it finds it counted. A reply that said it is over counts
       // as such though the stream broke after: the harness may stop reading once it has the last event.
       const facts = reply.end()
-      finish(request, complete || facts.ended ? facts : undefined)
+      ended = complete || facts.ended === true
+      finish(request, ended ? facts : undefined)
       await reader.cancel().catch(() => {})
-      res.end(redactor.end())
+      const tail = redactor.end()
+      // Never a silent end: a stream that broke says so in the harness's own protocol, and nothing is sent again.
+      const broke = !ended && !gone() && response.headers.get('content-type')?.includes('text/event-stream')
+      res.end(broke ? `${tail}${streamError(binding.entry, '模型服务的回复中断了，这一轮没有完成。')}` : tail)
     }
+    return ended ? 'complete' : gone() ? 'aborted' : 'broken'
   }
 
   private async translateReply(
     response: Response,
+    source: ReadableStream<Uint8Array> | undefined,
     res: ServerResponse,
     binding: Binding,
+    candidate: Candidate,
     service: GatewayService,
     request: OpenRequest | undefined,
     translated: { request: GatewayRequest; tools: ToolNames },
     returned: Record<string, string>,
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<'complete' | 'broken' | 'aborted'> {
     const { request: input, tools } = translated
     const safe = (text: string) => withoutKey(text, service.apiKey)
-    const scope = { providerId: binding.providerId, model: input.model, wire: binding.upstream }
+    const scope = { providerId: candidate.providerId, model: input.model, wire: candidate.upstream }
     const seal = (state: GatewayReasoning) => this.reasoning.seal(scope, state, safe)
     const output =
       binding.entry === 'anthropic-messages' ? new AnthropicOutput(input, tools, seal, safe) : new ResponsesOutput(input, tools, seal, safe)
-    const reply = replyReader(binding.upstream, response.headers.get('content-type'))
+    const reply = replyReader(candidate.upstream, response.headers.get('content-type'))
     if (request) request.reply = reply
     const write = async (events: Array<Record<string, unknown> & { type: string }>) => {
       for (const event of events) {
@@ -826,8 +1179,8 @@ export class ModelGatewayServer implements ModelGateway {
       }
     }
     try {
-      if (!response.body) throw new AppError(502, 'gateway-upstream', '模型服务没有回复正文')
-      const body = response.body.pipeThrough(
+      if (!source) throw new AppError(502, 'gateway-upstream', '模型服务没有回复正文')
+      const body = source.pipeThrough(
         new TransformStream<Uint8Array, Uint8Array>({
           transform(chunk, controller) {
             reply.feed(chunk)
@@ -846,9 +1199,9 @@ export class ModelGatewayServer implements ModelGateway {
         const scrubbers = { text: replyRedactor(service.apiKey), reasoning: replyRedactor(service.apiKey) }
         const encoder = new TextEncoder()
         const deltas =
-          binding.upstream === 'responses'
+          candidate.upstream === 'responses'
             ? decodeResponsesStream(body, signal)
-            : binding.upstream === 'anthropic-messages'
+            : candidate.upstream === 'anthropic-messages'
               ? decodeAnthropicStream(body, signal)
               : decodeChat(body, signal)
         for await (const delta of deltas) {
@@ -893,9 +1246,9 @@ export class ModelGatewayServer implements ModelGateway {
           await reader.cancel().catch(() => {})
         }
         const deltas: GatewayDelta[] =
-          binding.upstream === 'responses'
+          candidate.upstream === 'responses'
             ? decodeResponsesReply(JSON.parse(text))
-            : binding.upstream === 'anthropic-messages'
+            : candidate.upstream === 'anthropic-messages'
               ? decodeAnthropicReply(text)
               : decodeChatReply(JSON.parse(text))
         for (const delta of deltas) {
@@ -907,9 +1260,10 @@ export class ModelGatewayServer implements ModelGateway {
         res.writeHead(200, { ...returned, 'content-type': 'application/json; charset=utf-8' })
         res.end(safeJson(output.result(), service.apiKey))
       }
+      return 'complete'
     } catch (error) {
       finish(request)
-      if (res.destroyed || signal.aborted) return
+      if (res.destroyed || signal.aborted) return 'aborted'
       const message = error instanceof AppError ? safe(error.message) : '模型回复未完整转换，本轮没有确认完成'
       if (res.headersSent) {
         await write(output.fail(message, error instanceof AppError ? error.code : 'gateway-upstream'))
@@ -922,6 +1276,7 @@ export class ModelGatewayServer implements ModelGateway {
           message,
           binding.entry === 'anthropic-messages' ? 'anthropic' : 'openai',
         )
+      return 'broken'
     }
   }
 }

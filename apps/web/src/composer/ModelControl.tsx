@@ -46,12 +46,14 @@ import {
   serviceModels,
   servicePick,
   switchModel,
+  withOwnDefault,
   withServicePick,
   withTypedModels,
   type ComposerChoice,
 } from '../composerChoice.ts'
 import { fuzzyModelMatch, modelKey, rememberModel, useModelPreferences } from '../modelPreferences.ts'
 import { HarnessTile, ProviderTile } from '../components/BrandTile.tsx'
+import { HealthDot, menuHealth, nameWithHealth } from '../components/ServiceHealth.tsx'
 import { ModelAddPanel, modelGroups } from '../components/Pickers.tsx'
 import { AgentPresetList, AgentSetupPanel } from '../components/SetupPanels.tsx'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
@@ -544,16 +546,20 @@ function routeNote(
   name: string,
   route: NonNullable<TaskSummary['modelRoute']>,
   computer?: string,
-): { failure: string } | { brief: Brief; tone?: 'warn' } {
+): { failure: string } | { brief: Brief; tone?: 'warn'; fallback?: string } {
   const service = routeService(catalog, route, computer)
   if (service.unusable) return { failure: service.unusable.note }
+  // What the session fixed when it started; a service deleted since has no name left to show.
+  const others = (route.fallbacks ?? []).flatMap(item => (item.name ? [item.name] : []))
+  const fallback = others.length ? { fallback: `出错时改用「${[...new Set(others)].join('」「')}」` } : {}
   return route.bypassed
-    ? { brief: { label: '有一轮没经过 Latch', detail: `那一轮可能用了 ${name} 自己的登录或配置。` }, tone: 'warn' }
+    ? { brief: { label: '有一轮没经过 Latch', detail: `那一轮可能用了 ${name} 自己的登录或配置。` }, tone: 'warn', ...fallback }
     : {
         brief: {
           label: `经 Latch 用「${service.name}」`,
           detail: onComputer('请求由 Latch 在这台 Mac 上转发，用设置里的密钥。', computer),
         },
+        ...fallback,
       }
 }
 
@@ -581,11 +587,17 @@ export function ownModelGroups(
   const routed = session?.route ? routeService(catalog, session.route, computer) : undefined
   const services = catalog.providers.filter(provider => provider.kind !== 'demo' && provider.id !== session?.route?.providerId)
   // On a route, the Host offers only the service's models, the ones the gateway forwards.
-  const ownLabel = routed ? `${routed.name} · ${routed.unusable?.words ?? '经 Latch'}` : name
+  const routedHealth = routed && !routed.unusable ? menuHealth(findProvider(catalog, session?.route?.providerId)) : undefined
+  const ownLabel = routed ? `${nameWithHealth(routed.name, routedHealth)} · ${routed.unusable?.words ?? '经 Latch'}` : name
   const ownOptions = routed?.unusable
     ? own.map(option => ({ ...option, disabledReason: `下一轮会失败：服务${routed.unusable!.words}` }))
     : own
-  const ownMedia = !routed && harness ? { media: <HarnessTile harness={harness} size={16} /> } : {}
+  const ownMedia =
+    !routed && harness
+      ? { media: <HarnessTile harness={harness} size={16} /> }
+      : routedHealth
+        ? { media: <HealthDot words={routedHealth} /> }
+        : {}
   const groups: Array<PickerGroup<string>> = [{ id: '~own', label: ownLabel, ...ownMedia, options: ownOptions }]
   const disabled: Array<PickerGroup<string>['options'][number]> = []
   for (const provider of services) {
@@ -603,9 +615,11 @@ export function ownModelGroups(
     }
     const route = pairRoute(harness.capabilities, provider)
     const experimental = route.kind === 'translate' || harness.capabilities.models.experimental ? '实验性 · ' : ''
+    const health = menuHealth(provider)
     groups.push({
       id: `~service-${provider.id}`,
-      label: `${provider.name} · ${experimental}经 Latch`,
+      label: `${nameWithHealth(provider.name, health)} · ${experimental}经 Latch`,
+      ...(health ? { media: <HealthDot words={health} /> } : {}),
       options: serviceModels(provider).map(model => ({
         value: serviceValue({ providerId: provider.id, model }),
         label: model,
@@ -693,8 +707,9 @@ export function DraftModelControl({
       const base = configId === modelOption?.id ? withServicePick(choice.config, undefined) : choice.config
       onChoice({ config: { ...base, [configId]: value } })
     }
+    // Leaving a service for the Harness's own default is a choice of its own: remembered, and before a project's 默认模型.
     const pickService = (model: ModelRef | undefined) => {
-      onChoice({ config: withServicePick(choice.config, model, modelOption?.id) })
+      onChoice({ config: model ? withServicePick(choice.config, model, modelOption?.id)! : withOwnDefault(choice.config, modelOption?.id) })
     }
     const rows = (
       <CatalogueRows
@@ -1092,7 +1107,10 @@ function HarnessModelPicker({
                 {routeLine.failure}
               </p>
             ) : (
-              <BriefHint brief={routeLine.brief} className="model-note" {...(routeLine.tone ? { tone: routeLine.tone } : {})} />
+              <>
+                <BriefHint brief={routeLine.brief} className="model-note" {...(routeLine.tone ? { tone: routeLine.tone } : {})} />
+                {'fallback' in routeLine && routeLine.fallback && <p className="model-note">{routeLine.fallback}</p>}
+              </>
             ))}
           {feedback && ownFeedback && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />}
           {manage}

@@ -32,8 +32,12 @@ import { folderAccessText, PROJECT_ICONS, ProjectIcon, projectFolders, projectNa
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { modelFromKey, modelGroups, modelKey } from '../components/pickerOptions.tsx'
 import { LeftoverWorktrees } from './LeftoverWorktrees.tsx'
 import { IconTile, MiddleEllipsis, moreButton, NavRow, NoteLine, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+
+/** 「不设」 in the project's 默认模型: the Harness's own default stands. */
+const NO_MODEL = '~none'
 
 function folderInUse(project: WorkspaceInfo, folder: WorkspaceFolder, snapshot: AppSnapshot): boolean {
   return snapshot.tasks.some(
@@ -197,6 +201,47 @@ export function ProjectEditor({
             )
           }
         />
+        {(owner || project.defaultModel) && snapshot.catalog && (
+          <SettingsRow
+            title="默认模型"
+            trailing={
+              owner ? (
+                <ValuePicker
+                  label="默认模型"
+                  value={project.defaultModel ? modelKey(project.defaultModel) : NO_MODEL}
+                  disabled={busy}
+                  searchable={snapshot.catalog.providers.reduce((sum, provider) => sum + provider.models.length, 0) >= 8}
+                  width={320}
+                  header={{ title: '这个项目的新会话用' }}
+                  groups={[
+                    { id: '~none', options: [{ value: NO_MODEL, label: '不设' }] },
+                    ...modelGroups(snapshot.catalog).filter(group => group.options.length > 0),
+                    // A saved model that is off or gone now is still shown as what is saved.
+                    ...(project.defaultModel
+                    && !snapshot.catalog.providers.some(
+                      provider => provider.id === project.defaultModel!.providerId && provider.models.includes(project.defaultModel!.model),
+                    )
+                      ? [
+                          {
+                            id: '~saved',
+                            label: '现在不能用',
+                            options: [{ value: modelKey(project.defaultModel), label: project.defaultModel.model }],
+                          },
+                        ]
+                      : []),
+                  ]}
+                  onValueChange={value => {
+                    const next = value === NO_MODEL ? null : modelFromKey(value)
+                    if ((next ? modelKey(next) : NO_MODEL) === (project.defaultModel ? modelKey(project.defaultModel) : NO_MODEL)) return
+                    void execute(() => api(endpoint, { method: 'PATCH', body: { defaultModel: next } }))
+                  }}
+                />
+              ) : (
+                <code className="settings-mono">{project.defaultModel?.model}</code>
+              )
+            }
+          />
+        )}
         <SettingsRow title={`${projectSessionCount(project, snapshot.tasks)} 个会话`} />
       </SettingsGroup>
       {onOpenSession && (

@@ -14,6 +14,7 @@ import { THOUGHT_WORDS } from '../agents/personWords.ts'
 import type { AgentAvatar as AgentAvatarValue } from '@latch/protocol'
 import { VisibleText } from './VisibleText.tsx'
 import {
+  Badge,
   Button,
   Collapse,
   ICON_STROKE,
@@ -204,6 +205,7 @@ export function AuthorLine({
   model,
   provider,
   chosen,
+  fallback,
 }: {
   name: string
   /** The engine's name, when it is not already the word. */
@@ -214,8 +216,10 @@ export function AuthorLine({
   provider?: string
   /** The model the session had chosen, when `model` answered instead; `reported` when the service said so. */
   chosen?: { model: string; reported: boolean }
+  /** A 「出错时改用」 service answered the turn: its name, written before the model with the 备选 tag after. */
+  fallback?: string | undefined
 }) {
-  const detail = [engine, model].filter(Boolean).join(' · ')
+  const detail = [engine, fallback, model].filter(Boolean).join(' · ')
   return (
     <div className="assistant-meta">
       {/* The turn's source, not the harness's state now: the tile never draws readiness here. */}
@@ -224,6 +228,13 @@ export function AuthorLine({
       {detail && (
         <Tooltip content={provider}>
           <span className="assistant-meta-model">{detail}</span>
+        </Tooltip>
+      )}
+      {fallback && (
+        <Tooltip content={`这一轮由「${fallback}」回答`}>
+          <span className="assistant-meta-fallback" tabIndex={0}>
+            <Badge>备选</Badge>
+          </span>
         </Tooltip>
       )}
       {chosen && model && (

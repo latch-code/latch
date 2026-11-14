@@ -33,6 +33,7 @@ function modelLine(entry: RoutedModel): string {
   const parts = [`${entry.model}：${entry.requests} 次`]
   if (entry.failed) parts.push(`${entry.failed} 次没有完成`)
   if (entry.open) parts.push(`${entry.open} 次在这一轮结束时还在进行`)
+  if (entry.fallback) parts.push(`${entry.fallback} 次由备选回答`)
   if (entry.used && modelIdKey(entry.used) !== modelIdKey(entry.model)) parts.push(`服务说用的是 ${entry.used}`)
   return parts.join('，') + (entry.usage ? ` · ${tokenParts(entry.usage).join(' · ')}` : '')
 }
@@ -67,7 +68,9 @@ function SettledFacts({
   person: boolean
 }) {
   const times = turnTimes(turn)
-  const route = person ? undefined : turnRoute(turn)
+  // The built-in harness's turns went through no gateway: their record only says which service answered.
+  const routed = person ? undefined : turnRoute(turn)
+  const route = routed?.direct ? undefined : routed
   // Steps the harness reported come first; a turn through Latch without them has the tokens its replies reported.
   const stepUsage = person ? undefined : turnUsage(turn)
   const usage = person ? undefined : (stepUsage ?? route?.usage)

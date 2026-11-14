@@ -70,10 +70,29 @@ const usageSchema = z.object({
   cacheWriteTokens: z.number().nonnegative().optional(),
   reasoningTokens: z.number().nonnegative().optional(),
 })
+const count = z.number().int().nonnegative()
 const turnSchema = z.object({
   endedAt: z.string().optional(),
   activeMs: z.number().nonnegative().optional(),
   waitMs: z.number().nonnegative().optional(),
+  // Only the steps a 「出错时改用」 service answered: its ID and model, never content.
+  routed: z
+    .object({
+      requests: count,
+      models: z
+        .array(
+          z.object({
+            model: z.string().max(200),
+            used: z.string().max(200).optional(),
+            requests: count,
+            provider: z.string().max(128).optional(),
+            fallback: count.optional(),
+          }),
+        )
+        .max(16),
+      direct: z.literal(true).optional(),
+    })
+    .optional(),
 })
 // Every persisted field must be listed: z.object drops unknown keys on load.
 const toolDetailSchema = z.object({

@@ -135,6 +135,8 @@ export function providerSettings(record: ProviderRecord): ProviderSettings {
     models: [...record.models],
     ...(record.modelCapabilities ? { modelCapabilities: structuredClone(record.modelCapabilities) } : {}),
     defaultModel: record.defaultModel,
+    ...(record.fallbacks && Object.keys(record.fallbacks).length ? { fallbacks: structuredClone(record.fallbacks) } : {}),
+    ...(record.maxConcurrent !== undefined ? { maxConcurrent: record.maxConcurrent } : {}),
   }
 }
 

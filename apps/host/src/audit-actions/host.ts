@@ -111,6 +111,17 @@ export const HOST_ACTIONS = {
     result: z.enum(['denied', 'timeout', 'cancelled', 'error']),
   }),
   'provider.secret.set': z.strictObject({ providerId: opaqueId, originHash: hex64 }),
+  /**
+   * 「出错时改用」 of a service's models was edited: where its sessions' requests may go from then on. Only IDs and
+   * counts: `models` whose lists changed, the services the new lists name, and `widened` when anything was added or
+   * moved (an edit that only removes entries is a tightening, never blocked by this record).
+   */
+  'provider.fallbacks.changed': z.strictObject({
+    providerId: opaqueId,
+    models: count,
+    candidates: z.array(opaqueId).max(64),
+    widened: z.boolean(),
+  }),
   'provider.secret.cleared': z.strictObject({
     providerId: opaqueId,
     reason: z.enum(['origin-changed', 'path-changed', 'manual', 'deleted']),
@@ -143,6 +154,8 @@ export const HOST_ACTIONS = {
     glyphChanged: z.boolean(),
     primaryChanged: z.boolean(),
     reordered: z.boolean(),
+    /** The project's 默认模型 was set, changed or cleared. */
+    modelChanged: z.boolean().optional(),
   }),
   /** A saved project that became unusable (a folder failing the rules, missing or unreadable); it stays in settings. */
   'workspace.disabled': z.strictObject({

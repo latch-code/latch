@@ -72,6 +72,11 @@ export interface RoutedTurn {
   models: RoutedModel[]
   /** Closed diagnostic names only; no request, response or tool contents. */
   dropped?: GatewayLoss[]
+  /**
+   * The built-in harness, which calls services without the gateway: only the steps a 「出错时改用」 service answered are
+   * counted here, and nothing else of the turn.
+   */
+  direct?: true
 }
 
 export interface RoutedModel {
@@ -87,6 +92,10 @@ export interface RoutedModel {
   /** Of `requests`, those still under way when the turn ended: their results are not counted. */
   open?: number
   usage?: TokenUsage
+  /** With `fallback`: the 「出错时改用」 service whose reply came back last, by ID. Absent: the session's own service answered. */
+  provider?: string
+  /** Of `requests`, those a 「出错时改用」 service answered. */
+  fallback?: number
 }
 
 /** What an agent reported about its context window and cost; never estimated by Latch. */
@@ -138,9 +147,17 @@ export interface DriverTaskSummary {
   /**
    * A harness with its own models whose requests Latch forwards to one of its model services, fixed when the session
    * started: the service and the model chosen then. `bypassed`: a turn had a reply without a request through Latch.
-   * `name`: the service's name in 设置 › 模型, absent once it is deleted; `off`: it is turned off there.
+   * `name`: the service's name in 设置 › 模型, absent once it is deleted; `off`: it is turned off there. `fallbacks`: what
+   * the chosen model falls back to, fixed with the route, each with its service's name while it exists.
    */
-  modelRoute?: { providerId: string; model: string; bypassed?: true; name?: string; off?: true }
+  modelRoute?: {
+    providerId: string
+    model: string
+    bypassed?: true
+    name?: string
+    off?: true
+    fallbacks?: Array<{ providerId: string; model: string; name?: string }>
+  }
   /** Host-level session metadata; it applies to every harness. */
   pinned?: boolean
   archived?: boolean
@@ -217,6 +234,10 @@ export interface RunLive {
   commandName?: string
   /** When this activity began. */
   since: string
+  /** A model request of this run waits for a free place. Set by the Host, never a driver. */
+  queued?: true
+  /** With `queued`, when it waits for a place of one service: that service, by name. Absent while it waits for the Host's own limit. */
+  queuedFor?: string
   /**
    * When the run began, with the time it has spent waiting on a person: `since` restarts with each activity, so a clock
    * for the whole run reads these. Absent from drivers that do not report them.

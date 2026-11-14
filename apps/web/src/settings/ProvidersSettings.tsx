@@ -5,6 +5,7 @@ import {
   PROVIDER_KINDS,
   type AppSnapshot,
   type ModelCapabilities,
+  type ModelFallback,
   type ProviderKind,
   type ProviderPreset,
   type ProviderSettings,
@@ -80,6 +81,8 @@ import {
 import { FieldDialog } from './dialogs.tsx'
 import { dropProviderDraft, keepProviderDraft, peekProviderDraft, type ProviderDraft } from './providerDraft.ts'
 import { ModelVisibilitySettings } from './ModelVisibilitySettings.tsx'
+import { fallbackLabel, ModelFallbacksDialog } from './ModelFallbacks.tsx'
+import { HealthLine } from '../components/ServiceHealth.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import { UsageSettings } from './UsageSettings.tsx'
 import { ConfirmedAddresses } from './ConfirmedAddresses.tsx'
@@ -390,6 +393,9 @@ function ModelsGroups({
   onVision,
   kind,
   onThinking,
+  fallbacks,
+  services,
+  onFallbacks,
 }: {
   models: string[]
   defaultModel: string
@@ -410,6 +416,10 @@ function ModelsGroups({
   /** The service's protocol, which decides the level sets on offer. */
   kind: ProviderKind
   onThinking: (model: string, levels: string[] | undefined) => void
+  /** 「出错时改用」 by model, with the saved services their entries name. Absent on the add form, which has nothing saved yet. */
+  fallbacks?: Record<string, ModelFallback[]>
+  services?: readonly Pick<ProviderSettings, 'id' | 'name'>[]
+  onFallbacks?: (model: string) => void
 }) {
   const group = useId()
   const [filter, setFilter] = useState('')
@@ -478,9 +488,37 @@ function ModelsGroups({
                     onThinking(model, levels)
                   }}
                 />
+                {fallbacks?.[model]?.length ? (
+                  <span className="model-fallback-note">
+                    出错时改用 {fallbackLabel(fallbacks[model]![0]!, services ?? [])}
+                    {fallbacks[model]!.length > 1 ? ` 等 ${fallbacks[model]!.length} 个` : ''}
+                  </span>
+                ) : null}
               </span>
             </span>
             <span className="settings-row-end">
+              {onFallbacks && (
+                <Menu
+                  label={`${model} 的更多设置`}
+                  align="end"
+                  trigger={moreButton(`${model} 的更多设置`)}
+                  sections={[
+                    {
+                      id: 'model',
+                      items: [
+                        {
+                          id: 'fallbacks',
+                          label: '出错时改用…',
+                          ...(disabled ? { disabledReason: '正在保存' } : {}),
+                          onSelect: () => {
+                            onFallbacks(model)
+                          },
+                        },
+                      ],
+                    },
+                  ]}
+                />
+              )}
               {onVision && (
                 <Switch
                   label={`${model} 可以接收图片`}
@@ -535,6 +573,9 @@ function ModelsGroups({
     </>
   )
 }
+
+/** The limits a service's 同时请求 offers; the Host takes any whole number from 1 to 32. */
+const CONCURRENCY_CHOICES = [1, 2, 4, 8, 16, 32]
 
 /** How many models a listing may turn on by itself: a short list is what the person wants, a catalogue is not. */
 const TAKE_ALL_UP_TO = 12
@@ -1070,6 +1111,7 @@ function ProviderPage({
   const [error, setError] = useState('')
   const [dialog, setDialog] = useState<null | 'name' | 'address' | 'key'>(null)
   const [confirm, setConfirm] = useState<null | 'delete' | 'clear-key'>(null)
+  const [fallbacksFor, setFallbacksFor] = useState<string | null>(null)
   // The switch moves at once and goes back if the Host refuses.
   const [enabled, setEnabled] = useState(provider.enabled)
   const [seen, setSeen] = useState(provider.enabled)
@@ -1164,7 +1206,12 @@ function ProviderPage({
     <>
       <SectionHeading
         title={provider.name}
-        description={isDefault ? `${kindLabels[provider.kind]} · 新会话默认使用` : kindLabels[provider.kind]}
+        description={
+          <>
+            {isDefault ? `${kindLabels[provider.kind]} · 新会话默认使用` : kindLabels[provider.kind]}
+            <HealthLine health={provider.health} />
+          </>
+        }
         action={
           <Button
             disabled={busy}
@@ -1273,6 +1320,30 @@ function ProviderPage({
             }
           />
         )}
+        <SettingsRow
+          title="同时请求"
+          trailing={
+            <ValuePicker
+              label="同时请求"
+              value={provider.maxConcurrent === undefined ? 'none' : String(provider.maxConcurrent)}
+              disabled={busy}
+              bleed="end"
+              header={{ title: '这个服务同时最多几个请求' }}
+              options={[
+                { value: 'none', label: '不限' },
+                ...CONCURRENCY_CHOICES.map(count => ({ value: String(count), label: `${count} 个` })),
+                // A saved value outside the usual steps is still shown as it is.
+                ...(provider.maxConcurrent !== undefined && !CONCURRENCY_CHOICES.includes(provider.maxConcurrent)
+                  ? [{ value: String(provider.maxConcurrent), label: `${provider.maxConcurrent} 个` }]
+                  : []),
+              ]}
+              onValueChange={value => {
+                const next = value === 'none' ? null : Number(value)
+                if (next !== (provider.maxConcurrent ?? null)) apply({ maxConcurrent: next })
+              }}
+            />
+          }
+        />
         <CheckRow
           busy={probe.busy === 'check'}
           disabled={busy || unconfirmed || keyless}
@@ -1372,6 +1443,22 @@ function ProviderPage({
         onRemove={removeModel}
         onAdd={model => {
           apply({ models: [...provider.models, model] })
+        }}
+        fallbacks={provider.fallbacks}
+        services={data.providers}
+        onFallbacks={setFallbacksFor}
+      />
+      <ModelFallbacksDialog
+        open={fallbacksFor !== null}
+        provider={provider}
+        model={fallbacksFor ?? provider.defaultModel}
+        providers={data.providers}
+        onSubmit={list => {
+          const { [fallbacksFor ?? '']: _replaced, ...others } = provider.fallbacks ?? {}
+          return update({ fallbacks: list.length && fallbacksFor ? { ...others, [fallbacksFor]: list } : others })
+        }}
+        onClose={() => {
+          setFallbacksFor(null)
         }}
       />
       <SettingsGroup>
@@ -1709,6 +1796,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
               }}
               trailing={
                 <>
+                  <HealthLine health={provider.health} />
                   <ServiceStatus
                     provider={provider}
                     presets={data.presets}

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MAX_MODEL_FALLBACKS, MODEL_FAILURE_CLASSES } from '@latch/protocol'
 import { attachmentId, count, hex64, opaqueId } from './fields.ts'
 
 const risk = z.enum(['R0', 'R1', 'R2'])
@@ -114,6 +115,16 @@ export const SESSION_ACTIONS = {
   'task.permission-drift': z.strictObject({ sessionId: opaqueId, observedHash: hex64 }),
   /** A turn of a session on a gateway route had a reply, and none of its requests came through the gateway. */
   'task.model.bypassed': z.strictObject({ sessionId: opaqueId }),
+  /**
+   * Written before a session's model request goes to another candidate: the service it leaves, the position of the one
+   * it goes to among the session's candidates, and why by class. Never a model's name, a request or a reply.
+   */
+  'task.model.fallback': z.strictObject({
+    sessionId: opaqueId,
+    providerId: opaqueId,
+    candidate: z.number().int().min(0).max(MAX_MODEL_FALLBACKS),
+    errorClass: z.enum(MODEL_FAILURE_CLASSES),
+  }),
   'task.approval-auto-rejected': z.strictObject({
     sessionId: opaqueId,
     reason: z.enum(['persistent-only', 'unknown-kind', 'subagent-wider', 'harness-declined']),

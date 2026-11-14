@@ -453,10 +453,10 @@ describe('Responses to Chat gateway translation', () => {
       expect(text).toContain('response.failed')
       expect(text).not.toContain('response.completed')
       expect(lease.takeTurn().models[0]?.failed).toBe(1)
-      next = new Response('{"error":{"message":"too many requests"}}', { status: 429, headers: { 'retry-after': '7' } })
+      next = new Response('{"error":{"message":"too many requests"}}', { status: 429, headers: { 'retry-after': '30' } })
       const limited = await ask()
       expect(limited.status).toBe(429)
-      expect(limited.headers.get('retry-after')).toBe('7')
+      expect(limited.headers.get('retry-after')).toBe('30')
       expect(await limited.json()).toMatchObject({ error: { code: 'rate_limit_exceeded' } })
     } finally {
       await server.close()

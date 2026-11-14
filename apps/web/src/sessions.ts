@@ -103,7 +103,10 @@ const ACTIVITY_WORDS: Partial<Record<RunLive['activity'], string>> = {
   tool: '在用工具',
 }
 
-export const activityWords = (live: RunLive | undefined): string => (live && ACTIVITY_WORDS[live.activity]) ?? '运行中'
+export const activityWords = (live: RunLive | undefined): string =>
+  // A model request waiting for a free place says which service it waits for, whatever the run was doing before.
+  // The service is named only while its own place is what the request waits for.
+  live?.queuedFor ? `排队：${live.queuedFor}` : live?.queued ? '排队' : ((live && ACTIVITY_WORDS[live.activity]) ?? '运行中')
 
 /** 在跑命令 1:12, or the words alone when the Host did not say when the run began. */
 export function runningWords(live: RunLive | undefined, hostNow: number): string {

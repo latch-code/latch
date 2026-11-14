@@ -2,6 +2,7 @@ import { RunFileTracking, recordFileOutputs } from '@latch/core/file-tracking'
 import {
   fileMentionContext,
   LADDER_MODE,
+  MAX_MODEL_FALLBACKS,
   modelIdKey,
   promptTitle,
   readSessionSkills,
@@ -517,6 +518,8 @@ function checkedStartConfig(config: unknown): Array<{ configId: string; value: s
 }
 
 const WIRES = new Set<unknown>(['chat-completions', 'responses', 'anthropic-messages', 'gemini'])
+/** How many of a service's models may each name what they fall back to in one session's route. */
+const MAX_ROUTE_FALLBACK_MODELS = 64
 
 /** The value of `option` that is `model`: the same ID, else the same model under the agent's spelling of it. */
 function listedModel(option: SessionConfigOption, model: string): string | undefined {
@@ -556,8 +559,9 @@ function routedOptions(
 /** The Host's route as a driver keeps it: only routing fields, each bounded. */
 function checkedRoute(route: unknown): ModelRoute | undefined {
   if (route === undefined) return undefined
-  const { providerId, model, wire, upstream, origin } = (route ?? {}) as Record<string, unknown>
+  const { providerId, model, wire, upstream, origin, fallbacks } = (route ?? {}) as Record<string, unknown>
   const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max
+  const invalid = () => new AppError(400, 'model-route-invalid', '模型服务的转发设置无效')
   if (
     !text(providerId, 128)
     || !text(model, 200)
@@ -565,13 +569,51 @@ function checkedRoute(route: unknown): ModelRoute | undefined {
     || (upstream !== undefined && !WIRES.has(upstream))
     || !text(origin, 300)
   )
-    throw new AppError(400, 'model-route-invalid', '模型服务的转发设置无效')
+    throw invalid()
+  // 「出错时改用」 as the Host fixed it for this session: bounded, and only routing fields.
+  let checked: NonNullable<ModelRoute['fallbacks']> | undefined
+  if (fallbacks !== undefined) {
+    if (typeof fallbacks !== 'object' || fallbacks === null || Array.isArray(fallbacks)) throw invalid()
+    const entries = Object.entries(fallbacks as Record<string, unknown>)
+    if (entries.length > MAX_ROUTE_FALLBACK_MODELS) throw invalid()
+    checked = {}
+    for (const [name, list] of entries) {
+      if (!text(name, 200) || !Array.isArray(list) || list.length === 0 || list.length > MAX_MODEL_FALLBACKS) throw invalid()
+      checked[name] = list.map(item => {
+        const candidate = (item ?? {}) as Record<string, unknown>
+        if (
+          !text(candidate.providerId, 128)
+          || !text(candidate.model, 200)
+          || !WIRES.has(candidate.upstream)
+          || !text(candidate.origin, 300)
+        )
+          throw invalid()
+        return {
+          providerId: candidate.providerId,
+          model: candidate.model,
+          upstream: candidate.upstream as ModelRoute['wire'],
+          origin: candidate.origin,
+        }
+      })
+    }
+  }
   return {
     providerId,
     model,
     wire: wire as ModelRoute['wire'],
     origin,
     ...(upstream !== undefined ? { upstream: upstream as ModelRoute['wire'] } : {}),
+    ...(checked && Object.keys(checked).length ? { fallbacks: checked } : {}),
+  }
+}
+
+/** A session's route as its summary shows it: the service and model chosen, and what that model falls back to. */
+function routeSummary(route: ModelRoute): NonNullable<DriverTaskSummary['modelRoute']> {
+  const fallbacks = route.fallbacks?.[route.model]
+  return {
+    providerId: route.providerId,
+    model: route.model,
+    ...(fallbacks?.length ? { fallbacks: fallbacks.map(item => ({ providerId: item.providerId, model: item.model })) } : {}),
   }
 }
 
@@ -2080,7 +2122,7 @@ export class AgentRuntime implements Bridge {
         runId: run.id,
         ...(agentContext?.agent ? { agent: agentContext.agent } : {}),
         ...(agentContext && !agentContext.agent ? { agentPrivate: true as const } : {}),
-        ...(route ? { modelRoute: { providerId: route.providerId, model: route.model } } : {}),
+        ...(route ? { modelRoute: routeSummary(route) } : {}),
       },
       messages: [
         {
@@ -2150,7 +2192,7 @@ export class AgentRuntime implements Bridge {
           : {}),
         ...(agentContext?.agent ? { agent: agentContext.agent } : {}),
         ...(agentContext && !agentContext.agent ? { agentPrivate: true as const } : {}),
-        ...(route ? { modelRoute: { providerId: route.providerId, model: route.model } } : {}),
+        ...(route ? { modelRoute: routeSummary(route) } : {}),
       },
       messages: [],
       revision: 1,
@@ -3486,6 +3528,8 @@ export class AgentRuntime implements Bridge {
       origin: route.origin,
       wire: route.wire,
       ...(route.upstream ? { upstream: route.upstream } : {}),
+      // Where else the session's requests may go is part of what it launches; without any the fingerprint is unchanged.
+      ...(route.fallbacks ? { fallbacks: route.fallbacks } : {}),
     }
     if (gateway.via === 'providers') return { ...base, via: 'providers', names: [gateway.providerId, gateway.apiType] }
     return { ...base, via: 'launch', names: [gateway.tokenEnv, ...gateway.envNames].sort(), templates: { ...gateway.templates } }

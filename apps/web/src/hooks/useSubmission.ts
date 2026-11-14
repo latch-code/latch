@@ -13,6 +13,7 @@ import {
 } from '../core/api.ts'
 import {
   draftStart,
+  pickedOwnDefault,
   findHarness,
   harnessPicks,
   pinnedChoice,
@@ -341,6 +342,7 @@ export function useSubmission({
             ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
             ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
             ...(service ? { model: service } : choice.model ? { model: choice.model } : {}),
+            ...(!service && pickedOwnDefault(choice.config) ? { ownModel: true as const } : {}),
             ...(picks.length ? { config: picks } : {}),
             ...(worktree ? { worktree: worktree.from === 'head' ? (true as const) : worktree } : {}),
           }

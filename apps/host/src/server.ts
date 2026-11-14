@@ -46,6 +46,12 @@ import {
   BUILTIN_HELPER_CARD,
   type AgentPreset,
   pairRoute,
+  canTranslate,
+  MAX_MODEL_FALLBACKS,
+  MAX_SERVICE_CONCURRENCY,
+  PROVIDER_WIRES,
+  type ModelFallback,
+  type ModelFailureClass,
   PROJECT_GLYPHS,
   WIRE_NAMES,
   escapeSecurityText,
@@ -104,6 +110,7 @@ import {
   type MemoryProposalInput,
   type ScheduleProposalInput,
   type HostProject,
+  type ModelProvider,
   type ModelRoute,
   type ProjectFolder,
   type ToolRiskInput,
@@ -148,6 +155,8 @@ import { createEgressFetch, createEgressInspector, type EgressReason, type Fetch
 import { loadOrCreateHostIdentity } from './identity.ts'
 import { ModelGatewayServer, type GatewayService } from './model-gateway.ts'
 import { ModelRequestQueue } from './model-request-queue.ts'
+import { ModelScheduler } from './model-scheduler.ts'
+import { scheduledProvider, scheduledRequest, type ProviderCandidate } from './scheduled-provider.ts'
 import { readSessionSkills, type SessionSkill } from '@latch/protocol'
 import {
   DENY_READ_HOME_PATHS,
@@ -376,6 +385,8 @@ const createTaskSchema = promptSchema.extend({
   mode: z.enum(['chat', 'agent']).optional(),
   harnessId: z.string().regex(HARNESS_ID).optional(),
   workspaceId: z.string().min(1).max(64).optional(),
+  /** The person chose the Harness's own default model: a session choice, so the project's 默认模型 does not replace it. */
+  ownModel: z.literal(true).optional(),
   /**
    * Start in a Git worktree of the project's folder: `true` (or `head`) on a new branch from its HEAD, `commit` on a new
    * branch from another local branch or commit, `branch` on an existing local branch, `reuse` in an earlier Latch
@@ -472,6 +483,9 @@ const modelCapabilitiesRecord = z.record(modelId, modelCapabilitiesSchema).refin
  * needs an outbound allowance it lacks (desktop only). Without it, a keyless service at an unconfirmed address is saved
  * but not used until someone confirms the address.
  */
+const modelFallbacksRecord = z
+  .record(modelId, z.array(z.strictObject({ providerId: z.string().regex(PROVIDER_ID), model: modelId })).max(MAX_MODEL_FALLBACKS))
+  .refine(value => Object.keys(value).length <= 1000)
 const providerCreateSchema = z.object({
   id: z.string().regex(PROVIDER_ID).optional(),
   name: z.string().trim().min(1).max(80),
@@ -495,6 +509,10 @@ const providerUpdateSchema = z.object({
   defaultModel: modelId.optional(),
   enabled: z.boolean().optional(),
   confirmOrigin: z.boolean().optional(),
+  /** 「出错时改用」 by model, whole: a model left out has none. Every entry names a saved service's model. */
+  fallbacks: modelFallbacksRecord.optional(),
+  /** Null: no limit of this service's own. */
+  maxConcurrent: z.number().int().min(1).max(MAX_SERVICE_CONCURRENCY).nullable().optional(),
 })
 const providerOriginSchema = z.object({ baseURL: httpURL })
 /** Thinking levels are each protocol's own words, so a service that changes protocol keeps none it declared. */
@@ -571,9 +589,17 @@ const projectPatchSchema = z
     name: projectNameSchema.optional(),
     glyph: z.enum(PROJECT_GLYPHS).nullable().optional(),
     order: z.array(z.string().regex(FOLDER_ID)).min(1).max(PROJECT_FOLDER_LIMIT).optional(),
+    /** 「默认模型」 of the project's new sessions; null clears it. */
+    defaultModel: z
+      .strictObject({ providerId: z.string().regex(PROVIDER_ID), model: modelId, effort: modelEffort.optional() })
+      .nullable()
+      .optional(),
   })
   .strict()
-  .refine(value => value.name !== undefined || value.glyph !== undefined || value.order !== undefined, '没有要修改的内容')
+  .refine(
+    value => value.name !== undefined || value.glyph !== undefined || value.order !== undefined || value.defaultModel !== undefined,
+    '没有要修改的内容',
+  )
 const preferencesSchema = z.object({
   defaults: z.object({
     harnessId: z.string().regex(HARNESS_ID).optional(),
@@ -1507,6 +1533,30 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     let closing = false
     const modelRequests = new ModelRequestQueue()
     startupCleanup.push(() => modelRequests.close())
+    // One scheduler for the gateway and the built-in harness, so both read the same health and limits of a service.
+    const modelScheduler = new ModelScheduler({
+      limit: id => effectiveProvider(id)?.maxConcurrent,
+      // What a service is now: a candidate bound to older settings never touches what is known of it.
+      fingerprint: id => {
+        const record = effectiveProvider(id)
+        return record && providerFingerprint(record)
+      },
+      changed: () => refresh(),
+      queued: sessionId => {
+        if (sessionId) refresh(sessionId)
+      },
+    })
+    /** Service providers as their plugins registered them, before scheduling: what another service's fallback calls. */
+    const serviceProviders = new Map<string, ModelProvider>()
+    /** On record before a request leaves the service it was meant for; a failed write keeps it there. */
+    const modelFallback = async (event: { sessionId: string; providerId: string; candidate: number; reason: ModelFailureClass }) => {
+      await audit.append({
+        action: 'task.model.fallback',
+        actor: { listener: 'host' },
+        target: event.sessionId,
+        detail: { sessionId: event.sessionId, providerId: event.providerId, candidate: event.candidate, errorClass: event.reason },
+      })
+    }
     const providerFetchFor =
       (baseURL: string): FetchLike =>
       (input, init) => {
@@ -1715,6 +1765,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       service: id => {
         const record = effectiveProvider(id)
         return record && { name: record.name, enabled: record.enabled }
+      },
+      queueOf: sessionId => {
+        const waiting = modelScheduler.queueOf(sessionId)
+        if (!waiting) return undefined
+        // A service's name only while its own place is what is waited for; the Host's own limit has no name.
+        return waiting.providerId === undefined ? {} : { service: effectiveProvider(waiting.providerId)?.name ?? '模型服务' }
       },
     })
     hub = harnessHub
@@ -2046,7 +2102,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
     })
     startupCleanup.push(() => harnessHub.close())
-    const modelGateway = new ModelGatewayServer({ service: gatewayService, fetchFor: providerFetchFor, log, queue: modelRequests })
+    const modelGateway = new ModelGatewayServer({
+      service: gatewayService,
+      fetchFor: providerFetchFor,
+      log,
+      queue: modelRequests,
+      scheduler: modelScheduler,
+      fallback: modelFallback,
+    })
     await modelGateway.start()
     startupCleanup.push(() => modelGateway.close())
     const requiredHarness = options.harnessId ?? STANDARD
@@ -2721,6 +2784,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
       },
       projectUsable: id => savedProject(id) !== undefined,
+      projectModel: (projectId, harnessId) => projectDefaultModel(projectId, harnessId),
       automationAllowed: id => {
         const level = hub!.levelOf(id)
         return !!level && levelAtMost(level, policy.get().unattended.maxLevel)
@@ -2732,7 +2796,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }),
     })
     function providerExecutionRevision(record: ProviderRecord): string | undefined {
-      const { name: _, ...execution } = record
+      // What a run executes: not the service's name, nor how many requests it takes at a time or where a failed request
+      // may go next. Those are read as they are when a request is scheduled, and editing them replaces no plugin.
+      const { name: _, maxConcurrent: _limit, fallbacks: _fallbacks, ...execution } = record
       return executionBuildRevision(execution)
     }
     function checkPrivateSession(caller: Caller, id: string, write = false): void {
@@ -3213,31 +3279,94 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return effectiveProviders().find(record => record.id === id)
     }
 
+    /** What `model` of the service falls back to now, for a run of the built-in harness: saved services only. */
+    function providerFallbacks(providerId: string, model: string): ProviderCandidate[] {
+      return (effectiveProvider(providerId)?.fallbacks?.[model] ?? []).flatMap(item => {
+        const record = effectiveProvider(item.providerId)
+        if (!record || (item.providerId === providerId && item.model === model)) return []
+        const fingerprint = providerFingerprint(record)
+        return [
+          {
+            providerId: item.providerId,
+            model: item.model,
+            fingerprint,
+            provider: () => {
+              const current = gatewayService(item.providerId)
+              return current?.fingerprint === fingerprint && current.models.includes(item.model)
+                ? serviceProviders.get(item.providerId)
+                : undefined
+            },
+          },
+        ]
+      })
+    }
+
+    /** The service's plugin with its provider behind the scheduler; the provider itself stays reachable for fallbacks. */
+    function scheduled(plugin: HarnessPlugin, record: ProviderRecord): HarnessPlugin {
+      return {
+        ...plugin,
+        activate: context =>
+          plugin.activate({
+            ...context,
+            registerProvider: provider => {
+              context.registerProvider(
+                scheduledProvider(provider, {
+                  scheduler: modelScheduler,
+                  fallbacks: providerFallbacks,
+                  fingerprint: id => {
+                    const current = effectiveProvider(id)
+                    return current ? providerFingerprint(current) : ''
+                  },
+                  fallback: modelFallback,
+                }),
+              )
+              // After the registry took it: a provider it refused is nobody's fallback.
+              if (provider.id === record.id) serviceProviders.set(record.id, provider)
+            },
+          }),
+      }
+    }
+
     function buildProviderPlugin(record: ProviderRecord): HarnessPlugin {
       try {
-        return providerPlugin(record, {
-          fetch: providerFetchFor(record.baseURL),
-          acquire: async (signal, bytes) => {
-            const currentFingerprint = () => {
-              if (recordDestination(record) === 'unconfirmed') throw new OriginUnconfirmed()
-              const current = gatewayService(record.id)
-              if (closing || !current || current.fingerprint !== providerFingerprint(record))
-                throw new AppError(409, 'model-route-changed', '模型服务的设置已经变了，请重新选择模型。')
-              return current.fingerprint
-            }
-            const before = currentFingerprint()
-            const release = await modelRequests.acquire(signal, bytes)
-            try {
-              signal.throwIfAborted()
-              if (currentFingerprint() !== before)
-                throw new AppError(409, 'model-route-changed', '模型服务的设置已经变了，请重新选择模型。')
-              return release
-            } catch (error) {
-              release()
-              throw error
-            }
-          },
-        })
+        return scheduled(
+          providerPlugin(record, {
+            fetch: async (input, init) => {
+              const response = await providerFetchFor(record.baseURL)(input, init)
+              // The service answered: its first-byte time is met, however long the model thinks before its first event.
+              if (response.ok) scheduledRequest.getStore()?.timer.began()
+              return response
+            },
+            acquire: async (signal, bytes) => {
+              const currentFingerprint = () => {
+                if (recordDestination(record) === 'unconfirmed') throw new OriginUnconfirmed()
+                const current = gatewayService(record.id)
+                if (closing || !current || current.fingerprint !== providerFingerprint(record))
+                  throw new AppError(409, 'model-route-changed', '模型服务的设置已经变了，请重新选择模型。')
+                return current.fingerprint
+              }
+              const before = currentFingerprint()
+              const asking = scheduledRequest.getStore()
+              // The service's own place is already held; waiting for the Host's permit is not the service's silence.
+              const permit = modelRequests.acquire(
+                signal,
+                bytes,
+                asking?.sessionId ? () => modelScheduler.waiting(asking.sessionId) : undefined,
+              )
+              const release = await (asking ? asking.timer.waiting(permit) : permit)
+              try {
+                signal.throwIfAborted()
+                if (currentFingerprint() !== before)
+                  throw new AppError(409, 'model-route-changed', '模型服务的设置已经变了，请重新选择模型。')
+                return release
+              } catch (error) {
+                release()
+                throw error
+              }
+            },
+          }),
+          record,
+        )
       } catch (error) {
         throw error instanceof AppError ? error : new AppError(400, 'invalid-provider', errorText(error))
       }
@@ -3284,7 +3413,99 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     function providerView(record: ProviderRecord): ProviderSettings {
-      return { ...providerSettings(record), destination: recordDestination(record) }
+      const health = modelScheduler.health(record.id)
+      return { ...providerSettings(record), destination: recordDestination(record), ...(health ? { health } : {}) }
+    }
+
+    /** A service as the catalog lists it for every device: what its models fall back to and how its requests fare, no more. */
+    function providerSummary(provider: ModelProvider): ProviderSummary {
+      const record = pluginInfo(provider.id)?.managed === 'provider' ? effectiveProvider(provider.id) : undefined
+      const health = record ? modelScheduler.health(provider.id) : undefined
+      return {
+        ...summarizeProvider(provider, providerKindOf(provider.id)),
+        ...(record?.fallbacks && Object.keys(record.fallbacks).length ? { fallbacks: structuredClone(record.fallbacks) } : {}),
+        ...(health ? { health } : {}),
+      }
+    }
+
+    /** 「出错时改用」 as a save may keep it: only for the service's own models, each naming a saved service's model, never itself. */
+    function checkedFallbacks(
+      id: string,
+      models: readonly string[],
+      input: Record<string, ModelFallback[]>,
+    ): Record<string, ModelFallback[]> {
+      const kept: Record<string, ModelFallback[]> = {}
+      for (const [model, list] of Object.entries(input)) {
+        if (!models.includes(model) || list.length === 0) continue
+        const seen = new Set<string>()
+        for (const item of list) {
+          const key = `${item.providerId}\n${item.model}`
+          const other = item.providerId === id ? { models } : effectiveProvider(item.providerId)
+          if (seen.has(key) || (item.providerId === id && item.model === model) || !other?.models.includes(item.model))
+            throw new AppError(400, 'invalid-fallback', '「出错时改用」里有一个模型不在已保存的模型服务里，或重复了。')
+          seen.add(key)
+        }
+        kept[model] = list.map(({ providerId, model: name }) => ({ providerId, model: name }))
+      }
+      return kept
+    }
+
+    /** A saved list without what is gone by now: a model this service no longer has, a service or model that was removed. */
+    function liveFallbacks(id: string, models: readonly string[], saved: Record<string, ModelFallback[]>): Record<string, ModelFallback[]> {
+      const kept: Record<string, ModelFallback[]> = {}
+      for (const [model, list] of Object.entries(saved)) {
+        if (!models.includes(model)) continue
+        const live = list.filter(item =>
+          (item.providerId === id ? models : (effectiveProvider(item.providerId)?.models ?? [])).includes(item.model),
+        )
+        if (live.length) kept[model] = live
+      }
+      return kept
+    }
+
+    /**
+     * What an edit of 「出错时改用」 changed, for its record: how many models' lists differ, the services the new lists
+     * name, and whether anything was added or moved. Undefined when nothing changed.
+     */
+    function fallbackChange(
+      before: Record<string, ModelFallback[]>,
+      after: Record<string, ModelFallback[]>,
+    ): { models: number; candidates: string[]; widened: boolean } | undefined {
+      const key = (item: ModelFallback) => `${item.providerId}\n${item.model}`
+      const names = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+      const changed = names.filter(name => canonicalJson(before[name] ?? []) !== canonicalJson(after[name] ?? []))
+      if (!changed.length) return undefined
+      // Only removing entries leaves the rest in the order they had: anything else sends requests somewhere new or sooner.
+      const widened = changed.some(name => {
+        const old = (before[name] ?? []).map(key)
+        let at = 0
+        for (const entry of (after[name] ?? []).map(key)) {
+          const found = old.indexOf(entry, at)
+          if (found < 0) return true
+          at = found + 1
+        }
+        return false
+      })
+      const candidates = [...new Set(Object.values(after).flatMap(list => list.map(item => item.providerId)))].toSorted().slice(0, 64)
+      return { models: changed.length, candidates, widened }
+    }
+
+    /** Takes what other services' models fall back to out of their lists once it is gone: a removed service, or models it lost. */
+    async function pruneFallbacks(gone: (item: ModelFallback) => boolean): Promise<void> {
+      const refers = config.providers().some(record => Object.values(record.fallbacks ?? {}).some(list => list.some(gone)))
+      if (!refers) return
+      await config.updateProviders(draft => {
+        for (const record of draft) {
+          if (!record.fallbacks) continue
+          const kept = Object.fromEntries(
+            Object.entries(record.fallbacks)
+              .map(([model, list]) => [model, list.filter(item => !gone(item))] as const)
+              .filter(([, list]) => list.length > 0),
+          )
+          if (Object.keys(kept).length) record.fallbacks = kept
+          else delete record.fallbacks
+        }
+      })
     }
 
     /**
@@ -3369,12 +3590,34 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         )
       if (!service.models.includes(model.model))
         throw new AppError(400, 'model-unavailable', `${record.name} 里没有模型「${model.model.slice(0, 64)}」`)
+      // 「出错时改用」 as it is now, for every model of the service the session may switch to: fixed with the route, so
+      // later changes reach new sessions only. A candidate this harness cannot be given is left out; one that is off or
+      // unconfirmed stays, and is passed over while it is.
+      const fallbacks: NonNullable<ModelRoute['fallbacks']> = {}
+      // The chosen model's own first: the cap leaves out other models of a long list, never the one the session starts on.
+      const listed = Object.entries(record.fallbacks ?? {}).toSorted(([a], [b]) => Number(b === model.model) - Number(a === model.model))
+      for (const [name, list] of listed.slice(0, 64)) {
+        if (!service.models.includes(name)) continue
+        const kept = list.flatMap(item => {
+          const other = effectiveProvider(item.providerId)
+          if (!other || (item.providerId === record.id && item.model === name)) return []
+          const upstream = PROVIDER_WIRES[other.kind]
+          if (upstream !== route.wire && !canTranslate(route.wire, upstream)) return []
+          try {
+            return [{ providerId: other.id, model: item.model, upstream, origin: originOf(other.baseURL) }]
+          } catch {
+            return []
+          }
+        })
+        if (kept.length) fallbacks[name] = kept
+      }
       return {
         providerId: record.id,
         model: model.model,
         wire: route.wire,
         origin: originOf(record.baseURL),
         ...(route.kind === 'translate' ? { upstream: route.upstream } : {}),
+        ...(Object.keys(fallbacks).length ? { fallbacks } : {}),
       }
     }
 
@@ -4791,6 +5034,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(folder.message ? { unavailable: folder.message } : {}),
         })),
         ...(record.glyph ? { glyph: record.glyph } : {}),
+        ...(record.defaultModel ? { defaultModel: { ...record.defaultModel } } : {}),
         ...(state.folders.some(folder => folder.problem === 'code-root') ? { codeRoot: true as const } : {}),
         ...branchOfProject(record.path),
       }
@@ -5402,7 +5646,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const glyphChanged = input.glyph !== undefined && (input.glyph ?? undefined) !== record.glyph
       const primaryChanged = folders[0].id !== record.folders[0].id
       const reordered = folders.some((folder, index) => folder.id !== record.folders[index].id)
-      if (!renamed && !glyphChanged && !reordered) return projectInfo(record, await projectState(record))
+      const modelChanged =
+        input.defaultModel !== undefined && canonicalJson(input.defaultModel ?? null) !== canonicalJson(record.defaultModel ?? null)
+      // A model it can start on now; clearing never needs one.
+      if (modelChanged && input.defaultModel) assertModel(input.defaultModel)
+      if (!renamed && !glyphChanged && !reordered && !modelChanged) return projectInfo(record, await projectState(record))
       if (primaryChanged) {
         const verdict = await checkProjectFolders([folders[0].path], { existing: primaries(record.id) })
         if (!verdict.ok) throw verdict.error
@@ -5411,7 +5659,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         action: 'workspace.changed',
         actor: actorOf(caller),
         target: record.id,
-        detail: { workspaceId: record.id, renamed, glyphChanged, primaryChanged, reordered },
+        detail: { workspaceId: record.id, renamed, glyphChanged, primaryChanged, reordered, ...(modelChanged ? { modelChanged } : {}) },
       })
       try {
         if (primaryChanged) {
@@ -5434,6 +5682,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (glyphChanged) {
             if (input.glyph) target.glyph = input.glyph
             else delete target.glyph
+          }
+          if (modelChanged) {
+            if (input.defaultModel) target.defaultModel = { ...input.defaultModel }
+            else delete target.defaultModel
           }
           target.folders = folders
           target.path = folders[0].path
@@ -5547,6 +5799,33 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (saved) return saved
       const provider = usableProviders().find(item => item.id === defaultProviderId())
       return provider && { providerId: provider.id, model: provider.model }
+    }
+
+    /**
+     * The project's 默认模型 for a session of `harnessId` that chose none and whose Agent has none: only while the model
+     * can be used now, and by this harness. Otherwise the harness's own default stands.
+     */
+    function projectDefaultModel(projectId: string | undefined, harnessId: string): ModelRef | undefined {
+      const saved = projectId && projectId !== 'default' ? savedProject(projectId)?.defaultModel : undefined
+      const harness = hub?.info(harnessId)
+      if (!saved || !harness || !modelAvailable(saved)) return undefined
+      if (harness.capabilities.models.owner !== 'latch') {
+        const record = effectiveProvider(saved.providerId)
+        const route = record ? pairRoute(harness.capabilities, { kind: record.kind }) : undefined
+        if (route?.kind !== 'passthrough' && route?.kind !== 'translate') return undefined
+        // A thinking level is the built-in harness's to send; another harness sets its own.
+        return { providerId: saved.providerId, model: saved.model }
+      }
+      const declared = declaredThinking(saved)
+      return {
+        providerId: saved.providerId,
+        model: saved.model,
+        ...(saved.effort && declared.includes(saved.effort) ? { effort: saved.effort } : {}),
+      }
+    }
+
+    function declaredThinking(ref: ModelRef): readonly string[] {
+      return effectiveProvider(ref.providerId)?.modelCapabilities?.[ref.model]?.thinking ?? []
     }
 
     function defaultHarnessId(): string {
@@ -5679,7 +5958,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const { helperCard: _ignored, ...info } = harness
           return { ...info, ...(reported ? { attachmentsReported: reported } : {}), ...(card ? { helperCard: card } : {}) }
         }),
-        providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
+        providers: usableProviders().map(providerSummary),
         unusableProviders: unusableProviders(),
         uiPanels: registry.uiPanels(),
         skills: registry.skills(),
@@ -6754,6 +7033,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(startModel ? { model: startModel } : {}),
           ...(startWorkspace ? { workspaceId: startWorkspace } : {}),
         }
+      }
+      // Session choice, then the Agent's, then the project's 默认模型, then the harness's own default. Start choices sent
+      // with the request are the session's own, so the project's default stays out of their way.
+      if (!input.model && !input.ownModel && !input.config?.length && !input.forkOf) {
+        const preferred = projectDefaultModel(input.workspaceId, input.harnessId ?? defaultHarnessId())
+        if (preferred) input = { ...input, model: preferred }
       }
       // The queue of the project the session starts in; a fork's source session does not choose it.
       return await projectOperation(input.workspaceId ?? 'default', caller, 'run', async () => {
@@ -7852,6 +8137,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             // A key follows neither a new origin nor a new path; it is removed, as the dialog warned.
             const originChanged = scope.keyOrigin !== (before.keyOrigin ?? bound.keyOrigin)
             const moved = hadKey && !newKey && !clearing && (originChanged || scope.keyPath !== (before.keyPath ?? bound.keyPath))
+            const nextModels = withModel(input.models ?? before.models, input.defaultModel ?? before.defaultModel)
+            // Only a list this request sends is checked, before anything is on record: a saved entry whose service or
+            // model is gone since is dropped, never a reason to refuse renaming, turning off or clearing the key.
+            const fallbacks =
+              input.fallbacks !== undefined
+                ? checkedFallbacks(id, nextModels, input.fallbacks)
+                : liveFallbacks(id, nextModels, before.fallbacks ?? {})
+            const listChange = input.fallbacks !== undefined ? fallbackChange(before.fallbacks ?? {}, fallbacks) : undefined
+            if (listChange) {
+              const event: AuditEvent = {
+                action: 'provider.fallbacks.changed',
+                actor: actorOf(caller),
+                target: id,
+                detail: { providerId: id, ...listChange },
+              }
+              // Adding or moving a candidate redirects requests: not without its record. Removing is never held up by it.
+              if (listChange.widened) await audited(event)
+              else await audited(event, res)
+            }
             if (!newKey && hadKey && (clearing || moved)) {
               await audited(
                 {
@@ -7865,7 +8169,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             }
             const edited = editProvider(id, previous => {
               const defaultModel = input.defaultModel ?? previous.defaultModel
-              const { keyOrigin: previousOrigin, keyPath: previousPath, ...rest } = previous
+              const {
+                keyOrigin: previousOrigin,
+                keyPath: previousPath,
+                fallbacks: _fallbacks,
+                maxConcurrent: previousLimit,
+                ...rest
+              } = previous
+              const limit = input.maxConcurrent === undefined ? previousLimit : (input.maxConcurrent ?? undefined)
               const apiKey = newKey ?? (clearing || moved ? '' : previous.apiKey)
               const kept =
                 apiKey && previousOrigin && previousPath !== undefined ? { keyOrigin: previousOrigin, keyPath: previousPath } : undefined
@@ -7885,12 +8196,30 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                     : previous.modelCapabilities),
                 defaultModel,
                 enabled: input.enabled ?? previous.enabled,
+                ...(Object.keys(fallbacks).length ? { fallbacks } : {}),
+                ...(limit !== undefined ? { maxConcurrent: limit } : {}),
               }
             })
             if (!edited) throw new AppError(404, 'provider-not-found', '找不到该模型服务')
-            await saveAt(caller, res, { id, ...(plan ? { plan } : {}), stepup, ...(newKey ? { scope } : {}) }, () =>
-              saveProvider(caller, ...edited),
-            )
+            // The limit and the fallback list are read when a request is scheduled: saving them replaces no plugin, so
+            // nothing that runs on the service, an approved automation among it, is disturbed.
+            const schedulingOnly =
+              envProvider?.id !== id && Object.keys(input).every(name => name === 'fallbacks' || name === 'maxConcurrent')
+            if (schedulingOnly)
+              await config.updateProviders(
+                draft => {
+                  const index = draft.findIndex(item => item.id === id)
+                  if (index >= 0) draft[index] = structuredClone(edited[1])
+                },
+                async () => recheck(caller, 'admin'),
+              )
+            else
+              await saveAt(caller, res, { id, ...(plan ? { plan } : {}), stepup, ...(newKey ? { scope } : {}) }, () =>
+                saveProvider(caller, ...edited),
+              )
+            // Models this service no longer has are no longer anybody's fallback.
+            const lost = before.models.filter(model => !edited[0].models.includes(model))
+            if (lost.length) await pruneFallbacks(item => item.providerId === id && lost.includes(item.model))
             return edited[0]
           })
           refresh()
@@ -7907,6 +8236,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 res,
               )
             await deleteProvider(caller, id)
+            await pruneFallbacks(item => item.providerId === id)
           })
           refresh()
           json(res, { deleted: true })

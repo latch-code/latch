@@ -25,6 +25,75 @@ export interface ModelCapabilities {
  */
 export const PROVIDER_KINDS = ['openai-compatible', 'openai-responses', 'anthropic', 'gemini'] as const
 export type ProviderKind = (typeof PROVIDER_KINDS)[number]
+/**
+ * How a model request to a service ended, as the Host sorts it before it decides what happens next; never the service's
+ * words. `request`: the request itself was refused (400, 404, 413, 422…). `auth`: 401, or a 403 that says the key is at
+ * fault. `forbidden`: any other 403. `quota`: 402 or the
+ * balance ran out. `rate`: 429. `server`: 5xx or 529. `network`: no connection. `timeout`: no first byte in time.
+ * `stream`: the reply broke after it began. `unavailable`: the service is off, removed or changed. `circuit-open`: the
+ * Host is not sending to it for now.
+ */
+export const MODEL_FAILURE_CLASSES = [
+  'request',
+  'auth',
+  'forbidden',
+  'quota',
+  'rate',
+  'server',
+  'network',
+  'timeout',
+  'stream',
+  'unavailable',
+  'circuit-open',
+] as const
+export type ModelFailureClass = (typeof MODEL_FAILURE_CLASSES)[number]
+
+export const MODEL_FAILURE_NAMES: Readonly<Record<ModelFailureClass, string>> = {
+  request: '请求被拒绝',
+  auth: '密钥无效',
+  forbidden: '服务拒绝',
+  quota: '额度用完',
+  rate: '请求过多',
+  server: '服务出错',
+  network: '连不上',
+  timeout: '没有回应',
+  stream: '回复中断',
+  unavailable: '不能用',
+  'circuit-open': '暂停发送',
+}
+
+/**
+ * What the Host's real model requests say of a service, never a probe. Absent while it works. `slow`: the first byte takes
+ * three times as long as it used to. `failing`: requests keep failing, and the Host holds back for a minute at a time.
+ * `quota`: the balance ran out, and the Host prefers other services until `until`. `rate`: the service answered 429, and
+ * other services come first for the time it asked. `key-invalid`: the service refused the key.
+ */
+export interface ServiceHealth {
+  state: 'slow' | 'failing' | 'quota' | 'rate' | 'key-invalid'
+  /** The latest failure, by class. */
+  last?: ModelFailureClass
+  /** When it happened. */
+  at?: string
+  /** When the Host asks the service first again by a real request; absent while a trial request is under way or for `slow`. */
+  until?: string
+}
+
+export const SERVICE_HEALTH_NAMES: Readonly<Record<ServiceHealth['state'], string>> = {
+  slow: '变慢',
+  failing: '出错中',
+  quota: '额度用完',
+  rate: '请求过多',
+  'key-invalid': '密钥无效',
+}
+
+/** At most this many 「出错时改用」 entries per model. */
+export const MAX_MODEL_FALLBACKS = 4
+/** The most requests one service may be given at a time, when a limit is set. */
+export const MAX_SERVICE_CONCURRENCY = 32
+
+/** A model another one falls back to: a service and one of its models, never a thinking level. */
+export type ModelFallback = Pick<ModelRef, 'providerId' | 'model'>
+
 /** Browser-safe provider listing. It never contains credentials. */
 export interface ProviderSummary {
   modelCapabilities?: Record<string, ModelCapabilities>
@@ -34,6 +103,9 @@ export interface ProviderSummary {
   kind: ProviderKind | 'demo' | 'plugin'
   models: string[]
   defaultModel: string
+  /** 「出错时改用」 by model, in order; new sessions take it as it is when they start. */
+  fallbacks?: Record<string, ModelFallback[]>
+  health?: ServiceHealth
 }
 
 /** Neutral project glyphs (Lucide names); a project never has a colour. */
@@ -77,6 +149,8 @@ export interface WorkspaceInfo {
   /** Ordered; `[0]` is the primary folder. Absent from older Hosts. */
   folders?: WorkspaceFolder[]
   glyph?: ProjectGlyph
+  /** 「默认模型」: what a new session here starts on when neither the session nor its Agent chose one. Kept on the Host only. */
+  defaultModel?: ModelRef
   /** Host-read, display-only Git branch of the primary folder; omitted when metadata cannot be verified. */
   branch?: string
   /** The project lies in Latch's program directory: every Latch 内置 write asks for local approval, and ACP agents cannot start there. */
@@ -218,6 +292,11 @@ export interface ProviderSettings {
   enabled: boolean
   models: string[]
   defaultModel: string
+  /** 「出错时改用」 by model, in order. */
+  fallbacks?: Record<string, ModelFallback[]>
+  /** The most requests this service is given at a time; absent, only the Host's own limit applies. */
+  maxConcurrent?: number
+  health?: ServiceHealth
 }
 
 export interface PluginInfo {

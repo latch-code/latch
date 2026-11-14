@@ -201,6 +201,8 @@ interface TurnViewProps {
   provider?: string
   /** The model the session had chosen, when another one answered: the author line says both. */
   chosen?: { model: string; reported: boolean }
+  /** A 「出错时改用」 service answered this turn: its name. */
+  fallback?: string
   trailingLive: boolean
   latest: boolean
   outcome?: TurnOutcome
@@ -345,6 +347,7 @@ const TurnView = memo(function TurnView({
   model,
   provider,
   chosen,
+  fallback,
   trailingLive,
   latest,
   outcome,
@@ -437,7 +440,15 @@ const TurnView = memo(function TurnView({
           {speaker ? (
             <SpeakerLine speaker={speaker} demo={engine !== undefined} />
           ) : (
-            <AuthorLine name={harnessName} engine={engine} harness={harness} model={model} provider={provider} chosen={chosen} />
+            <AuthorLine
+              name={harnessName}
+              engine={engine}
+              harness={harness}
+              model={model}
+              provider={provider}
+              chosen={chosen}
+              fallback={fallback}
+            />
           )}
           {!trailingLive && hasWork && (
             <button
@@ -831,9 +842,13 @@ export function Transcript(props: TranscriptProps) {
           {...(speaker ? { speaker } : {})}
           login={login}
           harness={harness}
-          model={route?.differs ? route.answered : (stamped?.model ?? (trailingLive ? detail.summary.model : undefined))}
+          model={
+            route?.fallback?.model
+            ?? (route?.differs && !route.direct ? route.answered : (stamped?.model ?? (trailingLive ? detail.summary.model : undefined)))
+          }
           provider={providerId ? providerName?.(providerId) : undefined}
-          {...(route?.differs ? { chosen: { model: route.chosen!, reported: route.reported } } : {})}
+          {...(route?.differs && !route.fallback && !route.direct ? { chosen: { model: route.chosen!, reported: route.reported } } : {})}
+          {...(route?.fallback ? { fallback: providerName?.(route.fallback.providerId) ?? '另一个模型服务' } : {})}
           latest={latest}
           trailingLive={trailingLive}
           outcome={outcome}

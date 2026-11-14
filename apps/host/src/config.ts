@@ -3,6 +3,8 @@ import { chmod, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/prom
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
 import {
+  MAX_MODEL_FALLBACKS,
+  MAX_SERVICE_CONCURRENCY,
   MAX_THINKING_LEVELS,
   MODEL_EFFORT,
   PROJECT_GLYPHS,
@@ -10,6 +12,7 @@ import {
   PROVIDER_PRESETS,
   type AgentRecord,
   type ModelCapabilities,
+  type ModelFallback,
   type ModelRef,
   type ProjectGlyph,
   type ProviderKind,
@@ -38,6 +41,10 @@ export interface ProviderRecord {
   models: string[]
   modelCapabilities?: Record<string, ModelCapabilities>
   defaultModel: string
+  /** 「出错时改用」 by model, in order; a session takes it as it is when it starts. */
+  fallbacks?: Record<string, ModelFallback[]>
+  /** The most requests the Host gives this service at a time; absent, only the Host's own limit applies. */
+  maxConcurrent?: number
 }
 
 export interface WorkspaceFolderRecord {
@@ -57,6 +64,8 @@ export interface WorkspaceRecord {
   /** 1–8, ordered; `[0]` is the primary folder. Entries saved before projects had several folders get one on load. */
   folders: WorkspaceFolderRecord[]
   glyph?: ProjectGlyph
+  /** 「默认模型」 of the project's new sessions, after the session's own choice and its Agent's. Kept here only, never in the repository. */
+  defaultModel?: ModelRef
   /** A hand-edited path/folder mismatch stays disabled until the primary folder is explicitly selected again. */
   invalid?: true
 }
@@ -222,6 +231,10 @@ const providerSchema = z
     modelCapabilities: z.record(modelId, modelCapabilitiesSchema).optional(),
     models: z.array(modelId).min(1, '至少需要一个模型').max(1000, '模型数量过多'),
     defaultModel: modelId,
+    fallbacks: z
+      .record(modelId, z.array(z.object({ providerId: id('服务标识'), model: modelId })).max(MAX_MODEL_FALLBACKS, '备选过多'))
+      .optional(),
+    maxConcurrent: z.number().int().min(1).max(MAX_SERVICE_CONCURRENCY).optional(),
   })
   .superRefine((value, context) => {
     if (new Set(value.models).size !== value.models.length)
@@ -262,6 +275,7 @@ const workspaceSchema = z
     folders: z.array(folderSchema).min(1, '项目至少要有一个文件夹').max(8, '一个项目最多 8 个文件夹').optional(),
     // An unknown glyph (a newer Host's, or a hand edit) is dropped rather than making the whole file unreadable.
     glyph: z.enum(PROJECT_GLYPHS).optional().catch(undefined),
+    defaultModel: z.object({ providerId: id('服务标识'), model: modelId, effort: z.string().regex(MODEL_EFFORT).optional() }).optional(),
     invalid: z.literal(true).optional(),
   })
   .superRefine((value, context) => {
@@ -271,8 +285,17 @@ const workspaceSchema = z
     if (new Set(value.folders.map(folder => folder.path)).size !== value.folders.length)
       context.addIssue({ code: 'custom', path: ['folders'], message: '同一项目中的文件夹不能重复' })
   })
-  .transform(({ glyph, folders, ...rest }): WorkspaceRecord => ({
+  .transform(({ glyph, folders, defaultModel, ...rest }): WorkspaceRecord => ({
     ...rest,
+    ...(defaultModel
+      ? {
+          defaultModel: {
+            providerId: defaultModel.providerId,
+            model: defaultModel.model,
+            ...(defaultModel.effort ? { effort: defaultModel.effort } : {}),
+          },
+        }
+      : {}),
     // Saved before projects had several folders: the one directory becomes the primary folder.
     folders: folders ?? [{ id: folderIdFor(basename(rest.path), []), path: rest.path }],
     ...(rest.invalid || (folders && folders[0]?.path !== rest.path) ? { invalid: true as const } : {}),

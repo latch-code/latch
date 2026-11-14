@@ -912,6 +912,9 @@
 /* The model's thinking levels, under its ID so the row's end keeps only the image switch and remove. */
 .model-thinking {
   display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
   margin-inline-start: -6px;
 }
 .model-add {
@@ -1520,6 +1523,52 @@
 }
 .service-status[data-tone='warn'] {
   color: var(--amber);
+}
+/* How the Host's real requests to a service fare: a dot with its word, the latest failure behind the tooltip. */
+.service-health {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  margin-inline-start: var(--sp-8);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.service-health[data-tone='err'] {
+  color: var(--red);
+}
+.service-health[data-tone='warn'] {
+  color: var(--amber);
+}
+.service-health-dot {
+  display: inline-flex;
+  align-items: center;
+}
+/* What a model falls back to, beside its thinking: quiet, one line. */
+.model-fallback-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-fallbacks {
+  display: grid;
+  gap: var(--sp-12);
+}
+.model-fallbacks-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.model-fallbacks-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .settings-row-note {
   color: var(--muted);

@@ -14,6 +14,7 @@ import type {
   TaskDetail,
   DriverTaskSummary,
   GitPrBinding,
+  RunLive,
   TaskSummary,
 } from '@latch/protocol'
 import {
@@ -95,6 +96,8 @@ export interface HubOptions {
   silenceThresholds?: typeof SILENCE_THRESHOLDS
   /** A saved model service as 设置 › 模型 has it, turned on or off; undefined once it is deleted. */
   service?: (providerId: string) => { name: string; enabled: boolean } | undefined
+  /** What a model request of the session waits for: `service`, by name, for that service's place; neither for the Host's own limit. */
+  queueOf?: (sessionId: string) => { service?: string } | undefined
 }
 
 interface Entry {
@@ -183,11 +186,13 @@ function listed(task: TaskSummary): TaskSummary {
  */
 export function listSignature({ live, ...summary }: TaskSummary): unknown {
   if (!live) return summary
-  const { activity, runId, silenceThresholdMs, silent, unrecognized, lastEventAt } = live
+  const { activity, runId, silenceThresholdMs, silent, unrecognized, lastEventAt, queued, queuedFor } = live
   return {
     ...summary,
     live: {
       activity,
+      queued,
+      queuedFor,
       runId,
       silenceThresholdMs,
       silent,
@@ -1295,7 +1300,9 @@ export class HarnessHub implements Bridge {
       ...rest,
       // A run ID a cancel could not carry is left out, so the page sends a plain stop rather than one the Host refuses.
       ...(typeof runId === 'string' && RUN_ID.test(runId) ? { runId } : {}),
-      ...(live && typeof live.lastEventAt === 'string' ? { live: this.silence.evaluate(summary.id, live) } : {}),
+      ...(live && typeof live.lastEventAt === 'string'
+        ? { live: this.withQueue(summary.id, this.silence.evaluate(summary.id, live)) }
+        : {}),
       ...(modelRoute ? { modelRoute: this.routeOf(modelRoute) } : {}),
       harnessId,
       level: this.levelOf(harnessId),
@@ -1338,10 +1345,22 @@ export class HarnessHub implements Bridge {
 
   /** What the route says of its service comes from the Host's records, never from the driver. */
   private routeOf(route: NonNullable<TaskSummary['modelRoute']>): NonNullable<TaskSummary['modelRoute']> {
-    const { name: _name, off: _off, ...rest } = route
+    const { name: _name, off: _off, fallbacks: listed, ...rest } = route
     const service = this.options.service?.(route.providerId)
-    if (!service) return rest
-    return { ...rest, name: service.name, ...(service.enabled ? {} : { off: true as const }) }
+    const fallbacks = listed?.map(({ providerId, model }) => {
+      const name = this.options.service?.(providerId)?.name
+      return { providerId, model, ...(name ? { name } : {}) }
+    })
+    const base = { ...rest, ...(fallbacks?.length ? { fallbacks } : {}) }
+    if (!service) return base
+    return { ...base, name: service.name, ...(service.enabled ? {} : { off: true as const }) }
+  }
+
+  /** The service a model request of the run waits for a place of, as the Host's scheduler says; a driver never sets it. */
+  private withQueue(sessionId: string, live: RunLive): RunLive {
+    const { queued: _queued, queuedFor: _service, ...rest } = live
+    const waiting = this.options.queueOf?.(sessionId)
+    return waiting ? { ...rest, queued: true, ...(waiting.service ? { queuedFor: waiting.service } : {}) } : rest
   }
 
   private describe(entry: Entry): HarnessInfo {

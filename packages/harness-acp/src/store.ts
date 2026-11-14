@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import {
   GATEWAY_LOSSES,
+  MAX_MODEL_FALLBACKS,
   isFileChange,
   type FileChange,
   isFileMention,
@@ -198,6 +199,8 @@ const routedTurn = z.object({
         measured: count.optional(),
         open: count.optional(),
         usage: usage.optional(),
+        provider: z.string().max(128).optional(),
+        fallback: count.optional(),
       }),
     )
     .max(16),
@@ -340,7 +343,15 @@ const stateSchema = z.object({
         agent: z.strictObject({ customAgentId: z.string().min(1).max(128) }).optional(),
         agentPrivate: z.literal(true).optional(),
         modelRoute: z
-          .object({ providerId: z.string().min(1).max(128), model: z.string().min(1).max(200), bypassed: z.literal(true).optional() })
+          .object({
+            providerId: z.string().min(1).max(128),
+            model: z.string().min(1).max(200),
+            bypassed: z.literal(true).optional(),
+            fallbacks: z
+              .array(z.object({ providerId: z.string().min(1).max(128), model: z.string().min(1).max(200) }))
+              .max(MAX_MODEL_FALLBACKS)
+              .optional(),
+          })
           .optional(),
       }),
       messages: z.array(message),
@@ -415,6 +426,22 @@ const stateSchema = z.object({
             wire: z.enum(['chat-completions', 'responses', 'anthropic-messages', 'gemini']),
             upstream: z.enum(['chat-completions', 'responses', 'anthropic-messages', 'gemini']).optional(),
             origin: z.string().min(1).max(300),
+            fallbacks: z
+              .record(
+                z.string().min(1).max(200),
+                z
+                  .array(
+                    z.object({
+                      providerId: z.string().min(1).max(128),
+                      model: z.string().min(1).max(200),
+                      upstream: z.enum(['chat-completions', 'responses', 'anthropic-messages', 'gemini']),
+                      origin: z.string().min(1).max(300),
+                    }),
+                  )
+                  .min(1)
+                  .max(MAX_MODEL_FALLBACKS),
+              )
+              .optional(),
           })
           .optional(),
         routeModelSet: z.literal(true).optional(),
