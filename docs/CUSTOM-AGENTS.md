@@ -153,6 +153,8 @@ Agent 也能提议定时任务：`propose_schedule(name, plan, prompt)`，与 `p
 
 `POST /tasks` 接受 `customAgentId`。新会话的标题取第一条输入从第一行非 `>` 引用的文字起（内置与外部 Harness 相同，`promptTitle`），所以带入的成果不会成为标题；只有引用时取第一个「上次成果」的标题。请求里的 `harnessId` 只能是 Agent 自己的，别的得 400 `agent-harness-fixed`，什么也不开始（在第一次选定时核对，所以已记下的开始的重试照旧按回执回答）；同时给的 `mode`、`model`、`workspaceId` 只影响这次会话，没给的取 Agent 的默认值；Agent 的 `workspaceId: 'default'` 由 Host 映射为它的家，实际 cwd 与 `sessionFolder` 由分配器持有，不把私有家登记进公共项目目录；普通 Code 的同名值仍使用原起始文件夹或会话自己的文件夹，没有默认项目的 Agent 与这一次不用默认项目的委托都这样发送。只有用的是 Agent 自己的默认项目而它已移除时，开始以 409 `agent-unavailable`「默认项目已移除」拒绝；这一次另选的项目不存在时与普通会话一样是 400 `workspace-unavailable`。一个请求的选择在第一次时写入回执，所以结果未知后的重试不会换到后来改过的 Harness。
 
+外部 Harness 的原生空闲命令没有携带人物 brief 时，不消耗它；brief 保留到下一条普通消息。pi 的已报告原生前缀命令同样保留，未知命令仍按普通输入处理。具体来源与拦截规则见 [HARNESSES.md](HARNESSES.md#会话命令)。
+
 会话开始后 Agent 与 Harness 不再变，归属记录在 `TaskSummary.agent`。Agent 的会话内容只对完整数据范围的设备开放。
 
 **和「通用」对话**：`customAgentId: 'general'` 开始的会话不指定 Agent，「通用」照常生效（与其他没选 Agent 的会话一样）；Host 只在会话元数据里记下 `generalChat`（`session-meta.ts` 的 schema），摘要里是 `TaskSummary.generalChat: true`，执行端声称的同名字段被丢弃，不进审计。这个标记本身就让会话私有（与 Agent 的会话一样，`agentPrivate` 为真，范围较小的设备读不到、列不出，事件流里也没有它的内容），不论「通用」当时是否为空、Harness 是否接收「通用」；开始时与开始前的复查都要求完整数据范围。客户端据此把它放进我的 Agent 而不是 Code。它要求完整数据范围（否则 403 `agent-scope-required`），不带项目、工作树或分叉（否则 400 `general-chat-project`）；新话题固定用 Standard Agent，目录只由 Host 分配；旧参数的拒绝与未知结果保留见下文。

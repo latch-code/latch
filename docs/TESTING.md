@@ -404,6 +404,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `helper-proposals.e2e.ts` 另需 `LATCH_HELPER_PROPOSALS_LIVE=1` 和上述 Codex / OpenCode 的命令路径，沿相同临时目录规则验证真实 `latch-skills`。Codex 使用同协议假 Responses 服务，由客户端 `tool_search` 发现其 MCP 目录；OpenCode 使用假 Chat 服务，经实际提供的 `execute` 搜索并调用目录里的工具。帮手由夹具创建，提示、原生审批、记忆保存与日程「保存为关闭」经页面完成；提议须为 `origin:agent`，人保存前不产生记忆或日程，保存后 L3 日程仍为关闭状态。三宽深浅提议卡与表单在 `test-results/helper-proposals/`。它不验证付费模型、后台定时执行或浏览器 MCP；pi 不支持 MCP，不加入此用例。`codex-skills.live.test.ts` 在相同 opt-in 下向新建的自有线程读取官方 MCP 状态，再用本地假模型驱动一次成功提议和一次非法空提议，保存原生完成/失败事件；这个诊断用例的审批由夹具回答，页面审批另由 e2e 验证，不访问 CLI 存储。跨协议的工具发现限制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#responses-转-chat)。
 
+`codex-commands.live.test.ts`、`codex-compact.e2e.ts` 与 `pi-commands.e2e.ts` 默认跳过；所有者授权后设置 `LATCH_SLASH_LIVE=1` 及对应 `LATCH_CODEX_GATEWAY_BINARY` / `LATCH_PI_GATEWAY_BINARY` 才运行真实已安装 CLI。它们使用私有 HOME/XDG/CLI 目录、临时 Host 与本地假模型服务，不读取用户 CLI 存储。Codex 核对配置不符时没有上游请求、普通提示先应用配置、原生 compact 的真实完成及取消；页面覆盖正常补全后手动发送、运行中置灰与 HTTP 409、手机/平板/桌面截图，并验证 `/review` 明确拒绝且不新增上游请求。pi 用自有扩展、模板与技能验证真实展开和运行中追加，扩展命令的执行不花模型请求；原生 `/mcp` 出现在列表不等于 Latch 注入 MCP 已实现。假 app-server 和 pi fixture 的对应回归是手写替身，不是这些真实 CLI 的录制。
+
 `workbench-layout.e2e.ts` 验证总览与分拣台的共用会话、草稿与布局偏好，以及手机、平板、桌面的浅深色截图。分类的失败、未知、停止与归档/私有话题边界见 `apps/web/test/work-overview.test.ts`；默认偏好、旧数据和本地存储见 `workbench-preferences.test.ts`。
 
 `workbench-git-eligibility.e2e.ts` 经真实 Host API 对照普通文件夹、损坏 HEAD 与实际 Git 改动，再从首页刷新、打开概要和交付，截图覆盖三宽、两布局、浅深色。不适用不冒称读取失败，损坏状态不冒称没有改动。Host 的同名测试另检查权限、链接、目录及祖先替换后还原的拒绝。`desktop-workbench.e2e.ts` 使用真实临时 Git 仓库验证有内容的三道与布局/空间切换，并在 Electron 正常入口从首页批准写入、继续原会话和查看 Git 改动，保留两套草稿与附件。

@@ -513,7 +513,15 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 
 ### 会话命令
 
-ACP `available_commands_update` 的当前列表作为可选 `TaskDetail.commands` 发送给客户端，并随 ACP 会话持久化。每次更新替换之前的列表（空列表撤下命令）；最多 200 条，名称 100 字符、说明 1000 字符、输入提示 500 字符，畸形更新不接受。名称不能包含空白或控制字符。界面只在草稿开头的 `/` 词项匹配它们，选择后插入可编辑草稿；不会自动发送或由 Host 执行另一个命令。名称与说明按可见安全文本显示，旧 Host 没有该字段时不展示命令建议。线自己用 Agent 的协议执行的命令（线的 `idleCommands`，现在只有 pi 的 `compact`）带 `idleOnly`：运行中不列出，排队、把排队的消息改成它或追加到正在运行的一轮时 Host 以 409 `command-queued` 拒绝。
+ACP `available_commands_update` 的当前列表作为可选 `TaskDetail.commands` 发送给客户端，并随 ACP 会话持久化。每次更新替换之前的列表（空列表撤下命令）；最多 200 条，名称 100 字符、说明 1000 字符、输入提示 500 字符，畸形更新不接受。名称不能包含空白或控制字符。名称与说明按可见安全文本显示。点按与 Tab 只插入可编辑草稿；桌面键盘 Enter 的执行条件、参数提示和保留动作见 [DESIGN.md](DESIGN.md)。带 `idleOnly` 的命令在运行中保留置灰；排队、把排队的消息改成它或追加到运行中的一轮时，Host 以 409 `command-queued` 拒绝。
+
+Codex 直连声明 `/compact`，用 `thread/compact/start` 执行，不接受参数或附件。立即 RPC 回答不是完成；进度来自 `contextCompaction`，手动压缩以对应 `turn/completed` 的成功、失败或中断结算，取消用原有 `turn/interrupt` 并等待真实结算。自动压缩以自身 `item/completed` 为成功证据；普通一轮结束却缺少这个完成事件时显示「压缩上下文结果未知」，不推断已完成。每次压缩的终态只通知一次。
+
+原生 compact 没有每轮模型、思考或权限覆盖参数。已加载 thread 的 `thread/resume` 读回不等于应用新配置；执行前按实际读回核对 thread、目录、模型、思考、完整沙箱及审批策略，缺项、未知或非空 `activePermissionProfile` 都拒绝。改过配置时先由普通消息应用，再用 compact；不发空轮次代替人应用配置。Codex profile 版本为 6。原生 `/review` 会改变询问行为，并可能采用独立的 `review_model`，当前尚未接入；直接输入或追加时明确拒绝，不调用 `review/start`，也不转成普通提示。
+
+pi 在打开或加载会话时复用 `get_commands`，只采用实际报告的 extension、prompt、skill。公开列表有界，去掉路径、`sourceInfo` 和私有权限扩展命令，保留字面 `skill:name`；扩展和原生 compact 只在空闲时执行，提示模板和技能可以由 pi 在追加时展开。pi 自己报告 `/mcp` 不表示 Latch 能向它注入 MCP，`takesMcpServers` 不因此改变。pi profile 版本为 5。
+
+线的可选 `commandsWithoutContext` 区分必须保留原生前缀的命令与只限空闲的命令。只有完整首词与当前实际清单一致才省略本次人物 brief；没有输入参数的原生命令同样不消耗 brief，下一条普通消息继续携带它。未知名字、读取目录失败或多段上下文不冒充原生命令；未携带 brief 的用户消息不标记 `agentBrief`。
 
 分叉由 Host 以一条背景文本加新输入开启会话，ACP 不需要私有分叉方法；仍是新的启动。pi 在同一定义、同一文件夹内用它自己的分叉，见「pi 的 RPC 模式」。用户消息的 requestId 在 ACP 存储中保留，用于关联确认后的输入与客户端待发送气泡。
 
