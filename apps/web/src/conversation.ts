@@ -7,6 +7,7 @@ import {
   type TaskDetail,
   type TaskStatus,
   type TokenUsage,
+  type ToolAction,
   type ToolDecision,
   type ToolKind,
 } from '@latch/protocol'
@@ -375,11 +376,55 @@ export function approvalCommand(tool: Message['tool'], fallback?: string): Comma
   return reported === undefined ? undefined : { reported, ...unwrapShell(reported) }
 }
 
+/**
+ * What the Harness itself says a command does, when it classified all of it as reads, listings and searches (Codex).
+ * A call that still waits to be allowed is always shown as the command it is.
+ */
+export function shownActions(message: Pick<Message, 'tool' | 'state'>): ToolAction[] | undefined {
+  const tool = message.tool
+  if (!tool?.actions?.length || (tool.kind !== undefined && tool.kind !== 'execute')) return undefined
+  if (message.state === 'awaiting-approval' || message.state === 'queued') return undefined
+  return tool.actions
+}
+
+/** The kind a row is drawn as: a command its Harness classified reads as what it does. */
+export function rowKind(message: Pick<Message, 'tool' | 'toolName' | 'state'>): ToolKind {
+  const actions = shownActions(message)
+  if (!actions) return toolKind(message)
+  return actions.every(action => action.kind === 'read') ? 'read' : 'search'
+}
+
+/** How many quiet steps of each kind, in words: 「读取 3 个文件，搜索 2 次」. Only what was counted is said. */
+export function quietWords(counts: { read: number; list: number; search: number }): string {
+  return [
+    ...(counts.read ? [`读取 ${counts.read} 个文件`] : []),
+    ...(counts.list ? [`列出 ${counts.list} 个文件夹`] : []),
+    ...(counts.search ? [`搜索 ${counts.search} 次`] : []),
+  ].join('，')
+}
+
+function actionLabel(actions: readonly ToolAction[]): ToolLabel {
+  const [only] = actions
+  if (actions.length === 1 && only) {
+    if (only.kind === 'read' && only.path) return { verb: '读取', object: shortPath(only.path), mono: false }
+    if (only.kind === 'list') {
+      const folder = only.path?.replace(/[\\/]+$/u, '')
+      return { verb: '列出', object: folder ? shortPath(folder) : '当前文件夹', mono: false }
+    }
+    if (only.kind === 'search' && only.query) return { verb: '搜索', object: only.query, mono: true }
+    if (only.kind === 'search' && only.path) return { verb: '搜索', object: shortPath(only.path), mono: false }
+  }
+  const count = (kind: ToolAction['kind']) => actions.filter(action => action.kind === kind).length
+  return { object: quietWords({ read: count('read'), list: count('list'), search: count('search') }), mono: false }
+}
+
 export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>): ToolLabel {
   const tool = message.tool
   if (isReview(tool)) return { object: JUDGED_COPY.review(tool!.judged!.by), mono: false }
   const edited = diffLabel(tool)
   if (edited) return edited
+  const actions = shownActions(message)
+  if (actions) return actionLabel(actions)
   if (tool?.toolTitle) {
     const found = titledObject(tool)
     if (!found) return { object: tool.toolTitle, mono: false }

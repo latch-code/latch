@@ -498,6 +498,25 @@ describe('Codex over its app-server', () => {
     expect(detail.config?.find(option => option.category === 'model')?.currentValue).toBe('gpt-fake')
   })
 
+  it("carries Codex's own classification of a command only when it classified every part of it", async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const detail = await settled(bridge, await start(bridge, t.main, 'look around'))
+    const rows = detail.messages.filter(message => message.role === 'tool').map(message => [message.tool?.title, message.tool?.actions])
+    expect(rows).toEqual([
+      ["/bin/zsh -lc 'cat notes.txt'", [{ kind: 'read', path: `${t.main}/notes.txt` }]],
+      ["/bin/zsh -lc 'ls -la docs'", [{ kind: 'list', path: 'docs' }]],
+      [`/bin/zsh -lc "rg -n 'alpha' notes.txt"`, [{ kind: 'search', query: 'alpha', path: 'notes.txt' }]],
+      ["/bin/zsh -lc 'cat notes.txt | wc -l'", [{ kind: 'read', path: `${t.main}/notes.txt` }]],
+      // Not classified, or only partly: a command, with nothing derived from its text.
+      ["/bin/zsh -lc 'echo ok'", undefined],
+      ["/bin/zsh -lc 'cat notes.txt && rm notes.txt'", undefined],
+    ])
+    // The reported command is kept whole whatever Codex made of it.
+    for (const message of detail.messages.filter(item => item.role === 'tool'))
+      expect(JSON.parse(message.tool!.input!)).toMatchObject({ command: message.tool!.title })
+  })
+
   it('keeps the parts of a streamed reasoning summary apart as sections', async () => {
     const t = await computer()
     const bridge = await t.open()

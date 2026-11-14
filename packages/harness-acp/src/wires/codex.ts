@@ -292,6 +292,27 @@ function itemStatus(status: unknown, exitCode?: unknown): 'completed' | 'failed'
   return undefined
 }
 
+/**
+ * Codex's own reading of a command (`commandActions`, app-server 0.167): which file it reads, which folder it lists,
+ * what it searches for. Passed on only when Codex classified every part: one `unknown` (or a shape this version of
+ * Latch does not know) and the command is reported as a command, with nothing derived from its text.
+ */
+function commandActions(reported: unknown): Array<{ kind: 'read' | 'list' | 'search'; path?: string; query?: string }> | undefined {
+  if (!Array.isArray(reported) || reported.length === 0 || reported.length > 16) return undefined
+  const actions: Array<{ kind: 'read' | 'list' | 'search'; path?: string; query?: string }> = []
+  for (const action of reported) {
+    if (!isRecord(action)) return undefined
+    const path = typeof action.path === 'string' && action.path ? clip(action.path, 1000) : undefined
+    const query = typeof action.query === 'string' && action.query ? clip(action.query, 500) : undefined
+    if (action.type === 'read' && path) actions.push({ kind: 'read', path })
+    else if (action.type === 'listFiles') actions.push({ kind: 'list', ...(path ? { path } : {}) })
+    else if (action.type === 'search' && (query || path))
+      actions.push({ kind: 'search', ...(query ? { query } : {}), ...(path ? { path } : {}) })
+    else return undefined
+  }
+  return actions
+}
+
 /** A file change as text: each file's unified diff under its path. */
 function changesText(changes: unknown): { text: string; paths: string[] } {
   const list = Array.isArray(changes) ? changes.filter(isRecord) : []
@@ -1225,6 +1246,7 @@ export class CodexWire implements AgentWire {
       }
       case 'commandExecution': {
         const command = typeof item.command === 'string' ? item.command : 'command'
+        const actions = commandActions(item.commandActions)
         if (!done && item.status === 'inProgress' && !this.notRun.has(id)) this.turn?.commands.add(id)
         if (child) this.turn?.threads.add(child)
         if (!done || !this.output.has(id))
@@ -1235,6 +1257,7 @@ export class CodexWire implements AgentWire {
             kind: 'execute',
             status: this.allowed.has(id) ? 'in_progress' : 'pending',
             rawInput: { command, ...(typeof item.cwd === 'string' ? { cwd: item.cwd } : {}) },
+            ...(actions ? { actions } : {}),
           })
         if (!done) {
           this.output.set(id, '')
@@ -1249,6 +1272,8 @@ export class CodexWire implements AgentWire {
           toolCallId: id,
           status,
           content: output ? [{ type: 'content', content: { type: 'text', text: clip(output, TOOL_TEXT_LIMIT) } }] : [],
+          // The finished item's parse is the last word: an empty list clears what its start reported.
+          actions: actions ?? [],
           ...this.refusal(id, item.status),
         })
         this.commandEnded(id)

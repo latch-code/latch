@@ -4,12 +4,14 @@ import type {
   Message,
   PlanEntry,
   SessionConfigOption,
+  ToolAction,
   ToolBlock,
   ToolDecision,
   ToolDetail,
   ToolJudgement,
   ToolKind,
 } from '@latch/protocol'
+import { z } from 'zod'
 import { configOption, toolContent, toolLocation, type ContentBlock, type SessionState, type ToolFields } from './protocol.ts'
 
 export const TEXT_LIMIT = 2_000_000
@@ -72,6 +74,8 @@ export interface ToolState {
   outputWithoutFiles?: string
   content: unknown[]
   locations: unknown[]
+  /** The Harness's own classification of a command, when every part of it is a read, a listing or a search. */
+  actions?: ToolAction[]
   /** Open permission requests for this call. */
   awaiting: number
   /** Latch's verdict for a call the agent left unfinished when its turn ended. */
@@ -114,6 +118,33 @@ export function mergeTool(state: ToolState, fields: ToolFields, at: string): voi
   if (fields.rawOutput !== undefined) state.rawOutput = fields.rawOutput
   if (fields.content != null) state.content = fields.content.slice(0, 256)
   if (fields.locations != null) state.locations = fields.locations.slice(0, 256)
+  if (fields.actions != null) {
+    const actions = toolActions(fields.actions)
+    if (actions) state.actions = actions
+    else delete state.actions
+  }
+}
+
+const toolAction = z.object({
+  kind: z.enum(['read', 'list', 'search']),
+  path: z.string().max(4096).optional(),
+  query: z.string().max(4096).optional(),
+})
+
+/**
+ * A command's actions as rows may show them: all of them or none. One entry Latch does not know, an empty list or more
+ * than 16 means the command stays a command; nothing is guessed from what is left.
+ */
+export function toolActions(reported: readonly unknown[]): ToolAction[] | undefined {
+  if (reported.length === 0 || reported.length > 16) return undefined
+  const actions: ToolAction[] = []
+  for (const item of reported) {
+    const parsed = toolAction.safeParse(item)
+    if (!parsed.success) return undefined
+    const { kind, path, query } = parsed.data
+    actions.push({ kind, ...(path ? { path: clip(path, 1000) } : {}), ...(query ? { query: clip(query, 500) } : {}) })
+  }
+  return actions
 }
 
 /**
@@ -209,6 +240,7 @@ export function toolDetail(state: ToolState): ToolDetail {
     ...(output !== undefined ? { output: clip(output, TOOL_TEXT_LIMIT) } : {}),
     ...(outputWithoutFiles !== undefined ? { outputWithoutFiles: clip(outputWithoutFiles, TOOL_TEXT_LIMIT) } : {}),
     ...(locations.length ? { locations } : {}),
+    ...(state.actions?.length ? { actions: state.actions } : {}),
     ...(diffs.length ? { diffs } : {}),
     ...(state.decision ? { decision: state.decision } : {}),
     ...(state.judged ? { judged: { by: state.judged.by, outcome: state.judged.outcome } } : {}),

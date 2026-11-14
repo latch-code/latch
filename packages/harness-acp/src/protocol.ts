@@ -182,6 +182,8 @@ export const toolFields = z.object({
   rawOutput: z.unknown().optional(),
   /** Latch's native wires may separately identify the non-file part of a result. */
   outputWithoutFiles: z.string().optional(),
+  /** What a native wire's Harness says a command does (Codex's parsed actions); see `toolActions`. */
+  actions: z.array(z.unknown()).nullish(),
 })
 export type ToolFields = z.infer<typeof toolFields>
 

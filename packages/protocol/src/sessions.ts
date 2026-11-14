@@ -340,6 +340,16 @@ export interface ToolDecision {
   subagentStopped?: true
 }
 
+/**
+ * One thing a command does, as the Harness that ran it classified it (Codex's parsed command actions): reading a file,
+ * listing a folder or searching. Latch never derives these from a command's text.
+ */
+export interface ToolAction {
+  kind: 'read' | 'list' | 'search'
+  path?: string
+  query?: string
+}
+
 /** Structured presentation of one tool call. `Message.text` keeps the plain-text form. */
 export interface ToolDetail {
   kind?: ToolKind
@@ -357,6 +367,11 @@ export interface ToolDetail {
   /** Host-only producer result without file contents; empty means file-only output. Removed from every device response. */
   outputWithoutFiles?: string
   locations?: string[]
+  /**
+   * What the Harness says this command does, only when it classified every part of it as a read, a listing or a
+   * search; absent otherwise, and from Harnesses that report no such thing.
+   */
+  actions?: ToolAction[]
   diffs?: FileDiff[]
   /** How the call's approval ended; absent for calls that needed none, from older Hosts and from plugin drivers. */
   decision?: ToolDecision

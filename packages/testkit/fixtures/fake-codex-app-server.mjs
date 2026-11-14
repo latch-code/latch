@@ -237,6 +237,32 @@ async function play(text) {
     end()
     return reply('thought')
   }
+  if (word === 'look') {
+    // Commands with the actions Codex 0.167 parses for them (shapes recorded from the real binary): a read, a listing,
+    // a search, a pipeline it reads as one read, one it does not classify, and one only partly classified.
+    const steps = [
+      ['cat notes.txt', [{ type: 'read', command: 'cat notes.txt', name: 'notes.txt', path: `${thread.cwd}/notes.txt` }], 'alpha\nbeta\n'],
+      ['ls -la docs', [{ type: 'listFiles', command: 'ls -la docs', path: 'docs' }], 'guide.md\n'],
+      ["rg -n 'alpha' notes.txt", [{ type: 'search', command: 'rg -n alpha notes.txt', query: 'alpha', path: 'notes.txt' }], '1:alpha\n'],
+      ['cat notes.txt | wc -l', [{ type: 'read', command: 'cat notes.txt', name: 'notes.txt', path: `${thread.cwd}/notes.txt` }], '2\n'],
+      ['echo ok', [{ type: 'unknown', command: 'echo ok' }], 'ok\n'],
+      [
+        'cat notes.txt && rm notes.txt',
+        [
+          { type: 'read', command: 'cat notes.txt', name: 'notes.txt', path: `${thread.cwd}/notes.txt` },
+          { type: 'unknown', command: 'rm notes.txt' },
+        ],
+        '',
+      ],
+    ]
+    for (const [inner, commandActions, aggregatedOutput] of steps) {
+      const id = `cmd-${randomUUID()}`
+      const command = inner.includes("'") ? `/bin/zsh -lc "${inner}"` : `/bin/zsh -lc '${inner}'`
+      const shape = { type: 'commandExecution', id, command, cwd: thread.cwd, commandActions }
+      item({ ...shape, status: 'inProgress' }, () => ({ ...shape, status: 'completed', aggregatedOutput, exitCode: 0 }))()
+    }
+    return reply('looked')
+  }
   if (word === 'sections') {
     // A summary in two parts, as Codex streams one: each part starts with its bold title and no break comes between them.
     const id = `think-${randomUUID()}`

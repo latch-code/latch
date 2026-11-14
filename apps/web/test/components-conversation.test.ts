@@ -606,6 +606,77 @@ describe('tool rows and command blocks', () => {
     expect(silent).toContain('2 个测试未通过')
   })
 
+  it('draws a command its Harness classified as a read, a listing or a search as that row, and never guesses one', () => {
+    const acted = (inner: string, actions: NonNullable<Message['tool']>['actions'], extra: Partial<Message> = {}) => {
+      const command = `/bin/zsh -lc '${inner}'`
+      return renderToStaticMarkup(
+        createElement(
+          FileSession.Provider,
+          { value: { id: 's', folder: '/work/app' } },
+          createElement(ToolCard, {
+            message: tool({
+              toolName: 'execute',
+              state: 'completed',
+              tool: {
+                kind: 'execute',
+                title: command,
+                input: JSON.stringify({ command, cwd: '/work/app' }),
+                output: 'alpha',
+                ...(actions ? { actions } : {}),
+              },
+              ...extra,
+            }),
+          }),
+        ),
+      )
+    }
+    const read = acted('cat docs/notes.txt', [{ kind: 'read', path: '/work/app/docs/notes.txt' }])
+    expect(read).toContain('data-kind="read"')
+    expect(read).toContain('<span class="process-verb">读取</span>')
+    expect(read).toContain('<span class="process-folder">docs/</span>')
+    expect(read).toContain('<span class="process-name">notes.txt</span>')
+    expect(read).not.toContain('is-command')
+    expect(read).not.toContain('command-tail')
+    // The reported command stays one step away.
+    expect(read).toContain('title="/bin/zsh -lc &#x27;cat docs/notes.txt&#x27;"')
+    const listed = acted('ls -la docs', [{ kind: 'list', path: 'docs/' }])
+    expect(listed).toContain('<span class="process-verb">列出</span>')
+    expect(listed).toContain('<span class="process-name">docs</span>')
+    expect(acted('ls', [{ kind: 'list' }])).toContain('当前文件夹')
+    const searched = acted('rg -n alpha notes.txt', [{ kind: 'search', query: 'alpha', path: 'notes.txt' }])
+    expect(searched).toContain('data-kind="search"')
+    expect(searched).toContain('<span class="process-verb">搜索</span>')
+    expect(searched).toContain('<span class="process-object is-mono">alpha</span>')
+    const several = acted('cat a; cat b; rg x', [
+      { kind: 'read', path: 'a' },
+      { kind: 'read', path: 'b' },
+      { kind: 'search', query: 'x' },
+    ])
+    expect(several).toContain('读取 2 个文件，搜索 1 次')
+    // Running, it is already the quiet row; waiting to be allowed, it is the command.
+    expect(acted('cat docs/notes.txt', [{ kind: 'read', path: '/work/app/docs/notes.txt' }], { state: 'running' })).toContain(
+      'data-kind="read"',
+    )
+    const waiting = acted('cat docs/notes.txt', [{ kind: 'read', path: '/work/app/docs/notes.txt' }], { state: 'awaiting-approval' })
+    expect(waiting).toContain('is-command')
+    expect(waiting).toContain('cat docs/notes.txt</span>')
+    // Without the Harness's word for it, a command that plainly reads a file is still a command.
+    const unclassified = acted('cat docs/notes.txt', undefined)
+    expect(unclassified).toContain('data-kind="execute"')
+    expect(unclassified).toContain('is-command')
+    // Another tool's row never takes a command's classification.
+    const other = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({
+          toolName: 'fetch',
+          state: 'completed',
+          tool: { kind: 'fetch', input: '{"url":"https://example.com"}', actions: [{ kind: 'read', path: 'x' }] },
+        }),
+      }),
+    )
+    expect(other).toContain('data-kind="fetch"')
+  })
+
   it("keeps a command a plain row where its command line is unknown, and among a subagent's steps", () => {
     const html = run({ tool: { kind: 'execute', title: 'Run tests' } })
     expect(html).not.toContain('is-command')

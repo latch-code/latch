@@ -84,6 +84,10 @@ const toolDetailSchema = z.object({
   output: z.string().optional(),
   outputWithoutFiles: z.string().optional(),
   locations: z.array(z.string()).optional(),
+  actions: z
+    .array(z.object({ kind: z.enum(['read', 'list', 'search']), path: z.string().optional(), query: z.string().optional() }))
+    .max(16)
+    .optional(),
   diffs: z
     .array(
       z.object({

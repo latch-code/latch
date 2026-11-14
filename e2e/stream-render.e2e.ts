@@ -82,6 +82,30 @@ const turns = {
     say('\\n\\n' + (allowed ? '已运行。' : '没有运行。'))
   },
 }
+turns.reads = async ({ cwd, say, tool }) => {
+  // Commands as Codex reports them: wrapped, with its own classification of what each one does.
+  const run = (id, inner, actions, output, status = 'completed') => {
+    const command = zsh(inner)
+    tool({ toolCallId: id, title: command, kind: 'execute', status: 'in_progress', rawInput: { command, cwd }, ...(actions ? { actions } : {}) })
+    if (status !== 'in_progress') tool({ toolCallId: id, status, content: [text(output)] }, 'tool_call_update')
+  }
+  say('先读几份说明。')
+  run('act_1', 'cat ' + cwd + '/notes/SKILL.md', [{ kind: 'read', path: cwd + '/notes/SKILL.md' }], '# SKILL\\n\\n说明')
+  run('act_2', 'ls -la docs', [{ kind: 'list', path: 'docs' }], 'guide.md')
+  run('act_3', "rg -n 'AGENTS' .", [{ kind: 'search', query: 'AGENTS', path: '.' }], './AGENTS.md:1:# AGENTS')
+  run('act_4', 'sed -n 1,40p AGENTS.md', [{ kind: 'read', path: cwd + '/AGENTS.md' }], '# AGENTS')
+  run('act_5', 'echo ok', undefined, 'ok')
+  run('act_6', 'cat a.txt', [{ kind: 'read', path: cwd + '/a.txt' }], 'a')
+  run('act_7', 'cat b.txt', [{ kind: 'read', path: cwd + '/b.txt' }], 'b')
+  run('act_8', 'cat missing.txt', [{ kind: 'read', path: cwd + '/missing.txt' }], 'cat: missing.txt: No such file or directory', 'failed')
+  run('act_9', 'cat c.txt', [{ kind: 'read', path: cwd + '/c.txt' }], 'c')
+  run('act_10', 'cat d.txt', [{ kind: 'read', path: cwd + '/d.txt' }], 'd')
+  run('act_11', 'cat e.txt', [{ kind: 'read', path: cwd + '/e.txt' }], 'e')
+  run('act_12', 'cat slow.txt', [{ kind: 'read', path: cwd + '/slow.txt' }], '', 'in_progress')
+  await reached(1)
+  tool({ toolCallId: 'act_12', status: 'completed', content: [text('slow')] }, 'tool_call_update')
+  say('\\n\\n读完了。')
+}
 turns.thinking = async ({ say, think }) => {
   say(Array.from({ length: 14 }, (_, index) => '第 ' + (index + 1) + ' 段：先把要做的事说清楚，再开始动手。').join('\\n\\n'), 'intro')
   think('**Checking browser and environment**\\n\\nI look at \\x60AGENTS.md\\x60 first, then the **design** notes.\\n\\n', 'answer')
@@ -284,6 +308,41 @@ describe('how a turn of work is drawn', () => {
       await command(again, 'sleep 3').waitFor()
       await shot(again, 'commands-settled', 1440, theme)
     }
+  })
+
+  it('draws the commands a Harness classified as reads, listings and searches as those rows', async () => {
+    const id = await start('reads', '读取的会话')
+    await poll(async () => (await detail(id)).messages.some(message => message.id.endsWith('act_12')), 'the running read')
+    for (const [width, height] of SIZES)
+      for (const theme of THEMES) {
+        const page = await open(width, height, theme, id)
+        try {
+          const row = (kind: string, words: string) => page.locator(`.tool-card[data-kind="${kind}"]`).filter({ hasText: words })
+          const skill = row('read', 'SKILL.md')
+          expect(await skill.locator('.process-verb').innerText()).toBe('读取')
+          expect(await skill.locator('.process-folder').innerText()).toBe('notes/')
+          expect(await skill.getAttribute('class')).not.toContain('is-command')
+          expect(await skill.locator('.tool-card-header').getAttribute('title')).toContain("/bin/zsh -lc 'cat ")
+          expect(await row('search', 'docs').locator('.process-verb').innerText()).toBe('列出')
+          expect(await row('search', 'AGENTS').first().locator('.process-verb').innerText()).toBe('搜索')
+          // What the Harness did not classify is still a command; a failed read is a failed row with its reason.
+          expect(await page.locator('.tool-card.is-command').filter({ hasText: 'echo ok' }).count()).toBe(1)
+          expect(await row('read', 'missing.txt').getAttribute('class')).toContain('tool-failed')
+          await noHorizontalOverflow(page)
+          await shot(page, 'reads-running', width, theme)
+        } catch (error) {
+          await page.screenshot({ path: `${OUTPUT}/failed-reads-${width}-${theme}.png` })
+          throw error
+        }
+      }
+    // Opened, the row has the command as it was reported and what it printed.
+    const page = await open(1440, 900, 'light', id)
+    const skill = page.locator('.tool-card[data-kind="read"]').filter({ hasText: 'SKILL.md' })
+    await skill.locator('.tool-card-header').click()
+    await skill.locator('.argument-list').getByText("/bin/zsh -lc 'cat ", { exact: false }).waitFor()
+    await shot(page, 'read-opened', 1440, 'light')
+    await advance(1)
+    await settled(id)
   })
 
   it('shows the current title while it thinks, folds with a height transition that keeps the place, and opens as restricted Markdown', async () => {

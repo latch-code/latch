@@ -12,6 +12,7 @@ import {
   hasDiffs,
   isReview,
   ranDespite,
+  rowKind,
   shownToolOutput,
   shownToolState,
   toolDuration,
@@ -24,7 +25,6 @@ import { useChangesLink } from '../conversation/changesLink.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { homeOf, tildeHome } from '../core/shellUnwrap.ts'
 import { argumentView, basename, formatDuration } from '../format.ts'
-import { toolKind } from '../icons.tsx'
 import { ArgumentList } from './ArgumentList.tsx'
 import { DiffView, type DiffViewFile } from './DiffView.tsx'
 import { FileChip, FileRootContext, FileSession, type FileSessionInfo } from './FileChip.tsx'
@@ -75,6 +75,12 @@ const sameDiffs = (a: FileDiff[] | undefined, b: FileDiff[] | undefined) =>
         diff.path === other.path && diff.oldText === other.oldText && diff.newText === other.newText && diff.previous === other.previous
       )
     }))
+const sameActions = (a: ToolDetail['actions'], b: ToolDetail['actions']) =>
+  a === b
+  || (a?.length === b?.length
+    && (a ?? []).every(
+      (action, index) => action.kind === b![index]!.kind && action.path === b![index]!.path && action.query === b![index]!.query,
+    ))
 const sameDecision = (a: ToolDecision | undefined, b: ToolDecision | undefined) =>
   a === b || (a?.outcome === b?.outcome && a?.at === b?.at && a?.via === b?.via)
 const sameTool = (a: ToolDetail | undefined, b: ToolDetail | undefined) =>
@@ -87,6 +93,7 @@ const sameTool = (a: ToolDetail | undefined, b: ToolDetail | undefined) =>
     && a.input === b.input
     && a.output === b.output
     && a.locations?.join('\n') === b.locations?.join('\n')
+    && sameActions(a.actions, b.actions)
     && sameDiffs(a.diffs, b.diffs)
     && sameDecision(a.decision, b.decision)
     && a.judged?.outcome === b.judged?.outcome
@@ -115,7 +122,8 @@ export function rowPath(
   const view = argumentView(tool?.input)
   if (view.kind === 'entries')
     input = view.entries.find(([key, value]) => PATH_KEYS.includes(key) && value.trim() && !value.includes('\n'))?.[1]
-  const candidates = [diffs.length === 1 ? diffs[0]!.path : undefined, tool?.locations?.[0], input]
+  const acted = tool?.actions?.length === 1 ? tool.actions[0]!.path?.replace(/[\\/]+$/u, '') : undefined
+  const candidates = [diffs.length === 1 ? diffs[0]!.path : undefined, tool?.locations?.[0], input, acted]
   for (const path of candidates) {
     if (!path) continue
     const name = basename(path)
@@ -243,7 +251,8 @@ export const ToolCard = memo(
     const toolName = message?.toolName ?? approval?.toolName ?? ''
     const title = toolHeading(tool, toolName)
     const label = toolLabel({ tool, toolName, state })
-    const kind = toolKind({ tool, toolName })
+    // A command its Harness classified as reads, listings or searches is drawn as one of those rows.
+    const kind = rowKind({ tool, toolName, state })
     const diffs = tool?.diffs ?? approval?.tool?.diffs ?? []
     // While a call runs its plain-text form is still its input; only what it reported is output.
     const output = state === 'running' ? (tool?.output ?? '') : facts ? shownToolOutput(facts) : ''
