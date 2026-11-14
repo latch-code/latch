@@ -172,10 +172,48 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     await page.getByText('仓库配置（.git/config）里有 includeIf', { exact: false }).first().waitFor()
     expect(await input.inputValue()).toBe('hello')
     expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(1)
-    // The menu says so too.
-    await folder.click()
-    await expect.poll(() => worktree.getAttribute('aria-disabled')).toBe('true')
-    expect(await worktree.innerText()).toContain('请把 includeIf 移到全局配置')
+    // Disabled can precede the async reason. Hold the real Host reply to distinguish loading from a settled refusal.
+    const endpoint = '**/link/api/workspaces/rust-learn/worktree'
+    let release: () => void = () => {}
+    let received = false
+    const pending: Array<Promise<void>> = []
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    await page.route(endpoint, route => {
+      const work = (async () => {
+        const response = await route.fetch()
+        received = true
+        await held
+        await route.fulfill({ response })
+      })()
+      pending.push(work)
+      return work
+    })
+    try {
+      await folder.click()
+      await expect.poll(() => received).toBe(true)
+      await writeFile(
+        `${OUT}/include-if-loading.json`,
+        JSON.stringify(
+          {
+            disabled: await worktree.getAttribute('aria-disabled'),
+            text: await worktree.innerText(),
+          },
+          null,
+          2,
+        ) + '\n',
+      )
+      release()
+      await expect.poll(() => worktree.innerText()).toContain('请把 includeIf 移到全局配置')
+      expect(await worktree.getAttribute('aria-disabled')).toBe('true')
+    } finally {
+      release()
+      const settled = await Promise.allSettled(pending)
+      await page.unroute(endpoint)
+      const failures = settled.filter(result => result.status === 'rejected').map(result => result.reason)
+      if (failures.length) throw new AggregateError(failures, 'Worktree reply handlers did not settle')
+    }
     await page.keyboard.press('Escape')
 
     // Fixed, and on a long branch: the menu offers it again, and what stays behind still shows in full.

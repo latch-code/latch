@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AgentSettings, AppSnapshot, TaskDetail } from '@latch/protocol'
@@ -247,6 +247,73 @@ describe('permission states in a browser', () => {
     }
     await rejectWithoutNote(card)
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
+  })
+
+  it('ignores retained closed sheets while real menus and sheets keep Escape for themselves', async () => {
+    const sessionId = await startHighRisk('浮层与拒绝键')
+    await open(sessionId)
+    const card = page.locator('[data-approval-id]')
+    const reject = card.getByRole('button', { name: '拒绝', exact: true })
+    await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
+    const state = await page.evaluate(() => ({
+      sheets: [...document.querySelectorAll<HTMLDialogElement>('dialog.ui-sheet')].map(sheet => ({
+        tag: sheet.tagName,
+        open: sheet.open,
+        visible: sheet.checkVisibility(),
+      })),
+      openLayers: document.querySelectorAll(':popover-open:not([role="tooltip"]), dialog[open]').length,
+    }))
+    await writeFile(`${OUTPUT}/retained-sheet-state.json`, JSON.stringify(state, null, 2) + '\n')
+    expect(state.sheets.some(sheet => !sheet.open && !sheet.visible)).toBe(true)
+    expect(state.openLayers).toBe(0)
+    await reject.focus()
+    await expect.poll(() => caps(card, '拒绝')).toBe('Esc')
+    for (const flags of [
+      { isComposing: true },
+      { repeat: true },
+      { ctrlKey: true },
+      { metaKey: true },
+      { altKey: true },
+      { shiftKey: true },
+    ])
+      await reject.dispatchEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...flags })
+    expect((await detail(sessionId)).approvals).toHaveLength(1)
+    await page.keyboard.press('ControlOrMeta+Enter')
+    expect((await detail(sessionId)).approvals).toHaveLength(1)
+    try {
+      for (const [width, colorScheme] of [
+        [1440, 'light'],
+        [768, 'dark'],
+        [390, 'dark'],
+      ] as const) {
+        await page.setViewportSize({ width, height: 1000 })
+        await page.emulateMedia({ colorScheme })
+        await card.getByRole('button', { name: '更多', exact: true }).click()
+        const menu = page.getByRole('menu', { name: '更多', exact: true })
+        await menu.waitFor()
+        if (width === 390) expect(await page.locator('dialog.ui-sheet[open]').count()).toBe(1)
+        else expect(await page.locator(':popover-open:not([role="tooltip"])').count()).toBeGreaterThan(0)
+        await expect.poll(() => caps(card, '拒绝')).toBe('')
+        await page.screenshot({ path: `${OUTPUT}/approval-overlay-${width}-${colorScheme}.png`, animations: 'disabled' })
+        await page.keyboard.press('Escape')
+        await menu.waitFor({ state: 'hidden' })
+        expect((await detail(sessionId)).approvals).toHaveLength(1)
+      }
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await page.emulateMedia({ colorScheme: 'light' })
+      await reject.focus()
+      await page.keyboard.press('ArrowDown')
+      await expect.poll(() => caps(card, '拒绝')).toBe('Esc')
+      await page.screenshot({ path: `${OUTPUT}/approval-after-sheet-1440-light.png`, animations: 'disabled' })
+      await page.keyboard.press('Escape')
+      await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
+      expect((await detail(sessionId)).messages.find(message => message.role === 'tool')?.tool?.decision).toMatchObject({
+        outcome: 'rejected',
+      })
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await page.emulateMedia({ colorScheme: 'light' })
+    }
   })
 
   it('arms the drawer before it takes a press, ignores Enter, and refuses once on Esc', async () => {

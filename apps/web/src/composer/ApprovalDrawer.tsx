@@ -105,8 +105,8 @@ const typingOutsideComposer = (target: EventTarget | null) =>
   && target.closest('input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"], .ui-popover') !== null
   && !target.closest('.composer textarea')
 
-/** Whether another layer is open, which takes Esc for itself. */
-const layerOpen = () => document.querySelector(':popover-open:not([role="tooltip"]), dialog[open], .ui-sheet') !== null
+/** Closed Sheets retain their dialog node; only open layers take Esc for themselves. */
+const layerOpen = () => document.querySelector(':popover-open:not([role="tooltip"]), dialog[open]') !== null
 
 /** Whether an Esc pressed where focus is now would refuse: not from another field or layer, nor over written text. */
 function escapeRefusesAt(target: EventTarget | null): boolean {

@@ -394,6 +394,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `helpers/layout.ts` 的 `openSession(page, sessionId)` 按 Host ID 走正常入口：手机从 Code 首页进入「全部会话」，平板展开会话抽屉，桌面从可见项目树或完整历史选择。`backToPhoneSessions` 回到显式历史；`openSessions` 从设置返回 Code 首页或原会话，不把 Code 首页等同于历史列表。`phone.e2e.ts` 覆盖两个布局在 320 / 390 的首页、历史与会话往返、草稿、菜单与平台返回；`shell.e2e.ts` 另外检查发送回执晚到不会抢走设置或历史页面。
 
+`permissions-ui.e2e.ts` 核对常驻但关闭的 Sheet 不拦 Esc，真正打开的菜单/底部面板仍先处理它；同一用例保留输入法、长按、组合键与 R2 不允许快捷批准的负控。`worktrees.e2e.ts` 暂留真实 Host 的 includeIf 拒绝响应，区分读取状态与具体拒绝原因，释放并等待 handler 结算后才拆除拦截。
+
 `helper-home.e2e.ts` 通过临时 Host 与假 ACP 的正常创建、资料设置和新话题入口核对固定家、模型/思考/权限的真实读回，未确认权限时不发送；截图覆盖三宽深浅。跨桌面与手机检查同一表单 DOM、未保存默认项、活动焦点、未知写入同一 requestId 与关闭后的焦点归还，避免只检查重新入场后的画面。
 
 `helper-boundary.e2e.ts` 用假原生 Codex 与权限未读回的假 ACP，在新话题、首轮、重开与三宽浅深页面检查只有一个帮手边界入口，展开仍含本机读写/命令能力；独立首次启动的 Code 对照仍有时间线提示。真实 CLI 的 `helper-live` 也检查没有重复首启行。
