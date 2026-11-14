@@ -125,6 +125,8 @@ describe('the two places', () => {
     expect(initialRoute('device-1', true, true, false)).toEqual({ entry: 'agents' })
     // A restored session keeps its own place; a phone starts on its list; without 我的 Agent there is only Code.
     expect(initialRoute('device-1', true, true, true)).toEqual({ entry: 'sessions' })
+    // A reload while the home covered the session finds the home again; the session stays open under it.
+    expect(initialRoute('device-1', true, true, true, true)).toEqual({ entry: 'sessions', overview: true })
     expect(initialRoute('device-1', true, false, false)).toEqual({ entry: 'sessions', overview: true })
     expect(initialRoute('device-1', false, true, false)).toEqual({ entry: 'sessions', overview: true })
     stored.set(key, 'something else')

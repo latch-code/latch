@@ -95,6 +95,8 @@ export const APPROVAL_COPY = {
   /** The card's state, the session's live status and a sub-agent's row: one phrase for every wait on the person. */
   waiting: '等你处理',
   highRisk: '高风险',
+  /** A high-risk request is never remembered: the short fact beside its reason, the Host's sentence behind ⓘ. */
+  confirmEachTime: '每次都要确认',
   advisory: '仅提示',
   check: '需要核对',
   /** On an agent's ask: the fact in a few words, why one press away. */

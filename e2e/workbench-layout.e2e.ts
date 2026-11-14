@@ -283,6 +283,13 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       expect(await home.isVisible()).toBe(true)
       expect(await home.getAttribute('aria-label')).toBe('总览')
       expect(await homeInput.inputValue()).toBe('首页自己的新任务草稿')
+      // The home is a place of its own: 返回 from settings finds it again, over the same session.
+      await layoutSwitch(page).getByRole('radio', { name: LAYOUT_NAMES.overview, exact: true }).focus()
+      await page.keyboard.press('Alt+,')
+      await page.locator('.settings-page').waitFor({ state: 'visible' })
+      await page.locator('.settings-page').getByRole('button', { name: '返回', exact: true }).click()
+      await home.waitFor({ state: 'visible' })
+      expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
       await sameComposer()
       places.push(await place())
       await nowhere()
@@ -380,6 +387,20 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       expect(await page.locator('.app-shell').getAttribute('data-workbench-layout')).toBe('triage')
       await choose(page, recent.summary.title)
       await expect.poll(() => input.inputValue()).toBe(draft)
+      // A reload while the home covers a session finds the home again, the session still open under it.
+      await openHome(page)
+      await page.reload()
+      await connected(page)
+      await home.waitFor({ state: 'visible' })
+      expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
+      await expect.poll(() => input.inputValue()).toBe(draft)
+      expect(await homeInput.inputValue()).toBe('首页自己的新任务草稿')
+      // And a reload on the session itself stays on the session.
+      await choose(page, recent.summary.title)
+      await page.reload()
+      await connected(page)
+      await page.locator('main.workspace').waitFor({ state: 'visible' })
+      expect(await home.count()).toBe(0)
       await choose(page, waiting.summary.title)
       const approval = page.locator(`[data-approval-id="${waiting.approvals[0].id}"]`)
       await expect.poll(() => approval.getByRole('button', { name: '拒绝', exact: true }).isEnabled()).toBe(true)
@@ -417,9 +438,52 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             await layoutMenu(page, layout)
             const home = page.locator('.workbench-home')
             await reachable(home.locator(`[data-work-session="${waiting.summary.id}"]`))
-            expect(await home.locator(`[data-work-session="${failed.summary.id}"]`).textContent()).toContain('失败')
+            // A failure is titled by what the person does, the verb then the session; the bare word 失败 is not its title.
+            expect(await home.locator(`[data-work-session="${failed.summary.id}"] .work-decision-verb`).first().textContent()).toMatch(
+              /^(重试|查看)$/u,
+            )
+            expect(await home.locator(`[data-work-session="${failed.summary.id}"] strong`).allTextContents()).not.toContain('失败')
+            if (width === 1440) {
+              // The risk line stays one row: the red reason, the short fact and its ⓘ.
+              const clause = home.locator('.approval-clause').first()
+              expect(await clause.textContent()).toContain('每次都要确认')
+              expect((await clause.boundingBox())!.height).toBeLessThan(32)
+            }
             await capture(page, layout, width, theme)
             await noHorizontalOverflow(page, home)
+            if (width < 768) {
+              // Touch targets: each segment of the layout switch and the input's two buttons answer 44px around their middle.
+              const hits = await page.evaluate(() =>
+                [
+                  ...document.querySelectorAll<HTMLElement>(
+                    '.workbench-home .layout-switch [role="radio"], .workbench-home .composer-line button',
+                  ),
+                ]
+                  .filter(element => element.checkVisibility({ visibilityProperty: true }))
+                  .map(element => {
+                    const box = element.getBoundingClientRect()
+                    const [x, y] = [box.left + box.width / 2, box.top + box.height / 2]
+                    const hit = (dx: number, dy: number) => {
+                      const found = document.elementFromPoint(x + dx, y + dy)
+                      return found !== null && (found === element || element.contains(found))
+                    }
+                    return {
+                      name: element.getAttribute('aria-label') ?? element.textContent,
+                      ok: hit(0, -21) && hit(0, 21) && hit(-21, 0) && hit(21, 0),
+                    }
+                  }),
+              )
+              expect(hits.length).toBeGreaterThanOrEqual(4)
+              expect(hits.filter(item => !item.ok)).toEqual([])
+              // The session page at this width does not scroll sideways either.
+              await choose(page, running.summary.title)
+              await page.locator('main.workspace .composer-line').waitFor({ state: 'visible' })
+              await noHorizontalOverflow(page)
+              await capture(page, `${layout}-session`, width, theme)
+              await backToPhoneSessions(page)
+              await settleShell(page)
+              await openHome(page)
+            }
             expect(await home.locator(`[data-work-session="${recent.summary.id}"]`).count()).toBe(0)
             if (width < 768 && layout === 'triage') {
               await home.getByRole('button', { name: '可交付', exact: true }).click()

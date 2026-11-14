@@ -73,15 +73,23 @@ export function WorkbenchDecision({
     && failureAction(failure?.errorCode) === 'retry'
     && shell.submission.pending === null
     && !shell.submission.sending
+  // A failed or unconfirmed run is titled by what the person does about it: the verb, then its object. The Host names no
+  // object for either, so the object is the session, and its title is then not said a second time under it.
+  const resultUnknown = !!task.runEnd?.unknownResultCount
+  const resultVerb = resultUnknown ? '核对' : status.tone === 'failed' ? (retryable ? '重试' : '查看') : undefined
+  const resultIcon = status.tone === 'failed' ? AlertGlyph : resultUnknown ? UnknownGlyph : WaitingGlyph
+  const sessionTitle = task.title || '未命名会话'
   const context = (
     <div className="work-decision-context">
       <span>
         <Icon icon={FolderGlyph} size={12} />
         <VisibleText text={project?.name ?? '无项目'} />
       </span>
-      <Button variant="ghost" size="xs" className="work-decision-session" onClick={() => shell.choose(task.id)}>
-        <VisibleText text={task.title || '未命名会话'} />
-      </Button>
+      {!(resultVerb && !approval && !asked) && (
+        <Button variant="ghost" size="xs" className="work-decision-session" onClick={() => shell.choose(task.id)}>
+          <VisibleText text={sessionTitle} />
+        </Button>
+      )}
       {harness && (
         <span className="work-decision-harness">
           <HarnessTile harness={harness} size={14} />
@@ -117,12 +125,25 @@ export function WorkbenchDecision({
         <div className="work-decision-compact-row">
           <Button variant="ghost" className="work-decision-compact" aria-expanded={false} onClick={onExpand}>
             <span className="work-decision-compact-title">
-              <VisibleText text={action ?? (task.title || '未命名会话')} />
+              {!action && resultVerb ? (
+                <>
+                  <span className="work-decision-kind" data-tone={status.tone}>
+                    <Icon icon={resultIcon} size={14} />
+                  </span>
+                  <span className="work-decision-verb">{resultVerb}</span>
+                  <VisibleText text={sessionTitle} />
+                </>
+              ) : (
+                <VisibleText text={action ?? sessionTitle} />
+              )}
             </span>
             <span className="work-decision-compact-meta">
               <Icon icon={FolderGlyph} size={12} />
               <VisibleText text={project?.name ?? '无项目'} />
-              <StatusWord tone={unknown ? 'warn' : status.tone}>{unknown ?? status.words}</StatusWord>
+              {/* The title's verb and icon already say a failure or an unconfirmed result. */}
+              {(action || !resultVerb || unknown) && (
+                <StatusWord tone={unknown ? 'warn' : status.tone}>{unknown ?? status.words}</StatusWord>
+              )}
             </span>
             {!retryable && <Icon icon={ChevronRightGlyph} size={14} />}
           </Button>
@@ -163,8 +184,17 @@ export function WorkbenchDecision({
       ) : (
         <div className="work-decision-result">
           <strong data-tone={status.tone}>
-            <Icon icon={status.tone === 'failed' ? AlertGlyph : task.runEnd?.unknownResultCount ? UnknownGlyph : WaitingGlyph} size={16} />
-            {status.words}
+            <Icon icon={resultIcon} size={16} />
+            {resultVerb ? (
+              <>
+                <span className="work-decision-verb">{resultVerb}</span>
+                <Button variant="ghost" size="xs" className="work-decision-object" onClick={() => shell.choose(task.id)}>
+                  <VisibleText text={sessionTitle} />
+                </Button>
+              </>
+            ) : (
+              status.words
+            )}
           </strong>
           {context}
           {read.error ? (

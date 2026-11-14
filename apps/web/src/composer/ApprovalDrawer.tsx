@@ -619,14 +619,17 @@ function ApprovalPanel({
       {(risky || gate.note || hidden || previousNotes.length > 0 || gate.hint) && (
         <div className="approval-notes">
           {risky && (
-            <p className="approval-clause">
+            <div className="approval-clause">
               <span className="approval-clause-reason">{RISK_CLAUSE(approval.riskReason)}</span>
-              {riskSentence && (
-                <span className="approval-clause-sentence">
+              {/* The short fact stays in sight; the Host's own sentence is one press away. */}
+              {riskSentence ? (
+                <Hint className="approval-clause-sentence" lead={<span />} label={APPROVAL_COPY.confirmEachTime}>
                   <VisibleText text={riskSentence} />
-                </span>
+                </Hint>
+              ) : (
+                <span className="approval-clause-sentence">{APPROVAL_COPY.confirmEachTime}</span>
               )}
-            </p>
+            </div>
           )}
           {gate.note && (
             <Hint className="approval-note" lead={<Icon icon={WarningGlyph} size={12} />} label={gate.note.label}>

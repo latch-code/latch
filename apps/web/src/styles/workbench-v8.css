@@ -940,9 +940,36 @@
   display: inline-grid;
   place-items: center;
 }
-.work-decision-result > strong[data-tone='failed'],
-.work-decision-result > strong[data-tone='failed'] > .ui-icon {
+/* Red stays on the glyph; the title is the muted verb and its object in ink. */
+.work-decision-result > strong[data-tone='failed'] > .ui-icon,
+.work-decision-kind[data-tone='failed'] {
   color: var(--red);
+}
+.work-decision-kind {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-right: var(--sp-6);
+  color: var(--amber-icon);
+  vertical-align: -2px;
+}
+.work-decision-verb {
+  flex-shrink: 0;
+  margin-right: var(--sp-6);
+  color: var(--muted);
+  font-weight: 400;
+}
+.work-decision-result > strong > .work-decision-verb {
+  margin-right: 0;
+}
+.work-decision-object.ui-button {
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .work-decision-result > p {
   margin: 0;

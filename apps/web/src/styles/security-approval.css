@@ -257,7 +257,9 @@
   padding-inline-start: var(--sp-24);
 }
 .approval-clause {
-  display: block !important;
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: baseline;
   color: var(--red) !important;
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui-para) !important;
@@ -268,10 +270,25 @@
 }
 /* The Host's sentence follows the red reason in plain ink, a space apart. */
 .approval-clause-sentence {
-  display: inline !important;
+  display: inline-flex !important;
+  flex: 1 1 0;
+  min-width: 0;
   margin-inline-start: var(--sp-12);
   color: var(--ink-2) !important;
   font-weight: 400;
+}
+/* As a hint it keeps the row: the short fact, ⓘ beside it, and the Host's sentence unfolding under both. */
+.approval-clause > .ui-hint.approval-clause-sentence {
+  display: grid !important;
+  flex: 1 1 160px;
+  grid-template-columns: 0 max-content max-content minmax(0, 1fr);
+  column-gap: var(--sp-4);
+  min-height: 0;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+}
+.approval-clause > .ui-hint.approval-clause-sentence > .ui-hint-label {
+  overflow: visible;
 }
 .composer-stop[data-secure] {
   display: flex !important;

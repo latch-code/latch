@@ -560,11 +560,12 @@ describe('approval cards', () => {
       }),
     )
     expect(html).toContain('data-risky=""')
-    // The red reason, then the Host's sentence word for word, on their own line; not repeated in the details.
-    expect(html).toContain(
-      '<p class="approval-clause"><span class="approval-clause-reason">高风险</span><span class="approval-clause-sentence">写入需要确认</span></p>',
-    )
-    expect(html.match(/写入需要确认/gu)).toHaveLength(1)
+    // The red reason, then the short fact; the Host's sentence is word for word behind ⓘ, not repeated in the details.
+    expect(html).toContain('<div class="approval-clause"><span class="approval-clause-reason">高风险</span>')
+    expect(html).toMatch(/class="ui-hint approval-clause-sentence"[^>]*>.*?每次都要确认/u)
+    // Folded, the sentence is nowhere else on the card: only its ⓘ shows it.
+    expect(html).toMatch(/class="ui-hint approval-clause-sentence"(?:(?!<\/div>).)*aria-expanded="false"/u)
+    expect(html.match(/写入需要确认/gu) ?? []).toHaveLength(0)
     expect(html).toMatch(/data-variant="primary"[^>]*>(?:(?!<\/button>).)*?允许<\/button>/u)
   })
 

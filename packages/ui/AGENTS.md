@@ -19,7 +19,8 @@
 - 状态（`src/status.tsx`）：状态是状态词加至多一个 12px 图形，只有运行中的转圈会动，没有装饰背景动画；变化只为 `LiveChanges` 纪元不变时看见的变化交叉淡化；循环在视野外暂停，减少动效时停在静帧（`test/status.test.tsx`）。
 - 动效（`src/motion.tsx`）：时长 `--m-*` 与曲线 `--e-*`，离开用 70%，`MOTION`、`EASING` 与令牌一致；高度只经网格行展开，其余只动不透明度与位移；收起的身体是 `hidden="until-found"`；减少动效只剩不超过 120ms 的淡入淡出（`test/motion.test.tsx`）。
 - `TileChoice` 的 `compact` 用 20px 图标，键盘与不可选语义不变。
-- 圆角只取台阶上的值，不用 `corner-shape`（`apps/web/test/styles.test.ts#rounds corners only on the radius scale, without a corner shape`）。
+- 圆角只取台阶上的值，不用 `corner-shape`（`apps/web/test/styles.test.ts`）。
+- 键位（`Kbd`、按钮的 `keys`）是一段淡色字「⌘N」，不画框。
 
 `test/` 在真实浏览器中跑（见 [docs/TESTING.md](../../docs/TESTING.md)「组件测试」）；`test/gallery/` 是只供测试的原语总览页。新增或改动原语时在 gallery 补上每种状态，并补聚焦的浏览器用例。
 

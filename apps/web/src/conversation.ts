@@ -1110,7 +1110,9 @@ export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness
       actions: ['keep-waiting', 'stop'],
     }
   }
-  if (phase.kind === 'starting') return { tone: 'plain', text: phaseText(phase, opts.harness) }
+  // The header writes the Host's own activity word, 正在启动 included; without one (an older Host) the line says it here.
+  if (phase.kind === 'starting')
+    return { tone: 'plain', text: phaseText(phase, opts.harness), ...(live ? { inHeader: true as const } : {}) }
   // An older Host says nothing about silence; the time since its last output is all there is to go on.
   const lastOutput = live ? undefined : parseTime(detail.lastOutputAt)
   if (lastOutput !== undefined && opts.hostNow - lastOutput > 120_000)

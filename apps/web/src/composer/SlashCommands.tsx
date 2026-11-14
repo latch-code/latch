@@ -53,6 +53,12 @@ export function useSlashCommands({
   useEffect(() => {
     setDismissed(previous => (previous === word ? previous : null))
   }, [word])
+  // A list that opens again starts from its top: the row arrowed to or hovered last time is not carried over once the
+  // slash word is gone (the input was cleared, sent, or became the home's after 新会话).
+  const listed = token !== undefined
+  useEffect(() => {
+    if (!listed) setSelection(previous => (previous.word ? { word: '', optionId: '' } : previous))
+  }, [listed])
   const history = useMemo(
     () => (historyScope ? new SlashHistory(location.origin, historyScope.deviceId) : undefined),
     [historyScope?.deviceId],

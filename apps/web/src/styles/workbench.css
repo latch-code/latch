@@ -82,7 +82,8 @@
   .app-shell[data-overview] .phone-list {
     visibility: hidden;
   }
-  .app-shell:is([data-overview], [data-all-sessions]):has(> .workspace) .phone-tabs {
+  /* The session kept under the home is kept under 设置 and the other root pages too: their tab bar stays in reach. */
+  .app-shell:is([data-overview], [data-all-sessions], :not([data-entry='sessions'])):has(> .workspace) .phone-tabs {
     visibility: visible;
   }
 }

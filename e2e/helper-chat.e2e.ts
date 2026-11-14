@@ -860,7 +860,7 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
     await commandInput.press('Meta+Enter')
     await page.getByText('在跑命令', { exact: true }).filter({ visible: true }).first().waitFor()
     // The frame says what it does once; under the turn nothing is drawn while it runs.
-    expect(await page.locator('.status-line').filter({ visible: true }).count()).toBe(0)
+    await expect.poll(() => page.locator('.status-line').filter({ visible: true }).allTextContents()).toEqual([])
     await stateShots('topic-running')
     await page.getByRole('button', { name: '停止', exact: true }).filter({ visible: true }).click()
     await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${scribeSession.id}`)).summary.status).toBe('cancelled')

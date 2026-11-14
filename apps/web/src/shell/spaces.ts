@@ -85,11 +85,34 @@ export function spaceMove({
   return { route: { entry: 'agents', ...(left?.kind === 'page' && left.myAgent ? { myAgent: left.myAgent } : {}) } }
 }
 
-/** On a cold start a wide window opens the place this device was last in; 我的 Agent opens on its list. */
-export function initialRoute(deviceId: string, agents: boolean, wide: boolean, restoring: boolean): ShellRoute {
+/** Whether the home was showing over the open session when this tab last drew Code; kept for the tab, per device. */
+const homeKey = (deviceId: string) => `latch.home.${location.origin}.${deviceId}`
+
+export function readHomeShown(deviceId: string): boolean {
+  try {
+    return sessionStorage.getItem(homeKey(deviceId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function writeHomeShown(deviceId: string, shown: boolean): void {
+  try {
+    if (shown) sessionStorage.setItem(homeKey(deviceId), '1')
+    else sessionStorage.removeItem(homeKey(deviceId))
+  } catch {
+    /* Without storage a reload opens the session, which is still there under the home. */
+  }
+}
+
+/**
+ * On a cold start a wide window opens the place this device was last in; 我的 Agent opens on its list. A reload restores
+ * the open session, and the home over it when that is what was showing: the home is a place, not a way to a session.
+ */
+export function initialRoute(deviceId: string, agents: boolean, wide: boolean, restoring: boolean, home = false): ShellRoute {
   return agents && wide && !restoring && readSpace(spaceKey(deviceId)) === 'agents'
     ? { entry: 'agents' }
-    : { entry: 'sessions', ...(!restoring ? { overview: true } : {}) }
+    : { entry: 'sessions', ...(!restoring || home ? { overview: true } : {}) }
 }
 
 /**

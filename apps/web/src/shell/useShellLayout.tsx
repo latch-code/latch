@@ -42,7 +42,7 @@ import {
   sidebarAfterDrag,
   sidebarMax,
 } from './panelLayout.ts'
-import { backRoute, initialRoute, useSpaces } from './spaces.ts'
+import { backRoute, initialRoute, readHomeShown, useSpaces, writeHomeShown } from './spaces.ts'
 import { visibleEntries, type AgentPageTarget, type AppTarget, type MyAgentTarget, type ShellEntry, type ShellRoute } from './routes.ts'
 import { useDelegation } from '../agents/useAgentWrites.ts'
 import { openAgent, topicOwner, type ProfileSection } from '../agents/chat.ts'
@@ -107,7 +107,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const viewport = useViewport()
   const phone = viewport === 'phone'
   const [storedRoute, updateRoute] = useState<ShellRoute>(() =>
-    initialRoute(snapshot.device.id, snapshot.catalog?.features?.customAgents === true, !phone, selectedId !== null),
+    initialRoute(
+      snapshot.device.id,
+      snapshot.catalog?.features?.customAgents === true,
+      !phone,
+      selectedId !== null,
+      readHomeShown(snapshot.device.id),
+    ),
   )
   // Code without an open session is its home: 新会话 is the home's input, not a page of its own. A phone keeps its list.
   const route = useMemo<ShellRoute>(
@@ -121,6 +127,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const fromAllSessions = useRef(false)
   const fromOverview = useRef(false)
   routeRef.current = route
+  // Where Code was left: its home, the whole list or the open session. A page over it (设置, 应用) returns there, and a
+  // reload of this tab finds the home again when the home was what showed.
+  const codePlace = useRef<Pick<ShellRoute, 'overview' | 'allSessions'>>({})
+  if (route.entry === 'sessions')
+    codePlace.current = { ...(route.overview ? { overview: true } : {}), ...(route.allSessions ? { allSessions: true } : {}) }
+  const homeShown = route.entry === 'sessions' ? route.overview === true : codePlace.current.overview === true
+  useEffect(() => {
+    writeHomeShown(snapshot.device.id, homeShown)
+  }, [snapshot.device.id, homeShown])
   const parkInput = useRef<() => boolean>(() => true)
   const setRoute: Dispatch<SetStateAction<ShellRoute>> = useCallback(next => {
     const target = typeof next === 'function' ? next(routeRef.current) : next
@@ -655,7 +670,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   /** 设置 at the sidebar's foot, a tab or the way back. 会话 returns to the last open session. */
   const goEntry = (entry: ShellEntry) => {
     drawer.setOpen(false)
-    setRoute({ entry })
+    setRoute(entry === 'sessions' && routeRef.current.entry !== 'sessions' ? { entry, ...codePlace.current } : { entry })
   }
   const openOverview = () => {
     drawer.setOpen(false)
