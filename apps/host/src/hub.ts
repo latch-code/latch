@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
+import { withHarnessPromptSource } from '@latch/harness-acp'
 import { setTimeout as delay } from 'node:timers/promises'
 import type {
   Approval,
@@ -602,7 +603,11 @@ export class HarnessHub implements Bridge {
       ...((allFolders ? folders !== undefined : entry.bridge.commandCatalogue) && workspaceId !== undefined ? { workspaceId } : {}),
       ...(allFolders && workspaceId !== undefined && folders !== undefined ? { folders } : {}),
     }
-    const result = await this.accept(entry as Member, bridge => this.creatingProject.run(workspaceId, () => bridge.createTask(task)))
+    const result = await this.accept(entry as Member, bridge =>
+      withHarnessPromptSource({ method: 'create', requestId: input.requestId, text: input.prompt }, () =>
+        this.creatingProject.run(workspaceId, () => bridge.createTask(task)),
+      ),
+    )
     if (!this.claim(id, result.sessionId)) {
       throw new AppError(502, 'session-id-collision', `Harness ${id} 返回的会话标识已属于另一个 Harness`)
     }
@@ -955,7 +960,9 @@ export class HarnessHub implements Bridge {
     const text = this.promptNote ? await this.withNote(this.promptNote, sessionId, prompt, requestId) : prompt
     try {
       await this.accept(member, bridge =>
-        options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId),
+        withHarnessPromptSource({ method: 'prompt', sessionId, requestId, text: prompt }, () =>
+          options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId),
+        ),
       )
     } finally {
       if (options?.freshContext) await this.dropSeedPrefix(member, sessionId)
@@ -989,7 +996,9 @@ export class HarnessHub implements Bridge {
     const member = await this.route(sessionId)
     const bridge = member.bridge
     if (!bridge.steer) return 'prompt-required'
-    return await this.accept(member, () => bridge.steer!(sessionId, prompt, requestId))
+    return await this.accept(member, () =>
+      withHarnessPromptSource({ method: 'steer', sessionId, requestId, text: prompt }, () => bridge.steer!(sessionId, prompt, requestId)),
+    )
   }
 
   async cancel(sessionId: string, options?: CancelOptions): Promise<boolean | void> {

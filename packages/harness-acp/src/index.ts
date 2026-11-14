@@ -27,6 +27,7 @@ export { onVersionChange } from './version.ts'
 export { personCommandDirectories, resolveCommand, setCommandSearch } from './command.ts'
 export { commandName, launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 export type { AcpAgentOptions, AgentRecord } from './types.ts'
+export { withHarnessPromptSource, harnessPromptSource } from './prompt-source.ts'
 
 /** PATH lookups touch the file system; status() is polled with every catalog. */
 const LOOKUP_TTL_MS = 5_000

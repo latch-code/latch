@@ -31,7 +31,15 @@ export interface AgentWire {
    * so before it handles anything the agent wrote after the result, which awaiting the promise does not ensure; one that
    * holds those records until the caller has acted on the result may leave it out.
    */
-  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal, onResult?: (result: unknown) => void): Promise<unknown>
+  request(
+    method: string,
+    params: unknown,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+    onResult?: (result: unknown) => void,
+    /** Proven current user input only. Process-local context, never serialized into the agent protocol. */
+    context?: { userText: string },
+  ): Promise<unknown>
   notify(method: string, params: unknown): void
   /** `stop`: end stdin, then SIGTERM, then SIGKILL the group. `kill` skips stdin. Resolves once the process is gone. */
   stop(reason: 'stop' | 'kill', graceMs: number, cause?: string): Promise<ExitInfo>

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Approval, RunLive, TaskSummary } from '@latch/protocol'
 import { AppError, type HarnessDriver, type ModelProvider, type Bridge } from '@latch/sdk'
 import { createRuntime } from '@latch/core'
+import { harnessPromptSource } from '@latch/harness-acp'
 import { HarnessHub, listSignature, type HarnessMount } from '../src/hub.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -322,6 +323,39 @@ describe('run silence', () => {
 })
 
 describe('harness hub routing', () => {
+  it('proves the current input before Host notes for create, prompt and steer without changing their bodies', async () => {
+    const seen: Array<{ method: string; body: string; source?: string }> = []
+    const fixture = external([summary('existing', 'idle')], [], {
+      async createTask(input) {
+        seen.push({
+          method: 'create',
+          body: input.prompt,
+          source: harnessPromptSource({ method: 'create', requestId: input.requestId }, input.prompt),
+        })
+        return { sessionId: 'created' }
+      },
+      async prompt(sessionId, prompt, requestId) {
+        seen.push({ method: 'prompt', body: prompt, source: harnessPromptSource({ method: 'prompt', sessionId, requestId }, prompt) })
+      },
+      async steer(sessionId, prompt, requestId) {
+        seen.push({ method: 'steer', body: prompt, source: harnessPromptSource({ method: 'steer', sessionId, requestId }, prompt) })
+        return 'injected'
+      },
+    })
+    const { hub: value } = await hub(undefined, 'ext')
+    await value.attach(driver('ext'), mount(fixture.bridge))
+    value.notePrompts(async () => 'Undo note $note-only')
+    await value.createTask({ prompt: 'first $chosen', requestId: 'create-source' })
+    await value.prompt('existing', 'next $chosen', 'prompt-source')
+    await value.steer('existing', 'added $chosen', 'steer-source')
+    expect(seen).toEqual([
+      { method: 'create', body: 'first $chosen', source: 'first $chosen' },
+      { method: 'prompt', body: 'Undo note $note-only\n\nnext $chosen', source: 'next $chosen' },
+      { method: 'steer', body: 'added $chosen', source: 'added $chosen' },
+    ])
+    expect(harnessPromptSource({ method: 'prompt', sessionId: 'existing', requestId: 'prompt-source' }, seen[1]!.body)).toBeUndefined()
+  })
+
   it('routes sessions verbatim between the Standard runtime and an external driver without injecting Host fields', async () => {
     const dataDir = await directory()
     const provider: ModelProvider = {

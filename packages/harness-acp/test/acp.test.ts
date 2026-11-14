@@ -50,6 +50,7 @@ import { agentProbePreview } from '../src/probe.ts'
 import { initializeResult } from '../src/protocol.ts'
 import { AgentHealth } from '../src/types.ts'
 import * as commandCache from '../src/command-cache.ts'
+import { withHarnessPromptSource } from '../src/prompt-source.ts'
 
 const FAST: AcpAgentOptions = { cancelGraceMs: 300, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: 5_000 }
 const QWEN_MODES = 'plan,default,auto-edit,yolo,auto'
@@ -3979,6 +3980,133 @@ it('marks a recovered idle ACP file observation partial without changing the con
 })
 
 describe('command cache from real sessions', () => {
+  it('keeps proven user input separate from brief and replay text, and never invents provenance for a direct SDK prompt', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const calls = vi.spyOn(AcpWire.prototype, 'request')
+    try {
+      const requestId = rid()
+      const { sessionId } = await withHarnessPromptSource({ method: 'create', requestId, text: 'echo $actual' }, () =>
+        bridge.createTask({
+          prompt: 'echo $actual',
+          requestId,
+          agentContext: {
+            agent: { customAgentId: 'agt_source' },
+            instructions: '',
+            brief: { segments: [{ source: 'user', text: 'Brief example $brief-only' }] },
+            revision: 'a'.repeat(64),
+          },
+        }),
+      )
+      await settled(bridge, sessionId)
+      const first = calls.mock.calls.find(call => call[0] === 'session/prompt')!
+      expect(JSON.stringify(first[1])).toContain('$brief-only')
+      expect((first as readonly unknown[])[5]).toEqual({ userText: 'echo $actual' })
+      calls.mockClear()
+      const seeded = await bridge.createTask({ prompt: '', seed: 'Historical example $history-only\n', requestId: rid() })
+      const later = rid()
+      await withHarnessPromptSource({ method: 'prompt', sessionId: seeded.sessionId, requestId: later, text: 'echo current' }, () =>
+        bridge.prompt(seeded.sessionId, 'echo current', later),
+      )
+      await settled(bridge, seeded.sessionId)
+      const second = calls.mock.calls.find(call => call[0] === 'session/prompt')!
+      expect(JSON.stringify(second[1])).toContain('$history-only')
+      expect((second as readonly unknown[])[5]).toEqual({ userText: 'echo current' })
+      calls.mockClear()
+      await bridge.prompt(sessionId, 'echo $unproven', rid())
+      await settled(bridge, sessionId)
+      expect((calls.mock.calls.find(call => call[0] === 'session/prompt') as readonly unknown[])[5]).toBeUndefined()
+    } finally {
+      calls.mockRestore()
+    }
+  })
+
+  it('excludes file-reference and attachment bodies, preserves empty input, and does not persist provenance across recovery', async () => {
+    const fixture = await setup(
+      { FAKE_ACP_CAPS: 'embedded,load' },
+      {},
+      {},
+      {
+        readAttachment: async () => ({ type: 'text', name: 'note.txt', text: 'Attachment $attachment-only' }),
+      },
+    )
+    let bridge = await fixture.open()
+    const calls = vi.spyOn(AcpWire.prototype, 'request')
+    const attachment = {
+      id: 'abcdefghijklmnopqrstuv',
+      name: 'note.txt',
+      kind: 'text' as const,
+      mime: 'text/plain' as const,
+      size: 4,
+      sha256: 'a'.repeat(64),
+    }
+    const requestId = rid()
+    const input = { prompt: 'echo current', requestId, attachments: [attachment], fileRefs: [{ root: 'default', path: '$file-only.txt' }] }
+    try {
+      const first = await withHarnessPromptSource({ method: 'create', requestId, text: input.prompt }, () => bridge.createTask(input))
+      await settled(bridge, first.sessionId)
+      const sent = calls.mock.calls.find(call => call[0] === 'session/prompt')!
+      expect(JSON.stringify(sent[1])).toContain('$file-only')
+      expect(JSON.stringify(sent[1])).toContain('$attachment-only')
+      expect((sent as readonly unknown[])[5]).toEqual({ userText: 'echo current' })
+      expect(
+        (await fixture.log()).filter(row => row.method === 'session/prompt').every(row => !JSON.stringify(row.params).includes('userText')),
+      ).toBe(true)
+      calls.mockClear()
+      // The receipt is unchanged: replay without provenance never starts another model turn.
+      expect(await bridge.createTask(input)).toEqual(first)
+      expect(calls.mock.calls.some(call => call[0] === 'session/prompt')).toBe(false)
+      const emptyId = rid()
+      const empty = await withHarnessPromptSource({ method: 'create', requestId: emptyId, text: '' }, () =>
+        bridge.createTask({ prompt: '', requestId: emptyId, attachments: [attachment] }),
+      )
+      await settled(bridge, empty.sessionId)
+      expect((calls.mock.calls.find(call => call[0] === 'session/prompt') as readonly unknown[])[5]).toEqual({ userText: '' })
+      await bridge.close()
+      const saved = JSON.parse(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')) as { tasks: Record<string, { acp: object }> }
+      for (const task of Object.values(saved.tasks)) {
+        expect(task).not.toHaveProperty('userText')
+        expect(task.acp).not.toHaveProperty('userText')
+      }
+      bridge = await fixture.open()
+      calls.mockClear()
+      await bridge.prompt(first.sessionId, 'echo $unproven-after-recovery', rid())
+      await settled(bridge, first.sessionId)
+      expect((calls.mock.calls.find(call => call[0] === 'session/prompt') as readonly unknown[])[5]).toBeUndefined()
+    } finally {
+      calls.mockRestore()
+    }
+  })
+
+  it('removes only the current validated fork prefix from proven input', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const calls = vi.spyOn(AcpWire.prototype, 'request')
+    const prefix = 'Earlier transcript $history-only\n'
+    const prompt = `${prefix}echo $current`
+    const requestId = rid()
+    try {
+      const { sessionId } = await withHarnessPromptSource({ method: 'create', requestId, text: prompt }, () =>
+        bridge.createTask({ prompt, requestId, fork: { taskId: 'past', upToMessageId: 'earlier', prefixLength: prefix.length } }),
+      )
+      await settled(bridge, sessionId)
+      const sent = calls.mock.calls.find(call => call[0] === 'session/prompt')!
+      expect(JSON.stringify(sent[1])).toContain('$history-only')
+      expect((sent as readonly unknown[])[5]).toEqual({ userText: 'echo $current' })
+      calls.mockClear()
+      await expect(
+        bridge.createTask({
+          prompt,
+          requestId: rid(),
+          fork: { taskId: 'past', upToMessageId: 'earlier', prefixLength: prompt.length + 1 },
+        }),
+      ).rejects.toMatchObject({ code: 'fork-invalid' })
+      expect(calls.mock.calls.some(call => call[0] === 'session/prompt')).toBe(false)
+    } finally {
+      calls.mockRestore()
+    }
+  })
+
   it('publishes a durable command-report version after cache validation, without changing it for ordinary messages', async () => {
     const fixture = await setup()
     const bridge = await fixture.open()

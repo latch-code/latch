@@ -25,6 +25,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { CommandCache, commandDirectory, commandScope } from './command-cache.ts'
+import { harnessPromptSource } from './prompt-source.ts'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -313,6 +314,8 @@ interface Run {
   taskId: string
   seq: number
   prompt: string
+  /** Host-proven current user text, before file references, seed and brief; absent after unproven SDK input. */
+  userText?: string
   attachments?: AttachmentRef[]
   sensitiveOutput?: boolean
   imageCount?: number
@@ -1872,6 +1875,7 @@ export class AgentRuntime implements Bridge {
   async createTask(input: CreateTaskInput): Promise<{ sessionId: string }> {
     await this.ready()
     assertStart(input)
+    const userText = harnessPromptSource({ method: 'create', requestId: input.requestId }, input.prompt)
     const attachments = checkedAttachments(input.attachments)
     const fileRefs = input.fileRefs ?? []
     const config = checkedStartConfig(input.config)
@@ -1895,12 +1899,12 @@ export class AgentRuntime implements Bridge {
       return pending.promise
     }
     // Reserve before filesystem checks: another body with this ID cannot overtake a slow first check.
-    const promise = this.createTaskOnce(input).finally(() => this.creating.delete(key))
+    const promise = this.createTaskOnce(input, userText).finally(() => this.creating.delete(key))
     this.creating.set(key, { payloadHash, promise })
     return promise
   }
 
-  private async createTaskOnce(input: CreateTaskInput): Promise<{ sessionId: string }> {
+  private async createTaskOnce(input: CreateTaskInput, userText?: string): Promise<{ sessionId: string }> {
     await this.ready()
     assertStart(input)
     const mode = input.mode ?? 'agent'
@@ -1951,9 +1955,13 @@ export class AgentRuntime implements Bridge {
         : typeof input.workspaceId === 'string' && input.workspaceId.length > 0 && input.workspaceId.length <= 256
           ? { workspaceId: input.workspaceId }
           : undefined
+    const fork = input.fork ? checkedFork(input.fork, input.prompt) : undefined
+    // Only this start's validated prefix identifies a textual fork's history. It is not current user input.
+    const sourceText = fork ? (userText === input.prompt ? userText.slice(fork.prefixLength) : undefined) : userText
     const create = {
       sessionId,
       prompt: input.prompt,
+      ...(sourceText === undefined ? {} : { userText: sourceText }),
       attachments,
       fileRefs,
       requestId: input.requestId,
@@ -1966,7 +1974,7 @@ export class AgentRuntime implements Bridge {
       ...(input.agentContext ? { agentContext: input.agentContext } : {}),
       ...(config.length ? { startConfig: startChoices(config, this.state.catalogue) } : {}),
       ...(route ? { route } : {}),
-      ...(input.fork ? { fork: checkedFork(input.fork, input.prompt) } : {}),
+      ...(fork ? { fork } : {}),
       ...(input.seed ? { seed: input.seed } : {}),
     }
     if (scope?.passed?.via !== 'acp') return this.record(create)
@@ -1997,6 +2005,7 @@ export class AgentRuntime implements Bridge {
   private async record(create: {
     sessionId: string
     prompt: string
+    userText?: string
     attachments?: AttachmentRef[]
     fileRefs?: FileMention[]
     key: string
@@ -2023,7 +2032,7 @@ export class AgentRuntime implements Bridge {
     }
     if (agentContext?.skillBodies?.length || this.proposing(agentContext))
       await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext?.skillBodies ?? [])
-    const run = this.reserve(sessionId, 1, context)
+    const run = this.reserve(sessionId, 1, context, create.userText)
     run.attachments = attachments
     const at = isoTime(run.clock.startedAt)
     run.userMessageId = randomUUID()
@@ -2158,6 +2167,7 @@ export class AgentRuntime implements Bridge {
   async prompt(sessionId: string, prompt: string, requestId: string, options: PromptOptions = {}): Promise<void> {
     await this.ready()
     assertPrompt(prompt, requestId, options.attachments)
+    const userText = harnessPromptSource({ method: 'prompt', sessionId, requestId }, prompt)
     const key = digest(['prompt', sessionId, requestId])
     const attachments = checkedAttachments(options.attachments)
     const fileRefs = options.fileRefs ?? []
@@ -2213,7 +2223,7 @@ export class AgentRuntime implements Bridge {
     // A seeded session's first message carries its seed: sending it is what sends the seed.
     const seed = fresh ? '' : (task.acp.seed ?? '')
     context = seed + context
-    const run = this.reserve(sessionId, task.acp.turnSeq + 1, context)
+    const run = this.reserve(sessionId, task.acp.turnSeq + 1, context, userText)
     run.attachments = attachments
     // Shown as starting from now on (`preparing`), while the process starts.
     this.notify(sessionId)
@@ -2348,6 +2358,7 @@ export class AgentRuntime implements Bridge {
   async steer(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome> {
     await this.ready()
     assertPrompt(prompt, requestId)
+    const userText = harnessPromptSource({ method: 'steer', sessionId, requestId }, prompt)
     const key = digest(['steer', sessionId, requestId])
     const payloadHash = digest(prompt)
     const receipt = this.state.receipts[key]
@@ -2369,7 +2380,7 @@ export class AgentRuntime implements Bridge {
       await this.flush()
       return 'prompt-required'
     }
-    const promise = this.steerOnce(run, key, payloadHash, prompt, requestId).finally(() => this.steering.delete(key))
+    const promise = this.steerOnce(run, key, payloadHash, prompt, requestId, userText).finally(() => this.steering.delete(key))
     this.steering.set(key, { payloadHash, promise })
     return promise
   }
@@ -2378,7 +2389,14 @@ export class AgentRuntime implements Bridge {
     return run.sent && !run.cancelRequested && run.live?.initialized === true && run.live.capabilities.steer && !!run.acpSessionId
   }
 
-  private async steerOnce(run: Run, key: string, payloadHash: string, prompt: string, requestId: string): Promise<SteerOutcome> {
+  private async steerOnce(
+    run: Run,
+    key: string,
+    payloadHash: string,
+    prompt: string,
+    requestId: string,
+    userText?: string,
+  ): Promise<SteerOutcome> {
     const live = run.live!
     this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'sending' }
     run.steers = (run.steers ?? 0) + 1
@@ -2418,6 +2436,7 @@ export class AgentRuntime implements Bridge {
         Math.min(this.limits.requestTimeoutMs, STEER_TIMEOUT_MS),
         undefined,
         add,
+        userText === undefined ? undefined : { userText },
       )
       const answer = steerResult.safeParse(result)
       outcome = answer.success ? answer.data.outcome : 'invalid'
@@ -3753,7 +3772,7 @@ export class AgentRuntime implements Bridge {
 
   // ---- turns --------------------------------------------------------------------------------------------------
 
-  private reserve(taskId: string, seq: number, prompt: string): Run {
+  private reserve(taskId: string, seq: number, prompt: string, userText?: string): Run {
     let resolveDone!: () => void
     const done = new Promise<void>(resolve => {
       resolveDone = resolve
@@ -3765,6 +3784,7 @@ export class AgentRuntime implements Bridge {
       taskId,
       seq,
       prompt,
+      ...(userText === undefined ? {} : { userText }),
       sent: false,
       cancelRequested: false,
       activity: { phase: 'starting', since: isoTime(clock.startedAt) },
@@ -3843,10 +3863,14 @@ export class AgentRuntime implements Bridge {
       }
       this.phase(run, 'model')
       this.notify(run.taskId)
-      const answer = binding.live.wire.request('session/prompt', {
-        sessionId: binding.acpSessionId,
-        prompt: blocks,
-      })
+      const answer = binding.live.wire.request(
+        'session/prompt',
+        { sessionId: binding.acpSessionId, prompt: blocks },
+        undefined,
+        undefined,
+        undefined,
+        run.userText === undefined ? undefined : { userText: run.userText },
+      )
       if (brief) this.briefSent(run, brief)
       const result = await answer
       status = this.outcome(run, result, notes)
