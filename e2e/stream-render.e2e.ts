@@ -569,7 +569,8 @@ describe('how a turn of work is drawn', () => {
           await shot(sized, 'thinking-live-titled', width, theme)
         }
       // The reader scrolls up to the words above; the thought folding away below must not move them.
-      const reader = await open(1440, 900, 'light', id)
+      // A window short enough that the turn overflows it by more than the thought's own height.
+      const reader = await open(1440, 780, 'light', id)
       await reader.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
       const body = reader.locator('.thinking').last().locator('.ui-collapse')
       await reader.locator('.thinking-title').last().waitFor()

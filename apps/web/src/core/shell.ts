@@ -497,16 +497,22 @@ export function useTrafficLights(): boolean {
     const lights = mac ? shell?.lights : undefined
     if (!lights?.onFullScreen) return
     let live = true
-    void lights
-      .fullScreen?.()
-      .then(value => {
-        if (live) setFullScreen(value === true)
-      })
-      .catch(() => {})
+    const read = () => {
+      void lights
+        .fullScreen?.()
+        .then(value => {
+          if (live) setFullScreen(value === true)
+        })
+        .catch(() => {})
+    }
+    read()
     const stop = lights.onFullScreen(value => setFullScreen(value === true))
+    // Entering or leaving full screen resizes the window: main is asked again, in case its own word did not arrive.
+    addEventListener('resize', read)
     return () => {
       live = false
       stop()
+      removeEventListener('resize', read)
     }
   }, [mac, shell])
   return mac && !fullScreen

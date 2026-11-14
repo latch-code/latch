@@ -645,15 +645,23 @@ describe('visual capture of the real product', () => {
       for (const key of Object.keys(localStorage)) if (key.startsWith('latch.composer.')) localStorage.removeItem(key)
     })
     await home(target, 'reduce')
+    // The home keeps its draft and its first card arms again each time it is shown: every capture starts from an
+    // empty input and a card that takes presses.
+    const settled = async () => {
+      await target.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).fill('')
+      await expect.poll(() => target.locator('.workbench-home :is(.approval-panel, .question-card)[data-arming]').count()).toBe(0)
+    }
     if ((await target.locator('.phone-tabs').count()) > 0) {
       // A phone's Code tab is the home; its options are the row of chips over the input.
       await target.locator('.workbench-home').getByRole('group', { name: '会话选项', exact: true }).waitFor()
+      await settled()
       await settleMotion(target)
       return
     }
     await target.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
     await target.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
     await target.locator('.drawer-backdrop').waitFor({ state: 'detached' })
+    await settled()
   }
   /** A session from the list: the sidebar, the tablet's drawer, or a phone's list (the session's page pushed over it). */
   async function openSession(target: Page, viewport: VisualViewport, id: string): Promise<void> {

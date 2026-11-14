@@ -329,9 +329,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const page = await application.firstWindow()
       page.setDefaultTimeout(20_000)
       expect(page.url()).toBe('latch://app/link/')
-      // The traffic lights sit inside the page's 52px title row, in its 78px inset, which no control overlaps.
+      // The traffic lights' centre is the top row's line, 27px down (14px lights here); desktop-titlebar measures the rest.
       const lights = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getWindowButtonPosition())
-      expect(lights).toEqual({ x: 16, y: 27 })
+      expect(lights).toEqual({ x: 16, y: 20 })
       // The shell's facts and its actions (functions, so only their names or types cross back here); nothing else.
       expect(
         await page.evaluate(() => {
@@ -348,6 +348,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             updates: Object.keys(shell.updates as object),
             computers: Object.keys(shell.computers as object),
             spaces: Object.keys(shell.spaces as object),
+            lights: Object.fromEntries(Object.entries(shell.lights as object).map(([name, value]) => [name, typeof value])),
             diagnostics: Object.keys(shell.diagnostics as object),
             editors: Object.keys(shell.editors as object),
             lifecycle: Object.fromEntries(Object.entries(lifecycle).map(([name, value]) => [name, typeof value])),
@@ -369,6 +370,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         updates: ['get', 'check', 'download', 'install', 'cancelWaiting', 'setAutoDownload', 'onChange', 'onShow'],
         computers: ['list', 'subscribe', 'open', 'add', 'cancelAdd', 'trustCertificate', 'remove'],
         spaces: ['onShow'],
+        // Where the traffic lights end (a number) and whether the window is in full screen (a boolean out, nothing in).
+        lights: { end: 'number', fullScreen: 'function', onFullScreen: 'function' },
         browser: [
           'protocolVersion',
           'open',

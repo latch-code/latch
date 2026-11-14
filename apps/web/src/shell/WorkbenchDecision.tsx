@@ -140,8 +140,8 @@ export function WorkbenchDecision({
             <span className="work-decision-compact-meta">
               <Icon icon={FolderGlyph} size={12} />
               <VisibleText text={project?.name ?? '无项目'} />
-              {/* The title's verb and icon already say a failure or an unconfirmed result. */}
-              {(action || !resultVerb || unknown) && (
+              {/* The title's verb and icon already say a failure; how many results are unconfirmed is still said. */}
+              {(action || status.tone !== 'failed' || unknown) && (
                 <StatusWord tone={unknown ? 'warn' : status.tone}>{unknown ?? status.words}</StatusWord>
               )}
             </span>

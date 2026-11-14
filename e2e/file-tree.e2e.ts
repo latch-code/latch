@@ -66,7 +66,8 @@ it.each([
       expect((await owner.confirmed(`devices/${deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
       await page.reload()
       await connected(page)
-      const openOld = () => page.locator(`.workbench-home [data-work-session="${sessionId}"] .work-decision-session`).click()
+      const openOld = () =>
+        page.locator(`.workbench-home [data-work-session="${sessionId}"] :is(.work-decision-session, .work-decision-object)`).click()
       await openOld()
       await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
       const header = page.locator('.topbar[data-phone]')
