@@ -25,7 +25,7 @@ import {
   type ExitInfo,
   type SpawnSpec,
 } from './process.ts'
-import type { AgentWire, WireHandlers } from './types.ts'
+import type { AgentWire, WireHandlers, WireModelRoute } from './types.ts'
 
 /** Appended to the definition's arguments: the protocol this wire speaks. */
 export const CODEX_APP_SERVER_ARGS: readonly string[] = ['app-server']
@@ -49,6 +49,7 @@ const RESERVED = new Set([
 export const CODEX_MODE_ID = 'mode'
 const MAX_MODEL_PAGES = 5
 const MAX_THREADS = 50
+const DEFAULT_GATEWAY_EFFORT = '~default'
 const COMPACT = { name: 'compact', description: '把之前的对话总结成摘要，腾出上下文' }
 /** Context blocks are not command invocations, even when their instructions begin with a slash. */
 function nativeCommand(blocks: z.infer<typeof promptParams>['prompt']): string | undefined {
@@ -349,6 +350,7 @@ export class CodexWire implements AgentWire {
   private models: CodexModels = { models: [] }
   private model?: string
   private effort?: string
+  private routeEffort?: string
   private turn?: Turn
   /** Items whose text arrived in pieces, so their completion does not repeat it. */
   private readonly streamed = new Set<string>()
@@ -376,8 +378,9 @@ export class CodexWire implements AgentWire {
      * A session on a route: Codex runs on Latch's provider (`profiles/codex.ts`), whose models are the service's. Codex's
      * `model/list` would give its built-in presets for such a provider, so the wire offers these instead.
      */
-    private readonly route?: { model: string; models: readonly string[] },
+    private readonly route?: WireModelRoute,
   ) {
+    this.routeEffort = route?.effort ?? undefined
     this.process = AgentProcess.spawn(
       { ...spec, args: codexArgs(spec.args) },
       { record: record => this.onMessage(record), closed: info => this.onClosed(info) },
@@ -386,7 +389,7 @@ export class CodexWire implements AgentWire {
   }
 
   /** Throws for arguments Codex must not get; launch failures such as ENOENT arrive as an exit with `reason: 'spawn'`. */
-  static spawn(spec: SpawnSpec, handlers: WireHandlers, route?: { model: string; models: readonly string[] }): CodexWire {
+  static spawn(spec: SpawnSpec, handlers: WireHandlers, route?: WireModelRoute): CodexWire {
     return new CodexWire(spec, handlers, route)
   }
 
@@ -541,6 +544,7 @@ export class CodexWire implements AgentWire {
     if (this.route) {
       this.models = { models: this.route.models.slice(0, 500).map(id => ({ id, displayName: id })) }
       this.model ??= this.route.model
+      this.route.setThinking?.(this.route.model, this.routeEffort ?? null)
     } else await this.readModels(timeoutMs, signal)
     const settings = threadSettings(this.mode, this.cwd, this.servers)
     if (this.route) {
@@ -571,7 +575,7 @@ export class CodexWire implements AgentWire {
     const reported = read.data.model ?? undefined
     if (this.route && reported !== this.route.model) throw new RpcError(RPC.internal, 'Codex 没有采用所选模型，未发送本轮输入。')
     this.model = this.route ? (reported && this.route.models.includes(reported) ? reported : this.model) : (reported ?? this.model)
-    this.effort = read.data.reasoningEffort ?? this.effort
+    this.effort = this.route?.setThinking && this.routeEffort !== undefined ? this.routeEffort : (read.data.reasoningEffort ?? this.effort)
     this.reportMcp(timeoutMs)
     return { sessionId: this.threadId, configOptions: this.options() }
   }
@@ -721,6 +725,20 @@ export class CodexWire implements AgentWire {
       ...(this.model ? { model: this.model } : {}),
       ...(this.effort ? { effort: this.effort } : {}),
     }).options
+    if (this.route?.setThinking && this.model) {
+      const efforts = this.route.modelCapabilities?.[this.model]?.thinking ?? []
+      if (efforts.length)
+        listed.push({
+          id: CODEX_EFFORT_ID,
+          name: '思考',
+          category: 'thought_level',
+          currentValue: this.routeEffort ?? DEFAULT_GATEWAY_EFFORT,
+          options: [
+            { value: DEFAULT_GATEWAY_EFFORT, name: '默认' },
+            ...efforts.map(value => ({ value, name: value.charAt(0).toUpperCase() + value.slice(1) })),
+          ],
+        })
+    }
     return [
       {
         type: 'select',
@@ -746,12 +764,22 @@ export class CodexWire implements AgentWire {
     } else if (configId === CODEX_MODEL_ID) {
       if (!this.models.models.some(entry => entry.id === value) && value !== this.model)
         throw new RpcError(RPC.invalidParams, 'Codex does not offer this model')
+      if (this.route?.setThinking) {
+        this.routeEffort = undefined
+      }
       this.model = value
       const entry = this.models.models.find(item => item.id === value)
       const efforts = entry?.supportedReasoningEfforts?.map(item => item.reasoningEffort) ?? []
       if (this.effort && efforts.length && !efforts.includes(this.effort)) this.effort = entry?.defaultReasoningEffort ?? efforts[0]
     } else if (configId === CODEX_EFFORT_ID) {
-      this.effort = value
+      if (this.route?.setThinking) {
+        if (!this.model) throw new RpcError(RPC.invalidParams, 'No selected gateway model')
+        const effort = value === DEFAULT_GATEWAY_EFFORT ? null : value
+        if (effort !== null && !this.route.modelCapabilities?.[this.model]?.thinking?.includes(effort))
+          throw new RpcError(RPC.invalidParams, '这个模型服务没有声明所请求的思考档位')
+        this.routeEffort = effort ?? undefined
+        if (effort !== null) this.effort = effort
+      } else this.effort = value
     } else throw new RpcError(RPC.invalidParams, 'Unknown option')
     return { configOptions: this.options() }
   }
@@ -792,6 +820,8 @@ export class CodexWire implements AgentWire {
     done.catch(() => {})
     let answer: unknown
     try {
+      // Changes selected during a run belong to its successor, never to the current tool loop's requests.
+      if (this.route?.setThinking && this.model) this.route.setThinking(this.model, this.routeEffort ?? null)
       if (compact) {
         await this.assertCommandContext(timeoutMs)
         if (this.turn !== turn) return done

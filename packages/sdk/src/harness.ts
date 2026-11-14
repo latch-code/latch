@@ -93,6 +93,8 @@ export interface ModelGatewayLease {
   models: readonly string[]
   /** Capabilities declared in the saved service settings; absent means unknown, never inferred from model IDs. */
   modelCapabilities?: Readonly<Record<string, ModelCapabilities>>
+  /** Host-side choice for a Responses model; null means the service default, not a CLI's inherited effort. */
+  setThinking?(model: string, effort: string | null): void
   /** False once the token stops working: closed, or the service's settings changed since it was issued. */
   active(): boolean
   /** Revokes the token. Idempotent. */

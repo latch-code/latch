@@ -154,6 +154,71 @@ const said = (detail: DriverTaskDetail, role: string) =>
 const sent = (log: LogEntry[], method: string) => log.filter(entry => entry.event === 'recv' && entry.method === method)
 
 describe('Codex over its app-server', () => {
+  it('keeps gateway thinking fixed for the active turn and applies high or default only to its successor', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-codex-thinking-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const logFile = join(root, 'codex.jsonl')
+    const setThinking = vi.fn<(model: string, effort: string | null) => void>()
+    const wire = CodexWire.spawn(
+      {
+        command: process.execPath,
+        args: [FAKE_CODEX_APP_SERVER],
+        cwd: root,
+        env: { PATH: process.env.PATH, FAKE_ACP_LOG: logFile },
+        maxLineBytes: 1 << 20,
+        redact: text => text,
+      },
+      { request: async () => ({ outcome: { outcome: 'cancelled' } }), notification: () => {}, exit: () => {} },
+      { model: 'service-model', models: ['service-model'], modelCapabilities: { 'service-model': { thinking: ['high'] } }, setThinking },
+    )
+    cleanups.push(async () => {
+      await wire.stop('kill', 100)
+    })
+    const turns = async () =>
+      sent(
+        (await readFile(logFile, 'utf8'))
+          .split('\n')
+          .filter(Boolean)
+          .map(line => JSON.parse(line) as LogEntry),
+        'turn/start',
+      )
+    await wire.request('initialize', {}, 5_000)
+    const opened = (await wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000)) as {
+      sessionId: string
+      configOptions: Array<{ id: string; currentValue: string; options: Array<{ value: string }> }>
+    }
+    expect(opened.configOptions.find(option => option.id === 'reasoning_effort')).toMatchObject({
+      currentValue: '~default',
+      options: [{ value: '~default' }, { value: 'high' }],
+    })
+    const prompt = (text: string) =>
+      wire.request('session/prompt', { sessionId: opened.sessionId, prompt: [{ type: 'text', text }] }, 5_000)
+    const choose = (value: string) =>
+      wire.request('session/set_config_option', { sessionId: opened.sessionId, configId: 'reasoning_effort', value }, 5_000)
+    const first = prompt('sleep first').catch(error => error)
+    await vi.waitFor(async () => expect(await turns()).toHaveLength(1))
+    expect(setThinking).toHaveBeenLastCalledWith('service-model', null)
+    const beforeHigh = setThinking.mock.calls.length
+    await choose('high')
+    expect(setThinking).toHaveBeenCalledTimes(beforeHigh)
+    wire.notify('session/cancel')
+    await expect(first).resolves.toMatchObject({ stopReason: 'cancelled' })
+
+    const second = prompt('sleep second').catch(error => error)
+    await vi.waitFor(async () => expect(await turns()).toHaveLength(2))
+    expect(setThinking).toHaveBeenLastCalledWith('service-model', 'high')
+    expect((await turns())[1]?.params).toHaveProperty('effort', 'high')
+    const beforeDefault = setThinking.mock.calls.length
+    await choose('~default')
+    expect(setThinking).toHaveBeenCalledTimes(beforeDefault)
+    wire.notify('session/cancel')
+    await expect(second).resolves.toMatchObject({ stopReason: 'cancelled' })
+
+    await expect(prompt('echo third')).resolves.toMatchObject({ stopReason: 'end_turn' })
+    expect(setThinking).toHaveBeenLastCalledWith('service-model', null)
+    expect(setThinking).toHaveBeenCalledTimes(beforeDefault + 1)
+  })
+
   it('is the preset’s route for `codex`, and the adapter only for any other command', () => {
     expect(selectProfile({ id: 'c', name: 'C', presetId: 'codex', command: 'codex', args: [], env: {}, enabled: true }).profile?.wire).toBe(
       'codex',

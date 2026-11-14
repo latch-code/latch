@@ -13,11 +13,12 @@ const binary = process.env.LATCH_CODEX_GATEWAY_BINARY
 afterEach(() => vi.unstubAllEnvs())
 
 it.skipIf(!binary).each([
-  { model: 'gpt-5.5', custom: true },
-  { model: 'service-only-chat', custom: false },
+  { model: 'gpt-5.5', custom: true, thinking: true },
+  { model: 'service-only-chat', custom: false, thinking: true },
+  { model: 'deepseek-flash', custom: false, thinking: false },
 ])(
   'runs real Codex $model tools through translated Chat with signed reasoning replay (custom=$custom)',
-  async ({ model, custom }) => {
+  async ({ model, custom, thinking }) => {
     const root = await mkdtemp(join(tmpdir(), 'latch-codex-chat-live-'))
     for (const [key, leaf] of Object.entries({
       HOME: 'home',
@@ -122,7 +123,7 @@ it.skipIf(!binary).each([
           apiKey: 'fake-codex-chat-service-key',
           models: [model],
           defaultModel: model,
-          modelCapabilities: { [model]: { thinking: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] } },
+          ...(thinking ? { modelCapabilities: { [model]: { thinking: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] } } } : {}),
           confirmOrigin: true,
         },
       })
@@ -130,7 +131,14 @@ it.skipIf(!binary).each([
       const provider = ((await added.json()) as { provider: ProviderSettings }).provider
       const agent = await owner.confirmed('agents', {
         method: 'POST',
-        body: { id: 'codex', name: 'Codex', presetId: 'codex', command: binary!, args: [], env: {} },
+        body: {
+          id: 'codex',
+          name: 'Codex',
+          presetId: 'codex',
+          command: binary!,
+          args: thinking ? [] : ['-c', 'model_reasoning_effort="medium"'],
+          env: {},
+        },
       })
       expect(agent.status).toBe(201)
       const started = await owner.json<{ sessionId: string }>('tasks', {
@@ -140,7 +148,10 @@ it.skipIf(!binary).each([
           requestId: randomUUID(),
           prompt: 'Create note.txt containing gateway translated tool proof, then read it.',
           model: { providerId: provider.id, model },
-          config: [{ configId: '~mode', value: 'agent-full-access' }],
+          config: [
+            { configId: '~mode', value: 'agent-full-access' },
+            ...(thinking ? [{ configId: 'reasoning_effort', value: 'high' }] : []),
+          ],
         },
       })
       const detail = () => owner.json<TaskDetail>(`tasks/${started.sessionId}`)
@@ -170,6 +181,8 @@ it.skipIf(!binary).each([
       expect(result.messages.filter(message => message.role === 'assistant').at(-1)?.text).toBe('translated tools completed')
       expect(await readFile(join(root, 'project', 'note.txt'), 'utf8')).toBe('gateway translated tool proof\n')
       expect(received).toHaveLength(3)
+      if (!thinking) for (const request of received) expect(request).not.toHaveProperty('reasoning_effort')
+      else for (const request of received) expect(request).toHaveProperty('reasoning_effort', 'high')
       expect(JSON.stringify(received.at(-1))).toContain('TOKEN_ABSENT')
       expect(JSON.stringify(received.at(-1))).not.toContain('TOKEN_VISIBLE\\n')
       const last = received.at(-1)!.messages as Array<Record<string, unknown>>
@@ -182,11 +195,17 @@ it.skipIf(!binary).each([
         ...(custom ? { dropped: expect.arrayContaining(['tool-grammar']) } : {}),
       })
       phase = 'hold'
+      if (thinking)
+        await owner.json(`tasks/${started.sessionId}/config`, {
+          method: 'POST',
+          body: { configId: 'reasoning_effort', value: '~default', requestId: randomUUID() },
+        })
       await owner.json(`tasks/${started.sessionId}/prompt`, {
         method: 'POST',
         body: { prompt: 'Wait until this run is stopped.', requestId: randomUUID() },
       })
       await vi.waitFor(() => expect(holding).toBe(true), { timeout: 15_000 })
+      expect(received.at(-1)).not.toHaveProperty('reasoning_effort')
       const runId = (await detail()).summary.runId
       const stopped = await owner.json<{ receipt: CancelReceipt }>(`tasks/${started.sessionId}/cancel`, {
         method: 'POST',

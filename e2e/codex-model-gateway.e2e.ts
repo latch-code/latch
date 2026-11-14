@@ -1,7 +1,7 @@
 import { chromium } from '@playwright/test'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { AppSnapshot, ProviderSettings, TaskDetail } from '@latch/protocol'
 import { FAKE_CODEX_APP_SERVER, startFakeModels } from '@latch/testkit'
@@ -43,11 +43,12 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
       : [{ text: 'native gateway answer' }]
     const service = await startFakeModels({ replies })
     const key = 'sk-test-ui-native-gateway-0123456789'
-    const names = ['latch-service-only-a', 'latch-service-only-b']
+    const names = ['deepseek-flash', 'latch-service-only-b']
     const options = {
       demo: false,
       dataDir: join(root, 'data'),
       workspaceRoot: join(root, 'project'),
+      uiDir: resolve(process.env.LATCH_E2E_UI_DIR ?? 'dist/web'),
       commandDirectories: () => [dirname(command)],
       loginPrograms: (name: string) => (name === 'codex' ? command : undefined),
       detectPreset: (preset: { id: string }) => (preset.id === 'codex' ? { found: true, path: command } : { found: false }),
@@ -81,6 +82,7 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
           apiKey: key,
           models: names,
           defaultModel: names[0],
+          modelCapabilities: { [names[1]!]: { thinking: ['low', 'high'] } },
           confirmOrigin: true,
         },
       })
@@ -95,7 +97,7 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
               name: 'Codex',
               presetId: 'codex',
               command: 'codex',
-              args: [],
+              args: live ? ['-c', 'model_reasoning_effort="medium"'] : [],
               env: {},
             },
           })
@@ -158,6 +160,8 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
       await page.locator('.transcript').getByText('native gateway answer', { exact: true }).waitFor()
       expect((await detail()).summary.modelRoute).toMatchObject({ providerId: provider.id, model: names[0] })
       expect(service.requests[0]).toMatchObject({ wire, model: names[0], key })
+      if (wire === 'chat-completions') expect(service.requests[0]?.body).not.toHaveProperty('reasoning_effort')
+      if (wire === 'responses') expect(service.requests[0]?.body).not.toHaveProperty('reasoning.effort')
       if (live) {
         const body = service.requests.at(-1)?.body as {
           input?: Array<{ type?: string; output?: string }>
@@ -180,6 +184,12 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
       await chip().click()
       await modelRow(names[1]!).click()
       await expect.poll(async () => (await detail()).config?.find(option => option.category === 'model')?.currentValue).toBe(names[1])
+      const thinking = page.locator('button.thinking-picker').filter({ visible: true }).first()
+      await thinking.click()
+      await page.getByRole('menuitemradio', { name: 'High', exact: true }).waitFor()
+      await page.screenshot({ path: `${output}/declared-thinking.png`, animations: 'disabled' })
+      await page.getByRole('menuitemradio', { name: 'High', exact: true }).click()
+      await expect.poll(async () => (await detail()).config?.find(option => option.category === 'thought_level')?.currentValue).toBe('high')
       await host.close()
       host = await startTestHost({ ...options, port })
       owner = await host.enroll({ listener: 'unix' })
@@ -195,9 +205,30 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
       await expect.poll(async () => (await detail()).summary.status, { timeout: 60_000 }).toBe('idle')
       expect(service.requests.at(-1)).toMatchObject({ wire, model: names[1], key })
       expect((await detail()).config?.find(option => option.category === 'model')?.currentValue).toBe(names[1])
+      expect((await detail()).config?.find(option => option.category === 'thought_level')?.currentValue).toBe('high')
+      const effortField =
+        wire === 'responses' ? 'reasoning.effort' : wire === 'chat-completions' ? 'reasoning_effort' : 'output_config.effort'
+      expect(service.requests.at(-1)?.body).toHaveProperty(effortField, 'high')
       await expect.poll(() => page.locator(`[data-task-id="${id}"] .session-status`).innerText()).not.toMatch(/运行中|正在/u)
       await noHorizontalOverflow(page)
       await page.screenshot({ path: `${output}/restored.png`, animations: 'disabled' })
+      await chip().click()
+      await modelRow(names[0]!).click()
+      await expect.poll(async () => (await detail()).config?.find(option => option.category === 'model')?.currentValue).toBe(names[0])
+      expect((await detail()).config?.some(option => option.category === 'thought_level')).toBe(false)
+      const beforeDefault = service.requests.length
+      await next.fill('Reply with the service default after switching models.')
+      const defaultSent = page.waitForResponse(
+        response => response.request().method() === 'POST' && /\/tasks\/[^/]+\/prompt$/u.test(response.url()),
+      )
+      await next.press('Meta+Enter')
+      expect((await defaultSent).ok()).toBe(true)
+      await expect.poll(() => service.requests.length).toBeGreaterThan(beforeDefault)
+      await expect.poll(async () => (await detail()).summary.status, { timeout: 60_000 }).toBe('idle')
+      expect(service.requests.at(-1)?.body).not.toHaveProperty(effortField)
+      await expect.poll(() => page.locator('.transcript').getByText('native gateway answer', { exact: true }).count()).toBe(3)
+      await expect.poll(() => page.getByRole('button', { name: '停止', exact: true }).filter({ visible: true }).count()).toBe(0)
+      await page.screenshot({ path: `${output}/default-after-switch.png`, animations: 'disabled' })
       if (!live) {
         const text = await readFile(log, 'utf8')
         expect(text).not.toContain(key)

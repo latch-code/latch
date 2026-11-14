@@ -36,6 +36,7 @@ import { encodeAnthropic } from './model-gateway/out/anthropic.ts'
 import { decodeAnthropicReply, decodeAnthropicStream } from './model-gateway/out/anthropic-reply.ts'
 import type { GatewayRequest, GatewayDelta, GatewayReasoning } from './model-gateway/ir.ts'
 import type { ToolNames } from './model-gateway/tools.ts'
+import { exactJson } from './model-gateway/json.ts'
 
 /** A saved service as the gateway may use it now: undefined from `service` when sessions may not use it. */
 export interface GatewayService {
@@ -69,6 +70,7 @@ interface Binding {
   /** What the requests since the last `takeTurn` did. */
   turn: Tally
   closed: boolean
+  thinking?: { model: string; effort: string | null }
 }
 
 interface Tally {
@@ -480,6 +482,15 @@ export class ModelGatewayServer implements ModelGateway {
         return { requests, models: [...copies.values()], ...(dropped.size ? { dropped: [...dropped] } : {}) }
       },
       models: [...models],
+      setThinking: (model, effort) => {
+        const current = this.current(hash, binding)
+        if (!current) throw new AppError(409, 'model-route-changed', '模型服务的设置已经变了，请重新连接。')
+        if (binding.entry !== 'responses' || !binding.models.has(model))
+          throw new AppError(400, 'model-unavailable', '这个模型不能使用当前的思考设置。')
+        if (effort !== null && !current.modelCapabilities?.[model]?.thinking?.includes(effort))
+          throw new AppError(400, 'effort-unavailable', '这个模型服务没有声明所请求的思考档位')
+        binding.thinking = { model, effort }
+      },
       ...(service.modelCapabilities
         ? {
             modelCapabilities: Object.fromEntries(
@@ -563,6 +574,31 @@ export class ModelGatewayServer implements ModelGateway {
     if (!model || !binding.models.has(model)) {
       failed(entry)
       return refuse(res, 403, 'gateway-model', `模型「${(model ?? '').slice(0, 64)}」不在这个会话的模型服务里，Latch 没有转发`, shape)
+    }
+    if (binding.thinking?.model === model) {
+      const reasoning = fields.reasoning
+      const values =
+        reasoning && typeof reasoning === 'object' && !Array.isArray(reasoning) ? (reasoning as Record<string, unknown>) : undefined
+      const effort = values?.effort
+      if (
+        (effort !== undefined && typeof effort !== 'string')
+        || (binding.thinking.effort !== null && effort !== binding.thinking.effort)
+      ) {
+        failed(entry)
+        return refuse(res, 400, 'gateway-thinking-mismatch', 'Codex 发来的思考档位与当前选择不一致。', shape)
+      }
+      if (binding.thinking.effort === null && values && effort !== undefined) {
+        // This is the Host's explicit default intent. Keep unrelated reasoning fields and exact numeric tokens.
+        try {
+          const exact = exactJson(body.toString('utf8')) as Record<string, unknown>
+          delete (exact.reasoning as Record<string, unknown>).effort
+          delete values.effort
+          body = Buffer.from(JSON.stringify(exact))
+        } catch {
+          failed(entry)
+          return refuse(res, 400, 'gateway-translation-input', '请求包含无法保留的数值，Latch 没有转发。', shape)
+        }
+      }
     }
     let translated: { request: GatewayRequest; tools: ToolNames } | undefined
     if (binding.entry !== binding.upstream) {

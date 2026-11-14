@@ -70,6 +70,64 @@ const ask = (base: string, token: string, body: unknown, headers: Record<string,
   })
 
 describe('model gateway', () => {
+  it('uses only the current Host thinking intent, while undeclared and mismatched explicit efforts still fail', async () => {
+    const fake = await models()
+    const service = responses(fake, {
+      kind: 'openai-compatible',
+      models: ['fake-model', 'with-thinking'],
+      modelCapabilities: { 'with-thinking': { thinking: ['high'] } },
+    })
+    const { server } = await gateway({ svc: service })
+    const lease = server.open({ sessionId: 'thinking', route: { ...route(fake), upstream: 'chat-completions' } })
+    const body = { model: 'fake-model', input: 'hello', reasoning: { effort: 'medium', summary: 'auto' } }
+    expect((await ask(lease.baseURL, lease.token, body)).status).toBe(400)
+    expect(fake.requests).toHaveLength(0)
+    lease.setThinking!('fake-model', null)
+    const defaulted = await ask(lease.baseURL, lease.token, body)
+    expect(defaulted.status).toBe(200)
+    await defaulted.text()
+    expect(fake.requests[0]?.body).not.toHaveProperty('reasoning_effort')
+    expect(() => lease.setThinking!('fake-model', 'high')).toThrow('没有声明')
+    expect(() => lease.setThinking!('missing', null)).toThrow()
+    lease.setThinking!('with-thinking', 'high')
+    expect((await ask(lease.baseURL, lease.token, { ...body, model: 'with-thinking' })).status).toBe(400)
+    expect((await ask(lease.baseURL, lease.token, { model: 'with-thinking', input: 'hello' })).status).toBe(400)
+    expect((await ask(lease.baseURL, lease.token, body)).status).toBe(400)
+    expect(fake.requests).toHaveLength(1)
+    const explicit = await ask(lease.baseURL, lease.token, { ...body, model: 'with-thinking', reasoning: { effort: 'high' } })
+    expect(explicit.status).toBe(200)
+    await explicit.text()
+    expect(fake.requests[1]?.body).toHaveProperty('reasoning_effort', 'high')
+    service.fingerprint = 'changed'
+    expect(() => lease.setThinking!('with-thinking', null)).toThrow('设置已经变了')
+  })
+
+  it('removes an inherited effort without changing other Responses fields or exact number tokens', async () => {
+    const fake = await models()
+    let forwarded = ''
+    const { server } = await gateway({ svc: responses(fake) }, () => async (url, init) => {
+      forwarded = Buffer.from(init?.body as Uint8Array).toString('utf8')
+      return fetch(url, init)
+    })
+    const lease = server.open({ sessionId: 'default-responses', route: route(fake) })
+    lease.setThinking!('fake-model', null)
+    const response = await raw(`${lease.baseURL}/responses`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${lease.token}`, 'content-type': 'application/json' },
+      body: '{"model":"fake-model","input":"hello","reasoning":{"effort":"medium","summary":"auto"},"metadata":{"exact":9007199254740993}}',
+    })
+    expect(response.status).toBe(200)
+    expect(forwarded).toContain('9007199254740993')
+    expect(JSON.parse(forwarded).reasoning).toEqual({ summary: 'auto' })
+    const invalid = await raw(`${lease.baseURL}/responses`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${lease.token}`, 'content-type': 'application/json' },
+      body: '{"model":"fake-model","input":"hello","reasoning":{"effort":"medium"},"metadata":{"invalid":1e400}}',
+    })
+    expect(invalid.status).toBe(400)
+    expect(fake.requests).toHaveLength(1)
+  })
+
   it.each(['responses', 'chat-completions', 'anthropic-messages'] as const)('keeps non-Gemini model IDs exact over %s', async wire => {
     const fake = await models()
     const service = responses(fake, {

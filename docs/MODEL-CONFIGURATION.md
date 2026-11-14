@@ -32,6 +32,8 @@ sources:
 
 会话开始后不能换服务，只在原服务内换模型。会话模型选项受网关凭据的模型列表约束；已确认的新模型在进程或 Host 重启后继续使用，服务清单删除旧模型而保留当前模型时仍可恢复。Host 保存的服务名通过 `modelRoute.name` 展示，停用、删除、缺密钥或地址未确认时给出不可用原因并阻止继续使用。服务协议或地址变化不自动迁移会话。整轮回复却没有请求经过网关时显示 bypassed 并说明；这不能证明其他辅助调用均经过网关。
 
+Codex 使用网关模型时，思考菜单只列「默认」与该服务明确声明的档位；「默认」遵循模型服务，不继承 Codex 本机配置的档位。显式选择跨重启保留，换模型清掉原选择，运行中的修改从下一轮生效。规范化和请求核对见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
+
 ## Latch 内置的思考深度
 
 Latch 内置直接调模型服务，所以思考深度来自 设置 › 模型 里对每个模型的声明：`modelCapabilities[model].thinking`，由弱到强的上线值。服务的 `/models` 只给 ID，Latch 不按模型名称猜；设置页按协议给几组常见档位（Chat Completions 的 `reasoning_effort`；Responses 的 `reasoning.effort`；Anthropic 的 `output_config.effort`；Gemini 3 及以后的 `thinkingLevel`），默认不设置。没有声明时思考写「默认」，点开说明去哪里设置。

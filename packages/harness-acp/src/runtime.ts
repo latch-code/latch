@@ -4236,6 +4236,7 @@ export class AgentRuntime implements Bridge {
     let live!: Live
     let wire: AgentWire
     const selectedModel = savedModel && gateway?.models.includes(savedModel) ? savedModel : route?.model
+    const savedEffort = this.state.tasks[key]?.config?.find(option => option.category === 'thought_level')?.currentValue
     try {
       wire = openWire(
         this.selection.profile?.wire,
@@ -4259,7 +4260,19 @@ export class AgentRuntime implements Bridge {
           notification: (method, params) => this.onNotification(live, method, params),
           exit: info => this.onExit(live, info),
         },
-        gateway ? { route: { model: selectedModel!, models: gateway.models } } : {},
+        gateway
+          ? {
+              route: {
+                model: selectedModel!,
+                models: gateway.models,
+                modelCapabilities: gateway.modelCapabilities,
+                setThinking: gateway.setThinking,
+                ...(this.selection.profile?.wire === 'codex' && savedEffort
+                  ? { effort: savedEffort === '~default' ? null : savedEffort }
+                  : {}),
+              },
+            }
+          : {},
       )
     } catch (error) {
       gateway?.close()

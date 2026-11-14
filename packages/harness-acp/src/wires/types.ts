@@ -1,5 +1,11 @@
 import type { RpcId } from '../protocol.ts'
 import type { ExitInfo } from './process.ts'
+import type { ModelGatewayLease } from '@latch/sdk'
+
+export type WireModelRoute = Pick<ModelGatewayLease, 'models' | 'modelCapabilities' | 'setThinking'> & {
+  model: string
+  effort?: string | null
+}
 
 /** What the agent asks and tells the runtime, in ACP's terms whatever the wire speaks. */
 export interface WireHandlers {

@@ -3,7 +3,7 @@ import { CODEX_APP_SERVER_ARGS, CodexWire } from './codex.ts'
 import { GATE_FILE } from './pi-gate.ts'
 import { PI_RPC_ARGS, PiWire } from './pi.ts'
 import type { SpawnSpec } from './process.ts'
-import type { AgentWire, WireHandlers } from './types.ts'
+import type { AgentWire, WireHandlers, WireModelRoute } from './types.ts'
 
 /** The protocol a harness speaks, by its profile: ACP unless it says otherwise. */
 export type WireKind = 'acp' | 'pi' | 'codex'
@@ -13,7 +13,7 @@ export type WireKind = 'acp' | 'pi' | 'codex'
  * may offer, which the gateway forwards. A wire that speaks ACP leaves this to the agent.
  */
 export interface WireOptions {
-  route?: { model: string; models: readonly string[] }
+  route?: WireModelRoute
 }
 
 export function openWire(kind: WireKind | undefined, spec: SpawnSpec, handlers: WireHandlers, options: WireOptions = {}): AgentWire {

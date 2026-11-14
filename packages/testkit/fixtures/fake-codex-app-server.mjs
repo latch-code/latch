@@ -115,12 +115,17 @@ const provider = providerId && {
 }
 
 /** One turn through the process's own provider: a streamed Responses call, its text deltas joined. */
-async function viaProvider(model, text) {
+async function viaProvider(model, text, effort) {
   const token = provider.envKey ? env[provider.envKey] : undefined
   const response = await fetch(`${String(provider.baseURL).replace(/\/+$/u, '')}/responses`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ model, input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], stream: true }),
+    body: JSON.stringify({
+      model,
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }],
+      ...(effort ? { reasoning: { effort } } : {}),
+      stream: true,
+    }),
   })
   const body = await response.text()
   log('provider', { status: response.status, model })
@@ -603,7 +608,7 @@ async function runTurn(input) {
     // A login gone since the thread started fails the turn as Codex reports an expired login.
     if (env.FAKE_ACP_LOGIN_FILE && !existsSync(env.FAKE_ACP_LOGIN_FILE))
       outcome = { status: 'failed', error: { message: 'unexpected status 401 Unauthorized', codexErrorInfo: 'unauthorized' } }
-    else if (provider) outcome = await viaProvider(thread.model, text)
+    else if (provider) outcome = await viaProvider(thread.model, text, thread.effort)
     else outcome = await play(text)
     while (outcome === undefined && turn.steered.length) outcome = await reply(`steered: ${turn.steered.shift()}`)
   } catch (error) {

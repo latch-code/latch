@@ -22,6 +22,8 @@ sources:
 
 Harness 的 `ModelGatewayLease.modelCapabilities` 是已保存服务对模型的 vision/thinking 声明，缺失时保持未知，不按模型名猜；它不含价格或上下文容量。网关协议与租约规则见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
 
+`ModelGatewayLease.setThinking?(model: string, effort: string | null): void` 是可信 Driver 的进程内接口，当前由 Codex 直连使用；null 明确采用服务默认，显式值须在租约模型及当前服务声明内。它不是 HTTP 字段或设备权限，参数不含凭据。Driver 在本轮开始前登记本轮意图；运行中修改下一轮选项不得提前更新当前绑定。没有调用此接口的租约保持原来的请求校验。
+
 **插件**由用户围绕一项工作设计、创建和启停。一个自定义插件可以同时提供技能、工具、React 界面、模型 Provider 与完整 Harness，也可以只包含其中几项。文件放在一个插件包目录中，Host 内部以一个 Cordis fiber 管理它的贡献与资源。功能由这些贡献和 Host 模块共同实现，不需要为每项功能发明一个注册类别。
 
 Host 用 [Cordis](https://github.com/cordiverse/cordis) 的 `Context.plugin`、fiber 与 effect 管理生命周期；作者通过 `PluginContext` 注册能力。`LatchPlugin` 是插件对象的类型，`HarnessPlugin` 保留为兼容名称。原有默认导出插件对象的 `.mjs` 文件继续可用。

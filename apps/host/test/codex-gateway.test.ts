@@ -8,7 +8,7 @@ import { FAKE_CODEX_APP_SERVER, startFakeModels } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 
 it.each(['openai-responses', 'openai-compatible'] as const)(
-  'routes native Codex to a service-only %s model, reports a failure, and restores the same thread',
+  'routes native Codex to a service-only %s model, reports a failure, and restores the same thread with its explicit effort',
   async kind => {
     const root = await mkdtemp(join(tmpdir(), 'latch-codex-gateway-'))
     const bin = join(root, 'bin')
@@ -49,6 +49,7 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
           baseURL: `${models.origin}/v1`,
           apiKey: key,
           models: [model, nextModel],
+          modelCapabilities: { [nextModel]: { thinking: ['high'] } },
           defaultModel: model,
           confirmOrigin: true,
         },
@@ -94,6 +95,13 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
         body: { configId: modelId, value: nextModel, requestId: randomUUID() },
       })
       expect((await detail()).config?.find(option => option.category === 'model')?.currentValue).toBe(nextModel)
+      const thinking = (await detail()).config!.find(option => option.category === 'thought_level')!
+      expect(thinking).toMatchObject({ currentValue: '~default', options: [{ value: '~default' }, { value: 'high' }] })
+      await owner.json(`tasks/${start.sessionId}/config`, {
+        method: 'POST',
+        body: { configId: thinking.id, value: 'high', requestId: randomUUID() },
+      })
+      expect((await detail()).config?.find(option => option.category === 'thought_level')?.currentValue).toBe('high')
       // Removing the unused original choice must not invalidate the session's confirmed current model.
       expect(
         (
@@ -110,6 +118,7 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
       await owner.json(`tasks/${start.sessionId}/prompt`, { method: 'POST', body: { prompt: 'refused', requestId: randomUUID() } })
       await vi.waitFor(async () => expect((await detail()).summary.status).toBe('failed'), { timeout: 10_000 })
       expect((await detail()).messages.map(message => message.text).join('\n')).toContain('planned service refusal')
+      expect((await detail()).config?.find(option => option.category === 'thought_level')?.currentValue).toBe('high')
 
       await host.close()
       host = await startTestHost(options)
@@ -120,6 +129,9 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
       expect(models.requests).toHaveLength(3)
       expect(models.requests.every(request => request.key === key)).toBe(true)
       expect(models.requests.map(request => request.model)).toEqual([model, nextModel, nextModel])
+      expect((await detail()).config?.find(option => option.category === 'thought_level')?.currentValue).toBe('high')
+      for (const request of models.requests.slice(1))
+        expect(request.body).toHaveProperty(kind === 'openai-compatible' ? 'reasoning_effort' : 'reasoning.effort', 'high')
       const wire = await readFile(log, 'utf8')
       expect(wire).not.toContain(key)
       expect(wire).not.toContain('lmg1.')
@@ -131,6 +143,12 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
       expect(reads.filter(frame => frame.method === 'thread/start')).toHaveLength(1)
       expect(reads.filter(frame => frame.method === 'thread/resume')).toHaveLength(2)
       expect(reads.filter(frame => frame.method === 'model/list')).toHaveLength(0)
+      expect(
+        reads
+          .filter(frame => frame.method === 'turn/start')
+          .slice(1)
+          .map(frame => frame.params?.effort),
+      ).toEqual(['high', 'high'])
       for (const process of frames.filter(frame => frame.event === 'start')) {
         expect(process.argv).toContain('model_provider="latch"')
         expect(process.argv).not.toContain('shell_environment_policy.exclude=["LMG_TOKEN"]')
