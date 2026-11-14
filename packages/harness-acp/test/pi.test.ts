@@ -40,11 +40,12 @@ const event = (method: string, params?: Record<string, unknown>): ReplayEntry =>
   frame: { kind: 'notification', method, ...(params ? { params } : {}) },
 })
 /** Latch's permission extension found among pi's commands and asked for its level, which it reports as a status. */
-function gateRead(level: string, args = ''): ReplayEntry[] {
+function gateRead(level: string, args = '', commands: unknown[] = []): ReplayEntry[] {
   return [
     out('get_commands'),
     answer('get_commands', {
       commands: [
+        ...commands,
         {
           name: 'latch-permission',
           source: 'extension',
@@ -64,7 +65,7 @@ function gateSet(level: string, args = ''): ReplayEntry[] {
   ]
 }
 /** A pi process starting and opening the session it started with. */
-const opened: ReplayEntry[] = [
+const openedWith = (commands: unknown[] = []): ReplayEntry[] => [
   out('get_state'),
   answer('get_state', STATE),
   out('clear_queue'),
@@ -75,8 +76,9 @@ const opened: ReplayEntry[] = [
   answer('get_available_models', { models: [MODEL] }),
   out('get_available_thinking_levels'),
   answer('get_available_thinking_levels', { levels: ['off', 'low', 'medium', 'high'] }),
-  ...gateRead('ask'),
+  ...gateRead('ask', '', commands),
 ]
+const opened = openedWith()
 const stats: ReplayEntry[] = [out('get_session_stats'), answer('get_session_stats', { tokens: { input: 10, output: 2 }, cost: 0.001 })]
 
 async function transcript(scenario: string, steps: ReplayHeader['steps'], entries: ReplayEntry[]): Promise<string> {
@@ -98,7 +100,97 @@ async function transcript(scenario: string, steps: ReplayHeader['steps'], entrie
   return path
 }
 
+async function publicCommandsFixture(entries: ReplayEntry[]) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-pi-commands-')))
+  cleanups.push(() => rm(root, { recursive: true, force: true }))
+  const marks = join(root, 'marks')
+  const bin = join(root, 'bin')
+  await mkdir(marks)
+  await fakePrograms(bin, marks)
+  setCommandSearch(() => [bin])
+  const status = join(root, 'status.json')
+  const record: AgentRecord = {
+    id: 'pi',
+    name: 'pi',
+    presetId: 'pi',
+    command: process.execPath,
+    args: [REPLAY_AGENT],
+    env: replayEnv({ transcript: await transcript('public_commands', [], entries), status, workspace: root }),
+    enabled: true,
+  }
+  const driver = await activate(createAcpAgentPlugin(record, { stopGraceMs: 300, requestTimeoutMs: 5_000, log: () => {} }), cleanups)
+  const bridge = await openBridge(driver, { dataDir: join(root, 'data'), workspace: root, tmpRoot: join(root, 'tmp') }, cleanups)
+  return { root, bridge, status }
+}
+
+const commandReply = (message: string): ReplayEntry[] => [
+  out('prompt', { message }),
+  answer('prompt', { disposition: 'started' }),
+  event('agent_start'),
+  event('message_start', { message: { role: 'assistant', content: [] } }),
+  event('message_end', { message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }], stopReason: 'stop' } }),
+  event('agent_end', { messages: [], willRetry: false }),
+  event('agent_settled', { aborted: false }),
+  ...stats,
+]
+
 describe('pi over its own RPC', () => {
+  it('publishes bounded public extension, prompt and skill commands without private gate or resource paths', async () => {
+    const commands = [
+      {
+        name: 'inspect',
+        source: 'extension',
+        description: 'Inspect the public plan',
+        sourceInfo: { path: '/private-resource/not-for-clients' },
+      },
+      { name: 'plan-note', source: 'prompt', description: 'Expand the plan' },
+      { name: 'skill:public-note', source: 'skill', description: 'Read the public note' },
+      { name: 'latch-permission:other', source: 'extension' },
+      { name: 'bad name', source: 'prompt' },
+      { name: 'future', source: 'unknown' },
+      { name: 'compact', source: 'extension', description: 'Must not replace the native operation' },
+      ...Array.from({ length: 220 }, (_, i) => ({ name: `public-${i}`, source: 'prompt' })),
+    ]
+    const entries = [...openedWith(commands), ...commandReply('Hello')]
+    const { bridge, root, status } = await publicCommandsFixture(entries)
+    const { sessionId } = await bridge.createTask({ prompt: 'Hello', requestId: 'first', cwd: root })
+    await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
+    const listed = (await bridge.detail(sessionId)).commands!
+    expect(listed).toHaveLength(200)
+    expect(listed.slice(0, 4)).toEqual([
+      expect.objectContaining({ name: 'compact', idleOnly: true }),
+      { name: 'inspect', description: 'Inspect the public plan', idleOnly: true },
+      { name: 'plan-note', description: 'Expand the plan' },
+      { name: 'skill:public-note', description: 'Read the public note' },
+    ])
+    expect(listed.some(command => /latch-permission|bad name|future/u.test(command.name))).toBe(false)
+    expect(JSON.stringify(listed)).not.toContain('private-resource')
+    expect(readReplayStatus(status)).toMatchObject({ cursor: entries.length, total: entries.length })
+  })
+
+  it.each([true, false])('keeps a first skill command literal only when the native catalog knows its complete name (%s)', async known => {
+    const command = known ? '/skill:public-note keep the plan' : '/skill:public-notebook keep the plan'
+    const entries = [
+      ...openedWith([{ name: 'skill:public-note', source: 'skill' }]),
+      ...commandReply(known ? command : `PUBLIC BRIEF\n\n${command}`),
+      ...commandReply(known ? 'PUBLIC BRIEF\n\nHello' : 'Hello'),
+    ]
+    const { bridge, root, status } = await publicCommandsFixture(entries)
+    const brief = { segments: [{ source: 'user' as const, text: 'PUBLIC BRIEF' }] }
+    const agentContext = { agent: { customAgentId: 'agt_commands' }, instructions: '', brief, revision: 'a'.repeat(64) }
+    const { sessionId } = await bridge.createTask({ prompt: command, requestId: 'first', cwd: root, agentContext })
+    await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
+    expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'user')?.agentBrief).toEqual(
+      known ? undefined : brief,
+    )
+    await bridge.prompt(sessionId, 'Hello', 'next')
+    await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
+    expect((await bridge.detail(sessionId)).messages.filter(message => message.role === 'user').at(-1)?.agentBrief).toEqual(
+      known ? brief : undefined,
+    )
+    expect(readReplayStatus(status)).toMatchObject({ cursor: entries.length, total: entries.length })
+  })
+
   it('does not trust a command with the gate basename from another extension path', async () => {
     const entries = [
       ...opened.slice(0, 10),

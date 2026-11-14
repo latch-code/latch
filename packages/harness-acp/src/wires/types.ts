@@ -32,6 +32,8 @@ export interface AgentWire {
   stderrTail(limit?: number): string
   /** Commands the wire runs itself when a prompt is one of them, never sent as text, and only between turns. */
   readonly idleCommands?: ReadonlySet<string>
+  /** Commands from this wire's current native catalog that accept no separate one-time message context. */
+  readonly commandsWithoutContext?: ReadonlySet<string>
   /** It answers `FORK_METHOD`. */
   readonly forks?: true
 }

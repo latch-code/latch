@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
-import { FORK_METHOD, RPC, RpcError, STEER_METHOD } from '../protocol.ts'
+import { commandsUpdate, FORK_METHOD, RPC, RpcError, STEER_METHOD } from '../protocol.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
 import { GATE_COMMAND, GATE_LEVELS, GATE_MARK, writeGate } from './pi-gate.ts'
 import { PI_GATEWAY_PROVIDER } from '../profiles/pi-gateway.ts'
@@ -257,7 +257,9 @@ export function piArgs(args: readonly string[]): string[] {
 
 export class PiWire implements AgentWire {
   readonly exited: Promise<ExitInfo>
-  readonly idleCommands: ReadonlySet<string> = new Set([COMPACT.name])
+  readonly idleCommands = new Set([COMPACT.name])
+  readonly commandsWithoutContext = new Set([COMPACT.name])
+  private commands: z.infer<typeof commandsUpdate>['availableCommands'] = [COMPACT]
   readonly forks = true
   private readonly process: AgentProcess
   private nextId = 0
@@ -488,9 +490,30 @@ export class PiWire implements AgentWire {
    * as text.
    */
   private async readGate(timeoutMs?: number, signal?: AbortSignal): Promise<void> {
-    if (!this.gatePath) return
     const listed = await this.send({ type: 'get_commands' }, timeoutMs, signal).catch(() => undefined)
     const commands = isRecord(listed) && Array.isArray(listed.commands) ? listed.commands : []
+    this.commands = [COMPACT]
+    this.idleCommands.clear()
+    this.idleCommands.add(COMPACT.name)
+    this.commandsWithoutContext.clear()
+    this.commandsWithoutContext.add(COMPACT.name)
+    this.listedFor = undefined
+    for (const item of commands) {
+      if (this.commands.length === 200) break
+      if (!isRecord(item) || !['extension', 'prompt', 'skill'].includes(String(item.source))) continue
+      const parsed = commandsUpdate.shape.availableCommands.element.safeParse({
+        name: item.name,
+        ...(typeof item.description === 'string' ? { description: clip(item.description, 1000) } : {}),
+      })
+      if (!parsed.success) continue
+      const name = parsed.data.name
+      if (name === GATE_COMMAND || name.startsWith(`${GATE_COMMAND}:`) || this.commandsWithoutContext.has(name)) continue
+      this.commands.push(parsed.data)
+      this.commandsWithoutContext.add(name)
+      // pi's steer expands skills/templates, but explicitly rejects extension commands.
+      if (item.source === 'extension') this.idleCommands.add(name)
+    }
+    if (!this.gatePath) return
     const own = commands.find(
       item =>
         isRecord(item)
@@ -678,7 +701,7 @@ export class PiWire implements AgentWire {
     // Listed once the session has a turn, when the runtime surely knows it: it drops updates for a session it does not.
     if (this.listedFor !== this.sessionId) {
       this.listedFor = this.sessionId
-      this.update({ sessionUpdate: 'available_commands_update', availableCommands: [COMPACT] })
+      this.update({ sessionUpdate: 'available_commands_update', availableCommands: this.commands })
     }
     const compact = images.length ? undefined : compactCommand(texts.join('\n\n'))
     const done = new Promise<unknown>((resolve, reject) => {
@@ -720,7 +743,9 @@ export class PiWire implements AgentWire {
     this.assertSession(parsed.data.sessionId)
     const textOf = parsed.data.prompt.flatMap(block => (block.type === 'text' && block.text !== undefined ? [block.text] : []))
     // pi would abort the running turn to compact; it runs only between turns, never as text added to one.
-    if (compactCommand(textOf.join('\n\n'))) throw new RpcError(RPC.invalidParams, '/compact runs only between turns')
+    const named = /^\/(\S+)/u.exec(textOf.join('\n\n'))?.[1]
+    if (compactCommand(textOf.join('\n\n')) || (named !== undefined && this.idleCommands.has(named)))
+      throw new RpcError(RPC.invalidParams, 'This pi command runs only between turns')
     if (textOf.some(text => GATE_INPUT.test(text))) throw new RpcError(RPC.invalidParams, `/${GATE_COMMAND} is Latch's own command`)
     if (!this.turn || this.turn.cancelled || !this.running) return { outcome: 'promptRequired' }
     // pi queues it into the running turn, after the calls in flight and before the model's next request.
