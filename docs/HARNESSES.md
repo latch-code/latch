@@ -518,7 +518,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 
 新会话可以读取同项目、真实目录身份与准确启动指纹下，上次真实会话报告的完整命令目录。ACP 的派生缓存为私有数据目录中的 `harness-commands.json`（0600，最多 64 份目录、2 MiB），严格检查文件与持久来源，原子写入；空报告有别于未报告。缓存只收已绑定进程的实际报告，异步核对后再检查同一进程、会话与报告序号，不启动或探测 CLI，也不读 CLI 自有存储。
 
-`POST /agents/:id/commands` 接受正常开始会话的选择项，不接受任意 cwd；需要 view，并在异步查找后复查设备、项目、来源可见性、真实目录与完整启动指纹。新分配的文件夹、工作树与助手家没有真实目录时不命中，也不为查提示创建目录。响应只有 commands、reportedAt 与 source=previous-session；sourceSessionId、启动指纹和私有路径只在 Host 内使用。删除来源、改变启动配置或失去来源权限后不返回。缓存只是建议，不授执行能力。
+`POST /agents/:id/commands` 接受正常开始会话的选择项，不接受任意 cwd；需要 view，并在异步查找后复查设备、项目、来源可见性、真实目录与完整启动指纹。新分配的文件夹、工作树与助手家没有真实目录时不命中，也不为查提示创建目录。响应包含 commands、reportedAt、source=previous-session，以及可选的 skills、skillsTruncated；sourceSessionId、启动指纹和私有路径只在 Host 内使用。删除来源、改变启动配置或失去来源权限后不返回。缓存只是建议，不授执行能力。
 
 Host 每次挂载 Driver 生成 `HarnessInfo.commandCatalogue.generation`；ACP 每次命令报告完成缓存核对后更新并持久化 `TaskSummary.commandsVersion`。它们都是不透明标识，普通正文帧不改变命令版本。Web 用本来可见的任务 ID 与版本、Host、设备授权、Driver 代次、项目和实际开始选择确定提示范围；可见集合或选择改变时立即撤下旧结果并取消在途查询，迟到响应不回填。
 
@@ -549,7 +549,5 @@ Host 队列只在明确 runOutcome=completed 后自动派发。ACP 只有 sessio
 ACP 附件只走 `session/prompt` 的内容块。initialize 的 `promptCapabilities.image` 和 `embeddedContext` 必须各自为 true；Probe 缺少字段不代表支持，实际启动后再次核对。图片为 base64 image，文本为含 `latch-attachment:<id>` URI 和正文的 embedded resource，不在项目创建文件。Agent 输出图片通过 Host 回调存为会话附件，任务快照只写引用。含附件会话的 stderr 不进入 Host 日志，RPC 失败也不回显附件；具体限额和授权见 [ATTACHMENTS.md](ATTACHMENTS.md)。
 
 显式 `fileRefs` 由 Host 对固定目录再次验证，ACP 仅在本轮模型输入里追加真实目录映射，公开消息保留原文与引用 metadata。附件及文件引用 schema 都随会话持久化；假进程回归覆盖实际协商、内容块、图片输出与重启。
-
-分叉由 Host 以一条背景文本加新输入开启会话，ACP 不需要私有分叉方法；仍是新的启动。pi 在同一定义、同一文件夹内用它自己的分叉，见「pi 的 RPC 模式」。用户消息的 requestId 在 ACP 存储中保留，用于关联确认后的输入与客户端待发送气泡。
 
 文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。
