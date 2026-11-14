@@ -3,14 +3,15 @@ import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/p
 import {
   Button,
   Count,
-  EmptyState,
+  EditGlyph,
   FilterPills,
   FolderGlyph,
+  Hint,
   Icon,
   WaitingGlyph,
   PullRequestGlyph,
   NewSessionGlyph,
-  RefreshGlyph,
+  RunningGlyph,
   SearchGlyph,
   StatusWord,
   LaptopGlyph,
@@ -37,9 +38,20 @@ import {
 } from './useWorkbenchEvidence.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
-const GROUP_ICONS = { attention: WaitingGlyph, running: RefreshGlyph, delivery: PullRequestGlyph }
+const GROUP_ICONS = { attention: WaitingGlyph, running: RunningGlyph, delivery: PullRequestGlyph }
 
-function WorkRunning({ task, shell, onSelect }: { task: TaskSummary; shell: ShellState; onSelect: (id: string) => void }) {
+/** `overview`: name and time, then the activity with the project at the end. `triage` adds a line for project and computer. */
+function WorkRunning({
+  task,
+  shell,
+  layout,
+  onSelect,
+}: {
+  task: TaskSummary
+  shell: ShellState
+  layout: 'overview' | 'triage'
+  onSelect: (id: string) => void
+}) {
   const connected = shell.connection === 'connected'
   const read = useWorkbenchSession(
     task,
@@ -54,31 +66,44 @@ function WorkRunning({ task, shell, onSelect }: { task: TaskSummary; shell: Shel
   const elapsed = live ? runElapsed(live, lastNow.current) : undefined
   const project = projectOf(task, shell.catalog?.workspaces ?? [])
   const stopping = shell.stopping.has(task.id) || live?.activity === 'cancelling'
+  // The glyph follows what the Host reports: a command, or a running tool row that edits a file; anything else has none.
+  const editing =
+    live?.activity === 'tool'
+    && read.detail?.messages.findLast(message => message.role === 'tool' && message.state === 'running')?.tool?.kind === 'edit'
+  const activityIcon = stopping ? undefined : live?.activity === 'command' ? TerminalGlyph : editing ? EditGlyph : undefined
+  const projectName = escapeSecurityText(project?.name ?? '无项目')
   return (
     <article className="work-running" ref={read.element}>
       <Button variant="ghost" className="work-overview-row" data-work-session={task.id} onClick={() => onSelect(task.id)}>
         <span className="work-overview-row-head">
           <StatusGlyph running={connected} state={stopping ? 'stopping' : 'running'}>
-            <Icon icon={RefreshGlyph} size={14} />
+            <Icon icon={RunningGlyph} size={12} />
           </StatusGlyph>
           <span className="work-overview-row-title">{escapeSecurityText(task.title || '未命名会话')}</span>
           {elapsed !== undefined && <span className="work-running-time">{runClock(elapsed)}</span>}
         </span>
-        {live && (
-          <span className="work-running-action">
-            <Icon icon={live.activity === 'command' ? TerminalGlyph : RefreshGlyph} size={12} />
-            <span>
-              {!connected ? '上次状态：' : ''}
-              {stopping ? '正在停止' : escapeSecurityText(live.commandName ?? activityWords(live))}
-            </span>
+        {(live || layout === 'overview') && (
+          <span className="work-running-line">
+            {live && (
+              <span className="work-running-action">
+                {activityIcon && <Icon icon={activityIcon} size={12} />}
+                <span>
+                  {!connected ? '上次状态：' : ''}
+                  {stopping ? '正在停止' : escapeSecurityText(live.commandName ?? activityWords(live))}
+                </span>
+              </span>
+            )}
+            {layout === 'overview' && <span className="work-running-project">{projectName}</span>}
           </span>
         )}
-        <span className="work-overview-row-context">
-          <Icon icon={FolderGlyph} size={12} />
-          <span>{escapeSecurityText(project?.name ?? '无项目')}</span>
-          <Icon icon={LaptopGlyph} size={12} />
-          <span>{computerName(shell.snapshot.hostName)}</span>
-        </span>
+        {layout === 'triage' && (
+          <span className="work-overview-row-context">
+            <Icon icon={FolderGlyph} size={12} />
+            <span>{projectName}</span>
+            <Icon icon={LaptopGlyph} size={12} />
+            <span>{computerName(shell.snapshot.hostName)}</span>
+          </span>
+        )}
       </Button>
     </article>
   )
@@ -88,11 +113,14 @@ function DeliveryRow({
   task,
   entry,
   snapshot,
+  canWrite,
   onOpen,
 }: {
   task: TaskSummary
   entry: WorkbenchDeliveryEntry
   snapshot: AppSnapshot
+  /** This device may write through the delivery panel now: connected, with the scope to run. */
+  canWrite: boolean
   onOpen: () => void
 }) {
   const pr = entry.pr?.pr
@@ -104,6 +132,23 @@ function DeliveryRow({
       item => item.id !== task.id && item.cwd === task.cwd && (item.status === 'running' || item.status === 'waiting-approval'),
     )
   const project = projectOf(task, snapshot.catalog?.workspaces ?? [])
+  const pending = state?.files ? `未提交 ${state.files} 个文件` : state?.ahead ? `${state.ahead} 个提交未推送` : undefined
+  // 提交并开 PR only on the Host's evidence: files to commit on a branch with a remote, nothing in the way, nobody else writing here.
+  const deliverable =
+    canWrite
+    && !pr
+    && !entry.error
+    && !entry.prError
+    && !changing
+    && !task.personal
+    && task.mode !== 'chat'
+    && !!state
+    && state.files > 0
+    && state.conflicted === 0
+    && !state.gitOperation
+    && !state.running
+    && !!state.branch
+    && !!state.remote
   return (
     <div className="work-delivery" data-work-session={task.id}>
       <Button variant="ghost" className="work-delivery-title" icon={PullRequestGlyph} onClick={onOpen}>
@@ -111,23 +156,23 @@ function DeliveryRow({
         {escapeSecurityText(pr?.title ?? (task.title || '未命名会话'))}
       </Button>
       <div className="work-delivery-state">
-        <span>
-          {checks ?? (state?.files ? `目录未提交 ${state.files} 个文件` : state?.ahead ? `${state.ahead} 个提交未推送` : '查看交付状态')}
-        </span>
-        <Button size="xs" onClick={onOpen}>
-          {pr ? '查看 PR' : state?.files ? '查看改动' : '继续交付'}
+        <span>{checks ?? pending ?? '查看交付状态'}</span>
+        {changing && (
+          <Hint className="work-delivery-hint" label="" moreLabel="原因">
+            其他会话正在改动这个目录
+          </Hint>
+        )}
+        <Button variant="outline" size="xs" onClick={onOpen}>
+          {pr ? '查看 PR' : deliverable ? '提交并开 PR' : state?.files ? '查看改动' : '继续交付'}
         </Button>
       </div>
-      {checks && state && (state.files > 0 || state.ahead > 0) && (
-        <p className="work-delivery-changes">{state.files > 0 ? `目录未提交 ${state.files} 个文件` : `${state.ahead} 个提交未推送`}</p>
-      )}
+      {checks && pending && <p className="work-delivery-changes">{pending}</p>}
       <div className="work-delivery-project">
         <Icon icon={FolderGlyph} size={12} />
         {escapeSecurityText(project?.name ?? '无项目')}
         {state?.branch && <span>{escapeSecurityText(state.branch)}</span>}
       </div>
       {entry.error && <p className="work-delivery-error">{entry.error.message}</p>}
-      {changing && <p className="work-delivery-live">其他会话正在改动这个目录</p>}
     </div>
   )
 }
@@ -200,6 +245,8 @@ export function WorkOverview({
   const hasRepository = [...(evidence?.entries.values() ?? [])].some(entry => entry.state)
   const unobserved = snapshot.tasks.filter(task => !task.archived && spaceOf(task) === 'code' && !evidence?.entries.has(task.id)).length
   const counted = (id: WorkGroupId) => id !== 'delivery' || (!deliveryNotice && !deliveryPartial && unobserved === 0)
+  // Nothing in any group: one quiet line instead of three empty headings, unless a failed read still offers its retry.
+  const allEmpty = !compact && groups.every(group => group.tasks.length === 0) && !deliveryPartial && !evidence?.error
   if (!compact && !snapshot.tasks.some(task => !task.archived && spaceOf(task) === 'code'))
     return (
       <section className="workbench-empty" aria-label="工作总览">
@@ -221,9 +268,9 @@ export function WorkOverview({
       className="work-overview"
       data-layout={layout}
       data-compact={compact ? '' : undefined}
-      aria-label={compact ? '会话队列' : layout === 'triage' ? '分拣台' : '工作总览'}>
+      aria-label={compact ? '会话队列' : '工作总览'}>
       <header className="work-overview-heading">
-        <h2>{compact ? '会话' : layout === 'triage' ? '分拣台' : '总览'}</h2>
+        <h2>{compact ? '会话' : '总览'}</h2>
         <div className="work-overview-actions">
           <Button variant="ghost" icon={SearchGlyph} onClick={onSearch}>
             搜索
@@ -234,18 +281,21 @@ export function WorkOverview({
         </div>
       </header>
       {!connected && <p className="work-overview-connection">{connection === 'connecting' ? '正在连接' : '显示上次同步的会话'}</p>}
-      <FilterPills
-        className="work-overview-lanes"
-        label="分拣会话"
-        value={lane}
-        options={groups.map(group => ({
-          value: group.id,
-          label: counted(group.id) ? `${group.label} ${group.tasks.length}` : group.label,
-        }))}
-        onValueChange={setLane}
-      />
+      {allEmpty && <p className="work-overview-empty">{groups[0]!.empty}</p>}
+      {!allEmpty && (
+        <FilterPills
+          className="work-overview-lanes"
+          label="分拣会话"
+          value={lane}
+          options={groups.map(group => ({
+            value: group.id,
+            label: counted(group.id) ? `${group.label} ${group.tasks.length}` : group.label,
+          }))}
+          onValueChange={setLane}
+        />
+      )}
       <div className="work-overview-groups">
-        {groups.map(group => (
+        {(allEmpty ? [] : groups).map(group => (
           <section
             key={group.id}
             className="work-overview-group"
@@ -258,30 +308,25 @@ export function WorkOverview({
               {counted(group.id) && <Count value={group.tasks.length} />}
             </header>
             {group.tasks.length === 0 ? (
-              <EmptyState
-                className="work-overview-empty"
-                action={
-                  group.id === 'delivery' && !compact && (deliveryPartial || deliveryNotApplicable) && connected && evidence ? (
-                    <Button variant="ghost" size="xs" onClick={evidence.refresh}>
-                      {deliveryPartial ? '重试' : '刷新'}
-                    </Button>
-                  ) : undefined
-                }
-                title={
-                  group.id === 'delivery'
-                    ? (deliveryNotice
-                      ?? (deliveryPartial
-                        ? '部分目录暂时无法读取'
-                        : deliveryNotApplicable && !hasRepository
-                          ? '已查看的目录不支持 Git 交付'
-                          : deliveryNotApplicable
-                            ? '已查看的 Git 仓库没有待交付改动'
-                            : unobserved
-                              ? '已查看的会话没有待交付改动'
-                              : group.empty))
-                    : group.empty
-                }
-              />
+              <p className="work-overview-empty">
+                {group.id === 'delivery'
+                  ? (deliveryNotice
+                    ?? (deliveryPartial
+                      ? '部分目录暂时无法读取'
+                      : deliveryNotApplicable && !hasRepository
+                        ? '已查看的目录不支持 Git 交付'
+                        : deliveryNotApplicable
+                          ? '已查看的 Git 仓库没有待交付改动'
+                          : unobserved
+                            ? '已查看的会话没有待交付改动'
+                            : group.empty))
+                  : group.empty}
+                {group.id === 'delivery' && !compact && (deliveryPartial || deliveryNotApplicable) && connected && evidence && (
+                  <Button variant="outline" size="xs" onClick={evidence.refresh}>
+                    {deliveryPartial ? '重试' : '刷新'}
+                  </Button>
+                )}
+              </p>
             ) : (
               <ul className="work-overview-list">
                 {(compact || expandedGroups.has(group.id) ? group.tasks : group.tasks.slice(0, group.id === 'delivery' ? 2 : 5)).map(
@@ -315,13 +360,14 @@ export function WorkOverview({
                             task={task}
                             entry={evidence.entries.get(task.id)!}
                             snapshot={snapshot}
+                            canWrite={connected && shell?.access.scopes.has('run') === true}
                             onOpen={() => {
                               onSelect(task.id)
                               if (shell) requestAnimationFrame(() => shell.showSurface({ kind: 'delivery' }))
                             }}
                           />
                         ) : !compact && group.id === 'running' && shell ? (
-                          <WorkRunning task={task} shell={shell} onSelect={onSelect} />
+                          <WorkRunning task={task} shell={shell} layout={layout} onSelect={onSelect} />
                         ) : (
                           <Button
                             variant="ghost"
@@ -386,7 +432,7 @@ export function WorkOverview({
               <p className="work-overview-connection">
                 已查看最近 {evidence?.entries.size ?? 0} 个会话{' '}
                 {shell && (
-                  <Button variant="ghost" size="xs" onClick={shell.openAllSessions}>
+                  <Button variant="outline" size="xs" onClick={shell.openAllSessions}>
                     全部会话
                   </Button>
                 )}
@@ -401,7 +447,7 @@ export function WorkOverview({
                 <p className="work-overview-connection">
                   部分目录暂时无法读取{' '}
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="xs"
                     disabled={!connected}
                     tooltip={!connected ? '连接恢复后可以重试' : undefined}

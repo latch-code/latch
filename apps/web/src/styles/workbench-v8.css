@@ -124,12 +124,48 @@
   border-radius: var(--r-9);
 }
 .sidebar-work-computer {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
   border-top: 1px solid var(--line);
   padding-top: var(--sp-8);
 }
+.sidebar-work-computer > :first-child:not(.sidebar-awake) {
+  flex: 1;
+  min-width: 0;
+}
 .sidebar-work-computer > .ui-button {
-  width: 100%;
   justify-content: start;
+}
+/* After the computer's name while the desktop app keeps this Mac awake; the words are in its hover. */
+.sidebar-awake {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  height: 24px;
+  border-radius: var(--r-6);
+  color: var(--muted);
+}
+/* 「项目」 over the projects, with the + that adds one at its right. */
+.sidebar-group-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  margin-top: var(--sp-12);
+  padding: 0 var(--sp-6) 0 10px;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.sidebar-group-label + .session-group {
+  margin-top: var(--sp-2);
+}
+.shelf-lead {
+  flex-shrink: 0;
+  margin-right: var(--sp-6);
+  color: var(--muted);
 }
 .sidebar-foot {
   border: 0;
@@ -250,13 +286,26 @@
 .workbench-home {
   margin: 0;
   border-radius: 0;
-  padding: var(--sp-40) var(--sp-48) var(--sp-32);
+  /* 侧栏: the home starts under the window's top row, whose end holds the layout switch. */
+  padding: var(--sp-48) var(--sp-48) var(--sp-32);
 }
 .workbench-home-composer {
   max-width: 1088px;
 }
 .workbench-home-demo {
   margin: 0 0 var(--sp-12);
+}
+.workbench-home-history {
+  display: flex;
+  justify-content: flex-end;
+  max-width: 1088px;
+  margin-top: var(--sp-8);
+}
+.workbench-home-history:empty {
+  display: none;
+}
+.workbench-home-history .history-entry {
+  margin: 0;
 }
 .workbench-empty {
   margin-top: var(--sp-40);
@@ -330,9 +379,6 @@
 .workbench-home-composer .composer-input {
   padding-top: var(--sp-8);
   padding-bottom: var(--sp-16);
-}
-.workbench-home-composer .composer-prompt {
-  display: none;
 }
 .workbench-home-composer textarea {
   padding: 0 var(--sp-16);
@@ -443,6 +489,13 @@
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* Nothing changed, nothing ran and nothing to deliver: the whole panel is this one quiet line. */
+.session-overview-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
 .session-overview-command {
   display: flex;
   align-items: start;
@@ -547,6 +600,36 @@
 }
 .app-shell[data-workbench-layout='triage'] .sidebar {
   border-right: 1px solid var(--line);
+}
+/* 顶栏: the three lanes reach the window's foot and each scrolls by itself, so their dividing lines never stop short. */
+@media (min-width: 1024px) {
+  .app-shell[data-workbench-layout='triage'] .workbench-home:has(> .work-overview) {
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 0;
+  }
+  .app-shell[data-workbench-layout='triage'] .workbench-home > :not(.work-overview) {
+    flex-shrink: 0;
+    width: 100%;
+  }
+  .app-shell[data-workbench-layout='triage'] .workbench-home > .work-overview {
+    display: flex;
+    flex: 1 0 320px;
+    flex-direction: column;
+    width: 100%;
+    min-height: 0;
+  }
+  .app-shell[data-workbench-layout='triage'] .workbench-home > .work-overview > .work-overview-groups {
+    flex: 1 1 0;
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .app-shell[data-workbench-layout='triage'] .workbench-home > .work-overview .work-overview-group {
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: var(--sp-32);
+    scrollbar-width: thin;
+  }
 }
 .triage-sidebar .work-overview-heading {
   display: none;
@@ -841,10 +924,24 @@
   gap: var(--sp-8);
 }
 .work-decision-result > strong {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
   font-size: var(--fs-work-card);
   line-height: var(--lh-work-card);
 }
-.work-decision-result > strong[data-tone='failed'] {
+/* The glyph of the decision carries the tone: amber while it waits for you, red only for a failure. */
+.work-decision-result > strong > .ui-icon,
+.question-kind {
+  flex-shrink: 0;
+  color: var(--amber-icon);
+}
+.question-kind {
+  display: inline-grid;
+  place-items: center;
+}
+.work-decision-result > strong[data-tone='failed'],
+.work-decision-result > strong[data-tone='failed'] > .ui-icon {
   color: var(--red);
 }
 .work-decision-result > p {
@@ -913,8 +1010,32 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+.work-delivery-state {
+  flex-wrap: wrap;
+}
 .work-delivery-state > .ui-button {
   margin-left: auto;
+}
+/* Another session writes to this directory: an amber ⓘ beside the button, its reason on a line under them. */
+.work-delivery-hint {
+  display: contents;
+}
+.work-delivery-hint > :is(.ui-hint-lead, .ui-hint-label) {
+  display: none;
+}
+.work-delivery-hint > .ui-icon-button {
+  margin-left: auto;
+  color: var(--amber-icon);
+}
+.work-delivery-state > .work-delivery-hint + .ui-button {
+  margin-left: 0;
+}
+.work-delivery-hint > .ui-hint-detail {
+  order: 1;
+  flex-basis: 100%;
+  margin: 0;
+  padding: 0;
+  text-align: end;
 }
 .work-delivery-project {
   display: flex;
@@ -1016,7 +1137,7 @@
     display: none;
   }
   .workbench-home {
-    padding: var(--sp-24);
+    padding: var(--sp-48) var(--sp-24) var(--sp-24);
   }
   .app-shell[data-workbench-layout='triage'] .workbench-home {
     padding: var(--sp-24);
@@ -1159,41 +1280,26 @@
     border-top: 1px solid var(--line);
   }
   .workbench-home-composer .composer {
-    padding: 0;
-    border-radius: var(--r-full);
-    min-height: 50px;
+    padding-top: 0;
   }
   .workbench-home-composer .composer-stack {
     gap: 0;
   }
+  /* The place is the first chips of the row: the project, then where in it; the computer is the page's own. */
   .workbench-home-composer .home-composer-location {
-    display: none;
+    display: contents;
   }
   .home-composer-computer {
     display: none;
   }
   .workbench-home-composer .composer-input {
-    padding: var(--sp-12) var(--sp-48);
+    padding: 0;
   }
   .workbench-home-composer textarea {
-    padding: 0;
-    min-height: var(--lh-input);
+    padding: var(--sp-8) var(--sp-4);
+    min-height: calc(var(--lh-input) + 16px);
     font-size: var(--fs-input);
     line-height: var(--lh-input);
-  }
-  .workbench-home-composer .composer-toolbar {
-    display: contents;
-  }
-  .workbench-home-composer :is(.composer-controls, .composer-control, .composer-meta) {
-    display: none;
-  }
-  .workbench-home-composer .composer-end {
-    display: contents;
-  }
-  .workbench-home-composer .composer-slot {
-    position: absolute;
-    right: var(--sp-6);
-    bottom: var(--sp-6);
   }
   .workbench-phone-heading .space-switch {
     width: auto;
@@ -1211,15 +1317,6 @@
   }
   .workbench-phone-heading .ui-segmented-label {
     overflow: visible;
-  }
-  .workbench-phone-heading > [data-layout-trigger] {
-    flex: 0 0 auto;
-  }
-  .workbench-home-options.ui-icon-button {
-    position: absolute;
-    z-index: 5;
-    left: var(--sp-20);
-    bottom: calc(var(--sp-12) + var(--sp-6));
   }
   .app-shell[data-workbench-layout='triage'][data-overview] .phone-tabs {
     display: none;
@@ -1309,7 +1406,6 @@
     min-height: 44px;
   }
 }
-.work-delivery-live,
 .work-delivery-changes {
   color: var(--muted);
   font-size: var(--fs-caption);
@@ -1327,14 +1423,40 @@
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
 }
-.work-running-action {
+/* Name and time, then the activity with the project at its end; the wide lanes add a line for project and computer. */
+.work-running .work-overview-row.ui-button {
+  gap: var(--sp-4);
+  padding-block: var(--sp-12);
+}
+.work-running-line {
   display: flex;
   align-items: center;
-  gap: var(--sp-8);
-  margin: var(--sp-4) 0 var(--sp-6) var(--sp-24);
+  gap: var(--sp-12);
+  min-width: 0;
+  margin-left: var(--sp-24);
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
+  font-weight: 400;
+}
+.work-running-action {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.work-running-action > .ui-icon {
+  flex-shrink: 0;
+}
+.work-running-project {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .work-running-action > span {
   min-width: 0;

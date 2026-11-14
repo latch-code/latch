@@ -28,7 +28,7 @@ import { findHarness, projectFor, usesDemoModel } from '../composerChoice.ts'
 import { setSessionOpener } from '../core/blocking.ts'
 import { ArchiveUndo } from '../components/ArchiveUndo.tsx'
 import { basename } from '../format.ts'
-import { setPreference, usePreferences } from '../preferences.ts'
+import { setPreference, toggleWorkbenchLayout, usePreferences } from '../preferences.ts'
 import { shortcutWorksOnPage, workbenchShortcut } from '../workbenchShortcuts.ts'
 import { frameShortcutAllowed } from '../plugin-pages/model.ts'
 import { conversationShown } from '../composer/useArmed.ts'
@@ -106,8 +106,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const { selectedId, refresh, resync, connection } = harness
   const viewport = useViewport()
   const phone = viewport === 'phone'
-  const [route, updateRoute] = useState<ShellRoute>(() =>
+  const [storedRoute, updateRoute] = useState<ShellRoute>(() =>
     initialRoute(snapshot.device.id, snapshot.catalog?.features?.customAgents === true, !phone, selectedId !== null),
+  )
+  // Code without an open session is its home: 新会话 is the home's input, not a page of its own. A phone keeps its list.
+  const route = useMemo<ShellRoute>(
+    () =>
+      !phone && storedRoute.entry === 'sessions' && !storedRoute.overview && !storedRoute.allSessions && selectedId === null
+        ? { ...storedRoute, overview: true }
+        : storedRoute,
+    [phone, storedRoute, selectedId],
   )
   const routeRef = useRef(route)
   const fromAllSessions = useRef(false)
@@ -139,13 +147,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     },
     onForegroundSent: () => {
       // A late receipt may settle the input, but must not undo an explicit navigation away from it.
-      if (routeRef.current.entry !== 'sessions' || (routeRef.current.allSessions && !newSheetRef.current)) return
-      fromAllSessions.current = routeRef.current.allSessions === true
+      if (routeRef.current.entry !== 'sessions' || routeRef.current.allSessions) return
+      fromAllSessions.current = false
       fromOverview.current = routeRef.current.overview === true
       updateRoute({ entry: 'sessions' })
       setFilter('all')
       setSearch('')
-      setNewSheet(false)
       setPhoneSearching(false)
       setPushed(true)
     },
@@ -179,7 +186,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     choose,
     reveal,
     sessionMenu,
-    block,
     gate,
     askProject,
   } = session
@@ -195,16 +201,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const [sidebarDrag, setSidebarDrag] = useState<{ collapsed: boolean } | null>(null)
   /** The panel as a page in the conversation's place: on phones, and on tablets too narrow for the column. */
   const [infoPage, setInfoPage] = useState(false)
-  /** Phones: the new-session sheet over the session list. */
-  const [newSheet, setNewSheet] = useState(false)
-  const newSheetRef = useRef(newSheet)
-  newSheetRef.current = newSheet
-  const seenProjectRequest = useRef(session.projectAsk.request)
-  useEffect(() => {
-    if (seenProjectRequest.current === session.projectAsk.request) return
-    seenProjectRequest.current = session.projectAsk.request
-    if (phone && session.inputId === null) setNewSheet(true)
-  }, [phone, session.inputId, session.projectAsk.request])
   /** Phones: the search row under the list's header. */
   const [phoneSearching, setPhoneSearching] = useState(false)
   /** Phones: the open session slides back to the list; it is let go once the slide ends. */
@@ -246,9 +242,24 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const sidebarToggle = useRef<HTMLButtonElement>(null)
   /** The new-session page's 「添加 Agent」 tile, which the line under the input opens as well. */
   const setupTrigger = useRef<HTMLButtonElement>(null)
-  /** The input of the phone's new-session sheet, apart from the open session's. */
-  const sheetComposerRef = useRef<HTMLTextAreaElement>(null)
+  /** The home's input, which starts a session; the open session's own input stays mounted under the home. */
   const homeComposerRef = useRef<HTMLTextAreaElement>(null)
+  /** The home with its input focused, for what has already let go of the open session (a fork, a pending start). */
+  const showHome = useStableCallback(() => {
+    drawer.setOpen(false)
+    if (!routeRef.current.overview || routeRef.current.entry !== 'sessions') {
+      routeRef.current = { entry: 'sessions', overview: true }
+      updateRoute(routeRef.current)
+    }
+    focusNextFrame(homeComposerRef)
+  })
+  const seenProjectRequest = useRef(session.projectAsk.request)
+  useEffect(() => {
+    if (seenProjectRequest.current === session.projectAsk.request) return
+    seenProjectRequest.current = session.projectAsk.request
+    // The project list opens from the home's input, so a phone on its session list goes there first.
+    if (phone && session.inputId === null && !routeRef.current.overview) showHome()
+  }, [phone, session.inputId, session.projectAsk.request])
   useEffect(() => {
     if (route.overview) focusNextFrame(homeComposerRef)
   }, [route.overview])
@@ -545,24 +556,38 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     onOpen: openFile,
     onOffer: offerFile,
   })
-  /** A new session starts where the person is: in the open session's project, else as last chosen. */
+  /**
+   * 新会话 is the home with its input focused. It starts where the person is: in the open session's project, else as last
+   * chosen. Without an intent the open session stays open under the home, with its draft, attachments and reading
+   * position; an explicit action (a fork, a continuation) lets go of it and may replace the home's draft atomically.
+   */
   const startNewDraft = (intent?: SessionSelectionIntent, afterSelect?: () => void) => {
     const project = session.inputId === null ? undefined : projectFor(catalog, summary)
     const arrived = () => {
-      // choose has already parked the source input; do not save its old render again while changing the route.
-      updateRoute({ entry: 'sessions' })
       submission.setFork(null)
       if (project) submission.updateChoice({ workspaceId: project })
-      if (phone) setNewSheet(true)
-      else focusNextFrame(composerRef)
       afterSelect?.()
+      focusNextFrame(homeComposerRef)
     }
-    // Reopening the phone sheet keeps its existing draft; explicit actions may replace it atomically.
-    if (phone && session.inputId === null && !intent) {
-      submission.setFork(null)
-      setNewSheet(true)
-      afterSelect?.()
-    } else choose(null, arrived, intent)
+    if (intent) {
+      // choose has already parked the source input; do not save its old render again while changing the route.
+      choose(
+        null,
+        () => {
+          showHome()
+          arrived()
+        },
+        intent,
+      )
+      return
+    }
+    drawer.setOpen(false)
+    if (!routeRef.current.overview || routeRef.current.entry !== 'sessions') {
+      setRoute({ entry: 'sessions', overview: true })
+      // A draft too large to park keeps the person where they are.
+      if (!routeRef.current.overview) return
+    }
+    arrived()
   }
   const startNew = () => startNewDraft()
   /**
@@ -625,22 +650,18 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   )
   const openSettings = (section?: SettingsSection) => {
     drawer.setOpen(false)
-    setNewSheet(false)
     setRoute({ entry: 'settings', ...(section ? { section } : {}) })
   }
   /** 设置 at the sidebar's foot, a tab or the way back. 会话 returns to the last open session. */
   const goEntry = (entry: ShellEntry) => {
-    setNewSheet(false)
     drawer.setOpen(false)
     setRoute({ entry })
   }
   const openOverview = () => {
-    setNewSheet(false)
     drawer.setOpen(false)
     setRoute({ entry: 'sessions', overview: true })
   }
   const openAllSessions = () => {
-    setNewSheet(false)
     drawer.setOpen(false)
     setRoute({ entry: 'sessions', allSessions: true })
   }
@@ -658,7 +679,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     selected: summary,
     choose,
     leave: () => {
-      setNewSheet(false)
       drawer.setOpen(false)
     },
   })
@@ -677,11 +697,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       control?.focus({ preventScroll: true })
     })
   }
-  const workbenchView = `${preferences.workbenchLayout}:${space}`
-  const shownWorkbench = useRef(workbenchView)
+  // Moving between Code and 我的 Agent fades the arriving page in; a layout change cross-fades the whole window
+  // (`switchWorkbenchLayout`) and replaces nothing but the navigation around the page.
+  const shownSpace = useRef(space)
   useLayoutEffect(() => {
-    if (shownWorkbench.current === workbenchView) return
-    shownWorkbench.current = workbenchView
+    if (shownSpace.current === space) return
+    shownSpace.current = space
     const frame = appShell.current
     if (!frame || !matchMedia('(prefers-reduced-motion: no-preference)').matches) return
     const target = frame.querySelector<HTMLElement>(
@@ -699,9 +720,58 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     void animation.finished
       .catch(() => {})
       .then(() => {
-        if (shownWorkbench.current === workbenchView) delete frame.dataset.layoutChanging
+        if (shownSpace.current === space) delete frame.dataset.layoutChanging
       })
-  }, [workbenchView, route.entry, route.overview, route.allSessions])
+  }, [space, route.entry, route.overview, route.allSessions])
+  // A layout change keeps the page and the focus. Only focus that stood on navigation the other layout does not draw
+  // (a sidebar row, a top-bar tab) has nowhere to stay: it lands on the page itself, never on the document.
+  const shownLayout = useRef(preferences.workbenchLayout)
+  const layoutFocus = useRef<Element | null>(null)
+  useEffect(() => {
+    const focused = (event: FocusEvent) => {
+      layoutFocus.current = event.target instanceof Element ? event.target : null
+    }
+    const left = (event: FocusEvent) => {
+      if (event.relatedTarget === null && document.hasFocus()) layoutFocus.current = null
+    }
+    layoutFocus.current = document.activeElement
+    document.addEventListener('focusin', focused)
+    document.addEventListener('focusout', left)
+    return () => {
+      document.removeEventListener('focusin', focused)
+      document.removeEventListener('focusout', left)
+    }
+  }, [])
+  useLayoutEffect(() => {
+    if (shownLayout.current === preferences.workbenchLayout) return
+    shownLayout.current = preferences.workbenchLayout
+    const before = layoutFocus.current
+    const frame = appShell.current
+    if (!frame || !(before instanceof HTMLElement) || before === document.body || document.querySelector('dialog[open]')) return
+    const lost = !before.isConnected || !before.checkVisibility({ visibilityProperty: true }) || before.closest('[inert]') !== null
+    if (!lost) {
+      if (document.activeElement !== before) before.focus({ preventScroll: true })
+      return
+    }
+    const page = frame.querySelector<HTMLElement>(
+      route.entry === 'settings'
+        ? '.settings-page'
+        : route.entry === 'agents'
+          ? '.agents-page'
+          : route.entry === 'apps'
+            ? '.apps-page'
+            : route.overview
+              ? '.workbench-home'
+              : route.allSessions
+                ? '.workbench-sessions'
+                : 'main.workspace',
+    )
+    if (!page) return
+    // The page is a region, not a control: it takes the keys without joining the tab order or drawing a ring.
+    if (!page.hasAttribute('tabindex')) page.tabIndex = -1
+    page.dataset.layoutFocus = ''
+    page.focus({ preventScroll: true })
+  }, [preferences.workbenchLayout, route.entry, route.overview, route.allSessions])
   /**
    * A place chosen by its key or the menu bar: once it is drawn, focus lands on its primary (新会话 or 委托…) where that is
    * in sight, else on the place's own button, so it never drops to the page.
@@ -746,7 +816,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
    */
   const openMyAgent = (target?: MyAgentTarget) => {
     drawer.setOpen(false)
-    setNewSheet(false)
     const opening = openAgent(target, snapshot.tasks)
     const owner = opening.kind === 'topic' ? opening.owner : opening.target?.topic === 'new' ? opening.target.id : undefined
     if (owner && opening.section) setProfile(previous => ({ owner, section: opening.section, nonce: (previous?.nonce ?? 0) + 1 }))
@@ -781,17 +850,14 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   /** 应用, at a page or at the list. */
   const openApp = (target?: AppTarget) => {
     drawer.setOpen(false)
-    setNewSheet(false)
     setRoute({ entry: 'apps', ...(target ? { app: target } : {}) })
   }
   const openProjectSettings = (projectId: string) => {
     drawer.setOpen(false)
-    setNewSheet(false)
     setRoute({ entry: 'settings', section: 'workspaces', projectId })
   }
   const openAgentPage = (target: AgentPageTarget) => {
     drawer.setOpen(false)
-    setNewSheet(false)
     setRoute({ entry: 'settings', section: 'engines', agent: target })
   }
   /** Home and the full-history page keep their inputs underneath search; the phone's old list has its own field. */
@@ -880,7 +946,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   /** A project or 不选项目 from the list: the person was on their way to sending, so the input takes the keys again. */
   const chooseProject = (workspaceId: string) => {
     submission.updateChoice({ workspaceId, projectSkipped: workspaceId === 'default' })
-    requestAnimationFrame(() => (route.overview ? homeComposerRef : phone ? sheetComposerRef : composerRef).current?.focus())
+    requestAnimationFrame(() => (route.overview ? homeComposerRef : composerRef).current?.focus())
   }
   const folders = shellFolders()
   const pickProject =
@@ -923,12 +989,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     || submission.sending
     || attachmentDraft.preparing
     || (route.overview ? session.homeComposerState.gate : gate).kind !== 'open'
-  const sheetCanStart =
-    session.inputId === null
-    && (route.overview ? session.homeComposerState.gate : gate).kind === 'open'
-    && (route.overview ? session.homeComposerState.block : block) === null
-    && !newChoicesLocked
-    && (submission.draft.trim().length > 0 || attachmentDraft.items.length > 0)
   // The open column stands beside the conversation, which keeps its minimum width between the two.
   const inspectorBeside = columnOpen && placement?.kind === 'column' ? inspectorWidth : 0
   const sidebarLimit = sidebarMax(windowWidth, inspectorBeside)
@@ -937,7 +997,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   }
   /** A tablet's drawer is the session list, which a page entry does not show. */
   const toggleSidebar = () => {
-    if (route.overview && preferences.workbenchLayout === 'triage') setRoute({ entry: 'sessions' })
+    if (route.overview && preferences.workbenchLayout === 'triage') {
+      // 顶栏 draws no session list over its home, and without an open session there is no page under the home to show one.
+      if (!phone && selectedId === null) return
+      setRoute({ entry: 'sessions' })
+    }
     if (!drawerMode) setSidebarShut(!sidebarCollapsed)
     else if (route.entry === 'sessions') drawer.setOpen(!drawer.open)
   }
@@ -974,7 +1038,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setFileExpanded(false)
     setColumnOpen(true)
     setInfoPage(true)
-    if (phone) setNewSheet(false)
   }
   const launcherTakesFocus = () => {
     const asked = launcherAsked.current
@@ -1065,10 +1128,14 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     const dialogs = document.querySelectorAll('dialog[open]')
     const only = dialogs.length === 1 ? dialogs[0]! : null
     // An open dialog keeps the keys, but for the one key of what it is: ⌘/ closes the shortcuts it opened.
-    const draftFilesKey = action === 'files' && only?.classList.contains('new-session-sheet')
-    const passes = draftFilesKey || (action === 'shortcuts' && only?.classList.contains('shortcuts-overlay'))
+    const passes = action === 'shortcuts' && only?.classList.contains('shortcuts-overlay')
     if (dialogs.length && !passes) return
-    if ((route.entry !== 'sessions' || route.overview || route.allSessions) && !shortcutWorksOnPage(action) && !draftFilesKey) return
+    // The home's input is the new session's: its four controls and its project's files keep their keys there.
+    const homeInputKey =
+      route.entry === 'sessions'
+      && route.overview === true
+      && ((typeof action === 'object' && action.kind === 'control') || action === 'files')
+    if ((route.entry !== 'sessions' || route.overview || route.allSessions) && !shortcutWorksOnPage(action) && !homeInputKey) return
     if (typeof action === 'object') {
       // Held outside a field, or where the layout makes no character of it, the key is the app's even where it finds nothing.
       event.preventDefault()
@@ -1113,7 +1180,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       }
       if (fileTabs.tabs.length) {
         event.preventDefault()
-        revealDraftFiles()
         const index = fileTabs.tabs.findIndex(tab => tab.id === fileTabs.active?.id)
         fileTabs.select(fileTabs.tabs[(index + 1) % fileTabs.tabs.length]!.id)
         setInfoPage(true)
@@ -1126,10 +1192,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (action === 'compose') {
       event.preventDefault()
       if (route.overview) homeComposerRef.current?.focus()
-      else if (phone && selectedId === null) {
-        setNewSheet(true)
-        requestAnimationFrame(() => sheetComposerRef.current?.focus())
-      } else if (pageMode && infoPage) {
+      else if (phone && selectedId === null) showHome()
+      else if (pageMode && infoPage) {
         setInfoPage(false)
         requestAnimationFrame(() => composerRef.current?.focus())
       } else composerRef.current?.focus()
@@ -1144,6 +1208,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     }
     event.preventDefault()
+    if (action === 'layout') {
+      toggleWorkbenchLayout()
+      return
+    }
     if (action === 'new') {
       if (space === 'agents') delegate()
       else startNew()
@@ -1386,11 +1454,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const devMode = host?.devMode === true
   const level = current?.permission?.level ?? summary?.level
 
-  const revealDraftFiles = () => {
-    if (!phone || !newSheetRef.current || !routeRef.current.allSessions || session.inputId !== null) return
-    setRoute({ entry: 'sessions' })
-    setNewSheet(false)
-  }
   const browseFiles = () => {
     if (route.overview) {
       if (canBrowseDraftFiles) {
@@ -1400,7 +1463,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     }
     if (!canBrowseFiles) return
-    revealDraftFiles()
     setChangesWanted(false)
     setDeliveryWanted(false)
     setTerminalWanted(false)
@@ -1415,7 +1477,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     fileTabs.select(undefined)
     setInfoPage(true)
     setFileExpanded(false)
-    if (phone) setNewSheet(false)
   }
   const searchFiles = () => {
     setCommandMode('files')
@@ -1437,13 +1498,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const returnToFileInput = () => {
     if (draftFilesOpen && route.overview) {
       setDraftFilesOpen(false)
-      requestAnimationFrame(() => (phone && newSheet ? sheetComposerRef : homeComposerRef).current?.focus())
+      requestAnimationFrame(() => homeComposerRef.current?.focus())
       return
     }
     if (placement?.kind === 'sheet') closePanel()
     else if (pageMode) setInfoPage(false)
-    if (phone && session.inputId === null) setNewSheet(true)
-    requestAnimationFrame(() => (phone && session.inputId === null ? sheetComposerRef : composerRef).current?.focus())
+    requestAnimationFrame(() => composerRef.current?.focus())
   }
   const mentionFile = (mention: FileMention) => {
     if (!mentionChoice.enabled || fileMentions.length >= 32) return
@@ -1501,7 +1561,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       lastSurface.current = shownSurface()
       fileTabs.select(undefined)
       setFilesOpen(false)
-      setNewSheet(true)
+      showHome()
     }
     panelToggle.current?.focus({ preventScroll: true })
   }
@@ -1561,8 +1621,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setSidebarDrag,
     infoPage,
     setInfoPage,
-    newSheet,
-    setNewSheet,
+    showHome,
     phoneSearching,
     setPhoneSearching,
     popping,
@@ -1580,7 +1639,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     navigation,
     main,
     setupTrigger,
-    sheetComposerRef,
     homeComposerRef,
     searchRef,
     commandMode,
@@ -1687,7 +1745,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     chooseProject,
     createProjectAndStart,
     newChoicesLocked,
-    sheetCanStart,
     inspectorBeside,
     sidebarLimit,
     sidebarWidth,

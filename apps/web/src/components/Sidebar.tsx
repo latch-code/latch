@@ -1,7 +1,7 @@
 import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
-import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { FolderGit2 } from 'lucide-react'
+import { Fragment, memo, useCallback, useMemo, useRef, useState } from 'react'
+import { Coffee, FolderGit2 } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
 import { sessionHarness } from '../composerChoice.ts'
@@ -33,7 +33,7 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { Menu, type MenuSection } from './overlays.tsx'
 import { SessionRowGlyph, SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
-import { Collapse, ICON_STROKE, IconButton, ArchiveGlyph, ChevronLeftGlyph, MoreGlyph, PinGlyph, PlusGlyph } from '@latch/ui'
+import { Collapse, ICON_STROKE, Icon, IconButton, Tooltip, ArchiveGlyph, ChevronLeftGlyph, MoreGlyph, PinGlyph, PlusGlyph } from '@latch/ui'
 import { originTitle } from '../plugin-pages/model.ts'
 import { connectionTrouble, NavFoot, NavTop, NewSessionRow, type SpacesProps } from '../shell/SpaceNav.tsx'
 
@@ -44,7 +44,7 @@ export const connectionLabels: Record<ConnectionStatus, string> = {
   offline: '离线',
 }
 
-/** The footer's quiet line, in place of 已连接, while the desktop app keeps this Mac awake. */
+/** What the glyph beside the computer's name says while the desktop app keeps this Mac awake. */
 const KEEP_AWAKE_LABEL = '保持唤醒中'
 
 /** The connection is named only when it is not healthy. */
@@ -343,8 +343,8 @@ function useFoldedShelves(key: string) {
  * The whole navigation of a wide window. At the top: the computer's name where the page is not the Latch app on that
  * computer, the switch between Code and 我的 Agent (where the Host has it), the place's primary and 搜索 (the palette
  * searches). Code lists its shelves: 等你处理, each project, 无项目 and a quiet 已归档 row, without the sessions delegated to
- * an Agent; 我的 Agent lists your Agents and their recent delegations. At the foot, shared: 添加项目 (on this Mac, in Code),
- * 应用 and 设置. A shelf folds with its chevron; what ended up there stays one click away.
+ * an Agent; 我的 Agent lists your Agents and their recent delegations. 「项目」 heads the projects with a + that adds one (on
+ * this Mac). At the foot, shared: the computer, 应用 and 设置. A shelf folds with its chevron; what ended up there stays one click away.
  */
 export function Sidebar({
   snapshot,
@@ -369,7 +369,6 @@ export function Sidebar({
   drawer,
   onClose,
   connection,
-  onRefresh,
   sessionMenu,
   now,
   keepAwake,
@@ -398,7 +397,7 @@ export function Sidebar({
   archiveBatch?: import('react').ReactNode
   /** The line that offers to take back an archive, while it can. */
   archiveUndo?: import('react').ReactNode
-  /** The desktop app is keeping this Mac awake: why, for the title of the line that says so. */
+  /** The desktop app is keeping this Mac awake: why, for the hover of the glyph beside the computer's name. */
   keepAwake?: string
   selectedId: string | null
   isUnread: (task: TaskSummary) => boolean
@@ -425,6 +424,7 @@ export function Sidebar({
   hostProblem: { text: string } | null
 }) {
   const inAgents = spaces?.space === 'agents' && agents !== undefined
+  const awake = keepAwake !== undefined && keepAwake !== '' && connection === 'connected'
   return (
     <div className="sidebar-body" data-space={spaces?.space ?? 'code'}>
       <NavTop
@@ -457,6 +457,7 @@ export function Sidebar({
             onNewWithoutProject={onNewWithoutProject}
             onEditProject={onEditProject}
             onProjectsChanged={onProjectsChanged}
+            onCreateProject={onCreateProject}
             connection={connection}
             sessionMenu={sessionMenu}
             now={now}
@@ -465,21 +466,20 @@ export function Sidebar({
           {archiveUndo}
         </>
       )}
-      {/* While the desktop app keeps this Mac awake, a few quiet words say so. */}
-      {keepAwake && connection === 'connected' && (
-        <div className="sidebar-footer">
-          <button type="button" className="connection-badge connection-connected" title={`${keepAwake} · 同步最新状态`} onClick={onRefresh}>
-            {KEEP_AWAKE_LABEL}
-          </button>
+      {/* The computer's row; while the desktop app keeps this Mac awake, a small glyph after its name says so on hover. */}
+      {(computer || awake) && (
+        <div className="sidebar-work-computer">
+          {computer}
+          {awake && (
+            <Tooltip content={keepAwake}>
+              <span className="sidebar-awake" tabIndex={0} role="img" aria-label={KEEP_AWAKE_LABEL}>
+                <Icon icon={Coffee} size={14} />
+              </span>
+            </Tooltip>
+          )}
         </div>
       )}
-      {computer && <div className="sidebar-work-computer">{computer}</div>}
-      <NavFoot
-        apps={apps}
-        settings={onSettings}
-        trouble={connectionTrouble(connection, hostProblem)}
-        onCreateProject={inAgents ? undefined : onCreateProject}
-      />
+      <NavFoot apps={apps} settings={onSettings} trouble={connectionTrouble(connection, hostProblem)} />
     </div>
   )
 }
@@ -497,12 +497,15 @@ function CodeList({
   onNewWithoutProject,
   onEditProject,
   onProjectsChanged,
+  onCreateProject,
   connection,
   sessionMenu,
   now,
   space,
   projectTree,
 }: ProjectNavigationActions & {
+  /** Adds a project: the + at the right of 「项目」, where this device can. */
+  onCreateProject?: (() => void) | undefined
   snapshot: AppSnapshot
   selectedId: string | null
   isUnread: (task: TaskSummary) => boolean
@@ -542,6 +545,14 @@ function CodeList({
       .map(other => `|${other.computer.hostId}:${other.live ? other.items.map(item => item.taskId).join(',') : other.items.length}`)
       .join('')
   const remeasure = useListMotion(list, context, signature)
+  // 「项目」 heads the projects (and 无项目), after 等你处理; its + adds one.
+  const headAt = groups.findIndex(group => group.id !== 'waiting')
+  const projectsHead = !archived && (
+    <div className="sidebar-group-label">
+      <span>项目</span>
+      {onCreateProject && <IconButton size="xs" label="添加项目" tooltip="添加项目" icon={PlusGlyph} onClick={onCreateProject} />}
+    </div>
+  )
   return (
     <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>
       {archived && (
@@ -556,35 +567,38 @@ function CodeList({
           <span className="archived-count">{archivedCount}</span>
         </button>
       )}
+      {headAt < 0 && projectsHead}
       {groups.length === 0 ? (
         <div className="list-empty">
           <p>{own.length === 0 ? '会话会保存在这里' : archived ? '没有已归档的会话' : '暂无会话'}</p>
         </div>
       ) : (
-        groups.map(group => (
-          <SessionGroupView
-            key={group.id}
-            group={group}
-            snapshot={snapshot}
-            context={context}
-            settled={remeasure}
-            selectedId={selectedId}
-            isUnread={isUnread}
-            cancelling={cancelling}
-            frozen={frozen}
-            folded={folded.has(group.id)}
-            onFold={() => {
-              toggleShelf(group.id)
-            }}
-            now={now}
-            onSelect={onSelect}
-            onNewIn={onNewIn}
-            onNewWithoutProject={onNewWithoutProject}
-            menu={sessionMenu}
-            {...(group.id === 'waiting' ? { others } : {})}
-            onEditProject={onEditProject}
-            onProjectsChanged={onProjectsChanged}
-          />
+        groups.map((group, index) => (
+          <Fragment key={group.id}>
+            {index === headAt && projectsHead}
+            <SessionGroupView
+              group={group}
+              snapshot={snapshot}
+              context={context}
+              settled={remeasure}
+              selectedId={selectedId}
+              isUnread={isUnread}
+              cancelling={cancelling}
+              frozen={frozen}
+              folded={folded.has(group.id)}
+              onFold={() => {
+                toggleShelf(group.id)
+              }}
+              now={now}
+              onSelect={onSelect}
+              onNewIn={onNewIn}
+              onNewWithoutProject={onNewWithoutProject}
+              menu={sessionMenu}
+              {...(group.id === 'waiting' ? { others } : {})}
+              onEditProject={onEditProject}
+              onProjectsChanged={onProjectsChanged}
+            />
+          </Fragment>
         ))
       )}
       {archivedCount > 0 && !archived && (

@@ -9,6 +9,7 @@ import type { HarnessPlugin, ModelDelta } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openEntry, openSessions, settleShell } from './helpers/layout.ts'
+import { switchLayout } from './helpers/workbench.ts'
 
 const OUT = 'test-results/work-panel'
 
@@ -220,10 +221,7 @@ describe('the v8 work canvas in both layouts', () => {
           const page = await open(width, height, theme)
           const desktop = width >= 1024
           if (layout === 'triage') {
-            await page.getByRole('button', { name: '布局', exact: true }).click()
-            await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
-            await page.locator('.app-shell[data-workbench-layout="triage"]').waitFor()
-            await settleShell(page)
+            await switchLayout(page, 'triage')
           }
           const capture = (name: string) => shot(page, `${layout}-${name}`, width, theme)
 

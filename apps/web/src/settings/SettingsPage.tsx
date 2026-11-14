@@ -10,7 +10,6 @@ import { useBackLayer } from '../hooks/backStack.ts'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
 import {
-  Count,
   ICON_STROKE,
   Icon,
   IconButton,
@@ -59,7 +58,7 @@ const WorkspacesSettings = deferredComponent(
 
 /** What each section holds, so 搜索设置 finds a setting by the words on its row. */
 const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
-  general: '外观 主题 深色 浅色 布局 总览 分拣台 发送消息 回车 新文档 自动打开 通知 唤醒 名称',
+  general: '外观 主题 深色 浅色 布局 侧栏 顶栏 按项目 按状态 发送消息 回车 新文档 自动打开 通知 唤醒 名称',
   providers: '服务 密钥 key 添加服务 添加模型服务 用量 tokens 显示的模型 已确认的地址 地址 出站',
   engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
   mcp: 'mcp 服务器 工具 连接器 npx 命令',
@@ -156,7 +155,6 @@ export function SettingsPage({
   section: chosen = null,
   initialProjectId,
   initialAgent,
-  waiting = 0,
   onBack,
   onSection,
   onChanged,
@@ -173,7 +171,7 @@ export function SettingsPage({
   initialAgent?: AgentPageTarget
   /** The title row; the page names itself above its content instead, so it leaves the row empty. */
   titleSlot?: HTMLElement | null
-  /** How many sessions wait on the person, for the way back to them. */
+  /** Not drawn here: the count of what waits is the space switch's and the home's. */
   waiting?: number
   /** Back to the sessions, on wide windows. */
   onBack?: () => void
@@ -298,8 +296,7 @@ export function SettingsPage({
               <div className="settings-back-line">
                 <button type="button" className="sidebar-nav-row" onClick={onBack}>
                   <ArrowLeft size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-                  <span>返回会话</span>
-                  {waiting > 0 && <Count tone="warn" value={waiting} />}
+                  <span>返回</span>
                 </button>
               </div>
             )}

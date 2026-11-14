@@ -8,12 +8,13 @@ import { expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { LAYOUT_NAMES, layoutSwitch } from './helpers/workbench.ts'
 import { measureWorkbenchSwitch } from './helpers/workbenchSwitch.ts'
 
 const OUT = 'test-results/workbench-switch-populated'
 const measure = (page: Page, name: string, action: () => Promise<void>) => measureWorkbenchSwitch(page, OUT, name, action)
 
-it('switches the two named layouts and spaces without replacing the sender, losing input or duplicating a trigger', async () => {
+it('switches the two layouts and spaces without replacing the sender, losing input, sending anything or losing the one switch', async () => {
   const plugin: HarnessPlugin = {
     id: 'switch-check',
     name: '切换验收',
@@ -122,20 +123,25 @@ it('switches the two named layouts and spaces without replacing the sender, losi
       .setInputFiles({ name: 'switch.txt', mimeType: 'text/plain', buffer: Buffer.from('retained attachment') })
     await expect.poll(() => home.getByRole('button', { name: 'switch.txt', exact: true }).isEnabled()).toBe(true)
     const homeSender = await newInput.elementHandle()
+    // A layout change is this device's own; nothing that starts, answers or stops work may leave during one.
+    const writes: string[] = []
+    page.on('request', request => {
+      const path = new URL(request.url()).pathname
+      if (request.method() !== 'GET' && /\/api\/(?:tasks|approvals|questions)(?:\/|$)/u.test(path))
+        writes.push(`${request.method()} ${path}`)
+    })
+    const radio = (layout: 'overview' | 'triage') => layoutSwitch(page).getByRole('radio', { name: LAYOUT_NAMES[layout], exact: true })
     const results = []
-    for (const target of ['分拣台', '总览'] as const) {
-      await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').first().click()
-      results.push(
-        await measure(page, target === '分拣台' ? 'a-to-b' : 'b-to-a', () =>
-          page.getByRole('menuitemradio', { name: target, exact: true }).click(),
-        ),
-      )
+    for (const target of ['triage', 'overview'] as const) {
+      results.push(await measure(page, target === 'triage' ? 'a-to-b' : 'b-to-a', () => radio(target).click()))
+      expect(await radio(target).getAttribute('aria-checked')).toBe('true')
       expect(await homeSender!.evaluate(element => element.isConnected)).toBe(true)
       expect(await newInput.inputValue()).toBe('首页草稿保留')
       expect(await sender!.evaluate(element => element.isConnected)).toBe(true)
       expect(await input.inputValue()).toBe('会话草稿保留')
       expect(await transcript.evaluate(element => element.scrollTop)).toBe(reading)
-      expect(await page.evaluate(() => document.activeElement?.hasAttribute('data-layout-trigger'))).toBe(true)
+      expect(await radio(target).evaluate(element => element === document.activeElement)).toBe(true)
+      expect(await page.locator('.workbench-home').getAttribute('aria-label')).toBe('总览')
     }
     results.push(
       await measure(page, 'code-to-agent', () =>
@@ -172,11 +178,26 @@ it('switches the two named layouts and spaces without replacing the sender, losi
     expect(await input.inputValue()).toBe('会话草稿保留')
     expect(await transcript.evaluate(element => element.scrollTop)).toBe(reading)
     await page.emulateMedia({ reducedMotion: 'reduce' })
-    await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').first().click()
-    const reduced = await measure(page, 'reduced-a-to-b', () => page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click())
+    const reduced = await measure(page, 'reduced-a-to-b', () => radio('triage').click())
     expect(reduced.fades).toEqual([])
-    expect(results.flatMap(result => result.fades).every(duration => duration === 120)).toBe(true)
-    expect(results.slice(0, 2).every(result => result.fades.includes(120))).toBe(true)
+    expect(reduced.transitions).toEqual([])
+    expect(reduced.marked).toBe(false)
+    // A layout change is the window's cross-fade (--m-enter) and no page's own fade; a space change is the page's fade.
+    const [toTriage, toOverview, toAgents, toCode] = results
+    for (const result of [toTriage!, toOverview!]) {
+      expect(result.fades).toEqual([])
+      if (await page.evaluate(() => typeof document.startViewTransition === 'function')) {
+        expect(result.transitions).toEqual([160])
+        expect(result.marked).toBe(true)
+      } else expect(result.transitions).toEqual([])
+    }
+    for (const result of [toAgents!, toCode!]) {
+      expect(result.fades).toEqual([120])
+      expect(result.transitions).toEqual([])
+      expect(result.marked).toBe(false)
+    }
+    await expect.poll(() => page.evaluate(() => document.documentElement.hasAttribute('data-layout-switch'))).toBe(false)
+    expect(writes).toEqual([])
     expect(await host.host.bridge.listTasks()).toHaveLength(3)
     await writeFile(`${OUT}/frames.json`, JSON.stringify({ browser: await browser.version(), results: [...results, reduced] }, null, 2))
   } finally {

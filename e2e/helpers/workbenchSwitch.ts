@@ -6,15 +6,25 @@ export async function measureWorkbenchSwitch(page: Page, output: string, name: s
   await page.screenshot({ path: `${output}/${name}-before.png`, animations: 'disabled' })
   const recording = page.evaluate(
     expected =>
-      new Promise<{ intervals: number[]; triggers: number[]; fades: number[]; firstVisibleMs?: number; longtasks: number[] }>(resolve => {
+      new Promise<{
+        intervals: number[]
+        switches: number[]
+        fades: number[]
+        transitions: number[]
+        marked: boolean
+        firstVisibleMs?: number
+        longtasks: number[]
+      }>(resolve => {
         let previous = performance.now(),
           clickAt: number | undefined,
           firstVisibleMs: number | undefined
         const began = previous,
           intervals: number[] = [],
-          triggers: number[] = [],
+          switches: number[] = [],
           fades = new Set<number>(),
+          transitions = new Set<number>(),
           longtasks: number[] = []
+        let marked = false
         const clicked = () => {
           clickAt ??= performance.now()
         }
@@ -27,11 +37,20 @@ export async function measureWorkbenchSwitch(page: Page, output: string, name: s
         const frame = (now: number) => {
           intervals.push(now - previous)
           previous = now
-          triggers.push(
-            [...document.querySelectorAll<HTMLElement>('[data-layout-trigger]')].filter(
+          // The layout switch is one control that stays in sight through the change, never two and never none.
+          switches.push(
+            [...document.querySelectorAll<HTMLElement>('[role="radiogroup"][aria-label="布局"]')].filter(
               element => element.checkVisibility({ visibilityProperty: true }) && !element.closest('[inert]'),
             ).length,
           )
+          // A layout change is the window's own cross-fade; its pseudo-elements are the document's animations.
+          marked ||= document.documentElement.hasAttribute('data-layout-switch')
+          for (const animation of document.getAnimations()) {
+            const effect = animation.effect
+            if (!(effect instanceof KeyframeEffect) || !effect.pseudoElement?.startsWith('::view-transition')) continue
+            const duration = effect.getComputedTiming().duration
+            if (typeof duration === 'number') transitions.add(duration)
+          }
           for (const element of document.querySelectorAll('.workbench-home, .workspace-view, .agents-page'))
             for (const animation of element.getAnimations()) {
               const duration = animation.effect?.getComputedTiming().duration
@@ -56,7 +75,7 @@ export async function measureWorkbenchSwitch(page: Page, output: string, name: s
           else {
             observer.disconnect()
             document.removeEventListener('click', clicked, true)
-            resolve({ intervals, triggers, fades: [...fades], firstVisibleMs, longtasks })
+            resolve({ intervals, switches, fades: [...fades], transitions: [...transitions], marked, firstVisibleMs, longtasks })
           }
         }
         requestAnimationFrame(frame)
@@ -69,7 +88,7 @@ export async function measureWorkbenchSwitch(page: Page, output: string, name: s
   await action()
   const result = await recording
   expect(result.firstVisibleMs).toBeDefined()
-  expect(result.triggers.every(count => count === 1)).toBe(true)
+  expect(result.switches.every(count => count === 1)).toBe(true)
   await noHorizontalOverflow(page)
   await page.screenshot({ path: `${output}/${name}-after.png`, animations: 'disabled' })
   const sorted = result.intervals.toSorted((a, b) => a - b)
@@ -79,7 +98,12 @@ export async function measureWorkbenchSwitch(page: Page, output: string, name: s
     medianMs: sorted[Math.floor(sorted.length / 2)],
     p95Ms: sorted[Math.floor(sorted.length * 0.95)],
     maxMs: sorted.at(-1),
+    /** The arriving page's own fade, which only a move between Code and 我的 Agent draws. */
     fades: result.fades,
+    /** The durations of the window's view transition; empty with reduced motion or without the API. */
+    transitions: result.transitions,
+    /** Whether `html[data-layout-switch]` was seen in any frame. */
+    marked: result.marked,
     clickToFirstVisibleMs: result.firstVisibleMs,
     longtasksMs: result.longtasks,
   }

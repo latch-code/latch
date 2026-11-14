@@ -79,7 +79,6 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
     ).toBe(201)
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
-    if (width < 600) await page.getByRole('button', { name: '新会话选项', exact: true }).click()
     await chip('模型').click()
     await page
       .getByRole('menuitem', { name: '刷新模型列表', exact: true })
@@ -93,9 +92,7 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
     await row(page, choice).click()
     const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
     const submit = () =>
-      width < 600
-        ? page.locator('.new-session-sheet').getByRole('button', { name: '开始', exact: true }).click()
-        : input.press('Meta+Enter')
+      width < 600 ? page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }).click() : input.press('Meta+Enter')
     await input.fill('echo first')
     await submit()
     const elsewhere = row(page, /^不选项目/u)

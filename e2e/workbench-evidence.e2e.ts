@@ -11,6 +11,7 @@ import { installFakeGh } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
+import { switchLayout } from './helpers/workbench.ts'
 
 const OUT = 'test-results/workbench-evidence'
 const EDIT = '修正设置页的保存行为'
@@ -156,14 +157,33 @@ it('finds real evidence on the home, decides there, and continues the original s
     await page.reload()
     await connected(page)
     const home = page.locator('.workbench-home')
-    await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').first().click()
-    await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
+    await switchLayout(page, 'triage')
     const approval = home.locator(`[data-work-session="${sessions[1]}"]`)
     const question = home.locator(`[data-work-session="${sessions[2]}"]`)
     await approval.locator('.approval-panel').waitFor()
     await question.locator('.question-card').waitFor()
-    await expect.poll(() => home.locator('[data-group="delivery"]').textContent(), { timeout: 10_000 }).toContain('目录未提交 1 个文件')
+    // The row's second line is the evidence itself; the reason another session holds it back is behind 原因.
+    await expect.poll(() => home.locator('[data-group="delivery"]').textContent(), { timeout: 10_000 }).toContain('未提交 1 个文件')
+    expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain('目录未提交')
+    expect(await home.locator('[data-group="delivery"]').getByText('其他会话正在改动这个目录', { exact: true }).count()).toBe(0)
     expect(await approval.textContent()).toContain('settings.ts')
+    // The card leads with the glyph of its kind, never a dot; the tool's ID waits behind the title's hover; and 收起
+    // is one of 更多's choices, which leaves a small outlined 查看改动 in the folded card.
+    expect(await approval.locator('.approval-dot').count()).toBe(0)
+    expect(await approval.locator('.approval-title .approval-kind svg').count()).toBe(1)
+    expect(await approval.locator('.workbench-tool-name').filter({ visible: true }).count()).toBe(0)
+    await approval.locator('.approval-object').hover()
+    await page.getByRole('tooltip').filter({ hasText: 'write_file' }).waitFor()
+    await page.mouse.move(0, 0)
+    expect(await approval.locator('.approval-see').count()).toBe(0)
+    await approval.getByRole('button', { name: '更多', exact: true }).click()
+    await page.getByRole('menuitem', { name: '收起', exact: true }).click()
+    const see = approval.locator('.ui-button.approval-see')
+    expect(await see.innerText()).toBe('查看改动')
+    expect(await see.getAttribute('aria-expanded')).toBe('false')
+    await see.click()
+    await expect.poll(() => see.count()).toBe(0)
+    expect(await approval.locator('.diff-line').count()).toBeGreaterThan(0)
     expect(await approval.textContent()).toContain('keep')
     expect(await home.locator('[data-group="delivery"] .work-delivery').count()).toBe(1)
     await expect.poll(() => home.locator('[data-group="delivery"]').textContent(), { timeout: 10_000 }).toContain('检查通过 2/2')
@@ -171,8 +191,7 @@ it('finds real evidence on the home, decides there, and continues the original s
     for (const theme of ['light', 'dark'] as const)
       for (const layout of ['overview', 'triage'] as const) {
         await page.emulateMedia({ colorScheme: theme })
-        await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').first().click()
-        await page.getByRole('menuitemradio', { name: layout === 'overview' ? '总览' : '分拣台', exact: true }).click()
+        await switchLayout(page, layout)
         await settleShell(page)
         await page.evaluate(() => document.fonts.ready)
         await expect.poll(() => approval.getByRole('button', { name: '允许', exact: true }).isDisabled()).toBe(false)
@@ -183,8 +202,7 @@ it('finds real evidence on the home, decides there, and continues the original s
     for (const theme of ['light', 'dark'] as const)
       for (const layout of ['overview', 'triage'] as const) {
         await page.emulateMedia({ colorScheme: theme })
-        await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').first().click()
-        await page.getByRole('menuitemradio', { name: layout === 'overview' ? '总览' : '分拣台', exact: true }).click()
+        await switchLayout(page, layout)
         const frame = page.locator('.app-shell')
         if ((layout === 'overview') !== ((await frame.getAttribute('data-inspector')) === 'open')) await page.keyboard.press('Alt+Shift+b')
         await expect.poll(() => page.locator('.workspace .approval-panel[data-arming]').count()).toBe(0)
@@ -249,8 +267,7 @@ it('finds real evidence on the home, decides there, and continues the original s
     expect(await host.host.bridge.listTasks()).toHaveLength(3)
     expect(await home.getByRole('textbox', { name: '新会话消息', exact: true }).inputValue()).toBe('11')
     await home.locator('[data-group="delivery"] .work-delivery').getByRole('button').first().click()
-    await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').first().click()
-    await page.getByRole('menuitemradio', { name: '总览', exact: true }).click()
+    await switchLayout(page, 'overview')
     await page.getByRole('tab', { name: '概要', exact: true }).click()
     await expect.poll(() => page.locator('.session-overview').textContent(), { timeout: 10_000 }).toContain('目录未提交 2 个文件')
     expect(await page.locator('.session-overview').textContent()).toContain('检查通过 2/2')

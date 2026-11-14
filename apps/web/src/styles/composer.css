@@ -195,22 +195,10 @@
   }
 }
 
-/* The prompt glyph: a faint mono 「>」 on the first line, where the text starts after it. */
+/* The input starts at the card's own padding: nothing stands before the text. */
 .composer-input {
   position: relative;
   min-width: 0;
-}
-.composer-prompt {
-  position: absolute;
-  top: var(--sp-16);
-  left: var(--sp-16);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: var(--fs-mono);
-  line-height: var(--lh-prose);
-  font-weight: 600;
-  pointer-events: none;
-  user-select: none;
 }
 .composer textarea {
   display: block;
@@ -242,14 +230,10 @@
 }
 .composer-input > textarea,
 .composer-command-mirror {
-  padding-inline-start: calc(var(--sp-16) + var(--sp-20));
+  padding-inline-start: var(--sp-16);
 }
 .composer-input > textarea {
   position: relative;
-}
-.composer-input[data-sheet] > textarea,
-.composer-input[data-sheet] > .composer-command-mirror {
-  padding-inline-start: var(--sp-16);
 }
 .composer-command-mirror {
   position: absolute;
@@ -350,32 +334,44 @@
   display: none;
 }
 /*
- * A phone's session: two rows inside the frame. Harness and 模型 on the first, which they share so a long model ID is
- * cut before the Harness's name; 「+」, 思考, 权限 and send on the second, send at its end.
+ * A phone: what the message goes with (the place on the home, then Harness, 模型, 思考, 权限) is one row of chips that
+ * scrolls sideways; under it one line of ＋, the input and send.
  */
-.composer-toolbar[data-rows='two'] {
-  flex-direction: column;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  gap: var(--sp-2);
+.composer-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  padding: var(--sp-6) var(--sp-8) 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
 }
-.composer-toolbar[data-rows='two'] > .composer-controls,
-.composer-toolbar[data-rows='two'] > .composer-end {
-  flex-wrap: nowrap;
-  margin-inline-start: 0;
+.composer-chips::-webkit-scrollbar {
+  display: none;
 }
-.composer-toolbar[data-rows='two'] .composer-control[data-composer-control='harness'] {
+.composer-chips > *,
+.composer-chips .home-composer-location > * {
   flex: 0 0 auto;
 }
-.composer-toolbar[data-rows='two'] .composer-control[data-composer-control='model'] {
-  flex: 0 1 auto;
+/* A chip is never squeezed under its neighbour: the row scrolls instead. */
+.composer-chips .composer-status-seg:is([data-seg='folder'], [data-seg='branch']) {
+  flex: 0 0 auto;
 }
-.composer-toolbar[data-rows='two'] > .composer-end > * {
-  flex: 0 1 auto;
+.composer-line {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-2) var(--sp-6) var(--sp-6);
 }
-.composer-toolbar[data-rows='two'] > .composer-end > .composer-slot {
-  flex: none;
-  margin-inline-start: auto;
+.composer-line > .composer-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.composer-line > :is(.ui-icon-button, .composer-slot, .ui-button) {
+  flex: 0 0 auto;
+  margin-bottom: var(--sp-2);
 }
 .composer-meta > * {
   flex-shrink: 0;
@@ -722,7 +718,8 @@
 @media (prefers-reduced-motion: no-preference) {
 }
 
-/* Send is the composer's one blue action; when there is nothing to send it falls back to a neutral fill. */
+/* Send is the neutral ink key, so a screen's one blue action stays the decision that waits; with nothing to send it
+ * falls back to a soft fill. */
 .send-button {
   display: grid;
   place-items: center;
@@ -732,19 +729,19 @@
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--ink);
+  color: var(--canvas);
   transition:
     background-color var(--m-micro) var(--e-micro),
     color var(--m-micro) var(--e-micro);
 }
 .send-button:hover:not([aria-disabled='true']) {
-  background: var(--accent-hover);
+  background: var(--ink-2);
 }
 .send-button:active:not([aria-disabled='true']) {
-  background: var(--accent-hover);
+  background: var(--ink-2);
 }
-/* The ring goes 2px outside the circle, where it shows; inside it would be blue on blue. */
+/* The ring goes 2px outside the circle, where it shows against the page. */
 .send-button:focus-visible {
   outline-offset: 2px;
 }
@@ -820,7 +817,7 @@
   }
   .composer-input > textarea,
   .composer-command-mirror {
-    padding-inline-start: calc(var(--sp-12) + var(--sp-20));
+    padding-inline-start: var(--sp-12);
   }
   .composer-input[data-command] > textarea,
   .composer-input[data-command] > .composer-command-mirror {
@@ -832,17 +829,8 @@
     font-size: var(--fs-input);
     line-height: var(--lh-input);
   }
-  .composer-input[data-sheet] > textarea,
-  .composer-input[data-sheet] > .composer-command-mirror {
-    padding-inline-start: var(--sp-12);
-  }
   .composer-slash-button {
     display: inline-flex;
-  }
-  .composer-prompt {
-    top: var(--sp-12);
-    left: var(--sp-12);
-    line-height: var(--lh-input);
   }
   .composer-toolbar {
     padding: var(--sp-2) var(--sp-6) var(--sp-6) var(--sp-8);

@@ -51,8 +51,34 @@ describe('the workbench layout on this device', () => {
       expect(html.match(/role="radio"/gu)).toHaveLength(2)
       expect(html.match(/aria-checked="true"/gu)).toHaveLength(1)
       expect(html.match(/tabindex="0"/gu)).toHaveLength(1)
-      expect(html).toContain('总览')
-      expect(html).toContain('分拣台')
+      // The layouts are named for their shape; 总览 is the home's name in both, never a layout's.
+      expect(html).toContain('>侧栏<')
+      expect(html).toContain('>顶栏<')
+      expect(html).toContain('按项目')
+      expect(html).toContain('按状态')
+      expect(html).not.toContain('分拣台')
     }
+  })
+
+  it('keeps a choice saved before the layouts were renamed', () => {
+    // The stored keys did not change with the names, so nobody's choice is lost.
+    expect(parsePreferences('{"workbenchLayout":"triage"}').workbenchLayout).toBe('triage')
+    expect(parsePreferences('{"workbenchLayout":"overview"}').workbenchLayout).toBe('overview')
+  })
+
+  it('switches at once where the window cannot cross-fade, and toggles between the two', async () => {
+    const entries = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => entries.set(key, value),
+    })
+    vi.resetModules()
+    const preferences = await import('../src/preferences.ts')
+    preferences.switchWorkbenchLayout('triage')
+    expect(JSON.parse(entries.get('latch.preferences')!).workbenchLayout).toBe('triage')
+    preferences.toggleWorkbenchLayout()
+    expect(JSON.parse(entries.get('latch.preferences')!).workbenchLayout).toBe('overview')
+    preferences.toggleWorkbenchLayout()
+    expect(JSON.parse(entries.get('latch.preferences')!).workbenchLayout).toBe('triage')
   })
 })

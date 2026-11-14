@@ -13,7 +13,8 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 import { measureWorkbenchSwitch } from './helpers/workbenchSwitch.ts'
-import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
+import { noHorizontalOverflow } from './helpers/layout.ts'
+import { LAYOUT_NAMES, layoutSwitch, switchLayout } from './helpers/workbench.ts'
 
 const OUT = 'test-results/desktop-workbench'
 it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
@@ -179,7 +180,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
       await home.locator('.approval-panel').waitFor()
       const delivery = home.locator('[data-group="delivery"]')
-      await expect.poll(() => delivery.textContent(), { timeout: 10_000 }).toContain('目录未提交 1 个文件')
+      await expect.poll(() => delivery.textContent(), { timeout: 10_000 }).toContain('未提交 1 个文件')
       expect(await delivery.locator('.work-delivery').count()).toBe(1)
       expect(await delivery.getByRole('button', { name: '重试', exact: true }).count()).toBe(0)
       const draft = home.getByRole('textbox', { name: '新会话消息', exact: true })
@@ -190,13 +191,16 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       await expect.poll(() => home.getByRole('button', { name: 'desktop.txt', exact: true }).isEnabled()).toBe(true)
       const metrics = []
       for (const [name, target] of [
-        ['a-to-b', '分拣台'],
-        ['b-to-a', '总览'],
+        ['a-to-b', 'triage'],
+        ['b-to-a', 'overview'],
       ] as const) {
-        await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').first().click()
-        metrics.push(
-          await measureWorkbenchSwitch(page, OUT, name, () => page.getByRole('menuitemradio', { name: target, exact: true }).click()),
-        )
+        const radio = layoutSwitch(page).getByRole('radio', { name: LAYOUT_NAMES[target], exact: true })
+        const metric = await measureWorkbenchSwitch(page, OUT, name, () => radio.click())
+        metrics.push(metric)
+        // The window cross-fades as a whole; the page keeps no fade of its own, and the chosen segment keeps the focus.
+        expect(metric.fades).toEqual([])
+        expect(metric.transitions).toEqual([160])
+        expect(await radio.evaluate(element => element === document.activeElement)).toBe(true)
         expect(await sender!.evaluate(element => element.isConnected)).toBe(true)
         expect(await input.inputValue()).toBe('原会话草稿')
         expect(await transcript.evaluate(element => element.scrollTop)).toBe(reading)
@@ -219,15 +223,10 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       expect(await host.host.bridge.listTasks()).toHaveLength(3)
       for (const theme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: theme })
-        for (const [layout, title] of [
-          ['overview', '总览'],
-          ['triage', '分拣台'],
-        ] as const) {
-          await page.getByRole('button', { name: '布局', exact: true }).filter({ visible: true }).first().click()
-          await page.getByRole('menuitemradio', { name: title, exact: true }).click()
-          await settleShell(page)
+        for (const layout of ['overview', 'triage'] as const) {
+          await switchLayout(page, layout)
           await noHorizontalOverflow(page)
-          expect(await delivery.textContent()).toContain('目录未提交 1 个文件')
+          expect(await delivery.textContent()).toContain('未提交 1 个文件')
           await page.screenshot({ path: `${OUT}/${layout}-home-1440-${theme}.png`, animations: 'disabled' })
         }
       }
@@ -239,7 +238,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       expect(await readFile(join(folder, 'settings.ts'), 'utf8')).toBe('export const keep = true\n')
       expect(await draft.inputValue()).toBe('首页独立草稿')
       expect(await home.getByRole('button', { name: 'desktop.txt', exact: true }).isEnabled()).toBe(true)
-      await expect.poll(() => delivery.textContent(), { timeout: 10_000 }).toContain('目录未提交 2 个文件')
+      await expect.poll(() => delivery.textContent(), { timeout: 10_000 }).toContain('未提交 2 个文件')
       await delivery.getByRole('button', { name: '查看改动', exact: true }).click()
       await page.locator('.delivery-panel').getByText('release.md', { exact: true }).waitFor()
       await page.locator('.delivery-panel').getByText('settings.ts', { exact: true }).waitFor()

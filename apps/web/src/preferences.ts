@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { flushSync } from 'react-dom'
 import { switchTheme } from '@latch/ui'
 import { readStorage } from './core/storageKeys.ts'
 import {
@@ -11,9 +12,14 @@ import {
 /** Per-viewer conveniences. Browser storage can be missing or throw; every read has a default. */
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type SendKey = 'enter' | 'mod-enter'
+/**
+ * The two workbench layouts. The stored keys predate their names: `overview` is 侧栏 (by project), `triage` is 顶栏 (by
+ * state). The keys stay, so a choice saved under either name is still read.
+ */
 export type WorkbenchLayout = 'overview' | 'triage'
 /** How much of a turn's work the conversation shows: every row, only what went wrong, or one folded row. */
 export type WorkDisplay = 'all' | 'failures' | 'folded'
+export const LAYOUT_NAMES: Record<WorkbenchLayout, string> = { overview: '侧栏', triage: '顶栏' }
 export interface Preferences {
   autoOpenDocuments: boolean
   diffLayout: 'unified' | 'split'
@@ -112,6 +118,39 @@ export function setPreference<K extends keyof Preferences>(key: K, value: Prefer
   current = { ...snapshot(), [key]: value }
   storageSet(KEY, JSON.stringify(current))
   for (const listener of listeners) listener()
+}
+
+/**
+ * Changes the workbench layout on this device; nothing is sent to the Host. The page under the navigation stays mounted,
+ * so the window cross-fades as a whole (160ms) where the browser can do that, and changes at once with reduced motion.
+ */
+export function switchWorkbenchLayout(layout: WorkbenchLayout): void {
+  if (snapshot().workbenchLayout === layout) return
+  const apply = () => {
+    setPreference('workbenchLayout', layout)
+  }
+  if (
+    typeof document === 'undefined'
+    || typeof document.startViewTransition !== 'function'
+    || !matchMedia('(prefers-reduced-motion: no-preference)').matches
+  ) {
+    apply()
+    return
+  }
+  const root = document.documentElement
+  root.dataset.layoutSwitch = ''
+  const transition = document.startViewTransition(() => {
+    flushSync(apply)
+  })
+  void transition.finished
+    .catch(() => {})
+    .then(() => {
+      delete root.dataset.layoutSwitch
+    })
+}
+
+export function toggleWorkbenchLayout(): void {
+  switchWorkbenchLayout(snapshot().workbenchLayout === 'triage' ? 'overview' : 'triage')
 }
 
 export function usePreferences(): Preferences {

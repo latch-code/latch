@@ -28,8 +28,7 @@ export function composerActions(
         ? '这台设备只能查看'
         : undefined
   const locked = blocked ?? (shell.newChoicesLocked ? '当前暂不能更改选项' : undefined)
-  const focus = () =>
-    requestAnimationFrame(() => (shell.phone && selectedId === null ? shell.sheetComposerRef : shell.composerRef).current?.focus())
+  const focus = () => requestAnimationFrame(() => shell.composerRef.current?.focus())
   const intent = (draft: string): SessionSelectionIntent => ({
     ...(origin === 'slash' ? { consumeDraft: { inputId: shell.inputId, text: submission.draft } } : {}),
     draft,

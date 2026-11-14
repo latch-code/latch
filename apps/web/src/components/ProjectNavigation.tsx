@@ -11,6 +11,7 @@ import {
   ChevronRightGlyph,
   MoreGlyph,
   EditGlyph,
+  FolderGlyph,
   PlusGlyph,
   SettingsGlyph,
 } from '@latch/ui'
@@ -30,12 +31,15 @@ export interface ProjectNavigationActions {
  */
 export function ShelfHead({
   label,
+  lead,
   folded,
   onFold,
   count,
   actions,
   className,
 }: {
+  /** A glyph before the name: a project's folder. */
+  lead?: ReactNode
   label: ReactNode
   folded: boolean
   onFold: () => void
@@ -46,6 +50,7 @@ export function ShelfHead({
   return (
     <div className={className ? `shelf-head ${className}` : 'shelf-head'} data-folded={folded ? '' : undefined}>
       <button type="button" className="shelf-toggle" aria-expanded={!folded} onClick={onFold}>
+        {lead}
         <span className="shelf-label">{label}</span>
         <ChevronRightGlyph className="shelf-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>
@@ -188,6 +193,7 @@ export function ProjectGroupHeading({
       ) : onFold ? (
         <ShelfHead
           className="project-group-heading"
+          lead={<FolderGlyph className="shelf-lead" size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
           folded={folded}
           onFold={onFold}
           count={folded ? count : undefined}

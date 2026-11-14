@@ -350,7 +350,7 @@ export function ProjectPicker({
             ? (PROJECT_ICONS[workspaces.find(item => item.id === value)!.glyph!]?.icon ?? FolderGlyph)
             : FolderGlyph
       }
-      placeholder="选择项目"
+      placeholder={NO_PROJECT}
       header={{ title: '项目' }}
       width={320}
       value={value}

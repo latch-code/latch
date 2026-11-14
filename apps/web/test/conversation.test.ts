@@ -698,15 +698,18 @@ describe('the live run', () => {
         { cancelling: false, approvals: 0, hostNow: T0 + 72_000, harness: 'Codex', ...opts },
       )
     }
-    expect(status({}, { live: live({}) })).toEqual({ tone: 'plain', text: '运行中', clock: '1:12' })
+    // `inHeader`: the title row says running and stopping once, so the line under the turn draws neither.
+    expect(status({}, { live: live({}) })).toEqual({ tone: 'plain', text: '运行中', clock: '1:12', inHeader: true })
     expect(status({}, { live: live({ activity: 'command', commandName: 'swift test' }) })).toEqual({
       tone: 'plain',
       text: '命令运行中 · swift test',
       clock: '1:12',
+      inHeader: true,
     })
     expect(status({}, { live: live({ activity: 'approval' }) }, { approvals: 1 })).toEqual({ tone: 'quiet', text: '等你处理' })
     expect(status({ questions: [{}] as unknown as TaskDetail['questions'] }).tone).toBe('quiet')
-    expect(status({}, {}, { cancelling: true })).toEqual({ tone: 'plain', text: '正在停止…' })
+    expect(status({}, {}, { cancelling: true })).toEqual({ tone: 'plain', text: '正在停止…', inHeader: true })
+    expect(status({ activity: { phase: 'starting', since: at(71_000) } })).toEqual({ tone: 'plain', text: '正在启动 Codex…' })
   })
 
   it('asks when a run has gone quiet, in the words of what it waits on, and only then', () => {

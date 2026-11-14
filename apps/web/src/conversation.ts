@@ -1065,8 +1065,8 @@ export function runClock(ms: number): string {
 type StatusAction = 'keep-waiting' | 'stop'
 
 /**
- * The status line under a running turn: what is really happening, never only that time passes. `tone`: `plain` is the
- * ordinary line; `amber` asks the person, because nothing else would tell them the run went quiet; `quiet` is a phase
+ * The status under a running turn: what is really happening, never only that time passes. `tone`: `plain` is the
+ * ordinary line (drawn only for what the title row does not say: an agent that is starting); `amber` asks the person, because nothing else would tell them the run went quiet; `quiet` is a phase
  * with no line of its own, since the card that waits on the person already says so.
  */
 export type RunStatus = {
@@ -1075,6 +1075,8 @@ export type RunStatus = {
   text: string
   /** The elapsed part, kept apart so the words stay still while it ticks. */
   clock?: string
+  /** The session's title row already says this (the activity with its clock, or 正在停止): the line draws nothing. */
+  inHeader?: true
   actions?: StatusAction[]
   /** The system message recording a request Latch did not recognise. */
   viewMessageId?: string
@@ -1084,7 +1086,7 @@ const minutesText = (ms: number) => `${Math.max(1, Math.floor(ms / 60_000))} 分
 
 export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness: string; fallbackElapsed?: number }): RunStatus {
   const phase = livePhase(detail, opts)
-  if (phase.kind === 'cancelling') return { tone: 'plain', text: PHASE_WORDS.cancelling }
+  if (phase.kind === 'cancelling') return { tone: 'plain', text: PHASE_WORDS.cancelling, inHeader: true }
   if (phase.kind === 'approval' || phase.kind === 'question') return { tone: 'quiet', text: PHASE_WORDS[phase.kind] }
   const live = detail.summary.live
   const unknown = live?.unrecognized
@@ -1122,7 +1124,7 @@ export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness
   const command =
     running && toolKind(running) === 'execute' ? toolLabel(running).object : live?.activity === 'command' ? live.commandName : undefined
   const words = command ? `命令运行中 · ${command}` : '运行中'
-  return { tone: 'plain', text: words, ...(clock ? { clock } : {}) }
+  return { tone: 'plain', text: words, inHeader: true, ...(clock ? { clock } : {}) }
 }
 
 /** How a run ended when it took more than a plain answer, for the line that stays under the turn. */

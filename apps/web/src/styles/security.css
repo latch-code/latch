@@ -276,14 +276,10 @@
   ):hover:not([aria-disabled='true'], [aria-busy='true']) {
   background: linear-gradient(var(--hover), var(--hover)) var(--pop) !important;
 }
-/* A key cap keeps its own face, as in the primitive; on a filled button it is the button's colour, lifted. */
+/* A shortcut is quiet text, as in the primitive; on a filled button it takes the button's ink. */
 [data-secure] kbd {
-  background-color: var(--key) !important;
-  box-shadow: var(--sh-key) !important;
-}
-[data-secure] .ui-button:is([data-variant='primary'], [data-variant='destroy']) .ui-kbd {
-  background-color: color-mix(in srgb, var(--tip-bg) 22%, transparent) !important;
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--tip-bg) 20%, transparent) !important;
+  background: none !important;
+  box-shadow: none !important;
 }
 [data-secure] .ui-button[data-variant='ghost'] {
   background: transparent !important;

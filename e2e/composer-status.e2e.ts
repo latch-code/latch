@@ -15,11 +15,12 @@ const BRANCH = 'feat/enroll-check-and-a-branch-name-long-enough-to-be-cut'
 const OPENAI = { id: 'openai', name: 'OpenAI', kind: 'openai-responses', models: ['gpt-5.5'], defaultModel: 'gpt-5.5' }
 
 /**
- * The composer's last row says where the session works, which way its model goes and what it used, only from what was
- * reported. A fake ACP agent reports the context window and the tokens; what no fake reports (a cost, a branch, a
+ * A session's input has no status line: where it works is the title row's, what it used is the last row of ⋯, a cost
+ * stays with who reported it, and only a route that needs saying is said under the input. A draft still shows where it
+ * would work. A fake ACP agent reports the context window and the tokens; what no fake reports (a cost, a branch, a
  * route through a service) is written onto the session on its way to the page.
  */
-describe('the composer status line', () => {
+describe('the composer without a status line', () => {
   let host: TestHost
   let owner: TestDevice
   let browser: Browser
@@ -34,16 +35,6 @@ describe('the composer status line', () => {
     }
   }
   const status = (page: Page) => page.locator('form.composer .composer-status')
-  const segment = (page: Page, kind: string) => status(page).locator(`[data-seg="${kind}"]`)
-  /** The segments that are shown, each with its words. */
-  const shown = (page: Page) =>
-    status(page)
-      .locator('[data-seg]')
-      .evaluateAll(items =>
-        items
-          .filter(item => getComputedStyle(item).display !== 'none')
-          .map(item => [item.getAttribute('data-seg'), (item as HTMLElement).innerText.replace(/\s+/gu, ' ').trim()]),
-      )
   const shot = (page: Page, name: string) => page.screenshot({ path: `${OUTPUT}/${name}.png`, animations: 'disabled' })
 
   beforeAll(async () => {
@@ -143,7 +134,15 @@ describe('the composer status line', () => {
     await page.getByRole('textbox', { name: '继续对话', exact: true }).waitFor()
   }
 
-  it('says what the fake agent reported, with its name, and the context in cells beside its numbers', async () => {
+  /** Opens the session's ⋯ menu and returns its last quiet row: what the whole session used. */
+  async function usageLine(page: Page): Promise<string> {
+    await page.getByRole('button', { name: '会话操作', exact: true }).locator('visible=true').first().click()
+    const line = page.locator('p.session-usage-line')
+    await line.waitFor()
+    return (await line.innerText()).replace(/\s+/gu, ' ').trim()
+  }
+
+  it('draws no line under a session’s input, and says what the fake agent reported once, at the end of ⋯', async () => {
     for (const [width, theme] of [
       [1440, 'light'],
       [1440, 'dark'],
@@ -151,130 +150,109 @@ describe('the composer status line', () => {
     ] as const) {
       const { context, page } = await open(width, theme, { title: '状态行的会话' })
       try {
-        await segment(page, 'context').waitFor()
-        const segments = await shown(page)
-        // The route is the Harness's name alone here, so even a tablet's narrower column keeps 用时.
-        expect(segments.map(([kind]) => kind)).toEqual(['folder', 'route', 'context', 'tokens', 'time'])
-        expect(Object.fromEntries(segments)).toMatchObject({
-          route: 'Fake Agent',
-          context: '上下文 10 / 100',
-          tokens: '输入 10 输出 20',
-        })
-        expect(Object.fromEntries(segments).time).toMatch(/1 轮$/u)
-        const meter = segment(page, 'context').getByRole('meter', { name: '上下文' })
-        expect(await meter.getAttribute('aria-valuetext')).toBe('10 / 100')
-        expect(await meter.locator('.ui-meter-cell[data-on]').count()).toBe(1)
-        // The 50% ring and the branch under the frame are gone; the line is inside the frame, its last row.
-        expect(await page.locator('.composer-usage, .composer-context').count()).toBe(0)
-        expect(await status(page).evaluate(row => row === row.parentElement?.lastElementChild)).toBe(true)
-        // The prompt glyph sits on the input's first line.
-        expect(await page.locator('form.composer .composer-prompt').innerText()).toBe('>')
-        await noHorizontalOverflow(page, status(page))
-        await shot(page, `a-statusline-fake--${width}--${theme}`)
+        // Where it works is the title row's; nothing is repeated under the input, and nothing stands before its text.
+        expect(await status(page).count()).toBe(0)
+        expect(await page.locator('form.composer [data-seg]').count()).toBe(0)
+        expect(await page.locator('.composer-usage, .composer-context, form.composer .composer-prompt, .status-clock').count()).toBe(0)
+        expect(await page.locator('form.composer .composer-notice[data-tint="warn"]').count()).toBe(0)
+        const form = page.locator('form.composer')
+        expect(await form.evaluate(item => item.lastElementChild?.classList.contains('composer-toolbar'))).toBe(true)
+        await shot(page, `a-session-input--${width}--${theme}`)
+        const words = await usageLine(page)
+        expect(words).toMatch(/^上下文 10 \/ 100 · 输入 10 · 输出 20 · .*1 轮$/u)
+        await noHorizontalOverflow(page)
+        await shot(page, `a-usage-menu--${width}--${theme}`)
+        await page.keyboard.press('Escape')
       } finally {
         await context.close()
       }
     }
   })
 
-  it('names who reported a cost, says it is not a bill, and the route by the service’s name', async () => {
-    const { context, page } = await open(1440, 'light', {
+  it('keeps a cost with who reported it in the project’s popover, and warns under the input only for a route that needs saying', async () => {
+    const usage = { inputTokens: 212_000, outputTokens: 9400 }
+    const usageReport = { contextUsed: 84_000, contextSize: 272_000, cost: { amount: 0.21, currency: 'USD' }, at: new Date().toISOString() }
+    const fine = await open(1440, 'light', {
       title: '状态行的会话',
       rewrite: {
         id: planned,
-        summary: {
-          branch: BRANCH,
-          usage: { inputTokens: 212_000, outputTokens: 9400 },
-          modelRoute: { providerId: 'openai', model: 'gpt-5.5', name: 'OpenAI' },
-        },
-        detail: {
-          usageReport: { contextUsed: 84_000, contextSize: 272_000, cost: { amount: 0.21, currency: 'USD' }, at: new Date().toISOString() },
-        },
+        summary: { branch: BRANCH, usage, modelRoute: { providerId: 'openai', model: 'gpt-5.5', name: 'OpenAI' } },
+        detail: { usageReport },
       },
     })
     try {
-      await page.locator('.inspector-column').getByRole('button', { name: '关闭', exact: true }).click()
-      await page.locator('.workspace').evaluate(element => (element as HTMLElement).style.setProperty('--content-width', '1200px'))
-      // In a column wide enough, every segment; the cost always with who reported it and that it is not a bill.
-      const resizeColumn = (width: number | null) =>
-        page.locator('form.composer').evaluate(async (form, px) => {
-          await document.fonts.ready
-          const stack = form.closest('.composer-stack') as HTMLElement
-          if (px === null) stack.style.removeProperty('max-width')
-          else stack.style.maxWidth = `${px}px`
-          // ResizeObserver fits after layout; the preceding column's visible segments can survive until then.
-          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-        }, width)
-      await resizeColumn(1200)
-      await segment(page, 'cost').waitFor()
-      await expect
-        .poll(async () => Object.fromEntries(await shown(page)))
-        .toMatchObject({
-          branch: BRANCH,
-          route: 'OpenAI · 经 Latch',
-          context: '上下文 84k / 272k',
-          cost: 'US$0.21',
-        })
-      await segment(page, 'cost').getByRole('button', { name: '用量说明', exact: true }).click()
-      await page.getByText('由 Fake Agent 报告，不是账单', { exact: true }).locator('visible=true').waitFor()
+      const { page } = fine
+      expect(await status(page).count()).toBe(0)
+      // A route that works says nothing under the input.
+      expect(await page.locator('form.composer .composer-notice').count()).toBe(0)
+      const words = await usageLine(page)
+      expect(words).toContain('上下文 84k / 272k')
+      expect(words).toMatch(/输入 212(?:\.0)?k · 输出 9\.4k/u)
+      // The line never carries a cost: a cost needs who reported it.
+      expect(words).not.toContain('US$')
+      await shot(page, 'a-usage-menu-cost--1440--light')
       await page.keyboard.press('Escape')
-      // What gave way is the start of the order: 用时, then the tokens.
-      expect((await shown(page)).map(([kind]) => kind)).toEqual(['folder', 'branch', 'route', 'context', 'tokens', 'cost', 'time'])
-      await shot(page, 'a-statusline-cost-wide--1440--light')
-      await resizeColumn(null)
-      // The branch is cut in the line and whole in its tooltip.
-      const name = segment(page, 'branch').locator('.composer-status-value')
-      expect(await name.evaluate(item => item.scrollWidth > item.clientWidth)).toBe(true)
-      await segment(page, 'branch').locator('[tabindex="0"]').hover()
-      await page
-        .getByRole('tooltip')
-        .filter({ hasText: `分支 ${BRANCH}` })
-        .waitFor()
-      await shot(page, 'a-statusline-cost--1440--light')
-
-      // Narrower columns let go of 用时, then the tokens and the cost, then the route; the context stays, nothing overflows.
-      const order: Array<[number, string[]]> = [
-        [640, ['folder', 'branch', 'route', 'context']],
-        [560, ['folder', 'branch', 'context']],
-        [380, ['folder', 'branch', 'context']],
-      ]
-      for (const [column, kinds] of order) {
-        await resizeColumn(column)
-        await expect.poll(async () => (await shown(page)).map(([kind]) => kind)).toEqual(kinds)
-        await noHorizontalOverflow(page, status(page))
-        if (column === 560) {
-          // The four controls still share one row.
-          const tops = await page
-            .locator('form.composer [data-composer-control]')
-            .evaluateAll(items => items.map(item => Math.round(item.getBoundingClientRect().top)))
-          expect(new Set(tops).size).toBe(1)
-          await shot(page, 'a-statusline-560--1440--light')
-        }
-      }
+      // The branch is the title row's, whole.
+      expect(await page.locator('.topbar .topbar-session-branch').locator('visible=true').first().innerText()).toBe(BRANCH)
+      await page.locator('.topbar .topbar-crumb-button').locator('visible=true').first().click()
+      await page.getByText('由 Fake Agent 报告，不是账单', { exact: false }).locator('visible=true').first().waitFor()
+      expect(await page.locator('.crumb-body').innerText()).toContain('US$0.21')
+      await shot(page, 'a-project-popover-cost--1440--light')
     } finally {
-      await context.close()
+      await fine.context.close()
+    }
+    const bypassed = await open(1440, 'light', {
+      title: '状态行的会话',
+      rewrite: {
+        id: planned,
+        summary: { usage, modelRoute: { providerId: 'openai', model: 'gpt-5.5', name: 'OpenAI', bypassed: true } },
+        detail: { usageReport },
+      },
+    })
+    try {
+      const { page } = bypassed
+      const note = page.locator('form.composer .composer-notice[data-tint="warn"]')
+      await note.getByText('有一轮没经过 Latch', { exact: true }).waitFor()
+      expect(await status(page).count()).toBe(0)
+      await noHorizontalOverflow(page, page.locator('form.composer'))
+      await shot(page, 'a-route-warning--1440--light')
+    } finally {
+      await bypassed.context.close()
     }
   })
 
-  it('keeps only the context on a phone, with its numbers', async () => {
-    for (const theme of ['light', 'dark'] as const) {
-      const { context, page } = await open(390, theme, { title: '状态行的会话' })
+  it('lays a phone’s input out as one row of chips over ＋, the text and send, with no line under it', async () => {
+    for (const [width, theme] of [
+      [390, 'light'],
+      [390, 'dark'],
+      [320, 'light'],
+    ] as const) {
+      const { context, page } = await open(width, theme, { title: '状态行的会话' })
       try {
-        await segment(page, 'context').waitFor()
-        expect(await shown(page)).toEqual([['context', '上下文 10 / 100']])
+        const form = page.locator('form.composer').filter({ visible: true })
+        expect(await status(page).count()).toBe(0)
+        expect(await form.locator('.composer-toolbar, [data-rows], .composer-prompt').count()).toBe(0)
+        expect(await form.getByRole('button', { name: '／', exact: true }).count()).toBe(0)
+        const chips = form.getByRole('group', { name: '会话选项', exact: true })
+        expect(await chips.evaluate(item => item.classList.contains('composer-chips'))).toBe(true)
+        expect(await chips.locator('[data-composer-control]').count()).toBeGreaterThanOrEqual(2)
+        // The row scrolls sideways by itself; the page never does.
+        expect(await chips.evaluate(item => getComputedStyle(item).overflowX)).toMatch(/auto|scroll/u)
+        const line = form.locator('.composer-line')
+        const [chipsBox, lineBox, inputBox, sendBox] = await Promise.all([
+          chips.boundingBox(),
+          line.boundingBox(),
+          line.locator('textarea').boundingBox(),
+          line.locator('.send-button').boundingBox(),
+        ])
+        expect(chipsBox!.y + chipsBox!.height).toBeLessThanOrEqual(lineBox!.y + 1)
+        expect(inputBox!.x + inputBox!.width).toBeLessThanOrEqual(sendBox!.x + 1)
+        expect(await line.locator('.send-button').getAttribute('aria-label')).toBe('发送')
         await noHorizontalOverflow(page)
-        await shot(page, `phone-composer--390--${theme}`)
+        if (width === 390) await shot(page, `phone-composer--390--${theme}`)
       } finally {
         await context.close()
       }
-    }
-    const { context, page } = await open(320, 'light', { title: '状态行的会话' })
-    try {
-      await segment(page, 'context').waitFor()
-      await noHorizontalOverflow(page)
-    } finally {
-      await context.close()
     }
   })
 
@@ -297,7 +275,11 @@ describe('the composer status line', () => {
           .getByRole('menuitemradio', { name: /Fake Agent/u })
           .first()
           .click()
-        // No project: the title offers one, and the line says only which way the model goes.
+        // No project: the input's place says 不选项目 beside a folder glyph, and never asks to choose one.
+        const place = page.locator('.home-composer-location')
+        expect(await place.innerText()).toContain('不选项目')
+        expect(await page.getByText('选择项目', { exact: true }).count()).toBe(0)
+        expect(await place.locator('svg').count()).toBeGreaterThan(0)
         expect(await status(page).locator('visible=true').count()).toBe(0)
         expect(
           await page
@@ -314,8 +296,8 @@ describe('the composer status line', () => {
           .getByRole('menuitemradio', { name: /latch-demo/u })
           .first()
           .click()
-        await expect.poll(() => page.locator('.workbench-home .project-inline').innerText()).toContain('latch-demo')
         const location = page.locator('.home-composer-location')
+        await expect.poll(() => location.innerText()).toContain('latch-demo')
         await expect.poll(() => location.innerText()).toContain('main')
         expect(await location.innerText()).toContain('当前文件夹')
         // The folder choice is whole in the line: its arrow comes after its words.
@@ -335,7 +317,7 @@ describe('the composer status line', () => {
     }
   })
 
-  it('places the shared decision card above the composer, with the status line still its last row', async () => {
+  it('places the shared decision card above the composer, which has no status line', async () => {
     // Connecting a device needs the Mac's confirmation, which an external Harness's waiting session holds back: connect first.
     const pages = [
       { width: 1440, theme: 'light' as const, ...(await open(1440, 'light')) },
@@ -363,9 +345,8 @@ describe('the composer status line', () => {
         expect(Math.round(form.top - drawer.bottom)).toBeGreaterThanOrEqual(7)
         expect(await page.locator('form.composer').evaluate(item => getComputedStyle(item).borderTopLeftRadius)).toBe('14px')
         expect(await card.evaluate(item => getComputedStyle(item).borderBottomLeftRadius)).toBe('14px')
-        // A phone has only the context, which this Harness has not reported yet: no line at all.
-        if (width > 390) expect(await status(page).evaluate(row => row === row.parentElement?.lastElementChild)).toBe(true)
-        else expect(await status(page).count()).toBe(0)
+        // A session's input has no line under it, on any width.
+        expect(await status(page).count()).toBe(0)
         await shot(page, `a-approval--${width}--${theme}`)
       }
     } finally {

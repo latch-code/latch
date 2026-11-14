@@ -185,3 +185,64 @@
 .layout-preview[data-layout='triage'] :is(.layout-preview-input, .layout-preview-card) {
   background: var(--work-b-raised);
 }
+
+/*
+ * 侧栏 | 顶栏, the layout switch: two icon segments at the end of the window's top row, in the same place in both
+ * layouts. The shell draws one control over the end each title row keeps free for it, so it never remounts.
+ */
+.layout-switch .ui-segmented-option {
+  width: 28px;
+  padding: 0;
+}
+.layout-switch .ui-segmented-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.shell-layout-switch {
+  grid-area: 1 / 1 / 2 / -1;
+  align-self: start;
+  justify-self: end;
+  z-index: 4;
+  margin: 13px var(--sp-12) 0 0;
+  -webkit-app-region: no-drag;
+}
+.layout-switch-space {
+  flex: 0 0 auto;
+  width: 76px;
+}
+/* 侧栏 with the panel open: the panel's strip is the end of the top row, so it keeps the room instead. */
+.app-shell[data-workbench-layout='overview'][data-inspector='open'] .titlebar .layout-switch-space {
+  display: none;
+}
+.app-shell[data-workbench-layout='overview'][data-inspector='open'] .inspector-column .session-panel-strip {
+  padding-right: 84px;
+}
+/* An Agent's profile stands in the same end of the top row. */
+.app-shell[data-workbench-layout='overview'] .agent-profile:not([data-phone]) .agent-profile-head {
+  padding-right: 84px;
+}
+/* A layout change cross-fades the whole window; the page under the navigation stays mounted. */
+/* The group's own (250ms by default) holds the transition open, and the window out of reach, after the fade is over. */
+:root[data-layout-switch]::view-transition-group(root),
+:root[data-layout-switch]::view-transition-old(root),
+:root[data-layout-switch]::view-transition-new(root) {
+  animation-duration: var(--m-enter);
+  animation-timing-function: var(--e-micro);
+}
+/* The page that takes the keys when the focused navigation is gone is a region, not a control. */
+[data-layout-focus]:focus {
+  outline: none;
+}
+@media (max-width: 767.98px) {
+  .layout-switch .ui-segmented-option {
+    width: 36px;
+    padding: 0;
+  }
+  .layout-switch {
+    flex: 0 0 auto;
+  }
+}

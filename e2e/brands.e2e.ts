@@ -150,7 +150,6 @@ it.each(cases)('keeps official marks in the normal Harness menu at $width $theme
       expect({ id: preset.id, status: response.status }).toEqual({ id: preset.id, status: 201 })
     }
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
-    if (width < 768) await page.getByRole('button', { name: '新会话选项', exact: true }).click()
     const picker = page
       .getByRole('button', { name: /^Harness：/u })
       .filter({ visible: true })

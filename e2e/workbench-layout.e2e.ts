@@ -10,6 +10,7 @@ import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browse
 import { startTestHost } from './helpers/host.ts'
 import { backToPhoneSessions, closeSettings, noHorizontalOverflow, openSection, reachable, settleShell } from './helpers/layout.ts'
 import { VISUAL_TIME, visualContext } from './helpers/visual.ts'
+import { LAYOUT_NAMES, homeInput as homeInputOf, layoutSwitch, switchLayout } from './helpers/workbench.ts'
 
 const OUTPUT = 'test-results/workbench-layout'
 const MODEL = { providerId: 'workbench-fixture', model: 'fixture' }
@@ -43,19 +44,10 @@ async function openHome(page: Page): Promise<void> {
   await settleShell(page)
 }
 
-async function layoutMenu(page: Page, layout: 'overview' | 'triage'): Promise<void> {
-  await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').first().click()
-  await page
-    .getByRole('menu', { name: '布局', exact: true })
-    .getByRole('menuitemradio', { name: layout === 'overview' ? '总览' : '分拣台', exact: true })
-    .click()
-  await expect.poll(() => page.locator('.app-shell').getAttribute('data-workbench-layout')).toBe(layout)
-  await settleShell(page)
-  await expect.poll(() => page.evaluate(() => document.activeElement?.hasAttribute('data-layout-trigger'))).toBe(true)
-}
+const layoutMenu = switchLayout
 
 async function generalSettings(page: Page): Promise<void> {
-  await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').first().focus()
+  await layoutSwitch(page).getByRole('radio', { checked: true }).focus()
   await page.keyboard.press('Alt+,')
   const settings = page.locator('.settings-page')
   await settings.waitFor({ state: 'visible' })
@@ -125,6 +117,8 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             })
             signal.throwIfAborted()
           }
+          // The session the checks read is long enough to stand in its middle.
+          if (prompt === PROMPTS.recent) yield { type: 'text', text: '这一段用来核对切换布局后仍停在原处阅读。\n\n'.repeat(80) }
           yield { type: 'text', text: '工作台验收记录已整理。切换布局不会发送草稿。' }
           yield { type: 'finish', reason: 'stop' }
         },
@@ -172,7 +166,14 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       await enrollBrowser(page, host, { name: '布局切换验收', scopes: ['view', 'run'] })
       const writes: string[] = []
       page.on('request', request => {
-        if (request.method() === 'POST' && /\/api\/(?:tasks(?:\/[^/]+\/prompt)?|approvals\/[^/]+)$/u.test(new URL(request.url()).pathname))
+        // The 顶栏 queue's own read (`POST /api/workbench/delivery`) is a read; nothing that starts, continues, answers
+        // or stops work may leave while a layout changes.
+        if (
+          request.method() !== 'GET'
+          && /\/api\/(?:tasks(?:\/[^/]+\/(?:prompt|cancel|queue))?|approvals\/[^/]+|questions\/[^/]+)$/u.test(
+            new URL(request.url()).pathname,
+          )
+        )
           writes.push(request.url())
       })
       await choose(page, recent.summary.title)
@@ -186,17 +187,151 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
         expect(await page.evaluate(element => document.querySelector('.workspace textarea') === element, original)).toBe(true)
         expect(await input.inputValue()).toBe(draft)
       }
-      await layoutMenu(page, 'triage')
-      await sameComposer()
-      await openHome(page)
-      await sameComposer()
+      const shell = page.locator('.app-shell')
       const home = page.locator('.workbench-home')
-      const homeInput = home.getByRole('textbox', { name: '新会话消息', exact: true })
+      const homeInput = homeInputOf(page)
+      const settings = page.locator('.settings-page')
+      const nowhere = async () => expect(await page.evaluate(() => document.body.innerText)).not.toContain('分拣台')
+      const marked = () => page.evaluate(() => (window as unknown as { layoutSwitchMarks: number }).layoutSwitchMarks)
+      await page.evaluate(() => {
+        const state = window as unknown as { layoutSwitchMarks: number }
+        state.layoutSwitchMarks = 0
+        new MutationObserver(() => {
+          if (document.documentElement.hasAttribute('data-layout-switch')) state.layoutSwitchMarks++
+        }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-layout-switch'] })
+      })
+      const fades = await page.evaluate(() => typeof document.startViewTransition === 'function')
+      const still = () => expect.poll(() => page.evaluate(() => document.documentElement.hasAttribute('data-layout-switch'))).toBe(false)
+
+      // In a session: read from the middle, with a draft and the panel open.
+      if ((await shell.getAttribute('data-inspector')) !== 'open') await page.keyboard.press('Alt+Shift+b')
+      await expect.poll(() => shell.getAttribute('data-inspector')).toBe('open')
+      const transcript = page.locator('.workspace .transcript').first()
+      const bottom = await transcript.evaluate(element => element.scrollTop)
+      await transcript.hover()
+      await page.mouse.wheel(0, -1200)
+      await expect.poll(() => transcript.evaluate(element => element.scrollTop)).toBeLessThan(bottom - 600)
+      await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
+      const reading = await transcript.evaluate(element => element.scrollTop)
+      expect(reading).toBeGreaterThan(200)
+      const sameSession = async () => {
+        await sameComposer()
+        expect(Math.abs((await transcript.evaluate(element => element.scrollTop)) - reading)).toBeLessThanOrEqual(2)
+        expect(await shell.getAttribute('data-inspector')).toBe('open')
+        expect(await home.isVisible()).toBe(false)
+        expect(await settings.count()).toBe(0)
+      }
+      const place = async () => {
+        const box = await layoutSwitch(page).boundingBox()
+        if (!box) throw new Error('The layout switch is not drawn')
+        expect(await page.getByRole('radiogroup', { name: '布局', exact: true }).locator('visible=true').count()).toBe(1)
+        return box
+      }
+      const places: Array<{ x: number; y: number; width: number; height: number }> = [await place()]
+      await nowhere()
+      // The key, from the input: the same input keeps the focus and its text.
+      await input.focus()
+      await page.keyboard.press('Alt+Shift+L')
+      await expect.poll(() => shell.getAttribute('data-workbench-layout')).toBe('triage')
+      await still()
+      if (fades) expect(await marked()).toBe(1)
+      await sameSession()
+      expect(await original.evaluate(element => element === document.activeElement)).toBe(true)
+      places.push(await place())
+      await nowhere()
+      // The switch itself: the chosen segment keeps the focus.
+      await layoutMenu(page, 'overview')
+      await still()
+      await sameSession()
+      await layoutMenu(page, 'triage')
+      await still()
+      await sameSession()
+      // The palette's command names the layout it leads to.
+      await choose(page, '切换到侧栏布局')
+      await expect.poll(() => shell.getAttribute('data-workbench-layout')).toBe('overview')
+      await still()
+      await sameSession()
+      await choose(page, '切换到顶栏布局')
+      await expect.poll(() => shell.getAttribute('data-workbench-layout')).toBe('triage')
+      await still()
+      await sameSession()
+      // Reduced motion: the layout changes at once, with no transition to mark.
+      const marksBefore = await marked()
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await layoutMenu(page, 'overview')
+      await layoutMenu(page, 'triage')
+      expect(await marked()).toBe(marksBefore)
+      await sameSession()
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+
+      // 新会话 is the home with its input focused; the session stays open under it, and its row leads back.
+      await input.focus()
+      await page.keyboard.press('Alt+n')
+      await home.waitFor({ state: 'visible' })
+      await expect.poll(() => homeInput.evaluate(element => element === document.activeElement)).toBe(true)
+      expect(await page.locator('.new-session, .new-session-sheet').count()).toBe(0)
+      expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
+      await sameComposer()
+      expect(await home.getAttribute('aria-label')).toBe('总览')
+      places.push(await place())
+      await nowhere()
       await homeInput.fill('首页自己的新任务草稿')
       await sameComposer()
+      // Home stays home, with its own draft, in either layout.
       await layoutMenu(page, 'overview')
+      await still()
+      expect(await home.isVisible()).toBe(true)
+      expect(await home.getAttribute('aria-label')).toBe('总览')
       expect(await homeInput.inputValue()).toBe('首页自己的新任务草稿')
+      await sameComposer()
+      places.push(await place())
+      await nowhere()
+      const row = page.locator(`.sidebar [data-task-id="${recent.summary.id}"]`).filter({ visible: true })
+      expect(await row.getAttribute('aria-current')).not.toBeNull()
+      await row.click()
+      await home.waitFor({ state: 'hidden' })
+      await sameSession()
       await layoutMenu(page, 'triage')
+      await openHome(page)
+      expect(await homeInput.inputValue()).toBe('首页自己的新任务草稿')
+      await sameComposer()
+
+      // Settings stays settings.
+      await generalSettings(page)
+      const tiles = settings.getByRole('radiogroup', { name: '工作台布局', exact: true })
+      places.push(await place())
+      await nowhere()
+      await layoutMenu(page, 'overview')
+      await still()
+      expect(await settings.isVisible()).toBe(true)
+      await expect.poll(() => tiles.getByRole('radio', { name: /^侧栏/u }).getAttribute('aria-checked')).toBe('true')
+      places.push(await place())
+      await nowhere()
+      for (const layout of ['triage', 'overview'] as const) {
+        await page.keyboard.press('Alt+Shift+L')
+        await expect.poll(() => shell.getAttribute('data-workbench-layout')).toBe(layout)
+        await still()
+        expect(await settings.isVisible()).toBe(true)
+        expect(await tiles.isVisible()).toBe(true)
+        // The shortcuts list names the layouts as the switch does.
+        await page.keyboard.press('Alt+/')
+        const overlay = page.getByRole('dialog', { name: '快捷键', exact: true })
+        await overlay.waitFor()
+        expect(await overlay.locator('.shortcuts-overlay-row', { hasText: '切换侧栏、顶栏布局' }).count()).toBe(1)
+        expect(await overlay.locator('.shortcuts-overlay-row', { hasText: '顶栏布局：拒绝、允许聚焦的请求' }).count()).toBe(1)
+        await nowhere()
+        await page.keyboard.press('Escape')
+        await overlay.waitFor({ state: 'hidden' })
+      }
+      await layoutMenu(page, 'triage')
+      await closeSettings(settings)
+      await openHome(page)
+      // One place for the switch: the end of the window's top row, whatever the layout and the page.
+      for (const box of places)
+        for (const side of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(box[side] - places[0]![side])).toBeLessThanOrEqual(1)
+      expect(places[0]!.x + places[0]!.width).toBeGreaterThan(1440 - 24)
+      expect(places[0]!.y).toBeLessThan(52)
+      expect(writes).toEqual([])
       expect(await home.locator('[data-group="attention"]').textContent()).toContain(waiting.summary.title)
       expect(await home.locator('[data-group="attention"]').textContent()).toContain(failed.summary.title)
       expect(await home.locator('[data-group="running"]').textContent()).toContain(running.summary.title)
@@ -233,12 +368,13 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       expect(await input.inputValue()).toBe(draft)
       await generalSettings(page)
       const layouts = page.getByRole('radiogroup', { name: '工作台布局', exact: true })
-      await layouts.getByRole('radio', { name: '总览', exact: true }).focus()
+      // Each tile is named by its layout and what it sorts by: 「侧栏 按项目」 and 「顶栏 按状态」.
+      expect(await layouts.locator('.ui-tile-choice-label').allTextContents()).toEqual(['侧栏', '顶栏'])
+      expect(await layouts.locator('.ui-tile-choice-note').allTextContents()).toEqual(['按项目', '按状态'])
+      await layouts.getByRole('radio', { name: /^侧栏/u }).focus()
       await page.keyboard.press('ArrowRight')
-      await expect.poll(() => layouts.getByRole('radio', { name: '分拣台', exact: true }).getAttribute('aria-checked')).toBe('true')
-      expect(
-        await layouts.getByRole('radio', { name: '分拣台', exact: true }).evaluate(element => element === document.activeElement),
-      ).toBe(true)
+      await expect.poll(() => layouts.getByRole('radio', { name: /^顶栏/u }).getAttribute('aria-checked')).toBe('true')
+      expect(await layouts.getByRole('radio', { name: /^顶栏/u }).evaluate(element => element === document.activeElement)).toBe(true)
       await page.reload()
       await connected(page)
       expect(await page.locator('.app-shell').getAttribute('data-workbench-layout')).toBe('triage')
@@ -287,11 +423,18 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             expect(await home.locator(`[data-work-session="${recent.summary.id}"]`).count()).toBe(0)
             if (width < 768 && layout === 'triage') {
               await home.getByRole('button', { name: '可交付', exact: true }).click()
-              expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain('没有待交付的改动')
+              expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain('没有可交付的')
               await capture(page, 'triage-delivery-empty', width, theme)
               await home.getByRole('button', { name: '等你处理 2', exact: true }).click()
             }
             if (width === 768 && theme === 'light' && layout === 'triage') {
+              // 顶栏 has no session list over its home: with nothing open under it the key opens nothing unseen.
+              await page.keyboard.press('Alt+b')
+              await page.waitForTimeout(300)
+              expect(await page.locator('.sidebar.is-open').count()).toBe(0)
+              expect(await page.locator('.titlebar').getAttribute('inert')).toBeNull()
+              // With a session open the key leaves the home for it and slides the list over it.
+              await choose(page, waiting.summary.title)
               await page.keyboard.press('Alt+b')
               await page.locator('.sidebar.is-open').waitFor({ state: 'visible' })
               await reachable(
@@ -318,8 +461,9 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
           }
           await generalSettings(page)
           const layouts = page.getByRole('radiogroup', { name: '工作台布局', exact: true })
-          for (const name of ['总览', '分拣台']) await reachable(layouts.getByRole('radio', { name, exact: true }))
-          expect(await layouts.getByRole('radio', { name: '分拣台', exact: true }).getAttribute('aria-checked')).toBe('true')
+          for (const name of Object.values(LAYOUT_NAMES)) await reachable(layouts.getByRole('radio', { name: new RegExp(`^${name}`, 'u') }))
+          expect(await layouts.getByRole('radio', { name: /^顶栏/u }).getAttribute('aria-checked')).toBe('true')
+          expect(await page.evaluate(() => document.body.innerText)).not.toContain('分拣台')
           await noHorizontalOverflow(page, layouts)
           await capture(page, 'settings', width, theme)
         }
@@ -328,6 +472,21 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       }
     }
     expect(calls).toBe(callsBefore)
+    // A choice saved under the old key still opens its layout, under the new name.
+    const storedContext = await visualContext(browser, { name: 'desktop', width: 1440, height: 1000, touch: false })
+    try {
+      await storedContext.addInitScript(() => {
+        if (localStorage.getItem('latch.preferences') === null) localStorage.setItem('latch.preferences', '{"workbenchLayout":"triage"}')
+      })
+      const page = await storedContext.newPage()
+      await enrollBrowser(page, host, { name: '已存布局验收', scopes: ['view', 'run'] })
+      expect(await page.locator('.app-shell').getAttribute('data-workbench-layout')).toBe('triage')
+      expect(await layoutSwitch(page).getByRole('radio', { name: '顶栏', exact: true }).getAttribute('aria-checked')).toBe('true')
+      expect(await page.locator('.workbench-nav, .workbench-primary-nav').first().isVisible()).toBe(true)
+      expect(await page.evaluate(() => document.body.innerText)).not.toContain('分拣台')
+    } finally {
+      await storedContext.close()
+    }
     const approvalContext = await visualContext(browser, { name: 'desktop', width: 1440, height: 1000, touch: false })
     try {
       const page = await approvalContext.newPage()

@@ -52,8 +52,8 @@ export function LayoutTiles({ value, onValueChange }: { value: WorkbenchLayout; 
       value={value}
       onValueChange={onValueChange}
       options={[
-        { value: 'overview', label: '总览', tile: <LayoutPreview layout="overview" /> },
-        { value: 'triage', label: '分拣台', tile: <LayoutPreview layout="triage" /> },
+        { value: 'overview', label: '侧栏', note: '按项目', tile: <LayoutPreview layout="overview" /> },
+        { value: 'triage', label: '顶栏', note: '按状态', tile: <LayoutPreview layout="triage" /> },
       ]}
     />
   )

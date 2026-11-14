@@ -17,9 +17,9 @@ export function workGroups(
   delivery: ReadonlySet<string> = new Set(),
 ): WorkGroup[] {
   const groups: Record<WorkGroupId, WorkGroup> = {
-    attention: { id: 'attention', label: '等你处理', empty: '没有等你处理的会话', tasks: [] },
-    running: { id: 'running', label: '进行中', empty: '没有进行中的会话', tasks: [] },
-    delivery: { id: 'delivery', label: '可交付', empty: '没有待交付的改动', tasks: [] },
+    attention: { id: 'attention', label: '等你处理', empty: '没有要你处理的', tasks: [] },
+    running: { id: 'running', label: '进行中', empty: '没有进行中的', tasks: [] },
+    delivery: { id: 'delivery', label: '可交付', empty: '没有可交付的', tasks: [] },
   }
   const visible = tasks
     .filter(task => !task.archived && spaceOf(task) === 'code')

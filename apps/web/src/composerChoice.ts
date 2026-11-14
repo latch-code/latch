@@ -422,18 +422,6 @@ export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<
 }
 
 /**
- * Whether sending should ask for a folder first: a Harness works in one, and the Host has none in mind. A start directory
- * the owner set is a folder in mind; so is a fork. A Harness that runs no commands is fine without, as it reads and writes
- * only what it is given.
- */
-export function needsProject(catalog: HostCatalog | undefined, choice: ComposerChoice): boolean {
-  if (!catalog?.sessionFolders || choice.mode === 'chat' || choice.projectSkipped) return false
-  if (choice.workspaceId !== undefined && choice.workspaceId !== 'default') return false
-  const harness = catalog.harnesses.find(item => item.id === choice.harnessId)
-  return harness !== undefined && harness.capabilities.tools.shell
-}
-
-/**
  * The project a new session could start in a new worktree of: a saved project with one folder whose Git branch the Host
  * read, for a session that reads and writes files and is not a fork (a fork starts where its source left off).
  */

@@ -12,7 +12,7 @@ export function openControlWhenShown(name: ControlName, frames = 10, newOnly = t
       element =>
         element.getClientRects().length > 0
         && !element.closest('[inert], [hidden], [aria-hidden="true"]')
-        && (!newOnly || element.closest('.workspace.is-new')),
+        && (!newOnly || element.closest('.workbench-home')),
     )
     const trigger = control?.querySelector<HTMLButtonElement>('button')
     if (control && trigger && !trigger.disabled && trigger.getAttribute('aria-disabled') !== 'true') {

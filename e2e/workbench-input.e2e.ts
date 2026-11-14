@@ -6,6 +6,7 @@ import { expect, it } from 'vitest'
 import type { Device, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
+import { switchLayout } from './helpers/workbench.ts'
 import { startTestHost } from './helpers/host.ts'
 
 async function choose(page: Page, title: string) {
@@ -122,29 +123,39 @@ it.each([
         .setInputFiles({ name: 'home.txt', mimeType: 'text/plain', buffer: Buffer.from('home attachment') })
       await expect.poll(() => home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       expect(await home.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
-      // Starting a new input from Home still honors the hidden reading session's editor guard.
-      // Cancelling it must not change the Home route, its draft or its attachment target.
+      // 新建会话 is the home with its input focused: the reading session stays open under it, so its unsaved edit is
+      // not asked about, and the home keeps its route, draft and attachment target.
+      await home.getByRole('button', { name: 'home.txt', exact: true }).focus()
       await page.locator('.sidebar').getByRole('button', { name: '新建会话', exact: true }).click()
-      const leave = page.getByRole('dialog', { name: '放弃你的修改？', exact: true })
-      await leave.waitFor()
-      await leave.getByRole('button', { name: '取消', exact: true }).click()
+      await expect.poll(() => draft.evaluate(element => element === document.activeElement)).toBe(true)
+      expect(await page.getByRole('dialog', { name: '放弃你的修改？', exact: true }).count()).toBe(0)
       expect(await home.isVisible()).toBe(true)
+      expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
+      expect(await mounted!.evaluate(element => element.isConnected)).toBe(true)
       expect(await draft.inputValue()).toBe('只属于首页的新任务')
       expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       await page.setViewportSize({ width: 390, height: 844 })
       await home.locator('.workbench-phone-heading').waitFor()
+      // A phone has no sheet for a new session: the key leads to the same home input, with what it already holds.
+      await home.getByRole('button', { name: 'home.txt', exact: true }).focus()
       await page.keyboard.press('Alt+n')
-      const newSheet = page.getByRole('dialog', { name: '新会话', exact: true })
-      await newSheet.waitFor()
-      expect(await newSheet.getByRole('textbox', { name: '新会话消息', exact: true }).inputValue()).toBe('只属于首页的新任务')
-      expect(await newSheet.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
-      expect(await newSheet.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
+      await expect.poll(() => draft.evaluate(element => element === document.activeElement)).toBe(true)
+      expect(await page.getByRole('dialog', { name: '新会话', exact: true }).count()).toBe(0)
+      expect(await page.getByRole('button', { name: '新会话选项', exact: true }).count()).toBe(0)
+      expect(await draft.inputValue()).toBe('只属于首页的新任务')
+      expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
+      expect(await home.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
       expect(await page.getByRole('dialog', { name: '放弃你的修改？', exact: true }).count()).toBe(0)
-      await page.keyboard.press('Escape')
-      await newSheet.waitFor({ state: 'hidden' })
+      // The phone's input is one row of chips over ＋, the text and send.
+      const chips = home.getByRole('group', { name: '会话选项', exact: true })
+      expect(await chips.evaluate(element => element.classList.contains('composer-chips'))).toBe(true)
+      for (const name of [/^(?:项目：|不选项目)/u, /^Harness：/u]) expect(await chips.getByRole('button', { name }).count()).toBe(1)
+      expect(await home.locator('.composer-line textarea').count()).toBe(1)
+      expect(await home.locator('.composer-line .send-button').getAttribute('aria-label')).toBe('发送')
       expect(await home.isVisible()).toBe(true)
       await page.setViewportSize({ width: 1440, height: 1000 })
-      await page.locator('.titlebar').getByRole('button', { name: '返回会话', exact: true }).click()
+      // The session under the home is still the current row; it leads back.
+      await page.locator(`.sidebar [data-task-id="${sessionId}"]`).filter({ visible: true }).click()
       expect(await input.inputValue()).toBe('只属于原会话的草稿')
       expect(await mounted!.evaluate(element => element.isConnected)).toBe(true)
       expect(await transcript.evaluate(element => element.scrollTop)).toBe(position)
@@ -157,8 +168,7 @@ it.each([
       expect(await draft.inputValue()).toBe('只属于首页的新任务')
       for (const width of [320, 390]) {
         await page.setViewportSize({ width, height: 844 })
-        await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').click()
-        await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
+        await switchLayout(page, 'triage')
         const navigation = home.getByRole('navigation', { name: '会话导航', exact: true })
         for (const label of ['全部会话', '搜索'])
           expect((await navigation.getByRole('button', { name: label, exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)

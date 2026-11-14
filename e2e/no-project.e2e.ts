@@ -4,6 +4,7 @@ import type { TaskDetail, TaskSummary } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
+import { homeInput } from './helpers/workbench.ts'
 
 describe('no project means chat', () => {
   it.each([
@@ -18,17 +19,16 @@ describe('no project means chat', () => {
       const page = await context.newPage()
       page.setDefaultTimeout(15_000)
       await enrollBrowser(page, host, { name: '不选项目 ' + width })
-      const phone = width < 768
-      if (phone) await page.getByRole('button', { name: '新会话选项', exact: true }).click()
-      const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+      const input = homeInput(page)
+      // The place of the home's input names no project instead of asking for one, on a phone in its row of chips.
+      const place = page.locator('.workbench-home .home-composer-location')
+      expect(await place.innerText()).toContain('不选项目')
+      expect(await page.getByText('选择项目', { exact: true }).count()).toBe(0)
+      if (width < 768) expect(await place.evaluate(element => element.closest('.composer-chips') !== null)).toBe(true)
       await input.fill('解释一下什么是 SSE')
       // The switch is gone; the project list is what decides.
       expect(await page.getByRole('switch', { name: /只聊天/ }).count()).toBe(0)
-      await page
-        .getByRole('button', { name: /^项目：|^选择项目/ })
-        .filter({ visible: true })
-        .first()
-        .click()
+      await place.getByRole('button').filter({ visible: true }).first().click()
       // One kind of sentence for every Harness: who works, and how.
       await page.getByText('Latch 内置 只回复文字，不读写文件', { exact: true }).filter({ visible: true }).first().waitFor()
       // A browser is another device: projects are added on the computer, which the menu names.
@@ -38,11 +38,7 @@ describe('no project means chat', () => {
       expect(await input.inputValue()).toBe('解释一下什么是 SSE')
       await page.getByText('不读写文件', { exact: true }).filter({ visible: true }).first().waitFor()
       await noHorizontalOverflow(page)
-      await page
-        .getByRole('button', { name: /^(发送|开始)$/ })
-        .filter({ visible: true })
-        .first()
-        .click()
+      await page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }).click()
       await expect
         .poll(
           async () =>
@@ -51,6 +47,15 @@ describe('no project means chat', () => {
         .toMatchObject([{ mode: 'chat', workspaceId: 'default' }])
       const [task] = (await owner.json<{ tasks: TaskSummary[] }>('snapshot')).tasks
       expect(task?.sessionFolder).toBeUndefined()
+      // The session's title row draws no empty folder chip: where it names the place at all, it says 不选项目 in words.
+      if (width >= 768) {
+        await page.locator('main.workspace .topbar .topbar-title-button').waitFor()
+        const crumb = page.locator('main.workspace .topbar .topbar-crumb-button').filter({ visible: true })
+        if ((await crumb.count()) > 0) {
+          expect(await crumb.first().innerText()).toBe('不选项目')
+          expect(await crumb.first().locator('svg').count()).toBe(0)
+        }
+      }
       const continued = page.getByRole('textbox', { name: '继续对话', exact: true })
       await expect.poll(() => continued.getAttribute('placeholder')).toBe('写下问题或想法…')
       const detail = await owner.json<TaskDetail>(`tasks/${task!.id}`)

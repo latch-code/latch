@@ -6,7 +6,14 @@ import { deviceAccess } from '../core/permissions.ts'
 import { computerLabel } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { keepAwakeLine, loginItemNote, useShellLifecycle } from '../core/shellLifecycle.ts'
-import { setPreference, usePreferences, type SendKey, type ThemePreference, type WorkDisplay } from '../preferences.ts'
+import {
+  setPreference,
+  switchWorkbenchLayout,
+  usePreferences,
+  type SendKey,
+  type ThemePreference,
+  type WorkDisplay,
+} from '../preferences.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
 import { NotificationSettings } from './NotificationSettings.tsx'
 import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
@@ -166,12 +173,7 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
           <span>布局</span>
           <span>仅此设备</span>
         </div>
-        <LayoutTiles
-          value={preferences.workbenchLayout}
-          onValueChange={value => {
-            setPreference('workbenchLayout', value)
-          }}
-        />
+        <LayoutTiles value={preferences.workbenchLayout} onValueChange={switchWorkbenchLayout} />
       </SettingsGroup>
       <SettingsGroup title="使用">
         {usage && (

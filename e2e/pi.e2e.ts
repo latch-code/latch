@@ -121,11 +121,10 @@ describe('pi over its own RPC mode', () => {
     const tasks = (await owner.json<AppSnapshot>('snapshot')).tasks.toSorted((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
     return owner.json<TaskDetail>(`tasks/${tasks.at(-1)!.id}`)
   }
+  /** The new draft is the home's input: already in sight, or where 新建会话 leads. */
   const newDraft = async (page: Page) => {
-    const options = page.getByRole('button', { name: '新会话选项', exact: true })
     const create = page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true })
-    if (await options.isVisible()) await options.click()
-    else if (await create.count()) await create.click()
+    if (!(await page.locator('.workbench-home').isVisible()) && (await create.count())) await create.first().click()
     await draft(page).waitFor()
   }
   const start = async (page: Page, text: string) => {
@@ -414,11 +413,8 @@ describe('pi over its own RPC mode', () => {
     for (const width of [1440, 390] as const) {
       const page = await open(width, 'dark')
       await newDraft(page)
-      if (width === 390) {
-        const sheet = page.locator('.new-session-sheet')
-        await sheet.waitFor()
-        await sheet.getByRole('button', { name: /^模型/u }).click()
-      } else await chip(page, '模型').click()
+      // On a phone the 模型 chip is in the row over the home's input.
+      await chip(page, '模型').click()
       // The menu's group, not the status line under the input, which names the same thing.
       const inMenu = (text: string) => page.getByText(text, { exact: true }).and(page.locator(':not(.composer-status, .composer-status *)'))
       const readModels = modelAction(page, '读取 pi 的模型列表')

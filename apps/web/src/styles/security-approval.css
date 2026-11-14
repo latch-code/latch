@@ -1,8 +1,8 @@
 /* The approval card and the input while a device may only watch. */
 /*
  * The approval card above the input, as wide as it (the shared .composer-drawer joint). A neutral surface in both themes;
- * amber is only the dot. Line 1, the title: what it asks to do and the lines it changes. Line 2, quieter: the tool's ID,
- * a sub-agent's name, 查看改动 and the pager. 更多 · 拒绝 · 允许 sit beside the title, one size up from a toolbar's; on a phone
+ * amber is only the glyph of its kind. Line 1, the title: what it asks to do and the lines it changes. Line 2, quieter: a
+ * sub-agent's name, 查看改动 while the preview is folded, and the pager. 更多 · 拒绝 · 允许 sit beside the title, one size up from a toolbar's; on a phone
  * they take their own rows. Under them, full width: a risky request's red reason with the Host's sentence, an agent's
  * advisory line, warnings and why this device cannot allow. This layer keeps injected page styles from moving or hiding
  * what the approver weighs.
@@ -47,21 +47,25 @@
   font-weight: 600;
 }
 @media (max-width: 767.98px) {
-  .approval-panel[data-presentation] .workbench-tool-name {
-    flex-basis: 100%;
-    text-align: right;
-  }
   .approval-panel[data-presentation] .approval-object {
     overflow-wrap: break-word;
   }
 }
+/* The tool's ID is the title's tooltip; where nothing can hover it stays written, on a line of its own. */
 .approval-panel[data-presentation] .workbench-tool-name {
-  margin-left: auto;
+  display: none !important;
+  flex-basis: 100%;
   color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
   font-weight: 400;
+  text-align: right;
   white-space: nowrap;
+}
+@media (hover: none) {
+  .approval-panel[data-presentation] .workbench-tool-name {
+    display: block !important;
+  }
 }
 .approval-panel[data-presentation] .approval-meta {
   display: flex !important;
@@ -133,17 +137,15 @@
   line-height: var(--lh-ui) !important;
   font-weight: 500;
 }
-/* The one amber mark of a request that waits; the title beside it says what for. */
-.approval-dot {
-  display: block !important;
+/* The one amber mark of a request that waits: the glyph of its kind; the title beside it says what for. */
+.approval-kind {
+  display: inline-grid !important;
   flex-shrink: 0;
   align-self: center;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--r-full);
-  background: var(--amber-icon) !important;
+  place-items: center;
+  color: var(--amber-icon) !important;
 }
-/* Line 2 starts under the title's words, past the dot. */
+/* Line 2 starts under the title's words, past the glyph. */
 .approval-meta {
   display: flex !important;
   flex-wrap: wrap;
@@ -151,7 +153,7 @@
   column-gap: var(--sp-12);
   row-gap: var(--sp-2);
   min-width: 0;
-  padding-inline-start: var(--sp-16);
+  padding-inline-start: var(--sp-24);
   color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
@@ -243,28 +245,16 @@
   white-space: nowrap;
 }
 .approval-see {
-  display: inline !important;
-  padding: 0;
-  border: 0;
-  background: none;
+  display: inline-flex !important;
   color: var(--ink-2) !important;
-  font-size: var(--fs-caption) !important;
-  line-height: var(--lh-caption) !important;
-  text-decoration: underline;
-  text-decoration-color: var(--line-strong);
-  text-underline-offset: 3px;
   white-space: nowrap;
-}
-.approval-see:hover {
-  color: var(--ink) !important;
-  text-decoration-color: var(--muted);
 }
 /* Everything the request says beyond its title, under the title's words and as wide as the card. */
 .approval-notes {
   display: grid !important;
   gap: var(--sp-4);
   min-width: 0;
-  padding-inline-start: var(--sp-16);
+  padding-inline-start: var(--sp-24);
 }
 .approval-clause {
   display: block !important;
@@ -341,7 +331,7 @@
 }
 .approval-preview {
   display: grid !important;
-  padding-inline-start: var(--sp-16);
+  padding-inline-start: var(--sp-24);
   grid-template-rows: 0fr;
   transition: grid-template-rows calc(var(--m-panel) * 0.7) var(--e-exit);
 }
@@ -453,9 +443,17 @@
   font-size: var(--fs-code) !important;
   line-height: var(--lh-code) !important;
 }
+/* One number column, the old number on a removed line and the new one on any other, with the sign right after it. */
 .approval-preview .diff-line {
   display: grid !important;
+  grid-template-columns: 32px 16px minmax(0, 1fr);
   color: var(--ink) !important;
+}
+.approval-panel[data-secure] .approval-preview .diff-line > .diff-ln:is(.diff-ln-old, .diff-ln-new) {
+  display: none !important;
+}
+.approval-panel[data-secure] .approval-preview .diff-line > .diff-ln.diff-ln-one {
+  display: block !important;
 }
 /* Every cell of a line reads at the line's code size and in its font. */
 .approval-preview :is(.diff-table, .diff-hunk, .diff-hunk-header, .diff-line, .diff-ln, .diff-sign, .diff-text) {

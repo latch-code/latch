@@ -19,7 +19,6 @@ import {
   engineEntries,
   listsFoundHarnesses,
   noProjectLine,
-  needsProject,
   worktreeProject,
   nothingInstalled,
   presetsToAdd,
@@ -180,15 +179,8 @@ describe('composer choice', () => {
     expect(startBlock(snapshot({ catalog: listed }), kept)).toEqual({ kind: 'harness-unavailable', message: pi.statusMessage })
   })
 
-  it('asks for a folder only when a Harness has none and the Host would make one up', () => {
-    const local = { legacy: false, local: true }
+  it('remembers 不选项目 as a choice of its own', () => {
     const hostChosen = catalog({ sessionFolders: true, workspaces: catalog().workspaces.filter(item => item.id === 'default') })
-    const choice = resolveChoice(hostChosen, { harnessId: 'codex' })
-    expect(needsProject(hostChosen, choice)).toBe(true)
-    expect(needsProject(hostChosen, { ...choice, projectSkipped: true })).toBe(false)
-    expect(needsProject(hostChosen, resolveChoice(hostChosen, { harnessId: 'standard' }))).toBe(false)
-    // A start directory the owner set is a folder in mind.
-    expect(needsProject({ ...hostChosen, sessionFolders: undefined }, choice)).toBe(false)
     // 不选项目 is remembered; anything else leaves the question open.
     expect(resolveChoice(hostChosen, { workspaceId: 'default', projectSkipped: true }).projectSkipped).toBe(true)
     expect(resolveChoice(hostChosen, { workspaceId: 'default' }).projectSkipped).toBeUndefined()

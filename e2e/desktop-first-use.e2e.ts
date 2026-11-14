@@ -273,10 +273,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const owner = await host.enroll({ listener: 'unix' })
         expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toEqual([])
 
-        // Enter with no folder asks for one and keeps the draft; nothing has been saved or started.
+        // Nothing asks for a folder before sending: the input's place reads 不选项目, and its list opens when pressed. The
+        // draft stays; nothing has been saved or started.
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await input.fill('修一下测试')
-        await input.press('Meta+Enter')
+        const place = page.locator('.workbench-home .home-composer-location')
+        expect(await place.innerText()).toContain('不选项目')
+        expect(await page.getByText('选择项目', { exact: true }).count()).toBe(0)
+        await place.getByRole('button', { name: /^项目：/u }).click()
         const open = page.getByRole('menuitem', { name: '添加项目…', exact: true })
         await open.waitFor()
         expect(await input.inputValue()).toBe('修一下测试')
@@ -334,20 +338,22 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
 
         // 不选项目 works too: a new empty folder, nothing refused.
         await startNew(page, 1440)
-        await page.locator('.new-session-title button').first().click()
+        await place.getByRole('button', { name: /^项目：/u }).click()
         await page.getByText('Codex 在一个新的空文件夹里开始', { exact: true }).click()
         await input.fill('随便试试')
         await input.press('Meta+Enter')
         await page.locator('.transcript').getByText('echo: 随便试试', { exact: true }).waitFor()
         await noHorizontalOverflow(page)
 
-        // 添加项目 at the sidebar's foot: from a session, a cancel stays put, a refusal says so, a folder starts there.
+        // 添加项目, the ＋ beside the sidebar's 项目 heading: from a session, a cancel stays put, a refusal says so, a
+        // folder starts there.
         const pick = (chosen: string | null) =>
           application!.evaluate(({ dialog }, path) => {
             dialog.showOpenDialog = (async () =>
               path ? { canceled: false, filePaths: [path] } : { canceled: true, filePaths: [] }) as typeof dialog.showOpenDialog
           }, chosen)
-        const add = page.getByRole('button', { name: '添加项目', exact: true })
+        expect(await page.locator('.sidebar-add-project').count()).toBe(0)
+        const add = page.locator('.sidebar-group-label').getByRole('button', { name: '添加项目', exact: true })
         await pick(null)
         await add.click()
         await page.locator('.transcript').getByText('echo: 随便试试', { exact: true }).waitFor()
@@ -362,20 +368,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await mkdir(second)
         await pick(second)
         await add.click()
-        await page.locator('.new-session-title').getByText('second', { exact: true }).first().waitFor()
+        await place.getByText('second', { exact: true }).first().waitFor()
         await page.locator('#session-navigation').getByText('second', { exact: true }).waitFor()
-
-        // A new session in the project lists that project's latest sessions under the input, and only those.
-        await page.locator('.new-session-title button').first().click()
-        await page
-          .getByRole('menuitemradio', { name: /^rust-learn/u })
-          .or(page.getByRole('option', { name: /^rust-learn/u }))
-          .click()
-        const recent = page.getByRole('region', { name: '这个项目最近的会话', exact: true })
-        await expect.poll(() => recent.getByRole('button').count()).toBe(2)
-        expect(await recent.getByText('随便试试').count()).toBe(0)
-        await recent.getByRole('button').first().click()
-        await page.locator('.transcript').getByText('echo: 再来一个', { exact: true }).waitFor()
       } finally {
         await application?.close()
         await host.close()

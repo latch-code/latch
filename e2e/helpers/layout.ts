@@ -165,7 +165,9 @@ export async function openSessions(page: Page): Promise<void> {
   if (await isPhone(page)) await mainNavigation(page).getByRole('button', { name: 'Code', exact: true }).click()
   else
     await page
-      .getByRole('button', { name: /^返回会话/u })
+      .locator('.settings-back-line')
+      .getByRole('button', { name: '返回', exact: true })
+      .or(page.locator('.titlebar').getByRole('button', { name: '返回会话', exact: true }))
       .locator('visible=true')
       .first()
       .click()

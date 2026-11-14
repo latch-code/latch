@@ -320,7 +320,7 @@ function Buttons() {
             </Button>
           </div>
         </Cell>
-        <Cell caption="此刻按键生效：键帽在按钮上（触屏不画）">
+        <Cell caption="此刻按键生效：快捷键写在按钮上（触屏不画）">
           <div className="gallery-actions">
             <Button variant="ghost" menu>
               更多
@@ -334,7 +334,7 @@ function Buttons() {
           </div>
         </Cell>
       </Row>
-      <Row label="键帽">
+      <Row label="快捷键">
         {STATES.map(([caption, force]) => (
           <Cell key={caption} caption={caption} force={force}>
             <Button variant="outline" keys={['esc']}>

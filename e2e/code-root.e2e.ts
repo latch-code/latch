@@ -88,7 +88,8 @@ describe('a start directory inside Latch’s program directory', () => {
 
       // The session that works there: the project's popover, and the panel's page on a phone.
       if (viewport.name === 'phone') {
-        await page.getByRole('dialog', { name: '新会话', exact: true }).getByRole('button', { name: '取消', exact: true }).click()
+        // The new session was the home's input: the list is one step back.
+        await backToPhoneSessions(page)
         await page.locator('.phone-list').locator(`[data-task-id="${sessionId}"]`).click()
       } else await page.locator(`[data-task-id="${sessionId}"]`).first().click()
       // The conversation is read in, so the capture shows it beside the warning rather than the loading line.

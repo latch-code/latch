@@ -50,6 +50,11 @@ describe('workbench key routing', () => {
     expect(workbenchShortcut(key('Comma', { altKey: true }), false)).toBe('settings')
     expect(workbenchShortcut(key('KeyB', { altKey: true, shiftKey: true }), false)).toBe('side-panel')
     expect(workbenchShortcut(key('KeyB', { metaKey: true, altKey: true }), true)).toBe('side-panel')
+    // ⌥⌘L, and a browser's Alt Shift L: the other workbench layout, on any page.
+    expect(workbenchShortcut(key('KeyL', { metaKey: true, altKey: true }), true)).toBe('layout')
+    expect(workbenchShortcut(key('KeyL', { altKey: true, shiftKey: true }), false)).toBe('layout')
+    expect(workbenchShortcut(key('KeyL', { metaKey: true }), true)).toBe('compose')
+    expect(shortcutWorksOnPage('layout')).toBe(true)
     expect(workbenchShortcut(key('KeyB', { metaKey: true }), true)).toBe('sidebar')
     expect(workbenchShortcut(key('KeyN', { altKey: true, isComposing: true }), false)).toBeNull()
     expect(workbenchShortcut(key('KeyE', { metaKey: true, shiftKey: true }), true)).toBe('files')
@@ -161,6 +166,8 @@ describe('workbench key routing', () => {
       expect(shortcutKeys(id as keyof typeof before, true), id).toBe(desktop)
       expect(shortcutKeys(id as keyof typeof before, false, false), id).toBe(browser)
     }
+    expect(shortcutKeys('layout', true)).toBe('⌥⌘L')
+    expect(shortcutKeys('layout', false, false)).toBe('Alt Shift L')
     expect(shortcutKeys('triage-decide', true)).toBe('1 · 2')
     expect(shortcutKeys('triage-decide', false, false)).toBe('1 · 2')
     expect(shortcutKeys('browser', true)).toBe('⇧⌘B')

@@ -10,15 +10,15 @@ import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, openSession, settleShell } from './helpers/layout.ts'
+import { homeInput } from './helpers/workbench.ts'
 
-/** Opens the visible new draft: Home options on a phone, or the history/sidebar entry. */
+/** Shows the new draft, which is the home's input: already in sight, or where 新建会话 leads. */
 async function newDraft(page: Page): Promise<void> {
-  const options = page.getByRole('button', { name: '新会话选项', exact: true })
-  if (await options.isVisible()) await options.click()
-  else {
+  if (!(await page.locator('.workbench-home').isVisible())) {
     await backToPhoneSessions(page)
-    await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).click()
+    await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
   }
+  await homeInput(page).waitFor()
 }
 
 /** The test releases each delta; no paid model, token timers, or simulated Host. */
@@ -251,21 +251,29 @@ describe('streamed messages in the real workspace', () => {
     }
   })
 
-  it('says what the run does under its turn and settles it into the facts the Host recorded, the same after a reload', async () => {
+  it('says what the run does once, in the title row, and settles it into the facts the Host recorded, the same after a reload', async () => {
     const { context, page } = await open(1280, 820)
     try {
       const { id, reply } = await start(page, '检验回合脚部的进行与结算')
       const turn = page.locator('.turn').last()
       const status = turn.locator('.status-line')
       const footer = turn.locator('.turn-footer')
-      // While the turn runs the status line says so; the bar above the input has nothing to say, and there is no footer.
-      await expect.poll(() => status.textContent(), { interval: 20 }).toContain('运行中')
+      // While the turn runs the title row says so, once; under the turn it is only announced, never drawn. The bar above
+      // the input has nothing to say, and there is no footer.
+      const said = page.locator('.workspace .topbar .ui-status-word').filter({ visible: true })
+      await said.first().waitFor()
+      const announced = page.locator('.transcript p.sr-only[role="status"]')
+      await expect.poll(() => announced.last().textContent(), { interval: 20 }).toContain('运行中')
+      expect(await status.count()).toBe(0)
+      expect(await page.locator('.status-clock').count()).toBe(0)
       expect(await page.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
       expect(await footer.count()).toBe(0)
 
       reply.append('回合脚部的第一段正文。')
       await liveRow(page, id)
-      await expect.poll(() => status.textContent(), { interval: 50, timeout: 5000 }).toMatch(/\d+:\d{2}/)
+      // The clock is the title row's, written once.
+      await expect.poll(() => said.first().textContent(), { interval: 50, timeout: 5000 }).toMatch(/\d+:\d{2}/)
+      expect(await status.count()).toBe(0)
       reply.usage(1234, 340)
       reply.finish()
       await expect.poll(async () => (await host.bridge.detail(id)).summary.status, { interval: 20 }).toBe('idle')
@@ -619,7 +627,7 @@ describe('streamed messages in the real workspace', () => {
       await page.locator('[data-message-id]').filter({ hasText: '这个会话会在另一台设备上被删除。' }).waitFor()
       const removed = await page.request.delete(`${host.origin}/link/api/tasks/${encodeURIComponent(id)}`)
       expect(removed.status()).toBe(200)
-      await page.locator('.workspace.is-new').waitFor()
+      await page.locator('.workbench-home').waitFor()
       await page.getByRole('textbox', { name: '新会话消息' }).waitFor()
       await page.getByRole('status').filter({ hasText: '会话已被删除' }).waitFor()
       await connected(page)
@@ -708,16 +716,7 @@ describe('a Gemini CLI reply that broke off and was generated again', () => {
         const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await draft.fill('retry 1500')
         await draft.press('Meta+Enter')
-        const elsewhere = page.getByRole('menuitemradio', { name: /^不选项目/u }).or(page.getByRole('radio', { name: /^不选项目/u }))
-        if (
-          await elsewhere.waitFor({ timeout: 3_000 }).then(
-            () => true,
-            () => false,
-          )
-        ) {
-          await elsewhere.click()
-          await draft.press('Meta+Enter')
-        }
+        // No project is asked for first: a draft without one starts at once, in the Host's default folder.
         const transcript = page.locator('.transcript')
         const partial = transcript.locator('[data-message-id]').filter({ hasText: 'The answer is fo' })
         await partial.first().waitFor()

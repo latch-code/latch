@@ -118,25 +118,17 @@ a:hover {
 }
 
 /*
- * A key looks like a key: 18px, 4px corners, its own face with an edge and a 2px lower lip (--sh-key), 11/14·500 in
- * muted ink sitting above the lip. Only in tooltips, menu item ends, the search row and an approval's hint line.
+ * A shortcut is one run of quiet text, 「⌘N」: 11/14 in muted ink, no box and no face of its own. Only in tooltips,
+ * menu item ends, the search row and an approval's hint line.
  */
 kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 18px;
-  min-width: 18px;
-  padding: 0 var(--sp-4) var(--sp-2);
-  border-radius: var(--r-4);
-  background: var(--key);
-  box-shadow: var(--sh-key);
   color: var(--muted);
   font-family: var(--font);
   font-size: var(--fs-meta);
   line-height: var(--lh-meta);
-  font-weight: 500;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* While the theme changes (switchTheme in theme.ts) nothing transitions, so colours switch at once instead of sweeping. */

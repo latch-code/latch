@@ -15,10 +15,11 @@ const OUTPUT = 'test-results/harness-options'
 const refreshModels = (page: Page) =>
   page.getByRole('menuitem', { name: '刷新模型列表', exact: true }).or(page.getByRole('button', { name: '刷新模型列表', exact: true }))
 
+/** The new draft is the home's input: already in sight, or where 新建会话 leads. */
 async function openNew(page: Page) {
-  const options = page.getByRole('button', { name: '新会话选项', exact: true })
-  if (await options.isVisible()) await options.click()
-  else await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).click()
+  const home = page.locator('.workbench-home')
+  if (!(await home.isVisible())) await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+  await home.getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
 }
 
 /** Each level's own sentence, the same in Codex's list and in the sessions the fake agent opens. */
@@ -282,6 +283,8 @@ describe("choosing a Harness's own options before the first message", () => {
     expect(await chip(page, '模型').innerText()).toContain('Large')
     await page.reload()
     await connected(page)
+    // A reload opens the session that was open; the draft's picks wait on the home, where 新建会话 leads.
+    await startNew(page)
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Large')
     await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
     await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
@@ -506,14 +509,12 @@ describe("choosing a Harness's own options before the first message", () => {
     it(`lists the same on a phone, ${theme}`, async () => {
       const page = await open(390, theme)
       await openNew(page)
-      const sheet = page.locator('.new-session-sheet')
+      // A phone's options are the chips over the home's input; each opens its own sheet.
+      const sheet = page.locator('.workbench-home .composer-chips')
       await sheet.waitFor()
-      await sheet
-        .getByText(/列表来自上次会话|Small/u)
-        .first()
-        .waitFor()
+      await sheet.getByRole('button', { name: /^模型/u }).waitFor()
       expect(await sheet.getByText('开始后可以换', { exact: false }).count()).toBe(0)
-      await shot(page, `sheet-390-${theme}`)
+      await shot(page, `chips-390-${theme}`)
       await sheet.getByRole('button', { name: /^权限/u }).click()
       await row(page, '由模型判断').waitFor()
       expect(await row(page, '按规则放行').count()).toBe(0)
@@ -522,7 +523,7 @@ describe("choosing a Harness's own options before the first message", () => {
       await shot(page, `sheet-permission-390-${theme}`)
       // Closed with the rest shown, the next opening shows the main rows again.
       const picker = page.getByRole('dialog', { name: '权限' })
-      await picker.getByRole('button', { name: '取消', exact: true }).click()
+      await page.keyboard.press('Escape')
       await picker.waitFor({ state: 'hidden' })
       await sheet.getByRole('button', { name: /^权限/u }).click()
       await row(page, '由模型判断').waitFor()
@@ -607,7 +608,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
     const page = await open(390, 'dark')
     try {
       await openNew(page)
-      const sheet = page.locator('.new-session-sheet')
+      const sheet = page.locator('.workbench-home .composer-chips')
       await sheet.waitFor()
       expect(await sheet.getByRole('button', { name: /^Harness：/u }).getAttribute('aria-label')).toBe('Harness：Generic')
       const permission = sheet.getByRole('button', { name: /^权限：/u })
@@ -882,7 +883,7 @@ describe("choosing one of Codex's own models in a draft", () => {
       await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
       await connected(page)
       await openNew(page)
-      const sheet = page.locator('.new-session-sheet')
+      const sheet = page.locator('.workbench-home .composer-chips')
       await sheet.waitFor()
       await sheet.getByRole('button', { name: /^Harness/u }).click()
       await row(page, /^Codex/u).click()

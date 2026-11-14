@@ -359,8 +359,8 @@ export const ToolCard = memo(
     )
     const stateSlot = (
       <StatusWords state={shown} className={`tool-card-state state-${shown}`}>
-        {state === 'awaiting-approval' ? null : decision
-          && (unrun || (decision.outcome === 'allowed' && (state === 'completed' || state === 'running'))) ? (
+        {/* An allowance is on record in the row's tooltip; the slot says only a call its approval kept from running. */}
+        {state === 'awaiting-approval' ? null : decision && unrun ? (
           <DecisionWords decision={decision} />
         ) : (
           (stateWords[shown]

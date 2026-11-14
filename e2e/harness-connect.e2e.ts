@@ -92,12 +92,11 @@ describe('a Harness that cannot connect yet', () => {
     it(`says what each one needs at ${width} ${theme}`, async () => {
       const page = await open(width, theme)
       if (width === 390) {
-        await page.getByRole('button', { name: '新会话选项', exact: true }).click()
-        await page.getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
+        // A phone's new session is the home's input, with its options as chips over it.
+        await page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
         // DeepSeek Harness is not offered as if it could run.
         expect(await page.getByRole('button', { name: /DeepSeek Harness/u }).count()).toBe(0)
         await shot(page, `new-session-${width}-${theme}`)
-        await page.getByRole('button', { name: '取消', exact: true }).click()
       } else {
         // The new session's Harness menu offers no preset to a browser, since saving one is confirmed on the Mac; the
         // too-old DeepSeek Harness is listed greyed with 需要升级, never as a choice.

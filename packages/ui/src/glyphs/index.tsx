@@ -128,6 +128,14 @@ export const RefreshGlyph = defineGlyph(
     <path d="M12.75 1.5 V5 H9.25" />
   </>,
 )
+/** Running work at rest: the spinner's ring with its one full quarter, for a heading or a stopped clock. */
+export const RunningGlyph = defineGlyph(
+  'running',
+  <>
+    <circle cx="8" cy="8" r="5.75" opacity="0.22" />
+    <path d="M8 2.25 A5.75 5.75 0 0 1 13.75 8" />
+  </>,
+)
 export const ExternalGlyph = defineGlyph(
   'external',
   <>
@@ -726,6 +734,7 @@ export const LATCH_GLYPHS = {
   enter: EnterGlyph,
   undo: UndoGlyph,
   refresh: RefreshGlyph,
+  running: RunningGlyph,
   external: ExternalGlyph,
   close: CloseGlyph,
   plus: PlusGlyph,

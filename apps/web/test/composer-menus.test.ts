@@ -289,7 +289,7 @@ describe('the keys on the menu titles', () => {
         onChoose() {},
       }),
     )
-    expect(html).toMatch(/什么时候问你？<\/span><span class="menu-title-keys"[^>]*>(<kbd class="ui-kbd">[^<]+<\/kbd>){3}/u)
+    expect(html).toMatch(/什么时候问你？<\/span><span class="menu-title-keys"[^>]*><kbd class="ui-kbd">⌥⌘4<\/kbd>/u)
   })
 })
 

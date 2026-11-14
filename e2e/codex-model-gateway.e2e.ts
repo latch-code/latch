@@ -115,7 +115,6 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
             await page.setViewportSize({ width, height: 1000 })
             await page.emulateMedia({ colorScheme })
             await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-            if (!(await chip().isVisible())) await page.getByRole('button', { name: '新会话选项', exact: true }).click()
             await chip().click()
             await modelRow(names[0]!).waitFor()
             await modelRow(names[0]!).scrollIntoViewIfNeeded()

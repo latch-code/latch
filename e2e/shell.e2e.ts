@@ -6,6 +6,7 @@ import type { DeviceScope, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
+import { homeInput, switchLayout } from './helpers/workbench.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, noHorizontalOverflow, openEntry, openSessions, settleShell } from './helpers/layout.ts'
 
@@ -214,7 +215,11 @@ describe('the shell', () => {
       await page.locator('.settings-page[data-entry="settings"]').waitFor()
       await page.keyboard.press('Alt+KeyN')
       await page.locator('.settings-page').waitFor({ state: 'detached' })
-      expect(await page.locator('main.workspace').getAttribute('class')).toContain('is-new')
+      // 新会话 is the home with its input focused; the session stays open under it.
+      await page.locator('.workbench-home').waitFor()
+      await expect.poll(() => homeInput(page).evaluate(element => element === document.activeElement)).toBe(true)
+      expect(await page.locator('main.workspace').getAttribute('class')).toContain('has-task')
+      expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
       await page.context().close()
     })
 
@@ -313,9 +318,7 @@ describe('the shell', () => {
     it.each(['settings', 'all-sessions'] as const)('stays on %s when a send settles after the person moved there', async destination => {
       const page = await open(1440, 900, `壳层发送 ${destination}`)
       if (destination === 'all-sessions') {
-        await page.getByRole('button', { name: '布局', exact: true }).click()
-        await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
-        await page.locator('.app-shell[data-workbench-layout="triage"]').waitFor()
+        await switchLayout(page, 'triage')
       }
       let release: () => void = () => {}
       const held = new Promise<void>(done => {

@@ -90,8 +90,7 @@ describe('logging in to a Harness from a browser', () => {
     // Sending stays possible: the program may know better, and the refusal is what it says at that point.
     const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
     await input.fill('echo 第一轮')
-    await input.press('Meta+Enter')
-    await page.getByRole('menuitemradio', { name: /^不选项目/u }).click()
+    // No project is asked for first: without one the draft starts at once.
     await input.press('Meta+Enter')
     await refusal(page).waitFor()
     const end = page.locator('.run-end')

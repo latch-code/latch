@@ -173,6 +173,7 @@ function DraftPreview({
   )
 }
 
+/** An image is a thumbnail; any other attachment is a chip one line high: its glyph, name, size and ×. */
 function DraftAttachmentCard({
   item,
   controller,
@@ -218,7 +219,7 @@ function DraftAttachmentCard({
   ) : (
     <>
       <span className="attachment-file-icon">
-        <Icon icon={FileGlyph} size={20} />
+        <Icon icon={FileGlyph} size={14} />
       </span>
       <span className="attachment-file-copy">
         <span className="attachment-name">
@@ -250,6 +251,7 @@ function DraftAttachmentCard({
       <IconButton
         label={`移除附件 ${item.file.name}`}
         icon={CloseGlyph}
+        {...(image ? {} : { size: 'xs' as const })}
         disabled={locked}
         className="attachment-remove"
         onClick={() => controller.remove(item.key)}

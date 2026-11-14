@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useState, type RefObject } from 'react'
 import { PlugZap } from 'lucide-react'
-import { AGENT_PRESETS, type AgentPresetSettings, type AppSnapshot, type ModelRef, type TaskSummary } from '@latch/protocol'
+import { AGENT_PRESETS, type AgentPresetSettings, type ModelRef } from '@latch/protocol'
 import { Button, Collapse, CopyButton, ICON_STROKE, Icon, ChevronRightGlyph, RefreshGlyph, WarningGlyph } from '@latch/ui'
 import { api } from '../core/api.ts'
 import { foundWithoutAdapter, presetsFound } from '../core/agentDetection.ts'
@@ -9,10 +9,9 @@ import { ProviderSetupPanel } from '../components/SetupPanels.tsx'
 import type { StartBlock } from '../composerChoice.ts'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { useComputerName } from '../components/Pickers.tsx'
-import { taskHarness } from '../components/Sidebar.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { SETUP_COPY } from '../core/securityCopy.ts'
-import { middleEllipsis, relativeTime } from '../format.ts'
+import { middleEllipsis } from '../format.ts'
 
 /**
  * Why a session cannot start and the one thing that fixes it, each said plainly. A missing model service is added right
@@ -354,82 +353,5 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
         </>
       )}
     </section>
-  )
-}
-
-/** Under the input of a new session in a project: that project's latest sessions, each one click from opening. */
-export function RecentSessions({
-  snapshot,
-  sessions,
-  onOpen,
-}: {
-  snapshot: AppSnapshot
-  sessions: readonly TaskSummary[]
-  onOpen: (id: string) => void
-}) {
-  if (!sessions.length) return null
-  const now = new Date()
-  return (
-    <section className="new-session-recent" aria-label="这个项目最近的会话">
-      <h3>这个项目最近的会话</h3>
-      <ul>
-        {sessions.map(task => {
-          const harness = taskHarness(snapshot, task)
-          const title = task.title || '未命名会话'
-          return (
-            <li key={task.id}>
-              <button
-                type="button"
-                className="new-session-recent-row"
-                onClick={() => {
-                  onOpen(task.id)
-                }}>
-                <MarkTile mark={harness.mark} size={16} />
-                <span className="new-session-recent-title">
-                  <span>{title}</span>
-                  <span className="new-session-recent-harness">{harness.label}</span>
-                </span>
-                <time dateTime={task.updatedAt}>{relativeTime(task.updatedAt, now)}</time>
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-    </section>
-  )
-}
-
-/**
- * The new-session page: the question, centred on its ink, then the input, on a quiet dot grid that fades before it
- * reaches anything to read. On a first open what was found sits above the input; in a project its latest sessions
- * sit under it.
- */
-export function NewSession({
-  title,
-  composer,
-  setup,
-  found,
-  history,
-  recent,
-}: {
-  title: ReactNode
-  composer: ReactNode
-  setup?: ReactNode
-  found?: ReactNode
-  /** 接入已有会话, right under the input. */
-  history?: ReactNode
-  recent?: ReactNode
-}) {
-  return (
-    <div className="new-session">
-      <div className="new-session-inner">
-        <h2 className="new-session-title">{title}</h2>
-        {found}
-        {setup}
-        <div>{composer}</div>
-        {history}
-        {recent}
-      </div>
-    </div>
   )
 }

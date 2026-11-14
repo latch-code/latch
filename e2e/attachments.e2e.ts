@@ -9,11 +9,11 @@ import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { closeActiveFile, openSession, openSettings } from './helpers/layout.ts'
+/** The new draft is the home's input on every width: already in sight, or where 新建会话 leads. */
 async function newDraft(page: Page) {
-  if ((await page.locator('.phone-tabs').count()) > 0) {
-    await page.getByRole('button', { name: '新会话选项', exact: true }).click()
-    await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
-  } else await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+  const home = page.locator('.workbench-home')
+  if (!(await home.isVisible())) await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+  await home.getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
 }
 const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64')
 describe('private attachments through the composer', () => {
@@ -69,11 +69,6 @@ describe('private attachments through the composer', () => {
       for (const width of [1440, 768, 390, 320]) {
         await page.setViewportSize({ width, height: 1000 })
         await page.screenshot({ path: `test-results/attachments/mixed-${width}-arrival.png`, animations: 'disabled' })
-        if (width < 720 && !(await page.getByRole('dialog', { name: '新会话', exact: true }).isVisible())) {
-          const options = page.getByRole('button', { name: '新会话选项', exact: true })
-          if (await options.isVisible()) await options.click()
-          else await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
-        }
         for (const theme of ['light', 'dark'] as const) {
           await page.emulateMedia({ colorScheme: theme })
           const visible = page.locator('.attachment-drafts').filter({ visible: true })
@@ -81,6 +76,13 @@ describe('private attachments through the composer', () => {
           expect(
             await visible.locator('.attachment-draft[data-kind="file"]').evaluate(node => node.getBoundingClientRect().width),
           ).toBeLessThanOrEqual(224)
+          // Anything but an image is a chip one line high; only an image is a thumbnail.
+          const [chip, thumbnail] = await Promise.all([
+            visible.locator('.attachment-draft[data-kind="file"]').boundingBox(),
+            visible.locator('.attachment-draft:has(img)').boundingBox(),
+          ])
+          expect(chip!.height).toBeLessThanOrEqual(40)
+          expect(thumbnail!.height).toBeGreaterThan(chip!.height)
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
           await page.screenshot({ path: `test-results/attachments/mixed-${width}-${theme}.png`, animations: 'disabled' })
           await page
@@ -116,7 +118,7 @@ describe('private attachments through the composer', () => {
         await enrollBrowser(page, host, { name: `附件 ${width}`, scopes: ['admin'] })
         await newDraft(page)
         await expect.poll(() => page.getByRole('button', { name: '添加文件…', exact: true }).isEnabled()).toBe(true)
-        const composer = width === 390 ? page.getByRole('dialog', { name: '新会话', exact: true }) : page
+        const composer = width === 390 ? page.locator('.workbench-home') : page
         await composer.getByLabel('选择附件', { exact: true }).setInputFiles({ name: 'sample.png', mimeType: 'image/png', buffer: image })
         const drafts = composer.getByLabel('消息附件', { exact: true })
         await drafts.getByRole('button', { name: 'sample.png', exact: true }).waitFor({ state: 'visible' })
@@ -127,7 +129,7 @@ describe('private attachments through the composer', () => {
         const dialog = page.getByRole('dialog', { name: 'sample.png', exact: true })
         await expect.poll(() => dialog.locator('img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
         await dialog.getByRole('button', { name: '关闭', exact: true }).click()
-        await page.getByRole('button', { name: width === 390 ? '开始' : '发送', exact: true }).click()
+        await composer.getByRole('button', { name: '发送', exact: true }).click()
         await page.getByText('已收到 1 个附件。', { exact: true }).waitFor()
         const message = page.locator('.message-user')
         await expect
@@ -332,7 +334,8 @@ describe('private attachments through the composer', () => {
     try {
       await enrollBrowser(page, host, { name: '文件拖入', scopes: ['admin'] })
       await newDraft(page)
-      const surface = page.locator('main.workspace')
+      // The new draft is the home's input, so the home is what a file is dragged onto.
+      const surface = page.locator('.workbench-home')
       const data = await page.evaluateHandle(base64 => {
         const transfer = new DataTransfer()
         transfer.items.add(new File([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], 'dropped.png', { type: 'image/png' }))
@@ -420,21 +423,22 @@ describe('the attach button and @ on every Harness', () => {
           await sheet.getByText(`Late ${width} ${theme}`, { exact: true }).click()
           // Any choice closes the picker, the Harness already chosen too.
           await sheet.waitFor({ state: 'hidden' })
-          await page.locator('.new-session-sheet .ui-value-picker-text').getByText(`Late ${width} ${theme}`, { exact: true }).waitFor()
+          await page
+            .locator('.workbench-home .composer-chips [data-composer-control="harness"]')
+            .getByText(`Late ${width} ${theme}`, { exact: true })
+            .first()
+            .waitFor()
         } else await page.getByRole('menuitemradio', { name: lateName }).first().click()
         const add = page.getByRole('button', { name: '添加文件…', exact: true })
         // No hover on a touch screen: pressing says why, in place.
         await add.click()
-        const notice = page
-          .getByRole('dialog', { name: '新会话', exact: true })
-          .locator('.ui-notice-text')
-          .or(page.locator('main.workspace:not([inert]) .ui-notice-text'))
+        const notice = page.locator('.workbench-home .ui-notice-text').or(page.locator('main.workspace:not([inert]) .ui-notice-text'))
         await notice.getByText('发出第一条消息后可添加文件', { exact: true }).waitFor()
         await page.screenshot({ path: `${shots}/${width}-${theme}-not-started.png`, animations: 'disabled' })
         // Started from another device: this page learns it without a reload.
         await start(late, `已启动 ${width} ${theme}`)
         await expect.poll(() => add.getAttribute('data-unavailable'), { timeout: 15_000 }).toBeNull()
-        const composer = phone ? page.getByRole('dialog', { name: '新会话', exact: true }) : page
+        const composer = phone ? page.locator('.workbench-home') : page
         await composer.getByLabel('选择附件', { exact: true }).setInputFiles({
           name: 'tool.bin',
           mimeType: 'application/octet-stream',
@@ -447,10 +451,8 @@ describe('the attach button and @ on every Harness', () => {
         await drafts.getByRole('button', { name: '移除附件 tool.bin', exact: true }).click()
         // A Harness that takes none says so at once, never 正在检查 for good.
         const plainSession = await start(plain, `不收附件 ${width} ${theme}`)
-        if (phone) {
-          await page.locator('.new-session-sheet').getByRole('button', { name: '取消', exact: true }).first().click()
-          await openSession(page, plainSession)
-        } else {
+        if (phone) await openSession(page, plainSession)
+        else {
           await page.keyboard.press('Meta+k')
           const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
           await palette.getByRole('searchbox').fill(`不收附件 ${width} ${theme}`)

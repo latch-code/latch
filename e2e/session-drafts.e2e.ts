@@ -301,8 +301,14 @@ it('keeps text drafts across a reload, per session and for a new session, and cl
     await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
     const fresh = page.getByRole('textbox', { name: '新会话消息', exact: true })
     await fresh.fill('新会话的草稿')
+    // 新建会话 is the home over session A, which stayed open: its own draft is untouched.
+    expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
+    expect(await page.locator('main.workspace textarea').first().inputValue()).toBe('草稿 A：还没发')
     await page.reload()
     await connected(page)
+    // A reload opens the session that was open; the home's draft waits where 新建会话 leads.
+    if (!(await page.locator('.workbench-home').isVisible()))
+      await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
     await expect.poll(() => fresh.inputValue()).toBe('新会话的草稿')
     // Deleted on another device while this page shows something else: its text goes from storage.
     expect((await owner.request('tasks/' + a.summary.id, { method: 'DELETE' })).status).toBe(200)

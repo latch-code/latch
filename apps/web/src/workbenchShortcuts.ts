@@ -14,6 +14,8 @@ export type WorkbenchAction =
   | 'compose'
   | 'side-panel'
   | 'settings'
+  /** ⌥⌘L: the other workbench layout. */
+  | 'layout'
   /** ⇧⌘1 and ⇧⌘2: Code and 我的 Agent. */
   | { kind: 'space'; space: 'code' | 'agents' }
   /** ⌘1 to ⌘9: the Nth session as the sidebar draws it. */
@@ -66,6 +68,7 @@ const SHORTCUTS = [
   { id: 'palette', label: '搜索', desktop: '⌘K', browser: 'Mod K' },
   { id: 'sidebar', label: '收起或展开侧栏', desktop: '⌘B', browser: 'Alt B' },
   { id: 'side-panel', label: '侧边面板', desktop: '⌥⌘B', browser: 'Alt Shift B' },
+  { id: 'layout', label: '切换侧栏、顶栏布局', desktop: '⌥⌘L', browser: 'Alt Shift L' },
   { id: 'changes', label: '改动', desktop: '⌘D', browser: 'Alt D' },
   { id: 'terminal', label: '终端', desktop: '⌘J', browser: 'Alt J' },
   { id: 'browser', label: '浏览器', desktop: '⇧⌘B', browser: null },
@@ -81,7 +84,7 @@ const SHORTCUTS = [
   { id: 'session', label: '跳到第 N 个会话', desktop: '⌘1 … ⌘9', browser: 'Alt 1 … Alt 9' },
   { id: 'next-approval', label: '下一个等你处理的请求', desktop: '⌥⌘A', browser: 'Alt Shift A' },
   { id: 'decide', label: '允许、拒绝选中的请求', desktop: '⌘⏎ · esc', browser: 'Mod Enter · Esc' },
-  { id: 'triage-decide', label: '分拣台：拒绝、允许聚焦的请求', desktop: '1 · 2', browser: '1 · 2' },
+  { id: 'triage-decide', label: '顶栏布局：拒绝、允许聚焦的请求', desktop: '1 · 2', browser: '1 · 2' },
   { id: 'compose', label: '聚焦输入框', desktop: '⌘L', browser: 'Alt L' },
   { id: 'controls', label: 'Harness · 模型 · 思考 · 权限', desktop: '⌥⌘1 … ⌥⌘4', browser: 'Alt Shift 1 … Alt Shift 4' },
   { id: 'recall', label: '空输入框取回上一条消息', desktop: '↑', browser: '↑' },
@@ -131,6 +134,9 @@ export function shortcutCaps(keys: string): Array<{ join: '或' | '…' | null; 
   )
 }
 
+/** A part's keys as one run of text: 「⌘N」 where the modifiers are glyphs, 「Alt N」 where they are words. */
+export const capsText = (caps: readonly string[]): string => caps.join(caps.some(cap => /^[⌘⇧⌥⌃]$/u.test(cap)) ? '' : ' ')
+
 const BUTTON_KEYS: Record<string, string> = { '⌘': 'mod', '⇧': 'shift', '⌥': 'alt', '⌃': 'ctrl', Alt: 'alt', Shift: 'shift', Ctrl: 'ctrl' }
 
 /** A one-part shortcut as a Button's `keys` (`['mod', 'N']`), for the button that key presses; null for what this client lacks. */
@@ -148,6 +154,7 @@ export function shortcutWorksOnPage(action: WorkbenchAction): boolean {
     || action === 'sidebar'
     || action === 'shortcuts'
     || action === 'settings'
+    || action === 'layout'
     || (typeof action === 'object' && action.kind === 'space')
   )
 }
@@ -168,9 +175,11 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
     return index <= COMPOSER_CONTROLS.length ? { kind: 'control', control: COMPOSER_CONTROLS[index - 1]! } : null
   }
   if (desktop && event.code === 'KeyB' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'side-panel'
+  if (desktop && event.code === 'KeyL' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'layout'
   const modifier = desktop ? (event.metaKey || event.ctrlKey) && !event.altKey : event.altKey && !event.metaKey && !event.ctrlKey
   if (!modifier) return null
   if (!desktop && event.code === 'KeyB' && event.shiftKey) return 'side-panel'
+  if (!desktop && event.code === 'KeyL' && event.shiftKey) return 'layout'
   if (desktop && event.code === 'KeyB' && event.shiftKey) return 'browser'
   if (event.code === 'KeyE' && event.shiftKey) return 'files'
   // ⌘[ and ⌘] are a Mac's back and forward; moving between sessions is moving between tabs, which it shifts.

@@ -9,13 +9,10 @@ import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSection, settleShell } from './helpers/layout.ts'
+import { switchLayout } from './helpers/workbench.ts'
 
 const OUT = 'test-results/workbench-states'
-async function layout(page: Page, value: 'overview' | 'triage') {
-  await page.getByRole('button', { name: '布局', exact: true }).locator('visible=true').first().click()
-  await page.getByRole('menuitemradio', { name: value === 'overview' ? '总览' : '分拣台', exact: true }).click()
-  await settleShell(page)
-}
+const layout = switchLayout
 async function shot(page: Page, name: string, width: number, theme: 'light' | 'dark') {
   await page.setViewportSize({ width, height: width < 768 ? 844 : 1000 })
   await page.emulateMedia({ colorScheme: theme })
@@ -139,7 +136,7 @@ it('renders the v8 empty, loading, many, limited, read-only and offline states f
     await shot(page, 'overview-empty', 1440, 'dark')
     const emptyCard = await page.locator('.workbench-home-composer .composer').boundingBox()
     const emptyStack = await page.locator('.workbench-home-composer .composer-stack').boundingBox()
-    expect(emptyCard!.y).toBe(40)
+    expect(emptyCard!.y).toBe(48)
     expect(emptyStack!.height).toBe(emptyCard!.height)
     await layout(page, 'triage')
     await shot(page, 'triage-empty', 1440, 'dark')

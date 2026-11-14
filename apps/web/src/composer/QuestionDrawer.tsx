@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { AgentQuestion, QuestionAnswer, QuestionReceipt, QuestionResult, QuestionSubmission } from '@latch/protocol'
-import { Button, InlineNotice, Kbd, Tooltip } from '@latch/ui'
+import { Button, Icon, InlineNotice, Kbd, MessageGlyph, Tooltip } from '@latch/ui'
 import { api, inlineError, MessageError } from '../core/api.ts'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { cardTakesKeys, useArmed } from './useArmed.ts'
@@ -299,6 +299,9 @@ export function QuestionDrawer({
       data-arming={armed ? undefined : ''}
       aria-label="Harness 提问">
       <div className="question-heading">
+        <span className="question-kind" aria-hidden="true">
+          <Icon icon={MessageGlyph} size={16} />
+        </span>
         <span>{presentation ? <VisibleText text={current.label} /> : <>{asker} 想问你</>}</span>
         {question.questions.length > 1 && (
           <span className="question-count">
@@ -345,7 +348,7 @@ export function QuestionDrawer({
       {canAnswer && (current.multiple || draft.step > 0 || draft.pending) && (
         <div className="question-actions">
           {draft.step > 0 && !draft.pending && (
-            <Button size="sm" disabled={state.busy} onClick={state.back}>
+            <Button size="sm" variant="outline" disabled={state.busy} onClick={state.back}>
               上一题
             </Button>
           )}

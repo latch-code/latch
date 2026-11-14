@@ -13,7 +13,11 @@ import {
   type MenuTriggerProps,
   ChevronLeftGlyph,
   ChevronRightGlyph,
+  EditGlyph,
   LockGlyph,
+  TerminalGlyph,
+  Tooltip,
+  WaitingGlyph,
   WarningGlyph,
 } from '@latch/ui'
 import { useViewport } from '../breakpoints.ts'
@@ -25,7 +29,7 @@ import type { ApprovalGate } from '../core/permissions.ts'
 import { APPROVAL_COPY, APPROVAL_OPTION_LABELS, CONFIRMATION_COPY, RISK_CLAUSE } from '../core/securityCopy.ts'
 import { ArgumentList } from '../components/ArgumentList.tsx'
 import { DiffView, PREVIOUS_NOTES } from '../components/DiffView.tsx'
-import { hasHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
+import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { cardTakesKeys, useArmed } from './useArmed.ts'
 
 /**
@@ -263,7 +267,9 @@ export interface ApprovalDrawerProps {
 
 /**
  * The request the session waits on, joined to the composer and as wide as it: its title is what it asks to do, after
- * an amber dot, with the tool's ID, 查看改动 and the pager under it, and 更多 · 拒绝 · 允许 beside it. A risky request
+ * the amber glyph of its kind (a pencil for a write, a terminal for a command), with 查看改动 and the pager under it, and
+ * 更多 · 拒绝 · 允许 beside it; a card on the workbench or in a conversation keeps the tool's ID behind the title's
+ * tooltip, and folds its preview from 更多. A risky request
  * adds its red reason and the Host's sentence on a line of their own, an agent's ask the line that it is only advisory.
  * Buttons arm after 320ms, Enter does nothing, Esc refuses once and ⌘⏎ allows an ordinary request from inside the card;
  * a key's cap is drawn only while that key would do it. A routine diff unfolds in place on request; everything else
@@ -457,8 +463,12 @@ function ApprovalPanel({
           },
         }))
       : []),
+    ...(hasPreview && open ? [{ id: '~fold', label: APPROVAL_COPY.hidePreview, onSelect: () => setOpen(false) }] : []),
     ...(onStop ? [{ id: '~stop', label: APPROVAL_COPY.stopTurn, onSelect: onStop }] : []),
   ]
+  const toolId = presentation && toolName && toolName !== action ? toolName : undefined
+  // The glyph says what kind of decision this is; any other tool's request takes the mark of waiting.
+  const kindIcon = tool?.kind === 'execute' ? TerminalGlyph : tool?.kind === 'edit' || diffs.length > 0 ? EditGlyph : WaitingGlyph
   // One name at every width: a button with its chevron on a desk, a full row that opens a sheet on a phone.
   const moreTrigger = (props: MenuTriggerProps) => (
     <Button {...props} variant="ghost" size={phone ? 'lg' : 'md'} menu block={phone} className="approval-more" disabled={running}>
@@ -504,23 +514,27 @@ function ApprovalPanel({
       <div className="approval-row">
         <div className="approval-what">
           <div className="approval-title">
-            <span className="approval-dot" aria-hidden="true" />
-            {command && !requester ? (
-              <ApprovalCommand className="approval-object is-command" text={heading} />
-            ) : (
-              <span className="approval-object">
-                <VisibleText text={heading} />
-              </span>
-            )}
+            <span className="approval-kind" aria-hidden="true">
+              <Icon icon={kindIcon} size={16} />
+            </span>
+            <Tooltip content={toolId && escapeHiddenCharacters(toolId)}>
+              {command && !requester ? (
+                <ApprovalCommand className="approval-object is-command" text={heading} />
+              ) : (
+                <span className="approval-object">
+                  <VisibleText text={heading} />
+                </span>
+              )}
+            </Tooltip>
             {stat && (
               <span className="approval-stat">
                 <span className="stat-add">+{stat.add}</span>
                 {stat.del > 0 && <span className="stat-del"> −{stat.del}</span>}
               </span>
             )}
-            {presentation && toolName && toolName !== action && (
+            {toolId && (
               <code className="workbench-tool-name">
-                <VisibleText text={toolName} />
+                <VisibleText text={toolId} />
               </code>
             )}
           </div>
@@ -546,17 +560,18 @@ function ApprovalPanel({
                 子 Agent · <VisibleText text={approval.subagent} />
               </span>
             )}
-            {hasPreview && (
-              <button
-                type="button"
+            {hasPreview && !open && (
+              <Button
+                variant="outline"
+                size="xs"
                 className="approval-see"
-                aria-expanded={open}
+                aria-expanded={false}
                 aria-controls={previewId}
                 onClick={() => {
-                  setOpen(!open)
+                  setOpen(true)
                 }}>
-                {open ? APPROVAL_COPY.hidePreview : diffs.length > 0 ? APPROVAL_COPY.viewChange : APPROVAL_COPY.viewDetail}
-              </button>
+                {diffs.length > 0 ? APPROVAL_COPY.viewChange : APPROVAL_COPY.viewDetail}
+              </Button>
             )}
             {total > 1 && (
               <span className="approval-pager">

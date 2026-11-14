@@ -74,8 +74,9 @@ const approvalCard = (extra: Partial<Approval>, status?: ApprovalStatus, gate?: 
       ...(gate ? { gateFor: () => gate } : {}),
     }),
   )
-/** Whether a card offers 更多, the one name of its other choices at every width. */
-const offersMore = (html: string) => /<button[^>]*class="ui-button approval-more"[^>]*>更多<svg/u.test(html)
+/** Whether 更多 offers the broader choice; folding an open preview is in the same menu and widens nothing. */
+const offersMore = (html: string) =>
+  /<button[^>]*class="ui-button approval-more"[^>]*>更多<svg/u.test(html) && html.includes(`data-label="${APPROVAL_COPY.allowSession}"`)
 /** The words on a card's buttons, in order. */
 const buttonLabels = (html: string) =>
   [...html.matchAll(/<button[^>]*class="ui-button"[^>]*>(?:<svg.*?<\/svg>)?([^<]+)<\/button>/g)].map(match => match[1])
@@ -176,7 +177,9 @@ describe('decided approvals', () => {
     const allowed = decided({ outcome: 'allowed', at, via: 'this-mac' }, 'completed', { startedAt: at, completedAt: at })
     expect(allowed).toMatch(/<button type="button" class="tool-card-header"[^>]*title="[^"]*已允许 · [^"]*在这台 Mac 上决定"/u)
     expect(allowed).not.toContain(' tool-decision"')
-    expect(stateSlot(allowed)).toMatch(/data-outcome="allowed">已允许 · \d{2}:\d{2}$/u)
+    // The row's end keeps only how long it ran: the allowance and its time are in the tooltip.
+    expect(stateSlot(allowed)).toBe('')
+    expect(allowed.match(/已允许/gu)).toHaveLength(1)
     const cancelled = decided({ outcome: 'cancelled', at }, 'cancelled')
     // The words say nobody answered; the tooltip adds only when.
     expect(stateSlot(cancelled)).toMatch(/data-outcome="cancelled">已取消（会话停止）$/u)
@@ -465,7 +468,7 @@ describe('approval cards', () => {
     expect(html).not.toContain('line 7<')
   })
 
-  it('titles a request by what it asks to do, after an amber dot, puts 更多 first, and pages through several requests', () => {
+  it('titles a request by what it asks to do, after the glyph of its kind, puts 更多 first, and pages through several requests', () => {
     const html = approvalCard({
       risk: 'R1',
       options: [...ALWAYS],
@@ -476,12 +479,12 @@ describe('approval cards', () => {
       },
     })
     expect(html).toMatch(
-      /<div class="approval-title"><span class="approval-dot" aria-hidden="true"><\/span><span class="approval-object">写入文件 docs\/notes\.md<\/span><span class="approval-stat"><span class="stat-add">\+2<\/span>/u,
+      /<div class="approval-title"><span class="approval-kind" aria-hidden="true"><svg[^>]*latch-glyph-edit[^>]*>.*?<\/svg><\/span><span class="approval-object">写入文件 docs\/notes\.md<\/span><span class="approval-stat"><span class="stat-add">\+2<\/span>/u,
     )
     // No word of waiting stands in for the title, and the tool's ID and 查看改动 sit on the line under it.
     expect(html).not.toMatch(/等你处理|需要你允许/u)
     expect(html).toMatch(
-      /<div class="approval-meta"><code class="tool-card-name">write_file<\/code><button type="button" class="approval-see"[^>]*>查看改动<\/button>/u,
+      /<div class="approval-meta"><code class="tool-card-name">write_file<\/code><button[^>]*class="ui-button approval-see"[^>]*>查看改动<\/button>/u,
     )
     // 更多 · 拒绝 · 允许.
     const order = [...html.matchAll(/<button[^>]*class="ui-button(?: approval-more)?"[^>]*>([^<]+)/gu)].map(match => match[1])
@@ -499,6 +502,37 @@ describe('approval cards', () => {
       }),
     )
     expect(two).toContain('<span>2/2</span>')
+  })
+
+  it('on the workbench marks a command by its glyph, keeps the tool ID for the title’s tooltip and folds from 更多', () => {
+    const html = renderToStaticMarkup(
+      createElement(ApprovalDrawer, {
+        presentation: 'workbench',
+        approvals: [
+          approval({
+            risk: 'R1',
+            toolName: 'shell',
+            arguments: JSON.stringify({ command: 'pnpm test' }),
+            tool: { kind: 'execute', title: '运行测试', input: JSON.stringify({ command: 'pnpm test' }) },
+          }),
+        ],
+        messages: [],
+        index: 0,
+        onIndex: noop,
+        gateFor: item => approvalActions(item, null),
+        busy: new Map(),
+        statuses: new Map(),
+        onDecide: noop,
+      }),
+    )
+    expect(html).toMatch(/<span class="approval-kind" aria-hidden="true"><svg[^>]*latch-glyph-terminal/u)
+    // The ID is the tooltip of the title; the written copy is only for screens that cannot hover.
+    expect(html).toMatch(/role="tooltip" class="ui-tooltip"><span>shell<\/span>/u)
+    expect(html).not.toContain('tool-card-name')
+    // An open preview has no link under the title: 收起 is one of 更多.
+    expect(html).toMatch(/class="approval-preview"[^>]*data-open=""/u)
+    expect(html).not.toContain('approval-see')
+    expect(html).toContain(`data-label="${APPROVAL_COPY.hidePreview}"`)
   })
 
   it('takes no press until it has armed, so a click meant for what was there cannot land on it', () => {
@@ -766,15 +800,13 @@ describe('composer', () => {
       'thinking',
       'send',
     ])
-    // A phone's session: the same two groups as two rows inside the frame, nothing outside it.
+    // A phone: the four controls are one row of chips above the line of ＋, the input and send; no toolbar.
     const phone = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', inline: true, controls, trailing }))
-    expect(phone).toContain('data-rows="two"')
-    expect(phone.indexOf('data-composer-control="thinking"')).toBeLessThan(phone.indexOf('</form>'))
-    expect(order(phone)).toEqual(['controls', 'model', 'end', 'thinking', 'send'])
-    // The new-session sheet has its own rows and its 开始 in its header.
-    expect(renderToStaticMarkup(createElement(Composer, { ...base, variant: 'sheet', controls, trailing }))).not.toContain(
-      'composer-toolbar',
-    )
+    expect(phone).not.toContain('composer-toolbar')
+    expect(phone.indexOf('composer-chips')).toBeLessThan(phone.indexOf('composer-line'))
+    expect(phone.indexOf('data-composer-control="thinking"')).toBeLessThan(phone.indexOf('composer-line'))
+    expect(phone.indexOf('composer-line')).toBeLessThan(phone.indexOf('<textarea'))
+    expect(phone.indexOf('<textarea')).toBeLessThan(phone.indexOf('aria-label="发送"'))
   })
 
   it('shows a device that may only watch a dashed frame with the reason instead of the input', () => {

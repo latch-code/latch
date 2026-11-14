@@ -1,22 +1,18 @@
-import { Columns3 } from 'lucide-react'
 import {
   Button,
   OverviewGlyph,
   ScheduleGlyph,
   Icon,
   IconButton,
-  Menu,
   NewSessionGlyph,
   SearchGlyph,
   SettingsGlyph,
   PluginsGlyph,
   PanelLeftGlyph,
-  ChevronLeftGlyph,
   HistoryGlyph,
   LaptopGlyph,
   Kbd,
 } from '@latch/ui'
-import { setPreference, type WorkbenchLayout } from '../preferences.ts'
 import { currentShell } from '../core/shell.ts'
 import { ShellDelegate, SpaceButtons, SpaceSwitch, shellSpaces } from './SpaceNav.tsx'
 import { BrandMark } from '../components/ui.tsx'
@@ -24,7 +20,6 @@ import { ComputerMenu } from '../components/Computers.tsx'
 import { useComputers } from '../core/computers.ts'
 import { computerName } from '../core/securityCopy.ts'
 import type { ShellState } from './useShellLayout.tsx'
-import { useViewport } from '../breakpoints.ts'
 
 /** On tablets the project tree is a drawer beside a persistent 60px navigation rail. */
 export function TabletRail({ shell }: { shell: ShellState }) {
@@ -55,47 +50,6 @@ export function TabletRail({ shell }: { shell: ShellState }) {
   )
 }
 
-/** The same choice as Settings, available without leaving a draft or a reading position. */
-export function LayoutMenu({ value }: { value: WorkbenchLayout }) {
-  const phone = useViewport() === 'phone'
-  const choose = (layout: WorkbenchLayout) => {
-    setPreference('workbenchLayout', layout)
-    // Switching the navigation replaces this trigger; return keyboard focus to its visible counterpart.
-    requestAnimationFrame(() => {
-      const trigger = [...document.querySelectorAll<HTMLElement>('[data-layout-trigger]')].find(
-        element => element.checkVisibility({ visibilityProperty: true }) && !element.closest('[inert]'),
-      )
-      trigger?.focus({ preventScroll: true })
-    })
-  }
-  return (
-    <Menu
-      label="布局"
-      selection
-      sections={[
-        {
-          id: 'layout',
-          items: [
-            { id: 'overview', label: '总览', checked: value === 'overview', onSelect: () => choose('overview') },
-            { id: 'triage', label: '分拣台', checked: value === 'triage', onSelect: () => choose('triage') },
-          ],
-        },
-      ]}
-      trigger={props => (
-        <Button
-          {...props}
-          data-layout-trigger=""
-          variant="ghost"
-          aria-label="布局"
-          menu
-          icon={phone ? undefined : value === 'overview' ? OverviewGlyph : Columns3}>
-          {phone ? '布局' : value === 'overview' ? '总览' : '分拣台'}
-        </Button>
-      )}
-    />
-  )
-}
-
 export function WorkbenchComputer({ shell }: { shell: ShellState }) {
   const computers = useComputers()
   if (!shell.entries.includes('settings'))
@@ -114,7 +68,7 @@ export function WorkbenchComputer({ shell }: { shell: ShellState }) {
   )
 }
 
-/** Triage's navigation is above the work, leaving its home the whole width. */
+/** The 顶栏 layout's navigation is above the work, leaving its home the whole width. */
 export function WorkbenchNav({ shell }: { shell: ShellState }) {
   const spaces = shellSpaces(shell)
   return (
@@ -133,7 +87,6 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
           onClick={() => (shell.sidebarColumn ? shell.setSidebarShut(!shell.sidebarCollapsed) : shell.drawer.show())}
         />
       )}
-      {shell.route.overview && <IconButton label="返回会话" icon={ChevronLeftGlyph} onClick={() => shell.goEntry('sessions')} />}
       <nav className="workbench-primary-nav" aria-label="工作台">
         <Button
           variant="ghost"
@@ -162,19 +115,16 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
         )}
       </nav>
       <span className="workbench-nav-spacer" />
-      {shell.space === 'agents' ? (
-        <ShellDelegate shell={shell} compact />
-      ) : (
-        <IconButton label="新建会话" icon={NewSessionGlyph} onClick={shell.startNew} />
-      )}
+      {shell.space === 'agents' && <ShellDelegate shell={shell} compact />}
       <Button variant="ghost" className="workbench-search" aria-label="搜索" icon={SearchGlyph} onClick={shell.openSearch}>
         <span className="workbench-nav-label">搜索</span>
         <Kbd>⌘K</Kbd>
       </Button>
       <WorkbenchComputer shell={shell} />
       {shell.entries.includes('apps') && <IconButton label="应用" icon={PluginsGlyph} onClick={() => shell.openApp()} />}
-      <LayoutMenu value={shell.preferences.workbenchLayout} />
       {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}
+      {/* The layout switch is the shell's, drawn over this reserved end in both layouts. */}
+      <span className="layout-switch-space" aria-hidden="true" />
     </div>
   )
 }

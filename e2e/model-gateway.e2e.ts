@@ -32,7 +32,7 @@ const CODEX_MODELS = JSON.stringify(
 const shot = (page: Page, name: string) => page.screenshot({ path: `${OUTPUT}/${name}.png`, animations: 'disabled' })
 const input = (page: Page) => page.getByRole('textbox', { name: '新会话消息', exact: true })
 const chip = (page: Page, name: string): Locator => page.getByRole('button', { name: new RegExp(`^${name}：`, 'u') }).first()
-/** Words of the model menu, not the same words in the composer's status line or its tooltips. */
+/** Words of the model menu, not the same words in a draft's status line or its tooltips. */
 const menuText = (page: Page, text: string): Locator =>
   shownText(page, text, { exact: true }).and(page.locator(':not(.composer-status, .composer-status *)'))
 const row = (page: Page, name: RegExp | string) =>
@@ -168,26 +168,15 @@ describe('a Harness with its own models on a saved service', () => {
       [768, 'dark'],
     ] as const) {
       const page = await open(width, theme)
-      if (width === 390) {
-        await page.getByRole('button', { name: '新会话选项', exact: true }).click()
-        const sheet = page.locator('.new-session-sheet')
-        await sheet.waitFor()
-        await sheet.getByRole('button', { name: /^模型/u }).click()
-      } else await chip(page, '模型').click()
+      // On a phone the 模型 chip sits in the row over the home's input and opens its own sheet.
+      await chip(page, '模型').click()
       await shownText(page, 'OpenAI · 实验性 · 经 Latch', { exact: true }).waitFor()
       await noHorizontalOverflow(page)
       await shot(page, `draft-menu-${width}-${theme}`)
       await row(page, 'fake-model').click()
       if (width === 390) {
-        await expect
-          .poll(() =>
-            page
-              .locator('.new-session-sheet')
-              .getByRole('button', { name: /^模型/u })
-              .innerText(),
-          )
-          .toContain('fake-model · OpenAI')
-        await shot(page, `sheet-picked-${width}-${theme}`)
+        await expect.poll(() => chip(page, '模型').innerText()).toContain('fake-model')
+        await shot(page, `chip-picked-${width}-${theme}`)
       } else await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model')
       await page.context().close()
     }
@@ -266,8 +255,8 @@ describe('a Harness with its own models on a saved service', () => {
     expect(await menuText(page, 'Codex 自己的模型').count()).toBe(0)
     // The service it cannot use stays folded in the session too.
     await menuText(page, '1 个服务用不了').waitFor()
-    // The status line says the same way, in the same words.
-    expect(await page.locator('.composer-status [data-seg="route"]').innerText()).toBe('OpenAI · 经 Latch')
+    // A route that works is said in the menu alone: a session's input has no line under it.
+    expect(await page.locator('form.composer .composer-status, form.composer .composer-notice[data-tint="warn"]').count()).toBe(0)
     await shot(page, 'session-menu-1440-light')
     await page.keyboard.press('Escape')
 
@@ -276,7 +265,10 @@ describe('a Harness with its own models on a saved service', () => {
     // The menu says so by the service's name before anything is sent, and offers no model of it.
     await chip(page, '模型').click()
     await menuText(page, 'OpenAI · 已停用').waitFor()
-    await expect.poll(() => page.locator('.composer-status [data-seg="route"]').innerText()).toBe('OpenAI · 已停用')
+    // A route the next turn fails on is the one thing said under the input, in amber.
+    await expect
+      .poll(() => page.locator('form.composer .composer-notice[data-tint="warn"]').filter({ visible: true }).first().innerText())
+      .toContain('下一轮会失败：模型服务')
     await menuText(page, '这个会话开始时用的「OpenAI」已停用，下一轮会失败。在设置 › 模型里重新打开它，或新开一个会话。').waitFor()
     await expect.poll(() => row(page, 'fake-model-large').getAttribute('aria-disabled')).toBe('true')
     expect(await shownText(page, /经 Latch 用|openai · /u).count()).toBe(0)

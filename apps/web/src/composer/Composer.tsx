@@ -73,9 +73,9 @@ function sizeComposerInput(element: HTMLTextAreaElement | null) {
 
 /**
  * The message input, on the new-session page and docked under a conversation, with its drawers joined above the card
- * and the status line as its last row. It starts one line high behind a faint 「>」. The input stays editable while a run is active so the next message can be drafted; a Host that supports queues
- * accepts the next input for later. Its ring turns line-strong with focus inside, never blue. The send slot is the one
- * blue control: an arrow (a neutral fill while there is nothing to send, still focusable with its reason as its
+ * and the status line as its last row. It starts one line high. The input stays editable while a run is active so the next message can be drafted; a Host that supports queues
+ * accepts the next input for later. Its ring turns line-strong with focus inside, never blue. The send slot is a neutral
+ * ink key, never blue: an arrow (a soft fill while there is nothing to send, still focusable with its reason as its
  * tooltip), 追加 while a run that takes more text is active and there is text, 排队 while another run is, or the stop
  * circle, which is never red and steps back while an
  * approval waits. A device that may only watch sees a dashed, sunken frame with a lock and the reason instead of the
@@ -158,7 +158,7 @@ export function Composer({
   /** The optional insertion shortcut; typing slash commands uses the same sender either way. */
   showSlashButton?: boolean
   textareaRef: RefObject<HTMLTextAreaElement | null>
-  variant: 'new' | 'session' | 'sheet'
+  variant: 'new' | 'session'
   label: string
   placeholder: string
   draft: string
@@ -426,7 +426,7 @@ export function Composer({
       aria-activedescendant={slash.open && slash.options[slash.active] ? slash.id + '-' + slash.active : undefined}
       placeholder={placeholder}
       value={draft}
-      rows={variant === 'sheet' ? 5 : 1}
+      rows={1}
       disabled={locked}
       onChange={event => {
         mentions.setCaret(event.target.selectionStart)
@@ -460,12 +460,7 @@ export function Composer({
         </p>
       )
     ) : (
-      <div className="composer-input" data-sheet={variant === 'sheet' ? '' : undefined} data-command={commandChip ? '' : undefined}>
-        {variant !== 'sheet' && (
-          <span className="composer-prompt" aria-hidden="true">
-            &gt;
-          </span>
-        )}
+      <div className="composer-input" data-command={commandChip ? '' : undefined}>
         {commandChip && (
           <div ref={commandMirror} className="composer-command-mirror" aria-hidden="true">
             <span className="composer-command-chip">{commandChip}</span>
@@ -617,24 +612,6 @@ export function Composer({
         className={`composer ${run ? 'is-running' : ''}`}
         data-inline={inline ? '' : undefined}
         data-variant={readOnly !== undefined ? 'read-only' : undefined}
-        onDragEnter={
-          attachments
-            ? event => {
-                if (variant === 'sheet' && [...event.dataTransfer.types].includes('Files')) {
-                  event.preventDefault()
-                  attachments.setDragging(true)
-                }
-              }
-            : undefined
-        }
-        onDragLeave={
-          attachments
-            ? event => {
-                if (variant === 'sheet' && (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)))
-                  attachments.setDragging(false)
-              }
-            : undefined
-        }
         onDragOver={
           attachments
             ? event => {
@@ -647,13 +624,8 @@ export function Composer({
           event.preventDefault()
           if (sendable) submit()
         }}>
-        {variant === 'sheet' && attachments?.dragging && (
-          <div className="attachment-drop-mask" role="status">
-            松开以添加到这条消息
-          </div>
-        )}
         <RunBar run={run} />
-        {locationPosition === 'top' && location}
+        {!inline && locationPosition === 'top' && location}
         <ConfigUnknownBar state={configUnknown} />
         {actionBlock && <InlineNotice>{actionBlock}</InlineNotice>}
         {queueTray}
@@ -662,25 +634,40 @@ export function Composer({
           <AttachmentDrafts controller={attachments} locked={locked} onRestore={text => onDraft(draft ? `${draft}\n${text}` : text)} />
         )}
         <SlashCommands menu={slash} anchorRef={commandAnchor} onCreateTemplate={onCreateTemplate} />
-        {input}
-        {variant === 'sheet' && attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
-        {variant === 'sheet' && slashButton}
-        {variant !== 'sheet' && (
-          <div className="composer-toolbar" data-rows={inline ? 'two' : undefined}>
-            {locationPosition === 'toolbar' && location}
-            <div className="composer-controls">
-              {!inline && attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
-              {!inline && slashButton}
-              {controls}
-            </div>
-            <div className="composer-end">
-              {inline && attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
-              {inline && slashButton}
-              {trailing}
-              {meta && <div className="composer-meta">{meta}</div>}
+        {inline ? (
+          <>
+            {/* A phone: what the message goes with is one row of chips that scrolls sideways; under it ＋, the input, send. */}
+            {(location || controls || trailing || meta) && (
+              <div className="composer-chips" role="group" aria-label="会话选项">
+                {location}
+                {controls}
+                {trailing}
+                {meta}
+              </div>
+            )}
+            <div className="composer-line">
+              {attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
+              {input}
               {action}
             </div>
-          </div>
+          </>
+        ) : (
+          <>
+            {input}
+            <div className="composer-toolbar">
+              {locationPosition === 'toolbar' && location}
+              <div className="composer-controls">
+                {attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
+                {slashButton}
+                {controls}
+              </div>
+              <div className="composer-end">
+                {trailing}
+                {meta && <div className="composer-meta">{meta}</div>}
+                {action}
+              </div>
+            </div>
+          </>
         )}
         {status}
       </form>

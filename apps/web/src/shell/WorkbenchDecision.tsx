@@ -1,6 +1,17 @@
 import type { TaskSummary } from '@latch/protocol'
 import { useState } from 'react'
-import { Button, ChevronRightGlyph, FolderGlyph, Icon, InlineNotice, Skeleton, StatusWord } from '@latch/ui'
+import {
+  AlertGlyph,
+  Button,
+  ChevronRightGlyph,
+  FolderGlyph,
+  Icon,
+  InlineNotice,
+  Skeleton,
+  StatusWord,
+  UnknownGlyph,
+  WaitingGlyph,
+} from '@latch/ui'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -116,7 +127,7 @@ export function WorkbenchDecision({
             {!retryable && <Icon icon={ChevronRightGlyph} size={14} />}
           </Button>
           {retryable && (
-            <Button size="sm" onClick={() => shell.retryFromWorkbench(detail)}>
+            <Button size="xs" variant="outline" onClick={() => shell.retryFromWorkbench(detail)}>
               重试
             </Button>
           )}
@@ -151,13 +162,16 @@ export function WorkbenchDecision({
         />
       ) : (
         <div className="work-decision-result">
-          <strong data-tone={status.tone}>{status.words}</strong>
+          <strong data-tone={status.tone}>
+            <Icon icon={status.tone === 'failed' ? AlertGlyph : task.runEnd?.unknownResultCount ? UnknownGlyph : WaitingGlyph} size={16} />
+            {status.words}
+          </strong>
           {context}
           {read.error ? (
             <InlineNotice
               tone="error"
               action={
-                <Button variant="ghost" size="xs" onClick={read.retry}>
+                <Button variant="outline" size="xs" onClick={read.retry}>
                   重试
                 </Button>
               }>
@@ -187,11 +201,11 @@ export function WorkbenchDecision({
             </p>
           )}
           <div className="work-decision-result-actions">
-            <Button size="sm" variant="ghost" onClick={() => shell.choose(task.id)}>
+            <Button size="sm" variant="outline" onClick={() => shell.choose(task.id)}>
               {task.runEnd?.unknownResultCount ? '核对结果' : '查看会话'}
             </Button>
             {retryable && (
-              <Button size="sm" onClick={() => shell.retryFromWorkbench(detail)}>
+              <Button size="sm" variant="outline" onClick={() => shell.retryFromWorkbench(detail)}>
                 重试
               </Button>
             )}

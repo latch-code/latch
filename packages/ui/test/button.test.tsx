@@ -118,7 +118,7 @@ describe('buttons', () => {
     await expect.poll(openTooltips).toEqual([])
   })
 
-  it('draws one key cap per key after the words, keeps the name to the words and does not repeat the keys in the tooltip', async () => {
+  it('writes the keys as one quiet run after the words, keeps the name to the words and does not repeat the keys in the tooltip', async () => {
     const screen = await render(
       <div>
         <Button variant="outline" keys={['esc']}>
@@ -133,17 +133,18 @@ describe('buttons', () => {
     await expect.element(allow).toHaveAccessibleName('允许')
     const caps = Array.from(allow.element().querySelectorAll('kbd'), cap => cap.textContent)
     const mac = /Mac|iPhone|iPad/u.test(navigator.platform)
-    expect(caps).toEqual(mac ? ['⌘', '⏎'] : ['Ctrl', '⏎'])
+    expect(caps).toEqual(mac ? ['⌘⏎'] : ['Ctrl+⏎'])
     await expect.element(allow).toHaveAttribute('aria-keyshortcuts', mac ? 'Meta+Enter' : 'Control+Enter')
     const reject = screen.getByRole('button', { name: '拒绝' })
     expect(Array.from(reject.element().querySelectorAll('kbd'), cap => cap.textContent)).toEqual(['Esc'])
     await expect.element(reject).toHaveAttribute('aria-keyshortcuts', 'Escape')
-    // The caps follow the words, two apart; on the accent they are darker caps with white glyphs.
+    // The keys follow the words as text without a box; on the accent they take its ink.
     const keys = allow.element().querySelector('.ui-button-keys')!
     expect(keys.previousSibling?.textContent).toBe('允许')
     expect(style(keys).columnGap).toBe('2px')
     expect(style(allow.element().querySelector('kbd')!).color).toBe('rgb(255, 255, 255)')
-    expect(style(reject.element().querySelector('kbd')!).backgroundColor).toBe('rgb(251, 251, 252)')
+    expect(style(reject.element().querySelector('kbd')!).backgroundColor).toBe('rgba(0, 0, 0, 0)')
+    expect(style(reject.element().querySelector('kbd')!).boxShadow).toBe('none')
     // The tooltip says what the button does, without the keys already on it.
     await userEvent.tab()
     await userEvent.tab()

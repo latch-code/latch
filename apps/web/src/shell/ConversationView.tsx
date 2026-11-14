@@ -3,15 +3,12 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { HarnessInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
 import { sessionReadOnly } from '../core/permissions.ts'
-import { listsFoundHarnesses, projectFor } from '../composerChoice.ts'
+import { projectFor } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, MODE_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
 import { FindBar } from '../components/FindBar.tsx'
-import { FoundHarnessesCard, NewSession, RecentSessions } from '../newSession/NewSession.tsx'
-import { HistoryImportEntry } from '../history/HistoryImport.tsx'
 import { RebuildLostDialog } from '../history/RebuildLost.tsx'
 import { harnessName as harnessLabel } from '../composerChoice.ts'
-import { recentProjectSessions } from '../sessions.ts'
 import { Banner } from '../components/Banner.tsx'
 import { JumpLatest } from '../components/JumpLatest.tsx'
 import { Transcript } from '../components/Transcript.tsx'
@@ -20,15 +17,7 @@ import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { Button, Hint, ICON_STROKE, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
-import {
-  DEVICE_FAILURE_STEPS,
-  NewSessionTitle,
-  OWNER_FAILURE_STEPS,
-  SendingBubble,
-  SessionComposer,
-  SetupNotices,
-  takeFailureStep,
-} from './SessionComposers.tsx'
+import { DEVICE_FAILURE_STEPS, OWNER_FAILURE_STEPS, SendingBubble, SessionComposer, takeFailureStep } from './SessionComposers.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { SourceHandoffDock, type HandoffRequest } from '../handoffs/SourceHandoff.tsx'
 import { TargetHandoffDock } from '../handoffs/TargetHandoff.tsx'
@@ -58,7 +47,6 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     frozenAt,
     changesLink,
     submission,
-    choice,
     choose,
     jumpToLatest,
     stopCode,
@@ -73,8 +61,6 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     retry,
     coarse,
     phone,
-    setNewSheet,
-    sheetComposerRef,
     findOpen,
     setFindOpen,
     findFocus,
@@ -215,8 +201,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
       source: forkSource(current, harnessInfo),
     })
     submission.setDraft(draft)
-    if (phone) setNewSheet(true)
-    requestAnimationFrame(() => (phone ? sheetComposerRef : composerRef).current?.focus())
+    shell.showHome()
   }
   return (
     <div className="workspace-body">
@@ -224,45 +209,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
       <Banner show={Boolean(sessionBlock) && !workspaceChanged.has(selectedId ?? '')} scope={selectedId ?? ''}>
         {sessionBlock && <InlineNotice tone="neutral">{sessionBlock}</InlineNotice>}
       </Banner>
-      {selectedId === null ? (
-        <NewSession
-          title={<NewSessionTitle shell={shell} />}
-          composer={
-            <>
-              <SendingBubble shell={shell} />
-              <SessionComposer shell={shell} />
-            </>
-          }
-          setup={<SetupNotices shell={shell} />}
-          found={listsFoundHarnesses(catalog, snapshot.tasks.length, access) ? <FoundHarnessesCard onRecheck={refresh} /> : undefined}
-          history={
-            submission.fork ? undefined : (
-              <HistoryImportEntry
-                snapshot={snapshot}
-                workspaceId={choice.workspaceId}
-                phone={phone}
-                onOpen={id => {
-                  choose(id)
-                  void refresh()
-                }}
-              />
-            )
-          }
-          recent={
-            catalog && choice.workspaceId && choice.workspaceId !== 'default' && !submission.fork ? (
-              <RecentSessions
-                snapshot={snapshot}
-                sessions={recentProjectSessions(
-                  choice.workspaceId,
-                  snapshot.tasks.filter(task => !task.archived),
-                  catalog.workspaces,
-                )}
-                onOpen={choose}
-              />
-            ) : undefined
-          }
-        />
-      ) : (
+      {/* Without an open session the home covers this view; 新会话 is the home's input. */}
+      {selectedId === null ? null : (
         <div className="conversation">
           <div className="transcript-shell">
             {findOpen && current && (
@@ -315,8 +263,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                               })
                               choose(null)
                               submission.setDraft(draft)
-                              if (phone) setNewSheet(true)
-                              requestAnimationFrame(() => (phone ? sheetComposerRef : composerRef).current?.focus())
+                              shell.showHome()
                             }
                           : undefined
                       }

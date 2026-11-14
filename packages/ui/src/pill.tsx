@@ -169,8 +169,8 @@ export function ariaKeyShortcuts(keys: readonly string[], mac: boolean = onMac()
 }
 
 /**
- * A key or shortcut: in tooltips, menu item ends, the search row, an approval's hint line, and on a button whose key
- * presses it right now (Button's `keys`, one cap per key).
+ * A key or shortcut as one run of quiet text (「⌘N」, never a box per key): in tooltips, menu item ends, the search row,
+ * an approval's hint line, and on a button whose key presses it right now (Button's `keys`).
  */
 export function Kbd({
   keys,

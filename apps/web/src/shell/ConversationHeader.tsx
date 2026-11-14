@@ -42,14 +42,24 @@ import { topicOwner } from '../agents/chat.ts'
 import { TopicFrame } from '../agents/TopicFrame.tsx'
 import { sourceCrumb } from '../handoffs/model.ts'
 import { computerName } from '../core/securityCopy.ts'
+import { sessionTotals, type SessionTotals } from '../composer/sessionTotals.ts'
+import { formatTokens } from '../format.ts'
 
-/** The session's state when it is not the default: running and done say nothing here (the run bar says running). */
-function sessionPill(summary: TaskSummary, cancelling: boolean) {
-  if (cancelling) return <StatusPill tone="neutral">正在停止</StatusPill>
-  if (summary.status === 'failed') return <StatusPill tone="err">失败</StatusPill>
-  if (summary.status === 'cancelled') return <StatusPill tone="neutral">已停止</StatusPill>
-  if (summary.status === 'interrupted') return <StatusPill tone="neutral">已中断</StatusPill>
-  return null
+/**
+ * What the whole session used, on one line: 「上下文 12k / 200k · 输入 15.6k · 输出 3.1k · 10 秒 · 1 轮」, each part only
+ * when it was reported. A cost needs who reported it, so it stays in the project's popover with that clause.
+ */
+export function usageWords(totals: SessionTotals): string | undefined {
+  const { context, tokens, time } = totals
+  const parts = [
+    context
+      && (context.size === undefined
+        ? `上下文 ${formatTokens(context.used)}`
+        : `上下文 ${formatTokens(context.used)} / ${formatTokens(context.size)}`),
+    tokens && `输入 ${formatTokens(tokens.usage.inputTokens)} · 输出 ${formatTokens(tokens.usage.outputTokens)}`,
+    time?.text,
+  ].filter(Boolean)
+  return parts.length ? parts.join(' · ') : undefined
 }
 
 /** The clock's leaf: only these words re-render each second, and the shared ticker stops while the page is hidden. */
@@ -162,7 +172,7 @@ function ProjectCrumb({
   children,
   after,
 }: {
-  /** Absent for a session in a folder of its own: the glyph alone keeps the way to its path. */
+  /** Absent for a session in a folder of its own: 「不选项目」 keeps the way to its path. */
   project?: string | undefined
   summary: TaskSummary
   usage?: { contextUsed?: number; contextSize?: number } | undefined
@@ -186,15 +196,18 @@ function ProjectCrumb({
             className="topbar-crumb-button"
             title={project ?? '会话的文件夹'}
             aria-label={`${project ? `项目：${project}` : '会话的文件夹'}${worktree ? `，${lead} · ${escapeSecurityText(worktree)}` : ''}`}>
+            {/* Without a project there is no folder chip to draw: the words say so and still open where it runs. */}
             {worktree ? (
               <FolderGit2 size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-            ) : (
+            ) : project ? (
               <FolderGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-            )}
-            {project && (
+            ) : null}
+            {project ? (
               <span className="topbar-crumb-text">
                 <VisibleText text={project} />
               </span>
+            ) : (
+              !worktree && <span className="topbar-crumb-text">不选项目</span>
             )}
             {worktree && (
               <span className="topbar-crumb-worktree">
@@ -312,7 +325,8 @@ function PhoneTopBar({
   connection: ConnectionStatus
 }) {
   const title = summary ? summary.title || '未命名会话' : '新会话'
-  const state = summary && sessionPill(summary, cancelling)
+  // The header is the one place a session's state is written, on a phone as on a wide window.
+  const state = summary && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />
   const where = summary && source
   const branch = summary?.worktree ? `工作树 · ${summary.branch ?? summary.worktree.branch}` : summary?.branch
   // A conversation in 我的 Agent: its Agent's frame stands in the title's place, the topic under the name.
@@ -406,7 +420,10 @@ export function SessionHeader({
   frame,
   from,
   imported,
+  usageLine,
 }: {
+  /** What the whole session used, as the one quiet row at the end of ⋯. */
+  usageLine?: string | undefined
   /** The session was brought in from a harness's own earlier session. */
   imported?: HeaderImported | undefined
   /** The session is a topic of a conversation in 我的 Agent: its Agent's frame stands in the title's place. */
@@ -535,6 +552,7 @@ export function SessionHeader({
             label="会话操作"
             placement="bottom-end"
             sections={menu}
+            {...(usageLine ? { footer: () => <p className="session-usage-line">{usageLine}</p> } : {})}
             trigger={props => <IconButton {...props} label="会话操作" icon={MoreGlyph} />}
           />
         )}
@@ -613,6 +631,8 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     && !!current?.messages
       .slice(current.messages.findLastIndex(message => message.role === 'user'))
       .some(message => message.outputs?.length)
+  // A helper's tokens are its model's, kept to 设置 › 用量: a topic's menu has no usage row.
+  const usageLine = summary && !topicOf ? usageWords(sessionTotals({ summary, detail: current, harness: topHarness })) : undefined
   return (
     <SessionHeader
       panelRef={panelToggle}
@@ -639,6 +659,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
         : {})}
       panelOpen={panelShown}
       changesTotals={shell.changesTotals}
+      usageLine={usageLine}
       {...(topicOf && summary
         ? {
             frame: (
@@ -663,6 +684,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
                           label="会话操作"
                           placement="bottom-end"
                           sections={topMenu}
+                          {...(usageLine ? { footer: () => <p className="session-usage-line">{usageLine}</p> } : {})}
                           trigger={props => <IconButton {...props} size="lg" label="会话操作" icon={MoreGlyph} />}
                         />
                       )}

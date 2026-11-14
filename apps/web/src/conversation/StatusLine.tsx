@@ -61,8 +61,9 @@ export interface StatusLineProps {
 }
 
 /**
- * The line under a running turn. It names what really runs, and asks only when the run has gone quiet; waiting on the
- * person it says nothing, because the card that waits already does.
+ * The line under a running turn, drawn only for what the title row does not say: an agent that is starting, and a run
+ * that has gone quiet with what can be done about it. Running and stopping are the title row's; waiting on the person
+ * is the card's.
  */
 export function StatusLine({
   detail,
@@ -93,7 +94,10 @@ export function StatusLine({
   const [waiting, setWaiting] = useState(false)
   // Offline, the banner says so and the sidebar row has 上次确认: nothing about the run is claimed here meanwhile.
   if (frozenAt !== undefined) return null
-  if (status.tone === 'quiet') {
+  // The title row says the running state once, with its clock; here it is only announced.
+  // A helper's frame names what it does but not that it is stopping, so that stays here.
+  const stoppingHelper = person && (cancelling || detail.activity?.phase === 'cancelling')
+  if (status.tone === 'quiet' || (status.inHeader && !stoppingHelper)) {
     return (
       <p role="status" aria-live="polite" className="sr-only">
         {status.text}
@@ -107,11 +111,6 @@ export function StatusLine({
       <span role="status" aria-live="polite">
         <VisibleText text={status.text} />
       </span>
-      {status.clock && (
-        <span className="status-clock" aria-hidden="true">
-          · {status.clock}
-        </span>
-      )}
       {status.viewMessageId && (
         <button
           type="button"

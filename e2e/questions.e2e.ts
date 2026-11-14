@@ -77,7 +77,8 @@ test('keeps text written before a question arrived as the next message, until �
     page.on('request', observeAnswer)
     await page.getByRole('button', { name: '总览', exact: true }).click()
     await page.keyboard.press('1')
-    await page.getByRole('button', { name: '返回会话', exact: true }).click()
+    // The session under the home is still the sidebar's current row; it leads back.
+    await page.locator('.sidebar [data-task-id][aria-current]').filter({ visible: true }).first().click()
     await page.locator('.question-card:not([data-arming])').waitFor()
     expect(answersWhileCovered).toBe(0)
     expect(seen).toEqual([])

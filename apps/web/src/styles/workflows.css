@@ -256,8 +256,6 @@
   line-height: var(--lh-caption);
 }
 .palette-foot kbd {
-  height: 16px;
-  min-width: 16px;
   margin-inline-end: var(--sp-4);
 }
 /* No keys on a touch screen: rows are tapped. */

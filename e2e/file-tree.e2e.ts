@@ -78,23 +78,19 @@ it.each([
       await page.locator('.info-page').waitFor({ state: 'detached' })
       await page.getByRole('textbox', { name: '继续对话', exact: true }).fill('旧会话草稿')
       await header.getByRole('button', { name: '返回总览', exact: true }).click()
-      await page.locator('.workbench-home').getByRole('button', { name: '新会话选项', exact: true }).click()
-      const sheet = page.getByRole('dialog', { name: '新会话', exact: true })
-      await sheet.getByRole('button', { name: /^项目：/u }).click()
+      // The project is the first chip of the row over the home's input.
+      await page.locator('.workbench-home .composer-chips .home-composer-location').getByRole('button').first().click()
       await page
         .getByRole('dialog', { name: '项目', exact: true })
         .getByRole('radio', { name: /新项目/u })
         .click()
       await page.getByRole('dialog', { name: '项目', exact: true }).waitFor({ state: 'hidden' })
-      let input = sheet.getByRole('textbox', { name: '新会话消息', exact: true })
+      const input = page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
       await input.fill('给新项目的草稿')
       // The same Home draft and retained reading survive a resize before the file action.
       if (width !== 390) {
-        await sheet.locator(':scope > .ui-sheet-surface > .ui-sheet-top').getByRole('button', { name: '取消', exact: true }).click()
-        await sheet.waitFor({ state: 'hidden' })
         await page.setViewportSize({ width, height: 960 })
         await settleShell(page)
-        input = page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
         expect(await input.inputValue()).toBe('给新项目的草稿')
       }
       const reads: string[] = []
@@ -104,13 +100,15 @@ it.each([
         if (path.includes('/files/')) reads.push(path)
         if (path === '/link/api/tasks' && request.method() === 'POST') starts.push(request.postDataJSON())
       })
-      if (width === 390) await sheet.getByRole('button', { name: '浏览项目文件', exact: true }).click()
-      else {
+      // The draft's files open from the palette on every width. (A phone in the 侧栏 layout has no control that opens
+      // it: the key stands in here.)
+      const browse = async () => {
         await page.keyboard.press('Meta+k')
         const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
         await palette.getByRole('searchbox').fill('浏览项目文件')
         await palette.getByRole('option', { name: /浏览项目文件/u }).click()
       }
+      await browse()
       await expect
         .poll(() => reads.some(path => path.startsWith(`/link/api/workspaces/${newProject.id}/files/`)), { timeout: 5000 })
         .toBe(true)
@@ -133,7 +131,7 @@ it.each([
         await page.mouse.click(hit.x, hit.y)
         await files.waitFor({ state: 'hidden' })
         expect(await input.inputValue()).toBe('给新项目的草稿')
-        await sheet.getByRole('button', { name: '浏览项目文件', exact: true }).click()
+        await browse()
       }
       await page.getByRole('treeitem', { name: 'new.txt', exact: true }).click()
       const preview = page.getByRole('region', { name: '文件预览', exact: true })
@@ -152,11 +150,7 @@ it.each([
       await preview.getByRole('button', { name: '引用到对话', exact: true }).click()
       await expect.poll(() => input.inputValue()).toContain(`@${newProject.folders![0]!.id}:new.txt`)
       expect(await input.inputValue()).toContain('给新项目的草稿')
-      const sender =
-        width === 390
-          ? sheet.getByRole('button', { name: '开始', exact: true })
-          : page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true })
-      await sender.click()
+      await page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }).click()
       await expect.poll(() => starts.length).toBe(1)
       expect(starts[0]).toMatchObject({ workspaceId: newProject.id, fileRefs: [{ root: newProject.folders![0]!.id, path: 'new.txt' }] })
       await page.locator('main.workspace:not([inert]) .turn-reply').getByText('新项目收到了引用。', { exact: true }).waitFor()
@@ -264,14 +258,14 @@ it('browses a saved project before creating a session, previews and quotes real 
         await page.screenshot({ path: `test-results/file-tree/quoted-draft-${width}-${theme}.png`, animations: 'disabled' })
         await input.fill('保留我的草稿')
         if (width === 390) {
-          const sheet = page.getByRole('dialog', { name: '新会话', exact: true })
-          await sheet.locator(':scope > .ui-sheet-surface > .ui-sheet-top').getByRole('button', { name: '取消', exact: true }).click()
-          await sheet.waitFor({ state: 'hidden' })
+          // Leaving the home for the list and coming back through 新建会话 keeps the draft.
+          await backToPhoneSessions(page)
           expect(await page.locator('.phone-list').getByRole('button', { name: '返回总览', exact: true }).isVisible()).toBe(true)
           await page.locator('.phone-list').getByRole('button', { name: '新建会话', exact: true }).click()
           expect(await input.inputValue()).toBe('保留我的草稿')
         }
-        if (width < 1024) await page.getByRole('button', { name: '浏览项目文件', exact: true }).click()
+        // The home has no title row of its own: the draft's files come back with their key.
+        if (!(await page.getByRole('tab', { name: '文件', exact: true }).isVisible())) await page.keyboard.press('Alt+Shift+e')
         await page.getByRole('tab', { name: '文件', exact: true }).click()
         await tree.getByRole('treeitem', { name: 'src', exact: true }).focus()
         await page.keyboard.press('ArrowRight')
@@ -325,7 +319,12 @@ it('browses a saved project before creating a session, previews and quotes real 
           await settleShell(page)
           expect(await host.host.bridge.listTasks()).toHaveLength(taskCount)
           if (width === 390) {
-            await page.getByRole('button', { name: '返回', exact: true }).click()
+            // Over the home the draft's files are a sheet with 完成; over a session, the panel's page with 返回.
+            await page
+              .getByRole('button', { name: /^(?:返回|完成)$/u })
+              .filter({ visible: true })
+              .first()
+              .click()
             await expect.poll(() => input.inputValue()).toBe('保留我的草稿')
           } else expect(await input.inputValue()).toBe('保留我的草稿')
         }

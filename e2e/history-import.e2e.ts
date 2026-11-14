@@ -30,7 +30,7 @@ const readLog = async (path: string): Promise<LogEntry[]> =>
     .filter(Boolean)
     .map(line => JSON.parse(line) as LogEntry)
 
-describe('接入已有会话 from the new-session page', () => {
+describe('接入已有会话 from the home', () => {
   let root: string
   let host: TestHost
   let owner: TestDevice
@@ -366,9 +366,7 @@ describe('接入已有会话 from the new-session page', () => {
 
   it('goes through the same pages at 390', async () => {
     const page = await open(390, 'dark')
-    await page.getByRole('button', { name: '新会话选项', exact: true }).click()
-    const sheet = page.getByRole('dialog', { name: '新会话', exact: true })
-    await sheet.getByRole('button', { name: '接入已有会话', exact: true }).click()
+    await page.locator('.workbench-home').getByRole('button', { name: '接入已有会话', exact: true }).click()
     const dialog = dialogOf(page)
     await dialog.locator('.history-row').first().waitFor()
     await noHorizontalOverflow(page)

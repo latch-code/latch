@@ -29,7 +29,6 @@ import { composerActions } from './composerActions.ts'
 import { MoreMenu } from '../composer/Footer.tsx'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { BranchSegment, ComposerStatus, FolderSegment, statusRoute } from '../composer/ComposerStatus.tsx'
-import { sessionTotals } from '../composer/sessionTotals.ts'
 import {
   DraftHarnessControl,
   DraftModelControl,
@@ -67,11 +66,8 @@ export function SendingBubble({ shell }: { shell: ShellState }) {
 /** On a phone the input has no room for the part after the two spaces, which teaches @ and /. */
 const phoneWords = (words: string) => words.split('  ')[0]!
 
-/**
- * The new-session page's title is the project, a picker: the one chosen, or 选择项目 while there is none. What to do is
- * the input's to ask, so the title asks nothing.
- */
-export function NewSessionTitle({ shell }: { shell: ShellState }) {
+/** The home input's project: the one chosen, or 不选项目, which starts in the Host's default folder. */
+function HomeProject({ shell }: { shell: ShellState }) {
   const { catalog, choice, newChoicesLocked, access, owner, openSettings, createProject, projectAsk, chooseProject } = shell
   if (!catalog) return '新会话'
   const project = catalog.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
@@ -82,7 +78,6 @@ export function NewSessionTitle({ shell }: { shell: ShellState }) {
       value={project?.id ?? (choice.projectSkipped ? 'default' : undefined)}
       disabled={newChoicesLocked}
       harness={catalog.harnesses.find(item => item.id === choice.harnessId)}
-      inline={project !== undefined}
       onManage={owner ? () => openSettings('workspaces') : undefined}
       onCreate={createProject}
       onChange={chooseProject}
@@ -147,7 +142,7 @@ export function takeFailureStep(step: FailureStep, openSettings: (section: 'engi
  * The pickers come from `@latch/ui` and draw their own trigger, so the name sits on this wrapper.
  */
 
-/** The draft's real start choices, shared by Code Home, the new-session page and its phone sheet. */
+/** The draft's real start choices, for the home's input. */
 function useDraftHarnessCommands(shell: ShellState, enabled: boolean) {
   const { catalog, chosenHarness, choice, access, submission } = shell
   const cacheEnabled =
@@ -198,7 +193,7 @@ function useDraftHarnessCommands(shell: ShellState, enabled: boolean) {
   )
 }
 
-/** The input of the open session, or of the new-session page. */
+/** The input of the open session, or the home's, which starts one. */
 export function SessionComposer({ shell: base, home = false }: { shell: ShellState; home?: boolean }) {
   const shell = home
     ? { ...base, ...base.homeComposerState, composerRef: base.homeComposerRef }
@@ -267,8 +262,6 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
     setRecoveryProjects,
     cancelling,
     choose,
-    setNewSheet,
-    sheetComposerRef,
   } = shell
   const cachedCommands = useDraftHarnessCommands(shell, selectedId === null && (!home || shell.route.overview === true))
   const commandHarness = selectedId === null ? chosenHarness : harnessInfo
@@ -304,8 +297,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
                 },
                 source: forkSource(current, harnessInfo),
               })
-              if (phone) requestAnimationFrame(() => sheetComposerRef.current?.focus())
-              else openControlWhenShown('harness')
+              if (!phone) openControlWhenShown('harness')
             })
           },
         }
@@ -383,30 +375,10 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       })
       return <ComposerStatus place={place} route={route} phone={phone} />
     }
-    // A helper's input has no status line; only a route that needs saying is said, in its own short line.
-    if (speaker) return summary?.modelRoute && catalog ? <RouteWarning catalog={catalog} route={summary.modelRoute} /> : null
-    if (!summary || summary.personal) return null
-    const project = catalog && summary.mode !== 'chat' ? projectOf(summary, catalog.workspaces) : undefined
-    const folder = summary.mode === 'chat' ? undefined : project?.name || (summary.cwd ? placeName(summary) : undefined)
-    const worktree = summary.worktree ? (summary.branch ?? summary.worktree.branch) : undefined
-    const place = (
-      <>
-        {folder && <FolderSegment name={folder} tip={summary.cwd ? `文件夹 ${summary.cwd}` : `项目 ${folder}`} worktree={!!worktree} />}
-        {worktree ? (
-          <BranchSegment branch={worktree} worktree removed={summary.worktree?.removed === true} />
-        ) : (
-          summary.branch && <BranchSegment branch={summary.branch} />
-        )}
-      </>
-    )
-    return (
-      <ComposerStatus
-        place={folder || worktree || summary.branch ? place : undefined}
-        route={statusRoute(catalog, harnessInfo, { route: summary.modelRoute, model: ownModelName(current?.config) })}
-        totals={sessionTotals({ summary, detail: current, harness: harnessInfo })}
-        phone={phone}
-      />
-    )
+    // A session's input has no status line: where it works and what it used are the title row's. Only a route that
+    // needs saying (a service the next turn fails on, a turn that went around Latch) is said, in its own short line.
+    if (!summary || (!speaker && summary.personal)) return null
+    return summary.modelRoute && catalog ? <RouteWarning catalog={catalog} route={summary.modelRoute} /> : null
   })()
   const drawers = (
     <>
@@ -434,7 +406,6 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
                 choice: { harnessId: current.summary.harnessId, workspaceId, mode: current.summary.mode ?? 'agent' },
                 source: forkSource(current, harnessInfo),
               })
-              requestAnimationFrame(() => (phone ? sheetComposerRef : composerRef).current?.focus())
             })
           }}
         />
@@ -578,7 +549,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
         : {
             onOpenPending: () => {
               choose(pendingHome, () => {
-                if (phone && pendingHome === null) setNewSheet(true)
+                if (pendingHome === null) base.showHome()
               })
             },
           })}
@@ -623,7 +594,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       location={
         home ? (
           <div className="home-composer-location">
-            <NewSessionTitle shell={base} />
+            <HomeProject shell={base} />
             {worktreeOffer && (
               <FolderControl
                 project={worktreeOffer}
@@ -688,7 +659,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       )}
       queueable={canQueue && !answer}
       steerable={steer && !answer}
-      inline={phone && selectedId !== null}
+      inline={phone}
       meta={showControls && !phone ? <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} /> : undefined}
       controls={
         !showControls ? null : !catalog ? (
@@ -823,95 +794,6 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
           </>
         )
       }
-    />
-  )
-}
-
-/** Phones: the new-session sheet holds its own input, whose 开始 is in the sheet's header. */
-export function SheetComposer({ shell }: { shell: ShellState }) {
-  const {
-    catalog,
-    owner,
-    openSettings,
-    submission,
-    choice,
-    attachmentDraft,
-    setSubmissionDraft,
-    mentionChoice,
-    sendDraft,
-    retryDraft,
-    abandonPending,
-    abandoning,
-    block,
-    gate,
-    codeRootChoice,
-    placeholder,
-    coarse,
-    preferences,
-    sheetComposerRef,
-    promptTemplates,
-  } = shell
-  const cachedCommands = useDraftHarnessCommands(shell, shell.newSheet && shell.inputId === null)
-  return (
-    <Composer
-      textareaRef={sheetComposerRef}
-      fileMentions={mentionChoice}
-      attachments={catalog?.features?.attachments === true && gate.kind === 'open' ? attachmentDraft : undefined}
-      templates={scopedTemplates(promptTemplates, choice.workspaceId ?? catalog?.defaults.workspaceId, choice.harnessId)}
-      commands={cachedCommands?.commands}
-      skills={cachedCommands?.skills}
-      skillsTruncated={cachedCommands?.skillsTruncated}
-      commandSource={
-        shell.chosenHarness
-          ? {
-              name: harnessName(shell.chosenHarness),
-              media: <HarnessTile harness={shell.chosenHarness} size={16} />,
-              previousSession: !!cachedCommands,
-              awaitingSession: !!shell.chosenHarness.commandCatalogue && !cachedCommands,
-            }
-          : undefined
-      }
-      actions={composerActions(shell)}
-      onCreateTemplate={owner ? () => openSettings('general') : undefined}
-      historyScope={{ deviceId: shell.snapshot.device.id, harnessId: choice.harnessId }}
-      variant="sheet"
-      label="新会话消息"
-      placeholder={phoneWords(placeholder)}
-      draft={submission.draft}
-      onDraft={setSubmissionDraft}
-      pending={submission.pending}
-      sending={submission.sending}
-      error={submission.error}
-      {...composerFailure(submission.errorCode, owner, openSettings, () => {
-        void sendDraft()
-      })}
-      pendingReason={submission.pendingReason}
-      onRetry={() => {
-        void retryDraft()
-      }}
-      onAbandon={() => {
-        void abandonPending()
-      }}
-      abandoning={abandoning}
-      abandonHeld={submission.sendingElsewhere ? '另一个窗口正在重试' : undefined}
-      canSend={gate.kind === 'open' && block === null}
-      blockReason={block?.message}
-      readOnly={gate.kind === 'read-only' ? gate.text : undefined}
-      below={
-        codeRootChoice ? (
-          <p className="composer-notice" data-tint="warn" role="note">
-            <Icon icon={ShieldAlertGlyph} size={14} />
-            {CODE_ROOT_COPY.notice}
-          </p>
-        ) : undefined
-      }
-      onSubmit={() => {
-        void sendDraft()
-      }}
-      sendKey={preferences.sendKey}
-      coarse={coarse}
-      confirmation={<InlineConfirm active={submission.sending} rank={1} className="composer-confirm" />}
-      controls={null}
     />
   )
 }

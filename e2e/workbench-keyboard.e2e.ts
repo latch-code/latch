@@ -330,11 +330,15 @@ it.each([
           // Over the session, which keeps running under it: no page in between, no settings.
           expect(await page.locator('.settings-page').count()).toBe(0)
           expect(await page.locator('.transcript').getByText('运行中的会话，浮层盖在它上面。').count()).toBe(1)
-          expect(await overlay.locator('[data-keys="Alt 1 … Alt 9"] kbd').allTextContents()).toEqual(['Alt', '1', 'Alt', '9'])
+          expect(await overlay.locator('[data-keys="Alt 1 … Alt 9"] kbd').allTextContents()).toEqual(['Alt 1', 'Alt 9'])
           expect(await overlay.locator('[data-keys="Alt Shift 1 … Alt Shift 4"]').count()).toBe(1)
           expect(await overlay.locator('[data-keys="⌘1 … ⌘9"]').count()).toBe(0)
-          expect(await overlay.locator('.shortcuts-overlay-row').count()).toBe(26)
-          const triage = overlay.locator('.shortcuts-overlay-row', { hasText: '分拣台：拒绝、允许聚焦的请求' })
+          expect(await overlay.locator('.shortcuts-overlay-row').count()).toBe(27)
+          // The layouts are named as the switch names them, and the switch has its own key.
+          expect(await overlay.innerText()).not.toContain('分拣台')
+          const layoutKey = overlay.locator('.shortcuts-overlay-row', { hasText: '切换侧栏、顶栏布局' })
+          expect(await layoutKey.locator('kbd').allTextContents()).toEqual(['Alt Shift L'])
+          const triage = overlay.locator('.shortcuts-overlay-row', { hasText: '顶栏布局：拒绝、允许聚焦的请求' })
           expect(await triage.locator('kbd').allTextContents()).toEqual(['1', '2'])
           expect(await overlay.locator('.shortcuts-overlay-row', { hasText: '终端' }).count()).toBe(1)
           await noHorizontalOverflow(page, overlay.locator('.ui-dialog-surface'))
@@ -356,12 +360,15 @@ it.each([
           await overlay.waitFor({ state: 'hidden' })
           await stayed()
 
-          // Each control key opens its own menu, in the session and on the new-session page; Escape puts it away.
+          // Each control key opens its own menu, in the session and on the home's input; Escape puts it away.
           const controls = ['harness', 'model', 'thinking', 'permission'] as const
-          const opens = async (where: string) => {
+          const opens = async (where: 'session' | 'draft') => {
             const opened: string[] = []
             for (const [index, control] of controls.entries()) {
-              const trigger = page.locator(`.composer-stack [data-composer-control="${control}"] button`).first()
+              const trigger = page
+                .locator(where === 'draft' ? '.workbench-home' : 'main.workspace')
+                .locator(`.composer-stack [data-composer-control="${control}"] button`)
+                .first()
               if ((await trigger.count()) === 0) continue
               if ((await trigger.getAttribute('aria-disabled')) === 'true' || (await trigger.isDisabled())) continue
               await page.keyboard.press(`Alt+Shift+${String(index + 1)}`)
@@ -376,8 +383,11 @@ it.each([
           expect(await opens('session')).toEqual(controls)
           expect(await input.inputValue()).toBe(draft)
           await page.keyboard.press('Alt+n')
-          const newInput = page.getByRole('textbox', { name: '新会话消息', exact: true })
+          // 新会话 is the home with its input focused, over the session, which stays open.
+          const newInput = page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
           await newInput.waitFor()
+          await expect.poll(() => newInput.evaluate(element => element === document.activeElement)).toBe(true)
+          expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
           await newInput.fill('新会话草稿')
           expect(await opens('draft')).toEqual(controls)
           expect(await newInput.inputValue()).toBe('新会话草稿')

@@ -210,9 +210,7 @@ export function Button({
       )}
       {capped && showKeys && (
         <span className="ui-button-keys" aria-hidden="true">
-          {keys.map(key => (
-            <Kbd key={key} keys={key} />
-          ))}
+          <Kbd keys={keys.join('+')} />
         </span>
       )}
       {menu && <Icon icon={ChevronDownGlyph} size={12} className="ui-button-chevron" />}

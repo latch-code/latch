@@ -17,6 +17,7 @@ import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { MODE_COPY } from '../core/securityCopy.ts'
 import { BriefHint } from './BriefHint.tsx'
 import { controlKeyCaps } from './modelReasoning.ts'
+import { capsText } from '../workbenchShortcuts.ts'
 import type { ModeIcon, PermissionRow, PermissionView } from './permission.ts'
 
 export const MODE_ICONS: Record<ModeIcon, typeof ShieldGlyph> = {
@@ -53,9 +54,7 @@ export function PermissionList({ view, onChoose }: { view: PermissionView; onCho
           <span>{MODE_COPY.menuTitle}</span>
           {keys && (
             <span className="menu-title-keys" aria-hidden="true">
-              {keys.map(key => (
-                <Kbd key={key}>{key}</Kbd>
-              ))}
+              <Kbd>{capsText(keys)}</Kbd>
             </span>
           )}
         </p>

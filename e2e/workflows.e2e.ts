@@ -37,9 +37,9 @@ describe('session search and workbench navigation', () => {
         await result.waitFor()
         await result.click()
         await page.locator('.transcript [data-search-target]').first().waitFor()
-        // The branch: under the input where the status line has room, in the title's second line on a phone.
+        // The branch is the title row's: after the project on a wide window, in the title's second line on a phone.
         await page
-          .locator(width < 768 ? '.topbar-branch' : '.composer-branch')
+          .locator(width < 768 ? '.topbar-branch' : '.topbar .topbar-session-branch')
           .filter({ hasText: 'feature/quiet-ui' })
           .first()
           .waitFor()
@@ -80,7 +80,8 @@ describe('session search and workbench navigation', () => {
           await page.keyboard.press('Alt+b')
           await page.getByRole('button', { name: '收起侧栏', exact: true }).waitFor()
           await page.keyboard.press('Alt+n')
-          await page.locator('.new-session-title').waitFor()
+          // 新会话 is the home with its input focused.
+          await page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
           // In a field a Mac browser's ⌥, types ≤; the keys are the app's once focus has left it.
           await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
           await page.keyboard.press('Alt+,')
@@ -112,7 +113,6 @@ describe('session search and workbench navigation', () => {
         const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce' }),
           page = await context.newPage()
         await enrollBrowser(page, host, { name: `模板 ${width}` })
-        if (width === 390) await page.getByRole('button', { name: '新会话选项', exact: true }).click()
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await input.fill('/review')
         await page

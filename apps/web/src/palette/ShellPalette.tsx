@@ -1,5 +1,16 @@
 import { useCallback, useMemo } from 'react'
-import { ClipboardCopy, FileSearch, FolderTree, ArrowRightToLine, SunMoon, Eraser, GitFork, MessageCircle, Shield } from 'lucide-react'
+import {
+  ClipboardCopy,
+  FileSearch,
+  FolderTree,
+  ArrowRightToLine,
+  SunMoon,
+  Eraser,
+  GitFork,
+  MessageCircle,
+  PanelTop,
+  Shield,
+} from 'lucide-react'
 import {
   Icon,
   type IconComponent,
@@ -21,7 +32,7 @@ import { HARNESS_MARKS, presetOf } from '../brands.ts'
 import { harnessName } from '../composerChoice.ts'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { currentShell } from '../core/shell.ts'
-import { setPreference } from '../preferences.ts'
+import { setPreference, toggleWorkbenchLayout } from '../preferences.ts'
 import { projectOf } from '../sessions.ts'
 import { sectionLabel, settingsSections } from '../settings/SettingsPage.tsx'
 import { settingsSectionsAt, type SettingsSection } from '../shell/routes.ts'
@@ -352,6 +363,14 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
             setColumnOpen(true)
           }),
     })),
+    {
+      id: 'layout',
+      label: shell.preferences.workbenchLayout === 'triage' ? '切换到侧栏布局' : '切换到顶栏布局',
+      icon: glyph(shell.preferences.workbenchLayout === 'triage' ? PanelLeftGlyph : PanelTop),
+      root: true,
+      ...keys('layout'),
+      run: toggleWorkbenchLayout,
+    },
     ...(['system', 'light', 'dark'] as const).map(theme => ({
       id: `theme:${theme}`,
       label: `外观：${{ system: '跟随系统', light: '浅色', dark: '深色' }[theme]}`,

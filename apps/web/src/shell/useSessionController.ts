@@ -16,15 +16,7 @@ import { browserDraftStorage, forgetStoredDrafts, listedSessions, SessionDrafts 
 import { forgetPrivateAgentCreation } from '../core/agentCreation.ts'
 import { joinDraft, takeHandedDraft } from '../core/draftHandoff.ts'
 import type { SessionConfigFeedback } from '../composer/modelReasoning.ts'
-import {
-  findHarness,
-  findProvider,
-  harnessName as harnessLabel,
-  needsProject,
-  sessionHarness,
-  sessionModel,
-  startBlock,
-} from '../composerChoice.ts'
+import { findHarness, findProvider, harnessName as harnessLabel, sessionHarness, sessionModel, startBlock } from '../composerChoice.ts'
 import { openSession } from '../core/blocking.ts'
 import { provideSessionLinks } from '../core/sessionLinks.ts'
 import { exportFileName, saveText, transcriptMarkdown } from '../exportMarkdown.ts'
@@ -398,7 +390,7 @@ export function useSessionController({
     refs: fileMentions.filter(ref => hasFileMention(submission.draft, ref)),
     onRefs: setFileMentions,
   }
-  /** Sending found no folder to work in: the list opens, the draft stays. `notice`: a folder the Host just refused. */
+  /** The project list opens with a notice: a folder the Host just refused. A draft without a project starts as 不选项目. */
   const [projectRequest, setProjectRequest] = useState(0)
   const [projectNotice, setProjectNotice] = useState<string>()
   const askProject = (notice?: string) => {
@@ -410,10 +402,6 @@ export function useSessionController({
     if (inputId !== null) await configFlights.current.get(inputId)
   }
   const sendDraft = async () => {
-    if (inputId === null && !submission.fork && needsProject(catalog, choice)) {
-      askProject()
-      return
-    }
     if (inputId !== null && active && (attachmentDraft.items.length > 0 || mentionChoice.refs.length > 0)) {
       submission.setError(`${steer ? '追加' : '排队'}的消息不能带附件或文件引用，本轮结束后再发送。`)
       return

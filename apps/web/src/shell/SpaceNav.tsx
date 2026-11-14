@@ -1,6 +1,6 @@
 import { OverviewGlyph, ScheduleGlyph } from '@latch/ui'
 import type { ReactNode } from 'react'
-import { FolderPlus, Send } from 'lucide-react'
+import { Send } from 'lucide-react'
 import { GENERAL_AGENT_ID, type AppSnapshot } from '@latch/protocol'
 import {
   Button,
@@ -316,29 +316,21 @@ export function connectionTrouble(
 }
 
 /**
- * The foot, shared by both places and always in reach: 添加项目 (Code, in the Latch app on this Mac), 应用 where plugin
- * pages are applied, and 设置 with the trouble dot while the Mac cannot be reached as it should.
+ * The foot, shared by both places and always in reach: 应用 where plugin pages are applied, and 设置 with the trouble
+ * dot while the Mac cannot be reached as it should.
  */
 export function NavFoot({
   apps,
   settings,
   trouble,
-  onCreateProject,
 }: {
   apps?: { current: boolean; onOpen: () => void } | undefined
   settings?: (() => void) | undefined
   trouble: { tone: 'warn' | 'error'; text: string } | null
-  onCreateProject?: (() => void) | undefined
 }) {
   const desktop = currentShell() !== null
   return (
     <nav className="sidebar-foot" aria-label="主导航">
-      {onCreateProject && (
-        <button type="button" className="sidebar-nav-row sidebar-add-project" onClick={onCreateProject}>
-          <FolderPlus size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span>添加项目</span>
-        </button>
-      )}
       {apps && (
         <button
           type="button"
@@ -403,13 +395,12 @@ export function ShellDelegate({ shell, compact = false }: { shell: ShellState; c
 }
 
 /** The foot as the shell draws it, from any of the sidebar's places. */
-export function ShellNavFoot({ shell, onCreateProject }: { shell: ShellState; onCreateProject?: (() => void) | undefined }) {
+export function ShellNavFoot({ shell }: { shell: ShellState }) {
   return (
     <NavFoot
       apps={shell.entries.includes('apps') ? { current: shell.route.entry === 'apps', onOpen: () => shell.openApp() } : undefined}
       settings={shell.entries.includes('settings') ? () => shell.goEntry('settings') : undefined}
       trouble={connectionTrouble(shell.connection, shell.hostProblem)}
-      onCreateProject={onCreateProject}
     />
   )
 }

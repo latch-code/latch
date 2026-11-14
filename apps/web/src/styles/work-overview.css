@@ -169,8 +169,17 @@
   color: var(--accent-ink);
 }
 
+/* A group with nothing in it, or a home with nothing in any group: one quiet line. */
 .work-overview-empty {
-  padding: var(--sp-16) var(--sp-8);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: var(--sp-4) 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 
 .work-overview[data-layout='triage'] .work-overview-groups {

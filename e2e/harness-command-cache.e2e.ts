@@ -212,7 +212,10 @@ it('offers previous-session commands in a normal new draft after recovery withou
               .getByRole('menu', { name: /^Harness/u })
               .getByRole('menuitemradio', { name: '菜单 Agent', exact: true })
               .click()
+            // 新建会话 is this same home input, focused, with what it holds: typed afresh, the list opens again.
             await page.getByRole('button', { name: '新建会话', exact: true }).click()
+            await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
+            await input.fill('')
             await input.fill('/')
             await group.getByText('/public-plan', { exact: true }).waitFor()
             await page.screenshot({ path: `${output}/new-page-1440-light.png`, animations: 'disabled' })
@@ -223,12 +226,11 @@ it('offers previous-session commands in a normal new draft after recovery withou
             expect(await starts()).toBe(before)
           }
           if (width === 390 && colorScheme === 'dark') {
-            await currentPage.getByRole('button', { name: '新会话选项', exact: true }).click()
-            const sheet = currentPage.getByRole('dialog', { name: '新会话', exact: true })
-            const sheetInput = sheet.getByRole('textbox', { name: '新会话消息', exact: true })
+            // A phone's new session is the home's input.
+            const sheetInput = currentPage.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
             await sheetInput.fill('/')
             await group.getByText('/public-plan', { exact: true }).waitFor()
-            await currentPage.screenshot({ path: `${output}/phone-sheet-390-dark.png`, animations: 'disabled' })
+            await currentPage.screenshot({ path: `${output}/phone-home-390-dark.png`, animations: 'disabled' })
             await group
               .getByRole('option')
               .filter({ has: currentPage.getByText('/public-plan', { exact: true }) })
@@ -236,8 +238,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
             expect(await sheetInput.inputValue()).toBe('/public-plan ')
             expect(submissions).toBe(0)
             expect(await starts()).toBe(before)
-            await sheet.getByRole('button', { name: '取消', exact: true }).click()
-            await sheet.waitFor({ state: 'hidden' })
+            await sheetInput.fill('')
             await currentPage.setViewportSize({ width: 390, height: 360 })
             await input.fill('/')
             const cdp = await context.newCDPSession(currentPage)

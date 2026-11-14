@@ -865,8 +865,9 @@ describe('turn footers', () => {
     const running = render(true)
     expect(running.match(/class="turn-footer[ "]/g)).toHaveLength(2)
     expect(textsOf(running, 'turn-facts')).toHaveLength(1)
-    expect(running).toContain('class="status-line is-plain"')
-    expect(running).toContain('运行中')
+    // The title row says running once: under the turn it is only announced, never drawn.
+    expect(running).not.toContain('status-line')
+    expect(running).toContain('<p role="status" aria-live="polite" class="sr-only">运行中</p>')
   })
 
   it('renders no copy control between tool calls of one turn', () => {

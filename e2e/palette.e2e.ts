@@ -417,7 +417,7 @@ it.each([
         await page.keyboard.press('Alt+/')
         const overlay = page.getByRole('dialog', { name: '快捷键', exact: true })
         await overlay.waitFor()
-        expect(await overlay.locator('[data-keys="Alt N"] kbd').allTextContents()).toEqual(['Alt', 'N'])
+        expect(await overlay.locator('[data-keys="Alt N"] kbd').allTextContents()).toEqual(['Alt N'])
         expect(await page.locator('.settings-page').count()).toBe(0)
         await overlay.getByRole('button', { name: '设置 › 快捷键', exact: true }).click()
         await overlay.waitFor({ state: 'detached' })
@@ -426,7 +426,7 @@ it.each([
         await search.waitFor()
         // The page's name heads it once.
         expect(await page_.getByRole('heading', { name: '快捷键', exact: true }).count()).toBe(1)
-        expect(await page_.locator('[data-keys="Alt N"] kbd').allTextContents()).toEqual(['Alt', 'N'])
+        expect(await page_.locator('[data-keys="Alt N"] kbd').allTextContents()).toEqual(['Alt N'])
         expect(await page_.locator('[data-keys="⌘N"]').count()).toBe(0)
         await noHorizontalOverflow(page, page_)
         await shot(page, 'shortcuts')

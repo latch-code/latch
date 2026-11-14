@@ -133,8 +133,9 @@ it('starts a worktree from another branch, then removes a dirty one after the di
     await dialog.waitFor({ state: 'detached' })
     await page.getByText('已移除工作树和分支').first().waitFor()
     expect(existsSync(first.cwd!)).toBe(false)
+    // The title row says it, once: a session's input has no line under it to repeat it.
     await expect.poll(() => page.locator('.topbar-crumb-worktree').innerText()).toContain('工作树已移除')
-    await expect.poll(() => row.innerText()).toContain('工作树已移除')
+    expect(await page.locator('main.workspace form.composer .composer-status').count()).toBe(0)
     expect((await owner.json<TaskDetail>(`tasks/${first.id}`)).summary.worktree?.removed).toBe(true)
     // It only reads now: no input, no attachments, no 撤销本轮; the reason is behind the label's Hint.
     await page.locator('.composer-readonly').getByText('只能查看', { exact: true }).waitFor()
@@ -182,7 +183,7 @@ it('starts a worktree from another branch, then removes a dirty one after the di
       ['refs/heads/feature/login', 'refs/heads/main'].toSorted(),
     )
 
-    // At 320 the phone's new-session sheet offers the same start points.
+    // At 320 the row of chips over the phone's home input offers the same start points.
     await page.setViewportSize({ width: 320, height: 640 })
     await backToPhoneSessions(page)
     await page.getByRole('button', { name: '新建会话', exact: true }).first().click()

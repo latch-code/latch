@@ -5,6 +5,7 @@ import type { QuestionSubmission, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { switchLayout } from './helpers/workbench.ts'
 
 it.each([
   { name: 'chromium', engine: chromium },
@@ -96,27 +97,27 @@ it.each([
           await route.fulfill({ status: 503, json: { error: 'question-unknown', message: '回答回执暂不可用' } })
         } else await route.continue()
       })
-      await page.getByRole('button', { name: '布局', exact: true }).filter({ visible: true }).first().click()
-      await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
+      await switchLayout(page, 'triage')
       await page.setViewportSize({ width: 390, height: 844 })
       await home.locator('.workbench-phone-heading').waitFor()
-      await home.getByRole('button', { name: '新会话选项', exact: true }).click()
-      const sheet = page.getByRole('dialog', { name: '新会话', exact: true })
+      // A phone has no new-session sheet any more: its options are the chips over the home's input, and a chip's own
+      // sheet is the modal that keeps the number keys from answering the card behind it.
+      expect(await home.getByRole('button', { name: '新会话选项', exact: true }).count()).toBe(0)
+      expect(await page.getByRole('textbox', { name: '新会话消息', exact: true }).count()).toBe(1)
+      const opener = home.locator('.composer-chips .home-composer-location').getByRole('button').first()
+      await opener.click()
+      const sheet = page.getByRole('dialog', { name: '项目', exact: true })
       await sheet.waitFor()
       expect(await sheet.evaluate(element => element.matches(':modal'))).toBe(true)
       await expect.poll(() => card.locator('.question-card').getAttribute('data-arming')).toBe(null)
-      await sheet.getByRole('button', { name: '取消', exact: true }).focus()
       await page.keyboard.press('1')
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
       expect(requests).toHaveLength(0)
-      expect(await home.evaluate(element => element.hasAttribute('inert'))).toBe(true)
-      expect(await page.getByRole('textbox', { name: '新会话消息', exact: true }).count()).toBe(1)
       await home.locator('textarea').evaluate(element => element.focus())
       expect(await sheet.evaluate(element => element.contains(document.activeElement))).toBe(true)
-      await sheet.getByRole('button', { name: '取消', exact: true }).click()
+      await page.keyboard.press('Escape')
       await sheet.waitFor({ state: 'hidden' })
-      expect(await home.evaluate(element => element.hasAttribute('inert'))).toBe(false)
-      await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('新会话选项')
+      expect(requests).toHaveLength(0)
       await page.setViewportSize({ width: 1440, height: 1000 })
       await expect.poll(() => card.locator('.question-card').getAttribute('data-arming')).toBe(null)
       await card.getByRole('button', { name: /先做预览/ }).click()
@@ -132,8 +133,7 @@ it.each([
       await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
       releaseAnswer()
       await expect.poll(() => card.getByRole('button', { name: '重试这次回答', exact: true }).getAttribute('aria-busy')).toBe(null)
-      await page.getByRole('button', { name: '布局', exact: true }).filter({ visible: true }).first().click()
-      await page.getByRole('menuitemradio', { name: '分拣台', exact: true }).click()
+      await switchLayout(page, 'triage')
       expect(requests).toHaveLength(1)
       await card.getByRole('button', { name: '确认发布', exact: true }).click()
       await conversation.getByRole('button', { name: '重试这次回答', exact: true }).waitFor()

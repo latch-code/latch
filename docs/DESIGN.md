@@ -112,7 +112,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，用户从桌�
 
 Code 与我的 Agent 是两个空间，开关不是列表筛选；主操作、列表与主页一起切换，另一空间有待处理时带琥珀点。应用与设置是共用目的地，仍按 Host 能力与设备权限决定是否出现。分区定义见 [routes.ts](../apps/web/src/shell/routes.ts)，Agent 与应用的详情见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#界面) 和 [APP-PAGES.md](APP-PAGES.md#壳层)。页头可拖动桌面窗口，控件、弹层和安全界面除外。切换页面保留会话、阅读位置、草稿与面板，被盖住的内容 inert 且不接会话快捷键。冷启动进入 Code 首页，重新载入恢复原会话；晚到的发送回执不能抢走人已打开的设置或历史页面。
 
-**手机的页面栈。** 手机不放并排的栏，而是一页叠一页（[PhoneSessionList.tsx](../apps/web/src/components/PhoneSessionList.tsx)、[NewSessionSheet.tsx](../apps/web/src/newSession/NewSessionSheet.tsx)，样式在 `phone.css` 与 `phone-*.css`）。
+**手机的页面栈。** 手机不放并排的栏，而是一页叠一页（[PhoneSessionList.tsx](../apps/web/src/components/PhoneSessionList.tsx)，样式在 `phone.css` 与 `phone-*.css`）。
 
 - **Code 首页是根页**：底栏 Code 始终回决策首页，首页保留独立输入草稿。全部会话是明确的历史入口，不用点 Code 代替。总览与分拣台共用同一历史列表与会话控制器。
 - **全部会话是历史页**，在画布上，有「返回总览」：52 高的头行是 22/30·600 的「会话」与 44 的墨色幽灵按钮（新建会话），下面是常驻的搜索框；再往下依次是「等你处理」（有时才有，组名后是中性计数）、每个项目、「无项目」，分组规则与侧栏相同，置顶的会话排在各自分组的最前面并带一枚图钉；组名旁一条 `--line` 细线，项目组右端有「在 … 中新建会话」，列表末尾是「已归档」；点开后顶部有返回的一行。页面不是那台电脑上的 Latch 时（`isLocalListener` 为假，回环上的浏览器也算），头行上方是一行提示墨色的 `laptop` 图标与等宽的电脑名称。还没有会话时，列表开头左对齐地写「还没有会话」（次级墨色）、一行提示墨色的说明与 xs 次按钮「新建会话」，不放插画。列表末尾不再有同步按钮：连接的提示与横幅里有「重试」。

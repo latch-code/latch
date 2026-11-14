@@ -1,19 +1,17 @@
 import { useState } from 'react'
 import { Kbd, SearchField } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
-import { shortcutCaps, shortcutRows } from '../workbenchShortcuts.ts'
+import { capsText, shortcutCaps, shortcutRows } from '../workbenchShortcuts.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
 
-/** A shortcut's keys as caps: alternatives apart with 「或」, the ends of a range with 「…」. */
+/** A shortcut's keys as quiet text: alternatives apart with 「或」, the ends of a range with 「…」. */
 export function ShortcutCaps({ keys }: { keys: string }) {
   return (
     <span className="shortcut-caps" data-keys={keys}>
       {shortcutCaps(keys).map(({ join, caps }) => (
         <span key={caps.join(' ')} className="shortcut-alternative">
           {join && <span className="shortcut-or">{join}</span>}
-          {caps.map((cap, at) => (
-            <Kbd key={`${cap}-${String(at)}`}>{cap}</Kbd>
-          ))}
+          <Kbd>{capsText(caps)}</Kbd>
         </span>
       ))}
     </span>

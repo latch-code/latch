@@ -1,4 +1,3 @@
-import { useRef } from 'react'
 import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
 
@@ -6,9 +5,8 @@ import { SIDEBAR_MIN } from './panelLayout.ts'
 import { keepAwakeLine } from '../core/shellLifecycle.ts'
 import { openLayer } from '../hooks/backStack.ts'
 import { FoundHarnessesCard } from '../newSession/NewSession.tsx'
-import { NewSessionSheet } from '../newSession/NewSessionSheet.tsx'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
-import { worktreeProject, usesDemoModel, listsFoundHarnesses } from '../composerChoice.ts'
+import { usesDemoModel, listsFoundHarnesses } from '../composerChoice.ts'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
 import { ConversationHeader } from './ConversationHeader.tsx'
@@ -20,7 +18,6 @@ import {
   ResizeHandle,
   Scrim,
   ChevronLeftGlyph,
-  PlusGlyph,
   SearchGlyph,
   SettingsGlyph,
   StatusPill,
@@ -43,12 +40,13 @@ import { EditLeaveGuard } from '../preview/EditLeaveGuard.tsx'
 import { EditorChooser } from '../components/OpenInEditor.tsx'
 import { RightPanel } from './RightPanel.tsx'
 import { DraftFilePanel } from './DraftFilePanel.tsx'
-import { SendingBubble, SessionComposer, SetupNotices, SheetComposer } from './SessionComposers.tsx'
+import { SendingBubble, SessionComposer, SetupNotices } from './SessionComposers.tsx'
 import { useSideQuestionForks, withoutSideForks } from '../conversation/SideQuestion.tsx'
 import { useShellLayout } from './useShellLayout.tsx'
 import { OverviewGlyph } from '@latch/ui'
 import { WorkOverview } from './WorkOverview.tsx'
-import { LayoutMenu, TabletRail, WorkbenchComputer, WorkbenchNav } from './WorkbenchNav.tsx'
+import { TabletRail, WorkbenchComputer, WorkbenchNav } from './WorkbenchNav.tsx'
+import { LayoutSwitch } from './LayoutSwitch.tsx'
 import { WorkbenchSessions } from './WorkbenchSessions.tsx'
 import { useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
 import type { AppSnapshot } from '@latch/protocol'
@@ -59,7 +57,6 @@ type Harness = ReturnType<typeof useHarness>
 /** The signed-in shell. Mounted once per device identity, so per-device state starts fresh. */
 export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const shell = useShellLayout({ harness, snapshot })
-  const homeOptions = useRef<HTMLButtonElement>(null)
   const {
     phoneSession,
     phoneReview,
@@ -81,7 +78,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     submission,
     choice,
     attachmentDraft,
-    sendDraft,
     unread,
     sessionMenu,
     gate,
@@ -94,8 +90,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     sidebarDrag,
     setSidebarDrag,
     infoPage,
-    newSheet,
-    setNewSheet,
     phoneSearching,
     setPhoneSearching,
     popping,
@@ -104,7 +98,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     sidebarSnapping,
     navigation,
     main,
-    sheetComposerRef,
     searchRef,
     search,
     setSearch,
@@ -115,7 +108,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     lifecycle,
     fileTabs,
     filesOpen,
-    canBrowseFiles,
     filesVisible,
     placement,
     pageMode,
@@ -128,12 +120,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     startNew,
     openSettings,
     openProjectSettings,
-    manageProviders,
-    createProject,
-    projectAsk,
     createProjectAndStart,
-    newChoicesLocked,
-    sheetCanStart,
     sidebarLimit,
     sidebarWidth,
     setSidebarShut,
@@ -144,9 +131,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     archiveUndo,
     openSearch,
     startWithoutProject,
-    demo,
     startIn,
-    browseFiles,
     workspaceForFiles,
     column,
     page,
@@ -168,7 +153,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const overview = route.entry === 'sessions' && route.overview === true
   const allSessions = route.entry === 'sessions' && route.allSessions === true
   const covered = overview || allSessions
-  const newInputSheetOpen = phone && newSheet && shell.inputId === null
   const triage = shell.preferences.workbenchLayout === 'triage'
   const homeShell = { ...shell, ...shell.homeComposerState }
   const evidence = useWorkbenchDelivery(
@@ -215,6 +199,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               '--inspector-open-width': `${inspectorWidth}px`,
             }}>
             {!phone && (triage ? <WorkbenchNav shell={shell} /> : <TitleBar shell={shell} />)}
+            {/* One switch for both layouts, at the end of the window's top row: it stays mounted through a change. */}
+            {!phone && <LayoutSwitch className="shell-layout-switch" value={shell.preferences.workbenchLayout} />}
             {!triage && viewport === 'tablet' && <TabletRail shell={shell} />}
             <Scrim
               open={drawerMode && drawer.open}
@@ -241,7 +227,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   <Button variant="ghost" icon={OverviewGlyph} onClick={shell.openOverview}>
                     返回总览
                   </Button>
-                  <LayoutMenu value={shell.preferences.workbenchLayout} />
+                  <LayoutSwitch value={shell.preferences.workbenchLayout} />
                 </div>
                 <PhoneSessionList
                   space={entries.includes('agents') ? 'code' : undefined}
@@ -333,7 +319,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       onProjectsChanged={() => {
                         void refresh()
                       }}
-                      newActive={selectedId === null && !overview}
+                      newActive={false}
                       drawer={drawerMode}
                       onClose={() => {
                         drawer.setOpen(false)
@@ -404,7 +390,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   data-info-page={pageMode && infoPage ? '' : undefined}
                   data-pushed={phone && pushed ? '' : undefined}
                   data-leaving={phone && popping ? '' : undefined}>
-                  {attachmentDraft.dragging && (
+                  {attachmentDraft.dragging && !overview && (
                     <div className="attachment-drop-mask" role="status">
                       松开以添加到这条消息
                     </div>
@@ -491,9 +477,35 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             {overview && (
               <section
                 className="workbench-home"
-                aria-label={triage ? '分拣台' : '总览'}
-                aria-hidden={newInputSheetOpen || undefined}
-                inert={newInputSheetOpen || undefined}>
+                aria-label="总览"
+                onDragEnter={event => {
+                  if (
+                    catalog?.features?.attachments === true
+                    && homeShell.gate.kind === 'open'
+                    && [...event.dataTransfer.types].includes('Files')
+                  ) {
+                    event.preventDefault()
+                    attachmentDraft.setDragging(true)
+                  }
+                }}
+                onDragOver={event => {
+                  if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
+                }}
+                onDragLeave={event => {
+                  if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget))
+                    attachmentDraft.setDragging(false)
+                }}
+                onDropCapture={event => {
+                  attachmentDraft.setDragging(false)
+                  if (catalog?.features?.attachments === true && homeShell.gate.kind === 'open') dropAttachments(event, attachmentDraft)
+                  else if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
+                }}>
+                {/* Files dropped anywhere on the home go to its input, as they go to the open session's elsewhere. */}
+                {attachmentDraft.dragging && (
+                  <div className="attachment-drop-mask" role="status">
+                    松开以添加到这条消息
+                  </div>
+                )}
                 {phone && (
                   <header className="workbench-phone-heading">
                     {triage && shellSpaces(shell) ? <SpaceSwitch {...shellSpaces(shell)!} /> : <h1>Code</h1>}
@@ -501,7 +513,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     {triage && entries.includes('settings') && (
                       <IconButton label="设置" icon={SettingsGlyph} onClick={() => goEntry('settings')} />
                     )}
-                    <LayoutMenu value={shell.preferences.workbenchLayout} />
+                    <LayoutSwitch value={shell.preferences.workbenchLayout} />
                   </header>
                 )}
                 {phone && (
@@ -523,20 +535,16 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 )}
                 <ConnectionBanners shell={shell} />
                 <div className="workbench-home-composer">
-                  {phone && (
-                    <IconButton
-                      ref={homeOptions}
-                      className="workbench-home-options"
-                      label="新会话选项"
-                      icon={PlusGlyph}
-                      onClick={() => setNewSheet(true)}
-                    />
-                  )}
                   <SendingBubble shell={homeShell} />
                   <SessionComposer shell={shell} home />
                 </div>
                 <SetupNotices shell={homeShell} />
                 {listsFoundHarnesses(catalog, snapshot.tasks.length, shell.access) && <FoundHarnessesCard onRecheck={refresh} />}
+                {!submission.fork && work.snapshot.tasks.some(task => !task.archived) && (
+                  <div className="workbench-home-history">
+                    <HistoryImportEntry snapshot={snapshot} workspaceId={choice.workspaceId} phone={phone} onOpen={choose} />
+                  </div>
+                )}
                 <WorkOverview {...work} />
               </section>
             )}
@@ -586,60 +594,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             )}
             {phone && <PhoneTabBar shell={shell} />}
             {entries.includes('agents') && <ProfileLayer shell={shell} />}
-            {phone && (
-              <NewSessionSheet
-                focusComposer={submission.fork ? sheetComposerRef : undefined}
-                open={newInputSheetOpen}
-                onBrowseFiles={(overview ? shell.canBrowseDraftFiles : canBrowseFiles) ? browseFiles : undefined}
-                onClose={() => {
-                  setNewSheet(false)
-                  if (overview) requestAnimationFrame(() => homeOptions.current?.focus({ preventScroll: true }))
-                }}
-                snapshot={snapshot}
-                access={access}
-                choice={choice}
-                onChoice={submission.updateChoice}
-                disabled={newChoicesLocked}
-                canStart={sheetCanStart}
-                sending={submission.sending}
-                onStart={() => {
-                  void sendDraft()
-                }}
-                onManageProviders={manageProviders}
-                onProvidersChanged={() => {
-                  void refresh()
-                }}
-                onHarnessChanged={refresh}
-                onManageWorkspaces={owner ? () => openSettings('workspaces') : undefined}
-                onCreateProject={createProject}
-                projectAsk={projectAsk}
-                worktree={(() => {
-                  const project = worktreeProject(snapshot.catalog, choice, submission.fork !== null)
-                  return project && { project, picked: submission.worktree, onPick: submission.setWorktree }
-                })()}
-                composer={
-                  <>
-                    <SendingBubble shell={shell} />
-                    <SheetComposer shell={overview ? homeShell : shell} />
-                  </>
-                }
-                setup={<SetupNotices shell={overview ? homeShell : shell} />}
-                history={
-                  submission.fork ? undefined : (
-                    <HistoryImportEntry
-                      snapshot={snapshot}
-                      workspaceId={choice.workspaceId}
-                      phone
-                      onOpen={id => {
-                        choose(id)
-                        void refresh()
-                      }}
-                    />
-                  )
-                }
-                demo={demo}
-              />
-            )}
             <DraftFilePanel shell={shell} />
             <Overlays shell={shell} />
             <EditLeaveGuard />

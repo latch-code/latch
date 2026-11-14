@@ -608,18 +608,9 @@
   color: var(--ink);
 }
 
-/* Only while the desktop app keeps this Mac awake. */
-.sidebar-footer {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  flex-shrink: 0;
-  min-height: 28px;
-  padding: 0 var(--sp-4) 0 10px;
-}
 /*
- * The foot, under a line and always in reach however long the list is: 添加项目 (only in the Latch app on this Mac, in
- * Code), 应用 and 设置 as quiet rows, the trouble dot after 设置.
+ * The foot, under a line and always in reach however long the list is: 应用 and 设置 as quiet rows, the trouble dot
+ * after 设置.
  */
 .sidebar-foot {
   /* Counts on its buttons are cut out of the ground. */
@@ -702,46 +693,6 @@
 .sidebar-trouble[data-tone='error'] {
   background: var(--red);
 }
-/* A 16px badge that is also a button: its target reaches 4px past it on every side (24 high). */
-.connection-badge {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  height: 16px;
-  padding: 0 var(--sp-6);
-  border: 0;
-  border-radius: var(--r-full);
-  background: transparent;
-  color: var(--amber);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-meta);
-  font-weight: 500;
-  white-space: nowrap;
-}
-.connection-badge:hover {
-  background: var(--amber-soft);
-}
-.connection-badge::before {
-  content: '';
-  position: absolute;
-  inset: calc(-1 * var(--sp-4));
-}
-/*
- * Connected while the desktop app keeps this Mac awake: 保持唤醒中 in plain text3, never amber, since nothing is wrong.
- * Short enough not to shrink (the computer's name gives way, as it does for the amber badge), and nothing clips it, so
- * the target still reaches past it.
- */
-.connection-badge.connection-connected {
-  padding: 0;
-  background: none;
-  box-shadow: none;
-  color: var(--muted);
-}
-.connection-badge.connection-connected:hover {
-  color: var(--ink);
-}
-
 .project-group-caption {
   display: grid;
   justify-items: start;
