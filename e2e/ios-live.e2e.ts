@@ -14,14 +14,17 @@ import { clipboardLease, compileClipboardLease } from './helpers/iosClipboardLea
 import { clipboardGui, validateGuiPairing } from './helpers/iosClipboardValidation.ts'
 import { readDeviceClipboard, writeDeviceClipboard } from './helpers/iosDeviceClipboard.ts'
 import { pairingStagePage } from './helpers/iosPairingStage.ts'
+import { iosSlashEnvironment, prepareIosSlash } from './helpers/iosSlash.ts'
 
 const run = promisify(execFile)
 const PREFIX = 'latch-live-'
 const BUNDLE = 'dev.latch.ios.screens'
 const TYPES = ['iPhone-17-Pro', 'iPhone-16-Pro', 'iPhone-17', 'iPhone-16']
 const SCHEDULE_MODEL = { providerId: 'ios-live-schedule', model: 'fixture' }
+/** Optional normal-API templates and actual ACP command reports for the native Slash acceptance pass. */
+const SLASH = process.env.LATCH_IOS_SLASH === '1'
 /** The fake Agent really reports these ACP options; no fixture fills permission or model DTOs by hand. */
-const LIVE_AGENT_ENV = { FAKE_ACP_CONFIG: 'legacy' }
+const LIVE_AGENT_ENV = { FAKE_ACP_CONFIG: 'legacy', ...(SLASH ? iosSlashEnvironment : {}) }
 /** Scheduled work uses Standard under the existing unattended ceiling, with only a local scripted reply. */
 const scheduledProvider: HarnessPlugin = {
   id: SCHEDULE_MODEL.providerId,
@@ -299,6 +302,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         git('add', '--', 'computer.txt')
         git('commit', '-q', '-m', 'first')
         const enrolled = await target.enroll({ listener: 'unix' })
+        if (SLASH) await prepareIosSlash(enrolled)
         const saved = await enrolled.confirmed('agents', {
           method: 'POST',
           body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: LIVE_AGENT_ENV },
@@ -603,6 +607,7 @@ it('reads the live fake Agent configuration and continues its same session witho
   const host = await startTestHost()
   try {
     const owner = await host.enroll({ listener: 'unix' })
+    if (SLASH) await prepareIosSlash(owner)
     const response = await owner.confirmed('agents', {
       method: 'POST',
       body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: LIVE_AGENT_ENV },
@@ -611,11 +616,15 @@ it('reads the live fake Agent configuration and continues its same session witho
     const harnessId = ((await response.json()) as { agent: { id: string } }).agent.id
     const first = await owner.json<{ sessionId: string }>('tasks', {
       method: 'POST',
-      body: { harnessId, mode: 'agent', prompt: 'first', requestId: randomUUID() },
+      body: { harnessId, mode: 'agent', prompt: SLASH ? 'plan' : 'first', requestId: randomUUID() },
     })
     const detail = () => owner.json<TaskDetail>(`tasks/${first.sessionId}`)
     await expect.poll(async () => (await detail()).summary.status).toBe('idle')
     const ready = await detail()
+    if (SLASH) {
+      expect(ready.commands).toHaveLength(200)
+      expect((await owner.json<{ templates: unknown[] }>('prompts')).templates).toHaveLength(2)
+    }
     expect(ready.config).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
