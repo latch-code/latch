@@ -207,6 +207,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
     const savePhases = () => writeFile(join(output, 'pairing-phases.json'), JSON.stringify(phases, null, 2) + '\n')
     let derived: string | undefined
     let udid: string | undefined
+    let appPid: string | undefined
     /** Whether this run made the simulator and so shuts it down and deletes it. */
     let owned = false
     let host: TestHost | undefined
@@ -329,7 +330,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
           : undefined
       const otherOwner = other ? await prepare(other) : undefined
 
-      await simctl('launch', '--terminate-running-process', udid, BUNDLE, '-LatchLive', '1')
+      const launched = await simctl('launch', '--terminate-running-process', udid, BUNDLE, '-LatchLive', '1')
+      appPid = /: ([0-9]+)\s*$/u.exec(launched.stdout)?.[1]
       const clipboardBinary = GUI_CLIPBOARD ? await compileClipboardLease(derived) : undefined
       /** The Host whose code is on the clipboard and its usage count when it was written; undefined when none is. */
       let written: number | undefined
@@ -512,19 +514,21 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
       // The clipboard is emptied and the App stopped on any device; only a simulator this run made is shut down and deleted.
       if (udid) {
         // This dedicated Screens-only subsystem emits fixed milestones and elapsed time, never pairing inputs.
-        const timing = await simctl(
-          'spawn',
-          udid,
-          'log',
-          'show',
-          '--style',
-          'compact',
-          '--last',
-          '15m',
-          '--predicate',
-          'subsystem == "dev.latch.ios.screens" AND category == "pairing-timing"',
-        ).catch(() => undefined)
-        if (timing)
+        const timing = appPid
+          ? await simctl(
+              'spawn',
+              udid,
+              'log',
+              'show',
+              '--style',
+              'compact',
+              '--last',
+              '1h',
+              '--predicate',
+              `processIdentifier == ${appPid} AND subsystem == "dev.latch.ios.screens" AND category == "pairing-timing"`,
+            ).catch(() => undefined)
+          : undefined
+        if (timing) {
           await writeFile(
             join(output, 'pairing-app-timing.log'),
             timing.stdout
@@ -532,6 +536,14 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
               .filter(line => line.includes('LatchLive pairing-stage '))
               .join('\n') + '\n',
           ).catch(() => {})
+          await writeFile(
+            join(output, 'connection-app-timing.log'),
+            timing.stdout
+              .split('\n')
+              .filter(line => line.includes('LatchLive connection-stage '))
+              .join('\n') + '\n',
+          ).catch(() => {})
+        }
         // The validated workflow clears its own clipboard. Never send an unguarded clear through an unknown GUI.
         if (!GUI_CLIPBOARD) await toClipboard(udid, '').catch(() => {})
         await simctl('terminate', udid, BUNDLE).catch(() => {})

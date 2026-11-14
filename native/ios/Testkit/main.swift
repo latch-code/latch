@@ -453,6 +453,21 @@ do {
                 result["renewedOnSameTransport"] = true; result["oldWindowCannotCloseNew"] = true; result["missingWindowCannotCloseNew"] = true
             }
         }
+    case "phoneStreamRecovery":
+        var probes = 0, current = true
+        let value = NativeJSON.object(["revision": .number(2)])
+        var actions: [String] = []
+        for failure in [NativeFailure.expired, .eventOverflow, .forbidden] {
+            let next = await PhoneUnlock.recoverStream(failure, current: { current }, readMetadata: { probes += 1; return value })
+            actions.append(next?.action.rawValue ?? "obsolete")
+        }
+        current = false
+        let before = await PhoneUnlock.recoverStream(NativeFailure.unavailable, current: { current }, readMetadata: { probes += 1; return value })
+        current = true
+        let after = await PhoneUnlock.recoverStream(NativeFailure.unavailable, current: { current }, readMetadata: { probes += 1; current = false; return value })
+        current = true
+        let cancelled = await PhoneUnlock.recoverStream(CancellationError(), current: { current }, readMetadata: { probes += 1; return value })
+        result = ["actions": actions, "probes": probes, "staleBefore": before == nil, "staleAfter": after == nil, "cancelled": cancelled == nil]
     case "nativeProbe":
         let identity = input["withFixtureIdentity"] as? Bool == true ? try FixtureKeys().identity() : nil
         let connection = try await NativeHTTPConnection.open(host: "127.0.0.1", port: fixturePort(input), rootSpki: LinkBytes.unhex(input["rootSpki"] as? String ?? ""), knockKey: LinkBytes.unhex(input["knockKey"] as? String ?? ""), identity: identity)

@@ -60,6 +60,7 @@ const nativeSeen = vi.hoisted(() => [] as Array<{ deviceId: string; method: stri
 /** `METHOD path` of requests the native listener answers 503 once without passing on: a write the Host never saw. */
 const nativeDrop = vi.hoisted(() => new Set<string>())
 const nativeReadFaults = vi.hoisted(() => new Map<string, Array<{ status: number; code: string }>>())
+const nativeEventFaults = vi.hoisted(() => [] as Array<'end' | 'server' | 'transport' | 'metadata' | 'invalid'>)
 const nativeMalformedSuccess = vi.hoisted(() => new Set<string>())
 /** Replaces successful bodies only after the real Host authorizes the route, for native protocol-ordering fixtures. */
 const nativeBodyScripts = vi.hoisted(
@@ -183,6 +184,18 @@ vi.mock('../src/native.ts', async importOriginal => {
                 return end(...args)
               }) as typeof res.end
             }
+          }
+          const eventFault = key.startsWith('GET /link/api/events') ? nativeEventFaults.shift() : undefined
+          if (eventFault) {
+            if (eventFault === 'transport') return opening.close?.()
+            if (eventFault === 'metadata' || eventFault === 'invalid')
+              nativeReadFaults.set('GET /link/api/snapshot', [{ status: eventFault === 'metadata' ? 503 : 200, code: 'fixture-read' }])
+            res
+              .writeHead(eventFault === 'server' ? 500 : 200, {
+                'content-type': eventFault === 'server' ? 'application/json' : 'text/event-stream',
+              })
+              .end(eventFault === 'server' ? '{}' : ': ended\n\n')
+            return
           }
           const readFault = nativeReadFaults.get(key)?.shift()
           if (readFault) {
@@ -2390,6 +2403,47 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     30_000,
   )
 
+  it('discards a native stream probe after its reading intent changed and never probes explicit expiry', async () => {
+    expect(await invoke({ operation: 'phoneStreamRecovery' })).toEqual({
+      actions: ['contentExpired', 'eventOverflow', 'reconnect'],
+      probes: 1,
+      staleBefore: true,
+      staleAfter: true,
+      cancelled: true,
+    })
+  })
+  it.each(['end', 'server', 'transport', 'metadata', 'invalid'] as const)(
+    'checks the same native connection before treating an %s event failure as offline',
+    async failure => {
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+      try {
+        const owner = await host.enroll({ listener: 'unix' })
+        const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+        nativeEventFaults.push(failure)
+        const retry = failure === 'end' || failure === 'server'
+        expect(
+          await invoke(
+            { operation: 'nativeWorkspace', eventRecovery: true, payload: invitation.payload, port: host.host.nativePort },
+            25_000,
+          ),
+        ).toEqual({
+          eventFailure: 'unavailable',
+          leaseStillValid: true,
+          metadataRead: retry,
+          action: retry ? 'retryEvents' : 'reconnect',
+          resumed: retry,
+          pending: 1,
+          samePending: true,
+        })
+        expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
+      } finally {
+        nativeEventFaults.splice(0)
+        nativeReadFaults.delete('GET /link/api/snapshot')
+        await host.close()
+      }
+    },
+    30_000,
+  )
   it('reads, writes and stops from the actual Swift workspace against a real Host', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {

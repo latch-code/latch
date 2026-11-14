@@ -91,6 +91,36 @@ import LatchNativeCore
             await workspace.closeOpening(); await vault.lock()
             return ["ownAccepted": own, "crossStreamAccepted": crossed, "parserAccepted": parsed, "parserAckRefused": refused]
         }
+        if input["eventRecovery"] as? Bool == true {
+            let held = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["mode": .string("chat"), "prompt": .string("Unconfirmed event fixture")])
+            try await vault.storeBody(JSONEncoder().encode(held), name: "pending-" + held.requestId, lease: lease)
+            try await vault.storeMetadata(JSONEncoder().encode([held.requestId]), name: "pending-index")
+            var failure: Error = NativeFailure.invalidRecord
+            do {
+                let events = try await workspace.events(expectedLease: lease)
+                for try await _ in events.events {}
+                await events.cancel()
+            } catch { failure = error }
+            guard let recovery = await PhoneUnlock.recoverStream(failure, current: { true }, readMetadata: { try await workspace.snapshot() })
+                else { throw NativeFailure.invalidRecord }
+            let action = recovery.action
+            var resumed = false
+            if action.rawValue == "retryEvents" {
+                let events = try await workspace.events(expectedLease: lease)
+                for try await event in events.events {
+                    resumed = try await workspace.accepts(event, from: events, sessionId: nil)
+                    break
+                }
+                await events.cancel()
+            }
+            let pending = try await workspace.pendingWrites()
+            let valid = lease.valid
+            await workspace.closeOpening(); await vault.lock()
+            return ["eventFailure": (failure as? NativeFailure)?.rawValue ?? "other", "leaseStillValid": valid,
+                "metadataRead": recovery.snapshot != nil, "action": action.rawValue, "resumed": resumed, "pending": pending.count,
+                "samePending": pending.first?.requestId == held.requestId && pending.first?.path == held.path
+                    && pending.first?.method == held.method && pending.first?.body == held.body]
+        }
         if input["agentReadFailures"] as? Bool == true {
             let held = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["mode": .string("chat"), "prompt": .string("Unconfirmed fixture message")])
             try await vault.storeBody(JSONEncoder().encode(held), name: "pending-" + held.requestId, lease: lease)

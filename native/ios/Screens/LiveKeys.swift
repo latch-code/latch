@@ -17,6 +17,9 @@ enum PhoneLive {
     enum PairingStage: String {
         case accepted, keysStarted, keysReady, draftSaved, dialStarted, dialReady, lanReady, beginStarted, beginReady, approved, completeReady, failed
     }
+    enum ConnectionStage: String {
+        case windowBound, windowClosed, readUnavailable, streamExpired, streamUnavailable, streamOther, metadataConfirmed, reconnectRequired, networkChanged, bookFailed
+    }
     private static let pairingStart = ContinuousClock.now
     private static let pairingLog = Logger(subsystem: "dev.latch.ios.screens", category: "pairing-timing")
     /** Fixed milestones only: no invitation, address, identifier or error description enters the diagnostic. */
@@ -25,6 +28,13 @@ enum PhoneLive {
         let time = pairingStart.duration(to: .now).components
         let milliseconds = time.seconds * 1000 + time.attoseconds / 1_000_000_000_000_000
         pairingLog.notice("LatchLive pairing-stage \(stage.rawValue, privacy: .public) elapsed-ms \(milliseconds, privacy: .public)")
+    }
+    /** Booleans and monotonic time distinguish an expired body from a live connection; never record window receipts. */
+    static func connectionCheckpoint(_ stage: ConnectionStage, leaseValid: Bool, connected: Bool) {
+        guard isOn else { return }
+        let time = pairingStart.duration(to: .now).components
+        let milliseconds = time.seconds * 1000 + time.attoseconds / 1_000_000_000_000_000
+        pairingLog.notice("LatchLive connection-stage \(stage.rawValue, privacy: .public) elapsed-ms \(milliseconds, privacy: .public) lease-valid \(leaseValid, privacy: .public) connected \(connected, privacy: .public)")
     }
     /** Only an explicit `-LatchLive 1` launch argument: no default, file or environment turns it on. */
     static let isOn: Bool = {

@@ -153,6 +153,7 @@ import UIKit
     private var eventTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var streamGeneration = UUID()
+    private var eventRetryAttempt = 0
     var previewing = false
     private var refreshId: UUID?
     private var pendingEvent: (NativeEvent, NativeWorkspaceEvents, String?)?
@@ -211,6 +212,7 @@ import UIKit
         guard let store, !busy else { return }
         busy = true; defer { busy = false }
         generation = UUID(); let current = generation
+        eventRetryAttempt = 0
         eventTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel()
         resetBookRefresh()
         let previous = workspace; workspace = nil
@@ -296,6 +298,9 @@ import UIKit
     private func bindBodyLease(_ lease: BodyLease, current: UUID) throws {
         guard current == generation else { throw NativeFailure.expired }; try lease.requireValid()
         if bodyLease?.sameWindow(as: lease) != true {
+#if LATCH_SCREENS
+            PhoneLive.connectionCheckpoint(.windowBound, leaseValid: lease.valid, connected: connected)
+#endif
             // Verification does not change the caller's selected session, draft or attachments.
             privateSnapshot.clear()
             createdHelper = nil
@@ -312,6 +317,9 @@ import UIKit
     }
     private func closeBodyWindow(_ lease: BodyLease, current: UUID) {
         guard current == generation, bodyLease?.sameWindow(as: lease) == true else { return }
+#if LATCH_SCREENS
+        PhoneLive.connectionCheckpoint(.windowClosed, leaseValid: lease.valid, connected: connected)
+#endif
         bodyLease = nil; expiryTask?.cancel(); clearPrivateContent(); verifiedUntil = nil
         eventTask?.cancel(); startEvents()
         if PhoneUnlock.reopensAtExpiry(faceID: PhoneFaceID.isOn) { Task { await reopenContent(current) } }
@@ -368,6 +376,9 @@ import UIKit
     /** Going away is the banner's to say, not an alert's; true when that is what this failure was. */
     @discardableResult func wentAway(_ failure: Error) -> Bool {
         guard Self.outOfReach(failure) else { return false }
+#if LATCH_SCREENS
+        PhoneLive.connectionCheckpoint(.readUnavailable, leaseValid: bodyLease?.valid == true, connected: connected)
+#endif
         if connected { connected = false; offline = true; status = "不在线"; startReconnect() }
         return true
     }
@@ -379,6 +390,7 @@ import UIKit
         let current = generation, selected = verifiedUntil != nil ? sessionId : nil, streamId = streamGeneration
         eventTask = Task {
             var streamLease: BodyLease?
+            let openedAt = ContinuousClock.now
             do {
                 // The Host offers metadata snapshots without a body window, never an unverified SSE stream.
                 streamLease = await workspace.lease()
@@ -395,6 +407,7 @@ import UIKit
                 for try await event in stream.events {
                     guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
                     if try await workspace.accepts(event, from: stream, sessionId: selected) {
+                        if event.type == "heartbeat" || openedAt.duration(to: .now) >= .seconds(15) { eventRetryAttempt = 0 }
                         if event.type == "host-state" { hostNotice = PhoneHostNotice.parse(event.data) }
                         pendingEvent = (event, stream, selected)
                         scheduleEventRefresh(workspace: workspace, generation: current, stream: streamId)
@@ -402,17 +415,47 @@ import UIKit
                 }
             } catch {
                 guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
-                if PhoneUnlock.streamFailure(error) == .eventOverflow {
+#if LATCH_SCREENS
+                PhoneLive.connectionCheckpoint((error as? NativeFailure) == .expired ? .streamExpired
+                    : (error as? NativeFailure) == .unavailable ? .streamUnavailable : .streamOther,
+                    leaseValid: streamLease?.valid == true, connected: connected)
+#endif
+                let reading = privateSnapshot.epoch
+                guard let recovery = await PhoneUnlock.recoverStream(error, current: {
+                    !Task.isCancelled && self.generation == current && self.streamGeneration == streamId && self.privateSnapshot.accepts(reading)
+                }, readMetadata: { try await workspace.snapshot() }) else { return }
+                if recovery.action == .eventOverflow {
                     try? await workspace.forgetCursor(sessionId: selected)
                     if await refresh() { startEvents() }
                     return
                 }
-                if PhoneUnlock.streamFailure(error) == .contentExpired, let streamLease {
+                if recovery.action == .contentExpired, let streamLease {
                     await workspace.invalidateContentWindow(streamLease)
                     guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
                     closeBodyWindow(streamLease, current: current)
                     return
                 }
+                if recovery.action == .retryEvents, let value = recovery.snapshot {
+#if LATCH_SCREENS
+                    PhoneLive.connectionCheckpoint(.metadataConfirmed, leaseValid: bodyLease?.valid == true, connected: connected)
+#endif
+                    adoptSnapshot(value, captured: reading, windowOpen: bodyLease?.valid == true)
+                    connected = true; status = "已连接"
+                    reconnectTask?.cancel()
+                    if let streamLease, !streamLease.valid, bodyLease?.sameWindow(as: streamLease) == true {
+                        closeBodyWindow(streamLease, current: current)
+                        return
+                    }
+                    eventRetryAttempt = min(eventRetryAttempt + 1, 7)
+                    let delay = min(30.0, 0.5 * pow(2, Double(eventRetryAttempt - 1)))
+                    do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                    guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
+                    startEvents()
+                    return
+                }
+#if LATCH_SCREENS
+                PhoneLive.connectionCheckpoint(.reconnectRequired, leaseValid: bodyLease?.valid == true, connected: connected)
+#endif
                 connected = false; offline = true; status = "不在线"; startReconnect()
             }
         }
@@ -478,6 +521,9 @@ import UIKit
         monitorGeneration = UUID(); let current = monitorGeneration
         next.pathUpdateHandler = { [weak self] path in Task { @MainActor in
             guard let self, self.monitorGeneration == current else { return }
+#if LATCH_SCREENS
+            PhoneLive.connectionCheckpoint(.networkChanged, leaseValid: self.bodyLease?.valid == true, connected: self.connected)
+#endif
             self.currentNetworkPath = path; self.proximityTask?.cancel(); self.proximityTask = nil
             self.networkGeneration = UUID(); self.freshPairings.removeAll(); self.discovery.stop()
             if let host = self.selectedHost { try? self.startDiscovery(host) }
@@ -538,6 +584,9 @@ import UIKit
         } catch { if generation == current, !Task.isCancelled { startReconnect() } }
     }
     private func bookFailed(_ failure: NativeFailure, current: UUID) {
+#if LATCH_SCREENS
+        if generation == current { PhoneLive.connectionCheckpoint(.bookFailed, leaseValid: bodyLease?.valid == true, connected: connected) }
+#endif
         if generation == current, !wentAway(failure) { report(failure) }
     }
     private func startDiscovery(_ host: RegisteredHost) throws {
