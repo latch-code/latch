@@ -11,6 +11,18 @@ public struct PhoneEventRecovery: Sendable {
  * is on, it is asked before each new content window, and the words and icons say so.
  */
 public enum PhoneUnlock {
+    /** A transient read may retry once within the same reading; it never signs, replays a write or resets a stream. */
+    @MainActor public static func retryBodyRead<Value>(current: () -> Bool, read: () async throws -> Value) async throws -> Value {
+        guard current(), !Task.isCancelled else { throw CancellationError() }
+        do { return try await read() }
+        catch {
+            guard current(), !Task.isCancelled else { throw CancellationError() }
+            guard (error as? NativeFailure) == .unavailable || (error as? NativeReadFailure) == .failed else { throw error }
+            try await Task.sleep(for: .milliseconds(250))
+            guard current(), !Task.isCancelled else { throw CancellationError() }
+            return try await read()
+        }
+    }
     public static func streamFailure(_ error: Error) -> PhoneStreamFailure {
         switch error as? NativeFailure {
         case .expired: .contentExpired

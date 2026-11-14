@@ -5,6 +5,22 @@ import Security
 /** Reads synthetic Host JSON through the App's own projections, and answers in plain values the test can compare. */
 func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
     let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
+    if case let .array(cases) = value["bodyAvailability"] {
+        return ["allowed": cases.map { PhoneSessions.mayReadBody(snapshot: $0, sessionId: "selected") }]
+    }
+    if case let .array(cases) = value["currentSummaryCases"] {
+        return ["current": cases.map { item in
+            let summary = PhoneSessions.currentSummary(snapshot: item["snapshot"], detail: item["detail"], sessionId: item["sessionId"].string, cached: item["cached"].bool)
+            return summary["title"].string ?? "none"
+        }]
+    }
+    if case let .array(cases) = value["projectedSummaryCases"] {
+        return ["projected": cases.map { item -> [String: Any] in
+            let snapshot = PhoneSessions.projectingCurrentSummary(snapshot: item["snapshot"], detail: item["detail"], sessionId: item["sessionId"].string, cached: item["cached"].bool)
+            return ["revision": snapshot["revision"].integer ?? 0, "tasks": snapshot["tasks"].array.compactMap { $0["title"].string },
+                "face": "\(PhoneAgents.face(snapshot, id: "helper", available: true))"]
+        }]
+    }
     let hostNow = PhoneTime.parse(value["hostNow"]) ?? Date()
     func words(_ status: PhoneRowStatus) -> String {
         switch status {

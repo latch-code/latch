@@ -4,7 +4,7 @@ import Security
 
 /** A read response is not a receipt for any pending write. Only the Host's explicit journal state confirms that distinction. */
 public enum NativeReadFailure: Error, Sendable {
-    case agentWriteUnknown, failed
+    case agentWriteUnknown, failed, bodyAccessChanged
 }
 
 public enum NativeFailure: String, Error, LocalizedError, Sendable {

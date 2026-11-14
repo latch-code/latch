@@ -3,7 +3,7 @@ import LatchNativeCore
 
 extension PhoneModel {
     var canQueueCurrent: Bool { snapshot["catalog"]["features"]["queue"].bool }
-    var currentSummary: NativeJSON { snapshot["tasks"].array.first { $0["id"].string == sessionId } ?? detail["summary"] }
+    var currentSummary: NativeJSON { PhoneSessions.currentSummary(snapshot: snapshot, detail: detail, sessionId: sessionId, cached: detailCached) }
     /** Whether the open session is stopping: this phone asked and has no answer yet, or the Host says so, whoever asked. */
     var stoppingCurrent: Bool {
         guard let sessionId else { return false }
@@ -61,10 +61,10 @@ extension PhoneModel {
         }
         guard stillReading(), let lease = await workspace.lease() else { return }
         do {
-            let value = try await workspace.detail(id)
+            let applied = try await readSelectedBody(id, workspace: workspace)
             guard stillReading() else { return }
             try lease.requireValid()
-            detail = value; startEvents()
+            if applied { startEvents() }
         } catch {
             guard stillReading() else { return }
             if wentAway(error) {

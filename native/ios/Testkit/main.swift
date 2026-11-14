@@ -469,6 +469,25 @@ do {
         current = true
         let cancelled = await PhoneUnlock.recoverStream(CancellationError(), current: { current }, readMetadata: { probes += 1; return value })
         result = ["actions": actions, "probes": probes, "staleBefore": before == nil, "staleAfter": after == nil, "cancelled": cancelled == nil]
+    case "phoneBodyReadRetry":
+        var attempts: [Int] = [], failures: [String] = []
+        for mode in ["twice", "read-failed", "unknown", "forbidden", "expired", "stale"] {
+            var count = 0, current = true
+            do {
+                let _: Int = try await PhoneUnlock.retryBodyRead(current: { current }) {
+                    count += 1
+                    if mode == "stale" { current = false }
+                    if mode == "read-failed" { throw NativeReadFailure.failed }
+                    if mode == "unknown" { throw NativeReadFailure.agentWriteUnknown }
+                    if mode == "forbidden" { throw NativeFailure.forbidden }
+                    throw mode == "expired" ? NativeFailure.expired : NativeFailure.unavailable
+                }
+            } catch {
+                failures.append(error is CancellationError ? "cancelled" : "\(error)")
+            }
+            attempts.append(count)
+        }
+        result = ["attempts": attempts, "failures": failures]
     case "nativeProbe":
         let identity = input["withFixtureIdentity"] as? Bool == true ? try FixtureKeys().identity() : nil
         let connection = try await NativeHTTPConnection.open(host: "127.0.0.1", port: fixturePort(input), rootSpki: LinkBytes.unhex(input["rootSpki"] as? String ?? ""), knockKey: LinkBytes.unhex(input["knockKey"] as? String ?? ""), identity: identity)

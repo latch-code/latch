@@ -4,6 +4,37 @@ import Network
 import SwiftUI
 import UIKit
 
+@MainActor private final class PhoneBodyRead {
+    let id: UUID
+    let workspace: NativeWorkspace
+    let reading: NativeBodyReading
+    let host: UUID
+    let selection: UUID
+    let content: UUID
+    let session: String
+    let lease: BodyLease
+    var update: NativeBodyUpdate?
+    var publication: Task<Void, Never>?
+    var notice: NativeBodyNotice?
+    var metadata: Task<Void, Never>?
+    var repairRead: Task<Void, Never>?
+    var repaired = false
+    var pendingGeneration = UUID()
+    var sourceId = UUID()
+    var source: NativeWorkspaceEvents?
+    var readFailure: Error?
+    init(id: UUID, workspace: NativeWorkspace, reading: NativeBodyReading, host: UUID, selection: UUID, content: UUID, session: String, lease: BodyLease) {
+        self.id = id; self.workspace = workspace; self.reading = reading; self.host = host
+        self.selection = selection; self.content = content; self.session = session; self.lease = lease
+    }
+    func cancelPending() {
+        pendingGeneration = UUID()
+        publication?.cancel(); publication = nil; update = nil
+        metadata?.cancel(); metadata = nil; notice = nil
+        repairRead?.cancel(); repairRead = nil
+    }
+}
+
 @MainActor final class PhoneModel: ObservableObject {
     @Published var hosts: [RegisteredHost] = []
     @Published var selectedHost: RegisteredHost?
@@ -15,7 +46,7 @@ import UIKit
     @Published var detailFailed: String?
     @Published var previewProgress: PhonePreviewProgress?
     var previewJob: UUID?
-    @Published var sessionId: String?
+    @Published var sessionId: String? { didSet { if oldValue != sessionId { clearBodyReading() } } }
     @Published var pending: [NativePendingWrite] = []
     @Published var controlPending = NativeJSON.null
     @Published var draft: PairingDraft?
@@ -138,7 +169,9 @@ import UIKit
     @Published var privateSnapshot = PhonePrivateSnapshot()
     @Published var createdHelper: CreatedHelper?
     private var bodyLease: BodyLease?
-    @Published var contentGeneration = UUID()
+    @Published var contentGeneration = UUID() { didSet { if oldValue != contentGeneration { clearBodyReading() } } }
+    private var bodyRead: PhoneBodyRead?
+    private var bodyOpening: (id: UUID, host: UUID, selection: UUID, content: UUID, session: String, lease: BodyLease, workspace: NativeWorkspace, task: Task<NativeBodyReading, Error>)?
     var canRun: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("run") }
     var canApproveStandard: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("approve:standard") }
     var canApproveElevated: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("approve:elevated") }
@@ -298,6 +331,7 @@ import UIKit
     private func bindBodyLease(_ lease: BodyLease, current: UUID) throws {
         guard current == generation else { throw NativeFailure.expired }; try lease.requireValid()
         if bodyLease?.sameWindow(as: lease) != true {
+            clearBodyReading()
 #if LATCH_SCREENS
             PhoneLive.connectionCheckpoint(.windowBound, leaseValid: lease.valid, connected: connected)
 #endif
@@ -333,6 +367,145 @@ import UIKit
         else if let sessionId { await openSession(sessionId) }
         else if tab == .agents { await openAgents() }
     }
+    /** Selection changes withdraw App candidates immediately; the old handles can only close their own Core reader. */
+    func clearBodyReading() {
+        let previous = bodyRead, opening = bodyOpening
+        bodyRead = nil; bodyOpening = nil
+        previous?.cancelPending(); opening?.task.cancel()
+        if let previous { Task { await previous.workspace.endBody(previous.reading) } }
+        if let opening { Task { if let reading = try? await opening.task.value { await opening.workspace.endBody(reading) } } }
+    }
+    private func bodyIntentIsCurrent(_ value: PhoneBodyRead) -> Bool {
+        bodyRead === value && generation == value.host && contentGeneration == value.selection
+            && privateSnapshot.accepts(value.content) && sessionId == value.session
+            && bodyLease?.sameWindow(as: value.lease) == true
+    }
+    private func bodyIsCurrent(_ value: PhoneBodyRead) -> Bool { bodyIntentIsCurrent(value) && value.lease.valid }
+    private func bodyContext(_ selected: String, workspace: NativeWorkspace) async throws -> PhoneBodyRead {
+        guard sessionId == selected, let lease = bodyLease, lease.valid else { throw NativeFailure.expired }
+        if let bodyRead, bodyIsCurrent(bodyRead), bodyRead.workspace === workspace { return bodyRead }
+        let host = generation, selection = contentGeneration, content = privateSnapshot.epoch
+        let opening: (id: UUID, host: UUID, selection: UUID, content: UUID, session: String, lease: BodyLease, workspace: NativeWorkspace, task: Task<NativeBodyReading, Error>)
+        if let existing = bodyOpening, existing.host == host, existing.selection == selection,
+           existing.content == content, existing.session == selected, existing.workspace === workspace, existing.lease.sameWindow(as: lease) {
+            opening = existing
+        } else {
+            clearBodyReading()
+            opening = (UUID(), host, selection, content, selected, lease, workspace, Task { try await workspace.beginBody(selected) })
+            bodyOpening = opening
+        }
+        do {
+            let reading = try await opening.task.value
+            if let bodyRead, bodyRead.id == opening.id, bodyIsCurrent(bodyRead) { return bodyRead }
+            guard bodyOpening?.id == opening.id, generation == host, contentGeneration == selection,
+                  privateSnapshot.accepts(content), sessionId == selected, lease.valid, bodyLease?.sameWindow(as: lease) == true else {
+                await workspace.endBody(reading); throw CancellationError()
+            }
+            let value = PhoneBodyRead(id: opening.id, workspace: workspace, reading: reading,
+                host: host, selection: selection, content: content, session: selected, lease: lease)
+            bodyRead = value; bodyOpening = nil
+            return value
+        } catch {
+            if bodyOpening?.id == opening.id { bodyOpening = nil }
+            throw error
+        }
+    }
+    @discardableResult private func publishBody(_ update: NativeBodyUpdate, context: PhoneBodyRead) async throws -> Bool {
+        guard let receipt = context.reading.publication.apply(update, to: { value in
+            guard self.bodyIsCurrent(context) else { return false }
+            if let snapshot = value.snapshot {
+                self.adoptSnapshot(snapshot, captured: context.content, windowOpen: context.lease.valid)
+                // Adopting changed scopes takes content down synchronously, before the body's assignment.
+                guard self.bodyIsCurrent(context) else { return false }
+            }
+            if let detail = value.detail {
+                self.detail = detail
+                self.snapshot = PhoneSessions.projectingCurrentSummary(snapshot: self.snapshot, detail: detail, sessionId: context.session, cached: false)
+                if let time = PhoneTime.parse(detail["sync"]["hostTime"]) { self.hostClockOffset = time.timeIntervalSinceNow }
+                self.lastConfirmed = Date()
+            }
+            return true
+        }) else { return false }
+        try await context.workspace.applied(receipt)
+        return bodyIsCurrent(context)
+    }
+    /** HTTP and stream candidates use one publication floor; a completed fetch is not consumption evidence. */
+    @discardableResult func readSelectedBody(_ selected: String, workspace: NativeWorkspace) async throws -> Bool {
+        let context = try await bodyContext(selected, workspace: workspace)
+        guard !Task.isCancelled, bodyIsCurrent(context) else { throw CancellationError() }
+        let update = try await workspace.readBody(for: context.reading)
+        _ = try await publishBody(update, context: context)
+        return bodyIsCurrent(context)
+    }
+    private func queueBody(_ update: NativeBodyUpdate, context: PhoneBodyRead) {
+        guard bodyIsCurrent(context) else { return }
+        context.update = update
+        guard context.publication == nil else { return }
+        let pending = context.pendingGeneration
+        context.publication = Task {
+            defer { if context.pendingGeneration == pending { context.publication = nil } }
+            do {
+                while context.update != nil {
+                    try await Task.sleep(for: .milliseconds(100))
+                    guard !Task.isCancelled, bodyIsCurrent(context), let update = context.update else { return }
+                    context.update = nil
+                    _ = try await publishBody(update, context: context)
+                }
+            } catch { if !Task.isCancelled, bodyIsCurrent(context) { report(error) } }
+        }
+    }
+    private func queueBodyNotice(_ notice: NativeBodyNotice, context: PhoneBodyRead) {
+        guard bodyIsCurrent(context) else { return }
+        context.notice = notice
+        guard context.metadata == nil else { return }
+        let pending = context.pendingGeneration, source = context.sourceId
+        context.metadata = Task {
+            defer { if context.pendingGeneration == pending { context.metadata = nil } }
+            do {
+                while let notice = context.notice {
+                    context.notice = nil
+                    let update = try await PhoneUnlock.retryBodyRead(current: {
+                        !Task.isCancelled && self.bodyIsCurrent(context) && context.pendingGeneration == pending && context.sourceId == source
+                    }) { try await context.workspace.refreshBody(for: context.reading, after: notice) }
+                    guard !Task.isCancelled, bodyIsCurrent(context) else { return }
+                    _ = try await publishBody(update, context: context)
+                    await refreshControlPending()
+                }
+            } catch { if !Task.isCancelled { await failBodyRead(error, context: context, source: source) } }
+        }
+    }
+    /** A failed metadata read cannot leave an unconsumed barrier waiting for another event. */
+    private func failBodyRead(_ error: Error, context: PhoneBodyRead, source: UUID) async {
+        guard bodyIsCurrent(context), context.sourceId == source, let stream = context.source else { return }
+        context.readFailure = (error as? NativeReadFailure) == .failed ? NativeFailure.unavailable : error
+        await stream.cancel()
+    }
+    private func recoverBodyAccess(_ context: PhoneBodyRead, stream streamId: UUID) async {
+        guard bodyIsCurrent(context), streamGeneration == streamId else { return }
+        let host = generation, selected = context.session, repaired = context.repaired
+        // A validated access checkpoint withdrew this reader. Hide its content before any recovery await.
+        clearPrivateContent()
+        var reading = contentGeneration, content = privateSnapshot.epoch
+        do {
+            let value = try await context.workspace.snapshot()
+            guard generation == host, streamGeneration == streamId, sessionId == selected,
+                  contentGeneration == reading, privateSnapshot.accepts(content) else { return }
+            try context.lease.requireValid()
+            guard bodyLease?.sameWindow(as: context.lease) == true else { return }
+            adoptSnapshot(value, captured: content, windowOpen: true)
+            reading = contentGeneration; content = privateSnapshot.epoch
+            guard PhoneSessions.mayReadBody(snapshot: snapshot, sessionId: selected) else { detailFailed = selected; return }
+            let next = try await bodyContext(selected, workspace: context.workspace)
+            next.repaired = repaired
+            let update = try await context.workspace.readBody(for: next.reading)
+            _ = try await publishBody(update, context: next)
+            if bodyIsCurrent(next) { startEvents() }
+        } catch {
+            guard generation == host, streamGeneration == streamId, sessionId == selected,
+                  contentGeneration == reading, privateSnapshot.accepts(content), !Task.isCancelled else { return }
+            detailFailed = selected; report(error)
+        }
+    }
     @discardableResult func refresh() async -> Bool {
         guard let workspace else { return false }
         let current = generation, selected = sessionId
@@ -356,8 +529,8 @@ import UIKit
             guard current == generation, privateSnapshot.accepts(reading) else { return false }
             if let selected, lease?.valid == true {
                 let reading = contentGeneration
-                let value = try await workspace.detail(selected)
-                guard current == generation, sessionId == selected, contentGeneration == reading, lease?.valid == true else { return false }; detail = value
+                guard try await readSelectedBody(selected, workspace: workspace), current == generation,
+                      sessionId == selected, contentGeneration == reading, lease?.valid == true else { return false }
             }
             return true
         } catch {
@@ -384,12 +557,14 @@ import UIKit
     }
     func startEvents() {
         eventTask?.cancel()
+        bodyRead?.cancelPending()
         refreshTask?.cancel(); refreshTask = nil; refreshId = nil; pendingEvent = nil
         streamGeneration = UUID()
         guard let workspace else { return }
         let current = generation, selected = verifiedUntil != nil ? sessionId : nil, streamId = streamGeneration
         eventTask = Task {
             var streamLease: BodyLease?
+            var selectedBody: PhoneBodyRead?
             let openedAt = ContinuousClock.now
             do {
                 // The Host offers metadata snapshots without a body window, never an unverified SSE stream.
@@ -400,6 +575,13 @@ import UIKit
                         guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
                         guard await refresh() else { throw NativeFailure.unavailable }
                     }
+                    return
+                }
+                if let selected {
+                    let context = try await bodyContext(selected, workspace: workspace)
+                    selectedBody = context
+                    guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
+                    try await consumeBodyEvents(context, stream: streamId, openedAt: openedAt)
                     return
                 }
                 let stream = try await workspace.events(sessionId: selected, expectedLease: streamLease)
@@ -415,6 +597,14 @@ import UIKit
                 }
             } catch {
                 guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
+                if let selectedBody, !bodyIntentIsCurrent(selectedBody) { return }
+                selectedBody?.cancelPending()
+                if (error as? NativeReadFailure) == .bodyAccessChanged, let selectedBody {
+                    await recoverBodyAccess(selectedBody, stream: streamId); return
+                }
+                if selectedBody?.repaired == true, [NativeFailure.invalidRecord, .eventOverflow].contains(error as? NativeFailure) {
+                    report(error); return
+                }
 #if LATCH_SCREENS
                 PhoneLive.connectionCheckpoint((error as? NativeFailure) == .expired ? .streamExpired
                     : (error as? NativeFailure) == .unavailable ? .streamUnavailable : .streamOther,
@@ -425,6 +615,8 @@ import UIKit
                     !Task.isCancelled && self.generation == current && self.streamGeneration == streamId && self.privateSnapshot.accepts(reading)
                 }, readMetadata: { try await workspace.snapshot() }) else { return }
                 if recovery.action == .eventOverflow {
+                    // The selected reader already spent its one full repair; a new event task must not reset it.
+                    if selectedBody?.repaired == true { report(error); return }
                     try? await workspace.forgetCursor(sessionId: selected)
                     if await refresh() { startEvents() }
                     return
@@ -458,6 +650,70 @@ import UIKit
 #endif
                 connected = false; offline = true; status = "不在线"; startReconnect()
             }
+        }
+    }
+    private func consumeBodyEvents(_ context: PhoneBodyRead, stream streamId: UUID, openedAt: ContinuousClock.Instant) async throws {
+        var refreshAfterOpening = false
+        while !Task.isCancelled, bodyIsCurrent(context), streamGeneration == streamId {
+            let source = try await context.workspace.events(for: context.reading, incremental: !context.repaired)
+            let sourceId = UUID()
+            context.sourceId = sourceId; context.source = source; context.readFailure = nil
+            defer {
+                if context.sourceId == sourceId { context.source = nil }
+                Task { await source.cancel() }
+            }
+            if refreshAfterOpening {
+                refreshAfterOpening = false
+                let pending = context.pendingGeneration
+                context.repairRead = Task {
+                    defer { if context.pendingGeneration == pending { context.repairRead = nil } }
+                    do {
+                        let full = try await PhoneUnlock.retryBodyRead(current: {
+                            !Task.isCancelled && self.bodyIsCurrent(context) && context.pendingGeneration == pending && context.sourceId == sourceId
+                        }) { try await context.workspace.readBody(for: context.reading) }
+                        guard !Task.isCancelled, bodyIsCurrent(context) else { return }
+                        _ = try await publishBody(full, context: context)
+                    } catch { if !Task.isCancelled { await failBodyRead(error, context: context, source: sourceId) } }
+                }
+            }
+            var repair = false
+            do {
+                for try await event in source.events {
+                    guard !Task.isCancelled, bodyIsCurrent(context), streamGeneration == streamId else { return }
+                    let result = try await context.workspace.receive(event, from: source, for: context.reading)
+                    guard !Task.isCancelled, bodyIsCurrent(context), streamGeneration == streamId else { return }
+                    if event.type == "heartbeat" || openedAt.duration(to: .now) >= .seconds(15) { eventRetryAttempt = 0 }
+                    switch result {
+                    case let .update(update): queueBody(update, context: context)
+                    case let .notice(notice):
+                        if try NativeJSON.decode(notice.event.data)["resumeRequired"].bool { try await context.workspace.forgetCursor(sessionId: context.session) }
+                        queueBodyNotice(notice, context: context)
+                    case let .hostState(value): hostNotice = PhoneHostNotice.parse(value.data)
+                    case .ignore: break
+                    case .repair: repair = true
+                    }
+                    if repair { break }
+                }
+            } catch {
+                let failure = context.readFailure ?? error
+                if context.readFailure == nil, (failure as? NativeFailure) == .unavailable, !Task.isCancelled {
+                    try await context.workspace.checkBodyReading(context.reading)
+                }
+                guard !context.repaired, [NativeFailure.invalidRecord, .eventOverflow].contains(failure as? NativeFailure) else { throw failure }
+                repair = true
+            }
+            guard !Task.isCancelled, bodyIsCurrent(context), streamGeneration == streamId else { return }
+            if !repair {
+                if let failure = context.readFailure { throw failure }
+                try await context.workspace.checkBodyReading(context.reading)
+                throw NativeFailure.unavailable
+            }
+            guard !context.repaired else { throw NativeFailure.invalidRecord }
+            context.repaired = true; context.cancelPending()
+            await source.cancel()
+            guard !Task.isCancelled, bodyIsCurrent(context), streamGeneration == streamId else { return }
+            refreshAfterOpening = true
+            // Reopen first, clearing the failed stream's ledger before offering the concurrent HTTP repair.
         }
     }
     private func scheduleEventRefresh(workspace: NativeWorkspace, generation current: UUID, stream streamId: UUID) {
@@ -675,7 +931,7 @@ import UIKit
         if changedScope { clearPrivateContent(); heldDrafts = [:] }
         guard let projected = privateSnapshot.adopt(value, captured: changedScope ? privateSnapshot.epoch : captured ?? privateSnapshot.epoch,
             windowOpen: windowOpen && !changedScope) else { return }
-        snapshot = projected
+        snapshot = PhoneSessions.projectingCurrentSummary(snapshot: projected, detail: detail, sessionId: sessionId, cached: detailCached)
         if live { refreshReviewShortcuts() }
         if let hostTime = PhoneTime.parse(value["hostTime"]) {
             // A cached list is old by definition: it says when it was true, not what the Host's clock reads now.

@@ -74,6 +74,8 @@ const nativeBodyScripts = vi.hoisted(
         closed: number
         deviceId?: string
         snapshotDelay?: number
+        snapshotFailures?: number
+        snapshotReads?: number
         delays?: number[]
         beforeSnapshot?: (deviceId: string) => Promise<void>
         closedBeforeData?: boolean[]
@@ -104,9 +106,18 @@ vi.mock('../src/native.ts', async importOriginal => {
           const metadataScript =
             url.pathname === '/link/api/snapshot'
               ? [...nativeBodyScripts.values()].find(
-                  value => value.deviceId === opening.deviceId && (value.snapshotDelay || value.beforeSnapshot),
+                  value =>
+                    value.deviceId === opening.deviceId
+                    && (value.snapshotDelay || value.beforeSnapshot || value.snapshotFailures !== undefined),
                 )
               : undefined
+          if (metadataScript?.snapshotFailures !== undefined) {
+            metadataScript.snapshotReads = (metadataScript.snapshotReads ?? 0) + 1
+            if (metadataScript.snapshotFailures-- > 0) {
+              res.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"unavailable"}')
+              return
+            }
+          }
           if (metadataScript?.beforeSnapshot) {
             const before = metadataScript.beforeSnapshot
             metadataScript.beforeSnapshot = undefined
@@ -249,6 +260,60 @@ async function invoke(input: unknown, timeoutMs = 15_000): Promise<Record<string
 }
 
 describe.skipIf(process.platform !== 'darwin')('Swift native core interoperability', () => {
+  it('selects current native summary facts by Host revision without reviving cached or other-instance bodies', async () => {
+    const summary = (title: string, status: string) => ({ id: 'selected', title, status })
+    const snapshot = { instanceId: 'host-a', revision: 20, tasks: [summary('list-running', 'running')] }
+    const detail = { summary: summary('body-ended', 'idle'), cursor: 1, sync: { instanceId: 'host-a', revision: 21 } }
+    const cases = [
+      { snapshot, detail },
+      { snapshot: { ...snapshot, revision: 22, tasks: [summary('new-run', 'running')] }, detail },
+      { snapshot, detail, cached: true },
+      { snapshot: { ...snapshot, instanceId: 'host-b' }, detail },
+      { snapshot, detail: { ...detail, sync: { instanceId: 'host-a', revision: 20 }, cursor: 999_999 } },
+      { snapshot: { ...snapshot, revision: 22 }, detail: { ...detail, cursor: 999_999 } },
+      { snapshot: { ...snapshot, tasks: [] }, detail: { ...detail, sync: { instanceId: 'host-b', revision: 99 } } },
+      { snapshot, detail: { ...detail, summary: { ...detail.summary, id: 'other' } } },
+    ].map(value => ({ ...value, sessionId: 'selected' }))
+    expect(await invoke({ operation: 'phoneProjection', currentSummaryCases: cases })).toEqual({
+      current: ['body-ended', 'new-run', 'list-running', 'list-running', 'body-ended', 'list-running', 'none', 'list-running'],
+    })
+    expect(
+      await invoke({
+        operation: 'phoneProjection',
+        bodyAvailability: [
+          { ...snapshot, device: { status: 'active', scopes: ['view'] } },
+          { ...snapshot, device: { status: 'active', scopes: [] } },
+          { ...snapshot, device: { status: 'revoked', scopes: ['view'] } },
+          { ...snapshot, device: { status: 'active', scopes: ['view'] }, tasks: [] },
+        ],
+      }),
+    ).toEqual({ allowed: [true, false, false, false] })
+  })
+  it('projects a delivered body into its existing list row and helper face without fabricating global revision', async () => {
+    const summary = (id: string, title: string, status: string) => ({ id, title, status, agent: { customAgentId: 'helper' } })
+    const snapshot = {
+      instanceId: 'host-a',
+      revision: 20,
+      tasks: [summary('selected', 'old-running', 'running'), summary('other', 'other', 'idle')],
+    }
+    const detail = { summary: summary('selected', 'ended', 'idle'), sync: { instanceId: 'host-a', revision: 21 } }
+    const cases = [
+      { snapshot, detail },
+      { snapshot: { ...snapshot, revision: 22 }, detail },
+      { snapshot, detail, cached: true },
+      { snapshot: { ...snapshot, tasks: [snapshot.tasks[1]] }, detail },
+      { snapshot, detail: { ...detail, sync: { instanceId: 'host-b', revision: 99 } } },
+    ].map(value => ({ ...value, sessionId: 'selected' }))
+    expect(await invoke({ operation: 'phoneProjection', projectedSummaryCases: cases })).toEqual({
+      projected: [
+        { revision: 20, tasks: ['ended', 'other'], face: 'idle' },
+        { revision: 22, tasks: ['old-running', 'other'], face: 'running' },
+        { revision: 20, tasks: ['old-running', 'other'], face: 'running' },
+        { revision: 20, tasks: ['other'], face: 'idle' },
+        { revision: 20, tasks: ['old-running', 'other'], face: 'running' },
+      ],
+    })
+  })
   it('matches the shared slash vectors and keeps native command completion scoped, editable and separate from actions', async () => {
     const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/slash-match-v1.json'), 'utf8')) as {
       cases: Array<{ score: number | null; positions: number[] | null }>
@@ -2283,7 +2348,18 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     }
   }, 30_000)
 
-  it.each(['metadata', 'overflow', 'repair', 'opening', 'reconnect', 'scope', 'host-state'] as const)(
+  it.each([
+    'metadata',
+    'metadata-retry',
+    'detail-retry',
+    'overflow',
+    'repair',
+    'opening',
+    'reconnect',
+    'scope',
+    'scope-no-view',
+    'host-state',
+  ] as const)(
     'keeps native publication barriers bounded and repairs the actual reader once: %s',
     async mode => {
       const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
@@ -2321,11 +2397,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         const first =
           mode === 'host-state'
             ? [{ ...lifecycle, instanceId: 'another-host' }, lifecycle, full(1)]
-            : mode === 'metadata'
+            : mode === 'metadata' || mode === 'metadata-retry' || mode === 'detail-retry'
               ? [refresh, full(1), { ...delta, instanceId, sessionId, revision: revision + 2 }]
               : mode === 'overflow'
                 ? [refresh, ...Array.from({ length: 8 }, (_, index) => full(index + 1))]
-                : ['opening', 'scope', 'reconnect'].includes(mode)
+                : ['opening', 'scope', 'scope-no-view', 'reconnect'].includes(mode)
                   ? [full(1)]
                   : [full(1), bad]
         const fallback = mode === 'repair' ? [full(10, false), bad] : [full(10, false)]
@@ -2342,14 +2418,26 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           ...(['metadata', 'overflow'].includes(mode) ? { snapshotDelay: 250 } : {}),
         }
         if (mode === 'opening') Object.assign(script, { delays: [300, 0] })
+        if (mode === 'metadata-retry') Object.assign(script, { snapshotFailures: 1 })
+        if (mode === 'detail-retry')
+          Object.assign(script, {
+            beforeSnapshot: async () => {
+              nativeReadFaults.set(`GET /link/api/tasks/${sessionId}`, [{ status: 503, code: 'fixture-read' }])
+            },
+          })
         if (mode === 'reconnect')
           Object.assign(script, {
             details: [10, 20, 1, 21].map(offset => ({ ...base.detail, sync: { instanceId, revision: revision + offset } })),
           })
-        if (mode === 'scope')
+        if (mode === 'scope' || mode === 'scope-no-view')
           Object.assign(script, {
             beforeSnapshot: async (deviceId: string) => {
               expect((await owner.request(`devices/${deviceId}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
+              if (mode === 'scope-no-view') {
+                nativeBodyScripts.get(sessionId)!.beforeSnapshot = async () => {
+                  expect((await owner.request(`devices/${deviceId}`, { method: 'DELETE' })).status).toBe(200)
+                }
+              }
             },
           })
         nativeBodyScripts.set(sessionId, script)
@@ -2361,10 +2449,19 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           payload: invitation.payload,
           port: host.host.nativePort,
         })
-        if (mode === 'metadata') {
+        if (mode === 'metadata' || mode === 'metadata-retry' || mode === 'detail-retry') {
           expect(result).toMatchObject({ cursorHeld: true, metadataOnly: true, text: '中🙂文', cursor: 3 })
           expect(result.metadataMs).toBeGreaterThanOrEqual(240)
           expect(script.opened).toEqual([{ delta: 'delta-v1', resume: false }])
+          if (mode === 'metadata-retry') expect(nativeBodyScripts.get(sessionId)?.snapshotReads).toBe(2)
+          if (mode === 'detail-retry') {
+            const deviceId = nativeBodyScripts.get(sessionId)?.deviceId
+            expect(
+              nativeSeen.filter(
+                item => item.deviceId === deviceId && item.method === 'GET' && item.path === `/link/api/tasks/${sessionId}`,
+              ),
+            ).toHaveLength(2)
+          }
         } else if (mode === 'host-state') {
           expect(result).toEqual({ foreignIgnored: true, state: 'awake', noLifecycleAck: true, cursor: 3 })
           expect(script.opened).toEqual([{ delta: 'delta-v1', resume: false }])
@@ -2388,9 +2485,19 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
             oldOfferWithdrawn: true,
             oldReadingRejected: true,
             newPublicReadingAllowed: true,
+            scopeReason: true,
+            windowKept: true,
+            noNewSignatures: true,
+            expiredWins: true,
             pendingUnchanged: true,
           })
           expect(script.opened).toEqual([{ delta: undefined, resume: false }])
+        } else if (mode === 'scope-no-view') {
+          expect(result).toEqual({ scopeReason: true, metadataRefused: true, noNewSignatures: true, pendingUnchanged: true })
+          const deviceId = nativeBodyScripts.get(sessionId)?.deviceId
+          expect(
+            nativeSeen.filter(item => item.deviceId === deviceId && item.method === 'GET' && item.path === `/link/api/tasks/${sessionId}`),
+          ).toEqual([])
         } else {
           const { repairMs, metadataCancelled, ...facts } = result
           expect(facts).toEqual({
@@ -2410,7 +2517,15 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
             { delta: undefined, resume: false },
           ])
         }
-        await expect.poll(() => script.closed).toBe(mode === 'reconnect' ? 0 : ['metadata', 'scope', 'host-state'].includes(mode) ? 1 : 2)
+        await expect
+          .poll(() => script.closed)
+          .toBe(
+            mode === 'reconnect'
+              ? 0
+              : ['metadata', 'metadata-retry', 'detail-retry', 'scope', 'scope-no-view', 'host-state'].includes(mode)
+                ? 1
+                : 2,
+          )
         if (mode === 'opening') expect(nativeBodyScripts.get(sessionId)?.closedBeforeData).toEqual([true, false])
         const output = join(root, 'test-results/native-body-publication')
         await mkdir(output, { recursive: true })
@@ -2433,6 +2548,12 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       staleBefore: true,
       staleAfter: true,
       cancelled: true,
+    })
+  })
+  it('bounds native body read retries to one and cancels them when the current reading disappears', async () => {
+    expect(await invoke({ operation: 'phoneBodyReadRetry' })).toEqual({
+      attempts: [2, 2, 1, 1, 1, 1],
+      failures: ['unavailable', 'failed', 'agentWriteUnknown', 'forbidden', 'expired', 'cancelled'],
     })
   })
   it.each(['end', 'server', 'transport', 'metadata', 'invalid'] as const)(

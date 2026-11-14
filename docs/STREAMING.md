@@ -103,7 +103,7 @@ Provider.stream             Standard Runtime             Host                   
 
 ### 协商后的正文追加
 
-浏览器与本机 Electron 的选中会话请求带固定头 `x-latch-state: delta-v1`，不增加 URL 字段或身份信息。Host 只在选中会话且该头精确匹配时接受，原生入口也支持显式协商；当前 Node/Swift 客户端尚未发送该头，其他电脑的 Electron 页面也省略它，仍使用完整帧。新连接的第一个正文帧为完整 `task-state`，增加 `stream: { protocol: 'delta-v1', subscriptionId, stateSeq }`。subscriptionId 每个网络连接随机生成，stateSeq 从 1 开始，只计算该连接实际发送的正文帧；与 revision、cursor、原生重放序号相互独立。未带回执的完整帧按原协议显示，不能用 HTTP 响应猜测追加基线。
+浏览器与本机 Electron 的选中会话请求带固定头 `x-latch-state: delta-v1`，不增加 URL 字段或身份信息。Host 只在选中会话且该头精确匹配时接受，原生入口也支持显式协商；Swift App 的选中会话显式发送该头，列表流不协商；Node 原生客户端与其他电脑的 Electron 页面仍省略它，使用完整帧。新连接的第一个正文帧为完整 `task-state`，增加 `stream: { protocol: 'delta-v1', subscriptionId, stateSeq }`。subscriptionId 每个网络连接随机生成，stateSeq 从 1 开始，只计算该连接实际发送的正文帧；与 revision、cursor、原生重放序号相互独立。未带回执的完整帧按原协议显示，不能用 HTTP 响应猜测追加基线。
 
 原生协商只改变授权完成后的逐读者编码。replay 仍保存有界的不可变完整事件；完整帧和追加帧的 SSE id 都取该事件原有的 canonical cursor，不用 revision 或订阅序号代替。新连接回放的第一份正文为完整帧，后续才可追加；未入日志的即时 checkpoint 保持 `resumeRequired`，并清掉追加基线。正文窗口、scope、积压和原生 padding 活跃状态先于编码检查，连接关闭仍清理活跃标记。原生完整帧超过原上限仍先记录 refresh，不因追加协议扩大帧或缓存上限。
 
@@ -117,13 +117,17 @@ Host 只在 running、稳定 run/message 身份、正文与思考均为前缀延
 
 重复帧忽略；缺帧、错误订阅/run/message 身份或偏移、无法识别的操作触发修复；其他实例或会话的帧忽略。一个逻辑订阅最多修复一次：真正 abort fetch 并取消 reader，丢弃旧连接缓冲，立即建立完整状态连接，余下重连均不再协商追加。新连接的 onOpen 照常同步；换会话创建新的逻辑订阅。更换设备或权限代次时同步清掉影子、关闭旧流并使旧投影票据失效。读取位置、草稿、唯一 sender 与写请求编号都不参与这个传输优化。
 
-原生核心的 `NativeTaskStreamProjection` 提供同一契约的纯值投影，`NativeWorkspace` 的独立正文阅读接口已接入它；`PhoneModel` 尚未使用此接口，原生 App 默认仍接收完整帧。`events(for:incremental:)` 和底层 HTTP/2 接口只有显式传入 `true` 才协商追加。纯值投影不接受 HTTP 更新影子；`NativeTaskPublicationGate` 单独按实例、会话、选择/连接票据及 revision/source priority 筛选 HTTP 与流候选，替换连接使旧票据失效但不降低版本地板。纯候选和票据都不是正文 lease，也不能用来确认原生游标。
+原生核心的 `NativeTaskStreamProjection` 提供同一契约的纯值投影，`NativeWorkspace` 的独立正文阅读接口已接入它；`PhoneModel` 的选中会话经该接口接收并发布正文，列表流保持完整模式。`events(for:incremental:)` 和底层 HTTP/2 接口只有显式传入 `true` 才协商追加。纯值投影不接受 HTTP 更新影子；`NativeTaskPublicationGate` 单独按实例、会话、选择/连接票据及 revision/source priority 筛选 HTTP 与流候选，替换连接使旧票据失效但不降低版本地板。纯候选和票据都不是正文 lease，也不能用来确认原生游标。
 
 正文阅读由 `beginBody` 绑定当前实例、会话、Workspace 与已有正文窗口，既不签名也不开新窗口。真正的网络 collector 为每帧附上不可由公开 parser 构造的 reader 身份及连续序号；跨 reader、旧连接或旧选择的事件不能进入影子。新的打开意图取消并等旧打开过程关闭，收到响应头之前的取消也关闭实际 HTTP/2 子流。解析失败、缺帧或八条待应用记录耗尽时关闭实际旧流，最多进行一次完整帧修复；此后该阅读对象不再协商追加，第二次失败直接交还调用方。
 
 `readBody` 和 `receive` 只提供不可自行构造的 `NativeBodyUpdate`。消费者在 `@MainActor NativeBodyPublication.apply` 的同步回调内核对自己的活动选择并赋值，返回 `true` 才得到 `NativeBodyApplied`；返回 `false`、重入、失去窗口或旧选择都不推进发布门。锁只覆盖同步身份核对与赋值，没有网络或存储等待。回执只证明该回调接受了值，不证明屏幕已经绘制，App 仍负责关闭窗口、退到后台与切换页面后的撤下。
 
 只有 `Workspace.applied` 接受实际发布回执后，才推进 detailRevisions、已应用来源和原生游标。正文和列表快照分别确认：较旧的 HTTP 正文可被拒绝，同时应用更新的快照；`refresh` 与 `tasks-invalidated` 构成元数据屏障，后续正文或心跳不能越过尚未应用的屏障。待处理记录与待确认候选各最多八条，仅保存证明元数据；Workspace 另外只保留最新一份候选用于加密缓存，不把尚未应用的新候选当成旧回执的缓存。新选择、权限范围改变、窗口失效和关闭清理影子与证明；替换连接保留发布版本地板，但旧网络证据失效。旧完整帧接口保持兼容，新正文 reader 拒绝旧的数字版 `acknowledge`。
+
+App 的 `openSession` 与 `refresh` 也通过同一 `readBody`/publication，不再把 HTTP 详情直接覆盖已发布的较新流。每一帧先 `receive`，100ms 只合并已校验的候选；元数据 notice 独立读取与发布，不被正文替换。真正赋值后才提交 `applied` 回执；scope 变化导致 `adoptSnapshot` 撤下内容时，本次正文赋值停止且不出回执。当前摘要在同实例、同会话、非缓存且正文的 `sync.revision` 不低于快照 `revision` 时用正文，否则用列表；这两个版本都来自 Host 全局计数，不使用 Driver 的 `cursor`。已接受的正文摘要只替换快照中已有的同 ID 任务行，让人物头像和话题列表反映终态；全局快照版本与其他字段不变，后到的元数据仍按同一版本规则投影。
+
+同一阅读代次重开网络流保留修复次数和发布地板；App 也记录 collector 在 `receive` 之前报告的坏帧或队列溢出。第一次关掉旧 reader、重开完整流并并发 HTTP 恢复，第二次语义失败停下报告，不能用新建阅读对象绕过限额。旧清理只关闭旧句柄；切会话、换 Host、窗口与权限撤下同步清掉待发布状态。notice 与恢复 HTTP 读取遇到网络不可用或明确的408/5xx读取失败时在同 reading 内只重试一次；仍失败则关闭它所属的具体流，把错误交给原 SSE 恢复，不能丢下元数据屏障等下一帧。过期不重试，旧读取失败不关闭新 reader。原有 SSE 暂断后的 metadata 核对与退避、后台撤下、未知写入原请求和只读离线缓存均保留；缓存展示没有应用回执。 已验证同实例 checkpoint 的权限范围变化单独使阅读对象失效，不等于正文窗口到期；Core 只在这条路径报告 bodyAccessChanged，真正过期的 lease 优先。App 先撤下内容，再读一次真实 metadata；仅窗口仍有效、当前设备仍有 view 且会话仍在可见列表时重建阅读，继承已使用的修复次数，不签新窗口。服务端明确窗口拒绝和其他 expired 路径仍按原规则撤下。实际手机收益、键盘交互与 CPU 预算须另行实测，SDK 编译不代表已通过。
 
 Swift 的身份按 UTF-8 字节精确比较，长度按 UTF-16 单元与 Web 对齐。JSONDecoder 拒绝非法 UTF-8 与未配对 surrogate，不以替换字符继续追加。原生输入及重建候选仍受 `NativeJSON` 的 1MiB、深度、数组和对象宽度限制；候选经编码再读回确认这些约束，保留 O(history) 成本，不能称为常数 CPU。原生时钟只接受完整 ISO 时间，Web 的 `Date.parse` 还接受日期但没有时间的旧格式；共享向量明确这一区别，以及原生不能表示非法 surrogate 全量正文的边界。完整帧中的未知事实保持，追加帧的未知字段拒绝。
 

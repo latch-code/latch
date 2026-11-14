@@ -18,6 +18,7 @@ final class NativeBodyAuthority: @unchecked Sendable {
     private var epoch = UUID()
     private var active = true
     private var origin: NativeEventOrigin?
+    private var changedAccess = false
 
     func issue(lease: BodyLease, origin: NativeEventOrigin? = nil) throws -> NativeBodyEvidence {
         lock.lock(); defer { lock.unlock() }
@@ -37,9 +38,14 @@ final class NativeBodyAuthority: @unchecked Sendable {
         epoch = UUID(); origin = nil
     }
 
-    func invalidate() {
+    func invalidate(accessChanged: Bool = false) {
         lock.lock(); defer { lock.unlock() }
+        changedAccess = changedAccess || accessChanged
         active = false; epoch = UUID(); origin = nil
+    }
+    func accessWasChanged() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return changedAccess
     }
 
     func accepts(_ evidence: NativeBodyEvidence) -> Bool {

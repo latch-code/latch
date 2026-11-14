@@ -62,8 +62,8 @@ import LatchNativeCore
                     knockKey: device.knockKey, identity: keys.identity())
             }
         }
-        if input["bodyScript"] as? String == "scope", let id = input["sessionId"] as? String {
-            return try await bodyScopeFixture(workspace, vault: vault, lease: lease, id: id)
+        if let mode = input["bodyScript"] as? String, ["scope", "scope-no-view"].contains(mode), let id = input["sessionId"] as? String {
+            return try await bodyScopeFixture(workspace, vault: vault, lease: lease, keys: keys, id: id, mode: mode)
         }
         if let mode = input["bodyScript"] as? String, let id = input["sessionId"] as? String {
             return try await bodyOrderingFixture(workspace, vault: vault, id: id, mode: mode)

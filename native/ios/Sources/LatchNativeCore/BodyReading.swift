@@ -6,8 +6,11 @@ public struct NativeBodyReading: Sendable {
     let id: UUID
     let owner: UUID
     let sessionId: String
-    init(publication: NativeBodyPublication, owner: UUID, sessionId: String) {
+    let authority: NativeBodyAuthority
+    let lease: BodyLease
+    init(publication: NativeBodyPublication, owner: UUID, sessionId: String, authority: NativeBodyAuthority, lease: BodyLease) {
         self.publication = publication; self.owner = owner; self.sessionId = sessionId; self.id = UUID()
+        self.authority = authority; self.lease = lease
     }
 }
 
@@ -76,8 +79,8 @@ final class NativeBodyState {
         pending.removeAll(); offers = offers.filter { $0.value.evidence.origin == nil }; latest = nil
     }
 
-    func withdraw() {
-        authority.invalidate(); expiry?.cancel(); expiry = nil; resetStream(); offers.removeAll()
+    func withdraw(accessChanged: Bool = false) {
+        authority.invalidate(accessChanged: accessChanged); expiry?.cancel(); expiry = nil; resetStream(); offers.removeAll()
     }
 
     func record(ordinal: UInt64, cursor: NativeEventCursor?, requirement: NativeBodyRequirement) throws -> NativeBodyPosition {

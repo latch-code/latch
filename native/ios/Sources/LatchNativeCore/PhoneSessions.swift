@@ -86,6 +86,31 @@ public enum PhoneTime {
 }
 
 public enum PhoneSessions {
+    /** Only an available metadata row offers an automatic body reopening; the Host still authorizes its actual read. */
+    public static func mayReadBody(snapshot: NativeJSON, sessionId: String) -> Bool {
+        snapshot["device"]["status"].string == "active" && snapshot["device"]["scopes"].array.contains(.string("view"))
+            && snapshot["tasks"].array.contains { $0["id"].string?.utf8.elementsEqual(sessionId.utf8) == true }
+    }
+    /** Current conversation facts share the Host's global revision, not the driver's message cursor. */
+    public static func currentSummary(snapshot: NativeJSON, detail: NativeJSON, sessionId: String?, cached: Bool) -> NativeJSON {
+        guard let sessionId else { return .null }
+        let listed = snapshot["tasks"].array.first { $0["id"].string?.utf8.elementsEqual(sessionId.utf8) == true } ?? .null
+        guard !cached, detail["summary"]["id"].string?.utf8.elementsEqual(sessionId.utf8) == true,
+              let instance = snapshot["instanceId"].string, detail["sync"]["instanceId"].string?.utf8.elementsEqual(instance.utf8) == true,
+              let bodyRevision = detail["sync"]["revision"].integer, let listRevision = snapshot["revision"].integer,
+              bodyRevision >= listRevision else { return listed }
+        return detail["summary"]
+    }
+    /** A displayed body may update its existing list row without inventing a metadata revision or adding hidden rows. */
+    public static func projectingCurrentSummary(snapshot: NativeJSON, detail: NativeJSON, sessionId: String?, cached: Bool) -> NativeJSON {
+        let summary = currentSummary(snapshot: snapshot, detail: detail, sessionId: sessionId, cached: cached)
+        guard let id = summary["id"].string,
+              let index = snapshot["tasks"].array.firstIndex(where: { $0["id"].string?.utf8.elementsEqual(id.utf8) == true }),
+              snapshot["tasks"].array[index] != summary else { return snapshot }
+        var fields = snapshot.object, tasks = snapshot["tasks"].array
+        tasks[index] = summary; fields["tasks"] = .array(tasks)
+        return .object(fields)
+    }
     private static func live(_ task: NativeJSON) -> NativeJSON {
         ["running", "waiting-approval"].contains(task["status"].string ?? "") ? task["live"] : .null
     }

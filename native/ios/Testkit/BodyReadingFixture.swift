@@ -19,7 +19,8 @@ import LatchNativeCore
     return ["oldConnectionRejected": oldConnection, "revisionFloorKept": keptFloor, "newerAccepted": true, "restoredWithoutSigning": reusedWindow]
 }
 
-@MainActor func bodyScopeFixture(_ workspace: NativeWorkspace, vault: EncryptedVault, lease: BodyLease, id: String) async throws -> [String: Any] {
+@MainActor func bodyScopeFixture(_ workspace: NativeWorkspace, vault: EncryptedVault, lease: BodyLease, keys: FixtureKeys, id: String, mode: String) async throws -> [String: Any] {
+    let signatures = await keys.verificationCalls.value
     let held = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["mode": .string("chat"), "prompt": .string("Unknown retained write")])
     try await vault.storeBody(JSONEncoder().encode(held), name: "pending-" + held.requestId, lease: lease)
     try await vault.storeMetadata(JSONEncoder().encode([held.requestId]), name: "pending-index")
@@ -29,14 +30,27 @@ import LatchNativeCore
           case let .update(update) = try await workspace.receive(event, from: stream, for: reading) else { throw NativeFailure.invalidRecord }
     let snapshot = try await workspace.snapshot()
     let withdrawn = reading.publication.apply(update) { _ in true } == nil
-    var staleRead = false
-    do { _ = try await workspace.readBody(for: reading) } catch { staleRead = true }
+    var staleRead = false, scopeReason = false
+    do { _ = try await workspace.readBody(for: reading) } catch { staleRead = true; scopeReason = (error as? NativeReadFailure) == .bodyAccessChanged }
     let pending = try await workspace.pendingWrites()
+    if mode == "scope-no-view" {
+        var metadataRefused = false
+        do { _ = try await workspace.snapshot() } catch { metadataRefused = true }
+        let noNewSignatures = await keys.verificationCalls.value == signatures
+        await workspace.closeOpening()
+        return ["scopeReason": scopeReason, "metadataRefused": metadataRefused, "noNewSignatures": noNewSignatures,
+            "pendingUnchanged": pending.count == 1 && pending[0].requestId == held.requestId && pending[0].body == held.body]
+    }
     let current = try await workspace.beginBody(id), next = try await workspace.readBody(for: current)
     let allowed = current.publication.apply(next) { _ in true } != nil
+    let windowKept = lease.valid, noNewSignatures = await keys.verificationCalls.value == signatures
+    await workspace.invalidateContentWindow(lease)
+    var expiredWins = false
+    do { _ = try await workspace.readBody(for: reading) } catch { expiredWins = (error as? NativeFailure) == .expired }
     await workspace.endBody(current); await workspace.closeOpening()
     return ["scope": snapshot["device"]["dataScope"].string ?? "", "oldOfferWithdrawn": withdrawn,
         "oldReadingRejected": staleRead, "newPublicReadingAllowed": allowed,
+        "scopeReason": scopeReason, "windowKept": windowKept, "noNewSignatures": noNewSignatures, "expiredWins": expiredWins,
         "pendingUnchanged": pending.count == 1 && pending[0].requestId == held.requestId && pending[0].body == held.body]
 }
 
@@ -72,11 +86,11 @@ import LatchNativeCore
         return ["foreignIgnored": true, "state": value["state"].string ?? "", "noLifecycleAck": before == nil,
             "cursor": after?.array.first?["cursor"]["sequence"].integer ?? 0]
     }
-    if mode == "metadata" {
+    if mode == "metadata" || mode == "metadata-retry" || mode == "detail-retry" {
         guard let initial = try await iterator.next(),
               case let .notice(notice) = try await workspace.receive(initial, from: stream, for: reading) else { throw NativeFailure.invalidRecord }
         let start = ContinuousClock.now
-        let refresh = Task { try await workspace.refreshBody(for: reading, after: notice) }
+        let refresh = Task { try await PhoneUnlock.retryBodyRead(current: { !Task.isCancelled }) { try await workspace.refreshBody(for: reading, after: notice) } }
         var text = ""
         for _ in 0..<2 {
             guard let event = try await iterator.next(),

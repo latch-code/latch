@@ -924,7 +924,7 @@ public actor NativeWorkspace {
         let authority = NativeBodyAuthority()
         let publication = await NativeBodyPublication(instanceId: instance, sessionId: sessionId, authority: authority)
         guard bodyAttempt == intent, epoch == current, lease.valid else { authority.invalidate(); throw NativeFailure.expired }
-        let reading = NativeBodyReading(publication: publication, owner: bodyOwner, sessionId: sessionId)
+        let reading = NativeBodyReading(publication: publication, owner: bodyOwner, sessionId: sessionId, authority: authority, lease: lease)
         let state = NativeBodyState(reading: reading, instanceId: instance, authority: authority, lease: lease)
         bodyState = state
         state.expiry = Task { [weak self] in
@@ -936,10 +936,19 @@ public actor NativeWorkspace {
 
     private func body(_ reading: NativeBodyReading) throws -> NativeBodyState {
         guard reading.owner == bodyOwner, let state = bodyState, state.reading.id == reading.id,
-              instance?.utf8.elementsEqual(state.instanceId.utf8) == true else { throw NativeFailure.expired }
+              instance?.utf8.elementsEqual(state.instanceId.utf8) == true else { try bodyUnavailable(reading) }
         try state.lease.requireValid()
         return state
     }
+    private func bodyUnavailable(_ reading: NativeBodyReading) throws -> Never {
+        guard reading.owner == bodyOwner else { throw NativeFailure.expired }
+        // Only a checkpoint this Workspace validated can mark access changes. Expired/rejected windows still win.
+        try reading.lease.requireValid()
+        if reading.authority.accessWasChanged() { throw NativeReadFailure.bodyAccessChanged }
+        throw NativeFailure.expired
+    }
+    /** Classifies a closed reader without opening a stream, reading content, signing or acknowledging progress. */
+    public func checkBodyReading(_ reading: NativeBodyReading) throws { _ = try body(reading) }
 
     private func expireBody(_ id: UUID) async {
         guard let state = bodyState, state.reading.id == id else { return }
@@ -962,13 +971,13 @@ public actor NativeWorkspace {
         let intent = state.streamAttempt
         if let opening, let opened = try? await opening.value { await opened.cancel() }
         await previous?.cancel()
-        guard bodyState === state, state.streamAttempt == intent, epoch == current, state.lease.valid else { throw NativeFailure.expired }
+        guard bodyState === state, state.streamAttempt == intent, epoch == current, state.lease.valid else { try bodyUnavailable(reading) }
         let operation = Task { try await self.openEvents(sessionId: reading.sessionId, expectedLease: state.lease,
             incremental: incremental && !state.repaired, reading: reading.id) }
         state.opening = operation
         defer { if state.streamAttempt == intent { state.opening = nil } }
         let stream = try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
-        guard bodyState === state, state.streamAttempt == intent, epoch == current, state.lease.valid else { await stream.cancel(); throw NativeFailure.expired }
+        guard bodyState === state, state.streamAttempt == intent, epoch == current, state.lease.valid else { await stream.cancel(); try bodyUnavailable(reading) }
         state.origin = stream.stream.origin; state.authority.bindStream(stream.stream.origin); state.stream = stream
         return stream
     }
@@ -990,9 +999,9 @@ public actor NativeWorkspace {
         }
         let evidence = try state.authority.issue(lease: state.lease)
         let snapshot = notice == nil ? nil : try await self.snapshot()
-        guard bodyState === state, epoch == current, state.authority.accepts(evidence) else { throw NativeFailure.expired }
+        guard bodyState === state, epoch == current, state.authority.accepts(evidence) else { try bodyUnavailable(reading) }
         let detail = try await read("/link/api/tasks/" + reading.sessionId, body: true)
-        guard bodyState === state, epoch == current, state.authority.accepts(evidence) else { throw NativeFailure.expired }
+        guard bodyState === state, epoch == current, state.authority.accepts(evidence) else { try bodyUnavailable(reading) }
         var check = NativeTaskPublicationGate(instanceId: state.instanceId, sessionId: reading.sessionId)
         let ticket = check.capture()
         guard try check.acceptHTTP(detail.encoded(), ticket: ticket) != nil else { throw NativeFailure.invalidRecord }
@@ -1044,7 +1053,7 @@ public actor NativeWorkspace {
             if state.covered(position) { try await advanceBody(reading.id); return .ignore }
             return .notice(NativeBodyNotice(event: event, reading: reading.id, id: position.id))
         } catch {
-            guard bodyState === state, state.origin === provenance.origin else { throw NativeFailure.expired }
+            guard bodyState === state, state.origin === provenance.origin else { try bodyUnavailable(reading) }
             let failed = state.stream
             let repeated = state.repaired
             state.repaired = true; state.resetStream()
@@ -1268,7 +1277,7 @@ public actor NativeWorkspace {
         let changedAccess = metadata != .null && ["status", "scopes", "dataScope"].contains { metadata["device"][$0] != value["device"][$0] }
         if instance != id || changedAccess {
             let previous = bodyState?.stream
-            bodyAttempt = UUID(); bodyState?.withdraw(); bodyState = nil
+            bodyAttempt = UUID(); bodyState?.withdraw(accessChanged: instance == id && changedAccess); bodyState = nil
             if let previous { Task { await previous.cancel() } }
         }
         if instance != id { detailRevisions = [:]; detailOrder = []; appliedRevisions = [:] }
