@@ -1,207 +1,76 @@
-import { useEffect, useState, type KeyboardEvent } from 'react'
+import { useCallback, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 
-import { GENERAL_AGENT_ID, type CustomAgentList, type CustomAgentSummary } from '@latch/protocol'
+import { GENERAL_AGENT_ID } from '@latch/protocol'
 import {
   Button,
-  Hint,
   ICON_STROKE,
   IconButton,
   InlineNotice,
-  Skeleton,
-  EmptyState,
   ChevronLeftGlyph,
+  HistoryGlyph,
   PlusGlyph,
   OfflineGlyph,
+  SettingsGlyph,
 } from '@latch/ui'
 import { useBackLayer } from '../hooks/backStack.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
-import { NavTop, shellSpaces, ShellDelegate, ShellNavFoot } from '../shell/SpaceNav.tsx'
-import { AgentsSpaceList, Delegations } from './AgentsSpaceList.tsx'
-import { useLastConfirmed } from '../components/SessionStatus.tsx'
+import { NavTop, shellOverview, shellSpaces, ShellNewAgent, ShellNavFoot, SpaceSwitch } from '../shell/SpaceNav.tsx'
+import { WorkbenchComputer } from '../shell/WorkbenchNav.tsx'
+import { AgentsSpaceList } from './AgentsSpaceList.tsx'
 import { askDelegateFocus } from './delegateFocus.ts'
 import { HelperCreate } from './HelperCreate.tsx'
 import { AgentChat } from './AgentChat.tsx'
-import { AgentAvatar } from './AgentAvatar.tsx'
-import { agentActivity, agentEntries, agentLiveWord, dutyLine, GENERAL_NAME, worksIn, type AgentEntry } from './model.ts'
-import { ActivityWord, Availability, LockedAgents } from './parts.tsx'
-import { useAgentList, type AgentRead } from './useAgentData.ts'
+import { AgentsHome, WaitingCards } from './AgentsHome.tsx'
+import { AgentTopics } from './AgentTopics.tsx'
+import { GENERAL_NAME, readsAgents } from './model.ts'
+import { LockedAgents } from './parts.tsx'
 import { useAgentWrites } from './useAgentWrites.ts'
 
-/** The face of an entry and what it shows now; 通用 rests in grey and has no state of its own. */
-function EntryAvatar({ shell, entry, size }: { shell: ShellState; entry: AgentEntry; size: number }) {
-  if (entry.kind === 'general') return <AgentAvatar avatar="general" size={size} />
-  return <AgentAvatar avatar={entry.summary.avatar} size={size} state={agentActivity(shell.snapshot, entry.summary)} />
-}
-
-/** The word beside a face: 等你处理 or 运行中 first, then why it cannot start, then a failure. */
-function EntryState({ shell, summary, offline }: { shell: ShellState; summary: CustomAgentSummary; offline: boolean }) {
-  const state = agentActivity(shell.snapshot, summary)
-  if (!offline && (state === 'waiting' || state === 'running'))
-    return <ActivityWord state={state} live={agentLiveWord(shell.snapshot, summary.id)} />
-  if (offline || !summary.available)
-    return <Availability available={summary.available} reason={summary.unavailableReason} offline={offline} />
-  return <ActivityWord state={state} />
-}
-
-/** The list's rows while it loads: the size of what they stand for. */
-function ListSkeleton() {
-  return (
-    <ul className="agents-list" aria-busy="true" aria-label="正在读取 Agent">
-      {[0, 1, 2].map(row => (
-        <li key={row} className="agents-list-row" data-skeleton="">
-          <Skeleton width={40} height={40} />
-          <span className="agents-list-text">
-            <Skeleton width="30%" />
-            <Skeleton width="60%" height={12} />
-          </span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
 /**
- * The work panel's list (a phone's root page): each Agent with its face, name, duty, how it runs, where it works and
- * whether it can start now; 通用 first, marked as built in. A row opens the conversation with it. One primary: a new
- * topic with the selected Agent, or 新建 Agent when there is none of your own yet.
+ * The left of 我的 Agent on wide windows. 侧栏 layout: the sidebar's own top (the switch, 总览, 新建 Agent, 搜索, 定时任务),
+ * the roster and the shared foot. 顶栏 layout: the top bar holds the navigation, so this is the queue's rail alone.
  */
-function AgentList({
-  shell,
-  read,
-  selected,
-  offline,
-  onOpen,
-  onDelegate,
-  onNew,
-  onRetry,
-}: {
-  shell: ShellState
-  read: AgentRead<CustomAgentList>
-  selected: string | undefined
-  offline: boolean
-  onOpen: (id: string) => void
-  onDelegate: (id: string) => void
-  onNew: () => void
-  onRetry: () => void
-}) {
-  const list = 'value' in read ? read.value : undefined
-  const entries = agentEntries(list)
-  const own = entries.filter(entry => entry.kind === 'custom')
-  const target = own.find(entry => entry.id === selected) ?? own.find(entry => entry.summary.available) ?? own[0]
-  const canRun = shell.access.scopes.has('run')
-  return (
-    <div className="agents-list-page">
-      <div className="agents-list-head">
-        <div>
-          <h1 className="settings-title">我的 Agent</h1>
-          <Hint label="长期替你办事" lead={<span />} className="agents-intro">
-            每个 Agent 有名字、职责和默认项目；和它对话的每个话题都是一个属于它的会话。
-          </Hint>
-        </div>
-        {target && target.kind === 'custom' && canRun && (
-          <Button
-            variant="primary"
-            disabled={offline || !target.summary.available}
-            title={offline ? 'Mac 不在线' : target.summary.unavailableReason}
-            onClick={() => {
-              onDelegate(target.id)
-            }}>
-            给{target.name}发消息…
-          </Button>
-        )}
-      </div>
-      {read.state === 'locked' && <LockedAgents />}
-      {read.state === 'loading' && <ListSkeleton />}
-      {read.state === 'failed' && !list && (
-        <InlineNotice tone="error" title="读取失败" action={<Button onClick={onRetry}>重试</Button>}>
-          {read.message}
-        </InlineNotice>
-      )}
-      {read.state === 'confirming' && (
-        <InlineNotice tone="warn" title="正在确认上一项修改">
-          结果确认前不能读取或修改 Agent，Mac 会自己重试。
-        </InlineNotice>
-      )}
-      {entries.length > 0 && (
-        <ul className="agents-list" aria-label="我的 Agent">
-          {entries.map(entry => {
-            const duty = entry.kind === 'general' ? '没选别的 Agent 的会话都带上它' : dutyLine(entry.summary)
-            return (
-              <li key={entry.id}>
-                <button
-                  type="button"
-                  className="agents-list-row"
-                  aria-current={entry.id === target?.id ? 'true' : undefined}
-                  onClick={() => {
-                    onOpen(entry.id)
-                  }}>
-                  <EntryAvatar shell={shell} entry={entry} size={40} />
-                  <span className="agents-list-text">
-                    <span className="agents-list-name">
-                      {entry.name}
-                      {entry.kind === 'general' && <span className="agent-builtin">内置</span>}
-                    </span>
-                    {duty && <span className="agents-list-duty">{duty}</span>}
-                    {/* Who it is and where it works; how it runs is its 设置's, not the list's. */}
-                    {entry.kind === 'custom' && (
-                      <span className="agents-list-meta">
-                        <span>{worksIn(shell.catalog ?? undefined, entry.summary.defaultProjectId)}</span>
-                      </span>
-                    )}
-                  </span>
-                  {entry.kind === 'custom' && <EntryState shell={shell} summary={entry.summary} offline={offline} />}
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-      {list && own.length === 0 && (
-        <EmptyState
-          title="还没有自己的 Agent"
-          action={
-            canRun ? (
-              <Button variant="primary" icon={PlusGlyph} disabled={offline} onClick={onNew}>
-                新建 Agent
-              </Button>
-            ) : undefined
-          }
-        />
-      )}
-      {list && own.length > 0 && canRun && (
-        <Button variant="ghost" icon={PlusGlyph} className="agents-new" disabled={offline} onClick={onNew}>
-          新建 Agent
-        </Button>
-      )}
-    </div>
-  )
-}
-
-/** The sidebar's place on wide windows: the same top as the sidebar's in 我的 Agent, its list and the shared foot. */
 function AgentsNav({ shell }: { shell: ShellState }) {
+  if (shell.preferences.workbenchLayout === 'triage')
+    return (
+      <div className="triage-sidebar agents-rail agents-nav-body" data-space="agents">
+        <AgentsSpaceList shell={shell} rail />
+      </div>
+    )
   return (
-    <div className="sidebar-body agents-nav-body" data-space="agents">
+    <div className="sidebar-body agents-nav-body agents-sidebar" data-space="agents">
       <NavTop
         snapshot={shell.snapshot}
         spaces={shellSpaces(shell)}
-        primary={<ShellDelegate shell={shell} />}
+        overview={shellOverview(shell)}
+        primary={<ShellNewAgent shell={shell} />}
         onSearch={shell.openSearch}
+        {...(shell.catalog?.features?.automations
+          ? { onSchedules: () => shell.openMyAgent({ id: GENERAL_AGENT_ID, tab: 'schedules' }) }
+          : {})}
         drawer={false}
+        computerAtFoot
         onManageComputers={() => {
           shell.openSettings('computers')
         }}
       />
       <AgentsSpaceList shell={shell} />
+      {/* The computer stands at the foot, where the sidebar beside a topic has it, so nothing moves between the two. */}
+      <div className="sidebar-work-computer">
+        <WorkbenchComputer shell={shell} />
+      </div>
       <ShellNavFoot shell={shell} />
     </div>
   )
 }
 
 /**
- * 我的 Agent: on wide windows its list stands where the sidebar stands, under 新会话, 搜索, Code and 我的 Agent, and the
- * work panel shows the list page or an Agent's page; on phones the list is the root page and an Agent's page is pushed
- * over it. Like 设置, it covers the session's columns without unmounting them.
+ * 我的 Agent. Like 设置, it covers the session's columns without unmounting them. On wide windows the people stand at the
+ * left (the 侧栏 layout's roster, or the 顶栏 layout's queue) and the work panel shows the space's 总览, 全部话题, the
+ * creation page or a new topic with an Agent; in the 顶栏 layout 全部话题 takes the whole width, as Code's 全部会话 does.
+ * On phones the roster or queue is the root page, and a topic, the creation page and 全部话题 are pushed over it. The panel
+ * is the same element in both layouts, so a layout change keeps the Agent, the page and what was typed.
  */
 export function AgentsPage({ shell }: { shell: ShellState }) {
   const { snapshot, route, phone, connection, titleSlot } = shell
@@ -209,83 +78,43 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
   const target = route.myAgent
   const id = target?.id
   const chat = id !== undefined && id !== 'new'
-  const { read, reload } = useAgentList(snapshot)
-  const frozen = useLastConfirmed(connection, snapshot)
-  const writes = useAgentWrites(reload, {
-    origin: location.origin,
-    deviceId: snapshot.device.id,
-    allowed: snapshot.device.dataScope === 'all' && shell.access.scopes.has('view') && shell.access.scopes.has('run'),
-  })
-  // The Agent last opened is the list's selection, for its primary.
-  const [selected, setSelected] = useState<string | undefined>(chat ? id : undefined)
-  useEffect(() => {
-    if (chat && id !== GENERAL_AGENT_ID) setSelected(id)
-  }, [chat, id])
+  const topics = id === undefined && route.topics === true
+  const home = id === undefined && !topics
+  const locked = !readsAgents(snapshot)
+  const refreshShell = shell.refresh
+  const writes = useAgentWrites(
+    useCallback(() => void refreshShell(), [refreshShell]),
+    {
+      origin: location.origin,
+      deviceId: snapshot.device.id,
+      allowed: snapshot.device.dataScope === 'all' && shell.access.scopes.has('view') && shell.access.scopes.has('run'),
+    },
+  )
   const back = () => {
     if (writes.saving || writes.held) return
     writes.clear()
     shell.setRoute({ entry: 'agents' })
   }
-  const pushed = phone && id !== undefined
+  const pushed = phone && !home
   useBackLayer(pushed, back)
   const escape = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Escape' || !phone || !pushed || event.defaultPrevented) return
     if (event.target instanceof Element && event.target.closest('dialog, [popover]')) return
     back()
   }
-  const locked = read.state === 'locked'
-  const agentList = (
-    <AgentList
-      shell={shell}
-      read={read}
-      selected={selected}
-      offline={offline}
-      onOpen={next => {
-        if (writes.saving || writes.held) return
-        writes.clear()
-        shell.openMyAgent({ id: next })
-      }}
-      onDelegate={next => {
-        askDelegateFocus()
-        shell.openMyAgent({ id: next, topic: 'new' })
-      }}
-      onNew={() => {
-        shell.openMyAgent({ id: 'new' })
-      }}
-      onRetry={reload}
-    />
-  )
-  const panel = (
-    <>
-      {id === undefined && agentList}
-      {id === 'new' && locked && <LockedAgents />}
-      {id === 'new' && !locked && snapshot.catalog && (
-        <div className="agent-page">
-          <HelperCreate
-            key={snapshot.device.id}
-            catalog={snapshot.catalog}
-            access={shell.access}
-            agents={snapshot.customAgents ?? []}
-            writes={writes}
-            disabled={offline || locked}
-            onCreated={agent => {
-              writes.clear()
-              void shell.refresh()
-              askDelegateFocus()
-              shell.setRoute({ entry: 'agents', myAgent: { id: agent.id, topic: 'new' } })
-            }}
-            onCancel={back}
-            {...(shell.owner ? { onSettings: () => shell.openSettings('engines'), onManageProviders: shell.manageProviders } : {})}
-          />
-        </div>
-      )}
-    </>
-  )
+  // 顶栏 layout: 全部话题 takes the whole width, as Code's 全部会话 does. The 总览 keeps the queue beside it: an Agent with no
+  // topic yet is on no lane, and the queue is the way to it.
+  const wide = !phone && shell.preferences.workbenchLayout === 'triage' && topics
+  const canCreate = shell.access.scopes.has('run') && !locked
+  const triage = shell.preferences.workbenchLayout === 'triage'
+  const spaces = shellSpaces(shell)
   return (
     <section
       aria-label="我的 Agent"
       className="settings-page agents-page"
       data-entry="agents"
+      data-view={home ? 'home' : topics ? 'topics' : chat ? 'chat' : 'new'}
+      data-wide={wide ? '' : undefined}
       data-chat={chat ? '' : undefined}
       onKeyDown={escape}>
       {!locked && id !== 'new' && writes.held && writes.state?.write.key === 'agent:new' && (
@@ -298,20 +127,10 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
       )}
       {!phone
         && titleSlot
-        && !chat
+        && id === 'new'
         && createPortal(
           <div className="agents-crumb">
-            {id === undefined ? (
-              <span className="titlebar-page-title">我的 Agent</span>
-            ) : (
-              <>
-                <button type="button" className="agents-crumb-link" onClick={back}>
-                  我的 Agent
-                </button>
-                <span aria-hidden="true">/</span>
-                <span className="titlebar-page-title">新建 Agent</span>
-              </>
-            )}
+            <span className="titlebar-page-title">新建 Agent</span>
             {offline && (
               <span className="agents-offline">
                 <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
@@ -322,63 +141,119 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
           titleSlot,
         )}
       <div className="settings-layout" data-level={phone ? (pushed ? 'section' : 'root') : undefined}>
-        <div className="settings-nav-pane" inert={pushed || undefined}>
+        <div className="settings-nav-pane" inert={pushed || wide || undefined} hidden={wide || undefined}>
           {phone ? (
             <>
-              <header className="settings-bar">
-                <span />
-                <h2>我的 Agent</h2>
-                {offline && (
+              {/* 顶栏 layout: the top of a phone holds the switch between the places and 设置, as Code's home does there. */}
+              <header className={spaces && triage ? 'settings-bar workbench-phone-heading' : 'settings-bar'}>
+                {spaces && triage ? (
+                  <SpaceSwitch {...spaces} />
+                ) : (
+                  <>
+                    <span />
+                    <h2>我的 Agent</h2>
+                  </>
+                )}
+                {triage && shell.entries.includes('settings') && (
+                  <IconButton size="lg" label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />
+                )}
+                {offline ? (
                   <span className="agents-offline">
                     <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
                     不在线
                   </span>
+                ) : (
+                  canCreate && (
+                    <IconButton
+                      size="lg"
+                      label="新建 Agent"
+                      icon={PlusGlyph}
+                      onClick={() => {
+                        shell.openMyAgent({ id: 'new' })
+                      }}
+                    />
+                  )
                 )}
               </header>
               <div className="settings-scroll">
-                <div className="settings-content">
-                  {agentList}
-                  {read.state !== 'locked' && (
-                    <div className="space-list phone-delegations">
-                      <Delegations shell={shell} frozen={frozen} />
-                    </div>
+                <div className="settings-content agents-root">
+                  {!locked && <WaitingCards shell={shell} />}
+                  <AgentsSpaceList shell={shell} />
+                  {!locked && (
+                    <Button
+                      variant="ghost"
+                      className="agents-root-topics"
+                      icon={HistoryGlyph}
+                      onClick={() => {
+                        shell.openAgentTopics()
+                      }}>
+                      全部话题
+                    </Button>
                   )}
                 </div>
               </div>
             </>
           ) : (
-            <AgentsNav shell={shell} />
+            !wide && <AgentsNav shell={shell} />
           )}
         </div>
-        {chat ? (
-          <section
-            className="settings-panel agent-chat-panel"
-            aria-label={id === GENERAL_AGENT_ID ? GENERAL_NAME : (snapshot.customAgents?.find(agent => agent.id === id)?.name ?? 'Agent')}
-            aria-hidden={(phone && !pushed) || undefined}
-            inert={(phone && !pushed) || undefined}>
-            {(!phone || pushed) && <AgentChat key={id} shell={shell} owner={id} onBack={back} />}
-          </section>
-        ) : (
-          <section
-            className="settings-panel"
-            aria-label={id === undefined ? '我的 Agent' : '新建 Agent'}
-            aria-hidden={(phone && !pushed) || undefined}
-            inert={(phone && !pushed) || undefined}>
-            {phone && (
-              <header className="settings-bar">
-                <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
-                <h2>新建 Agent</h2>
-              </header>
-            )}
-            <div className="settings-scroll">
-              {(!phone || pushed) && (
-                <div key={id ?? 'list'} className="settings-content agents-content settings-enter">
-                  {panel}
-                </div>
+        <section
+          className={chat ? 'settings-panel agent-chat-panel' : 'settings-panel'}
+          aria-label={
+            chat
+              ? id === GENERAL_AGENT_ID
+                ? GENERAL_NAME
+                : (snapshot.customAgents?.find(agent => agent.id === id)?.name ?? 'Agent')
+              : topics
+                ? '全部话题'
+                : home
+                  ? '总览'
+                  : '新建 Agent'
+          }
+          aria-hidden={(phone && !pushed) || undefined}
+          inert={(phone && !pushed) || undefined}>
+          {chat && (!phone || pushed) && <AgentChat key={id} shell={shell} owner={id} onBack={back} />}
+          {/* A phone's root page is the roster or the queue; the 总览 is a wide window's. */}
+          {home && !phone && <AgentsHome shell={shell} />}
+          {topics && <AgentTopics shell={shell} onBack={back} />}
+          {id === 'new' && (
+            <>
+              {phone && (
+                <header className="settings-bar">
+                  <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
+                  <h2>新建 Agent</h2>
+                </header>
               )}
-            </div>
-          </section>
-        )}
+              <div className="settings-scroll">
+                <div className="settings-content agents-content settings-enter">
+                  {locked && <LockedAgents />}
+                  {!locked && snapshot.catalog && (
+                    <div className="agent-page">
+                      <HelperCreate
+                        key={snapshot.device.id}
+                        catalog={snapshot.catalog}
+                        access={shell.access}
+                        agents={snapshot.customAgents ?? []}
+                        writes={writes}
+                        disabled={offline || locked}
+                        onCreated={agent => {
+                          writes.clear()
+                          void shell.refresh()
+                          askDelegateFocus()
+                          shell.setRoute({ entry: 'agents', myAgent: { id: agent.id, topic: 'new' } })
+                        }}
+                        onCancel={back}
+                        {...(shell.owner
+                          ? { onSettings: () => shell.openSettings('engines'), onManageProviders: shell.manageProviders }
+                          : {})}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </section>
       </div>
     </section>
   )

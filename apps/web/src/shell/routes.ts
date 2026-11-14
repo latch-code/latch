@@ -32,8 +32,10 @@ export interface ShellRoute {
   projectId?: string
   /** The page an Agent section opens on. */
   agent?: AgentPageTarget
-  /** 我的 Agent: the Agent whose page is open, and its tab; absent, the list. */
+  /** 我的 Agent: the Agent whose page is open, and its tab; absent, the space's own 总览 (a phone's roster). */
   myAgent?: MyAgentTarget
+  /** 我的 Agent: 全部话题, every topic grouped by its Agent, in the place of the 总览. */
+  topics?: boolean
   /** 应用: the plugin page that is open (`apps/<pluginId>/<appId>`); absent, the list. */
   app?: AppTarget
 }

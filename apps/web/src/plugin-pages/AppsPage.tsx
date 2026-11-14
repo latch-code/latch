@@ -50,7 +50,7 @@ import { api, inlineError, isUncertain, newRequestId } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
-import { NavTop, NewSessionRow, ShellDelegate, ShellNavFoot, shellSpaces } from '../shell/SpaceNav.tsx'
+import { NavTop, NewSessionRow, ShellNewAgent, ShellNavFoot, shellSpaces } from '../shell/SpaceNav.tsx'
 import { settingsSections } from '../settings/SettingsPage.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { AppTarget } from '../shell/routes.ts'
@@ -129,7 +129,7 @@ function AppsNav({ shell, current }: { shell: ShellState; current: AppTarget | u
         spaces={spaces && { ...spaces, onSpace: shell.goSpace }}
         primary={
           shell.space === 'agents' && spaces ? (
-            <ShellDelegate shell={shell} />
+            <ShellNewAgent shell={shell} />
           ) : (
             <NewSessionRow onNew={shell.startNew} active={false} drawer={false} />
           )

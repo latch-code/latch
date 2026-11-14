@@ -45,6 +45,30 @@ export function Availability({ available, reason, offline }: { available: boolea
   )
 }
 
+/**
+ * An Agent that cannot start a topic now (its Harness is missing or too old), where its conversation is open: 不可用, the
+ * Host's reason behind ⓘ, and the way to repair it on a device that may change 设置. Its topics stay readable.
+ */
+export function Unavailable({ reason, onRepair }: { reason?: string | undefined; onRepair?: (() => void) | undefined }) {
+  return (
+    <span className="agent-unavailable">
+      <Hint
+        className="agent-availability"
+        label="不可用"
+        lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}
+        moreLabel="为什么不可用">
+        {reason ?? '现在不能开始新话题。'}
+        {!onRepair && ' 在这台 Mac 的 设置 里修复。'}
+      </Hint>
+      {onRepair && (
+        <Button variant="outline" size="xs" onClick={onRepair}>
+          去修复
+        </Button>
+      )}
+    </span>
+  )
+}
+
 /** A device whose data scope leaves Agents out: what is locked, and the fine print behind ⓘ. */
 export function LockedAgents() {
   return (

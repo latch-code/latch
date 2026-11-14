@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Button, ScheduleGlyph } from '@latch/ui'
+import { Button, ScheduleGlyph, StatusWord } from '@latch/ui'
 
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { useLastConfirmed } from '../components/SessionStatus.tsx'
@@ -9,7 +9,7 @@ import { agentTopics } from './chat.ts'
 import { askDelegateFocus } from './delegateFocus.ts'
 import { draftPermission, permissionView } from '../composer/permission.ts'
 import { ACTIVITY_WORDS, agentActivity, agentLiveWord, dutyLine, generalChoice, scheduleWords, sessionAgent } from './model.ts'
-import { ActivityWord, IsolationNote, PermissionNote } from './parts.tsx'
+import { ActivityWord, IsolationNote, PermissionNote, Unavailable } from './parts.tsx'
 import { helperPermissionBlocked, permissionNote } from './personWords.ts'
 import { MODE_COPY } from '../core/securityCopy.ts'
 import { draftConfig, startBlock, withLadderMode, type ComposerChoice } from '../composerChoice.ts'
@@ -86,6 +86,22 @@ export function TopicFrame({
         : found && !found.available
           ? (found.unavailableReason ?? '现在不能开始')
           : generalBlock?.message
+  // The state is said once per screen: where the 顶栏 layout's queue stands beside the conversation it already says it,
+  // in the same words, so the presence block does not repeat it.
+  const queueSays =
+    shell.preferences.workbenchLayout === 'triage' && !phone && (current === null || (!shell.drawerMode && !shell.sidebarCollapsed))
+  const repair = shell.owner && found && !found.available ? () => shell.openSettings('engines') : undefined
+  const word = gone ? (
+    <StatusWord tone="neutral" className="agent-activity">
+      已删除
+    </StatusWord>
+  ) : frozen === null && ACTIVITY_WORDS[state] ? (
+    queueSays ? null : (
+      <ActivityWord state={state} live={agentLiveWord(snapshot, owner, current)} />
+    )
+  ) : found && !found.available ? (
+    <Unavailable reason={found.unavailableReason} onRepair={repair} />
+  ) : null
   return (
     <AgentFrame
       name={name}
@@ -93,7 +109,7 @@ export function TopicFrame({
       duty={found ? dutyLine(found) : general ? '没选别的 Agent 的会话都带上它' : undefined}
       avatar={found?.avatar ?? 'general'}
       state={frozen !== null && (state === 'running' || state === 'waiting') ? 'idle' : state}
-      word={frozen === null && ACTIVITY_WORDS[state] ? <ActivityWord state={state} live={agentLiveWord(snapshot, owner, current)} /> : null}
+      word={word}
       note={
         note ? (
           <PermissionNote {...note} detail={boundary ? `${note.detail} ${boundary}` : note.detail} />
@@ -109,18 +125,22 @@ export function TopicFrame({
       }}
       actions={
         <>
-          {!phone && shell.catalog?.features?.automations && (
-            <Button variant="ghost" size="sm" icon={ScheduleGlyph} onClick={() => shell.openMyAgent({ id: owner, tab: 'schedules' })}>
-              {schedules.length === 1 && schedules[0].enabled
-                ? scheduleWords(schedules[0].schedule)
-                : schedules.length
-                  ? `${schedules.length} 个定时任务`
-                  : '定时任务'}
+          {!phone && shell.catalog?.features?.automations && schedules.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="agent-schedule-chip"
+              icon={ScheduleGlyph}
+              onClick={() => shell.openMyAgent({ id: owner, tab: 'schedules' })}>
+              <span className="agent-schedule-words">
+                {schedules.length === 1 && schedules[0].enabled ? scheduleWords(schedules[0].schedule) : `${schedules.length} 个定时任务`}
+              </span>
             </Button>
           )}
           <TopicMenu
             topics={agentTopics(snapshot.tasks, owner)}
             current={current}
+            title={title}
             frozen={frozen !== null}
             canStart={canStart}
             compact={phone}

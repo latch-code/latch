@@ -3,7 +3,7 @@ import { OverviewGlyph, Count, IconButton, useLivePrevious, InboxGlyph, PanelLef
 import { currentShell, lightsStyle, useTrafficLights } from '../core/shell.ts'
 import { waitingCount } from '../sessions.ts'
 import { BrandMark } from '../components/ui.tsx'
-import { ShellDelegate, SpaceButtons, shellSpaces } from './SpaceNav.tsx'
+import { ShellNewAgent, SpaceButtons, shellOverview, shellSpaces } from './SpaceNav.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /**
@@ -28,6 +28,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
     setTitleSlot,
   } = shell
   const spaces = shellSpaces(shell)
+  const home = shellOverview(shell)
   const desktop = currentShell()
   const lights = useTrafficLights()
   const approvals = waitingCount(snapshot)
@@ -83,7 +84,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
           <>
             {placed && <SpaceButtons {...spaces} />}
             {placed && shell.space === 'agents' ? (
-              <ShellDelegate shell={shell} compact />
+              <ShellNewAgent shell={shell} compact />
             ) : sessions ? (
               <IconButton
                 label="新建会话"
@@ -115,7 +116,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
       {(!sessions || route.overview) && <header ref={setTitleSlot} className="topbar titlebar-page" />}
       <div className="titlebar-views">
         {/* A tablet's rail already holds 总览; the layout switch itself is the shell's, drawn over this reserved end. */}
-        {sidebarColumn && shut && !route.overview && <IconButton label="总览" icon={OverviewGlyph} onClick={shell.openOverview} />}
+        {sidebarColumn && shut && !home.active && <IconButton label="总览" icon={OverviewGlyph} onClick={home.open} />}
         <span className="layout-switch-space" aria-hidden="true" />
       </div>
     </div>

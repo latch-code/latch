@@ -261,8 +261,10 @@ describe('creating a helper: 「你想让谁成为你的帮手？」', () => {
     )
     expect(html).toContain('你想让谁成为你的帮手？')
     expect(html).toContain('稳当，动手前每次问你。')
-    expect(html).toContain('不先问你')
-    expect(html).toContain('还有 2 个没准备好')
+    // 不先问你 stands beside the name of the one it is said of, not among what it can do.
+    expect(html).toMatch(/class="helper-card-name">(?:(?!helper-card-line).)*helper-unasked[^>]*>(?:<[^>]*>)*不先问你/u)
+    expect(html.match(/不先问你/gu)).toHaveLength(1)
+    expect(html).toContain('还有 2 位没准备好')
     expect(html.indexOf('Latch 内置')).toBeLessThan(html.indexOf('Codex'))
     // Nothing of step two yet.
     expect(html).not.toContain('创建')

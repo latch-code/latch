@@ -47,6 +47,9 @@ import { visibleEntries, type AgentPageTarget, type AppTarget, type MyAgentTarge
 import { useDelegation } from '../agents/useAgentWrites.ts'
 import { openAgent, topicOwner, type ProfileSection } from '../agents/chat.ts'
 import type { SchedulePrefill } from '../agents/activity.ts'
+import { askDelegateFocus } from '../agents/delegateFocus.ts'
+import { readsAgents } from '../agents/model.ts'
+import { queueOrder, rosterRows, rosterTopics } from '../agents/roster.ts'
 import { useSessionHandoffs } from '../handoffs/useHandoffs.ts'
 import { writeFailure } from '../handoffs/model.ts'
 import { api, newRequestId, setErrorComputer } from '../core/api.ts'
@@ -814,15 +817,29 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       : { space }
     : {}
   /**
-   * 委托…, 我的 Agent's primary: the sidebar's row opens its choice of Agent; with the sidebar out of sight, the list page
-   * offers the same choice.
+   * The rows the keys step through. In 我的 Agent they are the roster's: each Agent's topics in turn, in the queue's order
+   * where the 顶栏 layout draws a queue; under 已归档, the archived ones.
+   */
+  const steppedRows = () => {
+    if (entries.includes('agents') && space === 'agents' && agentsFilter !== 'archived') {
+      const rows = rosterRows(snapshot, { general: readsAgents(snapshot) })
+      return rosterTopics(preferences.workbenchLayout === 'triage' ? queueOrder(rows) : rows)
+    }
+    return listedSessions(snapshot.tasks, catalog?.workspaces, {
+      filter,
+      search,
+      folded: readFolded(shelvesKey(snapshot.device.id)),
+      projectTree: !phone && preferences.workbenchLayout === 'overview',
+      ...listSpace,
+    })
+  }
+  /**
+   * The key of 新会话 in 我的 Agent: the space's 总览 with its input ready, which addresses the Agent last spoken with (or
+   * the one picked in its chip).
    */
   const delegate = () => {
-    const trigger = [...document.querySelectorAll<HTMLButtonElement>('[data-delegate-trigger]')].find(
-      button => button.checkVisibility() && !button.closest('[inert]'),
-    )
-    if (trigger) trigger.click()
-    else openMyAgent()
+    askDelegateFocus()
+    openMyAgent()
   }
   /**
    * 我的 Agent: the list, the form for a new Agent, or a conversation with an Agent. A conversation opens on its current
@@ -861,6 +878,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const toggleProfile = (owner: string) => {
     if (profileShown) closeProfile()
     else openProfile(owner)
+  }
+  /** 全部话题: every topic of 我的 Agent grouped by its Agent; `archived` opens it on the archived ones. */
+  const openAgentTopics = (archived = false) => {
+    drawer.setOpen(false)
+    setAgentsFilter(archived ? 'archived' : 'all')
+    setRoute({ entry: 'agents', topics: true })
   }
   /** 应用, at a page or at the list. */
   const openApp = (target?: AppTarget) => {
@@ -1159,14 +1182,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         return
       }
       if (action.kind === 'session') {
-        const folded = readFolded(shelvesKey(snapshot.device.id))
-        const target = listedSessions(snapshot.tasks, catalog?.workspaces, {
-          filter,
-          search,
-          folded,
-          projectTree: !phone && preferences.workbenchLayout === 'overview',
-          ...listSpace,
-        })[action.index - 1]
+        const target = steppedRows()[action.index - 1]
         if (target && target.id !== selectedId) choose(target.id)
         return
       }
@@ -1260,15 +1276,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       if (!phone) setShortcutsOpen(open => !open)
       return
     }
-    const folded = readFolded(shelvesKey(snapshot.device.id))
-    const ordered = listedSessions(snapshot.tasks, catalog?.workspaces, {
-      filter,
-      search,
-      folded,
-      projectTree: !phone && preferences.workbenchLayout === 'overview',
-      ...listSpace,
-    })
-    const target = steppedSession(ordered, selectedId, action === 'next' ? 1 : -1)
+    const target = steppedSession(steppedRows(), selectedId, action === 'next' ? 1 : -1)
     if (target) choose(target.id)
   })
   useEffect(() => {
@@ -1741,6 +1749,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     openSettings,
     openAgentPage,
     openMyAgent,
+    openAgentTopics,
     profileOwner,
     profileShown,
     profileColumn,

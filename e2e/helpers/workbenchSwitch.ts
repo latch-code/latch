@@ -58,9 +58,7 @@ export async function measureWorkbenchSwitch(page: Page, output: string, name: s
             }
           const shell = document.querySelector<HTMLElement>('.app-shell')
           const target = document.querySelector<HTMLElement>(expected.entry === 'agents' ? '.agents-page' : '.workbench-home')
-          const content = target?.querySelector<HTMLElement>(
-            expected.entry === 'agents' ? '.agents-list-row:not([data-skeleton])' : '.approval-panel',
-          )
+          const content = target?.querySelector<HTMLElement>(expected.entry === 'agents' ? '[data-agent-id]' : '.approval-panel')
           if (
             clickAt !== undefined
             && firstVisibleMs === undefined

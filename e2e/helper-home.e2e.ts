@@ -384,7 +384,7 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
     await page.reload()
     await connected(page)
     await page.getByRole('radio', { name: '我的 Agent', exact: true }).filter({ visible: true }).click()
-    await page.getByRole('navigation', { name: '我的 Agent', exact: true }).getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     await page.getByRole('list', { name: '候选' }).getByRole('button', { name: '配置夹具', exact: true }).click()
     const form = page.getByRole('form', { name: '新建 Agent' })
     await form.getByLabel('名字', { exact: true }).fill('守家')

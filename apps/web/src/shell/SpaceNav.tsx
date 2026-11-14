@@ -1,7 +1,6 @@
 import { OverviewGlyph, ScheduleGlyph } from '@latch/ui'
 import type { ReactNode } from 'react'
-import { Send } from 'lucide-react'
-import { GENERAL_AGENT_ID, type AppSnapshot } from '@latch/protocol'
+import type { AppSnapshot } from '@latch/protocol'
 import {
   Button,
   ICON_STROKE,
@@ -17,8 +16,7 @@ import {
   NewSessionGlyph,
   CloseGlyph,
 } from '@latch/ui'
-import { AgentAvatar, AgentsGlyph } from '../agents/AgentAvatar.tsx'
-import { Menu, type MenuSection } from '../components/overlays.tsx'
+import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { ComputerMenu } from '../components/Computers.tsx'
 import { useComputers } from '../core/computers.ts'
 import { deviceAccess } from '../core/permissions.ts'
@@ -28,7 +26,6 @@ import { currentShell } from '../core/shell.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import type { Space } from '../sessions.ts'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
-import { askDelegateFocus } from '../agents/delegateFocus.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** The switch's state: the place shown (none on pages both places share), the way to a place, and where something waits. */
@@ -133,99 +130,46 @@ export function NewSessionRow({ onNew, active, drawer }: { onNew: () => void; ac
 }
 
 /**
- * 我的 Agent's primary: 新对话…, a choice of Agent (通用 first); choosing one opens a new topic with it, the input ready.
- * Without an Agent of your own the choice still has 通用, and 新建 Agent. The same key as 新会话 opens it.
+ * 我的 Agent's primary: 新建 Agent, on (pressed) while the creation page is open. A new topic starts from the space's 总览
+ * (its input addresses an Agent) or from 话题 ▾, so the same key as 新会话 opens the 总览 with the input ready.
  */
-function DelegateRow({
-  snapshot,
-  drawer,
+function NewAgentRow({
+  active,
   canRun,
   offline,
-  onDelegate,
   onNew,
   compact = false,
 }: {
-  snapshot: Pick<AppSnapshot, 'customAgents' | 'device'>
-  drawer: boolean
+  active: boolean
   canRun: boolean
   offline: boolean
-  onDelegate: (id: string) => void
   onNew: () => void
-  /** The shut sidebar's title row: an icon button. */
+  /** The shut sidebar's title row and the top bar: an icon button. */
   compact?: boolean
 }) {
-  const agents = snapshot.customAgents ?? []
-  const sections: MenuSection[] = [
-    {
-      id: 'agents',
-      items: [
-        ...(snapshot.device.dataScope === 'all'
-          ? [
-              {
-                id: GENERAL_AGENT_ID,
-                label: '通用',
-                leading: <AgentAvatar avatar="general" size={16} />,
-                ...(offline ? { disabled: true, disabledReason: 'Mac 不在线' } : {}),
-                onSelect: () => {
-                  onDelegate(GENERAL_AGENT_ID)
-                },
-              },
-            ]
-          : []),
-        ...agents.map(agent => ({
-          id: agent.id,
-          label: agent.name,
-          leading: <AgentAvatar avatar={agent.avatar} size={16} />,
-          ...(offline
-            ? { disabled: true, disabledReason: 'Mac 不在线' }
-            : agent.available
-              ? {}
-              : { disabled: true, disabledReason: agent.unavailableReason ?? '现在不能开始' }),
-          onSelect: () => {
-            onDelegate(agent.id)
-          },
-        })),
-      ],
-    },
-    ...(canRun
-      ? [
-          {
-            id: 'new',
-            items: [
-              {
-                id: 'new-agent',
-                label: '新建 Agent',
-                leading: <PlusGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />,
-                ...(offline ? { disabled: true, disabledReason: 'Mac 不在线' } : {}),
-                onSelect: onNew,
-              },
-            ],
-          },
-        ]
-      : []),
-  ].filter(section => section.items.length > 0)
-  if (!canRun || sections.length === 0) return null
-  return (
-    <Menu
-      label="和谁对话"
-      sections={sections}
-      trigger={props =>
-        compact ? (
-          <IconButton {...props} data-delegate-trigger="" data-space-primary="" label="新对话…" icon={Send} />
-        ) : (
-          <Button
-            {...props}
-            variant="ghost"
-            className="sidebar-nav-row"
-            data-delegate-trigger=""
-            data-space-primary=""
-            {...capsOf('new', drawer)}>
-            <Send size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            <span>新对话…</span>
-          </Button>
-        )
-      }
+  if (!canRun) return null
+  return compact ? (
+    <IconButton
+      data-space-primary=""
+      label="新建 Agent"
+      icon={PlusGlyph}
+      pressed={active}
+      disabled={offline}
+      tooltip={offline ? 'Mac 不在线' : undefined}
+      onClick={onNew}
     />
+  ) : (
+    <Button
+      variant="ghost"
+      className="sidebar-nav-row"
+      data-space-primary=""
+      aria-pressed={active}
+      disabled={offline}
+      tooltip={offline ? 'Mac 不在线' : undefined}
+      onClick={onNew}>
+      <PlusGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+      <span>新建 Agent</span>
+    </Button>
   )
 }
 
@@ -374,24 +318,35 @@ export function shellSpaces(shell: Pick<ShellState, 'entries' | 'space' | 'goSpa
   return { space: shared ? null : shell.route.overview ? 'code' : shell.space, onSpace: shell.goSpace, waits: shell.waits }
 }
 
-/** 新对话… as the shell draws it: a choice of Agent, which opens a new topic with it, the input ready. */
-export function ShellDelegate({ shell, compact = false }: { shell: ShellState; compact?: boolean }) {
+/** 新建 Agent as the shell draws it: the sidebar's row, or an icon button where there is no room for one. */
+export function ShellNewAgent({ shell, compact = false }: { shell: ShellState; compact?: boolean }) {
   return (
-    <DelegateRow
-      snapshot={shell.snapshot}
-      drawer={shell.drawerMode}
-      canRun={shell.access.scopes.has('run')}
+    <NewAgentRow
+      active={shell.route.entry === 'agents' && shell.route.myAgent?.id === 'new'}
+      canRun={shell.access.scopes.has('run') && shell.snapshot.device.dataScope === 'all'}
       offline={shell.connection === 'offline'}
       compact={compact}
-      onDelegate={id => {
-        askDelegateFocus()
-        shell.openMyAgent({ id, topic: 'new' })
-      }}
       onNew={() => {
         shell.openMyAgent({ id: 'new' })
       }}
     />
   )
+}
+
+/** 总览 in the sidebar's top rows: Code's home, or in 我的 Agent the space's own. */
+export function shellOverview(shell: Pick<ShellState, 'space' | 'route' | 'entries' | 'openOverview' | 'openMyAgent'>): {
+  active: boolean
+  open: () => void
+} {
+  const { route } = shell
+  if (shell.entries.includes('agents') && shell.space === 'agents' && !route.overview)
+    return {
+      active: route.entry === 'agents' && route.myAgent === undefined && !route.topics,
+      open: () => {
+        shell.openMyAgent()
+      },
+    }
+  return { active: route.entry === 'sessions' && route.overview === true, open: shell.openOverview }
 }
 
 /** The foot as the shell draws it, from any of the sidebar's places. */

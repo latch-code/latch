@@ -94,14 +94,14 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     await place(page, '我的 Agent').click()
     await page
       .getByRole('list', { name: '我的 Agent', exact: true })
-      .getByRole('button', { name: /^通用 内置/u })
+      .getByRole('button', { name: /^通用/u })
       .waitFor()
-    await page.getByText('还没有自己的 Agent').waitFor()
+    await page.locator('.agents-page').getByText('还没有自己的 Agent').first().waitFor()
     await page.screenshot({ path: `${OUT}/list-empty-1440.png` })
 
     // Create one on the fake ACP Harness, working in the project, from the sidebar's own 新建 Agent: first who, then
     // its name and duty, with the project under 更多.
-    await agentsNav(page).getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     await page.getByRole('heading', { name: '你想让谁成为你的帮手？' }).waitFor()
     await page.getByRole('list', { name: '候选' }).getByRole('button', { name: 'Fake Agent', exact: true }).click()
     const form = page.getByRole('form', { name: '新建 Agent' })
@@ -200,8 +200,11 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     await topics.getByRole('menuitemradio', { name: new RegExp(first!.title.slice(0, 4), 'u') }).click()
     await expect.poll(() => page.locator(`[data-task-id="${first!.id}"][aria-current="page"]`).count()).toBe(1)
 
-    // The conversations live in 我的 Agent: 最近对话 lists them, Code does not.
-    await agentsNav(page).getByRole('region', { name: '最近对话' }).waitFor()
+    // The conversations live in 我的 Agent: they hang under their Agent on the roster's tree, and Code does not list them.
+    const tree = agentsNav(page).getByRole('list', { name: '资料助手 的话题', exact: true })
+    await expect.poll(() => tree.locator('[data-task-id]').count()).toBe(2)
+    // The row ends with a state icon, never a word, and names no Harness or model.
+    expect(await agentsNav(page).innerText()).not.toMatch(/Fake Agent|Harness|模型|内置/u)
     await place(page, 'Code').click()
     await page.getByRole('navigation', { name: '会话列表' }).waitFor()
     expect(await page.getByRole('navigation', { name: '会话列表' }).locator(`[data-task-id="${first!.id}"]`).count()).toBe(0)
@@ -262,20 +265,20 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     await panel.getByRole('button', { name: '关闭资料', exact: true }).click()
     await panel.waitFor({ state: 'detached' })
 
-    // Archived, a topic stays in 我的 Agent: under its own 已归档, not in 最近对话 and not in Code.
+    // Archived, a topic stays in 我的 Agent: 已归档 opens 全部话题 on the archived ones, grouped under their Agent; not in Code.
     await owner.json('tasks/' + second.id, { method: 'PATCH', body: { archived: true } })
-    const shelf = agentsNav(page).getByRole('button', { name: /^已归档的对话/u })
+    const shelf = agentsNav(page).getByRole('button', { name: /^已归档的话题/u })
     await shelf.click()
-    await agentsNav(page)
-      .getByRole('region', { name: '已归档' })
+    const allTopics = page.getByRole('region', { name: '全部话题', exact: true })
+    await allTopics
+      .getByRole('region', { name: '资料助手', exact: true })
       .getByRole('button', { name: new RegExp(second.title.slice(0, 4), 'u') })
-      .waitFor()
-    await page.screenshot({ path: `${OUT}/archived-1440.png` })
-    await agentsNav(page)
-      .getByRole('region', { name: '已归档' })
-      .getByRole('button', { name: /^已归档/u })
       .first()
-      .click()
+      .waitFor()
+    expect(await allTopics.locator(`[data-task-id="${first!.id}"]`).count()).toBe(0)
+    await page.screenshot({ path: `${OUT}/archived-1440.png` })
+    await allTopics.getByRole('button', { name: '已归档', exact: true }).click()
+    await allTopics.locator(`[data-task-id="${first!.id}"]`).waitFor()
     await shelf.waitFor()
     await owner.json('tasks/' + second.id, { method: 'PATCH', body: { archived: false } })
 
@@ -286,6 +289,14 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
       if (!Array.isArray(snapshot.tasks)) return route.fulfill({ response })
       const tasks = snapshot.tasks.map(task => (task.id === first!.id ? { ...task, status: 'waiting-approval' as const } : task))
       await route.fulfill({ response, json: { ...snapshot, tasks } })
+    })
+    // Code's home covers the topic without closing it, so after the reload its detail is read again: it says the same.
+    const firstDetail = `**/link/api/tasks/${first!.id}`
+    await page.route(firstDetail, async route => {
+      const response = await route.fetch()
+      const detail = (await response.json()) as { summary?: { status: string } }
+      if (!detail.summary) return route.fulfill({ response })
+      await route.fulfill({ response, json: { ...detail, summary: { ...detail.summary, status: 'waiting-approval' } } })
     })
     // The keys: ⇧⌘1 to Code, ⇧⌘2 back.
     await page.keyboard.press('Meta+Shift+Digit1')
@@ -303,6 +314,7 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     await page.screenshot({ path: `${OUT}/shut-1440.png` })
     await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
     await page.unroute('**/link/api/snapshot*')
+    await page.unroute(firstDetail)
     await page.keyboard.press('Meta+Shift+Digit1')
     await expect.poll(() => place(page, 'Code').getAttribute('aria-checked')).toBe('true')
     await page.keyboard.press('Meta+Shift+Digit2')
@@ -326,11 +338,18 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     await page.locator('.topbar').getByRole('button', { name: '通用 的资料', exact: true }).waitFor()
     await page.screenshot({ path: `${OUT}/general-1440.png` })
 
-    // 新对话… (the key of 新会话, a browser's Alt N) chooses an Agent and opens a new topic with the input ready.
+    // The key of 新会话 (a browser's Alt N) opens the space's 总览 with the input ready; it addresses the Agent last spoken
+    // with, and the chip over it picks another.
     await page.keyboard.press('Alt+KeyN')
-    await page.getByRole('menuitem', { name: /资料助手/u }).click()
+    await expect.poll(() => page.locator('.agents-page').getAttribute('data-view')).toBe('home')
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('给通用发消息')
+    await page.keyboard.type('写了一半')
+    await page.locator('.agents-home').getByRole('button', { name: '发给谁', exact: true }).click()
+    await page.getByRole('menuitemradio', { name: /资料助手/u }).click()
     await input.waitFor()
-    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('给资料助手发消息')
+    // What was typed stays while the chip changes who is addressed.
+    expect(await input.inputValue()).toBe('写了一半')
+    await page.screenshot({ path: `${OUT}/home-1440.png` })
 
     // A refusal says so and keeps what was written.
     await page.route(
@@ -389,7 +408,10 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     const tabs = narrow.getByRole('navigation', { name: '主导航' })
     await tabs.getByRole('button', { name: 'Code', exact: true }).waitFor()
     await tabs.getByRole('button', { name: '我的 Agent', exact: true }).click()
-    await narrow.getByRole('region', { name: '最近对话' }).first().getByRole('button').first().waitFor()
+    await narrow
+      .getByRole('list', { name: '我的 Agent', exact: true })
+      .getByRole('button', { name: /资料助手/u })
+      .waitFor()
     await settled(narrow)
     await noHorizontalOverflow(narrow)
     await narrow.screenshot({ path: `${OUT}/list-390-dark.png` })
@@ -423,7 +445,12 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     await sheet.getByRole('banner').getByRole('button', { name: '完成', exact: true }).click()
     await sheet.waitFor({ state: 'hidden' })
     await narrow.getByRole('button', { name: '返回', exact: true }).first().click()
-    await narrow.getByRole('button', { name: /^给资料助手发消息/u }).waitFor()
+    // Back from the pushed topic to the root page, the roster, where its row opens it again.
+    await narrow
+      .getByRole('list', { name: '我的 Agent', exact: true })
+      .getByRole('button', { name: /资料助手/u })
+      .waitFor()
+    await expect.poll(() => narrow.locator('.app-shell').getAttribute('data-entry')).toBe('agents')
     await phone.close()
 
     // A device without the full data scope is told it cannot see Agents, not shown an empty list.
@@ -431,7 +458,7 @@ it('creates an Agent, talks with it in topics, keeps its profile, talks with 通
     const limited = await scoped.newPage()
     await enrollBrowser(limited, host, { name: `工作范围 ${randomUUID().slice(0, 4)}` })
     await place(limited, '我的 Agent').click()
-    await limited.locator('.agents-content').getByText('这台设备看不到 Agent').waitFor()
+    await limited.locator('.agents-home').getByText('这台设备看不到 Agent').waitFor()
     await agentsNav(limited).getByText('这台设备看不到 Agent').waitFor()
     expect(await limited.getByText('还没有自己的 Agent').count()).toBe(0)
     await scoped.close()
@@ -478,6 +505,258 @@ it('delegates from an Agent with no default project into its fixed home', async 
       .toMatchObject({ harnessId: 'fake-agent', workspaceId: 'default', cwd: join(host.workspaceRoot, 'helpers', agent.id) })
     await page.locator('.topbar .agent-frame').waitFor()
     expect(await page.getByText(/没有开始/u).count()).toBe(0)
+    await context.close()
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+})
+
+it('keeps the Agent, the topic and what was typed through a layout change, and pushes a topic over the roster on a phone', async () => {
+  const host = await startTestHost({ plugins: [fixture] })
+  const browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    await owner.confirmedJson('agents', {
+      method: 'POST',
+      body: { id: 'fake-agent', name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+    })
+    const agent = await owner.json<{ id: string }>('custom-agents', {
+      method: 'POST',
+      body: { requestId: randomUUID(), name: '晨报', harnessId: 'fake-agent', mode: 'agent', instructions: '', skills: [] },
+    })
+    await mkdir(OUT, { recursive: true })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    await fullScopeBrowser(page, host, owner, '名册与队列')
+    await place(page, '我的 Agent').click()
+    // The space's own 总览 is where the place opens; the roster stands beside it.
+    await expect.poll(() => page.locator('.agents-page').getAttribute('data-view')).toBe('home')
+    await agentsNav(page)
+      .getByRole('button', { name: /晨报/u })
+      .click()
+    const input = page.getByRole('textbox', { name: '给晨报发消息', exact: true })
+    await input.fill('整理一下今天的事')
+    await input.press('Meta+Enter')
+    const topics = async () => (await owner.json<AppSnapshot>('snapshot')).tasks.filter(task => task.agent?.customAgentId === agent.id)
+    await expect.poll(async () => (await topics()).length, { timeout: 15_000 }).toBe(1)
+    const [topic] = await topics()
+    const current = page.locator(`[data-task-id="${topic!.id}"][aria-current="page"]`)
+    await expect.poll(() => current.count()).toBe(1)
+    await page.locator('.topbar .agent-frame').waitFor()
+    // 侧栏: the roster, the topic on its Agent's tree, and the switcher named by the topic.
+    expect(await agentsNav(page).getAttribute('data-people')).toBe('roster')
+    await agentsNav(page).getByRole('list', { name: '晨报 的话题', exact: true }).locator(`[data-task-id="${topic!.id}"]`).waitFor()
+    // The open topic's own input (the new topic's is gone with its page).
+    const draft = page.locator('main.workspace textarea:visible').first()
+    await draft.fill('写到一半的话')
+    await page.screenshot({ path: `${OUT}/layout-roster-1440.png` })
+
+    // 顶栏: the same Agent and topic, the same words in the input; the left is the queue of people.
+    const layout = page.getByRole('radiogroup', { name: '布局', exact: true }).filter({ visible: true }).first()
+    await layout.getByRole('radio', { name: '顶栏', exact: true }).click()
+    await expect.poll(() => page.locator('.app-shell').getAttribute('data-workbench-layout')).toBe('triage')
+    await expect.poll(() => agentsNav(page).getAttribute('data-people')).toBe('queue')
+    await expect.poll(() => agentsNav(page).locator('[data-agent-id][aria-current="page"]').getAttribute('data-agent-id')).toBe(agent.id)
+    await page.locator('.topbar .agent-frame[data-layout="triage"]').waitFor()
+    expect(await page.locator('.topbar').getByRole('button', { name: '晨报 的资料', exact: true }).count()).toBe(1)
+    expect(await draft.inputValue()).toBe('写到一半的话')
+    expect(await page.locator('.app-shell').getAttribute('data-entry')).toBe('sessions')
+    // The top bar's own ways in this space.
+    const bar = page.getByRole('navigation', { name: '工作台', exact: true })
+    await bar.getByRole('button', { name: '全部话题', exact: true }).waitFor()
+    await page.screenshot({ path: `${OUT}/layout-queue-1440.png` })
+    await bar.getByRole('button', { name: '全部话题', exact: true }).click()
+    await page.getByRole('region', { name: '全部话题', exact: true }).locator(`[data-task-id="${topic!.id}"]`).click()
+    await expect.poll(() => page.locator('.app-shell').getAttribute('data-entry')).toBe('sessions')
+    expect(await draft.inputValue()).toBe('写到一半的话')
+    await bar.getByRole('button', { name: '总览', exact: true }).click()
+    await expect.poll(() => page.locator('.agents-page').getAttribute('data-view')).toBe('home')
+    await page
+      .locator('.agents-home')
+      .getByRole('region', { name: '最近结果', exact: true })
+      .locator(`[data-work-session="${topic!.id}"]`)
+      .click()
+    await expect.poll(() => page.locator('.app-shell').getAttribute('data-entry')).toBe('sessions')
+
+    // Back to 侧栏: still the same topic and the same words.
+    await layout.getByRole('radio', { name: '侧栏', exact: true }).click()
+    await expect.poll(() => agentsNav(page).getAttribute('data-people')).toBe('roster')
+    await expect.poll(() => current.count()).toBe(1)
+    expect(await draft.inputValue()).toBe('写到一半的话')
+    await context.close()
+
+    // A phone: the roster is the root page; a topic is pushed over it and the way back returns to the roster.
+    const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' })
+    const narrow = await phone.newPage()
+    narrow.setDefaultTimeout(15_000)
+    await fullScopeBrowser(narrow, host, owner, '名册 390')
+    await narrow.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
+    const row = narrow.getByRole('list', { name: '我的 Agent', exact: true }).getByRole('button', { name: /晨报/u })
+    await row.waitFor()
+    expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await noHorizontalOverflow(narrow)
+    await narrow.screenshot({ path: `${OUT}/roster-390.png` })
+    await row.click()
+    await narrow.locator('.topbar').getByRole('button', { name: '晨报 的资料', exact: true }).waitFor()
+    await expect.poll(() => narrow.locator('.app-shell').getAttribute('data-entry')).toBe('sessions')
+    await narrow.getByRole('button', { name: '返回', exact: true }).first().click()
+    await expect.poll(() => narrow.locator('.app-shell').getAttribute('data-entry')).toBe('agents')
+    await row.waitFor()
+    // 全部话题 is pushed the same way, and comes back to the roster.
+    await narrow.getByRole('button', { name: '全部话题', exact: true }).click()
+    await narrow.getByRole('region', { name: '全部话题', exact: true }).locator(`[data-task-id="${topic!.id}"]`).waitFor()
+    await narrow.getByRole('region', { name: '全部话题', exact: true }).getByRole('button', { name: '返回', exact: true }).click()
+    await row.waitFor()
+    await phone.close()
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+})
+
+it('decides a topic’s approval from the space’s 总览, raises the toast only where no card shows, and hides a covered card', async () => {
+  // A local model that asks to write a file whenever it is told to note something, and otherwise answers.
+  const approving: HarnessPlugin = {
+    id: 'agents-approving',
+    name: 'Agents approving fixture',
+    version: '1',
+    description: '',
+    activate(context) {
+      context.registerProvider({
+        id: 'agents-approving',
+        name: 'Agents approving fixture',
+        model: 'fixture',
+        async *stream({ messages }) {
+          const prompt = String(messages.findLast(message => message.role === 'user')?.content ?? '')
+          if (prompt.includes('记下来') && messages.at(-1)?.role !== 'tool') {
+            yield {
+              type: 'tool-call',
+              call: {
+                id: randomUUID(),
+                name: 'write_file',
+                arguments: { path: `notes/${randomUUID().slice(0, 6)}.md`, content: '# 记下\n' },
+              },
+            }
+            yield { type: 'finish', reason: 'tool-calls' }
+            return
+          }
+          yield { type: 'text', text: '已收到。' }
+          yield { type: 'finish', reason: 'stop' }
+        },
+      })
+    },
+  }
+  const host = await startTestHost({ demo: false, plugins: [approving], providerId: 'agents-approving' })
+  const browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const model = { providerId: 'agents-approving', model: 'fixture' }
+    const agent = await owner.json<{ id: string }>('custom-agents', {
+      method: 'POST',
+      body: { requestId: randomUUID(), name: '小满', harnessId: 'standard', mode: 'agent', instructions: '', skills: [] },
+    })
+    const start = async (prompt: string, status: string, customAgentId?: string): Promise<string> => {
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { requestId: randomUUID(), prompt, mode: 'agent', model, ...(customAgentId ? { customAgentId } : {}) },
+      })
+      await expect
+        .poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.id === sessionId)?.status, {
+          timeout: 15_000,
+        })
+        .toBe(status)
+      return sessionId
+    }
+    const approvalOf = async (sessionId: string) =>
+      (await owner.json<AppSnapshot>('snapshot')).approvals.find(approval => approval.sessionId === sessionId)!.id
+    // A Code session that waits for an approval, opened so that its card is the conversation's.
+    const code = await start('把这件事记下来', 'waiting-approval')
+    const codeApproval = await approvalOf(code)
+    await mkdir(OUT, { recursive: true })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    await fullScopeBrowser(page, host, owner, '总览里的审批')
+    await page.locator(`[data-work-session="${code}"]`).first().waitFor()
+    await page.locator('.workbench-home').locator(`[data-approval-id="${codeApproval}"]`).waitFor()
+    await page.keyboard.press('Meta+k')
+    const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+    await palette.getByRole('searchbox').fill('把这件事记下来')
+    await palette
+      .getByRole('option', { name: /把这件事记下来/u })
+      .first()
+      .click()
+    const covered = page.locator(`main.workspace [data-approval-id="${codeApproval}"]`)
+    await covered.waitFor()
+    const layout = page.getByRole('radiogroup', { name: '布局', exact: true }).filter({ visible: true }).first()
+    await layout.getByRole('radio', { name: '顶栏', exact: true }).click()
+    await expect.poll(() => page.locator('.app-shell').getAttribute('data-workbench-layout')).toBe('triage')
+
+    // (c) From 我的 Agent the Code conversation is covered: its protected card is inert and cannot be seen through the page.
+    await place(page, '我的 Agent').click()
+    await expect.poll(() => page.locator('.agents-page').getAttribute('data-view')).toBe('home')
+    const hidden = () =>
+      covered.evaluate(card => {
+        let lowest = 1
+        for (let node: Element | null = card; node; node = node.parentElement)
+          lowest = Math.min(lowest, Number(getComputedStyle(node).opacity))
+        return { inert: card.closest('[inert]') !== null, opacity: lowest }
+      })
+    await expect.poll(hidden).toEqual({ inert: true, opacity: 0 })
+    // The covered Code card is nowhere on the 总览 of 我的 Agent.
+    expect(await page.locator('.agents-page').locator(`[data-approval-id="${codeApproval}"]`).count()).toBe(0)
+
+    // (a), (b) A topic asks: its card is on the 总览 with the same approval, so no toast says it a second time there.
+    const waiting = await start('把今天的事记下来', 'waiting-approval', agent.id)
+    const approval = await approvalOf(waiting)
+    const home = page.locator('.agents-home')
+    const card = home.locator(`[data-approval-id="${approval}"]`)
+    await card.waitFor()
+    expect(await home.getByRole('region', { name: '等你处理', exact: true }).innerText()).toContain('小满')
+    await page.waitForTimeout(1_000)
+    const toast = page.locator('.toast').filter({ hasText: '另一个话题等你处理' })
+    expect(await toast.count()).toBe(0)
+    expect(await hidden()).toEqual({ inert: true, opacity: 0 })
+    await page.screenshot({ path: `${OUT}/home-approval-1440.png` })
+    // On 全部话题 no card shows it, so the toast does.
+    const bar = page.getByRole('navigation', { name: '工作台', exact: true })
+    await bar.getByRole('button', { name: '全部话题', exact: true }).click()
+    await page.getByRole('region', { name: '全部话题', exact: true }).locator(`[data-task-id="${waiting}"]`).waitFor()
+    await toast.waitFor()
+    expect(await page.locator('.agents-page').locator(`[data-approval-id="${approval}"]`).count()).toBe(0)
+
+    // A newer topic at rest: the flagged person still opens the topic that waits, where the same approval is the card.
+    const rested = await start('今天怎么样', 'idle', agent.id)
+    await bar.getByRole('button', { name: '总览', exact: true }).click()
+    await card.waitFor()
+    const person = page.getByRole('navigation', { name: '我的 Agent', exact: true }).locator(`[data-agent-id="${agent.id}"]`)
+    await person.click()
+    await expect.poll(() => page.locator('.app-shell').getAttribute('data-entry')).toBe('sessions')
+    await page.locator(`main.workspace [data-approval-id="${approval}"]`).waitFor()
+    expect(await page.locator(`main.workspace [data-approval-id="${codeApproval}"]`).count()).toBe(0)
+    const snapshot = await owner.json<AppSnapshot>('snapshot')
+    expect(snapshot.tasks.find(task => task.id === rested)!.updatedAt >= snapshot.tasks.find(task => task.id === waiting)!.updatedAt).toBe(
+      true,
+    )
+
+    // (a) Deciding on the 总览 is the same request: the Host settles that approval and the card leaves.
+    await bar.getByRole('button', { name: '总览', exact: true }).click()
+    await card.waitFor()
+    const allow = card.getByRole('button', { name: '允许', exact: true })
+    await expect.poll(() => allow.isDisabled()).toBe(false)
+    const decided = page.waitForRequest(
+      request => request.method() === 'POST' && new URL(request.url()).pathname.includes(`/approvals/${approval}`),
+    )
+    await allow.click()
+    await decided
+    await expect
+      .poll(async () => (await owner.json<AppSnapshot>('snapshot')).approvals.some(item => item.id === approval), { timeout: 15_000 })
+      .toBe(false)
+    await card.waitFor({ state: 'detached' })
+    // The Code session's own approval was never touched from here.
+    expect((await owner.json<AppSnapshot>('snapshot')).approvals.some(item => item.id === codeApproval)).toBe(true)
     await context.close()
   } finally {
     await browser.close()

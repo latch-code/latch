@@ -32,7 +32,7 @@ import { AgentsPage } from '../agents/AgentsPage.tsx'
 import { ProfileLayer } from '../agents/AgentProfile.tsx'
 import { AppsPage } from '../plugin-pages/AppsPage.tsx'
 import { AgentsSpaceList } from '../agents/AgentsSpaceList.tsx'
-import { ShellDelegate, SpaceSwitch, shellSpaces } from './SpaceNav.tsx'
+import { ShellNewAgent, SpaceSwitch, shellOverview, shellSpaces } from './SpaceNav.tsx'
 import { waitingCount } from '../sessions.ts'
 import { ConversationView } from './ConversationView.tsx'
 import { Overlays } from './Overlays.tsx'
@@ -271,7 +271,12 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 role={drawerMode && drawer.open ? 'dialog' : undefined}
                 aria-modal={drawerMode && drawer.open ? true : undefined}
                 tabIndex={-1}>
-                {triage && shell.space === 'code' && !drawerMode ? (
+                {triage && shell.space === 'agents' && entries.includes('agents') && !drawerMode ? (
+                  // 顶栏 layout, in a topic of 我的 Agent: the queue of people, as on 我的 Agent's own pages.
+                  <div className="triage-sidebar agents-rail" data-space="agents">
+                    <AgentsSpaceList shell={shell} rail />
+                  </div>
+                ) : triage && shell.space === 'code' && !drawerMode ? (
                   <div className="triage-sidebar">
                     <WorkOverview {...work} compact />
                     <Button variant="ghost" onClick={shell.openAllSessions}>
@@ -282,7 +287,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   <>
                     <Sidebar
                       projectTree={!triage}
-                      overview={{ active: overview, open: shell.openOverview }}
+                      overview={shellOverview(shell)}
                       onSchedules={
                         catalog?.features?.automations ? () => shell.openMyAgent({ id: 'general', tab: 'schedules' }) : undefined
                       }
@@ -311,7 +316,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       spaces={shellSpaces(shell)}
                       agents={
                         entries.includes('agents')
-                          ? { primary: <ShellDelegate shell={shell} />, list: <AgentsSpaceList shell={shell} /> }
+                          ? { primary: <ShellNewAgent shell={shell} />, list: <AgentsSpaceList shell={shell} /> }
                           : undefined
                       }
                       hostProblem={hostProblem}

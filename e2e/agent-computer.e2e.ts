@@ -165,7 +165,7 @@ it('「电脑」 shows the computer as the Host recorded it, a missed time with 
     expect((await owner.json<AgentComputer>(`custom-agents/${agent.id}/computer`)).missed).toEqual([])
 
     // 职责模板 only fill the text of a new Agent; nothing is created until 创建.
-    await page.getByRole('navigation', { name: '我的 Agent', exact: true }).getByRole('button', { name: '新建 Agent' }).first().click()
+    await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     await page.getByRole('list', { name: '候选' }).getByRole('button').first().click()
     const form = page.getByRole('form', { name: '新建 Agent' })
     await form.getByRole('group', { name: '从模板开始' }).getByRole('button', { name: '周报', exact: true }).click()

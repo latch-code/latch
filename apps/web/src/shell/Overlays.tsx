@@ -1,3 +1,4 @@
+import { agentsOverview, OVERVIEW_ROWS } from '../agents/roster.ts'
 import { useLayoutEffect } from 'react'
 import { api, errorMessage, MessageError } from '../core/api.ts'
 import { ShellPalette } from '../palette/ShellPalette.tsx'
@@ -107,10 +108,23 @@ export function Overlays({ shell }: { shell: ShellState }) {
     composerRef,
     access,
   } = shell
+  // A 总览 already shows what waits in its own place as a card: Code's home for Code's sessions, 我的 Agent's for its topics.
+  const toastTask = approvalToast ? snapshot.tasks.find(task => task.id === approvalToast.sessionId) : undefined
+  const toastSpace = toastTask ? spaceOf(toastTask) : undefined
+  // Only a card that is really in sight stands in for the toast: on a wide window's 总览, among the rows drawn before
+  // 「还有 N 件」, and not while the Host withholds the list of Agents.
+  const onAgentsHome =
+    route.entry === 'agents'
+    && route.myAgent === undefined
+    && !route.topics
+    && !shell.phone
+    && snapshot.customAgents !== undefined
+    && approvalToast !== null
+    && agentsOverview(snapshot.tasks, shell.stopping)
+      .attention.slice(0, OVERVIEW_ROWS)
+      .some(task => task.id === approvalToast.sessionId)
   const shownApprovalToast =
-    approvalToast && !(route.overview && snapshot.tasks.some(task => task.id === approvalToast.sessionId && spaceOf(task) === 'code'))
-      ? approvalToast
-      : null
+    approvalToast && !(route.overview && toastSpace === 'code') && !(onAgentsHome && toastSpace === 'agents') ? approvalToast : null
   return (
     <>
       {commandOpen && <ShellPalette shell={shell} />}
@@ -201,7 +215,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
       {(shownApprovalToast || toast) && <ToastClearance />}
       {shownApprovalToast && (
         <Toast className="toast" duration={null}>
-          <span>另一个会话等你处理</span>
+          <span>{toastSpace === 'agents' ? '另一个话题等你处理' : '另一个会话等你处理'}</span>
           <Button
             variant="ghost"
             onClick={() => {

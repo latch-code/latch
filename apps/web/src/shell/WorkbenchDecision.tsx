@@ -1,4 +1,4 @@
-import type { TaskSummary } from '@latch/protocol'
+import type { AgentAvatar as AgentAvatarValue, TaskSummary } from '@latch/protocol'
 import { useState } from 'react'
 import {
   AlertGlyph,
@@ -15,6 +15,7 @@ import {
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { composerGate } from '../core/permissions.ts'
@@ -34,9 +35,15 @@ export function WorkbenchDecision({
   expanded = true,
   onExpand,
   firstKeys = false,
+  person,
 }: {
   task: TaskSummary
   shell: ShellState
+  /**
+   * A topic of 我的 Agent: the card is the helper's. Its title carries the name (「小满想改 …」), the source line is the face
+   * and the name, and no project, Harness or model is said.
+   */
+  person?: { name: string; avatar: AgentAvatarValue | 'general' } | undefined
   emphasis?: boolean
   expanded?: boolean
   onExpand?: () => void
@@ -79,18 +86,28 @@ export function WorkbenchDecision({
   const resultVerb = resultUnknown ? '核对' : status.tone === 'failed' ? (retryable ? '重试' : '查看') : undefined
   const resultIcon = status.tone === 'failed' ? AlertGlyph : resultUnknown ? UnknownGlyph : WaitingGlyph
   const sessionTitle = task.title || '未命名会话'
+  const asker = person?.name ?? (harness ? harnessName(harness) : 'Agent')
+  const source = person ? (
+    <span className="work-decision-person">
+      <AgentAvatar avatar={person.avatar} size={16} />
+      <VisibleText text={person.name} />
+    </span>
+  ) : (
+    <span>
+      <Icon icon={FolderGlyph} size={12} />
+      <VisibleText text={project?.name ?? '无项目'} />
+    </span>
+  )
   const context = (
     <div className="work-decision-context">
-      <span>
-        <Icon icon={FolderGlyph} size={12} />
-        <VisibleText text={project?.name ?? '无项目'} />
-      </span>
+      {/* An approval's title already names the helper (「小满 想改 …」): the source line does not say it again. */}
+      {!(person && approval) && source}
       {!(resultVerb && !approval && !asked) && (
         <Button variant="ghost" size="xs" className="work-decision-session" onClick={() => shell.choose(task.id)}>
           <VisibleText text={sessionTitle} />
         </Button>
       )}
-      {harness && (
+      {harness && !person && (
         <span className="work-decision-harness">
           <HarnessTile harness={harness} size={14} />
           {harnessName(harness)}
@@ -116,7 +133,7 @@ export function WorkbenchDecision({
           compact
           context={context}
           state={asked}
-          asker={harness ? harnessName(harness) : 'Agent'}
+          asker={asker}
           canAnswer={canAnswer}
           disabledReason={!enabled ? '连接恢复后可以回答' : '这台设备只能看'}
           onOther={() => shell.choose(task.id)}
@@ -138,8 +155,17 @@ export function WorkbenchDecision({
               )}
             </span>
             <span className="work-decision-compact-meta">
-              <Icon icon={FolderGlyph} size={12} />
-              <VisibleText text={project?.name ?? '无项目'} />
+              {person ? (
+                <>
+                  <AgentAvatar avatar={person.avatar} size={16} />
+                  <VisibleText text={person.name} />
+                </>
+              ) : (
+                <>
+                  <Icon icon={FolderGlyph} size={12} />
+                  <VisibleText text={project?.name ?? '无项目'} />
+                </>
+              )}
               {/* The title's verb and icon already say a failure; how many results are unconfirmed is still said. */}
               {(action || status.tone !== 'failed' || unknown) && (
                 <StatusWord tone={unknown ? 'warn' : status.tone}>{unknown ?? status.words}</StatusWord>
@@ -159,6 +185,7 @@ export function WorkbenchDecision({
           emphasis={emphasis}
           context={context}
           numberKeys={firstKeys}
+          {...(person ? { requester: person.name } : {})}
           approvals={detail.approvals}
           messages={detail.messages}
           index={index}
@@ -176,7 +203,7 @@ export function WorkbenchDecision({
           context={context}
           firstKeys={firstKeys}
           state={asked}
-          asker={harness ? harnessName(harness) : 'Agent'}
+          asker={asker}
           canAnswer={canAnswer}
           disabledReason={!enabled ? '连接恢复后可以回答' : '这台设备只能看'}
           onOther={() => shell.choose(task.id)}
@@ -224,7 +251,9 @@ export function WorkbenchDecision({
                   ?? (task.runEnd?.unknownResultCount
                     ? '执行结果尚未确认'
                     : task.status === 'failed' || task.runOutcome === 'failed'
-                      ? '本轮失败，打开会话查看原因'
+                      ? person
+                        ? '这一轮失败了，打开话题看原因'
+                        : '本轮失败，打开会话查看原因'
                       : status.words)
                 }
               />
@@ -232,7 +261,7 @@ export function WorkbenchDecision({
           )}
           <div className="work-decision-result-actions">
             <Button size="sm" variant="outline" onClick={() => shell.choose(task.id)}>
-              {task.runEnd?.unknownResultCount ? '核对结果' : '查看会话'}
+              {task.runEnd?.unknownResultCount ? '核对结果' : person ? '查看话题' : '查看会话'}
             </Button>
             {retryable && (
               <Button size="sm" variant="outline" onClick={() => shell.retryFromWorkbench(detail)}>

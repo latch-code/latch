@@ -35,10 +35,7 @@ it('binds abandonment to the creation shown when the confirmation opened', async
     })
     const create = async (view: Page, name: string) => {
       await place(view, '我的 Agent').click()
-      await view
-        .getByRole('navigation', { name: '我的 Agent', exact: true })
-        .getByRole('button', { name: '新建 Agent', exact: true })
-        .click()
+      await view.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
       await view.getByRole('list', { name: '候选' }).getByRole('button', { name: 'Latch 内置', exact: true }).click()
       const form = view.getByRole('form', { name: '新建 Agent' })
       await form.getByLabel('名字', { exact: true }).fill(name)
@@ -143,7 +140,7 @@ it('keeps a sensitive creation out of storage and requires an explicit decision 
     const owner = await host.enroll({ listener: 'unix' })
     await fullScopeBrowser(page, host, owner, '私有创建')
     await place(page, '我的 Agent').click()
-    await page.getByRole('navigation', { name: '我的 Agent', exact: true }).getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     await page.getByRole('list', { name: '候选' }).getByRole('button', { name: 'Latch 内置', exact: true }).click()
     const form = page.getByRole('form', { name: '新建 Agent' })
     await form.getByLabel('名字', { exact: true }).fill('私有创建')
@@ -193,7 +190,7 @@ it('coordinates two windows retrying one creation without replacing its request'
     const owner = await host.enroll({ listener: 'unix' })
     await fullScopeBrowser(page, host, owner, '双窗口创建')
     await place(page, '我的 Agent').click()
-    await page.getByRole('navigation', { name: '我的 Agent', exact: true }).getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     await page.getByRole('list', { name: '候选' }).getByRole('button', { name: 'Latch 内置', exact: true }).click()
     const form = page.getByRole('form', { name: '新建 Agent' })
     await form.getByLabel('名字', { exact: true }).fill('双窗口只建一次')
@@ -247,7 +244,7 @@ it('keeps an unknown creation available for retry instead of cancelling away its
     const owner = await host.enroll({ listener: 'unix' })
     await fullScopeBrowser(page, host, owner, '创建回执')
     await place(page, '我的 Agent').click()
-    await page.getByRole('navigation', { name: '我的 Agent', exact: true }).getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     await page.getByRole('list', { name: '候选' }).getByRole('button', { name: 'Latch 内置', exact: true }).click()
     const form = page.getByRole('form', { name: '新建 Agent' })
     await form.getByLabel('名字', { exact: true }).fill('只创建一次')
@@ -305,7 +302,7 @@ it('keeps the creation draft when choosing a helper again and cancels without wr
     await fullScopeBrowser(page, host, owner, '创建草稿')
     await place(page, '我的 Agent').click()
     const before = (await owner.json<CustomAgentList>('custom-agents')).agents
-    await page.getByRole('navigation', { name: '我的 Agent', exact: true }).getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     const choose = (name: string) => page.getByRole('list', { name: '候选' }).getByRole('button', { name, exact: true }).click()
     await choose('Latch 内置')
     const form = page.getByRole('form', { name: '新建 Agent' })
@@ -644,7 +641,7 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
     await place(page, '我的 Agent').click()
 
     // Step one: who. Latch 内置 is the first card; the fake one has no card of its own, so it is its name alone.
-    await page.getByRole('navigation', { name: '我的 Agent', exact: true }).getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     await page.getByRole('heading', { name: '你想让谁成为你的帮手？' }).waitFor()
     const cards = page.getByRole('list', { name: '候选' }).getByRole('button')
     expect(await cards.allInnerTexts()).toEqual([expect.stringContaining('Latch 内置'), expect.stringContaining('Fake Agent')])
@@ -718,7 +715,7 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
     await expectPersonOnly(page)
 
     // A helper on the fake ACP Harness: the same two steps; its permission cannot be read back, and the frame says so.
-    await page.getByRole('navigation', { name: '我的 Agent', exact: true }).getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     await page.getByRole('list', { name: '候选' }).getByRole('button', { name: 'Fake Agent', exact: true }).click()
     const boundary = page.getByRole('form', { name: '新建 Agent' }).locator('.helper-isolation')
     await boundary.getByRole('button', { name: '不隔离：说明', exact: true }).click()
@@ -798,12 +795,13 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
         const phone = width < 768
         if (phone) await view.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
         else await view.keyboard.press('Meta+Shift+Digit2')
-        // Wherever the list stands at this width (the sidebar, a tablet's inline list, a phone's root page).
+        // Wherever the list stands at this width (the sidebar, a tablet's inline list, a phone's root page); the page in
+        // front is last in the document, over the rail or sidebar it covers.
         const visible = (name: string | RegExp) =>
           view
             .getByRole('button', { name, ...(typeof name === 'string' ? { exact: true } : {}) })
             .filter({ visible: true })
-            .first()
+            .last()
         await visible('新建 Agent').click()
         await view.getByRole('heading', { name: '你想让谁成为你的帮手？' }).waitFor()
         await shoot(view, `create-who-${width}-${scheme}`)

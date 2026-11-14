@@ -14,7 +14,7 @@ import {
   Kbd,
 } from '@latch/ui'
 import { currentShell, lightsStyle, useTrafficLights } from '../core/shell.ts'
-import { ShellDelegate, SpaceButtons, SpaceSwitch, shellSpaces } from './SpaceNav.tsx'
+import { ShellNewAgent, SpaceButtons, SpaceSwitch, shellOverview, shellSpaces } from './SpaceNav.tsx'
 import { BrandMark } from '../components/ui.tsx'
 import { ComputerMenu } from '../components/Computers.tsx'
 import { useComputers } from '../core/computers.ts'
@@ -24,14 +24,16 @@ import type { ShellState } from './useShellLayout.tsx'
 /** On tablets the project tree is a drawer beside a persistent 60px navigation rail. */
 export function TabletRail({ shell }: { shell: ShellState }) {
   const spaces = shellSpaces(shell)
+  const home = shellOverview(shell)
+  const inAgents = spaces?.space === 'agents'
   return (
     <nav className="workbench-tablet-rail" aria-label="工作台导航">
       <span className="workbench-rail-brand">
         <BrandMark size={24} />
       </span>
       {spaces && <SpaceButtons {...spaces} />}
-      <IconButton label="总览" icon={OverviewGlyph} pressed={shell.route.overview === true} onClick={shell.openOverview} />
-      <IconButton label="新建会话" icon={NewSessionGlyph} onClick={shell.startNew} />
+      <IconButton label="总览" icon={OverviewGlyph} pressed={home.active} onClick={home.open} />
+      {inAgents ? <ShellNewAgent shell={shell} compact /> : <IconButton label="新建会话" icon={NewSessionGlyph} onClick={shell.startNew} />}
       <IconButton label="搜索" icon={SearchGlyph} onClick={shell.openSearch} />
       {shell.catalog?.features?.automations && (
         <IconButton label="定时任务" icon={ScheduleGlyph} onClick={() => shell.openMyAgent({ id: 'general', tab: 'schedules' })} />
@@ -72,6 +74,10 @@ export function WorkbenchComputer({ shell }: { shell: ShellState }) {
 export function WorkbenchNav({ shell }: { shell: ShellState }) {
   const spaces = shellSpaces(shell)
   const lights = useTrafficLights()
+  const home = shellOverview(shell)
+  // In 我的 Agent the same three ways lead to the space's own pages: its 总览, 全部话题 and 定时任务.
+  const inAgents = spaces?.space === 'agents'
+  const allActive = inAgents ? shell.route.entry === 'agents' && shell.route.topics === true : shell.route.allSessions === true
   return (
     <div ref={shell.titlebar} className="titlebar workbench-nav" data-lights={lights ? '' : undefined} style={lightsStyle(currentShell())}>
       <span className="workbench-brand" aria-label="Latch">
@@ -89,21 +95,16 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
         />
       )}
       <nav className="workbench-primary-nav" aria-label="工作台">
-        <Button
-          variant="ghost"
-          icon={OverviewGlyph}
-          aria-label="总览"
-          aria-current={shell.route.overview ? 'page' : undefined}
-          onClick={shell.openOverview}>
+        <Button variant="ghost" icon={OverviewGlyph} aria-label="总览" aria-current={home.active ? 'page' : undefined} onClick={home.open}>
           <span className="workbench-nav-label">总览</span>
         </Button>
         <Button
           variant="ghost"
           icon={HistoryGlyph}
-          aria-label={shell.space === 'agents' ? '全部话题' : '全部会话'}
-          aria-current={shell.route.allSessions ? 'page' : undefined}
-          onClick={shell.space === 'agents' ? () => shell.goEntry('agents') : shell.openAllSessions}>
-          <span className="workbench-nav-label">{shell.space === 'agents' ? '全部话题' : '全部会话'}</span>
+          aria-label={inAgents ? '全部话题' : '全部会话'}
+          aria-current={allActive ? 'page' : undefined}
+          onClick={inAgents ? () => shell.openAgentTopics() : shell.openAllSessions}>
+          <span className="workbench-nav-label">{inAgents ? '全部话题' : '全部会话'}</span>
         </Button>
         {shell.catalog?.features?.automations && (
           <Button
@@ -116,7 +117,8 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
         )}
       </nav>
       <span className="workbench-nav-spacer" />
-      {shell.space === 'agents' && <ShellDelegate shell={shell} compact />}
+      {/* The queue's rail leads with 新建 Agent; 全部话题 has no rail, so the way stays here. */}
+      {inAgents && shell.route.entry === 'agents' && shell.route.topics === true && <ShellNewAgent shell={shell} compact />}
       <Button variant="ghost" className="workbench-search" aria-label="搜索" icon={SearchGlyph} onClick={shell.openSearch}>
         <span className="workbench-nav-label">搜索</span>
         <Kbd>⌘K</Kbd>

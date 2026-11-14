@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import type { AgentAvatar as AgentAvatarValue, TaskSummary } from '@latch/protocol'
-import { Button, ICON_STROKE, ChevronDownGlyph, PlusGlyph } from '@latch/ui'
+import { Button, ICON_STROKE, ChevronDownGlyph, MessageGlyph, PlusGlyph } from '@latch/ui'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { relativeTime } from '../format.ts'
@@ -32,6 +32,7 @@ const topicItem = (task: TaskSummary, current: string | null, frozen: boolean, o
 export function TopicMenu({
   topics,
   current,
+  title,
   frozen,
   onTopic,
   onNewTopic,
@@ -41,6 +42,8 @@ export function TopicMenu({
   topics: { open: TaskSummary[]; archived: TaskSummary[] }
   /** The open topic, or null on a new one. */
   current: string | null
+  /** What the switcher shows on wide windows: the open topic's title, or 新话题. A phone has room for the caret alone. */
+  title?: string | undefined
   frozen: boolean
   onTopic: (id: string) => void
   onNewTopic: () => void
@@ -82,7 +85,8 @@ export function TopicMenu({
       className="agent-topic-menu"
       trigger={props => (
         <Button {...props} variant="ghost" size={compact ? 'sm' : 'md'} className="agent-topic-trigger" aria-label="话题" tooltip="话题">
-          <span>话题</span>
+          <MessageGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          <span className="agent-topic-title">{compact || !title ? '话题' : <VisibleText text={title} />}</span>
           <ChevronDownGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         </Button>
       )}
@@ -91,8 +95,10 @@ export function TopicMenu({
 }
 
 /**
- * The conversation's frame: the Agent's face, name and state word on the left, which open its profile; on the right 话题 ▾
- * and what the place adds (the panel's toggles, ⋯). The same on a topic and on a new one.
+ * The conversation's frame. 侧栏 layout: a 40px face, the name and the role line on the left, which open the profile; at
+ * the right the one state word, the schedule chip, the topic switcher and what the place adds (⋯). 顶栏 layout: a presence
+ * block at the top of the conversation, a 52px face over the name and role with the same chips under them. The same on a
+ * topic and on a new one.
  */
 export function AgentFrame({
   name,
@@ -145,9 +151,12 @@ export function AgentFrame({
           )}
         </span>
       </button>
-      {!phone && word}
       {note}
-      <span className="agent-frame-actions">{actions}</span>
+      <span className="agent-frame-actions">
+        {/* The one state word of the screen, at the right; a phone says it under the name. */}
+        {!phone && word}
+        {actions}
+      </span>
     </div>
   )
 }

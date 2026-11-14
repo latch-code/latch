@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 
 import { GENERAL_AGENT_ID, type CustomAgentSummary, type HarnessInfo, type HostCatalog, type WorktreeStart } from '@latch/protocol'
 import { Badge, ICON_STROKE, IconButton, FolderGlyph, HistoryGlyph, PlusGlyph, CloseGlyph } from '@latch/ui'
@@ -112,8 +112,17 @@ export function NewTopic({
   agent,
   name,
   offline,
+  draftState,
+  lead,
+  showing,
 }: {
+  /** Whether this input's place is still what is shown when the Host answers a start; an Agent's own new topic by default. */
+  showing?: (route: ShellState['route']) => boolean
   shell: ShellState
+  /** The words typed, where the place keeps them itself (the 总览 keeps them while its chip changes who is addressed). */
+  draftState?: [string, Dispatch<SetStateAction<string>>]
+  /** What stands over the input: the 总览's chip of who is addressed. */
+  lead?: ReactNode
   owner: string
   /** Absent for 通用. */
   agent: CustomAgentSummary | undefined
@@ -122,7 +131,8 @@ export function NewTopic({
 }) {
   const { snapshot, delegation, access, preferences, coarse, catalog } = shell
   const general = owner === GENERAL_AGENT_ID
-  const [draft, setDraft] = useState('')
+  const ownDraft = useState('')
+  const [draft, setDraft] = draftState ?? ownDraft
   const [choice, setChoice] = useState<ComposerChoice>(() => (agent ? delegationChoice(agent) : generalChoice(catalog ?? undefined)))
   // The start point picked in 新工作树 (HEAD or another one), sent as picked.
   const [worktree, setWorktree] = useState<WorktreeStart | undefined>(undefined)
@@ -185,7 +195,7 @@ export function NewTopic({
     attachments.clear()
     setDraft('')
     setWorktree(undefined)
-    if (newTopicShowing(route.current, owner)) shell.choose(sessionId)
+    if (showing ? showing(route.current) : newTopicShowing(route.current, owner)) shell.choose(sessionId)
   }
   const send = async () => {
     if (!harness || !canStart || locked || attachments.preparing) return
@@ -213,6 +223,7 @@ export function NewTopic({
   })
   return (
     <div className="agent-delegate">
+      {lead}
       <Composer
         showSlashButton={false}
         textareaRef={input}

@@ -1,5 +1,5 @@
 import type { TaskSummary } from '@latch/protocol'
-import { activityWords, rowStatus, runningWords, silentWords, spaceOf, waitKind, waitsOnYou } from '../sessions.ts'
+import { activityWords, rowStatus, runningWords, silentWords, spaceOf, waitKind, waitsOnYou, type Space } from '../sessions.ts'
 
 export type WorkGroupId = 'attention' | 'running' | 'delivery'
 
@@ -10,11 +10,15 @@ export interface WorkGroup {
   tasks: TaskSummary[]
 }
 
-/** A navigation projection of the Host's summaries, never an assertion that a change is ready to deliver. */
+/**
+ * A navigation projection of the Host's summaries, never an assertion that a change is ready to deliver. `space` is the
+ * place whose sessions are grouped: Code's, or the topics of 我的 Agent (which have no delivery).
+ */
 export function workGroups(
   tasks: readonly TaskSummary[],
   cancelling: ReadonlySet<string> = new Set(),
   delivery: ReadonlySet<string> = new Set(),
+  space: Space = 'code',
 ): WorkGroup[] {
   const groups: Record<WorkGroupId, WorkGroup> = {
     attention: { id: 'attention', label: '等你处理', empty: '没有要你处理的', tasks: [] },
@@ -22,7 +26,7 @@ export function workGroups(
     delivery: { id: 'delivery', label: '可交付', empty: '没有可交付的', tasks: [] },
   }
   const visible = tasks
-    .filter(task => !task.archived && spaceOf(task) === 'code')
+    .filter(task => !task.archived && spaceOf(task) === space)
     .toSorted((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0) || a.id.localeCompare(b.id))
   for (const task of visible) {
     const status = rowStatus(task, { stopping: cancelling.has(task.id) })

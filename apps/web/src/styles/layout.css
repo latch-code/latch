@@ -194,9 +194,13 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   font-weight: 600;
 }
 
-/* A page covers the session's columns; they stay laid out, so nothing about them moves. */
+/*
+ * A page covers the session's columns; they stay laid out, so nothing about them moves. A protected approval card sets
+ * its own visibility, so the covered surface is also made transparent: its card must not show through 设置 or 我的 Agent.
+ */
 .app-shell:not([data-entry='sessions']) :is(.sidebar, .workspace, .inspector-column, .inspector-resize, .phone-list) {
   visibility: hidden;
+  opacity: 0;
 }
 
 .sidebar {

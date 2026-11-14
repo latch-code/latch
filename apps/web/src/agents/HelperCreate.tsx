@@ -20,6 +20,7 @@ import {
   TerminalGlyph,
   WarningGlyph,
   ShieldAlertGlyph,
+  ChevronRightGlyph,
   type IconComponent,
 } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
@@ -46,9 +47,9 @@ const ABILITY_ICONS: Record<HelperAbility, IconComponent> = {
   schedule: HistoryGlyph,
 }
 
-/** What it really does, as short tags; 不先问你 in amber where it acts without asking first. */
+/** What it really does, as short tags: an icon and two or three words, only for what it can do. */
 function Abilities({ candidate }: { candidate: HelperCandidate }) {
-  if (!candidate.abilities.length && !candidate.unasked) return null
+  if (!candidate.abilities.length) return null
   return (
     <ul className="helper-abilities" aria-label="能做的事">
       {candidate.abilities.map(ability => {
@@ -60,18 +61,14 @@ function Abilities({ candidate }: { candidate: HelperCandidate }) {
           </li>
         )
       })}
-      {candidate.unasked && (
-        <li>
-          <StatusWord tone="warn" className="helper-unasked">
-            不先问你
-          </StatusWord>
-        </li>
-      )}
     </ul>
   )
 }
 
-/** One candidate: the face it would start with, its name and mark, its one line and what it does. */
+/**
+ * One candidate: the face it would start with, its name and real mark (with an amber 不先问你 beside the name where it acts
+ * without asking first), its one line and what it does.
+ */
 function CandidateCard({
   candidate,
   face,
@@ -92,10 +89,16 @@ function CandidateCard({
           <span className="helper-card-name">
             <span>{name}</span>
             <HarnessTile harness={candidate.harness} size={14} />
+            {candidate.unasked && (
+              <StatusWord tone="warn" className="helper-unasked">
+                不先问你
+              </StatusWord>
+            )}
           </span>
           {candidate.card && <span className="helper-card-line">{candidate.card.line}</span>}
           <Abilities candidate={candidate} />
         </span>
+        <ChevronRightGlyph className="helper-card-go" size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
       </Button>
     </li>
   )
@@ -108,7 +111,7 @@ function Waiting({ waiting, onSettings }: { waiting: ReturnType<typeof helperCan
   return (
     <div className="helper-waiting">
       <FoldHeader open={open} onOpenChange={setOpen}>
-        还有 {waiting.length} 个没准备好
+        还有 {waiting.length} 位没准备好
       </FoldHeader>
       <Collapse open={open}>
         <ul className="helper-cards" aria-label="没准备好">
@@ -167,7 +170,7 @@ export function helperRequest(harness: Pick<HarnessInfo, 'id' | 'modes' | 'capab
 /**
  * Creating a helper, in two steps on one page. First 「你想让谁成为你的帮手？」: a card for each ready Harness that can
  * take an Agent, Latch 内置 first, and below the ones not ready. Then who it is: the face, a name, its duty (from a
- * template or written), 多说几句 for the instructions, and 更多 for the model, 做事前 and the project. Nothing exists until
+ * template or written), 多说几句 for the instructions, and 更多 for the model, 做事前 and 在哪做. Nothing exists until
  * 创建, which writes with a requestId; its Harness is fixed from then on.
  */
 export function HelperCreate({
@@ -317,13 +320,20 @@ export function HelperCreate({
           }}>
           换
         </Button>
+        {/* That Latch does not isolate it stays where the person decides, behind ⓘ; 不先问你 is said in words, amber. */}
         {isolation && (
           <Hint
-            className="helper-isolation"
-            label={isolation.label}
-            lead={<ShieldAlertGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}
+            className={chosen.unasked ? 'helper-isolation agent-permission-note is-warn' : 'helper-isolation'}
+            label={chosen.unasked ? '不先问你' : ''}
+            lead={
+              chosen.unasked ? (
+                <WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
+              ) : (
+                <ShieldAlertGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
+              )
+            }
             moreLabel="不隔离：说明">
-            {isolation.detail}
+            {isolation.label}。{isolation.detail}
           </Hint>
         )}
       </div>
@@ -436,8 +446,13 @@ export function HelperCreate({
             <dd>
               <BeforeActing harness={harness} mode={helperMode(harness)} />
             </dd>
-            <dt>在项目里做</dt>
+            <dt>在哪做</dt>
             <dd>
+              {!draft.defaultProjectId && (
+                <Hint label="它自己的文件夹" moreLabel="在哪做：说明">
+                  不是隔离：它仍能读写这台 Mac 上别处的文件。选了项目，新话题就在项目里做。
+                </Hint>
+              )}
               <ProjectPicker
                 catalog={catalog}
                 harness={harness}
