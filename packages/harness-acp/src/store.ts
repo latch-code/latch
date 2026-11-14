@@ -321,6 +321,7 @@ const stateSchema = z.object({
         mode: z.enum(['chat', 'agent']).optional(),
         usage: usage.optional(),
         permissionDrift: z.literal(true).optional(),
+        commandsVersion: z.string().uuid().optional(),
         workspaceId: z.string().optional(),
         folders: z.array(z.object({ id: z.string(), path: z.string() })).optional(),
         folderAccess: z.enum(['all', 'primary']).optional(),

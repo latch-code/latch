@@ -6372,9 +6372,18 @@ export class AgentRuntime implements Bridge {
         order,
         commands,
       })
-    })().catch(() => {
-      /* A suggestion cannot make a real turn fail, or revive a changed launch. */
-    })
+    })()
+      .catch(() => {
+        /* A suggestion cannot make a real turn fail, or revive a changed launch. */
+      })
+      .finally(() => {
+        if (this.closed || this.lives.get(live.key) !== live || cache.ordinal !== ordinal || this.state.tasks[task.summary.id] !== task)
+          return
+        // Publish after the asynchronous cache check: a draft must read the new entry, or the verified miss.
+        task.summary.commandsVersion = randomUUID()
+        this.mark()
+        this.notify(task.summary.id)
+      })
   }
 
   /** What a new session of this definition offered, for drafts; the definition it ran is the one it is kept under. */

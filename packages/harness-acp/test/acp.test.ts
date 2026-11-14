@@ -3979,6 +3979,27 @@ it('marks a recovered idle ACP file observation partial without changing the con
 })
 
 describe('command cache from real sessions', () => {
+  it('publishes a durable command-report version after cache validation, without changing it for ordinary messages', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const context = { cwd: fixture.workspace }
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid(), ...context })
+    await settled(bridge, sessionId)
+    await vi.waitFor(async () => expect((await bridge.detail(sessionId)).summary.commandsVersion).toBeTypeOf('string'))
+    const version = (await bridge.detail(sessionId)).summary.commandsVersion
+    expect(await bridge.commandCatalogue?.(context)).toMatchObject({ sourceSessionId: sessionId })
+    await bridge.prompt(sessionId, 'hello', rid())
+    await settled(bridge, sessionId)
+    expect((await bridge.detail(sessionId)).summary.commandsVersion).toBe(version)
+    await bridge.prompt(sessionId, 'plan', rid())
+    await settled(bridge, sessionId)
+    await vi.waitFor(async () => expect((await bridge.detail(sessionId)).summary.commandsVersion).not.toBe(version))
+    const updated = (await bridge.detail(sessionId)).summary.commandsVersion
+    await bridge.close()
+    const restored = await fixture.open()
+    expect((await restored.detail(sessionId)).summary.commandsVersion).toBe(updated)
+  })
+
   it.each([0, 257])('does not persist an invalid optional SDK cache scope (length %i)', async length => {
     const workspaceId = 'x'.repeat(length)
     const fixture = await setup()

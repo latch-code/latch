@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { HarnessCommandCatalogue, TaskDetail, WorkspaceInfo } from '@latch/protocol'
+import type { AppSnapshot, HarnessCommandCatalogue, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { createRuntime } from '@latch/core'
 import type { Bridge, CreateTaskInput, HarnessPlugin } from '@latch/sdk'
@@ -62,6 +62,8 @@ async function fixture(presetId?: 'opencode') {
   const paths = [join(root, 'project-a'), join(root, 'project-b')]
   for (const path of paths) await mkdir(path)
   const log = join(root, 'agent.jsonl')
+  const commandsFile = join(root, 'commands.json')
+  await writeFile(commandsFile, JSON.stringify([{ name: 'public-plan', description: 'Project command' }]))
   const options = { dataDir: join(root, 'data'), workspaceRoot: join(root, 'default') }
   let host = await startTestHost(options)
   cleanups.push(() => host.close())
@@ -81,7 +83,7 @@ async function fixture(presetId?: 'opencode') {
       env: {
         FAKE_ACP_LOG: log,
         ...(presetId ? { FAKE_ACP_CONFIG: 'legacy' } : {}),
-        FAKE_ACP_COMMANDS: JSON.stringify([{ name: 'public-plan', description: 'Project command' }]),
+        FAKE_ACP_COMMANDS_FILE: commandsFile,
       },
     },
   })
@@ -165,6 +167,27 @@ async function makePrivate(f: Awaited<ReturnType<typeof fixture>>, id: string) {
   expect((await f.work().request(`tasks/${id}`)).status).toBe(403)
 }
 
+it('changes the public cache generation when its confirmed driver definition is replaced, without starting a CLI', async () => {
+  const f = await fixture()
+  const generation = async () =>
+    (await f.work().json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'fake')?.commandCatalogue?.generation
+  const before = await generation()
+  expect(before).toBeTypeOf('string')
+  expect(
+    (await f.work().json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'standard')?.commandCatalogue,
+  ).toBeUndefined()
+  await f.create()
+  await vi.waitFor(async () => expect((await f.read()).catalogue).not.toBeNull())
+  const started = await f.starts()
+  expect(await generation()).toBe(before)
+  await f.owner().confirmedJson('agents/fake', { method: 'PUT', body: { env: { PUBLIC_CACHE_REVISION: 'next' } } })
+  const next = await generation()
+  expect(next).toBeTypeOf('string')
+  expect(next).not.toBe(before)
+  expect(await f.read()).toEqual({ catalogue: null })
+  expect(await f.starts()).toBe(started)
+})
+
 it('never exposes a private source through a work-scoped draft cache or without device authentication', async () => {
   const f = await fixture()
   const id = await f.create()
@@ -172,6 +195,13 @@ it('never exposes a private source through a work-scoped draft cache or without 
   await makePrivate(f, id)
   expect(await f.read()).toEqual({ catalogue: null })
   expect((await f.read(f.projects[0]!, f.owner())).catalogue?.commands[0]?.name).toBe('public-plan')
+  await writeFile(join(f.root, 'commands.json'), JSON.stringify([{ name: 'private-plan', description: `Private note in ${f.root}` }]))
+  await f.owner().json(`tasks/${id}/prompt`, { method: 'POST', body: { prompt: 'plan', requestId: randomUUID() } })
+  await vi.waitFor(async () => expect((await f.read(f.projects[0]!, f.owner())).catalogue?.commands[0]?.name).toBe('private-plan'))
+  const hidden = await f.read()
+  expect(hidden).toEqual({ catalogue: null })
+  expect(JSON.stringify(hidden)).not.toContain(f.root)
+  expect(JSON.stringify(hidden)).not.toContain('private-plan')
   expect(
     (
       await f.host().raw('loopback-tcp', 'api/agents/fake/commands', {

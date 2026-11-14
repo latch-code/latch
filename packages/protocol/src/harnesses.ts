@@ -222,6 +222,8 @@ export interface HarnessInfo {
   catalogue?: HarnessCatalogue
   /** Absent: what it offers is known only once a session starts. */
   catalogueRead?: CatalogueRead
+  /** A read-only previous-session command cache exists. Generation changes when its Host driver is replaced. */
+  commandCatalogue?: { generation: string }
   /** Model IDs a person typed for this harness, offered with its own models; a session sends one even when not listed. */
   customModels?: string[]
   /**

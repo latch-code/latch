@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type {
   Approval,
@@ -95,6 +96,7 @@ export interface HubOptions {
 }
 
 interface Entry {
+  generation: string
   driver: HarnessDriver
   trust: HarnessTrust
   capabilities: HarnessCapabilities
@@ -277,7 +279,14 @@ export class HarnessHub implements Bridge {
       throw refusal
     }
     const capabilities = harnessFacts(driver.capabilities, driver.name, mount.kind)
-    const entry: Entry = { driver, trust: trustOf(mount.kind, capabilities), capabilities, starting: true, accepting: 0 }
+    const entry: Entry = {
+      generation: randomUUID(),
+      driver,
+      trust: trustOf(mount.kind, capabilities),
+      capabilities,
+      starting: true,
+      accepting: 0,
+    }
     this.entries.delete(driver.id)
     this.entries.set(driver.id, entry)
     let bridge: Bridge | undefined
@@ -1382,6 +1391,7 @@ export class HarnessHub implements Bridge {
       ...(login ? { login } : {}),
       ...(catalogue ? { catalogue: structuredClone(catalogue) } : {}),
       ...(catalogueRead ? { catalogueRead: structuredClone(catalogueRead) } : {}),
+      ...(entry.bridge?.commandCatalogue ? { commandCatalogue: { generation: entry.generation } } : {}),
       ...(customModels?.length ? { customModels: [...customModels] } : {}),
       ...(ownMcp ? { ownMcp: structuredClone(ownMcp) } : {}),
       ...(driver.historyImport || driver.seededStart

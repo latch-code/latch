@@ -111,6 +111,8 @@ export interface DriverTaskSummary {
   origin?: SessionOrigin
   /** Host-derived count only; question bodies remain in gated detail. Absent on older Hosts. */
   pendingQuestions?: number
+  /** Opaque previous-command report version; ordinary message updates do not change it. Not a capability claim. */
+  commandsVersion?: string
   id: string
   title: string
   status: TaskStatus

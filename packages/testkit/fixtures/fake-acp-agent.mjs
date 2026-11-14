@@ -1796,7 +1796,11 @@ const scenarios = {
     update(sessionId, { sessionUpdate: 'usage_update', used: 10, size: 100 })
     update(sessionId, {
       sessionUpdate: 'available_commands_update',
-      availableCommands: env.FAKE_ACP_COMMANDS ? JSON.parse(env.FAKE_ACP_COMMANDS) : [{ name: 'init', description: 'init' }],
+      availableCommands: env.FAKE_ACP_COMMANDS_FILE
+        ? JSON.parse(readFileSync(env.FAKE_ACP_COMMANDS_FILE, 'utf8'))
+        : env.FAKE_ACP_COMMANDS
+          ? JSON.parse(env.FAKE_ACP_COMMANDS)
+          : [{ name: 'init', description: 'init' }],
     })
     update(sessionId, { sessionUpdate: 'some_future_kind', anything: true })
     say('planned')

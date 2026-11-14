@@ -146,7 +146,7 @@ export function Composer({
   attachmentMenu?: MenuSection[]
   templates?: PromptTemplate[]
   commands?: SessionCommand[]
-  commandSource?: { name: string; media?: ReactNode; firstTurn?: boolean }
+  commandSource?: { name: string; media?: ReactNode; firstTurn?: boolean; previousSession?: boolean; awaitingSession?: boolean }
   historyScope?: { deviceId: string; harnessId?: string }
   onCreateTemplate?: () => void
   /** What Latch itself does from the slash menu in this session. */
@@ -320,7 +320,9 @@ export function Composer({
     harnessMedia: commandSource?.media,
     running: !!run,
     firstTurn: commandSource?.firstTurn,
-    session: commands !== undefined,
+    session: commands !== undefined && !commandSource?.previousSession,
+    previousSession: commandSource?.previousSession,
+    awaitingSession: commandSource?.awaitingSession,
     ...(historyScope ? { historyScope } : {}),
     ...(actions ? { actions } : {}),
     enabled: !locked && readOnly === undefined && answer === undefined,

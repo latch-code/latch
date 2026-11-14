@@ -10,6 +10,7 @@ import {
   projectFor,
   sameModel,
   servicePick,
+  startConfig,
   withLadderMode,
   worktreeProject,
 } from '../composerChoice.ts'
@@ -20,6 +21,7 @@ import { projectOf } from '../sessions.ts'
 import { seedWaiting } from '../history/model.ts'
 import { basename } from '../format.ts'
 import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
+import { useHarnessCommands } from '../hooks/useHarnessCommands.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
 import { ComposerControl, openControlWhenShown } from '../composer/ComposerControl.tsx'
@@ -145,6 +147,57 @@ export function takeFailureStep(step: FailureStep, openSettings: (section: 'engi
  * The pickers come from `@latch/ui` and draw their own trigger, so the name sits on this wrapper.
  */
 
+/** The draft's real start choices, shared by Code Home, the new-session page and its phone sheet. */
+function useDraftHarnessCommands(shell: ShellState, enabled: boolean) {
+  const { catalog, chosenHarness, choice, access, submission } = shell
+  const cacheEnabled =
+    enabled
+    && !!chosenHarness
+    && !!chosenHarness.commandCatalogue
+    && chosenHarness.status === 'ready'
+    && access.scopes.has('view')
+    && shell.connection === 'connected'
+    && submission.pending === null
+    && submission.fork === null
+    && !submission.worktree
+  const service = cacheEnabled ? servicePick(catalog, chosenHarness, choice.config) : undefined
+  const model = service ?? choice.model
+  const picks = cacheEnabled
+    ? startConfig(chosenHarness, choice.config).filter(
+        pick => !service || chosenHarness?.catalogue?.options.find(option => option.id === pick.configId)?.category !== 'model',
+      )
+    : []
+  const project = cacheEnabled ? catalog?.workspaces.find(item => item.id === (choice.workspaceId ?? 'default')) : undefined
+  const provider = cacheEnabled && model ? catalog?.providers.find(item => item.id === model.providerId) : undefined
+  return useHarnessCommands(
+    cacheEnabled
+      ? {
+          harnessId: chosenHarness.id,
+          workspaceId: choice.workspaceId,
+          mode: choice.mode,
+          ...(model ? { model } : {}),
+          ...(picks.length ? { config: picks } : {}),
+        }
+      : undefined,
+    cacheEnabled
+      ? JSON.stringify([
+          shell.snapshot.instanceId,
+          shell.snapshot.host.hostId,
+          shell.snapshot.device.id,
+          shell.snapshot.device.dataScope,
+          shell.snapshot.device.scopes,
+          chosenHarness.commandCatalogue?.generation,
+          project && [project.id, project.path, project.unavailable, project.folders],
+          provider && [provider.id, provider.kind, model && provider.modelCapabilities?.[model.model]],
+          shell.snapshot.tasks
+            .filter(task => task.harnessId === chosenHarness.id && (task.workspaceId ?? 'default') === (choice.workspaceId ?? 'default'))
+            .map(task => [task.id, task.commandsVersion ?? ''])
+            .sort(([left], [right]) => left!.localeCompare(right!)),
+        ])
+      : '',
+  )
+}
+
 /** The input of the open session, or of the new-session page. */
 export function SessionComposer({ shell: base, home = false }: { shell: ShellState; home?: boolean }) {
   const shell = home
@@ -217,6 +270,8 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
     setNewSheet,
     sheetComposerRef,
   } = shell
+  const cachedCommands = useDraftHarnessCommands(shell, selectedId === null && (!home || shell.route.overview === true))
+  const commandHarness = selectedId === null ? chosenHarness : harnessInfo
   const manageEngines = owner ? () => openSettings('engines') : undefined
   // A refusal the new session's own block already says (a Harness found too old once sent) is said there once.
   const refusal = selectedId === null && block !== null && submission.error === block.message ? '' : submission.error
@@ -485,13 +540,16 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
       fileMentions={mentionChoice}
-      commands={current?.commands}
+      commands={selectedId === null ? cachedCommands?.commands : current?.commands}
       commandSource={
-        harnessInfo
+        commandHarness
           ? {
-              name: harnessName(harnessInfo),
-              media: <HarnessTile harness={harnessInfo} size={16} />,
+              name: harnessName(commandHarness),
+              media: <HarnessTile harness={commandHarness} size={16} />,
               firstTurn: !!seedService || (!!summary?.agent && !current?.messages.some(message => message.role === 'user')),
+              ...(selectedId === null
+                ? { previousSession: !!cachedCommands, awaitingSession: !!commandHarness.commandCatalogue && !cachedCommands }
+                : {}),
             }
           : undefined
       }
@@ -791,12 +849,24 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
     sheetComposerRef,
     promptTemplates,
   } = shell
+  const cachedCommands = useDraftHarnessCommands(shell, shell.newSheet && shell.inputId === null)
   return (
     <Composer
       textareaRef={sheetComposerRef}
       fileMentions={mentionChoice}
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' ? attachmentDraft : undefined}
       templates={scopedTemplates(promptTemplates, choice.workspaceId ?? catalog?.defaults.workspaceId, choice.harnessId)}
+      commands={cachedCommands?.commands}
+      commandSource={
+        shell.chosenHarness
+          ? {
+              name: harnessName(shell.chosenHarness),
+              media: <HarnessTile harness={shell.chosenHarness} size={16} />,
+              previousSession: !!cachedCommands,
+              awaitingSession: !!shell.chosenHarness.commandCatalogue && !cachedCommands,
+            }
+          : undefined
+      }
       actions={composerActions(shell)}
       onCreateTemplate={owner ? () => openSettings('general') : undefined}
       historyScope={{ deviceId: shell.snapshot.device.id, harnessId: choice.harnessId }}

@@ -23,6 +23,8 @@ export function useSlashCommands({
   running = false,
   firstTurn = false,
   session = false,
+  previousSession = false,
+  awaitingSession = false,
   historyScope,
 }: {
   draft: string
@@ -35,6 +37,8 @@ export function useSlashCommands({
   onCommand?(text: string): void
   harnessName?: string
   harnessMedia?: ReactNode
+  previousSession?: boolean
+  awaitingSession?: boolean
   historyScope?: { deviceId: string; harnessId?: string }
 } & SlashContext) {
   const id = useId()
@@ -104,7 +108,7 @@ export function useSlashCommands({
     if ((event.key !== 'Enter' && event.key !== 'Tab') || event.shiftKey || !option) return false
     event.preventDefault()
     event.stopPropagation()
-    if (event.key === 'Enter' && option.kind === 'command' && !option.inputHint && !running && onCommand) {
+    if (event.key === 'Enter' && option.kind === 'command' && !option.inputHint && !running && !previousSession && onCommand) {
       remember(option)
       dismiss()
       onCommand(option.text.trimEnd())
@@ -124,6 +128,8 @@ export function useSlashCommands({
     reopen: () => setDismissed(null),
     harnessName,
     harnessMedia,
+    previousSession,
+    awaitingSession,
     reportedCommands: commands.length,
     setActive: (index: number) => {
       const option = options[index]
@@ -154,7 +160,17 @@ export function SlashCommands({
   anchorRef: RefObject<HTMLElement | null>
   onCreateTemplate?: () => void
 }) {
-  const labels = { recent: '最近', action: 'Latch', template: '提示模板', command: menu.harnessName }
+  const labels = {
+    recent: '最近',
+    action: 'Latch',
+    template: '提示模板',
+    command: menu.harnessName + (menu.previousSession ? '（上次会话）' : ''),
+  }
+  const noCommands = menu.awaitingSession
+    ? '开始会话后列出'
+    : menu.previousSession
+      ? '上次会话没有列出命令'
+      : `${menu.harnessName} 还没报告命令`
   const media = {
     recent: undefined,
     action: <BrandMark size={16} />,
@@ -186,7 +202,7 @@ export function SlashCommands({
           ? {
               empty: (
                 <>
-                  <span>{menu.harnessName} 还没报告命令</span>
+                  <span>{noCommands}</span>
                   {onCreateTemplate && (
                     <Button size="xs" variant="ghost" onClick={onCreateTemplate}>
                       新建提示模板
@@ -216,7 +232,7 @@ export function SlashCommands({
           ? latchActionOf('/' + menu.query)
             ? '这个动作在当前页面不可用'
             : `没有「/${escapeSecurityText(menu.query)}」· Enter 原样发给 ${menu.harnessName}`
-          : `${menu.harnessName} 还没报告命令`
+          : noCommands
       }
       footer={
         <>
@@ -227,7 +243,7 @@ export function SlashCommands({
             <Kbd>Tab</Kbd> 补全
           </span>
           <span>
-            <Kbd>⏎</Kbd> 运行
+            <Kbd>⏎</Kbd> {menu.previousSession ? '选择' : '运行'}
           </span>
           <Kbd>Esc</Kbd>
         </>
