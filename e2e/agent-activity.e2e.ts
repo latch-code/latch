@@ -1,7 +1,7 @@
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
 import type {
   AppSnapshot,
@@ -55,7 +55,7 @@ async function openConversation(page: Page, width: number, name = '资讯') {
 
 it('a run comes back to the conversation as a card, the Agent proposes a schedule the person saves, and 动态 and 资料库 show the run', async () => {
   await mkdir(OUT, { recursive: true })
-  const host = await startTestHost()
+  const host = await startTestHost({ uiDir: resolve(process.env.LATCH_E2E_UI_DIR ?? 'dist/web') })
   let browser: Browser | undefined
   try {
     browser = await chromium.launch(browserLaunchOptions())
@@ -96,6 +96,7 @@ it('a run comes back to the conversation as a card, the Agent proposes a schedul
         projectId: project.id,
         prompt: 'shell-edit',
         schedule: { kind: 'daily', time: '08:00' },
+        enabled: false,
         notify: false,
       },
     })
@@ -164,12 +165,17 @@ it('a run comes back to the conversation as a card, the Agent proposes a schedul
     expect(await form.getByLabel('名称').inputValue()).toBe('晚间精选')
     expect(await form.getByLabel('几点').inputValue()).toBe('20:00')
     expect(await form.getByLabel('每次的输入').inputValue()).toBe('整理今天的新闻')
+    // New schedules start at home; this run's shared project is an explicit choice by the person.
+    await form.getByRole('button', { name: /^项目.*家/u }).waitFor()
+    await form.getByRole('button', { name: /^项目/u }).click()
+    await page.getByRole('menuitemradio', { name: 'news', exact: true }).click()
     await still(page)
     await page.screenshot({ path: `${OUT}/editor-prefilled-1440-light.png` })
-    await form.getByRole('button', { name: '创建', exact: true }).click()
+    await form.getByRole('button', { name: '保存为关闭', exact: true }).click()
     await expect.poll(async () => (await owner.json<AutomationList>('automations')).automations.length).toBe(2)
     const created = (await owner.json<AutomationList>('automations')).automations.find(item => item.name === '晚间精选')!
     expect(created).toMatchObject({
+      enabled: false,
       customAgentId: agent.id,
       projectId: project.id,
       prompt: '整理今天的新闻',
@@ -223,6 +229,7 @@ it('a run comes back to the conversation as a card, the Agent proposes a schedul
         projectId: project.id,
         prompt: 'crash',
         schedule: { kind: 'weekly', day: 5, time: '17:00' },
+        enabled: false,
         notify: false,
       },
     })

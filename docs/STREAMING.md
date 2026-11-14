@@ -363,7 +363,7 @@ iOS 客户端把超时的读取当作 Mac 暂时连不上：列表横幅说明�
 
 ### 搜索定位与阅读标记
 
-正文搜索响应不是会话状态更新。点击结果先切换到原会话，等待对应 detail 后再通过 `useReadingPosition` 定位消息；迟到的搜索响应不会改变当前会话正文。会话内查找只创建 DOM Range 与 CSS Highlight，折叠行通过 `beforematch` 展开，不改写消息节点或增加一条消息。手动「标为未读」是每台设备的本地阅读偏好，持久化到已有阅读标记中；重新打开或收到该会话更新时清除，删除会话后清理。
+正文搜索响应不是会话状态更新。点击结果先切换到原会话，等待对应 detail 后再通过 `useReadingPosition` 定位消息；迟到的搜索响应不会改变当前会话正文。会话内查找只创建 DOM Range 与 CSS Highlight，折叠行通过 `beforematch` 展开，不改写消息节点或增加一条消息。查找打开时按 `detail.sync.revision` 重扫流式追加，旧 Host 没有同步版本时才回退到 `detail.cursor`；正文追加可能保持 cursor 和已提交 messages 引用不变，不能据此跳过新文字。重新计数仍按消息与匹配身份保留当前选择。手动「标为未读」是每台设备的本地阅读偏好，持久化到已有阅读标记中；重新打开或收到该会话更新时清除，删除会话后清理。
 
 文件标签是客户端阅读状态，不改变 Host 的会话状态。文件分块读取绑定打开时的 ETag，元数据变化先显示待更新提示；权限失效卸载解析器，标签切换取消 fetch、worker、PDF render 与 MessagePort。手机文件页复用页面返回栈；阅读位置仍由会话的控制器管理。相关契约见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
 

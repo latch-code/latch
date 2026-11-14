@@ -267,7 +267,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
             {findOpen && current && (
               <FindBar
                 sessionId={current.summary.id}
-                revision={current.cursor}
+                revision={current.sync?.revision ?? current.cursor}
                 messages={current.messages}
                 focusRequest={findFocus}
                 fallbackFocus={composerRef}

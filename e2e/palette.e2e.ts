@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { chromium, type Locator, type Page } from '@playwright/test'
 import { expect, it } from 'vitest'
@@ -22,7 +22,8 @@ it.each([
   [1440, 900, 'dark', false],
 ] as const)('searches, steps back and finds at %i × %i %s', async (width, height, theme, touch) => {
   let released = false,
-    ticking = false
+    ticking = false,
+    growMatches = false
   const plugin: HarnessPlugin = {
     id: 'palette-model',
     name: 'Palette fixture',
@@ -42,6 +43,10 @@ it.each([
             yield { type: 'text', text: `流式匹配词 开头。\n\n流式匹配词 第二处。\n\n${LONG}` }
             // Each tick makes the open find bar search again.
             while (!released) {
+              if (growMatches) {
+                growMatches = false
+                yield { type: 'text', text: '\n\n流式匹配词 第三处。' }
+              }
               if (ticking) yield { type: 'text', text: '。' }
               await sleep(16)
             }
@@ -55,7 +60,7 @@ it.each([
       })
     },
   }
-  const host = await startTestHost({ plugins: [plugin] })
+  const host = await startTestHost({ plugins: [plugin], uiDir: resolve(process.env.LATCH_E2E_UI_DIR ?? 'dist/web') })
   const browser = await chromium.launch(browserLaunchOptions())
   const owner = await host.enroll({ listener: 'unix' })
   const shot = (page: Page, state: string) => page.screenshot({ path: `${OUTPUT}/${state}-${width}-${theme}.png`, animations: 'disabled' })
@@ -324,6 +329,29 @@ it.each([
         await expect.poll(() => find.getByRole('status').textContent()).toBe(count)
         await expect.poll(currentMatchShown).toBe(true)
       }
+      // A real Provider append changes the searchable text before the turn is committed; keep the selected second match.
+      const beforeAppend = await owner.json<TaskDetail>(`tasks/${running}`)
+      growMatches = true
+      await page.locator('.transcript').getByText('流式匹配词 第三处。', { exact: false }).waitFor()
+      const afterAppend = await owner.json<TaskDetail>(`tasks/${running}`)
+      await writeFile(
+        `${OUTPUT}/live-find-${width}-${theme}.json`,
+        JSON.stringify(
+          {
+            beforeCursor: beforeAppend.cursor,
+            afterCursor: afterAppend.cursor,
+            beforeRevision: beforeAppend.sync?.revision,
+            afterRevision: afterAppend.sync?.revision,
+            status: afterAppend.summary.status,
+            appended: afterAppend.liveText.includes('流式匹配词 第三处。'),
+          },
+          null,
+          2,
+        ) + '\n',
+      )
+      await expect.poll(() => find.getByRole('status').textContent()).toBe('2/3')
+      await expect.poll(currentMatchShown).toBe(true)
+      await shot(page, 'find-live-append')
       // A match appearing in an earlier row takes the ordinal: the count follows, and the reader stays on their match.
       await page
         .locator('.transcript [data-message-id]')
@@ -331,7 +359,7 @@ it.each([
         .evaluate(row => {
           row.append('流式匹配词')
         })
-      await expect.poll(() => find.getByRole('status').textContent()).toBe('3/3')
+      await expect.poll(() => find.getByRole('status').textContent()).toBe('3/4')
       const place = () =>
         page.evaluate(() => (([...(CSS.highlights.get('latch-find-current') ?? [])][0] as Range).startContainer.textContent ?? '').trim())
       expect(await place()).toContain('第二处')
@@ -341,7 +369,7 @@ it.each([
         .evaluate(row => {
           row.lastChild!.remove()
         })
-      await expect.poll(() => find.getByRole('status').textContent()).toBe('2/2')
+      await expect.poll(() => find.getByRole('status').textContent()).toBe('2/3')
       ticking = false
 
       // Esc held down, or still falling after the find bar closed, does not stop the run.
@@ -374,13 +402,13 @@ it.each([
       await page.keyboard.press('Meta+f')
       await find.waitFor()
       await query.fill('流式匹配词')
-      await expect.poll(() => find.getByRole('status').textContent()).toBe('1/2')
+      await expect.poll(() => find.getByRole('status').textContent()).toBe('1/3')
       await query.press('Enter')
-      await expect.poll(() => find.getByRole('status').textContent()).toBe('2/2')
+      await expect.poll(() => find.getByRole('status').textContent()).toBe('2/3')
 
       released = true
       await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${running}`)).summary.status, { timeout: 15_000 }).toBe('idle')
-      await expect.poll(() => find.getByRole('status').textContent()).toBe('2/3')
+      await expect.poll(() => find.getByRole('status').textContent()).toBe('2/4')
       await query.press('Escape')
       await find.waitFor({ state: 'hidden' })
 
@@ -406,6 +434,21 @@ it.each([
         await page_.getByText('在会话中查找', { exact: true }).waitFor()
         expect(await page_.getByText('新会话', { exact: true }).count()).toBe(0)
       }
+    } catch (error) {
+      await page.screenshot({ path: `${OUTPUT}/failure-${width}-${theme}.png`, animations: 'disabled' })
+      await writeFile(
+        `${OUTPUT}/failure-${width}-${theme}.json`,
+        JSON.stringify(
+          {
+            dialogs: await page.getByRole('dialog').allTextContents(),
+            searches: await page.getByRole('searchbox').evaluateAll(fields => fields.map(field => (field as HTMLInputElement).value)),
+            running: (await owner.json<TaskDetail>(`tasks/${running}`)).summary.status,
+          },
+          null,
+          2,
+        ) + '\n',
+      )
+      throw error
     } finally {
       await context.close()
     }
