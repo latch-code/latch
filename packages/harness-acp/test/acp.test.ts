@@ -2521,6 +2521,14 @@ describe('ACP turn mapping', () => {
     ])
   })
 
+  it("drops a command classification an ordinary ACP agent sends: only Latch's Codex wire may say what a command does", async () => {
+    const bridge = await (await setup()).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'classify', requestId: rid() })
+    const row = (await settled(bridge, sessionId)).messages.find(message => message.role === 'tool')
+    expect(row?.tool).toMatchObject({ kind: 'execute', title: 'rm -rf build', output: 'gone' })
+    expect(row?.tool?.actions).toBeUndefined()
+  })
+
   it('splits assistant messages on messageId changes and keeps reasoning apart from text', async () => {
     const bridge = await (await setup()).open()
     const ids = await bridge.createTask({ prompt: 'ids', requestId: rid() })

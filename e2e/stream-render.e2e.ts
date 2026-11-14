@@ -82,6 +82,22 @@ const turns = {
     say('\\n\\n' + (allowed ? '已运行。' : '没有运行。'))
   },
 }
+turns.tail = async ({ sessionId, cwd, say, tool }) => {
+  say('需要你允许一条命令。')
+  const command = zsh('echo start' + '\\n'.repeat(41) + 'rm -rf ~')
+  const toolCall = { toolCallId: 'tail_1', title: command, kind: 'execute', status: 'pending', rawInput: { command, cwd } }
+  tool(toolCall)
+  await request('session/request_permission', {
+    sessionId,
+    toolCall,
+    options: [
+      { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+    ],
+  })
+  tool({ toolCallId: 'tail_1', status: 'failed', content: [text('not run')] }, 'tool_call_update')
+  say('\\n\\n没有运行。')
+}
 turns.reads = async ({ cwd, say, tool }) => {
   // Commands as Codex reports them: wrapped, with its own classification of what each one does.
   const run = (id, inner, actions, output, status = 'completed') => {
@@ -272,7 +288,7 @@ describe('how a turn of work is drawn', () => {
         try {
           const listed = command(page, 'rg --files')
           const object = await listed.locator('.process-object').innerText()
-          // The wrapper and its quoting are gone (the home directory as ~ is a unit case: a temp folder is under none).
+          // The wrapper and its quoting are gone; paths are written as reported.
           expect(object.startsWith("pwd; rg --files -g 'AGENTS.md' -g '!node_modules' /")).toBe(true)
           expect(object).not.toContain('zsh')
           // The reported line is one step away: in the tooltip, and in the opened row's arguments.
@@ -662,7 +678,7 @@ describe('how a turn of work is drawn', () => {
           await openSession(page, id)
           seen = rows(page)
           await seen.failed.waitFor()
-          expect(await seen.steps.locator('> .process-row').allInnerTexts()).toEqual(['工作过程 · 4 步', '工作过程 · 1 步'])
+          expect(await seen.steps.locator('> .process-row').allInnerTexts()).toEqual(['工作过程 · 3 步', '工作过程 · 1 步'])
           expect([await seen.waiting.count(), await seen.card.count()]).toEqual([1, 1])
           expect(await seen.done.isVisible()).toBe(false)
           await noHorizontalOverflow(page)
@@ -704,7 +720,9 @@ describe('how a turn of work is drawn', () => {
           // (The card arms after a moment, so the buttons may still be held.)
           await reachable(card.getByRole('button', { name: '允许', exact: true }), { allowDisabled: true })
           await reachable(card.getByRole('button', { name: '拒绝', exact: true }), { allowDisabled: true })
-          expect(await card.locator('.approval-shell').innerText()).toBe('经 zsh -lc')
+          expect(await card.locator('.approval-shell').innerText()).toBe('经 /bin/zsh -lc')
+          // Scrolled to its end nothing lies below, so nothing says there is more.
+          await card.locator('.approval-more-lines').waitFor({ state: 'hidden' })
           await noHorizontalOverflow(page)
           await shot(page, 'approval-command', width, theme)
         } catch (error) {
@@ -715,5 +733,28 @@ describe('how a turn of work is drawn', () => {
     const approval = (await detail(id)).approvals[0]!
     await owner.json(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'reject', requestId: randomUUID() } })
     await settled(id)
+    // A command whose last line is far below what the box shows: the card says how many lines are still to read.
+    const tailed = await start('tail', '藏着尾巴的会话')
+    await poll(async () => (await detail(tailed)).approvals.length === 1, 'the approval')
+    for (const [width, height] of SIZES) {
+      const page = await open(width, height, 'light', tailed)
+      const card = page.locator('.approval-panel').first()
+      const box = card.locator('.approval-object.is-command')
+      const more = card.locator('.approval-more-lines')
+      await more.waitFor()
+      const hidden = await box.evaluate(element =>
+        Math.round((element.scrollHeight - element.clientHeight) / parseFloat(getComputedStyle(element).lineHeight)),
+      )
+      expect(hidden).toBeGreaterThan(10)
+      expect(await more.innerText()).toBe(`还有 ${hidden} 行`)
+      expect(await box.evaluate(element => getComputedStyle(element).maskImage)).toContain('linear-gradient')
+      await shot(page, 'approval-tail', width, 'light')
+      await box.evaluate(element => element.scrollTo(0, element.scrollHeight))
+      await more.waitFor({ state: 'hidden' })
+      expect(await box.innerText()).toContain('rm -rf ~')
+    }
+    const last = (await detail(tailed)).approvals[0]!
+    await owner.json(`approvals/${last.id}`, { method: 'POST', body: { decision: 'reject', requestId: randomUUID() } })
+    await settled(tailed)
   })
 })

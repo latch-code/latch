@@ -17,6 +17,7 @@ import {
   turnBlocks,
   quietGroupWords,
   alwaysShown,
+  linesBelow,
   workFolds,
   foldWords,
   failureReason,
@@ -419,8 +420,8 @@ describe("a turn's blocks and its fold", () => {
     for (const step of never)
       expect(shape(turn(read('r1'), read('r2'), step, read('r3')))).toEqual([['tool:r1', 'tool:r2', `tool:${step.id}`, 'tool:r3']])
     // A command its Harness classified joins as what it does; one it did not classify does not.
-    const acted = (id: string, actions: NonNullable<Message['tool']>['actions']) =>
-      tool(id, { tool: { kind: 'execute', input: '{"command":"x"}', ...(actions ? { actions } : {}) } })
+    const acted = (id: string, actions: NonNullable<Message['tool']>['actions'], command = 'x') =>
+      tool(id, { tool: { kind: 'execute', input: JSON.stringify({ command }), ...(actions ? { actions } : {}) } })
     const mixed = [
       acted('a1', [{ kind: 'read', path: 'a' }]),
       acted('a2', [{ kind: 'list', path: 'docs' }]),
@@ -434,6 +435,19 @@ describe("a turn's blocks and its fold", () => {
     // The words count what the steps themselves say, nothing else.
     expect(quietGroupWords(mixed)).toBe('读取 3 个文件，列出 1 个文件夹，搜索 1 次')
     expect(quietGroupWords([read('r1'), read('r2'), read('r3')])).toBe('读取 3 个文件')
+    // A classified command that pipes, chains or redirects is a command: never a quiet step, never in a group, and at
+    // 只留失败 it is hidden or shown exactly as a command is.
+    const piped = acted('p', [{ kind: 'read', path: 'list' }], 'cat list | xargs rm')
+    expect(shape(turn(read('r1'), read('r2'), piped, read('r3')))).toEqual([['tool:r1', 'tool:r2', 'tool:p', 'tool:r3']])
+    expect(toolLabel(piped)).toEqual({ verb: '运行', object: 'cat list | xargs rm', mono: true })
+    expect(alwaysShown(piped)).toBe(false)
+    expect(alwaysShown({ ...piped, state: 'failed', text: 'x' })).toBe(true)
+    // The numbers come from the box itself.
+    expect(linesBelow({ scrollHeight: 1000, clientHeight: 320, scrollTop: 0 }, 18)).toBe(38)
+    expect(linesBelow({ scrollHeight: 1000, clientHeight: 320, scrollTop: 680 }, 18)).toBe(0)
+    expect(linesBelow({ scrollHeight: 320, clientHeight: 320, scrollTop: 0 }, 18)).toBe(0)
+    expect(linesBelow({ scrollHeight: 330, clientHeight: 320, scrollTop: 0 }, 18)).toBe(1)
+    expect(linesBelow({ scrollHeight: 1000, clientHeight: 320, scrollTop: 0 }, Number.NaN)).toBe(0)
   })
 
   it('leaves every row, only what always shows, or those with the rest folded, by the level the reader chose', () => {
@@ -463,7 +477,12 @@ describe("a turn's blocks and its fold", () => {
     // Only what went wrong or waits; a block with nothing left is gone. Prose, questions and failure notes are untouched.
     expect(shape(turnBlocks(turn, 'failures'))).toEqual([['tool:f', 'tool:w'], 'a2', 'q', 'n'])
     // The rest folded between the rows that always show, counted by the steps it holds.
-    expect(shape(turnBlocks(turn, 'folded'))).toEqual([['steps:4', 'tool:f', 'steps:1', 'tool:w', 'steps:1'], 'a2', ['steps:1'], 'q', 'n'])
+    // Thoughts are no steps: the first fold holds a thought and three reads.
+    expect(shape(turnBlocks(turn, 'folded'))).toEqual([['steps:3', 'tool:f', 'steps:1', 'tool:w', 'steps:1'], 'a2', ['steps:1'], 'q', 'n'])
+    expect(shape(turnBlocks(firstTurn([user('u'), reply('t', '', { reasoning: '想' }), reply('a', '好')]), 'folded'))).toEqual([
+      ['steps:0'],
+      'a',
+    ])
     // The block keeps its key at every level, so a change of level remounts nothing above it.
     for (const level of ['all', 'failures', 'folded'] as const) expect(turnBlocks(turn, level)[0]).toMatchObject({ key: 'work:a1' })
   })

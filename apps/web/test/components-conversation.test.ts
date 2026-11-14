@@ -196,12 +196,11 @@ describe('with the connection down', () => {
     const command = tool({ toolName: 'shell', state: 'awaiting-approval', tool: { kind: 'execute', title: reported, input } })
     const html = renderToStaticMarkup(createElement(Drawer, { message: command, approval: request }))
     expect(html).toContain(`<span class="approval-object is-command" tabindex="0">${inner}</span>`)
-    expect(html).toContain('<span class="approval-shell">经 zsh -lc</span>')
-    // The home directory is not rewritten where a command is decided.
-    expect(html).not.toContain('~/work')
+    // The wrapper is named exactly as it was reported, directory and all.
+    expect(html).toContain('<span class="approval-shell">经 /bin/zsh -lc</span>')
     const asked = renderToStaticMarkup(createElement(Drawer, { message: command, approval: request, requester: '小抄' }))
     expect(asked).toContain(`<span class="approval-command" tabindex="0">${inner}</span>`)
-    expect(asked).toContain('经 zsh -lc')
+    expect(asked).toContain('经 /bin/zsh -lc')
     // An unwrapped command is whole too, and names no wrapper.
     const bare = tool({
       toolName: 'shell',
@@ -211,6 +210,22 @@ describe('with the connection down', () => {
     const plain = renderToStaticMarkup(createElement(Drawer, { message: bare, approval: approval({ toolName: 'shell' }) }))
     expect(plain).toContain('<span class="approval-object is-command" tabindex="0">ls -la</span>')
     expect(plain).not.toContain('approval-shell')
+    // A shell that is not the system's is some other program: the card shows the line as reported, whole.
+    for (const reportedLine of [
+      "/Users/me/proj/tools/bash -c 'pnpm test'",
+      "/tmp/x/bash -c 'ls'",
+      '/bin/../tmp/sh -c ls',
+      './bash -c ls',
+    ]) {
+      const other = tool({
+        toolName: 'shell',
+        state: 'awaiting-approval',
+        tool: { kind: 'execute', title: reportedLine, input: JSON.stringify({ command: reportedLine }) },
+      })
+      const card = renderToStaticMarkup(createElement(Drawer, { message: other, approval: approval({ toolName: 'shell' }) }))
+      expect(card).toContain(`>${reportedLine.replaceAll("'", '&#x27;')}</span>`)
+      expect(card).not.toContain('approval-shell')
+    }
   })
 
   it('stops the thinking row and the caret, and says when it last knew', () => {
@@ -560,15 +575,15 @@ describe('tool rows and command blocks', () => {
     const html = renderToStaticMarkup(
       createElement(FileSession.Provider, { value: { id: 's', folder: '/Users/me/work/app' } }, createElement(ToolCard, { message })),
     )
+    // Paths in a command are written as reported: nothing is rewritten.
     const object = /<span class="process-object is-mono">(.*?)<\/span>/u.exec(html)?.[1]
-    expect(object).toBe('rg --files -g &#x27;AGENTS.md&#x27; ~/work/app')
+    expect(object).toBe('rg --files -g &#x27;AGENTS.md&#x27; /Users/me/work/app')
     expect(html).toContain(`title="${reported.replaceAll('"', '&quot;').replaceAll("'", '&#x27;')}"`)
-    // Without a home the session's folders name, the path is written as reported.
-    const plain = renderToStaticMarkup(createElement(ToolCard, { message }))
-    expect(plain).toContain('rg --files -g &#x27;AGENTS.md&#x27; /Users/me/work/app</span>')
-    // A shape Latch does not recognise is shown as reported.
+    // A shape Latch does not recognise, or a shell that is not the system's, is shown as reported.
     const odd = run({ tool: { kind: 'execute', input: JSON.stringify({ command: 'bash -lc "echo $HOME"' }) } })
     expect(odd).toContain('bash -lc &quot;echo $HOME&quot;</span>')
+    const own = run({ tool: { kind: 'execute', input: JSON.stringify({ command: "/Users/me/proj/tools/bash -c 'pnpm test'" }) } })
+    expect(own).toContain('/Users/me/proj/tools/bash -c &#x27;pnpm test&#x27;</span>')
   })
 
   it('draws no tail for a command without reported output, not even its plain-text form', () => {
@@ -647,7 +662,7 @@ describe('tool rows and command blocks', () => {
     expect(searched).toContain('data-kind="search"')
     expect(searched).toContain('<span class="process-verb">搜索</span>')
     expect(searched).toContain('<span class="process-object is-mono">alpha</span>')
-    const several = acted('cat a; cat b; rg x', [
+    const several = acted('multi', [
       { kind: 'read', path: 'a' },
       { kind: 'read', path: 'b' },
       { kind: 'search', query: 'x' },
@@ -664,6 +679,48 @@ describe('tool rows and command blocks', () => {
     const unclassified = acted('cat docs/notes.txt', undefined)
     expect(unclassified).toContain('data-kind="execute"')
     expect(unclassified).toContain('is-command')
+    // A classification may only make a plain command quieter: one that pipes, chains, redirects or substitutes can do
+    // more than it names, so it stays a command, whatever the Harness called it.
+    const piped = acted('cat a | wc -l', [{ kind: 'read', path: '/work/app/a' }])
+    expect(piped).toContain('data-kind="execute"')
+    expect(piped).toContain('is-command')
+    expect(piped).toContain('cat a | wc -l</span>')
+    expect(piped).not.toContain('读取')
+    for (const inner of [
+      'cat list | xargs rm',
+      'cat a; rm b',
+      'cat a && rm b',
+      'cat a & rm b',
+      'cat a > b',
+      'cat < a',
+      'cat `which x`',
+      'cat $(which x)',
+      'cat a | tee ~/.zshrc',
+    ]) {
+      const row = acted(inner, [{ kind: 'read', path: '/work/app/a' }])
+      expect([inner, row.includes('data-kind="execute"'), row.includes('is-command'), row.includes('读取')]).toEqual([
+        inner,
+        true,
+        true,
+        false,
+      ])
+    }
+    // So is one whose line Latch cannot read on one line.
+    const lines = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({
+          toolName: 'execute',
+          state: 'completed',
+          tool: {
+            kind: 'execute',
+            title: 'cat a',
+            input: JSON.stringify({ command: 'cat a\nrm b' }),
+            actions: [{ kind: 'read', path: 'a' }],
+          },
+        }),
+      }),
+    )
+    expect(lines).toContain('data-kind="execute"')
     // Another tool's row never takes a command's classification.
     const other = renderToStaticMarkup(
       createElement(ToolCard, {

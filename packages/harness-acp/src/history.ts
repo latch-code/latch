@@ -76,7 +76,14 @@ function measure(capture: Capture, entry: Entry): void {
  * not kept, since neither a preview nor a text rebuild shows it and the agent keeps its own. The text stays in memory
  * as it came until `captured` redacts each whole message.
  */
-export function captureUpdate(capture: Capture, update: { sessionUpdate: string }, at: string, redact: (text: string) => string): void {
+export function captureUpdate(
+  capture: Capture,
+  update: { sessionUpdate: string },
+  at: string,
+  redact: (text: string) => string,
+  /** The wire is Latch's own Codex wire, whose command classification (`actions`) is kept; any other agent's is dropped. */
+  classifies = false,
+): void {
   switch (update.sessionUpdate) {
     case 'user_message_chunk':
     case 'agent_message_chunk': {
@@ -121,7 +128,8 @@ export function captureUpdate(capture: Capture, update: { sessionUpdate: string 
         capture.tools.set(id, entry)
         capture.entries.push(entry)
       }
-      mergeTool(entry.tool!, parsed.data, at)
+      const { actions, ...fields } = parsed.data
+      mergeTool(entry.tool!, classifies && actions != null ? parsed.data : fields, at)
       entry.message = { ...redactedTool(toolMessage(entry.tool!), redact), imported: true }
       measure(capture, entry)
       return
@@ -137,6 +145,15 @@ function redactedTool(message: Message, redact: (text: string) => string): Messa
     ...(message.tool.title !== undefined ? { title: redact(message.tool.title) } : {}),
     ...(message.tool.input !== undefined ? { input: redact(message.tool.input) } : {}),
     ...(message.tool.output !== undefined ? { output: redact(message.tool.output) } : {}),
+    ...(message.tool.actions
+      ? {
+          actions: message.tool.actions.map(action => ({
+            kind: action.kind,
+            ...(action.path !== undefined ? { path: redact(action.path) } : {}),
+            ...(action.query !== undefined ? { query: redact(action.query) } : {}),
+          })),
+        }
+      : {}),
     ...(message.tool.diffs
       ? {
           diffs: message.tool.diffs.map(diff => ({

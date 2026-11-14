@@ -206,6 +206,27 @@
   font-size: var(--fs-mono) !important;
   line-height: var(--lh-mono) !important;
 }
+/* The box and the line that counts what lies below it stand together; in a row they take the room the title had. */
+.approval-command-box {
+  display: grid !important;
+  flex: 1 1 100%;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.approval-title > .approval-command-box {
+  flex: 1 1 0;
+}
+/* More of the command lies below: the box fades out at its foot, and the line under it says how much. */
+:is(.approval-object.is-command, .approval-command)[data-more] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--sp-32)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--sp-32)), transparent);
+}
+.approval-more-lines {
+  color: var(--amber) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+  font-weight: 400;
+}
 .approval-shell {
   flex-shrink: 0;
   white-space: nowrap;

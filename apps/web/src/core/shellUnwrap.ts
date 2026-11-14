@@ -1,11 +1,15 @@
 /** A command as a row shows it: the command a shell wrapper carried, and the wrapper it came in. */
 export interface UnwrappedCommand {
   command: string
-  /** The wrapper as written without its directory: `zsh -lc`. Absent when the command is shown as reported. */
+  /** The wrapper exactly as reported, directory and all: `/bin/zsh -lc`. Absent when the command is shown as reported. */
   shell?: string
 }
 
-const WRAPPER = /^(?:(?:\/[\w.+-]+)*\/)?(sh|bash|zsh)[ \t]+(-l?c)[ \t]+/u
+/**
+ * A system shell by its bare name or in one of the directories systems keep it in, written exactly so: any other path
+ * (a project's own `bash`, one reached through `..`, a relative one) is some other program and is shown as reported.
+ */
+const WRAPPER = /^((?:\/bin\/|\/usr\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)?(?:sh|bash|zsh))[ \t]+(-l?c)[ \t]+/u
 /** Characters an unquoted shell word carries literally; anything else could be expanded, split or end the word. */
 const BARE = /[\w@%+=:,./!-]/u
 /** The characters a backslash escapes inside double quotes (POSIX); before any other it stays a backslash. */
@@ -55,8 +59,9 @@ function singleWord(text: string): string | undefined {
 }
 
 /**
- * The command inside `sh|bash|zsh -c|-lc <one word>`, the three shapes agents wrap a command in. Any other shape (more
- * arguments, another flag, an expansion in the word, an empty command) is returned as it was reported: a row never
+ * The command inside `sh|bash|zsh -c|-lc <one word>`, the three shapes agents wrap a command in. Any other shape (a
+ * shell at another path, more arguments, another flag, an expansion in the word, an empty command) is returned as it was
+ * reported: a row never
  * shows a command Latch had to guess. Display only: what ran is the reported command, which stays one step away.
  */
 export function unwrapShell(reported: string): UnwrappedCommand {
@@ -65,36 +70,4 @@ export function unwrapShell(reported: string): UnwrappedCommand {
   const command = singleWord(reported.slice(wrapper[0].length).trimEnd())
   if (command === undefined || command.trim() === '') return { command: reported }
   return { command, shell: `${wrapper[1]} ${wrapper[2]}` }
-}
-
-/**
- * The home directory a session's folders lie in, read off their own paths: `/Users/<name>` or `/home/<name>`. The Host
- * reports no home, so nothing is assumed when the folders do not agree or lie elsewhere (a shared folder, a volume).
- */
-export function homeOf(folders: readonly (string | undefined)[]): string | undefined {
-  let home: string | undefined
-  for (const folder of folders) {
-    if (!folder) continue
-    const found = /^\/(?:Users|home)\/[^/]+(?=\/|$)/u.exec(folder)?.[0]
-    if (!found || /^\/Users\/(?:Shared|Guest)$/u.test(found) || (home !== undefined && home !== found)) return undefined
-    home = found
-  }
-  return home
-}
-
-/** `home` written `~` where a path begins with it; display only, and never inside another name (`/Users/annabel`). */
-export function tildeHome(text: string, home: string | undefined): string {
-  if (!home) return text
-  let out = ''
-  let from = 0
-  for (;;) {
-    const at = text.indexOf(home, from)
-    if (at < 0) return out + text.slice(from)
-    const before = text[at - 1]
-    const after = text[at + home.length]
-    const starts = before === undefined || /[\s'"=:(<>|;&,]/u.test(before)
-    const ends = after === undefined || /[/\s'":)<>|;&,]/u.test(after)
-    out += text.slice(from, at) + (starts && ends ? '~' : home)
-    from = at + home.length
-  }
 }

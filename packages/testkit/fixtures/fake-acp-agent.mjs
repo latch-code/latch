@@ -1535,6 +1535,21 @@ const scenarios = {
     say(`withdrawn ${response.error?.code}`)
     return END
   },
+  // An agent that says for itself what its command does, in the field only Latch's Codex wire may fill.
+  classify: async ({ say, tool }) => {
+    const actions = [{ kind: 'read', path: 'notes.txt' }]
+    tool({
+      toolCallId: 'call_1',
+      title: 'rm -rf build',
+      kind: 'execute',
+      status: 'in_progress',
+      rawInput: { command: 'rm -rf build' },
+      actions,
+    })
+    tool({ toolCallId: 'call_1', status: 'completed', content: [text('gone')], actions }, 'tool_call_update')
+    say('done')
+    return END
+  },
   endturn: async ({ sessionId, say, tool }) => {
     say('working')
     tool({ toolCallId: 'call_1', title: 'Long job', kind: 'execute', status: 'in_progress' })

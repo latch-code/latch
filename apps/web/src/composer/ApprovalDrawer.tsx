@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 
 import type { Approval, ApprovalOption, FileDiff, Message } from '@latch/protocol'
 import {
@@ -20,7 +20,7 @@ import { useViewport } from '../breakpoints.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { previousState } from '../diff.ts'
 import { argumentView } from '../format.ts'
-import { approvalCommand, diffStat, toolHeading } from '../conversation.ts'
+import { approvalCommand, diffStat, linesBelow, toolHeading } from '../conversation.ts'
 import type { ApprovalGate } from '../core/permissions.ts'
 import { APPROVAL_COPY, APPROVAL_OPTION_LABELS, CONFIRMATION_COPY, RISK_CLAUSE } from '../core/securityCopy.ts'
 import { ArgumentList } from '../components/ArgumentList.tsx'
@@ -56,6 +56,39 @@ function approvalHidesText(approval: Approval, title: string, diffs: readonly Fi
     [title, approval.toolName, approval.reason, approval.subagent, approval.tool?.input ?? approval.arguments].some(text =>
       hasHiddenCharacters(text),
     ) || diffs.some(diff => hasHiddenCharacters(diff.path) || hasHiddenCharacters(diff.newText) || hasHiddenCharacters(diff.oldText))
+  )
+}
+
+/**
+ * The command an approval asks about, whole. A long one scrolls in its own box so the choices stay in reach; while any
+ * of it lies below what the box shows, the box fades out at its foot and a line under it counts the lines still to
+ * read, measured from the box itself, so a command's last line is never out of sight without a word.
+ */
+function ApprovalCommand({ className, text }: { className: string; text: string }) {
+  const box = useRef<HTMLSpanElement>(null)
+  const [below, setBelow] = useState(0)
+  useLayoutEffect(() => {
+    const element = box.current
+    if (!element) return undefined
+    const measure = () => {
+      setBelow(linesBelow(element, parseFloat(getComputedStyle(element).lineHeight)))
+    }
+    measure()
+    const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : undefined
+    resized?.observe(element)
+    element.addEventListener('scroll', measure, { passive: true })
+    return () => {
+      resized?.disconnect()
+      element.removeEventListener('scroll', measure)
+    }
+  }, [text])
+  return (
+    <span className="approval-command-box">
+      <span ref={box} className={className} data-more={below > 0 ? '' : undefined} tabIndex={0}>
+        <VisibleText text={text} />
+      </span>
+      {below > 0 && <span className="approval-more-lines">还有 {below} 行</span>}
+    </span>
   )
 }
 
@@ -472,11 +505,13 @@ function ApprovalPanel({
         <div className="approval-what">
           <div className="approval-title">
             <span className="approval-dot" aria-hidden="true" />
-            <span
-              className={command && !requester ? 'approval-object is-command' : 'approval-object'}
-              tabIndex={command && !requester ? 0 : undefined}>
-              <VisibleText text={heading} />
-            </span>
+            {command && !requester ? (
+              <ApprovalCommand className="approval-object is-command" text={heading} />
+            ) : (
+              <span className="approval-object">
+                <VisibleText text={heading} />
+              </span>
+            )}
             {stat && (
               <span className="approval-stat">
                 <span className="stat-add">+{stat.add}</span>
@@ -490,11 +525,15 @@ function ApprovalPanel({
             )}
           </div>
           <div className="approval-meta">
-            {requester && heading !== what && (
-              <span className={command ? 'approval-command' : undefined} tabIndex={command ? 0 : undefined}>
-                <VisibleText text={what} />
-              </span>
-            )}
+            {requester
+              && heading !== what
+              && (command ? (
+                <ApprovalCommand className="approval-command" text={what} />
+              ) : (
+                <span>
+                  <VisibleText text={what} />
+                </span>
+              ))}
             {command?.shell && <span className="approval-shell">经 {command.shell}</span>}
             {context}
             {!presentation && toolName && toolName !== action && (

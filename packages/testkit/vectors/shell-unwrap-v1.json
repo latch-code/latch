@@ -5,7 +5,7 @@
       "name": "zsh login, double quotes",
       "reported": "/bin/zsh -lc \"pnpm test\"",
       "command": "pnpm test",
-      "shell": "zsh -lc"
+      "shell": "/bin/zsh -lc"
     },
     {
       "name": "bash login, single quotes",
@@ -23,37 +23,37 @@
       "name": "sh, single quotes",
       "reported": "/bin/sh -c 'echo hi'",
       "command": "echo hi",
-      "shell": "sh -c"
+      "shell": "/bin/sh -c"
     },
     {
       "name": "bash without login",
       "reported": "/usr/bin/bash -c \"git status\"",
       "command": "git status",
-      "shell": "bash -c"
+      "shell": "/usr/bin/bash -c"
     },
     {
       "name": "homebrew path",
       "reported": "/opt/homebrew/bin/zsh -lc 'ls'",
       "command": "ls",
-      "shell": "zsh -lc"
+      "shell": "/opt/homebrew/bin/zsh -lc"
     },
     {
       "name": "single quotes joined by a quoted quote",
       "reported": "/bin/zsh -lc 'rg --files -g '\"'\"'AGENTS.md'\"'\"' -g '\"'\"'!node_modules'\"'\"' /Users/me/work'",
       "command": "rg --files -g 'AGENTS.md' -g '!node_modules' /Users/me/work",
-      "shell": "zsh -lc"
+      "shell": "/bin/zsh -lc"
     },
     {
       "name": "double quotes around single quotes",
       "reported": "/bin/zsh -lc \"pwd; rg --files -g 'AGENTS.md' /Users/me/work\"",
       "command": "pwd; rg --files -g 'AGENTS.md' /Users/me/work",
-      "shell": "zsh -lc"
+      "shell": "/bin/zsh -lc"
     },
     {
       "name": "double quotes broken by a quoted quote",
       "reported": "/bin/zsh -lc \"rg -g '\"'\"'!node_modules'\"'\"' .\"",
       "command": "rg -g '\"!node_modules\"' .",
-      "shell": "zsh -lc"
+      "shell": "/bin/zsh -lc"
     },
     {
       "name": "escaped double quotes",
@@ -128,9 +128,57 @@
       "shell": "sh -c"
     },
     {
+      "name": "usr local path",
+      "reported": "/usr/local/bin/bash -lc 'ls'",
+      "command": "ls",
+      "shell": "/usr/local/bin/bash -lc"
+    },
+    {
       "name": "no wrapper",
       "reported": "pnpm test",
       "command": "pnpm test",
+      "shell": null
+    },
+    {
+      "name": "a shell in a temporary folder",
+      "reported": "/tmp/x/bash -c 'ls'",
+      "command": "/tmp/x/bash -c 'ls'",
+      "shell": null
+    },
+    {
+      "name": "a shell reached through ..",
+      "reported": "/bin/../tmp/sh -c ls",
+      "command": "/bin/../tmp/sh -c ls",
+      "shell": null
+    },
+    {
+      "name": "a relative shell",
+      "reported": "./bash -c ls",
+      "command": "./bash -c ls",
+      "shell": null
+    },
+    {
+      "name": "a shell in a project",
+      "reported": "/Users/me/p/zsh -lc 'ls'",
+      "command": "/Users/me/p/zsh -lc 'ls'",
+      "shell": null
+    },
+    {
+      "name": "a shell below a system folder",
+      "reported": "/usr/bin/extra/bash -c 'ls'",
+      "command": "/usr/bin/extra/bash -c 'ls'",
+      "shell": null
+    },
+    {
+      "name": "a system folder below another",
+      "reported": "/opt/x/bin/sh -c 'ls'",
+      "command": "/opt/x/bin/sh -c 'ls'",
+      "shell": null
+    },
+    {
+      "name": "a doubled slash",
+      "reported": "/bin//sh -c 'ls'",
+      "command": "/bin//sh -c 'ls'",
       "shell": null
     },
     {

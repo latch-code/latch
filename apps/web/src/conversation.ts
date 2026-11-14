@@ -384,8 +384,15 @@ export function shownActions(message: Pick<Message, 'tool' | 'state'>): ToolActi
   const tool = message.tool
   if (!tool?.actions?.length || (tool.kind !== undefined && tool.kind !== 'execute')) return undefined
   if (message.state === 'awaiting-approval' || message.state === 'queued') return undefined
+  // A classification may only make a plain command quieter. One that pipes, chains, redirects or substitutes can
+  // write or run something its classification does not name (`cat list | xargs rm`), so it stays the command it is.
+  const line = commandLine(tool)
+  if (!line || COMPOUND.test(line.command)) return undefined
   return tool.actions
 }
+
+/** What joins, redirects or nests commands in a shell line; a line with any of it is never read as its classification. */
+const COMPOUND = /[|;&<>`\n]|\$\(/u
 
 /** The kind a row is drawn as: a command its Harness classified reads as what it does. */
 export function rowKind(message: Pick<Message, 'tool' | 'toolName' | 'state'>): ToolKind {
@@ -476,6 +483,15 @@ export function blockedLine(block: Blocked): string {
 export function blockedReason(block: Blocked): string | undefined {
   const reason = block.reason?.trim()
   return reason && reason !== shortReason(block) ? reason : undefined
+}
+
+/**
+ * How many lines of a scrolling box lie below what it shows, from its own measured geometry; none when it does not
+ * scroll or is at its end.
+ */
+export function linesBelow(box: { scrollHeight: number; clientHeight: number; scrollTop: number }, lineHeight: number): number {
+  const below = box.scrollHeight - box.clientHeight - box.scrollTop
+  return lineHeight > 0 && below > 1 ? Math.max(1, Math.round(below / lineHeight)) : 0
 }
 
 /**
@@ -713,7 +729,9 @@ export function alwaysShown(message: Message): boolean {
   return subagent.stoppable === true || subagent.status === 'failed' || subagent.status === 'unknown' || subagent.steps.some(alwaysShown)
 }
 
-const itemSteps = (item: WorkItem): number => (item.kind === 'reads' ? item.messages.length : item.kind === 'steps' ? item.count : 1)
+/** The tool steps a row stands for; a thought is no step. */
+const itemSteps = (item: WorkItem): number =>
+  item.kind === 'reads' ? item.messages.length : item.kind === 'steps' ? item.count : item.kind === 'tool' ? 1 : 0
 
 /** The rows a level leaves: every one, only those that always show, or those with the rest folded between them. */
 function atLevel(items: WorkItem[], level: WorkLevel): WorkItem[] {

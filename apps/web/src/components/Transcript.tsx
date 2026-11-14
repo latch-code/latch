@@ -146,7 +146,8 @@ function StepsRow({ items, count, context }: { items: WorkItem[]; count: number;
           setOpen(!open)
         }}>
         <span className="process-label">
-          <span className="process-object">工作过程 · {count} 步</span>
+          {/* Only tool steps are counted; a fold that holds nothing but thoughts says no number. */}
+          <span className="process-object">{count > 0 ? `工作过程 · ${count} 步` : '工作过程'}</span>
         </span>
         <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>

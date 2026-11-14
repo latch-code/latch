@@ -23,7 +23,6 @@ import {
 } from '../conversation.ts'
 import { useChangesLink } from '../conversation/changesLink.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
-import { homeOf, tildeHome } from '../core/shellUnwrap.ts'
 import { argumentView, basename, formatDuration } from '../format.ts'
 import { ArgumentList } from './ArgumentList.tsx'
 import { DiffView, type DiffViewFile } from './DiffView.tsx'
@@ -282,8 +281,7 @@ export const ToolCard = memo(
     // one row once it settled.
     const command = kind === 'execute' && label.mono && label.verb !== undefined && !review && !inline
     const line = kind === 'execute' && label.mono && label.verb !== undefined ? commandLine(tool) : undefined
-    const home = useMemo(() => homeOf([session?.folder, ...(session?.folders ?? []).map(folder => folder.path)]), [session])
-    const object = line ? tildeHome(label.object, home) : label.object
+    const object = label.object
     const well = command && (state === 'running' || shown === 'failed' || shown === 'interrupted' || shown === 'unknown')
     // A judgement's words, once its call settled: the review's verdict, or that the call ran without an ask.
     const judgedWords =
@@ -492,7 +490,7 @@ export const ToolCard = memo(
                     </Hint>
                   )}
                   {/* A review's input is the agent's whole event, its status still the one it began with: its own words say it. */}
-                  {/* A command shown without its wrapper or its home directory keeps the reported line here, whole. */}
+                  {/* A command shown without its wrapper keeps the reported line here, whole. */}
                   {!review && !applied && (
                     <ArgumentList text={tool?.input} covered={line && object !== line.reported ? [] : [label.object]} quiet />
                   )}

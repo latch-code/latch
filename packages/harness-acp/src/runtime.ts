@@ -1284,6 +1284,17 @@ export class AgentRuntime implements Bridge {
     return reading
   }
 
+  /**
+   * A command's classification (`actions`) is taken only from Latch's own Codex wire, which passes on what Codex parsed.
+   * From any other agent the field is dropped where its report is read: an ACP agent's word for what a command does
+   * never changes how the command is drawn.
+   */
+  private ownFields(fields: ToolFields): ToolFields {
+    if (fields.actions == null || this.selection.profile?.wire === 'codex') return fields
+    const { actions: _dropped, ...rest } = fields
+    return rest
+  }
+
   /** Whether this harness reports its own MCP servers over its protocol: Codex's app-server does; ACP does not. */
   private reportsOwnMcp(): boolean {
     return this.selection.profile?.wire === 'codex'
@@ -5492,7 +5503,7 @@ export class AgentRuntime implements Bridge {
     if (!envelope.success) return
     if (live.capture && live.capture.acpSessionId === envelope.data.sessionId && !live.sessions.has(envelope.data.sessionId)) {
       const update = this.selection.profile?.normalizeUpdate?.(envelope.data.update) ?? envelope.data.update
-      captureUpdate(live.capture, update, this.now(), this.redact)
+      captureUpdate(live.capture, update, this.now(), this.redact, this.selection.profile?.wire === 'codex')
       return
     }
     const taskId = live.sessions.get(envelope.data.sessionId)
@@ -5580,7 +5591,13 @@ export class AgentRuntime implements Bridge {
       case 'tool_call_update': {
         const parsed = toolFields.safeParse(update)
         if (parsed.success)
-          this.applyTool(task, run, parsed.data, update.sessionUpdate === 'tool_call', this.selection.profile?.readDenial?.(update))
+          this.applyTool(
+            task,
+            run,
+            this.ownFields(parsed.data),
+            update.sessionUpdate === 'tool_call',
+            this.selection.profile?.readDenial?.(update),
+          )
         const ended = this.selection.profile?.readChildEnd?.(update)
         if (ended) this.endChild(live, task, run, ended)
         return
@@ -6190,7 +6207,7 @@ export class AgentRuntime implements Bridge {
       case 'tool_call_update': {
         const parsed = toolFields.safeParse(update)
         if (!parsed.success) return
-        const state = childCall(child, row, parsed.data, this.now())
+        const state = childCall(child, row, this.ownFields(parsed.data), this.now())
         // Latch knows no mode of a subagent's own, so its calls are judged by the mode of the session that started it.
         this.judge(task, state, parsed.data.toolCallId, this.selection.profile?.readDenial?.(update))
         if (!row || !upsertStep(row, toolMessage(state))) return
@@ -6264,6 +6281,7 @@ export class AgentRuntime implements Bridge {
     }
     const now = this.now()
     // Past the limits a subagent's call has no step, but the request needs none.
+    toolCall = this.ownFields(toolCall)
     const state = child ? childCall(child, row, toolCall, now) : this.toolState(task, toolCall.toolCallId)
     if (!child) mergeTool(state, toolCall, now)
     const record = (item: Message) => {
