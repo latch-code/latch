@@ -1,6 +1,6 @@
 import { ArrowLeft } from 'lucide-react'
 import { OverviewGlyph, Count, IconButton, useLivePrevious, InboxGlyph, PanelLeftGlyph, NewSessionGlyph } from '@latch/ui'
-import { currentShell } from '../core/shell.ts'
+import { currentShell, lightsStyle, useTrafficLights } from '../core/shell.ts'
 import { waitingCount } from '../sessions.ts'
 import { BrandMark } from '../components/ui.tsx'
 import { ShellDelegate, SpaceButtons, shellSpaces } from './SpaceNav.tsx'
@@ -29,6 +29,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
   } = shell
   const spaces = shellSpaces(shell)
   const desktop = currentShell()
+  const lights = useTrafficLights()
   const approvals = waitingCount(snapshot)
   // The button shows only while something waits, so its count is told the value it rose from.
   const approvalsBefore = useLivePrevious(approvals)
@@ -41,7 +42,8 @@ export function TitleBar({ shell }: { shell: ShellState }) {
     <div
       ref={titlebar}
       className="titlebar"
-      data-lights={desktop?.platform === 'darwin' ? '' : undefined}
+      data-lights={lights ? '' : undefined}
+      style={lightsStyle(desktop)}
       data-shut={shut ? '' : undefined}
       data-waiting={approvals > 0 ? '' : undefined}
       data-spaces={shut && placed ? '' : undefined}>

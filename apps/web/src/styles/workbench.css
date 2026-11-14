@@ -3,7 +3,7 @@
   padding: 0 var(--sp-16);
 }
 .workbench-nav[data-lights] {
-  padding-left: 80px;
+  padding-left: var(--lights-lead);
 }
 .workbench-brand {
   font-size: var(--fs-heading);

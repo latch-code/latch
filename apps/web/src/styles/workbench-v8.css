@@ -95,9 +95,6 @@
   background: var(--canvas);
   color: var(--ink);
 }
-.titlebar[data-lights]:not([data-shut]) .titlebar-lead {
-  padding-top: 0;
-}
 .titlebar-views {
   margin-left: auto;
   z-index: 3;

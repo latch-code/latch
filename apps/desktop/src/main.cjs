@@ -97,6 +97,21 @@ const APP_URL = 'latch://app/link/'
 /** A development run is Electron's own bundle, whose version is Electron's; the desktop package says this app's. */
 const DESKTOP_VERSION = '0.1.0'
 const log = text => console.error(`[Latch] ${text}`)
+/** Whether the asking page's window is in full screen: nothing goes in, a boolean comes out, for any window's top page. */
+const FULL_SCREEN_CHANNEL = 'latch:window:full-screen'
+
+/** The line the page's top row stands on, in px from the window's top (--lights-line in the page's styles). */
+const LIGHTS_LINE = 27
+
+/**
+ * Where the traffic lights go so that their centre is LIGHTS_LINE. Electron places them by their top edge, and macOS
+ * draws them 14px tall from macOS 26 and 12px in a 16px box before it (preload.cjs tells the page where they end).
+ */
+function trafficLights() {
+  const major = Number.parseInt(process.getSystemVersion(), 10)
+  return { x: 16, y: LIGHTS_LINE - (major >= 26 ? 7 : 8) }
+}
+
 /** The Host start script of this checkout: the only script the desktop app starts (see lifecycle.cjs). */
 const HOST_SCRIPT = resolve(__dirname, '../../../dist/start.js')
 const CHECK_INTERVAL_MS = 5_000
@@ -160,7 +175,7 @@ const DESKTOP_MIN_WIDTH = 768
 
 /** @param {{ width?: number, height?: number, preload?: boolean, partition?: string }} [options] */
 function createWindow({ width = 1250, height = 850, preload = true, partition } = {}) {
-  return new BrowserWindow({
+  const window = new BrowserWindow({
     width,
     height,
     minWidth: Math.min(width, DESKTOP_MIN_WIDTH),
@@ -169,11 +184,11 @@ function createWindow({ width = 1250, height = 850, preload = true, partition } 
     // The window's own colour (--sidebar in @latch/ui), so the window shows no flash before the first paint.
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#09090b' : '#ebebef',
     icon,
-    // The page's title row holds the traffic lights in its 78px inset and moves the window. Their centre is the work
-    // panel's title row's (8px inset + half of 52px), where the lead's buttons stand too; before the shell the
-    // enrollment, connection and crash screens draw a strip of the same height. The local error page, which has neither,
-    // keeps the standard bar.
-    ...(preload && process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 27 } } : {}),
+    // The page's top row holds the traffic lights and moves the window. Their centre is the row's own line, 27px from
+    // the window's top in both layouts (the 52px row of 侧栏 stands on it, the 56px bar of 顶栏 within half a pixel);
+    // before the shell the enrollment, connection and crash screens draw a strip of the same height. The local error
+    // page, which has neither, keeps the standard bar.
+    ...(preload && process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: trafficLights() } : {}),
     webPreferences: {
       ...(preload ? { preload: join(__dirname, 'preload.cjs') } : {}),
       // Another computer's window: its own storage, cache and scheme handlers, shared with nothing else.
@@ -193,6 +208,13 @@ function createWindow({ width = 1250, height = 850, preload = true, partition } 
       devTools: !app.isPackaged,
     },
   })
+  // Full screen hides the traffic lights: the page's top row is told, so it starts where it does without them.
+  const tellFullScreen = () => {
+    if (!window.isDestroyed()) window.webContents.send(FULL_SCREEN_CHANNEL, window.isFullScreen())
+  }
+  window.on('enter-full-screen', tellFullScreen)
+  window.on('leave-full-screen', tellFullScreen)
+  return window
 }
 
 /** The window that shows the page; folder and file actions answer only its own top-level page. */
@@ -1133,6 +1155,11 @@ async function start() {
   protocol.handle('latch', request => proxy.handle(request))
   protocol.handle('latch-frame', request => proxy.previewFrame(request))
   handleFolders(proxy, store)
+  // Asked by a window's own top page only; a preview tab or a frame is no window and gets false.
+  ipcMain.handle(FULL_SCREEN_CHANNEL, event => {
+    const window = event.senderFrame === event.sender.mainFrame ? BrowserWindow.fromWebContents(event.sender) : null
+    return window ? window.isFullScreen() : false
+  })
   // The renderer may only trigger this; main makes the invitation and gives it to the default browser.
   const openInBrowser = createBrowserOpener({
     invite: () => proxy.browserInvitation(),

@@ -497,6 +497,26 @@ const HOME = (() => {
 })()
 const REMOTE = /^h-[a-z2-7]{52}$/.test(HOME)
 
+/**
+ * Where the traffic lights end, in px from the window's left edge, so the page's top row starts clear of them: they
+ * begin at 16 (main.cjs) and are three of 14px at a pitch of 23 from macOS 26, of 12px at 20 before it. A number of
+ * this window's own chrome; nothing about the computer beyond what the page's user agent already says.
+ */
+const LIGHTS =
+  process.platform === 'darwin' && typeof process.getSystemVersion === 'function'
+    ? Object.freeze({
+        end: Number.parseInt(process.getSystemVersion(), 10) >= 26 ? 76 : 68,
+        /** Full screen hides the lights. Nothing goes to main; only a boolean comes back. */
+        fullScreen: () => ipcRenderer.invoke('latch:window:full-screen').then(value => value === true),
+        onFullScreen: callback => {
+          if (typeof callback !== 'function') return () => {}
+          const listener = (_event, value) => callback(value === true)
+          ipcRenderer.on('latch:window:full-screen', listener)
+          return () => ipcRenderer.removeListener('latch:window:full-screen', listener)
+        },
+      })
+    : undefined
+
 // Another computer's page: none of this Mac's folders, files, preview browser, lifecycle, notifications or updates,
 // which all act on this Mac. It behaves as the page does without a shell for them, as in a browser.
 if (REMOTE)
@@ -509,6 +529,7 @@ if (REMOTE)
       platform: process.platform,
       computers: computersApi(false),
       spaces: spacesApi,
+      ...(LIGHTS ? { lights: LIGHTS } : {}),
     }),
   )
 
@@ -523,6 +544,7 @@ if (!REMOTE)
       devMode: true,
       computers: computersApi(true),
       spaces: spacesApi,
+      ...(LIGHTS ? { lights: LIGHTS } : {}),
       platform: process.platform,
       previews: Object.freeze({ protocolVersion: 1, htmlScripts: true }),
       folders: Object.freeze({

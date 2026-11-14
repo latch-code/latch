@@ -13,7 +13,7 @@ import {
   LaptopGlyph,
   Kbd,
 } from '@latch/ui'
-import { currentShell } from '../core/shell.ts'
+import { currentShell, lightsStyle, useTrafficLights } from '../core/shell.ts'
 import { ShellDelegate, SpaceButtons, SpaceSwitch, shellSpaces } from './SpaceNav.tsx'
 import { BrandMark } from '../components/ui.tsx'
 import { ComputerMenu } from '../components/Computers.tsx'
@@ -71,8 +71,9 @@ export function WorkbenchComputer({ shell }: { shell: ShellState }) {
 /** The 顶栏 layout's navigation is above the work, leaving its home the whole width. */
 export function WorkbenchNav({ shell }: { shell: ShellState }) {
   const spaces = shellSpaces(shell)
+  const lights = useTrafficLights()
   return (
-    <div ref={shell.titlebar} className="titlebar workbench-nav" data-lights={currentShell()?.platform === 'darwin' ? '' : undefined}>
+    <div ref={shell.titlebar} className="titlebar workbench-nav" data-lights={lights ? '' : undefined} style={lightsStyle(currentShell())}>
       <span className="workbench-brand" aria-label="Latch">
         <BrandMark size={24} />
       </span>

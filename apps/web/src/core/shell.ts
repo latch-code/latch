@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { ComputerSummary } from '@latch/protocol'
 /** What adding folders as projects through the desktop shell came to. */
 export type FolderResult =
@@ -366,6 +367,13 @@ export interface LatchShell {
   kind: 'electron'
   devMode: boolean
   platform: string
+  /** macOS: where the window's traffic lights end, in px from its left edge; the top row starts 12px after them. */
+  lights?: {
+    end: number
+    /** Full screen hides the lights; absent on a shell that does not say. */
+    fullScreen?(): Promise<boolean>
+    onFullScreen?(callback: (fullScreen: boolean) => void): () => void
+  }
   /** Shells from before folder support do not have it. */
   folders?: ShellFolders
   /**
@@ -475,4 +483,37 @@ export function shellBrowser(): ShellBrowser | null {
   return typeof browser.list === 'function' && typeof browser.open === 'function' && typeof browser.subscribe === 'function'
     ? browser
     : null
+}
+
+/**
+ * Whether the window's traffic lights float over the top row: the desktop app on a Mac, out of full screen. The row
+ * keeps their place free while they do, and starts at the window's edge while they are hidden.
+ */
+export function useTrafficLights(): boolean {
+  const shell = currentShell()
+  const mac = shell?.platform === 'darwin'
+  const [fullScreen, setFullScreen] = useState(false)
+  useEffect(() => {
+    const lights = mac ? shell?.lights : undefined
+    if (!lights?.onFullScreen) return
+    let live = true
+    void lights
+      .fullScreen?.()
+      .then(value => {
+        if (live) setFullScreen(value === true)
+      })
+      .catch(() => {})
+    const stop = lights.onFullScreen(value => setFullScreen(value === true))
+    return () => {
+      live = false
+      stop()
+    }
+  }, [mac, shell])
+  return mac && !fullScreen
+}
+
+/** The traffic lights' end as a style for the top row, or nothing where the window has none (or an older shell). */
+export function lightsStyle(shell: LatchShell | null | undefined): { '--lights-end'?: string } {
+  const end = shell?.platform === 'darwin' ? shell.lights?.end : undefined
+  return typeof end === 'number' && Number.isFinite(end) && end >= 40 && end <= 120 ? { '--lights-end': `${end}px` } : {}
 }

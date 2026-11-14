@@ -129,16 +129,24 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   line-height: var(--lh-ui);
   font-weight: 500;
 }
-/* The traffic lights sit in the lead's first 78px. */
-.titlebar[data-lights] .titlebar-lead {
-  --lead-inset: 78px;
-}
 /*
- * The lights' centre is the panel's title row's (main.cjs), so beside them the lead's buttons stand on that line with the
- * sidebar open too, as they do shut: twice the inset above leaves the rest of the 52px centred there.
+ * The desktop app on a Mac: the traffic lights float over the row's start. The shell says where they end
+ * (--lights-end; 68 where an older shell does not), and the row's first thing begins 12px after that. Their centre is
+ * --lights-line from the window's top (main.cjs), so the lead is twice that tall and its middle is that line.
  */
-.titlebar[data-lights]:not([data-shut]) .titlebar-lead {
-  padding-top: calc(var(--shell-inset) * 2);
+.titlebar[data-lights] {
+  --lights-end: 68px;
+  --lights-line: 27px;
+  --lights-lead: calc(var(--lights-end) + var(--sp-12));
+}
+.titlebar[data-lights] .titlebar-lead,
+.titlebar[data-lights][data-shut] .titlebar-lead {
+  --lead-inset: var(--lights-lead);
+  align-self: flex-start;
+  height: calc(var(--lights-line) * 2);
+}
+.titlebar[data-lights] .titlebar-wordmark {
+  margin-left: 0;
 }
 /*
  * Shut, the lead moves into the panel's title row and holds only ◧ and what the sidebar would otherwise offer, clear of
