@@ -38,7 +38,16 @@ import {
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { FAKE_ACP_AGENT, fakeConversation, swiftFixturePath, testHarness, writeFakeHistory } from '@latch/testkit'
-import { NOT_ACCEPTED_5XX } from '@latch/protocol'
+import {
+  AGENT_PRESETS,
+  BUILTIN_HELPER_CARD,
+  NOT_ACCEPTED_5XX,
+  pairRoute,
+  type AppSnapshot,
+  type CustomAgent,
+  type HarnessInfo,
+  type HostCatalog,
+} from '@latch/protocol'
 import { startTestHost } from './helpers/host.ts'
 import { startNativeHost } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
@@ -113,6 +122,307 @@ async function invoke(input: unknown, timeoutMs = 15_000): Promise<Record<string
 }
 
 describe.skipIf(process.platform !== 'darwin')('Swift native core interoperability', () => {
+  it('creates native helper requests from current capabilities while preserving a held request and explicit choices', async () => {
+    const standard = {
+      ...testHarness('standard', { kind: 'builtin', label: 'Latch' }),
+      agentContext: 'private' as const,
+      helperCard: BUILTIN_HELPER_CARD,
+    }
+    const base = testHarness('codex', { label: 'Codex' })
+    const codex: HarnessInfo = {
+      ...base,
+      agentContext: 'first-turn',
+      skills: 'server',
+      helperCard: AGENT_PRESETS.find(item => item.id === 'codex')!.helperCard,
+      capabilities: { ...base.capabilities, models: { ...base.capabilities.models, owner: 'harness', wires: ['responses'] } },
+      permission: { approvals: 'prompts', readback: 'mode', modes: ['read-only', 'danger-full-access'], startMode: 'read-only' },
+      catalogue: {
+        reportedAt: '2026-11-14T00:00:00.000Z',
+        source: 'session',
+        options: [
+          {
+            id: 'model',
+            name: 'Model',
+            category: 'model',
+            currentValue: 'gpt-fixture',
+            options: [
+              { value: 'gpt-fixture', name: 'Fixture' },
+              { value: 'gpt-other', name: 'Other' },
+            ],
+          },
+          {
+            id: 'reasoning',
+            name: 'Thinking',
+            category: 'thought_level',
+            currentValue: 'low',
+            options: [
+              { value: 'low', name: 'Low' },
+              { value: 'high', name: 'High' },
+            ],
+          },
+        ],
+        perModel: [
+          {
+            model: 'gpt-other',
+            options: [
+              {
+                id: 'reasoning',
+                name: 'Thinking',
+                category: 'thought_level',
+                currentValue: 'medium',
+                options: [{ value: 'medium', name: 'Medium' }],
+              },
+            ],
+          },
+        ],
+      },
+    }
+    const pi: HarnessInfo = {
+      ...testHarness('pi'),
+      agentContext: 'first-turn',
+      helperCard: AGENT_PRESETS.find(item => item.id === 'pi')!.helperCard,
+      permission: { approvals: 'none', readback: 'none' },
+    }
+    pi.capabilities = { ...pi.capabilities, tools: { ...pi.capabilities.tools, shell: false } }
+    const own: HarnessInfo = { ...testHarness('mine', { mark: 'unknown' }), agentContext: 'first-turn' }
+    const missing: HarnessInfo = {
+      ...testHarness('missing', { status: 'unavailable' }),
+      agentContext: 'first-turn',
+      statusMessage: 'Fixture command unavailable',
+    }
+    const providers: HostCatalog['providers'] = [
+      {
+        id: 'chat',
+        name: 'Chat',
+        kind: 'openai-compatible',
+        models: ['m1'],
+        defaultModel: 'm1',
+        modelCapabilities: { m1: { thinking: ['low', 'high'] } },
+      },
+      { id: 'responses', name: 'Responses', kind: 'openai-responses', models: ['gpt-fixture'], defaultModel: 'gpt-fixture' },
+      { id: 'anthropic', name: 'Anthropic', kind: 'anthropic', models: ['m2'], defaultModel: 'm2' },
+      { id: 'gemini', name: 'Gemini', kind: 'gemini', models: ['g1'], defaultModel: 'g1' },
+      { id: 'demo', name: 'Demo', kind: 'demo', models: ['demo'], defaultModel: 'demo' },
+    ]
+    const catalog: HostCatalog = {
+      harnesses: [
+        codex,
+        pi,
+        own,
+        standard,
+        missing,
+        { ...codex, id: 'offer', offer: { presetId: 'codex' } },
+        { ...own, id: 'no-context', agentContext: undefined },
+      ],
+      providers,
+      workspaces: [{ id: 'project', name: 'Project', path: '/fixture' }],
+      defaults: { harnessId: 'codex', mode: 'agent', workspaceId: 'project', model: { providerId: 'chat', model: 'm1' } },
+    }
+    const cases = [
+      { harnessId: 'standard', name: '  Helper  ', description: ' First\nSecond ', instructions: 'Keep this\nverbatim' },
+      { harnessId: 'codex', engineOptions: { model: 'gpt-fixture', '~mode': 'danger-full-access' }, chooseAgain: ['codex'] },
+      {
+        harnessId: 'codex',
+        model: { providerId: 'chat', model: 'm1' },
+        engineOptions: { '~mode': 'danger-full-access' },
+        chooseAgain: ['standard'],
+      },
+      { harnessId: 'codex', catalogAfter: { ...catalog, harnesses: [{ ...codex, status: 'unavailable' }] } },
+      { harnessId: 'no-context' },
+      { harnessId: 'offer' },
+      { harnessId: 'missing' },
+      { harnessId: 'standard', name: '' },
+      { harnessId: 'standard', name: '🙂'.repeat(41) },
+      { harnessId: 'standard', name: 'before\u202eafter' },
+      { harnessId: 'standard', defaultProjectId: 'missing' },
+      { harnessId: 'standard', avatar: { kind: 'face', bracket: 'round', eyes: 'dot', hue: 'neutral' } },
+      { harnessId: 'codex', model: { providerId: 'gemini', model: 'g1' } },
+      { harnessId: 'codex', model: { providerId: 'chat', model: 'm1', effort: 'high' } },
+      { harnessId: 'codex', model: { providerId: 'chat', model: 'm1', effort: 'invented' } },
+      { harnessId: 'codex', engineOptions: { '~mode': 'invented' } },
+      { harnessId: 'codex', engineOptions: { model: 'invented' } },
+      { harnessId: 'codex', model: { providerId: 'chat', model: 'm1' }, engineOptions: { model: 'gpt-fixture' } },
+      { harnessId: 'codex', engineOptions: { model: 'gpt-other', reasoning: 'high' } },
+      { harnessId: 'codex', engineOptions: { model: 'gpt-other', reasoning: 'medium' } },
+      { harnessId: 'standard', engineOptions: { '~mode': 'danger-full-access' } },
+    ]
+    const created = { id: `agt_${randomUUID()}`, revision: 1, harnessId: 'standard', name: 'A different display name' }
+    const result = await invoke({
+      operation: 'phoneHelperCreate',
+      catalog,
+      cases,
+      agents: [{ avatar: { hue: 'ink' } }],
+      responses: [created, { ...created, id: 'general' }, { ...created, revision: 0 }, { ...created, harnessId: 'foreign' }],
+    })
+    expect((result.ready as Array<{ id: string }>).map(item => item.id)).toEqual(['standard', 'codex', 'pi', 'mine'])
+    expect(result.waiting).toMatchObject([{ id: 'missing', reason: 'Fixture command unavailable' }])
+    expect(result.ready).toMatchObject([
+      { unasked: false },
+      { abilities: expect.arrayContaining(['memory', 'schedule']) },
+      { unasked: true, abilities: ['files'] },
+      { abilities: [] },
+    ])
+    const rows = result.cases as Array<{
+      accepted: boolean
+      body: Record<string, unknown>
+      sameHeldBytes: boolean
+      duplicateHeldRefused: boolean
+      createdIds: unknown[]
+    }>
+    expect(rows.map(row => row.accepted)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+    ])
+    expect(rows[0]).toMatchObject({
+      method: 'POST',
+      path: '/link/api/custom-agents',
+      body: {
+        name: 'Helper',
+        description: 'First\nSecond',
+        instructions: 'Keep this\nverbatim',
+        harnessId: 'standard',
+        mode: 'agent',
+        skills: [],
+        avatar: { hue: 'slate' },
+      },
+      createdIds: [created.id, null, null, null],
+    })
+    expect(rows[0]!.body).not.toHaveProperty('model')
+    expect(rows[0]!.body).not.toHaveProperty('engineOptions')
+    expect(rows[0]!.body).not.toHaveProperty('defaultProjectId')
+    expect(rows[1]!.body).toMatchObject({ engineOptions: { model: 'gpt-fixture', '~mode': 'danger-full-access' } })
+    expect(rows[2]!.body).not.toHaveProperty('model')
+    expect(rows[2]!.body).not.toHaveProperty('engineOptions')
+    for (const row of rows.filter(row => row.accepted)) expect(row).toMatchObject({ sameHeldBytes: true, duplicateHeldRefused: true })
+    const models = result.models as Record<string, Array<{ providerId: string; model: string; experimental: boolean }>>
+    for (const harness of [standard, codex, pi, own]) {
+      const expected = providers.flatMap(provider => {
+        const route = pairRoute(harness.capabilities, provider)
+        return ['direct', 'passthrough', 'translate'].includes(route.kind)
+          ? provider.models.map(model => ({
+              providerId: provider.id,
+              model,
+              experimental: 'experimental' in route && route.experimental === true,
+            }))
+          : []
+      })
+      expect(models[harness.id]).toEqual(
+        expected.map(model => ({ ...model, id: Buffer.from(`${model.providerId}\0${model.model}`).toString('base64url') })),
+      )
+    }
+    const knownOnly = {
+      ...catalog,
+      harnesses: [{ ...codex, capabilities: { ...codex.capabilities, models: { ...codex.capabilities.models, knownOnly: true } } }],
+      providers: [
+        {
+          id: 'chat',
+          name: 'Chat',
+          kind: 'openai-compatible',
+          models: ['vendor/GPT-FIXTURE-20261114', 'unlisted'],
+          defaultModel: 'unlisted',
+        },
+      ],
+    }
+    const restricted = await invoke({
+      operation: 'phoneHelperCreate',
+      catalog: knownOnly,
+      cases: [
+        { harnessId: 'codex', model: { providerId: 'chat', model: 'vendor/GPT-FIXTURE-20261114' } },
+        { harnessId: 'codex', model: { providerId: 'chat', model: 'unlisted' } },
+      ],
+    })
+    expect(restricted.cases).toMatchObject([{ accepted: true }, { accepted: false }])
+    const composed = 'caf\u00e9',
+      decomposed = 'cafe\u0301'
+    const unicode = {
+      ...catalog,
+      harnesses: [standard],
+      providers: [{ id: 'chat', name: 'Chat', kind: 'openai-compatible', models: [composed, decomposed], defaultModel: composed }],
+    }
+    const exact = await invoke({
+      operation: 'phoneHelperCreate',
+      catalog: unicode,
+      cases: [{ harnessId: 'standard', model: { providerId: 'chat', model: decomposed } }],
+    })
+    const exactModels = (exact.models as Record<string, Array<{ id: string; model: string }>>).standard!
+    expect(new Set(exactModels.map(model => model.id)).size).toBe(2)
+    expect(exact.cases).toMatchObject([{ accepted: true, body: { model: { model: decomposed } } }])
+  })
+
+  it('sends a Swift-created helper request to the real Host and resolves retries from its receipt without creating a topic', async () => {
+    const host = await startTestHost()
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const snapshot = await owner.json<AppSnapshot>('snapshot')
+      expect(snapshot.catalog?.harnesses.find(item => item.id === 'standard')?.helperCard).toEqual(BUILTIN_HELPER_CARD)
+      const input = {
+        operation: 'phoneHelperCreate',
+        catalog: snapshot.catalog,
+        cases: [{ harnessId: 'standard', name: 'Native fixture helper' }],
+      }
+      const drafted = await invoke(input)
+      const body = (drafted.cases as Array<{ body: Record<string, unknown> }>)[0]!.body
+      const created = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body })
+      expect(created).toMatchObject({ name: 'Native fixture helper', harnessId: 'standard', mode: 'agent' })
+      const retried = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body })
+      expect(retried.id).toBe(created.id)
+      const resolved = await invoke({ ...input, responses: [retried] })
+      expect(resolved.cases).toMatchObject([{ createdIds: [created.id] }])
+      const after = await owner.json<AppSnapshot>('snapshot')
+      expect(after.customAgents).toHaveLength(1)
+      expect(after.tasks).toHaveLength(0)
+    } finally {
+      await host.close()
+    }
+  })
+
+  it('keeps a native helper at home by default and refuses a project beyond its Harness folder limit', async () => {
+    const catalog = {
+      harnesses: [{ ...testHarness('limited'), agentContext: 'first-turn', projectFolders: { access: 'all', max: 1 } }],
+      providers: [],
+      workspaces: [
+        { id: 'default', name: 'Start folder', path: '/fixture' },
+        { id: 'single', name: 'Single', folders: [{ id: 'one', path: '/fixture/one' }] },
+        {
+          id: 'multiple',
+          name: 'Multiple',
+          folders: [
+            { id: 'one', path: '/fixture/one' },
+            { id: 'two', path: '/fixture/two' },
+          ],
+        },
+      ],
+    }
+    const result = await invoke({
+      operation: 'phoneHelperCreate',
+      catalog,
+      cases: ['multiple', 'single', 'default'].map(defaultProjectId => ({ harnessId: 'limited', defaultProjectId })),
+    })
+    const rows = result.cases as Array<{ accepted: boolean; body: Record<string, unknown> }>
+    expect(rows.map(row => row.accepted)).toEqual([false, true, true])
+    expect(rows[1]!.body).toHaveProperty('defaultProjectId', 'single')
+    expect(rows[2]!.body).not.toHaveProperty('defaultProjectId')
+  })
+
   it('projects the shared task stream vectors without mixing HTTP into the stream shadow or weakening source priority', async () => {
     const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/task-delta-v1.json'), 'utf8')) as {
       strings: Array<{ bytes: number | null }>

@@ -51,6 +51,7 @@ sources:
   - apps/web/src/agents/computer.ts
   - apps/web/src/agents/roleTemplates.ts
   - native/ios/Sources/LatchNativeCore/PhoneAgents.swift
+  - native/ios/Sources/LatchNativeCore/PhoneHelperCreate.swift
   - native/ios/App/Agents/AgentsView.swift
   - native/ios/Sources/LatchNativeCore/PhoneAgentChat.swift
   - native/ios/App/Agents/AgentChat.swift
@@ -93,6 +94,8 @@ Agent 是用户使用的那个东西：名称、头像、说明、指令、技�
 放弃绑定打开确认框时看见的那条记录，取得跨窗口锁后仍须是同一条，不能清掉另一个窗口后来开始的创建；损坏记录也按其原始内容区分。存储暂时无法读取时继续显示未知，并暂停重试、放弃和新建，直到能重新读到记录，不能把读取失败当作不存在。
 
 创建第二步的「换」只返回候选步骤，保留名字、职责、指令和头像；重新选择同一 Harness 保留模型，改选另一 Harness 回到它的默认模型。未按「创建」时取消不会写入 Host。
+
+Host 的 Harness 目录提供同一份公开 `helperCard` 预设，客户端仍按就绪状态、Agent 上下文和实际工具能力筛选。原生核心 `PhoneHelperCreate` 提供候选、草稿切换、模型/项目选择与创建请求构造，尚未接入 App 两步创建界面。创建时再次核对当前目录，不带 Code 的默认模型或权限；明确选定的服务模型、思考档位与原生配置须仍被支持。项目复用文件夹数量限制，「家」省略 `defaultProjectId`。待确认创建保留原 `NativePendingWrite` 字节和编号；进入新帮手只使用该提交的成功回执 ID，不从同名列表推断。
 
 ## 字段
 

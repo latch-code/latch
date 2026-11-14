@@ -1,4 +1,4 @@
-import type { AgentPreset } from './agent-presets.ts'
+import type { AgentPreset, HelperCard } from './agent-presets.ts'
 import type { AgentProbeResult } from './features.ts'
 import type { HarnessOwnMcp } from './mcp.ts'
 import type { ModeTier, SessionConfigOption, TaskMode } from './sessions.ts'
@@ -161,6 +161,8 @@ export interface CatalogueRead {
 export interface HarnessInfo {
   /** What it really does; see `HarnessCapabilities`. */
   capabilities: HarnessCapabilities
+  /** The same public preset card on every client; availability and actual capabilities still filter its abilities. */
+  helperCard?: HelperCard
   /** How an agent's instructions and memories reach this engine. Absent: they cannot, so no agent can run on it. */
   agentContext?: 'private' | 'first-turn'
   /** How an agent's skills reach it: loaded natively, or fetched from a read-only server. Absent: they do not. */

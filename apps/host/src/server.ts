@@ -43,6 +43,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { z } from 'zod'
 import {
   AGENT_PRESETS,
+  BUILTIN_HELPER_CARD,
   type AgentPreset,
   pairRoute,
   PROJECT_GLYPHS,
@@ -5611,7 +5612,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         },
         harnesses: [...hub!.drivers(), ...(mayDefine ? presetsToOffer() : [])].map(harness => {
           const reported = harness.attachmentsReported ?? reportedAttachments(harness)
-          return reported ? { ...harness, attachmentsReported: reported } : harness
+          const card =
+            harness.capabilities.permission.enforcement === 'latch'
+              ? BUILTIN_HELPER_CARD
+              : AGENT_PRESETS.find(preset => preset.id === harness.capabilities.display.mark)?.helperCard
+          const { helperCard: _ignored, ...info } = harness
+          return { ...info, ...(reported ? { attachmentsReported: reported } : {}), ...(card ? { helperCard: card } : {}) }
         }),
         providers: usableProviders().map(provider => summarizeProvider(provider, providerKindOf(provider.id))),
         unusableProviders: unusableProviders(),
