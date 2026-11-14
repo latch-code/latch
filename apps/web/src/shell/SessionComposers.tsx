@@ -541,6 +541,8 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
       fileMentions={mentionChoice}
       commands={selectedId === null ? cachedCommands?.commands : current?.commands}
+      skills={selectedId === null ? cachedCommands?.skills : current?.skills}
+      skillsTruncated={selectedId === null ? cachedCommands?.skillsTruncated : current?.skillsTruncated}
       commandSource={
         commandHarness
           ? {
@@ -857,6 +859,8 @@ export function SheetComposer({ shell }: { shell: ShellState }) {
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' ? attachmentDraft : undefined}
       templates={scopedTemplates(promptTemplates, choice.workspaceId ?? catalog?.defaults.workspaceId, choice.harnessId)}
       commands={cachedCommands?.commands}
+      skills={cachedCommands?.skills}
+      skillsTruncated={cachedCommands?.skillsTruncated}
       commandSource={
         shell.chosenHarness
           ? {

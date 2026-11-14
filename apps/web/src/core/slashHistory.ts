@@ -10,6 +10,7 @@ const markerKey = (origin: string) => `latch.slash-forgotten.${origin}`
 const contexts = new Map<string, { version: number; keep?: string }>()
 const safeId = (value: unknown): value is string =>
   typeof value === 'string' && value.length <= 256 && !/[\s\p{C}]/u.test(value) && !looksSecret(value)
+const harnessScoped = (id: string) => /^(command|skill):/u.test(id)
 
 /** IDs only: no labels, arguments, prompt bodies or paths are persisted. */
 export class SlashHistory {
@@ -41,9 +42,9 @@ export class SlashHistory {
       return raw.slice(0, 8).flatMap((value: unknown) => {
         if (!value || typeof value !== 'object') return []
         const entry = value as Record<string, unknown>
-        if (!safeId(entry.id) || !/^(action|template|command):.+/u.test(entry.id)) return []
-        if (entry.id.startsWith('command:') && !safeId(entry.harnessId)) return []
-        return [{ id: entry.id, ...(entry.id.startsWith('command:') ? { harnessId: entry.harnessId as string } : {}) }]
+        if (!safeId(entry.id) || !/^(action|template|command|skill):.+/u.test(entry.id)) return []
+        if (harnessScoped(entry.id) && !safeId(entry.harnessId)) return []
+        return [{ id: entry.id, ...(harnessScoped(entry.id) ? { harnessId: entry.harnessId as string } : {}) }]
       })
     } catch {
       return []
@@ -55,9 +56,9 @@ export class SlashHistory {
       .map(entry => entry.id)
   }
   record(id: string, harnessId: string | undefined): void {
-    if (!safeId(id) || !/^(action|template|command):.+/u.test(id)) return
-    if (id.startsWith('command:') && !safeId(harnessId)) return
-    const entry = { id, ...(id.startsWith('command:') ? { harnessId } : {}) }
+    if (!safeId(id) || !/^(action|template|command|skill):.+/u.test(id)) return
+    if (harnessScoped(id) && !safeId(harnessId)) return
+    const entry = { id, ...(harnessScoped(id) ? { harnessId } : {}) }
     try {
       if (!this.current()) return
       const previous = this.read().filter(item => item.id !== entry.id || item.harnessId !== entry.harnessId)

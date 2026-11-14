@@ -18,6 +18,19 @@ const storage = () => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('recent slash choices', () => {
+  it('keeps native skill choices under their Harness and never revives them after sign-out', () => {
+    storage()
+    const history = new SlashHistory('https://skills-host', 'device-a')
+    history.record('skill:$review', 'codex')
+    history.record('skill:/skill:notes', 'pi')
+    history.record('skill:$without-owner', undefined)
+    expect(history.ids('codex')).toEqual(['skill:$review'])
+    expect(history.ids('pi')).toEqual(['skill:/skill:notes'])
+    expect(history.ids(undefined)).toEqual([])
+    forgetStoredDrafts('https://skills-host')
+    history.record('skill:$review', 'codex')
+    expect(new SlashHistory('https://skills-host', 'device-a').ids('codex')).toEqual([])
+  })
   it('keeps eight unique IDs per device and scopes Harness commands without storing prompts', () => {
     const values = storage()
     const first = new SlashHistory('https://host', 'device-a')

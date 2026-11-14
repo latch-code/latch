@@ -7,7 +7,7 @@ import type { AppSnapshot, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { startFakeModels } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSession, settleShell } from './helpers/layout.ts'
 
 const binary = process.env.LATCH_CODEX_GATEWAY_BINARY
 it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
@@ -99,6 +99,8 @@ it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
         expect(JSON.stringify(detail)).not.toContain(skillPath)
         expect(service.requests).toHaveLength(1)
         expect(JSON.stringify(service.requests[0]?.body)).toContain(marker)
+        const continued = page.getByRole('textbox', { name: '继续对话', exact: true })
+        const menu = page.getByRole('listbox', { name: '命令与提示模板', exact: true })
         for (const [width, theme] of [
           [1440, 'light'],
           [768, 'dark'],
@@ -106,14 +108,33 @@ it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
         ] as const) {
           await page.setViewportSize({ width, height: 1000 })
           await page.emulateMedia({ colorScheme: theme })
+          await settleShell(page)
+          if (!(await continued.isVisible())) await openSession(page, id)
+          await continued.fill('/latch-ui-proof')
+          await menu.getByRole('option').first().waitFor()
           await noHorizontalOverflow(page)
-          await page.screenshot({ path: `${output}/completed-${width}-${theme}.png`, animations: 'disabled' })
+          await page.screenshot({ path: `${output}/picker-${width}-${theme}.png`, animations: 'disabled' })
+          await continued.press('Enter')
+          expect(await continued.inputValue()).toBe('$latch-ui-proof ')
+          expect(service.requests).toHaveLength(1)
         }
+        await page.setViewportSize({ width: 1440, height: 1000 })
+        await settleShell(page)
+        if (!(await continued.isVisible())) await openSession(page, id)
+        expect(await continued.inputValue()).toBe('$latch-ui-proof ')
+        await continued.press('End')
+        await continued.pressSequentially('请再次直接回答公开验证语句，不要运行工具。')
+        await continued.press('Meta+Enter')
+        await expect.poll(() => service!.requests.length).toBe(2)
+        await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status).toBe('idle')
+        expect(JSON.stringify(service.requests[1]?.body)).toContain(marker)
+        await page.screenshot({ path: `${output}/picker-completed.png`, animations: 'disabled' })
         await writeFile(
           `${output}/evidence.json`,
           JSON.stringify(
             {
               normalUi: true,
+              pickerInsertsWithoutSending: true,
               bodyMarkerReceived: true,
               currentSkillsHaveNoPath: true,
               modelRequests: service.requests.length,

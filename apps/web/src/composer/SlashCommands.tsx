@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode
 import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
 import { Button, CodeGlyph, FileGlyph, Icon, Kbd, Suggest } from '@latch/ui'
+import { BookOpen } from 'lucide-react'
 import { BrandMark } from '../components/ui.tsx'
 import { matchSlash, slashToken } from './slash-match.ts'
 import { slashOptions, type SlashAction, type SlashContext, type SlashOption } from './slash-options.ts'
@@ -13,6 +14,8 @@ export function useSlashCommands({
   draft,
   caret = draft.length,
   commands = [],
+  skills = [],
+  skillsTruncated = false,
   templates = [],
   actions = [],
   enabled,
@@ -30,6 +33,7 @@ export function useSlashCommands({
   draft: string
   caret?: number
   commands?: readonly SessionCommand[]
+  skillsTruncated?: boolean
   templates?: readonly PromptTemplate[]
   actions?: readonly SlashAction[]
   enabled: boolean
@@ -53,7 +57,7 @@ export function useSlashCommands({
     () => (historyScope ? new SlashHistory(location.origin, historyScope.deviceId) : undefined),
     [historyScope?.deviceId],
   )
-  const available = slashOptions(word, commands, templates, actions, { running, firstTurn, session })
+  const available = slashOptions(word, commands, templates, actions, { running, firstTurn, session, skills })
   const recent =
     token && !token.query
       ? (history
@@ -130,6 +134,8 @@ export function useSlashCommands({
     harnessMedia,
     previousSession,
     awaitingSession,
+    skillsTruncated,
+    enterLabel: options[active]?.kind === 'command' && !options[active]?.inputHint && !running && !previousSession ? '运行' : '选择',
     reportedCommands: commands.length,
     setActive: (index: number) => {
       const option = options[index]
@@ -140,8 +146,8 @@ export function useSlashCommands({
 
 function highlighted(text: string, query: string): ReactNode {
   const safe = escapeSecurityText(text)
-  const match = matchSlash(safe.replace(/^\//u, ''), query)
-  const offset = safe.startsWith('/') ? 1 : 0
+  const match = matchSlash(safe.replace(/^[/\$]/u, ''), query)
+  const offset = /^[/\$]/u.test(safe) ? 1 : 0
   const positions = new Set(match?.positions.map(position => position + offset))
   let index = 0
   return Array.from(safe).map(character => {
@@ -164,6 +170,7 @@ export function SlashCommands({
     recent: '最近',
     action: 'Latch',
     template: '提示模板',
+    skill: '技能' + (menu.previousSession ? '（上次会话）' : ''),
     command: menu.harnessName + (menu.previousSession ? '（上次会话）' : ''),
   }
   const noCommands = menu.awaitingSession
@@ -175,13 +182,19 @@ export function SlashCommands({
     recent: undefined,
     action: <BrandMark size={16} />,
     template: <Icon icon={FileGlyph} size={16} />,
+    skill: <Icon icon={BookOpen} size={16} />,
     command: menu.harnessMedia ?? <Icon icon={CodeGlyph} size={16} />,
   }
   const groups = menu.query
     ? ['search' as const]
-    : (['recent', 'command', 'template', 'action'] as const).filter(
+    : (['recent', 'command', 'skill', 'template', 'action'] as const).filter(
         kind => kind === 'command' || menu.options.some(option => (option.recent ? 'recent' : option.kind) === kind),
       )
+  const empty = menu.query
+    ? latchActionOf('/' + menu.query)
+      ? '这个动作在当前页面不可用'
+      : `没有「/${escapeSecurityText(menu.query)}」· Enter 原样发给 ${menu.harnessName}`
+    : noCommands
   return (
     <Suggest
       id={menu.id}
@@ -195,45 +208,57 @@ export function SlashCommands({
         if (option) menu.select(option)
       }}
       onDismiss={menu.dismiss}
-      groups={groups.map(kind => ({
-        id: kind,
-        ...(kind !== 'search' ? { label: labels[kind], media: media[kind] } : {}),
-        ...(kind === 'command' && !menu.reportedCommands
-          ? {
-              empty: (
-                <>
-                  <span>{noCommands}</span>
-                  {onCreateTemplate && (
-                    <Button size="xs" variant="ghost" onClick={onCreateTemplate}>
-                      新建提示模板
-                    </Button>
-                  )}
-                </>
-              ),
-            }
-          : {}),
-        items: menu.options.flatMap((option, index) =>
-          kind !== 'search' && (option.recent ? 'recent' : option.kind) !== kind
-            ? []
-            : [
-                {
-                  id: menu.id + '-' + index,
-                  label: highlighted(option.label, menu.query),
-                  description: escapeSecurityText(option.description),
-                  ...(option.inputHint ? { hint: escapeSecurityText(option.inputHint) } : {}),
-                  ...(kind === 'search' ? { source: labels[option.kind], media: media[option.kind] } : {}),
-                  disabled: option.unavailable,
-                },
-              ],
-        ),
-      }))}
-      empty={
-        menu.query
-          ? latchActionOf('/' + menu.query)
-            ? '这个动作在当前页面不可用'
-            : `没有「/${escapeSecurityText(menu.query)}」· Enter 原样发给 ${menu.harnessName}`
-          : noCommands
-      }
+      groups={[
+        ...groups.map(kind => ({
+          id: kind,
+          ...(kind !== 'search' ? { label: labels[kind], media: media[kind] } : {}),
+          ...(kind === 'command' && !menu.reportedCommands
+            ? {
+                empty: (
+                  <>
+                    <span>{noCommands}</span>
+                    {onCreateTemplate && (
+                      <Button size="xs" variant="ghost" onClick={onCreateTemplate}>
+                        新建提示模板
+                      </Button>
+                    )}
+                  </>
+                ),
+              }
+            : {}),
+          items: menu.options.flatMap((option, index) =>
+            kind !== 'search' && (option.recent ? 'recent' : option.kind) !== kind
+              ? []
+              : [
+                  {
+                    id: menu.id + '-' + index,
+                    label: highlighted(option.label, menu.query),
+                    description: escapeSecurityText(option.description),
+                    ...(option.inputHint ? { hint: escapeSecurityText(option.inputHint) } : {}),
+                    ...(kind === 'search'
+                      ? {
+                          source: option.source ? `${labels[option.kind]} · ${option.source}` : labels[option.kind],
+                          media: media[option.kind],
+                        }
+                      : option.source
+                        ? { source: option.source }
+                        : {}),
+                    disabled: option.unavailable,
+                  },
+                ],
+          ),
+        })),
+        ...(menu.skillsTruncated
+          ? [
+              {
+                id: 'skill-limit',
+                items: [],
+                empty: <span role="status">{menu.query && !menu.options.length ? `${empty}。` : ''}仅列出部分技能</span>,
+              },
+            ]
+          : []),
+      ]}
+      empty={empty}
       footer={
         <>
           <span>
@@ -243,7 +268,7 @@ export function SlashCommands({
             <Kbd>Tab</Kbd> 补全
           </span>
           <span>
-            <Kbd>⏎</Kbd> {menu.previousSession ? '选择' : '运行'}
+            <Kbd>⏎</Kbd> {menu.enterLabel}
           </span>
           <Kbd>Esc</Kbd>
         </>

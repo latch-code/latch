@@ -506,7 +506,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 | ACP 的原生分叉（`session/fork`） | 未实现；Codex 等 Agent 声明的 `session/fork` 只能分叉整个会话（从某一轮分叉的位置在其他客户端的私有 `_meta` 里，Latch 不借用），新进程能否分叉另一个进程的会话还没有用真实 Agent 核对。现在 pi 以外的 Harness 的分叉都由 Host 以背景文本开启新会话 |
 | 回答 pi 扩展的选择题与输入框 | 未实现；它们回答「已取消」并写进会话 |
 | 只有主文件夹的 Codex 会话把 `.agents/skills/` 计入启动指纹 | 尚未实现；原生技能目录读取已接入，但没有扩展这个指纹范围 |
-| Web 与 iOS 的原生技能选择菜单 | 尚未实现；后端已有公开目录和精确调用，当前可手动输入 Codex `$name`，pi 保留原有 `/skill:name` 补全 |
+| iOS 的原生技能选择菜单 | 尚未实现；Web 命令菜单已按真实目录提供技能，iOS 仍可手动输入原生调用文字 |
 | Qwen Code、goose 经 Latch 使用模型服务 | 未实现；尚未接好各自选择服务的配置，模型菜单收起的那一行点开后写「尚未实现」 |
 | 其他协议翻译方向 | 未实现；当前只开放 Responses/Anthropic→Chat 与 Responses↔Anthropic，其余组合列出但不能选 |
 
@@ -534,7 +534,7 @@ pi 在打开或加载会话时复用 `get_commands`，只采用实际报告的 e
 
 线的可选 `commandsWithoutContext` 区分必须保留原生前缀的命令与只限空闲的命令。只有完整首词与线确认的命令集合一致才省略本次人物 brief；没有输入参数的原生命令同样不消耗 brief，下一条普通消息继续携带它。未知名字或读取目录失败不省略 brief；Codex 不把多文本上下文块当作原生命令。未携带 brief 的用户消息不标记 `agentBrief`。
 
-**原生技能。** 可选 `TaskDetail.skills` 与 `HarnessCommandCatalogue.skills` 保存公开的 `name`、精确 `invocation`、可选 `description` 和已知 `scope`，不含路径、正文或 `sourceInfo`。旧 `commands` 保持兼容：Codex 的 `$name` 不放进斜杠命令，pi 的 `/skill:name` 继续保留，新增 skills 不重复 legacy 说明。目录最多 200 项，包含 JSON 包装和截断标记的 UTF-8 总量不超过 64 KiB；先保名称，再分配可选说明。仅省略说明不算目录截断，名称本身或数量超限时以 `skillsTruncated:true` 明示，随会话与缓存持久化。Host 再次校验字段和预算，拒绝夹带私有字段。Web 与 iOS 技能选择菜单尚未接入。
+**原生技能。** 可选 `TaskDetail.skills` 与 `HarnessCommandCatalogue.skills` 保存公开的 `name`、精确 `invocation`、可选 `description` 和已知 `scope`，不含路径、正文或 `sourceInfo`。旧 `commands` 保持兼容：Codex 的 `$name` 不放进斜杠命令，pi 的 `/skill:name` 继续保留，新增 skills 不重复 legacy 说明。目录最多 200 项，包含 JSON 包装和截断标记的 UTF-8 总量不超过 64 KiB；先保名称，再分配可选说明。仅省略说明不算目录截断，名称本身或数量超限时以 `skillsTruncated:true` 明示，随会话与缓存持久化。Host 再次校验字段和预算，拒绝夹带私有字段。Web 命令菜单把这些项放在技能组，Codex 插入 `$name `，pi 插入 `/skill:name `；已列为技能的 pi 命令不再重复显示在 Harness 组。点按、Tab、Enter 均只插入草稿，最近选择按 Harness 隔离，目录截断时显示「仅列出部分技能」。iOS 独立技能菜单尚未接入。
 
 Codex 直连开 thread 或恢复时，以实际 cwd 调用 0.167 的 `skills/list {cwds:[cwd],forceReload:true}`；原生路径只留在当前 wire 的完整 enabled 映射里，不从客户端或提示内容接收路径。`skills/changed` 立即清空映射后重新读取，重叠读取合并，旧代次回答不得恢复旧路径。读取失败或目录不完整时撤下当前目录，错误中的私有路径不外发。不读取 CLI 存储，不另外启动探测进程。公开目录的数量与字节截断不截断当前 wire 的合规调用映射，原生 RPC 帧上限不变。
 
@@ -549,14 +549,6 @@ Host 队列只在明确 runOutcome=completed 后自动派发。ACP 只有 sessio
 ACP 附件只走 `session/prompt` 的内容块。initialize 的 `promptCapabilities.image` 和 `embeddedContext` 必须各自为 true；Probe 缺少字段不代表支持，实际启动后再次核对。图片为 base64 image，文本为含 `latch-attachment:<id>` URI 和正文的 embedded resource，不在项目创建文件。Agent 输出图片通过 Host 回调存为会话附件，任务快照只写引用。含附件会话的 stderr 不进入 Host 日志，RPC 失败也不回显附件；具体限额和授权见 [ATTACHMENTS.md](ATTACHMENTS.md)。
 
 显式 `fileRefs` 由 Host 对固定目录再次验证，ACP 仅在本轮模型输入里追加真实目录映射，公开消息保留原文与引用 metadata。附件及文件引用 schema 都随会话持久化；假进程回归覆盖实际协商、内容块、图片输出与重启。
-
-**原生技能。** 可选 `TaskDetail.skills` 与 `HarnessCommandCatalogue.skills` 保存公开的 `name`、精确 `invocation`、可选 `description` 和已知 `scope`，不含路径、正文或 `sourceInfo`。旧 `commands` 保持兼容：Codex 的 `$name` 不放进斜杠命令，pi 的 `/skill:name` 继续保留，新增 skills 不重复 legacy 说明。目录最多 200 项，包含 JSON 包装和截断标记的 UTF-8 总量不超过 64 KiB；先保名称，再分配可选说明。仅省略说明不算目录截断，名称本身或数量超限时以 `skillsTruncated:true` 明示，随会话与缓存持久化。Host 再次校验字段和预算，拒绝夹带私有字段。Web 与 iOS 技能选择菜单尚未接入。
-
-Codex 直连开 thread 或恢复时，以实际 cwd 调用 0.167 的 `skills/list {cwds:[cwd],forceReload:true}`；原生路径只留在当前 wire 的完整 enabled 映射里，不从客户端或提示内容接收路径。`skills/changed` 立即清空映射后重新读取，重叠读取合并，旧代次回答不得恢复旧路径。读取失败或目录不完整时撤下当前目录，错误中的私有路径不外发。不读取 CLI 存储，不另外启动探测进程。公开目录的数量与字节截断不截断当前 wire 的合规调用映射，原生 RPC 帧上限不变。
-
-Host 在增加人物 brief、文件引用、撤销说明、seed 与历史之前保留本轮原文，只经内部调用上下文传给运行时与 wire；不接受公共 HTTP 的来源声明，不改变请求哈希、队列或回执。分叉仅在原文与已核对的完整输入一致时扣除已验证的背景前缀。Codex 只从该原文的完整空白分隔 `$name` 匹配官方清单，补充 `{type:'skill',name,path}`；原文字仍照常发送。未知、带前后缀、转义或引号包围的名字保持文字，同名 enabled 项明确拒绝，追加时也不改成另开一轮。没有原文证据时不扫描完整 prompt 兜底。它只限定 Latch 生成的结构化项，不限制 CLI 或模型自己的行为，也不是沙箱。
-
-技能公开元数据沿会话和原有命令缓存保存；缓存复用同一项目、目录身份、启动指纹与来源会话可见性检查，读取不启动 CLI。恢复出的缓存仅是上次会话的建议，不能给当前结构化调用提供路径；新 wire 必须重新读取官方目录。磁盘变化没有额外主动探测，仍需 CLI 的目录变更通知或下次打开时重读。
 
 分叉由 Host 以一条背景文本加新输入开启会话，ACP 不需要私有分叉方法；仍是新的启动。pi 在同一定义、同一文件夹内用它自己的分叉，见「pi 的 RPC 模式」。用户消息的 requestId 在 ACP 存储中保留，用于关联确认后的输入与客户端待发送气泡。
 

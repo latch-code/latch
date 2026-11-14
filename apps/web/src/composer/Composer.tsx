@@ -4,7 +4,7 @@ import type { MenuSection } from '../components/overlays.tsx'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { CornerDownRight, ListPlus, Slash } from 'lucide-react'
-import { escapeSecurityText, type PromptTemplate, type SessionCommand } from '@latch/protocol'
+import { escapeSecurityText, type PromptTemplate, type SessionCommand, type SessionSkill } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
@@ -84,6 +84,8 @@ function sizeComposerInput(element: HTMLTextAreaElement | null) {
 export function Composer({
   textareaRef,
   commands,
+  skills,
+  skillsTruncated,
   commandSource,
   historyScope,
   onCreateTemplate,
@@ -146,6 +148,8 @@ export function Composer({
   attachmentMenu?: MenuSection[]
   templates?: PromptTemplate[]
   commands?: SessionCommand[]
+  skills?: SessionSkill[]
+  skillsTruncated?: boolean
   commandSource?: { name: string; media?: ReactNode; firstTurn?: boolean; previousSession?: boolean; awaitingSession?: boolean }
   historyScope?: { deviceId: string; harnessId?: string }
   onCreateTemplate?: () => void
@@ -315,6 +319,8 @@ export function Composer({
     draft,
     caret: slashCaret?.draft === draft ? slashCaret.at : draft.length,
     commands,
+    skills,
+    skillsTruncated,
     templates,
     harnessName: commandSource?.name,
     harnessMedia: commandSource?.media,

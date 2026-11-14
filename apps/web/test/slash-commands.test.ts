@@ -2,6 +2,38 @@ import { describe, expect, it } from 'vitest'
 import { slashMatches, slashOptions } from '../src/composer/SlashCommands.tsx'
 import { latchActionOf } from '../src/composer/latchActions.ts'
 describe('advertised slash commands', () => {
+  it('groups only declared skills, preserves native invocations and removes duplicate legacy skill commands', () => {
+    const skills = [
+      { name: 'review', invocation: '$review', description: '检查改动', scope: 'project' as const },
+      { name: 'notes', invocation: '/skill:notes', scope: 'user' as const },
+    ]
+    const result = slashOptions('/', [{ name: 'review' }, { name: 'skill:notes' }, { name: 'skill:legacy' }], [], [], { skills })
+    expect(result.map(option => [option.kind, option.label])).toEqual([
+      ['command', '/review'],
+      ['command', '/skill:legacy'],
+      ['skill', '$review'],
+      ['skill', '/skill:notes'],
+    ])
+    expect(result[2]).toMatchObject({ text: '$review ', source: '项目' })
+    expect(result[3]).toMatchObject({ text: '/skill:notes ', source: '个人' })
+    expect(slashOptions('请 /review', [{ name: 'review' }], [], [], { skills, firstTurn: true, running: true })).toMatchObject([
+      { kind: 'skill', label: '$review', text: '$review ' },
+    ])
+    expect(slashOptions('/tmp/review', [], [], [], { skills })).toEqual([])
+    expect(slashOptions('/检', [], [], [], { skills })[0]?.label).toBe('$review')
+    expect(slashOptions('请 /notes', [], [], [], { skills })).toEqual([])
+    expect(slashOptions('/公开', [{ name: 'skill:notes', description: '读取公开说明' }], [], [], { skills })).toMatchObject([
+      { kind: 'skill', label: '/skill:notes', description: '读取公开说明' },
+    ])
+  })
+  it('keeps every advertised skill reachable and never supplies an execution handler', () => {
+    const skills = Array.from({ length: 200 }, (_, index) => ({ name: `proof-${index}`, invocation: `$proof-${index}` }))
+    const result = slashOptions('/', [], [], [], { skills })
+    expect(result).toHaveLength(200)
+    expect(result.at(-1)).toMatchObject({ kind: 'skill', label: '$proof-199', text: '$proof-199 ' })
+    expect(result.every(option => option.run === undefined && option.unavailable === undefined)).toBe(true)
+    expect(slashOptions('/proof-199', [], [], [], { skills })[0]?.label).toBe('$proof-199')
+  })
   it('reserves all eight Latch actions even when not offered here, without intercepting paths or inline text', () => {
     expect(slashOptions('/', [{ name: 'clear' }, { name: 'MODEL' }, { name: 'init' }], [])).toMatchObject([{ label: '/init' }])
     expect(latchActionOf('／MODEL deepseek')).toEqual({ name: 'model', argument: 'deepseek' })

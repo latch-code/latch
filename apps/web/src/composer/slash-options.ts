@@ -1,4 +1,4 @@
-import type { PromptTemplate, SessionCommand } from '@latch/protocol'
+import type { PromptTemplate, SessionCommand, SessionSkill } from '@latch/protocol'
 import { matchSlash, slashToken } from './slash-match.ts'
 import { isLatchAction } from './latchActions.ts'
 
@@ -27,7 +27,7 @@ export interface SlashAction {
 export interface SlashOption {
   recent?: true
   id: string
-  kind: 'action' | 'template' | 'command'
+  kind: 'action' | 'template' | 'command' | 'skill'
   label: string
   description: string
   text: string
@@ -35,14 +35,17 @@ export interface SlashOption {
   inputHint?: string
   run?: (argument?: string) => void
   unavailable?: true
+  source?: string
 }
 
 export interface SlashContext {
   running?: boolean
   firstTurn?: boolean
   session?: boolean
+  skills?: readonly SessionSkill[]
 }
-const ORDER = { command: 0, template: 1, action: 2 }
+const ORDER = { command: 0, skill: 1, template: 2, action: 3 }
+const SKILL_SCOPE = { project: '项目', user: '个人', system: '系统', admin: '管理', temporary: '临时' }
 
 export function slashOptions(
   draft: string,
@@ -54,11 +57,13 @@ export function slashOptions(
   const token = slashToken(draft)
   if (!token) return []
   const query = token.query
+  const skills = context.skills ?? []
   const score = (name: string, description: string) => matchSlash(name, query, description)?.score ?? Infinity
   const options: SlashOption[] = [
     ...(token.initial
       ? commands
           .filter(command => !isLatchAction(command.name.toLowerCase()) && !actions.some(action => action.name === command.name))
+          .filter(command => !skills.some(skill => skill.invocation === '/' + command.name))
           .map(command => {
             const unavailable = context.firstTurn
               ? '第一条消息之后可用'
@@ -77,6 +82,20 @@ export function slashOptions(
             }
           })
       : []),
+    ...skills
+      .filter(skill => token.initial || skill.invocation.startsWith('$'))
+      .map(skill => {
+        const description = skill.description ?? commands.find(command => '/' + command.name === skill.invocation)?.description ?? ''
+        return {
+          id: 'skill:' + skill.invocation,
+          kind: 'skill' as const,
+          label: skill.invocation,
+          description,
+          text: skill.invocation + ' ',
+          score: Math.min(score(skill.name, description), score(skill.invocation.slice(1), description)),
+          ...(skill.scope ? { source: SKILL_SCOPE[skill.scope] } : {}),
+        }
+      }),
     ...templates.map(template => {
       const slug = !RANDOM_ID.test(template.id)
       const description = template.content.split('\n').find(line => line.trim()) ?? ''
