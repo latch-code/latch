@@ -568,7 +568,10 @@ it('pairs on the LAN only, then uses a private relay, and preserves recovery and
   }
   await vi.waitFor(async () => expect(await denied()).toBe(true), { timeout: 5000 })
   expect(host.host.security.devices.nativeRevocations().find(item => item.id === prepared.deviceId)?.acknowledged).toBe(true)
-  await vi.waitFor(() => expect(deny.mock.calls.length).toBeGreaterThanOrEqual(3), { timeout: 3000 })
+  // One denial for each route whose passes are still good: today's and tomorrow's, and yesterday's for the first fifteen
+  // minutes of the day. The node refuses one for a route past that and closes the Host's connection.
+  const live = (Date.now() / 1000) % 86_400 <= 900 ? 3 : 2
+  await vi.waitFor(() => expect(deny.mock.calls.length).toBeGreaterThanOrEqual(live), { timeout: 3000 })
   expect(
     (await desktop.request('policy', { method: 'PATCH', body: { hostEgressAllow: { remove: [`localhost:${relay.port}`] } } })).status,
   ).toBe(200)
@@ -577,7 +580,7 @@ it('pairs on the LAN only, then uses a private relay, and preserves recovery and
   expect(
     (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`localhost:${relay.port}`] } } })).status,
   ).toBe(200)
-  await vi.waitFor(() => expect(deny.mock.calls.length).toBeGreaterThanOrEqual(3), { timeout: 5000 })
+  await vi.waitFor(() => expect(deny.mock.calls.length).toBeGreaterThanOrEqual(live), { timeout: 5000 })
   expect(await denied()).toBe(true)
   expect(observedTls.inner).toBeGreaterThan(0)
   expect(observedTls.outer).toBeGreaterThan(0)
