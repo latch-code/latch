@@ -5,6 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { strToU8, zipSync } from 'fflate'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import type { AppSnapshot } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -83,9 +84,10 @@ describe('the right panel', () => {
     const name = `Panel ${width} ${theme} ${randomUUID()}`
     await enrollBrowser(page, host, { name, scopes: ['admin'] })
     const owner = await host.enroll({ listener: 'unix' })
-    const { devices } = await owner.json<{ devices: Array<{ id: string; name: string }> }>('devices')
-    const device = devices.find(item => item.name === name)!
-    expect((await owner.confirmed(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+    // By the page's own id: the Host renumbers a name that reads like another device's in the 19 characters its
+    // confirmation shows, and these names differ only after that.
+    const id = await page.evaluate(async () => ((await (await fetch('/link/api/snapshot')).json()) as AppSnapshot).device.id)
+    expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
     await page.reload()
     await openSession(page, sessionId)
     await settleShell(page)

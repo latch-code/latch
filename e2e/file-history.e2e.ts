@@ -3,9 +3,10 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { expect, it } from 'vitest'
+import type { Device } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
-import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { openSession, settleShell } from './helpers/layout.ts'
 
 it('opens every tool edit of a file in the same column and keeps history available after deletion and reload', async () => {
@@ -71,6 +72,7 @@ it('opens every tool edit of a file in the same column and keeps history availab
       oldText: 'version 0\n',
       newText: 'version 1\n',
     })
+    const owner = await host.enroll({ listener: 'unix' })
     await mkdir('test-results/file-history', { recursive: true })
     for (const [width, theme] of [
       [390, 'light'],
@@ -82,16 +84,39 @@ it('opens every tool edit of a file in the same column and keeps history availab
       const page = await context.newPage()
       page.setDefaultTimeout(15_000)
       try {
-        await enrollBrowser(page, host, { name: `History ${width}`, scopes: ['admin'] })
+        const name = `History ${width} ${theme}`
+        await enrollBrowser(page, host, { name, scopes: ['admin'] })
         await openSession(page, sessionId)
-        // A device that cannot read the changes tab opens a file's recorded edits from the conversation.
+        // On the default work scope the Host sends the edits' paths without their bodies: the turn's file opens as the
+        // file this session wrote, and there is no recorded edit to show.
+        const limited = await page.evaluate(async id => JSON.stringify(await (await fetch(`/link/api/tasks/${id}`)).json()), sessionId)
+        expect(limited).toContain('report.txt')
+        expect(limited).not.toContain('version 1')
+        expect(limited).not.toContain('"diffs"')
         const toggle = page.getByRole('button', { name: '显示文件', exact: true })
         if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
         await page
           .getByRole('region', { name: '这一轮改动的文件', exact: true })
           .locator('button.summary-file', { hasText: 'report.txt' })
           .click()
+        const preview = page.getByRole('region', { name: '文件预览', exact: true })
         const history = page.getByRole('region', { name: '文件历史改动', exact: true })
+        await preview.getByText('version 2', { exact: true }).waitFor()
+        expect(await history.count()).toBe(0)
+        expect(await page.locator('.diff-line').count()).toBe(0)
+        expect(await page.locator('body').innerText()).not.toContain('version 1')
+        // The owner lets this browser read project files, as the device's switch does. The turn's files then open in the
+        // changes tab, and a file's own recorded edits from its tab.
+        const device = (await owner.json<{ devices: Device[] }>('devices')).devices.find(item => item.name === name)
+        expect(device?.dataScope).toBe('work')
+        expect((await owner.confirmed(`devices/${device!.id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+        await page.reload()
+        await connected(page)
+        await openSession(page, sessionId)
+        await page.locator('.turn-reply').getByRole('button', { name: '预览文件：report.txt', exact: true }).click()
+        await preview.getByText('version 2', { exact: true }).waitFor()
+        await preview.getByRole('button', { name: '文件操作', exact: true }).click()
+        await page.getByRole('menuitem', { name: '查看改动', exact: true }).click()
         await history.getByText('2 次工具修改', { exact: false }).waitFor()
         const first = history.getByRole('region', { name: '第 1 次修改', exact: true }),
           second = history.getByRole('region', { name: '第 2 次修改', exact: true })
@@ -124,7 +149,6 @@ it('opens every tool edit of a file in the same column and keeps history availab
         await page.screenshot({ path: `test-results/file-history/${width}-${theme}.png`, animations: 'disabled' })
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
         await history.getByRole('button', { name: '预览', exact: true }).click()
-        const preview = page.getByRole('region', { name: '文件预览', exact: true })
         await preview.getByText('version 2', { exact: true }).waitFor()
         await preview.getByRole('button', { name: '文件操作', exact: true }).click()
         await page.getByRole('menuitem', { name: '查看改动', exact: true }).click()

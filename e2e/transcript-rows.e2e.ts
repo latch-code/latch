@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { TaskDetail } from '@latch/protocol'
+import type { Device, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -167,8 +167,17 @@ describe('tool rows and command blocks', () => {
     })
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
-    await enrollBrowser(page, host, { name: touch ? '工具行 手机' : '工具行 电脑' })
+    const name = touch ? '工具行 手机' : '工具行 电脑'
+    await enrollBrowser(page, host, { name })
     await connected(page)
+    // The phone stays on the default work scope; the owner lets the computer read project files, as its switch does.
+    if (!touch) {
+      const device = (await owner.json<{ devices: Device[] }>('devices')).devices.find(item => item.name === name)
+      expect(device?.dataScope).toBe('work')
+      expect((await owner.confirmed(`devices/${device!.id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+      await page.reload()
+      await connected(page)
+    }
     return page
   }
   async function open(width: number, height: number, theme: 'light' | 'dark', title: string): Promise<Page> {
@@ -222,7 +231,10 @@ describe('tool rows and command blocks', () => {
           expect(await name.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
           expect(await long.locator('.tool-card-header').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
           const edit = page.locator('.tool-card[data-kind="edit"]').first()
-          expect(await edit.locator('.process-stat').innerText()).toBe('+3 −2')
+          await edit.waitFor()
+          // Line counts come from the diff bodies, which only a device that may read project files receives.
+          if (width < 768) expect(await edit.locator('.process-stat').count()).toBe(0)
+          else expect(await edit.locator('.process-stat').innerText()).toBe('+3 −2')
           await noHorizontalOverflow(page)
           await page.screenshot({ path: `${OUTPUT}/a-running--${width}--${theme}.png`, animations: 'disabled' })
         } catch (error) {

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { chromium, type Page } from '@playwright/test'
 import { expect, it } from 'vitest'
 import type { Device, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSection, settleShell } from './helpers/layout.ts'
@@ -107,7 +108,13 @@ it('renders the v8 empty, loading, many, limited, read-only and offline states f
       })
     },
   }
-  const host = await startTestHost({ demo: false, plugins: [plugin], providerId: 'state-model', hostName: '验收电脑' })
+  const host = await startTestHost({
+    uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+    demo: false,
+    plugins: [plugin],
+    providerId: 'state-model',
+    hostName: '验收电脑',
+  })
   const browser = await chromium.launch(browserLaunchOptions())
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN', reducedMotion: 'reduce' })
   const page = await context.newPage()
@@ -187,12 +194,20 @@ it('renders the v8 empty, loading, many, limited, read-only and offline states f
       }
       await layout(page, 'overview')
     }
-    // Work scope may read shared Code transcript evidence; project browsing and delivery remain unavailable.
+    // Work scope retains the pending operation and path, while file bodies, diffs and project delivery stay unavailable.
     await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
     await page.reload()
     await connected(page)
     await home.locator('.approval-panel').waitFor()
-    expect(await home.locator('.diff-line').count()).toBeGreaterThan(0)
+    expect(await home.locator('.diff-line').count()).toBe(0)
+    const limited = await page.evaluate(async id => {
+      const current: TaskDetail = await (await fetch(`/link/api/tasks/${id}`)).json()
+      return current.approvals[0]
+    }, ids[6]!)
+    expect(limited?.toolName).toBe('write_file')
+    expect(limited?.tool).not.toHaveProperty('diffs')
+    expect(JSON.stringify(limited)).toContain('settings-7.ts')
+    expect(JSON.stringify(limited)).not.toContain('export const keep')
     expect(await home.locator('[data-group="delivery"]').textContent()).toContain('这台设备不能读取项目改动')
     await shot(page, 'overview-limited', 1440, 'dark')
     await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all', scopes: ['view'] } })
@@ -225,6 +240,7 @@ it('renders the v8 empty, loading, many, limited, read-only and offline states f
     for (const theme of ['light', 'dark'] as const) await shot(page, 'overview-settings', 1440, theme)
   } finally {
     releaseRead?.()
+    await page.unrouteAll({ behavior: 'wait' })
     await context.setOffline(false)
     for (const id of ids) await host.host.bridge.cancel(id).catch(() => {})
     await context.close()

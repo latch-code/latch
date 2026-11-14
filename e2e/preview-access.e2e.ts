@@ -1,14 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { chromium, type Page } from '@playwright/test'
 import { strToU8, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import type { Device, FileMetadata, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { closeActiveFile, settleShell } from './helpers/layout.ts'
+
+const OUT = 'test-results/preview-access'
 
 async function showList(page: Page, width: number) {
   if (width === 900) {
@@ -52,7 +55,12 @@ describe('preview authority reduction', () => {
             })
           },
         },
-        host = await startTestHost({ demo: false, providerId: provider.id, plugins: [provider] }),
+        host = await startTestHost({
+          uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+          demo: false,
+          providerId: provider.id,
+          plugins: [provider],
+        }),
         browser = await chromium.launch(browserLaunchOptions()),
         context = await browser.newContext({
           viewport: { width, height: 1000 },
@@ -61,6 +69,7 @@ describe('preview authority reduction', () => {
         })
       context.setDefaultTimeout(15_000)
       try {
+        await mkdir(OUT, { recursive: true })
         const owner = await host.enroll({ listener: 'unix' }),
           source = join(host.root, 'access-project')
         await mkdir(source)
@@ -104,19 +113,13 @@ describe('preview authority reduction', () => {
         expect(device.dataScope).toBe('work')
         await showList(page, width)
         await page.locator(`[data-task-id="${created.sessionId}"]`).click()
-        const artifactLink = page
-            .getByRole('region', { name: '这一轮改动的文件', exact: true })
-            .locator('button.summary-file', { hasText: 'allowed.txt' }),
+        const artifactLink = page.locator('.turn-reply').getByRole('button', { name: '预览文件：allowed.txt', exact: true }),
           preview = page.getByRole('region', { name: '文件预览', exact: true })
-        // The card's row opens the change; the file itself is one button away.
-        const openArtifact = async () => {
-          const toggle = page.getByRole('button', { name: '显示文件', exact: true })
-          if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
-          await artifactLink.click()
-          await page.getByRole('region', { name: '文件历史改动', exact: true }).getByRole('button', { name: '预览', exact: true }).click()
-        }
-        await openArtifact()
+        const capture = (state: string) => page.screenshot({ path: `${OUT}/${kind}-${width}-${state}.png`, animations: 'disabled' })
+        // The actual reply's file chip resolves a permitted artifact without opening restricted file history.
+        await artifactLink.click()
         await preview.getByText(artifact, { exact: true }).waitFor()
+        await capture('work-artifact')
         await closeActiveFile(page)
         const allSnapshot = page.waitForResponse(
           async response =>
@@ -134,12 +137,21 @@ describe('preview authority reduction', () => {
           .click()
         await page.keyboard.press('Alt+Shift+e')
         const tree = page.getByRole('region', { name: '项目文件', exact: true })
-        await tree.getByRole('treeitem', { name: privateName, exact: true }).click()
+        // Not reproduced after one failure beside other builds: say what the tree showed instead (a refused or timed-out
+        // listing reads as its own line there).
+        await tree
+          .getByRole('treeitem', { name: privateName, exact: true })
+          .click()
+          .catch(async (cause: unknown) => {
+            const shown = (await tree.count()) ? await tree.innerText() : 'no project tree on the page'
+            throw new Error(`The project tree did not list ${privateName}; it shows: ${shown}`, { cause })
+          })
         const frame = kind === 'docx' ? page.frameLocator('iframe[title="文档预览"]') : undefined
         if (frame) await frame.getByText(marker, { exact: true }).waitFor()
         else await preview.getByText(marker, { exact: true }).waitFor()
         const originalFrame = kind === 'docx' ? page.frames().find(frame => frame.url().includes('/preview-frame/office.html')) : undefined
         if (kind === 'docx') expect(originalFrame).toBeDefined()
+        await capture('all-workspace')
         let metaRequests = 0
         page.on('request', request => {
           if (/\/link\/api\/files\/[^/]+\/meta$/u.test(request.url())) metaRequests++
@@ -162,6 +174,7 @@ describe('preview authority reduction', () => {
         await expect.poll(() => page.locator('iframe[title="文档预览"]').count()).toBe(0)
         if (originalFrame) expect(originalFrame.isDetached()).toBe(true)
         expect(metaRequests).toBe(0)
+        await capture('work-cleared')
         const requests: string[] = []
         page.on('request', request => {
           if (request.method() === 'POST' && request.url().endsWith('/tasks/' + created.sessionId + '/files/resolve'))
@@ -177,7 +190,7 @@ describe('preview authority reduction', () => {
             && response.url().endsWith('/tasks/' + created.sessionId + '/files/resolve')
             && (response.request().postDataJSON() as { paths?: string[] }).paths?.includes('allowed.txt') === true,
         )
-        await openArtifact()
+        await artifactLink.click()
         const reauthorized = await resolved
         expect(reauthorized.ok()).toBe(true)
         expect(((await reauthorized.json()) as { files: Array<{ status: string; file: FileMetadata }> }).files[0]?.status).toBe('ok')
@@ -186,6 +199,7 @@ describe('preview authority reduction', () => {
         expect(requests).toContain('bytes')
         expect((await owner.json<{ devices: Device[] }>('devices')).devices.find(item => item.id === device.id)?.dataScope).toBe('work')
         expect(metaRequests).toBe(0)
+        await capture('work-reauthorized')
       } finally {
         await context.close()
         await browser.close()
