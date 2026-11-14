@@ -106,13 +106,13 @@ extension PhoneModel {
         if let target, target != sessionId { if let key = target { attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachSend.movedWords }; return false }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, text.count <= 16_000,
               attachments.count <= PhoneAttachments.perMessage, attachments.isEmpty || (!queue && !steer) else { return false }
-        let current = generation
+        let current = generation, selected = sessionId, reading = contentGeneration
         do {
             guard canRun else { throw NativeFailure.forbidden }
             try await ensureVerified()
-            guard current == generation else { return false }
+            guard current == generation, selected == sessionId, reading == contentGeneration else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
-            let path = sessionId.map { "/link/api/tasks/" + $0 + "/prompt" } ?? "/link/api/tasks"
+            let path = selected.map { "/link/api/tasks/" + $0 + "/prompt" } ?? "/link/api/tasks"
             var fields: [String: NativeJSON] = ["prompt": .string(text)]
             if let nextModel, sessionId != nil { fields["model"] = .object(["providerId": .string(nextModel.providerId), "model": .string(nextModel.model)]) }
             if steer { fields["steer"] = .bool(true) }
@@ -121,7 +121,6 @@ extension PhoneModel {
             let fresh = sessionId.map { clearing.contains($0) && !queue && !steer } ?? false
             if fresh { fields["freshContext"] = .bool(true) }
             if !attachments.isEmpty { fields["attachmentIds"] = .array(attachments.map { .string($0) }) }
-            let selected = sessionId
             let sent = await submit(try NativePendingWrite(method: .post, path: path, fields: fields))
             if sent, fresh, pending.isEmpty, let selected { clearing.remove(selected) }
             return sent

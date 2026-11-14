@@ -103,6 +103,12 @@ struct LocalTextEditor: UIViewRepresentable {
     let placeholder: String
     var maximumLines: Int? = 6
     var focused: Binding<Bool>? = nil
+    var selection: Binding<NSRange>? = nil
+    var composing: Binding<Bool>? = nil
+    var selectionRequest: Binding<EditorSelectionRequest?>? = nil
+    var commandKeys: [String] = []
+    var onCommand: ((String) -> Void)? = nil
+    var suffixHint: String? = nil
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> LocalPromptView {
         let view = LocalPromptView(usingTextLayoutManager: true)
@@ -118,7 +124,25 @@ struct LocalTextEditor: UIViewRepresentable {
     private static var font: UIFont { UIFont.systemFont(ofSize: UIFontMetrics(forTextStyle: .body).scaledValue(for: 16)) }
     func updateUIView(_ view: LocalPromptView, context: Context) {
         context.coordinator.parent = self
-        if view.text != text { view.text = text }
+        context.coordinator.applying = true
+        defer { context.coordinator.applying = false }
+        var selectionChanged = false
+        if view.text != text {
+            view.text = text
+            if selection != nil { view.selectedRange = NSRange(location: text.utf16.count, length: 0); selectionChanged = true }
+        }
+        view.completionKeys = commandKeys; view.completionCommand = onCommand
+        if view.commandHint != suffixHint { view.commandHint = suffixHint; view.setNeedsLayout() }
+        view.accessibilityHint = suffixHint
+        if let request = selectionRequest?.wrappedValue, view.markedTextRange == nil {
+            let count = (view.text ?? "").utf16.count
+            if request.text.utf8.elementsEqual((view.text ?? "").utf8), request.range.location <= count,
+               request.range.length <= count - request.range.location { view.selectedRange = request.range; selectionChanged = true }
+            DispatchQueue.main.async { [weak coordinator = context.coordinator] in
+                guard let coordinator, coordinator.parent.selectionRequest?.wrappedValue?.id == request.id else { return }
+                coordinator.parent.selectionRequest?.wrappedValue = nil
+            }
+        }
         view.accessibilityLabel = placeholder
         view.font = Self.font
         view.isScrollEnabled = maximumLines == nil
@@ -126,6 +150,11 @@ struct LocalTextEditor: UIViewRepresentable {
             // Changing the responder during a layout pass is refused, so it waits for the next turn.
             let wanted = focused.wrappedValue
             DispatchQueue.main.async { if wanted { view.becomeFirstResponder() } else { view.resignFirstResponder() } }
+        }
+        if selectionChanged {
+            DispatchQueue.main.async { [weak view, weak coordinator = context.coordinator] in
+                guard let view, view.window != nil else { return }; coordinator?.readSelection(view)
+            }
         }
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: LocalPromptView, context: Context) -> CGSize? {
@@ -137,10 +166,18 @@ struct LocalTextEditor: UIViewRepresentable {
     }
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: LocalTextEditor
+        var applying = false
         init(_ parent: LocalTextEditor) { self.parent = parent }
-        func textViewDidChange(_ textView: UITextView) { parent.text = textView.text ?? "" }
-        func textViewDidBeginEditing(_ textView: UITextView) { if parent.focused?.wrappedValue == false { parent.focused?.wrappedValue = true } }
-        func textViewDidEndEditing(_ textView: UITextView) { if parent.focused?.wrappedValue == true { parent.focused?.wrappedValue = false } }
+        func textViewDidChange(_ textView: UITextView) { parent.text = textView.text ?? ""; readSelection(textView) }
+        func textViewDidChangeSelection(_ textView: UITextView) { readSelection(textView) }
+        func readSelection(_ textView: UITextView) {
+            guard !applying else { return }
+            if let selection = parent.selection, selection.wrappedValue != textView.selectedRange { selection.wrappedValue = textView.selectedRange }
+            let marked = textView.markedTextRange != nil
+            if let composing = parent.composing, composing.wrappedValue != marked { composing.wrappedValue = marked }
+        }
+        func textViewDidBeginEditing(_ textView: UITextView) { readSelection(textView); if parent.focused?.wrappedValue == false { parent.focused?.wrappedValue = true } }
+        func textViewDidEndEditing(_ textView: UITextView) { readSelection(textView); if parent.focused?.wrappedValue == true { parent.focused?.wrappedValue = false } }
     }
 }
 
@@ -158,6 +195,38 @@ class LocalTextView: UITextView {
 }
 
 final class LocalPromptView: LocalTextView {
+    var completionKeys: [String] = []
+    var completionCommand: ((String) -> Void)?
+    var commandHint: String?
+    private var hintLabel: UILabel?
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let commandHint, markedTextRange == nil, let range = selectedTextRange, range.isEmpty else { hintLabel?.isHidden = true; return }
+        let label: UILabel
+        if let hintLabel { label = hintLabel }
+        else {
+            label = UILabel(); label.isUserInteractionEnabled = false; label.isAccessibilityElement = false
+            label.textColor = .placeholderText; label.lineBreakMode = .byTruncatingTail
+            addSubview(label); hintLabel = label
+        }
+        let caret = caretRect(for: range.end), width = max(0, bounds.width - caret.maxX - 4)
+        label.text = commandHint; label.font = font; label.isHidden = width < 12
+        label.frame = CGRect(x: caret.maxX + 4, y: caret.minY, width: width, height: caret.height)
+    }
+    override var keyCommands: [UIKeyCommand]? {
+        guard isFirstResponder, window != nil, markedTextRange == nil, completionCommand != nil else { return super.keyCommands }
+        let own = completionKeys.map { key in
+            let command = UIKeyCommand(input: key == "submit" ? "\r" : key,
+                modifierFlags: key == "submit" ? .command : [], action: #selector(runCompletion(_:)))
+            command.wantsPriorityOverSystemBehavior = true
+            return command
+        }
+        return own + (super.keyCommands ?? [])
+    }
+    @objc private func runCompletion(_ command: UIKeyCommand) {
+        guard isFirstResponder, window != nil, markedTextRange == nil, let input = command.input else { return }
+        completionCommand?(command.modifierFlags.contains(.command) ? "submit" : input)
+    }
     override func cut(_ sender: Any?) {
         guard isEditable, let selection = selectedTextRange, !selection.isEmpty else { return }
         copy(sender); replace(selection, withText: "")

@@ -1,5 +1,6 @@
 import LatchNativeCore
 import SwiftUI
+import UIKit
 
 /** The Agent a conversation frames, and what its header does. */
 struct AgentFrame {
@@ -186,6 +187,13 @@ private struct NewTopicView: View {
     @State private var prompt = ""
     @State private var sending = false
     @State private var focused = false
+    @StateObject private var slash = SlashComposerState()
+    @State private var slashSpace: CGFloat = 198
+    @State private var modelPicker = false
+    @State private var modelQuery = ""
+    @State private var openedHost: UUID?
+    @State private var openedContent: UUID?
+    @State private var delivered = false
     /** The picker the ＋ opened. */
     @State private var attachSource: AttachSource?
     @StateObject private var files = SessionFilePreview()
@@ -198,6 +206,17 @@ private struct NewTopicView: View {
     private var catalog: NativeJSON { model.snapshot["catalog"] }
     private var agent: NativeJSON { model.snapshot["customAgents"].array.first { $0["id"].string == frame.owner } ?? .null }
     private var harness: NativeJSON { PhoneStart.harness(catalog, choice.harnessId) }
+    private var slashContext: PhoneSlashContext {
+        var value = PhoneSlashContext(bodyOpen: model.agentAccess == .ready && model.connected && model.verifiedUntil.map { $0 > Date() } == true, canRun: model.canRun)
+        value.pending = sending || model.busy || !model.pending.isEmpty
+        value.firstTurn = true; value.harnessId = choice.harnessId; value.projectId = choice.workspaceId
+        if PhoneStart.usesServices(harness), !PhoneStart.models(catalog).isEmpty { value.actions.insert(.model) }
+        value.actionReasons[.new] = "已经在新话题里"
+        return value
+    }
+    private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: [], context: slashContext, focused: focused) }
+    private var slashRead: SlashReadKey { SlashReadKey(model: model, enabled: focused && slashContext.bodyOpen, retry: slash.retry) }
+    private var slashReason: String? { if case let .unavailable(reason) = PhoneSlash.action(prompt, context: slashContext) { reason } else { nil } }
     private var mine: [NativePendingWrite] { model.pending.filter { PhonePending.kind($0) == .topic(owner: frame.owner) } }
     private var blocker: String? {
         if !mine.isEmpty { return nil }
@@ -206,7 +225,10 @@ private struct NewTopicView: View {
         return PhoneAgents.blocker(catalog, agent: agent, choice: choice, connected: model.connected, canRun: model.canRun)
     }
     private var canSend: Bool {
-        blocker == nil && mine.isEmpty && !sending && !model.busy && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.tray(attachKey).isEmpty)
+        if PhoneSlash.actionOf(prompt) != nil {
+            if case .open = PhoneSlash.action(prompt, context: slashContext) { return !slash.composing }; return false
+        }
+        return blocker == nil && mine.isEmpty && !sending && !model.busy && !slash.composing && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.tray(attachKey).isEmpty)
     }
     /** Cards of runs that settled while the Agent had no topic: here until the next topic keeps them. */
     private var waiting: [PhoneScheduleResult] { model.agentResults[frame.owner] ?? [] }
@@ -235,10 +257,23 @@ private struct NewTopicView: View {
             choice = general ? PhoneAgentChat.generalChoice(catalog) : PhoneAgents.choice(catalog, agent: agent)
         }
         .modifier(AttachSupport(key: attachKey, selection: attachSelection, harness: harness, source: $attachSource))
+        .sheet(isPresented: $modelPicker) {
+            NavigationStack { ModelList(models: PhoneStart.models(catalog), chosen: $choice.model, initialQuery: modelQuery) }.presentationCornerRadius(28)
+        }
+        .onChange(of: prompt) { _, value in slash.changed(value) }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in slash.clear(); modelPicker = false }
+        .task(id: slashRead) { await slash.load(model, key: slashRead) }
+        .onAppear {
+            openedHost = model.generation; openedContent = model.privateSnapshot.epoch
+            if let held = model.takeDraft(for: attachKey) { prompt = held }
+        }
         // Not delivered, for certain: the text comes back into this input.
-        .onChange(of: model.returnedText[attachKey]) { _, value in if let value { prompt = PhonePending.joined(prompt, value); model.returnedText[attachKey] = nil } }
+        .onChange(of: model.returnedText[attachKey], initial: true) { _, value in if let value { prompt = PhonePending.joined(prompt, value); model.returnedText[attachKey] = nil } }
         // Leaving the new topic lets go of what was attached here, unless a start that carries them is still unconfirmed.
         .onDisappear {
+            slash.clear()
+            if !delivered, model.generation == openedHost, model.privateSnapshot.epoch == openedContent,
+               model.verifiedUntil.map({ $0 > Date() }) == true { model.holdDraft(prompt, for: attachKey) }
             if PhoneAttachments.dropsOnClose(key: attachKey, pending: model.pending, starting: sending, verifying: model.verifying, covered: false) { model.dropAttachments(attachKey) }
         }
     }
@@ -268,6 +303,12 @@ private struct NewTopicView: View {
             }
             if let blocker { Text(blocker).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(2).padding(.horizontal, 16).frame(maxWidth: .infinity, alignment: .leading) }
             AttachmentRows(key: attachKey, selection: attachSelection)
+            if let slashReason { Text(slashReason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16) }
+            if let menu = slashMenu {
+                SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: frame.entry.name, mark: PhoneStart.mark(harness), reportedCommands: 0,
+                    loading: slash.loading, failure: slash.failure, maximumHeight: slashSpace, retry: { slash.retry += 1 },
+                    choose: { slash.complete(menu, option: $0, text: $prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) }).padding(.horizontal, 12)
+            }
             field
         }.padding(.bottom, 8).padding(.top, 4)
     }
@@ -295,7 +336,12 @@ private struct NewTopicView: View {
         let placeholder = PhoneAgentChat.placeholder(frame.entry.name)
         return HStack(alignment: .bottom, spacing: 8) {
             AttachButton(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource, extra: AnyView(picks)).padding(.leading, -8).padding(.bottom, 8)
-            LocalTextEditor(text: $prompt, placeholder: placeholder, focused: $focused)
+            SlashInsertButton(disabled: !slashContext.bodyOpen || !slashContext.canRun || slashContext.pending || slash.composing) {
+                slash.insertSlash($prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending); focused = true
+            }.padding(.bottom, 8)
+            LocalTextEditor(text: $prompt, placeholder: placeholder, maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
+                selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
+                commandKeys: slashKeys, onCommand: slashKey, suffixHint: slash.hint(prompt, commands: [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
                 .overlay(alignment: .topLeading) {
                     if prompt.isEmpty { Text(placeholder).font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).lineLimit(1).allowsHitTesting(false).accessibilityHidden(true) }
                 }
@@ -314,14 +360,25 @@ private struct NewTopicView: View {
         .overlay(RoundedRectangle(cornerRadius: 26).stroke(PhoneTheme.lineStrong))
         .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
         .padding(.horizontal, 12)
+        .background(GeometryReader { proxy in Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in slashSpace = max(0, value - proxy.safeAreaInsets.top - 12) } })
         .disabled(!mine.isEmpty)
     }
     private func check(_ name: String, on: Bool) -> some View {
         Group { if on { Label(name, systemImage: "checkmark") } else { Text(name) } }
     }
     private func send() {
+        guard canSend, !slash.composing else { return }
+        switch PhoneSlash.action(prompt, context: slashContext) {
+        case .text: break
+        case .unavailable: return
+        case let .open(action, argument):
+            guard action == .model else { return }
+            modelQuery = argument; modelPicker = true; prompt = ""; slash.clear(); return
+        }
         sending = true
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = model.generation, content = model.privateSnapshot.epoch, reading = model.contentGeneration
+        let owner = frame.owner, chosenAgent = agent, chosen = choice, key = attachKey
         Task {
             var ids: [String] = []
             if !model.tray(attachKey).isEmpty {
@@ -329,12 +386,36 @@ private struct NewTopicView: View {
                 guard case let .success(value) = await model.attachmentsToSend(attachKey, target: nil) else { model.endAttachmentSend(attachKey); sending = false; return }
                 ids = value
             }
-            let done = await model.startTopic(owner: frame.owner, agent: agent, choice: choice, prompt: text, attachments: ids)
-            model.endAttachmentSend(attachKey)
+            guard model.generation == host, model.privateSnapshot.epoch == content, model.contentGeneration == reading else {
+                model.endAttachmentSend(key); sending = false; return
+            }
+            let done = await model.startTopic(owner: owner, agent: chosenAgent, choice: chosen, prompt: text, attachments: ids)
+            model.endAttachmentSend(key)
+            guard model.generation == host, model.privateSnapshot.epoch == content else { sending = false; return }
+            delivered = done
             prompt = PhoneAgentChat.promptAfterStart(prompt, pending: model.pending, owner: frame.owner, started: done)
             if done, let id = model.sessionId { started(id) }
             sending = false
         }
+    }
+    private var slashKeys: [String] {
+        var keys = canSend ? ["submit"] : []
+        guard let menu = slashMenu else { return keys }
+        keys.append(UIKeyCommand.inputEscape)
+        if menu.options.contains(where: { $0.unavailable == nil }) { keys += [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow] }
+        if slash.active(menu, text: prompt) != nil { keys += ["\t", "\r"] }
+        return keys
+    }
+    private func slashKey(_ key: String) {
+        guard !slash.composing else { return }
+        if key == "submit" { if canSend { send() }; return }
+        guard let menu = slashMenu else { return }
+        if key == UIKeyCommand.inputEscape { slash.dismiss(prompt); return }
+        if key == UIKeyCommand.inputUpArrow || key == UIKeyCommand.inputDownArrow { slash.move(menu, text: prompt, down: key == UIKeyCommand.inputDownArrow); return }
+        guard let selected = slash.active(menu, text: prompt), menu.options.indices.contains(selected) else { return }
+        let option = menu.options[selected]
+        guard slash.complete(menu, option: option, text: $prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) else { return }
+        if key == "\r", option.kind == .action { send() }
     }
     private func retry(_ pending: NativePendingWrite) {
         sending = true

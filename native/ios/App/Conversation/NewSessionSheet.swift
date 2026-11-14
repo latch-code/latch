@@ -1,5 +1,6 @@
 import LatchNativeCore
 import SwiftUI
+import UIKit
 
 /** A sheet as tall as what it holds: rows for what the session runs on, then the first message. */
 struct NewSessionSheet: View {
@@ -8,6 +9,8 @@ struct NewSessionSheet: View {
     @Environment(\.colorScheme) private var scheme
     /** 从这里分叉: the same sheet, keeping the source up to the turn it was opened from. */
     var fork: PhoneForkDraft? = nil
+    var initialChoice: PhoneStartChoice? = nil
+    var initialPrompt: String? = nil
     @State private var choice = PhoneStartChoice()
     @State private var prompt = ""
     @State private var height: CGFloat = 520
@@ -18,6 +21,26 @@ struct NewSessionSheet: View {
     @State private var importing: HistoryScope?
     /** The picker the ＋ opened. */
     @State private var attachSource: AttachSource?
+    @State private var focused = false
+    @StateObject private var slash = SlashComposerState()
+    @State private var slashSpace: CGFloat = 198
+    @State private var modelPicker = false
+    @State private var modelQuery = ""
+    @State private var openedHost: UUID?
+    @State private var openedContent: UUID?
+    @State private var delivered = false
+    private var draftKey: String { fork.map { "fork-" + $0.id } ?? PhoneModel.newSessionTray }
+    private var slashContext: PhoneSlashContext {
+        var value = PhoneSlashContext(bodyOpen: model.connected && model.verifiedUntil.map { $0 > Date() } == true, canRun: model.canRun)
+        value.pending = starting || model.busy || !model.pending.isEmpty; value.firstTurn = fork != nil
+        value.harnessId = choice.harnessId; value.projectId = choice.workspaceId
+        if PhoneStart.usesServices(harness), !PhoneStart.models(catalog).isEmpty { value.actions.insert(.model) }
+        value.actionReasons[.new] = "已经在新会话里"
+        return value
+    }
+    private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: [], context: slashContext, focused: focused) }
+    private var slashRead: SlashReadKey { SlashReadKey(model: model, enabled: focused && slashContext.bodyOpen, retry: slash.retry) }
+    private var slashReason: String? { if case let .unavailable(reason) = PhoneSlash.action(prompt, context: slashContext) { reason } else { nil } }
     private let attachKey = PhoneModel.newSessionTray
     /** A fork carries its source's conversation; attachments go with a plain new session only. */
     private var attaches: Bool { fork == nil }
@@ -33,6 +56,9 @@ struct NewSessionSheet: View {
     private var harness: NativeJSON { catalog["harnesses"].array.first { $0["id"].string == choice.harnessId } ?? .null }
     private var blocker: String? { PhoneStart.blocker(catalog, choice: choice) }
     private var canStart: Bool {
+        if PhoneSlash.actionOf(prompt) != nil {
+            if case .open = PhoneSlash.action(prompt, context: slashContext) { return !slash.composing }; return false
+        }
         let attached = attaches && !model.tray(attachKey).isEmpty
         return blocker == nil && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attached) && (fork == nil ? model.canRun : model.canFork) && !starting && model.pending.isEmpty
     }
@@ -63,13 +89,25 @@ struct NewSessionSheet: View {
                 if attaches && (!model.tray(attachKey).isEmpty || model.tray(attachKey).note != nil) {
                     AttachmentRows(key: attachKey, selection: attachSelection, inset: 0).padding(.vertical, 2)
                 }
-                LocalTextEditor(text: $prompt, placeholder: "要做什么？", maximumLines: 6)
+                if let slashReason { Text(slashReason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading) }
+                if let menu = slashMenu {
+                    SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: PhoneStart.engineName(harness), mark: PhoneStart.mark(harness), reportedCommands: 0,
+                        loading: slash.loading, failure: slash.failure, maximumHeight: slashSpace, retry: { slash.retry += 1 },
+                        choose: { slash.complete(menu, option: $0, text: $prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) })
+                }
+                LocalTextEditor(text: $prompt, placeholder: "要做什么？", maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
+                    selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
+                    commandKeys: slashKeys, onCommand: slashKey, suffixHint: slash.hint(prompt, commands: [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
                     .overlay(alignment: .topLeading) { if prompt.isEmpty { Text("要做什么？").font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).allowsHitTesting(false).accessibilityHidden(true) } }
-                    .padding(14).padding(.bottom, attaches ? 40 : 0).frame(minHeight: 110, alignment: .topLeading)
+                    .padding(14).padding(.bottom, 40).frame(minHeight: 110, alignment: .topLeading)
                     .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 16))
                     .overlay(alignment: .bottomLeading) {
-                        if attaches { AttachButton(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource).padding(10) }
+                        HStack(spacing: 4) {
+                            if attaches { AttachButton(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource) }
+                            SlashInsertButton(disabled: !slashContext.bodyOpen || !slashContext.canRun || slashContext.pending || slash.composing) { slash.insertSlash($prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending); focused = true }
+                        }.padding(10)
                     }
+                    .background(GeometryReader { proxy in Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in slashSpace = max(0, value - proxy.safeAreaInsets.top - 12) } })
                 if fork == nil { HistoryEntryRow(entry: PhoneHistory.entry(model.snapshot, workspaceId: choice.workspaceId)) { importing = HistoryScope(model.snapshot, workspaceId: choice.workspaceId) } }
                 ForEach(model.pending, id: \.requestId) { pending in
                     HStack {
@@ -89,15 +127,21 @@ struct NewSessionSheet: View {
             .background(GeometryReader { proxy in Color.clear.onChange(of: proxy.size.height, initial: true) { _, value in height = value + 72 } })
             .frame(maxHeight: .infinity, alignment: .top)
             .navigationTitle(fork == nil ? "新会话" : "从这里分叉").navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(isPresented: $modelPicker) {
+                ModelList(models: PhoneStart.models(catalog), chosen: Binding(get: { shownModel }, set: { choice.model = $0; picked = fork == nil ? nil : $0 }), initialQuery: modelQuery)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly) }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("开始") { start() }.buttonStyle(.borderedProminent).buttonBorderShape(.capsule).tint(PhoneTheme.accent).disabled(!canStart)
+                    Button(PhoneSlash.actionOf(prompt) == nil ? "开始" : "打开") { start() }.buttonStyle(.borderedProminent).buttonBorderShape(.capsule).tint(PhoneTheme.accent).disabled(!canStart)
                 }
             }
         }
         // Another Harness starts on its own default model: Latch's for one that uses its services, none otherwise.
         .onChange(of: choice.harnessId) { old, new in if old != nil, old != new { choice.model = PhoneStart.defaultModel(catalog, harnessId: new); picked = nil } }
+        .onChange(of: prompt) { _, value in slash.changed(value) }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in slash.clear(); modelPicker = false }
+        .task(id: slashRead) { await slash.load(model, key: slashRead) }
         // The sheet goes once the cover has; the session opens once both have (InboxView's onDismiss).
         .fullScreenCover(item: $importing, onDismiss: { if model.openAfterDismiss != nil { dismiss() } }) { scope in
             HistoryImportView(project: scope.project, sources: scope.sources) { taskId in
@@ -110,6 +154,9 @@ struct NewSessionSheet: View {
         // Closing the sheet lets go of what was attached here; the Host's drafts go too.
         // Only a real dismiss lets go: not while starting or opening the window for it, an unconfirmed start, or 接入已有会话 over it.
         .onDisappear {
+            slash.clear()
+            if !delivered, model.generation == openedHost, model.privateSnapshot.epoch == openedContent,
+               model.verifiedUntil.map({ $0 > Date() }) == true { model.holdDraft(prompt, for: draftKey) }
             if PhoneAttachments.dropsOnClose(key: attachKey, pending: model.pending, starting: starting, verifying: model.verifying, covered: importing != nil) {
                 model.dropAttachments(attachKey)
             }
@@ -117,30 +164,67 @@ struct NewSessionSheet: View {
         .presentationDetents([.height(height), .large])
         .presentationDragIndicator(.visible)
         .onAppear {
+            openedHost = model.generation; openedContent = model.privateSnapshot.epoch
             if let fork {
                 let source = model.detail["summary"]["id"].string == fork.taskId ? model.detail["summary"] : model.summary(of: fork.taskId)
                 choice = fork.choice(catalog, source: source); if prompt.isEmpty { prompt = PhoneForkDraft.prompt }
-            } else { choice = PhoneStart.defaults(catalog) }
+            } else { choice = initialChoice ?? PhoneStart.defaults(catalog) }
+            if let initialPrompt { prompt = initialPrompt }
+            else if let held = model.takeDraft(for: draftKey) { prompt = held }
             #if LATCH_SCREENS
             if model.staged, ScreensStage.importing, fork == nil { importing = HistoryScope(model.snapshot, workspaceId: choice.workspaceId) }
             #endif
         }
     }
     private func start() {
+        guard canStart, !slash.composing else { return }
+        switch PhoneSlash.action(prompt, context: slashContext) {
+        case .text: break
+        case .unavailable: return
+        case let .open(action, argument):
+            guard action == .model else { return }
+            modelQuery = argument; modelPicker = true; prompt = ""; slash.clear(); return
+        }
         starting = true
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines), chosen = choice, source = fork, forkPlan = plan
+        let host = model.generation, content = model.privateSnapshot.epoch, reading = model.contentGeneration
         Task {
-            let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             var ids: [String] = []
             if attaches, !model.tray(attachKey).isEmpty {
                 // Waits for uploads still on their way; one that cannot go, or rows taken away meanwhile, keep the sheet open.
                 guard case let .success(value) = await model.attachmentsToSend(attachKey, target: nil) else { model.endAttachmentSend(attachKey); starting = false; return }
                 ids = value
             }
-            let started = if let fork, let plan { await model.startFork(fork, plan: plan, prompt: text) } else { await model.start(choice, prompt: text, attachments: ids) }
+            guard model.generation == host, model.privateSnapshot.epoch == content, model.contentGeneration == reading else {
+                model.endAttachmentSend(attachKey); starting = false; return
+            }
+            let started: Bool
+            if let source { started = if let forkPlan { await model.startFork(source, plan: forkPlan, prompt: text) } else { false } }
+            else { started = await model.start(chosen, prompt: text, attachments: ids) }
+            delivered = started
             model.endAttachmentSend(attachKey)
             starting = false
             if started, model.pending.isEmpty { dismiss() }
         }
+    }
+    private var slashKeys: [String] {
+        var keys = canStart ? ["submit"] : []
+        guard let menu = slashMenu else { return keys }
+        keys.append(UIKeyCommand.inputEscape)
+        if menu.options.contains(where: { $0.unavailable == nil }) { keys += [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow] }
+        if slash.active(menu, text: prompt) != nil { keys += ["\t", "\r"] }
+        return keys
+    }
+    private func slashKey(_ key: String) {
+        guard !slash.composing else { return }
+        if key == "submit" { if canStart { start() }; return }
+        guard let menu = slashMenu else { return }
+        if key == UIKeyCommand.inputEscape { slash.dismiss(prompt); return }
+        if key == UIKeyCommand.inputUpArrow || key == UIKeyCommand.inputDownArrow { slash.move(menu, text: prompt, down: key == UIKeyCommand.inputDownArrow); return }
+        guard let selected = slash.active(menu, text: prompt), menu.options.indices.contains(selected) else { return }
+        let option = menu.options[selected]
+        guard slash.complete(menu, option: option, text: $prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) else { return }
+        if key == "\r", option.kind == .action { start() }
     }
     private func row<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {
         HStack(spacing: 8) {
@@ -207,13 +291,19 @@ struct NewSessionSheet: View {
     }
 }
 
-private struct ModelList: View {
+struct ModelList: View {
     @Environment(\.dismiss) private var dismiss
     let models: [PhoneModelChoice]
     @Binding var chosen: PhoneModelChoice?
+    @State private var query: String
+    init(models: [PhoneModelChoice], chosen: Binding<PhoneModelChoice?>, initialQuery: String = "") {
+        self.models = models; _chosen = chosen; _query = State(initialValue: initialQuery)
+    }
     var body: some View {
-        let providers = Array(Dictionary(grouping: models, by: \.providerId).values).sorted { ($0.first?.providerName ?? "") < ($1.first?.providerName ?? "") }
+        let filtered = models.filter { query.isEmpty || ($0.model + " " + $0.providerName).localizedCaseInsensitiveContains(query) }
+        let providers = Array(Dictionary(grouping: filtered, by: \.providerId).values).sorted { ($0.first?.providerName ?? "") < ($1.first?.providerName ?? "") }
         List {
+            if providers.isEmpty { Text("没有匹配的模型").foregroundStyle(PhoneTheme.muted) }
             ForEach(providers, id: \.first?.providerId) { group in
                 Section(group.first?.providerName ?? "") {
                     ForEach(group) { item in
@@ -228,6 +318,7 @@ private struct ModelList: View {
                 }
             }
         }.navigationTitle("模型").navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索模型")
     }
 }
 
