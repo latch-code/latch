@@ -14,6 +14,12 @@ import { noHorizontalOverflow, openSession, settleShell } from './helpers/layout
 
 const OUT = 'test-results/delivery'
 const SLOW = { timeout: 30_000 }
+/**
+ * How long these Hosts wait for a push, in place of the product's two minutes, so a hook that sleeps reads as unknown. A
+ * push to the local remote takes about a quarter of a second, and passed four seconds once the Mac was building
+ * elsewhere (load average over 200): that ordinary push then read as unknown too.
+ */
+const PUSH_LIMIT = 12_000
 
 async function shot(page: Page, name: string) {
   await mkdir(OUT, { recursive: true })
@@ -100,7 +106,7 @@ it('stages, commits through the repository hooks, pushes to a bare remote, and s
       home,
       hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: scratch },
       shell: async () => ({ file: '/bin/sh', argv: ['-sh'] }),
-      timeouts: { push: 4_000 },
+      timeouts: { push: PUSH_LIMIT },
     },
   })
   const browser = await chromium.launch(browserLaunchOptions())
@@ -128,7 +134,7 @@ it('stages, commits through the repository hooks, pushes to a bare remote, and s
 if [ -f '${control}/fail-commit' ]; then echo "src/app.ts:3:7 error  'unused' is declared but never used" >&2; echo "1 error"; exit 1; fi
 touch '${control}/commit-ran'`,
     )
-    await hook(join(repo, '.git', 'hooks'), 'pre-push', `if [ -f '${control}/slow-push' ]; then rm '${control}/slow-push'; sleep 10; fi`)
+    await hook(join(repo, '.git', 'hooks'), 'pre-push', `if [ -f '${control}/slow-push' ]; then rm '${control}/slow-push'; sleep 40; fi`)
     const remote = join(scratch, 'remote.git')
     git(scratch, 'init', '-q', '--bare', '-b', 'main', remote)
     await hook(
@@ -275,7 +281,7 @@ touch '${control}/commit-ran'`,
     await writeFile(join(control, 'slow-push'), '')
     await primary.click()
     await panel.getByText('推送中…', { exact: false }).first().waitFor()
-    await panel.getByText('推送结果未知').waitFor({ timeout: 20_000 })
+    await panel.getByText('推送结果未知').waitFor(SLOW)
     expect(await panel.locator('.delivery-line', { hasText: '推送结果未知' }).locator('svg').first().getAttribute('class')).toMatch(
       /circle-(?:help|question)/u,
     )
@@ -459,7 +465,7 @@ it('keeps a retried push and PR unknown on a refusal, shows it, and lets the pag
       home,
       hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: scratch },
       shell: gh.shell,
-      timeouts: { push: 4_000, prCreate: 3_000 },
+      timeouts: { push: PUSH_LIMIT, prCreate: 3_000 },
     },
   })
   const browser = await chromium.launch(browserLaunchOptions())
@@ -487,7 +493,7 @@ it('keeps a retried push and PR unknown on a refusal, shows it, and lets the pag
     }
     branch('feat/currency-filter')
     const pre = join(host.workspaceRoot, '.git', 'hooks', 'pre-push')
-    await writeFile(pre, `#!/bin/sh\nif [ -f '${control}/slow-push' ]; then rm '${control}/slow-push'; sleep 10; fi\n`)
+    await writeFile(pre, `#!/bin/sh\nif [ -f '${control}/slow-push' ]; then rm '${control}/slow-push'; sleep 40; fi\n`)
     await chmod(pre, 0o755)
 
     const owner = await host.enroll({ listener: 'unix' })
@@ -530,7 +536,7 @@ it('keeps a retried push and PR unknown on a refusal, shows it, and lets the pag
       await writeFile(join(control, 'slow-push'), '')
       await primary.click()
       const unknownRow = panel.locator('.delivery-line', { hasText: '推送结果未知' })
-      await unknownRow.waitFor({ timeout: 20_000 })
+      await unknownRow.waitFor(SLOW)
       const unknownId = pushes.at(-1)!
 
       // The retry is refused before the Host reads anything (the write budget is spent): still unknown, the same
@@ -556,7 +562,14 @@ it('keeps a retried push and PR unknown on a refusal, shows it, and lets the pag
       await acceptance(page, 'push-abandoned')
       await expect.poll(() => primary.innerText(), SLOW).toBe('推送 1 个提交')
       await primary.click()
-      await panel.locator('.delivery-line', { hasText: '已推送到' }).waitFor()
+      // When the line is missing, say what the panel showed instead and whether a new request left.
+      await panel
+        .locator('.delivery-line', { hasText: '已推送到' })
+        .waitFor()
+        .catch(async (cause: unknown) => {
+          const sent = pushes.at(-1) !== unknownId
+          throw new Error(`No pushed line (new request sent: ${sent}); the panel shows: ${await panel.innerText()}`, { cause })
+        })
       expect(pushes.at(-1)).not.toBe(unknownId)
       expect(execFileSync('git', ['rev-parse', branchName], { cwd: bare, env }).toString('utf8').trim()).toBe(git('rev-parse', 'HEAD'))
 
