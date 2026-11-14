@@ -16,6 +16,7 @@ import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { StepupMethod } from '../audit.ts'
 import { json, jsonBody, safeDecode } from '../http-util.ts'
 import { parseProjectMcp, readProjectMcpText } from '../mcp-import.ts'
+import type { McpOAuth } from '../mcp-oauth.ts'
 import { middleSlot } from '../presence-reason.ts'
 import {
   envInput,
@@ -27,6 +28,8 @@ import {
   locateCommand,
   MCP_ID,
   newServerId,
+  oauthClientId,
+  oauthWidens,
   remoteAddress,
   runnerTarget,
   scopeNarrows,
@@ -94,6 +97,19 @@ const patchSchema = z.strictObject({
   headers: headersPatch.optional(),
 })
 const testSchema = z.strictObject({ requestId })
+/** 登录: a client ID (and its secret) typed on this Mac for a server that registers no client itself; `null` forgets it. */
+const loginSchema = z.strictObject({
+  requestId,
+  clientId: oauthClientId.nullable().optional(),
+  clientSecret: z
+    .string()
+    .min(1)
+    .max(4096)
+    .refine(value => !/[\0-\x1F\x7F]/u.test(value))
+    .optional(),
+})
+const LOGIN_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)\/oauth\/login$/u
+const LOGOUT_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)\/oauth\/logout$/u
 const SERVER_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)$/u
 const TEST_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)\/test$/u
 const IMPORT_PATH = '/link/api/mcp/import'
@@ -134,6 +150,14 @@ export interface McpRouteDeps {
   projectFolders: (workspaceId: string) => Array<{ id: string; path: string }> | undefined
   /** 测试 of a remote server: `initialize` and `tools/list` from the Host, within 20 s, then the session ends. */
   testRemote: (record: McpHttpRecord) => Promise<{ status: 'ok'; tools: string[] } | { status: 'failed'; reason: McpFailure }>
+  /** Remote servers' logins (OAuth): started only here, on this Mac. */
+  oauth: McpOAuth
+  /**
+   * The outbound allowance for an address (an authorization server's) that nothing uses any more: in the policy, not
+   * one the Host was started with, and no remote server's address or login, and no model service, reaches that
+   * `host:port`. Asked after the definition that used it is gone or changed.
+   */
+  unusedAllowance: (address: string) => string | undefined
 }
 
 const changed = () => new AppError(409, 'mcp-changed', 'MCP 服务器已被修改，请刷新后重试')
@@ -176,6 +200,31 @@ function remoteLines(
       ? [{ label: '出站许可', value: `允许 Host 访问 ${egress.target}（${egress.local ? '这台电脑上的地址' : '局域网或私网地址'}）` }]
       : []),
     { label: '用在', value: scopeText(scope) },
+    { label: 'MCP 服务器', value: name },
+  ]
+}
+
+/**
+ * The confirmation of a server's login: the authorization server (the Host's fact, first) and the scopes asked of it,
+ * then where the tokens go.
+ */
+function oauthLines(
+  name: string,
+  url: string,
+  login: { issuer: string; scopes: string[]; resource: string },
+  egress?: { target: string; local?: boolean },
+): PreviewLine[] {
+  return [
+    // The issuer whole, as it is bound: two tenants of one origin do not read the same.
+    { label: '授权服务器', value: login.issuer },
+    // What the tokens are for, when it is not simply the server's address (its origin, then).
+    ...(login.resource !== url ? [{ label: '资源', value: login.resource }] : []),
+    // Every scope, never cut, with how many there are: the server chose them, not the person.
+    { label: '范围', value: login.scopes.length ? `${login.scopes.length} 个：${login.scopes.join(' ')}` : '由授权服务器决定' },
+    { label: '地址', value: `${url}（令牌只发往这个地址与授权服务器）` },
+    ...(egress
+      ? [{ label: '出站许可', value: `允许 Host 访问 ${egress.target}（${egress.local ? '这台电脑上的地址' : '局域网或私网地址'}）` }]
+      : []),
     { label: 'MCP 服务器', value: name },
   ]
 }
@@ -368,6 +417,9 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         name,
         url: spec.url,
         headerNames: spec.headerNames.toSorted(),
+        ...(spec.oauth
+          ? { oauth: { issuer: spec.oauth.issuer, scopes: spec.oauth.scopes.toSorted(), resource: spec.oauth.resource } }
+          : {}),
         scope,
         egress: reach.egress ?? null,
         // Header values typed with the change are bound to it, never shown.
@@ -380,9 +432,43 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
     )
   }
 
-  function answer(res: Parameters<typeof json>[0], id: string, status = 200): void {
+  /** A server as devices see it, with its login as it stands in this process (登录中, the last failure). */
+  function viewOf(id: string): McpServerView | undefined {
     const server = store.view(id)
+    const record = store.get(id)
+    if (!server || server.transport !== 'http' || record?.transport !== 'http') return server
+    const { oauth: _, ...rest } = server
+    const oauth = deps.oauth.view(record)
+    return oauth ? { ...rest, oauth } : rest
+  }
+
+  function answer(res: Parameters<typeof json>[0], id: string, status = 200): void {
+    const server = viewOf(id)
     json(res, { ...(server ? { server } : {}), revision: store.revision() }, status)
+  }
+
+  const oauthSpec = (oauth: McpHttpRecord['oauth']) =>
+    oauth ? { issuer: oauth.issuer, scopes: [...oauth.scopes], resource: oauth.resource } : undefined
+
+  /**
+   * What 登录 and 退出登录 answered, by device and request ID, in memory: a request sent again (its answer never
+   * arrived) is answered as before, and never starts a second login, registration or revocation.
+   */
+  const loginReceipts = new Map<string, { payloadHash: string; answer: Record<string, unknown> }>()
+  // Only what stays true is kept: a login's address is not (it dies with the login), so a resend gets the address
+  // only while that login still waits (`McpOAuth.waiting`), and otherwise how the login stands now.
+  const loginReceipt = (caller: DeviceCaller, kind: string, id: string, input: { requestId: string }) => {
+    const key = sha256Hex(canonicalJson([caller.device.id, kind, id, input.requestId]))
+    const payloadHash = sha256Hex(canonicalJson(input))
+    const found = loginReceipts.get(key)
+    if (found && found.payloadHash !== payloadHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同的修改')
+    return {
+      answer: found?.answer,
+      keep(answer: Record<string, unknown>) {
+        loginReceipts.set(key, { payloadHash, answer })
+        while (loginReceipts.size > 64) loginReceipts.delete(loginReceipts.keys().next().value as string)
+      },
+    }
   }
 
   const remoteStateOf = (
@@ -392,6 +478,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
     transport: 'http',
     url: record.url,
     headerNames: record.headerNames,
+    oauth: oauthSpec(record.oauth as McpHttpRecord['oauth']),
     scope: record.scope,
     enabled: record.enabled,
     disabledTools: record.disabledTools,
@@ -568,7 +655,9 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
       }
     }
     checkHeaderNames(headerNames)
-    const spec: McpHttpSpec = { url, headerNames }
+    // A login is for the address it was confirmed with: another address has none, and the old tokens end.
+    const keepsLogin = url === current.url
+    const spec: McpHttpSpec = { url, headerNames, oauth: keepsLogin ? oauthSpec(current.oauth) : undefined }
     const after = remoteStateOf(
       {
         ...spec,
@@ -591,6 +680,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
     const widened = widens(previous, after)
     let stepup: StepupMethod = 'none'
     let reach: { target: string; egress?: string; local?: boolean } | undefined
+    let ending = undefined as Ending | undefined
     if (widened === 'spec') {
       reach = await deps.egressFor(url)
       stepup = await confirmRemote(req, caller, name, spec, after.scope, input.headers ?? {}, reach)
@@ -610,6 +700,8 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         widened ? undefined : res,
       )
       const undo = reach?.egress ? await deps.allowEgress(caller, reach.egress, stepup) : async () => {}
+      // What the authorization server will be asked to revoke, read before the change takes the login away.
+      const revoke = !keepsLogin && current.oauth ? deps.oauth.snapshot(id) : undefined
       try {
         await store.change({ deviceId: caller.device.id, requestId: input.requestId, payload: input }, ({ servers, secrets, stamp }) => {
           const record = servers.servers.find(item => item.id === id)
@@ -617,6 +709,8 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
           record.name = name
           record.url = url
           record.headerNames = [...headerNames]
+          if (!keepsLogin) delete record.oauth
+          const held = keepsLogin ? secrets.servers[id]?.oauth : undefined
           record.specHash = hash
           if (widened === 'spec') record.confirmed = { hash, secretNames: [...headerNames] }
           record.scope = after.scope
@@ -625,8 +719,12 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
           if (kinds.has('spec')) delete record.report
           record.revision += 1
           record.updatedAt = stamp
-          if (headerNames.length)
-            secrets.servers[id] = { env: {}, headers: Object.fromEntries(headerNames.map(key => [key, headers[key] ?? ''])) }
+          if (headerNames.length || held)
+            secrets.servers[id] = {
+              env: {},
+              ...(headerNames.length ? { headers: Object.fromEntries(headerNames.map(key => [key, headers[key] ?? ''])) } : {}),
+              ...(held ? { oauth: held } : {}),
+            }
           else delete secrets.servers[id]
           return id
         })
@@ -634,11 +732,232 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         await undo()
         throw error
       }
+      // Only once the change is written: an edit that failed leaves the login as it was.
+      if (revoke) {
+        await deps.oauth.ended(id)
+        ending = { deleted: true, revoke }
+      }
     })
     if (kinds.has('spec') || kinds.has('name') || kinds.has('secret') || !after.enabled || scopeNarrows(current.scope, after.scope))
       deps.revoke(id)
+    // The definition no longer has the login (the change above removed it): only the authorization server is left to
+    // tell, and its outbound allowance to take back when nothing else uses it.
+    if (ending) {
+      await revokeLogin(caller, id, res, ending, true)
+      if (current.oauth) await dropIssuerAllowance(caller, res, current.oauth.issuer, [url])
+    }
     context.refresh()
     answer(res, id)
+  }
+
+  type Ending = Awaited<ReturnType<McpOAuth['forget']>>
+
+  /**
+   * Takes back the outbound allowance an authorization server needed (a loopback or private one) once no server logs
+   * in there any more. `own` are addresses whose allowance is the person's to keep or remove (the server's own
+   * address: 「同时移除出站许可」). It only narrows: it goes ahead when the record of it cannot be written.
+   */
+  async function dropIssuerAllowance(caller: Caller, res: Parameters<typeof json>[0], issuer: string, own: readonly string[]) {
+    const host = (address: string) => {
+      const url = new URL(address)
+      return `${url.hostname}:${url.port || (url.protocol === 'https:' ? '443' : '80')}`
+    }
+    if (own.some(address => host(address) === host(issuer))) return
+    const target = deps.unusedAllowance(issuer)
+    if (target) await deps.removeAllowance(caller, target, res)
+  }
+
+  /**
+   * The second half of ending a login, run outside the configuration lock: the authorization server is asked to revoke
+   * what `forget` deleted here (bounded, best effort) and the outcome is put on record. `undeleted`: the tokens could not
+   * be deleted from this Mac (`gone` says the definition itself took them away). It only narrows, so it goes ahead when
+   * the record of it cannot be written.
+   */
+  async function revokeLogin(caller: Caller, id: string, res: Parameters<typeof json>[0], ending: Ending, gone = false) {
+    const remote = await ending.revoke()
+    const result = ending.deleted || gone ? remote : ('undeleted' as const)
+    if (result !== 'none')
+      await context.audited(
+        { action: 'mcp.oauth.revoked', actor: context.actorOf(caller), target: id, stepup: 'none', detail: { serverId: id, result } },
+        res,
+      )
+    return result
+  }
+
+  /**
+   * 登录, pressed on this Mac. The server's own metadata (read at its bound origin) names the authorization server
+   * and the scopes. An authorization server or a scope that no confirmation named is confirmed first, as a new
+   * outbound address is (`mcp.server.apply`), before anything is sent to it; a login again within what was confirmed
+   * asks nothing. Then the Host starts the login and answers with the address for the person's browser.
+   */
+  async function login(
+    req: Parameters<RouteContext['confirm']>[0],
+    res: Parameters<typeof json>[0],
+    caller: DeviceCaller,
+    id: string,
+    input: z.infer<typeof loginSchema>,
+  ): Promise<void> {
+    // The same request again is answered as it was: no second login, registration or confirmation.
+    const receipt = loginReceipt(caller, 'login', id, input)
+    if (receipt.answer) {
+      // Still waiting: the same address. Finished, given up or timed out: no address, only how it stands now.
+      json(res, { ...deps.oauth.waiting(id, caller.device.id, input.requestId), server: viewOf(id), revision: store.revision() })
+      return
+    }
+    let record = store.get(id)
+    if (!record) throw missing()
+    if (record.transport !== 'http') throw new AppError(400, 'mcp-transport', '本机命令没有登录')
+    if (!record.enabled) throw new AppError(409, 'mcp-disabled', '这个 MCP 服务器已停用')
+    if (!isConfirmed(record)) throw new AppError(409, 'mcp-unconfirmed', '这个 MCP 服务器的定义没有经过确认')
+    const found = await deps.oauth.discover(record)
+    context.recheck(caller, 'admin')
+    const wanted = { issuer: found.issuer, scopes: found.scopes, resource: found.resource }
+    let ending = undefined as Ending | undefined
+    let previousIssuer = undefined as string | undefined
+    // Within what was confirmed (the same authorization server and resource, no new scope): the confirmed scopes stay
+    // the ceiling.
+    if (oauthWidens(oauthSpec(record.oauth), wanted)) {
+      const reach = await deps.egressFor(found.issuer)
+      const spec: McpHttpSpec = { url: record.url, headerNames: record.headerNames, oauth: wanted }
+      const stepup = await context.confirm(
+        req,
+        caller,
+        'mcp.server.apply',
+        {
+          transport: 'http',
+          login: true,
+          serverId: id,
+          name: record.name,
+          url: record.url,
+          issuer: found.issuer,
+          scopes: found.scopes,
+          resource: found.resource,
+          egress: reach.egress ?? null,
+        },
+        { form: 'mcp.server.apply-remote', slots: { target: reach.target, server: record.name } },
+        oauthLines(
+          record.name,
+          record.url,
+          wanted,
+          reach.egress ? { target: reach.egress, ...(reach.local ? { local: true } : {}) } : undefined,
+        ),
+        [],
+        reach.target,
+      )
+      const base = record
+      await context.serial(caller, 'admin', async () => {
+        const latest = store.get(id)
+        if (!latest || latest.transport !== 'http') throw missing()
+        if (latest.revision !== base.revision) throw changed()
+        const hash = httpSpecHash(spec)
+        await context.audited({
+          action: 'mcp.server.changed',
+          actor: context.actorOf(caller),
+          target: id,
+          stepup,
+          detail: { serverId: id, kinds: ['spec'], specHash: hash, enabled: latest.enabled },
+        })
+        const undo = reach.egress ? await deps.allowEgress(caller, reach.egress, stepup) : async () => {}
+        // Another authorization server: what the old one issued ends with this change, and is revoked after it.
+        const moved = latest.oauth !== undefined && latest.oauth.issuer !== found.issuer
+        const revoke = moved ? deps.oauth.snapshot(id) : undefined
+        if (moved) previousIssuer = latest.oauth?.issuer
+        try {
+          await store.change(undefined, ({ servers, secrets, stamp }) => {
+            const item = servers.servers.find(entry => entry.id === id)
+            if (!item || item.transport !== 'http') throw missing()
+            const kept = item.oauth?.issuer === found.issuer ? item.oauth : undefined
+            // The old server's tokens, and the client typed or registered for it, go in the same write.
+            if (!kept && secrets.servers[id]?.oauth) delete secrets.servers[id]!.oauth
+            item.oauth = {
+              issuer: found.issuer,
+              scopes: [...found.scopes],
+              resource: found.resource,
+              ...(kept?.clientId ? { clientId: kept.clientId } : {}),
+              ...(kept?.login ? { login: kept.login } : {}),
+            }
+            item.specHash = hash
+            // The header names confirmed before stay as they were confirmed; the login joins them.
+            item.confirmed = {
+              hash: httpSpecHash({ url: item.url, headerNames: item.confirmed.secretNames, oauth: wanted }),
+              secretNames: [...item.confirmed.secretNames],
+            }
+            item.revision += 1
+            item.updatedAt = stamp
+            return id
+          })
+        } catch (error) {
+          await undo()
+          throw error
+        }
+        // Only once the change is written: a failed one leaves the old login as it was.
+        if (revoke) {
+          await deps.oauth.ended(id)
+          ending = { deleted: true, revoke }
+        }
+      })
+      // Sessions opened for the definition as it was end; the next ones carry the login.
+      deps.revoke(id)
+      if (ending) await revokeLogin(caller, id, res, ending, true)
+      if (previousIssuer) await dropIssuerAllowance(caller, res, previousIssuer, [record.url])
+      record = store.get(id)
+      if (!record || record.transport !== 'http' || !record.oauth) throw missing()
+    }
+    // A client ID typed for this server, or taken back: on record first, like a secret's new value.
+    const typed = input.clientId === undefined ? record.oauth?.clientId : (input.clientId ?? undefined)
+    if (input.clientId !== undefined || input.clientSecret !== undefined) {
+      if (input.clientSecret !== undefined && !typed) throw new AppError(400, 'invalid-input', '只有填写了 Client ID 才能填写它的密钥')
+      const held = store.oauthOf(id).clientSecret
+      if (typed !== record.oauth?.clientId || (input.clientSecret !== undefined && input.clientSecret !== held)) {
+        let before = undefined as Ending | undefined
+        await context.serial(caller, 'admin', async () => {
+          const latest = store.get(id)
+          if (!latest || latest.transport !== 'http' || !latest.oauth) throw missing()
+          // A login made as another client ends with this change, in the same write, and is revoked after it.
+          const revoke = latest.oauth.login && latest.oauth.login.clientId !== typed ? deps.oauth.snapshot(id) : undefined
+          await context.audited({
+            action: 'mcp.server.changed',
+            actor: context.actorOf(caller),
+            target: id,
+            stepup: 'none',
+            detail: { serverId: id, kinds: ['secret'], specHash: latest.specHash, enabled: latest.enabled },
+          })
+          await store.change(undefined, ({ servers, secrets, stamp }) => {
+            const item = servers.servers.find(entry => entry.id === id)
+            if (!item || item.transport !== 'http' || !item.oauth) throw missing()
+            const same = item.oauth.clientId === typed
+            if (typed) item.oauth.clientId = typed
+            else delete item.oauth.clientId
+            const entry = (secrets.servers[id] ??= { env: {} })
+            // Another client's secret never carries over to this one.
+            const secret = typed ? (input.clientSecret ?? (same ? entry.oauth?.clientSecret : undefined)) : undefined
+            if (revoke) delete item.oauth.login
+            entry.oauth = revoke ? {} : { ...entry.oauth }
+            if (secret) entry.oauth.clientSecret = secret
+            else delete entry.oauth.clientSecret
+            if (Object.keys(entry.oauth).length === 0) delete entry.oauth
+            item.updatedAt = stamp
+            return id
+          })
+          if (revoke) {
+            await deps.oauth.ended(id)
+            before = { deleted: true, revoke }
+          }
+        })
+        if (before) {
+          deps.revoke(id)
+          await revokeLogin(caller, id, res, before, true)
+        }
+        record = store.get(id)
+        if (!record || record.transport !== 'http') throw missing()
+      }
+    }
+    if (!isConfirmed(record)) throw new AppError(409, 'mcp-unconfirmed', '这个 MCP 服务器的定义没有经过确认')
+    const started = await deps.oauth.begin(record, { deviceId: caller.device.id, actor: context.actorOf(caller) }, input.requestId)
+    context.recheck(caller, 'admin')
+    context.refresh()
+    receipt.keep({})
+    json(res, { ...started, server: viewOf(id), revision: store.revision() })
   }
 
   return {
@@ -651,7 +970,8 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         const admin = caller.device?.scopes.includes('admin') === true
         json(res, {
           ...list,
-          servers: list.servers.map(server => {
+          servers: list.servers.map(listed => {
+            const server = viewOf(listed.id) ?? listed
             const allowance = admin && server.transport === 'http' ? deps.allowanceOf(server.id) : undefined
             return allowance ? { ...server, allowance } : server
           }),
@@ -877,6 +1197,8 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         // 「同时移除出站许可」: only an allowance no other server or model service uses.
         const withAllowance = new URL(req.url ?? '/', 'http://latch.invalid').searchParams.get('allowance') === 'remove'
         let allowance: string | undefined
+        let ending = undefined as Ending | undefined
+        let left = undefined as { issuer: string; url: string } | undefined
         await context.serial(caller, 'admin', async () => {
           if (!store.get(id)) throw missing()
           allowance = withAllowance ? deps.allowanceOf(id) : undefined
@@ -884,6 +1206,10 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
             { action: 'mcp.server.removed', actor: context.actorOf(caller), target: id, stepup: 'none', detail: { serverId: id } },
             res,
           )
+          // Its login ends on this Mac at once; the authorization server is told after the lock is released.
+          const leaving = store.get(id)
+          if (leaving?.transport === 'http' && leaving.oauth) left = { issuer: leaving.oauth.issuer, url: leaving.url }
+          ending = await deps.oauth.forget(id)
           await store.change(undefined, ({ servers, secrets }) => {
             servers.servers = servers.servers.filter(item => item.id !== id)
             delete secrets.servers[id]
@@ -891,9 +1217,55 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
           })
         })
         deps.revoke(id)
+        deps.oauth.removed(id)
+        const login = ending ? await revokeLogin(caller, id, res, ending, true) : 'none'
         if (allowance) await deps.removeAllowance(caller, allowance, res)
+        // The allowance its authorization server needed goes when no other server logs in there.
+        if (left) await dropIssuerAllowance(caller, res, left.issuer, [left.url])
         context.refresh()
-        json(res, { deleted: true, revision: store.revision(), ...(allowance ? { allowanceRemoved: allowance } : {}) })
+        json(res, {
+          deleted: true,
+          revision: store.revision(),
+          ...(allowance ? { allowanceRemoved: allowance } : {}),
+          ...(login !== 'none' ? { oauth: login } : {}),
+        })
+        return true
+      }
+      // 登录 and 退出登录 of a remote server: only on this Mac. Every other device sees how the login stands, no more.
+      const loginMatch = LOGIN_PATH.exec(path)
+      if (loginMatch && method === 'POST') {
+        context.requireScope(caller, 'admin')
+        context.requireLocal(caller)
+        const id = safeDecode(loginMatch[1]!)
+        if (!MCP_ID.test(id)) throw missing()
+        const input = loginSchema.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+        context.recheck(caller, 'admin')
+        await login(req, res, caller, id, input)
+        return true
+      }
+      const logoutMatch = LOGOUT_PATH.exec(path)
+      if (logoutMatch && method === 'POST') {
+        context.requireScope(caller, 'admin')
+        context.requireLocal(caller)
+        const id = safeDecode(logoutMatch[1]!)
+        const input = testSchema.parse(await jsonBody(req))
+        context.recheck(caller, 'admin')
+        const record = MCP_ID.test(id) ? store.get(id) : undefined
+        if (!record) throw missing()
+        if (record.transport !== 'http') throw new AppError(400, 'mcp-transport', '本机命令没有登录')
+        const receipt = loginReceipt(caller, 'logout', id, input)
+        if (receipt.answer) {
+          json(res, { ...receipt.answer, server: viewOf(id), revision: store.revision() })
+          return true
+        }
+        // On this Mac first, with the other configuration changes in turn; then the sessions that carried the token;
+        // the authorization server last, outside the lock.
+        const ending = await context.serial(caller, 'admin', () => deps.oauth.forget(id))
+        deps.revoke(id)
+        const result = await revokeLogin(caller, id, res, ending)
+        context.refresh()
+        receipt.keep({ oauth: result })
+        json(res, { oauth: result, server: viewOf(id), revision: store.revision() })
         return true
       }
       const testMatch = TEST_PATH.exec(path)
@@ -947,7 +1319,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         if (!running) testing.set(id, { requestId: input.requestId, promise })
         const result = (await promise) as Awaited<ReturnType<typeof testServer>>
         context.recheck(caller as DeviceCaller, 'admin')
-        json(res, { ...result, server: store.view(id) as McpServerView | undefined })
+        json(res, { ...result, server: viewOf(id) })
         return true
       }
       return false

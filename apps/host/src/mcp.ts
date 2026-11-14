@@ -15,6 +15,7 @@ import {
   isSavedMcpServerName,
   isUnpinnedRunner,
   type McpFailure,
+  type McpOAuthView,
   type McpReport,
   type McpScope,
   type McpServerView,
@@ -26,6 +27,11 @@ import { canonicalJson, setKnownSecrets, sha256Hex, writeFileAtomic } from '@lat
 export const MCP_DIRECTORY = 'mcp'
 const SERVERS_FILE = 'servers.json'
 const SECRETS_FILE = 'secrets.json'
+/**
+ * Beside the directory, not in it: the servers whose login was ended while its tokens could not be deleted from
+ * `mcp/`. Written when that deletion fails, so the end outlives a restart; it names servers by ID and nothing else.
+ */
+const ENDED_FILE = 'mcp-ended.json'
 const MAX_SERVERS = 64
 const MAX_RECEIPTS = 256
 /** A tool's name as MCP spells it; longer ones are not offered to the switch. */
@@ -205,13 +211,80 @@ const stdioRecord = z.strictObject({
   secretNames: z.array(envName).max(32),
   projectCwd: z.boolean(),
 })
-/** A remote address (Streamable HTTP); `specHash` is of its address and header names. */
+/** An OAuth scope token (RFC 6749 §3.3). */
+export const oauthScope = z.string().regex(/^[\x21\x23-\x5B\x5D-\x7E]{1,128}$/u)
+/** A client ID: printable ASCII, as authorization servers issue them. */
+export const oauthClientId = z.string().regex(/^[\x20-\x7E]{1,512}$/u)
+/**
+ * A token as an authorization server may issue it and as it is kept: token68 (RFC 6750), 20 characters or more. Every
+ * kept token is masked by its exact value in what the Host writes, so a remote party must not be able to make an
+ * ordinary word one.
+ */
+export const oauthToken = z.string().regex(/^(?=.{20,16384}$)[A-Za-z0-9._~+/-]+=*$/u)
+/** A client secret as it is kept: no control character, bounded. */
+const oauthSecret = z
+  .string()
+  .min(1)
+  .max(16 * 1024)
+  .refine(value => !/[\0-\x1F\x7F]/u.test(value))
+
+/**
+ * An address of an authorization server (its issuer, an endpoint): `https://`, or `http://` on this Mac's loopback
+ * written literally; no credentials or fragment. Returns it as written, or undefined.
+ */
+export function oauthAddress(value: string, query = false): string | undefined {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return undefined
+  }
+  if (value.length > 2048 || url.username || url.password || url.hash || value.includes('#')) return undefined
+  if (!query && (url.search || value.includes('?'))) return undefined
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackHost(url.hostname))) return undefined
+  return value
+}
+const oauthUrl = z.string().refine(value => oauthAddress(value) === value)
+const oauthEndpoint = z.string().refine(value => oauthAddress(value, true) === value)
+
+/**
+ * A remote server's login. `issuer`, `scopes` and `resource` are what a local confirmation approved (the scopes are a
+ * ceiling: a login asks for no more); `login` is how the last one stands, with the endpoints it will use again, all on
+ * the issuer's origin. Tokens and a client secret are in secrets.json.
+ */
+const oauthRecord = z.strictObject({
+  issuer: oauthUrl,
+  scopes: z.array(oauthScope).max(64),
+  /** What the tokens are for (RFC 8707): the server's own name for itself, at its bound origin. */
+  resource: oauthUrl,
+  /** A client ID a person typed (pre-registered); absent, Latch registers itself where the server offers that. */
+  clientId: oauthClientId.optional(),
+  login: z
+    .strictObject({
+      state: z.enum(['signed-in', 'relogin']),
+      /** Why it needs a new login. */
+      reason: z.enum(['refresh', 'rejected', 'expired', 'scope']).optional(),
+      clientId: oauthClientId,
+      /** Latch registered this client itself for this login. */
+      registered: z.boolean(),
+      authMethod: z.enum(['none', 'client_secret_basic', 'client_secret_post']),
+      tokenEndpoint: oauthEndpoint,
+      revocationEndpoint: oauthEndpoint.optional(),
+      expiresAt: stamp.optional(),
+      at: stamp,
+    })
+    .optional(),
+})
+export type McpOAuthRecord = z.infer<typeof oauthRecord>
+
+/** A remote address (Streamable HTTP); `specHash` is of its address, header names and confirmed login. */
 const httpRecord = z.strictObject({
   ...common,
   transport: z.literal('http'),
   url: remoteUrl,
   /** Its request headers, by name: their values are in secrets.json. */
   headerNames: z.array(headerName).max(32),
+  oauth: oauthRecord.optional(),
 })
 const recordSchema = z.discriminatedUnion('transport', [stdioRecord, httpRecord])
 export type McpServerRecord = z.infer<typeof recordSchema>
@@ -230,10 +303,35 @@ const serversFile = z.strictObject({
 })
 const secretsFile = z.strictObject({
   v: z.literal(1),
-  servers: z.record(serverId, z.strictObject({ env: z.record(envName, envValue), headers: z.record(headerName, headerValue).optional() })),
+  servers: z.record(
+    serverId,
+    z.strictObject({
+      env: z.record(envName, envValue),
+      headers: z.record(headerName, headerValue).optional(),
+      /** A remote server's login: its tokens, and the secret of its client when it has one. */
+      oauth: z
+        .strictObject({ accessToken: oauthToken.optional(), refreshToken: oauthToken.optional(), clientSecret: oauthSecret.optional() })
+        .optional(),
+    }),
+  ),
 })
 type ServersFile = z.infer<typeof serversFile>
 type SecretsFile = z.infer<typeof secretsFile>
+const endedFile = z.strictObject({ v: z.literal(1), servers: z.array(serverId).max(MAX_SERVERS) })
+
+/**
+ * Takes a server's login out of both files' contents: its tokens, how the login stood, and the secret of a client
+ * Latch registered for it. A typed client's ID and secret stay for the next login.
+ */
+export function stripLogin(servers: ServersFile, secrets: SecretsFile, id: string): void {
+  const current = servers.servers.find(item => item.id === id)
+  if (current?.transport === 'http' && current.oauth) delete current.oauth.login
+  const entry = secrets.servers[id]
+  if (!entry?.oauth) return
+  const secret = current?.transport === 'http' && current.oauth?.clientId ? entry.oauth.clientSecret : undefined
+  if (secret) entry.oauth = { clientSecret: secret }
+  else delete entry.oauth
+}
 
 /** What a person enters for a local command. */
 export const specInput = {
@@ -274,15 +372,28 @@ export interface McpHttpSpec {
   /** Origin and path. */
   url: string
   headerNames: string[]
+  /**
+   * Its confirmed login: where it logs in, for which scopes at most, and what the tokens are for. Absent: no login was
+   * confirmed.
+   */
+  oauth?: { issuer: string; scopes: string[]; resource: string } | undefined
 }
 
 export function httpSpecHash(spec: McpHttpSpec): string {
-  return sha256Hex(canonicalJson({ transport: 'http', url: spec.url, headerNames: spec.headerNames.toSorted() }))
+  return sha256Hex(
+    canonicalJson({
+      transport: 'http',
+      url: spec.url,
+      headerNames: spec.headerNames.toSorted(),
+      // Absent without a login, so a definition from before logins hashes as it did.
+      ...(spec.oauth ? { oauth: { issuer: spec.oauth.issuer, scopes: spec.oauth.scopes.toSorted(), resource: spec.oauth.resource } } : {}),
+    }),
+  )
 }
 
 type ConfirmedRecord =
   | (Pick<McpStdioRecord, keyof McpSpec | 'confirmed'> & { transport?: 'stdio' })
-  | Pick<McpHttpRecord, 'transport' | keyof McpHttpSpec | 'confirmed'>
+  | (Pick<McpHttpRecord, 'transport' | 'url' | 'headerNames' | 'confirmed'> & { oauth?: McpHttpSpec['oauth'] })
 
 /**
  * Whether a saved definition is one a confirmation approved: its program (a remote server's address) as confirmed, and
@@ -291,7 +402,7 @@ type ConfirmedRecord =
 export function isConfirmed(record: ConfirmedRecord): boolean {
   if (record.transport === 'http')
     return (
-      httpSpecHash({ url: record.url, headerNames: record.confirmed.secretNames }) === record.confirmed.hash
+      httpSpecHash({ url: record.url, headerNames: record.confirmed.secretNames, oauth: record.oauth }) === record.confirmed.hash
       && record.headerNames.every(name => record.confirmed.secretNames.includes(name))
     )
   return (
@@ -324,7 +435,11 @@ const secretNamesOf = (state: McpState) => (state.transport === 'http' ? state.h
 function specWidens(before: McpState, after: McpState): boolean {
   if (before.transport === 'http' || after.transport === 'http') {
     if (before.transport !== 'http' || after.transport !== 'http') return true
-    return before.url !== after.url || after.headerNames.some(name => !before.headerNames.includes(name))
+    return (
+      before.url !== after.url
+      || after.headerNames.some(name => !before.headerNames.includes(name))
+      || oauthWidens(before.oauth, after.oauth)
+    )
   }
   return (
     before.command !== after.command
@@ -332,6 +447,20 @@ function specWidens(before: McpState, after: McpState): boolean {
     || before.projectCwd !== after.projectCwd
     || canonicalJson(before.env) !== canonicalJson(after.env)
     || after.secretNames.some(name => !before.secretNames.includes(name))
+  )
+}
+
+/**
+ * Whether a login reaches further than the one confirmed: another authorization server, a scope it did not name, or
+ * tokens for another resource. The same server with fewer scopes, or no login at all, does not.
+ */
+export function oauthWidens(before: McpHttpSpec['oauth'], after: McpHttpSpec['oauth']): boolean {
+  if (!after) return false
+  return (
+    !before
+    || before.issuer !== after.issuer
+    || before.resource !== after.resource
+    || after.scopes.some(scope => !before.scopes.includes(scope))
   )
 }
 
@@ -577,6 +706,22 @@ export function usedIn(scope: McpScope, session: { agentId?: string; projectId?:
   )
 }
 
+/** A login as devices see it: where and how it stands, never a token or a client's ID. */
+export function oauthView(record: McpHttpRecord): McpOAuthView | undefined {
+  const oauth = record.oauth
+  // It asked for a login and none was confirmed yet: 未登录.
+  if (!oauth) return record.report?.reason === 'auth-required' ? { state: 'signed-out' } : undefined
+  const login = oauth.login
+  return {
+    state: login ? login.state : 'signed-out',
+    issuer: oauth.issuer,
+    scopes: [...oauth.scopes],
+    ...(login?.state === 'signed-in' && login.expiresAt ? { expiresAt: login.expiresAt } : {}),
+    ...(login?.state === 'relogin' ? { reason: login.reason ?? 'rejected' } : {}),
+    ...(oauth.clientId ? { clientId: true as const } : {}),
+  }
+}
+
 export function serverView(
   record: McpServerRecord,
   secrets: Readonly<Record<string, string>>,
@@ -593,13 +738,16 @@ export function serverView(
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   }
-  if (record.transport === 'http')
+  if (record.transport === 'http') {
+    const oauth = oauthView(record)
     return {
       ...common,
       transport: 'http',
       url: record.url,
       headers: record.headerNames.map(name => ({ name, set: Object.hasOwn(headers, name) && headers[name] !== '' })),
+      ...(oauth ? { oauth } : {}),
     }
+  }
   return {
     ...common,
     transport: 'stdio',
@@ -629,15 +777,42 @@ export class McpStore {
   private secrets: SecretsFile
   private queue: Promise<unknown> = Promise.resolve()
 
+  /** Servers whose login was ended but whose tokens are not known to be off the disk. */
+  private readonly ended: Set<string>
+
   private constructor(
     private readonly directory: string,
     private readonly now: () => number,
     servers: ServersFile,
     secrets: SecretsFile,
+    private readonly endedPath: string,
+    ended: Iterable<string>,
   ) {
     this.servers = servers
     this.secrets = secrets
+    this.ended = new Set(ended)
     this.exposeSecrets()
+  }
+
+  /** Whether a server's login was ended while its tokens may still be on this Mac's disk. */
+  isEnded(id: string): boolean {
+    return this.ended.has(id)
+  }
+
+  /**
+   * Puts on disk, apart from the two files, that a server's login is over. Rejects when even that cannot be written:
+   * the end then holds only until the Host stops.
+   */
+  async markEnded(id: string): Promise<void> {
+    if (this.ended.has(id)) return
+    await writeFileAtomic(this.endedPath, `${JSON.stringify({ v: 1, servers: [...this.ended, id] })}\n`)
+    this.ended.add(id)
+  }
+
+  /** The tokens are off the disk: the mark goes. Best effort; a mark left behind is cleared at the next start. */
+  async clearEnded(id: string): Promise<void> {
+    if (!this.ended.delete(id)) return
+    await writeFileAtomic(this.endedPath, `${JSON.stringify({ v: 1, servers: [...this.ended] })}\n`).catch(() => {})
   }
 
   static async open(dataDir: string, now: () => number = Date.now): Promise<McpStore> {
@@ -651,7 +826,23 @@ export class McpStore {
     const servers = rawServers === undefined ? { v: 1 as const, revision: 0, servers: [], receipts: [] } : serversFile.parse(rawServers)
     const secrets = rawSecrets === undefined ? { v: 1 as const, servers: {} } : secretsFile.parse(rawSecrets)
     for (const name of [SERVERS_FILE, SECRETS_FILE]) await chmod(join(directory, name), 0o600).catch(() => {})
-    return new McpStore(directory, now, servers, secrets)
+    // A login ended before the Host stopped, whose tokens could not be deleted then: they are out of memory before
+    // anything can use them, and deleted from the files now if those can be written.
+    const endedPath = join(dataDir, ENDED_FILE)
+    const rawEnded = await readJson(endedPath)
+    let ended = rawEnded === undefined ? [] : endedFile.parse(rawEnded).servers
+    if (ended.length) {
+      for (const id of ended) stripLogin(servers, secrets, id)
+      try {
+        await writeFileAtomic(join(directory, SECRETS_FILE), `${JSON.stringify(secrets)}\n`)
+        await writeFileAtomic(join(directory, SERVERS_FILE), `${JSON.stringify(servers, null, 2)}\n`)
+        await rm(endedPath, { force: true })
+        ended = []
+      } catch {
+        /* Still on disk: the mark stays, and the login shows that it could not be deleted. */
+      }
+    }
+    return new McpStore(directory, now, servers, secrets, endedPath, ended)
   }
 
   /**
@@ -664,6 +855,8 @@ export class McpStore {
       Object.values(this.secrets.servers).flatMap(entry => [
         ...Object.values(entry.env),
         ...Object.values(entry.headers ?? {}).flatMap(value => [value, ...(/^\S+ +(\S.*)$/u.exec(value)?.slice(1) ?? [])]),
+        // A login's tokens and its client's secret: opaque, so masked by their exact values.
+        ...Object.values(entry.oauth ?? {}),
       ]),
     )
   }
@@ -706,6 +899,11 @@ export class McpStore {
   /** A remote server's request headers, for the Host's client only: never to a device, an agent or a log. */
   headersOf(id: string): Record<string, string> {
     return { ...this.secrets.servers[id]?.headers }
+  }
+
+  /** A remote server's tokens and client secret, for the Host's own login code only. */
+  oauthOf(id: string): { accessToken?: string; refreshToken?: string; clientSecret?: string } {
+    return { ...this.secrets.servers[id]?.oauth }
   }
 
   /** The servers a session gets now: on, and used in it. */

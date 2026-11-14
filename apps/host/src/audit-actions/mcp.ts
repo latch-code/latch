@@ -43,4 +43,37 @@ export const MCP_ACTIONS = {
     result: z.enum(['ok', 'error', 'cancelled', 'failed']),
     ms: count,
   }),
+  /**
+   * A remote server's login (OAuth), started on this Mac: begun (before anything is listened for or opened), finished
+   * (before the tokens are kept), refused or given up (by class), a renewal the authorization server refused, and the
+   * tokens' end. Never a token, a code, a state, a client ID or an address.
+   */
+  'mcp.oauth.started': z.strictObject({ serverId }),
+  'mcp.oauth.authorized': z.strictObject({ serverId, registered: z.boolean(), renewable: z.boolean() }),
+  'mcp.oauth.failed': z.strictObject({
+    serverId,
+    reason: z.enum([
+      'discovery',
+      'resource',
+      'metadata',
+      'endpoint',
+      'pkce',
+      'client-required',
+      'registration',
+      'state',
+      'issuer',
+      'replay',
+      'denied',
+      'expired',
+      'exchange',
+      'token',
+      'scope',
+      'refused',
+      'unreachable',
+      'cancelled',
+      'audit',
+    ]),
+  }),
+  'mcp.oauth.refresh-failed': z.strictObject({ serverId }),
+  'mcp.oauth.revoked': z.strictObject({ serverId, result: z.enum(['revoked', 'failed', 'unsupported', 'none', 'undeleted']) }),
 } as const satisfies Record<string, ZodType>

@@ -58,11 +58,15 @@ function ConfirmationWarnings({ ticket }: { ticket: ConfirmationTicket }) {
 
 /**
  * What a system form's one sentence leaves out. A start names the program there, not its folder or what the project can
- * change; a slot the Host cut carries 「…」, its only mark, and a slot's own 「…」 merely shows these too. The native sheet
- * lists the lines itself. Hashes bind the request and are nothing to read.
+ * change; a slot the Host cut carries 「…」, its only mark, and a slot's own 「…」 merely shows these too. The system
+ * sheet shows that one sentence and nothing else, so what it leaves out is listed here. Hashes bind the request and
+ * are nothing to read.
  */
-function detailsLeftOut(ticket: ConfirmationTicket) {
-  if (!ticket.reason?.includes('…')) return []
+export function detailsLeftOut(ticket: ConfirmationTicket) {
+  // A login's authorization server and scopes come from the server, not from anything the person typed, and the
+  // sentence has no room for them: they are always listed, every scope, before the person confirms.
+  const login = (ticket.lines ?? []).some(line => line.label === '授权服务器')
+  if (!ticket.reason?.includes('…') && !login) return []
   return (ticket.lines ?? []).filter(line => !/指纹|哈希|首条输入/u.test(line.label))
 }
 

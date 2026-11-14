@@ -200,6 +200,7 @@ import {
   type McpHttpRecord,
   type McpServerRecord,
 } from './mcp.ts'
+import { McpOAuth } from './mcp-oauth.ts'
 import { McpRemotePool, McpRemoteSession, builtinToolName, maskStrings, remoteFailure, type RemoteAnswer } from './mcp-remote.ts'
 import {
   authFailure,
@@ -705,6 +706,8 @@ export interface ServerOptions {
   commandDirectories?: () => readonly string[]
   /** Tests: receives a harness's login script instead of a terminal opening. Production never sets it. */
   loginTerminal?: (script: string) => Promise<void>
+  /** Tests: how long a remote MCP server's login waits for the browser (at most 10 minutes). Production never sets it. */
+  mcpLoginTtlMs?: number
   /** Tests: how long a run's first prompt and a stop wait for lifecycle listeners. Production never sets it. */
   lifecycleBounds?: Partial<LifecycleBounds>
   /** Default `console.error('[Latch] ' + text)`; every line is redacted first. */
@@ -1269,6 +1272,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /** The Host's sessions with remote MCP servers, through the same outbound rules (docs/MCP.md). */
     const mcpRemote = new McpRemotePool()
     startupCleanup.push(() => mcpRemote.closeAll())
+    /** Remote MCP servers' logins (OAuth): the Host is the client, through the same outbound rules. */
+    const mcpOAuth = new McpOAuth({
+      store: mcpStore,
+      fetch: egressFetch,
+      now,
+      // The device that began a login is its actor; what the Host does by itself (a renewal, a timeout) is the Host's.
+      audit: async (action, detail, actor) => {
+        await audit.append({
+          action,
+          actor: (actor as AuditEvent['actor'] | undefined) ?? { listener: 'host' },
+          target: String(detail.serverId),
+          detail,
+        } as AuditEvent)
+      },
+      initiatorHolds: deviceId => devices.isActive(deviceId) && devices.get(deviceId)?.scopes.includes('admin') === true,
+      changed: () => refresh(),
+      log,
+      ...(options.mcpLoginTtlMs !== undefined ? { ttlMs: options.mcpLoginTtlMs } : {}),
+    })
+    startupCleanup.push(() => mcpOAuth.close())
     let hub: HarnessHub | undefined
     const presence = new PresenceService({
       backend: options.presence ?? createPresenceBackend({ codeRoot, policy }),
@@ -2503,7 +2526,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const target = hostPortOf(record.url)
           if (!target || !policy.get().hostEgressAllow.includes(target) || egressExtra.includes(target)) return undefined
           const others = [
-            ...mcpStore.records().flatMap(item => (item.id !== serverId && item.transport === 'http' ? [item.url] : [])),
+            // Another server's address, or the authorization server one logs in at.
+            ...mcpStore
+              .records()
+              .flatMap(item =>
+                item.transport === 'http' && item.id !== serverId ? [item.url, ...(item.oauth ? [item.oauth.issuer] : [])] : [],
+              ),
             ...config.providers().map(provider => provider.baseURL),
           ]
           return others.some(url => hostPortOf(url) === target) ? undefined : target
@@ -2533,6 +2561,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           } finally {
             await session.close()
           }
+        },
+        oauth: mcpOAuth,
+        unusedAllowance: address => {
+          const target = hostPortOf(address)
+          if (!target || !policy.get().hostEgressAllow.includes(target) || egressExtra.includes(target)) return undefined
+          const used = [
+            ...mcpStore
+              .records()
+              .flatMap(item => (item.transport === 'http' ? [item.url, ...(item.oauth ? [item.oauth.issuer] : [])] : [])),
+            ...config.providers().map(provider => provider.baseURL),
+          ]
+          return used.some(url => hostPortOf(url) === target) ? undefined : target
         },
       },
       browser: {
@@ -4252,7 +4292,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const latest = mcpStore.get(record.id)
       if (!latest || latest.transport !== 'http' || latest.specHash !== record.specHash || !mcpConfirmed(latest))
         throw new AppError(409, 'mcp-server-gone', 'This MCP server was removed, switched off or changed in Latch.')
-      return { url: latest.url, headers: mcpStore.headersOf(latest.id), fetch: egressFetch }
+      return {
+        url: latest.url,
+        headers: mcpStore.headersOf(latest.id),
+        fetch: egressFetch,
+        // A server with a confirmed login carries its token, to this address alone; the Host renews it.
+        ...(latest.oauth
+          ? {
+              authorization: mcpOAuth.authorization(latest.id),
+              onRejected: (why: 'rejected' | 'scope') => void mcpOAuth.relogin(latest.id, why),
+            }
+          : {}),
+      }
     }
 
     function remoteSession(key: string, record: McpHttpRecord) {

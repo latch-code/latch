@@ -9,6 +9,7 @@ import {
   type AppSnapshot,
   type McpFailure,
   type McpHttpServerView,
+  type McpOAuthFailure,
   type McpScope,
   type McpServerView,
   type McpServersResponse,
@@ -54,7 +55,7 @@ export const MCP_FAILURE_TEXT: Readonly<Record<McpFailure, string>> = {
   protocol: '回答不是 MCP',
   'list-failed': '没有列出工具',
   'output-too-large': '输出过大',
-  'auth-required': '需要登录 · 尚未实现',
+  'auth-required': '需要登录',
   unreachable: '无法连接',
   refused: 'Latch 没有连接这个地址',
 }
@@ -64,6 +65,37 @@ const RUNS_AS_YOU = {
   detail:
     '命令由 Agent 一侧的 latch-mcp 启动，以你的身份运行，Latch 不隔离它。经 Latch 的每次调用都有记录；Harness 自己的 MCP 不经过 Latch。',
 }
+/** Why a login did not finish or no longer holds: Latch's own words, never the authorization server's. */
+export const MCP_LOGIN_FAILURE_TEXT: Readonly<Record<McpOAuthFailure, string>> = {
+  discovery: '服务器没有说明去哪里登录',
+  resource: '服务器说明的资源与它的地址不符',
+  metadata: '读不到授权服务器的说明',
+  endpoint: '授权服务器的端点不在确认过的地址上',
+  pkce: '授权服务器不支持 PKCE',
+  'client-required': '需要填写 Client ID',
+  registration: '授权服务器没有接受注册',
+  state: '回调与这次登录不符',
+  issuer: '回调不是来自确认过的授权服务器',
+  denied: '登录被拒绝或取消',
+  expired: '登录超时',
+  exchange: '授权服务器没有发出令牌',
+  token: '授权服务器发出的令牌不合格式',
+  scope: '范围超出确认过的',
+  refused: 'Latch 没有连接这个地址',
+  unreachable: '无法连接授权服务器',
+  cancelled: '登录已取消',
+  audit: '记录写不进',
+  refresh: '续期被拒绝',
+  rejected: '服务器不再接受这次登录',
+  delete: '没能删除这台 Mac 上的登录',
+}
+const LOGIN_NOTE = {
+  label: '令牌只留在这台 Mac',
+  detail:
+    'Latch 在系统浏览器里登录，令牌只存在这台 Mac 上，只发往这个地址与确认过的授权服务器，不交给 Agent 或其他设备。只能在这台 Mac 上登录与退出；移除服务器或退出登录时令牌会被撤销。',
+}
+const CLIENT_NOTE = '授权服务器不提供自动注册时填写。注册时回调地址填 http://127.0.0.1/callback（任意端口）。'
+
 const REMOTE_NOTE = {
   label: '请求头只留在这台 Mac',
   detail:
@@ -75,13 +107,31 @@ const BUILTIN_NOTE = {
     '命令交给 Claude Agent、Codex 等外部 Harness；pi 不接收 MCP 服务器。内置 Harness 要由 Latch 自己在这台 Mac 上运行命令，尚未实现；远程地址由 Latch 调用，每次都要你确认。',
 }
 
-/** The state word of a server: 已停用, 未测试, 可用 · N 个工具, or 失败 with the reason behind it. */
+/** How a remote server's login stands, in a word: amber waits for the person, red is an attempt that failed. */
+export function mcpLoginStatus(server: McpHttpServerView): { tone: StatusTone; text: string; reason?: string } | undefined {
+  const oauth = server.oauth
+  if (!oauth) return undefined
+  // 退出登录 did not get the tokens off this Mac: said as it is, not as a login that failed.
+  if (oauth.state === 'failed' && oauth.reason === 'delete') return { tone: 'failed', text: MCP_LOGIN_FAILURE_TEXT.delete }
+  if (oauth.state === 'signing-in') return { tone: 'running', text: '登录中' }
+  if (oauth.state === 'failed')
+    return { tone: 'failed', text: '登录失败', reason: oauth.reason ? MCP_LOGIN_FAILURE_TEXT[oauth.reason] : '' }
+  if (oauth.state === 'relogin')
+    return { tone: 'warn', text: '需要重新登录', reason: oauth.reason ? MCP_LOGIN_FAILURE_TEXT[oauth.reason] : '' }
+  if (oauth.state === 'signed-out') return { tone: 'warn', text: '未登录' }
+  return { tone: 'done', text: '已登录' }
+}
+
+/** The state word of a server: 已停用, 未测试, 可用 · N 个工具, its login where that waits, or 失败 with the reason. */
 export function mcpStatus(server: McpServerView): { tone: StatusTone; text: string; reason?: string } {
   if (!server.enabled) return { tone: 'neutral', text: '已停用' }
+  const login = server.transport === 'http' ? mcpLoginStatus(server) : undefined
+  // A login that is not there yet says more than the last test does.
+  if (login && server.transport === 'http' && server.oauth?.state !== 'signed-in') return login
   const report = server.report
-  if (!report) return { tone: 'neutral', text: '未测试' }
-  // A login is something the person does, not a failure; OAuth is not built yet, which the word says.
-  if (report.status === 'failed' && report.reason === 'auth-required') return { tone: 'warn', text: '需要登录 · 尚未实现' }
+  if (!report) return login ?? { tone: 'neutral', text: '未测试' }
+  // A login is something the person does, not a failure.
+  if (report.status === 'failed' && report.reason === 'auth-required') return { tone: 'warn', text: '需要登录' }
   if (report.status === 'failed') return { tone: 'failed', text: '失败', reason: report.reason ? MCP_FAILURE_TEXT[report.reason] : '' }
   const on = report.tools.filter(tool => !server.disabledTools.includes(tool)).length
   return { tone: 'done', text: `可用 · ${on} 个工具` }
@@ -799,6 +849,233 @@ function UrlDialog({
   )
 }
 
+/** A client ID registered beforehand, for an authorization server that registers none itself. */
+function ClientDialog({
+  onSubmit,
+  onClose,
+}: {
+  onSubmit: (clientId: string, clientSecret: string) => Promise<string>
+  onClose: () => void
+}) {
+  const [clientId, setClientId] = useState('')
+  const [secret, setSecret] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const invalid = clientId !== '' && !/^[\x20-\x7E]{1,512}$/u.test(clientId.trim())
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!clientId.trim() || invalid || busy) return
+    setBusy(true)
+    const failure = await onSubmit(clientId.trim(), secret)
+    setBusy(false)
+    if (failure) setError(failure)
+    else onClose()
+  }
+  return (
+    <Dialog
+      open
+      size="form"
+      title="Client ID"
+      onClose={() => {
+        if (!busy) onClose()
+      }}
+      footer={
+        <>
+          <Button size="md" disabled={busy} onClick={onClose}>
+            取消
+          </Button>
+          <Button size="md" variant="primary" type="submit" form="mcp-client-form" disabled={!clientId.trim() || invalid} loading={busy}>
+            登录
+          </Button>
+        </>
+      }>
+      <form
+        id="mcp-client-form"
+        className="settings-form"
+        onSubmit={event => {
+          void submit(event)
+        }}>
+        <TextField
+          label="Client ID"
+          value={clientId}
+          spellCheck={false}
+          autoComplete="off"
+          hint={<Hint label="在授权服务器注册的应用">{CLIENT_NOTE}</Hint>}
+          error={invalid ? '只能是可见的 ASCII 字符' : undefined}
+          onChange={event => {
+            setClientId(event.target.value)
+          }}
+        />
+        <TextField
+          label="Client Secret（没有就留空）"
+          type="password"
+          value={secret}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={event => {
+            setSecret(event.target.value)
+          }}
+        />
+        {error && <InlineNotice tone="error">{error}</InlineNotice>}
+        <InlineConfirm active={busy} rank={1} />
+      </form>
+    </Dialog>
+  )
+}
+
+/**
+ * A remote server's login: how it stands for every device; 登录, 在浏览器中打开, 取消 and 退出登录 only on this Mac. The
+ * browser is opened by the person's own click on the address the Host answered with; the page keeps that address only
+ * while it is open.
+ */
+function LoginGroup({
+  server,
+  local,
+  disabled,
+  onChanged,
+}: {
+  server: McpHttpServerView
+  local: boolean
+  disabled: boolean
+  onChanged: (server?: McpServerView) => void
+}) {
+  const oauth = server.oauth
+  const [busy, setBusy] = useState<null | 'login' | 'logout'>(null)
+  const [error, setError] = useState('')
+  const [address, setAddress] = useState('')
+  const [client, setClient] = useState(false)
+  const write = useWrite()
+  const state = oauth?.state
+  const refresh = useRef(onChanged)
+  refresh.current = onChanged
+  // The browser's return reaches the Host, not this page: while a login waits, the page asks how it stands.
+  useEffect(() => {
+    if (state !== 'signing-in') {
+      setAddress('')
+      return
+    }
+    const timer = window.setInterval(() => refresh.current(), 2000)
+    return () => window.clearInterval(timer)
+  }, [state])
+  if (!oauth) return null
+  const status = mcpLoginStatus(server)!
+  const path = `mcp/servers/${encodeURIComponent(server.id)}/oauth`
+  const login = async (typed?: { clientId: string; clientSecret: string }): Promise<string> => {
+    setBusy('login')
+    setError('')
+    try {
+      const body = typed ? { clientId: typed.clientId, ...(typed.clientSecret ? { clientSecret: typed.clientSecret } : {}) } : {}
+      const result = await write('login', requestId =>
+        withConfirmation(confirmation =>
+          api<{ authorizationUrl?: string; server?: McpServerView }>(`${path}/login`, {
+            method: 'POST',
+            body: { requestId, ...body },
+            ...(confirmation ? { confirmation } : {}),
+          }),
+        ),
+      )
+      // A request sent again after its login was over comes back without an address.
+      setAddress(result.authorizationUrl ?? '')
+      onChanged(result.server)
+      return ''
+    } catch (cause) {
+      onChanged()
+      return inlineError(cause)
+    } finally {
+      setBusy(null)
+    }
+  }
+  const logout = async () => {
+    setBusy('logout')
+    setError('')
+    try {
+      const result = await write('logout', requestId =>
+        api<{ server?: McpServerView }>(`${path}/logout`, { method: 'POST', body: { requestId } }),
+      )
+      setAddress('')
+      onChanged(result.server)
+    } catch (cause) {
+      setError(inlineError(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+  const idle = disabled || busy !== null
+  const needsClient = oauth.state === 'failed' && oauth.reason === 'client-required'
+  const undeleted = oauth.state === 'failed' && oauth.reason === 'delete'
+  const start = () => {
+    if (needsClient) setClient(true)
+    else void login().then(text => text && setError(text))
+  }
+  return (
+    <SettingsGroup title="登录" note={<NoteLine brief={LOGIN_NOTE} />}>
+      <SettingsRow
+        className="mcp-login"
+        title={
+          <StatusWord tone={status.tone} title={status.reason || undefined}>
+            {status.text}
+          </StatusWord>
+        }
+        description={
+          oauth.state === 'signed-in' && oauth.expiresAt
+            ? `到期 ${dateTime(oauth.expiresAt)}`
+            : oauth.state === 'signing-in'
+              ? '在浏览器里完成'
+              : status.reason || undefined
+        }
+        trailing={
+          local && (
+            <span className="mcp-row-actions">
+              {oauth.state === 'signing-in' && address && (
+                <Button
+                  variant="primary"
+                  disabled={idle}
+                  onClick={() => {
+                    window.open(address, '_blank', 'noopener,noreferrer')
+                  }}>
+                  在浏览器中打开
+                </Button>
+              )}
+              {oauth.state === 'signing-in' && (
+                <Button variant="ghost" disabled={idle} loading={busy === 'logout'} onClick={() => void logout()}>
+                  取消
+                </Button>
+              )}
+              {oauth.state === 'signed-in' && (
+                <Button variant="ghost" disabled={idle} loading={busy === 'logout'} onClick={() => void logout()}>
+                  退出登录
+                </Button>
+              )}
+              {undeleted && (
+                <Button variant="primary" disabled={idle} loading={busy === 'logout'} onClick={() => void logout()}>
+                  重试
+                </Button>
+              )}
+              {!undeleted && (oauth.state === 'signed-out' || oauth.state === 'failed' || oauth.state === 'relogin') && (
+                <>
+                  <Button variant="ghost" disabled={idle} onClick={() => setClient(true)}>
+                    Client ID…
+                  </Button>
+                  <Button variant="primary" disabled={idle} loading={busy === 'login'} onClick={start}>
+                    {oauth.state === 'relogin' ? '重新登录' : '登录'}
+                  </Button>
+                </>
+              )}
+            </span>
+          )
+        }
+      />
+      {oauth.issuer && <SettingsRow title="授权服务器" description={<MiddleEllipsis text={oauth.issuer} className="settings-mono" />} />}
+      {oauth.scopes && oauth.scopes.length > 0 && (
+        <SettingsRow title="范围" description={<code className="settings-mono">{oauth.scopes.join(' ')}</code>} />
+      )}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      <InlineConfirm active={busy === 'login'} rank={1} />
+      {client && <ClientDialog onSubmit={(clientId, clientSecret) => login({ clientId, clientSecret })} onClose={() => setClient(false)} />}
+    </SettingsGroup>
+  )
+}
+
 /** A remote server's address and request headers by name, with 编辑 and 更换 on this Mac. */
 function RemoteGroups({
   server,
@@ -1102,6 +1379,9 @@ function ServerPage({
         <InlineNotice tone="error">{`测试失败：${report.reason ? MCP_FAILURE_TEXT[report.reason] : '没有完成'}`}</InlineNotice>
       )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {server.transport === 'http' && (
+        <LoginGroup server={server} local={local && server.enabled} disabled={busy !== null} onChanged={onChanged} />
+      )}
       {server.transport === 'http' ? (
         <RemoteGroups
           server={server}
@@ -1173,7 +1453,9 @@ function ServerPage({
           title={`移除 ${server.name}？`}
           message={
             <>
-              {`正在用它的会话立即失去它；它的${remote ? '请求头' : '环境变量'}的值一并删除。`}
+              {`正在用它的会话立即失去它；它的${remote ? '请求头' : '环境变量'}的值一并删除${
+                server.transport === 'http' && server.oauth?.state === 'signed-in' ? '，登录的令牌会被撤销' : ''
+              }。`}
               {server.transport === 'http' && server.allowance && (
                 <Checkbox
                   label={`同时移除出站许可 ${server.allowance}`}

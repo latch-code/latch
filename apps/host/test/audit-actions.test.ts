@@ -51,6 +51,11 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'mcp.server.test': { serverId: `mcp_${'F'.repeat(22)}`, specHash: hex },
   'mcp.server.started': { serverId: `mcp_${'F'.repeat(22)}`, sessionId, specHash: hex },
   'mcp.tool.called': { serverId: `mcp_${'F'.repeat(22)}`, sessionId, callId: '00000000-0000-4000-8000-000000000000', toolHash: hex },
+  'mcp.oauth.started': { serverId: `mcp_${'F'.repeat(22)}` },
+  'mcp.oauth.authorized': { serverId: `mcp_${'F'.repeat(22)}`, registered: true, renewable: true },
+  'mcp.oauth.failed': { serverId: `mcp_${'F'.repeat(22)}`, reason: 'state' },
+  'mcp.oauth.refresh-failed': { serverId: `mcp_${'F'.repeat(22)}` },
+  'mcp.oauth.revoked': { serverId: `mcp_${'F'.repeat(22)}`, result: 'revoked' },
   'mcp.tool.settled': {
     serverId: `mcp_${'F'.repeat(22)}`,
     sessionId,

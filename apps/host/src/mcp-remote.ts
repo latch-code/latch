@@ -75,7 +75,7 @@ export class McpRemoteError extends Error {
 }
 
 const MESSAGES: Readonly<Record<RemoteFailure, string>> = {
-  'auth-required': 'The MCP server asks for a login, which Latch does not do yet.',
+  'auth-required': 'The MCP server asks for a login: log in to it in Latch on this Mac (设置 › MCP).',
   unreachable: 'The MCP server could not be reached or answered with an HTTP error.',
   refused: 'Latch did not connect: the address is not allowed, or the server redirected elsewhere.',
   timeout: 'The MCP server did not answer in time.',
@@ -139,6 +139,14 @@ export interface McpRemoteOptions {
   headers: Readonly<Record<string, string>>
   /** The Host's outbound fetch. */
   fetch: FetchLike
+  /**
+   * The server's login (OAuth), when it has one: the access token to send as `Authorization: Bearer`, renewed first when
+   * it is about to run out, or (`renew`) because the server just refused it. Undefined: no usable token. The token goes
+   * where the headers go, the bound address, and nowhere else.
+   */
+  authorization?: (renew: boolean) => Promise<string | undefined>
+  /** The server refused the token after a renewal (`rejected`), or asks for scopes it does not carry (`scope`). */
+  onRejected?: (why: 'rejected' | 'scope') => void
   timeoutMs?: number
   maxBytes?: number
 }
@@ -265,7 +273,7 @@ export class McpRemoteSession {
       release = await turn(new URL(this.options.url).origin, timeout)
       const response = await this.options.fetch(this.options.url, {
         method: 'DELETE',
-        headers: this.headers(),
+        headers: this.headers(await this.options.authorization?.(false).catch(() => undefined)),
         redirect: 'manual',
         signal: timeout,
       })
@@ -277,9 +285,11 @@ export class McpRemoteSession {
     }
   }
 
-  private headers(): Headers {
+  private headers(token?: string): Headers {
     const headers = new Headers()
     for (const [name, value] of Object.entries(this.options.headers)) headers.set(name, value)
+    // The login's token takes the header's place: only ever in `Authorization`, never in the address.
+    if (token !== undefined) headers.set('authorization', `Bearer ${token}`)
     headers.set('content-type', 'application/json')
     headers.set('accept', 'application/json, text/event-stream')
     if (this.version) headers.set('mcp-protocol-version', this.version)
@@ -307,7 +317,30 @@ export class McpRemoteSession {
       throw this.failure(error, signal, timeout)
     }
     try {
-      return await this.send(message, id, signal, timeout, combined)
+      const authorization = this.options.authorization
+      if (!authorization) return await this.send(message, id, signal, timeout, combined, undefined)
+      const token = await authorization(false)
+      try {
+        return await this.send(message, id, signal, timeout, combined, token)
+      } catch (error) {
+        if (!(error instanceof McpRemoteError) || error.reason !== 'auth-required' || combined.aborted) throw error
+        if (error instanceof ScopeRefused) {
+          this.options.onRejected?.('scope')
+          throw error
+        }
+        // Refused: renewed once and sent once more; a second refusal is the person's to mend.
+        const renewed = token === undefined ? undefined : await authorization(true)
+        if (renewed === undefined || renewed === token) {
+          if (token !== undefined && renewed === token) this.options.onRejected?.('rejected')
+          throw error
+        }
+        try {
+          return await this.send(message, id, signal, timeout, combined, renewed)
+        } catch (again) {
+          if (again instanceof McpRemoteError && again.reason === 'auth-required') this.options.onRejected?.('rejected')
+          throw again
+        }
+      }
     } finally {
       release()
     }
@@ -319,12 +352,13 @@ export class McpRemoteSession {
     signal: AbortSignal | undefined,
     timeout: AbortSignal,
     combined: AbortSignal,
+    token: string | undefined,
   ): Promise<{ answer?: RemoteAnswer; response: Response }> {
     let response: Response
     try {
       response = await this.options.fetch(this.options.url, {
         method: 'POST',
-        headers: this.headers(),
+        headers: this.headers(token),
         body: JSON.stringify(message),
         // Never followed: a server's headers go to the confirmed origin and path alone.
         redirect: 'manual',
@@ -336,6 +370,9 @@ export class McpRemoteSession {
     try {
       if (response.status >= 300 && response.status < 400) throw failed('refused')
       if (response.status === 401) throw failed('auth-required')
+      // A token without the scopes the server wants: widening them is a new login, confirmed on this Mac.
+      if (response.status === 403 && token !== undefined && /\binsufficient_scope\b/u.test(response.headers.get('www-authenticate') ?? ''))
+        throw new ScopeRefused()
       if (response.status === 404 && this.sessionId && message.method !== 'initialize') throw new SessionGone()
       if (!response.ok) throw failed('unreachable')
       if (id === undefined) {
@@ -416,6 +453,13 @@ export class McpRemoteSession {
 
 /** The server forgot the session (404): start again. */
 class SessionGone extends Error {}
+
+/** 403 `insufficient_scope`: the login holds, but not for this. */
+class ScopeRefused extends McpRemoteError {
+  constructor() {
+    super('auth-required', MESSAGES['auth-required'])
+  }
+}
 
 /** The reason for any error a remote call ended with, for its report. */
 export function remoteFailure(error: unknown): RemoteFailure {

@@ -15,8 +15,8 @@ export interface McpScope {
 
 /**
  * Why a server did not come up, as the bridge, the Host's client or 测试 saw it; never the server's own words. The last
- * three are a remote address's: it asks for a login (OAuth, 尚未实现), it could not be reached or answered with an HTTP
- * error, or the Host refused to go there (an outbound rule, a redirect).
+ * three are a remote address's: it asks for a login (登录 on this Mac, OAuth), it could not be reached or answered with an
+ * HTTP error, or the Host refused to go there (an outbound rule, a redirect).
  */
 export type McpFailure =
   | 'spawn-failed'
@@ -78,11 +78,63 @@ export interface McpHttpServerView extends McpServerCommon {
   url: string
   /** Its request headers by name; every value is secret. */
   headers: Array<{ name: string; set: boolean }>
+  /** Its login, when it asks for one or has one. */
+  oauth?: McpOAuthView
   /**
    * The outbound allowance (`host:port`) that only this server uses, in the list for a device that manages this Host:
    * removing the server may remove it too. Absent when there is none, or another server or a model service uses it.
    */
   allowance?: string
+}
+
+/**
+ * A remote server's login (OAuth), as any device may see it: `signed-out` (it asks for one, or one was ended),
+ * `signing-in` (a login started on this Mac waits for the browser), `signed-in`, `relogin` (the token ran out or was
+ * refused and could not be renewed) and `failed` (the last attempt, with why).
+ */
+export type McpOAuthState = 'signed-out' | 'signing-in' | 'signed-in' | 'relogin' | 'failed'
+
+/** Why a login did not finish or no longer holds: the Host's own class, never the authorization server's words. */
+export type McpOAuthFailure =
+  | 'discovery'
+  | 'resource'
+  | 'metadata'
+  | 'endpoint'
+  | 'pkce'
+  | 'client-required'
+  | 'registration'
+  | 'state'
+  | 'issuer'
+  | 'denied'
+  | 'expired'
+  | 'exchange'
+  /** The authorization server's token is not shaped like one (token68, 20 characters or more). */
+  | 'token'
+  | 'scope'
+  | 'refused'
+  | 'unreachable'
+  | 'cancelled'
+  | 'audit'
+  | 'refresh'
+  | 'rejected'
+  /** 退出登录 could not delete the tokens from this Mac; no request carries them, and it can be tried again. */
+  | 'delete'
+
+/** Never a token, a client secret, a code or a state: only where the login is and how it stands. */
+export interface McpOAuthView {
+  state: McpOAuthState
+  /** The confirmed authorization server: its issuer, whole. Absent before the first login is confirmed. */
+  issuer?: string
+  /** The scopes that were confirmed; empty when the server names none. */
+  scopes?: string[]
+  /** When the access token runs out, if the authorization server said. */
+  expiresAt?: string
+  /** With `failed` and `relogin`. */
+  reason?: McpOAuthFailure
+  /** A client ID was typed on this Mac (the value stays there); otherwise Latch registers itself where offered. */
+  clientId?: true
+  /** A `signing-in` login ends by then. */
+  until?: string
 }
 
 export type McpServerView = McpStdioServerView | McpHttpServerView

@@ -1,9 +1,10 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { isUnpinnedRunner, type AppSnapshot, type HarnessInfo, type McpServerView } from '@latch/protocol'
+import { isUnpinnedRunner, type AppSnapshot, type HarnessInfo, type McpHttpServerView, type McpServerView } from '@latch/protocol'
 import { agentServers, harnessNote } from '../src/agents/McpSection.tsx'
-import { McpStatusWord, mcpStatus, remoteUrl, scopeText } from '../src/settings/McpSettings.tsx'
+import { detailsLeftOut } from '../src/components/InlineConfirm.tsx'
+import { MCP_LOGIN_FAILURE_TEXT, McpStatusWord, mcpStatus, remoteUrl, scopeText } from '../src/settings/McpSettings.tsx'
 
 const AGENT = `agt_${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`
 
@@ -46,9 +47,49 @@ describe('设置 › MCP', () => {
     const failed = { ...report, status: 'failed' as const, tools: [], reason: 'timeout' as const }
     expect(mcpStatus(server({ report: failed }))).toEqual({ tone: 'failed', text: '失败', reason: '没有在时限内完成初始化' })
     expect(renderToStaticMarkup(createElement(McpStatusWord, { server: server({ report: failed }) }))).toContain('data-tone="failed"')
-    // A remote server that asks for a login waits for the person, in amber, and says OAuth is not built yet.
+    // A remote server that asks for a login waits for the person, in amber.
     const login = { ...failed, reason: 'auth-required' as const }
-    expect(mcpStatus(server({ report: login }))).toEqual({ tone: 'warn', text: '需要登录 · 尚未实现' })
+    expect(mcpStatus(server({ report: login }))).toEqual({ tone: 'warn', text: '需要登录' })
+  })
+
+  it('says a remote server’s login in a word: 未登录, 登录中, 已登录, 需要重新登录, or 登录失败 with why', () => {
+    const remote = (oauth: McpHttpServerView['oauth'], change: Partial<McpHttpServerView> = {}) =>
+      server({ transport: 'http', url: 'https://mcp.example.com/mcp', headers: [], oauth, ...change } as Partial<McpServerView>)
+    expect(mcpStatus(remote({ state: 'signed-out' }))).toEqual({ tone: 'warn', text: '未登录' })
+    expect(mcpStatus(remote({ state: 'signing-in' }))).toEqual({ tone: 'running', text: '登录中' })
+    expect(mcpStatus(remote({ state: 'failed', reason: 'issuer' }))).toEqual({
+      tone: 'failed',
+      text: '登录失败',
+      reason: '回调不是来自确认过的授权服务器',
+    })
+    expect(mcpStatus(remote({ state: 'relogin', reason: 'refresh' }))).toEqual({ tone: 'warn', text: '需要重新登录', reason: '续期被拒绝' })
+    // Logged in: the login itself until a test or a session says more, then the tools.
+    expect(mcpStatus(remote({ state: 'signed-in' }))).toEqual({ tone: 'done', text: '已登录' })
+    const report = { status: 'ok' as const, tools: ['a'], at: '2026-11-13T00:00:00.000Z', via: 'test' as const }
+    expect(mcpStatus(remote({ state: 'signed-in' }, { report }))).toEqual({ tone: 'done', text: '可用 · 1 个工具' })
+    // Switched off says so first; every reason has words.
+    expect(mcpStatus(remote({ state: 'signed-out' }, { enabled: false }))).toEqual({ tone: 'neutral', text: '已停用' })
+    for (const text of Object.values(MCP_LOGIN_FAILURE_TEXT)) expect(text.length).toBeGreaterThan(0)
+    // 退出登录 that could not delete the tokens from this Mac says exactly that, even over a login that still stands.
+    expect(mcpStatus(remote({ state: 'failed', reason: 'delete' }))).toEqual({ tone: 'failed', text: '没能删除这台 Mac 上的登录' })
+  })
+
+  it('lists a login’s authorization server and every scope in the confirmation, though the sentence was not cut', () => {
+    const scopes = Array.from({ length: 64 }, (_, index) => `scope-${index}`).join(' ')
+    const ticket = {
+      reason: '让 Latch 连接 auth.example.com:443（MCP 服务器「docs」）',
+      lines: [
+        { label: '授权服务器', value: 'https://auth.example.com' },
+        { label: '范围', value: `64 个：${scopes}` },
+      ],
+    } as unknown as Parameters<typeof detailsLeftOut>[0]
+    expect(detailsLeftOut(ticket).map(line => line.value)).toEqual(['https://auth.example.com', `64 个：${scopes}`])
+    // Any other confirmation keeps its rule: the lines show only when the sentence was cut.
+    const plain = {
+      reason: '让 Latch 连接 mcp.example.com:443（MCP 服务器「docs」）',
+      lines: [{ label: '地址', value: 'https://mcp.example.com/mcp' }],
+    }
+    expect(detailsLeftOut(plain as unknown as Parameters<typeof detailsLeftOut>[0])).toEqual([])
   })
 
   it('takes https:// addresses, and http:// only on this Mac’s loopback, never with a query or credentials', () => {

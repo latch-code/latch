@@ -1,8 +1,9 @@
 ---
-description: Latch 的 MCP 服务器：本机命令与远程地址的定义与秘密、本机确认与出站许可、测试、「用在」、latch-mcp 桥与工具网关、Host 作为远程 MCP 客户端、交给各 Harness、审计与限制。
+description: Latch 的 MCP 服务器：本机命令与远程地址的定义与秘密、本机确认与出站许可、测试、「用在」、latch-mcp 桥与工具网关、Host 作为远程 MCP 客户端、远程服务器的登录（OAuth）、交给各 Harness、审计与限制。
 sources:
   - apps/host/src/mcp.ts
   - apps/host/src/mcp-remote.ts
+  - apps/host/src/mcp-oauth.ts
   - apps/host/src/mcp-import.ts
   - apps/host/src/routes/mcp.ts
   - apps/host/src/audit-actions/mcp.ts
@@ -16,26 +17,29 @@ sources:
   - apps/web/src/agents/McpSection.tsx
   - packages/testkit/fixtures/fake-mcp-stdio.mjs
   - packages/testkit/src/fake-mcp-http.ts
+  - packages/testkit/src/fake-oauth.ts
   - apps/host/test/mcp.test.ts
   - apps/host/test/mcp-remote.test.ts
+  - apps/host/test/mcp-oauth.test.ts
   - apps/host/test/mcp-import.test.ts
   - packages/harness-acp/test/mcp-bridge.test.ts
   - e2e/mcp.e2e.ts
+  - e2e/mcp-oauth.e2e.ts
 ---
 
 # MCP 服务器
 
 MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务器。Latch 只管前一半，经 Latch 的调用有记录；Harness 自己的服务器只显示它经协议报告的（现在只有 Codex 直连，见「Harness 自己的 MCP」），它们的调用（以及完全访问的 Agent 自己启动的任何程序）Latch 一次也看不到。**这不是沙箱**：本机命令以你的身份运行，Latch 不隔离它。
 
-两种服务器：本机命令（stdio，Agent 一侧经桥启动）与远程地址（Streamable HTTP，Host 是它唯一的客户端，见「远程地址」）。OAuth（需要登录的远程服务器显示「需要登录 · 尚未实现」）与旧的 HTTP+SSE 传输（MCP 规范已弃用）尚未实现。
+两种服务器：本机命令（stdio，Agent 一侧经桥启动）与远程地址（Streamable HTTP，Host 是它唯一的客户端，见「远程地址」）。需要登录的远程服务器在这台 Mac 上登录（OAuth，见「登录」）。旧的 HTTP+SSE 传输（MCP 规范已弃用）与 Client ID Metadata Document（要 Latch 在 HTTPS 上托管一份文档，Latch 没有这样的服务）尚未实现。
 
 ## 定义与秘密
 
 - `<数据目录>/mcp/servers.json`：定义，strict schema。每个服务器有 ID（`mcp_` 加 22 位）、名称、命令（保存时找到的绝对路径）、参数、**普通变量**（名字与值，属于确认过的定义，设备可读）、**秘密变量**的名字、「在项目文件夹里启动」、「用在」、开关、关掉的工具、修订号、`specHash`（命令、参数、普通变量、秘密变量名与工作目录方式的 SHA-256）、`confirmed`（本机确认通过时的 `specHash` 与它点名的秘密变量名，只在确认通过时写）和最近一次报告（状态、工具名、原因枚举、时间、来自测试还是会话）。还存最近 256 个请求的回执：请求 ID 与设备的哈希、请求体的哈希。
 - 远程地址的定义（`transport: 'http'`）没有命令、参数与变量，只有地址 `url`（源与路径，见「远程地址」）与请求头的名字 `headerNames`；`specHash` 是地址与请求头名字的 SHA-256，`confirmed` 记下确认时的哈希与它点名的请求头名字。
-- `<数据目录>/mcp/secrets.json`：秘密变量的值与远程地址请求头的值（`headers`；请求头的值一律是秘密），strict schema。值从不返回任何设备：读接口只回 `{ name, set, secret: true }`；普通变量带 `value`。秘密变量的名字不能决定加载哪些程序或文件（`BASH_ENV`、`ENV`、`PYTHONPATH`、`PYTHONHOME`、`PYTHONSTARTUP`、`PERL5OPT`、`PERL5LIB`、`RUBYOPT`、`RUBYLIB`、`NODE_OPTIONS`、`NODE_PATH`、`JAVA_TOOL_OPTIONS`、`_JAVA_OPTIONS`、`JDK_JAVA_OPTIONS`、`PERLLIB`、`SHELLOPTS`、`PS4`、`LUA_INIT`、`GOFLAGS`、`GOPROXY`、`CLASSPATH`、`RUSTFLAGS`、`PATH`、`HOME`，以及 `UV_*`、`PIP_*`、`PIPX_*`、`NPM_CONFIG_*`、`BUN_*`、`DENO_*`、`GEM_*`、`CARGO_*`、`XDG_*`、`DYLD_*`、`LD_*`、`GIT_*`，不分大小写），值也不能像路径或地址（`~/`、`./`、`../`、盘符开头，或形如路径的 `/…`：只有路径字符、且有第二个 `/` 或以 `/usr`、`/Users` 等根目录开头，所以以 `/` 开头的 base64 秘密仍可作秘密；`<scheme>://`、`file:`、`data:` 与 `host:port`）：这些只能作普通变量，出现在确认里（400 `mcp-secret-not-allowed`，说明原因）。
+- `<数据目录>/mcp/secrets.json`：秘密变量的值、远程地址请求头的值（`headers`；请求头的值一律是秘密）与登录的令牌和客户端密钥（`oauth`：`accessToken`、`refreshToken`、`clientSecret`），strict schema。值从不返回任何设备：读接口只回 `{ name, set, secret: true }`；普通变量带 `value`。秘密变量的名字不能决定加载哪些程序或文件（`BASH_ENV`、`ENV`、`PYTHONPATH`、`PYTHONHOME`、`PYTHONSTARTUP`、`PERL5OPT`、`PERL5LIB`、`RUBYOPT`、`RUBYLIB`、`NODE_OPTIONS`、`NODE_PATH`、`JAVA_TOOL_OPTIONS`、`_JAVA_OPTIONS`、`JDK_JAVA_OPTIONS`、`PERLLIB`、`SHELLOPTS`、`PS4`、`LUA_INIT`、`GOFLAGS`、`GOPROXY`、`CLASSPATH`、`RUSTFLAGS`、`PATH`、`HOME`，以及 `UV_*`、`PIP_*`、`PIPX_*`、`NPM_CONFIG_*`、`BUN_*`、`DENO_*`、`GEM_*`、`CARGO_*`、`XDG_*`、`DYLD_*`、`LD_*`、`GIT_*`，不分大小写），值也不能像路径或地址（`~/`、`./`、`../`、盘符开头，或形如路径的 `/…`：只有路径字符、且有第二个 `/` 或以 `/usr`、`/Users` 等根目录开头，所以以 `/` 开头的 base64 秘密仍可作秘密；`<scheme>://`、`file:`、`data:` 与 `host:port`）：这些只能作普通变量，出现在确认里（400 `mcp-secret-not-allowed`，说明原因）。
 - 两个文件都是 0600，目录 0700，原子写入，不进时间机器备份，诊断导出不含它们。和模型密钥一样，这是「磁盘上只存哈希」的例外：完全访问的 Agent 能读它，也能读服务器进程的环境。
-- 秘密变量与请求头的值（8 个字符以上；更短的不加入，不受这一层保护；`Bearer <令牌>` 这样带方案的请求头另把令牌本身加入）从此在 Host 发出的文字里按确切值遮盖，原样、JSON 转义与 URL 编码三种写法都算（`redactKnownSecrets`、`maskKnownSecrets`）：日志、错误、事件、诊断，ACP Agent 的文字与工具输出（存下与发给设备之前），终端「加入对话」、应用构建与 Git 交付的输出。判断文件或文字是否含秘密的检查（`redactSecrets`、`containsSecret`）只认形状，不受它影响。
+- 秘密变量、请求头的值与登录的令牌和客户端密钥（8 个字符以上；更短的不加入，不受这一层保护；`Bearer <令牌>` 这样带方案的请求头另把令牌本身加入）从此在 Host 发出的文字里按确切值遮盖，原样、JSON 转义与 URL 编码三种写法都算（`redactKnownSecrets`、`maskKnownSecrets`）：日志、错误、事件、诊断，ACP Agent 的文字与工具输出（存下与发给设备之前），终端「加入对话」、应用构建与 Git 交付的输出。判断文件或文字是否含秘密的检查（`redactSecrets`、`containsSecret`）只认形状，不受它影响。
 - 命令按 Harness 命令的同一规则查找（`resolveCommand`），含 `/` 的相对路径按找不到处理。命令落在数据目录、Latch 程序目录、默认工作区或任何项目的文件夹里时拒绝（400 `mcp-command-forbidden`）。名称是字母、数字、`-`、`_`，最多 32 个，不以 `latch` 开头，不连写 `__`（内置 Harness 用它分开服务器与工具；之前保存的名字照旧可读、可改其他字段）（留给 `latch-skills`、`latch-browser`）。变量名不能是 `PATH` 或 Harness 定义保留的名字（`NODE_OPTIONS`、`LATCH_*`、`DYLD_*` 等）。
 
 ## 路由
@@ -47,6 +51,8 @@ MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务�
 | `PATCH /mcp/servers/:id` | `host.sock` 的 `admin`；`{ enabled: false }` 任何 `admin` 设备 | `{ requestId, baseRevision, …改动 }`，`baseRevision` 是这个服务器的修订号；远程地址的改动是 `url` 与 `headers`（值为 `null` 即移除），给另一种服务器的字段 400 `mcp-transport`；放宽时本机确认 |
 | `DELETE /mcp/servers/:id` | `host.sock` 的 `admin` | 连同它的值一起删除 |
 | `POST /mcp/servers/:id/test` | `host.sock` 的 `admin` | `{ requestId }`；见「测试」 |
+| `POST /mcp/servers/:id/oauth/login` | `host.sock` 的 `admin` | `{ requestId, clientId?, clientSecret? }`；回答 `{ authorizationUrl, until, server }`；见「登录」 |
+| `POST /mcp/servers/:id/oauth/logout` | `host.sock` 的 `admin` | `{ requestId }`；取消进行中的登录，撤销并删除令牌；回答 `{ oauth, server }` |
 | `GET /mcp/import?project=<项目 ID>` | `host.sock` 的 `admin` | 项目每个文件夹的 `.mcp.json`；见「从项目导入」 |
 | `POST /agents/:id/mcp` | `run` | 「读取」这个 Harness 自己的 MCP；见「Harness 自己的 MCP」 |
 
@@ -55,6 +61,7 @@ MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务�
 - **远程地址要本机确认**：新增；换源或路径；新的请求头名字（同样由 `widens` 判断）。表单 `mcp.server.apply-remote` 的句子是「让 Latch 连接 <host:port>（MCP 服务器「<名称>」）」，地址在前、保留结尾的域名。卡片上的行列出地址、请求头的名字（「值只发往这个地址」）、出站许可（需要时）与「用在」；请求头的值只以哈希绑定在确认上。换请求头的值、移除请求头不要确认（`use`）。
 - **不要确认，但先审计、写不进就不生效**（`widens` 的 `use`）：秘密变量换值、「用在」多了 Agent、项目或所有会话、关掉的工具重新打开、启用。移除秘密变量也算这一类。**只收窄**（审计失败照常执行，响应带 `x-latch-audit: failed`）：改名、「用在」变少、关工具、停用、移除服务器。代码与去向确认过一次，挂到更多会话是使用，不是新边界。
 - 有完全访问会话在运行或等你处理时，放宽与其他本机确认一样返回 409 `presence-blocked`；停用、移除从不被挡。
+- 登录的审计见「登录」：`mcp.oauth.started`、`mcp.oauth.authorized`、`mcp.oauth.failed`、`mcp.oauth.refresh-failed`、`mcp.oauth.revoked`。
 - 审计（detail 只有 ID、哈希、枚举、布尔与计数，没有名称、命令、值）：`mcp.server.added`（先于保存，写不进就不保存；从项目导入的带来源项目的 ID `importedFrom`）、`mcp.server.changed`（`kinds`：`spec`、`secret`、`scope`、`tools`、`enabled`、`name`；只收窄的改动在审计失败时照常执行，响应带 `x-latch-audit: failed`）、`mcp.server.removed`、`mcp.server.test`。
 
 ## 测试
@@ -68,11 +75,28 @@ MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务�
 - **地址**：只收 `https://`；`http://` 只收这台 Mac 的回环地址，且要写成字面的 `localhost`、`127.x.x.x` 或 `[::1]`（解析结果可能变的名字不算）。不带账号、查询或片段（400 `mcp-url-invalid`）；保存的是源与路径。请求头的名字是 HTTP 的 token，客户端自己的（`Accept`、`Content-Type`、`Mcp-Session-Id`、`MCP-Protocol-Version`、`Host`、`Cookie`、`Connection` 等与 `Sec-*`）不能填，名字不分大小写不能重复，最多 32 个。
 - **确认与出站许可合在一次**：保存前 Host 按出站策略判断这个地址（与模型服务地址同一个 `inspectEgress`）。云元数据等永远不许的地址 403 `egress-denied`；回环、私网等要许可、而 `hostEgressAllow`（及启动时的出站许可）还没有它时，许可作为「出站许可」一行放进同一次 `mcp.server.apply`，确认通过后以同一个 stepup 写进策略（审计 `policy.changed`），保存失败时撤回。地址已经许可过（例如同一个源的模型服务、另一个远程 MCP 服务器）时不再出现这一行，所以同一个地址不会问两次；但新的远程服务器本身总要确认，因为它绑定的是要带去的请求头。移除服务器时可以一并收回只有它在用的许可（见下「移除」）。
 - **Host 是客户端**（`mcp-remote.ts`，自己写，不引入依赖）：Streamable HTTP（MCP 2025-06-18；服务器回答 2025-03-26、2025-06-18 或 2025-11-25 之外的版本按协议错误处理）。每条消息 POST 到确认时绑定的地址（只此一处，`DELETE` 结束会话也是），`Accept: application/json, text/event-stream`，`initialize` 之后带服务器给的 `Mcp-Session-Id`（只收可见 ASCII、最多 256 个字符）与协商出的 `MCP-Protocol-Version`。请求只经 Host 注入的出站 `fetch`（出站策略按连接时解析出的地址检查），`redirect: 'manual'`：任何 3xx 都按「Latch 没有连接这个地址」拒绝，请求头不会跟着去别处。回答是 JSON 或事件流（SSE 分帧沿用模型服务的 `sseData`），整个回答最多 2 MiB，一次请求最多 60 秒（测试与内置 Harness 列工具时 20 秒）；服务器忘了会话（404）时重新 `initialize` 一次再试；服务器自己的请求（sampling、elicitation、roots）一律拒绝：每个回答里最多回复 16 个 method not found，再多的不回复；通知的回答（202）不读、立即放掉。这台 Host 对同一个源同时最多 8 个请求，其余排队；调用被停止时另发 `notifications/cancelled`。客户端不声明任何能力。
-- **失败的原因只是枚举**：`auth-required`（401，OAuth 尚未实现，界面写「需要登录 · 尚未实现」，琥珀）、`unreachable`（连不上或 HTTP 错误）、`refused`（出站策略不许或重定向）、`timeout`、`protocol`、`output-too-large`、`list-failed`。错误文字是 Host 自己的固定句子，从不带服务器的原文、请求头或它的值。
+- **失败的原因只是枚举**：`auth-required`（401：没有登录，或登录不再有效，见「登录」；界面写琥珀的「未登录」或「需要重新登录」）、`unreachable`（连不上或 HTTP 错误）、`refused`（出站策略不许或重定向）、`timeout`、`protocol`、`output-too-large`、`list-failed`。错误文字是 Host 自己的固定句子，从不带服务器的原文、请求头或它的值。
 - **回答在离开 Host 之前遮盖**：工具列表与结果里的每个字符串与对象的键都经 `redactKnownSecrets`，包括服务器说回来的请求头值；名字里含已保存秘密的工具不记进报告、不交给内置 Harness。
 - **只用一份定义**：Host 每次打开会话时重新读定义，要求它与调用方核对过的 `specHash` 一致，地址与请求头取自同一份；在途调用的审计还没写完时改了地址，新的请求头也不会发往旧地址。桥只在启动清单成功（`mcp.server.started` 已写下）并说明是远程地址之后才转发。
 - **移除**：远程服务器的出站许可没有别的远程服务器、模型服务或启动时的许可在用时，列表给出 `allowance`，移除对话框给出「同时移除出站许可」（`DELETE …?allowance=remove`）；收窄不要确认，记为 `policy.changed`。
 - **会话**：每个桥（外部 Harness）或每个内置会话与服务器的组合各一个 Host 会话；桥结束、令牌失效、服务器停用、移除、改动或「用在」不再包括这个会话时，Host 结束会话并中止在途的调用。
+
+## 登录
+
+远程服务器回答 401 时要登录（OAuth 2.1，MCP 授权规范 2025-11-25，加 RFC 9207 的 `iss` 核对）。Host 是 OAuth 客户端（`mcp-oauth.ts`，自己写，不引入依赖）；Agent、桥与其他设备从不接触令牌。
+
+- **只在这台 Mac 上发起。** `oauth/login` 与 `oauth/logout` 只收 `host.sock` 上的 `admin`（其他入口 403 `local-only`）；手机、iPad 与其他电脑只看到状态（`McpHttpServerView.oauth`）：未登录、登录中、已登录（到期时间）、需要重新登录、登录失败与原因的类别。读接口从不回令牌、Client ID、state 或登录地址。
+- **发现只问绑定的源。** Host 先向服务器的地址发一次 `initialize`（带它的请求头，不带令牌）听 401 的 `WWW-Authenticate`，再读它的资源元数据（RFC 9728）：挑战里的 `resource_metadata`，没有时是 `/.well-known/oauth-protected-resource<路径>` 与 `/.well-known/oauth-protected-resource`。元数据必须在服务器自己的源上，它的 `resource` 必须正是服务器的地址，或正是这个地址的源（MCP 规范的规范写法；源上别的目录会让令牌对确认之外的东西也有效，一律拒绝，`resource`）。授权服务器取 `authorization_servers` 的第一个，只收 `https://` 或字面的本机回环（否则 `endpoint`）。范围取挑战里的 `scope`，没有时取 `scopes_supported`。到这一步，授权服务器只是被点了名，什么都没有发给它。
+- **确认。** 授权服务器或范围没有被确认过时（第一次登录、换了授权服务器、多了范围、`resource` 变了；三者都在 `specHash` 与 `confirmed` 里），登录先要本机确认 `mcp.server.apply`：远程服务器按新的出站地址对待，授权服务器的源与范围是确认的一部分，更宽的范围算放宽。表单 `mcp.server.apply-remote` 的句子是「让 Latch 连接 <授权服务器的 host:port>（MCP 服务器「<名称>」）」，行里是授权服务器的 issuer 全文（同一个源上的两个租户读起来不同；经确认卡片的安全文字写出）、`resource` 不是服务器地址时的「资源」一行、范围（「N 个：」加每一个，从不截断；一次登录最多 64 个，更多的在确认之前就拒绝）、服务器的地址，以及授权服务器在回环或私网时的出站许可（同一次确认，同一个 stepup 写进策略）。系统表单只有那一句话，所以页面上的确认卡片对登录总是列出这些行（`detailsLeftOut`），人在按下之前看得到每一个范围。确认通过后先写 `mcp.server.changed`（`spec`），再把 `oauth`（`issuer`、`scopes`、`resource`）记进定义与 `confirmed`；`specHash` 因此变化，旧定义下的会话结束。**同一个授权服务器、范围不超出已确认的再次登录不弹确认**：信任在连接时建立一次。有完全访问会话在运行或等你处理时，需要确认的登录同样 409 `presence-blocked`。
+- **授权服务器的元数据**从确认过的 issuer 读（RFC 8414 与 OIDC 的位置，按规范的顺序）。`issuer` 必须与确认的完全相同（`metadata`）；授权、令牌、注册、撤销端点都必须在 issuer 的源上、`https://` 或字面的本机回环（`endpoint`）：指向别处的文档被拒绝，所以 code、verifier 与令牌只发往确认过的那一个源。`code_challenge_methods_supported` 没有 `S256` 时拒绝（`pkce`）。端点分在几个源上的授权服务器因此登录不了，原因如实写出。
+- **客户端**：人填过 Client ID（`clientId`，密钥 `clientSecret` 存 `secrets.json`，有密钥时用 `client_secret_basic`，服务器只收 `client_secret_post` 时用它）就用它，回调路径固定为 `/callback`（注册时填 `http://127.0.0.1/callback`，端口任意）；没有时向 `registration_endpoint` 动态注册（RFC 7591，公开客户端，每次登录注册一次，回调路径带 128 位随机值）；两者都没有时 409 `mcp-oauth-client-required`，界面让人填。注册回答里的 `client_secret` 与授权服务器发的每个令牌都必须是 token68、至少 20 个字符（否则 `registration`、`token`，续期时按被拒处理）；有密钥时 Basic 头里的 Client ID 与密钥各自先按表单编码（RFC 6749 §2.3.1）：保存的令牌会按确切值在 Host 写出的文字里被遮盖，所以不让远端把一个普通的词变成「秘密」。填写或更换 Client ID 不弹确认，先写 `mcp.server.changed`（`secret`）。
+- **登录**：先写 `mcp.oauth.started`，写不进就不开始。Host 在 `127.0.0.1` 的随机端口开一个只为这次登录存在的监听（不是 API 的入口），生成 `state`（256 位）与 PKCE verifier，回答授权地址：`response_type=code`、`client_id`、`redirect_uri`、`state`、`code_challenge`（`S256`）、`resource`、`scope`。地址只在这一次回答里给发起的桌面端；同一个设备的同一个 `requestId` 再来按回执回答（登录与退出登录都是；回执只在内存里，带不同的请求体 409 `request-conflict`），不再注册、不再开监听、不再撤销：那次登录还在等就给同一个地址，已经完成、取消或超时就不给地址，只给现在的状态。**浏览器由人在桌面端点「在浏览器中打开」打开**（桌面端已有的外部链接路径），Host 不启动任何程序。同一个服务器只有一次登录在进行（新的顶掉旧的），全部服务器最多 4 次，正在准备的也算在内。
+- **回调**只认：`GET`、这次登录自己的路径、`Host` 是 `127.0.0.1:<端口>`；其他一律 404。不带这次登录的 `state` 的请求谁都发得出（别的进程、扫回环的网页）：回答 400，什么都不改变，登录继续等真正的回调；这类拒绝每秒最多回答 20 个，再多的直接断开，一条审计也不写。带着 `state` 的才是浏览器的回调：`iss` 与确认的 issuer 不同或元数据说会带而没带（`issuer`）、带了 `error`（`denied`）就拒绝并结束这次登录；5 分钟没回来（`expired`）监听关闭。第一个相符的回调之后不再收别的：换令牌期间同一个回调再来被拒绝并记 `replay`（一次登录最多 3 条），换完监听关闭。页面无论结果都只显示同一句固定的话（`CALLBACK_TEXT`），不显示授权服务器的任何内容。
+- **换令牌**：`code`、`redirect_uri`、`code_verifier`、`resource` 发往令牌端点。回答必须是 `Bearer`；指明了范围而回答的 `scope` 超出时拒绝（`scope`）。保存前核对服务器的定义没变、仍启用，这期间没有退出登录或移除，发起的设备仍是能管理这台 Mac 的设备（否则 `cancelled`），再写 `mcp.oauth.authorized`，写不进就不保存（`audit`）。没保存的令牌、以及被这次登录顶替的旧令牌，在有撤销端点时交还。换令牌期间 code 与拿到的令牌按确切值加入遮盖，保存失败时写的那行日志里没有它们。`mcp.oauth.started` 与 `mcp.oauth.authorized` 的 actor 是发起的设备。
+- **使用**：`McpRemoteSession` 在每个请求上带 `Authorization: Bearer`，只发往绑定的地址（与请求头同一条路，不跟随重定向）。到期前 60 秒先用 refresh token 续期（带 `resource`；轮换出的新 refresh token 替换旧的）；服务器回答 401 时续期一次、重发一次。同一时刻要续期的请求共用一次续期。续期的回答按登录时同样的规则核对：范围超出确认过的不保存、交还，状态变成「需要重新登录」（`scope`，记 `mcp.oauth.refresh-failed`）。续期被授权服务器拒绝（`mcp.oauth.refresh-failed`，令牌删除）、没有 refresh token、续期后仍 401，或 403 `insufficient_scope`（不自动扩大范围）时状态变成「需要重新登录」，原因 `refresh`、`expired`、`rejected`、`scope`。成功的续期不写审计。
+- **结束**：「退出登录」、移除服务器、换地址（登录属于确认时的地址）或换授权服务器时，先在这台 Mac 上结束（`forget`）：这个服务器的登录「代」加一，正在准备的登录立刻关掉监听，正在换令牌的登录与在途的续期回来时什么都不保存、把拿到的交还；从这一刻起不再带 bearer；令牌从 `secrets.json` 删除，用着它的会话结束。然后在配置锁之外向撤销端点（RFC 7009，必须在确认的 issuer 的源上）撤销 refresh 与 access token，每个请求有时限、尽力而为。结果（`revoked`、`failed`、`unsupported`）在回答与 `mcp.oauth.revoked` 里；本机的删除写不进时结果是 `undeleted`（审计记的也是它，不是 `revoked`）：令牌还在磁盘上但不再发出，界面写「没能删除这台 Mac 上的登录」与「重试」，这期间不能开始新的登录（409 `mcp-oauth-delete`）。这个「已结束」另写在 `<数据目录>/mcp-ended.json`（只有服务器 ID，在 `mcp/` 之外，所以 `mcp/` 写不进时它仍可能写得进）：Host 重启时先把这些服务器的令牌从内存里拿掉、再从两个文件里删除，删成了才去掉记号，所以结束过的登录不会在重启后回来；连这个记号也写不进时，结束只在这次运行里有效，界面同样写没能删除。换地址、换授权服务器或换 Client ID 时，旧登录随那一次写入一起删除，写入失败就保留原样；授权服务器在回环或私网、而且不再有服务器在那里登录时，它的出站许可随之收回（只收窄，审计写不进照常执行；与服务器自己的地址同一个 `host:port` 的不动，那由「同时移除出站许可」决定）。它只收窄：审计写不进照常执行，响应带 `x-latch-audit: failed`。人填的 Client ID 与密钥留到移除服务器。
+- **审计** detail 只有服务器 ID 与类别：`mcp.oauth.started`、`mcp.oauth.authorized`（`registered`、`renewable`）、`mcp.oauth.failed`（`reason`）、`mcp.oauth.refresh-failed`、`mcp.oauth.revoked`（`result`）。令牌、code、state、verifier、Client ID 与地址都不在其中，也不进日志、事件流与错误文字（错误是 Host 自己的固定句子）。
+- **限制**：`state` 与进行中的登录只在内存里，Host 重启后要重新开始；「登录失败」的原因也只在内存里。动态注册在授权服务器那边留下的客户端不会被删除：每次登录注册一个，Latch 不调用注册管理接口（RFC 7592）。运行中 403 的 `scope` 挑战不被记下：重新登录时按服务器当时说的范围，比确认过的宽就再确认。真实的授权服务器没有逐一验证：只在假授权服务器上验证。
 
 ## 用在哪些会话
 
@@ -122,11 +146,13 @@ MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务�
 
 ## 界面
 
-- **设置 › MCP**（`admin` 设备可见）：下半是各外部 Harness 自己的 MCP（见「Harness 自己的 MCP」）：Codex 直连一组「<名称> 自己的 MCP」带「读取」，其他 Harness 一行灰字。上半「Latch 的 MCP 服务器」，每行是传输图标（本机命令是终端，远程地址是地球）、名称、「用在」与状态词（已停用、未测试、可用 · N 个工具、琥珀的「需要登录 · 尚未实现」、红色的失败，原因在悬停里）。「添加…」先分段选「命令 | 远程地址」；远程地址的页列出 URL（「编辑…」）与请求头的名字和「已设置」（更换值、移除、添加），值从不显示。点开是这个服务器的页：状态与读取时间，「测试」「停用 / 启用」「移除」；命令、参数与工作目录；变量只列名字与「已设置」，可以更换值或移除；工具逐个开关；「用在」。`npx`、`uvx` 等没写版本时一行琥珀色「每次启动可能下载新版本」。「添加…」与除停用以外的改动只在这台 Mac 的桌面端出现；其他设备只看、只能停用。
+- **设置 › MCP**（`admin` 设备可见）：下半是各外部 Harness 自己的 MCP（见「Harness 自己的 MCP」）：Codex 直连一组「<名称> 自己的 MCP」带「读取」，其他 Harness 一行灰字。上半「Latch 的 MCP 服务器」，每行是传输图标（本机命令是终端，远程地址是地球）、名称、「用在」与状态词（已停用、未测试、可用 · N 个工具、红色的失败，原因在悬停里；要登录的远程服务器是琥珀的「未登录」「需要重新登录」、进行中的「登录中」、红色的「登录失败」，登录后还没有报告时是「已登录」）。「添加…」先分段选「命令 | 远程地址」；远程地址的页列出 URL（「编辑…」）与请求头的名字和「已设置」（更换值、移除、添加），值从不显示。点开是这个服务器的页：状态与读取时间，「测试」「停用 / 启用」「移除」；命令、参数与工作目录；变量只列名字与「已设置」，可以更换值或移除；工具逐个开关；「用在」。`npx`、`uvx` 等没写版本时一行琥珀色「每次启动可能下载新版本」。要登录的远程服务器的页多一组「登录」：状态与到期时间、授权服务器的源、范围；这台 Mac 的桌面端另有「登录 / 重新登录」「Client ID…」「在浏览器中打开」「取消」「退出登录」。「添加…」与除停用以外的改动只在这台 Mac 的桌面端出现；其他设备只看、只能停用。
 - **我的 Agent › 资料面板 › MCP**：这个 Agent 的会话拿到的服务器（「所有会话」的标出来）；这台 Mac 的桌面端可以用开关把已有的服务器挂上或取下，改的是服务器的「用在」，不要确认。内置 Harness 的 Agent 写「内置 Harness 尚未支持 MCP 命令」，pi 写「这个 Harness 不接收 MCP 服务器」。
 
 ## 测试替身
 
-`packages/testkit/src/fake-mcp-http.ts`（`startFakeMcpHttp`）：进程内只听 127.0.0.1 的 Streamable HTTP 服务器，会话 ID、JSON 或事件流回答，工具 `echo`（可把指名的请求头说回来，用于检查遮盖）、`slow`、`big`；可以要求登录（带 `resource_metadata` 的 401）、重定向、忘掉会话、在回答前发自己的请求；记下每个请求的请求头名字，值只记测试点名的。
+`packages/testkit/src/fake-mcp-http.ts`（`startFakeMcpHttp`）：进程内只听 127.0.0.1 的 Streamable HTTP 服务器，会话 ID、JSON 或事件流回答，工具 `echo`（可把指名的请求头说回来，用于检查遮盖）、`slow`、`big`；可以要求登录（带 `resource_metadata` 的 401）、作受保护的资源（`protect`：没有有效 bearer 时 401，自己提供资源元数据，可指向别处的元数据、别的 `resource`、不带指针的挑战、403 `insufficient_scope`）、重定向、忘掉会话、在回答前发自己的请求；记下每个请求的请求头名字，值只记测试点名的。
+
+`packages/testkit/src/fake-oauth.ts`（`startFakeOAuth`）：进程内只听 127.0.0.1 的授权服务器：RFC 8414 元数据、动态注册、授权码加 PKCE（核对 `S256`，code 只能用一次）、续期（轮换）、撤销。`authorize()` 代替人的浏览器，返回回到 Host 的回调地址而不访问它。可脚本的坏情形：错的或缺的 `iss`、改写元数据（端点在别的源或明文 http、别的 issuer、没有 `S256`）、不提供注册、续期被拒、不发 refresh token、多给范围、撤销失败、令牌立刻作废（`expireAccess`）。它记下发出的令牌与收到的参数名，不写日志。
 
 `packages/testkit/fixtures/fake-mcp-stdio.mjs`（`FAKE_MCP_STDIO`）：2025 握手，工具 `echo`、`slow`、`env_names`、`where`；`FAKE_MCP_MODE` 为 `crash`、`silent`、`noisy`、`ask`、`changed`；`FAKE_MCP_LOG` 只记环境变量的名字。假 ACP Agent 在 `FAKE_ACP_MCP=dsh` 下的提示 `mcp <服务器> <工具> [JSON 参数]` 调用一个工具，`mcp-list <服务器>` 列出工具。

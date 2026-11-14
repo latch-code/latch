@@ -14,6 +14,23 @@ export interface FakeMcpHttpOptions {
   answer?: 'json' | 'sse'
   /** Answer every request with 401 and a `WWW-Authenticate` naming `resource_metadata`. */
   login?: boolean
+  /**
+   * A protected resource (the MCP authorization spec): a request without a bearer token that `valid` accepts gets 401
+   * with `resource_metadata`, and the server serves that metadata, naming `issuer` as its authorization server.
+   */
+  protect?: {
+    issuer: string
+    valid: (token: string) => boolean
+    scopes?: string[]
+    /** Where the 401 says the metadata is, instead of this server's own well-known address. */
+    metadataUrl?: string
+    /** The `resource` the metadata names, instead of this server's `/mcp`. */
+    resource?: string
+    /** No `resource_metadata` in the 401: the client finds the well-known address itself. */
+    bareChallenge?: boolean
+    /** Answer 403 `insufficient_scope` to `tools/call`, token or not. */
+    insufficient?: boolean
+  }
   /** Answer every POST with a 307 to this URL. */
   redirect?: string
   /** Header names whose values are kept with each request. */
@@ -127,6 +144,39 @@ export async function startFakeMcpHttp(options: FakeMcpHttpOptions = {}): Promis
         ...(sessionId ? { sessionId } : {}),
         ...(protocolVersion ? { protocolVersion } : {}),
       })
+      const protect = options.protect
+      if (protect) {
+        const self = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+        const path = new URL(req.url ?? '/', self).pathname
+        if (
+          req.method === 'GET'
+          && (path === '/.well-known/oauth-protected-resource/mcp' || path === '/.well-known/oauth-protected-resource')
+        ) {
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(
+            JSON.stringify({
+              resource: protect.resource ?? `${self}/mcp`,
+              authorization_servers: [protect.issuer],
+              ...(protect.scopes ? { scopes_supported: protect.scopes } : {}),
+            }),
+          )
+          return
+        }
+        const bearer = /^Bearer (.+)$/u.exec(typeof req.headers.authorization === 'string' ? req.headers.authorization : '')?.[1]
+        if (bearer === undefined || !protect.valid(bearer)) {
+          const metadata = protect.metadataUrl ?? `${self}/.well-known/oauth-protected-resource/mcp`
+          res.writeHead(401, {
+            'www-authenticate': protect.bareChallenge ? 'Bearer' : `Bearer resource_metadata="${metadata}"`,
+          })
+          res.end()
+          return
+        }
+        if (protect.insufficient && body?.method === 'tools/call') {
+          res.writeHead(403, { 'www-authenticate': 'Bearer error="insufficient_scope", scope="admin"' })
+          res.end()
+          return
+        }
+      }
       if (options.login) {
         res.writeHead(401, {
           'www-authenticate': `Bearer resource_metadata="http://127.0.0.1:${(server.address() as AddressInfo).port}/.well-known/oauth-protected-resource"`,
