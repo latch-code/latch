@@ -210,6 +210,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
     let guiActivationFailed = false
     const status = GUI_CLIPBOARD
       ? await pairingStagePage({
+          start: () => writeFile(`${HOLD}.pair`, '', { mode: 0o600 }),
           acknowledge: async phase => {
             const before = phase === 'off-control' ? await clipboardGui() : undefined
             if (before && before.kind !== 'open') throw new Error('The existing Device Hub is unavailable')

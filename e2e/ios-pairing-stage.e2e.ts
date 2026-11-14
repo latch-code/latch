@@ -6,6 +6,38 @@ import { pairingStagePage } from './helpers/iosPairingStage.ts'
 import { chromium } from 'playwright'
 import { browserLaunchOptions } from './helpers/browser.ts'
 
+it('starts only from the current idle or restored stage, once, through its own page', async () => {
+  let starts = 0
+  const page = await pairingStagePage({
+    start: async () => {
+      starts++
+    },
+  })
+  const state = async () => (await (await fetch(new URL('phase', page.url))).json()) as { phase: string; version: number }
+  const start = (value: unknown, origin = new URL(page.url).origin) =>
+    fetch(new URL('start', page.url), {
+      method: 'POST',
+      headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify(value),
+    })
+  try {
+    const first = await state()
+    expect((await start(first, 'https://example.invalid')).status).toBe(403)
+    expect((await start(first)).status).toBe(204)
+    expect((await start(first)).status).toBe(409)
+    await page.show('on-control')
+    expect((await start(await state())).status).toBe(409)
+    await page.show('paste-ready')
+    expect((await start(await state())).status).toBe(409)
+    await page.show('restored')
+    expect((await start(first)).status).toBe(409)
+    expect((await start(await state())).status).toBe(204)
+    expect(starts).toBe(2)
+  } finally {
+    await page.close()
+  }
+})
+
 it('acknowledges only the current public control from its own page, once per stage', async () => {
   const acknowledgements: string[] = []
   const page = await pairingStagePage({
@@ -81,7 +113,11 @@ it('waits for the old acknowledgement before exposing the next control stage', a
 
 it('offers ordinary browser buttons only for the active operator acknowledgement', async () => {
   const acknowledged: string[] = []
+  let starts = 0
   const page = await pairingStagePage({
+    start: async () => {
+      starts++
+    },
     acknowledge: async value => {
       acknowledged.push(value)
     },
@@ -90,6 +126,9 @@ it('offers ordinary browser buttons only for the active operator acknowledgement
   try {
     const tab = await browser.newPage()
     await tab.goto(page.url)
+    await tab.getByRole('button', { name: '开始本次配对' }).click()
+    await expect.poll(() => starts).toBe(1)
+    expect(await tab.getByRole('button', { name: '开始本次配对' }).isEnabled()).toBe(false)
     expect(await tab.getByRole('button', { name: '已打开共享' }).isVisible()).toBe(false)
     await page.show('on-control')
     await tab.getByRole('button', { name: '已打开共享' }).click()
