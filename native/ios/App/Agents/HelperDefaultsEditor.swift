@@ -24,7 +24,12 @@ struct HelperDefaultsEditor: View {
                 }
                 HelperDefaultFields(draft: $draft, catalog: model.snapshot["catalog"]).disabled(saving || write != nil)
                 if model.engineInfo(draft.harnessId)["level"].string == "L3" { HelperBoundaryNote() }
-                if let outcome { WriteNotice(state: outcome, retry: save, reload: { saved(); dismiss() }, held: write) }
+                if let outcome {
+                    WriteNotice(state: outcome, retry: save, reload: { saved(); dismiss() }, held: write, settled: {
+                        guard active else { return }
+                        active = false; write = nil; self.outcome = nil; saved(); dismiss()
+                    })
+                }
                 HStack {
                     Spacer()
                     Button(write == nil ? "保存" : "重试同一请求", action: save)
@@ -51,7 +56,7 @@ struct HelperDefaultsEditor: View {
         .onChange(of: model.privateSnapshot.epoch) { _, _ in active = false; draft = PhoneHelperDraft(harnessId: ""); write = nil; outcome = nil; dismiss() }
     }
     private func save() {
-        guard !saving, !model.busy, model.canRun, model.agentAccess == .ready else { return }
+        guard active, !saving, !model.busy, model.canRun, model.agentAccess == .ready else { return }
         do { if write == nil { write = try PhoneHelperCreate.changeDefaults(model.snapshot["catalog"], agent: agent, draft: draft) } }
         catch { outcome = .refused("这些选项现在不可用，请重新载入。"); return }
         guard let write else { return }

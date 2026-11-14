@@ -223,6 +223,7 @@ struct WriteNotice: View {
     var reload: (() -> Void)? = nil
     /** The unconfirmed write itself, for 核对并放下: what the Host now says is shown and the write is let go. */
     var held: NativePendingWrite? = nil
+    var settled: (() -> Void)? = nil
     @State private var checked: String?
     @State private var abandoning = false
     var body: some View {
@@ -237,10 +238,10 @@ struct WriteNotice: View {
                         if PhoneHelperCreate.isCreation(held) {
                             Button("放弃这次创建") { abandoning = true }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                                 .confirmationDialog("放下这次创建？", isPresented: $abandoning, titleVisibility: .visible) {
-                                    Button("放下这次创建", role: .destructive) { Task { checked = await model.checkAgentWrite(held) ?? "没能放下，稍后再试" } }
+                                    Button("放下这次创建", role: .destructive) { settle(held, failure: "没能放下，稍后再试") }
                                 } message: { Text("只在这台设备放下待确认的请求。电脑上如果已经创建，它仍会保留；再次创建会新增一个 Agent。") }
                         } else {
-                            Button("核对并放下") { Task { checked = await model.checkAgentWrite(held) ?? "没能核对，稍后再试" } }
+                            Button("核对并放下") { settle(held, failure: "没能核对，稍后再试") }
                                 .font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                         }
                     }
@@ -256,6 +257,15 @@ struct WriteNotice: View {
             }
         case .refused(let message):
             Label("没有保存：" + message, systemImage: "exclamationmark.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.red)
+        }
+    }
+    private func settle(_ write: NativePendingWrite, failure: String) {
+        let current = model.generation, content = model.privateSnapshot.epoch
+        Task {
+            let result = await model.checkAgentWrite(write)
+            guard current == model.generation, model.privateSnapshot.accepts(content) else { return }
+            checked = result ?? failure
+            if result != nil { settled?() }
         }
     }
 }

@@ -124,7 +124,7 @@ extension PhoneModel {
      */
     func checkAgentWrite(_ write: NativePendingWrite) async -> String? {
         guard pending.contains(where: { $0.requestId == write.requestId }), !busy, let workspace, connected else { return nil }
-        let current = generation
+        let current = generation, content = privateSnapshot.epoch
         // Busy for the whole check, so no retry of the same request starts meanwhile.
         busy = true; defer { if generation == current { busy = false } }
         var proposals: [PhoneProposal]?
@@ -132,11 +132,14 @@ extension PhoneModel {
             guard let read = await readProposals(owner) else { return nil }
             proposals = read
         }
-        guard current == generation else { return nil }
+        guard current == generation, privateSnapshot.accepts(content) else { return nil }
         do { try await workspace.settlePending(write.requestId) } catch { return nil }
+        guard current == generation, privateSnapshot.accepts(content) else { return nil }
         pending.removeAll { $0.requestId == write.requestId }
         _ = await refresh()
+        guard current == generation, privateSnapshot.accepts(content) else { return nil }
         if let owner = PhoneAgentWrites.owner(write) ?? PhoneAgentWrites.decisionOwner(write) { await loadProposals(owner) }
+        guard current == generation, privateSnapshot.accepts(content) else { return nil }
         return PhoneAgentWrites.checkWords(write, proposals: proposals)
     }
     /** An owner's proposals, read again when the snapshot says they changed; nothing outside a window. */

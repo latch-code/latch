@@ -20,7 +20,7 @@ struct HelperCreateSheet: View {
     private var selected: PhoneHelperCandidate? { (candidates.ready + candidates.waiting).first { $0.id == draft.harnessId } }
     private var locked: Bool { saving || write != nil }
     private var canCreate: Bool {
-        completedId == nil && model.canRun && model.agentAccess == .ready && !model.busy && !saving
+        active && completedId == nil && model.canRun && model.agentAccess == .ready && !model.busy && !saving
             && model.pending.allSatisfy { $0.requestId == write?.requestId }
             && (write != nil || (try? PhoneHelperCreate.create(catalog, draft: draft, requestId: "helper-draft-validation")) != nil)
     }
@@ -36,7 +36,12 @@ struct HelperCreateSheet: View {
                             Button("刷新并打开") { openCreated() }.font(PhoneTheme.caption).disabled(saving || !model.connected)
                         }
                     }
-                    if let outcome { WriteNotice(state: outcome, retry: { save() }, held: write) }
+                    if let outcome {
+                        WriteNotice(state: outcome, retry: { save() }, held: write, settled: {
+                            guard active else { return }
+                            active = false; write = nil; self.outcome = nil; dismiss()
+                        })
+                    }
                 }.padding(20).frame(maxWidth: 560).frame(maxWidth: .infinity)
             }
             .background(PhoneTheme.canvas)
