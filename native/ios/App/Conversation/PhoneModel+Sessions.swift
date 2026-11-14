@@ -69,7 +69,7 @@ extension PhoneModel {
             guard stillReading() else { return }
             if wentAway(error) {
                 // The window is still open, and this is what it last read; it is said to be old where it is shown.
-                if let cached = try? await workspace.cachedDetail(id), stillReading() { detail = cached; detailCached = true }
+                if let cached = try? await workspace.cachedDetail(id), stillReading(), lease.valid { detail = cached; detailCached = true }
             } else if [NativeFailure.expired, .forbidden, .contextChanged].contains(error as? NativeFailure) { report(error) }
             else { detailFailed = id }
         }

@@ -14,6 +14,7 @@ struct TurnView: View, Equatable {
     let switched: String?
     let mark: String?
     let engine: String
+    var fileScope = PhoneFileScope()
     /** The run's own line says how it ended, so the footer does not say it twice. */
     let endSaid: Bool
     /** 复制, 重试 and 从这里分叉, and where the turn is in the session. */
@@ -25,7 +26,8 @@ struct TurnView: View, Equatable {
     @State private var tapped = false
     nonisolated static func == (a: TurnView, b: TurnView) -> Bool {
         a.turn == b.turn && a.latest == b.latest && a.status == b.status && a.running == b.running && a.frozen == b.frozen && a.delivery == b.delivery
-            && a.switched == b.switched && a.mark == b.mark && a.engine == b.engine && a.endSaid == b.endSaid && a.actions == b.actions && a.index == b.index
+            && a.switched == b.switched && a.mark == b.mark && a.engine == b.engine && a.fileScope == b.fileScope
+            && a.endSaid == b.endSaid && a.actions == b.actions && a.index == b.index
     }
     private var outcome: String { PhoneConversation.outcome(turn, latestStatus: status) }
     var body: some View {
@@ -66,7 +68,7 @@ struct TurnView: View, Equatable {
     }
     @ViewBuilder private var footer: some View {
         let outputs = turn.replies.flatMap { $0["outputs"].array }
-        let summary = PhoneConversation.summary(turn, outputs: outputs)
+        let summary = PhoneConversation.summary(turn, outputs: outputs, scope: fileScope)
         if !summary.files.isEmpty {
             ChangedFilesCard(summary: summary, partial: turn.replies.contains { $0["outputsTruncated"].bool || $0["outputsUnavailable"].bool }, open: open)
         }
@@ -248,7 +250,7 @@ private struct ChangedFilesCard: View {
             if partial { Text("可能还有没列出的文件").font(.system(size: 12)).foregroundStyle(PhoneTheme.amber).padding(.horizontal, 12).padding(.bottom, 8) }
             if expanded {
                 Divider().overlay(PhoneTheme.line)
-                ForEach(summary.files, id: \.path) { file in
+                ForEach(summary.files) { file in
                     Button { if !file.deleted { open(file.path, file.root) } } label: { FileRowLabel(file: file).padding(.horizontal, 12).padding(.vertical, 8).contentShape(Rectangle()) }
                         .buttonStyle(.plain).disabled(file.deleted)
                 }

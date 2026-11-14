@@ -170,7 +170,8 @@ struct AgentReadState: View {
             case .confirming: ConfirmingAgents()
             case .offline: Text("Mac 不在线，连上后可以查看").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted)
             case .closed:
-                Button(PhoneUnlock.reopenWords(faceID: faceID), action: retry).buttonStyle(.bordered).buttonBorderShape(.capsule).tint(PhoneTheme.ink).disabled(!model.connected)
+                Button(PhoneUnlock.reopenWords(faceID: faceID)) { Task { await model.openAgents(); retry() } }
+                    .buttonStyle(.bordered).buttonBorderShape(.capsule).tint(PhoneTheme.ink).disabled(!model.connected || model.verifying)
             case .missing: Text("找不到这个 Agent").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted)
             case .failed:
                 VStack(spacing: 10) {
@@ -264,15 +265,20 @@ struct MemoryEditor: View {
         .interactiveDismissDisabled(saving || state == .unknown)
         // An unconfirmed write stays with the model and is offered again on the page; the text goes with the window.
         .onChange(of: model.verifiedUntil == nil) { _, closed in if closed { dismiss() } }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in
+            draft = MemoryDraft(memory: nil, text: ""); write = nil; state = nil; dismiss()
+        }
     }
     private func save() {
         if write == nil {
             write = draft.memory.map { try? PhoneMemoryWrite.change(owner: owner, memory: $0, text: draft.text) } ?? (try? PhoneMemoryWrite.create(owner: owner, text: draft.text))
         }
         guard let write else { return }
+        let content = model.privateSnapshot.epoch
         saving = true
         Task {
             let outcome = await model.writeAgent(write)
+            guard model.privateSnapshot.accepts(content) else { return }
             saving = false
             if outcome == .done { saved(); dismiss() }
             else {

@@ -278,8 +278,9 @@ public actor NativeHTTPConnection {
             return NativeEventStream(events: pair.stream, channel: stream)
         } catch {
             if !installed { eventCount = max(0, eventCount - 1) }
-            pair.continuation.finish(throwing: NativeFailure.unavailable)
-            throw NativeFailure.unavailable
+            let failure: NativeFailure = (error as? NativeFailure) == .expired ? .expired : .unavailable
+            pair.continuation.finish(throwing: failure)
+            throw failure
         }
     }
     private func eventEnded() { eventCount = max(0, eventCount - 1) }

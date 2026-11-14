@@ -1,11 +1,6 @@
 import Foundation
 import LatchNativeCore
 
-/** A read of an Agent's private parts: they sit behind the content window, and a smaller data scope cannot make it. */
-enum PhoneAgentRead: Equatable {
-    case loading, ready(NativeJSON), locked, confirming, offline, closed, missing, failed
-}
-
 /** What became of a memory write. The Host is the authority: nothing shows as saved until it says so. */
 enum PhoneAgentWrite: Equatable {
     case done, unknown, changed, refused(String)
@@ -17,24 +12,21 @@ extension PhoneModel {
         if staged { return ScreensStage.read(path) }
         #endif
         guard let workspace, connected else { return .offline }
-        let current = generation
+        let current = generation, content = privateSnapshot.epoch
+        let lease = await workspace.lease()
+        guard current == generation, privateSnapshot.accepts(content), !Task.isCancelled else { return .loading }
+        guard let lease, lease.valid else { return .closed }
         do {
-            try await ensureVerified()
-            guard current == generation else { return .loading }
             let value = try await workspace.read(path, body: true)
-            guard current == generation, verifiedUntil != nil else { return .closed }
+            guard current == generation, privateSnapshot.accepts(content), !Task.isCancelled else { return .loading }
+            guard lease.valid, verifiedUntil != nil else { return .closed }
             return .ready(value)
         } catch {
             // A read superseded by a newer one (its task cancelled) says nothing about the Host: the newer one answers.
-            guard current == generation, !Task.isCancelled, !(error is CancellationError) else { return .loading }
-            switch error as? NativeFailure {
-            case .forbidden: return .locked
-            case .resultUnknown: return .confirming
-            case .expired, .declined, .notVerified: return .closed
-            case .unsupported: return .missing
-            case .unavailable: wentAway(error); return .offline
-            default: return .failed
-            }
+            guard current == generation, privateSnapshot.accepts(content), !Task.isCancelled, !(error is CancellationError) else { return .loading }
+            let failure = PhoneAgents.readFailure(error)
+            if failure == .offline { wentAway(error) }
+            return failure
         }
     }
     /** A phone gets 我的 Agent only inside a content window, so the tab opens one as a conversation does. */
@@ -42,11 +34,13 @@ extension PhoneModel {
         #if LATCH_SCREENS
         if staged { return }
         #endif
-        guard workspace != nil, connected, verifiedUntil == nil, !verifying else { return }
+        guard workspace != nil, connected, !verifying else { return }
         do { try await ensureVerified(); _ = await refresh() }
         catch { if (error as? NativeFailure) != .declined, !wentAway(error) { report(error) } }
     }
-    var agentAccess: PhoneAgentAccess { PhoneAgents.access(snapshot, windowOpen: verifiedUntil != nil) }
+    var agentAccess: PhoneAgentAccess {
+        PhoneAgents.access(snapshot, windowOpen: verifiedUntil != nil, privateConfirmed: privateSnapshot.confirmed)
+    }
     func readAgent(_ id: String) async -> PhoneAgentRead {
         guard PhoneAgents.validId(id) else { return .missing }
         return await readAgentPart("/link/api/custom-agents/" + id)

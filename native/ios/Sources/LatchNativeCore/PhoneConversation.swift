@@ -24,7 +24,8 @@ public struct PhoneDiffLine: Equatable, Sendable {
     public let kind: Kind
     public let text: String
 }
-public struct PhoneChangedFile: Equatable, Sendable {
+public struct PhoneChangedFile: Equatable, Sendable, Identifiable {
+    public let id: String
     public let path: String
     public let root: String?
     public let add: Int?
@@ -348,21 +349,32 @@ public enum PhoneConversation {
      * What a turn's tools edited and what the folders watched during its run saw. A call its approval kept from running changed
      * nothing, so it does not count; a watched file carries no line counts because other writers share the folder.
      */
-    public static func summary(_ turn: PhoneTurn, outputs: [NativeJSON]) -> PhoneTurnSummary {
+    public static func summary(_ turn: PhoneTurn, outputs: [NativeJSON], scope: PhoneFileScope = PhoneFileScope()) -> PhoneTurnSummary {
         var order: [String] = [], added: [String: Int] = [:], removed: [String: Int] = [:]
+        var references: [String: (path: String, root: String?)] = [:]
         for message in turn.replies where message["role"].string == "tool" {
             for diff in applied(message) {
                 guard let path = diff["path"].string else { continue }
-                if added[path] == nil { order.append(path); added[path] = 0; removed[path] = 0 }
+                let reference = scope.reference(path: path, root: nil), key = reference.id
+                if added[key] == nil {
+                    order.append(key); added[key] = 0; removed[key] = 0
+                    references[key] = (reference.path, reference.root)
+                }
                 for line in diffLines(old: diff["oldText"].string, new: diff["newText"].string ?? "") {
-                    if line.kind == .add { added[path, default: 0] += 1 } else if line.kind == .remove { removed[path, default: 0] += 1 }
+                    if line.kind == .add { added[key, default: 0] += 1 } else if line.kind == .remove { removed[key, default: 0] += 1 }
                 }
             }
         }
-        var files = order.map { PhoneChangedFile(path: $0, root: nil, add: added[$0], del: removed[$0], deleted: false) }
+        var files = order.compactMap { key -> PhoneChangedFile? in
+            guard let reference = references[key] else { return nil }
+            return PhoneChangedFile(id: key, path: reference.path, root: reference.root, add: added[key], del: removed[key], deleted: false)
+        }
+        var seen = Set(order)
         for file in outputs {
-            guard let path = file["path"].string, added[path] == nil else { continue }
-            files.append(PhoneChangedFile(path: path, root: file["root"].string, add: nil, del: nil, deleted: file["change"].string == "deleted"))
+            guard let path = file["path"].string else { continue }
+            let reference = scope.reference(path: path, root: file["root"].string)
+            guard seen.insert(reference.id).inserted else { continue }
+            files.append(PhoneChangedFile(id: reference.id, path: reference.path, root: reference.root, add: nil, del: nil, deleted: file["change"].string == "deleted"))
         }
         let counted = !files.isEmpty && files.allSatisfy { $0.add != nil }
         return PhoneTurnSummary(files: files, add: counted ? files.reduce(0) { $0 + ($1.add ?? 0) } : nil, del: counted ? files.reduce(0) { $0 + ($1.del ?? 0) } : nil)

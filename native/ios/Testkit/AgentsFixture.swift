@@ -5,6 +5,24 @@ import LatchNativeCore
 func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
     let snapshot = value["snapshot"], catalog = snapshot["catalog"]
+    if value["privateProjectionProbe"].bool {
+        var proposals = PhoneProposalStore(), results = PhoneResultStore()
+        var projection = PhonePrivateSnapshot()
+        let old = projection.epoch
+        guard let initial = projection.adopt(snapshot, captured: old, windowOpen: true) else { throw NativeFailure.invalidRecord }
+        let initialAccess = PhoneAgents.access(initial, privateConfirmed: projection.confirmed).rawValue
+        // A network outage does not change the content window or discard its already-authorized cached fields.
+        let offline = PhoneAgents.access(initial, privateConfirmed: projection.confirmed).rawValue
+        projection.clear()
+        let cleared = PhoneAgents.takeDown(snapshot, proposals: &proposals, results: &results)
+        let clearedAccess = PhoneAgents.access(cleared, privateConfirmed: projection.confirmed).rawValue
+        let lateIgnored = projection.adopt(snapshot, captured: old, windowOpen: true) == nil && !projection.accepts(old)
+        guard let hostMissing = projection.adopt(cleared, captured: projection.epoch, windowOpen: true) else { throw NativeFailure.invalidRecord }
+        let hostAccess = PhoneAgents.access(hostMissing, privateConfirmed: projection.confirmed).rawValue
+        let closed = projection.adopt(snapshot, captured: projection.epoch, windowOpen: false)
+        return ["initial": initialAccess, "offlineCache": offline, "cleared": clearedAccess, "hostMissing": hostAccess,
+            "lateIgnored": lateIgnored, "closedPrivate": closed?["customAgents"] == .null && !projection.confirmed]
+    }
     func fieldValue(_ json: NativeJSON) throws -> Any { try JSONSerialization.jsonObject(with: json.encoded(), options: .fragmentsAllowed) }
     let agents = snapshot["customAgents"].array
     let choices = agents.map { PhoneAgents.choice(catalog, agent: $0) }

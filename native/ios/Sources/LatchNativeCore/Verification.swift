@@ -13,6 +13,7 @@ public struct BodyLease: Sendable {
         self.deadline = min(bounded, originalDeadline ?? bounded)
     }
     public var valid: Bool { authority.accepts(id) && Date() < verifiedUntil && ContinuousClock.now < deadline }
+    public func sameWindow(as other: BodyLease) -> Bool { authority === other.authority && id == other.id }
     public func requireValid() throws { guard valid else { throw NativeFailure.expired } }
     /** Rebinding a UI observer keeps this lease's original wall and monotonic deadlines. */
     public func waitForInvalidation() async throws {
@@ -53,6 +54,11 @@ public actor NativeVerification {
     private var version = UUID()
     public init(hostId: String, deviceId: String) { self.hostId = hostId; self.deviceId = deviceId }
     public func currentLease() -> BodyLease? { window?.lease.valid == true ? window?.lease : nil }
+    /** A late stream failure may withdraw its own window, never a newer verification on this connection. */
+    public func invalidate(_ lease: BodyLease?) -> Bool {
+        guard let lease, window?.lease.sameWindow(as: lease) == true else { return false }
+        closeOpening(); return true
+    }
     public func closeOpening() {
         version = UUID()
         _ = authority.replace(); opening = UUID().uuidString

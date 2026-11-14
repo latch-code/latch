@@ -2,6 +2,11 @@ import CryptoKit
 import Foundation
 import Security
 
+/** A read response is not a receipt for any pending write. Only the Host's explicit journal state confirms that distinction. */
+public enum NativeReadFailure: Error, Sendable {
+    case agentWriteUnknown, failed
+}
+
 public enum NativeFailure: String, Error, LocalizedError, Sendable {
     case invalidRecord, identityMismatch, expired, unavailable, unsupported, resultUnknown, storageUnavailable, revoked, eventOverflow, forbidden, contextChanged, declined, notVerified, changedElsewhere, terminalOpen, notStoppable, busy, sessionLost
     public var errorDescription: String? {

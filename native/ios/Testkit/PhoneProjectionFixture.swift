@@ -36,6 +36,7 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
     func hours(_ count: Double) -> Date { hostNow.addingTimeInterval(count * -3600) }
     func ended(_ end: PhoneRunEnd?) -> Any { end.map { ["failed": $0.failed, "text": $0.text, "unknown": $0.unknown] as [String: Any] } ?? NSNull() }
     return [
+        "sameScope": PhoneFileScope(value["scopes"].array.first ?? .null) == PhoneFileScope(value["scopes"].array.last ?? .null),
         "parsed": value["stamps"].array.map { PhoneTime.parse($0)?.timeIntervalSince1970 ?? -1 },
         "confirmed": [PhoneTime.message(hostNow, now: hostNow) == PhoneTime.clock(hostNow), PhoneTime.message(hours(24), now: hostNow).hasPrefix("昨天"), PhoneTime.message(hours(96), now: hostNow).contains("月")],
         "clocks": [PhoneTime.runClock(seconds: 47), PhoneTime.runClock(seconds: 723), PhoneTime.runClock(seconds: 3723)],
@@ -54,7 +55,7 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         "shelves": PhoneSessions.shelves(tasks: tasks, workspaces: workspaces).map { ["label": $0.label, "ids": $0.tasks.compactMap { $0["id"].string }] },
         "found": PhoneSessions.shelves(tasks: tasks, workspaces: workspaces, query: value["query"].string ?? "").map { $0.label },
         "turns": turns.map { turn -> [String: Any] in
-            let summary = PhoneConversation.summary(turn, outputs: value["outputs"].array)
+            let summary = PhoneConversation.summary(turn, outputs: value["outputs"].array, scope: PhoneFileScope(detail["summary"]))
             let outcome = PhoneConversation.outcome(turn, latestStatus: nil)
             return ["blocks": PhoneConversation.blocks(turn, settled: true).map(block), "folds": PhoneConversation.workFolds(turn, outcome: outcome),
                 "fold": PhoneConversation.foldWords(turn), "files": summary.files.map(\.path), "add": summary.add ?? -1, "del": summary.del ?? -1]

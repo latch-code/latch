@@ -138,6 +138,7 @@ struct NativePreviewView: View {
                 }
             }
         }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in editing = false; dismiss() }
     }
 }
 private struct RasterQuickLook: UIViewControllerRepresentable {

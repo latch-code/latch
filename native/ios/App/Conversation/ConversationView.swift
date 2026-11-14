@@ -46,6 +46,7 @@ struct ConversationView: View {
         .task(id: [id, PhoneHandoffs.involved(model.snapshot, sessionId: id), model.verifiedUntil == nil ? "closed" : "open"]) { await model.loadHandoffs(id) }
         .onChange(of: model.verifiedUntil) { _, value in if value == nil { preview = nil } }
         .onChange(of: model.contentGeneration) { _, _ in preview = nil; cancelFile() }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in preview = nil; fileList = nil }
         .onDisappear { cancelFile(); preview = nil; PreviewFiles.clear() }
     }
     @ToolbarContentBuilder private var header: some ToolbarContent {
@@ -124,7 +125,7 @@ struct ConversationView: View {
                     let latest = index == turns.count - 1
                     TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
                         delivery: latest && running ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: switches[turn.id],
-                        mark: model.engineMark(summary["harnessId"].string), engine: engine,
+                        mark: model.engineMark(summary["harnessId"].string), engine: engine, fileScope: PhoneFileScope(model.detail["summary"]),
                         endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil,
                         actions: model.detailCached ? .none : PhoneTurnActions.of(turn, latest: latest, running: latest && running, canSend: canSend, canFork: canFork),
                         index: index, open: { openFile($0, $1) }).equatable()
@@ -228,7 +229,8 @@ struct ConversationView: View {
         var seen = Set<String>(), result: [PhoneChangedFile] = []
         for turn in PhoneConversation.turns(model.detail["messages"].array).reversed() {
             let outputs = turn.replies.flatMap { $0["outputs"].array }
-            for file in PhoneConversation.summary(turn, outputs: outputs).files where !file.deleted && seen.insert(file.path).inserted { result.append(file) }
+            for file in PhoneConversation.summary(turn, outputs: outputs, scope: PhoneFileScope(model.detail["summary"])).files
+                where !file.deleted && seen.insert(file.id).inserted { result.append(file) }
         }
         return result
     }
@@ -316,7 +318,7 @@ private struct SessionFilesSheet: View {
     let open: (String, String?) -> Void
     var body: some View {
         NavigationStack {
-            List(files, id: \.path) { file in
+            List(files) { file in
                 Button { open(file.path, file.root) } label: { FileRowLabel(file: file) }
             }
             .listStyle(.plain)

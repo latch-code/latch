@@ -50,6 +50,7 @@ const root = fileURLToPath(new URL('../../../', import.meta.url))
 const nativeSeen = vi.hoisted(() => [] as Array<{ deviceId: string; method: string; path: string }>)
 /** `METHOD path` of requests the native listener answers 503 once without passing on: a write the Host never saw. */
 const nativeDrop = vi.hoisted(() => new Set<string>())
+const nativeReadFaults = vi.hoisted(() => new Map<string, Array<{ status: number; code: string }>>())
 vi.mock('../src/native.ts', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/native.ts')>()
   return {
@@ -60,6 +61,11 @@ vi.mock('../src/native.ts', async importOriginal => {
         handler(req, res, opening) {
           nativeSeen.push({ deviceId: opening.deviceId, method: req.method ?? '', path: req.url ?? '' })
           const key = `${req.method ?? ''} ${req.url ?? ''}`
+          const readFault = nativeReadFaults.get(key)?.shift()
+          if (readFault) {
+            res.writeHead(readFault.status, { 'content-type': 'application/json' }).end(JSON.stringify({ error: readFault.code }))
+            return
+          }
           if (nativeDrop.delete(key)) {
             res.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"unavailable","message":"unavailable"}')
             return
@@ -537,10 +543,56 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     30_000,
   )
   it.each([
-    { name: 'accepted recovery', rejectRecovery: false, directRecovery: false },
-    { name: 'rejected reconnect recovery', rejectRecovery: true, directRecovery: false },
-    { name: 'rejected explicit unlock recovery', rejectRecovery: true, directRecovery: true },
-  ])('expires a restored body lease offline after $name', async ({ rejectRecovery, directRecovery }) => {
+    { name: 'accepted recovery', rejectRecovery: false, directRecovery: false, eventFirst: false, lateHead: false, headFailure: '' },
+    {
+      name: 'rejected reconnect recovery',
+      rejectRecovery: true,
+      directRecovery: false,
+      eventFirst: false,
+      lateHead: false,
+      headFailure: '',
+    },
+    {
+      name: 'rejected explicit unlock recovery',
+      rejectRecovery: true,
+      directRecovery: true,
+      eventFirst: false,
+      lateHead: false,
+      headFailure: '',
+    },
+    {
+      name: 'event expiry before the window observer',
+      rejectRecovery: false,
+      directRecovery: false,
+      eventFirst: true,
+      lateHead: false,
+      headFailure: '',
+    },
+    {
+      name: 'event expiry before the response head',
+      rejectRecovery: false,
+      directRecovery: false,
+      eventFirst: true,
+      lateHead: true,
+      headFailure: '',
+    },
+    {
+      name: 'a stream closed before its response head',
+      rejectRecovery: false,
+      directRecovery: false,
+      eventFirst: true,
+      lateHead: false,
+      headFailure: 'closed',
+    },
+    {
+      name: 'a server failure before its response head',
+      rejectRecovery: false,
+      directRecovery: false,
+      eventFirst: true,
+      lateHead: false,
+      headFailure: 'server',
+    },
+  ])('expires a restored body lease offline after $name', async ({ rejectRecovery, directRecovery, eventFirst, lateHead, headFailure }) => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     let opening = '',
       until = '',
@@ -554,6 +606,31 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       enrollments: host.host.security.enrollments,
       bind: { host: '127.0.0.1', port: 0 },
       handler(req, res) {
+        if (eventFirst && req.url === '/link/api/events') {
+          if (headFailure === 'closed') {
+            res.destroy()
+            return
+          }
+          if (headFailure === 'server') {
+            res.writeHead(500, { 'content-type': 'application/json' }).end('{}')
+            return
+          }
+          const head = () => {
+            res.writeHead(200, { 'content-type': 'text/event-stream' })
+            res.write(': heartbeat\n\n')
+          }
+          if (!lateHead) head()
+          const timer = setTimeout(
+            () => (lateHead ? head() : res.write(': heartbeat\n\n')),
+            Math.max(1, Date.parse(until) - Date.now() + 20),
+          )
+          res.on('close', () => clearTimeout(timer))
+          return
+        }
+        if (eventFirst && req.url === '/link/api/fixture-probe') {
+          res.writeHead(200, { 'content-type': 'application/json' }).end('{}')
+          return
+        }
         let bytes = 0
         const chunks: Buffer[] = []
         req.on('data', (chunk: Buffer) => {
@@ -572,7 +649,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           } else if (req.url === '/link/api/native/verification') {
             signatures++
             until = new Date(Date.now() + 1200).toISOString()
-            status = rejectRecovery && signatures > 1 ? 200 : 503
+            status = (rejectRecovery || eventFirst) && signatures > 1 ? 200 : 503
             if (status === 200) result = { verifiedUntil: until, windowToken: token }
           } else if (
             req.url === '/link/api/native/verification/recover'
@@ -597,6 +674,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           operation: 'nativeLeaseExpiry',
           rejectRecovery,
           directRecovery,
+          eventFirst,
+          headFailure,
           port: faulty.port,
           rootSpki: Buffer.from(payload.rootSpki).toString('hex'),
           knockKey: createHash('sha256').update(invitationCode(payload.secret)).digest('hex'),
@@ -608,8 +687,21 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         reboundObserverDidNotExtend: true,
         cancelledObserverSettled: true,
         cacheClosed: true,
+        ...(headFailure
+          ? { eventAction: 'reconnect', eventFailure: 'unavailable', failedStreamKeptWindow: true }
+          : eventFirst
+            ? {
+                eventAction: 'contentExpired',
+                eventFailure: 'expired',
+                transportUsable: true,
+                networkAction: 'reconnect',
+                renewedOnSameTransport: true,
+                oldWindowCannotCloseNew: true,
+                missingWindowCannotCloseNew: true,
+              }
+            : {}),
       })
-      expect(signatures).toBe(rejectRecovery ? 2 : 1)
+      expect(signatures).toBe(rejectRecovery || (eventFirst && !headFailure) ? 2 : 1)
       expect(recoveries).toBe(1)
     } finally {
       await faulty.close()
@@ -663,6 +755,95 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     await expect(invoke({ operation: 'events', oversizedLine: true })).rejects.toThrow('rejected')
     for (const invalid of [Buffer.from([100, 97, 116, 97, 58, 0xff, 10, 10]), Buffer.from('event: unsafe.event\n\n')])
       await expect(invoke({ operation: 'events', chunks: [invalid.toString('hex')] })).rejects.toThrow('rejected')
+  })
+  it('does not report locally cleared private Agent data as an unconfirmed Host write', async () => {
+    expect(
+      await invoke({
+        operation: 'phoneAgents',
+        privateProjectionProbe: true,
+        snapshot: { catalog: { features: { customAgents: true } }, device: { dataScope: 'all' }, customAgents: [] },
+      }),
+    ).toEqual({
+      initial: 'ready',
+      offlineCache: 'ready',
+      cleared: 'closed',
+      hostMissing: 'confirming',
+      lateIgnored: true,
+      closedPrivate: true,
+    })
+  })
+  it('counts native changed files by the Host folder identity across absolute diffs and relative outputs', async () => {
+    const project = async (summary: object, paths: string[], outputs: object[]) => {
+      const result = await invoke({
+        operation: 'phoneProjection',
+        detail: {
+          summary,
+          messages: [
+            { id: 'u', role: 'user', text: 'edit' },
+            ...paths.map((path, index) => ({
+              id: `tool-${index}`,
+              role: 'tool',
+              state: 'completed',
+              tool: { kind: 'edit', diffs: [{ path, oldText: '', newText: 'line\n' }] },
+            })),
+          ],
+        },
+        outputs,
+      })
+      return (result.turns as Array<{ files: string[] }>)[0]!.files
+    }
+    const output = (root: string, path: string) => ({ root, path, change: 'created' })
+    expect(
+      await project(
+        { cwd: '/work' },
+        ['/work/agent-edit.txt'],
+        [output('default', 'agent-edit.txt'), output('default', 'command-edit.txt')],
+      ),
+    ).toEqual(['agent-edit.txt', 'command-edit.txt'])
+    expect(
+      await project(
+        {
+          cwd: '/work/a',
+          folders: [
+            { id: 'a', path: '/work/a' },
+            { id: 'b', path: '/work/b' },
+          ],
+        },
+        ['/work/a/file.txt'],
+        [output('a', 'file.txt'), output('b', 'file.txt')],
+      ),
+    ).toHaveLength(2)
+    expect(
+      await project(
+        {
+          cwd: '/work',
+          folders: [
+            { id: 'a', path: '/work' },
+            { id: 'b', path: '/work/nested' },
+          ],
+        },
+        ['/work/nested/file.txt'],
+        [output('a', 'nested/file.txt'), output('b', 'file.txt')],
+      ),
+    ).toHaveLength(1)
+    expect(await project({}, ['/work/file.txt'], [output('default', 'file.txt')])).toHaveLength(2)
+    expect(await project({ cwd: '/work' }, ['/work/file.txt'], [output('unknown', 'file.txt')])).toHaveLength(2)
+    expect(await project({ cwd: '/work' }, ['/work/file.txt'], [output('default', '../work/file.txt')])).toHaveLength(2)
+    expect(await project({ cwd: '/work' }, ['/work/\u00e9.txt', '/work/e\u0301.txt'], [])).toHaveLength(2)
+    expect(
+      await project(
+        {
+          folders: [
+            { id: 'a', path: '/work/\u00e9' },
+            { id: 'b', path: '/work/e\u0301' },
+          ],
+        },
+        ['/work/e\u0301/file.txt'],
+        [output('a', 'file.txt')],
+      ),
+    ).toHaveLength(2)
+    const scopes = await invoke({ operation: 'phoneProjection', scopes: [{ cwd: '/work/\u00e9' }, { cwd: '/work/e\u0301' }] })
+    expect(scopes.sameScope).toBe(false)
   })
   it('projects Host sessions for the phone: shelves, frozen words, turns, approvals and what it may start', async () => {
     const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`
@@ -1371,6 +1552,25 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await rm(temporary, { recursive: true, force: true })
     }
   })
+  it('distinguishes a Host Agent write awaiting confirmation from failed native reads without dropping the transport', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    const path = 'GET /link/api/custom-agents/general'
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      nativeReadFaults.set(path, [
+        { status: 503, code: 'agent-write-unknown' },
+        { status: 500, code: 'internal' },
+        { status: 408, code: 'read-timeout' },
+      ])
+      expect(
+        await invoke({ operation: 'nativeWorkspace', agentReadFailures: true, payload: invitation.payload, port: host.host.nativePort }),
+      ).toEqual({ outcomes: ['confirming', 'failed', 'failed'], transportUsable: true, pending: 1, samePending: true, timeout: 'offline' })
+    } finally {
+      nativeReadFaults.delete(path)
+      await host.close()
+    }
+  }, 30_000)
   it('reads, writes and stops from the actual Swift workspace against a real Host', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {

@@ -61,19 +61,27 @@ struct FileEditorView: View {
         }
         .onAppear { text = original; base = original }
         .onChange(of: model.verifiedUntil) { _, value in if value == nil { close(nil) } }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in
+            text = ""; base = ""; request = nil; unknown = false; failure = nil; conflict = false
+            close(nil)
+        }
         .interactiveDismissDisabled(text != base)
     }
     private func close(_ next: PreviewItem?) { done(next); dismiss() }
     private func save() async {
+        let content = model.privateSnapshot.epoch
         if request == nil { request = try? PhoneFileEdit.save(sessionId: edit.sessionId, handle: edit.handle, baseHash: edit.baseHash, content: text) }
         guard let request else { failure = "这段内容不能保存"; return }
         failure = nil
         model.editPaths[request.requestId] = (edit.reference, edit.root)
-        switch await model.write(request, retryAnswered: PhoneFileEdit.retryAnswered(request), refresh: false) {
+        let outcome = await model.write(request, retryAnswered: PhoneFileEdit.retryAnswered(request), refresh: false)
+        guard model.privateSnapshot.accepts(content) else { return }
+        switch outcome {
         case .done:
             model.editPaths.removeValue(forKey: request.requestId)
             self.request = nil; unknown = false
             let next = try? await model.preview(reference: edit.reference, root: edit.root)
+            guard model.privateSnapshot.accepts(content) else { if let next { PreviewFiles.discard(next) }; return }
             close(next)
         case let .refused(refusal):
             model.editPaths.removeValue(forKey: request.requestId)
@@ -86,17 +94,22 @@ struct FileEditorView: View {
     /** The handle may have expired: read the file again and say whether it holds this text, then let the save go. */
     private func checkAndDrop() async {
         guard let request else { return }
+        let content = model.privateSnapshot.epoch
         // Not dropped: the request and its 重试保存 stay.
-        guard let words = await model.checkAndDrop(request) else { failure = "没能核对，稍后再试"; return }
+        let result = await model.checkAndDrop(request)
+        guard model.privateSnapshot.accepts(content) else { return }
+        guard let words = result else { failure = "没能核对，稍后再试"; return }
         self.request = nil; unknown = false; failure = words
     }
     /** The file as it is now, as the new base; what the person wrote is gone unless they copied it first. */
     private func loadLatest() async {
+        let content = model.privateSnapshot.epoch
         loading = true; defer { loading = false }
         do {
             let item = try await model.preview(reference: edit.reference, root: edit.root)
+            guard model.privateSnapshot.accepts(content) else { PreviewFiles.discard(item); return }
             guard let next = item.edit, let latest = item.text else { failure = "这个文件现在不能编辑"; conflict = false; return }
             edit = next; text = latest; base = latest; conflict = false
-        } catch { failure = "读不到这个文件" }
+        } catch { if model.privateSnapshot.accepts(content) { failure = "读不到这个文件" } }
     }
 }

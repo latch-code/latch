@@ -35,6 +35,24 @@ import LatchNativeCore
         catch { cacheNeedsWindow = (error as? NativeFailure) == .expired }
         guard cacheNeedsWindow else { throw NativeFailure.identityMismatch }
         let lease = try await workspace.verify()
+        if input["agentReadFailures"] as? Bool == true {
+            let held = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["mode": .string("chat"), "prompt": .string("Unconfirmed fixture message")])
+            try await vault.storeBody(JSONEncoder().encode(held), name: "pending-" + held.requestId, lease: lease)
+            try await vault.storeMetadata(JSONEncoder().encode([held.requestId]), name: "pending-index")
+            var outcomes: [String] = []
+            for _ in 0..<3 {
+                do { _ = try await workspace.read("/link/api/custom-agents/general", body: true); outcomes.append("ready") }
+                catch { outcomes.append(String(describing: PhoneAgents.readFailure(error))) }
+            }
+            let read = try await workspace.read("/link/api/custom-agents/general", body: true)
+            let live = try await workspace.snapshot()
+            let pending = try await workspace.pendingWrites()
+            await workspace.closeOpening(); await vault.lock()
+            return ["outcomes": outcomes, "transportUsable": read != .null && live["device"]["id"].string == device.deviceId,
+                "pending": pending.count, "samePending": pending.first?.requestId == held.requestId && pending.first?.path == held.path
+                    && pending.first?.method == held.method && pending.first?.body == held.body,
+                "timeout": String(describing: PhoneAgents.readFailure(NativeFailure.resultUnknown))]
+        }
         let create = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["mode": .string("chat"), "prompt": .string("Daily Swift conversation")])
         let task = try await workspace.submit(create)
         guard let taskId = task["sessionId"].string else { throw NativeFailure.invalidRecord }

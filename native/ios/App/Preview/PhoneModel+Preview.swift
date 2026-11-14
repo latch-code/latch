@@ -18,15 +18,23 @@ extension PhoneModel {
         defer { if previewJob == job { cancelPreview() } }
         try await ensureVerified(); try Task.checkCancellation()
         guard generation == current, contentGeneration == reading, previewJob == job else { throw NativeFailure.contextChanged }
-        let item = try await PreviewFiles.load(reference: reference, root: root, session: sessionId, workspace: workspace) { [weak self] done, total in
-            Task { @MainActor [weak self] in
-                guard let self, self.generation == current, self.contentGeneration == reading, self.previewJob == job else { return }
-                self.previewProgress = PhonePreviewProgress(completed: done, total: total)
+        let content = privateSnapshot.epoch
+        let item: PreviewItem
+        do {
+            item = try await PreviewFiles.load(reference: reference, root: root, session: sessionId, workspace: workspace) { [weak self] done, total in
+                Task { @MainActor [weak self] in
+                    guard let self, self.generation == current, self.contentGeneration == reading, self.privateSnapshot.accepts(content), self.previewJob == job else { return }
+                    self.previewProgress = PhonePreviewProgress(completed: done, total: total)
+                }
             }
+        } catch {
+            guard generation == current, contentGeneration == reading, privateSnapshot.accepts(content), previewJob == job else { throw CancellationError() }
+            throw error
         }
         do {
-            try Task.checkCancellation(); try item.lease.requireValid()
-            guard generation == current, contentGeneration == reading, previewJob == job else { throw NativeFailure.contextChanged }
+            try Task.checkCancellation()
+            guard generation == current, contentGeneration == reading, privateSnapshot.accepts(content), previewJob == job else { throw CancellationError() }
+            try item.lease.requireValid()
             return item
         } catch { PreviewFiles.discard(item); throw error }
     }

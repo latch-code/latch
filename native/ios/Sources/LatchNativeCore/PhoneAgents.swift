@@ -145,15 +145,31 @@ public struct PhoneAgentEntry: Equatable, Sendable, Identifiable {
     public let unavailableReason: String?
 }
 
+/** A read of private Agent data. A failed read never settles a pending write. */
+public enum PhoneAgentRead: Equatable, Sendable {
+    case loading, ready(NativeJSON), locked, confirming, offline, closed, missing, failed
+}
+
 public enum PhoneAgents {
+    public static func readFailure(_ error: Error) -> PhoneAgentRead {
+        if let read = error as? NativeReadFailure { return read == .agentWriteUnknown ? .confirming : .failed }
+        return switch error as? NativeFailure {
+        case .forbidden: .locked
+        case .resultUnknown: .offline
+        case .expired, .declined, .notVerified: .closed
+        case .unsupported: .missing
+        case .unavailable: .offline
+        default: .failed
+        }
+    }
     public static let generalId = "general"
     public static let generalName = "通用"
     public static let generalDuty = "没选别的 Agent 的会话都带上它"
-    public static func access(_ snapshot: NativeJSON, windowOpen: Bool = true) -> PhoneAgentAccess {
+    public static func access(_ snapshot: NativeJSON, windowOpen: Bool = true, privateConfirmed: Bool = true) -> PhoneAgentAccess {
         guard snapshot["catalog"]["features"]["customAgents"].bool else { return .hidden }
         guard snapshot["device"]["dataScope"].string == "all" else { return .locked }
         // Names, duties and schedules are content: outside a window they are not shown, whatever is still in memory.
-        guard windowOpen else { return .closed }
+        guard windowOpen && privateConfirmed else { return .closed }
         return snapshot["customAgents"] == .null ? .confirming : .ready
     }
     /** The snapshot with what only a content window may show taken out, for when a window closes. */

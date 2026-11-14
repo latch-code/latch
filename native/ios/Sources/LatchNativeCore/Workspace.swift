@@ -331,7 +331,13 @@ public actor NativeWorkspace {
         let response = try await connection.request(.get, path: path)
         guard epoch == current else { throw NativeFailure.unavailable }
         if body { try lease?.requireValid() }
-        guard response.status == 200 else { throw await responseFailure(response, lease: lease) }
+        guard response.status == 200 else {
+            if response.status == 503, (try? NativeJSON.decode(response.body))?["error"].string == "agent-write-unknown" {
+                throw NativeReadFailure.agentWriteUnknown
+            }
+            if response.status == 408 || response.status >= 500 { throw NativeReadFailure.failed }
+            throw await responseFailure(response, lease: lease)
+        }
         return try NativeJSON.decode(response.body)
     }
     public func resolveFile(sessionId: String, reference: String, rootId: String?) async throws -> NativeJSON {
@@ -896,15 +902,18 @@ public actor NativeWorkspace {
               Set(value["fields"].object.keys).isSubset(of: ["requestId", "runId", "decision"]) else { throw NativeFailure.storageUnavailable }
         return value
     }
-    public func events(sessionId: String? = nil) async throws -> NativeWorkspaceEvents {
+    public func events(sessionId: String? = nil, expectedLease: BodyLease? = nil) async throws -> NativeWorkspaceEvents {
         let (connection, current) = try transport()
         try await loadCursors()
         let selected = sessionId ?? "", cursor = cursors.first { $0.selection == selected && $0.cursor.epoch == instance }
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        if let expectedLease, !lease.sameWindow(as: expectedLease) { throw NativeFailure.expired }
         let stream = try await connection.events(sessionId: sessionId, lease: lease, cursor: cursor?.cursor)
         guard epoch == current else { await stream.cancel(); throw NativeFailure.unavailable }
         return NativeWorkspaceEvents(events: stream.events, stream: stream, epoch: current, selection: selected, lease: lease)
     }
+    /** Closes only the matching body authorization; the authenticated transport and encrypted pending writes remain. */
+    public func invalidateContentWindow(_ lease: BodyLease) async { _ = await verification.invalidate(lease) }
     public func accepts(_ event: NativeEvent, from stream: NativeWorkspaceEvents, sessionId: String?) throws -> Bool {
         let selected = sessionId ?? ""
         guard stream.epoch == epoch, stream.selection == selected else { return false }
@@ -1016,7 +1025,7 @@ public actor NativeWorkspace {
         let code = value?["error"].string
         if ["native-verification-required", "native-verification-invalid", "native-verification-superseded"].contains(code ?? "") {
             // An old response cannot invalidate a newer local verification lease.
-            if lease?.valid != false { await verification.closeOpening() }
+            _ = await verification.invalidate(lease)
             return .expired
         }
         if ["workspace-changed", "workspace-disabled", "permission-drift"].contains(code ?? "") { return .contextChanged }

@@ -37,6 +37,7 @@ import UIKit
         model.storeReady = true
         model.connected = true
         model.verifiedUntil = .distantFuture
+        _ = model.privateSnapshot.adopt(model.snapshot, captured: model.privateSnapshot.epoch, windowOpen: true)
         switch name {
         case "harness-menu":
             creating = true

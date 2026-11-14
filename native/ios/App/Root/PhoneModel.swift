@@ -129,7 +129,14 @@ import UIKit
     func hostNow() -> Date { Date().addingTimeInterval(hostClockOffset) }
     @Published var busy = false
     @Published var verifying = false
-    @Published var verifiedUntil: Date? { didSet { if verifiedUntil != nil, oldValue == nil { flushHistoryCloses() } } }
+    @Published var verifiedUntil: Date? {
+        didSet {
+            if verifiedUntil == nil { bodyLease = nil }
+            else if oldValue == nil { flushHistoryCloses() }
+        }
+    }
+    @Published var privateSnapshot = PhonePrivateSnapshot()
+    private var bodyLease: BodyLease?
     @Published var contentGeneration = UUID()
     var canRun: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("run") }
     var canApproveStandard: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("approve:standard") }
@@ -287,39 +294,56 @@ import UIKit
     }
     private func bindBodyLease(_ lease: BodyLease, current: UUID) throws {
         guard current == generation else { throw NativeFailure.expired }; try lease.requireValid()
+        if bodyLease?.sameWindow(as: lease) != true {
+            // Verification does not change the caller's selected session, draft or attachments.
+            privateSnapshot.clear()
+            detail = .null; detailFailed = nil; PreviewFiles.clear()
+            snapshot = PhoneAgents.takeDown(snapshot, proposals: &proposals, results: &agentResults)
+        }
+        bodyLease = lease
         verifiedUntil = lease.verifiedUntil; expiryTask?.cancel()
         expiryTask = Task {
             do { try await lease.waitForInvalidation() } catch { return }
             guard !Task.isCancelled, current == generation else { return }
-            clearPrivateContent(); verifiedUntil = nil
-            eventTask?.cancel(); startEvents()
-            // Its own task: opening binds a new lease, which cancels this one.
-            if PhoneUnlock.reopensAtExpiry(faceID: PhoneFaceID.isOn) { Task { await reopenContent(current) } }
+            closeBodyWindow(lease, current: current)
         }
+    }
+    private func closeBodyWindow(_ lease: BodyLease, current: UUID) {
+        guard current == generation, bodyLease?.sameWindow(as: lease) == true else { return }
+        bodyLease = nil; expiryTask?.cancel(); clearPrivateContent(); verifiedUntil = nil
+        eventTask?.cancel(); startEvents()
+        if PhoneUnlock.reopensAtExpiry(faceID: PhoneFaceID.isOn) { Task { await reopenContent(current) } }
     }
     /** What was on screen when its window ran out comes back without a tap; nothing asks the person. */
     private func reopenContent(_ current: UUID) async {
         guard current == generation, connected, verifiedUntil == nil, !verifying else { return }
         if let lastReopen, lastReopen.duration(to: .now) < .seconds(60) { return }
         lastReopen = .now
-        if let sessionId { await openSession(sessionId) }
+        if tab == .agents && agentPath.isEmpty { await openAgents() }
+        else if let sessionId { await openSession(sessionId) }
+        else if tab == .agents { await openAgents() }
     }
     @discardableResult func refresh() async -> Bool {
         guard let workspace else { return false }
         let current = generation, selected = sessionId
+        var reading = privateSnapshot.epoch
         do {
             let lease = await workspace.lease()
             guard current == generation else { return false }
             if let lease { try bindBodyLease(lease, current: current) }
             else {
-                if verifiedUntil != nil { clearPrivateContent() }
+                if let bodyLease { closeBodyWindow(bodyLease, current: current) }
+                else if verifiedUntil != nil { clearPrivateContent() }
                 else { detail = .null; pending = []; PreviewFiles.clear(); clearAttachments() }
                 verifiedUntil = nil
             }
+            reading = privateSnapshot.epoch
             let value = try await workspace.snapshot()
-            guard current == generation else { return false }; adoptSnapshot(value)
-            await refreshControlPending()
             guard current == generation else { return false }
+            guard privateSnapshot.accepts(reading) else { return true }
+            adoptSnapshot(value, captured: reading, windowOpen: lease?.valid == true)
+            await refreshControlPending()
+            guard current == generation, privateSnapshot.accepts(reading) else { return false }
             if let selected, lease?.valid == true {
                 let reading = contentGeneration
                 let value = try await workspace.detail(selected)
@@ -327,7 +351,7 @@ import UIKit
             }
             return true
         } catch {
-            guard current == generation else { return false }
+            guard current == generation, privateSnapshot.accepts(reading), !Task.isCancelled, !(error is CancellationError) else { return false }
             if !wentAway(error) {
                 report(error)
                 if selected == sessionId, detail == .null, verifiedUntil != nil { detailFailed = selected }
@@ -352,9 +376,11 @@ import UIKit
         guard let workspace else { return }
         let current = generation, selected = verifiedUntil != nil ? sessionId : nil, streamId = streamGeneration
         eventTask = Task {
+            var streamLease: BodyLease?
             do {
                 // The Host offers metadata snapshots without a body window, never an unverified SSE stream.
-                if await workspace.lease() == nil {
+                streamLease = await workspace.lease()
+                if streamLease == nil {
                     while !Task.isCancelled, generation == current, streamGeneration == streamId {
                         try await Task.sleep(for: .seconds(15))
                         guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
@@ -362,7 +388,7 @@ import UIKit
                     }
                     return
                 }
-                let stream = try await workspace.events(sessionId: selected)
+                let stream = try await workspace.events(sessionId: selected, expectedLease: streamLease)
                 defer { Task { await stream.cancel() } }
                 for try await event in stream.events {
                     guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
@@ -374,9 +400,15 @@ import UIKit
                 }
             } catch {
                 guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
-                if (error as? NativeFailure) == .eventOverflow {
+                if PhoneUnlock.streamFailure(error) == .eventOverflow {
                     try? await workspace.forgetCursor(sessionId: selected)
                     if await refresh() { startEvents() }
+                    return
+                }
+                if PhoneUnlock.streamFailure(error) == .contentExpired, let streamLease {
+                    await workspace.invalidateContentWindow(streamLease)
+                    guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
+                    closeBodyWindow(streamLease, current: current)
                     return
                 }
                 connected = false; offline = true; status = "不在线"; startReconnect()
@@ -423,13 +455,14 @@ import UIKit
                     }
                     guard current == generation else { return }
                     let available = try await candidates(host)
+                    let reading = privateSnapshot.epoch
                     let value = try await paths.migrate(available, workspace: workspace)
                     guard current == generation else { return }
                     await bookRefresher?.connectionChanged()
                     guard current == generation else { return }
                     if let lease = await workspace.lease() { try bindBodyLease(lease, current: current) }
                     guard current == generation else { return }
-                    adoptSnapshot(value); connected = true; status = "已连接"
+                    adoptSnapshot(value, captured: reading, windowOpen: bodyLease?.valid == true); connected = true; status = "已连接"
                     _ = await refresh(); startEvents(); scheduleProximity(workspace); return
                 } catch {
                     if Task.isCancelled || current != generation { return }
@@ -491,13 +524,14 @@ import UIKit
         guard let newBook, NativeBookPathChange.requiresMigration(previous: oldBook, current: newBook), let workspace else { return }
         do {
             if oldKey != newBook.discoveryKey { try startDiscovery(saved) }
+            let reading = privateSnapshot.epoch
             let value = try await paths.migrate(candidates(saved), workspace: workspace)
             guard generation == current else { return }
             await bookRefresher?.connectionChanged()
             guard generation == current else { return }
             if let lease = await workspace.lease() { try bindBodyLease(lease, current: current) }
             guard generation == current else { return }
-            adoptSnapshot(value); connected = true; status = "已连接"
+            adoptSnapshot(value, captured: reading, windowOpen: bodyLease?.valid == true); connected = true; status = "已连接"
             _ = await refresh(); startEvents()
         } catch { if generation == current, !Task.isCancelled { startReconnect() } }
     }
@@ -564,12 +598,14 @@ import UIKit
         guard !(failure is CancellationError) else { return }
         if (failure as? NativeFailure) == .expired {
             // The conversation offers the way back in; a closed window is not an error to report.
-            verifiedUntil = nil; clearPrivateContent(); startEvents()
+            if let bodyLease, !bodyLease.valid { closeBodyWindow(bodyLease, current: generation) }
+            else if bodyLease == nil { verifiedUntil = nil; clearPrivateContent(); startEvents() }
             return
         } else if (failure as? NativeFailure) == .forbidden || (failure as? NativeFailure) == .contextChanged { clearPrivateContent() }
         error = (failure as? NativeFailure)?.errorDescription ?? "暂时无法完成，请稍后重试。"
     }
     private func clearPrivateContent() {
+        privateSnapshot.clear()
         cancelPreview()
         detail = .null; detailFailed = nil; pending = []; contentGeneration = UUID(); PreviewFiles.clear(); clearAttachments()
         contentSearch = PhoneContentSearch(); forkDraft = nil; draftInserts = [:]; editPaths = [:]
@@ -578,12 +614,16 @@ import UIKit
         // Agents' names, duties and schedules came with the window and go with it.
         snapshot = PhoneAgents.takeDown(snapshot, proposals: &proposals, results: &agentResults)
     }
-    private func adoptSnapshot(_ value: NativeJSON, live: Bool = true) {
+    private func adoptSnapshot(_ value: NativeJSON, live: Bool = true, captured: UUID? = nil, windowOpen: Bool = false) {
+        guard captured.map(privateSnapshot.accepts) ?? true else { return }
         if let instance = value["instanceId"].string, snapshot["instanceId"].string == instance,
            let revision = value["revision"].integer, let applied = snapshot["revision"].integer, revision < applied { return }
         let keys = ["status", "scopes", "dataScope"]
-        if snapshot != .null, keys.contains(where: { snapshot["device"][$0] != value["device"][$0] }) { clearPrivateContent(); heldDrafts = [:] }
-        snapshot = value
+        let changedScope = snapshot != .null && keys.contains(where: { snapshot["device"][$0] != value["device"][$0] })
+        if changedScope { clearPrivateContent(); heldDrafts = [:] }
+        guard let projected = privateSnapshot.adopt(value, captured: changedScope ? privateSnapshot.epoch : captured ?? privateSnapshot.epoch,
+            windowOpen: windowOpen && !changedScope) else { return }
+        snapshot = projected
         if live { refreshReviewShortcuts() }
         if let hostTime = PhoneTime.parse(value["hostTime"]) {
             // A cached list is old by definition: it says when it was true, not what the Host's clock reads now.

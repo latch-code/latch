@@ -38,6 +38,7 @@ struct AgentProfileSheet: View {
         .presentationDragIndicator(.visible)
         // A reload keeps what is shown until the answer comes, so the memory editor pushed over it stays alive.
         .task(id: reading) {
+            guard model.agentAccess == .ready, model.verifiedUntil != nil else { read = .closed; return }
             if case .ready = read {} else { read = .loading }
             let next = await model.readAgent(id)
             if next != .loading { read = next }
@@ -45,6 +46,14 @@ struct AgentProfileSheet: View {
         .task(id: [PhoneProposals.signature(model.snapshot, owner: id), model.verifiedUntil == nil ? "closed" : "open"]) { await model.loadProposals(id) }
         // What the window showed goes with it.
         .onChange(of: model.verifiedUntil == nil) { _, closed in if closed { dismiss() } }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in
+            editing = nil; read = .closed
+            if model.agentAccess == .ready, model.verifiedUntil != nil { reload() }
+        }
+        .onChange(of: model.agentAccess) { _, access in
+            if access == .ready, model.verifiedUntil != nil { reload() }
+            else { editing = nil; read = .closed }
+        }
         // A window that closed takes what it showed and never opens again by itself (no unasked Face ID).
         .onChange(of: model.contentGeneration) { _, _ in
             let showing: Bool = { if case .ready = read { return true }; return false }()

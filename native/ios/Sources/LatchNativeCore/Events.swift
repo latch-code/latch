@@ -99,9 +99,10 @@ final class NativeEventCollector: ChannelInboundHandler, @unchecked Sendable {
             switch unwrapInboundIn(data) {
             case let .head(head):
                 if head.status.code < 200 { return }
-                guard !opened, head.status.code == 200, head.headers.count <= 64,
+                guard head.status.code == 200 else { throw NativeFailure.unavailable }
+                guard !opened, head.headers.count <= 64,
                       head.headers["content-type"].count == 1,
-                      head.headers["content-type"].first?.lowercased().hasPrefix("text/event-stream") == true else { throw NativeFailure.expired }
+                      head.headers["content-type"].first?.lowercased().hasPrefix("text/event-stream") == true else { throw NativeFailure.invalidRecord }
                 opened = true; ready.succeed(())
             case var .body(buffer):
                 guard opened, let bytes = buffer.readBytes(length: buffer.readableBytes) else { throw NativeFailure.invalidRecord }
@@ -123,7 +124,7 @@ final class NativeEventCollector: ChannelInboundHandler, @unchecked Sendable {
     func handlerRemoved(context: ChannelHandlerContext) { timer?.cancel(); self.context = nil }
     private func fail(_ context: ChannelHandlerContext, error: NativeFailure = .unavailable) {
         guard !finished else { return }; finished = true; timer?.cancel()
-        if !opened { ready.fail(NativeFailure.expired) }
+        if !opened { ready.fail(error) }
         continuation.finish(throwing: error)
         context.close(promise: nil)
     }

@@ -189,6 +189,7 @@ struct ScheduleProposalRow: View {
         .accessibilityElement(children: .contain).accessibilityLabel("定时提议")
         .sheet(isPresented: $form) { ScheduleProposalForm(owner: owner, proposal: proposal).presentationCornerRadius(28) }
         .onChange(of: model.verifiedUntil == nil) { _, closed in if closed { form = false } }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in form = false }
     }
     @ViewBuilder private var outcome: some View {
         switch proposal.state {
@@ -306,6 +307,7 @@ struct ScheduleProposalForm: View {
             } else if location == nil { location = PhoneScheduleProposals.location(agent, catalog: catalog) }
         }
         .onChange(of: model.verifiedUntil == nil) { _, closed in if closed { dismiss() } }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in dismiss() }
     }
     private func save() {
         guard let location, let write = try? PhoneScheduleProposals.create(owner: owner, proposal: proposal, location: location, notify: notify, enabled: enabled) else { return }

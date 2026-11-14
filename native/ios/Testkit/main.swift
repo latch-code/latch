@@ -404,11 +404,36 @@ do {
         defer { try? FileManager.default.removeItem(at: directory) }
         let vault = try EncryptedVault(directory: directory, key: LinkBytes.random(32), binding: "expiry")
         try await vault.storeBody(Data("private expiring body".utf8), name: "body", lease: lease)
-        let start = ContinuousClock.now
-        let waiting = Task { try await lease.waitForInvalidation() }
         let cancelled = Task { try await lease.waitForInvalidation() }; cancelled.cancel()
         var cancellation = false
         do { try await cancelled.value } catch { cancellation = error is CancellationError }
+        var eventAction: String?, eventFailure: String?, failedStreamKeptWindow = false
+        if input["eventFirst"] as? Bool == true {
+            stage = "expiry-event"
+            var events: NativeEventStream?
+            do {
+                let stream = try await second.events(lease: lease); events = stream
+                for try await _ in stream.events {}
+            }
+            catch {
+                eventFailure = (error as? NativeFailure)?.rawValue ?? "other"
+                eventAction = PhoneUnlock.streamFailure(error).rawValue
+            }
+            if let events { await events.cancel() }
+            if !(input["headFailure"] as? String ?? "").isEmpty {
+                guard lease.valid else { throw NativeFailure.expired }
+                failedStreamKeptWindow = true
+            } else {
+                stage = "expiry-transport-probe"
+                guard eventAction != nil, try await second.request(.get, path: "/link/api/fixture-probe").status == 200 else { throw NativeFailure.unavailable }
+                let renewed = try await verifier.verify(on: second) { try await keys.signVerification($0) }
+                guard renewed.valid, !renewed.sameWindow(as: lease), await verifier.invalidate(lease) == false, await verifier.invalidate(nil) == false,
+                      renewed.valid else { throw NativeFailure.identityMismatch }
+            }
+        }
+        stage = "expiry-observers"
+        let start = ContinuousClock.now
+        let waiting = Task { try await lease.waitForInvalidation() }
         try await Task.sleep(for: .milliseconds(50))
         let rebound = Task { try await lease.waitForInvalidation() }
         try await waiting.value; try await rebound.value
@@ -419,6 +444,14 @@ do {
         await verifier.closeOpening(); await second.close(); await vault.lock()
         result = ["recoveredWithoutSigning": !rejectRecovery, "rejectedRecoveryReverified": rejectRecovery, "expiredWithoutNetwork": true, "reboundObserverDidNotExtend": true,
             "cancelledObserverSettled": true, "cacheClosed": true]
+        if let eventAction {
+            result["eventAction"] = eventAction; result["eventFailure"] = eventFailure
+            if failedStreamKeptWindow { result["failedStreamKeptWindow"] = true }
+            else {
+                result["transportUsable"] = true; result["networkAction"] = PhoneUnlock.streamFailure(NativeFailure.unavailable).rawValue
+                result["renewedOnSameTransport"] = true; result["oldWindowCannotCloseNew"] = true; result["missingWindowCannotCloseNew"] = true
+            }
+        }
     case "nativeProbe":
         let identity = input["withFixtureIdentity"] as? Bool == true ? try FixtureKeys().identity() : nil
         let connection = try await NativeHTTPConnection.open(host: "127.0.0.1", port: fixturePort(input), rootSpki: LinkBytes.unhex(input["rootSpki"] as? String ?? ""), knockKey: LinkBytes.unhex(input["knockKey"] as? String ?? ""), identity: identity)
