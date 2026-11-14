@@ -422,6 +422,10 @@ Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Messag
 
 输入的附件队列是客户端草稿状态；点击发送后先等待上传再建立持久待确认提交。取消等待只终止上传，不调用会话取消。文件选择的结构化引用与原请求一起保存，文字编辑移除标记也移除其选择；网络重试继续使用已保存的引用。
 
+### 原生私有页面的到期恢复
+
+Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入口自动恢复。我的 Agent 列表和人物话题都先验证并刷新私有快照，再沿 `refresh` 读取仍选中的话题；单个话题的 detail 不能把 `PhonePrivateSnapshot.confirmed` 置为真，也不能依赖恢复流下一次碰巧变化的通知补齐快照。关闭 Face ID 并不绕过 Host 的正文验证。恢复开始时固定 Host 代次、页面、Agent 路径、会话与阅读代次，验证晚回后不再为已切换的意图读取私有内容；Face ID 开启时保留明确的「查看」入口。原来的恢复频率限制、后台撤下和未知写入回执均不改变。
+
 ### 本设备的发送投影
 
 **确定的拒绝。** 一次写入是否「结果未知」按 Host 的错误码判断，不只看状态：网络错误、超时、408 与 5xx 是结果未知，只有一种例外：5xx 的错误码在 `NOT_ACCEPTED_5XX`（`@latch/protocol` 的 `refusedBeforeAccepting`）里。这些码只在 Host 记录请求之前抛出，说明什么都没有接收：`audit-unavailable`、`presence-unavailable`、`agent-busy`、`agent-start-failed`、`agent-refused`、`agent-paused`、`agent-handshake-timeout`、`model-gateway-unavailable`。4xx（408 除外）同样是确定的拒绝，例如 `harness-unavailable`、`harness-version-unsupported`。ACP 会话重新接上 Agent 时（这一轮还没有记录）进程退出或不再应答时，Host 答 503 `agent-start-failed`；Agent 回答错误（会话被别的客户端占用、回答无效）时答 502 `agent-refused`，带它自己的原因。确定的拒绝之后页面丢弃 `requestId`，文字留在输入框，原因就地显示，并按错误码给出下一步（Harness 起不来：能改设置的设备给「打开设置 › Harness」，所有设备给「重试」）；Host 同时放下为这个请求保留的附件。这些码只在 Host 什么都没有记下时出现：没有用户消息、没有回执，也没有之后还可能把它发出去的排队项。立即发送的排队消息（会话空闲时 `queue: true`）先写下排队回执再发送；发送被这样拒绝时，Host 先删掉这一项和它的回执再回答（为它写下的 `task.prompt.queued`、`task.prompt.sent` 审计各补一条 `action.failed`），删不掉就把这一项留作「发送结果未确认」并改答不在清单里的 503 `queue-send-unknown`，所以同一段文字永远只有一条重发的路。iPhone/iPad 用同一份清单（`NativeHostRefusal.notAccepted5xx`，`native-swift.test.ts` 核对两份一致）：第一次提交得到确定的拒绝时不留作「结果未知」，文字留在输入框，写出 Host 的原话。两端只在重试时不同：网页上，重试（同一 `requestId`）得到确定的拒绝也结束等待；iPhone/iPad 上，重试的拒绝只有 Host 按第一次提交的回执作答时（`retryAnswered`，例如 `attachment-released`）才结束等待，其他拒绝（4xx 与清单里的 5xx）仍留作「结果未知」并写出 Host 的原话，因为重试被拒绝说明不了第一次提交是否已被接收。网页能这样做，是因为 Host 对自己接收过的一轮先认回执：Driver 把这一轮写稳之后，Host 在内存里按会话、设备与 `requestId` 记下所发内容的哈希；同一设备带同样内容的重试不再做提交前的检查，直接答已接收（带附件的再补一次绑定），检查变化（项目、Harness 版本、模型、文件引用、数据范围）不会把已送达的消息说成被拒绝；同一 `requestId` 换了内容仍是 409 `request-conflict`；别的设备、还在写稳中的一轮与 Host 重启之后的重试照常检查（重启后 Driver 自己的回执仍按 `requestId` 防止重复）。新增一个在接收前拒绝的 5xx 时把它同时加入 `NOT_ACCEPTED_5XX` 与 Swift 核心；接收之后才可能出现的码不能加入。

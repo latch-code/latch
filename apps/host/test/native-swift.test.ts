@@ -314,6 +314,21 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ],
     })
   })
+  it('refreshes private Agent metadata after expiry without restoring an obsolete Host or reading intent', async () => {
+    expect(await invoke({ operation: 'phonePrivateReopen' })).toEqual({
+      rows: [
+        { mode: 'topic', events: ['verify', 'snapshot', 'selected-detail'], access: 'ready' },
+        { mode: 'list', events: ['verify', 'snapshot', 'selected-detail'], access: 'ready' },
+        { mode: 'code', events: ['session:code-session'], access: 'closed' },
+        { mode: 'none', events: [], access: 'closed' },
+        { mode: 'face-id', events: [], access: 'closed' },
+        { mode: 'old-host', events: [], access: 'closed' },
+        { mode: 'changed-host', events: ['verify', 'cancelled'], access: 'closed' },
+        { mode: 'cancelled', events: ['verify', 'cancelled'], access: 'closed' },
+        { mode: 'changed-reading', events: ['verify', 'cancelled'], access: 'closed' },
+      ],
+    })
+  })
   it('matches the shared slash vectors and keeps native command completion scoped, editable and separate from actions', async () => {
     const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/slash-match-v1.json'), 'utf8')) as {
       cases: Array<{ score: number | null; positions: number[] | null }>

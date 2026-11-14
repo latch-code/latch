@@ -363,9 +363,21 @@ import UIKit
         guard current == generation, connected, verifiedUntil == nil, !verifying else { return }
         if let lastReopen, lastReopen.duration(to: .now) < .seconds(60) { return }
         lastReopen = .now
-        if tab == .agents && agentPath.isEmpty { await openAgents() }
-        else if let sessionId { await openSession(sessionId) }
-        else if tab == .agents { await openAgents() }
+        let selectedTab = tab, selectedPath = agentPath, selected = sessionId, reading = contentGeneration
+        let target: PhoneContentReopen = tab == .agents ? .agents(sessionId: agentPath.isEmpty ? nil : selected)
+            : selected.map(PhoneContentReopen.session) ?? .none
+        func stillReading() -> Bool {
+            current == generation && connected && tab == selectedTab && agentPath == selectedPath
+                && sessionId == selected && contentGeneration == reading && !PhoneFaceID.isOn
+        }
+        do {
+            try await PhoneUnlock.reopenContent(target, faceID: PhoneFaceID.isOn, current: stillReading,
+                verify: { try await self.ensureVerified() }, refreshPrivate: { await self.refresh() },
+                openSession: { await self.openSession($0) })
+        } catch {
+            guard stillReading(), !(error is CancellationError) else { return }
+            if !wentAway(error) { report(error) }
+        }
     }
     /** Selection changes withdraw App candidates immediately; the old handles can only close their own Core reader. */
     func clearBodyReading() {

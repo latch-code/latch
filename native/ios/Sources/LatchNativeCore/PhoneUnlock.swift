@@ -6,11 +6,28 @@ public struct PhoneEventRecovery: Sendable {
     public let snapshot: NativeJSON?
 }
 
+public enum PhoneContentReopen: Sendable {
+    case agents(sessionId: String?), session(String), none
+}
+
 /**
  * A connected phone opens its content without asking. Face ID is the person's own choice in 设置, off by default; when it
  * is on, it is asked before each new content window, and the words and icons say so.
  */
 public enum PhoneUnlock {
+    /** Reopens only the captured foreground reading intent. A private page needs its newly authorized snapshot. */
+    @MainActor public static func reopenContent(_ target: PhoneContentReopen, faceID: Bool, current: () -> Bool,
+        verify: () async throws -> Void, refreshPrivate: () async -> Bool, openSession: (String) async -> Void) async throws {
+        guard reopensAtExpiry(faceID: faceID), current(), !Task.isCancelled else { return }
+        switch target {
+        case let .session(id): await openSession(id)
+        case .agents:
+            try await verify()
+            guard current(), !Task.isCancelled else { throw CancellationError() }
+            _ = await refreshPrivate()
+        case .none: break
+        }
+    }
     /** A transient read may retry once within the same reading; it never signs, replays a write or resets a stream. */
     @MainActor public static func retryBodyRead<Value>(current: () -> Bool, read: () async throws -> Value) async throws -> Value {
         guard current(), !Task.isCancelled else { throw CancellationError() }

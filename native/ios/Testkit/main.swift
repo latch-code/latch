@@ -488,6 +488,8 @@ do {
             attempts.append(count)
         }
         result = ["attempts": attempts, "failures": failures]
+    case "phonePrivateReopen":
+        result = try await privateReopenFixture()
     case "nativeProbe":
         let identity = input["withFixtureIdentity"] as? Bool == true ? try FixtureKeys().identity() : nil
         let connection = try await NativeHTTPConnection.open(host: "127.0.0.1", port: fixturePort(input), rootSpki: LinkBytes.unhex(input["rootSpki"] as? String ?? ""), knockKey: LinkBytes.unhex(input["knockKey"] as? String ?? ""), identity: identity)
