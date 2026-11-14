@@ -42,12 +42,30 @@ export async function validateGuiPairing(
 ): Promise<void> {
   const pid = await io.guiPid()
   if (!pid) throw new Error('GUI clipboard validation needs exactly one Device Hub')
-  const proof = new ClipboardProof(pid, io.device)
+  const device = io.device
+  const proof = new ClipboardProof(pid, device)
   const lease = io.clipboard()
+  // This run's public markers and invitation remain in memory only. Never clear a later external copy.
+  const ownedDeviceText = new Set<string>()
+  const writeDevice = async (value: string) => {
+    if (io.device !== device) throw new Error('Simulator clipboard target changed')
+    ownedDeviceText.add(value)
+    await io.writeDevice(value)
+  }
+  const clearDevice = async (requireClosed: boolean) => {
+    if (io.device !== device) throw new Error('Simulator clipboard target changed')
+    if (requireClosed && !(await io.guiClosed())) throw new Error('Simulator GUI reopened before cleanup')
+    const value = await io.readDevice()
+    if (value === '') return true
+    if (!ownedDeviceText.has(value)) return false
+    if (io.device !== device) throw new Error('Simulator clipboard target changed')
+    await io.writeDevice('')
+    return true
+  }
   let restored = false
   let failure: unknown
   const stable = async () => {
-    if ((await io.guiPid()) !== pid || existsSync(io.hold)) throw new Error('GUI clipboard validation interrupted')
+    if ((await io.guiPid()) !== pid || io.device !== device || existsSync(io.hold)) throw new Error('GUI clipboard validation interrupted')
     await lease.request({ op: 'check' })
   }
   const manual = async (kind: 'on' | 'off') => {
@@ -71,12 +89,12 @@ export async function validateGuiPairing(
     const first = publicClipboardMarker()
     await lease.request({ op: 'write', marker: first })
     await lease.request({ op: 'expect-remote', marker: first })
-    await io.writeDevice(first)
+    await writeDevice(first)
     await manual('on')
 
     const fromDevice = publicClipboardMarker()
     await lease.request({ op: 'expect-remote', marker: fromDevice })
-    await io.writeDevice(fromDevice)
+    await writeDevice(fromDevice)
     let deviceToHost = false
     const deviceDeadline = performance.now() + CONTROL_MS
     while (performance.now() < deviceDeadline) {
@@ -90,6 +108,7 @@ export async function validateGuiPairing(
       await pause(100)
     }
     const fromHost = publicClipboardMarker()
+    ownedDeviceText.add(fromHost)
     await lease.request({ op: 'write', marker: fromHost })
     let hostToDevice = false
     const hostDeadline = performance.now() + CONTROL_MS
@@ -108,7 +127,7 @@ export async function validateGuiPairing(
 
     const stopped = publicClipboardMarker()
     await lease.request({ op: 'track', marker: stopped })
-    await io.writeDevice(stopped)
+    await writeDevice(stopped)
     // OFF observes both directions with the very same string type and options used by the ON positive control.
     const negative = async () => {
       const deadline = performance.now() + OFF_MS
@@ -119,7 +138,9 @@ export async function validateGuiPairing(
       }
     }
     await negative()
-    await lease.request({ op: 'write', marker: publicClipboardMarker() })
+    const offHost = publicClipboardMarker()
+    ownedDeviceText.add(offHost)
+    await lease.request({ op: 'write', marker: offHost })
     await negative()
     proof.off(false, false, performance.now())
     proof.take((await io.guiPid()) ?? -1, io.device, performance.now())
@@ -132,7 +153,7 @@ export async function validateGuiPairing(
       throw new Error('Could not create the temporary invitation')
     }
     proof.check((await io.guiPid()) ?? -1, io.device, performance.now(), !lease.failure)
-    await io.writeDevice(payload)
+    await writeDevice(payload)
     await io.stage('Clipboard controls passed. Activate the product Paste button now; this one-use window lasts at most 10 seconds.')
     for (;;) {
       await stable()
@@ -145,7 +166,7 @@ export async function validateGuiPairing(
       if (value !== payload && value !== '') throw new Error('Simulator clipboard changed before pairing')
       await pause(100)
     }
-    await io.writeDevice('')
+    if (!(await clearDevice(false))) throw new Error('Simulator clipboard changed before cleanup')
     await io.stage(
       'Pairing code consumed. Use Device Hub > Quit and Keep Simulators Running to restore the original Mac clipboard; the App stays connected.',
     )
@@ -177,7 +198,7 @@ export async function validateGuiPairing(
         await pause(100)
       }
     }
-    await io.writeDevice('')
+    await clearDevice(true)
   } catch (cause) {
     failure ??= cause
   }
@@ -185,6 +206,8 @@ export async function validateGuiPairing(
     const receipt = await lease.close()
     if (!restored && receipt.restored !== true && receipt.reason !== 'external-change')
       throw new Error('Clipboard cleanup has no restoration receipt')
+    // The helper may have waited beyond the controller's manual timeout for the official GUI exit.
+    if (await io.guiClosed()) await clearDevice(true)
   } catch (cause) {
     failure ??= cause
   }

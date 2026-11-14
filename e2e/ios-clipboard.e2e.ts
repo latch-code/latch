@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { setTimeout as pause } from 'node:timers/promises'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { writeFile } from 'node:fs/promises'
 import { clipboardGui, validateGuiPairing } from './helpers/iosClipboardValidation.ts'
 import { readDeviceClipboard, writeDeviceClipboard } from './helpers/iosDeviceClipboard.ts'
@@ -305,6 +305,79 @@ describe.skipIf(process.platform !== 'darwin')('clipboard restoration on an isol
     }
     expect((await f.inspect()).originalMatches).toBe(true)
   })
+
+  it.each(['owned', 'external', 'external before close', 'copy during GUI check', 'target changed'] as const)(
+    'cleans only owned simulator text after a late GUI exit: %s',
+    async mode => {
+      const probe = join(directory, randomUUID() + '.gui')
+      await writeFile(probe, 'open')
+      const f = await fixture(probe),
+        hold = join(directory, randomUUID()),
+        device = randomUUID()
+      let closed = false,
+        deviceText = '',
+        finishing = false,
+        clock = 0,
+        writesWhileOpen = 0,
+        target = device,
+        closedChecks = 0
+      const now = vi.spyOn(performance, 'now').mockImplementation(() => (finishing ? (clock += 60_000) : 0))
+      try {
+        await expect(
+          validateGuiPairing(
+            {
+              get device() {
+                return target
+              },
+              hold,
+              clipboard: () => ({
+                ...f.lease,
+                close: async () => {
+                  closed = true
+                  if (mode === 'external') deviceText = 'new external simulator copy'
+                  if (mode === 'target changed') target = randomUUID()
+                  await writeFile(probe, 'closed')
+                  return f.lease.close()
+                },
+              }),
+              guiPid: async () => (closed ? undefined : 123),
+              guiClosed: async () => {
+                if (closed && mode === 'copy during GUI check' && ++closedChecks === 2) deviceText = 'new external simulator copy'
+                return closed
+              },
+              readDevice: async () => deviceText,
+              writeDevice: async text => {
+                if (text === '' && !closed) writesWhileOpen++
+                deviceText = text
+              },
+              stage: async text => {
+                if (text.includes('Clipboard ON,')) throw new Error('Public fixture stopped before ON')
+                if (text.startsWith('Validation stopped.')) {
+                  if (mode === 'external before close') {
+                    closed = true
+                    deviceText = 'new external simulator copy'
+                    await writeFile(probe, 'closed')
+                  } else finishing = true
+                }
+              },
+            },
+            async () => {
+              throw new Error('No invitation expected')
+            },
+            () => false,
+            async () => {},
+          ),
+        ).rejects.toThrow('Public fixture stopped before ON')
+        expect(writesWhileOpen).toBe(0)
+        if (mode === 'target changed') expect(deviceText.startsWith('latch-public-clipboard-')).toBe(true)
+        else expect(deviceText).toBe(mode.startsWith('external') || mode === 'copy during GUI check' ? 'new external simulator copy' : '')
+        expect((await f.inspect()).originalMatches).toBe(true)
+      } finally {
+        now.mockRestore()
+        await writeFile(probe, 'closed')
+      }
+    },
+  )
 })
 
 describe('one-use GUI pairing proof', () => {

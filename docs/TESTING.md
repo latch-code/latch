@@ -142,7 +142,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 2. 在指定设备的 `Edit > Use Shared Clipboard` 开启共享，随后创建 `<文件>.clipboard-on`。两个方向都必须在各自五秒内实际同步成功；两边都不通不能通过。
 3. 关闭同一菜单开关，创建 `<文件>.clipboard-off`。用相同格式和选项分别观察两个方向十秒，都不能同步；没有成功的正控时不接受负控。
 4. 通过后才创建邀请并经 stdin 写入指定模拟器。窗口从负控结束起最长十秒、仅一次，绑定同一 Device Hub PID 与设备；通过 App 原有“粘贴”和连接、核对流程，不直接设置 App 或 Host 的配对状态。
-5. 持有期间持续检查进程与剪贴板变化；失效先关闭本测试的临时 Host，使邀请码失效，不自动重发。共享状态不再可确认时，先按提示使用官方 `Quit and Keep Simulators Running`，实际确认两个 GUI 均退出后才清模拟器剪贴板。
+5. 持有期间持续检查进程与剪贴板变化；失效先关闭本测试的临时 Host，使邀请码失效，不自动重发。共享状态不再可确认时，先按提示使用官方 `Quit and Keep Simulators Running`，实际确认两个 GUI 均退出后，只清仍匹配本轮公开标记或邀请、且目标设备未变的模拟器剪贴板；人后来复制的新内容保留。GUI 晚于控制器等待期限退出时，收到 Swift 的退出/恢复回执后仍补做同一归属检查与清理。
 6. 无论配对成功还是异常，恢复 Mac 原格式前都先用官方 `Quit and Keep Simulators Running` 退出两个 GUI；Swift 辅助自己检查进程，绝不以 Node 的 OFF 声明豁免。GUI 仍在时只保留内存并写 waitingForGui 状态，EOF、TERM、超时、坏输入或控制器断开都不先恢复；Node 不强杀唯一的内存持有者。GUI 退出且剪贴板仍属本次测试时恢复各格式，使用 current-host-only 避免重新发布通用剪贴板；人复制了新内容就保留新内容。收到恢复回执后可重开 Device Hub，模拟器与已连接 App 一直运行。不把中断或等待称为通过。
 
 这是本机受控窗口内的验收前提，不是永久隔离保证。`e2e/helpers/ClipboardLease.swift` 只由 Vitest 编译并驱动，不进入任何 App target；它不输出原剪贴板内容、配对码或可复用摘要。`e2e/ios-clipboard.e2e.ts` 默认只使用随机命名的独立 pasteboard，验证各格式恢复、外部复制、异常退出、超时和一次性证明，不读写系统剪贴板。显式 `LATCH_IOS_CLIPBOARD_TEST_DEVICE=<自有 UDID>` 可在两个 GUI 均关闭时验证公开标记实际往返与清空，只接受 `latch-live-root-` 前缀的自有运行中模拟器；断言只打印布尔值。设备写入使用 devicectl 默认的三种标准文本 UTI，读回指定 UTF-8 类型；只用 stdin/stdout，单条命令最多 5 秒，配对证明仍在原 10 秒内失效，不因命令延迟续期。真实 GUI 验收仍需独立记录正常原生流程与结果，软件密钥、临时 Host 和假模型的边界不变。
