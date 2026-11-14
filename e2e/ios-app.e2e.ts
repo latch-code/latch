@@ -72,6 +72,7 @@ it.skipIf(process.platform !== 'darwin')(
         'LatchLive software keys',
         'LatchLive pairing-stage',
         'LatchLive connection-stage',
+        'LatchLive body-repair',
         'LiveSoftwareKeys',
         'LiveIdentityProvider',
         '-LatchLive',

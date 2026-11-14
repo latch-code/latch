@@ -702,7 +702,11 @@ import UIKit
                         queueBodyNotice(notice, context: context)
                     case let .hostState(value): hostNotice = PhoneHostNotice.parse(value.data)
                     case .ignore: break
-                    case .repair: repair = true
+                    case let .repair(diagnostic):
+#if LATCH_SCREENS
+                        PhoneLive.bodyRepairCheckpoint(diagnostic)
+#endif
+                        repair = true
                     }
                     if repair { break }
                 }
@@ -712,6 +716,11 @@ import UIKit
                     try await context.workspace.checkBodyReading(context.reading)
                 }
                 guard !context.repaired, [NativeFailure.invalidRecord, .eventOverflow].contains(failure as? NativeFailure) else { throw failure }
+#if LATCH_SCREENS
+                PhoneLive.connectionCheckpoint(context.readFailure != nil ? .bodyReadRepair
+                    : (failure as? NativeFailure) == .eventOverflow ? .eventBufferRepair : .eventRecordRepair,
+                    leaseValid: context.lease.valid, connected: connected)
+#endif
                 repair = true
             }
             guard !Task.isCancelled, bodyIsCurrent(context), streamGeneration == streamId else { return }

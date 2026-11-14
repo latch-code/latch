@@ -119,7 +119,7 @@ Host 只在 running、稳定 run/message 身份、正文与思考均为前缀延
 
 原生核心的 `NativeTaskStreamProjection` 提供同一契约的纯值投影，`NativeWorkspace` 的独立正文阅读接口已接入它；`PhoneModel` 的选中会话经该接口接收并发布正文，列表流保持完整模式。`events(for:incremental:)` 和底层 HTTP/2 接口只有显式传入 `true` 才协商追加。纯值投影不接受 HTTP 更新影子；`NativeTaskPublicationGate` 单独按实例、会话、选择/连接票据及 revision/source priority 筛选 HTTP 与流候选，替换连接使旧票据失效但不降低版本地板。纯候选和票据都不是正文 lease，也不能用来确认原生游标。
 
-正文阅读由 `beginBody` 绑定当前实例、会话、Workspace 与已有正文窗口，既不签名也不开新窗口。真正的网络 collector 为每帧附上不可由公开 parser 构造的 reader 身份及连续序号；跨 reader、旧连接或旧选择的事件不能进入影子。新的打开意图取消并等旧打开过程关闭，收到响应头之前的取消也关闭实际 HTTP/2 子流。解析失败、缺帧或八条待应用记录耗尽时关闭实际旧流，最多进行一次完整帧修复；此后该阅读对象不再协商追加，第二次失败直接交还调用方。
+正文阅读由 `beginBody` 绑定当前实例、会话、Workspace 与已有正文窗口，既不签名也不开新窗口。真正的网络 collector 为每帧附上不可由公开 parser 构造的 reader 身份及连续序号；跨 reader、旧连接或旧选择的事件不能进入影子。新的打开意图取消并等旧打开过程关闭，收到响应头之前的取消也关闭实际 HTTP/2 子流。解析失败、缺帧或八条待应用记录耗尽时关闭实际旧流，最多进行一次完整帧修复；此后该阅读对象不再协商追加，第二次失败直接交还调用方。修复结果同时携带固定来源类别及有界账本计数，供 Screens 区分投影、候选、待应用记录与事件缓冲；该诊断不改变修复路径，正常 App 不输出正文或修复日志。
 
 `readBody` 和 `receive` 只提供不可自行构造的 `NativeBodyUpdate`。消费者在 `@MainActor NativeBodyPublication.apply` 的同步回调内核对自己的活动选择并赋值，返回 `true` 才得到 `NativeBodyApplied`；返回 `false`、重入、失去窗口或旧选择都不推进发布门。锁只覆盖同步身份核对与赋值，没有网络或存储等待。回执只证明该回调接受了值，不证明屏幕已经绘制，App 仍负责关闭窗口、退到后台与切换页面后的撤下。
 

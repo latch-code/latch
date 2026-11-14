@@ -701,3 +701,5 @@ Harness 选项回归：`acp.test.ts` 覆盖草稿严格应用、按模型读取�
 `native-swift.test.ts` 的 current-summary 场景使用实际 `PhoneSessions.currentSummary`，覆盖终态正文先到、新一轮元数据先到、同版本、缓存、Host 实例变化和不使用 Driver cursor。相邻投影验证人物头像状态与已有任务行同步、全局版本不变且不插入隐藏行；真实原生 Host 的 metadata-retry/detail-retry 场景分别让第一份 snapshot/正文答503，确认同一 notice 的一次只读重试后屏障及时释放，不新开 reader；unknown写、forbidden与expired不重试。原生 App 的 beginBody/readBody/逐帧 receive 接线另经 SDK 构建验证；真实设备操作与网络请求计数须在融合 App 中验收，不能用 Testkit 的手动 publication 回调代替。
 
 原生 body scope 场景还核对已验权限变化与窗口到期的分类：同 lease 可读新的公开会话且无新增签名；随后真正使 lease 失效仍返回 expired。临时设备被撤销后 metadata 失败且不发送新正文 GET，未知写的原请求不因范围切换改写。
+
+原生大历史发布节拍的可选诊断用 `LATCH_NATIVE_CADENCE=1 pnpm exec vitest run --config vitest.config.ts apps/host/test/native-swift.test.ts -t "large-history publication cadence"`：真实临时 Host、假 ACP、10×20KB 历史、6000 片段及 100ms 合并发布，结果写 `test-results/native-cadence/result.json`。它不包含 SwiftUI 渲染，不能替代真实 App 的性能验收。Screens 的修复诊断仅记录固定类别、有界账本计数及单调耗时，不记录正文、身份或任意错误字符串；正常 App 不包含该日志。

@@ -2265,6 +2265,54 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     }
   }, 30_000)
 
+  it.skipIf(process.env.LATCH_NATIVE_CADENCE !== '1')(
+    'keeps native delta negotiation through large-history publication cadence',
+    async () => {
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+      try {
+        const owner = await host.enroll({ listener: 'unix' })
+        await owner.confirmedJson('agents', {
+          method: 'POST',
+          body: {
+            id: 'cadence',
+            name: 'Cadence',
+            command: process.execPath,
+            args: [FAKE_ACP_AGENT],
+          },
+        })
+        const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+          method: 'POST',
+          body: {
+            harnessId: 'cadence',
+            mode: 'agent',
+            prompt: 'big 20000',
+            requestId: randomUUID(),
+          },
+        })
+        const settled = () => expect.poll(async () => (await host.host.bridge.detail(sessionId)).summary.status).toBe('idle')
+        await settled()
+        for (let index = 1; index < 10; index++) {
+          await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'big 20000', requestId: randomUUID() } })
+          await settled()
+        }
+        const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+        const result = await invoke(
+          { operation: 'nativeWorkspace', bodyScript: 'cadence', sessionId, payload: invitation.payload, port: host.host.nativePort },
+          100_000,
+        )
+        await mkdir(join(root, 'test-results/native-cadence'), { recursive: true })
+        await writeFile(join(root, 'test-results/native-cadence/result.json'), JSON.stringify(result, null, 2))
+        expect(result.repairs).toBe(0)
+        expect(result.failure).toBe('')
+        expect(result.delta).toBeGreaterThan(1000)
+        expect(result.finalBytes).toBe(28890)
+      } finally {
+        await host.close()
+      }
+    },
+    150_000,
+  )
+
   it('publishes native body offers synchronously before committing progress and withdraws old selections and leases', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {
@@ -2464,6 +2512,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           payload: invitation.payload,
           port: host.host.nativePort,
         })
+        if (mode === 'overflow') expect(result).toMatchObject({ cause: 'ledger', pending: 8, covered: 0 })
+        if (mode === 'repair') expect(result).toMatchObject({ cause: 'projection', pending: 1, covered: 0 })
         if (mode === 'metadata' || mode === 'metadata-retry' || mode === 'detail-retry') {
           expect(result).toMatchObject({ cursorHeld: true, metadataOnly: true, text: '中🙂文', cursor: 3 })
           expect(result.metadataMs).toBeGreaterThanOrEqual(240)
@@ -2521,6 +2571,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
             oldOfferInvalidated: true,
             fallbackApplied: true,
             secondFailureStops: mode === 'repair',
+            cause: mode === 'overflow' ? 'ledger' : 'projection',
+            pending: mode === 'overflow' ? 8 : 1,
+            covered: 0,
           })
           if (mode === 'overflow') {
             expect(repairMs).toBeGreaterThan(0)

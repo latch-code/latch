@@ -50,6 +50,9 @@ import LatchNativeCore
             await workspace.closeOpening(); await vault.lock()
             return ["unknown": unknown, "sameRequest": same, "createdId": id, "cleared": cleared]
         }
+        if input["bodyScript"] as? String == "cadence", let id = input["sessionId"] as? String {
+            return try await bodyCadenceFixture(workspace, id: id)
+        }
         if input["bodyScript"] as? String == "shadow", let id = input["sessionId"] as? String {
             return try await bodyShadowFixture(workspace, vault: vault, id: id)
         }

@@ -111,6 +111,7 @@ import LatchNativeCore
             "metadataMs": Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15]
     }
     var held: NativeBodyUpdate?, updates = 0, repaired = false
+    var diagnosis: NativeBodyRepair?
     var refresh: Task<NativeBodyUpdate, Error>?
     let start = ContinuousClock.now
     for _ in 0..<9 {
@@ -119,7 +120,7 @@ import LatchNativeCore
         case let .update(update): held = update; updates += 1
         case let .notice(notice):
             if mode == "overflow" { refresh = Task { try await workspace.refreshBody(for: reading, after: notice) } }
-        case .repair: repaired = true
+        case let .repair(value): repaired = true; diagnosis = value
         case .ignore, .hostState: throw NativeFailure.invalidRecord
         }
         if repaired { break }
@@ -147,6 +148,9 @@ import LatchNativeCore
     await workspace.endBody(reading); await workspace.closeOpening()
     var result: [String: Any] = ["updates": updates, "repaired": repaired, "oldOfferInvalidated": invalidated,
         "fallbackApplied": true, "secondFailureStops": terminalFailure]
+    if let diagnosis {
+        result["cause"] = diagnosis.cause.rawValue; result["pending"] = diagnosis.pending; result["covered"] = diagnosis.covered
+    }
     if mode == "overflow" {
         result["metadataCancelled"] = metadataCancelled
         result["repairMs"] = Double(repairTime.seconds) * 1000 + Double(repairTime.attoseconds) / 1e15
@@ -245,4 +249,67 @@ import LatchNativeCore
         "legacyAccepts": oldAccepts, "legacyAckRefused": oldAckRefused, "staleSelectionRefused": stale,
         "foreignPublicationRefused": crossed, "expiredPublicationRefused": expired, "closedRead": closedRead,
         "noImplicitVerification": noVerification, "closedPublicationRefused": closed]
+}
+
+/** Diagnostic replay of the App's 100ms opaque-update publication, against actual Host events. */
+@MainActor func bodyCadenceFixture(_ workspace: NativeWorkspace, id: String) async throws -> [String: Any] {
+    let reading = try await workspace.beginBody(id)
+    let initial = try await workspace.readBody(for: reading)
+    if let receipt = reading.publication.apply(initial, to: { _ in true }) { try await workspace.applied(receipt) }
+    let stream = try await workspace.events(for: reading, incremental: true)
+    var held: NativeBodyUpdate?, publication: Task<Void, Never>?, metadata: Task<Void, Never>?
+    var updates = 0, applied = 0, notices = 0, repairs = 0, full = 0, delta = 0, finalBytes = 0
+    var failure = "", timings: [[String: Any]] = []
+    let start = ContinuousClock.now
+    func mark(_ kind: String) {
+        let elapsed = start.duration(to: .now).components
+        timings.append(["kind": kind, "ms": Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15,
+            "updates": updates, "applied": applied, "delta": delta])
+    }
+    _ = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/tasks/" + id + "/prompt", fields: ["prompt": .string("count 6000")]))
+    do {
+        for try await event in stream.events {
+            if event.type == "task-state" { full += 1 }
+            if event.type == "task-delta" { delta += 1 }
+            switch try await workspace.receive(event, from: stream, for: reading) {
+            case let .update(update):
+                updates += 1; held = update
+                if publication == nil {
+                    publication = Task {
+                        defer { publication = nil }
+                        do {
+                            while held != nil {
+                                try await Task.sleep(for: .milliseconds(100))
+                                guard !Task.isCancelled, let next = held else { return }; held = nil
+                                if let receipt = reading.publication.apply(next, to: { _ in true }) {
+                                    try await workspace.applied(receipt); applied += 1
+                                }
+                            }
+                        } catch { if !Task.isCancelled { failure = "publication-" + String(describing: error); mark("publication-failed") } }
+                    }
+                }
+            case let .notice(notice):
+                notices += 1; mark("notice")
+                metadata = Task {
+                    do {
+                        let next = try await workspace.refreshBody(for: reading, after: notice)
+                        mark("metadata-returned")
+                        if let receipt = reading.publication.apply(next, to: { _ in true }) { try await workspace.applied(receipt) }
+                        mark("metadata-applied")
+                    } catch { if !Task.isCancelled { failure = "metadata-" + String(describing: error); mark("metadata-failed") } }
+                }
+            case let .repair(value): repairs += 1; mark("repair-" + value.cause.rawValue)
+            case .ignore, .hostState: break
+            }
+            if repairs > 0 { break }
+            if event.type == "task-state", let value = try? NativeJSON.decode(event.data),
+               value["detail"]["summary"]["status"].string == "idle", value["detail"]["messages"].array.count >= 22 {
+                finalBytes = value["detail"]["messages"].array.last?["text"].string?.utf8.count ?? 0; break
+            }
+        }
+    } catch { failure = "stream-" + String(describing: error); mark("stream-failed") }
+    publication?.cancel(); metadata?.cancel(); _ = await publication?.value; _ = await metadata?.value
+    await stream.cancel(); await workspace.endBody(reading); await workspace.closeOpening()
+    return ["updates": updates, "applied": applied, "notices": notices, "repairs": repairs, "full": full, "delta": delta,
+        "finalBytes": finalBytes, "failure": failure, "timings": timings]
 }

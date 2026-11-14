@@ -1015,31 +1015,42 @@ public actor NativeWorkspace {
               state.origin === stream.stream.origin, let provenance = event.provenance,
               provenance.origin === stream.stream.origin else { return .ignore }
         if provenance.ordinal <= state.ordinal { return .ignore }
+        var cause = NativeBodyRepair.Cause.ordinal
         do {
             guard provenance.ordinal == state.ordinal + 1 else { throw NativeFailure.invalidRecord }
             state.ordinal = provenance.ordinal
+            cause = .cursor
             if let cursor = event.cursor {
                 guard cursor.epoch.utf8.elementsEqual(state.instanceId.utf8), cursor.sequence >= state.cursor else { throw NativeFailure.invalidRecord }
                 state.cursor = cursor.sequence
             }
+            cause = .control
             if event.type == "heartbeat" || event.type == "resumed" {
                 guard event.data.isEmpty, event.cursor != nil else { throw NativeFailure.invalidRecord }
+                cause = .ledger
                 _ = try state.record(ordinal: provenance.ordinal, cursor: event.cursor, requirement: .none)
+                cause = .receipt
                 try await advanceBody(reading.id)
                 return .ignore
             }
             if event.type == "task-state" || event.type == "task-delta" {
+                cause = .cursor
                 guard event.cursor != nil else { throw NativeFailure.invalidRecord }
+                cause = .projection
                 switch state.shadow.receive(type: event.type, data: event.data) {
                 case .repair: throw NativeFailure.invalidRecord
                 case .ignore: return .ignore
                 case let .candidate(candidate):
+                    cause = .ledger
                     let position = try state.record(ordinal: provenance.ordinal, cursor: event.cursor, requirement: .body(candidate.revision))
-                    if state.covered(position) { try await advanceBody(reading.id); return .ignore }
+                    if state.covered(position) { cause = .receipt; try await advanceBody(reading.id); return .ignore }
+                    cause = .authority
                     let evidence = try state.authority.issue(lease: state.lease, origin: provenance.origin)
+                    cause = .offer
                     return .update(try state.offer(NativeBodyUpdate(stream: candidate, evidence: evidence), priority: 2))
                 }
             }
+            cause = .metadata
             let value = try NativeJSON.decode(event.data)
             guard value["type"].string == event.type else { throw NativeFailure.invalidRecord }
             if event.type == "host-state", event.cursor == nil {
@@ -1049,17 +1060,19 @@ public actor NativeWorkspace {
             guard ["refresh", "tasks-invalidated"].contains(event.type),
                   value["instanceId"].string?.utf8.elementsEqual(state.instanceId.utf8) == true,
                   let revision = value["revision"].integer else { throw NativeFailure.invalidRecord }
+            cause = .ledger
             let position = try state.record(ordinal: provenance.ordinal, cursor: event.cursor, requirement: .snapshot(revision))
-            if state.covered(position) { try await advanceBody(reading.id); return .ignore }
+            if state.covered(position) { cause = .receipt; try await advanceBody(reading.id); return .ignore }
             return .notice(NativeBodyNotice(event: event, reading: reading.id, id: position.id))
         } catch {
             guard bodyState === state, state.origin === provenance.origin else { try bodyUnavailable(reading) }
+            let diagnostic = NativeBodyRepair(cause: cause, state: state)
             let failed = state.stream
             let repeated = state.repaired
             state.repaired = true; state.resetStream()
             await failed?.cancel()
             if repeated { throw error }
-            return .repair
+            return .repair(diagnostic)
         }
     }
 

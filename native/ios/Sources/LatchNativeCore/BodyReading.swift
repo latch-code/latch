@@ -22,8 +22,22 @@ public struct NativeBodyNotice: Sendable {
     init(event: NativeEvent, reading: UUID, id: UUID) { self.event = event; self.reading = reading; self.id = id }
 }
 
+/** Fixed failure categories and bounded proof counts; no body, identity, error text or authorization receipt. */
+public struct NativeBodyRepair: Sendable {
+    public enum Cause: String, Sendable { case ordinal, cursor, control, projection, ledger, authority, offer, metadata, receipt }
+    public let cause: Cause
+    public let pending: Int
+    public let covered: Int
+    public let offers: Int
+    public let ordinal: UInt64
+    init(cause: Cause, state: NativeBodyState) {
+        self.cause = cause; pending = state.pending.count; covered = state.pending.filter(state.covered).count
+        offers = state.offers.count; ordinal = state.ordinal
+    }
+}
+
 public enum NativeBodyEventResult: Sendable {
-    case update(NativeBodyUpdate), notice(NativeBodyNotice), hostState(NativeEvent), ignore, repair
+    case update(NativeBodyUpdate), notice(NativeBodyNotice), hostState(NativeEvent), ignore, repair(NativeBodyRepair)
 }
 
 enum NativeBodyRequirement {
