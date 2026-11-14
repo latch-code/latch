@@ -207,9 +207,25 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
     }
     const output = resolve(process.env.LATCH_IOS_LIVE_DIR ?? 'test-results/ios-live')
     await mkdir(output, { recursive: true })
+    let guiActivationFailed = false
     const status = GUI_CLIPBOARD
       ? await pairingStagePage({
-          acknowledge: phase => writeFile(`${HOLD}.clipboard-${phase === 'on-control' ? 'on' : 'off'}`, '', { mode: 0o600 }),
+          acknowledge: async phase => {
+            const before = phase === 'off-control' ? await clipboardGui() : undefined
+            if (before && before.kind !== 'open') throw new Error('The existing Device Hub is unavailable')
+            await writeFile(`${HOLD}.clipboard-${phase === 'on-control' ? 'on' : 'off'}`, '', { mode: 0o600 })
+            if (!before || before.kind !== 'open') return
+            try {
+              // The browser ACK can take focus. Activate the same official GUI before the two OFF observation windows.
+              await run('/usr/bin/open', ['-b', 'com.apple.dt.Devices'], { timeout: 5000, maxBuffer: 4096 })
+              const after = await clipboardGui()
+              if (after.kind !== 'open' || after.pid !== before.pid) throw new Error('Device Hub changed during activation')
+            } catch {
+              // The already-written ACK must not let validation proceed after activation failed.
+              guiActivationFailed = true
+              throw new Error('Could not activate the existing Device Hub')
+            }
+          },
         })
       : undefined
     const phases: Array<{ phase: string; host: number; at: number }> = []
@@ -374,6 +390,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
               clipboard: () => clipboardLease(clipboardBinary),
               hold: HOLD,
               guiPid: async () => {
+                if (guiActivationFailed) return undefined
                 const gui = await clipboardGui()
                 return gui.kind === 'open' ? gui.pid : undefined
               },
