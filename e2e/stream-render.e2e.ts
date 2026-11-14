@@ -82,6 +82,16 @@ const turns = {
     say('\\n\\n' + (allowed ? '已运行。' : '没有运行。'))
   },
 }
+turns.thinking = async ({ say, think }) => {
+  say(Array.from({ length: 14 }, (_, index) => '第 ' + (index + 1) + ' 段：先把要做的事说清楚，再开始动手。').join('\\n\\n'), 'intro')
+  think('**Checking browser and environment**\\n\\nI look at \\x60AGENTS.md\\x60 first, then the **design** notes.\\n\\n', 'answer')
+  think(Array.from({ length: 12 }, (_, index) => 'Step ' + (index + 1) + ': compare the layout with the reference and note what differs.').join('\\n') + '\\n\\n**Plann', 'answer')
+  await reached(1)
+  think('ing the page**\\n\\n- core concepts\\n- data types\\n- [docs](https://example.com/docs) and <b>bold</b>\\n\\nThen write it.', 'answer')
+  await reached(2)
+  say(Array.from({ length: 10 }, (_, index) => '结论 ' + (index + 1) + '：页面包含核心概念、数据类型和常用命令。').join('\\n\\n'), 'answer')
+  await reached(3)
+}
 const rl = createInterface({ input: process.stdin })
 rl.on('line', async line => {
   const message = JSON.parse(line)
@@ -98,8 +108,9 @@ rl.on('line', async line => {
   if (message.method === 'session/prompt') {
     const sessionId = message.params.sessionId
     const input = message.params.prompt.map(part => part.text ?? '').join('')
-    const say = value => update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: value } })
-    const think = value => update(sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: value } })
+    const chunk = (sessionUpdate, value, messageId) => update(sessionId, { sessionUpdate, content: { type: 'text', text: value }, ...(messageId ? { messageId } : {}) })
+    const say = (value, messageId) => chunk('agent_message_chunk', value, messageId)
+    const think = (value, messageId) => chunk('agent_thought_chunk', value, messageId)
     const tool = (value, kind = 'tool_call') => update(sessionId, { sessionUpdate: kind, ...value })
     await turns[input.trim().split(/\\s+/u)[0]]?.({ sessionId, cwd: cwds.get(sessionId), say, think, tool })
     return reply({ stopReason: 'end_turn' })
@@ -272,6 +283,108 @@ describe('how a turn of work is drawn', () => {
       await again.locator('.work-fold[aria-expanded="false"]').first().click()
       await command(again, 'sleep 3').waitFor()
       await shot(again, 'commands-settled', 1440, theme)
+    }
+  })
+
+  it('shows the current title while it thinks, folds with a height transition that keeps the place, and opens as restricted Markdown', async () => {
+    const id = await start('thinking', '思考的会话')
+    const reasoning = async () => (await detail(id)).liveReasoning ?? ''
+    await poll(async () => (await reasoning()).endsWith('**Plann'), 'the first thought')
+    const page = await open(1440, 700, 'light', id)
+    try {
+      const row = page.locator('.thinking').last()
+      // The title that is still arriving is not shown: the line names the section the thought is in.
+      await row.locator('.thinking-title').getByText('Checking browser and environment', { exact: true }).waitFor()
+      expect(await row.locator('.thinking-toggle').innerText()).toContain('思考中')
+      expect(await row.locator('.thinking-body').innerText()).not.toContain('**')
+      await shot(page, 'thinking-live', 1440, 'light')
+      await advance(1)
+      await row.locator('.thinking-title').getByText('Planning the page', { exact: true }).waitFor()
+      expect(await row.locator('.reasoning-heading').allInnerTexts()).toEqual(['Checking browser and environment', 'Planning the page'])
+      for (const [width, height] of SIZES)
+        for (const theme of THEMES) {
+          const sized = await open(width, height, theme, id)
+          await sized.locator('.thinking-title').last().getByText('Planning the page', { exact: true }).waitFor()
+          await noHorizontalOverflow(sized)
+          await shot(sized, 'thinking-live-titled', width, theme)
+        }
+      // The reader scrolls up to the words above; the thought folding away below must not move them.
+      const reader = await open(1440, 700, 'light', id)
+      await reader.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
+      const body = reader.locator('.thinking').last().locator('.ui-collapse')
+      await reader.locator('.thinking-title').last().waitFor()
+      await reader.locator('.transcript').hover()
+      await reader.mouse.wheel(0, -160)
+      await expect.poll(() => reader.locator('.jump-latest').count()).toBeGreaterThan(0)
+      const anchor = reader.locator('.message-assistant').first().locator('p').nth(9)
+      const before = await anchor.evaluate(element => element.getBoundingClientRect().top)
+      const open0 = await body.evaluate(element => element.getBoundingClientRect().height)
+      expect(open0).toBeGreaterThan(100)
+      // On the other device the reader follows the latest output: the fold must leave them at its end.
+      const follower = await open(390, 844, 'light', id)
+      await follower.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
+      await follower.locator('.thinking-title').last().waitFor()
+      // Sample the fold as it happens: heights between open and shut prove it is a transition, not a jump.
+      const sample = (target: Page) =>
+        target.evaluate(
+          () =>
+            new Promise<Array<{ height: number; top: number; gap: number }>>(done => {
+              const all = document.querySelectorAll('.thinking .ui-collapse')
+              const collapse = all[all.length - 1]!
+              const anchor = document.querySelectorAll('.message-assistant')[0]!.querySelectorAll('p')[9]!
+              const scroller = document.querySelector('main.workspace:not([inert]) .transcript')!
+              const seen: Array<{ height: number; top: number; gap: number }> = []
+              const started = performance.now()
+              const frame = () => {
+                seen.push({
+                  height: collapse.getBoundingClientRect().height,
+                  top: anchor.getBoundingClientRect().top,
+                  gap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+                })
+                if (performance.now() - started < 1500) requestAnimationFrame(frame)
+                else done(seen)
+              }
+              requestAnimationFrame(frame)
+            }),
+        )
+      const reading = sample(reader)
+      const following = sample(follower)
+      await advance(2)
+      const seen = await reading
+      expect(seen.at(-1)!.height).toBeLessThan(2)
+      expect(seen.some(frame => frame.height > 4 && frame.height < open0 - 4)).toBe(true)
+      for (const frame of seen) expect(Math.abs(frame.top - before)).toBeLessThanOrEqual(1)
+      const followed = await following
+      expect(followed.at(-1)!.height).toBeLessThan(2)
+      expect(Math.abs(followed.at(-1)!.gap)).toBeLessThanOrEqual(2)
+      await follower.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+      await reader.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+      // Folded, it says how long it took; opened, it is Markdown with nothing that navigates or loads.
+      const folded = reader.locator('.thinking').last()
+      await expect.poll(() => folded.locator('.thinking-toggle').innerText()).toMatch(/^思考了 /u)
+      expect(await folded.locator('.thinking-title').count()).toBe(0)
+      await advance(3)
+      await settled(id)
+      for (const [width, height] of SIZES)
+        for (const theme of THEMES) {
+          const sized = await open(width, height, theme, id)
+          const fold = sized.locator('.work-fold[aria-expanded="false"]')
+          if ((await fold.count()) > 0) await fold.first().click()
+          const thought = sized.locator('.thinking').last()
+          await shot(sized, 'thinking-folded', width, theme)
+          await thought.locator('.thinking-toggle').click()
+          await thought.locator('.reasoning-content strong').getByText('design', { exact: true }).waitFor()
+          expect(await thought.locator('.reasoning-content li').count()).toBe(3)
+          expect(await thought.locator('a, img, b').count()).toBe(0)
+          expect(await thought.locator('.reasoning-content').last().innerText()).toContain(
+            '[docs](https://example.com/docs) and <b>bold</b>',
+          )
+          await noHorizontalOverflow(sized)
+          await shot(sized, 'thinking-opened', width, theme)
+        }
+    } catch (error) {
+      await page.screenshot({ path: `${OUTPUT}/failed-thinking.png` })
+      throw error
     }
   })
 

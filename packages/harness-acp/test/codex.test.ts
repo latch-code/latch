@@ -498,6 +498,16 @@ describe('Codex over its app-server', () => {
     expect(detail.config?.find(option => option.category === 'model')?.currentValue).toBe('gpt-fake')
   })
 
+  it('keeps the parts of a streamed reasoning summary apart as sections', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const detail = await settled(bridge, await start(bridge, t.main, 'sections please'))
+    expect(said(detail, 'assistant').trim()).toBe('planned')
+    expect(detail.messages.find(message => message.reasoning)?.reasoning).toBe(
+      '**Checking the project**\n\nReading `AGENTS.md` first.\n\n**Planning the page**\n\n- one\n- two',
+    )
+  })
+
   it('runs /compact as an idle native operation and preserves a first-turn brief for the next message', async () => {
     const t = await computer()
     const bridge = await t.open()

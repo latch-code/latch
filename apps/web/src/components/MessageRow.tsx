@@ -1,10 +1,10 @@
 import { MentionedText } from './MentionedText.tsx'
 import { MessageAttachments } from './MessageAttachments.tsx'
-import { memo, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { GitFork, RotateCcw } from 'lucide-react'
 import { splitChangeNote, type HarnessInfo, type Message } from '@latch/protocol'
-import { MessageContent } from '../MessageContent.tsx'
-import { ownTextStart } from '../conversation.ts'
+import { MessageContent, ReasoningContent } from '../MessageContent.tsx'
+import { ownTextStart, reasoningSections } from '../conversation.ts'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
 import { absoluteTime, formatDuration, messageTime } from '../format.ts'
 import { MarkTile } from './BrandTile.tsx'
@@ -55,6 +55,11 @@ export function TimeLabel({ at, tip }: { at: number; tip?: (now: number) => Reac
  * Reasoning the model reported, as a work row: while it streams, 「思考中」 with its light crossing it and the seconds
  * since it began; once the answer starts, 「思考了 6 秒」. The body opens by itself while the reasoning streams and folds
  * away as the answer starts; the reader's own choice wins. Without times it is 「思考过程」.
+ *
+ * A Harness that titles its thoughts (Codex's summary parts) has the current title on the live line, 「思考中 · 标题」, and
+ * each title as a small heading in the body. The body is drawn through the reply's Markdown pipeline restricted to
+ * emphasis, inline code and lists, as replies are while they arrive; a thought that was never open on this page (history)
+ * stays plain text until it is opened, so folded thoughts cost no parsing.
  */
 export function ThinkingRow({
   text,
@@ -79,6 +84,11 @@ export function ThinkingRow({
 }) {
   const [choice, setChoice] = useState<boolean | null>(null)
   const open = choice ?? live
+  const sections = useMemo(() => reasoningSections(text, live), [text, live])
+  const title = live ? sections.at(-1)?.title : undefined
+  // Parsed once it has been open here, and kept from then on so folding it does not redraw it.
+  const [rich, setRich] = useState(false)
+  if (open && !rich) setRich(true)
   const started = parseTime(liveTimes?.startedAt)
   // Re-renders every second while the live reasoning counts up.
   useTicker(live && !frozen && started !== undefined ? 'second' : false)
@@ -117,6 +127,11 @@ export function ThinkingRow({
             '思考过程'
           )}
         </Swap>
+        {title && (
+          <span className="thinking-title">
+            <VisibleText text={title} />
+          </span>
+        )}
         <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         {elapsed && (
           <span className="process-time" aria-hidden="true">
@@ -131,7 +146,25 @@ export function ThinkingRow({
         }}>
         <div className="thinking-body">
           <div className="thinking-scroll">
-            <p className="reasoning-text">{text}</p>
+            <div className="thinking-sections">
+              {sections.map((section, index) => (
+                <Fragment key={index}>
+                  {section.title !== undefined && (
+                    <p className="reasoning-heading">
+                      <VisibleText text={section.title} />
+                    </p>
+                  )}
+                  {section.body
+                    && (rich ? (
+                      <ReasoningContent text={section.body} streaming={live && index === sections.length - 1} />
+                    ) : (
+                      <p className="reasoning-text">
+                        <VisibleText text={section.body} />
+                      </p>
+                    ))}
+                </Fragment>
+              ))}
+            </div>
           </div>
         </div>
       </Collapse>

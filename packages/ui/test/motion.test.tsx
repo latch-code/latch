@@ -188,6 +188,21 @@ describe('disclosures', () => {
     expect(inner.getAttribute('hidden')).toBe('until-found')
   })
 
+  it('keeps closing through an end the browser reports after no time, and closes at the one that took its time', async () => {
+    const screen = await render(<Disclosure initial />)
+    const box = screen.container.querySelector<HTMLElement>('.ui-collapse')!
+    const inner = box.querySelector<HTMLElement>('.ui-collapse-inner')!
+    await screen.getByRole('button', { name: 'toggle' }).click()
+    expect(box.dataset.state).toBe('closing')
+    // A transition whose start was moved later ends once with no time elapsed, and then runs.
+    box.dispatchEvent(new TransitionEvent('transitionend', { bubbles: true, propertyName: 'grid-template-rows', elapsedTime: 0 }))
+    await frames()
+    expect(box.dataset.state).toBe('closing')
+    expect(inner.hasAttribute('hidden')).toBe(false)
+    await expect.poll(() => box.dataset.state, { timeout: 2000 }).toBe('closed')
+    expect(inner.getAttribute('hidden')).toBe('until-found')
+  })
+
   it('only fades under reduced motion: the box opens at once', async () => {
     await reducedMotion(async () => {
       const screen = await render(<Disclosure />)

@@ -237,6 +237,19 @@ async function play(text) {
     end()
     return reply('thought')
   }
+  if (word === 'sections') {
+    // A summary in two parts, as Codex streams one: each part starts with its bold title and no break comes between them.
+    const id = `think-${randomUUID()}`
+    const parts = ['**Checking the project**\n\nReading `AGENTS.md` first.', '**Planning the page**\n\n- one\n- two']
+    const end = item({ type: 'reasoning', id, summary: [], content: [] }, () => ({ type: 'reasoning', id, summary: parts, content: [] }))
+    for (const [summaryIndex, part] of parts.entries()) {
+      notify('item/reasoning/summaryPartAdded', { threadId: thread.id, turnId: turn.id, itemId: id, summaryIndex })
+      for (const delta of [part.slice(0, 9), part.slice(9)])
+        notify('item/reasoning/summaryTextDelta', { threadId: thread.id, turnId: turn.id, itemId: id, delta, summaryIndex })
+    }
+    end()
+    return reply('planned')
+  }
   if (word === 'crash') process.exit(3)
   if (word === 'widen' || word === 'elicit' || word === 'odd') {
     const [method, params] =

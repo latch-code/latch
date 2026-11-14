@@ -59,6 +59,7 @@ interface MarkdownNode {
   value?: string
   lang?: string
   children?: MarkdownNode[]
+  position?: { start: { offset?: number }; end: { offset?: number } }
 }
 const BLOCK_PARENTS = new Set(['root', 'blockquote', 'listItem', 'footnoteDefinition'])
 const LINE_BREAK = /^<br\s*\/?>$/iu
@@ -93,7 +94,37 @@ function literalHtml() {
   return walk
 }
 
+const REASONING_NODES = new Set(['root', 'paragraph', 'text', 'strong', 'emphasis', 'inlineCode', 'list', 'listItem', 'break'])
+
+/**
+ * Reasoning is drawn with paragraphs, lists, emphasis and inline code only. Anything else Markdown would make of it (a
+ * link, an image, a heading, a quote, a code block, HTML) reads as the characters it was written with: nothing in a
+ * thought navigates, loads or runs. Runs after `limitDepth`, which bounds this walk.
+ */
+function reasoningOnly() {
+  return (tree: MarkdownNode, file: { value: unknown }) => {
+    const source = String(file.value)
+    const walk = (parent: MarkdownNode) => {
+      if (!parent.children) return
+      parent.children = parent.children.map(node => {
+        if (REASONING_NODES.has(node.type)) {
+          walk(node)
+          return node
+        }
+        const start = node.position?.start.offset
+        const end = node.position?.end.offset
+        const written: MarkdownNode = { type: 'text', value: start === undefined || end === undefined ? '' : source.slice(start, end) }
+        return BLOCK_PARENTS.has(parent.type) ? { type: 'paragraph', children: [written] } : written
+      })
+    }
+    walk(tree)
+  }
+}
+
 const remarkPlugins = [remarkGfm, remarkMath, restrictInlineMath, limitDepth]
+// No GFM and no math: a table, an address or a formula in a thought stays the text it is.
+const reasoningPlugins = [limitDepth, reasoningOnly]
+const REASONING_ELEMENTS = ['p', 'strong', 'em', 'code', 'ul', 'ol', 'li', 'br']
 const replyPlugins = [...remarkPlugins, literalHtml]
 const MarkdownFileContext = createContext<MarkdownFiles>({})
 const relativeBase = 'https://markdown.invalid/'
@@ -516,6 +547,39 @@ export const MessageContent = memo(function MessageContent({
       )}
     </div>
   )
+})
+
+const renderReasoning = (source: string) =>
+  renderMarkdown({
+    children: source,
+    remarkPlugins: reasoningPlugins,
+    allowedElements: REASONING_ELEMENTS,
+    unwrapDisallowed: true,
+    urlTransform: safeUrl,
+    skipHtml: true,
+  })
+const reasoningChild = (_source: string, child: ReactNode, index: number) =>
+  isValidElement(child) ? cloneElement(child, { key: index }) : child
+
+/**
+ * A stretch of reported reasoning: the reply's Markdown pipeline (the same parser, depth limit, URL rule and, while it
+ * arrives, the same block reuse and display-only closing of unfinished marks) restricted to paragraphs, lists,
+ * emphasis and inline code. Text with hidden characters, or that nests too deeply, is shown plain with every
+ * character visible.
+ */
+export const ReasoningContent = memo(function ReasoningContent({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  const renderer = useMemo(() => createStreamingMarkdown(renderReasoning, reasoningChild), [])
+  const rendered = useMemo(
+    () => (hasHiddenCharacters(text) || exceedsMarkdownNesting(text) ? null : renderer(text, streaming)),
+    [text, streaming, renderer],
+  )
+  if (rendered === null)
+    return (
+      <p className="reasoning-text">
+        <VisibleText text={text} />
+      </p>
+    )
+  return <div className="reasoning-content">{rendered}</div>
 })
 
 export const PLAIN_TEXT_NOTE = '结构过深，按纯文本显示'

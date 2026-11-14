@@ -608,6 +608,7 @@
   flex-direction: column;
 }
 .thinking-label {
+  flex-shrink: 0;
   color: var(--ink-2);
 }
 .thinking-body {
@@ -623,12 +624,64 @@
   display: flex;
   flex-direction: column-reverse;
 }
-.reasoning-text {
+.reasoning-text,
+.reasoning-content {
   color: var(--muted);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui-para);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.reasoning-text,
+.reasoning-content p {
+  white-space: pre-wrap;
+}
+/* Sections of a titled thought: the title in the row's ink above what was thought under it. */
+.thinking-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.reasoning-heading {
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.reasoning-heading:not(:first-child) {
+  margin-top: var(--sp-8);
+}
+/* A thought's Markdown: paragraphs, lists, emphasis and inline code in the muted ink; lines break where they were written. */
+.reasoning-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+}
+.reasoning-content :is(p, ul, ol) {
+  margin: 0;
+}
+.reasoning-content :is(ul, ol) {
+  padding-left: var(--sp-20);
+}
+.reasoning-content strong {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.reasoning-content code {
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+}
+/* The title a live thought is under, after 「思考中」: it gives way before the words do. */
+.thinking-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thinking-title::before {
+  content: ' · ';
+  white-space: pre;
 }
 
 /*

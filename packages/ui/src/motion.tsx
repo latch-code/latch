@@ -136,6 +136,9 @@ export function Collapse({
       data-settled={settled && phase === 'open' ? '' : undefined}
       onTransitionEnd={event => {
         if (event.target !== event.currentTarget || event.propertyName !== 'grid-template-rows') return
+        // On a busy frame the browser can move a transition's start later after it began: it reports an end that took
+        // no time and then runs the whole transition. Only the end that took its time is the end.
+        if (event.elapsedTime === 0) return
         if (phase === 'closing') setPhase('closed')
         else if (phase === 'open') setSettled(true)
       }}>

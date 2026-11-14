@@ -371,6 +371,8 @@ export class CodexWire implements AgentWire {
   private turn?: Turn
   /** Items whose text arrived in pieces, so their completion does not repeat it. */
   private readonly streamed = new Set<string>()
+  /** The summary part a reasoning item last streamed: a new part is a new section of the thought. */
+  private readonly summaryPart = new Map<string, number>()
   /** Command output so far, per item. */
   private readonly output = new Map<string, string>()
   /** Calls a person answered: what Codex then reports declined was their choice, not Codex's refusal. */
@@ -1063,6 +1065,7 @@ export class CodexWire implements AgentWire {
     if (this.turn !== turn) return
     this.turn = undefined
     this.streamed.clear()
+    this.summaryPart.clear()
     this.output.clear()
     this.answered.clear()
     this.allowed.clear()
@@ -1210,7 +1213,8 @@ export class CodexWire implements AgentWire {
             ? typeof item.text === 'string'
               ? item.text
               : ''
-            : (Array.isArray(item.summary) ? item.summary : []).filter(part => typeof part === 'string').join('\n')
+            : // Each part of a summary is a section of its own: a title line and what was thought under it.
+              (Array.isArray(item.summary) ? item.summary : []).filter(part => typeof part === 'string').join('\n\n')
         if (text)
           emit({
             sessionUpdate: item.type === 'agentMessage' ? 'agent_message_chunk' : 'agent_thought_chunk',
@@ -1434,10 +1438,17 @@ export class CodexWire implements AgentWire {
       case 'item/reasoning/textDelta': {
         if (typeof params.delta !== 'string' || !params.delta || typeof params.itemId !== 'string') return
         this.streamed.add(params.itemId)
+        let text = params.delta
+        if (method === 'item/reasoning/summaryTextDelta' && typeof params.summaryIndex === 'number') {
+          // Codex streams a summary part by part without a break between them; a blank line keeps the sections apart.
+          const part = this.summaryPart.get(params.itemId)
+          if (part !== undefined && part !== params.summaryIndex) text = `\n\n${text}`
+          this.summaryPart.set(params.itemId, params.summaryIndex)
+        }
         this.update({
           sessionUpdate: method === 'item/agentMessage/delta' ? 'agent_message_chunk' : 'agent_thought_chunk',
           messageId: clip(params.itemId, 512),
-          content: { type: 'text', text: params.delta },
+          content: { type: 'text', text },
         })
         return
       }

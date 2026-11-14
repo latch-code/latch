@@ -571,6 +571,58 @@ export function toolDuration(message: Message, now: number): { ms: number; live:
 /** Whether a tool's changes are evidence that stays in view: its diffs. */
 export const hasDiffs = (message: Message) => (message.tool?.diffs?.length ?? 0) > 0
 
+// ---- Reasoning -------------------------------------------------------------------------------------------------------
+
+/** A stretch of reported reasoning under the title its Harness gave it (Codex's summaries); one without a title has none. */
+export interface ReasoningSection {
+  title?: string
+  body: string
+}
+
+/** A line that is one bold phrase and nothing else, after a blank line or at the start: a summary part's title. */
+const SECTION_TITLE = /^\*\*([^*\n]+)\*\*[ \t]*$/u
+/** The start of such a line while its end has not arrived. */
+const PENDING_TITLE = /^\*\*[^*\n]*\*?$/u
+
+/**
+ * Reasoning as its sections. Text without a title line is one section, exactly as written. `live`: the last line may be
+ * a title still arriving, which is left out until it is whole, so its asterisks never show.
+ */
+export function reasoningSections(text: string, live = false): ReasoningSection[] {
+  if (!text.includes('**')) return text ? [{ body: text }] : []
+  let source = text
+  if (live) {
+    const last = text.lastIndexOf('\n') + 1
+    const before = text.slice(0, last)
+    if (PENDING_TITLE.test(text.slice(last)) && !SECTION_TITLE.test(text.slice(last)) && /(?:^|\n[ \t]*\n)$/u.test(before)) source = before
+  }
+  const sections: ReasoningSection[] = []
+  let title: string | undefined
+  let body: string[] = []
+  let blank = true
+  let titled = false
+  const flush = () => {
+    const words = body.join('\n').trim()
+    if (title !== undefined || words) sections.push({ ...(title !== undefined ? { title } : {}), body: words })
+  }
+  for (const line of source.split('\n')) {
+    const found = blank ? SECTION_TITLE.exec(line)?.[1]?.trim() : undefined
+    if (found) {
+      flush()
+      title = found
+      titled = true
+      body = []
+      blank = true
+      continue
+    }
+    body.push(line)
+    blank = line.trim() === ''
+  }
+  if (!titled) return source.trim() ? [{ body: source === text ? text : source.trimEnd() }] : []
+  flush()
+  return sections
+}
+
 // ---- A turn's blocks and its fold --------------------------------------------------------------------------------
 
 /** A row of the work: a tool, a block's reasoning, or the finished reads of a settled turn as one row. */
