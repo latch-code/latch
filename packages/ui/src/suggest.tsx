@@ -33,7 +33,7 @@ export interface SuggestProps {
   footer?: ReactNode
 }
 
-/** Suggestions keep focus and keyboard handling in their input; the list lives above its card in the top layer. */
+/** Suggestions keep focus in their input; the top-layer list prefers above, with a fallback for cards near the top. */
 export function Suggest({
   id,
   label,
@@ -71,11 +71,17 @@ export function Suggest({
       const top = viewport?.offsetTop ?? 0
       const left = viewport?.offsetLeft ?? 0
       const width = viewport?.width ?? innerWidth
-      const room = Math.max(0, target.top - top - 14)
+      const height = viewport?.height ?? innerHeight
+      const preferred = phone ? 206 : 304
+      const above = Math.max(0, target.top - top - 14)
+      const below = Math.max(0, top + height - target.bottom - 14)
+      const down = above < preferred && below > above
+      const room = down ? below : above
       element.style.width = `${Math.min(target.width, Math.max(0, width - 16))}px`
-      element.style.maxHeight = `${Math.min(room, phone ? 206 : 304)}px`
+      element.style.maxHeight = `${Math.min(room, preferred)}px`
       element.style.left = `${Math.max(left + 8, Math.min(target.left, left + width - element.offsetWidth - 8))}px`
-      element.style.top = `${Math.max(top + 8, target.top - 6 - element.offsetHeight)}px`
+      const y = down ? target.bottom + 6 : target.top - 6 - element.offsetHeight
+      element.style.top = `${Math.max(top + 8, Math.min(y, top + height - element.offsetHeight - 8))}px`
     }
     place()
     const resize = new ResizeObserver(place)

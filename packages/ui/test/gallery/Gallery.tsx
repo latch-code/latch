@@ -47,6 +47,7 @@ import {
   StatusWords,
   Swap,
   SuggestPanel,
+  Suggest,
   Switch,
   SwitchRow,
   Tabs,
@@ -1990,6 +1991,37 @@ function Focus() {
   )
 }
 
+function TopSuggestions() {
+  const anchor = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <div ref={anchor}>
+        <TextAreaField label="顶部输入示例" defaultValue="/" />
+      </div>
+      <Button
+        onClick={() => {
+          anchor.current?.scrollIntoView({ block: 'start' })
+          anchor.current?.querySelector('textarea')?.focus()
+          setOpen(true)
+        }}>
+        查看顶部输入建议
+      </Button>
+      <Suggest
+        id="gallery-top-suggest"
+        label="顶部命令"
+        anchorRef={anchor}
+        open={open}
+        groups={[{ id: 'top', label: 'Agent（上次会话）', items: [{ id: 'top-plan', label: '/plan', description: '检查计划' }] }]}
+        onActiveChange={() => {}}
+        onChoose={() => setOpen(false)}
+        onDismiss={() => setOpen(false)}
+        footer="Tab 补全"
+      />
+    </>
+  )
+}
+
 export function Gallery() {
   return (
     <main className="gallery" aria-label="@latch/ui">
@@ -2004,6 +2036,7 @@ export function Gallery() {
         <Pickers />
         <Inputs />
         <Section title="输入建议">
+          <TopSuggestions />
           <SuggestPanel
             id="gallery-suggest"
             label="命令建议"

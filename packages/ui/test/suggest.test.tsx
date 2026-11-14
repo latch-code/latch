@@ -4,13 +4,13 @@ import { page, userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import { Suggest } from '../src/index.ts'
 
-function Fixture({ choose = () => {} }: { choose?: (id: string) => void }) {
+function Fixture({ choose = () => {}, top = false }: { choose?: (id: string) => void; top?: boolean }) {
   const anchor = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(true)
   const [active, setActive] = useState<string>()
   return (
     <>
-      <div style={{ height: 420 }} />
+      <div style={{ height: top ? 8 : 420 }} />
       <div ref={anchor} style={{ width: 480 }}>
         <textarea aria-label="消息" onFocus={() => setOpen(true)} aria-controls="suggest" aria-activedescendant={active} />
       </div>
@@ -45,6 +45,47 @@ function Fixture({ choose = () => {} }: { choose?: (id: string) => void }) {
 }
 
 describe('input suggestions', () => {
+  it.each([
+    { width: 390, height: 320 },
+    { width: 768, height: 300 },
+  ])('keeps the last option reachable in a $width × $height viewport', async viewport => {
+    await page.viewport(viewport.width, viewport.height)
+    try {
+      const choose = vi.fn()
+      await render(<Fixture top choose={choose} />)
+      await page.getByRole('textbox', { name: '消息' }).click()
+      const anchor = document.querySelector('textarea')!.parentElement!
+      const top = anchor.getBoundingClientRect().top
+      const scroll = window.scrollY
+      await page.getByRole('option', { name: '/command-199 ', exact: false }).click()
+      expect(choose).toHaveBeenCalledWith('command-199')
+      const panel = document.querySelector('.ui-suggest')!.getBoundingClientRect()
+      const list = document.querySelector('.ui-suggest-list')!.getBoundingClientRect()
+      const last = document.getElementById('command-199')!.getBoundingClientRect()
+      expect(panel.top).toBeGreaterThanOrEqual(7)
+      expect(panel.bottom).toBeLessThanOrEqual(viewport.height - 7)
+      expect(last.top).toBeGreaterThanOrEqual(list.top - 1)
+      expect(last.bottom).toBeLessThanOrEqual(list.bottom + 1)
+      expect(anchor.getBoundingClientRect().top).toBe(top)
+      expect(window.scrollY).toBe(scroll)
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('消息')
+    } finally {
+      await page.viewport(1280, 800)
+    }
+  })
+
+  it('uses the available space below a top-of-page input and keeps options reachable', async () => {
+    await render(<Fixture top />)
+    await page.getByRole('textbox', { name: '消息' }).click()
+    const anchor = document.querySelector('textarea')!.parentElement!.getBoundingClientRect()
+    const layer = document.querySelector<HTMLElement>('.ui-suggest')!.getBoundingClientRect()
+    expect(layer.top).toBeGreaterThanOrEqual(anchor.bottom + 5)
+    expect(layer.bottom).toBeLessThanOrEqual(window.innerHeight - 8)
+    expect(document.querySelector('.ui-suggest-list')!.getBoundingClientRect().height).toBeGreaterThan(80)
+    await page.getByRole('option', { name: '/command-1 ', exact: false }).first().click()
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('消息')
+  })
+
   it('keeps the input focused, shows every option, and suppresses unavailable choices', async () => {
     const choose = vi.fn()
     await render(<Fixture choose={choose} />)
