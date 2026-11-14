@@ -87,6 +87,7 @@ do {
         stage = "activity"
         result = try await runNativeAgentActivity(input)
     case "phoneActions": result = try phoneActionsFixture(input)
+    case "phoneSlash": result = try phoneSlashFixture(data)
     case "phoneFlows": result = try await phoneFlowsFixture()
     case "phoneReview": result = try phoneReviewFixture(input)
     case "phoneAttachments": result = try phoneAttachmentsFixture(input)

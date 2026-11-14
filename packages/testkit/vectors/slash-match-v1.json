@@ -1,15 +1,293 @@
 {
   "version": 1,
   "cases": [
-    { "name": "compact", "query": "compact", "score": 0 },
-    { "name": "compact", "query": "COM", "score": 1 },
-    { "name": "project-review", "query": "rev", "score": 2 },
-    { "name": "代码审查", "query": "dmsc", "score": 3 },
-    { "name": "检查改动", "query": "jcgd", "score": 3 },
-    { "name": "compact", "query": "mpa", "score": 4 },
-    { "name": "compact", "query": "cmpt", "score": 5 },
-    { "name": "compact", "query": "压缩", "description": "压缩上下文", "score": 6 },
-    { "name": "compact", "query": "other", "score": null },
-    { "name": "compact", "query": "", "score": 0 }
+    {
+      "name": "compact",
+      "query": "compact",
+      "score": 0,
+      "positions": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "name": "compact",
+      "query": "COM",
+      "score": 1,
+      "positions": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "name": "project-review",
+      "query": "rev",
+      "score": 2,
+      "positions": [
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "name": "代码审查",
+      "query": "dmsc",
+      "score": 3,
+      "positions": []
+    },
+    {
+      "name": "检查改动",
+      "query": "jcgd",
+      "score": 3,
+      "positions": []
+    },
+    {
+      "name": "compact",
+      "query": "mpa",
+      "score": 4,
+      "positions": [
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "name": "compact",
+      "query": "cmpt",
+      "score": 5,
+      "positions": [
+        0,
+        2,
+        3,
+        6
+      ]
+    },
+    {
+      "name": "compact",
+      "query": "压缩",
+      "description": "压缩上下文",
+      "score": 6,
+      "positions": []
+    },
+    {
+      "name": "compact",
+      "query": "other",
+      "score": null,
+      "positions": null
+    },
+    {
+      "name": "compact",
+      "query": "",
+      "score": 0,
+      "positions": []
+    },
+    {
+      "name": "🙂-review",
+      "query": "rev",
+      "score": 2,
+      "positions": [
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "name": "x🙂y🙂",
+      "query": "🙂🙂",
+      "score": 5,
+      "positions": [
+        1,
+        2,
+        4,
+        5
+      ]
+    },
+    {
+      "name": "éclair",
+      "query": "é",
+      "score": null,
+      "positions": null
+    },
+    {
+      "name": "İnit",
+      "query": "i",
+      "score": 1,
+      "positions": [
+        0
+      ]
+    },
+    {
+      "name": "项目:代码审查",
+      "query": "代码",
+      "score": 2,
+      "positions": [
+        3,
+        4
+      ]
+    }
+  ],
+  "tokens": [
+    {
+      "draft": "／Rev",
+      "expect": {
+        "query": "rev",
+        "start": 0,
+        "end": 4,
+        "initial": true
+      }
+    },
+    {
+      "draft": "😀 /REV suffix",
+      "caret": 7,
+      "expect": {
+        "query": "rev",
+        "start": 3,
+        "end": 7,
+        "initial": false
+      }
+    },
+    {
+      "draft": "看看 /rev 后面",
+      "caret": 7,
+      "expect": {
+        "query": "rev",
+        "start": 3,
+        "end": 7,
+        "initial": false
+      }
+    },
+    {
+      "draft": " \n/rev",
+      "expect": {
+        "query": "rev",
+        "start": 2,
+        "end": 6,
+        "initial": false
+      }
+    },
+    {
+      "draft": "﻿/x",
+      "expect": {
+        "query": "x",
+        "start": 1,
+        "end": 3,
+        "initial": false
+      }
+    },
+    {
+      "draft": "/tmp/x",
+      "expect": null
+    },
+    {
+      "draft": "/review argument",
+      "expect": null
+    },
+    {
+      "draft": "abc/review",
+      "expect": null
+    },
+    {
+      "draft": "/x",
+      "expect": null
+    },
+    {
+      "draft": "/review",
+      "caret": 3,
+      "expect": null
+    }
+  ],
+  "actions": [
+    {
+      "draft": "／MODEL deepseek",
+      "expect": {
+        "name": "model",
+        "argument": "deepseek"
+      }
+    },
+    {
+      "draft": " /new 第一条\n第二行 ",
+      "expect": {
+        "name": "new",
+        "argument": "第一条\n第二行"
+      }
+    },
+    {
+      "draft": "/clear",
+      "expect": {
+        "name": "clear",
+        "argument": ""
+      }
+    },
+    {
+      "draft": "/btw",
+      "expect": {
+        "name": "btw",
+        "argument": ""
+      }
+    },
+    {
+      "draft": "/fork",
+      "expect": {
+        "name": "fork",
+        "argument": ""
+      }
+    },
+    {
+      "draft": "/new",
+      "expect": {
+        "name": "new",
+        "argument": ""
+      }
+    },
+    {
+      "draft": "/model",
+      "expect": {
+        "name": "model",
+        "argument": ""
+      }
+    },
+    {
+      "draft": "/think",
+      "expect": {
+        "name": "think",
+        "argument": ""
+      }
+    },
+    {
+      "draft": "/permissions",
+      "expect": {
+        "name": "permissions",
+        "argument": ""
+      }
+    },
+    {
+      "draft": "/changes",
+      "expect": {
+        "name": "changes",
+        "argument": ""
+      }
+    },
+    {
+      "draft": "看看 /model",
+      "expect": null
+    },
+    {
+      "draft": "/model/file",
+      "expect": null
+    },
+    {
+      "draft": "/models",
+      "expect": null
+    },
+    {
+      "draft": "/btw/问题",
+      "expect": null
+    }
   ]
 }

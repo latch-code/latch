@@ -8,6 +8,7 @@ sources:
   - apps/web/src/App.tsx
   - apps/web/src/shell/AppShell.tsx
   - apps/web/public
+  - native/ios/Sources/LatchNativeCore/PhoneSlash.swift
   - build/icon.png
 ---
 # Latch 界面设计
@@ -437,3 +438,5 @@ Slash 建议使用 `@latch/ui` 的 Suggest：弹层贴着当前输入卡片上�
 ↑↓选择，Tab 补全；点击 Harness 命令只插入，Enter 对无参数命令走当前输入框唯一发送流程，有参数命令只补全并显示参数提示。模板把 `$ARGUMENTS` 留作可选中的占位内容。命令仍是普通 textarea 文字，视觉标记不改变发给 Host 的内容。手机有 `/` 插入按钮。输入法组合期间不运行命令，问题回答与拒绝理由不启用 Slash。
 
 `/new` 与 `/fork` 只准备新草稿，不发送；离开未保存文件的确认完成后，才一次性消费来源草稿并写入目标草稿，期间目标或输入改变就拒绝旧操作。`/model` 可带搜索词，`/think` 与 `/permissions` 打开现有控件，`/changes` 打开已有改动入口，`/clear` 与 `/btw` 复用当前会话动作。命令面板共用这些动作，保留来源草稿。未知结果或正在提交时不能执行新动作；能力不足的动作给出简短原因，保留的 Latch 命令不会意外转发给 Harness。
+
+iOS 核心 `PhoneSlash` 已提供同源匹配、拼音首字母、UTF-16 选区、200 条来源的列表投影和可编辑补全；App 输入框尚未接入。纯函数不读模板、不开正文窗口、不存历史，也不发请求。点按补全只返回草稿和选区，八个 Latch 名字由独立拦截函数识别；页面只传入已有动作入口，未提供的写「iPhone 尚未实现」。正文窗口关闭、未知提交或只读状态分别阻止显示或选择；实际窗口、输入法与页面身份仍由接入方核对。

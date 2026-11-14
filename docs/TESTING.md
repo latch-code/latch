@@ -675,3 +675,5 @@ Harness 选项回归：`acp.test.ts` 覆盖草稿严格应用、按模型读取�
 
 
 `e2e/slash.e2e.ts` 在 Chromium 与 WebKit 的桌面、平板和手机深浅色中检查 200 条命令可达、Tab/点击不发送、无参 Enter 仅发送一次、模型搜索、模板占位、参数提示与手机插入入口；同时检查 `/new`、`/fork` 不创建任务且原草稿被原子消费，以及同一草稿在 1440→390→1440 时保留并重新测量高度。`apps/web/test/slash-match.test.ts` 读取共享匹配向量，`slash-history.test.ts` 覆盖标识限定与设备清理；Suggest 的真实浏览器组件用例在 `packages/ui/test/suggest.test.tsx`。
+
+`native-swift.test.ts` 的 `phoneSlash` 经真实 Swift Core 读取同一份 `slash-match-v1.json`，对照打分、拼音、UTF-16 高亮位置、全角/行内触发、路径与八个保留动作；同时核对 200 项、模板作用域、可编辑占位选区、草稿变化后拒绝旧选择、未知提交及关闭窗口的投影。该夹具直接用产品的有界 JSONDecoder 读取向量，避免 JSONSerialization 丢掉字符串开头的 U+FEFF。纯核心通过不等于原生键盘、IME 或 App 菜单已接入。

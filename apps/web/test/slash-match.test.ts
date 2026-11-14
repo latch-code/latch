@@ -2,14 +2,22 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { SLASH_MATCH_VECTORS_FILE } from '@latch/testkit'
 import { matchSlash, pinyinInitials, slashToken } from '../src/composer/slash-match.ts'
+import { latchActionOf } from '../src/composer/latchActions.ts'
 
 describe('slash matching', () => {
   it('matches the shared native and web vectors', () => {
     const vectors = JSON.parse(readFileSync(SLASH_MATCH_VECTORS_FILE, 'utf8')) as {
-      cases: Array<{ name: string; query: string; description?: string; score: number | null }>
+      cases: Array<{ name: string; query: string; description?: string; score: number | null; positions: number[] | null }>
+      tokens: Array<{ draft: string; caret?: number; expect: ReturnType<typeof slashToken> | null }>
+      actions: Array<{ draft: string; expect: ReturnType<typeof latchActionOf> | null }>
     }
-    for (const item of vectors.cases)
-      expect(matchSlash(item.name, item.query, item.description)?.score ?? null, item.name + ':' + item.query).toBe(item.score)
+    for (const item of vectors.cases) {
+      const result = matchSlash(item.name, item.query, item.description)
+      expect(result?.score ?? null, item.name + ':' + item.query).toBe(item.score)
+      expect(result?.positions ?? null, item.name + ':' + item.query).toEqual(item.positions)
+    }
+    for (const item of vectors.tokens) expect(slashToken(item.draft, item.caret) ?? null, item.draft).toEqual(item.expect)
+    for (const item of vectors.actions) expect(latchActionOf(item.draft) ?? null, item.draft).toEqual(item.expect)
   })
   it('ranks names before descriptions and matches noncontiguous letters', () => {
     expect(matchSlash('compact', 'compact')?.score).toBe(0)
