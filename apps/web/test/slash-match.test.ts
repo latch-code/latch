@@ -10,6 +10,7 @@ describe('slash matching', () => {
       cases: Array<{ name: string; query: string; description?: string; score: number | null; positions: number[] | null }>
       tokens: Array<{ draft: string; caret?: number; expect: ReturnType<typeof slashToken> | null }>
       actions: Array<{ draft: string; expect: ReturnType<typeof latchActionOf> | null }>
+      initials: Array<{ name: string; expect: string }>
     }
     for (const item of vectors.cases) {
       const result = matchSlash(item.name, item.query, item.description)
@@ -18,6 +19,7 @@ describe('slash matching', () => {
     }
     for (const item of vectors.tokens) expect(slashToken(item.draft, item.caret) ?? null, item.draft).toEqual(item.expect)
     for (const item of vectors.actions) expect(latchActionOf(item.draft) ?? null, item.draft).toEqual(item.expect)
+    for (const item of vectors.initials) expect(pinyinInitials(item.name), item.name).toBe(item.expect)
   })
   it('ranks names before descriptions and matches noncontiguous letters', () => {
     expect(matchSlash('compact', 'compact')?.score).toBe(0)

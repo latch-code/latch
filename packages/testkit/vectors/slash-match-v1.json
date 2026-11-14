@@ -289,5 +289,55 @@
       "draft": "/btw/问题",
       "expect": null
     }
+  ],
+  "initials": [
+    {
+      "name": "长",
+      "expect": "z"
+    },
+    {
+      "name": "重",
+      "expect": "z"
+    },
+    {
+      "name": "行",
+      "expect": "x"
+    },
+    {
+      "name": "乐",
+      "expect": "l"
+    },
+    {
+      "name": "厦",
+      "expect": "s"
+    },
+    {
+      "name": "藏",
+      "expect": "c"
+    },
+    {
+      "name": "重庆",
+      "expect": "zq"
+    },
+    {
+      "name": "音乐",
+      "expect": "yl"
+    },
+    {
+      "name": "银行",
+      "expect": "yx"
+    },
+    {
+      "name": "长大",
+      "expect": "zd"
+    },
+    {
+      "name": "收藏",
+      "expect": "sc"
+    },
+    {
+      "name": "厦门",
+      "expect": "sm"
+    }
   ]
 }

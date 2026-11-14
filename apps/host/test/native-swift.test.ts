@@ -254,12 +254,14 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       cases: Array<{ score: number | null; positions: number[] | null }>
       tokens: Array<{ expect: unknown }>
       actions: Array<{ expect: unknown }>
+      initials: Array<{ name: string; expect: string }>
     }
     const result = await invoke({ operation: 'phoneSlash', ...vectors })
     expect(result).toEqual({
       cases: vectors.cases.map(({ score, positions }) => ({ score, positions })),
       tokens: vectors.tokens.map(value => value.expect),
       actions: vectors.actions.map(value => value.expect),
+      initials: vectors.initials.map(value => value.expect),
       all200Reachable: true,
       reservedNames: true,
       scopeFiltering: true,

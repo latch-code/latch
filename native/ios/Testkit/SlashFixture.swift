@@ -61,7 +61,8 @@ func phoneSlashFixture(_ input: Data) throws -> [String: Any] {
     context.bodyOpen = false
     guard PhoneSlash.menu("/", commands: commands, templates: templates, context: context) == nil,
           case .unavailable = PhoneSlash.action("/model", context: context) else { throw NativeFailure.invalidRecord }
-    return ["cases": cases, "tokens": tokens, "actions": actions, "all200Reachable": true,
+    return ["initials": vectors["initials"].array.map { PhoneSlash.pinyinInitials($0["name"].string ?? "") },
+        "cases": cases, "tokens": tokens, "actions": actions, "all200Reachable": true,
         "reservedNames": true, "scopeFiltering": true, "editableInsertion": true, "utf16Selection": true,
         "staleInsertionRefused": true, "runningFirstTurn": true, "closedPendingReadOnly": true]
 }
