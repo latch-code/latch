@@ -129,6 +129,14 @@ it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
         await expect.poll(async () => (await detail()).summary.status).toBe('cancelled')
         await expect.poll(async () => (await detail()).messages.some(message => message.text === 'Codex 已取消压缩上下文')).toBe(true)
         await page.screenshot({ path: `${output}/cancelled-390-dark.png`, animations: 'disabled' })
+        const beforeReview = service.requests.length
+        await input.fill('/review check the public plan')
+        await input.press('Meta+Enter')
+        await expect.poll(async () => (await detail()).summary.status).toBe('failed')
+        expect(service.requests).toHaveLength(beforeReview)
+        expect((await detail()).commands?.some(command => command.name === 'review')).toBe(false)
+        expect((await detail()).messages.some(message => message.text.includes('原生审阅不会先询问'))).toBe(true)
+        await page.screenshot({ path: `${output}/review-refused-390-dark.png`, animations: 'disabled' })
         await writeFile(
           `${output}/evidence.json`,
           JSON.stringify(
@@ -141,6 +149,7 @@ it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
               modelRequests: service.requests.length,
               commands: (await detail()).commands,
               status: (await detail()).summary.status,
+              reviewRefusedWithoutModelRequest: true,
             },
             null,
             2,

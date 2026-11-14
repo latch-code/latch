@@ -302,6 +302,71 @@ describe('Codex over its app-server', () => {
     expect(notes.map(message => message.text)).toEqual([expected])
   })
 
+  it.each(['/review', '/review check the public plan'])(
+    'refuses %s locally without a model turn or consuming the pending brief',
+    async prompt => {
+      const t = await computer()
+      const bridge = await t.open()
+      const brief = { segments: [{ source: 'user' as const, text: 'PUBLIC REVIEW BRIEF' }] }
+      const agentContext = { agent: { customAgentId: 'agt_review' }, instructions: '', brief, revision: 'a'.repeat(64) }
+      const { launchHash } = await bridge.launchPreview!({ cwd: t.main })
+      const { sessionId: id } = await bridge.createTask({
+        prompt,
+        requestId: rid(),
+        cwd: t.main,
+        expectedLaunchHash: launchHash,
+        agentContext,
+      })
+      const refused = await settled(bridge, id)
+      expect(refused.summary.status).toBe('failed')
+      expect(said(refused, 'system')).toContain('原生审阅不会先询问')
+      expect(refused.commands?.some(command => command.name === 'review')).toBe(false)
+      expect(refused.messages.find(message => message.role === 'user')?.agentBrief).toBeUndefined()
+      expect(sent(await t.log(), 'turn/start')).toHaveLength(0)
+      expect(sent(await t.log(), 'review/start')).toHaveLength(0)
+      await bridge.prompt(id, 'Hello', rid())
+      const next = await settled(bridge, id)
+      expect(next.messages.filter(message => message.role === 'user').at(-1)?.agentBrief).toEqual(brief)
+      expect(sent(await t.log(), 'turn/start')[0]?.params?.input).toEqual([
+        { type: 'text', text: 'PUBLIC REVIEW BRIEF', text_elements: [] },
+        { type: 'text', text: 'Hello', text_elements: [] },
+      ])
+    },
+  )
+
+  it('does not send /review as steering text during another turn', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'sleep until told')
+    await vi.waitFor(async () => expect(sent(await t.log(), 'turn/start')).toHaveLength(1))
+    await expect(bridge.steer!(id, '/review the public plan', rid())).rejects.toThrow('没有接受这条追加')
+    expect(sent(await t.log(), 'turn/steer')).toHaveLength(0)
+    expect(sent(await t.log(), 'review/start')).toHaveLength(0)
+    await bridge.cancel(id)
+    await settled(bridge, id)
+  })
+
+  it('does not interpret a context block as the person invoking a native command', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const brief = { segments: [{ source: 'user' as const, text: '/compact is an example in this instruction.' }] }
+    const agentContext = { agent: { customAgentId: 'agt_context' }, instructions: '', brief, revision: 'a'.repeat(64) }
+    const { launchHash } = await bridge.launchPreview!({ cwd: t.main })
+    const { sessionId: id } = await bridge.createTask({
+      prompt: 'Hello',
+      requestId: rid(),
+      cwd: t.main,
+      expectedLaunchHash: launchHash,
+      agentContext,
+    })
+    expect((await settled(bridge, id)).summary.status).toBe('idle')
+    expect(sent(await t.log(), 'thread/compact/start')).toHaveLength(0)
+    expect(sent(await t.log(), 'turn/start')[0]?.params?.input).toEqual([
+      { type: 'text', text: brief.segments[0]!.text, text_elements: [] },
+      { type: 'text', text: 'Hello', text_elements: [] },
+    ])
+  })
+
   it('gives the thread latch-browser as Codex config with paths only, and a fresh token file when it resumes', async () => {
     const leases: Array<{ token: string; tokenFile: string; closed: boolean }> = []
     const toolGateway: ToolGateway = {

@@ -50,8 +50,12 @@ export const CODEX_MODE_ID = 'mode'
 const MAX_MODEL_PAGES = 5
 const MAX_THREADS = 50
 const COMPACT = { name: 'compact', description: '把之前的对话总结成摘要，腾出上下文' }
-const compactInput = (blocks: z.infer<typeof promptParams>['prompt']) =>
-  blocks.some(block => block.type === 'text' && /^\/compact(?:\s|$)/u.test(block.text ?? ''))
+/** Context blocks are not command invocations, even when their instructions begin with a slash. */
+function nativeCommand(blocks: z.infer<typeof promptParams>['prompt']): string | undefined {
+  const texts = blocks.filter(block => block.type === 'text')
+  return texts.length === 1 ? /^\/(\S+)(?:\s|$)/u.exec(texts[0]?.text ?? '')?.[1] : undefined
+}
+const REVIEW_UNAVAILABLE = 'Codex 原生审阅不会先询问；Latch 暂未接入 /review。'
 
 const MODES = CODEX_MODES
 type Mode = CodexMode
@@ -331,6 +335,7 @@ interface McpCall {
 export class CodexWire implements AgentWire {
   readonly exited: Promise<ExitInfo>
   readonly idleCommands = new Set([COMPACT.name])
+  readonly commandsWithoutContext = new Set([COMPACT.name, 'review'])
   private listedFor?: string
   private readonly process: AgentProcess
   private nextId = 0
@@ -773,7 +778,9 @@ export class CodexWire implements AgentWire {
       this.listedFor = this.threadId
       this.update({ sessionUpdate: 'available_commands_update', availableCommands: [COMPACT] })
     }
-    const compact = compactInput(parsed.data.prompt)
+    const command = nativeCommand(parsed.data.prompt)
+    if (command === 'review') throw new RpcError(RPC.invalidParams, REVIEW_UNAVAILABLE)
+    const compact = command === 'compact'
     if (compact && (parsed.data.prompt.length !== 1 || parsed.data.prompt[0]?.text?.trim() !== '/compact'))
       throw new RpcError(RPC.invalidParams, 'Codex 的 /compact 不接受参数或附件。')
     const input = this.input(parsed.data.prompt)
@@ -850,7 +857,9 @@ export class CodexWire implements AgentWire {
     const parsed = promptParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     this.assertSession(parsed.data.sessionId)
-    if (compactInput(parsed.data.prompt)) throw new RpcError(RPC.invalidParams, '/compact 只能在本轮结束后运行。')
+    const command = nativeCommand(parsed.data.prompt)
+    if (command === 'review') throw new RpcError(RPC.invalidParams, REVIEW_UNAVAILABLE)
+    if (command === 'compact') throw new RpcError(RPC.invalidParams, '/compact 只能在本轮结束后运行。')
     const turn = this.turn
     if (!turn?.id || turn.cancelled) return { outcome: 'promptRequired' }
     try {
