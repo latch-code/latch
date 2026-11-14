@@ -408,6 +408,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `palette.e2e.ts` 在六种宽度/配色下用受控 Provider 实际追加新匹配，核对运行中即更新计数、保留选中位置；旧行插入/移除、完成、重开查找和键盘退回仍覆盖。`agent-activity.e2e.ts` 的外部 L3 任务保存为关闭后人工运行，不为展示结果卡开启后台执行。
 
+`agent-computer.e2e.ts` 使用内置 Harness 与演示模型，实际启用定时后模拟 Host 睡眠越过运行时间，检查错过记录、手动补跑及保持唤醒和通知设置；不为外部 L3 放宽无人值守上限。
+
 `transcript-find.e2e.ts` 经真实 Standard 读取本地报告，在三宽验证从未挂载的工具输出可查找、内外折叠展开、逐项 Highlight、清空查询和焦点／草稿保留，不额外发起模型调用。`preview-renderers.e2e.ts` 生成含一万形状的实际 PPTX，检查固定复杂度拒绝、释放 frame 和随后正常打开 DOCX；普通 30 页首屏性能仍独立测量，不用拒绝样本替代正常预览。
 
 流式 Markdown 的切块等价性由 `stream-markdown.test.ts` 在六十篇以上样本的每个前缀检查；`preview-renderers.e2e.ts` 检查代码展开、焦点、表格行身份、未闭合图表与数学，生成 `test-results/stream-markdown/` 的五宽深浅截图；`streaming-render.e2e.ts` 检查真实 Transcript 中的消息身份与结算后原文复制。

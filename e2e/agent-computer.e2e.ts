@@ -1,10 +1,9 @@
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import type { AgentComputer, AppSnapshot, Automation, AutomationDetail, CustomAgent } from '@latch/protocol'
-import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import type { TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
@@ -65,19 +64,10 @@ it('「电脑」 shows the computer as the Host recorded it, a missed time with 
   try {
     browser = await chromium.launch(browserLaunchOptions())
     const owner = await host.enroll({ listener: 'unix' })
-    await owner.confirmed('agents', {
-      method: 'POST',
-      body: {
-        id: 'fake-agent',
-        name: 'Fake Agent',
-        command: process.execPath,
-        args: [FAKE_ACP_AGENT],
-        env: { FAKE_ACP_LOG: join(host.root, 'acp.log') },
-      },
-    })
+    // A missed background run requires a Harness within the Host's unattended ceiling.
     const agent = await owner.json<CustomAgent>('custom-agents', {
       method: 'POST',
-      body: { requestId: randomUUID(), name: '晨报助手', description: '每天早上写一页晨报', harnessId: 'fake-agent' },
+      body: { requestId: randomUUID(), name: '晨报助手', description: '每天早上写一页晨报', harnessId: 'standard', mode: 'agent' },
     })
     const at = new Date(Date.now() + 10 * 60_000)
     const automation = await owner.json<Automation>('automations', {
