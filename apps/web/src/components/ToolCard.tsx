@@ -5,6 +5,7 @@ import { previousState } from '../diff.ts'
 import {
   blockedLine,
   blockedReason,
+  commandLine,
   decisionLine,
   diffStat,
   failureReason,
@@ -21,6 +22,7 @@ import {
 } from '../conversation.ts'
 import { useChangesLink } from '../conversation/changesLink.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
+import { homeOf, tildeHome } from '../core/shellUnwrap.ts'
 import { argumentView, basename, formatDuration } from '../format.ts'
 import { toolKind } from '../icons.tsx'
 import { ArgumentList } from './ArgumentList.tsx'
@@ -94,8 +96,10 @@ const sameTool = (a: ToolDetail | undefined, b: ToolDetail | undefined) =>
     && a.blocked?.reason === b.blocked?.reason)
 
 const PATH_KEYS = ['path', 'file', 'file_path', 'filePath']
-/** How many of a command's last lines its block shows while it is folded. */
+/** How many of a command's last lines its block shows while it is folded: screen lines, because none of them wraps. */
 export const COMMAND_TAIL_LINES = 5
+/** A tail line is one screen line and fades out at the block's edge, so the page holds no more of it than could show. */
+const TAIL_LINE_CHARS = 400
 
 /**
  * The whole path behind a row whose object is a file's name, so the row can show where it is: the folder quieter than the
@@ -126,10 +130,13 @@ export function rowPath(
   return undefined
 }
 
-/** A command's last lines, as its folded block shows them; trailing blank lines say nothing. */
+/** A command's last lines, as its folded block shows them, each cut to what one line can show; trailing blank lines say nothing. */
 export function commandTail(output: string, lines = COMMAND_TAIL_LINES): string {
   const all = output.replace(/\s+$/u, '').split(/\r?\n/u)
-  return all.slice(-lines).join('\n')
+  return all
+    .slice(-lines)
+    .map(line => (line.length > TAIL_LINE_CHARS ? line.slice(0, TAIL_LINE_CHARS) : line))
+    .join('\n')
 }
 
 /** How long the tool ran, ticking every second while it runs and frozen once it settles; nothing under a second. */
@@ -194,9 +201,11 @@ function SourceOutput({ text, language, enabled }: { text: string; language: str
 /**
  * One tool call as a work row on the turn's rail: the verb in its column, the object (a file's path in mono with its
  * folder quieter than its name), the lines it changed, and at the row's end its state (a spinner while it runs, a red ✕
- * when it failed) and its duration under the pointer. A command whose command line is known is a block instead: a
- * prompt glyph, the command once, how long it ran, and while folded the last lines of the output the tool reported, with
- * a block caret only while it still runs; a failed one has a red rail on its left. A failed row says why on one line,
+ * when it failed) and its duration under the pointer. A command whose command line is known shows a prompt glyph and the
+ * command a shell wrapper carried (the reported line in its tooltip and its details). Settled, it is a row like any
+ * other and its output opens with it. While it runs, and once it failed or its result is unknown, it is a block: the last
+ * lines of the output the tool reported under it, none wrapped, with a block caret only while it still runs and a red
+ * rail on its left when it failed. A failed row says why on one line,
  * with 重试 when this device may resend the turn. Opening a row shows what it did indented under its words: a file edit's
  * short preview (never while the right panel is open: there the row stays one line and selects its file in 改动),
  * otherwise its arguments and whole output. A pending approval is decided in the drawer above the composer; here the
@@ -260,8 +269,13 @@ export const ToolCard = memo(
     const wholeReason = block ? blockedReason(block) : undefined
     const judged = tool?.judged
     const review = isReview(tool)
-    // A command whose command line is known is drawn as a block, its last lines in view while it is folded.
+    // A command whose command line is known: a block with its last lines in view while it runs or after it went wrong,
+    // one row once it settled.
     const command = kind === 'execute' && label.mono && label.verb !== undefined && !review && !inline
+    const line = kind === 'execute' && label.mono && label.verb !== undefined ? commandLine(tool) : undefined
+    const home = useMemo(() => homeOf([session?.folder, ...(session?.folders ?? []).map(folder => folder.path)]), [session])
+    const object = line ? tildeHome(label.object, home) : label.object
+    const well = command && (state === 'running' || shown === 'failed' || shown === 'interrupted' || shown === 'unknown')
     // A judgement's words, once its call settled: the review's verdict, or that the call ran without an ask.
     const judgedWords =
       judged && (state === 'completed' || state === 'failed') && !(state === 'failed' && judged.outcome === 'unasked')
@@ -285,6 +299,7 @@ export const ToolCard = memo(
     // The row's tooltip: the call's full heading when the row shortens it, a titled tool's ID, and an allowance's record.
     const tooltip = [
       title !== label.object ? title : undefined,
+      line && line.reported !== title && line.reported !== object ? line.reported : undefined,
       tool?.toolTitle && toolName && toolName !== label.object ? toolName : undefined,
       decision?.outcome === 'allowed' ? decisionLine(decision, 0).full : undefined,
     ]
@@ -324,7 +339,7 @@ export const ToolCard = memo(
             </span>
           ) : (
             <span className={label.mono ? 'process-object is-mono' : 'process-object'}>
-              <VisibleText text={label.object} />
+              <VisibleText text={object} />
             </span>
           )}
         </StatusWords>
@@ -349,14 +364,14 @@ export const ToolCard = memo(
     )
     const hasDetails = !panelEdit
     // Only what the tool itself reported is output: a command's plain-text form is not.
-    const tail = command && !open && tool?.output ? commandTail(tool.output) : ''
+    const tail = well && !open && tool?.output ? commandTail(tool.output) : ''
     // The tail shows the last lines; the reason is the first one that says something, which a long output scrolls off.
     const reason = failed ? failureReason(message ?? { text: '' }) : ''
     const reasonInTail = tail !== '' && reason !== '' && tail.includes(reason)
     return (
       <FileRootContext.Provider value={rootId}>
         <article
-          className={`tool-card tool-${shown}${command ? ' is-command' : ''}`}
+          className={`tool-card tool-${shown}${command ? ' is-command' : ''}${well ? ' is-block' : ''}`}
           data-kind={newFile ? 'new' : kind}
           data-open={open && hasDetails ? '' : undefined}
           data-selected={selected ? '' : undefined}
@@ -468,7 +483,10 @@ export const ToolCard = memo(
                     </Hint>
                   )}
                   {/* A review's input is the agent's whole event, its status still the one it began with: its own words say it. */}
-                  {!review && !applied && <ArgumentList text={tool?.input} covered={[label.object]} quiet />}
+                  {/* A command shown without its wrapper or its home directory keeps the reported line here, whole. */}
+                  {!review && !applied && (
+                    <ArgumentList text={tool?.input} covered={line && object !== line.reported ? [] : [label.object]} quiet />
+                  )}
                   {showOutput
                     && !applied
                     && (output ? (

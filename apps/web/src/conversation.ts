@@ -11,6 +11,7 @@ import {
   type ToolKind,
 } from '@latch/protocol'
 import { parseDuration, parseTime } from './core/hostClock.ts'
+import { unwrapShell, type UnwrappedCommand } from './core/shellUnwrap.ts'
 import { APPROVAL_COPY, DECISION_COPY, JUDGED_COPY } from './core/securityCopy.ts'
 import { absoluteTime, argumentView, basename, clockTime, dayClockTime, formatDuration, messageTime, sameDay, sumUsage } from './format.ts'
 import { diffLines, previousState } from './diff.ts'
@@ -350,6 +351,30 @@ function diffLabel(tool: Message['tool']): ToolLabel | undefined {
   return { verb: '新建', object: `${shortPath(diff.path)} · ${lines} 行`, mono: false }
 }
 
+/** A command call's line: as the agent reported it, as a row shows it, and the shell wrapper it came in, if any. */
+export interface CommandLine extends UnwrappedCommand {
+  reported: string
+}
+
+const COMMAND_KEYS = ['command', 'cmd']
+
+/** The command line of a call that reports one on a single line; a wrapper Latch does not recognise is shown as it is. */
+export function commandLine(tool: Message['tool']): CommandLine | undefined {
+  const reported = argument(tool?.input, COMMAND_KEYS)
+  return reported === undefined ? undefined : { reported, ...unwrapShell(reported) }
+}
+
+/**
+ * The command an approval asks about, whole and on as many lines as it has: the person allows what they read, so
+ * nothing is cut, and the wrapper it runs through is named beside it. Undefined when the call reports no command.
+ */
+export function approvalCommand(tool: Message['tool'], fallback?: string): CommandLine | undefined {
+  const view = argumentView(tool?.input ?? fallback)
+  if (tool?.toolTitle || view.kind !== 'entries') return undefined
+  const reported = view.entries.find(([key, value]) => COMMAND_KEYS.includes(key) && value.trim())?.[1]
+  return reported === undefined ? undefined : { reported, ...unwrapShell(reported) }
+}
+
 export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>): ToolLabel {
   const tool = message.tool
   if (isReview(tool)) return { object: JUDGED_COPY.review(tool!.judged!.by), mono: false }
@@ -364,7 +389,8 @@ export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>)
   const verb = VERBS[kind]
   let object: string | undefined
   let mono = true
-  if (kind === 'execute') object = argument(tool?.input, ['command', 'cmd'])
+  // A shell wrapper is not the command: the row shows what it carried, and the reported line stays in its details.
+  if (kind === 'execute') object = commandLine(tool)?.command
   else if (kind === 'read' || kind === 'edit' || kind === 'delete' || kind === 'move') {
     const path = tool?.locations?.[0] ?? argument(tool?.input, PATH_KEYS)
     object = path === undefined ? undefined : shortPath(path)

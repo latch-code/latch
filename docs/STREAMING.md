@@ -331,6 +331,16 @@ Standard 的工具与模型在进程内运行，没有可结束的进程：停�
 
 当前使用完整消息列表，没有历史分页或虚拟列表；也没有“已发送”阅读状态或预留回复空间。手机视口变化通过 ResizeObserver 参与布局，但浏览器尺寸验收不能等同于 iPhone/Android 真机软键盘和全部惯性滚动行为已经验证。
 
+## 工作过程的行
+
+源码：[ToolCard.tsx](../apps/web/src/components/ToolCard.tsx)、[shellUnwrap.ts](../apps/web/src/core/shellUnwrap.ts)、[conversation.ts](../apps/web/src/conversation.ts)。这一节只是画法：Host 给的消息、ID、状态与工具输入不变。
+
+**命令。** Agent 报告的命令行是 `sh`、`bash` 或 `zsh` 加 `-c` 或 `-lc` 再加**恰好一个** shell 词时，行里显示这个词去掉引号后的内容（`unwrapShell`）；多出参数、别的开关、词里有会被外层 shell 展开的 `$` 或反引号、未闭合的引号、空命令，都按报告的原样显示，只还原一层。共享向量是 `packages/testkit/vectors/shell-unwrap-v1.json`（每条还原的用例都用真实 `/bin/sh` 核对过）。报告的原文在行的提示里，展开后在参数里一字不少。会话文件夹都在同一个 `/Users/<名>` 或 `/home/<名>` 下时，行里把这个目录写成 `~`（`homeOf`、`tildeHome`；Host 不报告家目录，文件夹不在这两处或不一致时不改写）；只改显示。
+
+**审批卡不改写。** 调用的标题就是这条命令时，卡片显示还原后的整条命令，保留换行、不截断、不写 `~`，下面一行写「经 zsh -lc」；标题是 Agent 另写的说明时照旧显示说明，参数里是报告的原文。
+
+**行与块。** 已结束的命令是一行（`is-command`），输出在展开后才出现。运行中、失败、被打断或结果未知的命令是块（`is-block`）：下面是工具报告的输出的最后 5 行，每行不换行、最多 400 字符、在右边淡出，所以折叠的尾巴不超过 5 个屏幕行；展开后的输出照旧换行并在自己的框里滚动。协议不带退出码，所以不画退出码；用时不足一秒不写。
+
 ## Markdown、代码与安全边界
 
 源码：[MessageContent.tsx](../apps/web/src/MessageContent.tsx)、[markdown.css](../apps/web/src/styles/markdown.css)、[DiffView.tsx](../apps/web/src/components/DiffView.tsx)。

@@ -188,6 +188,31 @@ describe('with the connection down', () => {
     expect(renderToStaticMarkup(createElement(Drawer, { message: command, approval: request }))).not.toContain('想运行')
   })
 
+  it('puts the whole wrapped command on an approval card, uncut, and names the wrapper', () => {
+    const inner = `set -e\n${Array.from({ length: 40 }, (_, index) => `echo step-${index} /Users/me/work`).join('; ')}`
+    const reported = `/bin/zsh -lc '${inner}'`
+    const input = JSON.stringify({ command: reported })
+    const request = approval({ toolName: 'shell', arguments: input })
+    const command = tool({ toolName: 'shell', state: 'awaiting-approval', tool: { kind: 'execute', title: reported, input } })
+    const html = renderToStaticMarkup(createElement(Drawer, { message: command, approval: request }))
+    expect(html).toContain(`<span class="approval-object is-command" tabindex="0">${inner}</span>`)
+    expect(html).toContain('<span class="approval-shell">经 zsh -lc</span>')
+    // The home directory is not rewritten where a command is decided.
+    expect(html).not.toContain('~/work')
+    const asked = renderToStaticMarkup(createElement(Drawer, { message: command, approval: request, requester: '小抄' }))
+    expect(asked).toContain(`<span class="approval-command" tabindex="0">${inner}</span>`)
+    expect(asked).toContain('经 zsh -lc')
+    // An unwrapped command is whole too, and names no wrapper.
+    const bare = tool({
+      toolName: 'shell',
+      state: 'awaiting-approval',
+      tool: { kind: 'execute', title: 'ls -la', input: '{"command":"ls -la"}' },
+    })
+    const plain = renderToStaticMarkup(createElement(Drawer, { message: bare, approval: approval({ toolName: 'shell' }) }))
+    expect(plain).toContain('<span class="approval-object is-command" tabindex="0">ls -la</span>')
+    expect(plain).not.toContain('approval-shell')
+  })
+
   it('stops the thinking row and the caret, and says when it last knew', () => {
     const live = { text: '想', live: true, streaming: true, liveTimes: { startedAt: localIso(0) } }
     const moving = renderToStaticMarkup(createElement(ThinkingRow, live))
@@ -489,7 +514,7 @@ describe('tool rows and command blocks', () => {
 
   it('draws a command as a block: the prompt glyph and the command once, and nothing for an exit code', () => {
     const html = run({})
-    expect(html).toContain('tool-card tool-running is-command')
+    expect(html).toContain('tool-card tool-running is-command is-block')
     expect(html).toContain('class="command-prompt" aria-hidden="true">$</span>')
     expect(html.match(/pnpm test/gu)).toHaveLength(1)
     // The verb stays for assistive technology; the glyph says it to the eye.
@@ -506,10 +531,44 @@ describe('tool rows and command blocks', () => {
     // The tail repeats what the opened block holds whole, so it never auto-opens and is not read twice.
     expect(running).toContain('aria-expanded="false"')
     expect(running).not.toContain('tool-output')
-    const done = run({ state: 'completed', tool: { kind: 'execute', input: '{"command":"pnpm test"}', output } })
-    expect(tail(done)).toContain('line 9')
-    expect(done).not.toContain('command-caret')
     expect(commandTail('a\nb\nc', 2)).toBe('b\nc')
+    // One screen line each: a line that could not show whole is cut for the tail and whole in the opened output.
+    const long = commandTail(`${'x'.repeat(2000)}\nend`)
+    expect(long.split('\n').map(line => line.length)).toEqual([400, 3])
+  })
+
+  it('makes a settled command one row: no block and no output until it is opened', () => {
+    const output = Array.from({ length: 9 }, (_, index) => `line ${index + 1}`).join('\n')
+    const done = run({ state: 'completed', tool: { kind: 'execute', input: '{"command":"pnpm test"}', output } })
+    expect(done).toContain('tool-card tool-completed is-command"')
+    expect(done).not.toContain('is-block')
+    expect(done).not.toContain('command-tail')
+    expect(done).not.toContain('command-caret')
+    expect(done).not.toContain('line 9')
+    expect(done).toContain('class="command-prompt" aria-hidden="true">$</span>')
+    for (const state of ['cancelled', 'queued', 'awaiting-approval'] as const)
+      expect(run({ state, tool: { kind: 'execute', input: '{"command":"pnpm test"}', output } })).not.toContain('is-block')
+  })
+
+  it('shows the command a shell wrapper carried, and keeps the reported line in the tooltip', () => {
+    const reported = `/bin/zsh -lc 'rg --files -g '"'"'AGENTS.md'"'"' /Users/me/work/app'`
+    const message = tool({
+      toolName: 'shell',
+      state: 'completed',
+      tool: { kind: 'execute', title: reported, input: JSON.stringify({ command: reported, cwd: '/Users/me/work/app' }) },
+    })
+    const html = renderToStaticMarkup(
+      createElement(FileSession.Provider, { value: { id: 's', folder: '/Users/me/work/app' } }, createElement(ToolCard, { message })),
+    )
+    const object = /<span class="process-object is-mono">(.*?)<\/span>/u.exec(html)?.[1]
+    expect(object).toBe('rg --files -g &#x27;AGENTS.md&#x27; ~/work/app')
+    expect(html).toContain(`title="${reported.replaceAll('"', '&quot;').replaceAll("'", '&#x27;')}"`)
+    // Without a home the session's folders name, the path is written as reported.
+    const plain = renderToStaticMarkup(createElement(ToolCard, { message }))
+    expect(plain).toContain('rg --files -g &#x27;AGENTS.md&#x27; /Users/me/work/app</span>')
+    // A shape Latch does not recognise is shown as reported.
+    const odd = run({ tool: { kind: 'execute', input: JSON.stringify({ command: 'bash -lc "echo $HOME"' }) } })
+    expect(odd).toContain('bash -lc &quot;echo $HOME&quot;</span>')
   })
 
   it('draws no tail for a command without reported output, not even its plain-text form', () => {
@@ -524,7 +583,8 @@ describe('tool rows and command blocks', () => {
       text: '2 个测试未通过',
       tool: { kind: 'execute', input: '{"command":"pnpm test"}', output: ' × clears the key' },
     })
-    expect(html).toContain('tool-card tool-failed is-command')
+    expect(html).toContain('tool-card tool-failed is-command is-block')
+    expect(html).toContain('command-tail')
     expect(html).toContain('process-failed')
     // The tail shows what it printed; the reason line would only repeat its first line. 重试 stays.
     expect(html).not.toContain('tool-failure')

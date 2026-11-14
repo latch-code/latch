@@ -20,7 +20,7 @@ import { useViewport } from '../breakpoints.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { previousState } from '../diff.ts'
 import { argumentView } from '../format.ts'
-import { diffStat, toolHeading } from '../conversation.ts'
+import { approvalCommand, diffStat, toolHeading } from '../conversation.ts'
 import type { ApprovalGate } from '../core/permissions.ts'
 import { APPROVAL_COPY, APPROVAL_OPTION_LABELS, CONFIRMATION_COPY, RISK_CLAUSE } from '../core/securityCopy.ts'
 import { ArgumentList } from '../components/ArgumentList.tsx'
@@ -323,11 +323,17 @@ function ApprovalPanel({
   const toolName = message?.toolName ?? approval.toolName
   // The tool's own title and its ID are what the approver weighs against each other, so the drawer always shows both.
   const action = toolHeading(tool, toolName)
+  // A command is read whole before it is allowed: the one a shell wrapper carries, uncut, with the wrapper named under
+  // it. Only where the call's own heading is that command; an agent's description of it stays as the agent wrote it.
+  const reported = tool?.kind === 'execute' ? approvalCommand(tool, approval.arguments) : undefined
+  // A long heading arrives cut with a marker at its end; its first 500 characters are the command's own.
+  const command = reported?.reported.startsWith(action.slice(0, 500)) ? reported : undefined
+  const what = command?.command ?? action
   const diffs = tool?.diffs ?? approval.tool?.diffs ?? []
   const file = (diffs.length === 1 ? diffs[0]?.path : tool?.locations?.[0])?.split(/[\\/]/u).at(-1)
   const heading = requester
     ? `${requester} ${tool?.kind === 'execute' ? '想运行一条命令' : tool?.kind === 'edit' && file ? `想改 ${file}` : `想执行：${action}`}`
-    : action
+    : what
   const hidden = approvalHidesText(approval, action, diffs)
   const quietReason =
     presentation
@@ -466,7 +472,9 @@ function ApprovalPanel({
         <div className="approval-what">
           <div className="approval-title">
             <span className="approval-dot" aria-hidden="true" />
-            <span className="approval-object">
+            <span
+              className={command && !requester ? 'approval-object is-command' : 'approval-object'}
+              tabIndex={command && !requester ? 0 : undefined}>
               <VisibleText text={heading} />
             </span>
             {stat && (
@@ -482,7 +490,12 @@ function ApprovalPanel({
             )}
           </div>
           <div className="approval-meta">
-            {requester && heading !== action && <VisibleText text={action} />}
+            {requester && heading !== what && (
+              <span className={command ? 'approval-command' : undefined} tabIndex={command ? 0 : undefined}>
+                <VisibleText text={what} />
+              </span>
+            )}
+            {command?.shell && <span className="approval-shell">经 {command.shell}</span>}
             {context}
             {!presentation && toolName && toolName !== action && (
               <code className="tool-card-name">

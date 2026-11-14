@@ -277,11 +277,16 @@ describe('tool rows and command blocks', () => {
     await poll(async () => (await detail(commands)).summary.status === 'idle', 'the turn to settle')
     for (const theme of ['light', 'dark'] as const) {
       const settled = await open(1440, 900, theme, '命令块的会话')
-      // A settled turn folds its work into 「已工作 …」; the blocks are under it.
+      // A settled turn folds its work into 「已工作 …」; its rows are under it.
       await settled.locator('.work-fold[aria-expanded="false"]').click()
       const done = block(settled, RUNNING).filter({ hasNotText: '--reporter' })
-      await expect.poll(() => done.locator('.command-tail').innerText()).toContain('12 passed (12)')
+      // Settled, the command is one row: its output is under it only once it is opened.
+      await done.waitFor()
+      expect(await done.getAttribute('class')).not.toContain('is-block')
+      expect(await done.locator('.command-tail').count()).toBe(0)
       expect(await done.locator('.command-caret').count()).toBe(0)
+      await done.locator('.tool-card-header').click()
+      await done.locator('.tool-output').getByText('12 passed (12)', { exact: false }).waitFor()
       await settled.screenshot({ path: `${OUTPUT}/settled--1440--${theme}.png`, animations: 'disabled' })
     }
   })

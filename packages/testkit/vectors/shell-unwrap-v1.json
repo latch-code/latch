@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "zsh login, double quotes",
+      "reported": "/bin/zsh -lc \"pnpm test\"",
+      "command": "pnpm test",
+      "shell": "zsh -lc"
+    },
+    {
+      "name": "bash login, single quotes",
+      "reported": "bash -lc 'ls -la'",
+      "command": "ls -la",
+      "shell": "bash -lc"
+    },
+    {
+      "name": "sh, bare word",
+      "reported": "sh -c pwd",
+      "command": "pwd",
+      "shell": "sh -c"
+    },
+    {
+      "name": "sh, single quotes",
+      "reported": "/bin/sh -c 'echo hi'",
+      "command": "echo hi",
+      "shell": "sh -c"
+    },
+    {
+      "name": "bash without login",
+      "reported": "/usr/bin/bash -c \"git status\"",
+      "command": "git status",
+      "shell": "bash -c"
+    },
+    {
+      "name": "homebrew path",
+      "reported": "/opt/homebrew/bin/zsh -lc 'ls'",
+      "command": "ls",
+      "shell": "zsh -lc"
+    },
+    {
+      "name": "single quotes joined by a quoted quote",
+      "reported": "/bin/zsh -lc 'rg --files -g '\"'\"'AGENTS.md'\"'\"' -g '\"'\"'!node_modules'\"'\"' /Users/me/work'",
+      "command": "rg --files -g 'AGENTS.md' -g '!node_modules' /Users/me/work",
+      "shell": "zsh -lc"
+    },
+    {
+      "name": "double quotes around single quotes",
+      "reported": "/bin/zsh -lc \"pwd; rg --files -g 'AGENTS.md' /Users/me/work\"",
+      "command": "pwd; rg --files -g 'AGENTS.md' /Users/me/work",
+      "shell": "zsh -lc"
+    },
+    {
+      "name": "double quotes broken by a quoted quote",
+      "reported": "/bin/zsh -lc \"rg -g '\"'\"'!node_modules'\"'\"' .\"",
+      "command": "rg -g '\"!node_modules\"' .",
+      "shell": "zsh -lc"
+    },
+    {
+      "name": "escaped double quotes",
+      "reported": "bash -lc \"echo \\\"a b\\\" && ls\"",
+      "command": "echo \"a b\" && ls",
+      "shell": "bash -lc"
+    },
+    {
+      "name": "escaped dollar and backtick",
+      "reported": "bash -lc \"echo \\$HOME \\`date\\`\"",
+      "command": "echo $HOME `date`",
+      "shell": "bash -lc"
+    },
+    {
+      "name": "backslash kept before an ordinary character",
+      "reported": "sh -c \"printf 'a\\nb'\"",
+      "command": "printf 'a\\nb'",
+      "shell": "sh -c"
+    },
+    {
+      "name": "escaped backslash",
+      "reported": "sh -c \"echo a\\\\b\"",
+      "command": "echo a\\b",
+      "shell": "sh -c"
+    },
+    {
+      "name": "several commands",
+      "reported": "zsh -lc 'cd app && pnpm build; echo done'",
+      "command": "cd app && pnpm build; echo done",
+      "shell": "zsh -lc"
+    },
+    {
+      "name": "pipes and redirects",
+      "reported": "bash -lc 'cat a.txt | sort > b.txt 2>&1'",
+      "command": "cat a.txt | sort > b.txt 2>&1",
+      "shell": "bash -lc"
+    },
+    {
+      "name": "newlines in the command",
+      "reported": "bash -lc 'set -e\nls\npwd'",
+      "command": "set -e\nls\npwd",
+      "shell": "bash -lc"
+    },
+    {
+      "name": "heredoc",
+      "reported": "bash -lc 'cat <<EOF\nhello\nEOF'",
+      "command": "cat <<EOF\nhello\nEOF",
+      "shell": "bash -lc"
+    },
+    {
+      "name": "unicode",
+      "reported": "zsh -lc 'echo 你好 🙂'",
+      "command": "echo 你好 🙂",
+      "shell": "zsh -lc"
+    },
+    {
+      "name": "extra spaces",
+      "reported": "zsh   -lc    'ls'  ",
+      "command": "ls",
+      "shell": "zsh -lc"
+    },
+    {
+      "name": "escaped space in a bare word",
+      "reported": "sh -c ls\\ -la",
+      "command": "ls -la",
+      "shell": "sh -c"
+    },
+    {
+      "name": "mixed quoting in one word",
+      "reported": "sh -c 'echo '\"a b\"",
+      "command": "echo a b",
+      "shell": "sh -c"
+    },
+    {
+      "name": "no wrapper",
+      "reported": "pnpm test",
+      "command": "pnpm test",
+      "shell": null
+    },
+    {
+      "name": "empty",
+      "reported": "",
+      "command": "",
+      "shell": null
+    },
+    {
+      "name": "empty command",
+      "reported": "zsh -lc ''",
+      "command": "zsh -lc ''",
+      "shell": null
+    },
+    {
+      "name": "blank command",
+      "reported": "zsh -lc '  '",
+      "command": "zsh -lc '  '",
+      "shell": null
+    },
+    {
+      "name": "wrapper alone",
+      "reported": "zsh -lc",
+      "command": "zsh -lc",
+      "shell": null
+    },
+    {
+      "name": "unquoted command of several words",
+      "reported": "sh -c ls -la",
+      "command": "sh -c ls -la",
+      "shell": null
+    },
+    {
+      "name": "arguments after the command",
+      "reported": "bash -c 'echo $0' name",
+      "command": "bash -c 'echo $0' name",
+      "shell": null
+    },
+    {
+      "name": "expansion in double quotes",
+      "reported": "bash -lc \"echo $HOME\"",
+      "command": "bash -lc \"echo $HOME\"",
+      "shell": null
+    },
+    {
+      "name": "command substitution in double quotes",
+      "reported": "bash -lc \"echo `date`\"",
+      "command": "bash -lc \"echo `date`\"",
+      "shell": null
+    },
+    {
+      "name": "unterminated single quote",
+      "reported": "zsh -lc 'ls",
+      "command": "zsh -lc 'ls",
+      "shell": null
+    },
+    {
+      "name": "unterminated double quote",
+      "reported": "zsh -lc \"ls",
+      "command": "zsh -lc \"ls",
+      "shell": null
+    },
+    {
+      "name": "trailing backslash",
+      "reported": "sh -c ls\\",
+      "command": "sh -c ls\\",
+      "shell": null
+    },
+    {
+      "name": "bare glob",
+      "reported": "sh -c *",
+      "command": "sh -c *",
+      "shell": null
+    },
+    {
+      "name": "bare tilde",
+      "reported": "sh -c ~/run",
+      "command": "sh -c ~/run",
+      "shell": null
+    },
+    {
+      "name": "another flag",
+      "reported": "bash -x -c 'ls'",
+      "command": "bash -x -c 'ls'",
+      "shell": null
+    },
+    {
+      "name": "interactive flag",
+      "reported": "zsh -ic 'ls'",
+      "command": "zsh -ic 'ls'",
+      "shell": null
+    },
+    {
+      "name": "another shell",
+      "reported": "fish -c 'ls'",
+      "command": "fish -c 'ls'",
+      "shell": null
+    },
+    {
+      "name": "shell name as a prefix",
+      "reported": "zshx -lc 'ls'",
+      "command": "zshx -lc 'ls'",
+      "shell": null
+    },
+    {
+      "name": "env prefix",
+      "reported": "env FOO=1 zsh -lc 'ls'",
+      "command": "env FOO=1 zsh -lc 'ls'",
+      "shell": null
+    },
+    {
+      "name": "shell inside a command",
+      "reported": "echo zsh -lc 'ls'",
+      "command": "echo zsh -lc 'ls'",
+      "shell": null
+    },
+    {
+      "name": "script path",
+      "reported": "/bin/zsh ./run.sh",
+      "command": "/bin/zsh ./run.sh",
+      "shell": null
+    }
+  ]
+}

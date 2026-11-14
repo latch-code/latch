@@ -390,8 +390,8 @@
  * The work rows hang on a thin rail under the sentence that caused them: 26 high (28 on phones), the verb in the muted
  * ink in one column, the object after it (a file's path in mono with its folder quieter than its name, commands and
  * queries in mono), the lines it changed right after, and at the row's end its state and, under the pointer, its
- * duration. A row lights under the pointer; its chevron shows there, on focus, while open and on touch. A command is a
- * block across the column, off the rail (tool-card.css).
+ * duration. A row lights under the pointer; its chevron shows there, on focus, while open and on touch. A command that
+ * runs or went wrong is a block across the column, off the rail (tool-card.css).
  */
 .work-rows {
   display: flex;
@@ -404,10 +404,10 @@
   margin-top: var(--sp-8);
 }
 /* The rail is drawn by each row it carries, so a command block between rows breaks it. */
-.work-rows > :not(.is-command) {
+.work-rows > :not(.is-block) {
   position: relative;
 }
-.work-rows > :not(.is-command)::before {
+.work-rows > :not(.is-block)::before {
   content: '';
   position: absolute;
   top: -1px;

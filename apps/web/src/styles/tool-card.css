@@ -101,26 +101,27 @@
 }
 
 /*
- * A command is a well across the column, off the rail: the prompt glyph and the command once, in mono, and at its end
- * how it stands and how long it ran. Folded, the last lines of the output the tool reported stand under it, with a block
- * caret only while it still runs. A command the harness reported failed has a red rail down its left edge; how it ended
- * is not drawn, because the protocol carries no exit code.
+ * A command says its line in mono after a prompt glyph. Settled, it is a row on the rail like any other. While it runs,
+ * and once it failed or its result is unknown, it is a well across the column, off the rail: the command once, how it
+ * stands and how long it ran, and folded under it the last lines of the output the tool reported, one screen line each,
+ * fading out at the well's edge, with a block caret only while it still runs. A command the harness reported failed has
+ * a red rail down its left edge; how it ended is not drawn, because the protocol carries no exit code.
  */
-.tool-card.is-command {
+.tool-card.is-block {
   position: relative;
   overflow: hidden;
   border-radius: var(--r-8);
   background: var(--sunken);
   box-shadow: var(--sh-well);
 }
-.work-rows > .tool-card.is-command {
+.work-rows > .tool-card.is-block {
   margin: var(--sp-8) 0 var(--sp-8) calc(var(--sp-20) * -1);
 }
-.work-rows > .tool-card.is-command:first-child {
+.work-rows > .tool-card.is-block:first-child {
   margin-top: 0;
 }
-.work-rows .tool-card.is-command > .tool-tray > .tool-card-header,
-.tool-card.is-command > .tool-tray > .tool-card-header {
+.work-rows .tool-card.is-block > .tool-tray > .tool-card-header,
+.tool-card.is-block > .tool-tray > .tool-card-header {
   gap: var(--sp-8);
   width: 100%;
   min-height: 36px;
@@ -128,7 +129,7 @@
   padding: 0 var(--sp-12) 0 var(--sp-12);
   border-radius: 0;
 }
-.tool-card.is-command > .tool-tray > .tool-card-header:hover {
+.tool-card.is-block > .tool-tray > .tool-card-header:hover {
   background: var(--hover);
 }
 .command-prompt {
@@ -139,26 +140,34 @@
   line-height: var(--lh-mono);
   font-weight: 600;
 }
+.tool-card.is-command:not(.is-block) .command-prompt {
+  margin-right: var(--sp-8);
+}
 .tool-card.is-command .process-object.is-mono {
   color: var(--ink);
+}
+.tool-card.is-block .process-object.is-mono {
   font-weight: 500;
 }
-.tool-card.is-command .process-chevron {
+.tool-card.is-block .process-chevron {
   margin-left: var(--sp-4);
 }
-/* A block says how long it ran without the pointer: the duration is the block's own fact. */
+/* A command says how long it ran without the pointer: over a second, the duration is what its row has to say. */
 .tool-card.is-command .process-end > .process-time {
   opacity: 1;
 }
+/* Five lines at most, none wrapped: a long line fades out at the edge and is whole in the opened output. */
 .command-tail {
+  max-height: calc(var(--lh-code) * 5 + var(--sp-2) + var(--sp-12));
   margin: 0;
   padding: var(--sp-2) var(--sp-12) var(--sp-12) calc(var(--sp-12) + 1ch + var(--sp-8));
+  overflow: hidden;
   color: var(--ink-2);
   font-family: var(--mono);
   font-size: var(--fs-code);
   line-height: var(--lh-code);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--sp-32)), transparent);
 }
 .command-caret {
   display: inline-block;
@@ -173,25 +182,25 @@
     animation: caret 1.06s steps(1) infinite;
   }
 }
-.tool-card.is-command.tool-failed::before {
+.tool-card.is-block.tool-failed::before {
   content: '';
   position: absolute;
   inset: 0 auto 0 0;
   width: 2px;
   background: var(--red-solid);
 }
-.tool-card.is-command :is(.tool-failure, .tool-block-line) {
+.tool-card.is-block :is(.tool-failure, .tool-block-line) {
   padding: 0 var(--sp-12) var(--sp-8) calc(var(--sp-12) + 1ch + var(--sp-8));
 }
-.tool-card.is-command .tool-card-body {
+.tool-card.is-block .tool-card-body {
   padding: 0 var(--sp-12) var(--sp-12);
 }
-.tool-card.is-command .tool-output-scroll {
+.tool-card.is-block .tool-output-scroll {
   background: transparent;
   box-shadow: inset 0 1px 0 var(--line);
   border-radius: 0;
 }
-.tool-card.is-command .tool-decision {
+.tool-card.is-block .tool-decision {
   padding: 0 var(--sp-12);
 }
 .tool-pre {

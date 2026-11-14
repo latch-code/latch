@@ -188,6 +188,28 @@
   font-size: var(--fs-mono) !important;
   line-height: var(--lh-mono) !important;
 }
+/* A command keeps its own lines and is never cut: what is allowed is what was read. A long one scrolls in its own box,
+ * so the choices stay in reach. */
+.approval-object.is-command,
+.approval-command {
+  display: block !important;
+  max-height: min(40vh, 320px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval-command {
+  min-width: 0;
+  color: var(--ink) !important;
+  font-family: var(--mono) !important;
+  font-size: var(--fs-mono) !important;
+  line-height: var(--lh-mono) !important;
+}
+.approval-shell {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 .approval-stat {
   display: inline !important;
   font-family: var(--mono) !important;
