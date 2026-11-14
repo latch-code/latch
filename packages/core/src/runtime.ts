@@ -440,9 +440,14 @@ function recordResult(
   cancelled = false,
   interrupted = false,
   images: AttachmentRef[] = [],
+  outputWithoutFiles?: string,
 ): void {
   task.history.push({ role: 'tool', content: text, toolCallId: call.id, isError, ...(images.length ? { attachmentRefs: images } : {}) })
   const previous = toolMessage(task, call)
+  const { outputWithoutFiles: _oldOutput, ...shown } = previous?.tool ?? {
+    title: call.name,
+    input: JSON.stringify(call.arguments, null, 2),
+  }
   const message: Message = {
     id: `tool:${call.id}`,
     role: 'tool',
@@ -451,7 +456,7 @@ function recordResult(
     state: cancelled ? 'cancelled' : isError ? 'failed' : 'completed',
     ...(interrupted ? { interrupted: true as const } : {}),
     ...(images.length ? { attachments: images } : {}),
-    tool: { ...(previous?.tool ?? { title: call.name, input: JSON.stringify(call.arguments, null, 2) }), output: text },
+    tool: { ...shown, output: text, ...(outputWithoutFiles !== undefined ? { outputWithoutFiles } : {}) },
     ...(previous?.createdAt ? { createdAt: previous.createdAt } : { createdAt: at }),
     ...(previous?.startedAt ? { startedAt: previous.startedAt } : {}),
     completedAt: at,
@@ -1433,7 +1438,19 @@ class HarnessRuntime implements Bridge {
     // A completed result remains true even if cancellation raced its completion.
     const images = await this.toolImages(run, call, result)
     this.output(run)
-    await this.change(run.sessionId, task => recordResult(task, call, this.now(), result.text, false, false, false, images))
+    await this.change(run.sessionId, task =>
+      recordResult(
+        task,
+        call,
+        this.now(),
+        result.text,
+        false,
+        false,
+        false,
+        images,
+        typeof result.textWithoutFiles === 'string' ? result.textWithoutFiles : undefined,
+      ),
+    )
     await tool.resultCommitted?.({ sessionId: run.sessionId, callId: call.id, state: 'completed' })
   }
 
@@ -1453,8 +1470,11 @@ class HarnessRuntime implements Bridge {
         /* An image the store refuses (type, size) is left out; the text says what the tool did. */
       }
     }
-    if (refs.length < images.length || (result.images?.length ?? 0) > TOOL_IMAGE_LIMIT)
-      result.text = `${result.text}\n\n（${call.name} 的部分图片没有保存。）`
+    if (refs.length < images.length || (result.images?.length ?? 0) > TOOL_IMAGE_LIMIT) {
+      const note = `\n\n（${call.name} 的部分图片没有保存。）`
+      result.text += note
+      if (typeof result.textWithoutFiles === 'string') result.textWithoutFiles += note
+    }
     return refs
   }
 

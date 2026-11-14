@@ -197,6 +197,16 @@ snapshot 与 task-state 可能交错。摘要与审批只在 detail.revision 大
 
 **当前没有 WAL、持久事件队列、Last-Event-ID 历史重放或逐事件缺口恢复。** 断线后通过当前快照收敛，不保证客户端看过所有短暂中间状态。SSE 关闭只移除订阅，不取消 run。创建/输入的幂等回执另由 Runtime 持久化，审批决定与取消的回执由 Host 随会话保存（见下文）；浏览器保存的待确认提交用于显式重试，不是自动离线任务队列。这条记录只有一条：输入框为它锁定；「未确认送达」和重试只显示在它所属的会话或新会话，其他会话写「另一个会话有消息未确认送达」并给「打开」与「放弃这次提交」。记录同时带着正在等待的确认票据（`awaitingConfirmation`）时，内容还没有发出：重新打开页面会取消这张票据（系统表单随之关闭），把文字放回输入框，不显示未确认送达。同一设备的另一个窗口结算后，经 `storage` 事件清除这一行。
 
+### 文件差异的设备投影
+
+Host 按发送时设备的当前数据范围生成详情和审批的展示投影。`all` 保留原内容；`work` 不收到 `ToolDetail.diffs` 的正文，路径并入 `locations`，文件编辑的参数仅保留路径与有限控制元数据。其他字符串值和不明结构明确省略，JSON 数字词元不重编码，不把大整数或 `-0` 改成另一值。省略字段不逐条插入占位文案，生产者摘要的 JSON 编码字节数不得大于原输出，避免受限投影把合法原生帧膨胀到既有上限之外。消息、工具、审批、运行和 requestId、时间、decision、judged、blocked与失败/取消/结果未知的事实保持；子 Agent 的步骤递归应用相同规则。
+
+可信生产者可提供 `ToolDetail.outputWithoutFiles`，内容是原结果中不含文件正文的说明，空字符串表示原输出全为文件内容。Standard 的 `ToolResult.textWithoutFiles` 进入此字段；Codex fileChange 与 pi 明确的 `details.diff` 标记为文件输出，不用未分类的另一段文字充当安全摘要。两套会话 schema 都保存它，但任何设备响应都剥离这个来源字段，`all` 也不重复接收摘要。canonical 原生复放只保留可发送的完整投影，按该不可变事件身份关联的 `work` 投影另留 Host 内存；重放时仍按当前 scope 选择，复放游标和增量基线不由来源字段决定。ACP 每次替换 rawOutput/content 时，没有新标记就清掉旧安全摘要，不能把旧结果的说明套在新输出上。执行端追加的结果未知/未开始说明同时进入安全摘要；发送给模型与 `all` 的完整结果不改。
+
+旧历史与没有提供安全摘要的编辑结果，Host保守省略无法区分的内容段，保留路径、已知结果码与状态，不猜测工具执行成功或没有执行；普通命令/MCP/聊天正文不按关键词改写。`Message.text` 的工具载荷副本同时投影。审批展示参数被省略不影响 Host 用原参数分级、计算预览哈希和处理原审批ID/原requestId。Markdown 导出消费同一已授权详情，没有另一个未过滤的历史出口。
+
+SSE 逐读者先投影再 `TaskDeltaStream.encode`，原事件和 Driver 对象不被修改；两种数据范围的帧缓存不共用。NativeReplay 仍保存 Host 的 canonical 事件，投影序列化沿用该事件的原游标；重放时重新核对当前范围。scope变化仍清掉旧增量基线，第一帧重新完整发送，原积压与回放上限不变。
+
 ## 消息、审批与取消
 
 源码：[runtime.ts](../packages/core/src/runtime.ts)、[Transcript.tsx](../apps/web/src/components/Transcript.tsx)、[ToolCard.tsx](../apps/web/src/components/ToolCard.tsx)、[MessageRow.tsx](../apps/web/src/components/MessageRow.tsx)、[approvalDecision.ts](../apps/web/src/core/approvalDecision.ts)、[confirmations.ts](../apps/web/src/core/confirmations.ts)。

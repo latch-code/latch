@@ -203,6 +203,7 @@ const toolDetail = z.object({
   title: z.string().optional(),
   input: z.string().optional(),
   output: z.string().optional(),
+  outputWithoutFiles: z.string().optional(),
   locations: z.array(z.string()).optional(),
   diffs: z
     .array(

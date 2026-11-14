@@ -178,6 +178,8 @@ export const toolFields = z.object({
   locations: z.array(z.unknown()).nullish(),
   rawInput: z.unknown().optional(),
   rawOutput: z.unknown().optional(),
+  /** Latch's native wires may separately identify the non-file part of a result. */
+  outputWithoutFiles: z.string().optional(),
 })
 export type ToolFields = z.infer<typeof toolFields>
 

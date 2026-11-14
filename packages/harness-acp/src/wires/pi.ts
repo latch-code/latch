@@ -205,6 +205,13 @@ function resultText(result: unknown): string {
   return content.flatMap(item => (isRecord(item) && item.type === 'text' && typeof item.text === 'string' ? [item.text] : [])).join('')
 }
 
+function resultWithoutFiles(result: unknown): string | undefined {
+  if (!isRecord(result) || !isRecord(result.details) || typeof result.details.diff !== 'string' || !result.details.diff.trim())
+    return undefined
+  // resultText chose only the declared diff. Do not substitute unclassified content as a supposedly safe summary.
+  return ''
+}
+
 const TOOL_KINDS: Readonly<Record<string, string>> = {
   read: 'read',
   edit: 'edit',
@@ -858,12 +865,15 @@ export class PiWire implements AgentWire {
       case 'tool_execution_end': {
         if (typeof event.toolCallId !== 'string') return
         const end = event.type === 'tool_execution_end'
-        const output = clip(resultText(end ? event.result : event.partialResult), TOOL_TEXT_LIMIT)
+        const result = end ? event.result : event.partialResult
+        const output = clip(resultText(result), TOOL_TEXT_LIMIT)
+        const outputWithoutFiles = resultWithoutFiles(result)
         this.update({
           sessionUpdate: 'tool_call_update',
           toolCallId: event.toolCallId,
           ...(end ? { status: event.isError === true ? 'failed' : 'completed' } : {}),
           ...(output ? { content: [{ type: 'content', content: { type: 'text', text: output } }] } : {}),
+          ...(output && outputWithoutFiles !== undefined ? { outputWithoutFiles: clip(outputWithoutFiles, TOOL_TEXT_LIMIT) } : {}),
         })
         return
       }

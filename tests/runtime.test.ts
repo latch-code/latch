@@ -95,6 +95,33 @@ async function waitStatus(bridge: Bridge, id: string, status: string) {
 }
 
 describe('independent harness runtime', () => {
+  it('keeps a missing-image warning in the file-free presentation without changing model history', async () => {
+    const dataDir = await directory(),
+      seen: ModelMessage[][] = []
+    const provider = toolProvider('write_note', seen)
+    provider.modelCapabilities = { 'fixture-model': { vision: true } }
+    const text = 'PRIVATE_FILE_CONTENT',
+      safe = 'Updated notes.txt.'
+    const writing = tool(async () => ({ text, textWithoutFiles: safe, images: [{ mimeType: 'image/png', data: 'AAAA' }] }), false)
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(provider, [writing]),
+        providerId: provider.id,
+        saveAttachment: async () => {
+          throw new Error('fixture attachment rejected')
+        },
+      }),
+    )
+    const { sessionId } = await bridge.createTask({ prompt: 'Write the note', requestId: 'image-file-summary' })
+    await waitStatus(bridge, sessionId, 'idle')
+    const message = (await bridge.detail(sessionId)).messages.find(item => item.role === 'tool')!
+    expect(message.tool!.outputWithoutFiles).toBe(safe + '\n\n（write_note 的部分图片没有保存。）')
+    expect(message.text).toBe(text + '\n\n（write_note 的部分图片没有保存。）')
+    expect(seen.at(-1)?.at(-1)).toMatchObject({ role: 'tool', content: message.text })
+  })
+
   it('pauses working time for a user-input tool and acknowledges only its durable result before the model continues', async () => {
     const dataDir = await directory(),
       response = deferred<{ text: string }>(),

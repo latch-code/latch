@@ -346,6 +346,8 @@ export interface ToolDetail {
   input?: string
   /** Result text, when the call produced one. */
   output?: string
+  /** Host-only producer result without file contents; empty means file-only output. Removed from every device response. */
+  outputWithoutFiles?: string
   locations?: string[]
   diffs?: FileDiff[]
   /** How the call's approval ended; absent for calls that needed none, from older Hosts and from plugin drivers. */

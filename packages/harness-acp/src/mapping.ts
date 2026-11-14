@@ -69,6 +69,7 @@ export interface ToolState {
   status?: string
   rawInput?: unknown
   rawOutput?: unknown
+  outputWithoutFiles?: string
   content: unknown[]
   locations: unknown[]
   /** Open permission requests for this call. */
@@ -107,6 +108,9 @@ export function mergeTool(state: ToolState, fields: ToolFields, at: string): voi
     }
   }
   if (fields.rawInput !== undefined) state.rawInput = fields.rawInput
+  // A new payload without provenance must not inherit the preceding result's safe summary.
+  if (fields.content != null || fields.rawOutput !== undefined) delete state.outputWithoutFiles
+  if (fields.outputWithoutFiles !== undefined) state.outputWithoutFiles = fields.outputWithoutFiles
   if (fields.rawOutput !== undefined) state.rawOutput = fields.rawOutput
   if (fields.content != null) state.content = fields.content.slice(0, 256)
   if (fields.locations != null) state.locations = fields.locations.slice(0, 256)
@@ -186,7 +190,10 @@ export function toolDetail(state: ToolState): ToolDetail {
     }
   }
   let output = texts.length ? texts.join('\n') : state.rawOutput !== undefined ? pretty(state.rawOutput) : undefined
+  let outputWithoutFiles = state.outputWithoutFiles
   if (state.final) output = output ? `${output}\n\n${state.final.note}` : state.final.note
+  if (state.final && outputWithoutFiles !== undefined)
+    outputWithoutFiles = outputWithoutFiles ? `${outputWithoutFiles}\n\n${state.final.note}` : state.final.note
   const locations = state.locations
     .flatMap(item => {
       const parsed = toolLocation.safeParse(item)
@@ -200,6 +207,7 @@ export function toolDetail(state: ToolState): ToolDetail {
     ...(state.title ? { title: clip(state.title, 1000) } : {}),
     ...(state.rawInput !== undefined ? { input: clip(pretty(state.rawInput), TOOL_TEXT_LIMIT) } : {}),
     ...(output !== undefined ? { output: clip(output, TOOL_TEXT_LIMIT) } : {}),
+    ...(outputWithoutFiles !== undefined ? { outputWithoutFiles: clip(outputWithoutFiles, TOOL_TEXT_LIMIT) } : {}),
     ...(locations.length ? { locations } : {}),
     ...(diffs.length ? { diffs } : {}),
     ...(state.decision ? { decision: state.decision } : {}),

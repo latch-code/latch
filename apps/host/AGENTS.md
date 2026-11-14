@@ -2,7 +2,7 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/server.ts`、`routes/`、`listeners.ts`、`access.ts`、`http-util.ts`、`preview-frames.ts`、`task-delta.ts`、`traffic.ts`、`not-found.ts` | HTTP/SSE（`test/route-guards.test.ts`）、认证、限速、CSP、流量与 404 |
+| `src/server.ts`、`routes/`、`src/task-delta.ts`、`src/task-content.ts` | HTTP/SSE、认证、投影与限速（`test/route-guards.test.ts`） |
 | `src/native*.ts`、`relay/` | 原生连接、发现、墓碑与目录 |
 | `src/auth.ts`、`presence*.ts`、`agent-probes.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-*.ts`、`model-gateway/`、`risk.ts`、`paths.ts` | 设备与登记；本机确认与理由；审计；`policy.json`；出站与模型网关；风险分级；路径 |
 | `src/host-state.ts`、`crypto.ts`、`identity.ts`、`hub.ts`、`session-meta.ts`、`prompt-queues.ts`、`questions.ts`、`agent-*.ts`、`config.ts`、`providers.ts` | Host 状态与锁、加密、会话路由及回执、Agent 与接力规则、配置与插件（`plugin-packages.ts`） |
@@ -22,6 +22,7 @@
 - 本机确认只经 `PresenceService` 的系统表单（`PRESENCE_ACTIONS`），没有设备签名批准的路径。
 - 终端限 `host.sock`、数据范围 `all`，环境只经 `terminalEnvironment`（[TERMINAL.md](../../docs/TERMINAL.md)）。
 - 构建拒绝测试代码（security.test）。
+- work剥文件差异；输出投影不改执行参数、回执和终态（STREAMING）。
 - `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`），供 Vite 与 Vitest 配置直接加载。
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。
 - 文件树/搜索限 `all`；macOS 仅经 `latch-files` 描述符。索引不存权限，预览绑定 Harness/根身份/版本，晚回复查设备与正文窗口（ARCHITECTURE）。

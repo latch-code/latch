@@ -223,7 +223,8 @@ export default {
 }
 ```
 
-- `execute` 收到 `sessionId`、`callId`、`workspaceRoot`（会话项目的主文件夹，即会话的工作目录）、`workspaceFolders`（会话的全部文件夹 `{ id, path, primary }`，主文件夹在前；Standard 总是提供，旧的 Driver 可能省略，此时 `workspaceRoot` 是唯一的文件夹）与 `signal`，返回 `{ text, images? }`；抛错会作为错误结果交回模型。Standard 不会替工具执行完整的 JSON Schema 校验，工具必须自行校验输入。
+- `execute` 收到 `sessionId`、`callId`、`workspaceRoot`（会话项目的主文件夹，即会话的工作目录）、`workspaceFolders`（会话的全部文件夹 `{ id, path, primary }`，主文件夹在前；Standard 总是提供，旧的 Driver 可能省略，此时 `workspaceRoot` 是唯一的文件夹）与 `signal`，返回 `{ text, images?, textWithoutFiles? }`；抛错会作为错误结果交回模型。Standard 不会替工具执行完整的 JSON Schema 校验，工具必须自行校验输入。
+- 文件编辑工具可提供 `textWithoutFiles`：明确不含文件正文的结果说明/元数据，空字符串表示没有可显示的结果文字；不得把差异或文件内容当作安全摘要。它只供受限数据范围的展示，写入 `ToolDetail.outputWithoutFiles`，不替换发送给模型的 `text`。没有此字段的编辑输出在受限设备上保守省略不明内容段，保留原状态/路径/结果码。此合同依赖可信插件如实声明，不是插件代码沙箱。
 - 项目可以有多个文件夹。让模型用文件夹的 `id` 选择文件夹，路径相对于所选文件夹；不要把绝对路径交给模型。内置 [workspace-files](../apps/host/src/plugins/tools/workspace-files/index.ts) 的做法：`list_folders` 只返回 `{ folder, name, primary }`（标识、文件夹名、是否为主文件夹），其他工具带可选参数 `folder`，缺省为主文件夹，不是会话的文件夹时拒绝。
 - `kind`（`read | edit | delete | move | search | execute | think | fetch | other`）决定工具卡片的图标。
 - 可选的 `title` 是工具做什么的简短说法，用产品的语言写（「读取文件」「写入文件」）。过程行与审批卡写它加这次调用的对象（路径、命令、搜索词或地址，从参数 `path`、`command`、`query`、`url` 等读出）：「写入文件 notes/plan.md」，运行中是「正在写入文件 notes/plan.md」。标题只用于显示：Host 截到 40 个字符、把不可见与改变方向的字符显示为 `\u{…}`，它不参与风险分级，审批卡仍写出工具名。没有 `title` 时过程行按 `kind` 写动词与对象，读不出对象时写工具名（等宽），不猜。

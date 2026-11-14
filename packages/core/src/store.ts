@@ -82,6 +82,7 @@ const toolDetailSchema = z.object({
   toolTitle: z.string().optional(),
   input: z.string().optional(),
   output: z.string().optional(),
+  outputWithoutFiles: z.string().optional(),
   locations: z.array(z.string()).optional(),
   diffs: z
     .array(

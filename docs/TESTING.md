@@ -19,6 +19,8 @@ sources:
 
 `native-swift.test.ts` 的私有页面到期恢复用例调用 App 共用的 `PhoneUnlock` 编排，核对人物话题先重新确认私有快照、普通 Code 保持原入口，以及 Face ID、旧 Host/阅读意图和取消的负例。它不启动 GUI，也不代替十分钟窗口到期的实际 iPhone/iPad 验收。
 
+`task-content.test.ts` 与 `task-content-projection.test.ts` 验证文件差异的work投影、原审批/回执、真实Host重启、延迟读取期间收紧/撤销及精确JSON数字；`native.test.ts` 同时检查原生增量与canonical游标重放。`restricted-diff.e2e.ts` 从真实临时Host的正常会话菜单下载Markdown，比较work/all及收紧后的实际文件，不以CSS隐藏或单独调用导出函数代替。ACP的`file-output.test.ts`、Codex/pi协议用例验证安全输出来源与旧摘要失效。
+
 `e2e/helper-chat.e2e.ts` 用临时 Host、假 ACP 与本地 Provider 验证两步创建、换候选保留草稿、角色化对话和原生斜杠命令、上传中取消、带项目与附件的原请求重试。创建回执丢失后覆盖跨入口、刷新、双窗口串行重试、敏感正文不落盘、撤权后旧回复不能覆盖新请求，以及旧放弃确认不能清掉替换后的请求。手机、平板与桌面的深浅色截图写入 `test-results/helper-chat/`。存储读取失败、坏记录、跨窗口锁与设备换代边界在 `agent-creation.test.ts`、`session-drafts.test.ts`、`slash-history.test.ts`；这些夹具不等于真实 Harness 或原生 iOS 操作验收。
 
 模型网关的机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。`model-gateway.test.ts` 覆盖四协议入口、头白名单、进程凭据、上游错误脱敏、流式用量与下游取消；`codex-gateway.test.ts` 通过假原生 Codex 真实调用 Host 网关，检查服务独有模型、失败不回退及重启恢复。`codex-environment.test.ts` 检查有效命令环境规则在新建与恢复前读取并保留，未知规则拒绝开线程。

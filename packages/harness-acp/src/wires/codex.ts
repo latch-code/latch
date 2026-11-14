@@ -1139,6 +1139,7 @@ export class CodexWire implements AgentWire {
             status: 'pending',
             locations: paths.slice(0, 32).map(path => ({ path })),
             content,
+            outputWithoutFiles: '',
           })
         if (item.status === 'completed') emit({ sessionUpdate: 'tool_call_update', toolCallId: id, status: 'in_progress' })
         return emit({
@@ -1146,6 +1147,7 @@ export class CodexWire implements AgentWire {
           toolCallId: id,
           status: itemStatus(item.status) ?? 'completed',
           ...(content.length ? { content } : {}),
+          ...(content.length ? { outputWithoutFiles: '' } : {}),
           ...this.refusal(id, item.status),
         })
       }

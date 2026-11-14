@@ -135,6 +135,38 @@ const commandReply = (message: string): ReplayEntry[] => [
 ]
 
 describe('pi over its own RPC', () => {
+  it('identifies the declared edit diff without treating unrelated content as a safe replacement', async () => {
+    const diff = '-1 PI_OLD_FILE_BODY\n+1 PI_NEW_FILE_BODY'
+    const path = await transcript(
+      'file_output',
+      [{ step: 'prompt', text: 'Edit the fixture' }, { step: 'settle' }],
+      [
+        ...opened,
+        out('prompt', { message: 'Edit the fixture' }),
+        answer('prompt', { disposition: 'started' }),
+        event('agent_start'),
+        event('tool_execution_start', {
+          toolCallId: 'edit-file',
+          toolName: 'edit',
+          args: { path: 'notes.txt', oldText: 'PI_OLD_FILE_BODY', newText: 'PI_NEW_FILE_BODY' },
+        }),
+        event('tool_execution_end', {
+          toolCallId: 'edit-file',
+          toolName: 'edit',
+          isError: false,
+          result: { details: { diff }, content: [{ type: 'text', text: 'Unclassified duplicate: PI_NEW_FILE_BODY' }] },
+        }),
+        event('agent_end', { messages: [], willRetry: false }),
+        event('agent_settled', { aborted: false }),
+        ...stats,
+      ],
+    )
+    const { detail } = await replayTranscript(path, cleanups)
+    const message = detail.messages.find(item => item.tool?.kind === 'edit')!
+    expect(message).toMatchObject({ state: 'completed', text: diff, tool: { output: diff, outputWithoutFiles: '' } })
+    expect(message.tool!.input).toContain('PI_NEW_FILE_BODY')
+  })
+
   it('publishes bounded public extension, prompt and skill commands without private gate or resource paths', async () => {
     const commands = [
       {

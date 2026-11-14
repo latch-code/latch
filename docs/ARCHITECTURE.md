@@ -148,6 +148,12 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - **本机确认只留给真实边界，只在这台 Mac 上发起。** 连接新设备、扩大设备权限、确认新的模型服务地址或出站地址、应用含代码的插件、新增或放宽本机程序与远程 MCP 服务器（MCP 服务器的命令、参数、变量名与工作目录，或远程地址的源、路径与请求头名字，`mcp.server.apply`，远程地址需要的出站许可在同一次确认里；Harness 定义的命令、参数与变量，`harness.command.apply`，见 [MCP.md](./MCP.md) 与 [HARNESSES.md](./HARNESSES.md)）。只有经 `host.sock` 认证的已登记设备（桌面端）能发起；设备登记是唯一例外，而 `host.sock` 以外的登记还要先有一次性邀请，从未有过设备时桌面端在 `host.sock` 上的第一次连接不需要确认。开始 Agent、放宽模式、批准操作、改 Harness 的名称与开关不弹确认：Agent 是没有沙箱的可信代码，审批是人选择的看管程度。
 - **先审计再执行。** 授予或执行权限的操作先写入审计记录，写入失败则拒绝执行；降低权限的操作从不因审计失败而受阻。
 
+### 文件差异的数据范围
+
+普通会话仍按原有 `view`、`run` 和审批权限工作。`dataScope: 'work'` 的设备读取 HTTP 详情、历史、审批快照与 SSE（包括原生重放）时，Host 省略文件差异正文及文件编辑参数中的内容，只保留动作、路径、明确的结果元数据和结算事实；`all` 保留完整内容。投影在最后一次当前设备核对之后、增量编码之前执行，不改变 Driver 的历史、真正的审批参数、模型输入与请求回执。快照异步读取期间数据范围发生变化，返回 `device-scope-changed` 要求重新读取，不能把旧权限下组装的数据与新权限混在一份快照里。协议与旧历史规则见 [STREAMING](STREAMING.md#文件差异的设备投影)。
+
+这不是对会话文字的信息流隔离：用户/助手正文、普通命令输出与 MCP 结果不凭文本猜测删除；可信本机 Agent 仍能在这些渠道转述内容，原有会话文件引用规则也不改变。
+
 ### 不防御的情况
 
 Latch 不隔离执行的代码：插件、ACP Agent 与第三方 Harness 是可信本机代码，没有操作系统沙箱，它们自己的网络访问不受出站策略约束。同一系统用户的进程可以连接 Host、访问数据目录并改写审计记录，哈希链只能让篡改被发现。邀请链接被他人看到时，对方可以在有效期内抢先使用。回环浏览器的凭据会随请求发往同一主机名上其他端口的服务。
@@ -502,7 +508,7 @@ Host 约每 40ms 合并一次变化，把选中会话的 `task-state` 推送给�
 | 操作系统沙箱、Agent 出站代理、项目配置中和、托管安装 | 未实现；因此每个 ACP 与插件 Harness 会话都是 L3 |
 | Standard 的 L0 / L2 级别与级别选择 | 未实现；Standard 固定为 L1，L0–L2 只是 `policy.json` 中 `unattended.maxLevel` 的取值：低于 L1 时定时任务不能开启或运行 |
 | `write_file` 基于原内容哈希的并发检查 | 未实现 |
-| 自动批准规则、数据范围（`work` / `all`）在会话文件与终端以外的访问限制 | 未实现；`unattended.allowAutoApproveRules` 与 `unattended.approvalTtlHours.acp` 只保存。无人值守运行（定时任务）检查 `unattended.maxLevel` 与 `pauseAfterIdleDays`，在每个审批处停下，超过 `approvalTtlHours.standard` 后取消，不自动批准 |
+| 自动批准规则 | 未实现；`unattended.allowAutoApproveRules` 与 `unattended.approvalTtlHours.acp` 只保存。无人值守运行（定时任务）检查 `unattended.maxLevel` 与 `pauseAfterIdleDays`，在每个审批处停下，超过 `approvalTtlHours.standard` 后取消，不自动批准 |
 | 在其他设备上查看会话文件（预览列、句柄内容、`work` 设备的引用集合、远程读取的上限与审计） | 未实现；目前只有桌面端经 `host.sock` 在访达中显示、快速查看与用默认应用打开，其他设备上路径标记的菜单只有「复制路径」，并写明在运行 Latch 的 Mac 上用桌面端打开 |
 | Windows 上用默认应用打开 | 未实现；还没有核对 Windows 的文件关联，只提供在资源管理器中显示 |
 | 阻止 `policy.json` / `settings.json` 的带外修改 | 只检测并审计，不阻止 |

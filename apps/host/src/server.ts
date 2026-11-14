@@ -244,6 +244,7 @@ import { HostLifecycle, hostStateInputSchema } from './lifecycle.ts'
 import { HostComputer, KEEP_AWAKE_HOLD_MS, desktopReportSchema } from './computer.ts'
 import { TrafficMeter, type FrameKind, type StreamMeter } from './traffic.ts'
 import { TaskDeltaCache, TaskDeltaStream } from './task-delta.ts'
+import { allApproval, allTaskContent, workApproval, workTaskContent } from './task-content.ts'
 import { TASK_DELTA_HEADER, TASK_DELTA_PROTOCOL } from '@latch/protocol'
 import { DiagnosticLog, diagnosticsBundle, type DiagnosticCategory } from './diagnostics.ts'
 import {
@@ -2070,8 +2071,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     // One answer per cancel request at a time, so a copy sent while the first is settling gets the same receipt.
     const cancelFlights = new Map<string, Promise<CancelReceipt>>()
     const traffic = new TrafficMeter(now)
-    // A task-state frame goes to every stream that selected its session; its text is the same for all of them.
+    // Frames are shared only within one content projection; restricted events have a separate identity.
     const frames = new WeakMap<ChangeEvent | TaskStateEvent, string>()
+    const workEvents = new WeakMap<TaskStateEvent, TaskStateEvent>()
     // List hints about a private session: only a device that may read it hears them.
     const privateHints = new WeakSet<ChangeEvent | TaskStateEvent>()
     let pendingGlobal = false
@@ -6099,7 +6101,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           res.once('close', () => stream.nativeOpening?.padding?.activity(res, false))
         }
       }
-      const nativeCursor = stream.nativeOpening ? nativeReplay.cursorOf(event) : undefined
+      const canonical = event
+      const nativeCursor = stream.nativeOpening ? nativeReplay.cursorOf(canonical) : undefined
+      if (narrow && event.type === 'task-state') {
+        const projected = workEvents.get(event)
+        if (!projected) {
+          stream.delta?.clear()
+          return
+        }
+        event = projected
+      }
       if (stream.delta && event.type === 'task-state' && (!stream.nativeOpening || nativeCursor !== undefined)) {
         const projected = stream.delta.encode(event)
         // The stamp belongs only to this reader; neither the shared WeakMap nor native replay may retain it.
@@ -6113,7 +6124,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // An unretained checkpoint cannot become an acknowledged per-reader baseline.
         if (nativeCursor === undefined) stream.delta?.clear()
         frame =
-          nativeReplay.frame(event)
+          (event === canonical
+            ? nativeReplay.frame(canonical)
+            : nativeCursor !== undefined
+              ? `id: ${nativeCursor}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+              : undefined)
           ?? `id: ${nativeReplay.cursor()}\nevent: ${event.type}\ndata: ${JSON.stringify({ ...event, resumeRequired: true })}\n\n`
       }
       if (frame === undefined) {
@@ -6233,14 +6248,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const summaryChanged = summaries.get(sessionId) !== signature
           summaries.set(sessionId, signature)
           const sentAt = hostTime()
+          const source = { ...detail, sync: { instanceId, revision: globalRevision, hostTime: sentAt } }
           const event = nativeReplay.publish({
             type: 'task-state',
             instanceId,
             revision: globalRevision,
             sessionId,
-            detail: { ...detail, sync: { instanceId, revision: globalRevision, hostTime: sentAt } },
+            detail: allTaskContent(source),
             hostTime: sentAt,
           })
+          // Keep the restricted view with the retained canonical event. Neither wire includes Host-only provenance;
+          // the immutable copy also prevents later driver mutation from changing a replay's authorized content.
+          if (event.type === 'task-state') {
+            const restricted = workTaskContent(source)
+            workEvents.set(
+              event,
+              restricted === source ? event : { ...event, detail: JSON.parse(JSON.stringify(restricted)) as TaskDetail },
+            )
+          }
           const invalidated = summaryChanged
             ? nativeReplay.publish({ type: 'tasks-invalidated', instanceId, revision: globalRevision, sessionId })
             : undefined
@@ -7420,7 +7445,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const detail = await decoratedDetail(id)
         recheck(caller, 'view')
         privateAccess(caller, detail.summary)
-        traffic.response('detail', json(res, { ...detail, sync: { instanceId, revision: detailRevision } }), id)
+        const shown = fullData(caller) ? allTaskContent(detail) : workTaskContent(detail)
+        traffic.response('detail', json(res, { ...shown, sync: { instanceId, revision: detailRevision } }), id)
         return true
       }
       if (method === 'PATCH' && !action) {
@@ -8602,6 +8628,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (noteCounts.length) snapshot.reviewNotes = noteCounts
         const appSummaries = await appRoutes.summaries()
         if (appSummaries.length) snapshot.apps = appSummaries
+        recheck(caller, 'view')
+        if (snapshot.device.dataScope !== currentDevice(caller).dataScope)
+          throw new AppError(403, 'device-scope-changed', '设备的数据范围已变化，请重新读取。')
+        snapshot.tasks = snapshot.tasks.filter(task => privateVisible(caller, task))
+        snapshot.approvals = snapshot.approvals.filter(approval => snapshot.tasks.some(task => task.id === approval.sessionId))
+        snapshot.approvals = snapshot.approvals.map(fullData(caller) ? allApproval : workApproval)
         traffic.response('snapshot', json(res, snapshot))
         return
       }

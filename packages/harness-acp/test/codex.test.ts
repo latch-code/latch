@@ -523,6 +523,20 @@ describe('Codex over its app-server', () => {
     const declined = await settled(bridge, id)
     expect(said(declined, 'assistant')).toContain('not edited')
     expect(declined.messages.filter(message => message.role === 'tool').at(-1)).toMatchObject({ state: 'failed' })
+    await bridge.prompt(id, 'edit the notes', rid())
+    const writing = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+    await bridge.decide(writing.approvals[0]!.id, 'allow')
+    const edited = await settled(bridge, id)
+    expect(edited.messages.filter(message => message.tool?.kind === 'edit').at(-1)?.tool).toMatchObject({
+      output: expect.stringContaining('+hello'),
+      outputWithoutFiles: '',
+    })
+    await bridge.close()
+    const restored = await t.open()
+    expect((await restored.detail(id)).messages.filter(message => message.tool?.kind === 'edit').at(-1)?.tool).toMatchObject({
+      output: expect.stringContaining('+hello'),
+      outputWithoutFiles: '',
+    })
   })
 
   it('sends each mode’s policy with every turn and thread, the project’s other folders writable only in a writing mode', async () => {

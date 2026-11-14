@@ -79,6 +79,8 @@ export interface ToolImage {
  */
 export interface ToolResult {
   text: string
+  /** A result's public status/metadata without file contents, for devices whose data scope is work. Not model input. */
+  textWithoutFiles?: string
   images?: ToolImage[]
 }
 export interface ToolDefinition {

@@ -26,7 +26,7 @@ import {
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import type { TestDevice } from '@latch/testkit'
-import type { TaskDetail } from '@latch/protocol'
+import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import type { Bridge, HarnessPlugin } from '@latch/sdk'
 import type { PresenceBackend } from '../src/presence.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -140,6 +140,94 @@ async function verifyDevice(
   return { ...receipt, appOpenId: challenge.appOpenId }
 }
 describe('native Host entry with existing authorization', () => {
+  it.each([false, true])(
+    'keeps a legal large tool result readable to all-data native clients with a private summary: %s',
+    async marked => {
+      const text = 'x'.repeat(360_000)
+      const plugin: HarnessPlugin = {
+        id: 'large-summary',
+        name: 'Large summary',
+        version: '1',
+        description: '',
+        activate(context) {
+          context.registerTool({
+            name: 'large_status',
+            kind: 'read',
+            description: 'Fixture status',
+            parameters: {},
+            requiresApproval: false,
+            execute: async () => ({ text, ...(marked ? { textWithoutFiles: text } : {}) }),
+          })
+          context.registerProvider({
+            id: 'large-summary',
+            name: 'Large summary',
+            model: 'fixture',
+            async *stream({ messages }) {
+              if (messages.at(-1)?.role === 'tool') {
+                yield { type: 'text', text: 'done' }
+                yield { type: 'finish', reason: 'stop' }
+              } else {
+                yield { type: 'tool-call', call: { id: randomUUID(), name: 'large_status', arguments: {} } }
+                yield { type: 'finish', reason: 'tool-calls' }
+              }
+            },
+          })
+        },
+      }
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, demo: false, providerId: plugin.id, plugins: [plugin] })
+      cleanup.push(() => host.close())
+      const owner = await desktopOf(host),
+        registered = await pair(host, owner)
+      await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+      expect(body<AppSnapshot>(await registered.client.request('GET', '/link/api/snapshot')).device.dataScope).toBe('all')
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { mode: 'agent', prompt: 'Get the fixture status', requestId: randomUUID() },
+      })
+      await expect.poll(async () => (await host.host.bridge.detail(sessionId)).approvals.length).toBe(1)
+      const pending = await host.host.bridge.detail(sessionId)
+      const session = Reflect.get(registered.client, 'session') as ClientHttp2Session
+      const response = session.request({
+        ':method': 'GET',
+        ':path': `/link/api/events?sessionId=${sessionId}`,
+        'x-latch-state': 'delta-v1',
+      })
+      cleanup.push(() => response.close())
+      const frames: Array<{ type: string; detail?: TaskDetail }> = []
+      let wire = ''
+      const decoder = new TextDecoder()
+      response.on('data', (data: Buffer) => {
+        wire += decoder.decode(data, { stream: true })
+        let end: number
+        while ((end = wire.indexOf('\n\n')) >= 0) {
+          const frame = wire.slice(0, end)
+          wire = wire.slice(end + 2)
+          const data = frame
+            .split('\n')
+            .find(line => line.startsWith('data: '))
+            ?.slice(6)
+          if (data) frames.push(JSON.parse(data) as { type: string; detail?: TaskDetail })
+        }
+      })
+      const opened = new Promise<number>(resolve => response.once('response', headers => resolve(Number(headers[':status']))))
+      response.end()
+      expect(await opened).toBe(200)
+      await owner.json(`approvals/${pending.approvals[0]!.id}`, { method: 'POST', body: { decision: 'allow', requestId: randomUUID() } })
+      await expect.poll(async () => (await host.host.bridge.summary(sessionId)).status).toBe('idle')
+      const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+      const stored = (await host.host.bridge.detail(sessionId)).messages.find(message => message.role === 'tool')!
+      expect(stored.tool!.outputWithoutFiles).toBe(marked ? text : undefined)
+      const row = detail.messages.find(message => message.role === 'tool')!
+      expect(row.text.length).toBe(text.length)
+      expect(row.tool!.output!.length).toBe(text.length)
+      expect.soft(row.tool!.outputWithoutFiles !== undefined).toBe(false)
+      expect.soft(Buffer.byteLength(JSON.stringify(detail))).toBeLessThan(1_048_000)
+      await expect.poll(() => frames.some(frame => frame.type === 'task-state' && frame.detail?.summary.status === 'idle')).toBe(true)
+      expect(frames.some(frame => frame.detail?.messages.some(message => message.tool?.outputWithoutFiles !== undefined))).toBe(false)
+    },
+    20_000,
+  )
+
   it.each([undefined, 'delta-v0', 'delta-v1'])('negotiates native text frames without changing canonical replay: %s', async protocol => {
     let currentTime = Date.now()
     const steps = Array.from({ length: 5 }, () => {
@@ -196,6 +284,35 @@ describe('native Host entry with existing authorization', () => {
       }),
       201,
     )
+    const reported: TaskDetail[] = []
+    const fullDetail = host.host.bridge.detail.bind(host.host.bridge)
+    vi.spyOn(host.host.bridge, 'detail').mockImplementation(async id => {
+      const value = await fullDetail(id)
+      if (id !== started.sessionId) return value
+      // A driver-reported historical edit: authentication, replay and per-reader encoding remain real.
+      const detail: TaskDetail = {
+        ...value,
+        messages: [
+          ...value.messages,
+          {
+            id: 'reported-edit',
+            role: 'tool' as const,
+            state: 'completed' as const,
+            text: 'NATIVE_FILE_BODY_6281',
+            tool: {
+              kind: 'edit' as const,
+              locations: ['notes.txt'],
+              output: 'NATIVE_FILE_BODY_6281',
+              outputWithoutFiles: 'NATIVE_SAFE_STATUS',
+              decision: { outcome: 'allowed', at: '2026-11-14T00:00:00.000Z', via: 'other-device' },
+              diffs: [{ path: 'notes.txt', newText: 'NATIVE_FILE_BODY_6281' }],
+            },
+          },
+        ],
+      }
+      reported.push(detail)
+      return detail
+    })
     // Only this wire-level consumer opts in; the existing public Node and Swift clients still request complete frames.
     const session = Reflect.get(registered.client, 'session') as ClientHttp2Session
     const open = async (header: string | undefined, resume = '') => {
@@ -233,6 +350,11 @@ describe('native Host entry with existing authorization', () => {
     const first = selected.body()[0]!
     expect(first.id).toBe(old.body()[0]!.id)
     expect(first.value).toMatchObject({ type: 'task-state', detail: { liveText: '正文' } })
+    expect(JSON.stringify(first.value)).toContain('NATIVE_FILE_BODY_6281')
+    expect(JSON.stringify(first.value)).not.toContain('outputWithoutFiles')
+    expect(JSON.stringify(first.value)).not.toContain('NATIVE_SAFE_STATUS')
+    // The retained work view must be a value, even if the trusted driver later mutates a returned nested object.
+    for (const detail of reported) detail.messages.at(-1)!.tool!.decision!.at = 'LATE_DRIVER_MUTATION'
     steps[1]!.release()
     await expect.poll(() => selected.body().length).toBe(2)
     await expect.poll(() => old.body().length).toBe(2)
@@ -272,6 +394,17 @@ describe('native Host entry with existing authorization', () => {
         stream: { stateSeq: 4 },
         detail: { liveText: '正文追加🙂第三段After scope change' },
       })
+      expect(JSON.stringify(selected.body()[3]!.value)).not.toContain('NATIVE_FILE_BODY_6281')
+      expect(JSON.stringify(selected.body()[3]!.value)).toContain('notes.txt')
+      const limitedReplay = await open(protocol, `&resumeEpoch=${epoch}&resumeAfter=${sequence}`)
+      await expect.poll(() => limitedReplay.body().length).toBe(3)
+      expect(limitedReplay.body()[0]!.id).toBe(selected.body()[1]!.id)
+      expect(limitedReplay.body()[0]!.value).toMatchObject({ type: 'task-state', stream: { stateSeq: 1 } })
+      expect(JSON.stringify(limitedReplay.body())).not.toContain('NATIVE_FILE_BODY_6281')
+      expect(JSON.stringify(limitedReplay.body())).toContain('NATIVE_SAFE_STATUS')
+      expect(JSON.stringify(limitedReplay.body())).not.toContain('LATE_DRIVER_MUTATION')
+      expect(JSON.stringify(limitedReplay.body())).toContain('2026-11-14T00:00:00.000Z')
+      expect(JSON.stringify(limitedReplay.body())).not.toContain('outputWithoutFiles')
       const closed = new Promise<void>(resolve => selected.response.once('close', resolve))
       currentTime += 600_001
       steps[4]!.release()

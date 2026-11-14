@@ -322,7 +322,8 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
           const input = writeInput.parse(args)
           const folder = targetFolder(context, input.folder)
           await writeRegular(folder.folder.path, input.path, input.content, guard, context.signal, hooks)
-          return { text: `${describe('已写入', input.path, folder)}（${Buffer.byteLength(input.content)} 字节）` }
+          const text = `${describe('已写入', input.path, folder)}（${Buffer.byteLength(input.content)} 字节）`
+          return { text, textWithoutFiles: text }
         },
       })
     },
