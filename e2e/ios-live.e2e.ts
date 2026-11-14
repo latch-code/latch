@@ -15,6 +15,7 @@ import { clipboardGui, validateGuiPairing } from './helpers/iosClipboardValidati
 import { readDeviceClipboard, writeDeviceClipboard } from './helpers/iosDeviceClipboard.ts'
 import { pairingStagePage } from './helpers/iosPairingStage.ts'
 import { iosSlashEnvironment, prepareIosSlash } from './helpers/iosSlash.ts'
+import { iosLiveMetricRecorder, seedIosStream } from './helpers/iosLiveMetrics.ts'
 
 const run = promisify(execFile)
 const PREFIX = 'latch-live-'
@@ -23,6 +24,8 @@ const TYPES = ['iPhone-17-Pro', 'iPhone-16-Pro', 'iPhone-17', 'iPhone-16']
 const SCHEDULE_MODEL = { providerId: 'ios-live-schedule', model: 'fixture' }
 /** Optional normal-API templates and actual ACP command reports for the native Slash acceptance pass. */
 const SLASH = process.env.LATCH_IOS_SLASH === '1'
+/** Optional read-only Host counters and actual ACP history for the App body-stream acceptance pass. */
+const METRICS = process.env.LATCH_IOS_LIVE_METRICS === '1'
 /** The fake Agent really reports these ACP options; no fixture fills permission or model DTOs by hand. */
 const LIVE_AGENT_ENV = { FAKE_ACP_CONFIG: 'legacy', ...(SLASH ? iosSlashEnvironment : {}) }
 /** Scheduled work uses Standard under the existing unattended ceiling, with only a local scripted reply. */
@@ -221,6 +224,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
     let owned = false
     let host: TestHost | undefined
     let other: TestHost | undefined
+    let metrics: ReturnType<typeof iosLiveMetricRecorder> | undefined
     try {
       derived = await mkdtemp(join(tmpdir(), 'latch-ios-live-'))
       await run(
@@ -316,6 +320,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         return enrolled
       }
       const owner = await prepare(host, 'A')
+      if (METRICS) await seedIosStream(host, owner, agents.get(host)!)
       if (ATTACH) {
         const images = await owner.confirmed('agents', {
           method: 'POST',
@@ -346,6 +351,10 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
             })
           : undefined
       const otherOwner = other ? await prepare(other, 'B') : undefined
+      if (METRICS) {
+        metrics = iosLiveMetricRecorder(output, [{ host, owner }, ...(other && otherOwner ? [{ host: other, owner: otherOwner }] : [])])
+        await metrics(true)
+      }
 
       const launched = await simctl('launch', '--terminate-running-process', udid, BUNDLE, '-LatchLive', '1')
       appPid = /: ([0-9]+)\s*$/u.exec(launched.stdout)?.[1]
@@ -432,11 +441,15 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
           ...(GUI_CLIPBOARD ? [`clipboard validation stage: ${HOLD}.clipboard-info`] : []),
           ...(status ? [`read-only public stage: ${status.url}`] : []),
           ...(other ? [`fresh code for the second computer: touch ${HOLD}.pair2`] : []),
+          ...(METRICS ? [`read-only traffic sample: touch ${HOLD}.metrics`] : []),
         ]
         await writeFile(`${HOLD}.info`, [...info, ...(refused ? [refused] : [])].join('\n') + '\n')
         const deadline = Date.now() + HOLD_MS
         while (!existsSync(HOLD) && Date.now() < deadline) {
           await watch()
+          const forcedMetrics = METRICS && existsSync(`${HOLD}.metrics`)
+          if (forcedMetrics) await rm(`${HOLD}.metrics`, { force: true })
+          await metrics?.(forcedMetrics)
           if (existsSync(`${HOLD}.pair`) && Date.now() < deadline) {
             await rm(`${HOLD}.pair`, { force: true })
             if (!GUI_CLIPBOARD) await toClipboard(udid, '')
@@ -512,6 +525,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         await rm(`${HOLD}.received.json`, { force: true })
         await rm(`${HOLD}.run`, { force: true })
         await rm(`${HOLD}.fail`, { force: true })
+        if (METRICS) await rm(`${HOLD}.metrics`, { force: true })
         if (GUI_CLIPBOARD) await rm(`${HOLD}.clipboard-info`, { force: true })
       } else if (PAIR_MS) {
         const deadline = Date.now() + PAIR_MS
@@ -526,6 +540,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         await simctl('io', udid, 'screenshot', join(output, 'paired.png'))
       }
     } finally {
+      await metrics?.(true).catch(() => {})
       await status?.close().catch(() => {})
       await savePhases().catch(() => {})
       // The clipboard is emptied and the App stopped on any device; only a simulator this run made is shut down and deleted.

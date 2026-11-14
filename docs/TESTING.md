@@ -663,6 +663,8 @@ pnpm latch presence test --data-dir <临时目录>
 
 Live 的 Fake Agent 与 Fake Images 通过假 ACP 自己的 legacy 配置响应提供模型和 mode；预检读取真实 Host 投影，并在同一个会话发送第二条消息。不手填能力 DTO，不把显示出的模式名称当作隔离或扩大授权。两台临时电脑的初始 Git 提交各含同名 `computer.txt`，只有公开的 A/B 标记，供从正常文件入口核对当前电脑。普通 `ios-live` 预检不操作模拟器与剪贴板；真实双 Host 的往返仍需在配对提示有效期内验证，超过该窗口的同机 Bonjour 地址会被正常 peer 检查拒绝，不能代替物理设备跨网络验收。
 
+`LATCH_IOS_LIVE_METRICS=1` 为真实 App 正文流验收准备一条 Fake Agent 的十轮历史（每轮两万字节），仍经正常 Host API 与假 ACP 生成。App 中打开“原生流式验收”，发送已有假 Agent 命令 `count 6000` 可观察约一分钟的连续回复。测试每五秒经已有管理员 `traffic` API 记录完整/增量帧字节、正文 GET 次数与连接计数；消息身份与字节长度只经自有 Host 的只读 bridge 读取，不额外发正文 GET。最多2048个采样写到本轮 `traffic.json`，不含正文、地址或凭据；`<hold>.metrics` 可追加一次只读采样。该观测不会启动 Agent 写操作、替 App 协商能力或修改权限，`ios-live-metrics.e2e.ts` 验证采样不增加正文请求并保留真实请求计数。
+
 显式 `LATCH_IOS_SLASH=1` 将本轮 Fake Agent/Images 改用实际 ACP options 响应；正常发送 `plan` 后，假 Agent 自己报告 200 条命令与 `command-197` 的参数提示。两台临时 Host 都经正常模板 API 建立“代码审查”和“重庆行程”。不开这个选项仍用 legacy。`ios-slash-fixture.e2e.ts` 与该开关下的 Live 预检核对真实命令/模板读回，不操作 GUI，也不替代实际键盘、输入法和点击不发送的验收。
 
 客户端的 `workspace-recovery.e2e.ts` 真实删除原会话目录，验证三宽的项目选择、草稿、焦点与显式提交；`webkit.e2e.ts` 用实际 WebKit 检查三宽授权文件读取和引用发送。`desktop-models.e2e.ts` 在隔离 Electron 中更改假 ACP 的真实模型与推理选项，模拟执行后丢回复，确认只读恢复、没有重复写入和额外认证。配对回归另检查默认收起公开指纹后，展开仍与系统确认的原身份一致。以上夹具不代替真机 Safari、真实 Agent、Touch ID 或公网验收。
