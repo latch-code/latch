@@ -1,6 +1,6 @@
 # Latch iOS
 
-`Sources/LatchNativeCore` 支持 iOS/macOS；正文增量默认关闭，与 `PhoneHelperCreate` 均尚未接入 App。界面在 `App` / `Latch.xcodeproj`（SwiftUI、UIKit/TextKit 2），Vitest 的 `Testkit` 不进产品。
+`Sources/LatchNativeCore` 支持 iOS/macOS；正文增量默认关闭，尚未接入 App。界面在 `App` / `Latch.xcodeproj`（SwiftUI、UIKit/TextKit 2），Vitest 的 `Testkit` 不进产品。
 
 - Host 是设备、权限、会话与执行结果的唯一权威；地址、Bonjour 与中继不是身份。
 - 先验证敲门的服务端 HMAC，再发设备证书；TLS 1.3、固定 SNI/ALPN、禁恢复，根证明通过前不交付业务数据。内层身份不从网络学习或替换。
@@ -24,5 +24,5 @@
 
 - `LatchScreens` 只编模拟器：截图场景与 `-LatchLive 1` 的软件密钥（`ios-live.e2e.ts`）在 `Screens/` 与 `LATCH_SCREENS` 下，不进 `Latch`（`ios-app.e2e.ts`、`check:boundaries` 核对）。
 - 预览取消关闭自有Task，晚回不展示。
-- 助手规则见 docs/CUSTOM-AGENTS.md；待确认请求不改 body/requestId。
+- 助手见 docs/CUSTOM-AGENTS.md；创建只认成功回执，畸形成功保原请求；离页重试不导航。
 - 目录只为固定节点/公钥恢复公网地址；提示不授予正文或替换身份。

@@ -168,6 +168,46 @@ public enum PhoneHelperCreate {
         return try NativePendingWrite(method: .post, path: base, fields: fields, requestId: requestId)
     }
     public static func isCreation(_ write: NativePendingWrite) -> Bool { write.method == "POST" && write.path == base }
+    public static func defaults(_ agent: NativeJSON) -> PhoneHelperDraft {
+        var draft = PhoneHelperDraft(harnessId: agent["harnessId"].string ?? "")
+        draft.model = agent["model"] == .null ? nil : agent["model"]
+        draft.engineOptions = agent["engineOptions"].object.compactMapValues(\.string)
+        draft.defaultProjectId = agent["defaultProjectId"].string
+        return draft
+    }
+    /** Model-dependent settings belong to the old model, including when the person returns to the default. */
+    public static func selectNativeModel(_ catalog: NativeJSON, draft: PhoneHelperDraft, value: String?) throws -> PhoneHelperDraft {
+        guard let selected = harness(catalog, id: draft.harnessId), draft.model == nil,
+              let option = selected["catalogue"]["options"].array.first(where: { $0["category"].string == "model" }),
+              let key = option["id"].string else { throw NativeFailure.invalidRecord }
+        if let value {
+            guard option["options"].array.contains(where: { same($0["value"].string, value) })
+                || selected["customModels"].array.contains(where: { same($0.string, value) }) else { throw NativeFailure.invalidRecord }
+        }
+        let all = selected["catalogue"]["options"].array + selected["catalogue"]["perModel"].array.flatMap { $0["options"].array }
+        let dependent = Set(all.filter { ["thought_level", "model_config"].contains($0["category"].string ?? "") }.compactMap { $0["id"].string })
+        var next = draft
+        next.engineOptions = next.engineOptions.filter { !dependent.contains($0.key) }
+        next.engineOptions[key] = value
+        return next
+    }
+    /** A narrow defaults patch cannot change the helper's identity, instructions, tools or fixed Harness. */
+    public static func changeDefaults(_ catalog: NativeJSON, agent: NativeJSON, draft: PhoneHelperDraft,
+        requestId: String = UUID().uuidString) throws -> NativePendingWrite {
+        guard let id = agent["id"].string, id != PhoneAgents.generalId, PhoneAgents.validId(id),
+              let revision = agent["revision"].integer, revision > 0, same(agent["harnessId"].string, draft.harnessId),
+              let selected = harness(catalog, id: draft.harnessId) else { throw NativeFailure.invalidRecord }
+        if let model = draft.model { try validateModel(model, catalog: catalog, harnessId: draft.harnessId) }
+        try validateOptions(draft.engineOptions, harness: selected, service: draft.model != nil)
+        let project = draft.defaultProjectId == "default" ? nil : draft.defaultProjectId
+        if let project {
+            guard projects(catalog, harnessId: draft.harnessId).contains(where: { $0.id == project && $0.unavailable == nil }) else { throw NativeFailure.invalidRecord }
+        }
+        return try NativePendingWrite(method: .patch, path: base + "/" + id,
+            fields: ["baseRevision": .number(Double(revision)), "model": draft.model ?? .null,
+                "engineOptions": draft.engineOptions.isEmpty ? .null : .object(draft.engineOptions.mapValues(NativeJSON.string)),
+                "defaultProjectId": project.map(NativeJSON.string) ?? .null], requestId: requestId)
+    }
     /** A held request is returned unchanged; none of today's catalog or defaults rewrites its bytes. */
     public static func pending(_ writes: [NativePendingWrite]) throws -> NativePendingWrite? {
         let held = writes.filter(isCreation)

@@ -35,6 +35,21 @@ import LatchNativeCore
         catch { cacheNeedsWindow = (error as? NativeFailure) == .expired }
         guard cacheNeedsWindow else { throw NativeFailure.identityMismatch }
         let lease = try await workspace.verify()
+        if input["helperReceipt"] as? Bool == true {
+            let catalog = try await workspace.snapshot()["catalog"]
+            var draft = try PhoneHelperCreate.choose(catalog, harnessId: "standard", agents: [])
+            draft.name = "Receipt fixture helper"
+            let write = try PhoneHelperCreate.create(catalog, draft: draft)
+            var unknown = false
+            do { _ = try await workspace.submit(write) } catch { unknown = (error as? NativeFailure) == .resultUnknown }
+            let held = try await workspace.pendingWrites()
+            let same = held.count == 1 && held[0].requestId == write.requestId && held[0].body == write.body
+            let response = try await workspace.submit(write)
+            let id = try PhoneHelperCreate.createdId(response, for: write)
+            let cleared = try await workspace.pendingWrites().isEmpty
+            await workspace.closeOpening(); await vault.lock()
+            return ["unknown": unknown, "sameRequest": same, "createdId": id, "cleared": cleared]
+        }
         if input["bodyScript"] as? String == "shadow", let id = input["sessionId"] as? String {
             return try await bodyShadowFixture(workspace, vault: vault, id: id)
         }

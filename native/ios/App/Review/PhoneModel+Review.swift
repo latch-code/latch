@@ -92,7 +92,7 @@ extension PhoneModel {
             }
             return
         }
-        if PhoneAgentWrites.handles(request) {
+        if PhoneAgentWrites.handles(request) || PhoneHelperCreate.isCreation(request) {
             switch await writeAgent(request) {
             case let .refused(words): error = words
             case .changed: error = "已在别处修改"

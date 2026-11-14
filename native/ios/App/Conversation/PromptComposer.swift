@@ -11,6 +11,7 @@ struct PromptComposer: View {
     /** Why this phone cannot type here; nil when it can. */
     let gate: String?
     let engine: String
+    var person: Bool = false
     @State private var text = ""
     @State private var focused = false
     @State private var nextModel: PhoneModelChoice?
@@ -81,7 +82,7 @@ struct PromptComposer: View {
                 Text("告诉 Agent 的话最多 \(PhoneConversation.rejectionNoteLimit) 个字").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
             }
             if let gate { gateLine(gate) } else { field }
-            if gate == nil && model.sessionId != nil && (focused || !controls.isEmpty) { chips }
+            if gate == nil && !person && model.sessionId != nil && (focused || !controls.isEmpty) { chips }
         }
         .padding(.bottom, 8).padding(.top, 4)
         .animation(.easeOut(duration: 0.2), value: focused)

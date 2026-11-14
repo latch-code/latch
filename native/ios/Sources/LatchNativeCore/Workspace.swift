@@ -681,6 +681,9 @@ public actor NativeWorkspace {
         guard epoch == current else { throw NativeFailure.resultUnknown }
         if (200..<300).contains(response.status) {
             guard let value = try? NativeJSON.decode(response.body) else { throw NativeFailure.resultUnknown }
+            if PhoneHelperCreate.isCreation(pending), (try? PhoneHelperCreate.createdId(value, for: pending)) == nil {
+                throw NativeFailure.resultUnknown
+            }
             try? await removePending(pending.requestId)
             return value
         }

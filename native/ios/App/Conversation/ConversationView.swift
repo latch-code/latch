@@ -20,6 +20,11 @@ struct ConversationView: View {
     private var summary: NativeJSON { model.currentSummary }
     private var engine: String { model.engineName(summary["harnessId"].string) }
     private var hasContent: Bool { model.detail["summary"]["id"].string == id }
+    private var inputReason: String? {
+        if let reason = PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) { return reason }
+        if frame != nil, hasContent, PhoneHelperSpeech.permission(model.detail, harness: model.engineInfo(summary["harnessId"].string))?.blocked == true { return "权限没确认，暂不能发送" }
+        return nil
+    }
     var body: some View {
         Group {
             if hasContent { transcript }
@@ -101,7 +106,7 @@ struct ConversationView: View {
         let switches = PhoneConversation.switches(turns)
         let status = summary["status"].string ?? model.detail["summary"]["status"].string
         let running = status == "running" || status == "waiting-approval"
-        let canSend = model.connected && PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) == nil
+        let canSend = model.connected && inputReason == nil
         let canFork = model.connected && model.canFork && summary["personal"] == .null
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
@@ -125,7 +130,7 @@ struct ConversationView: View {
                     let latest = index == turns.count - 1
                     TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
                         delivery: latest && running ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: switches[turn.id],
-                        mark: model.engineMark(summary["harnessId"].string), engine: engine, fileScope: PhoneFileScope(model.detail["summary"]),
+                        mark: model.engineMark(summary["harnessId"].string), engine: engine, helper: frame?.entry, fileScope: PhoneFileScope(model.detail["summary"]),
                         endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil,
                         actions: model.detailCached ? .none : PhoneTurnActions.of(turn, latest: latest, running: latest && running, canSend: canSend, canFork: canFork),
                         index: index, open: { openFile($0, $1) }).equatable()
@@ -133,7 +138,7 @@ struct ConversationView: View {
                     if let placed = results[turn.id] { resultStack(placed) }
                     ForEach(proposals[turn.id] ?? []) { proposalRow($0) }
                 }
-                if running { RunStatusLine().id("status") }
+                if running { RunStatusLine(person: frame != nil).id("status") }
                 else if let end = PhoneConversation.runEnd(model.detail["summary"], engine: engine) { RunEndView(end: end) }
                 if model.detailCached { Text("这是之前读到的内容，连上 Mac 后更新").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                 if model.detail["permission"]["drift"] != .null || summary["permissionDrift"].bool {
@@ -199,7 +204,7 @@ struct ConversationView: View {
             } else {
                 // A stop needs no window, so it stays in reach while the content is closed.
                 PromptComposer(draftId: id, placeholder: frame.map { PhoneAgentChat.placeholder($0.entry.name) }, gate: rebuiltInto != nil ? "已按文字重建为新会话 · 这个会话只能查看"
-                    : hasContent || !model.connected ? PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) : PromptComposer.closedWindow, engine: engine)
+                    : hasContent || !model.connected ? inputReason : PromptComposer.closedWindow, engine: engine, person: frame != nil)
             }
         }.frame(maxWidth: 760).frame(maxWidth: .infinity)
     }
@@ -279,12 +284,15 @@ private struct HeaderTitle: View {
 /** What the run is really doing. While the phone cannot hear the Mac nothing here ticks: it says when it was last true. */
 private struct RunStatusLine: View {
     @EnvironmentObject private var model: PhoneModel
+    var person = false
     var body: some View {
         if !model.connected {
             Text(model.lastConfirmed.map { "上次确认 " + PhoneTime.message($0) } ?? "状态未更新").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
         } else {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
-                let status = PhoneConversation.runStatus(model.detail, stopping: model.stoppingCurrent, engine: model.engineName(model.currentSummary["harnessId"].string), hostNow: model.hostNow())
+                let status = person
+                    ? PhoneHelperSpeech.status(model.detail, stopping: model.stoppingCurrent, engine: model.engineName(model.currentSummary["harnessId"].string), hostNow: model.hostNow())
+                    : PhoneConversation.runStatus(model.detail, stopping: model.stoppingCurrent, engine: model.engineName(model.currentSummary["harnessId"].string), hostNow: model.hostNow())
                 if status.tone != .quiet {
                     VStack(alignment: .leading, spacing: 8) {
                         (Text(status.text) + Text(status.clock.map { " · " + $0 } ?? "").monospacedDigit())

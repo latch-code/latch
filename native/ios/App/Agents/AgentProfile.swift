@@ -88,6 +88,26 @@ struct AgentProfileSheet: View {
                 section("电脑") { ComputerSection(id: id, agent: general ? .null : summary) }.id("computer")
                 if !general && summary != .null { section("通知") { NotificationSection(agent: summary) } }
                 section("工作位置") { Text(entry.place ?? "不带项目").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }
+                if model.canRun, PhoneAgentChat.owner(model.currentSummary) == id,
+                   model.detail["summary"]["id"].string == model.sessionId {
+                    let controls = PhoneSessionConfig.controls(model.detail, harness: model.engineInfo(model.currentSummary["harnessId"].string))
+                    if !controls.isEmpty {
+                        section("当前话题") {
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 12) { ConfigChips(controls: controls, chip: { AnyView($0.font(PhoneTheme.caption)) }) }
+                                VStack(alignment: .leading, spacing: 12) { ConfigChips(controls: controls, chip: { AnyView($0.font(PhoneTheme.caption)) }) }
+                            }
+                        }
+                    }
+                }
+                if !general, model.canRun {
+                    detailed { value in
+                        NavigationLink { HelperDefaultsEditor(agent: value["agent"], saved: reload) } label: {
+                            HStack { Text("做事方式"); Spacer(); Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)) }
+                                .font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
+                }
                 section("Harness · 模型") {
                     HStack(spacing: 6) {
                         if let harness = entry.harnessId { EngineTile(mark: model.engineMark(harness), size: 14) }

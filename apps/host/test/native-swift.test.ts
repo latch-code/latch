@@ -60,6 +60,7 @@ const nativeSeen = vi.hoisted(() => [] as Array<{ deviceId: string; method: stri
 /** `METHOD path` of requests the native listener answers 503 once without passing on: a write the Host never saw. */
 const nativeDrop = vi.hoisted(() => new Set<string>())
 const nativeReadFaults = vi.hoisted(() => new Map<string, Array<{ status: number; code: string }>>())
+const nativeMalformedSuccess = vi.hoisted(() => new Set<string>())
 /** Replaces successful bodies only after the real Host authorizes the route, for native protocol-ordering fixtures. */
 const nativeBodyScripts = vi.hoisted(
   () =>
@@ -89,6 +90,13 @@ vi.mock('../src/native.ts', async importOriginal => {
         async handler(req, res, opening) {
           nativeSeen.push({ deviceId: opening.deviceId, method: req.method ?? '', path: req.url ?? '' })
           const key = `${req.method ?? ''} ${req.url ?? ''}`
+          if (nativeMalformedSuccess.has(key)) {
+            const end = res.end.bind(res)
+            res.end = ((...args: Parameters<typeof res.end>) => {
+              if (res.statusCode >= 200 && res.statusCode < 300 && nativeMalformedSuccess.delete(key)) return end('{"id":"malformed"}')
+              return end(...args)
+            }) as typeof res.end
+          }
           const url = new URL(req.url ?? '/', 'https://fixture.invalid')
           const selected = url.pathname === '/link/api/events' ? url.searchParams.get('sessionId') : url.pathname.split('/').at(-1)
           const script = selected ? nativeBodyScripts.get(selected) : undefined
@@ -278,6 +286,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
                 currentValue: 'medium',
                 options: [{ value: 'medium', name: 'Medium' }],
               },
+              {
+                id: 'other-format',
+                name: 'Format',
+                category: 'model_config',
+                currentValue: 'plain',
+                options: [{ value: 'plain', name: 'Plain' }],
+              },
             ],
           },
         ],
@@ -353,13 +368,34 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { harnessId: 'standard', engineOptions: { '~mode': 'danger-full-access' } },
     ]
     const created = { id: `agt_${randomUUID()}`, revision: 1, harnessId: 'standard', name: 'A different display name' }
+    const nativeDraft = {
+      ...created,
+      harnessId: 'codex',
+      engineOptions: { model: 'gpt-other', reasoning: 'medium', 'other-format': 'plain', '~mode': 'danger-full-access' },
+    }
     const result = await invoke({
       operation: 'phoneHelperCreate',
       catalog,
       cases,
       agents: [{ avatar: { hue: 'ink' } }],
       responses: [created, { ...created, id: 'general' }, { ...created, revision: 0 }, { ...created, harnessId: 'foreign' }],
+      changes: [
+        { agent: nativeDraft, engineOptions: { reasoning: 'medium', 'other-format': 'plain', '~mode': 'danger-full-access' } },
+        { agent: nativeDraft, selectNativeModel: null },
+        { agent: nativeDraft, selectNativeModel: 'gpt-fixture' },
+        { agent: nativeDraft, selectNativeModel: 'unknown' },
+      ],
     })
+    expect(result.changes).toMatchObject([
+      { accepted: false },
+      { accepted: true, body: { engineOptions: { '~mode': 'danger-full-access' } } },
+      { accepted: true, body: { engineOptions: { model: 'gpt-fixture', '~mode': 'danger-full-access' } } },
+      { accepted: false },
+    ])
+    for (const change of (result.changes as Array<{ body?: { engineOptions: unknown } }>).slice(1, 3)) {
+      expect(change.body?.engineOptions).not.toHaveProperty('reasoning')
+      expect(change.body?.engineOptions).not.toHaveProperty('other-format')
+    }
     expect((result.ready as Array<{ id: string }>).map(item => item.id)).toEqual(['standard', 'codex', 'pi', 'mine'])
     expect(result.waiting).toMatchObject([{ id: 'missing', reason: 'Fixture command unavailable' }])
     expect(result.ready).toMatchObject([
@@ -474,6 +510,64 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(exact.cases).toMatchObject([{ accepted: true, body: { model: { model: decomposed } } }])
   })
 
+  it('names native helper activity only from reported work and keeps unread permissions visible', async () => {
+    const states = [
+      { activity: { phase: 'starting' } },
+      { activity: { phase: 'model' }, liveReasoning: 'reasoning' },
+      { activity: { phase: 'model' }, liveText: 'answer' },
+      { activity: { phase: 'cancelling' } },
+      { questions: [{ id: 'q' }] },
+      ...['read', 'search', 'fetch', 'edit', 'execute'].map(kind => ({
+        activity: { phase: 'tool' },
+        messages: [
+          { id: 'u', role: 'user', text: 'work' },
+          { id: 't', role: 'tool', state: 'running', tool: { kind } },
+        ],
+      })),
+      { activity: { phase: 'tool', toolName: 'browser_open' } },
+      { activity: { phase: 'tool', toolName: 'mcp__notes__find' } },
+    ]
+    const result = await invoke({
+      operation: 'phoneHelperCreate',
+      speech: states.map(detail => ({ detail })),
+    })
+    expect((result.speech as Array<{ status: string }>).map(item => item.status)).toEqual([
+      '在准备',
+      '在想',
+      '在回复',
+      '在停下',
+      '等你点头',
+      '在看文件',
+      '在找东西',
+      '在查资料',
+      '在写文件',
+      '在跑命令',
+      '在看网页',
+      '在用 notes',
+    ])
+    const detail = { summary: { mode: 'agent' }, permission: { level: 'L3', readback: 'mode', expectedMode: 'ask' } }
+    const permissions = await invoke({
+      operation: 'phoneHelperCreate',
+      speech: [
+        { detail },
+        {
+          detail: {
+            ...detail,
+            config: [{ category: 'mode', currentValue: 'ask' }],
+            permission: { ...detail.permission, modeTiers: { ask: { tier: 'ask' } } },
+          },
+        },
+        { detail: { permission: { level: 'L3', approvals: 'none', readback: 'none' } } },
+        { detail: { permission: { level: 'L3', approvals: 'prompts', readback: 'none' } } },
+      ],
+    })
+    expect(permissions.speech).toMatchObject([
+      { permission: '权限没确认', blocked: true },
+      { permission: null, blocked: false },
+      { permission: '不先问你', blocked: false },
+      { permission: '权限没确认', blocked: false },
+    ])
+  })
   it('sends a Swift-created helper request to the real Host and resolves retries from its receipt without creating a topic', async () => {
     const host = await startTestHost()
     try {
@@ -496,6 +590,34 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       const after = await owner.json<AppSnapshot>('snapshot')
       expect(after.customAgents).toHaveLength(1)
       expect(after.tasks).toHaveLength(0)
+      const defaults = await invoke({
+        ...input,
+        cases: [],
+        changes: [
+          { agent: created, model: { providerId: 'demo', model: 'demo' } },
+          { agent: created, harnessId: 'other' },
+          { agent: { ...created, revision: 0 } },
+          { agent: { ...created, id: 'general' } },
+          { agent: created, project: 'missing' },
+        ],
+      })
+      const changes = defaults.changes as Array<{ accepted: boolean; body: Record<string, unknown> }>
+      expect(changes.map(change => change.accepted)).toEqual([true, false, false, false, false])
+      expect(Object.keys(changes[0]!.body).sort()).toEqual(['baseRevision', 'defaultProjectId', 'engineOptions', 'model', 'requestId'])
+      const updated = await owner.json<CustomAgent>(`custom-agents/${created.id}`, { method: 'PATCH', body: changes[0]!.body })
+      expect(updated).toMatchObject({
+        revision: created.revision + 1,
+        harnessId: 'standard',
+        name: created.name,
+        model: { providerId: 'demo', model: 'demo' },
+      })
+      expect(await owner.json(`custom-agents/${created.id}`, { method: 'PATCH', body: changes[0]!.body })).toEqual(updated)
+      const stale = await owner.request(`custom-agents/${created.id}`, {
+        method: 'PATCH',
+        body: { ...changes[0]!.body, requestId: randomUUID() },
+      })
+      expect(stale.status).toBe(409)
+      expect(await stale.json()).toMatchObject({ error: 'agent-changed' })
     } finally {
       await host.close()
     }
@@ -1984,6 +2106,29 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ).toEqual({ outcomes: ['confirming', 'failed', 'failed'], transportUsable: true, pending: 1, samePending: true, timeout: 'offline' })
     } finally {
       nativeReadFaults.delete(path)
+      await host.close()
+    }
+  }, 30_000)
+  it('retains an unanswered Swift helper creation when a successful HTTP response lacks its identity', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    const key = 'POST /link/api/custom-agents'
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      nativeMalformedSuccess.add(key)
+      const result = await invoke({
+        operation: 'nativeWorkspace',
+        helperReceipt: true,
+        payload: invitation.payload,
+        port: host.host.nativePort,
+      })
+      expect(result).toMatchObject({ unknown: true, sameRequest: true, cleared: true })
+      const snapshot = await owner.json<AppSnapshot>('snapshot')
+      expect(snapshot.customAgents).toHaveLength(1)
+      expect(snapshot.customAgents![0]!.id).toBe(result.createdId)
+      expect(snapshot.tasks).toHaveLength(0)
+    } finally {
+      nativeMalformedSuccess.delete(key)
       await host.close()
     }
   }, 30_000)

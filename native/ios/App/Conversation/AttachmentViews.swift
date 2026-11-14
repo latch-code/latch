@@ -34,20 +34,24 @@ struct AttachButton: View {
     let harness: NativeJSON
     let selection: NativeJSON?
     @Binding var source: AttachSource?
+    var extra: AnyView? = nil
     var body: some View {
         let state = model.attachState(key), caps = state.caps
         Group {
             if model.attachLocked(key) {
                 Button { model.attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachments.lockedWords } label: { plus }
-            } else if let caps, caps.any, model.tray(key).items.count < PhoneAttachments.perMessage {
+            } else if extra != nil || (caps?.any == true && model.tray(key).items.count < PhoneAttachments.perMessage) {
                 Menu {
-                    Section(PhoneAttachments.limitsLine(caps)) {
-                        if caps.images {
-                            Button("照片", systemImage: "photo.on.rectangle") { source = .photos }
-                            if UIImagePickerController.isSourceTypeAvailable(.camera) { Button("拍照", systemImage: "camera") { source = .camera } }
+                    if let caps, caps.any, model.tray(key).items.count < PhoneAttachments.perMessage {
+                        Section(PhoneAttachments.limitsLine(caps)) {
+                            if caps.images {
+                                Button("照片", systemImage: "photo.on.rectangle") { source = .photos }
+                                if UIImagePickerController.isSourceTypeAvailable(.camera) { Button("拍照", systemImage: "camera") { source = .camera } }
+                            }
+                            Button("文件", systemImage: "folder") { source = .files }
                         }
-                        Button("文件", systemImage: "folder") { source = .files }
-                    }
+                    } else { Button("添加附件") { model.explainAttach(key, harness: harness, selection: selection) } }
+                    extra
                 } label: { plus }
             } else {
                 Button {

@@ -424,7 +424,7 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 同一向量文件还包含 full/delta、HTTP/source priority 与旧选择序列，`task-stream-vectors.test.ts` 和现有 Swift Testkit 的 `taskStreamProjection` 操作共同消费。无效字符串以外层合法的 `rawJSON` 保存，不使 Foundation 在读取整份夹具时先失败。`native-swift.test.ts` 另验证原生 1MiB 候选、补字段后的对象宽度、合计追加上限、旧连接票据与版本地板。这里只测试纯值核心，未启用原生协商或 App 消费，也不替代 lease、实际取消、padding 与游标确认的后续互操作验收。
 
-同一 Swift 互操作入口的 `phoneHelperCreate` 检查原生创建候选、显式模型/配置、UTF-16 长度、精确模型身份、跨 Harness 保留文稿、项目文件夹限制和原请求恢复；与 TypeScript `pairRoute` 对照服务路线，且把 Swift 构造的请求真正送到临时 Host 验证创建/幂等。它不启动 CLI、不打开 App，也不能替代两步界面和未知写恢复的实际交互验收。
+同一 Swift 互操作入口的 `phoneHelperCreate` 检查原生创建候选、显式模型/配置、UTF-16 长度、精确模型身份、跨 Harness 保留文稿、项目文件夹限制和原请求恢复；与 TypeScript `pairRoute` 对照服务路线，把 Swift 构造的请求真正送到临时 Host 验证创建、默认项窄补丁、幂等及过期版本拒绝。人物状态和权限未确认也从实际字段投影。`nativeWorkspace` 另在真实 HTTP/2 里替换已授权创建的成功正文，验证缺少身份时保留原请求并从真实回执恢复，只创建一个 Agent。它们不启动 CLI、不打开 App，也不能替代两步界面和未知写恢复的实际交互验收。
 
 Host 的 `native.test.ts` 另检查 scope 收紧后公共会话下一帧重新完整、正文到期后流结束而元数据仍可读取；`native-relay.e2e.ts` 在真实中继、TLS 与 padding 上验证首完整帧及追加帧均登记活动，运行未结束时关闭响应会实际清除活动。方法 spy 只观察原实现，不替换传输或时钟；这仍不等于 App 已接入增量消费。
 

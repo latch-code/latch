@@ -276,7 +276,7 @@ private struct PendingWritesBar: View {
                 Spacer()
                 if PhoneHistory.isImport(pending) {
                     Button("核对并放下") { Task { checked = await model.checkImportFromList(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
-                } else if PhoneAgentWrites.handles(pending) {
+                } else if PhoneAgentWrites.handles(pending) && !PhoneHelperCreate.isCreation(pending) {
                     Button("核对并放下") { Task { checked = await model.checkAgentWrite(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 } else if PhoneDelivery.isStage(pending) || PhoneFileEdit.pendingSave(pending) != nil {
                     Button("核对并放下") { Task { checked = await model.checkAndDrop(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)

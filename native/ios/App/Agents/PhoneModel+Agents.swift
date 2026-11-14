@@ -6,6 +6,11 @@ enum PhoneAgentWrite: Equatable {
     case done, unknown, changed, refused(String)
 }
 
+struct CreatedHelper: Equatable {
+    let requestId: String
+    let id: String
+}
+
 extension PhoneModel {
     func readAgentPart(_ path: String) async -> PhoneAgentRead {
         #if LATCH_SCREENS
@@ -68,13 +73,20 @@ extension PhoneModel {
         do {
             try await ensureVerified()
             guard current == generation else { return .refused("稍后再试。") }
+            let content = privateSnapshot.epoch, lease = await workspace.lease()
+            guard current == generation, privateSnapshot.accepts(content), lease?.valid == true else { return .refused("请重新查看内容。") }
             guard pending.allSatisfy({ $0.requestId == write.requestId }) else { return .refused("上一项提交结果待确认，先确认它。") }
             busy = true; defer { if generation == current { busy = false } }
             if !pending.contains(where: { $0.requestId == write.requestId }) { pending.append(write) }
-            _ = try await workspace.submit(write, explain: true, retryAnswered: PhoneAgentWrites.retryAnswered(write))
+            let response = try await workspace.submit(write, explain: true, retryAnswered: PhoneAgentWrites.retryAnswered(write))
             guard current == generation else { return .done }
             pending.removeAll { $0.requestId == write.requestId }
             _ = await refresh()
+            // Only the actual creation receipt supplies this identity; a retry away from the form never navigates.
+            if current == generation, privateSnapshot.accepts(content), lease?.valid == true,
+               PhoneHelperCreate.isCreation(write), let id = try? PhoneHelperCreate.createdId(response, for: write) {
+                createdHelper = CreatedHelper(requestId: write.requestId, id: id)
+            }
             return .done
         } catch is NativeUnsettledRefusal {
             // A retry the Host's words do not settle: still unknown, with the same request.

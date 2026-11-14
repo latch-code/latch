@@ -14,6 +14,7 @@ struct TurnView: View, Equatable {
     let switched: String?
     let mark: String?
     let engine: String
+    var helper: PhoneAgentEntry? = nil
     var fileScope = PhoneFileScope()
     /** The run's own line says how it ended, so the footer does not say it twice. */
     let endSaid: Bool
@@ -27,7 +28,7 @@ struct TurnView: View, Equatable {
     nonisolated static func == (a: TurnView, b: TurnView) -> Bool {
         a.turn == b.turn && a.latest == b.latest && a.status == b.status && a.running == b.running && a.frozen == b.frozen && a.delivery == b.delivery
             && a.switched == b.switched && a.mark == b.mark && a.engine == b.engine && a.fileScope == b.fileScope
-            && a.endSaid == b.endSaid && a.actions == b.actions && a.index == b.index
+            && a.endSaid == b.endSaid && a.actions == b.actions && a.index == b.index && a.helper == b.helper
     }
     private var outcome: String { PhoneConversation.outcome(turn, latestStatus: status) }
     var body: some View {
@@ -38,7 +39,7 @@ struct TurnView: View, Equatable {
             if let switched { TimelineDivider(words: switched, symbol: nil) }
             if let user = turn.user { UserBubble(message: user, delivery: delivery, open: open) }
             if !turn.replies.isEmpty || running {
-                AuthorLine(mark: mark, engine: engine, model: PhoneConversation.turnModel(turn))
+                AuthorLine(mark: mark, engine: engine, model: PhoneConversation.turnModel(turn), helper: helper)
                     .contentShape(Rectangle()).onTapGesture { if !latest && !actions.isEmpty { withAnimation(.easeOut(duration: 0.15)) { tapped.toggle() } } }
             }
             if folds {
@@ -52,7 +53,7 @@ struct TurnView: View, Equatable {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case let .work(_, items):
-                    if !folds || unfolded { VStack(alignment: .leading, spacing: 8) { ForEach(Array(items.enumerated()), id: \.offset) { _, item in WorkRow(item: item, frozen: frozen, open: open) } } }
+                    if !folds || unfolded { VStack(alignment: .leading, spacing: 8) { ForEach(Array(items.enumerated()), id: \.offset) { _, item in WorkRow(item: item, frozen: frozen, person: helper != nil, open: open) } } }
                 case let .prose(message): ConversationText(text: message["text"].string ?? "", markdown: true).frame(maxWidth: .infinity, alignment: .leading)
                 case let .note(message) where message["steered"].bool:
                     VStack(alignment: .trailing, spacing: 4) {
@@ -128,11 +129,13 @@ private struct AuthorLine: View {
     let mark: String?
     let engine: String
     let model: String?
+    let helper: PhoneAgentEntry?
     var body: some View {
         HStack(spacing: 8) {
-            EngineTile(mark: mark, size: 16)
-            Text(engine).font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.ink)
-            if let model { Text(model).font(.system(size: 12)).foregroundStyle(PhoneTheme.muted).lineLimit(1) }
+            if let helper { AgentFace(avatar: helper.avatar, size: 16) }
+            else { EngineTile(mark: mark, size: 16) }
+            Text(helper?.name ?? engine).font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.ink)
+            if helper == nil, let model { Text(model).font(.system(size: 12)).foregroundStyle(PhoneTheme.muted).lineLimit(1) }
         }
     }
 }
@@ -140,6 +143,7 @@ private struct AuthorLine: View {
 private struct WorkRow: View {
     let item: PhoneWorkItem
     let frozen: Bool
+    let person: Bool
     let open: (String, String?) -> Void
     @State private var expanded = false
     var body: some View {
@@ -153,6 +157,11 @@ private struct WorkRow: View {
         }
     }
     private func thinkingWords(_ message: NativeJSON) -> String {
+        if person {
+            if message["state"].string == "streaming" { return "在想" }
+            if let ms = message["reasoningMs"].integer, ms > 0 { return "想了 \(max(1, Int((Double(ms) / 1000).rounded()))) 秒" }
+            return "想法"
+        }
         let spent = PhoneTime.duration(seconds: Double(message["reasoningMs"].integer ?? 0) / 1000)
         return spent.map { "思考了 " + $0 } ?? "思考"
     }

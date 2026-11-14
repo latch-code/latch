@@ -136,6 +136,7 @@ import UIKit
         }
     }
     @Published var privateSnapshot = PhonePrivateSnapshot()
+    @Published var createdHelper: CreatedHelper?
     private var bodyLease: BodyLease?
     @Published var contentGeneration = UUID()
     var canRun: Bool { connected && snapshot["device"]["status"].string == "active" && hasScope("run") }
@@ -297,6 +298,7 @@ import UIKit
         if bodyLease?.sameWindow(as: lease) != true {
             // Verification does not change the caller's selected session, draft or attachments.
             privateSnapshot.clear()
+            createdHelper = nil
             detail = .null; detailFailed = nil; PreviewFiles.clear()
             snapshot = PhoneAgents.takeDown(snapshot, proposals: &proposals, results: &agentResults)
         }
@@ -606,6 +608,7 @@ import UIKit
     }
     private func clearPrivateContent() {
         privateSnapshot.clear()
+        createdHelper = nil
         cancelPreview()
         detail = .null; detailFailed = nil; pending = []; contentGeneration = UUID(); PreviewFiles.clear(); clearAttachments()
         contentSearch = PhoneContentSearch(); forkDraft = nil; draftInserts = [:]; editPaths = [:]

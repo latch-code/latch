@@ -41,5 +41,24 @@ func phoneHelperCreateFixture(_ input: [String: Any]) throws -> [String: Any] {
     let models = Dictionary(uniqueKeysWithValues: candidates.ready.map { candidate in
         (candidate.id, PhoneHelperCreate.services(catalog, harnessId: candidate.id).map { ["id": $0.id, "providerId": $0.choice.providerId, "model": $0.choice.model, "experimental": $0.experimental] as [String: Any] })
     })
-    return ["ready": candidates.ready.map(entry), "waiting": candidates.waiting.map(entry), "cases": rows, "models": models]
+    let changes = try value["changes"].array.map { item -> [String: Any] in
+        let agent = item["agent"]
+        var draft = PhoneHelperCreate.defaults(agent)
+        if let harness = item["harnessId"].string { draft.harnessId = harness }
+        if item.object["model"] != nil { draft.model = item["model"] == .null ? nil : item["model"] }
+        if item.object["engineOptions"] != nil { draft.engineOptions = item["engineOptions"].object.compactMapValues(\.string) }
+        if item.object["project"] != nil { draft.defaultProjectId = item["project"].string }
+        do {
+            if item.object["selectNativeModel"] != nil { draft = try PhoneHelperCreate.selectNativeModel(catalog, draft: draft, value: item["selectNativeModel"].string) }
+            let write = try PhoneHelperCreate.changeDefaults(catalog, agent: agent, draft: draft, requestId: item["requestId"].string ?? "helper-default-fixture-0001")
+            return ["accepted": true, "path": write.path, "method": write.method, "body": try plain(NativeJSON.decode(write.body))]
+        } catch NativeFailure.invalidRecord { return ["accepted": false] }
+    }
+    let speech = value["speech"].array.map { item -> [String: Any] in
+        let detail = item["detail"], note = PhoneHelperSpeech.permission(detail, harness: item["harness"])
+        let status = PhoneHelperSpeech.status(detail, stopping: item["stopping"].bool, engine: "Fixture CLI", hostNow: Date(timeIntervalSince1970: 1000))
+        return ["activity": PhoneHelperSpeech.activity(detail["summary"]) as Any? ?? NSNull(), "status": status.text,
+            "permission": note?.words as Any? ?? NSNull(), "blocked": note?.blocked ?? false]
+    }
+    return ["ready": candidates.ready.map(entry), "waiting": candidates.waiting.map(entry), "cases": rows, "models": models, "changes": changes, "speech": speech]
 }

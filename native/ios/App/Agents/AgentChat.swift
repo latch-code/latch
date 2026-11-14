@@ -28,6 +28,7 @@ struct AgentFrameItems: ToolbarContent {
 }
 
 private struct AgentFrameTitle: View {
+    @EnvironmentObject private var model: PhoneModel
     let frame: AgentFrame
     let topic: NativeJSON
     @Environment(\.horizontalSizeClass) private var width
@@ -39,7 +40,7 @@ private struct AgentFrameTitle: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(entry.name).font(.system(size: 15, weight: .semibold)).foregroundStyle(PhoneTheme.ink).lineLimit(1)
-                        if let words = entry.face.words { FaceWord(face: entry.face, words: words) }
+                        if let words = model.connected ? PhoneHelperSpeech.activity(topic) ?? entry.face.words : nil { FaceWord(face: entry.face, words: words) }
                     }
                     Text(topic == .null ? "新话题" : PhoneConversation.visible(topic["title"].string ?? "未命名会话"))
                         .font(.system(size: 12)).foregroundStyle(PhoneTheme.muted).lineLimit(1)
@@ -128,6 +129,13 @@ struct AgentChat: View {
             }
         }
         .background(PhoneTheme.canvas)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let entry, model.agentAccess == .ready, model.engineInfo(entry.harnessId)["level"].string == "L3" {
+                let detail = shown != nil && model.detail["summary"]["id"].string == shown ? model.detail : .null
+                HelperPermissionLine(name: entry.name, note: PhoneHelperSpeech.permission(detail, harness: model.engineInfo(entry.harnessId)))
+                    .padding(.horizontal, 16).padding(.vertical, 6)
+            }
+        }
         // A pushed conversation on a phone needs the room, a new topic as much as a topic.
         .toolbar(width == .compact && model.agentAccess == .ready ? .hidden : .automatic, for: .tabBar)
         .sheet(isPresented: $profile) {
@@ -238,7 +246,10 @@ private struct NewTopicView: View {
         VStack(spacing: 10) {
             AgentFace(avatar: frame.entry.avatar, size: 56, face: frame.entry.face)
             Text(frame.entry.name).font(.system(size: 20, weight: .semibold)).foregroundStyle(PhoneTheme.ink)
-            if !frame.entry.duty.isEmpty { Text(frame.entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).multilineTextAlignment(.center) }
+            if !general, PhoneAgentChat.topics(model.snapshot["tasks"].array, id: frame.owner).open.isEmpty,
+               PhoneAgentChat.topics(model.snapshot["tasks"].array, id: frame.owner).archived.isEmpty {
+                Text("你好，我是" + frame.entry.name + "。" + frame.entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).multilineTextAlignment(.center)
+            } else if !frame.entry.duty.isEmpty { Text(frame.entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).multilineTextAlignment(.center) }
             if !frame.entry.available { Unavailable(reason: frame.entry.unavailableReason) }
         }
     }
@@ -256,34 +267,34 @@ private struct NewTopicView: View {
                 }.padding(.horizontal, 16)
             }
             if let blocker { Text(blocker).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(2).padding(.horizontal, 16).frame(maxWidth: .infinity, alignment: .leading) }
-            picks
             AttachmentRows(key: attachKey, selection: attachSelection)
             field
         }.padding(.bottom, 8).padding(.top, 4)
     }
     /** This topic's project (not for General) and model; the Harness remains the owner's. */
+    @ViewBuilder
     private var picks: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+        Section {
                 if !general {
-                    Menu {
-                        ForEach(PhoneStart.projects(catalog)) { project in Button { choice.workspaceId = project.id } label: { check(project.name, on: project.id == choice.workspaceId) } }
-                    } label: { chip { Image(systemName: "folder").font(.system(size: 12)); Text(PhoneAgents.worksIn(catalog, projectId: choice.workspaceId)) } }
+                    Menu("在项目里做") {
+                        ForEach(PhoneHelperCreate.projects(catalog, harnessId: choice.harnessId ?? "")) { project in
+                            Button { choice.workspaceId = project.id } label: { check(project.name, on: project.id == choice.workspaceId) }.disabled(project.unavailable != nil)
+                        }
+                    }
                 }
                 if PhoneStart.usesServices(harness) {
-                    Menu {
+                    Menu("这次用的模型") {
                         if !general { Button { choice.model = nil } label: { check("默认模型", on: choice.model == nil) } }
                         ForEach(PhoneStart.models(catalog)) { item in Button { choice.model = item } label: { check(item.model + " · " + item.providerName, on: item == choice.model) } }
-                    } label: { chip { Text(choice.model?.model ?? "默认模型") } }
+                    }
                 }
-            }.padding(.horizontal, 12)
         }
         .disabled(sending || !mine.isEmpty)
     }
     private var field: some View {
         let placeholder = PhoneAgentChat.placeholder(frame.entry.name)
         return HStack(alignment: .bottom, spacing: 8) {
-            AttachButton(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource).padding(.leading, -8).padding(.bottom, 8)
+            AttachButton(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource, extra: AnyView(picks)).padding(.leading, -8).padding(.bottom, 8)
             LocalTextEditor(text: $prompt, placeholder: placeholder, focused: $focused)
                 .overlay(alignment: .topLeading) {
                     if prompt.isEmpty { Text(placeholder).font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).lineLimit(1).allowsHitTesting(false).accessibilityHidden(true) }
@@ -304,10 +315,6 @@ private struct NewTopicView: View {
         .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
         .padding(.horizontal, 12)
         .disabled(!mine.isEmpty)
-    }
-    private func chip<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        HStack(spacing: 6) { content() }.font(.system(size: 13)).foregroundStyle(PhoneTheme.ink2).lineLimit(1)
-            .padding(.horizontal, 12).frame(height: 32).background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().stroke(PhoneTheme.line))
     }
     private func check(_ name: String, on: Bool) -> some View {
         Group { if on { Label(name, systemImage: "checkmark") } else { Text(name) } }
@@ -334,6 +341,18 @@ private struct NewTopicView: View {
         Task {
             if await model.finishTopic(pending), let id = model.sessionId { prompt = ""; started(id) }
             sending = false
+        }
+    }
+}
+
+private struct HelperPermissionLine: View {
+    let name: String
+    let note: PhoneHelperPermission?
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(note?.words ?? "Latch 不隔离" + name).font(.system(size: 12)).foregroundStyle(note?.warning == true ? PhoneTheme.amber : PhoneTheme.muted)
+            HintButton(label: "做事前与本机能力", text: (note?.words == "权限没确认" ? "Latch 说不准它动手前会不会问你。" : note?.words == "不先问你" ? "它动手前不问你。" : "") + "它能读写本机文件、运行命令，Latch 不隔离它。")
+            Spacer(minLength: 0)
         }
     }
 }

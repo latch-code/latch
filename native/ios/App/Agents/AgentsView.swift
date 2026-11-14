@@ -76,6 +76,7 @@ struct Unavailable: View {
 private struct AgentList: View {
     @EnvironmentObject private var model: PhoneModel
     @Binding var selection: String?
+    @State private var creating = false
     var body: some View {
         let access = model.agentAccess
         let entries = PhoneAgents.entries(model.snapshot, windowOpen: model.verifiedUntil != nil)
@@ -89,15 +90,24 @@ private struct AgentList: View {
             case .closed: ClosedAgents().plainAgentRow()
             case .hidden: EmptyView()
             case .ready:
+                if let receipt = model.createdHelper {
+                    if entries.contains(where: { $0.id == receipt.id }) {
+                        Button("打开新建的 Agent") { selection = receipt.id; model.createdHelper = nil }.plainAgentRow()
+                    } else {
+                        HStack {
+                            Text("已创建 · 列表暂未更新").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                            Spacer()
+                            Button("刷新列表") { Task { await model.refresh() } }.font(PhoneTheme.caption)
+                        }.plainAgentRow()
+                    }
+                }
                 ForEach(entries) { entry in
                     AgentRow(entry: entry).tag(entry.id)
                         .listRowInsets(EdgeInsets(top: 10, leading: 20, bottom: 10, trailing: 20)).listRowBackground(Color.clear)
                 }
                 if entries.count == 1 {
-                    HStack(spacing: 6) {
-                        Text("还没有自己的 Agent").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted)
-                        HintButton(label: "新建 Agent", text: "新建 Agent 尚未实现：在网页或桌面端新建。")
-                    }.frame(maxWidth: .infinity).padding(.top, 32).plainAgentRow()
+                    Button("新建 Agent") { creating = true }.buttonStyle(.bordered).buttonBorderShape(.capsule)
+                        .frame(maxWidth: .infinity).padding(.top, 32).plainAgentRow().disabled(!model.canRun)
                 }
             }
         }
@@ -106,6 +116,17 @@ private struct AgentList: View {
         .background(PhoneTheme.canvas)
         .navigationTitle("我的 Agent")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            if access == .ready {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("新建 Agent", systemImage: "plus") { creating = true }.labelStyle(.iconOnly).disabled(!model.canRun)
+                }
+            }
+        }
+        .sheet(isPresented: $creating) {
+            HelperCreateSheet { id in creating = false; selection = id; model.createdHelper = nil }.presentationCornerRadius(28)
+        }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in creating = false }
         .refreshable { await model.refresh() }
         // Without Face ID nothing asks, so the list comes by itself; with it, the first opening asks once, as a conversation does.
         .task(id: model.connected) { if model.agentAccess == .closed { await model.openAgents() } }
@@ -143,16 +164,19 @@ private struct AgentRow: View {
                     if entry.general { BuiltInMark() }
                 }
                 if !entry.duty.isEmpty { Text(entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }
-                HStack(spacing: 6) {
-                    if let harness = entry.harnessId { EngineTile(mark: model.engineMark(harness), size: 14) }
-                    Text(([entry.runs] + [entry.place].compactMap { $0 }).joined(separator: " · "))
-                        .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
-                }
-                if let words = entry.face.words { FaceWord(face: entry.face, words: words) }
+                if let place = entry.place { Text(place).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1) }
+                if let words = liveWords { FaceWord(face: entry.face, words: words) }
                 else if !entry.available { Unavailable(reason: entry.unavailableReason) }
             }
             Spacer(minLength: 0)
         }.contentShape(Rectangle())
+    }
+    private var liveWords: String? {
+        guard model.connected else { return nil }
+        if entry.face == .running, let task = model.snapshot["tasks"].array.first(where: { PhoneAgentChat.owner($0) == entry.id && $0["status"].string == "running" }) {
+            return PhoneHelperSpeech.activity(task) ?? entry.face.words
+        }
+        return entry.face == .waiting ? "等你点头" : entry.face.words
     }
 }
 
@@ -200,6 +224,7 @@ struct WriteNotice: View {
     /** The unconfirmed write itself, for 核对并放下: what the Host now says is shown and the write is let go. */
     var held: NativePendingWrite? = nil
     @State private var checked: String?
+    @State private var abandoning = false
     var body: some View {
         switch state {
         case .done: EmptyView()
@@ -209,8 +234,15 @@ struct WriteNotice: View {
                     Label("结果未知", systemImage: "questionmark.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     Spacer()
                     if let held {
-                        Button("核对并放下") { Task { checked = await model.checkAgentWrite(held) ?? "没能核对，稍后再试" } }
-                            .font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                        if PhoneHelperCreate.isCreation(held) {
+                            Button("放弃这次创建") { abandoning = true }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                                .confirmationDialog("放下这次创建？", isPresented: $abandoning, titleVisibility: .visible) {
+                                    Button("放下这次创建", role: .destructive) { Task { checked = await model.checkAgentWrite(held) ?? "没能放下，稍后再试" } }
+                                } message: { Text("只在这台设备放下待确认的请求。电脑上如果已经创建，它仍会保留；再次创建会新增一个 Agent。") }
+                        } else {
+                            Button("核对并放下") { Task { checked = await model.checkAgentWrite(held) ?? "没能核对，稍后再试" } }
+                                .font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                        }
                     }
                     if let retry { Button("重试同一请求", action: retry).font(PhoneTheme.caption).disabled(model.busy || !model.connected) }
                 }
@@ -381,7 +413,7 @@ struct AgentSettingsSection: View {
             }
             field("技能") { Text(PhoneAgents.skillWords(catalog, skills: agent["skills"])) }
             if !general { field("可以使用") { Text(PhoneAgents.toolWords(agent["tools"])) } }
-            NotYet(text: general ? "修改通用" : "修改 Agent")
+            NotYet(text: general ? "修改通用指令" : "修改名字、职责与指令")
         }
     }
     private func field<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {

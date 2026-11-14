@@ -229,7 +229,8 @@ public struct PhoneScheduleLocation: Equatable, Sendable, Identifiable {
  */
 public enum PhoneAgentWrites {
     public static func handles(_ write: NativePendingWrite) -> Bool {
-        switch PhonePending.kind(write) {
+        if PhoneHelperCreate.isCreation(write) { return true }
+        return switch PhonePending.kind(write) {
         case .memory, .proposal, .schedule, .run, .scheduleCreate, .agent: true
         default: false
         }
@@ -274,6 +275,7 @@ public enum PhoneAgentWrites {
     }
     /** What 核对并放下 says once the write is dropped, from what the Host now lists. */
     public static func checkWords(_ write: NativePendingWrite, proposals: [PhoneProposal]?) -> String {
+        if PhoneHelperCreate.isCreation(write) { return "已在这台设备放下这次创建；电脑上已经创建的 Agent 会保留。" }
         if decisionOwner(write) != nil, let proposals {
             let id = write.path.split(separator: "/").dropLast().last.map(String.init)
             guard let proposal = proposals.first(where: { $0.id == id }) else { return "这条提议已不在了" }
@@ -295,6 +297,7 @@ public enum PhoneAgentWrites {
     }
     /** The pending line, by what the proposal is when this device has read it. */
     public static func words(_ write: NativePendingWrite, proposals: [PhoneProposal]) -> String {
+        if PhoneHelperCreate.isCreation(write) { return "新建 Agent 的结果待确认" }
         guard case .proposal = PhonePending.kind(write) else { return PhonePending.words(write) }
         let id = write.path.split(separator: "/").dropLast().last.map(String.init)
         guard let proposal = proposals.first(where: { $0.id == id }) else { return PhonePending.words(write) }
