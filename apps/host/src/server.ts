@@ -148,6 +148,7 @@ import { createEgressFetch, createEgressInspector, type EgressReason, type Fetch
 import { loadOrCreateHostIdentity } from './identity.ts'
 import { ModelGatewayServer, type GatewayService } from './model-gateway.ts'
 import { ModelRequestQueue } from './model-request-queue.ts'
+import { readSessionSkills, type SessionSkill } from '@latch/protocol'
 import {
   DENY_READ_HOME_PATHS,
   PROJECT_FOLDER_LIMIT,
@@ -408,24 +409,31 @@ const taskPatchSchema = z
 const commandCatalogueSchema = createTaskSchema
   .pick({ workspaceId: true, mode: true, model: true, config: true, worktree: true, customAgentId: true })
   .strict()
-const publicCommandCatalogue = z.object({
-  commands: z
-    .array(
-      z.object({
-        name: z
-          .string()
-          .min(1)
-          .max(100)
-          .regex(/^[^\s\u0000-\u001f\u007f]+$/u),
-        description: z.string().max(1000).optional(),
-        inputHint: z.string().max(500).optional(),
-        idleOnly: z.literal(true).optional(),
-      }),
-    )
-    .max(200),
-  reportedAt: z.string().datetime(),
-  source: z.literal('previous-session'),
-})
+const publicCommandCatalogue = z
+  .object({
+    skillsTruncated: z.literal(true).optional(),
+    skills: z
+      .custom<SessionSkill[]>(value => readSessionSkills(value) !== undefined)
+      .transform(value => readSessionSkills(value)!)
+      .optional(),
+    commands: z
+      .array(
+        z.object({
+          name: z
+            .string()
+            .min(1)
+            .max(100)
+            .regex(/^[^\s\u0000-\u001f\u007f]+$/u),
+          description: z.string().max(1000).optional(),
+          inputHint: z.string().max(500).optional(),
+          idleOnly: z.literal(true).optional(),
+        }),
+      )
+      .max(200),
+    reportedAt: z.string().datetime(),
+    source: z.literal('previous-session'),
+  })
+  .refine(value => !value.skillsTruncated || value.skills !== undefined, 'A truncated catalogue must include its public skills')
 const configSchema = z.strictObject({
   configId: z.string().min(1).max(128),
   value: z.string().max(1024),

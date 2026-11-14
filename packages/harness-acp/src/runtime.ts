@@ -1,5 +1,13 @@
 import { RunFileTracking, recordFileOutputs } from '@latch/core/file-tracking'
-import { fileMentionContext, LADDER_MODE, modelIdKey, promptTitle, type FileMention } from '@latch/protocol'
+import {
+  fileMentionContext,
+  LADDER_MODE,
+  modelIdKey,
+  promptTitle,
+  readSessionSkills,
+  boundSessionSkills,
+  type FileMention,
+} from '@latch/protocol'
 import { checkedAttachments, promptBlocks } from './attachments.ts'
 import {
   clearTakenProposals,
@@ -176,6 +184,7 @@ import {
   steerResult,
   toolFields,
   updateEnvelope,
+  SESSION_SKILLS_UPDATE,
   type ContentBlock,
   type PermissionOption,
   type RpcId,
@@ -999,6 +1008,8 @@ export class AgentRuntime implements Bridge {
       ...(active && run?.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
       ...(task.usageReport ? { usageReport: task.usageReport } : {}),
       ...(task.commands ? { commands: task.commands } : {}),
+      ...(task.skills ? { skills: task.skills } : {}),
+      ...(task.skills && task.skillsTruncated ? { skillsTruncated: true as const } : {}),
       ...(task.plan ? { plan: task.plan } : {}),
       ...(task.config?.length ? { config: task.config } : {}),
       permission: this.permissionView(task),
@@ -1129,11 +1140,18 @@ export class AgentRuntime implements Bridge {
       || source.acp.commandContext.workspaceId !== input.workspaceId
       || source.acp.launchHash !== record.launchHash
       || !isDeepStrictEqual(source.commands, record.commands)
+      || !isDeepStrictEqual(source.skills, record.skills)
+      || source.skillsTruncated !== record.skillsTruncated
     )
       return undefined
     return {
       sourceSessionId: record.sourceSessionId,
-      catalogue: { commands: record.commands, reportedAt: record.reportedAt, source: 'previous-session' },
+      catalogue: {
+        commands: record.commands,
+        ...(record.skills ? { skills: record.skills, ...(record.skillsTruncated ? { skillsTruncated: true } : {}) } : {}),
+        reportedAt: record.reportedAt,
+        source: 'previous-session',
+      },
     }
   }
 
@@ -5628,6 +5646,23 @@ export class AgentRuntime implements Bridge {
         this.noteCommandCatalogue(live, task)
         break
       }
+      case SESSION_SKILLS_UPDATE: {
+        if (this.closed || this.lives.get(live.key) !== live || live.wire.stopping) return
+        const reported = readSessionSkills(update.skills)
+        const visible = reported?.flatMap(skill => {
+          if (this.redact(skill.name) !== skill.name || this.redact(skill.invocation) !== skill.invocation) return []
+          return [{ ...skill, ...(skill.description === undefined ? {} : { description: clip(this.redact(skill.description), 1000) }) }]
+        })
+        const bounded = visible ? boundSessionSkills(visible) : undefined
+        const skills = bounded?.skills
+        if (skills === undefined) delete task.skills
+        else task.skills = skills
+        if (skills && (update.skillsTruncated === true || bounded?.skillsTruncated || reported?.length !== skills.length))
+          task.skillsTruncated = true
+        else delete task.skillsTruncated
+        this.noteCommandCatalogue(live, task)
+        break
+      }
       case 'notice': {
         const parsed = noticeUpdate.safeParse(update)
         if (!parsed.success) return
@@ -6370,6 +6405,8 @@ export class AgentRuntime implements Bridge {
     const ordinal = ++cache.ordinal
     const order = this.commandCache.nextOrder()
     const commands = structuredClone(task.commands)
+    const skills = task.skills ? structuredClone(task.skills) : undefined
+    const skillsTruncated = skills && task.skillsTruncated
     const reportedAt = this.now()
     return (async () => {
       const launch = await this.assertLaunch(task.acp.cwd, cache.confirmed)
@@ -6395,6 +6432,8 @@ export class AgentRuntime implements Bridge {
         reportedAt,
         order,
         commands,
+        ...(skills ? { skills } : {}),
+        ...(skillsTruncated ? { skillsTruncated: true } : {}),
       })
     })()
       .catch(() => {

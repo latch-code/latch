@@ -242,6 +242,9 @@ it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
         expect(commands.find(command => command.name === 'skill:public-note')?.idleOnly).toBeUndefined()
         expect(commands.some(command => command.name.startsWith('latch-permission'))).toBe(false)
         expect(JSON.stringify(commands)).not.toContain(agentDirectory)
+        expect((await detail()).skills).toContainEqual(expect.objectContaining({ name: 'public-note', invocation: '/skill:public-note' }))
+        expect((await detail()).skills?.every(skill => skill.description === undefined)).toBe(true)
+        expect(JSON.stringify((await detail()).skills)).not.toContain(agentDirectory)
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
         const list = page.getByRole('listbox', { name: '命令与提示模板', exact: true })
         for (const [width, theme] of [

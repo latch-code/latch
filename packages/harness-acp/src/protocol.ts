@@ -2,6 +2,8 @@
 import { z } from 'zod'
 
 export const PROTOCOL_VERSION = 1
+/** Wire-to-runtime metadata; native paths never belong to this update. */
+export const SESSION_SKILLS_UPDATE = '_latch/skills_update'
 
 /**
  * What Latch tells every agent it can take. No file system or terminal, so agents keep those to themselves; questions

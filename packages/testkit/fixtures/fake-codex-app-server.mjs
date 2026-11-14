@@ -600,6 +600,7 @@ async function play(text) {
 
 async function runTurn(input) {
   const text = input.flatMap(part => (part.type === 'text' ? [part.text] : [])).join('\n')
+  if (text === 'skills-changed') notify('skills/changed', {})
   turn.text = text
   turn.items.push({ type: 'userMessage', id: `user-${randomUUID()}`, clientId: null, content: input })
   notify('turn/started', { threadId: thread.id, turn: { id: turn.id, status: 'inProgress', items: [] } })
@@ -752,6 +753,14 @@ async function handle(method, params) {
       return env.FAKE_CODEX_LOGGED_OUT === '1' || (env.FAKE_ACP_LOGIN_FILE && !existsSync(env.FAKE_ACP_LOGIN_FILE))
         ? { account: null, requiresOpenaiAuth: true }
         : { account: { type: 'chatgpt', email: 'person@example.com', planType: 'plus' }, requiresOpenaiAuth: true }
+    case 'skills/list': {
+      const value = env.FAKE_CODEX_SKILLS_FILE ? readFileSync(env.FAKE_CODEX_SKILLS_FILE, 'utf8') : (env.FAKE_CODEX_SKILLS ?? '[]')
+      const report = JSON.parse(value)
+      if (report?.error) throw Object.assign(new Error('Directory unavailable: /private/catalogue-error'), { code: -32603 })
+      if (typeof report?.waitFor === 'string') while (!existsSync(report.waitFor)) await sleep(10)
+      const skills = Array.isArray(report) ? report : report.skills
+      return { data: (params.cwds ?? []).map(cwd => ({ cwd, skills, errors: [] })) }
+    }
     case 'model/list': {
       if (env.FAKE_CODEX_LIST_ERROR) throw Object.assign(new Error(env.FAKE_CODEX_LIST_ERROR), { code: -32603 })
       const start = params.cursor ? Number(params.cursor) : 0

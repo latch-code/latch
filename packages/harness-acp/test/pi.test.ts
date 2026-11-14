@@ -11,6 +11,7 @@ import {
   setCommandSearch,
   type AgentRecord,
 } from '../src/index.ts'
+import { MAX_SESSION_SKILLS_BYTES, readSessionSkills } from '@latch/protocol'
 import { forkPlan } from '../src/wires/pi.ts'
 import { activate, fakePrograms, openBridge, replayTranscript } from './helpers/replay.ts'
 
@@ -197,8 +198,53 @@ describe('pi over its own RPC', () => {
     ])
     expect(listed.some(command => /latch-permission|bad name|future/u.test(command.name))).toBe(false)
     expect(JSON.stringify(listed)).not.toContain('private-resource')
+    expect((await bridge.detail(sessionId)).skills).toEqual([{ name: 'public-note', invocation: '/skill:public-note' }])
     expect(readReplayStatus(status)).toMatchObject({ cursor: entries.length, total: entries.length })
   })
+
+  it.each(['long-descriptions', 'unicode-names', 'count'] as const)(
+    'preserves pi skill invocations within the public %s budget and keeps the last native skill callable',
+    async kind => {
+      const names = Array.from({ length: kind === 'count' ? 205 : 200 }, (_, index) =>
+        kind === 'unicode-names' ? `${'界'.repeat(90)}${index}` : `public-${index}`,
+      )
+      const command = `/skill:${names.at(-1)!} keep the plan`
+      const entries = [
+        ...openedWith(
+          names.map(name => ({
+            name: `skill:${name}`,
+            source: 'skill',
+            description: '界'.repeat(1000),
+            sourceInfo: { path: '/private/skills', scope: 'project' },
+          })),
+        ),
+        ...commandReply(command),
+        ...commandReply('PUBLIC BRIEF\n\nHello'),
+      ]
+      const { bridge, root, status } = await publicCommandsFixture(entries)
+      const brief = { segments: [{ source: 'user' as const, text: 'PUBLIC BRIEF' }] }
+      const agentContext = { agent: { customAgentId: 'agt_commands' }, instructions: '', brief, revision: 'a'.repeat(64) }
+      const { sessionId } = await bridge.createTask({ prompt: command, requestId: 'first', cwd: root, agentContext })
+      await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
+      const detail = await bridge.detail(sessionId)
+      expect(readSessionSkills(detail.skills)).toEqual(detail.skills)
+      expect(detail.skills?.every(skill => skill.description === undefined && skill.scope === 'project')).toBe(true)
+      expect(
+        Buffer.byteLength(JSON.stringify({ skills: detail.skills, ...(detail.skillsTruncated ? { skillsTruncated: true } : {}) })),
+      ).toBeLessThanOrEqual(MAX_SESSION_SKILLS_BYTES)
+      if (kind === 'long-descriptions') {
+        expect(detail.skills).toHaveLength(200)
+        expect(detail.skills?.at(-1)?.invocation).toBe(`/skill:${names.at(-1)!}`)
+        expect(detail.skillsTruncated).toBeUndefined()
+      } else expect(detail.skillsTruncated).toBe(true)
+      expect(JSON.stringify(detail.skills)).not.toContain('/private/skills')
+      expect(detail.messages.find(message => message.role === 'user')?.agentBrief).toBeUndefined()
+      await bridge.prompt(sessionId, 'Hello', 'next')
+      await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
+      expect((await bridge.detail(sessionId)).messages.filter(message => message.role === 'user').at(-1)?.agentBrief).toEqual(brief)
+      expect(readReplayStatus(status)).toMatchObject({ cursor: entries.length, total: entries.length })
+    },
+  )
 
   it.each([true, false])('keeps a first skill command literal only when the native catalog knows its complete name (%s)', async known => {
     const command = known ? '/skill:public-note keep the plan' : '/skill:public-notebook keep the plan'

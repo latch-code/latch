@@ -9,7 +9,9 @@ import {
   isFileMention,
   type FileMention,
   isAttachmentRef,
+  readSessionSkills,
   type AttachmentRef,
+  type SessionSkill,
 } from '@latch/protocol'
 import type { ModelRoute } from '@latch/sdk'
 import type {
@@ -127,6 +129,8 @@ export interface AcpTask {
   summary: DriverTaskSummary
   messages: Message[]
   commands?: SessionCommand[]
+  skills?: SessionSkill[]
+  skillsTruncated?: true
   plan?: PlanEntry[]
   config?: SessionConfigOption[]
   /** The agent's latest report of its context window and cost. */
@@ -346,6 +350,8 @@ const stateSchema = z.object({
         )
         .optional(),
       config: z.array(configOption).optional(),
+      skills: z.custom<SessionSkill[]>(value => readSessionSkills(value) !== undefined).optional(),
+      skillsTruncated: z.literal(true).optional(),
       commands: z
         .array(
           z.object({

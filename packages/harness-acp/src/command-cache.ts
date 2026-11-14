@@ -3,6 +3,7 @@ import { lstat, open, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
+import { readSessionSkills, type SessionSkill } from '@latch/protocol'
 
 const MAX_BYTES = 2 * 1024 * 1024
 const MAX_ENTRIES = 64
@@ -25,6 +26,8 @@ const entry = z.strictObject({
   reportedAt: z.string().datetime(),
   order: z.number().int().positive(),
   commands: z.array(command).max(200),
+  skills: z.custom<SessionSkill[]>(value => readSessionSkills(value) !== undefined).optional(),
+  skillsTruncated: z.literal(true).optional(),
 })
 const state = z.strictObject({ version: z.literal(1), entries: z.array(entry).max(MAX_ENTRIES) })
 export type CommandCacheEntry = z.infer<typeof entry>

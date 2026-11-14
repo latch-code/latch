@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { startFakeModels } from '@latch/testkit'
 import { CodexWire } from '../src/wires/codex.ts'
+import { AgentProcess, isRecord } from '../src/wires/process.ts'
 import { skillsServer, writeSessionSkills } from '../src/skills-server.ts'
 
 const binary = process.env.LATCH_CODEX_GATEWAY_BINARY
@@ -164,6 +165,137 @@ it.skipIf(process.env.LATCH_HELPER_PROPOSALS_LIVE !== '1' || !binary)(
         } finally {
           await rm(root, { recursive: true, force: true })
         }
+      }
+    }
+  },
+  60_000,
+)
+
+it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
+  'uses a private real Codex directory and injects only the current user skill into a controlled model request',
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-codex-skills-live-')))
+    let upstream: Awaited<ReturnType<typeof startFakeModels>> | undefined
+    let wire: CodexWire | undefined
+    const sent: Array<Record<string, unknown>> = []
+    const write = AgentProcess.prototype.write
+    const observer = vi.spyOn(AgentProcess.prototype, 'write').mockImplementation(function (this: AgentProcess, message: unknown) {
+      if (isRecord(message) && message.method === 'turn/start' && isRecord(message.params)) sent.push(structuredClone(message.params))
+      write.call(this, message)
+    })
+    try {
+      const env: NodeJS.ProcessEnv = { PATH: process.env.PATH }
+      for (const name of ['HOME', 'CODEX_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'TMPDIR']) {
+        env[name] = join(root, name.toLowerCase())
+        await mkdir(env[name]!)
+      }
+      const directory = join(root, '.agents', 'skills', 'latch-public-proof')
+      await mkdir(directory, { recursive: true })
+      const path = join(directory, 'SKILL.md')
+      const marker = 'LATCH_NATIVE_SKILL_BODY_20261114'
+      await writeFile(
+        path,
+        '---\nname: latch-public-proof\ndescription: A public fixture for explicit skill invocation.\n---\nUse this public verification phrase: '
+          + marker
+          + '\n',
+      )
+      upstream = await startFakeModels({
+        replyFor: request => ({
+          text: JSON.stringify(request.body).includes(marker) ? 'Native skill body received.' : 'Native skill body missing.',
+        }),
+      })
+      const updates: unknown[] = []
+      wire = CodexWire.spawn(
+        {
+          command: binary!,
+          args: [
+            '-c',
+            'model_provider="fixture"',
+            '-c',
+            'model_providers.fixture.name="Fixture"',
+            '-c',
+            `model_providers.fixture.base_url="${upstream.origin}/v1"`,
+            '-c',
+            'model_providers.fixture.wire_api="responses"',
+            '-c',
+            'model_providers.fixture.requires_openai_auth=false',
+          ],
+          cwd: root,
+          env,
+          maxLineBytes: 16 * 1024 * 1024,
+          redact: text => text,
+        },
+        {
+          request: async () => ({ outcome: { outcome: 'selected', optionId: 'reject' } }),
+          notification: (_method, params) => {
+            updates.push(params)
+          },
+          exit: () => {},
+        },
+        { model: 'gpt-5.5', models: ['gpt-5.5'] },
+      )
+      const initialized = await wire.request('initialize', {}, 10_000)
+      const { sessionId } = (await wire.request('session/new', { cwd: root, mcpServers: [] }, 20_000)) as { sessionId: string }
+      const userText = 'Use $latch-public-proof and answer with its public verification phrase. Use no tools.'
+      expect(
+        await wire.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: userText }] }, 20_000, undefined, undefined, {
+          userText,
+        }),
+      ).toMatchObject({ stopReason: 'end_turn' })
+      expect((sent[0]!.input as Array<Record<string, unknown>>).filter(item => item.type === 'skill')).toEqual([
+        { type: 'skill', name: 'latch-public-proof', path },
+      ])
+      expect(JSON.stringify(upstream.requests[0]?.body)).toContain(marker)
+      const ordinary = 'Say one ordinary sentence. Use no tools.'
+      await wire.request(
+        'session/prompt',
+        {
+          sessionId,
+          prompt: [
+            { type: 'text', text: 'Context example $latch-public-proof is not this turn input.' },
+            { type: 'text', text: ordinary },
+          ],
+        },
+        20_000,
+        undefined,
+        undefined,
+        { userText: ordinary },
+      )
+      expect((sent[1]!.input as Array<Record<string, unknown>>).filter(item => item.type === 'skill')).toEqual([])
+      const catalogues = updates.flatMap(value =>
+        isRecord(value) && isRecord(value.update) && value.update.sessionUpdate === '_latch/skills_update' ? [value.update] : [],
+      )
+      expect(JSON.stringify(catalogues)).not.toContain(path)
+      expect(
+        catalogues.some(
+          value => Array.isArray(value.skills) && value.skills.some(skill => isRecord(skill) && skill.invocation === '$latch-public-proof'),
+        ),
+      ).toBe(true)
+      await mkdir('test-results/native-slash/codex', { recursive: true })
+      await writeFile(
+        'test-results/native-slash/codex/skills-evidence.json',
+        JSON.stringify(
+          {
+            initialized,
+            officialDirectoryUsed: true,
+            structuredSkillCounts: sent.map(
+              value => (value.input as Array<Record<string, unknown>>).filter(item => item.type === 'skill').length,
+            ),
+            bodyMarkerReceived: true,
+            publicCatalogueHasNoPath: true,
+            modelRequests: upstream.requests.length,
+          },
+          null,
+          2,
+        ),
+      )
+    } finally {
+      observer.mockRestore()
+      try {
+        await wire?.stop('stop', 500)
+      } finally {
+        await upstream?.close()
+        await rm(root, { recursive: true, force: true })
       }
     }
   },

@@ -7,7 +7,7 @@
 不变量：
 
 - `@latch/sdk` 的类型文件只用 `@latch/protocol/types`，外部项目才能检查兼容入口（`tests/plugin-sdk.test.ts#type-check in an outside TypeScript project that does not allow .ts import extensions`）。外部项目只接受仅含类型的 .ts 路径导入与导出，所以 `src/types.ts` 只写 `export type`，值由 `src/index.ts` 导出；新模块两处都要加。
-- 目录中的技能不含正文，React 面板只有模块摘要，模块源码经认证另取；数据面板不接受 HTML、脚本或样式。
+- 技能不含正文或私有路径，React 面板只有模块摘要，模块源码经认证另取；数据面板不接受 HTML、脚本或样式。
 - 上线前页面与 Host 同版本，新字段不必为旧 Host 写成可选。
 - `agent-presets.ts` 只放浏览器可用的展示与启动数据；权限行为写在 `packages/harness-acp/src/profiles/`。
 - `AgentRecord.env` 的值不离开 Host，浏览器只收到 `AgentSettings`（变量名）。

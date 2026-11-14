@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { withHarnessPromptSource } from '@latch/harness-acp'
+import { readSessionSkills } from '@latch/protocol'
 import { setTimeout as delay } from 'node:timers/promises'
 import type {
   Approval,
@@ -572,8 +573,11 @@ export class HarnessHub implements Bridge {
             index === firstUser ? { ...message, ...(fork ? { forkContext: fork } : { importContext: rebuilt! }) } : message,
           )
         : detail.messages
+    const { skills: reportedSkills, skillsTruncated, ...withoutSkills } = detail
+    const skills = readSessionSkills(reportedSkills)
     return {
-      ...detail,
+      ...withoutSkills,
+      ...(skills ? { skills, ...(skillsTruncated === true ? { skillsTruncated: true as const } : {}) } : {}),
       messages,
       summary: this.present(member.driver.id, detail.summary),
       permission: this.permission(member, detail.permission),

@@ -323,6 +323,29 @@ describe('run silence', () => {
 })
 
 describe('harness hub routing', () => {
+  it('projects only bounded public native skill metadata, never private path or source fields', async () => {
+    const { bridge } = external([summary('skills', 'idle')])
+    const detail = await bridge.detail('skills')
+    let skills: unknown = [{ name: 'known', invocation: '$known', description: 'Known', scope: 'project' }]
+    bridge.detail.mockImplementation(async () => ({ ...detail, skills }) as typeof detail)
+    const { hub: value } = await hub(undefined, 'ext')
+    await value.attach(driver('ext'), mount(bridge))
+    expect((await value.detail('skills')).skills).toEqual(skills)
+    for (const invalid of [
+      [{ name: 'known', invocation: '$known', path: '/private/native-skill/SKILL.md' }],
+      [{ name: 'known', invocation: '$known', sourceInfo: { path: '/private/native-skill' } }],
+      [{ name: 'known', invocation: '$different' }],
+      [{ name: 'bad name', invocation: '$bad name' }],
+      [{ name: 'known', invocation: '$known', description: 'x'.repeat(1001) }],
+      Array.from({ length: 201 }, (_, index) => ({ name: `known-${index}`, invocation: `$known-${index}` })),
+    ]) {
+      skills = invalid
+      const projected = await value.detail('skills')
+      expect(projected.skills).toBeUndefined()
+      expect(JSON.stringify(projected)).not.toContain('private/native-skill')
+    }
+  })
+
   it('proves the current input before Host notes for create, prompt and steer without changing their bodies', async () => {
     const seen: Array<{ method: string; body: string; source?: string }> = []
     const fixture = external([summary('existing', 'idle')], [], {

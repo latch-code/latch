@@ -1,10 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { AppSnapshot, HarnessCommandCatalogue, TaskDetail, WorkspaceInfo } from '@latch/protocol'
-import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import {
+  MAX_SESSION_SKILLS_BYTES,
+  type AppSnapshot,
+  type HarnessCommandCatalogue,
+  type TaskDetail,
+  type WorkspaceInfo,
+} from '@latch/protocol'
+import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { createRuntime } from '@latch/core'
 import type { Bridge, CreateTaskInput, HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
@@ -56,15 +62,45 @@ it('keeps a folder-aware cache reader on its original own-folder input without a
   expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.sessionFolder).toBeDefined()
 })
 
-async function fixture(presetId?: 'opencode') {
+async function fixture(presetId?: 'opencode' | 'codex') {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-harness-commands-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const paths = [join(root, 'project-a'), join(root, 'project-b')]
   for (const path of paths) await mkdir(path)
   const log = join(root, 'agent.jsonl')
   const commandsFile = join(root, 'commands.json')
-  await writeFile(commandsFile, JSON.stringify([{ name: 'public-plan', description: 'Project command' }]))
-  const options = { dataDir: join(root, 'data'), workspaceRoot: join(root, 'default') }
+  await writeFile(
+    commandsFile,
+    JSON.stringify(
+      presetId === 'codex'
+        ? Array.from({ length: 205 }, (_, index) => ({
+            name: `public-${index}`,
+            description: 'Public skill',
+            path: `/private/official-skills/${index}/SKILL.md`,
+            scope: 'repo',
+            enabled: true,
+          }))
+        : [{ name: 'public-plan', description: 'Project command' }],
+    ),
+  )
+  const bin = join(root, 'bin')
+  const command = join(bin, 'codex')
+  if (presetId === 'codex') {
+    await mkdir(bin)
+    await writeFile(command, `#!/bin/sh\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`)
+    await chmod(command, 0o755)
+  }
+  const options = {
+    dataDir: join(root, 'data'),
+    workspaceRoot: join(root, 'default'),
+    ...(presetId === 'codex'
+      ? {
+          commandDirectories: () => [bin],
+          loginPrograms: (name: string) => (name === 'codex' ? command : undefined),
+          detectPreset: (preset: { id: string }) => (preset.id === 'codex' ? { found: true, path: command } : { found: false }),
+        }
+      : {}),
+  }
   let host = await startTestHost(options)
   cleanups.push(() => host.close())
   let owner = await host.enroll({ listener: 'unix' })
@@ -78,11 +114,12 @@ async function fixture(presetId?: 'opencode') {
       id: 'fake',
       ...(presetId ? { presetId } : {}),
       name: 'Fake',
-      command: process.execPath,
-      args: [FAKE_ACP_AGENT],
+      command: presetId === 'codex' ? 'codex' : process.execPath,
+      args: presetId === 'codex' ? [] : [FAKE_ACP_AGENT],
       env: {
         FAKE_ACP_LOG: log,
-        ...(presetId ? { FAKE_ACP_CONFIG: 'legacy' } : {}),
+        ...(presetId === 'opencode' ? { FAKE_ACP_CONFIG: 'legacy' } : {}),
+        ...(presetId === 'codex' ? { FAKE_CODEX_SKILLS_FILE: commandsFile, FAKE_CODEX_STATE: join(root, 'threads.json') } : {}),
         FAKE_ACP_COMMANDS_FILE: commandsFile,
       },
     },
@@ -156,6 +193,39 @@ it('reads a real session command cache for a normal view device, isolates projec
   await f.restart()
   expect((await f.read()).catalogue?.commands[0]?.name).toBe('public-plan')
   expect(await f.starts()).toBe(before)
+})
+
+it('carries bounded native skills and truncation through authorized HTTP cache reads and restart without starting a CLI', async () => {
+  const f = await fixture('codex')
+  const id = await f.create()
+  const expected = { name: 'public-0', description: 'Public skill', invocation: '$public-0', scope: 'project' }
+  await vi.waitFor(async () => expect((await f.read()).catalogue?.skills?.[0]).toEqual(expected))
+  const read = await f.read()
+  expect(read.catalogue?.skills).toHaveLength(200)
+  expect(read.catalogue?.skillsTruncated).toBe(true)
+  expect(read.catalogue?.commands.map(command => command.name)).toEqual(['compact'])
+  expect(Buffer.byteLength(JSON.stringify({ skills: read.catalogue?.skills, skillsTruncated: true }))).toBeLessThanOrEqual(
+    MAX_SESSION_SKILLS_BYTES,
+  )
+  expect(JSON.stringify(read)).not.toContain('/private/official-skills')
+  expect(JSON.stringify(read)).not.toContain(id)
+  expect(await f.read(f.projects[1]!)).toEqual({ catalogue: null })
+  const before = await f.starts()
+  await f.restart()
+  expect(await f.read()).toEqual(read)
+  expect(await f.starts()).toBe(before)
+  expect((await f.work().json<TaskDetail>(`tasks/${id}`)).skills?.[0]).toEqual(expected)
+  await makePrivate(f, id)
+  expect(await f.read()).toEqual({ catalogue: null })
+  await writeFile(
+    join(f.root, 'commands.json'),
+    JSON.stringify([
+      { name: 'private-note', description: 'Private new report', path: '/private/new-report/SKILL.md', scope: 'user', enabled: true },
+    ]),
+  )
+  await f.owner().json(`tasks/${id}/prompt`, { method: 'POST', body: { prompt: 'skills-changed', requestId: randomUUID() } })
+  await vi.waitFor(async () => expect((await f.read(f.projects[0]!, f.owner())).catalogue?.skills?.[0]?.name).toBe('private-note'))
+  expect(await f.read()).toEqual({ catalogue: null })
 })
 
 async function makePrivate(f: Awaited<ReturnType<typeof fixture>>, id: string) {

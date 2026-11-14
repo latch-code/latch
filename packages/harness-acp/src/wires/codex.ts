@@ -6,13 +6,21 @@
  */
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
-import { escapeSecurityText, type HarnessMcpServer, type HarnessMcpState } from '@latch/protocol'
+import {
+  escapeSecurityText,
+  readSessionSkills,
+  boundSessionSkills,
+  type HarnessMcpServer,
+  type HarnessMcpState,
+  type SessionSkill,
+} from '@latch/protocol'
+import { isAbsolute } from 'node:path'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { CODEX_EFFORT_ID, CODEX_MODEL_ID, codexModel, codexOptions, type CodexModels } from '../codex-models.ts'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
 import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
-import { MCP_STATUS_METHOD, MCP_STATUS_UPDATE, RPC, RpcError, STEER_METHOD, type RpcId } from '../protocol.ts'
+import { MCP_STATUS_METHOD, MCP_STATUS_UPDATE, RPC, RpcError, STEER_METHOD, SESSION_SKILLS_UPDATE, type RpcId } from '../protocol.ts'
 import {
   AgentProcess,
   ConnectionClosed,
@@ -338,6 +346,13 @@ export class CodexWire implements AgentWire {
   readonly idleCommands = new Set([COMPACT.name])
   readonly commandsWithoutContext = new Set([COMPACT.name, 'review'])
   private listedFor?: string
+  private readonly skillPaths = new Map<string, { name: string; path: string }>()
+  private readonly ambiguousSkills = new Set<string>()
+  private skillCatalogue?: SessionSkill[]
+  private skillTruncated = false
+  private skillGeneration = 0
+  private skillRead?: Promise<void>
+  private skillAgain = false
   private readonly process: AgentProcess
   private nextId = 0
   private readonly pending = new Map<number, Pending>()
@@ -400,7 +415,14 @@ export class CodexWire implements AgentWire {
     return this.process.stopping
   }
 
-  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+  request(
+    method: string,
+    params: unknown,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+    _onResult?: (result: unknown) => void,
+    context?: { userText: string },
+  ): Promise<unknown> {
     const exit = this.process.exit
     if (exit) return Promise.reject(new ConnectionClosed(exit))
     if (this.stopping) return Promise.reject(new ConnectionStopping())
@@ -417,11 +439,11 @@ export class CodexWire implements AgentWire {
       case 'session/list':
         return this.list(params, timeoutMs, signal)
       case 'session/prompt':
-        return this.prompt(params, timeoutMs)
+        return this.prompt(params, timeoutMs, context)
       case 'session/set_config_option':
         return Promise.resolve(this.setOption(params))
       case STEER_METHOD:
-        return this.steer(params, timeoutMs, signal)
+        return this.steer(params, timeoutMs, signal, context)
       case 'logout':
         return this.send('account/logout', undefined, timeoutMs, signal)
       case MCP_STATUS_METHOD:
@@ -576,8 +598,99 @@ export class CodexWire implements AgentWire {
     if (this.route && reported !== this.route.model) throw new RpcError(RPC.internal, 'Codex 没有采用所选模型，未发送本轮输入。')
     this.model = this.route ? (reported && this.route.models.includes(reported) ? reported : this.model) : (reported ?? this.model)
     this.effort = this.route?.setThinking && this.routeEffort !== undefined ? this.routeEffort : (read.data.reasoningEffort ?? this.effort)
+    await this.readSkills(timeoutMs, signal)
     this.reportMcp(timeoutMs)
     return { sessionId: this.threadId, configOptions: this.options() }
+  }
+
+  /** Only the official directory supplies skill paths. Invalidation clears them before any asynchronous re-read. */
+  private readSkills(timeoutMs?: number, signal?: AbortSignal): Promise<void> {
+    const threadId = this.threadId
+    const cwd = this.cwd
+    const generation = ++this.skillGeneration
+    this.skillPaths.clear()
+    this.ambiguousSkills.clear()
+    this.skillCatalogue = undefined
+    this.skillTruncated = false
+    this.reportSkills()
+    if (!threadId || signal?.aborted || this.stopping) return Promise.resolve()
+    if (this.skillRead) {
+      this.skillAgain = true
+      return this.skillRead
+    }
+    const reading = this.send('skills/list', { cwds: [cwd], forceReload: true }, Math.min(timeoutMs ?? 5_000, 5_000), signal)
+      .then(answer => {
+        if (this.threadId !== threadId || this.cwd !== cwd || this.skillGeneration !== generation || this.stopping) return
+        if (!isRecord(answer) || !Array.isArray(answer.data) || answer.data.length !== 1) return
+        const entry = answer.data[0]
+        if (!isRecord(entry) || entry.cwd !== cwd || !Array.isArray(entry.skills) || !Array.isArray(entry.errors) || entry.errors.length)
+          return
+        const candidates: Array<{ name: string; path: string; skill?: SessionSkill }> = []
+        const counts = new Map<string, number>()
+        for (const row of entry.skills) {
+          if (!isRecord(row) || row.enabled !== true || typeof row.name !== 'string') continue
+          counts.set(row.name, (counts.get(row.name) ?? 0) + 1)
+          if (
+            !row.name.length
+            || row.name.length > 4096
+            || /[\s\u0000-\u001f\u007f]/u.test(row.name)
+            || typeof row.path !== 'string'
+            || !['repo', 'user', 'system', 'admin'].includes(String(row.scope))
+            || !isAbsolute(row.path)
+            || row.path.length > 16_384
+            || /[\u0000-\u001f\u007f]/u.test(row.path)
+          ) {
+            this.skillTruncated = true
+            continue
+          }
+          const scope = row.scope === 'repo' ? 'project' : row.scope
+          const parsed = readSessionSkills([
+            {
+              name: row.name,
+              invocation: `$${row.name}`,
+              scope,
+              ...(typeof row.description === 'string' && row.description.length <= 1000 ? { description: row.description } : {}),
+            },
+          ])
+          candidates.push({ name: row.name, path: row.path, ...(parsed?.[0] ? { skill: parsed[0] } : {}) })
+        }
+        for (const [name, count] of counts) if (count > 1) this.ambiguousSkills.add(`$${name}`)
+        const publicSkills: SessionSkill[] = []
+        for (const { name, skill, path } of candidates) {
+          if (counts.get(name) !== 1) {
+            this.skillTruncated = true
+            continue
+          }
+          this.skillPaths.set(`$${name}`, { name, path })
+          if (skill) publicSkills.push(skill)
+          else this.skillTruncated = true
+        }
+        const bounded = boundSessionSkills(publicSkills)
+        this.skillCatalogue = bounded.skills
+        this.skillTruncated ||= bounded.skillsTruncated === true
+      })
+      .catch(() => {
+        // Directory failures can quote private paths. Only the absence of a current catalogue leaves this wire.
+      })
+      .finally(() => {
+        if (this.skillRead === reading) this.skillRead = undefined
+        if (this.skillGeneration === generation) this.reportSkills()
+        if (this.skillAgain && !signal?.aborted && !this.stopping && this.threadId === threadId) {
+          this.skillAgain = false
+          void this.readSkills()
+        }
+      })
+    this.skillRead = reading
+    return reading
+  }
+
+  private reportSkills(): void {
+    if (this.threadId && this.listedFor === this.threadId)
+      this.update({
+        sessionUpdate: SESSION_SKILLS_UPDATE,
+        skills: this.skillCatalogue ?? null,
+        ...(this.skillCatalogue && this.skillTruncated ? { skillsTruncated: true } : {}),
+      })
   }
 
   /**
@@ -788,16 +901,26 @@ export class CodexWire implements AgentWire {
     if (!this.threadId || sessionId !== this.threadId) throw new RpcError(RPC.notFound, 'Session not found')
   }
 
-  private input(blocks: z.infer<typeof promptParams>['prompt']): unknown[] {
-    return blocks.map(block => {
+  private input(blocks: z.infer<typeof promptParams>['prompt'], context?: { userText: string }): unknown[] {
+    const input: unknown[] = blocks.map(block => {
       if (block.type === 'text' && block.text !== undefined) return { type: 'text', text: block.text, text_elements: [] }
       if (block.type === 'image' && block.data && block.mimeType)
         return { type: 'image', url: `data:${block.mimeType};base64,${block.data}` }
       throw new RpcError(RPC.invalidParams, `Codex takes no ${clip(block.type, 64)} content here`)
     })
+    const added = new Set<string>()
+    for (const match of context?.userText.matchAll(/(?:^|\s)(\$\S+)/gu) ?? []) {
+      const invocation = match[1]!
+      if (this.ambiguousSkills.has(invocation)) throw new RpcError(RPC.invalidParams, '技能名称不唯一，请先在 Codex 中消除重复名称。')
+      const skill = this.skillPaths.get(invocation)
+      if (!skill || added.has(invocation)) continue
+      added.add(invocation)
+      input.push({ type: 'skill', name: skill.name, path: skill.path })
+    }
+    return input
   }
 
-  private async prompt(params: unknown, timeoutMs?: number): Promise<unknown> {
+  private async prompt(params: unknown, timeoutMs?: number, context?: { userText: string }): Promise<unknown> {
     const parsed = promptParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     this.assertSession(parsed.data.sessionId)
@@ -805,13 +928,14 @@ export class CodexWire implements AgentWire {
     if (this.listedFor !== this.threadId) {
       this.listedFor = this.threadId
       this.update({ sessionUpdate: 'available_commands_update', availableCommands: [COMPACT] })
+      this.reportSkills()
     }
     const command = nativeCommand(parsed.data.prompt)
     if (command === 'review') throw new RpcError(RPC.invalidParams, REVIEW_UNAVAILABLE)
     const compact = command === 'compact'
     if (compact && (parsed.data.prompt.length !== 1 || parsed.data.prompt[0]?.text?.trim() !== '/compact'))
       throw new RpcError(RPC.invalidParams, 'Codex 的 /compact 不接受参数或附件。')
-    const input = this.input(parsed.data.prompt)
+    const input = this.input(parsed.data.prompt, context)
     let turn!: Turn
     const done = new Promise<unknown>((resolve, reject) => {
       turn = { resolve, reject, cancelled: false, commands: new Set(), threads: new Set(), ...(compact ? { compact: true } : {}) }
@@ -883,7 +1007,7 @@ export class CodexWire implements AgentWire {
       throw new RpcError(RPC.invalidParams, 'Codex 当前上下文的模型、思考或权限与选择不一致。请先发送普通消息应用设置，再运行 /compact。')
   }
 
-  private async steer(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+  private async steer(params: unknown, timeoutMs?: number, signal?: AbortSignal, context?: { userText: string }): Promise<unknown> {
     const parsed = promptParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     this.assertSession(parsed.data.sessionId)
@@ -892,13 +1016,9 @@ export class CodexWire implements AgentWire {
     if (command === 'compact') throw new RpcError(RPC.invalidParams, '/compact 只能在本轮结束后运行。')
     const turn = this.turn
     if (!turn?.id || turn.cancelled) return { outcome: 'promptRequired' }
+    const input = this.input(parsed.data.prompt, context)
     try {
-      await this.send(
-        'turn/steer',
-        { threadId: this.threadId, expectedTurnId: turn.id, input: this.input(parsed.data.prompt) },
-        timeoutMs,
-        signal,
-      )
+      await this.send('turn/steer', { threadId: this.threadId, expectedTurnId: turn.id, input }, timeoutMs, signal)
     } catch (error) {
       // The turn ended meanwhile: the addition becomes the next prompt.
       if (error instanceof RpcError && error.code !== RPC.cancelled) return { outcome: 'promptRequired' }
@@ -1276,6 +1396,10 @@ export class CodexWire implements AgentWire {
   }
 
   private onNotification(method: string, params: Record<string, unknown>): void {
+    if (method === 'skills/changed') {
+      void this.readSkills()
+      return
+    }
     const mcp = this.trackMcp(method, params)
     // Codex may run its subagents' threads in this process: their calls reach the session marked as theirs.
     const thread = typeof params.threadId === 'string' ? params.threadId : undefined
@@ -1585,6 +1709,10 @@ export class CodexWire implements AgentWire {
   }
 
   private onClosed(info: ExitInfo): void {
+    this.skillGeneration++
+    this.skillPaths.clear()
+    this.ambiguousSkills.clear()
+    this.skillCatalogue = undefined
     const closed = new ConnectionClosed(info)
     for (const entry of this.pending.values()) {
       entry.cleanup()

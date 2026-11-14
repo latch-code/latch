@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DriverTaskDetail } from '@latch/protocol'
+import { MAX_SESSION_SKILLS_BYTES, readSessionSkills, type DriverTaskDetail } from '@latch/protocol'
 import type { Bridge, HarnessDriver, HarnessHostOptions, HarnessPlugin, HarnessSecurityEvent, HostProject, ToolGateway } from '@latch/sdk'
 import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER } from '@latch/testkit'
 import {
@@ -15,6 +15,7 @@ import {
   selectProfile,
   setCommandSearch,
   setLoginPrograms,
+  withHarnessPromptSource,
   type AcpAgentOptions,
   type AgentRecord,
 } from '../src/index.ts'
@@ -154,6 +155,249 @@ const said = (detail: DriverTaskDetail, role: string) =>
 const sent = (log: LogEntry[], method: string) => log.filter(entry => entry.event === 'recv' && entry.method === method)
 
 describe('Codex over its app-server', () => {
+  it('publishes only public skills and sends a native skill item from proven current user text and the official directory', async () => {
+    const privatePath = '/private/official-skill-directory/public-work/SKILL.md'
+    const fixture = await computer({
+      FAKE_CODEX_SKILLS: JSON.stringify([
+        { name: 'public-work', description: 'Public work', path: privatePath, scope: 'repo', enabled: true, pluginId: null },
+        {
+          name: 'disabled-work',
+          description: 'Disabled',
+          path: '/private/disabled/SKILL.md',
+          scope: 'user',
+          enabled: false,
+          pluginId: null,
+        },
+      ]),
+    })
+    const bridge = await fixture.open()
+    const requestId = rid()
+    const prompt = 'hello $public-work'
+    const { launchHash } = await bridge.launchPreview!({ cwd: fixture.main })
+    const { sessionId } = await withHarnessPromptSource({ method: 'create', requestId, text: prompt }, () =>
+      bridge.createTask({ prompt, requestId, cwd: fixture.main, expectedLaunchHash: launchHash }),
+    )
+    const detail = await until(bridge, sessionId, value => value.summary.status === 'idle')
+    expect(detail.skills).toEqual([{ name: 'public-work', description: 'Public work', invocation: '$public-work', scope: 'project' }])
+    expect(detail.commands?.map(command => command.name)).toEqual(['compact'])
+    expect(JSON.stringify(detail)).not.toContain(privatePath)
+    const log = await fixture.log()
+    expect(log.filter(row => row.method === 'skills/list').map(row => row.params)).toEqual([{ cwds: [fixture.main], forceReload: true }])
+    expect(log.find(row => row.method === 'turn/start')?.params?.input).toEqual([
+      { type: 'text', text: prompt, text_elements: [] },
+      { type: 'skill', name: 'public-work', path: privatePath },
+    ])
+    await vi.waitFor(async () => expect((await bridge.commandCatalogue?.({ cwd: fixture.main }))?.catalogue.skills).toEqual(detail.skills))
+    await bridge.close()
+    const restored = await fixture.open()
+    expect((await restored.detail(sessionId)).skills).toEqual(detail.skills)
+    expect((await restored.commandCatalogue?.({ cwd: fixture.main }))?.catalogue.skills).toEqual(detail.skills)
+  })
+
+  it('never selects a disabled, prefixed, quoted, escaped or unproven skill name', async () => {
+    const fixture = await computer({
+      FAKE_CODEX_SKILLS: JSON.stringify([
+        { name: 'known', description: 'Known', path: '/private/known/SKILL.md', scope: 'user', enabled: true },
+        { name: 'twice', description: 'A', path: '/private/a/SKILL.md', scope: 'repo', enabled: true },
+        { name: 'twice', description: 'B', path: '/private/b/SKILL.md', scope: 'user', enabled: true },
+        { name: 'off', description: 'Off', path: '/private/off/SKILL.md', scope: 'user', enabled: false },
+      ]),
+    })
+    const bridge = await fixture.open()
+    const { launchHash } = await bridge.launchPreview!({ cwd: fixture.main })
+    const requestId = rid()
+    const prompt = 'hello $off $known-extra `$known` \\$known $unknown'
+    const { sessionId } = await withHarnessPromptSource({ method: 'create', requestId, text: prompt }, () =>
+      bridge.createTask({ prompt, requestId, cwd: fixture.main, expectedLaunchHash: launchHash }),
+    )
+    const detail = await until(bridge, sessionId, value => value.summary.status === 'idle')
+    expect(detail.skills?.map(skill => skill.invocation)).toEqual(['$known'])
+    expect((await fixture.log()).find(row => row.method === 'turn/start')?.params?.input).toEqual([
+      { type: 'text', text: prompt, text_elements: [] },
+    ])
+    await bridge.prompt(sessionId, 'hello $known', rid())
+    await until(bridge, sessionId, value => value.summary.status === 'idle')
+    expect((await fixture.log()).filter(row => row.method === 'turn/start').at(-1)?.params?.input).toEqual([
+      { type: 'text', text: 'hello $known', text_elements: [] },
+    ])
+    const next = rid()
+    await withHarnessPromptSource({ method: 'prompt', sessionId, requestId: next, text: 'hello $known $known' }, () =>
+      bridge.prompt(sessionId, 'hello $known $known', next),
+    )
+    await until(bridge, sessionId, value => value.summary.status === 'idle')
+    expect((await fixture.log()).filter(row => row.method === 'turn/start').at(-1)?.params?.input).toEqual([
+      { type: 'text', text: 'hello $known $known', text_elements: [] },
+      { type: 'skill', name: 'known', path: '/private/known/SKILL.md' },
+    ])
+  })
+
+  it('rejects an explicitly named ambiguous skill before sending any model input', async () => {
+    const fixture = await computer({
+      FAKE_CODEX_SKILLS: JSON.stringify([
+        { name: 'twice', path: '/private/a/SKILL.md', scope: 'repo', enabled: true },
+        { name: 'twice', path: '/private/b/SKILL.md', scope: 'user', enabled: true },
+      ]),
+    })
+    const bridge = await fixture.open()
+    const requestId = rid()
+    const prompt = 'hello $twice'
+    const { launchHash } = await bridge.launchPreview!({ cwd: fixture.main })
+    const { sessionId } = await withHarnessPromptSource({ method: 'create', requestId, text: prompt }, () =>
+      bridge.createTask({ prompt, requestId, cwd: fixture.main, expectedLaunchHash: launchHash }),
+    )
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('failed')
+    expect(said(detail, 'system')).toContain('技能名称不唯一')
+    expect((await fixture.log()).filter(row => row.method === 'turn/start')).toEqual([])
+    expect(JSON.stringify(detail)).not.toContain('/private/a/')
+    expect(JSON.stringify(detail)).not.toContain('/private/b/')
+  })
+
+  it('clears private paths and public suggestions on changed or failed skill reads', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-skill-reports-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const file = join(root, 'skills.json')
+    await writeFile(
+      file,
+      JSON.stringify([{ name: 'known', description: 'Known', path: '/private/old/SKILL.md', scope: 'user', enabled: true }]),
+    )
+    const fixture = await computer({ FAKE_CODEX_SKILLS_FILE: file })
+    const bridge = await fixture.open()
+    const sessionId = await start(bridge, fixture.main, 'hello')
+    await until(bridge, sessionId, value => value.summary.status === 'idle')
+    expect((await bridge.detail(sessionId)).skills?.map(skill => skill.name)).toEqual(['known'])
+    for (const report of [[], { error: true }]) {
+      await writeFile(file, JSON.stringify(report))
+      await bridge.prompt(sessionId, 'skills-changed', rid())
+      await until(bridge, sessionId, value => value.summary.status === 'idle')
+      await vi.waitFor(async () => expect((await bridge.detail(sessionId)).skills).toEqual(Array.isArray(report) ? [] : undefined))
+      const requestId = rid()
+      await withHarnessPromptSource({ method: 'prompt', sessionId, requestId, text: 'hello $known' }, () =>
+        bridge.prompt(sessionId, 'hello $known', requestId),
+      )
+      await until(bridge, sessionId, value => value.summary.status === 'idle')
+      expect((await fixture.log()).filter(row => row.method === 'turn/start').at(-1)?.params?.input).toEqual([
+        { type: 'text', text: 'hello $known', text_elements: [] },
+      ])
+      expect(JSON.stringify(await bridge.detail(sessionId))).not.toContain('/private/old/SKILL.md')
+      expect(JSON.stringify(await bridge.detail(sessionId))).not.toContain('/private/catalogue-error')
+    }
+  })
+
+  it('rejects ambiguous skill steering instead of converting the local refusal into a new prompt', async () => {
+    const fixture = await computer({
+      FAKE_CODEX_SKILLS: JSON.stringify([
+        { name: 'twice', path: '/private/a/SKILL.md', scope: 'repo', enabled: true },
+        { name: 'twice', path: '/private/b/SKILL.md', scope: 'user', enabled: true },
+      ]),
+    })
+    const bridge = await fixture.open()
+    const sessionId = await start(bridge, fixture.main, 'sleep until told')
+    await vi.waitFor(async () => expect(sent(await fixture.log(), 'turn/start')).toHaveLength(1), { timeout: 8_000 })
+    const requestId = rid()
+    await expect(
+      withHarnessPromptSource({ method: 'steer', sessionId, requestId, text: 'hello $twice' }, () =>
+        bridge.steer!(sessionId, 'hello $twice', requestId),
+      ),
+    ).rejects.toThrow('没有接受这条追加')
+    expect(sent(await fixture.log(), 'turn/steer')).toEqual([])
+    expect(sent(await fixture.log(), 'turn/start')).toHaveLength(1)
+    await bridge.cancel(sessionId)
+    await settled(bridge, sessionId)
+  })
+
+  it('invalidates paths before a delayed directory read and discards it after another changed notification', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-skill-refresh-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const file = join(root, 'skills.json')
+    const release = join(root, 'release')
+    const row = (name: string) => ({ name, path: `/private/${name}/SKILL.md`, scope: 'user', enabled: true })
+    await writeFile(file, JSON.stringify([row('old')]))
+    const fixture = await computer({ FAKE_CODEX_SKILLS_FILE: file })
+    const bridge = await fixture.open()
+    const sessionId = await start(bridge, fixture.main, 'hello')
+    await settled(bridge, sessionId)
+    expect((await bridge.detail(sessionId)).skills?.map(skill => skill.name)).toEqual(['old'])
+    try {
+      await writeFile(file, JSON.stringify({ skills: [row('stale')], waitFor: release }))
+      await bridge.prompt(sessionId, 'skills-changed', rid())
+      await settled(bridge, sessionId)
+      await vi.waitFor(async () => expect((await fixture.log()).filter(row => row.method === 'skills/list')).toHaveLength(2))
+      expect((await bridge.detail(sessionId)).skills).toBeUndefined()
+      const requestId = rid()
+      await withHarnessPromptSource({ method: 'prompt', sessionId, requestId, text: 'hello $old' }, () =>
+        bridge.prompt(sessionId, 'hello $old', requestId),
+      )
+      await settled(bridge, sessionId)
+      expect((await fixture.log()).filter(row => row.method === 'turn/start').at(-1)?.params?.input).toEqual([
+        { type: 'text', text: 'hello $old', text_elements: [] },
+      ])
+      await writeFile(file, JSON.stringify([row('fresh')]))
+      await bridge.prompt(sessionId, 'skills-changed', rid())
+      await settled(bridge, sessionId)
+      await writeFile(release, '')
+      await vi.waitFor(async () => expect((await bridge.detail(sessionId)).skills?.map(skill => skill.name)).toEqual(['fresh']))
+      expect((await fixture.log()).filter(row => row.method === 'skills/list')).toHaveLength(3)
+      const next = rid()
+      await withHarnessPromptSource({ method: 'prompt', sessionId, requestId: next, text: 'hello $fresh $old $stale' }, () =>
+        bridge.prompt(sessionId, 'hello $fresh $old $stale', next),
+      )
+      await settled(bridge, sessionId)
+      expect((await fixture.log()).filter(row => row.method === 'turn/start').at(-1)?.params?.input).toEqual([
+        { type: 'text', text: 'hello $fresh $old $stale', text_elements: [] },
+        { type: 'skill', name: 'fresh', path: '/private/fresh/SKILL.md' },
+      ])
+    } finally {
+      await writeFile(release, '')
+    }
+  })
+
+  it.each(['long-descriptions', 'unicode-names', 'count'] as const)(
+    'bounds %s in UTF-8 without using the public cutoff for native lookup',
+    async kind => {
+      const root = await mkdtemp(join(tmpdir(), 'latch-skills-budget-'))
+      cleanups.push(() => rm(root, { recursive: true, force: true }))
+      const file = join(root, 'skills.json')
+      const rows = Array.from({ length: kind === 'count' ? 205 : 200 }, (_, index) => ({
+        name: kind === 'unicode-names' ? `${'界'.repeat(90)}${index}` : `public-${index}`,
+        description: kind === 'long-descriptions' ? '界'.repeat(1000) : '',
+        path: `/private/official-budget/${index}/SKILL.md`,
+        scope: 'repo',
+        enabled: true,
+      }))
+      await writeFile(file, JSON.stringify(rows))
+      const fixture = await computer({ FAKE_CODEX_SKILLS_FILE: file })
+      const bridge = await fixture.open()
+      const requestId = rid()
+      const prompt = `hello $${rows.at(-1)!.name}`
+      const { launchHash } = await bridge.launchPreview!({ cwd: fixture.main })
+      const { sessionId } = await withHarnessPromptSource({ method: 'create', requestId, text: prompt }, () =>
+        bridge.createTask({ prompt, requestId, cwd: fixture.main, expectedLaunchHash: launchHash }),
+      )
+      const detail = await until(bridge, sessionId, value => value.summary.status === 'idle')
+      expect(readSessionSkills(detail.skills)).toEqual(detail.skills)
+      const publicData = { skills: detail.skills, ...(detail.skillsTruncated ? { skillsTruncated: true } : {}) }
+      expect(Buffer.byteLength(JSON.stringify(publicData))).toBeLessThanOrEqual(MAX_SESSION_SKILLS_BYTES)
+      expect(JSON.stringify(publicData)).not.toContain('/private/official-budget/')
+      if (kind === 'long-descriptions') {
+        expect(detail.skills).toHaveLength(200)
+        expect(detail.skills?.at(-1)?.name).toBe(rows.at(-1)!.name)
+        expect(detail.skills?.some(skill => skill.description === undefined)).toBe(true)
+        expect(detail.skillsTruncated).toBeUndefined()
+      } else {
+        expect(detail.skillsTruncated).toBe(true)
+        expect(detail.skills!.length).toBeLessThan(rows.length)
+      }
+      const sent = (await fixture.log()).find(row => row.method === 'turn/start')?.params?.input as Array<Record<string, unknown>>
+      expect(sent.filter(item => item.type === 'skill')).toEqual([{ type: 'skill', name: rows.at(-1)!.name, path: rows.at(-1)!.path }])
+      await vi.waitFor(async () => expect((await bridge.commandCatalogue?.({ cwd: fixture.main }))?.catalogue).toMatchObject(publicData))
+      await bridge.close()
+      const restored = await fixture.open()
+      expect((await restored.detail(sessionId)).skillsTruncated).toBe(detail.skillsTruncated)
+      expect((await restored.commandCatalogue?.({ cwd: fixture.main }))?.catalogue).toMatchObject(publicData)
+    },
+  )
+
   it('keeps gateway thinking fixed for the active turn and applies high or default only to its successor', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-codex-thinking-'))
     cleanups.push(() => rm(root, { recursive: true, force: true }))

@@ -19,6 +19,14 @@ export interface SessionCommand {
   idleOnly?: true
 }
 
+/** Public skill suggestions. Native paths and contents stay inside the owning wire. */
+export interface SessionSkill {
+  name: string
+  description?: string
+  invocation: string
+  scope?: 'project' | 'user' | 'system' | 'admin' | 'temporary'
+}
+
 /** Browser-safe product state, independent of a particular harness driver. */
 export type TaskStatus = 'idle' | 'running' | 'waiting-approval' | 'cancelled' | 'failed' | 'interrupted'
 export type TaskMode = 'chat' | 'agent'
@@ -595,6 +603,10 @@ export interface TaskDetail {
   usageReport?: UsageReport
   /** Commands currently advertised by this session; selecting one only edits the draft. */
   commands?: SessionCommand[]
+  /** The session's current native skill catalogue; distinct from legacy slash commands. */
+  skills?: SessionSkill[]
+  /** The public skill catalogue omitted entries; explicit native lookup still belongs to the current wire. */
+  skillsTruncated?: true
   /** Latest plan reported by the harness. */
   plan?: PlanEntry[]
   /** Options the harness lets the user change for this session. */

@@ -54,6 +54,28 @@ it('persists a real empty report privately and refuses a different fingerprint',
   await restored.close()
 })
 
+it('keeps public skills under the same cache fingerprint and rejects private skill fields', async () => {
+  const root = await directory()
+  const cache = new CommandCache(root)
+  await cache.load()
+  const skills = [{ name: 'known', invocation: '$known', scope: 'project' as const }]
+  cache.remember(record({ skills }))
+  await cache.close()
+  const restored = new CommandCache(root)
+  await restored.load()
+  expect(restored.read(hash('a'), hash('b'), hash('c'))?.skills).toEqual(skills)
+  expect(restored.read(hash('a'), hash('d'), hash('c'))).toBeUndefined()
+  await restored.close()
+  const file = join(root, 'harness-commands.json')
+  const saved = JSON.parse(await readFile(file, 'utf8'))
+  saved.entries[0].skills[0].path = '/private/native-skill/SKILL.md'
+  await writeFile(file, JSON.stringify(saved), { mode: 0o600 })
+  const invalid = new CommandCache(root)
+  await invalid.load()
+  expect(invalid.read(hash('a'), hash('b'), hash('c'))).toBeUndefined()
+  await invalid.close()
+})
+
 it('orders async reports by receipt ordinal rather than wall clock and does not restore a removed entry on write completion', async () => {
   const root = await directory()
   const cache = new CommandCache(root)

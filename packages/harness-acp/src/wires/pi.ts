@@ -7,8 +7,9 @@ import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
+import { readSessionSkills, boundSessionSkills, type SessionSkill } from '@latch/protocol'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
-import { commandsUpdate, FORK_METHOD, RPC, RpcError, STEER_METHOD } from '../protocol.ts'
+import { commandsUpdate, FORK_METHOD, RPC, RpcError, STEER_METHOD, SESSION_SKILLS_UPDATE } from '../protocol.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
 import { GATE_COMMAND, GATE_LEVELS, GATE_MARK, writeGate } from './pi-gate.ts'
 import { PI_GATEWAY_PROVIDER } from '../profiles/pi-gateway.ts'
@@ -267,6 +268,8 @@ export class PiWire implements AgentWire {
   readonly idleCommands = new Set([COMPACT.name])
   readonly commandsWithoutContext = new Set([COMPACT.name])
   private commands: z.infer<typeof commandsUpdate>['availableCommands'] = [COMPACT]
+  private skills?: SessionSkill[]
+  private skillsTruncated?: true
   readonly forks = true
   private readonly process: AgentProcess
   private nextId = 0
@@ -500,13 +503,13 @@ export class PiWire implements AgentWire {
     const listed = await this.send({ type: 'get_commands' }, timeoutMs, signal).catch(() => undefined)
     const commands = isRecord(listed) && Array.isArray(listed.commands) ? listed.commands : []
     this.commands = [COMPACT]
+    const skills: SessionSkill[] = []
     this.idleCommands.clear()
     this.idleCommands.add(COMPACT.name)
     this.commandsWithoutContext.clear()
     this.commandsWithoutContext.add(COMPACT.name)
     this.listedFor = undefined
     for (const item of commands) {
-      if (this.commands.length === 200) break
       if (!isRecord(item) || !['extension', 'prompt', 'skill'].includes(String(item.source))) continue
       const parsed = commandsUpdate.shape.availableCommands.element.safeParse({
         name: item.name,
@@ -515,11 +518,26 @@ export class PiWire implements AgentWire {
       if (!parsed.success) continue
       const name = parsed.data.name
       if (name === GATE_COMMAND || name.startsWith(`${GATE_COMMAND}:`) || this.commandsWithoutContext.has(name)) continue
+      if (item.source === 'skill' && name.startsWith('skill:')) {
+        const scope =
+          isRecord(item.sourceInfo) && ['project', 'user', 'system', 'admin', 'temporary'].includes(String(item.sourceInfo.scope))
+            ? item.sourceInfo.scope
+            : undefined
+        const skill = readSessionSkills([{ name: name.slice(6), invocation: `/${name}`, ...(scope ? { scope } : {}) }])
+        if (skill?.[0]) {
+          skills.push(skill[0])
+          this.commandsWithoutContext.add(name)
+        }
+      }
+      if (this.commands.length === 200) continue
       this.commands.push(parsed.data)
       this.commandsWithoutContext.add(name)
       // pi's steer expands skills/templates, but explicitly rejects extension commands.
       if (item.source === 'extension') this.idleCommands.add(name)
     }
+    const bounded = boundSessionSkills(skills)
+    this.skills = isRecord(listed) && Array.isArray(listed.commands) ? bounded.skills : undefined
+    this.skillsTruncated = this.skills && bounded.skillsTruncated
     if (!this.gatePath) return
     const own = commands.find(
       item =>
@@ -709,6 +727,11 @@ export class PiWire implements AgentWire {
     if (this.listedFor !== this.sessionId) {
       this.listedFor = this.sessionId
       this.update({ sessionUpdate: 'available_commands_update', availableCommands: this.commands })
+      this.update({
+        sessionUpdate: SESSION_SKILLS_UPDATE,
+        skills: this.skills ?? null,
+        ...(this.skillsTruncated ? { skillsTruncated: true } : {}),
+      })
     }
     const compact = images.length ? undefined : compactCommand(texts.join('\n\n'))
     const done = new Promise<unknown>((resolve, reject) => {

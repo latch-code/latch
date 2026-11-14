@@ -229,7 +229,7 @@ Codex 直连使用服务的模型列表，可以选择原生目录之外的模�
 
 - **握手与登录。** `initialize` 之后发 `initialized`；版本取自回答的 `userAgent`。开会话前先 `account/read`：没有账号且需要 OpenAI 登录时按未登录处理（409 `agent-auth-required`，「Codex 还没登录。按它自己的方式登录后重试。」），不开 thread。
 - **会话。** 新会话 `thread/start`，恢复 `thread/resume`（`excludeTurns`）。只有 Codex 自己说没有这个 thread（`no rollout found for thread id`、`invalid session id`）时是「该 Harness 已找不到这个会话」；其他拒绝照原样（脱敏后）显示它的理由，接入已有会话时据此认出「正在别处使用」。会话带技能时，只读技能服务器经 thread 的 `config.mcp_servers` 交给 Codex。
-- **一轮。** `turn/start` 带输入（文字；图片作 data URL）、模型、思考深度与当前模式的设置，等到 `turn/completed` 才结束：`completed` 正常结束，`interrupted` 算取消，`failed` 带 Codex 的原因失败。`item/agentMessage/delta` 与推理增量流式显示，`commandExecution`（输出增量）、`fileChange`（每个文件的 diff）、`mcpToolCall`、`webSearch` 显示为工具调用，`turn/plan/updated` 是计划，`thread/tokenUsage/updated` 是用量；`willRetry` 的 `error` 是一条「Codex 正在重试」的提示。运行中追加用 `turn/steer`（带当前一轮的 ID）。
+- **一轮。** `turn/start` 带输入（文字；图片作 data URL；显式技能用官方目录中的 name/path）、模型、思考深度与当前模式的设置，等到 `turn/completed` 才结束：`completed` 正常结束，`interrupted` 算取消，`failed` 带 Codex 的原因失败。`item/agentMessage/delta` 与推理增量流式显示，`commandExecution`（输出增量）、`fileChange`（每个文件的 diff）、`mcpToolCall`、`webSearch` 显示为工具调用，`turn/plan/updated` 是计划，`thread/tokenUsage/updated` 是用量；`willRetry` 的 `error` 是一条「Codex 正在重试」的提示。运行中追加用 `turn/steer`（带当前一轮的 ID）。
 - **权限模式。** 四档与 ACP 路线同名、同说明，对照写在 `profiles/codex.ts`（改动时提高 profile 的 `version`），模式由 wire 保存，每一轮都随 `turn/start` 发出（thread 开始与恢复时也带上）：
 
   | 模式 | `approvalPolicy` | 沙箱 | 谁审 |
@@ -261,7 +261,7 @@ pi 不经适配器：`wires/pi.ts` 启动 `pi --mode rpc`（这两个参数接�
 - **一轮。** `prompt` 发出这一轮，等到 `agent_settled` 才结束，然后读 `get_session_stats`：这个会话的输入与输出令牌、上下文占用和花费（美元）。回复以 `error` 结束时这一轮失败，写 pi 给的原因；以 `length` 结束时按达到长度上限处理。扩展把这条输入当作自己的命令处理（`handled`）时这一轮立即结束。
 - **停止。** 先 `clear_queue` 再 `abort`：不清空队列，`abort` 会接着处理排队的追加。清掉的追加内容写进会话：「pi 提示：停止前追加的内容还没送到 pi，已撤回」。
 - **运行中追加。** pi 在跑这一轮（`agent_start` 到 `agent_end`）时用 `steer` 加进去，pi 在手上的工具调用结束后、下一次请求模型之前读到它；其他时候交回 Host 排队。
-- **`/compact`。** pi 的 RPC 不列出它自己界面里的 `/compact`，当作文字发出去会交给模型，所以会话第一轮开始时 Latch 把它列为 pi 的命令（「把之前的对话总结成摘要，腾出上下文；可以在命令后写总结时要注意什么」）。一条消息只有 `/compact`，或 `/compact` 后跟空白和说明、不带图片时，发 pi 的 `compact` 命令（说明放在 `customInstructions`），不发 `prompt`。这条消息留在记录里，作为一轮运行：pi 的 `compaction_start`、`compaction_end` 成为已有的压缩行（「pi 已压缩上下文」加摘要，「pi 压缩上下文失败：原因」，或「pi 已取消压缩上下文」，pi 自己加在原因前的 `Compaction failed: ` 去掉），pi 回答 `compact` 时这一轮结束；pi 报告了压缩时，压缩失败或被扩展取消都不让这一轮失败，还没报告压缩就拒绝时这一轮失败并写 pi 的原因（遮住像密钥的部分）。停止照常先 `clear_queue` 再 `abort`，pi 会中止压缩，这一轮是已停止。之后的上下文占用未知，直到下一条回复，因为 pi 在压缩后不报告它。pi 压缩前会先中止手上的事，所以 `/compact` 只在两轮之间：它的命令带 `idleOnly`，运行中斜杠菜单不列它，排队、把排队的消息改成它或追加时 Host 拒绝（409 `command-queued`，「/compact 不能排队或追加，请等本轮结束后发送。」），线也不把它当作追加。pi 自己的其他命令（`get_commands` 列出的扩展、提示与技能命令）还没有列出。
+- **`/compact`。** pi 的 RPC 不列出它自己界面里的 `/compact`，当作文字发出去会交给模型，所以会话第一轮开始时 Latch 把它列为 pi 的命令（「把之前的对话总结成摘要，腾出上下文；可以在命令后写总结时要注意什么」）。一条消息只有 `/compact`，或 `/compact` 后跟空白和说明、不带图片时，发 pi 的 `compact` 命令（说明放在 `customInstructions`），不发 `prompt`。这条消息留在记录里，作为一轮运行：pi 的 `compaction_start`、`compaction_end` 成为已有的压缩行（「pi 已压缩上下文」加摘要，「pi 压缩上下文失败：原因」，或「pi 已取消压缩上下文」，pi 自己加在原因前的 `Compaction failed: ` 去掉），pi 回答 `compact` 时这一轮结束；pi 报告了压缩时，压缩失败或被扩展取消都不让这一轮失败，还没报告压缩就拒绝时这一轮失败并写 pi 的原因（遮住像密钥的部分）。停止照常先 `clear_queue` 再 `abort`，pi 会中止压缩，这一轮是已停止。之后的上下文占用未知，直到下一条回复，因为 pi 在压缩后不报告它。pi 压缩前会先中止手上的事，所以 `/compact` 只在两轮之间：它的命令带 `idleOnly`，运行中斜杠菜单保留置灰，排队、把排队的消息改成它或追加时 Host 拒绝（409 `command-queued`，「/compact 不能排队或追加，请等本轮结束后发送。」），线也不把它当作追加。pi 自己的扩展、提示模板与技能命令来自 `get_commands`，见「会话命令」。
 - **工具与其他事件。** `tool_execution_*` 成为工具行：`bash` 是命令，`read` 是读取，`edit`、`write` 是改文件，`grep`、`find`、`ls` 是搜索，`edit` 的 diff 以文本显示。压缩成为压缩行；自动重试、扩展的通知与扩展出错成为通知。模型服务的错误可能带出一段密钥：pi 转来的失败回复、重试原因、压缩失败原因与扩展出错都先遮住像密钥的部分。
 - **扩展的提问。** 扩展的 `confirm` 像审批一样交给人，选项是「允许」「拒绝」；`select`、`input`、`editor` 按「不支持的请求」写进会话，并回答 pi「已取消」。
 - **分叉。** 从一个 pi 会话分叉到同一个 pi 定义、同一个文件夹时（「从这里分叉」与「从这里编辑」都是），Latch 用 pi 自己的会话文件分叉：新会话带着 pi 到那一轮为止的原样记录，第一条只发人写的话，不发背景文本（`HarnessCapabilities.fork: 'native'`，见 [ARCHITECTURE.md](ARCHITECTURE.md#会话分叉)）。做法：新会话的进程 `switch_session` 到来源的会话文件，`get_entries` 读出记录，沿 pi 所在的分支找来源下一轮开始（那条用户消息记下的时间）之后的第一条用户消息，`fork` 在它之前；分叉点就是最新一轮时 `clone` 整条分支。Latch 在上一轮结算之后才开始下一轮，所以这个时间之前写下的都属于分叉点及以前；pi 与 Host 在同一台电脑上用同一个时钟。分叉后用 `get_entries` 从预期的最后一条往后读，核对 pi 复制出的新文件正好停在那里（pi 复制时保留条目 ID；之后只能有设置、标签之类模型看不到的条目）。分叉在发送时才做，而且只在第一轮做：第一轮在 pi 打开会话之前就结束了（停止、进程没能启动）时，下一轮像其他新会话一样开始，不再分叉，也不写分叉的原因；背景文本只在第一条消息里，重试第一轮会连同它一起重发，另写一条新消息则不带。pi 的 `fork` 返回的那条消息文字不用：「从这里编辑」已经把 Latch 记下的原文放进输入框，pi 的文字里还有 Latch 附加的指令块与文件引用。做不到时退回背景文本，并在新会话里写一行「pi 没有用它自己的记录分叉：<原因>。这次以文字带上来源会话到这一轮为止的记录。」：不在来源的文件夹里、分叉点之后清空过上下文、来源会话文件已不在（pi 打开不存在的文件得到空会话，`get_entries` 没有记录）、下一轮开始之后的压缩（例如 `/compact`）会被带进来、扩展取消了 `switch_session` 或 `fork`、pi 拒绝命令或复制出的文件没有停在那一轮。退回前进程先 `new_session` 离开来源（这一步也被扩展取消时停止进程），Latch 的会话不会在来源的文件上继续，分叉也不往来源的文件里写（pi 的扩展在打开会话时自己写的除外）。已知限制：系统时钟在两轮之间往回拨时，按时间找到的位置可能错一轮，核对只能确认 pi 停在了所要求的条目上。
@@ -505,7 +505,8 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 | Claude Agent 的其他文件夹（`additionalDirectories`） | 未实现；Claude 访问会话目录以外的路径时逐次询问 |
 | ACP 的原生分叉（`session/fork`） | 未实现；Codex 等 Agent 声明的 `session/fork` 只能分叉整个会话（从某一轮分叉的位置在其他客户端的私有 `_meta` 里，Latch 不借用），新进程能否分叉另一个进程的会话还没有用真实 Agent 核对。现在 pi 以外的 Harness 的分叉都由 Host 以背景文本开启新会话 |
 | 回答 pi 扩展的选择题与输入框 | 未实现；它们回答「已取消」并写进会话 |
-| 只有主文件夹的 Codex 会话计入 `.agents/skills/` | 未实现；需要提高 Codex profile 的版本，已有 Codex 会话届时要新建 |
+| 只有主文件夹的 Codex 会话把 `.agents/skills/` 计入启动指纹 | 尚未实现；原生技能目录读取已接入，但没有扩展这个指纹范围 |
+| Web 与 iOS 的原生技能选择菜单 | 尚未实现；后端已有公开目录和精确调用，当前可手动输入 Codex `$name`，pi 保留原有 `/skill:name` 补全 |
 | Qwen Code、goose 经 Latch 使用模型服务 | 未实现；尚未接好各自选择服务的配置，模型菜单收起的那一行点开后写「尚未实现」 |
 | 其他协议翻译方向 | 未实现；当前只开放 Responses/Anthropic→Chat 与 Responses↔Anthropic，其余组合列出但不能选 |
 
@@ -527,11 +528,19 @@ ACP `available_commands_update` 的当前列表作为可选 `TaskDetail.commands
 
 Codex 直连声明 `/compact`，用 `thread/compact/start` 执行，不接受参数或附件。立即 RPC 回答不是完成；进度来自 `contextCompaction`，手动压缩以对应 `turn/completed` 的成功、失败或中断结算，取消用原有 `turn/interrupt` 并等待真实结算。自动压缩以自身 `item/completed` 为成功证据；普通一轮结束却缺少这个完成事件时显示「压缩上下文结果未知」，不推断已完成。每次压缩的终态只通知一次。
 
-原生 compact 没有每轮模型、思考或权限覆盖参数。已加载 thread 的 `thread/resume` 读回不等于应用新配置；执行前按实际读回核对 thread、目录、模型、思考、完整沙箱及审批策略，缺项、未知或非空 `activePermissionProfile` 都拒绝。改过配置时先由普通消息应用，再用 compact；不发空轮次代替人应用配置。Codex profile 版本为 7。原生 `/review` 会改变询问行为，并可能采用独立的 `review_model`，当前尚未接入；直接输入或追加时明确拒绝，不调用 `review/start`，也不转成普通提示。
+原生 compact 没有每轮模型、思考或权限覆盖参数。已加载 thread 的 `thread/resume` 读回不等于应用新配置；执行前按实际读回核对 thread、目录、模型、思考、完整沙箱及审批策略，缺项、未知或非空 `activePermissionProfile` 都拒绝。改过配置时先由普通消息应用，再用 compact；不发空轮次代替人应用配置。Codex profile 版本为 8。原生 `/review` 会改变询问行为，并可能采用独立的 `review_model`，当前尚未接入；直接输入或追加时明确拒绝，不调用 `review/start`，也不转成普通提示。
 
-pi 在打开或加载会话时复用 `get_commands`，只采用实际报告的 extension、prompt、skill。公开列表有界，去掉路径、`sourceInfo` 和私有权限扩展命令，保留字面 `skill:name`；扩展和原生 compact 只在空闲时执行，提示模板和技能可以由 pi 在追加时展开。pi 自己报告 `/mcp` 不表示 Latch 能向它注入 MCP，`takesMcpServers` 不因此改变。pi profile 版本为 5。
+pi 在打开或加载会话时复用 `get_commands`，只采用实际报告的 extension、prompt、skill。公开列表有界，去掉路径、`sourceInfo` 和私有权限扩展命令，保留字面 `skill:name`；扩展和原生 compact 只在空闲时执行，提示模板和技能可以由 pi 在追加时展开。pi 自己报告 `/mcp` 不表示 Latch 能向它注入 MCP，`takesMcpServers` 不因此改变。pi profile 版本为 6。
 
 线的可选 `commandsWithoutContext` 区分必须保留原生前缀的命令与只限空闲的命令。只有完整首词与线确认的命令集合一致才省略本次人物 brief；没有输入参数的原生命令同样不消耗 brief，下一条普通消息继续携带它。未知名字或读取目录失败不省略 brief；Codex 不把多文本上下文块当作原生命令。未携带 brief 的用户消息不标记 `agentBrief`。
+
+**原生技能。** 可选 `TaskDetail.skills` 与 `HarnessCommandCatalogue.skills` 保存公开的 `name`、精确 `invocation`、可选 `description` 和已知 `scope`，不含路径、正文或 `sourceInfo`。旧 `commands` 保持兼容：Codex 的 `$name` 不放进斜杠命令，pi 的 `/skill:name` 继续保留，新增 skills 不重复 legacy 说明。目录最多 200 项，包含 JSON 包装和截断标记的 UTF-8 总量不超过 64 KiB；先保名称，再分配可选说明。仅省略说明不算目录截断，名称本身或数量超限时以 `skillsTruncated:true` 明示，随会话与缓存持久化。Host 再次校验字段和预算，拒绝夹带私有字段。Web 与 iOS 技能选择菜单尚未接入。
+
+Codex 直连开 thread 或恢复时，以实际 cwd 调用 0.167 的 `skills/list {cwds:[cwd],forceReload:true}`；原生路径只留在当前 wire 的完整 enabled 映射里，不从客户端或提示内容接收路径。`skills/changed` 立即清空映射后重新读取，重叠读取合并，旧代次回答不得恢复旧路径。读取失败或目录不完整时撤下当前目录，错误中的私有路径不外发。不读取 CLI 存储，不另外启动探测进程。公开目录的数量与字节截断不截断当前 wire 的合规调用映射，原生 RPC 帧上限不变。
+
+Host 在增加人物 brief、文件引用、撤销说明、seed 与历史之前保留本轮原文，只经内部调用上下文传给运行时与 wire；不接受公共 HTTP 的来源声明，不改变请求哈希、队列或回执。分叉仅在原文与已核对的完整输入一致时扣除已验证的背景前缀。Codex 只从该原文的完整空白分隔 `$name` 匹配官方清单，补充 `{type:'skill',name,path}`；原文字仍照常发送。未知、带前后缀、转义或引号包围的名字保持文字，同名 enabled 项明确拒绝，追加时也不改成另开一轮。没有原文证据时不扫描完整 prompt 兜底。它只限定 Latch 生成的结构化项，不限制 CLI 或模型自己的行为，也不是沙箱。
+
+技能公开元数据沿会话和原有命令缓存保存；缓存复用同一项目、目录身份、启动指纹与来源会话可见性检查，读取不启动 CLI。恢复出的缓存仅是上次会话的建议，不能给当前结构化调用提供路径；新 wire 必须重新读取官方目录。磁盘变化没有额外主动探测，仍需 CLI 的目录变更通知或下次打开时重读。
 
 分叉由 Host 以一条背景文本加新输入开启会话，ACP 不需要私有分叉方法；仍是新的启动。pi 在同一定义、同一文件夹内用它自己的分叉，见「pi 的 RPC 模式」。用户消息的 requestId 在 ACP 存储中保留，用于关联确认后的输入与客户端待发送气泡。
 
@@ -540,6 +549,14 @@ Host 队列只在明确 runOutcome=completed 后自动派发。ACP 只有 sessio
 ACP 附件只走 `session/prompt` 的内容块。initialize 的 `promptCapabilities.image` 和 `embeddedContext` 必须各自为 true；Probe 缺少字段不代表支持，实际启动后再次核对。图片为 base64 image，文本为含 `latch-attachment:<id>` URI 和正文的 embedded resource，不在项目创建文件。Agent 输出图片通过 Host 回调存为会话附件，任务快照只写引用。含附件会话的 stderr 不进入 Host 日志，RPC 失败也不回显附件；具体限额和授权见 [ATTACHMENTS.md](ATTACHMENTS.md)。
 
 显式 `fileRefs` 由 Host 对固定目录再次验证，ACP 仅在本轮模型输入里追加真实目录映射，公开消息保留原文与引用 metadata。附件及文件引用 schema 都随会话持久化；假进程回归覆盖实际协商、内容块、图片输出与重启。
+
+**原生技能。** 可选 `TaskDetail.skills` 与 `HarnessCommandCatalogue.skills` 保存公开的 `name`、精确 `invocation`、可选 `description` 和已知 `scope`，不含路径、正文或 `sourceInfo`。旧 `commands` 保持兼容：Codex 的 `$name` 不放进斜杠命令，pi 的 `/skill:name` 继续保留，新增 skills 不重复 legacy 说明。目录最多 200 项，包含 JSON 包装和截断标记的 UTF-8 总量不超过 64 KiB；先保名称，再分配可选说明。仅省略说明不算目录截断，名称本身或数量超限时以 `skillsTruncated:true` 明示，随会话与缓存持久化。Host 再次校验字段和预算，拒绝夹带私有字段。Web 与 iOS 技能选择菜单尚未接入。
+
+Codex 直连开 thread 或恢复时，以实际 cwd 调用 0.167 的 `skills/list {cwds:[cwd],forceReload:true}`；原生路径只留在当前 wire 的完整 enabled 映射里，不从客户端或提示内容接收路径。`skills/changed` 立即清空映射后重新读取，重叠读取合并，旧代次回答不得恢复旧路径。读取失败或目录不完整时撤下当前目录，错误中的私有路径不外发。不读取 CLI 存储，不另外启动探测进程。公开目录的数量与字节截断不截断当前 wire 的合规调用映射，原生 RPC 帧上限不变。
+
+Host 在增加人物 brief、文件引用、撤销说明、seed 与历史之前保留本轮原文，只经内部调用上下文传给运行时与 wire；不接受公共 HTTP 的来源声明，不改变请求哈希、队列或回执。分叉仅在原文与已核对的完整输入一致时扣除已验证的背景前缀。Codex 只从该原文的完整空白分隔 `$name` 匹配官方清单，补充 `{type:'skill',name,path}`；原文字仍照常发送。未知、带前后缀、转义或引号包围的名字保持文字，同名 enabled 项明确拒绝，追加时也不改成另开一轮。没有原文证据时不扫描完整 prompt 兜底。它只限定 Latch 生成的结构化项，不限制 CLI 或模型自己的行为，也不是沙箱。
+
+技能公开元数据沿会话和原有命令缓存保存；缓存复用同一项目、目录身份、启动指纹与来源会话可见性检查，读取不启动 CLI。恢复出的缓存仅是上次会话的建议，不能给当前结构化调用提供路径；新 wire 必须重新读取官方目录。磁盘变化没有额外主动探测，仍需 CLI 的目录变更通知或下次打开时重读。
 
 分叉由 Host 以一条背景文本加新输入开启会话，ACP 不需要私有分叉方法；仍是新的启动。pi 在同一定义、同一文件夹内用它自己的分叉，见「pi 的 RPC 模式」。用户消息的 requestId 在 ACP 存储中保留，用于关联确认后的输入与客户端待发送气泡。
 
