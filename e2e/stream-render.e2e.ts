@@ -1,11 +1,11 @@
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
-import type { TestDevice } from '@latch/testkit'
+import { FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { closeSettings, noHorizontalOverflow, openSection, openSession, openSettings, reachable } from './helpers/layout.ts'
@@ -99,25 +99,29 @@ turns.tail = async ({ sessionId, cwd, say, tool }) => {
   say('\\n\\n没有运行。')
 }
 turns.reads = async ({ cwd, say, tool }) => {
-  // Commands as Codex reports them: wrapped, with its own classification of what each one does.
-  const run = (id, inner, actions, output, status = 'completed') => {
-    const command = zsh(inner)
-    tool({ toolCallId: id, title: command, kind: 'execute', status: 'in_progress', rawInput: { command, cwd }, ...(actions ? { actions } : {}) })
+  // The agent's own read and search tools, and one shell command between them.
+  const run = (id, inner, quiet, output, status = 'completed') => {
+    const call = quiet
+      ? quiet.kind === 'read'
+        ? { title: 'Read ' + quiet.path, kind: 'read', locations: [{ path: quiet.path }] }
+        : { title: 'Search ' + quiet.query, kind: 'search', rawInput: { query: quiet.query } }
+      : { title: zsh(inner), kind: 'execute', rawInput: { command: zsh(inner), cwd } }
+    tool({ toolCallId: id, status: 'in_progress', ...call })
     if (status !== 'in_progress') tool({ toolCallId: id, status, content: [text(output)] }, 'tool_call_update')
   }
   say('先读几份说明。')
-  run('act_1', 'cat ' + cwd + '/notes/SKILL.md', [{ kind: 'read', path: cwd + '/notes/SKILL.md' }], '# SKILL\\n\\n说明')
-  run('act_2', 'ls -la docs', [{ kind: 'list', path: 'docs' }], 'guide.md')
-  run('act_3', "rg -n 'AGENTS' .", [{ kind: 'search', query: 'AGENTS', path: '.' }], './AGENTS.md:1:# AGENTS')
-  run('act_4', 'sed -n 1,40p AGENTS.md', [{ kind: 'read', path: cwd + '/AGENTS.md' }], '# AGENTS')
+  run('act_1', 'cat ' + cwd + '/notes/SKILL.md', { kind: 'read', path: cwd + '/notes/SKILL.md' }, '# SKILL\\n\\n说明')
+  run('act_2', '', { kind: 'search', query: 'docs' }, 'guide.md')
+  run('act_3', '', { kind: 'search', query: 'AGENTS' }, './AGENTS.md:1:# AGENTS')
+  run('act_4', 'sed -n 1,40p AGENTS.md', { kind: 'read', path: cwd + '/AGENTS.md' }, '# AGENTS')
   run('act_5', 'echo ok', undefined, 'ok')
-  run('act_6', 'cat a.txt', [{ kind: 'read', path: cwd + '/a.txt' }], 'a')
-  run('act_7', 'cat b.txt', [{ kind: 'read', path: cwd + '/b.txt' }], 'b')
-  run('act_8', 'cat missing.txt', [{ kind: 'read', path: cwd + '/missing.txt' }], 'cat: missing.txt: No such file or directory', 'failed')
-  run('act_9', 'cat c.txt', [{ kind: 'read', path: cwd + '/c.txt' }], 'c')
-  run('act_10', 'cat d.txt', [{ kind: 'read', path: cwd + '/d.txt' }], 'd')
-  run('act_11', 'cat e.txt', [{ kind: 'read', path: cwd + '/e.txt' }], 'e')
-  run('act_12', 'cat slow.txt', [{ kind: 'read', path: cwd + '/slow.txt' }], '', 'in_progress')
+  run('act_6', 'cat a.txt', { kind: 'read', path: cwd + '/a.txt' }, 'a')
+  run('act_7', 'cat b.txt', { kind: 'read', path: cwd + '/b.txt' }, 'b')
+  run('act_8', 'cat missing.txt', { kind: 'read', path: cwd + '/missing.txt' }, 'cat: missing.txt: No such file or directory', 'failed')
+  run('act_9', 'cat c.txt', { kind: 'read', path: cwd + '/c.txt' }, 'c')
+  run('act_10', 'cat d.txt', { kind: 'read', path: cwd + '/d.txt' }, 'd')
+  run('act_11', 'cat e.txt', { kind: 'read', path: cwd + '/e.txt' }, 'e')
+  run('act_12', 'cat slow.txt', { kind: 'read', path: cwd + '/slow.txt' }, '', 'in_progress')
   await reached(1)
   tool({ toolCallId: 'act_12', status: 'completed', content: [text('slow')] }, 'tool_call_update')
   await reached(2)
@@ -125,16 +129,20 @@ turns.reads = async ({ cwd, say, tool }) => {
 }
 turns.levels = async ({ sessionId, cwd, say, think, tool }) => {
   think('**Looking around**\\n\\nRead the notes first.', 'look')
-  const run = (id, inner, actions, output, status = 'completed') => {
+  const quiet = (id, call, output) => {
+    tool({ toolCallId: id, status: 'in_progress', ...call })
+    tool({ toolCallId: id, status: 'completed', content: [text(output)] }, 'tool_call_update')
+  }
+  const run = (id, inner, output, status) => {
     const command = zsh(inner)
-    tool({ toolCallId: id, title: command, kind: 'execute', status: 'in_progress', rawInput: { command, cwd }, ...(actions ? { actions } : {}) })
+    tool({ toolCallId: id, title: command, kind: 'execute', status: 'in_progress', rawInput: { command, cwd } })
     tool({ toolCallId: id, status, content: [text(output)] }, 'tool_call_update')
   }
-  run('lv_1', 'cat a.txt', [{ kind: 'read', path: cwd + '/a.txt' }], 'a')
-  run('lv_2', 'ls docs', [{ kind: 'list', path: 'docs' }], 'guide.md')
-  run('lv_3', 'rg -n x .', [{ kind: 'search', query: 'x', path: '.' }], './a.txt:1:x')
-  run('lv_4', 'pnpm test', undefined, ' × one test failed', 'failed')
-  run('lv_5', 'echo ok', undefined, 'ok')
+  quiet('lv_1', { title: 'Read a.txt', kind: 'read', locations: [{ path: cwd + '/a.txt' }] }, 'a')
+  quiet('lv_2', { title: 'Search docs', kind: 'search', rawInput: { query: 'docs' } }, 'guide.md')
+  quiet('lv_3', { title: 'Search x', kind: 'search', rawInput: { query: 'x' } }, './a.txt:1:x')
+  run('lv_4', 'pnpm test', ' × one test failed', 'failed')
+  run('lv_5', 'echo ok', 'ok', 'completed')
   say('需要你允许一条命令。', 'ask')
   const command = zsh('rm -rf build')
   const toolCall = { toolCallId: 'lv_6', title: command, kind: 'execute', status: 'pending', rawInput: { command, cwd } }
@@ -227,11 +235,28 @@ describe('how a turn of work is drawn', () => {
     await advance(0)
     const agent = join(scratch, 'render-agent.mjs')
     await writeFile(agent, agentSource(control))
-    host = await startTestHost()
+    // A stand-in for the `codex` program: the test kit's app-server, which reports commands with Codex's own actions.
+    const bin = join(scratch, 'bin')
+    await mkdir(bin)
+    const codex = join(bin, 'codex')
+    await writeFile(
+      codex,
+      `#!/bin/sh\nexport FAKE_CODEX_STATE='${join(scratch, 'threads.json')}'\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`,
+    )
+    await chmod(codex, 0o755)
+    host = await startTestHost({
+      commandDirectories: () => [bin],
+      loginPrograms: name => (name === 'codex' ? codex : undefined),
+      detectPreset: preset => (preset.id === 'codex' ? { found: true, path: codex } : { found: false }),
+    })
     owner = await host.enroll({ listener: 'unix' })
     await owner.confirmedJson('agents', {
       method: 'POST',
       body: { id: 'render-agent', name: 'Render Agent', command: process.execPath, args: [agent] },
+    })
+    await owner.confirmedJson('agents', {
+      method: 'POST',
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex', args: [], env: {} },
     })
     // Browsers connect before any external Harness runs: while one runs or waits, the Host confirms no new device.
     browser = await chromium.launch(browserLaunchOptions())
@@ -354,7 +379,7 @@ describe('how a turn of work is drawn', () => {
     }
   })
 
-  it('draws the commands a Harness classified as reads, listings and searches as quiet rows, three or more as one', async () => {
+  it('draws three or more finished reads and searches as one row that opens to them', async () => {
     const id = await start('reads', '读取的会话')
     await poll(async () => (await detail(id)).messages.some(message => message.id.endsWith('act_12')), 'the running read')
     for (const [width, height] of SIZES)
@@ -364,13 +389,10 @@ describe('how a turn of work is drawn', () => {
           const row = (kind: string, words: string) => page.locator(`.tool-card[data-kind="${kind}"]`).filter({ hasText: words })
           const groups = page.locator('.reads-row')
           // Four finished quiet steps are one row that says what they were; two are still two rows.
-          expect(await groups.locator('> .process-row').allInnerTexts()).toEqual([
-            '读取 2 个文件，列出 1 个文件夹，搜索 1 次',
-            '读取 3 个文件',
-          ])
+          expect(await groups.locator('> .process-row').allInnerTexts()).toEqual(['读取 2 个文件，搜索 2 次', '读取 3 个文件'])
           expect(await row('read', 'a.txt').isVisible()).toBe(true)
           expect(await row('read', 'b.txt').isVisible()).toBe(true)
-          // What the Harness did not classify is still a command; a failed read and the one still running stay rows.
+          // A command between them stays a command; a failed read and the one still running stay rows.
           expect(await page.locator('.tool-card.is-command').filter({ hasText: 'echo ok' }).count()).toBe(1)
           expect(await row('read', 'missing.txt').getAttribute('class')).toContain('tool-failed')
           expect(await row('read', 'slow.txt').isVisible()).toBe(true)
@@ -383,9 +405,7 @@ describe('how a turn of work is drawn', () => {
           await skill.waitFor()
           expect(await skill.locator('.process-verb').innerText()).toBe('读取')
           expect(await skill.locator('.process-folder').innerText()).toBe('notes/')
-          expect(await skill.getAttribute('class')).not.toContain('is-command')
-          expect(await skill.locator('.tool-card-header').getAttribute('title')).toContain("/bin/zsh -lc 'cat ")
-          expect(await row('search', 'docs').locator('.process-verb').innerText()).toBe('列出')
+          expect(await row('search', 'docs').locator('.process-verb').innerText()).toBe('搜索')
           expect(await row('search', 'AGENTS').first().locator('.process-verb').innerText()).toBe('搜索')
           await noHorizontalOverflow(page)
           await shot(page, 'reads-opened', width, theme)
@@ -394,13 +414,8 @@ describe('how a turn of work is drawn', () => {
           throw error
         }
       }
-    // Opened, a row has the command as it was reported and what it printed.
     const page = await open(1440, 420, 'light', id)
     await page.locator('.reads-row').first().locator('> .process-row').click()
-    const skill = page.locator('.tool-card[data-kind="read"]').filter({ hasText: 'SKILL.md' })
-    await skill.locator('.tool-card-header').click()
-    await skill.locator('.argument-list').getByText("/bin/zsh -lc 'cat ", { exact: false }).waitFor()
-    await shot(page, 'read-opened', 1440, 'light')
     // The reader looks at the first rows; the running read joining its group below must not move them.
     await page.locator('.transcript').hover()
     await page.mouse.wheel(0, -400)
@@ -488,6 +503,47 @@ describe('how a turn of work is drawn', () => {
       .poll(() => scroller.evaluate(element => Math.abs(element.scrollHeight - element.scrollTop - element.clientHeight)))
       .toBeLessThanOrEqual(2)
     await pill.waitFor({ state: 'hidden' })
+  })
+
+  it('draws a command as the read, listing or search Codex classified it as, and a piped or unclassified one as a command', async () => {
+    const { sessionId: id } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { harnessId: 'codex', prompt: 'look around', requestId: randomUUID() },
+    })
+    await owner.json(`tasks/${id}`, { method: 'PATCH', body: { title: 'Codex 分类的会话' } })
+    await settled(id)
+    for (const [width, height] of SIZES)
+      for (const theme of THEMES) {
+        const page = await open(width, height, theme, id)
+        try {
+          const fold = page.locator('.work-fold[aria-expanded="false"]')
+          if ((await fold.count()) > 0) await fold.first().click()
+          // Three plain commands Codex classified are quiet steps, so they are one row; opened, each says what it does.
+          const group = page.locator('.reads-row')
+          expect(await group.locator('> .process-row').allInnerTexts()).toEqual(['读取 1 个文件，列出 1 个文件夹，搜索 1 次'])
+          await group.locator('> .process-row').click()
+          const read = page.locator('.tool-card[data-kind="read"]').filter({ hasText: 'notes.txt' })
+          await read.waitFor()
+          expect(await read.locator('.process-verb').innerText()).toBe('读取')
+          expect(await read.getAttribute('class')).not.toContain('is-command')
+          // The reported command is one step away.
+          expect(await read.locator('.tool-card-header').getAttribute('title')).toContain("/bin/zsh -lc 'cat notes.txt'")
+          expect(
+            await page.locator('.tool-card[data-kind="search"]').filter({ hasText: 'docs' }).locator('.process-verb').innerText(),
+          ).toBe('列出')
+          expect(
+            await page.locator('.tool-card[data-kind="search"]').filter({ hasText: 'alpha' }).locator('.process-verb').innerText(),
+          ).toBe('搜索')
+          // Codex calls the pipeline one read; it pipes, so it is the command it is. So are the unclassified ones.
+          const commands = page.locator('.tool-card.is-command[data-kind="execute"] .process-object')
+          expect(await commands.allInnerTexts()).toEqual(['cat notes.txt | wc -l', 'echo ok', 'cat notes.txt && rm notes.txt'])
+          await noHorizontalOverflow(page)
+          await shot(page, 'codex-classified', width, theme)
+        } catch (error) {
+          await page.screenshot({ path: `${OUTPUT}/failed-codex-${width}-${theme}.png` })
+          throw error
+        }
+      }
   })
 
   it('shows the current title while it thinks, folds with a height transition that keeps the place, and opens as restricted Markdown', async () => {

@@ -218,7 +218,7 @@ GUI 模式另开本轮 `127.0.0.1:0` 公开阶段页，不含邀请码、Host �
 | 阅读位置、用户意图、布局重排、`reveal` | `reading-position.test.ts`、`streaming-ui.e2e.ts` |
 | 高亮调度、流式代码块尾部与逐行着色、已结算轮次不重绘（预算是渲染次数与 span 数，不是耗时）、长行、查找跨 token | `highlight-scheduler.test.ts`、`streaming-render.e2e.ts` |
 | 读取输出按文件名着色、行号与外层标记、上限、着色不移动会话 | `tool-output-code.test.ts`、`tool-highlight.e2e.ts` |
-| 工具行与命令块：细轨、动词列、等宽路径（从会话文件夹写起，文件名不截断）、命令块只画协议里有的（命令、用时、工具报告的最后几行、调用自己的失败状态，没有退出码）、块状光标只在运行中、输出到达时阅读位置不动、子 Agent 行与「停止」列 | `components-conversation.test.ts` 的 `tool rows and command blocks`；真实 Host、本文件里的最小 ACP Agent 与假 ACP Agent 的三宽两色见 `e2e/transcript-rows.e2e.ts`（截图写入 `test-results/transcript-rows/`） |
+| 工具行与命令块：细轨、动词列、等宽路径（从会话文件夹写起，文件名不截断）、运行中与失败的命令块只画协议里有的（命令、用时、工具报告的最后几行、调用自己的失败状态，没有退出码）、结束的命令成行、块状光标只在运行中、输出到达时阅读位置不动、子 Agent 行与「停止」列 | `components-conversation.test.ts` 的 `tool rows and command blocks`；真实 Host、本文件里的最小 ACP Agent 与假 ACP Agent 的三宽两色见 `e2e/transcript-rows.e2e.ts`（截图写入 `test-results/transcript-rows/`） |
 | Markdown/URL 安全、不加载图片、代码与表格、隐藏字符标记 | `message-content.test.ts`、`components-*.test.ts`、`streaming-ui.e2e.ts` |
 | 客户端安全逻辑：共享编码的浏览器实现、事件流解析与续期后重连、权限展示（`apps/web/src/core/permissions.ts`）、安全文案（`apps/web/src/core/securityCopy.ts`）、`api()` 与本机确认流程、凭据续期（Web Locks、应答丢失、退避、浏览器没有保存新 Cookie）、审批回执、停止请求的重用与回答、审计回滚提示 | `client-security.test.ts` |
 | 开发代理只对 `h-<hostId>.localhost` 转交凭据 Cookie | `client-devproxy.test.ts` |
@@ -433,6 +433,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 `transcript-find.e2e.ts` 经真实 Standard 读取本地报告，在三宽验证从未挂载的工具输出可查找、内外折叠展开、逐项 Highlight、清空查询和焦点／草稿保留，不额外发起模型调用。`preview-renderers.e2e.ts` 生成含一万形状的实际 PPTX，检查固定复杂度拒绝、释放 frame 和随后正常打开 DOCX；普通 30 页首屏性能仍独立测量，不用拒绝样本替代正常预览。
 
 流式 Markdown 的切块等价性由 `stream-markdown.test.ts` 在六十篇以上样本的每个前缀检查；`preview-renderers.e2e.ts` 检查代码展开、焦点、表格行身份、未闭合图表与数学，生成 `test-results/stream-markdown/` 的五宽深浅截图；`streaming-render.e2e.ts` 检查真实 Transcript 中的消息身份与结算后原文复制。
+
+`e2e/stream-render.e2e.ts` 用本文件里的脚本化 ACP Agent 在三宽两色下检查一轮工作的画法（[STREAMING.md](STREAMING.md#工作过程的行)）：去外壳的命令、结束的命令成行、最多 5 个屏幕行的尾巴、审批卡上的整条命令与「经 zsh -lc」、Harness 分类的读取行与 3 条起的分组、思考的标题与受限 Markdown、自动收起的高度过渡（阅读时锚点偏移不超过 1px、跟随时贴底）、文字匀速显现、「回到最新」的位置与文字、「工作过程」三档；截图写入 `test-results/stream-render/`。外壳还原的共享向量是 `packages/testkit/vectors/shell-unwrap-v1.json`（`shell-unwrap.test.ts`）；思考的安全用例在 `thinking.test.ts`，节奏与每帧一次在 `paced-text.test.ts`。`packages/harness-acp/test/codex-actions.live.test.ts` 默认跳过：所有者授权后设置 `LATCH_CODEX_ACTIONS_LIVE=1` 与 `LATCH_CODEX_GATEWAY_BINARY`，用真实已安装的 Codex、私有 HOME/CODEX_HOME 与本机脚本化上游跑几条无害命令，把它报告的 `commandActions` 写入 `test-results/codex-actions/`；不读登录，不调用模型。`stream-performance.e2e.ts` 加 `LATCH_STREAM_MOTION=1` 时不减弱动效，量的是带匀速显现的页面。
 
 `streaming-render.e2e.ts` 还在真实 DOM 中给已结算消息的字段读取计数，验证 300 轮历史的正文追加不重复投影；计数是工作量，不代表毫秒预算。回归覆盖尾轮晋升后的同节点/展开/文字选择、共享展示与未知 prop、审批/提问、文件记录刷新和权限撤回、空历史合成回复的记录与插入索引、已提交 live ID 的空值切换。`conversation.test.ts` 核对同 ID/新字段重写、运行事实清空与时间/状态的即时变化；正文与状态均不依赖缓存的旧权限。
 

@@ -216,6 +216,11 @@
 .approval-title > .approval-command-box {
   flex: 1 1 0;
 }
+/* Beside a command of many lines the amber mark stays with its first line. */
+.approval-title:has(> .approval-command-box) > .approval-dot {
+  align-self: start;
+  margin-top: var(--sp-6);
+}
 /* More of the command lies below: the box fades out at its foot, and the line under it says how much. */
 :is(.approval-object.is-command, .approval-command)[data-more] {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--sp-32)), transparent);
