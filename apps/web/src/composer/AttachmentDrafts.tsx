@@ -172,6 +172,92 @@ function DraftPreview({
     </Modal>
   )
 }
+
+function DraftAttachmentCard({
+  item,
+  controller,
+  locked,
+  onPreview,
+  onConfirm,
+}: {
+  item: DraftAttachment
+  controller: AttachmentDraftController
+  locked: boolean
+  onPreview(): void
+  onConfirm(): void
+}) {
+  const image = item.ref?.kind === 'image'
+  const [picture, setPicture] = useState<{ file: File; url: string }>()
+  useEffect(() => {
+    if (!image) return
+    const url = URL.createObjectURL(item.file)
+    setPicture({ file: item.file, url })
+    return () => URL.revokeObjectURL(url)
+  }, [item.file, image])
+  const name = item.pastedText === undefined ? item.file.name : `已粘贴 ${item.pastedText.length.toLocaleString()} 字`
+  const status = (
+    <span className="attachment-state" role="status">
+      {item.status === 'uploading' ? (
+        <>
+          <Spinner size={12} />
+          {`${uploadBytes(item.file.size * item.progress)} / ${uploadBytes(item.file.size)}`}
+        </>
+      ) : item.status === 'ready' ? (
+        `${Math.ceil(item.file.size / 1024)} KB`
+      ) : (
+        item.error
+      )}
+    </span>
+  )
+  const content = image ? (
+    picture?.file === item.file ? (
+      <img src={picture.url} alt="" decoding="async" />
+    ) : (
+      <Icon icon={Image} size={20} />
+    )
+  ) : (
+    <>
+      <span className="attachment-file-icon">
+        <Icon icon={FileGlyph} size={20} />
+      </span>
+      <span className="attachment-file-copy">
+        <span className="attachment-name">
+          <VisibleText text={name} />
+        </span>
+        {status}
+      </span>
+    </>
+  )
+  return (
+    <div className="attachment-draft" data-state={item.status} data-kind={image ? 'image' : 'file'}>
+      {item.status === 'ready' || item.status === 'confirm' ? (
+        <Button variant="ghost" size="sm" className="attachment-draft-open" aria-label={name} disabled={locked} onClick={onPreview}>
+          {content}
+        </Button>
+      ) : (
+        <div className="attachment-draft-open">{content}</div>
+      )}
+      {image && item.status !== 'ready' && status}
+      {(item.status === 'failed' || item.status === 'confirm') && (
+        <Button
+          className="attachment-retry"
+          size="xs"
+          disabled={locked}
+          onClick={() => (item.status === 'confirm' ? onConfirm() : controller.retry(item.key))}>
+          {item.status === 'confirm' ? '确认内容…' : '重试上传'}
+        </Button>
+      )}
+      <IconButton
+        label={`移除附件 ${item.file.name}`}
+        icon={CloseGlyph}
+        disabled={locked}
+        className="attachment-remove"
+        onClick={() => controller.remove(item.key)}
+      />
+    </div>
+  )
+}
+
 export function AttachmentDrafts({
   controller,
   locked,
@@ -203,47 +289,14 @@ export function AttachmentDrafts({
       {controller.items.length > 0 && (
         <div className="attachment-drafts" aria-label="消息附件">
           {controller.items.map(item => (
-            <div key={item.key} className="attachment-draft" data-state={item.status}>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={locked || (item.status !== 'ready' && item.status !== 'confirm')}
-                onClick={() => setPreview(item.key)}>
-                <Icon icon={item.ref?.kind === 'image' ? Image : FileGlyph} size={14} />
-                <span className="attachment-name">
-                  <VisibleText
-                    text={item.pastedText === undefined ? item.file.name : `已粘贴 ${item.pastedText.length.toLocaleString()} 字`}
-                  />
-                </span>
-              </Button>
-              <span className="attachment-state" role="status">
-                {item.status === 'uploading' ? (
-                  <>
-                    <Spinner size={12} />
-                    {`${uploadBytes(item.file.size * item.progress)} / ${uploadBytes(item.file.size)}`}
-                  </>
-                ) : item.status === 'ready' ? (
-                  `${Math.ceil(item.file.size / 1024)} KB`
-                ) : (
-                  item.error
-                )}
-              </span>
-              {/* A refusal stays a refusal: only removing the file helps. */}
-              {(item.status === 'failed' || item.status === 'confirm') && (
-                <Button
-                  size="xs"
-                  disabled={locked}
-                  onClick={() => (item.status === 'confirm' ? setConfirm(item.key) : controller.retry(item.key))}>
-                  {item.status === 'confirm' ? '确认内容…' : '重试上传'}
-                </Button>
-              )}
-              <IconButton
-                label={`移除附件 ${item.file.name}`}
-                icon={CloseGlyph}
-                disabled={locked}
-                onClick={() => controller.remove(item.key)}
-              />
-            </div>
+            <DraftAttachmentCard
+              key={item.key}
+              item={item}
+              controller={controller}
+              locked={locked}
+              onPreview={() => setPreview(item.key)}
+              onConfirm={() => setConfirm(item.key)}
+            />
           ))}
         </div>
       )}

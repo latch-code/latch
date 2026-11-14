@@ -50,6 +50,8 @@ type ButtonProps = Omit<ComponentProps<'button'>, 'disabled'> & {
    * accessible name stays the words, the keys go to aria-keyshortcuts, and the tooltip does not repeat them.
    */
   keys?: readonly string[]
+  /** Keep an active shortcut accessible without drawing key caps inside the button. */
+  showKeys?: boolean
   block?: boolean
 }
 
@@ -117,6 +119,7 @@ export function Button({
   tooltip,
   shortcut,
   keys,
+  showKeys = true,
   block = false,
   type = 'button',
   className,
@@ -205,7 +208,7 @@ export function Button({
       ) : (
         words
       )}
-      {capped && (
+      {capped && showKeys && (
         <span className="ui-button-keys" aria-hidden="true">
           {keys.map(key => (
             <Kbd key={key} keys={key} />

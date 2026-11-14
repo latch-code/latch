@@ -265,6 +265,18 @@ function Buttons() {
           </Cell>
         ))}
       </Row>
+      <Row label="审批动作">
+        <Cell caption="次要动作">
+          <Button variant="outline" keys={['1']} showKeys={false}>
+            拒绝
+          </Button>
+        </Cell>
+        <Cell caption="主动作">
+          <Button variant="primary" keys={['2']} showKeys={false}>
+            允许
+          </Button>
+        </Cell>
+      </Row>
       <Row label="加载">
         <Cell caption="主">
           <Button variant="primary" loading loadingLabel="添加中…">

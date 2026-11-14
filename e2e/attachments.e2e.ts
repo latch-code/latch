@@ -49,6 +49,60 @@ describe('private attachments through the composer', () => {
     await browser?.close()
     await host?.close()
   })
+  it('shows mixed attachment previews at narrow and wide sizes without stretching file cards across the composer', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    try {
+      await enrollBrowser(page, host, { name: '附件缩略图', scopes: ['admin'] })
+      await newDraft(page)
+      const screenshot = process.env.LATCH_ATTACHMENT_SAMPLE
+        ? await readFile(process.env.LATCH_ATTACHMENT_SAMPLE)
+        : await page.screenshot({ animations: 'disabled' })
+      await page.getByLabel('选择附件', { exact: true }).setInputFiles([
+        { name: 'workbench.png', mimeType: 'image/png', buffer: screenshot },
+        { name: 'review-notes.txt', mimeType: 'text/plain', buffer: Buffer.from('先检查图片和文字附件，再继续产品评审。') },
+      ])
+      const drafts = page.getByLabel('消息附件', { exact: true })
+      await expect.poll(() => drafts.locator('[data-state="ready"]').count()).toBe(2)
+      await expect.poll(() => drafts.locator('img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
+      for (const width of [1440, 768, 390, 320]) {
+        await page.setViewportSize({ width, height: 1000 })
+        await page.screenshot({ path: `test-results/attachments/mixed-${width}-arrival.png`, animations: 'disabled' })
+        if (width < 720 && !(await page.getByRole('dialog', { name: '新会话', exact: true }).isVisible())) {
+          const options = page.getByRole('button', { name: '新会话选项', exact: true })
+          if (await options.isVisible()) await options.click()
+          else await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+        }
+        for (const theme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: theme })
+          const visible = page.locator('.attachment-drafts').filter({ visible: true })
+          await expect.poll(() => visible.count()).toBe(1)
+          expect(
+            await visible.locator('.attachment-draft[data-kind="file"]').evaluate(node => node.getBoundingClientRect().width),
+          ).toBeLessThanOrEqual(224)
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+          await page.screenshot({ path: `test-results/attachments/mixed-${width}-${theme}.png`, animations: 'disabled' })
+          await page
+            .locator('.composer')
+            .filter({ visible: true })
+            .first()
+            .screenshot({ path: `test-results/attachments/mixed-composer-${width}-${theme}.png`, animations: 'disabled' })
+        }
+      }
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await drafts.getByRole('button', { name: 'review-notes.txt', exact: true }).click()
+      const preview = page.getByRole('dialog', { name: 'review-notes.txt', exact: true })
+      await preview.getByText('先检查图片和文字附件，再继续产品评审。', { exact: true }).waitFor()
+      await preview.getByRole('button', { name: '关闭', exact: true }).click()
+      await drafts.getByRole('button', { name: '移除附件 workbench.png', exact: true }).click()
+      expect(await drafts.locator('img').count()).toBe(0)
+      expect(await drafts.getByRole('button', { name: 'review-notes.txt', exact: true }).count()).toBe(1)
+      expect(await page.getByRole('textbox').filter({ visible: true }).first().inputValue()).toBe('')
+    } finally {
+      await context.close()
+    }
+  })
   for (const [width, theme] of [
     [390, 'light'],
     [900, 'dark'],
@@ -67,6 +121,7 @@ describe('private attachments through the composer', () => {
         const drafts = composer.getByLabel('消息附件', { exact: true })
         await drafts.getByRole('button', { name: 'sample.png', exact: true }).waitFor({ state: 'visible' })
         await expect.poll(() => drafts.getByRole('button', { name: 'sample.png', exact: true }).isEnabled(), { timeout: 10000 }).toBe(true)
+        await expect.poll(() => drafts.locator('img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
         await page.screenshot({ path: `test-results/attachments/${width}-${theme}-ready.png`, animations: 'disabled' })
         await drafts.getByRole('button', { name: 'sample.png', exact: true }).click()
         const dialog = page.getByRole('dialog', { name: 'sample.png', exact: true })
@@ -75,6 +130,9 @@ describe('private attachments through the composer', () => {
         await page.getByRole('button', { name: width === 390 ? '开始' : '发送', exact: true }).click()
         await page.getByText('已收到 1 个附件。', { exact: true }).waitFor()
         const message = page.locator('.message-user')
+        await expect
+          .poll(() => message.locator('.message-attachments img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
+          .toBe(true)
         await message.getByRole('button', { name: 'sample.png 1 KB', exact: true }).click()
         const preview = page.getByRole('region', { name: '文件预览', exact: true })
         await expect.poll(() => preview.locator('img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
@@ -113,6 +171,14 @@ describe('private attachments through the composer', () => {
       await page
         .getByLabel('选择附件')
         .setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('attachment retry') })
+      await page.getByRole('button', { name: '重试上传', exact: true }).waitFor()
+      expect(
+        await page.locator('.attachment-draft[data-state="failed"] .attachment-state').evaluate(element => {
+          let opacity = 1
+          for (let node: Element | null = element; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity)
+          return opacity
+        }),
+      ).toBe(1)
       await page.getByRole('button', { name: '重试上传', exact: true }).click()
       await expect.poll(() => page.getByRole('button', { name: 'notes.txt', exact: true }).isEnabled()).toBe(true)
       const input = page.getByRole('textbox', { name: '新会话消息', exact: true })

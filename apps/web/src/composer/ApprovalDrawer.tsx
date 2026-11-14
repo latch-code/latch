@@ -393,16 +393,6 @@ function ApprovalPanel({
     if (reject) choose(reject)
   })
   const caps = approvalKeyCaps({ phone, shortcut: shortcut && armed && !running, escapes, ...places, rejectLabel })
-  // The caps this card can show at all keep their room while focus is elsewhere (hidden, not removed): a cap appearing as
-  // a press moves focus into the card would widen 允许 and slide 更多 out from under the pointer before it is released.
-  const room = approvalKeyCaps({
-    phone,
-    shortcut: shortcut && armed && !running,
-    escapes,
-    inCard: true,
-    escapeRefuses: true,
-    rejectLabel,
-  })
   const keys = (event: KeyboardEvent<HTMLElement>) => {
     if (running || !armed || event.defaultPrevented) return
     if (!cardTakesKeys(card.current, event.target)) return
@@ -440,13 +430,7 @@ function ApprovalPanel({
     menuItems.length > 0 ? (
       <Menu label={APPROVAL_COPY.moreChoices} align="end" side="top" sections={[{ id: 'more', items: menuItems }]} trigger={moreTrigger} />
     ) : null
-  const button = (
-    option: ApprovalOption,
-    variant: 'primary' | 'outline',
-    label: string,
-    keys: string[] | undefined,
-    live: boolean,
-  ): ReactNode => {
+  const button = (option: ApprovalOption, variant: 'primary' | 'outline', label: string, keys: string[] | undefined): ReactNode => {
     const pressed = busy === option.id
     return (
       <Button
@@ -454,7 +438,7 @@ function ApprovalPanel({
         variant={variant === 'primary' && !emphasis ? 'outline' : variant}
         size={phone ? 'lg' : 'md'}
         keys={keys}
-        data-keys-idle={keys && !live ? '' : undefined}
+        showKeys={false}
         tooltip={label === option.label ? undefined : option.label}
         loading={pressed}
         disabled={!armed || (running && !pressed)}
@@ -554,16 +538,14 @@ function ApprovalPanel({
               reject,
               'outline',
               rejectLabel ?? optionLabel(reject, gate),
-              numbered && !phone ? ['1'] : room.reject,
-              numbered ? places.numeric : caps.reject !== undefined,
+              numbered ? (!phone && places.numeric ? ['1'] : undefined) : caps.reject,
             )}
           {allow
             && button(
               allow,
               primary ? 'primary' : 'outline',
               optionLabel(allow, gate),
-              numbered && !phone ? ['2'] : room.allow,
-              numbered ? places.numeric : caps.allow !== undefined,
+              numbered ? (!phone && places.numeric ? ['2'] : undefined) : caps.allow,
             )}
         </div>
       </div>

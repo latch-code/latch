@@ -1,18 +1,78 @@
 .attachment-drafts {
-  display: grid;
-  gap: var(--sp-4);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-8);
   margin: var(--sp-8);
-  max-height: 240px;
+  padding: var(--sp-4);
+  max-height: 180px;
   overflow: auto;
 }
-.attachment-draft,
 .attachment-draft {
+  position: relative;
+  flex: 0 0 auto;
+  width: 224px;
+  max-width: 100%;
   border: 1px solid var(--line);
-  border-radius: var(--r-8);
-  padding: var(--sp-4);
+  border-radius: var(--r-12);
+  background: var(--pop);
 }
-.attachment-draft > .ui-button {
+.attachment-draft > .attachment-draft-open {
+  display: flex;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 64px;
   min-width: 0;
+  padding: var(--sp-10) var(--sp-32) var(--sp-10) var(--sp-10);
+  gap: var(--sp-10);
+  border-radius: inherit;
+  text-align: start;
+  white-space: normal;
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.attachment-file-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  height: 40px;
+  border-radius: var(--r-8);
+  background: var(--hover);
+  color: var(--muted);
+}
+.attachment-file-copy {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.attachment-draft > .attachment-remove {
+  position: absolute;
+  inset-block-start: var(--sp-4);
+  inset-inline-end: var(--sp-4);
+}
+.attachment-draft[data-kind='image'] {
+  width: 104px;
+}
+.attachment-draft[data-kind='image'] > .attachment-draft-open {
+  justify-content: center;
+  height: 104px;
+  padding: 0;
+  overflow: hidden;
+}
+.attachment-draft-open > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.attachment-draft[data-kind='image'] > .attachment-remove {
+  border-radius: var(--r-full);
+  background: var(--pop);
+  color: var(--ink);
+  box-shadow: var(--sh-1);
+}
+.attachment-draft > .attachment-retry {
+  margin: 0 var(--sp-8) var(--sp-8);
 }
 .attachment-name {
   overflow: hidden;
@@ -20,13 +80,15 @@
   white-space: nowrap;
   max-width: 240px;
 }
-.attachment-state,
 .attachment-state {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-4);
   min-width: 0;
   overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
 }
 .attachment-draft:is([data-state='failed'], [data-state='refused']) .attachment-state {
   color: var(--red);
@@ -34,9 +96,6 @@
 /* Pressable, to say why it adds nothing; looks as a disabled button does. */
 .attachment-button[data-unavailable] {
   opacity: 0.45;
-}
-.attachment-draft > .attachment-state {
-  flex: 1;
 }
 .attachment-preview img {
   display: block;
@@ -61,6 +120,30 @@
 }
 .message-user .message-attachments {
   justify-content: flex-end;
+}
+.message-attachment-picture.ui-button {
+  width: 176px;
+  height: 128px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+}
+.message-attachment-picture > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.message-attachment-picture .attachment-name {
+  max-width: 110px;
+}
+.message-attachment-file.ui-button {
+  min-height: 56px;
+  max-width: 100%;
+  gap: var(--sp-10);
+  padding: var(--sp-8) var(--sp-12);
+  text-align: start;
 }
 @media (max-width: 719px) {
   .attachment-name {

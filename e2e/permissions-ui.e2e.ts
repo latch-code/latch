@@ -164,22 +164,10 @@ describe('permission states in a browser', () => {
     expect(await composer.inputValue()).toBe('')
   })
 
-  /**
-   * The key caps a card's button draws, as their glyphs ('' when it draws none). A cap whose key does not work from where
-   * focus is keeps its room hidden, so the buttons do not move under a press; hidden caps are not drawn.
-   */
-  const caps = (card: Locator, name: string) =>
-    card
-      .getByRole('button', { name, exact: true })
-      .locator('.ui-button-keys')
-      .evaluateAll(spans =>
-        spans
-          .filter(span => getComputedStyle(span).visibility !== 'hidden')
-          .map(span => span.textContent ?? '')
-          .join(''),
-      )
+  const activeKeys = async (card: Locator, name: string) =>
+    (await card.getByRole('button', { name, exact: true }).getAttribute('aria-keyshortcuts')) ?? ''
 
-  it('draws a key cap only where the key does it now, and ⌘⏎ in the input rejects with what was written', async () => {
+  it('keeps approval buttons compact while shortcuts follow focus and input rejection keeps its note', async () => {
     const { sessionId } = await remote.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: { prompt: '生成需要审批的报告', requestId: randomUUID(), mode: 'agent', model: { providerId: 'demo', model: 'demo' } },
@@ -198,20 +186,36 @@ describe('permission states in a browser', () => {
     // Focus in the empty input: Esc refuses, ⌘⏎ would send there, so 允许 has no cap.
     const note = page.getByRole('textbox', { name: '拒绝并说明改做什么…', exact: true })
     await note.focus()
-    expect(await caps(card, '拒绝')).toBe('Esc')
-    expect(await caps(card, '允许')).toBe('')
+    expect(await activeKeys(card, '拒绝')).toBe('Escape')
+    expect(await activeKeys(card, '允许')).toBe('')
+    expect(await card.locator('.ui-button-keys').count()).toBe(0)
+    const allow = card.getByRole('button', { name: '允许', exact: true })
+    const before = await allow.boundingBox()
+    expect(
+      await allow.evaluate(button => {
+        const range = document.createRange()
+        range.selectNodeContents(button)
+        const words = range.getBoundingClientRect(),
+          box = button.getBoundingClientRect()
+        return Math.abs(words.left + words.width / 2 - box.left - box.width / 2)
+      }),
+    ).toBeLessThan(1)
     // Focus in the card: ⌘⏎ allows an ordinary request of Latch 内置.
     await card.getByRole('button', { name: '拒绝', exact: true }).focus()
-    await expect.poll(() => caps(card, '允许')).toMatch(/^(?:⌘⏎|Ctrl⏎)$/u)
+    await expect.poll(() => activeKeys(card, '允许')).toMatch(/^(?:Meta|Control)\+Enter$/u)
+    expect(await card.locator('.ui-button-keys').count()).toBe(0)
+    expect((await allow.boundingBox())?.width).toBeCloseTo(before!.width, 1)
     await page.screenshot({ path: `${OUTPUT}/approval-caps-focused.png`, animations: 'disabled' })
+    await card.screenshot({ path: `${OUTPUT}/approval-clean-light.png`, animations: 'disabled' })
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.screenshot({ path: `${OUTPUT}/approval-caps-focused-dark.png`, animations: 'disabled' })
+    await card.screenshot({ path: `${OUTPUT}/approval-clean-dark.png`, animations: 'disabled' })
     await page.emulateMedia({ colorScheme: 'light' })
     // Writing what to do instead: 拒绝 sends it, Esc does not refuse, and ⌘⏎ in the input rejects with the note.
     await note.fill('只列出文件名')
     await card.getByRole('button', { name: '拒绝并发送', exact: true }).waitFor()
-    expect(await caps(card, '拒绝并发送')).toBe('')
-    expect(await caps(card, '允许')).toBe('')
+    expect(await activeKeys(card, '拒绝并发送')).toBe('')
+    expect(await activeKeys(card, '允许')).toBe('')
     await note.press('ControlOrMeta+Enter')
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
     const settled = await detail(sessionId)
@@ -225,8 +229,9 @@ describe('permission states in a browser', () => {
     const card = page.locator('[data-approval-id]')
     await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
     await card.getByRole('button', { name: '拒绝', exact: true }).focus()
-    expect(await caps(card, '拒绝')).toBe('Esc')
-    expect(await caps(card, '允许')).toBe('')
+    expect(await activeKeys(card, '拒绝')).toBe('Escape')
+    expect(await activeKeys(card, '允许')).toBe('')
+    expect(await card.locator('.ui-button-keys').count()).toBe(0)
     // ⌘⏎ inside the card does not allow it either.
     await page.keyboard.press('ControlOrMeta+Enter')
     expect((await detail(sessionId)).approvals).toHaveLength(1)
@@ -267,7 +272,7 @@ describe('permission states in a browser', () => {
     expect(state.sheets.some(sheet => !sheet.open && !sheet.visible)).toBe(true)
     expect(state.openLayers).toBe(0)
     await reject.focus()
-    await expect.poll(() => caps(card, '拒绝')).toBe('Esc')
+    await expect.poll(() => activeKeys(card, '拒绝')).toBe('Escape')
     for (const flags of [
       { isComposing: true },
       { repeat: true },
@@ -293,7 +298,7 @@ describe('permission states in a browser', () => {
         await menu.waitFor()
         if (width === 390) expect(await page.locator('dialog.ui-sheet[open]').count()).toBe(1)
         else expect(await page.locator(':popover-open:not([role="tooltip"])').count()).toBeGreaterThan(0)
-        await expect.poll(() => caps(card, '拒绝')).toBe('')
+        await expect.poll(() => activeKeys(card, '拒绝')).toBe('')
         await page.screenshot({ path: `${OUTPUT}/approval-overlay-${width}-${colorScheme}.png`, animations: 'disabled' })
         await page.keyboard.press('Escape')
         await menu.waitFor({ state: 'hidden' })
@@ -303,7 +308,7 @@ describe('permission states in a browser', () => {
       await page.emulateMedia({ colorScheme: 'light' })
       await reject.focus()
       await page.keyboard.press('ArrowDown')
-      await expect.poll(() => caps(card, '拒绝')).toBe('Esc')
+      await expect.poll(() => activeKeys(card, '拒绝')).toBe('Escape')
       await page.screenshot({ path: `${OUTPUT}/approval-after-sheet-1440-light.png`, animations: 'disabled' })
       await page.keyboard.press('Escape')
       await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
@@ -450,8 +455,8 @@ describe('permission states in a browser', () => {
     // An agent's ask: Esc refuses, but ⌘⏎ never allows it, so 允许 has no cap even with focus in the card.
     await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
     await card.getByRole('button', { name: '拒绝', exact: true }).focus()
-    expect(await caps(card, '拒绝')).toBe('Esc')
-    expect(await caps(card, '允许')).toBe('')
+    expect(await activeKeys(card, '拒绝')).toBe('Escape')
+    expect(await activeKeys(card, '允许')).toBe('')
     await page.screenshot({ path: `${OUTPUT}/l3-browser-approval-desktop.png`, fullPage: true, animations: 'disabled' })
     await page.setViewportSize({ width: 390, height: 844 })
     await page.screenshot({ path: `${OUTPUT}/l3-browser-approval-phone.png`, fullPage: true, animations: 'disabled' })

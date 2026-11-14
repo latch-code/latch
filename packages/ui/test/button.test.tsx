@@ -11,6 +11,24 @@ const openTooltips = () => Array.from(document.querySelectorAll('.ui-tooltip:pop
 const wait = (ms: number) => new Promise(done => setTimeout(done, ms))
 
 describe('buttons', () => {
+  it('keeps an accessible shortcut without drawing or reserving key caps', async () => {
+    const screen = await render(
+      <Button variant="primary" keys={['2']} showKeys={false}>
+        允许
+      </Button>,
+    )
+    const button = screen.getByRole('button', { name: '允许', exact: true })
+    await expect.element(button).toHaveAttribute('aria-keyshortcuts', '2')
+    expect(button.element().querySelector('kbd')).toBeNull()
+    const before = button.element().getBoundingClientRect()
+    const words = document.createRange()
+    words.selectNodeContents(button.element())
+    const label = words.getBoundingClientRect()
+    expect(Math.abs(label.left + label.width / 2 - before.left - before.width / 2)).toBeLessThan(1)
+    await screen.rerender(<Button variant="primary">允许</Button>)
+    expect(button.element().getBoundingClientRect().width).toBeCloseTo(before.width, 1)
+    await expect.element(button).not.toHaveAttribute('aria-keyshortcuts')
+  })
   it('keeps a disabled button focusable with its reason, and ignores its clicks, even as a form submit', async () => {
     const submitted = vi.fn()
     const clicked = vi.fn()

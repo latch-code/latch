@@ -81,6 +81,7 @@ const SHORTCUTS = [
   { id: 'session', label: '跳到第 N 个会话', desktop: '⌘1 … ⌘9', browser: 'Alt 1 … Alt 9' },
   { id: 'next-approval', label: '下一个等你处理的请求', desktop: '⌥⌘A', browser: 'Alt Shift A' },
   { id: 'decide', label: '允许、拒绝选中的请求', desktop: '⌘⏎ · esc', browser: 'Mod Enter · Esc' },
+  { id: 'triage-decide', label: '分拣台：拒绝、允许聚焦的请求', desktop: '1 · 2', browser: '1 · 2' },
   { id: 'compose', label: '聚焦输入框', desktop: '⌘L', browser: 'Alt L' },
   { id: 'controls', label: 'Harness · 模型 · 思考 · 权限', desktop: '⌥⌘1 … ⌥⌘4', browser: 'Alt Shift 1 … Alt Shift 4' },
   { id: 'recall', label: '空输入框取回上一条消息', desktop: '↑', browser: '↑' },

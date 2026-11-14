@@ -161,7 +161,8 @@ describe('workbench key routing', () => {
       expect(shortcutKeys(id as keyof typeof before, true), id).toBe(desktop)
       expect(shortcutKeys(id as keyof typeof before, false, false), id).toBe(browser)
     }
-    expect(shortcutRows(true, true).map(row => row.id)).toHaveLength(28)
+    expect(shortcutKeys('triage-decide', true)).toBe('1 · 2')
+    expect(shortcutKeys('triage-decide', false, false)).toBe('1 · 2')
     expect(shortcutKeys('browser', true)).toBe('⇧⌘B')
     expect(shortcutKeys('browser', false, false)).toBeNull()
     expect(shortcutKeys('terminal', true)).toBe('⌘J')
