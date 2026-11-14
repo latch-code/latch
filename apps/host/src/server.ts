@@ -403,6 +403,27 @@ const taskPatchSchema = z
     archived: z.boolean().optional(),
   })
   .refine(value => value.title !== undefined || value.pinned !== undefined || value.archived !== undefined, '没有要修改的内容')
+const commandCatalogueSchema = createTaskSchema
+  .pick({ workspaceId: true, mode: true, model: true, config: true, worktree: true, customAgentId: true })
+  .strict()
+const publicCommandCatalogue = z.object({
+  commands: z
+    .array(
+      z.object({
+        name: z
+          .string()
+          .min(1)
+          .max(100)
+          .regex(/^[^\s\u0000-\u001f\u007f]+$/u),
+        description: z.string().max(1000).optional(),
+        inputHint: z.string().max(500).optional(),
+        idleOnly: z.literal(true).optional(),
+      }),
+    )
+    .max(200),
+  reportedAt: z.string().datetime(),
+  source: z.literal('previous-session'),
+})
 const configSchema = z.strictObject({
   configId: z.string().min(1).max(128),
   value: z.string().max(1024),
@@ -8005,6 +8026,105 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           },
         )
         json(res, result)
+        return true
+      }
+      // Previous-session suggestions only: unlike catalogue, this endpoint never starts or probes a program.
+      const commandsMatch = path.match(/^\/link\/api\/agents\/([^/]+)\/commands$/u)
+      if (commandsMatch && method === 'POST') {
+        requireScope(caller, 'view')
+        limits.classC.take(caller.device.id)
+        const deviceScope = JSON.stringify([caller.device.dataScope, caller.device.scopes.toSorted()])
+        const authorize = () => {
+          recheck(caller, 'view')
+          const current = devices.get(caller.device.id)
+          if (JSON.stringify([current?.dataScope, current?.scopes.toSorted()]) !== deviceScope)
+            throw new AppError(403, 'device-scope-changed', '设备权限已变化，请重试。')
+        }
+        const input = commandCatalogueSchema.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+        authorize()
+        const id = safeDecode(commandsMatch[1]!)
+        const workspaceId = input.workspaceId ?? 'default'
+        const context = async () => {
+          const harness = hub!.info(id)
+          if (!harness || !hub!.has(id) || harness.status !== 'ready') return undefined
+          const mode = input.mode ?? (harness.modes.includes('agent') ? 'agent' : harness.modes[0])
+          if (mode && !harness.modes.includes(mode)) return undefined
+          if (workspaceId === 'default' && hub!.levelOf(id) !== 'L1' && (defaultFlags.insideData || defaultFlags.codeRoot)) return undefined
+          // A new own folder/worktree has no actual directory yet. A cache read may never allocate one or a helper home.
+          if (input.worktree || input.customAgentId || (workspaceId === 'default' && makeOwnFolders && mode === 'agent')) return undefined
+          const chosen = workspaceId === 'default' ? undefined : savedProject(workspaceId)
+          if (workspaceId !== 'default' && !chosen) return undefined
+          if (chosen) await assertWorkspaceUsable(chosen)
+          const folders = chosen?.folders.map(({ id, path }) => ({ id, path })) ?? [{ id: 'default', path: workspaceRoot }]
+          const identities = []
+          for (const folder of folders) {
+            const real = await realpath(folder.path)
+            const info = await lstat(real, { bigint: true })
+            if (!info.isDirectory()) return undefined
+            identities.push([folder.id, real, String(info.dev), String(info.ino)])
+          }
+          authorize()
+          const modelRoute = input.model && harness.capabilities.models.owner !== 'latch' ? modelRouteFor(harness, input.model) : undefined
+          const current = workspaceId === 'default' ? undefined : savedProject(workspaceId)
+          if (JSON.stringify(current) !== JSON.stringify(chosen)) return undefined
+          const revision = JSON.stringify([current, modelRoute, hub!.info(id)])
+          const stillConfigured = () => {
+            try {
+              const harnessNow = hub!.info(id)
+              if (!harnessNow) return false
+              const routeNow =
+                input.model && harnessNow.capabilities.models.owner !== 'latch' ? modelRouteFor(harnessNow, input.model) : undefined
+              return JSON.stringify([workspaceId === 'default' ? undefined : savedProject(workspaceId), routeNow, harnessNow]) === revision
+            } catch {
+              return false
+            }
+          }
+          return {
+            cwd: identities[0]![1]!,
+            folders,
+            modelRoute,
+            stillConfigured,
+            key: JSON.stringify([identities, current, modelRoute, hub!.info(id)]),
+          }
+        }
+        const before = await context()
+        if (!before) {
+          authorize()
+          json(res, { catalogue: null })
+          return true
+        }
+        const lookup = () =>
+          hub!.commandCatalogueOf(id, {
+            cwd: before.cwd,
+            workspaceId,
+            folders: before.folders,
+            ...(before.modelRoute ? { modelRoute: before.modelRoute } : {}),
+            ...(input.config ? { config: input.config } : {}),
+          })
+        const cached = await lookup()
+        authorize()
+        const source = cached?.current() ? await sessionTask(cached.sourceSessionId) : undefined
+        const canReadSource = () =>
+          !!source
+          && privateVisible(caller, source)
+          && (!hub!.agentPrivate(source.id) || devices.get(caller.device.id)?.dataScope === 'all')
+        const sourceAvailable =
+          source && cached && canReadSource()
+            ? await assertSessionWorkspace(cached.sourceSessionId).then(
+                () => true,
+                () => false,
+              )
+            : false
+        const after = await context()
+        authorize()
+        const visible = cached?.current() && sourceAvailable && canReadSource() && after?.key === before.key
+        // Source checks also yield: repeat the driver's full launch/configuration check, without probing a program.
+        const verified = visible ? await lookup().catch(() => undefined) : undefined
+        authorize()
+        const current =
+          verified?.current() && verified.sourceSessionId === cached?.sourceSessionId && before.stillConfigured() && canReadSource()
+        const publicResult = publicCommandCatalogue.safeParse(current && verified ? verified.catalogue : undefined)
+        json(res, { catalogue: publicResult.success ? publicResult.data : null })
         return true
       }
       // What a Harness offers, read before a session: the same gate as starting one, since it starts the same program.

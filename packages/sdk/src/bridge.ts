@@ -53,8 +53,8 @@ export interface CreateTaskInput {
   /** Absolute working directory chosen from the Host's workspaces. Absent means the driver default. */
   cwd?: string
   /**
-   * Drivers that declare `projectFolders: 'all'`, with `cwd`: the project the session starts in (`default` for the
-   * start directory). Others never receive it.
+   * Drivers that receive `folders`, or primary-only drivers implementing `commandCatalogue`: the project the session
+   * starts in (`default` for the start directory). A catalogue reader uses this only to scope suggestions, not extra files.
    */
   workspaceId?: string
   /**

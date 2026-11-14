@@ -4,6 +4,7 @@ import type {
   Approval,
   HarnessInfo,
   HarnessCapabilities,
+  HarnessCommandCatalogue,
   KeepWaitingResult,
   RunEnd,
   SessionPermission,
@@ -38,8 +39,8 @@ import { projectIdOf, type LifecycleEvent, type SessionLifecycle } from './sessi
 import { RunSilence, SILENCE_THRESHOLDS, type LiveRun } from './run-silence.ts'
 
 /**
- * `harnessId` is Host-only. `workspaceId` and `folders` reach only drivers that declare `projectFolders: 'all'`; the
- * hub strips them for every other driver, which then works in `cwd` alone.
+ * `harnessId` is Host-only. Only drivers declaring `projectFolders: 'all'` receive the folders. A command-cache reader
+ * also receives the project ID, so suggestions from different projects never share a scope; its files remain `cwd` alone.
  */
 export interface HubCreateInput extends CreateTaskInput {
   harnessId?: string
@@ -422,6 +423,27 @@ export class HarnessHub implements Bridge {
     })
   }
 
+  /** A previous real session's suggestions. The final guard is Host-only and grants no access to their source. */
+  async commandCatalogueOf(
+    harnessId: string,
+    input: Parameters<NonNullable<Bridge['commandCatalogue']>>[0],
+  ): Promise<{ sourceSessionId: string; catalogue: HarnessCommandCatalogue; current(): boolean } | undefined> {
+    const member = this.member(harnessId)
+    if (!member?.bridge.commandCatalogue) return undefined
+    const { folders, ...context } = input
+    const result = await member.bridge.commandCatalogue({
+      ...context,
+      ...(member.driver.projectFolders === 'all' && folders ? { folders } : {}),
+    })
+    if (!result) return undefined
+    const current = () =>
+      !this.closing
+      && this.member(harnessId) === member
+      && this.ownerOf(result.sourceSessionId) === harnessId
+      && this.meta.has(result.sourceSessionId)
+    return current() ? { ...result, current } : undefined
+  }
+
   info(id: string): HarnessInfo | undefined {
     const entry = this.entries.get(id)
     return entry && this.describe(entry)
@@ -565,8 +587,12 @@ export class HarnessHub implements Bridge {
     const id = harnessId ?? this.options.defaultId()
     const entry = this.entries.get(id)
     if (!entry?.bridge) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
-    const task: CreateTaskInput =
-      entry.driver.projectFolders === 'all' && workspaceId !== undefined && folders !== undefined ? { ...rest, workspaceId, folders } : rest
+    const allFolders = entry.driver.projectFolders === 'all'
+    const task: CreateTaskInput = {
+      ...rest,
+      ...((allFolders ? folders !== undefined : entry.bridge.commandCatalogue) && workspaceId !== undefined ? { workspaceId } : {}),
+      ...(allFolders && workspaceId !== undefined && folders !== undefined ? { folders } : {}),
+    }
     const result = await this.accept(entry as Member, bridge => this.creatingProject.run(workspaceId, () => bridge.createTask(task)))
     if (!this.claim(id, result.sessionId)) {
       throw new AppError(502, 'session-id-collision', `Harness ${id} 返回的会话标识已属于另一个 Harness`)
