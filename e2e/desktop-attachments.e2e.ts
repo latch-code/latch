@@ -34,7 +34,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         })
       },
     }
-    const fixture = await startTestHost({ demo: false, plugins: [plugin], presenceMode: 'manual' })
+    const fixture = await startTestHost({
+      demo: false,
+      plugins: [plugin],
+      presenceMode: 'manual',
+      uiDir: resolve(process.env.LATCH_E2E_UI_DIR ?? 'dist/web'),
+    })
     try {
       const host = fixture.host
       await writeHostState(fixture.dataDir, {
@@ -67,13 +72,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByRole('button', { name: '继续', exact: true }).click()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       expect(fixture.presence.requests).toHaveLength(0)
-      const image = Buffer.concat([
-        Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64'),
-        Buffer.alloc(2 * 1024 * 1024),
-      ])
-      await page.getByLabel('选择附件').setInputFiles({ name: 'large.png', mimeType: 'image/png', buffer: image })
-      await expect.poll(() => page.getByRole('button', { name: 'large.png', exact: true }).isEnabled(), { timeout: 15000 }).toBe(true)
-      await page.getByRole('button', { name: '发送', exact: true }).click()
+      const image = Buffer.concat([await page.screenshot({ animations: 'disabled' }), Buffer.alloc(2 * 1024 * 1024)])
+      const composer = page.getByRole('region', { name: '总览', exact: true }).locator('form')
+      await composer.getByLabel('选择附件').setInputFiles({ name: 'large.png', mimeType: 'image/png', buffer: image })
+      await expect.poll(() => composer.getByRole('button', { name: 'large.png', exact: true }).isEnabled(), { timeout: 15000 }).toBe(true)
+      await expect
+        .poll(() => composer.locator('.attachment-draft img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
+        .toBe(true)
+      await composer.getByRole('button', { name: '发送', exact: true }).click()
       await page.getByText('桌面附件已收到', { exact: true }).waitFor()
       expect(sentBytes).toBe(image.length)
       await page

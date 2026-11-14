@@ -163,6 +163,7 @@ describe('a session of several folders', () => {
     const tools = await mount()
     expect(await tools.get('write_file')!.execute({ path: 'index.html', content: 'web page', folder: 'web' }, context)).toEqual({
       text: '已写入「web」中的 index.html（8 字节）',
+      textWithoutFiles: '已写入「web」中的 index.html（8 字节）',
     })
     expect(await readFile(join(web, 'index.html'), 'utf8')).toBe('web page')
     await tools.get('write_file')!.execute({ path: 'main.ts', content: 'app code' }, context)

@@ -1355,7 +1355,8 @@ class HarnessRuntime implements Bridge {
         if (answer.decision !== 'allow') {
           this.output(run)
           const text = answer.note ? `${REJECTED}用户的说明：${answer.note}` : REJECTED
-          await this.change(run.sessionId, task => recordResult(task, call, this.now(), text, true))
+          // The result is our refusal and the person's note, never output from the file tool that did not run.
+          await this.change(run.sessionId, task => recordResult(task, call, this.now(), text, true, false, false, [], text))
           return
         }
       }

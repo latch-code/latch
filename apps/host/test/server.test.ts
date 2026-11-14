@@ -3532,6 +3532,10 @@ describe('workspaces, policy and audit', () => {
     expect(detail.messages.find(message => message.role === 'tool')?.tool?.output).toBe(
       '用户拒绝了本次工具调用，未执行该操作。用户的说明：先把计划发给我看',
     )
+    expect(detail.messages.find(message => message.role === 'tool')?.tool).not.toHaveProperty('outputWithoutFiles')
+    expect((await t.host.bridge.detail(rejected)).messages.find(message => message.role === 'tool')?.tool?.outputWithoutFiles).toBe(
+      '用户拒绝了本次工具调用，未执行该操作。用户的说明：先把计划发给我看',
+    )
     // The demo answers in its own words: no internal code, no doubled full stop.
     const reply = detail.messages.findLast(message => message.role === 'assistant')!.text
     expect(reply).toBe('你拒绝了这次操作，报告没有写入。\n\n收到你的说明：「先把计划发给我看」。这是演示模型，不会据此改做别的事。')

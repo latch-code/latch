@@ -39,5 +39,4 @@ browser 环境：不用 Node 全局变量与模块；Host、core、testkit 只�
 
 - 附件字节只经专用上传，未知提交保留原请求与引用（ATTACHMENTS.md）。
 
-- Harness 草稿保留先选，思考按模型读；`source: launch` 不算读回，见 HARNESSES.md。
-- 原生技能只按公开目录补全；`$name` 可在句中，`/skill:name` 只在开头，选择不发送。目录截断要明示（HARNESSES、DESIGN）。
+- Harness 草稿与技能见 HARNESSES.md；技能只补全，pi 仅在开头。
