@@ -41,7 +41,7 @@ enum PhoneLive {
         guard isOn else { return }
         let time = pairingStart.duration(to: .now).components
         let milliseconds = time.seconds * 1000 + time.attoseconds / 1_000_000_000_000_000
-        pairingLog.notice("LatchLive body-repair \(value.cause.rawValue, privacy: .public) elapsed-ms \(milliseconds, privacy: .public) pending \(value.pending, privacy: .public) covered \(value.covered, privacy: .public) offers \(value.offers, privacy: .public) ordinal \(value.ordinal, privacy: .public)")
+        pairingLog.notice("LatchLive body-repair \(value.cause.rawValue, privacy: .public) elapsed-ms \(milliseconds, privacy: .public) pending \(value.pending, privacy: .public) covered \(value.covered, privacy: .public) prefix \(value.coveredPrefixCount, privacy: .public) first-uncovered \(value.firstUncoveredKind.rawValue, privacy: .public) offers \(value.offers, privacy: .public) ordinal \(value.ordinal, privacy: .public)")
     }
     /** Only an explicit `-LatchLive 1` launch argument: no default, file or environment turns it on. */
     static let isOn: Bool = {

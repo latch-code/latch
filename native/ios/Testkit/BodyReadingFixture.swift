@@ -150,6 +150,7 @@ import LatchNativeCore
         "fallbackApplied": true, "secondFailureStops": terminalFailure]
     if let diagnosis {
         result["cause"] = diagnosis.cause.rawValue; result["pending"] = diagnosis.pending; result["covered"] = diagnosis.covered
+        result["coveredPrefixCount"] = diagnosis.coveredPrefixCount; result["firstUncoveredKind"] = diagnosis.firstUncoveredKind.rawValue
     }
     if mode == "overflow" {
         result["metadataCancelled"] = metadataCancelled

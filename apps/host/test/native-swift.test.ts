@@ -2574,6 +2574,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
             cause: mode === 'overflow' ? 'ledger' : 'projection',
             pending: mode === 'overflow' ? 8 : 1,
             covered: 0,
+            coveredPrefixCount: 0,
+            firstUncoveredKind: mode === 'overflow' ? 'snapshot' : 'body',
           })
           if (mode === 'overflow') {
             expect(repairMs).toBeGreaterThan(0)

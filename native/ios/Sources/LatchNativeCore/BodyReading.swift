@@ -25,13 +25,22 @@ public struct NativeBodyNotice: Sendable {
 /** Fixed failure categories and bounded proof counts; no body, identity, error text or authorization receipt. */
 public struct NativeBodyRepair: Sendable {
     public enum Cause: String, Sendable { case ordinal, cursor, control, projection, ledger, authority, offer, metadata, receipt }
+    public enum Requirement: String, Sendable { case body, snapshot, none }
     public let cause: Cause
     public let pending: Int
     public let covered: Int
+    public let coveredPrefixCount: Int
+    public let firstUncoveredKind: Requirement
     public let offers: Int
     public let ordinal: UInt64
     init(cause: Cause, state: NativeBodyState) {
         self.cause = cause; pending = state.pending.count; covered = state.pending.filter(state.covered).count
+        coveredPrefixCount = state.pending.prefix(while: state.covered).count
+        switch state.pending.first(where: { !state.covered($0) })?.requirement {
+        case .some(.body): firstUncoveredKind = .body
+        case .some(.snapshot): firstUncoveredKind = .snapshot
+        case .some(.none), .none: firstUncoveredKind = .none
+        }
         offers = state.offers.count; ordinal = state.ordinal
     }
 }
