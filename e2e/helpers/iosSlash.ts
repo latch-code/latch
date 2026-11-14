@@ -5,7 +5,7 @@ export const iosSlashEnvironment = {
   FAKE_ACP_COMMANDS: JSON.stringify(
     Array.from({ length: 200 }, (_, index) => ({
       name: `command-${String(index).padStart(3, '0')}`,
-      description: index === 196 ? '检查方向字符 \u202E 提示' : `检查步骤 ${index}`,
+      description: index === 196 ? `检查方向字符 ${String.fromCodePoint(0x202e)} 提示` : `检查步骤 ${index}`,
       ...(index === 197 ? { input: { hint: '文件或目录' } } : {}),
     })),
   ),

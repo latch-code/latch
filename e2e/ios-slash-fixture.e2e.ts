@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { expect, it } from 'vitest'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import type { TaskDetail } from '@latch/protocol'
+import { escapeSecurityText } from '@latch/protocol'
 import { startTestHost } from './helpers/host.ts'
 import { iosSlashEnvironment, prepareIosSlash } from './helpers/iosSlash.ts'
 
@@ -24,7 +25,9 @@ it('prepares native Slash GUI input through real Host templates and an actual fa
     expect(detail.commands).toHaveLength(200)
     expect(detail.commands?.at(-1)?.name).toBe('command-199')
     expect(detail.commands?.find(command => command.name === 'command-197')?.inputHint).toBe('文件或目录')
-    expect(detail.commands?.find(command => command.name === 'command-196')?.description).toContain('\u202E')
+    const direction = detail.commands?.find(command => command.name === 'command-196')?.description ?? ''
+    expect(direction).toContain(String.fromCodePoint(0x202e))
+    expect(escapeSecurityText(direction)).toContain('\\u{202E}')
     expect(detail.messages.filter(message => message.role === 'user')).toHaveLength(1)
     const templates = await owner.json<{ templates: Array<{ id: string; name: string; content: string }> }>('prompts')
     expect(templates.templates.find(template => template.id === 'native-review')).toMatchObject({
