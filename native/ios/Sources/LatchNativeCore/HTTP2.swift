@@ -244,40 +244,50 @@ public actor NativeHTTPConnection {
             throw NativeFailure.resultUnknown
         }
     }
-    public func events(sessionId: String? = nil, lease: BodyLease? = nil, cursor: NativeEventCursor? = nil) async throws -> NativeEventStream {
+    public func events(sessionId: String? = nil, lease: BodyLease? = nil, cursor: NativeEventCursor? = nil, incremental: Bool = false) async throws -> NativeEventStream {
         guard !closed, channel.isActive, eventCount < 2 else { throw NativeFailure.unavailable }
+        guard !incremental || sessionId != nil else { throw NativeFailure.invalidRecord }
         if let sessionId {
             guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}"), let lease else { throw NativeFailure.invalidRecord }
             try lease.requireValid()
         }
         eventCount += 1
+        let origin = NativeEventOrigin()
         let pair = AsyncThrowingStream<NativeEvent, Error>.makeStream(bufferingPolicy: .bufferingOldest(8))
         let ready = channel.eventLoop.makePromise(of: Void.self), promise = channel.eventLoop.makePromise(of: (any Channel).self)
         var installed = false
+        let cancellation = NativeConnectionCancellation()
         streams.createStreamChannel(promise: promise) { stream in
             stream.eventLoop.makeCompletedFuture {
                 try stream.pipeline.syncOperations.addHandlers(HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https),
-                    NativeEventCollector(ready: ready, continuation: pair.continuation, lease: lease))
+                    NativeEventCollector(ready: ready, continuation: pair.continuation, lease: lease, origin: origin))
             }
         }
-        do {
+        do { return try await withTaskCancellationHandler {
             let stream = try await promise.futureResult.get()
             installed = true
             stream.closeFuture.whenComplete { _ in Task { await self.eventEnded() } }
             pair.continuation.onTermination = { _ in stream.close(promise: nil) }
+            cancellation.bind(stream)
+            try Task.checkCancellation()
             var query = sessionId.map { ["sessionId=" + $0] } ?? []
             if let cursor {
                 _ = try NativeEventCursor.parse("\(cursor.epoch):\(cursor.sequence)")
                 query += ["resumeEpoch=" + cursor.epoch, "resumeAfter=\(cursor.sequence)"]
             }
             let path = "/link/api/events" + (query.isEmpty ? "" : "?" + query.joined(separator: "&"))
-            let fields = HTTPHeaders([("host", "native.latch.invalid"), ("accept", "text/event-stream")])
+            var fields = HTTPHeaders([("host", "native.latch.invalid"), ("accept", "text/event-stream")])
+            if incremental { fields.add(name: "x-latch-state", value: "delta-v1") }
             stream.write(HTTPClientRequestPart.head(HTTPRequestHead(version: .http2, method: .GET, uri: path, headers: fields)), promise: nil)
             try await stream.writeAndFlush(HTTPClientRequestPart.end(nil)).get()
             try await ready.futureResult.get()
-            return NativeEventStream(events: pair.stream, channel: stream)
+            try Task.checkCancellation()
+            return NativeEventStream(events: pair.stream, channel: stream, origin: origin)
+        } onCancel: { cancellation.cancel() }
         } catch {
+            cancellation.cancel()
             if !installed { eventCount = max(0, eventCount - 1) }
+            if Task.isCancelled { pair.continuation.finish(throwing: CancellationError()); throw CancellationError() }
             let failure: NativeFailure = (error as? NativeFailure) == .expired ? .expired : .unavailable
             pair.continuation.finish(throwing: failure)
             throw failure

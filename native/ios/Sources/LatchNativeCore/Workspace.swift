@@ -67,6 +67,7 @@ public struct NativeWorkspaceEvents: Sendable {
     fileprivate let epoch: UUID
     fileprivate let selection: String
     fileprivate let lease: BodyLease?
+    fileprivate let bodyReading: UUID?
     public func cancel() async { await stream.cancel() }
 }
 struct QualifiedNativePath: Sendable {
@@ -114,6 +115,9 @@ public actor NativeWorkspace {
     private var detailRevisions: [String: UInt64] = [:]
     private var detailOrder: [String] = []
     private var appliedRevisions: [String: UInt64] = [:]
+    private let bodyOwner = UUID()
+    private var bodyAttempt = UUID()
+    private var bodyState: NativeBodyState?
     public init(device: PreparedNativeDevice, keys: any NativeIdentityProvider, vault: EncryptedVault,
         onRevoked: (@Sendable (VerifiedNativeRevocation) -> Void)? = nil) throws {
         guard LinkBytes.base32(LinkBytes.hash(device.rootSpki)) == device.hostId,
@@ -170,6 +174,7 @@ public actor NativeWorkspace {
             await cancelFileTransfer()
             guard path.ticket == attempt, !Task.isCancelled else { throw NativeFailure.unavailable }
             let old = connection; connection = path.connection; reopen = path.reopen; epoch = UUID()
+            bodyState?.authority.replaceConnection(); bodyState?.resetStream(); bodyState?.offers.removeAll()
             if let old { Task { await old.close() } }
             return value
         } catch { await path.connection.close(); throw error }
@@ -902,21 +907,225 @@ public actor NativeWorkspace {
               Set(value["fields"].object.keys).isSubset(of: ["requestId", "runId", "decision"]) else { throw NativeFailure.storageUnavailable }
         return value
     }
+    /** Selects one body without opening a verification window. A new selection invalidates every earlier candidate. */
+    public func beginBody(_ sessionId: String) async throws -> NativeBodyReading {
+        guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord }
+        let (_, current) = try transport()
+        let intent = UUID(); bodyAttempt = intent
+        let previous = bodyState?.stream, opening = bodyState?.opening
+        bodyState?.withdraw(); bodyState = nil
+        if let opening, let opened = try? await opening.value { await opened.cancel() }
+        await previous?.cancel()
+        guard let instance, let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        let authority = NativeBodyAuthority()
+        let publication = await NativeBodyPublication(instanceId: instance, sessionId: sessionId, authority: authority)
+        guard bodyAttempt == intent, epoch == current, lease.valid else { authority.invalidate(); throw NativeFailure.expired }
+        let reading = NativeBodyReading(publication: publication, owner: bodyOwner, sessionId: sessionId)
+        let state = NativeBodyState(reading: reading, instanceId: instance, authority: authority, lease: lease)
+        bodyState = state
+        state.expiry = Task { [weak self] in
+            do { try await lease.waitForInvalidation() } catch { return }
+            await self?.expireBody(reading.id)
+        }
+        return reading
+    }
+
+    private func body(_ reading: NativeBodyReading) throws -> NativeBodyState {
+        guard reading.owner == bodyOwner, let state = bodyState, state.reading.id == reading.id,
+              instance?.utf8.elementsEqual(state.instanceId.utf8) == true else { throw NativeFailure.expired }
+        try state.lease.requireValid()
+        return state
+    }
+
+    private func expireBody(_ id: UUID) async {
+        guard let state = bodyState, state.reading.id == id else { return }
+        let stream = state.stream, opening = state.opening
+        state.withdraw(); bodyState = nil
+        if let opening, let opened = try? await opening.value { await opened.cancel() }
+        await stream?.cancel()
+    }
+
+    public func endBody(_ reading: NativeBodyReading) async {
+        guard reading.owner == bodyOwner else { return }
+        await expireBody(reading.id)
+    }
+
+    /** A logical reading may repair once. Reopening it afterwards always requests complete states. */
+    public func events(for reading: NativeBodyReading, incremental: Bool = false) async throws -> NativeWorkspaceEvents {
+        let state = try body(reading), current = epoch
+        let previous = state.stream, opening = state.opening
+        state.resetStream()
+        let intent = state.streamAttempt
+        if let opening, let opened = try? await opening.value { await opened.cancel() }
+        await previous?.cancel()
+        guard bodyState === state, state.streamAttempt == intent, epoch == current, state.lease.valid else { throw NativeFailure.expired }
+        let operation = Task { try await self.openEvents(sessionId: reading.sessionId, expectedLease: state.lease,
+            incremental: incremental && !state.repaired, reading: reading.id) }
+        state.opening = operation
+        defer { if state.streamAttempt == intent { state.opening = nil } }
+        let stream = try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+        guard bodyState === state, state.streamAttempt == intent, epoch == current, state.lease.valid else { await stream.cancel(); throw NativeFailure.expired }
+        state.origin = stream.stream.origin; state.authority.bindStream(stream.stream.origin); state.stream = stream
+        return stream
+    }
+
+    /** A real HTTP read is an offer only: it neither seeds the stream shadow nor advances applied revisions. */
+    public func readBody(for reading: NativeBodyReading) async throws -> NativeBodyUpdate {
+        try await readBody(reading, notice: nil)
+    }
+
+    public func refreshBody(for reading: NativeBodyReading, after notice: NativeBodyNotice) async throws -> NativeBodyUpdate {
+        try await readBody(reading, notice: notice)
+    }
+
+    private func readBody(_ reading: NativeBodyReading, notice: NativeBodyNotice?) async throws -> NativeBodyUpdate {
+        let state = try body(reading), current = epoch
+        if let notice {
+            guard notice.reading == reading.id, state.pending.contains(where: { $0.id == notice.id }),
+                  notice.event.provenance?.origin === state.origin else { throw NativeFailure.invalidRecord }
+        }
+        let evidence = try state.authority.issue(lease: state.lease)
+        let snapshot = notice == nil ? nil : try await self.snapshot()
+        guard bodyState === state, epoch == current, state.authority.accepts(evidence) else { throw NativeFailure.expired }
+        let detail = try await read("/link/api/tasks/" + reading.sessionId, body: true)
+        guard bodyState === state, epoch == current, state.authority.accepts(evidence) else { throw NativeFailure.expired }
+        var check = NativeTaskPublicationGate(instanceId: state.instanceId, sessionId: reading.sessionId)
+        let ticket = check.capture()
+        guard try check.acceptHTTP(detail.encoded(), ticket: ticket) != nil else { throw NativeFailure.invalidRecord }
+        return try state.offer(NativeBodyUpdate(http: detail, snapshot: snapshot, evidence: evidence), priority: 1)
+    }
+
+    /** Each actual frame reaches the shadow before a publication revision can suppress it. */
+    public func receive(_ event: NativeEvent, from stream: NativeWorkspaceEvents, for reading: NativeBodyReading) async throws -> NativeBodyEventResult {
+        let state = try body(reading)
+        guard stream.bodyReading == reading.id, stream.epoch == epoch,
+              state.origin === stream.stream.origin, let provenance = event.provenance,
+              provenance.origin === stream.stream.origin else { return .ignore }
+        if provenance.ordinal <= state.ordinal { return .ignore }
+        do {
+            guard provenance.ordinal == state.ordinal + 1 else { throw NativeFailure.invalidRecord }
+            state.ordinal = provenance.ordinal
+            if let cursor = event.cursor {
+                guard cursor.epoch.utf8.elementsEqual(state.instanceId.utf8), cursor.sequence >= state.cursor else { throw NativeFailure.invalidRecord }
+                state.cursor = cursor.sequence
+            }
+            if event.type == "heartbeat" || event.type == "resumed" {
+                guard event.data.isEmpty, event.cursor != nil else { throw NativeFailure.invalidRecord }
+                _ = try state.record(ordinal: provenance.ordinal, cursor: event.cursor, requirement: .none)
+                try await advanceBody(reading.id)
+                return .ignore
+            }
+            if event.type == "task-state" || event.type == "task-delta" {
+                guard event.cursor != nil else { throw NativeFailure.invalidRecord }
+                switch state.shadow.receive(type: event.type, data: event.data) {
+                case .repair: throw NativeFailure.invalidRecord
+                case .ignore: return .ignore
+                case let .candidate(candidate):
+                    let position = try state.record(ordinal: provenance.ordinal, cursor: event.cursor, requirement: .body(candidate.revision))
+                    if state.covered(position) { try await advanceBody(reading.id); return .ignore }
+                    let evidence = try state.authority.issue(lease: state.lease, origin: provenance.origin)
+                    return .update(try state.offer(NativeBodyUpdate(stream: candidate, evidence: evidence), priority: 2))
+                }
+            }
+            let value = try NativeJSON.decode(event.data)
+            guard value["type"].string == event.type else { throw NativeFailure.invalidRecord }
+            if event.type == "host-state", event.cursor == nil {
+                guard value["instanceId"].string?.utf8.elementsEqual(state.instanceId.utf8) == true else { return .ignore }
+                return .hostState(event)
+            }
+            guard ["refresh", "tasks-invalidated"].contains(event.type),
+                  value["instanceId"].string?.utf8.elementsEqual(state.instanceId.utf8) == true,
+                  let revision = value["revision"].integer else { throw NativeFailure.invalidRecord }
+            let position = try state.record(ordinal: provenance.ordinal, cursor: event.cursor, requirement: .snapshot(revision))
+            if state.covered(position) { try await advanceBody(reading.id); return .ignore }
+            return .notice(NativeBodyNotice(event: event, reading: reading.id, id: position.id))
+        } catch {
+            guard bodyState === state, state.origin === provenance.origin else { throw NativeFailure.expired }
+            let failed = state.stream
+            let repeated = state.repaired
+            state.repaired = true; state.resetStream()
+            await failed?.cancel()
+            if repeated { throw error }
+            return .repair
+        }
+    }
+
+    /** No caller-provided event, revision or cursor is accepted here. */
+    public func applied(_ receipt: NativeBodyApplied) async throws {
+        try await serializeCursor { try await self.applyBodyReceipt(receipt) }
+    }
+
+    private func applyBodyReceipt(_ receipt: NativeBodyApplied) async throws {
+        guard let state = bodyState, state.authority.accepts(receipt.evidence) else { throw NativeFailure.expired }
+        guard var offer = state.offers[receipt.evidence.id], offer.evidence === receipt.evidence else { return }
+        if receipt.body {
+            if state.bodyRevision == nil || offer.bodyRevision > state.bodyRevision!
+                || offer.bodyRevision == state.bodyRevision && offer.priority > state.bodyPriority {
+                state.bodyRevision = offer.bodyRevision; state.bodyPriority = offer.priority
+            }
+            detailRevisions[state.reading.sessionId] = max(detailRevisions[state.reading.sessionId] ?? 0, offer.bodyRevision)
+            detailOrder.removeAll { $0 == state.reading.sessionId }; detailOrder.append(state.reading.sessionId)
+            while detailOrder.count > 16 { detailRevisions.removeValue(forKey: detailOrder.removeFirst()) }
+        }
+        if receipt.snapshot, let revision = offer.snapshotRevision { state.snapshotRevision = max(state.snapshotRevision ?? 0, revision) }
+        offer.applied = true; state.offers[receipt.evidence.id] = offer
+        if receipt.body, let latest = state.latest, latest.evidence === receipt.evidence {
+            let current = epoch
+            try await vault.storeBody(latest.detail.encoded(), name: "detail-" + state.reading.sessionId, lease: state.lease)
+            guard bodyState === state, epoch == current, state.authority.accepts(receipt.evidence) else { throw NativeFailure.expired }
+        }
+        try await persistBodyProgress(state.reading.id)
+    }
+
+    private func advanceBody(_ id: UUID) async throws {
+        try await serializeCursor { try await self.persistBodyProgress(id) }
+    }
+
+    private func persistBodyProgress(_ id: UUID) async throws {
+        guard let state = bodyState, state.reading.id == id else { throw NativeFailure.expired }
+        try state.lease.requireValid()
+        let prefix = state.pending.prefix(while: state.covered)
+        guard let last = prefix.last else { state.pruneOffers(); return }
+        if let cursor = prefix.compactMap(\.cursor).last {
+            guard let applied = state.bodyRevision, applied <= (detailRevisions[state.reading.sessionId] ?? 0) else { return }
+            let current = epoch, intent = state.streamAttempt
+            try await loadCursors()
+            guard bodyState === state, state.streamAttempt == intent, epoch == current, state.lease.valid else { throw NativeFailure.expired }
+            let selected = state.reading.sessionId
+            if let previous = cursors.first(where: { $0.selection == selected && $0.cursor.epoch == state.instanceId }),
+               cursor.sequence < previous.cursor.sequence { throw NativeFailure.invalidRecord }
+            var next = cursors.filter { $0.selection != selected }
+            next.append(AppliedCursor(selection: selected, cursor: cursor, revision: applied))
+            if next.count > 16 { next.removeFirst(next.count - 16) }
+            try await vault.storeMetadata(JSONEncoder().encode(next), name: "event-cursors")
+            guard bodyState === state, state.streamAttempt == intent, epoch == current, state.lease.valid else { throw NativeFailure.expired }
+            cursors = next; appliedRevisions[selected] = applied
+            if appliedRevisions.count > 16 { appliedRevisions = Dictionary(uniqueKeysWithValues: cursors.map { ($0.selection, $0.revision) }) }
+        }
+        state.pending.removeAll { $0.ordinal <= last.ordinal }
+        state.pruneOffers()
+    }
+
     public func events(sessionId: String? = nil, expectedLease: BodyLease? = nil) async throws -> NativeWorkspaceEvents {
+        try await openEvents(sessionId: sessionId, expectedLease: expectedLease)
+    }
+    private func openEvents(sessionId: String?, expectedLease: BodyLease?, incremental: Bool = false, reading: UUID? = nil) async throws -> NativeWorkspaceEvents {
         let (connection, current) = try transport()
         try await loadCursors()
         let selected = sessionId ?? "", cursor = cursors.first { $0.selection == selected && $0.cursor.epoch == instance }
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
         if let expectedLease, !lease.sameWindow(as: expectedLease) { throw NativeFailure.expired }
-        let stream = try await connection.events(sessionId: sessionId, lease: lease, cursor: cursor?.cursor)
+        let stream = try await connection.events(sessionId: sessionId, lease: lease, cursor: cursor?.cursor, incremental: incremental)
         guard epoch == current else { await stream.cancel(); throw NativeFailure.unavailable }
-        return NativeWorkspaceEvents(events: stream.events, stream: stream, epoch: current, selection: selected, lease: lease)
+        return NativeWorkspaceEvents(events: stream.events, stream: stream, epoch: current, selection: selected, lease: lease, bodyReading: reading)
     }
     /** Closes only the matching body authorization; the authenticated transport and encrypted pending writes remain. */
     public func invalidateContentWindow(_ lease: BodyLease) async { _ = await verification.invalidate(lease) }
     public func accepts(_ event: NativeEvent, from stream: NativeWorkspaceEvents, sessionId: String?) throws -> Bool {
         let selected = sessionId ?? ""
-        guard stream.epoch == epoch, stream.selection == selected else { return false }
+        guard stream.bodyReading == nil, stream.epoch == epoch, stream.selection == selected else { return false }
+        guard let provenance = event.provenance, provenance.origin === stream.stream.origin else { return false }
         if stream.lease?.valid != true { return false }
         let value = event.data.isEmpty ? NativeJSON.null : try NativeJSON.decode(event.data)
         let reset = event.type == "refresh" && value["type"].string == "refresh" && value["resumeRequired"].bool
@@ -952,8 +1161,9 @@ public actor NativeWorkspace {
         try await task.value
     }
     private func applyAcknowledgement(_ event: NativeEvent, from stream: NativeWorkspaceEvents, selected: String, revision applied: UInt64) async throws {
-        guard stream.epoch == epoch, stream.selection == selected, applied <= LinkBytes.maximumInteger,
+        guard stream.bodyReading == nil, stream.epoch == epoch, stream.selection == selected, applied <= LinkBytes.maximumInteger,
               let currentInstance = instance else { throw NativeFailure.unavailable }
+        guard let provenance = event.provenance, provenance.origin === stream.stream.origin else { throw NativeFailure.invalidRecord }
         guard let lease = stream.lease else { throw NativeFailure.expired }; try lease.requireValid()
         try await loadCursors()
         let fetched = selected.isEmpty ? revision : detailRevisions[selected] ?? 0
@@ -996,6 +1206,7 @@ public actor NativeWorkspace {
     }
     public func closeOpening() async {
         attempt = UUID(); epoch = UUID(); instance = nil; revision = 0
+        bodyAttempt = UUID(); bodyState?.withdraw(); bodyState = nil
         metadata = .null
         detailRevisions = [:]; detailOrder = []; appliedRevisions = [:]
         await verification.closeOpening()
@@ -1051,6 +1262,12 @@ public actor NativeWorkspace {
     private func adoptCheckpoint(_ value: NativeJSON) throws -> NativeJSON {
         guard let id = value["instanceId"].string, let next = value["revision"].integer else { throw NativeFailure.invalidRecord }
         if instance == id, next < revision { throw NativeFailure.invalidRecord }
+        let changedAccess = metadata != .null && ["status", "scopes", "dataScope"].contains { metadata["device"][$0] != value["device"][$0] }
+        if instance != id || changedAccess {
+            let previous = bodyState?.stream
+            bodyAttempt = UUID(); bodyState?.withdraw(); bodyState = nil
+            if let previous { Task { await previous.cancel() } }
+        }
         if instance != id { detailRevisions = [:]; detailOrder = []; appliedRevisions = [:] }
         instance = id; revision = next; metadata = value
         return value

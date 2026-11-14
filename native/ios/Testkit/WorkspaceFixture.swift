@@ -35,6 +35,47 @@ import LatchNativeCore
         catch { cacheNeedsWindow = (error as? NativeFailure) == .expired }
         guard cacheNeedsWindow else { throw NativeFailure.identityMismatch }
         let lease = try await workspace.verify()
+        if input["bodyScript"] as? String == "shadow", let id = input["sessionId"] as? String {
+            return try await bodyShadowFixture(workspace, vault: vault, id: id)
+        }
+        if input["bodyScript"] as? String == "opening", let id = input["sessionId"] as? String {
+            return try await bodyOpeningFixture(workspace, id: id)
+        }
+        if input["bodyScript"] as? String == "reconnect", let id = input["sessionId"] as? String {
+            return try await bodyConnectionFixture(workspace, keys: keys, id: id) {
+                try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki,
+                    knockKey: device.knockKey, identity: keys.identity())
+            }
+        }
+        if input["bodyScript"] as? String == "scope", let id = input["sessionId"] as? String {
+            return try await bodyScopeFixture(workspace, vault: vault, lease: lease, id: id)
+        }
+        if let mode = input["bodyScript"] as? String, let id = input["sessionId"] as? String {
+            return try await bodyOrderingFixture(workspace, vault: vault, id: id, mode: mode)
+        }
+        if input["bodyPublication"] as? Bool == true {
+            return try await bodyReadingFixture(workspace, vault: vault, lease: lease, keys: keys)
+        }
+        if input["eventProvenance"] as? Bool == true {
+            let firstStream = try await workspace.events(expectedLease: lease)
+            let secondStream = try await workspace.events(expectedLease: lease)
+            var firstEvents = firstStream.events.makeAsyncIterator()
+            guard let first = try await firstEvents.next(), let cursor = first.cursor else { throw NativeFailure.invalidRecord }
+            let own = try await workspace.accepts(first, from: firstStream, sessionId: nil)
+            let crossed = try await workspace.accepts(first, from: secondStream, sessionId: nil)
+            var parser = NativeEventParser()
+            let wire = Data("id: \(cursor.epoch):\(cursor.sequence)\nevent: \(first.type)\ndata: ".utf8) + first.data + Data("\n\n".utf8)
+            guard let copied = try parser.feed(wire).first else { throw NativeFailure.invalidRecord }
+            let parsed = try await workspace.accepts(copied, from: firstStream, sessionId: nil)
+            let revision = try await workspace.snapshot()["revision"].integer ?? 0
+            var refused = false
+            do { try await workspace.acknowledge(copied, from: firstStream, sessionId: nil, appliedRevision: revision) }
+            catch { refused = true }
+            try await workspace.acknowledge(first, from: firstStream, sessionId: nil, appliedRevision: revision)
+            await firstStream.cancel(); await secondStream.cancel()
+            await workspace.closeOpening(); await vault.lock()
+            return ["ownAccepted": own, "crossStreamAccepted": crossed, "parserAccepted": parsed, "parserAckRefused": refused]
+        }
         if input["agentReadFailures"] as? Bool == true {
             let held = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["mode": .string("chat"), "prompt": .string("Unconfirmed fixture message")])
             try await vault.storeBody(JSONEncoder().encode(held), name: "pending-" + held.requestId, lease: lease)

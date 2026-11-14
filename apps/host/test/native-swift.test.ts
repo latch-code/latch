@@ -60,6 +60,25 @@ const nativeSeen = vi.hoisted(() => [] as Array<{ deviceId: string; method: stri
 /** `METHOD path` of requests the native listener answers 503 once without passing on: a write the Host never saw. */
 const nativeDrop = vi.hoisted(() => new Set<string>())
 const nativeReadFaults = vi.hoisted(() => new Map<string, Array<{ status: number; code: string }>>())
+/** Replaces successful bodies only after the real Host authorizes the route, for native protocol-ordering fixtures. */
+const nativeBodyScripts = vi.hoisted(
+  () =>
+    new Map<
+      string,
+      {
+        details: unknown[]
+        streams: string[][]
+        opened: Array<{ delta: string | string[] | undefined; resume: boolean }>
+        closed: number
+        deviceId?: string
+        snapshotDelay?: number
+        delays?: number[]
+        beforeSnapshot?: (deviceId: string) => Promise<void>
+        closedBeforeData?: boolean[]
+        delayedMetadata?: { started: number; delivered: number }
+      }
+    >(),
+)
 vi.mock('../src/native.ts', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/native.ts')>()
   return {
@@ -67,9 +86,96 @@ vi.mock('../src/native.ts', async importOriginal => {
     startNativeHost: (options: Parameters<typeof actual.startNativeHost>[0]) =>
       actual.startNativeHost({
         ...options,
-        handler(req, res, opening) {
+        async handler(req, res, opening) {
           nativeSeen.push({ deviceId: opening.deviceId, method: req.method ?? '', path: req.url ?? '' })
           const key = `${req.method ?? ''} ${req.url ?? ''}`
+          const url = new URL(req.url ?? '/', 'https://fixture.invalid')
+          const selected = url.pathname === '/link/api/events' ? url.searchParams.get('sessionId') : url.pathname.split('/').at(-1)
+          const script = selected ? nativeBodyScripts.get(selected) : undefined
+          const metadataScript =
+            url.pathname === '/link/api/snapshot'
+              ? [...nativeBodyScripts.values()].find(
+                  value => value.deviceId === opening.deviceId && (value.snapshotDelay || value.beforeSnapshot),
+                )
+              : undefined
+          if (metadataScript?.beforeSnapshot) {
+            const before = metadataScript.beforeSnapshot
+            metadataScript.beforeSnapshot = undefined
+            await before(opening.deviceId)
+          }
+          if (metadataScript) {
+            const end = res.end.bind(res)
+            res.end = ((...args: Parameters<typeof res.end>) => {
+              if (res.statusCode !== 200) return end(...args)
+              const count = (metadataScript.delayedMetadata ??= { started: 0, delivered: 0 })
+              count.started++
+              const timer = setTimeout(() => {
+                if (!res.destroyed) {
+                  count.delivered++
+                  end(...args)
+                }
+              }, metadataScript.snapshotDelay)
+              res.once('close', () => clearTimeout(timer))
+              return res
+            }) as typeof res.end
+          }
+          if (script && req.method === 'GET') {
+            if (url.pathname === '/link/api/events') {
+              const write = res.write.bind(res)
+              const writeHead = res.writeHead.bind(res)
+              const delay = script.delays?.shift() ?? 0
+              let head: Parameters<typeof res.writeHead> | undefined
+              if (delay)
+                res.writeHead = ((...args: Parameters<typeof res.writeHead>) => {
+                  if (args[0] !== 200) return writeHead(...args)
+                  head = args
+                  res.statusCode = 200
+                  return res
+                }) as typeof res.writeHead
+              let sent = false
+              let delivered = false
+              const timers: Array<ReturnType<typeof setTimeout>> = []
+              res.write = ((...args: Parameters<typeof res.write>) => {
+                if (res.statusCode !== 200) return write(...args)
+                if (!sent) {
+                  sent = true
+                  script.deviceId = opening.deviceId
+                  script.opened.push({ delta: req.headers['x-latch-state'], resume: url.searchParams.has('resumeAfter') })
+                  const frames = script.streams.shift() ?? []
+                  frames.forEach((frame, index) =>
+                    timers.push(
+                      setTimeout(
+                        () => {
+                          if (!res.destroyed) {
+                            if (head) {
+                              writeHead(...head)
+                              head = undefined
+                            }
+                            delivered = true
+                            write(frame)
+                          }
+                        },
+                        delay + index * 10,
+                      ),
+                    ),
+                  )
+                }
+                return true
+              }) as typeof res.write
+              res.once('close', () => {
+                script.closed++
+                ;(script.closedBeforeData ??= []).push(!delivered)
+                timers.forEach(clearTimeout)
+              })
+            } else if (url.pathname === `/link/api/tasks/${selected}`) {
+              const end = res.end.bind(res)
+              res.end = ((...args: Parameters<typeof res.end>) => {
+                if (res.statusCode === 200)
+                  return end(JSON.stringify(script.details.length > 1 ? script.details.shift() : script.details[0]))
+                return end(...args)
+              }) as typeof res.end
+            }
+          }
           const readFault = nativeReadFaults.get(key)?.shift()
           if (readFault) {
             res.writeHead(readFault.status, { 'content-type': 'application/json' }).end(JSON.stringify({ error: readFault.code }))
@@ -1881,6 +1987,264 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 30_000)
+  it('requires an actual native reader origin for event acceptance and cursor acknowledgement', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      const result = await invoke({
+        operation: 'nativeWorkspace',
+        eventProvenance: true,
+        payload: invitation.payload,
+        port: host.host.nativePort,
+      })
+      expect(result).toEqual({ ownAccepted: true, crossStreamAccepted: false, parserAccepted: false, parserAckRefused: true })
+    } finally {
+      await host.close()
+    }
+  }, 30_000)
+
+  it('publishes native body offers synchronously before committing progress and withdraws old selections and leases', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      const result = await invoke({
+        operation: 'nativeWorkspace',
+        bodyPublication: true,
+        payload: invitation.payload,
+        port: host.host.nativePort,
+      })
+      expect(result).toEqual({
+        refusedApplication: true,
+        noProgressBeforeApplication: true,
+        nestedPublicationRefused: true,
+        appliedOnce: true,
+        cacheAfterReceipt: true,
+        cursorAfterReceipt: true,
+        idempotentReceipt: true,
+        duplicateRefused: true,
+        legacyAccepts: false,
+        legacyAckRefused: true,
+        staleSelectionRefused: true,
+        foreignPublicationRefused: true,
+        expiredPublicationRefused: true,
+        closedRead: true,
+        noImplicitVerification: true,
+        closedPublicationRefused: true,
+      })
+    } finally {
+      await host.close()
+    }
+  }, 30_000)
+
+  it('advances the actual native stream shadow behind newer HTTP without replacing it or losing UTF8 offsets', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    let sessionId = ''
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      ;({ sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { mode: 'chat', prompt: 'Native shadow fixture', requestId: randomUUID() },
+      }))
+      const actual = await owner.json<{ summary: { status: string }; sync: { instanceId: string } }>(`tasks/${sessionId}`)
+      await expect.poll(async () => (await owner.json<typeof actual>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+      const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/task-delta-v1.json'), 'utf8')) as {
+        streams: Array<{ actions: Array<{ frame: Record<string, unknown>; expect: { detail: { liveText: string } } }> }>
+      }
+      const actions = vectors.streams[0]!.actions.slice(0, 3)
+      const frames: Array<Record<string, unknown>> = actions.map((action, index) => ({
+        ...action.frame,
+        instanceId: actual.sync.instanceId,
+        sessionId,
+        revision: index === 2 ? 21 : 10 + index,
+      }))
+      const first = frames[0] as unknown as { detail: Record<string, unknown> & { summary: Record<string, unknown> } }
+      first.detail.summary.id = sessionId
+      const details = [20, 21].map(revision => ({
+        ...first.detail,
+        liveText: 'HTTP newer',
+        sync: { instanceId: actual.sync.instanceId, revision },
+      }))
+      const script = {
+        details,
+        streams: [
+          frames.map(
+            (frame, index) => `id: ${actual.sync.instanceId}:${index + 1}\nevent: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`,
+          ),
+        ],
+        opened: [] as Array<{ delta: string | string[] | undefined; resume: boolean }>,
+        closed: 0,
+      }
+      nativeBodyScripts.set(sessionId, script)
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      expect(
+        await invoke({
+          operation: 'nativeWorkspace',
+          bodyScript: 'shadow',
+          sessionId,
+          payload: invitation.payload,
+          port: host.host.nativePort,
+        }),
+      ).toEqual({
+        ignoredOlder: 2,
+        text: actions[2]!.expect.detail.liveText,
+        httpUnchanged: true,
+        streamWinsSameRevision: true,
+        cursor: 3,
+        cachedText: actions[2]!.expect.detail.liveText,
+      })
+      expect(script.opened).toEqual([{ delta: 'delta-v1', resume: false }])
+      await expect.poll(() => script.closed).toBe(1)
+    } finally {
+      nativeBodyScripts.delete(sessionId)
+      await host.close()
+    }
+  }, 30_000)
+
+  it.each(['metadata', 'overflow', 'repair', 'opening', 'reconnect', 'scope', 'host-state'] as const)(
+    'keeps native publication barriers bounded and repairs the actual reader once: %s',
+    async mode => {
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+      let sessionId = ''
+      try {
+        const owner = await host.enroll({ listener: 'unix' })
+        ;({ sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+          method: 'POST',
+          body: { mode: 'chat', prompt: 'Native ordering fixture', requestId: randomUUID() },
+        }))
+        await expect.poll(async () => (await owner.json<{ summary: { status: string } }>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+        const actual = await owner.json<{ sync: { instanceId: string; revision: number } }>(`tasks/${sessionId}`)
+        const snapshot = await owner.json<{ revision: number }>('snapshot')
+        const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/task-delta-v1.json'), 'utf8')) as {
+          streams: Array<{ actions: Array<{ frame: Record<string, unknown> }> }>
+        }
+        const base = vectors.streams[0]!.actions[0]!.frame as Record<string, unknown> & {
+          detail: { summary: Record<string, unknown> }
+          stream: Record<string, unknown>
+        }
+        const delta = vectors.streams[0]!.actions[1]!.frame
+        const instanceId = actual.sync.instanceId,
+          revision = snapshot.revision + 20
+        base.detail.summary.id = sessionId
+        const full = (sequence: number, incremental = true) => ({
+          ...base,
+          instanceId,
+          sessionId,
+          revision: revision + sequence,
+          ...(incremental ? { stream: { ...base.stream, stateSeq: sequence } } : { stream: undefined }),
+        })
+        const bad = { ...delta, instanceId, sessionId, revision: revision + 2, baseSeq: 99 }
+        const refresh = { type: 'refresh', instanceId, revision: snapshot.revision }
+        const lifecycle = { type: 'host-state', instanceId, state: 'awake', at: '2026-11-14T00:00:00.000Z' }
+        const first =
+          mode === 'host-state'
+            ? [{ ...lifecycle, instanceId: 'another-host' }, lifecycle, full(1)]
+            : mode === 'metadata'
+              ? [refresh, full(1), { ...delta, instanceId, sessionId, revision: revision + 2 }]
+              : mode === 'overflow'
+                ? [refresh, ...Array.from({ length: 8 }, (_, index) => full(index + 1))]
+                : ['opening', 'scope', 'reconnect'].includes(mode)
+                  ? [full(1)]
+                  : [full(1), bad]
+        const fallback = mode === 'repair' ? [full(10, false), bad] : [full(10, false)]
+        const wire = (frames: Array<Record<string, unknown>>, offset = 0) =>
+          frames.map(
+            (frame, index) =>
+              `${frame.type === 'host-state' ? '' : `id: ${instanceId}:${offset + index + 1}\n`}event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`,
+          )
+        const script = {
+          details: [{ ...base.detail, liveText: 'Old HTTP body', sync: { instanceId, revision: actual.sync.revision } }],
+          streams: [wire(first), wire(fallback, 20)],
+          opened: [] as Array<{ delta: string | string[] | undefined; resume: boolean }>,
+          closed: 0,
+          ...(['metadata', 'overflow'].includes(mode) ? { snapshotDelay: 250 } : {}),
+        }
+        if (mode === 'opening') Object.assign(script, { delays: [300, 0] })
+        if (mode === 'reconnect')
+          Object.assign(script, {
+            details: [10, 20, 1, 21].map(offset => ({ ...base.detail, sync: { instanceId, revision: revision + offset } })),
+          })
+        if (mode === 'scope')
+          Object.assign(script, {
+            beforeSnapshot: async (deviceId: string) => {
+              expect((await owner.request(`devices/${deviceId}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
+            },
+          })
+        nativeBodyScripts.set(sessionId, script)
+        const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+        const result = await invoke({
+          operation: 'nativeWorkspace',
+          bodyScript: mode,
+          sessionId,
+          payload: invitation.payload,
+          port: host.host.nativePort,
+        })
+        if (mode === 'metadata') {
+          expect(result).toMatchObject({ cursorHeld: true, metadataOnly: true, text: '中🙂文', cursor: 3 })
+          expect(result.metadataMs).toBeGreaterThanOrEqual(240)
+          expect(script.opened).toEqual([{ delta: 'delta-v1', resume: false }])
+        } else if (mode === 'host-state') {
+          expect(result).toEqual({ foreignIgnored: true, state: 'awake', noLifecycleAck: true, cursor: 3 })
+          expect(script.opened).toEqual([{ delta: 'delta-v1', resume: false }])
+        } else if (mode === 'opening') {
+          expect(result).toEqual({ lateOpeningRejected: true, currentReaderApplied: true })
+          expect(script.opened).toEqual([
+            { delta: 'delta-v1', resume: false },
+            { delta: 'delta-v1', resume: false },
+          ])
+        } else if (mode === 'reconnect') {
+          expect(result).toEqual({
+            oldConnectionRejected: true,
+            revisionFloorKept: true,
+            newerAccepted: true,
+            restoredWithoutSigning: true,
+          })
+          expect(script.opened).toEqual([])
+        } else if (mode === 'scope') {
+          expect(result).toEqual({
+            scope: 'work',
+            oldOfferWithdrawn: true,
+            oldReadingRejected: true,
+            newPublicReadingAllowed: true,
+            pendingUnchanged: true,
+          })
+          expect(script.opened).toEqual([{ delta: undefined, resume: false }])
+        } else {
+          const { repairMs, metadataCancelled, ...facts } = result
+          expect(facts).toEqual({
+            updates: mode === 'overflow' ? 7 : 1,
+            repaired: true,
+            oldOfferInvalidated: true,
+            fallbackApplied: true,
+            secondFailureStops: mode === 'repair',
+          })
+          if (mode === 'overflow') {
+            expect(repairMs).toBeGreaterThan(0)
+            expect(metadataCancelled).toBe(true)
+            expect(nativeBodyScripts.get(sessionId)?.delayedMetadata).toEqual({ started: 1, delivered: 0 })
+          } else expect([repairMs, metadataCancelled]).toEqual([undefined, undefined])
+          expect(script.opened).toEqual([
+            { delta: 'delta-v1', resume: false },
+            { delta: undefined, resume: false },
+          ])
+        }
+        await expect.poll(() => script.closed).toBe(mode === 'reconnect' ? 0 : ['metadata', 'scope', 'host-state'].includes(mode) ? 1 : 2)
+        if (mode === 'opening') expect(nativeBodyScripts.get(sessionId)?.closedBeforeData).toEqual([true, false])
+        const output = join(root, 'test-results/native-body-publication')
+        await mkdir(output, { recursive: true })
+        await writeFile(
+          join(output, `${mode}.json`),
+          JSON.stringify({ ...result, readers: script.opened, closed: script.closed }, null, 2) + '\n',
+        )
+      } finally {
+        nativeBodyScripts.delete(sessionId)
+        await host.close()
+      }
+    },
+    30_000,
+  )
+
   it('reads, writes and stops from the actual Swift workspace against a real Host', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {

@@ -2,10 +2,21 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 
+/** Issued only by an actual HTTP/2 event stream. Public parser output has no origin. */
+final class NativeEventOrigin: Sendable {}
+struct NativeEventProvenance: Sendable {
+    let origin: NativeEventOrigin
+    let ordinal: UInt64
+}
+
 public struct NativeEvent: Sendable {
     public let type: String
     public let data: Data
     public let cursor: NativeEventCursor?
+    let provenance: NativeEventProvenance?
+    init(type: String, data: Data, cursor: NativeEventCursor?, provenance: NativeEventProvenance? = nil) {
+        self.type = type; self.data = data; self.cursor = cursor; self.provenance = provenance
+    }
 }
 public struct NativeEventCursor: Codable, Sendable, Equatable {
     public let epoch: String
@@ -21,6 +32,7 @@ public struct NativeEventCursor: Codable, Sendable, Equatable {
 public struct NativeEventStream: Sendable {
     public let events: AsyncThrowingStream<NativeEvent, Error>
     let channel: any Channel
+    let origin: NativeEventOrigin
     public func cancel() async { try? await channel.close().get() }
 }
 
@@ -78,13 +90,15 @@ final class NativeEventCollector: ChannelInboundHandler, @unchecked Sendable {
     private let ready: EventLoopPromise<Void>
     private let continuation: AsyncThrowingStream<NativeEvent, Error>.Continuation
     private let lease: BodyLease?
+    private let origin: NativeEventOrigin
+    private var ordinal: UInt64 = 0
     private var parser = NativeEventParser()
     private var opened = false
     private var finished = false
     private var timer: Scheduled<Void>?
     private weak var context: ChannelHandlerContext?
-    init(ready: EventLoopPromise<Void>, continuation: AsyncThrowingStream<NativeEvent, Error>.Continuation, lease: BodyLease?) {
-        self.ready = ready; self.continuation = continuation; self.lease = lease
+    init(ready: EventLoopPromise<Void>, continuation: AsyncThrowingStream<NativeEvent, Error>.Continuation, lease: BodyLease?, origin: NativeEventOrigin) {
+        self.ready = ready; self.continuation = continuation; self.lease = lease; self.origin = origin
     }
     func handlerAdded(context: ChannelHandlerContext) { self.context = context; arm(context) }
     private func arm(_ context: ChannelHandlerContext) {
@@ -108,7 +122,11 @@ final class NativeEventCollector: ChannelInboundHandler, @unchecked Sendable {
                 guard opened, let bytes = buffer.readBytes(length: buffer.readableBytes) else { throw NativeFailure.invalidRecord }
                 for event in try parser.feed(Data(bytes)) {
                     try lease?.requireValid()
-                    switch continuation.yield(event) {
+                    guard ordinal < LinkBytes.maximumInteger else { throw NativeFailure.eventOverflow }
+                    ordinal += 1
+                    let received = NativeEvent(type: event.type, data: event.data, cursor: event.cursor,
+                        provenance: NativeEventProvenance(origin: origin, ordinal: ordinal))
+                    switch continuation.yield(received) {
                     case .enqueued: break
                     case .dropped: throw NativeFailure.eventOverflow
                     case .terminated: throw NativeFailure.unavailable
