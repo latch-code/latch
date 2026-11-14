@@ -528,8 +528,8 @@ async function forceGalleryStates(page: Page): Promise<void> {
   }
 }
 
-/** Approvals as a Host of the previous build sent them: no risk, no options of its own, no advisory flag. */
-const previousBuild = (approvals: Approval[]): Approval[] =>
+/** Optional approval metadata may be absent; a current Host must then display the conservative R2 fallback. */
+const withoutApprovalMetadata = (approvals: Approval[]): Approval[] =>
   approvals.map(({ risk: _risk, options: _options, advisory: _advisory, ...rest }) => rest)
 
 describe('visual capture of the real product', () => {
@@ -879,6 +879,22 @@ describe('visual capture of the real product', () => {
 
   it('drives sessions into every state through the Host API', async () => {
     local = await testHost.enroll({ listener: 'unix', name: '本机桌面端' })
+    // Full file/diff surfaces require explicit data access before any L3 session can block widening.
+    // The separate non-admin devices remain work-scoped for restricted file and settings captures.
+    for (const { page: target } of pages.values()) {
+      const device = await target.evaluate(async () => {
+        const snapshot: AppSnapshot = await (await fetch('/link/api/snapshot')).json()
+        return snapshot.device
+      })
+      expect(device.dataScope).toBe('work')
+      await local.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })
+      expect(
+        await target.evaluate(async () => {
+          const snapshot: AppSnapshot = await (await fetch('/link/api/snapshot')).json()
+          return snapshot.device.dataScope
+        }),
+      ).toBe('all')
+    }
     // Projects are added from the desktop app, which signs the request in its main process.
     expect((await local.addFolders({ paths: [join(projects, 'website')], name: 'website' })).status).toBe(201)
     const saved = await local.confirmed('agents', {
@@ -1545,38 +1561,34 @@ describe('visual capture of the real product', () => {
       await recorder.capture(target, viewport, 'approval-r1-locked', 'R1 on a device without 批准普通操作')
       await target.unroute('**/link/api/snapshot')
 
-      // A Host of the previous build: no device rights or risk in what it sends, so the card offers plain 拒绝 and
-      // 允许 under the legacy-Host banner.
+      // Keep the required Host identity: missing optional risk/options/advisory metadata is treated as R2.
       await target.route('**/link/api/snapshot', async route => {
         const response = await route.fetch()
-        const body: AppSnapshot = await response.json()
-        const { host: _host, ...snapshot } = body
-        await route.fulfill({ response, json: { ...snapshot, approvals: previousBuild(snapshot.approvals) } })
+        const snapshot: AppSnapshot = await response.json()
+        await route.fulfill({ response, json: { ...snapshot, approvals: withoutApprovalMetadata(snapshot.approvals) } })
       })
       await target.route(`**/link/api/tasks/${sessions.r1}`, async route => {
         if (route.request().method() !== 'GET') return route.fallback()
         const response = await route.fetch()
         const current: TaskDetail = await response.json()
-        await route.fulfill({ response, json: { ...current, approvals: previousBuild(current.approvals) } })
+        await route.fulfill({ response, json: { ...current, approvals: withoutApprovalMetadata(current.approvals) } })
       })
-      await openSession(target, viewport, sessions.r1)
-      const legacy = target.locator('[data-approval-id]')
-      await target.locator('[data-approval-id]:not([data-arming])').waitFor()
-      await target.getByText('这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。', { exact: true }).waitFor()
-      await reachable(legacy.getByRole('button', { name: '允许', exact: true }))
-      await reachable(legacy.getByRole('button', { name: '拒绝', exact: true }))
-      await recorder.capture(target, viewport, 'approval-legacy', 'a Host of the previous build: plain allow and reject')
-      await target.unroute(`**/link/api/tasks/${sessions.r1}`)
-      await target.unroute('**/link/api/snapshot')
+      try {
+        await openSession(target, viewport, sessions.r1)
+        const fallback = target.locator('[data-approval-id]')
+        await target.locator('[data-approval-id]:not([data-arming])').waitFor()
+        expect(await fallback.getAttribute('data-risky')).toBe('')
+        const allowButton = fallback.getByRole('button', { name: '允许', exact: true })
+        await reachable(allowButton)
+        expect(await allowButton.getAttribute('aria-keyshortcuts')).toBeNull()
+        await reachable(fallback.getByRole('button', { name: '拒绝', exact: true }))
+        await recorder.capture(target, viewport, 'approval-missing-risk', 'missing optional approval metadata: conservative R2')
+      } finally {
+        await target.unroute(`**/link/api/tasks/${sessions.r1}`)
+        await target.unroute('**/link/api/snapshot')
+      }
 
-      // A turn taken back, and a record that does not cover its folder. The record is the Host's shape, on a device whose
-      // data scope covers the files.
-      await target.route('**/link/api/snapshot', async route => {
-        const response = await route.fetch()
-        const snapshot: AppSnapshot = await response.json()
-        snapshot.device.dataScope = 'all'
-        await route.fulfill({ response, json: snapshot })
-      })
+      // A turn taken back, and a record that does not cover its folder. This device was actually granted file access.
       const doneAt = (await detail(sessions.done)).messages.find((message: { role: string }) => message.role === 'user')?.createdAt
       const turnList = {
         scope: 'turn',
@@ -1836,11 +1848,37 @@ describe('visual capture of the real product', () => {
   // ---- A device that cannot manage the Host ------------------------------------------------------------------
 
   it.each(VISUAL_VIEWPORTS)(
-    'captures settings for a device without 管理此 Host at $name width',
+    'captures restricted files and settings for a device without 管理此 Host at $name width',
     async viewport => {
       const target = readOnlyPages.get(viewport.name)!.page
       await target.goto(`${host.loopbackOrigin}/link/`)
       await connected(target)
+      expect(
+        await target.evaluate(async () => {
+          const snapshot: AppSnapshot = await (await fetch('/link/api/snapshot')).json()
+          return snapshot.device.dataScope
+        }),
+      ).toBe('work')
+      await openSession(target, viewport, sessions.done)
+      await shows(target, /建议再补一条/)
+      const restricted = await target.evaluate(async id => {
+        const current: TaskDetail = await (await fetch(`/link/api/tasks/${id}`)).json()
+        return current
+      }, sessions.done)
+      const edit = restricted.messages.find(message => message.tool?.kind === 'edit')
+      expect(edit).toBeDefined()
+      expect(edit!.tool).not.toHaveProperty('diffs')
+      expect(JSON.stringify(edit)).toContain('src/settings.ts')
+      expect(JSON.stringify(edit)).not.toContain('省略表示保留')
+      const fold = target.locator('.work-fold').last()
+      if ((await fold.getAttribute('aria-expanded')) !== 'true') await fold.click()
+      const tool = target.locator('.tool-card[data-kind="edit"]').last()
+      await reachable(tool.locator('.tool-card-header'))
+      await tool.locator('.tool-card-header').click()
+      await expect.poll(() => tool.getAttribute('data-open')).not.toBeNull()
+      expect(await tool.locator('.diff-view').count()).toBe(0)
+      expect(await tool.innerText()).not.toContain('省略表示保留')
+      await recorder.capture(target, viewport, 'session-diff-restricted', 'work-scoped device: edit status and path, no file diff')
       {
         const settings = await openSettings(target, '设置')
         await openSection(settings, '通用')

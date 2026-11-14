@@ -88,7 +88,8 @@ export async function backToPhoneSessions(page: Page): Promise<void> {
     .getByRole('button', { name: /^(返回会话列表|返回总览)$/u })
     .filter({ visible: true })
   if ((await back.count()) > 0) await back.click()
-  if (await page.locator('.workbench-home').isVisible()) await page.getByRole('button', { name: '全部会话', exact: true }).click()
+  if (await page.locator('.workbench-home').isVisible())
+    await page.getByRole('navigation', { name: '会话导航', exact: true }).getByRole('button', { name: '全部会话', exact: true }).click()
   await page.locator('.phone-list:not([inert])').waitFor()
   await settleShell(page)
 }
