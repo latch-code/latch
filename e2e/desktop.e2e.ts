@@ -618,7 +618,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const keysOverlay = page.getByRole('dialog', { name: '快捷键', exact: true })
       await page.keyboard.press('Meta+/')
       await keysOverlay.waitFor()
-      expect(await keysOverlay.locator('[data-keys="⌘1 … ⌘9"] kbd').allTextContents()).toEqual(['⌘', '1', '⌘', '9'])
+      expect(await keysOverlay.locator('[data-keys="⌘1 … ⌘9"] kbd').allTextContents()).toEqual(['⌘1', '⌘9'])
       expect(await keysOverlay.locator('[data-keys="⌥⌘1 … ⌥⌘4"]').count()).toBe(1)
       expect(await keysOverlay.locator('[data-keys*="Alt"]').count()).toBe(0)
       expect(await page.locator('.settings-page').count()).toBe(0)
@@ -646,8 +646,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       )
       await page.keyboard.press('Meta+Digit1')
       expect(await jumped).toBe(true)
-      expect(await page.locator('.sidebar-top [aria-keyshortcuts="Meta+N"] .ui-kbd').allTextContents()).toEqual(['⌘', 'N'])
-      expect(await page.locator('.sidebar-top [aria-keyshortcuts="Meta+K"] .ui-kbd').allTextContents()).toEqual(['⌘', 'K'])
+      expect(await page.locator('.sidebar-top [aria-keyshortcuts="Meta+N"] .ui-kbd').allTextContents()).toEqual(['⌘N'])
+      expect(await page.locator('.sidebar-top [aria-keyshortcuts="Meta+K"] .ui-kbd').allTextContents()).toEqual(['⌘K'])
       await page.locator('.sidebar-top').screenshot({ path: 'test-results/native-desktop-sidebar-keys.png', animations: 'disabled' })
 
       // Settings › 通用: main keeps the Mac awake while the session runs (it reads host-info over host.sock every few
@@ -686,24 +686,18 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await shell.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('space-code')?.click())
       await expect.poll(() => place('Code').getAttribute('aria-checked')).toBe('true')
       await page.locator('.agents-page').waitFor({ state: 'detached' })
-      // The footer says so in a few quiet words, whole at the window's default width (a 248px sidebar with 开发版), with
-      // the reason in the title and the target still reaching past the 16px line.
-      const awake = page.locator('.sidebar-footer').getByRole('button', { name: '保持唤醒中', exact: true })
+      // The computer's row says so with a small glyph after its name, the reason behind its hover; the footer keeps no
+      // line or button of its own for it.
+      const awake = page.locator('.sidebar-work-computer .sidebar-awake[role="img"][aria-label="保持唤醒中"]')
       await awake.waitFor()
-      expect(await awake.getAttribute('title')).toBe('保持唤醒中：有会话在运行 · 同步最新状态')
-      expect(
-        await awake.evaluate(element => {
-          // The words against the button's own box: scrollWidth would also count the ::before that reaches past it.
-          const words = document.createRange()
-          words.selectNodeContents(element)
-          return {
-            whole: words.getBoundingClientRect().width <= element.getBoundingClientRect().width + 0.5,
-            overflow: getComputedStyle(element).overflow,
-            target: element.getBoundingClientRect().height - 2 * Number.parseFloat(getComputedStyle(element, '::before').bottom),
-          }
-        }),
-      ).toEqual({ whole: true, overflow: 'visible', target: 24 })
-      await page.locator('.sidebar-footer').screenshot({ path: 'test-results/native-desktop-keep-awake.png', animations: 'disabled' })
+      expect(await page.locator('.sidebar-footer').getByRole('button', { name: '保持唤醒中', exact: true }).count()).toBe(0)
+      expect(await page.locator('.sidebar').getByText('保持唤醒中', { exact: true }).count()).toBe(0)
+      await awake.hover()
+      await page.getByRole('tooltip').filter({ hasText: '保持唤醒中：有会话在运行' }).waitFor()
+      await page
+        .locator('.sidebar-work-computer')
+        .screenshot({ path: 'test-results/native-desktop-keep-awake.png', animations: 'disabled' })
+      await page.mouse.move(0, 0)
       // The page cannot report sleep or a stop for main.
       expect(
         await page.evaluate(

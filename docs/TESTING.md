@@ -422,7 +422,7 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `codex-commands.live.test.ts`、`codex-compact.e2e.ts` 与 `pi-commands.e2e.ts` 默认跳过；所有者授权后设置 `LATCH_SLASH_LIVE=1` 及对应 `LATCH_CODEX_GATEWAY_BINARY` / `LATCH_PI_GATEWAY_BINARY` 才运行真实已安装 CLI。它们使用私有 HOME/XDG/CLI 目录、临时 Host 与本地假模型服务，不读取用户 CLI 存储。Codex 核对配置不符时没有上游请求、普通提示先应用配置、原生 compact 的真实完成及取消；页面覆盖正常补全后手动发送、运行中置灰与 HTTP 409、手机/平板/桌面截图，并验证 `/review` 明确拒绝且不新增上游请求。pi 用自有扩展、模板与技能验证真实展开和运行中追加，扩展命令的执行不花模型请求；原生 `/mcp` 出现在列表不等于 Latch 注入 MCP 已实现。假 app-server 和 pi fixture 的对应回归是手写替身，不是这些真实 CLI 的录制。 `codex-skills.live.test.ts` 另有同一 `LATCH_SLASH_LIVE` 下的原生技能用例：真实 Codex 从临时项目的官方目录读取技能，核对本轮原文产生的结构化项、受控上游收到技能正文，以及上下文中同名例子不产生结构化项。`codex-skills.e2e.ts` 从正常页面选择本地服务模型，手动输入 `$name` 后，从三宽命令菜单选择真实技能，核对 Enter 只插入、手动发送后真实 CLI 收到技能正文；没有新增 `$` 触发菜单。pi 用例还核对独立的公开 skills 元数据不带路径、不重复说明。假进程与回放用例覆盖同名拒绝、目录失败与迟到更新、200 项和 UTF-8 预算；`apps/host/test/harness-commands.test.ts` 核对技能缓存重启不启动 CLI、私有来源的新报告不可见。
 
-`workbench-layout.e2e.ts` 验证总览与分拣台的共用会话、草稿与布局偏好，以及手机、平板、桌面的浅深色截图。分类的失败、未知、停止与归档/私有话题边界见 `apps/web/test/work-overview.test.ts`；默认偏好、旧数据和本地存储见 `workbench-preferences.test.ts`。
+`workbench-layout.e2e.ts` 验证侧栏与顶栏两种布局的共用会话、草稿与布局偏好，布局开关、⌥⌘L 与命令面板三个入口，切换后停在同一页并保留焦点，以及手机、平板、桌面的浅深色截图。分类的失败、未知、停止与归档/私有话题边界见 `apps/web/test/work-overview.test.ts`；默认偏好、旧数据和本地存储见 `workbench-preferences.test.ts`。
 
 `workbench-git-eligibility.e2e.ts` 经真实 Host API 对照普通文件夹、损坏 HEAD 与实际 Git 改动，再从首页刷新、打开概要和交付，截图覆盖三宽、两布局、浅深色。不适用不冒称读取失败，损坏状态不冒称没有改动。Host 的同名测试另检查权限、链接、目录及祖先替换后还原的拒绝。`desktop-workbench.e2e.ts` 使用真实临时 Git 仓库验证有内容的三道与布局/空间切换，并在 Electron 正常入口从首页批准写入、继续原会话和查看 Git 改动，保留两套草稿与附件。
 

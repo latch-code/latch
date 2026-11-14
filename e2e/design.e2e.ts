@@ -49,15 +49,12 @@ describe('responsive workspace controls', () => {
     try {
       const page = await context.newPage()
       await enrollBrowser(page, testHost, { name: `输入框 ${label}` })
-      if (touch) {
-        await page.locator('.workbench-home').getByRole('button', { name: '新会话选项', exact: true }).click()
-        await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
-      }
-      const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+      // The new session is the home's input on every width; a phone has no sheet for it.
+      const input = page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
       const before = (await input.boundingBox())!.height
       await input.fill(Array.from({ length: 8 }, (_, index) => `待办 ${index + 1}`).join('\n'))
       await expect.poll(async () => (await input.boundingBox())!.height).toBeGreaterThan(before)
-      await reachable(page.getByRole('button', { name: touch ? '开始' : '发送', exact: true }))
+      await reachable(page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }))
       await noHorizontalOverflow(page)
       await capture(page, `compact-draft-${label}`)
     } finally {
@@ -84,7 +81,7 @@ describe('responsive workspace controls', () => {
         await page.locator('.workbench-empty').getByText('还没有会话', { exact: true }).waitFor()
         await reachable(page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
         await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
-        // Code stays at Home; the explicit history entry keeps search and the new-session sheet reachable.
+        // Code stays at Home; the explicit history entry keeps search and 新建会话, which leads back to Home's input.
         await reachable(page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
         await reachable(page.getByRole('button', { name: '全部会话', exact: true }))
         await backToPhoneSessions(page)
@@ -99,9 +96,10 @@ describe('responsive workspace controls', () => {
         await noHorizontalOverflow(page)
         await capture(page, `${label}-navigation`)
         await head.getByRole('button', { name: '新建会话', exact: true }).click()
-        await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
+        await page.locator('.workbench-home').waitFor()
+        expect(await page.getByRole('dialog', { name: '新会话', exact: true }).count()).toBe(0)
       }
-      const composer = page.getByRole('textbox', { name: '新会话消息', exact: true })
+      const composer = page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
       // Home can cover a parked input; exactly one target may accept editing, and the other is inert.
       const targets = await page.locator('textarea[aria-label="新会话消息"]').evaluateAll(elements => {
         const modal = document.querySelector('dialog:modal')
@@ -120,19 +118,23 @@ describe('responsive workspace controls', () => {
       await reachable(composer)
       await composer.fill('这是一条未提交的布局验收草稿。')
       await noHorizontalOverflow(page)
-      // Model and project: rows of the sheet on phones, the one control in the input elsewhere.
+      // The project and the four controls: one row of chips over the input on phones, which scrolls sideways by itself
+      // (a chip past its edge is reached by scrolling the row); the controls in the input's toolbar elsewhere.
       if (phone) {
-        for (const row of ['Harness', '思考', '权限'])
-          await page.locator('.new-sheet-card').getByText(row, { exact: true }).first().waitFor()
-        await page
-          .locator('.new-sheet-card')
-          .getByRole('button', { name: /^模型：/ })
-          .waitFor()
-        await noHorizontalOverflow(page, page.locator('.new-session-sheet > .ui-sheet-surface > .ui-sheet-body'))
+        const chips = page.locator('.workbench-home').getByRole('group', { name: '会话选项', exact: true })
+        expect(await chips.evaluate(element => element.classList.contains('composer-chips'))).toBe(true)
+        expect(await chips.locator('.home-composer-location').count()).toBe(1)
+        for (const control of ['harness', 'model', 'thinking', 'permission']) {
+          const chip = chips.locator(`[data-composer-control="${control}"]`).getByRole('button').first()
+          await chip.scrollIntoViewIfNeeded()
+          await reachable(chip)
+        }
+        expect(await page.locator('.workbench-home .composer-toolbar, .workbench-home [data-rows]').count()).toBe(0)
+        await noHorizontalOverflow(page)
       } else
         for (const control of [/^Harness：/, /^模型：/, /^思考：/, /^权限：/])
           await reachable(page.getByRole('button', { name: control }).first())
-      await reachable(page.getByRole('button', { name: phone ? '开始' : '发送', exact: true }), { allowDisabled: phone })
+      await reachable(page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }))
       await composer.fill('')
       await capture(page, `${label}-new-session`)
 
@@ -144,10 +146,6 @@ describe('responsive workspace controls', () => {
         await page.emulateMedia({ colorScheme: 'light' })
       }
 
-      if (phone) {
-        await page.getByRole('dialog', { name: '新会话', exact: true }).getByRole('button', { name: '取消', exact: true }).click()
-        await page.getByRole('dialog', { name: '新会话', exact: true }).waitFor({ state: 'hidden' })
-      }
       const navigationButton = page.getByRole('button', { name: '打开会话列表', exact: true })
       if (await navigationButton.isVisible()) {
         await reachable(navigationButton)

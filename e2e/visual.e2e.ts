@@ -638,7 +638,7 @@ describe('visual capture of the real product', () => {
     await target.goto(`${host.loopbackOrigin}/link/`)
     await connected(target)
   }
-  /** The new-session page uses the same compact controls while empty or drafting. */
+  /** The new session is the home's input on every width; 新建会话 leads there and focuses it. */
   async function newSession(target: Page): Promise<void> {
     // Each capture starts with the Host's default choice, not a model selected by an earlier surface.
     await target.evaluate(() => {
@@ -646,13 +646,13 @@ describe('visual capture of the real product', () => {
     })
     await home(target, 'reduce')
     if ((await target.locator('.phone-tabs').count()) > 0) {
-      await target.locator('.workbench-home').getByRole('button', { name: '新会话选项', exact: true }).click()
-      await target.getByRole('dialog', { name: '新会话', exact: true }).waitFor()
+      // A phone's Code tab is the home; its options are the row of chips over the input.
+      await target.locator('.workbench-home').getByRole('group', { name: '会话选项', exact: true }).waitFor()
       await settleMotion(target)
       return
     }
     await target.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
-    await target.locator('.workspace.is-new').waitFor()
+    await target.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
     await target.locator('.drawer-backdrop').waitFor({ state: 'detached' })
   }
   /** A session from the list: the sidebar, the tablet's drawer, or a phone's list (the session's page pushed over it). */
@@ -852,7 +852,8 @@ describe('visual capture of the real product', () => {
       await connected(target)
       await target.locator('.workbench-empty').getByText('还没有会话', { exact: true }).waitFor()
       await reachable(target.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
-      if (viewport.name === 'phone') await reachable(target.getByRole('button', { name: '新会话选项', exact: true }))
+      if (viewport.name === 'phone')
+        await reachable(target.locator('.workbench-home .composer-chips').getByRole('button', { name: /^项目：/u }))
       if (viewport.name !== 'phone') {
         await target.emulateMedia({ reducedMotion: 'reduce' })
         await target.evaluate(() => new Promise(done => setTimeout(done, 400)))
@@ -1050,9 +1051,7 @@ describe('visual capture of the real product', () => {
       await newSession(target)
       const composer = target.getByRole('textbox', { name: '新会话消息', exact: true })
       await reachable(composer)
-      await reachable(target.getByRole('button', { name: viewport.name === 'phone' ? '开始' : '发送', exact: true }), {
-        allowDisabled: true,
-      })
+      await reachable(target.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }), { allowDisabled: true })
       await recorder.capture(target, viewport, 'new-session', 'empty')
       await target.getByRole('textbox', { name: '新会话消息', exact: true }).blur()
       await settleMotion(target)
@@ -1063,8 +1062,8 @@ describe('visual capture of the real product', () => {
       await target.getByRole(viewport.name === 'phone' ? 'radio' : 'menuitemradio', { name: /Latch 内置/ }).click()
       await settleMotion(target)
       if (viewport.name === 'phone') {
-        const sheet = target.getByRole('dialog', { name: '新会话', exact: true })
-        // The project and the model are rows that open single-choice sheets of their own.
+        const sheet = target.locator('.workbench-home .composer-chips')
+        // The project and the model are chips that open single-choice sheets of their own.
         for (const [surface, row, title] of [
           ['new-session-project', /^项目：/, '项目'],
           ['new-session-model', /^模型：/, '模型'],
@@ -1126,16 +1125,11 @@ describe('visual capture of the real product', () => {
       await target.getByRole('button', { name: /^Harness：/ }).click()
       await target.getByRole(viewport.name === 'phone' ? 'radio' : 'menuitemradio', { name: /Latch 内置/ }).click()
       // The phone sheet covers Home's same setup state; only the modal's controls may be reached.
-      const setup =
-        viewport.name === 'phone'
-          ? target.getByRole('dialog', { name: '新会话', exact: true }).locator('.setup-card')
-          : target.locator('.setup-card')
+      const setup = target.locator('.workbench-home .setup-card')
       await setup.getByText('还没有模型服务。', { exact: true }).waitFor()
       expect(await target.getByRole('button', { name: '添加模型服务', exact: true }).count()).toBe(1)
       await reachable(setup.getByRole('button', { name: '添加模型服务', exact: true }))
-      await reachable(target.getByRole('button', { name: viewport.name === 'phone' ? '开始' : '发送', exact: true }), {
-        allowDisabled: true,
-      })
+      await reachable(target.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }), { allowDisabled: true })
       await recorder.capture(target, viewport, 'new-session-setup', 'no model service yet: the card that adds one')
       await setup.getByRole('button', { name: '添加模型服务', exact: true }).click()
       const inCard = setup.getByRole('region', { name: '添加模型服务', exact: true })
@@ -1190,7 +1184,7 @@ describe('visual capture of the real product', () => {
         await desktopApp.goto(`${host.loopbackOrigin}/link/`)
         await connected(desktopApp)
         await desktopApp.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
-        await desktopApp.locator('.workspace.is-new').waitFor()
+        await desktopApp.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
         // Nothing to answer first: the Harness it found is already chosen.
         expect(await desktopApp.getByRole('button', { name: /^Harness：本地 ACP Harness/ }).count()).toBe(1)
         // Nothing typed yet: the start button rests on the same neutral fill as an empty send, its lock kept.
@@ -1226,10 +1220,12 @@ describe('visual capture of the real product', () => {
       await openSession(target, viewport, sessions.running)
       await shows(target, '用例覆盖了省略密钥的情况，运行一次确认。')
       await reachable(target.getByRole('button', { name: '停止', exact: true }))
-      // Running work turns the spinner on its tool row and the turn ends with the live line, which says how long the run
-      // has worked; the bar above the input says nothing then, and the open session's own row says it runs like any other.
+      // Running work turns the spinner on its tool row, and the title row says what runs and for how long, once: no line
+      // is drawn under the turn. The bar above the input says nothing then, and the open session's own row says it runs
+      // like any other.
       await target.locator('.tool-card .ui-spinner').first().waitFor()
-      await target.locator('.status-line .status-clock').waitFor()
+      await target.locator('.topbar .ui-status-word').filter({ visible: true }).first().waitFor()
+      expect(await target.locator('.status-line, .status-clock').count()).toBe(0)
       expect(await target.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
       if (sidebar)
         expect(await sidebar.locator(`[data-task-id="${sessions.running}"] .ui-spinner`).filter({ visible: true }).count()).toBe(1)
@@ -1247,7 +1243,7 @@ describe('visual capture of the real product', () => {
       await pages.get(viewport.name)!.context.setOffline(false)
       await connected(target)
 
-      // Stopping: the bar over the input says the outcome of a stop that never answered, the status line a stop under way.
+      // Stopping: the bar over the input says the outcome of a stop that never answered, the title row a stop under way.
       // Neither request reaches the Host, so the run goes on; the next page load forgets both.
       await target.route('**/link/api/tasks/*/cancel', route => route.abort('connectionreset'))
       await target.getByRole('button', { name: '停止', exact: true }).click()
@@ -1257,8 +1253,9 @@ describe('visual capture of the real product', () => {
       await reachable(runBar.getByRole('button', { name: '重试', exact: true }))
       expect(await target.locator('.composer-stack > .ui-notice').count()).toBe(0)
       await target.locator('.stop-button .stop-glyph').waitFor()
-      // Nothing is known to be stopping: the status line says what runs again, and the top bar claims no 正在停止.
-      await target.locator('.status-line .status-clock').waitFor()
+      // Nothing is known to be stopping: the title row says what runs again and claims no 正在停止.
+      await target.locator('.topbar .ui-status-word').filter({ visible: true }).first().waitFor()
+      expect(await target.locator('.status-line').count()).toBe(0)
       expect(await target.locator('.topbar').getByText('正在停止', { exact: true }).count()).toBe(0)
       await target.locator('.run-bar-collapse[data-settled]').waitFor()
       await settleMotion(target)
@@ -1274,7 +1271,8 @@ describe('visual capture of the real product', () => {
         await route.abort('connectionreset')
       })
       await runBar.getByRole('button', { name: '重试', exact: true }).click()
-      await target.locator('.status-line').getByText('正在停止…', { exact: true }).waitFor()
+      await target.locator('.topbar').getByText('正在停止', { exact: true }).filter({ visible: true }).first().waitFor()
+      expect(await target.locator('.status-line').count()).toBe(0)
       expect(await target.getByRole('button', { name: '停止', exact: true }).getAttribute('aria-disabled')).toBe('true')
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-stopping', 'a stop under way')
@@ -1453,14 +1451,22 @@ describe('visual capture of the real product', () => {
       await target.keyboard.press('Escape')
       await target.getByRole('menuitem', { name: /这个会话都允许这类操作/ }).waitFor({ state: 'hidden' })
 
-      // Evidence starts expanded in v8. Collapsing and reopening keeps the controls in the same card.
+      // Evidence starts expanded in v8. 收起 is one of 更多's choices; folded, the card offers a small outlined 查看改动,
+      // and reopening keeps the controls in the same card. The title leads with the glyph of its kind, not a dot.
       const toggle = r1.locator('.approval-see')
-      await reachable(toggle)
-      expect(await toggle.getAttribute('aria-expanded')).toBe('true')
+      const foldPreview = async () => {
+        await choices.click()
+        await target.getByRole('menuitem', { name: '收起', exact: true }).click()
+        await reachable(toggle)
+        expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+        expect(await toggle.evaluate(element => element.classList.contains('ui-button'))).toBe(true)
+      }
+      expect(await toggle.count()).toBe(0)
+      expect(await r1.locator('.approval-dot').count()).toBe(0)
+      await r1.locator('.approval-title .approval-kind svg').waitFor()
+      await foldPreview()
       await toggle.click()
-      await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('false')
-      await toggle.click()
-      await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('true')
+      await expect.poll(() => toggle.count()).toBe(0)
       if (viewport.name === 'phone') {
         // The paper stays short: the first rows of the diff and a fold bar for the rest.
         await reachable(r1.getByRole('button', { name: '展开其余 13 行', exact: true }))
@@ -1477,7 +1483,7 @@ describe('visual capture of the real product', () => {
           '[data-approval-id] .ui-button',
         ])
       }
-      await toggle.click()
+      await foldPreview()
 
       // A decision whose answer never arrived: the card offers to send the same choice again.
       await target.route('**/link/api/approvals/**', route => route.abort('connectionreset'))
