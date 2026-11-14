@@ -20,7 +20,7 @@ Vitest 驱动浏览器、Electron 与原生；剪贴板回归用独立命名板�
 
 CLI 实测含命令与技能，须 opt-in（[TESTING](../docs/TESTING.md)）。
 
-`native-swift-relay.e2e.ts` 用真实双Go与Swift检查单流、旧能力兼容、首块前后取消与App换代；每块复核原权限，测速含子连接握手。
+`native-swift-relay.e2e.ts` 用真实双Go与Swift检查单流、旧能力兼容、首块前后取消与App换代，及移除手机后控制连接仍在；每块复核权限
 
 `stream-delta.e2e.ts` 验证正文增量与完整帧修复。
 
