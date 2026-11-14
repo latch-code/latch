@@ -32,6 +32,8 @@ export interface AcpRecord {
   /** Absent until session/new succeeds. */
   acpSessionId?: string
   cwd: string
+  /** Draft project identity for command suggestions, including profiles that do not take additional folders. */
+  commandContext?: { workspaceId?: string }
   agentVersion?: string
   /** Number of prompts sent in this task; scopes tool message IDs. */
   turnSeq: number
@@ -365,6 +367,7 @@ const stateSchema = z.object({
       acp: z.object({
         acpSessionId: z.string().optional(),
         cwd: z.string(),
+        commandContext: z.strictObject({ workspaceId: z.string().min(1).max(256).optional() }).optional(),
         agentVersion: z.string().optional(),
         turnSeq: z.number().int().nonnegative(),
         brief: agentBrief.optional(),

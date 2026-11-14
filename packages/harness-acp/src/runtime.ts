@@ -23,6 +23,8 @@ import {
 } from './questions.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
+import { isDeepStrictEqual } from 'node:util'
+import { CommandCache, commandDirectory, commandScope } from './command-cache.ts'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -41,6 +43,7 @@ import type {
   TaskStatus,
   DriverTaskSummary,
   HarnessCatalogue,
+  HarnessCommandCatalogue,
   HarnessMcpReport,
   HarnessOwnMcp,
   CatalogueRead,
@@ -227,6 +230,7 @@ interface Live {
   /** Latch task this process serves; also names its private temporary directory. */
   key: string
   wire: AgentWire
+  commandCache?: { directory: string; confirmed: Confirmed; ordinal: number }
   initialized: boolean
   capabilities: {
     resume: boolean
@@ -729,6 +733,7 @@ export class AgentRuntime implements Bridge {
   private state: AcpState = emptyAcpState()
   private readonly fileTracking: RunFileTracking
   private readonly store: AcpStore
+  private readonly commandCache: CommandCache
   private readonly workspaceRoot: string
   private readonly redact: (text: string) => string
   /** Every gateway token a process of this runtime was given, so that none is repeated in what it says. */
@@ -809,6 +814,7 @@ export class AgentRuntime implements Bridge {
     private readonly onClosed?: () => void,
   ) {
     this.store = createAcpStore(options.dataDir)
+    this.commandCache = new CommandCache(options.dataDir)
     this.fileTracking = new RunFileTracking({
       track: options.trackFiles,
       current: (id, runId) => this.state.tasks[id]?.summary.runId === runId,
@@ -894,6 +900,7 @@ export class AgentRuntime implements Bridge {
     if (this.closed) return Promise.reject(new AppError(503, 'runtime-closed', '运行节点已关闭'))
     return (this.started ??= (async () => {
       this.state = await this.store.load()
+      await this.commandCache.load()
       this.loaded = true
       let changed = false
       for (const task of Object.values(this.state.tasks)) {
@@ -949,6 +956,7 @@ export class AgentRuntime implements Bridge {
       await Promise.all([...this.runs.values()].map(run => run.done))
       await this.fileTracking.close()
       if (this.loaded) await this.flush().catch(() => {})
+      await this.commandCache.close()
       try {
         await this.store.close()
       } finally {
@@ -1048,12 +1056,7 @@ export class AgentRuntime implements Bridge {
     config?: ReadonlyArray<{ configId: string; value: string }>
   }): Promise<LaunchPreview> {
     await this.ready()
-    // The agent is given the registered path; configuration is looked up along it and along its real path.
-    const given = await this.workspace(input.cwd)
-    const cwd = await realpath(given)
-    const passed = (await this.scopeOf(input, given))?.passed
-    const project = await this.projectConfig(given, passed)
-    const launch = this.currentLaunch(project, passed, input.modelRoute, this.startProcessMode(input.config))
+    const { cwd, passed, launch } = await this.draftLaunch(input)
     this.previews.delete(launch.hash)
     this.previews.set(launch.hash, { definitionHash: launch.definitionHash, folders: foldersKey(passed) })
     for (const [hash] of this.previews) {
@@ -1083,6 +1086,51 @@ export class AgentRuntime implements Bridge {
       verified: selectProfile(this.agent).verified,
       approvals: this.profile?.approvals ?? 'prompts',
       readback: this.profile?.readback ?? 'none',
+    }
+  }
+
+  private async draftLaunch(input: Parameters<AgentRuntime['launchPreview']>[0]) {
+    // The agent is given the registered path; configuration is looked up along it and along its real path.
+    const given = await this.workspace(input.cwd)
+    const cwd = await realpath(given)
+    const passed = (await this.scopeOf(input, given))?.passed
+    const project = await this.projectConfig(given, passed)
+    const launch = this.currentLaunch(project, passed, input.modelRoute, this.startProcessMode(input.config))
+    return { cwd, passed, launch }
+  }
+
+  async commandCatalogue(
+    input: Parameters<AgentRuntime['launchPreview']>[0],
+  ): Promise<{ sourceSessionId: string; catalogue: HarnessCommandCatalogue } | undefined> {
+    await this.ready()
+    const { cwd, launch } = await this.draftLaunch(input)
+    const directory = await commandDirectory(cwd)
+    if (!directory) return undefined
+    // Directory validation yields: neither a moved command nor changed project configuration may reuse the earlier key.
+    const current = await this.draftLaunch(input)
+    const currentDirectory = await commandDirectory(cwd)
+    this.assertOpen()
+    if (
+      current.cwd !== cwd
+      || current.launch.hash !== launch.hash
+      || currentDirectory !== directory
+      || this.definitionNow(true) !== launch.definitionHash
+    )
+      return undefined
+    this.commandCache.retainDefinition(launch.definitionHash)
+    const record = this.commandCache.read(commandScope(directory, input.workspaceId), launch.hash, launch.definitionHash)
+    if (!record) return undefined
+    const source = this.state.tasks[record.sourceSessionId]
+    if (
+      !source?.acp.commandContext
+      || source.acp.commandContext.workspaceId !== input.workspaceId
+      || source.acp.launchHash !== record.launchHash
+      || !isDeepStrictEqual(source.commands, record.commands)
+    )
+      return undefined
+    return {
+      sourceSessionId: record.sourceSessionId,
+      catalogue: { commands: record.commands, reportedAt: record.reportedAt, source: 'previous-session' },
     }
   }
 
@@ -1896,6 +1944,13 @@ export class AgentRuntime implements Bridge {
     const launch = this.currentLaunch(project, scope?.passed, route, this.startProcessMode(config))
     if (launch.hash !== input.expectedLaunchHash) throw this.launchRefusal(input.expectedLaunchHash, launch, scope?.passed)
     const sessionId = `task-${randomUUID()}`
+    // Profiles without folder support previously ignored malformed optional SDK scope values; do not persist them.
+    const commandContext =
+      input.workspaceId === undefined
+        ? {}
+        : typeof input.workspaceId === 'string' && input.workspaceId.length > 0 && input.workspaceId.length <= 256
+          ? { workspaceId: input.workspaceId }
+          : undefined
     const create = {
       sessionId,
       prompt: input.prompt,
@@ -1906,6 +1961,7 @@ export class AgentRuntime implements Bridge {
       payloadHash,
       cwd,
       launch,
+      ...(commandContext ? { commandContext } : {}),
       ...(scope ? { scope } : {}),
       ...(input.agentContext ? { agentContext: input.agentContext } : {}),
       ...(config.length ? { startConfig: startChoices(config, this.state.catalogue) } : {}),
@@ -1948,6 +2004,7 @@ export class AgentRuntime implements Bridge {
     requestId: string
     cwd: string
     launch: Launch
+    commandContext?: NonNullable<AcpRecord['commandContext']>
     scope?: Scope
     agentContext?: AgentExecutionContext
     startConfig?: StartChoice[]
@@ -2002,6 +2059,7 @@ export class AgentRuntime implements Bridge {
       revision: 1,
       acp: {
         cwd,
+        commandContext: create.commandContext,
         turnSeq: 1,
         launchHash: launch.hash,
         definitionHash: launch.definitionHash,
@@ -2060,6 +2118,7 @@ export class AgentRuntime implements Bridge {
       revision: 1,
       acp: {
         cwd,
+        commandContext: create.commandContext,
         turnSeq: 0,
         launchHash: launch.hash,
         definitionHash: launch.definitionHash,
@@ -2444,6 +2503,7 @@ export class AgentRuntime implements Bridge {
     this.fileTracking.dispose(sessionId)
     if (task.acp.skills || task.acp.proposals) await removeSessionSkills(skillsDirectory(this.options.dataDir, sessionId))
     delete this.state.tasks[sessionId]
+    this.commandCache.forget(sessionId)
     for (const [key, receipt] of Object.entries(this.state.receipts)) {
       if (receipt.taskId !== sessionId) continue
       if (receipt.kind === 'create') receipt.deleted = true
@@ -4164,6 +4224,7 @@ export class AgentRuntime implements Bridge {
     if (paused) throw new AppError(503, 'agent-paused', `${name} 在一分钟内连续崩溃 3 次，已暂停自动重启。请检查安装与登录状态，稍后再试。`)
     // Every start reads the project configuration again: the agent loads it now, not when the session was confirmed.
     const first = await this.assertLaunch(cwd, confirmed)
+    const cacheDirectory = await commandDirectory(cwd)
     // A command older than its profile supports would not start, or would start and never answer: refused before it
     // runs. Not recorded as the harness's last error: it says so itself, and an upgrade ends it. Before the re-check
     // below, which stays the last await before the spawn.
@@ -4287,6 +4348,7 @@ export class AgentRuntime implements Bridge {
     live = {
       key,
       wire,
+      ...(cacheDirectory ? { commandCache: { directory: cacheDirectory, confirmed: structuredClone(confirmed), ordinal: 0 } } : {}),
       ...(gateway ? { gateway } : {}),
       ...(delivered?.sessionMeta ? { gatewayMeta: delivered.sessionMeta } : {}),
       initialized: false,
@@ -5530,6 +5592,7 @@ export class AgentRuntime implements Bridge {
         break
       }
       case 'available_commands_update': {
+        if (this.closed || this.lives.get(live.key) !== live || live.wire.stopping) return
         const parsed = commandsUpdate.safeParse(update)
         if (!parsed.success) return
         task.commands = parsed.data.availableCommands.map(command => ({
@@ -5538,6 +5601,7 @@ export class AgentRuntime implements Bridge {
           ...(command.input?.hint ? { inputHint: command.input.hint } : {}),
           ...(live.wire.idleCommands?.has(command.name) ? { idleOnly: true as const } : {}),
         }))
+        this.noteCommandCatalogue(live, task)
         break
       }
       case 'notice': {
@@ -6273,6 +6337,44 @@ export class AgentRuntime implements Bridge {
     for (const permission of this.permissions.values())
       if (permission.taskId === task.summary.id && permission.statusAfter) return permission.statusAfter
     return 'idle'
+  }
+
+  private noteCommandCatalogue(live: Live, task: AcpTask): Promise<void> | undefined {
+    const cache = live.commandCache
+    const context = task.acp.commandContext
+    if (!cache || !context || !task.commands) return
+    const ordinal = ++cache.ordinal
+    const order = this.commandCache.nextOrder()
+    const commands = structuredClone(task.commands)
+    const reportedAt = this.now()
+    return (async () => {
+      const launch = await this.assertLaunch(task.acp.cwd, cache.confirmed)
+      const directory = await commandDirectory(task.acp.cwd)
+      await this.assertLaunch(task.acp.cwd, cache.confirmed)
+      const currentDirectory = await commandDirectory(task.acp.cwd)
+      if (
+        this.closed
+        || this.lives.get(live.key) !== live
+        || live.wire.stopping
+        || cache.ordinal !== ordinal
+        || this.state.tasks[task.summary.id] !== task
+        || directory !== cache.directory
+        || currentDirectory !== directory
+        || this.definitionNow(true) !== launch.definitionHash
+      )
+        return
+      this.commandCache.remember({
+        scope: commandScope(cache.directory, context.workspaceId),
+        launchHash: launch.hash,
+        definitionHash: launch.definitionHash,
+        sourceSessionId: task.summary.id,
+        reportedAt,
+        order,
+        commands,
+      })
+    })().catch(() => {
+      /* A suggestion cannot make a real turn fail, or revive a changed launch. */
+    })
   }
 
   /** What a new session of this definition offered, for drafts; the definition it ran is the one it is kept under. */

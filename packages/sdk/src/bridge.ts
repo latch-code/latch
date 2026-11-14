@@ -11,6 +11,7 @@ import type {
   DriverTaskSummary,
   ModelWire,
   HarnessCatalogue,
+  HarnessCommandCatalogue,
   HarnessOwnMcp,
   CatalogueRead,
 } from '@latch/protocol/types'
@@ -277,6 +278,18 @@ export interface Bridge {
   readConfig?(sessionId: string, configId: string, value: string): Promise<ConfigReading>
   /** Optional. How a config change relates to the session's expected permission mode. */
   classifyConfigChange?(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass>
+  /**
+   * Optional. Only a cached real-session command report for this exact draft context; never starts a process or probes.
+   * The source session ID is private to the Host, which must recheck source visibility and draft authorization after
+   * awaiting this read. The catalogue is a previous-session suggestion, not present capabilities or execution authority.
+   */
+  commandCatalogue?(input: {
+    cwd: string
+    workspaceId?: string
+    folders?: ReadonlyArray<ProjectFolder>
+    modelRoute?: ModelRoute
+    config?: ReadonlyArray<{ configId: string; value: string }>
+  }): Promise<{ sourceSessionId: string; catalogue: HarnessCommandCatalogue } | undefined>
   /** Optional. What the harness offered when a session of its current definition last started; see `HarnessCatalogue`. */
   catalogue?(): HarnessCatalogue | undefined
   /**

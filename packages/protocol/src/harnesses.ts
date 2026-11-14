@@ -1,7 +1,7 @@
 import type { AgentPreset, HelperCard } from './agent-presets.ts'
 import type { AgentProbeResult } from './features.ts'
 import type { HarnessOwnMcp } from './mcp.ts'
-import type { ModeTier, SessionConfigOption, TaskMode } from './sessions.ts'
+import type { ModeTier, SessionCommand, SessionConfigOption, TaskMode } from './sessions.ts'
 
 /** How a person logs in to a harness: its own program, in a terminal on the computer that runs it. */
 export interface HarnessLogin {
@@ -125,6 +125,13 @@ export interface HarnessCapabilities {
  * with `~`; a start sets it as the mode the agent reports, whatever that option is called.
  */
 export const LADDER_MODE = '~mode'
+
+/** Public suggestions reported by an earlier real session; never current capability or permission evidence. */
+export interface HarnessCommandCatalogue {
+  commands: SessionCommand[]
+  reportedAt: string
+  source: 'previous-session'
+}
 
 /**
  * What a harness offered when a session of its current definition last started: model, thinking, mode and its other

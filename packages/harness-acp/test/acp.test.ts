@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { chmod, link, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
+import { chmod, link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -49,6 +49,7 @@ import { fingerprintProjectConfig, PROJECT_CONFIG_LIMITS } from '../src/project-
 import { agentProbePreview } from '../src/probe.ts'
 import { initializeResult } from '../src/protocol.ts'
 import { AgentHealth } from '../src/types.ts'
+import * as commandCache from '../src/command-cache.ts'
 
 const FAST: AcpAgentOptions = { cancelGraceMs: 300, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: 5_000 }
 const QWEN_MODES = 'plan,default,auto-edit,yolo,auto'
@@ -3975,6 +3976,214 @@ it('marks a recovered idle ACP file observation partial without changing the con
   expect(detail.summary.updatedAt).toBe('2020-01-01T00:00:00Z')
   expect(detail.messages[0]).toMatchObject({ outputs: [{ path: 'result.txt' }], outputsTruncated: true })
   expect(detail.messages[0]!.outputsPending).toBeUndefined()
+})
+
+describe('command cache from real sessions', () => {
+  it.each([0, 257])('does not persist an invalid optional SDK cache scope (length %i)', async length => {
+    const workspaceId = 'x'.repeat(length)
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const context = { cwd: fixture.workspace, workspaceId }
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid(), ...context })
+    await settled(bridge, sessionId)
+    await bridge.close()
+    const restored = await fixture.open()
+    expect((await restored.detail(sessionId)).commands).toEqual([{ name: 'init', description: 'init' }])
+    expect(await restored.commandCatalogue?.(context)).toBeUndefined()
+    expect(await restored.commandCatalogue?.({ cwd: fixture.workspace })).toBeUndefined()
+  })
+
+  it.each(['command', 'project'] as const)(
+    'discards a lookup when its %s fingerprint changes during directory validation',
+    async change => {
+      const binRoot = await mkdtemp(join(tmpdir(), 'latch-cache-command-'))
+      cleanups.push(() => rm(binRoot, { recursive: true, force: true }))
+      const bins = [join(binRoot, 'a'), join(binRoot, 'b')]
+      for (const bin of bins) {
+        await mkdir(bin)
+        await symlink(process.execPath, join(bin, 'cache-node'))
+      }
+      let currentBin = bins[0]!
+      setCommandSearch(() => [currentBin])
+      const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy' }, {}, { presetId: 'opencode', command: 'cache-node' })
+      const bridge = await fixture.open()
+      const context = { cwd: fixture.workspace }
+      const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid(), ...context })
+      await settled(bridge, sessionId)
+      await vi.waitFor(async () => expect(await bridge.commandCatalogue?.(context)).toMatchObject({ sourceSessionId: sessionId }))
+      const starts = (await fixture.log()).filter(entry => entry.event === 'start').length
+      let entered!: () => void
+      let release!: () => void
+      const waiting = new Promise<void>(done => {
+        entered = done
+      })
+      const held = new Promise<void>(done => {
+        release = done
+      })
+      const readDirectory = commandCache.commandDirectory
+      const spy = vi.spyOn(commandCache, 'commandDirectory').mockImplementationOnce(async cwd => {
+        const identity = await readDirectory(cwd)
+        entered()
+        await held
+        return identity
+      })
+      const reading = bridge.commandCatalogue!(context)
+      try {
+        await waiting
+        if (change === 'command') currentBin = bins[1]!
+        else await writeFile(join(fixture.workspace, 'opencode.json'), '{}')
+        release()
+        expect(await reading).toBeUndefined()
+        expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(starts)
+      } finally {
+        release()
+        await reading.catch(() => {})
+        spy.mockRestore()
+      }
+    },
+  )
+
+  it.each(['command', 'project'] as const)(
+    'discards a real report when its %s fingerprint changes during directory validation',
+    async change => {
+      const binRoot = await mkdtemp(join(tmpdir(), 'latch-cache-command-'))
+      cleanups.push(() => rm(binRoot, { recursive: true, force: true }))
+      const bins = [join(binRoot, 'a'), join(binRoot, 'b')]
+      for (const bin of bins) {
+        await mkdir(bin)
+        await symlink(process.execPath, join(bin, 'cache-node'))
+      }
+      let currentBin = bins[0]!
+      setCommandSearch(() => [currentBin])
+      const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy' }, {}, { presetId: 'opencode', command: 'cache-node' })
+      const bridge = await fixture.open()
+      const context = { cwd: fixture.workspace }
+      const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid(), ...context })
+      await settled(bridge, sessionId)
+      await vi.waitFor(async () => expect(await bridge.commandCatalogue?.(context)).toMatchObject({ sourceSessionId: sessionId }))
+      let entered!: () => void
+      let release!: () => void
+      const waiting = new Promise<void>(done => {
+        entered = done
+      })
+      const held = new Promise<void>(done => {
+        release = done
+      })
+      const readDirectory = commandCache.commandDirectory
+      const spy = vi.spyOn(commandCache, 'commandDirectory').mockImplementationOnce(async cwd => {
+        const identity = await readDirectory(cwd)
+        entered()
+        await held
+        return identity
+      })
+      const runtime = bridge as unknown as { noteCommandCatalogue(...args: unknown[]): Promise<void> | undefined }
+      const note = vi.spyOn(runtime, 'noteCommandCatalogue')
+      const remember = vi.spyOn(commandCache.CommandCache.prototype, 'remember')
+      const reporting = bridge.prompt(sessionId, 'plan', rid())
+      try {
+        await waiting
+        if (change === 'command') currentBin = bins[1]!
+        else await writeFile(join(fixture.workspace, 'opencode.json'), '{}')
+        expect(await bridge.commandCatalogue!(context)).toBeUndefined()
+        release()
+        await reporting
+        await Promise.all(note.mock.results.map(result => result.value))
+        expect(remember).not.toHaveBeenCalled()
+        await settled(bridge, sessionId)
+      } finally {
+        release()
+        await reporting.catch(() => {})
+        await Promise.allSettled(note.mock.results.map(result => Promise.resolve(result.value)))
+        remember.mockRestore()
+        note.mockRestore()
+        spy.mockRestore()
+      }
+    },
+  )
+
+  it('separates project IDs and actual directory identities even when launch hashes are equal', async () => {
+    const fixture = await setup()
+    const other = join(fixture.root, 'other')
+    await mkdir(other)
+    const bridge = await fixture.open(() => [fixture.workspace, other])
+    const a = { cwd: fixture.workspace, workspaceId: 'project-a' }
+    const b = { cwd: fixture.workspace, workspaceId: 'project-b' }
+    expect((await bridge.launchPreview!(a)).launchHash).toBe((await bridge.launchPreview!(b)).launchHash)
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid(), ...a })
+    await settled(bridge, sessionId)
+    await vi.waitFor(async () => expect(await bridge.commandCatalogue?.(a)).toMatchObject({ sourceSessionId: sessionId }))
+    const starts = (await fixture.log()).filter(entry => entry.event === 'start').length
+    expect(await bridge.commandCatalogue?.(b)).toBeUndefined()
+    expect(await bridge.commandCatalogue?.({ ...a, cwd: other })).toBeUndefined()
+    await rename(fixture.workspace, join(fixture.root, 'replaced-workspace'))
+    await mkdir(fixture.workspace)
+    expect(await bridge.commandCatalogue?.(a)).toBeUndefined()
+    expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(starts)
+  })
+
+  it('preserves an empty report and removes a deleted source without reading a new CLI', async () => {
+    const fixture = await setup({ FAKE_ACP_COMMANDS: '[]' })
+    const bridge = await fixture.open()
+    const context = { cwd: fixture.workspace }
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid(), ...context })
+    await settled(bridge, sessionId)
+    await vi.waitFor(async () =>
+      expect(await bridge.commandCatalogue?.(context)).toMatchObject({
+        sourceSessionId: sessionId,
+        catalogue: { commands: [] },
+      }),
+    )
+    await bridge.remove!(sessionId)
+    expect(await bridge.commandCatalogue?.(context)).toBeUndefined()
+    await bridge.close()
+    const starts = (await fixture.log()).filter(entry => entry.event === 'start').length
+    const restored = await fixture.open()
+    expect(await restored.commandCatalogue?.(context)).toBeUndefined()
+    expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(starts)
+  })
+
+  it('rejects a previous definition without probing and treats mismatched stored source commands as a miss', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const context = { cwd: fixture.workspace }
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid(), ...context })
+    await settled(bridge, sessionId)
+    await vi.waitFor(async () => expect(await bridge.commandCatalogue?.(context)).toMatchObject({ sourceSessionId: sessionId }))
+    await bridge.close()
+    const file = join(fixture.dataDir, 'harness-commands.json')
+    const saved = JSON.parse(await readFile(file, 'utf8')) as { entries: Array<{ commands: unknown[] }> }
+    saved.entries[0]!.commands = [{ name: 'never-reported' }]
+    await writeFile(file, JSON.stringify(saved), { mode: 0o600 })
+    const starts = (await fixture.log()).filter(entry => entry.event === 'start').length
+    const mismatched = await fixture.open()
+    expect(await mismatched.commandCatalogue?.(context)).toBeUndefined()
+    await mismatched.close()
+    const changed = await fixture.redefine({ env: { ...fixture.record.env, CACHE_DEFINITION_CHANGED: '1' } })
+    expect(await changed.commandCatalogue?.(context)).toBeUndefined()
+    expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(starts)
+  })
+
+  it('does not launch a probe and keeps a reported catalogue across a Host restart', async () => {
+    const fixture = await setup({ FAKE_ACP_COMMANDS: JSON.stringify([{ name: 'public-plan', description: 'Public plan' }]) })
+    const bridge = await fixture.open()
+    const context = { cwd: fixture.workspace }
+    expect(await bridge.commandCatalogue?.(context)).toBeUndefined()
+    expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(0)
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid(), ...context })
+    await settled(bridge, sessionId)
+    expect((await bridge.detail(sessionId)).commands).toEqual([{ name: 'public-plan', description: 'Public plan' }])
+    await vi.waitFor(async () =>
+      expect(await bridge.commandCatalogue?.(context)).toMatchObject({
+        sourceSessionId: sessionId,
+        catalogue: { source: 'previous-session', commands: [{ name: 'public-plan', description: 'Public plan' }] },
+      }),
+    )
+    const starts = (await fixture.log()).filter(entry => entry.event === 'start').length
+    await bridge.close()
+    const restored = await fixture.open()
+    expect(await restored.commandCatalogue?.(context)).toMatchObject({ sourceSessionId: sessionId })
+    expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(starts)
+  })
 })
 
 describe('agent context', () => {
