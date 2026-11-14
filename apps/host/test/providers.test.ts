@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PROVIDER_KINDS, PROVIDER_PRESETS } from '@latch/protocol'
 import { startFakeModels } from '@latch/testkit'
 import type { HarnessPlugin, ModelDelta, ModelMessage, ModelProvider, ToolDefinition } from '@latch/sdk'
@@ -25,6 +25,8 @@ import {
   usableKey,
 } from '../src/providers.ts'
 import type { ProviderRecord } from '../src/config.ts'
+import { ModelGatewayServer } from '../src/model-gateway.ts'
+import { ModelRequestQueue } from '../src/model-request-queue.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -64,6 +66,77 @@ async function collect(stream: AsyncIterable<ModelDelta>): Promise<ModelDelta[]>
 
 const message: ModelMessage = { role: 'user', content: '你好' }
 const freshSignal = () => new AbortController().signal
+
+it('shares upstream capacity between an in-process provider and the Harness gateway until the complete response is released', async () => {
+  const queue = new ModelRequestQueue({ active: 1, waiting: 4, bytes: 4096, waitMs: 30_000 })
+  const acquire = vi.spyOn(queue, 'acquire')
+  let requests = 0
+  const cancelled = vi.fn()
+  const fetcher: FetchLike = async () => {
+    requests++
+    if (requests === 1)
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode('data: {"choices":[{"index":0,"delta":{"content":"first"},"finish_reason":null}]}\n\n'),
+            )
+          },
+          cancel: cancelled,
+        }),
+        { headers: { 'content-type': 'text/event-stream' } },
+      )
+    return Response.json({ model: 'fake-model', choices: [{ message: { content: 'second' }, finish_reason: 'stop' }] })
+  }
+  const baseURL = 'https://models.example.invalid/v1'
+  const { providers } = await mount(
+    createOpenAIPlugin({
+      baseURL,
+      apiKey: '',
+      model: 'fake-model',
+      fetch: fetcher,
+      acquire: (signal, bytes) => queue.acquire(signal, bytes),
+    }),
+  )
+  const server = new ModelGatewayServer({
+    queue,
+    service: () => ({ kind: 'openai-compatible', baseURL, apiKey: '', models: ['fake-model'], fingerprint: 'one' }),
+    fetchFor: () => fetcher,
+    log: () => {},
+  })
+  await server.start()
+  cleanups.push(async () => {
+    queue.close()
+    await server.close()
+  })
+  const lease = server.open({
+    sessionId: 'queued',
+    route: {
+      providerId: 'same-service',
+      model: 'fake-model',
+      wire: 'chat-completions',
+      origin: originOf(baseURL),
+    },
+  })
+  const stream = providers[0]!.stream({ messages: [message], tools: [], signal: freshSignal() })[Symbol.asyncIterator]()
+  cleanups.push(async () => {
+    await stream.return?.()
+  })
+  expect(await stream.next()).toMatchObject({ value: { type: 'text', text: 'first' } })
+  const pending = fetch(`${lease.baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${lease.token}` },
+    body: JSON.stringify({ model: 'fake-model', messages: [{ role: 'user', content: 'hello' }] }),
+  })
+  await vi.waitFor(() => expect(acquire).toHaveBeenCalledTimes(2))
+  expect(requests).toBe(1)
+  await stream.return?.()
+  expect(cancelled).toHaveBeenCalledTimes(1)
+  const response = await pending
+  expect(response.status).toBe(200)
+  expect(await response.text()).toContain('second')
+  expect(requests).toBe(2)
+})
 /** Loopback test servers only; production passes the Host's egress-checked fetch. */
 const direct = { fetch: globalThis.fetch as FetchLike }
 const unusedFetch: FetchLike = async () => {

@@ -3,6 +3,7 @@ description: Harness 经 Host 使用模型服务的回环入口、凭据、协�
 sources:
   - apps/host/src/model-gateway.ts
   - apps/host/src/model-gateway
+  - apps/host/src/model-request-queue.ts
   - apps/host/src/model-reply.ts
   - packages/harness-acp/src/profiles
   - packages/harness-acp/src/runtime.ts
@@ -121,6 +122,10 @@ pi 的模型注册 API 必须有输入上下文和输出上限。私有扩展优
 扩展在进程内用官方 `registerProvider` 注册服务，网关凭据只留在进程内存，并从子进程继承环境删除。pi 恢复会话时会重新加载扩展，因此同一进程的扩展实例从自己的私有槽取回凭据；新进程总由 Host 重新发放。扩展数据文件不含凭据。pi 强制要求的价格字段只作内部占位；经服务的会话不把它们或运行预算转换成 Agent 报告的费用、上下文容量。实际 token 用量仍从服务的响应记录。Pi 仅为私有 provider 注册官方 streamSimple 委托，沿用官方 SDK 的消息、工具、推理回放与取消转换，覆盖普通回复、压缩与分支摘要。每次以 options.reasoning 为准；在原 onPayload 回调之后核对模型并限制输出上限，删除上限的回调不能消除运行预算。Gemini 只注册服务声明且可原样发送的离散档位，Host 再过滤选项并拒绝旧的不支持值；最终 thinkingConfig 写对应档位并删除自动预算。payload 失配直接在官方 SDK 发网前失败。该桥允许服务使用自己的模型别名，不靠修改模型 ID 触发 SDK 的型号判断；其他 provider 不受影响。
 
 ## 生命周期与可见事实
+
+Host 的内置模型服务与 Harness 网关共用 32 个上游请求名额，持有到响应实际读取完毕或取消结算，收到响应头不会归还。满额后按到达顺序排队，最多等 30 秒；等待队列额外限制为 128 个请求、序列化正文合计 64 MiB，达到任一界限拒绝新等待。超时或队列已满返回 429 `gateway-busy`，网关附 `retry-after: 1`。取消等待立即移除，停止 Host 拒绝全部等待；已经取得的名额只由所属请求归还一次。
+
+排队不是授权。内置服务和网关在取得名额后重新核对当前服务、地址、密钥及模型声明；进程凭据失效或配置变化的请求不发送旧密钥。连接检测和模型列表不占模型请求名额。单服务可配置上限、专用排队状态、备选、重试、健康与会话亲和尚未接入，不能把共享并发门当作完整调度。
 
 进程退出、Host 关闭、服务协议/地址/密钥/可用性、模型清单或声明能力变化会作废凭据；下一轮重新准备进程与凭据，服务不能用了就明确失败。会话不能换服务，同服务内只提供该凭据允许的模型。Host 保存的 vision/thinking 声明随 lease 交给 profile，不从模型名猜图片、思考、价格或容量。
 

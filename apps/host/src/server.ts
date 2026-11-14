@@ -147,6 +147,7 @@ import { HostRelayDirectory } from './relay/directory.ts'
 import { createEgressFetch, createEgressInspector, type EgressReason, type FetchLike, type LookupFunction } from './egress.ts'
 import { loadOrCreateHostIdentity } from './identity.ts'
 import { ModelGatewayServer, type GatewayService } from './model-gateway.ts'
+import { ModelRequestQueue } from './model-request-queue.ts'
 import {
   DENY_READ_HOME_PATHS,
   PROJECT_FOLDER_LIMIT,
@@ -1494,6 +1495,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * build every request from it), only while it is a preset's origin or a confirmed address, then through the egress
      * policy. Anything else is refused like an unconfirmed address.
      */
+    let closing = false
+    const modelRequests = new ModelRequestQueue()
+    startupCleanup.push(() => modelRequests.close())
     const providerFetchFor =
       (baseURL: string): FetchLike =>
       (input, init) => {
@@ -2033,7 +2037,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
     })
     startupCleanup.push(() => harnessHub.close())
-    const modelGateway = new ModelGatewayServer({ service: gatewayService, fetchFor: providerFetchFor, log })
+    const modelGateway = new ModelGatewayServer({ service: gatewayService, fetchFor: providerFetchFor, log, queue: modelRequests })
     await modelGateway.start()
     startupCleanup.push(() => modelGateway.close())
     const requiredHarness = options.harnessId ?? STANDARD
@@ -2076,7 +2080,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     let changes: Promise<void> = Promise.resolve()
     const agentProbes = new AgentProbes({ root: runtime.tmpRoot, dataDir, now })
     startupCleanup.push(() => agentProbes.close())
-    let closing = false
     /** The audit records of a queue item sent at once, until it is sent or refused (then marked `action.failed`). */
     const queueAudits = new Map<string, number[]>()
     const promptQueues = await PromptQueues.open({
@@ -3202,7 +3205,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     function buildProviderPlugin(record: ProviderRecord): HarnessPlugin {
       try {
-        return providerPlugin(record, { fetch: providerFetchFor(record.baseURL) })
+        return providerPlugin(record, {
+          fetch: providerFetchFor(record.baseURL),
+          acquire: async (signal, bytes) => {
+            const currentFingerprint = () => {
+              if (recordDestination(record) === 'unconfirmed') throw new OriginUnconfirmed()
+              const current = gatewayService(record.id)
+              if (closing || !current || current.fingerprint !== providerFingerprint(record))
+                throw new AppError(409, 'model-route-changed', '模型服务的设置已经变了，请重新选择模型。')
+              return current.fingerprint
+            }
+            const before = currentFingerprint()
+            const release = await modelRequests.acquire(signal, bytes)
+            try {
+              signal.throwIfAborted()
+              if (currentFingerprint() !== before)
+                throw new AppError(409, 'model-route-changed', '模型服务的设置已经变了，请重新选择模型。')
+              return release
+            } catch (error) {
+              release()
+              throw error
+            }
+          },
+        })
       } catch (error) {
         throw error instanceof AppError ? error : new AppError(400, 'invalid-provider', errorText(error))
       }
@@ -3285,6 +3310,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * A saved service as the gateway may forward to it now: enabled, its plugin running, and offered to sessions. The
      * fingerprint changes with its protocol, address, key, models, capabilities and where requests may go, never its name.
      */
+    function providerFingerprint(record: ProviderRecord): string {
+      return sha256Hex(
+        canonicalJson({
+          kind: record.kind,
+          baseURL: record.baseURL,
+          key: sha256Hex(usableKey(record)),
+          destination: recordDestination(record),
+          models: record.models.length ? record.models : [record.defaultModel],
+          modelCapabilities: record.modelCapabilities ?? {},
+        }),
+      )
+    }
+
     function gatewayService(id: string): GatewayService | undefined {
       const record = effectiveProvider(id)
       const plugin = pluginInfo(id)
@@ -3297,16 +3335,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         apiKey,
         models,
         ...(record.modelCapabilities ? { modelCapabilities: structuredClone(record.modelCapabilities) } : {}),
-        fingerprint: sha256Hex(
-          canonicalJson({
-            kind: record.kind,
-            baseURL: record.baseURL,
-            key: sha256Hex(apiKey),
-            destination: recordDestination(record),
-            models,
-            modelCapabilities: record.modelCapabilities ?? {},
-          }),
-        ),
+        fingerprint: providerFingerprint(record),
       }
     }
 
@@ -9158,6 +9187,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       close() {
         return (shutdown ??= (async () => {
           closing = true
+          modelRequests.close()
           // First, while the engines still answer: a check made against a closing Host would pause on its way out.
           await automations.close()
           await handoffs.close()

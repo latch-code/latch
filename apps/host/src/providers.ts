@@ -100,7 +100,10 @@ export function usableKey(record: ProviderRecord): string {
 }
 
 /** One plugin per configured provider; the plugin ID equals the provider ID. Requests go through `deps.fetch`. */
-export function providerPlugin(record: ProviderRecord, deps: { fetch: FetchLike }): HarnessPlugin {
+export function providerPlugin(
+  record: ProviderRecord,
+  deps: { fetch: FetchLike; acquire?: (signal: AbortSignal, bytes: number) => Promise<() => void> },
+): HarnessPlugin {
   return factories[record.kind]({
     id: record.id,
     name: record.name,
@@ -110,6 +113,7 @@ export function providerPlugin(record: ProviderRecord, deps: { fetch: FetchLike 
     models: record.models,
     ...(record.modelCapabilities ? { modelCapabilities: structuredClone(record.modelCapabilities) } : {}),
     fetch: deps.fetch,
+    ...(deps.acquire ? { acquire: deps.acquire } : {}),
   })
 }
 

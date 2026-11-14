@@ -37,6 +37,7 @@ import { decodeAnthropicReply, decodeAnthropicStream } from './model-gateway/out
 import type { GatewayRequest, GatewayDelta, GatewayReasoning } from './model-gateway/ir.ts'
 import type { ToolNames } from './model-gateway/tools.ts'
 import { exactJson } from './model-gateway/json.ts'
+import { ModelRequestQueue } from './model-request-queue.ts'
 
 /** A saved service as the gateway may use it now: undefined from `service` when sessions may not use it. */
 export interface GatewayService {
@@ -55,6 +56,7 @@ export interface ModelGatewayDeps {
   /** The service's outbound fetch: only under its base URL, only to a preset or confirmed address, through egress policy. */
   fetchFor(baseURL: string): FetchLike
   log(text: string): void
+  queue?: ModelRequestQueue
 }
 
 interface Binding {
@@ -264,7 +266,7 @@ function refuse(res: ServerResponse, status: number, code: string, message: stri
   }
   const body = JSON.stringify(
     shape === 'anthropic'
-      ? { type: 'error', error: { type: ANTHROPIC_ERRORS[status] ?? 'api_error', message } }
+      ? { type: 'error', error: { type: ANTHROPIC_ERRORS[status] ?? 'api_error', message, ...(code === 'gateway-busy' ? { code } : {}) } }
       : { error: { code, message } },
   )
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -388,8 +390,11 @@ export class ModelGatewayServer implements ModelGateway {
   private readonly reasoning = new ReasoningSeals()
   private server?: Server
   private port?: number
+  private readonly queue: ModelRequestQueue
 
-  constructor(private readonly deps: ModelGatewayDeps) {}
+  constructor(private readonly deps: ModelGatewayDeps) {
+    this.queue = deps.queue ?? new ModelRequestQueue()
+  }
 
   async start(): Promise<void> {
     const server = createServer((req, res) => {
@@ -415,6 +420,7 @@ export class ModelGatewayServer implements ModelGateway {
   }
 
   async close(): Promise<void> {
+    if (!this.deps.queue) this.queue.close()
     for (const binding of this.bindings.values()) binding.closed = true
     this.bindings.clear()
     const server = this.server
@@ -639,12 +645,40 @@ export class ModelGatewayServer implements ModelGateway {
       failed(entry)
       return refuse(res, 401, 'gateway-token', '模型服务的设置已经变了，这个凭据不再有效。下一条消息会重新连接。', shape)
     }
-    const request: OpenRequest | undefined = entry ? { tally, entry, apiKey: service.apiKey } : undefined
-    if (request) tally.open.add(request)
+    const controller = new AbortController()
+    const disconnected = () => {
+      if (!res.writableFinished) controller.abort()
+    }
+    res.once('close', disconnected)
+    if (res.destroyed) controller.abort()
+    let release: (() => void) | undefined
+    let started = false
     try {
-      await this.forward(req, res, binding, service, target.upstream(service.baseURL), body, request, translated)
+      release = await this.queue.acquire(controller.signal, body.length)
+      controller.signal.throwIfAborted()
+      // Waiting is not authorization: the process and service must still match when its permit arrives.
+      service = this.current(hash, binding)
+      if (!service) {
+        failed(entry)
+        return refuse(res, 401, 'gateway-token', '模型服务的设置已经变了，这个凭据不再有效。下一条消息会重新连接。', shape)
+      }
+      const request: OpenRequest | undefined = entry ? { tally, entry, apiKey: service.apiKey } : undefined
+      started = true
+      if (request) tally.open.add(request)
+      try {
+        await this.forward(req, res, binding, service, target.upstream(service.baseURL), body, request, controller.signal, translated)
+      } finally {
+        finish(request)
+      }
+    } catch (error) {
+      if (!started) failed(entry)
+      if (controller.signal.aborted) return
+      if (!(error instanceof AppError)) throw error
+      if (error.code === 'gateway-busy') res.setHeader('retry-after', '1')
+      refuse(res, error.status, error.code, error.message, shape)
     } finally {
-      finish(request)
+      release?.()
+      res.off('close', disconnected)
     }
   }
 
@@ -656,6 +690,7 @@ export class ModelGatewayServer implements ModelGateway {
     upstream: string,
     body: Buffer,
     request: OpenRequest | undefined,
+    signal: AbortSignal,
     translated?: { request: GatewayRequest; tools: ToolNames },
   ): Promise<void> {
     const wire = binding.upstream
@@ -667,11 +702,6 @@ export class ModelGatewayServer implements ModelGateway {
       const value = req.headers[name]
       if (typeof value === 'string') headers[name] = value
     }
-    // A request the harness gave up on, a cancel among them, stops at the service too.
-    const controller = new AbortController()
-    res.on('close', () => {
-      if (!res.writableFinished) controller.abort()
-    })
     let response: Response
     try {
       response = await this.deps.fetchFor(service.baseURL)(upstream, {
@@ -679,11 +709,11 @@ export class ModelGatewayServer implements ModelGateway {
         headers,
         body: new Uint8Array(body),
         redirect: 'error',
-        signal: controller.signal,
+        signal,
       })
     } catch (error) {
       finish(request)
-      if (controller.signal.aborted) return
+      if (signal.aborted) return
       const detail = error instanceof Error ? error.message : String(error)
       return refuse(res, 502, 'gateway-upstream', `连不上模型服务：${withoutKey(detail, service.apiKey).slice(0, 300)}`, shape)
     }
@@ -730,7 +760,7 @@ export class ModelGatewayServer implements ModelGateway {
       return
     }
     if (translated) {
-      await this.translateReply(response, res, binding, service, request, translated, returned, controller.signal)
+      await this.translateReply(response, res, binding, service, request, translated, returned, signal)
       return
     }
     res.writeHead(response.status, returned)

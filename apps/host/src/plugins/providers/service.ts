@@ -27,6 +27,8 @@ export interface ServiceConfig {
   modelCapabilities?: Record<string, ModelCapabilities>
   /** Every request goes through it. The Host passes its egress-checked fetch; defaults to `globalThis.fetch`. */
   fetch?: FetchLike
+  /** A Host permit held until the complete model response has been consumed or cancelled. */
+  acquire?: (signal: AbortSignal, bytes: number) => Promise<() => void>
 }
 
 /** What one protocol's plugin is called when the configuration does not say. */
@@ -69,19 +71,26 @@ export function createServicePlugin(config: ServiceConfig, wire: ModelWire, info
       // A saved service can change protocol, and one protocol's signature means nothing to another.
       const signer = `${info.id}\n${id}\n${model}`
       const call = wire.request(config.baseURL, apiKey, { model, messages, tools, signer, ...(effort ? { effort } : {}) })
-      const body = await openEventStream(
-        fetcher,
-        call.url,
-        {
-          method: 'POST',
-          signal,
-          redirect: 'error',
-          headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...call.headers },
-          body: JSON.stringify(call.body),
-        },
-        safeError,
-      )
-      yield* wire.decode(body, signal, safeError, signer)
+      const encoded = JSON.stringify(call.body)
+      const release = await config.acquire?.(signal, Buffer.byteLength(encoded))
+      try {
+        signal.throwIfAborted()
+        const body = await openEventStream(
+          fetcher,
+          call.url,
+          {
+            method: 'POST',
+            signal,
+            redirect: 'error',
+            headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...call.headers },
+            body: encoded,
+          },
+          safeError,
+        )
+        yield* wire.decode(body, signal, safeError, signer)
+      } finally {
+        release?.()
+      }
     },
   }
   return {

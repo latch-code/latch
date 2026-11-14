@@ -9,6 +9,7 @@ import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { createAcpAgentPlugin } from '@latch/harness-acp'
 import { FAKE_ACP_AGENT, startFakeModels, type FakeModels, type TestDevice } from '@latch/testkit'
 import { ModelGatewayServer, type GatewayService } from '../src/model-gateway.ts'
+import { ModelRequestQueue } from '../src/model-request-queue.ts'
 import { startTestHost } from './helpers/host.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -70,6 +71,64 @@ const ask = (base: string, token: string, body: unknown, headers: Record<string,
   })
 
 describe('model gateway', () => {
+  it.each(['process closed', 'service changed'] as const)(
+    'rechecks a queued request after its %s without sending a stale credential',
+    async change => {
+      const fake = await models()
+      const service = responses(fake)
+      const queue = new ModelRequestQueue({ active: 1, waiting: 4, bytes: 1024, waitMs: 30_000 })
+      const release = await queue.acquire(new AbortController().signal, 0)
+      const server = new ModelGatewayServer({ service: () => service, fetchFor: () => fetch, log: () => {}, queue })
+      await server.start()
+      cleanups.push(() => server.close())
+      const lease = server.open({ sessionId: 'queued', route: route(fake) })
+      const acquire = vi.spyOn(queue, 'acquire')
+      const pending = ask(lease.baseURL, lease.token, { model: 'fake-model', input: 'hello' })
+      await vi.waitFor(() => expect(acquire).toHaveBeenCalledTimes(1))
+      expect(fake.requests).toHaveLength(0)
+      if (change === 'process closed') lease.close()
+      else service.fingerprint = 'replacement'
+      release()
+      const result = await pending
+      expect(result.status).toBe(401)
+      expect(await result.text()).toContain('gateway-token')
+      expect(fake.requests).toHaveLength(0)
+      const next = await queue.acquire(new AbortController().signal, 0)
+      next()
+      queue.close()
+    },
+  )
+
+  it.each(['responses', 'anthropic-messages'] as const)(
+    'returns %s queue exhaustion without forwarding and keeps model listing available',
+    async wire => {
+      const fake = await models()
+      const service = responses(fake, { kind: wire === 'responses' ? 'openai-responses' : 'anthropic' })
+      const queue = new ModelRequestQueue({ active: 1, waiting: 0, bytes: 0, waitMs: 30_000 })
+      const release = await queue.acquire(new AbortController().signal, 0)
+      const server = new ModelGatewayServer({ service: () => service, fetchFor: () => fetch, log: () => {}, queue })
+      await server.start()
+      cleanups.push(() => server.close())
+      const lease = server.open({ sessionId: 'queued', route: { ...route(fake), wire } })
+      const base = wire === 'responses' ? lease.baseURL : `${lease.baseURL}/v1`
+      const headers = { authorization: `Bearer ${lease.token}` }
+      const listing = await fetch(`${base}/models`, { headers })
+      expect(listing.status).toBe(200)
+      await listing.text()
+      const result = await fetch(`${base}/${wire === 'responses' ? 'responses' : 'messages'}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ model: 'fake-model', input: 'hello' }),
+      })
+      expect(result.status).toBe(429)
+      expect(result.headers.get('retry-after')).toBe('1')
+      expect(await result.json()).toMatchObject({ error: { code: 'gateway-busy' } })
+      expect(fake.requests).toHaveLength(0)
+      release()
+      queue.close()
+    },
+  )
+
   it('uses only the current Host thinking intent, while undeclared and mismatched explicit efforts still fail', async () => {
     const fake = await models()
     const service = responses(fake, {
