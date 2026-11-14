@@ -1,30 +1,104 @@
-import { createServer } from 'node:http'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 
 export type PairingStage = 'idle' | 'on-control' | 'off-control' | 'paste-ready' | 'consumed' | 'restored' | 'cleanup'
 
-/** Read-only public milestones let one CUA call wait then press the real native button without a model round trip. */
-export async function pairingStagePage() {
+type ControlStage = 'on-control' | 'off-control'
+
+/** Public milestones and optional operator acknowledgements contain no pairing inputs or product write endpoint. */
+export async function pairingStagePage(options: { acknowledge?: (stage: ControlStage) => Promise<void> } = {}) {
   let phase: PairingStage = 'idle'
+  let version = 0,
+    accepted: number | undefined,
+    origin = '',
+    closed = false
+  let pending = Promise.resolve()
   const page = `<!doctype html><meta charset="utf-8"><title>Native pairing test stage</title>
-<output id="phase">idle</output><script>
-async function update(){try{const r=await fetch('/phase',{cache:'no-store'});if(r.ok)document.getElementById('phase').textContent=(await r.json()).phase;}catch{}finally{setTimeout(update,100);}}
+<output id="phase">idle</output>
+${options.acknowledge ? '<button data-phase="on-control" hidden>已打开共享</button><button data-phase="off-control" hidden>已关闭共享</button><p id="note" aria-live="polite"></p>' : ''}<script>
+let state={phase:'idle',version:0},busy=false,accepted;
+const buttons=[...document.querySelectorAll('button[data-phase]')];
+function render(){document.getElementById('phase').textContent=state.phase;for(const b of buttons){b.hidden=b.dataset.phase!==state.phase;b.disabled=busy||accepted===state.version;}}
+for(const b of buttons)b.onclick=async()=>{if(busy||b.dataset.phase!==state.phase)return;const sent={phase:state.phase,version:state.version};busy=true;render();try{const r=await fetch('/ack',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(sent)});if(r.ok)accepted=sent.version;document.getElementById('note').textContent=r.ok?'已确认当前操作':'确认未被接受，请重新核对当前阶段';}catch{document.getElementById('note').textContent='确认失败，请重试';}finally{busy=false;render();}};
+async function update(){try{const r=await fetch('/phase',{cache:'no-store'});if(r.ok){state=await r.json();render();}}catch{}finally{setTimeout(update,100);}}
 update();
 </script>`
-  const server = createServer((req, res) => {
+  async function respond(req: IncomingMessage, res: ServerResponse) {
     res.setHeader('cache-control', 'no-store')
     res.setHeader('x-content-type-options', 'nosniff')
+    res.setHeader('x-frame-options', 'DENY')
+    if (closed) {
+      res.writeHead(503).end()
+      return
+    }
+    if (req.method === 'POST' && req.url === '/ack' && options.acknowledge) {
+      if (
+        req.headers.origin !== origin
+        || req.headers.host !== new URL(origin).host
+        || req.headers['content-type']?.split(';')[0] !== 'application/json'
+      ) {
+        res.writeHead(403).end()
+        return
+      }
+      req.setEncoding('utf8')
+      let text = ''
+      for await (const chunk of req) {
+        if (typeof chunk !== 'string' || Buffer.byteLength(text) + Buffer.byteLength(chunk) > 128) {
+          res.writeHead(413).end()
+          return
+        }
+        text += chunk
+      }
+      const input: unknown = JSON.parse(text)
+      if (
+        typeof input !== 'object'
+        || input === null
+        || Array.isArray(input)
+        || Object.keys(input).length !== 2
+        || !('phase' in input)
+        || !('version' in input)
+        || (input.phase !== 'on-control' && input.phase !== 'off-control')
+        || input.phase !== phase
+        || input.version !== version
+        || accepted === version
+        || closed
+      ) {
+        res.writeHead(409).end()
+        return
+      }
+      const control = input.phase,
+        revision = version
+      accepted = revision
+      const work = pending.then(() => options.acknowledge!(control))
+      pending = work.catch(() => {})
+      try {
+        await work
+        res.writeHead(204).end()
+      } catch {
+        if (version === revision) accepted = undefined
+        res.writeHead(500).end()
+      }
+      return
+    }
     if (req.method !== 'GET') {
       res.writeHead(405).end()
       return
     }
     if (req.url === '/phase') {
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ phase }))
+      res.end(JSON.stringify({ phase, ...(options.acknowledge ? { version } : {}) }))
     } else if (req.url === '/') {
       res.setHeader('content-type', 'text/html; charset=utf-8')
       res.end(page)
     } else res.writeHead(404).end()
+  }
+  const server = createServer((req, res) => {
+    void respond(req, res).catch(() => {
+      if (!res.writableEnded) res.writeHead(400).end()
+    })
   })
+  server.requestTimeout = 3000
+  server.headersTimeout = 3000
+  server.maxHeadersCount = 24
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
@@ -34,15 +108,28 @@ update();
     server.close()
     throw new Error('Missing local stage listener')
   }
+  origin = `http://127.0.0.1:${address.port}`
   return {
-    url: `http://127.0.0.1:${address.port}/`,
+    url: origin + '/',
     show(value: PairingStage) {
-      phase = value
+      // A prior ACK must finish writing its flag before the next stage can start and remove that flag.
+      const next = pending.then(() => {
+        if (!closed) {
+          phase = value
+          version++
+          accepted = undefined
+        }
+      })
+      pending = next
+      return next
     },
-    close: () =>
-      new Promise<void>((resolve, reject) => {
+    close: async () => {
+      closed = true
+      await pending
+      return new Promise<void>((resolve, reject) => {
         server.closeAllConnections()
         server.close(error => (error ? reject(error) : resolve()))
-      }),
+      })
+    },
   }
 }

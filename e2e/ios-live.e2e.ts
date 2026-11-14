@@ -204,7 +204,11 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
     }
     const output = resolve(process.env.LATCH_IOS_LIVE_DIR ?? 'test-results/ios-live')
     await mkdir(output, { recursive: true })
-    const status = GUI_CLIPBOARD ? await pairingStagePage() : undefined
+    const status = GUI_CLIPBOARD
+      ? await pairingStagePage({
+          acknowledge: phase => writeFile(`${HOLD}.clipboard-${phase === 'on-control' ? 'on' : 'off'}`, '', { mode: 0o600 }),
+        })
+      : undefined
     const phases: Array<{ phase: string; host: number; at: number }> = []
     const record = (phase: string, host: number) => {
       phases.push({ phase, host, at: Date.now() })
@@ -381,7 +385,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
                           ? 'restored'
                           : 'cleanup'
                 record(phase, index)
-                status?.show(phase)
+                await status?.show(phase)
                 await savePhases()
                 await writeFile(`${HOLD}.clipboard-info`, text + '\n', { mode: 0o600 })
               },
