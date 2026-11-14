@@ -513,6 +513,14 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 
 ### 会话命令
 
+新会话可以读取同项目、真实目录身份与准确启动指纹下，上次真实会话报告的完整命令目录。ACP 的派生缓存为私有数据目录中的 `harness-commands.json`（0600，最多 64 份目录、2 MiB），严格检查文件与持久来源，原子写入；空报告有别于未报告。缓存只收已绑定进程的实际报告，异步核对后再检查同一进程、会话与报告序号，不启动或探测 CLI，也不读 CLI 自有存储。
+
+`POST /agents/:id/commands` 接受正常开始会话的选择项，不接受任意 cwd；需要 view，并在异步查找后复查设备、项目、来源可见性、真实目录与完整启动指纹。新分配的文件夹、工作树与助手家没有真实目录时不命中，也不为查提示创建目录。响应只有 commands、reportedAt 与 source=previous-session；sourceSessionId、启动指纹和私有路径只在 Host 内使用。删除来源、改变启动配置或失去来源权限后不返回。缓存只是建议，不授执行能力。
+
+Host 每次挂载 Driver 生成 `HarnessInfo.commandCatalogue.generation`；ACP 每次命令报告完成缓存核对后更新并持久化 `TaskSummary.commandsVersion`。它们都是不透明标识，普通正文帧不改变命令版本。Web 用本来可见的任务 ID 与版本、Host、设备授权、Driver 代次、项目和实际开始选择确定提示范围；可见集合或选择改变时立即撤下旧结果并取消在途查询，迟到响应不回填。
+
+Code 首页、新会话页和手机选项面板标记「上次会话」，点按、Tab、Enter 都只插入草稿。可见草稿每 30 秒只读重验，后台暂停，重新可见立即重验；等待时不打断草稿或菜单焦点。磁盘配置变化和没有公开通知的 public→private 可能使之前的公开提示保留到下次重验；私有活动的事件过滤不变，HTTP 每次仍重新授权，不能返回私有化后的新报告。
+
 ACP `available_commands_update` 的当前列表作为可选 `TaskDetail.commands` 发送给客户端，并随 ACP 会话持久化。每次更新替换之前的列表（空列表撤下命令）；最多 200 条，名称 100 字符、说明 1000 字符、输入提示 500 字符，畸形更新不接受。名称不能包含空白或控制字符。名称与说明按可见安全文本显示。点按与 Tab 只插入可编辑草稿；桌面键盘 Enter 的执行条件、参数提示和保留动作见 [DESIGN.md](DESIGN.md)。带 `idleOnly` 的命令在运行中保留置灰；排队、把排队的消息改成它或追加到运行中的一轮时，Host 以 409 `command-queued` 拒绝。
 
 Codex 直连声明 `/compact`，用 `thread/compact/start` 执行，不接受参数或附件。立即 RPC 回答不是完成；进度来自 `contextCompaction`，手动压缩以对应 `turn/completed` 的成功、失败或中断结算，取消用原有 `turn/interrupt` 并等待真实结算。自动压缩以自身 `item/completed` 为成功证据；普通一轮结束却缺少这个完成事件时显示「压缩上下文结果未知」，不推断已完成。每次压缩的终态只通知一次。

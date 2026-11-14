@@ -342,6 +342,8 @@ Host 把第三方 Harness 插件的会话标为完全访问（L3）：Latch 无�
 
 ### Bridge 契约
 
+可选 `commandCatalogue({cwd, workspaceId?, folders?, modelRoute?, config?})` 只读上次实际会话报告，返回 `{sourceSessionId, catalogue}` 或 undefined，不启动或探测程序。sourceSessionId 仅供 Host 在异步查找后复查来源与草稿授权，不交给设备；目录不授当前能力或执行权限。只有声明 `projectFolders: 'all'` 的 Driver 收到完整 folders；实现此读取的 Driver 可收到 workspaceId 以隔离项目，但不会因此获得其他文件夹。旧插件无需实现。缓存边界见 [会话命令](HARNESSES.md#会话命令)。
+
 签名以 [bridge.ts](../packages/sdk/src/bridge.ts) 为准。
 
 **拒绝与「结果未知」。** 客户端把 5xx 当作结果未知、保留原 `requestId` 重试，只有错误码在 `NOT_ACCEPTED_5XX`（`@latch/protocol`：`agent-start-failed`、`agent-refused`、`agent-paused`、`agent-handshake-timeout`、`model-gateway-unavailable`、`agent-busy`、`audit-unavailable`、`presence-unavailable`）里的 5xx 例外：它们的意思是「什么都没有记下」，客户端丢弃 `requestId`、让人重新发送，Host 同时放下为这个请求保留的附件。Driver 的 `createTask`、`prompt` 只能在这一轮还没有记录（没有用户消息、没有回执、没有可能之后再发出的排队项）时抛这些码；已经记下任何东西之后失败，就用不在清单里的 5xx（例如 `storage-unavailable`），让客户端用同一个 `requestId` 重试。4xx（408 除外）同样表示没有接收。
