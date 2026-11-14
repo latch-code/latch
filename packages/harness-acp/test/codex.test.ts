@@ -189,6 +189,105 @@ describe('Codex over its app-server', () => {
     expect(detail.config?.find(option => option.category === 'model')?.currentValue).toBe('gpt-fake')
   })
 
+  it('runs /compact as an idle native operation and preserves a first-turn brief for the next message', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const brief = { segments: [{ source: 'user' as const, text: 'Keep the public plan.' }] }
+    const agentContext = { agent: { customAgentId: 'agt_slash' }, instructions: '', brief, revision: 'a'.repeat(64) }
+    const { launchHash } = await bridge.launchPreview!({ cwd: t.main })
+    const { sessionId: id } = await bridge.createTask({
+      prompt: '/compact',
+      requestId: rid(),
+      cwd: t.main,
+      expectedLaunchHash: launchHash,
+      agentContext,
+    })
+    const done = await settled(bridge, id)
+    expect(done.summary.status).toBe('idle')
+    expect(done.commands).toContainEqual(expect.objectContaining({ name: 'compact', idleOnly: true }))
+    expect(said(done, 'system')).toContain('Codex 已压缩上下文')
+    expect(done.messages.find(message => message.role === 'user')?.agentBrief).toBeUndefined()
+    expect(sent(await t.log(), 'turn/start')).toHaveLength(0)
+    expect(sent(await t.log(), 'thread/compact/start')).toHaveLength(1)
+    await bridge.prompt(id, 'Continue with the plan.', rid())
+    const next = await settled(bridge, id)
+    expect(next.messages.filter(message => message.role === 'user').at(-1)?.agentBrief).toEqual(brief)
+    expect(sent(await t.log(), 'turn/start')[0]!.params?.input).toEqual([
+      { type: 'text', text: 'Keep the public plan.', text_elements: [] },
+      { type: 'text', text: 'Continue with the plan.', text_elements: [] },
+    ])
+  })
+
+  it('does not settle a compact ACK or item completion before the actual cancelled turn', async () => {
+    const t = await computer({ FAKE_CODEX_COMPACT_HOLD: '1', FAKE_CODEX_INTERRUPT_MS: '120' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, '/compact')
+    await until(bridge, id, detail => said(detail, 'system').includes('正在压缩上下文'))
+    expect((await bridge.detail(id)).summary.status).toBe('running')
+    await bridge.cancel(id)
+    const done = await settled(bridge, id)
+    expect(done.summary.status).toBe('cancelled')
+    expect(said(done, 'system')).toContain('Codex 已取消压缩上下文')
+    expect(said(done, 'system')).not.toContain('Codex 已压缩上下文')
+    expect(sent(await t.log(), 'turn/interrupt')).toHaveLength(1)
+  })
+
+  it('keeps a failed compaction failed even when its item was completed', async () => {
+    const t = await computer({ FAKE_CODEX_COMPACT_FAIL: '1' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, '/compact')
+    const done = await settled(bridge, id)
+    expect(done.summary.status).toBe('failed')
+    expect(said(done, 'system')).toContain('Codex 压缩上下文失败')
+    expect(said(done, 'system')).not.toContain('Codex 已压缩上下文')
+  })
+
+  it.each([
+    ['mode', 'workspace-write'],
+    ['model', 'gpt-fake-mini'],
+    ['reasoning_effort', 'high'],
+  ])('refuses /compact after an unapplied %s change, then accepts after an ordinary turn', async (configId, value) => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo setup')
+    await settled(bridge, id)
+    await bridge.setConfig!(id, configId!, value!)
+    await bridge.prompt(id, '/compact', rid())
+    const refused = await settled(bridge, id)
+    expect(refused.summary.status).toBe('failed')
+    expect(said(refused, 'system')).toContain('与选择不一致')
+    expect(sent(await t.log(), 'thread/compact/start')).toHaveLength(0)
+    expect(sent(await t.log(), 'turn/start')).toHaveLength(1)
+    await bridge.prompt(id, 'echo apply settings', rid())
+    await settled(bridge, id)
+    await bridge.prompt(id, '/compact', rid())
+    const done = await settled(bridge, id)
+    expect(done.summary.status).toBe('idle')
+    expect(sent(await t.log(), 'thread/compact/start')).toHaveLength(1)
+  })
+
+  it('does not start compact when cancellation arrives while its native context is being read', async () => {
+    const t = await computer({ FAKE_CODEX_CONTEXT_MS: '250' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, '/compact')
+    await vi.waitFor(async () => expect(sent(await t.log(), 'thread/resume').some(entry => entry.params?.cwd === undefined)).toBe(true))
+    await bridge.cancel(id)
+    expect((await settled(bridge, id)).summary.status).toBe('cancelled')
+    expect(sent(await t.log(), 'thread/compact/start')).toHaveLength(0)
+    expect(sent(await t.log(), 'turn/interrupt')).toHaveLength(0)
+  })
+
+  it('rejects compact arguments without treating them as a model prompt', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, '/compact keep the plan')
+    const done = await settled(bridge, id)
+    expect(done.summary.status).toBe('failed')
+    expect(said(done, 'system')).toContain('不接受参数或附件')
+    expect(sent(await t.log(), 'turn/start')).toHaveLength(0)
+    expect(sent(await t.log(), 'thread/compact/start')).toHaveLength(0)
+  })
+
   it('gives the thread latch-browser as Codex config with paths only, and a fresh token file when it resumes', async () => {
     const leases: Array<{ token: string; tokenFile: string; closed: boolean }> = []
     const toolGateway: ToolGateway = {

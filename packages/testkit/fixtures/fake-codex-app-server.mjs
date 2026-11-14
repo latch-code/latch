@@ -649,7 +649,10 @@ function opened(record) {
     modelProvider: record.provider ?? 'openai',
     serviceTier: null,
     reasoningEffort: record.effort,
-    sandbox: {},
+    cwd: record.cwd,
+    approvalPolicy: record.policy?.approvalPolicy,
+    approvalsReviewer: record.policy?.approvalsReviewer,
+    sandbox: record.policy?.sandboxPolicy ?? {},
   }
 }
 
@@ -757,6 +760,16 @@ async function handle(method, params) {
         model: params.model ?? env.FAKE_CODEX_MODEL ?? 'gpt-fake',
         provider: providerId ?? 'openai',
         effort: 'medium',
+        policy: {
+          approvalPolicy: params.approvalPolicy,
+          approvalsReviewer: params.approvalsReviewer,
+          sandboxPolicy:
+            params.sandbox === 'read-only'
+              ? { type: 'readOnly', networkAccess: false }
+              : params.sandbox === 'workspace-write'
+                ? { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
+                : { type: 'dangerFullAccess' },
+        },
         createdAt: now(),
         updatedAt: now(),
         turns: [],
@@ -768,6 +781,7 @@ async function handle(method, params) {
       return opened(thread)
     }
     case 'thread/resume': {
+      if (params.cwd === undefined) await sleep(Number(env.FAKE_CODEX_CONTEXT_MS ?? 0))
       const found = threads()[params.threadId]
       if (!found) throw Object.assign(new Error(`no rollout found for thread id ${params.threadId}`), { code: -32600 })
       if (env.FAKE_CODEX_RESUME_ERROR) throw Object.assign(new Error(env.FAKE_CODEX_RESUME_ERROR), { code: -32600 })
@@ -791,11 +805,38 @@ async function handle(method, params) {
       const data = Object.values(threads()).filter(item => !wanted.length || wanted.includes(item.provider ?? 'openai'))
       return { data: data.map(shown), nextCursor: null, backwardsCursor: null }
     }
+    case 'thread/compact/start': {
+      if (!thread || params.threadId !== thread.id || turn) throw Object.assign(new Error('thread not idle'), { code: -32600 })
+      const running = { id: `turn-${randomUUID()}`, items: [], cancelled: false }
+      turn = running
+      setImmediate(async () => {
+        const item = { type: 'contextCompaction', id: `compact-${randomUUID()}` }
+        notify('turn/started', { threadId: thread.id, turn: { id: running.id, status: 'inProgress', items: [] } })
+        notify('item/started', { threadId: thread.id, turnId: running.id, item })
+        if (env.FAKE_CODEX_COMPACT_HOLD === '1')
+          await new Promise(resolve => {
+            running.interrupt = resolve
+          })
+        else await sleep(40)
+        notify('item/completed', { threadId: thread.id, turnId: running.id, item })
+        const status = running.cancelled ? 'interrupted' : env.FAKE_CODEX_COMPACT_FAIL === '1' ? 'failed' : 'completed'
+        turn = undefined
+        notify('turn/completed', {
+          threadId: thread.id,
+          turn: { id: running.id, status, error: status === 'failed' ? { message: 'Compaction model unavailable' } : null, items: [] },
+        })
+        running.settled?.()
+      })
+      return {}
+    }
     case 'turn/start': {
       if (!thread || params.threadId !== thread.id) throw Object.assign(new Error('thread not loaded'), { code: -32600 })
       if (turn) throw Object.assign(new Error('a turn is already running'), { code: -32600 })
       turn = { id: `turn-${randomUUID()}`, items: [], steered: [], policy: params, cancelled: false }
       if (params.model) thread.model = params.model
+      if (params.effort) thread.effort = params.effort
+      thread.policy = params
+      save(thread)
       const id = turn.id
       setImmediate(() => void runTurn(params.input))
       return { turn: { id, status: 'inProgress', items: [], error: null } }

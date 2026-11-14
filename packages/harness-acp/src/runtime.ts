@@ -3765,7 +3765,10 @@ export class AgentRuntime implements Bridge {
       // The agent forked its own record of the source: the Host's text record of it is not sent as well.
       if (fork?.native && run.seq === 1) run.prompt = run.prompt.slice(fork.prefixLength)
       const content = await promptBlocks(run.prompt, run.attachments ?? [], binding.live.capabilities, this.options.readAttachment)
-      const brief = this.state.tasks[run.taskId]?.acp.brief
+      // Native idle operations accept no message context. Keep the brief pending for the next ordinary prompt.
+      const named = /^\/(\S+)/u.exec(run.prompt)?.[1]
+      const nativeCommand = named !== undefined && binding.live.wire.idleCommands?.has(named)
+      const brief = nativeCommand ? undefined : this.state.tasks[run.taskId]?.acp.brief
       const blocks = brief ? [{ type: 'text', text: brief.segments.map(segment => segment.text).join('\n') }, ...content] : content
       if (run.cancelRequested) {
         status = 'cancelled'

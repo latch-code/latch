@@ -49,6 +49,9 @@ const RESERVED = new Set([
 export const CODEX_MODE_ID = 'mode'
 const MAX_MODEL_PAGES = 5
 const MAX_THREADS = 50
+const COMPACT = { name: 'compact', description: '把之前的对话总结成摘要，腾出上下文' }
+const compactInput = (blocks: z.infer<typeof promptParams>['prompt']) =>
+  blocks.some(block => block.type === 'text' && /^\/compact(?:\s|$)/u.test(block.text ?? ''))
 
 const MODES = CODEX_MODES
 type Mode = CodexMode
@@ -298,6 +301,8 @@ interface Pending {
  */
 interface Turn {
   id?: string
+  compact?: boolean
+  compactions?: Set<string>
   resolve(result: unknown): void
   reject(error: Error): void
   cancelled: boolean
@@ -325,6 +330,8 @@ interface McpCall {
 
 export class CodexWire implements AgentWire {
   readonly exited: Promise<ExitInfo>
+  readonly idleCommands = new Set([COMPACT.name])
+  private listedFor?: string
   private readonly process: AgentProcess
   private nextId = 0
   private readonly pending = new Map<number, Pending>()
@@ -762,15 +769,33 @@ export class CodexWire implements AgentWire {
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     this.assertSession(parsed.data.sessionId)
     if (this.turn) throw new RpcError(RPC.internal, 'A turn is already running')
+    if (this.listedFor !== this.threadId) {
+      this.listedFor = this.threadId
+      this.update({ sessionUpdate: 'available_commands_update', availableCommands: [COMPACT] })
+    }
+    const compact = compactInput(parsed.data.prompt)
+    if (compact && (parsed.data.prompt.length !== 1 || parsed.data.prompt[0]?.text?.trim() !== '/compact'))
+      throw new RpcError(RPC.invalidParams, 'Codex 的 /compact 不接受参数或附件。')
     const input = this.input(parsed.data.prompt)
     let turn!: Turn
     const done = new Promise<unknown>((resolve, reject) => {
-      turn = { resolve, reject, cancelled: false, commands: new Set(), threads: new Set() }
+      turn = { resolve, reject, cancelled: false, commands: new Set(), threads: new Set(), ...(compact ? { compact: true } : {}) }
     })
     this.turn = turn
     done.catch(() => {})
     let answer: unknown
     try {
+      if (compact) {
+        await this.assertCommandContext(timeoutMs)
+        if (this.turn !== turn) return done
+        // A cancellation while reading settings never starts a native operation.
+        if (turn.cancelled) {
+          this.finish(turn, () => turn.resolve({ stopReason: 'cancelled' }))
+          return done
+        }
+        await this.send('thread/compact/start', { threadId: this.threadId }, timeoutMs)
+        return done
+      }
       answer = await this.send(
         'turn/start',
         {
@@ -800,10 +825,32 @@ export class CodexWire implements AgentWire {
     return done
   }
 
+  /** Native operations have no per-turn overrides. Rejoining only reads the loaded thread's effective context. */
+  private async assertCommandContext(timeoutMs?: number): Promise<void> {
+    const actual = await this.send('thread/resume', { threadId: this.threadId, excludeTurns: true }, timeoutMs)
+    const expected = turnSettings(this.mode, this.cwd, this.folders)
+    if (
+      !isRecord(actual)
+      || !isRecord(actual.thread)
+      || actual.thread.id !== this.threadId
+      || actual.cwd !== this.cwd
+      || typeof actual.model !== 'string'
+      || actual.model !== this.model
+      || !Object.hasOwn(actual, 'reasoningEffort')
+      || actual.activePermissionProfile != null
+      || (actual.reasoningEffort ?? null) !== (this.effort ?? null)
+      || actual.approvalPolicy !== expected.approvalPolicy
+      || actual.approvalsReviewer !== expected.approvalsReviewer
+      || !isDeepStrictEqual(actual.sandbox, expected.sandboxPolicy)
+    )
+      throw new RpcError(RPC.invalidParams, 'Codex 当前上下文的模型、思考或权限与选择不一致。请先发送普通消息应用设置，再运行 /compact。')
+  }
+
   private async steer(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
     const parsed = promptParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     this.assertSession(parsed.data.sessionId)
+    if (compactInput(parsed.data.prompt)) throw new RpcError(RPC.invalidParams, '/compact 只能在本轮结束后运行。')
     const turn = this.turn
     if (!turn?.id || turn.cancelled) return { outcome: 'promptRequired' }
     try {
@@ -825,6 +872,13 @@ export class CodexWire implements AgentWire {
   private settle(status: unknown, error: unknown): void {
     const turn = this.turn
     if (!turn || turn.ending) return
+    for (const id of turn.compactions ?? [])
+      this.update({
+        sessionUpdate: 'compaction_update',
+        compactionId: id,
+        status: turn.cancelled || status === 'interrupted' ? 'cancelled' : status === 'completed' ? 'completed' : 'failed',
+        ...(isRecord(error) && typeof error.message === 'string' ? { error: error.message } : {}),
+      })
     const usage = turn.usage ? { usage: turn.usage } : {}
     const answer =
       status === 'interrupted' || (turn.cancelled && status !== 'failed')
@@ -926,6 +980,13 @@ export class CodexWire implements AgentWire {
   }
 
   private answer(turn: Turn, status: unknown, error: unknown): void {
+    for (const id of turn.compactions ?? [])
+      this.update({
+        sessionUpdate: 'compaction_update',
+        compactionId: id,
+        status: turn.cancelled || status === 'interrupted' ? 'cancelled' : status === 'completed' ? 'completed' : 'failed',
+        ...(isRecord(error) && typeof error.message === 'string' ? { error: error.message } : {}),
+      })
     const usage = turn.usage ? { usage: turn.usage } : {}
     if (status === 'failed') {
       // Codex's own word for a login the service no longer takes: the session asks for a login, as ACP's refusal does.
@@ -968,6 +1029,17 @@ export class CodexWire implements AgentWire {
     const done = phase === 'completed'
     const emit = (update: Record<string, unknown> & { sessionUpdate: string }) => this.emit(sessionId, this.marked(update, child))
     switch (item.type) {
+      case 'contextCompaction': {
+        if (child || !this.turn) return
+        const compactionId = clip(id, 256)
+        this.turn.compactions ??= new Set()
+        this.turn.compactions.add(compactionId)
+        // Manual compaction is one operation: its turn, not its item's lifecycle, supplies the outcome.
+        if (!done || !this.turn.compact)
+          emit({ sessionUpdate: 'compaction_update', compactionId, status: done ? 'completed' : 'in_progress' })
+        if (done && !this.turn.compact) this.turn.compactions.delete(compactionId)
+        return
+      }
       case 'agentMessage':
       case 'reasoning': {
         if (child || !done || this.streamed.has(id)) return
@@ -1216,6 +1288,7 @@ export class CodexWire implements AgentWire {
       }
       case 'item/started':
       case 'item/completed':
+        if (isRecord(params.item) && params.item.type === 'contextCompaction' && (!turn?.id || params.turnId !== turn.id)) return
         if (isRecord(params.item) && this.threadId)
           this.item(this.threadId, params.item, method === 'item/started' ? 'started' : 'completed', undefined, mcp)
         return
