@@ -368,14 +368,14 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
       const { devices } = await owner.json<{ devices: Device[] }>('devices')
       const enrolled = devices.find(item => item.name === '重试外观的浏览器')!
       const alternate = devices.find(item => item.name === '另一台浏览器')!
-      const originalCookies = await context.cookies(`${host.origin}/link/`)
-      const alternateCookies = await other.context.cookies(`${host.origin}/link/`)
+      const snapshotUrl = new URL('/link/api/snapshot', page.url()).href
+      const originalCookies = await context.cookies(snapshotUrl)
+      const alternateCookies = await other.context.cookies(snapshotUrl)
       const selectDevice = async (cookies: Cookie[], id: string) => {
         // The same mounted App sees an authenticated snapshot for a different device.
         await context.addCookies(cookies)
         const selected = page.waitForResponse(
-          async response =>
-            response.url().endsWith('/link/api/snapshot') && response.ok() && ((await response.json()) as AppSnapshot).device.id === id,
+          async response => response.url() === snapshotUrl && response.ok() && ((await response.json()) as AppSnapshot).device.id === id,
         )
         await page.evaluate(() => window.dispatchEvent(new Event('online')))
         await selected
