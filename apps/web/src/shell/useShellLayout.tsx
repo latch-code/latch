@@ -524,7 +524,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     !!summary
     && (!entries.includes('agents')
       || spaceOf(summary) === 'code'
-      || canBrowseFiles
+      || (canBrowseFiles && summary.mode !== 'chat')
       || canViewChanges
       || canDeliver
       || canBrowser
