@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, memo, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Eraser, RotateCcw } from 'lucide-react'
 import {
   splitChangeNote,
@@ -37,6 +37,7 @@ import {
   type WorkItem,
 } from '../conversation.ts'
 import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
+import { ReplyViewport } from '../MessageContent.tsx'
 import type { LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { TurnCards } from '../conversation/TurnCards.tsx'
 import { RunEndNote, StatusLine, type StatusLineProps } from '../conversation/StatusLine.tsx'
@@ -192,6 +193,7 @@ function WorkRow({ item, context, onRetry }: { item: WorkItem; context: RowConte
 interface TurnViewProps {
   turn: Turn
   context: RowContext
+  replyViewport?: RefObject<Element | null>
   /** Stands in for the Harness in what the status says, and beside it on the author line: only the demo model does. */
   engine?: string
   harnessName: string
@@ -383,6 +385,7 @@ function OutcomeRecord({ turn, outcome, onRetry }: { turn: Turn; outcome: TurnOu
 const TurnView = memo(function TurnView({
   login,
   turn,
+  replyViewport,
   engine,
   harnessName,
   speaker,
@@ -510,14 +513,15 @@ const TurnView = memo(function TurnView({
             if (block.kind === 'prose') {
               const streaming = block.message.id === rowContext.streamingId
               return (
-                <MessageRow
-                  key={block.message.id}
-                  message={block.message}
-                  streaming={streaming}
-                  observeStream={rowContext.observeStream === true}
-                  frozen={rowContext.frozen}
-                  coarse={rowContext.coarse}
-                />
+                <ReplyViewport.Provider key={block.message.id} value={replyViewport}>
+                  <MessageRow
+                    message={block.message}
+                    streaming={streaming}
+                    observeStream={rowContext.observeStream === true}
+                    frozen={rowContext.frozen}
+                    coarse={rowContext.coarse}
+                  />
+                </ReplyViewport.Provider>
               )
             }
             if (block.kind === 'note') {
@@ -669,6 +673,8 @@ const TurnView = memo(function TurnView({
 interface TranscriptProps {
   detail: TaskDetail
   projection?: TranscriptProjection
+  /** The known nearest scrollport for ordinary reply Markdown. */
+  replyViewport?: RefObject<Element | null>
   approvals: Approval[]
   /** This device's approval buttons; omitted, every offered option is shown. */
   harnessName: string
@@ -726,6 +732,7 @@ export function Transcript(props: TranscriptProps) {
   const {
     login,
     detail,
+    replyViewport,
     approvals,
     harnessName,
     speaker,
@@ -871,6 +878,7 @@ export function Transcript(props: TranscriptProps) {
         <TurnView
           key={turn.key}
           turn={turn}
+          replyViewport={replyViewport}
           context={{
             sessionId,
             approvals: ownApprovals,

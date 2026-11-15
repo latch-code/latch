@@ -274,6 +274,7 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
                       detail={current}
                       observeStream={showTranscript && frozenAt === undefined}
                       projection={projection}
+                      replyViewport={reading.containerRef}
                       onSource={choose}
                       failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
                       onFailureStep={step => takeFailureStep(step, openSettings)}

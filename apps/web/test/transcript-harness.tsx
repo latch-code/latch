@@ -108,6 +108,7 @@ function Harness() {
             <Transcript
               detail={detail}
               projection={projection}
+              replyViewport={reading.containerRef}
               approvals={detail.approvals ?? none}
               harnessName="夹具"
               active={detail.summary.status === 'running' || detail.summary.status === 'waiting-approval'}
