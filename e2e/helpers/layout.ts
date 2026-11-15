@@ -122,7 +122,7 @@ const mainNavigation = (page: Page) => page.getByRole('navigation', { name: '主
 // Persistent desktop / tablet chrome precedes the drawer in DOM order; a closing drawer can still be painted for a frame.
 const entryButton = (page: Page, name: string) =>
   page
-    .locator('.workbench-nav, .workbench-tablet-rail')
+    .locator('.workbench-nav, .workbench-tablet-rail, .workbench-phone-heading')
     .getByRole('button', { name, exact: true })
     .or(mainNavigation(page).getByRole('button', { name, exact: true }))
     .filter({ visible: true })
@@ -151,9 +151,10 @@ export async function openEntry(page: Page, name: string): Promise<void> {
   }
   if (await page.locator('.settings-page').isVisible()) return
   await settleShell(page)
-  await backToPhoneSessions(page)
-  const phone = await isPhone(page)
-  if (!phone && !(await entryButton(page, name).isVisible())) await footInReach(page)
+  if (!(await entryButton(page, name).isVisible())) {
+    if (await isPhone(page)) await backToPhoneSessions(page)
+    else await footInReach(page)
+  }
   const button = entryButton(page, name)
   await reachable(button)
   await button.click()

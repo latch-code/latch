@@ -324,19 +324,26 @@ describe('the v8 work canvas in both layouts', () => {
             await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
           }
 
-          // Settings replaces the work canvas, keeping its own navigation and every content edge in the window.
+          // Settings owns both columns and keeps the original canvas under the dialog.
+          const beforeSettings = await canvas(page)
           await openEntry(page, '设置')
-          await page.locator('.settings-page .settings-content').waitFor()
-          await page.locator('.settings-page .ui-loading').waitFor({ state: 'detached' })
+          const settings = page.locator('.settings-overlay:modal')
+          await settings.locator('.settings-content').waitFor()
+          await settings.locator('.ui-loading').waitFor({ state: 'detached' })
           await settleShell(page)
-          const nav = await page.locator('.settings-nav-pane').evaluate(element => element.getBoundingClientRect().right)
-          const content = await page.locator('.settings-panel').evaluate(element => element.getBoundingClientRect().toJSON() as Rect)
+          const overlay = await settings.evaluate(element => element.getBoundingClientRect().toJSON() as Rect)
+          const nav = await settings.locator('.settings-nav-pane').evaluate(element => element.getBoundingClientRect().right)
+          const content = await settings.locator('.settings-panel').evaluate(element => element.getBoundingClientRect().toJSON() as Rect)
+          expect(overlay.left).toBeGreaterThan(0)
+          expect(overlay.right).toBeLessThan(width)
+          expect(overlay.bottom).toBeLessThan(height)
           expect(Math.round(content.left)).toBe(Math.round(nav))
-          expect(Math.round(content.right)).toBe(width)
-          expect(Math.round(content.bottom)).toBe(height)
+          expect(Math.round(content.right)).toBe(Math.round(overlay.right - 1))
+          expect(Math.round(content.bottom)).toBe(Math.round(overlay.bottom - 1))
           await noHorizontalOverflow(page)
           await capture('settings')
           await openSessions(page)
+          expect(await canvas(page)).toEqual(beforeSettings)
         })
 
   it('slides no track with reduced motion, and glides it otherwise', async () => {

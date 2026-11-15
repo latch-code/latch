@@ -242,6 +242,15 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       }
       const places: Array<{ x: number; y: number; width: number; height: number }> = [await place()]
       await nowhere()
+      const retainedTranscript = await transcript.elementHandle()
+      if (!retainedTranscript) throw new Error('The conversation has no transcript')
+      await generalSettings(page)
+      await sameComposer()
+      expect(await retainedTranscript.evaluate(element => element.isConnected)).toBe(true)
+      expect(Math.abs((await retainedTranscript.evaluate(element => element.scrollTop)) - reading)).toBeLessThanOrEqual(2)
+      await closeSettings(settings)
+      await sameSession()
+      expect(await transcript.evaluate((element, retained) => element === retained, retainedTranscript)).toBe(true)
       // The key, from the input: the same input keeps the focus and its text.
       await input.focus()
       await page.keyboard.press('Alt+Shift+L')
@@ -374,8 +383,16 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
           await reachable(navigation.getByRole('button', { name, exact: true }))
         }
         await navigation.getByRole('button', { name: label, exact: true }).click()
-        await expect.poll(() => page.locator('.app-shell').getAttribute('data-entry')).toBe(entry)
-        await expect.poll(() => page.locator('.workbench-home').isVisible()).toBe(entry === 'sessions')
+        if (entry === 'settings') {
+          await page.locator('.settings-overlay:modal').waitFor()
+          expect(await page.locator('.app-shell').getAttribute('data-entry')).toBe('sessions')
+          expect(await home.isVisible()).toBe(true)
+          await closeSettings(settings)
+          await reachable(navigation.getByRole('button', { name: '设置', exact: true }))
+        } else {
+          await expect.poll(() => page.locator('.app-shell').getAttribute('data-entry')).toBe(entry)
+          await expect.poll(() => home.isVisible()).toBe(entry === 'sessions')
+        }
         if (entry === 'sessions') {
           await reachable(page.getByRole('button', { name: '全部会话', exact: true }))
           expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
