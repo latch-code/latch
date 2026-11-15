@@ -16,13 +16,20 @@
   box-shadow: var(--sh-dialog);
 }
 .settings-page {
+  min-width: 0;
+  min-height: 0;
+  background: var(--canvas);
+}
+/* My Agents and Apps use the shared two-column page outside the dialog. */
+.app-shell > .settings-page {
+  grid-area: 2 / 1 / 3 / -1;
+  z-index: 5;
+}
+.settings-overlay .settings-page {
   --entry-nav-width: clamp(200px, 26vw, 232px);
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-width: 0;
-  min-height: 0;
-  background: var(--canvas);
 }
 .settings-overlay-header {
   display: flex;
@@ -40,7 +47,7 @@
   line-height: var(--lh-heading);
   font-weight: 600;
 }
-.settings-page > .settings-layout {
+.settings-overlay .settings-page > .settings-layout {
   flex: 1;
   height: auto;
 }
@@ -88,8 +95,8 @@
   align-content: start;
   gap: 1px;
 }
-.settings-page .settings-nav,
-.settings-page .settings-search {
+.settings-overlay .settings-nav,
+.settings-overlay .settings-search {
   width: auto;
 }
 /* A device without 管理此 Host: one quiet line under the sections says what is hidden and where to grant it. */
@@ -158,6 +165,18 @@
   min-height: 0;
   overflow: clip;
   background: var(--canvas);
+}
+@media (min-width: 768px) {
+  .app-shell > .settings-page,
+  .app-shell > .settings-page .settings-nav-pane {
+    background: transparent;
+    box-shadow: none;
+  }
+  .app-shell > .settings-page .settings-panel {
+    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) max(0px, var(--shell-inset) - var(--entry-nav-width));
+    border-radius: 0 0 var(--r-12) var(--r-12);
+    background: transparent;
+  }
 }
 /* The open section's name, above its content (a page inside it names itself under its way back). */
 .settings-title {
@@ -237,6 +256,13 @@
   display: none;
 }
 @media (max-width: 767.98px) {
+  .app-shell > .settings-page {
+    position: absolute;
+    inset: 0 0 var(--phone-tabs-height);
+  }
+  .app-shell > .settings-page:has(.settings-layout:not([data-level='root'])) {
+    bottom: 0;
+  }
   .settings-overlay.ui-modal-page {
     width: 100vw;
     height: 100dvh;
@@ -249,7 +275,7 @@
   .settings-overlay-header {
     padding-top: calc(var(--sp-4) + env(safe-area-inset-top));
   }
-  .settings-page .settings-bar {
+  .settings-overlay .settings-bar {
     padding-top: var(--sp-4);
   }
   .settings-layout {

@@ -129,6 +129,7 @@ const entryButton = (page: Page, name: string) =>
     .first()
 
 const isPhone = async (page: Page) => (await page.locator('.phone-tabs').count()) > 0
+const settingsPage = (page: Page) => page.locator('.settings-overlay .settings-page')
 
 /** The foot stands in the sidebar: away from a page, and on a tablet inside its drawer. */
 async function footInReach(page: Page): Promise<void> {
@@ -146,10 +147,10 @@ async function footInReach(page: Page): Promise<void> {
 export async function openEntry(page: Page, name: string): Promise<void> {
   if (name !== '设置') {
     await openEntry(page, '设置')
-    await openSection(page.locator('.settings-page'), name)
+    await openSection(settingsPage(page), name)
     return
   }
-  if (await page.locator('.settings-page').isVisible()) return
+  if (await settingsPage(page).isVisible()) return
   await settleShell(page)
   if (!(await entryButton(page, name).isVisible())) {
     if (await isPhone(page)) await backToPhoneSessions(page)
@@ -162,13 +163,13 @@ export async function openEntry(page: Page, name: string): Promise<void> {
 
 /** Back to the workbench from the settings panel. */
 export async function openSessions(page: Page): Promise<void> {
-  await closeSettings(page.locator('.settings-page'))
+  await closeSettings(settingsPage(page))
 }
 
 /** Returns the opened 设置 page, on its 设备 section when `section` names it. */
 export async function openSettings(page: Page, section: '设置' | '设备' = '设置'): Promise<Locator> {
   await openEntry(page, '设置')
-  const settings = page.locator('.settings-page')
+  const settings = settingsPage(page)
   await settings.waitFor()
   if (section === '设备') await openSection(settings, '设备')
   return settings
@@ -218,8 +219,9 @@ export async function openSection(settings: Locator, name: string): Promise<void
 
 /** Closes the whole panel from any settings level. */
 export async function closeSettings(settings: Locator): Promise<void> {
-  await settings.getByRole('button', { name: '关闭设置', exact: true }).click()
-  await settings.waitFor({ state: 'detached' })
+  const panel = settings.and(settingsPage(settings.page()))
+  await panel.getByRole('button', { name: '关闭设置', exact: true }).click()
+  await panel.waitFor({ state: 'detached' })
 }
 
 /** The selected file tab goes the way a keyboard closes it: its × only shows under the pointer. */
