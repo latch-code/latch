@@ -175,10 +175,11 @@ async function rows(application: ElectronApplication) {
   return application.evaluate(() => (Reflect.get(globalThis, 'notificationFixture') as MainFixture).shown)
 }
 async function focus(application: ElectronApplication, focused: boolean) {
-  await application.evaluate(({ BrowserWindow }, selected) => {
+  await application.evaluate(({ app, BrowserWindow }, selected) => {
     const window = BrowserWindow.getAllWindows()[0]!
     if (selected) {
       window.show()
+      app.focus({ steal: true })
       window.focus()
     } else window.hide()
   }, focused)
