@@ -39,6 +39,7 @@ async function fullScopeBrowser(page: Page, host: TestHost, owner: TestDevice, n
   expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
   await page.reload()
   await connected(page)
+  return id
 }
 
 /** The page has stopped moving: a pushed level has slid (or faded) in. */
@@ -748,7 +749,7 @@ it('decides a topic’s approval from the space’s 总览, raises the toast onl
   }
 })
 
-it('opens the Agent row actions by keyboard and retries a lost deletion response without removing its chat', async () => {
+it('opens the Agent row actions by keyboard and retries a lost deletion response after navigation and scope changes', async () => {
   await mkdir(OUT, { recursive: true })
   const host = await startTestHost({ plugins: [fixture] })
   const browser = await chromium.launch(browserLaunchOptions())
@@ -772,7 +773,7 @@ it('opens the Agent row actions by keyboard and retries a lost deletion response
     })
     await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
     const page = await context.newPage()
-    await fullScopeBrowser(page, host, owner, 'Agent 行操作')
+    const deviceId = await fullScopeBrowser(page, host, owner, 'Agent 行操作')
     await place(page, '我的 Agent').click()
     const more = (name: string) =>
       agentsNav(page)
@@ -786,13 +787,26 @@ it('opens the Agent row actions by keyboard and retries a lost deletion response
     await page.keyboard.press('Escape')
 
     const writes: string[] = []
+    const previous = (await owner.json<AppSnapshot>('snapshot')).customAgents!.find(row => row.id === agent.id)!
+    let holdOldList = true
+    await page.route('**/link/api/snapshot', async route => {
+      const response = await route.fetch()
+      if (holdOldList && response.ok()) {
+        const snapshot = (await response.json()) as AppSnapshot
+        if (snapshot.customAgents?.every(row => row.id !== agent.id)) {
+          await route.fulfill({ response, json: { ...snapshot, customAgents: [...snapshot.customAgents, previous] } })
+          return
+        }
+      }
+      await route.fulfill({ response })
+    })
     await page.route(`**/link/api/custom-agents/${agent.id}`, async route => {
       if (route.request().method() !== 'DELETE') return route.continue()
       writes.push(String(route.request().postDataJSON().requestId))
+      if (writes.length === 2) holdOldList = false
       const response = await route.fetch()
       expect(response.ok()).toBe(true)
-      if (writes.length === 1) await route.abort('failed')
-      else await route.fulfill({ response })
+      await route.abort('failed')
     })
     await more(agent.name).focus()
     await page.keyboard.press('Enter')
@@ -809,8 +823,24 @@ it('opens the Agent row actions by keyboard and retries a lost deletion response
     await more(agent.name).click()
     await menu.getByRole('menuitem', { name: '删除 Agent' }).click()
     await confirm.getByRole('button', { name: '删除', exact: true }).click()
-    await confirm.getByRole('button', { name: '重试同一请求', exact: true }).click()
+    await confirm.getByRole('button', { name: '重试同一请求', exact: true }).waitFor()
+    await confirm.getByRole('button', { name: '取消', exact: true }).click()
     await confirm.waitFor({ state: 'hidden' })
+    await place(page, 'Code').click()
+    await agentsNav(page).waitFor({ state: 'hidden' })
+    await place(page, '我的 Agent').click()
+    const retry = agentsNav(page).getByRole('button', { name: '重试同一请求', exact: true }).filter({ visible: true })
+    await retry.waitFor({ timeout: 6000 })
+    const abandon = agentsNav(page).getByRole('button', { name: '放弃等待', exact: true }).filter({ visible: true })
+    await abandon.waitFor()
+    expect((await owner.confirmed(`devices/${deviceId}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
+    await agentsNav(page).getByText('这台设备看不到 Agent', { exact: true }).first().waitFor()
+    await retry.waitFor({ state: 'hidden' })
+    await abandon.waitFor({ state: 'hidden' })
+    expect((await owner.confirmed(`devices/${deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+    await retry.click()
+    await more(agent.name).waitFor({ state: 'hidden' })
+    await retry.waitFor({ state: 'hidden' })
     expect(writes).toHaveLength(2)
     expect(writes[1]).toBe(writes[0])
     expect((await owner.json<CustomAgentList>('custom-agents')).agents.find(item => item.id === agent.id)).toBeUndefined()

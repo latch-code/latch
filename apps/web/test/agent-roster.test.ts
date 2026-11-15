@@ -345,6 +345,7 @@ describe('what the rows draw', () => {
       now: Date.UTC(2026, 10, 14, 10, 0),
       preferences: { workbenchLayout: layout },
       access: { scopes: new Set(['run', 'view']) },
+      agentRemovals: { state: null, held: false, saving: false },
       ...extra,
     }) as unknown as ShellState
   const list = (layout: 'overview' | 'triage', extra: Partial<ShellState> = {}, rail = false) =>

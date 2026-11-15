@@ -36,11 +36,25 @@ export function TakesEffect({ label = '何时生效' }: { label?: string }) {
 }
 
 /** A write's state under its form: saving, refused, changed meanwhile, or unknown with a retry of the same request. */
-export function WriteNotice({ state, onRetry, onReload }: { state: WriteState | null; onRetry: () => void; onReload?: () => void }) {
+export function WriteNotice({
+  state,
+  onRetry,
+  onReload,
+  onAbandon,
+}: {
+  state: WriteState | null
+  onRetry: () => void
+  onReload?: () => void
+  onAbandon?: () => void
+}) {
   if (!state || !('kind' in state)) return null
   if (state.kind === 'unknown')
     return (
-      <InlineNotice tone="warn" title="结果未知" action={state.unreplayable ? undefined : <Button onClick={onRetry}>重试同一请求</Button>}>
+      <InlineNotice
+        tone="warn"
+        title="结果未知"
+        action={state.unreplayable ? undefined : <Button onClick={onRetry}>重试同一请求</Button>}
+        {...(onAbandon ? { onClose: onAbandon, closeLabel: '放弃等待' } : {})}>
         <span>{state.message}</span> <span className="agent-request-id">{state.write.body.requestId}</span>
       </InlineNotice>
     )

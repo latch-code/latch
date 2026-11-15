@@ -44,7 +44,7 @@ import {
 } from './panelLayout.ts'
 import { backRoute, initialRoute, readHomeShown, useSpaces, writeHomeShown } from './spaces.ts'
 import { visibleEntries, type AgentPageTarget, type AppTarget, type MyAgentTarget, type ShellEntry, type ShellRoute } from './routes.ts'
-import { useDelegation } from '../agents/useAgentWrites.ts'
+import { useAgentRemoval, useDelegation } from '../agents/useAgentWrites.ts'
 import { openAgent, topicOwner, type ProfileSection } from '../agents/chat.ts'
 import type { SchedulePrefill } from '../agents/activity.ts'
 import { askDelegateFocus } from '../agents/delegateFocus.ts'
@@ -312,6 +312,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const delegation = useDelegation(snapshot, refresh, text => {
     setToast({ text, tone: 'error' })
   })
+  const agentRemovals = useAgentRemoval(snapshot, readsAgents(snapshot) && access.scopes.has('view') && access.scopes.has('run'), refresh)
   // Back on the conversation (from a page, or a tab shown again): its approval cards arm again before they take a press.
   const conversationVisible = route.entry === 'sessions' && !route.overview && !route.allSessions
   const wasConversationVisible = useRef(conversationVisible)
@@ -1786,6 +1787,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     openApp,
     frameShortcut,
     delegation,
+    agentRemovals,
     openProjectSettings,
     openSearch,
     searchShortcut,

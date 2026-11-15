@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import { GENERAL_AGENT_ID, type CustomAgentSummary, type TaskSummary } from '@latch/protocol'
 import {
@@ -24,7 +24,6 @@ import { startBlock } from '../composerChoice.ts'
 import { relativeTime } from '../format.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { WriteNotice } from './AgentForm.tsx'
-import { useAgentWrites } from './useAgentWrites.ts'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import type { AvatarState } from './avatarFace.ts'
 import { ownerName, topicOwner } from './chat.ts'
@@ -214,10 +213,10 @@ export function AgentsSpaceList({ shell, rail = false }: { shell: ShellState; ra
   const canRun = shell.access.scopes.has('run') && !locked
   const offline = connection === 'offline'
   const archived = snapshot.tasks.filter(task => task.archived && topicOwner(task)).length
-  const [removing, setRemoving] = useState<Pick<RosterRow, 'id' | 'name'> | null>(null)
-  const refresh = shell.refresh
-  const writes = useAgentWrites(useCallback(() => void refresh(), [refresh]))
-  const canDelete = canRun && shell.access.scopes.has('view') && snapshot.device.dataScope === 'all'
+  const [removal, setRemoving] = useState<Pick<RosterRow, 'id' | 'name'> | null>(null)
+  const writes = shell.agentRemovals
+  const canDelete = canRun && shell.access.scopes.has('view')
+  const removing = removal && snapshot.customAgents?.every(agent => agent.id !== removal.id) !== true ? removal : null
   const menu: AgentRowMenu = row => {
     if (row.gone || row.confirming) return null
     return (
@@ -312,7 +311,9 @@ export function AgentsSpaceList({ shell, rail = false }: { shell: ShellState; ra
           <span className="archived-count">{archived}</span>
         </button>
       )}
-      {canDelete && writes.held && !removing && <WriteNotice state={writes.state} onRetry={() => void writes.retry()} />}
+      {canDelete && writes.held && !removing && (
+        <WriteNotice state={writes.state} onRetry={() => void writes.retry()} onAbandon={writes.clear} />
+      )}
       {canDelete && removing && (
         <ConfirmDialog
           title={`删除「${removing.name}」？`}
