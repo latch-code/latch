@@ -424,7 +424,9 @@ describe('composer choice', () => {
   it('keeps a configured service and a shared wider permission value with the Harness that picked them', () => {
     const local = { legacy: false, local: true }
     const engines = ['qwen', 'opencode'].map(id => {
-      const engine = testHarness(id, { permission: { startMode: 'default', modes: ['default', 'yolo'] } })
+      const engine = testHarness(id, {
+        permission: { approvals: 'prompts', readback: 'mode', startMode: 'default', modes: ['default', 'yolo'] },
+      })
       return {
         ...engine,
         capabilities: { ...engine.capabilities, models: { ...engine.capabilities.models, wires: ['chat-completions' as const] } },

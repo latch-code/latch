@@ -87,9 +87,18 @@ it('holds renamed setup choices and completion until their settings directory en
 })
 
 it('keeps a queued implicit start on the same Harness as its saved gateway', async () => {
-  const entered = Promise.withResolvers<void>()
-  const held = Promise.withResolvers<void>()
-  const resolvingDefault = Promise.withResolvers<void>()
+  let enter!: () => void
+  let release!: () => void
+  let resolveDefault!: () => void
+  const entered = new Promise<void>(done => {
+    enter = done
+  })
+  const held = new Promise<void>(done => {
+    release = done
+  })
+  const resolvingDefault = new Promise<void>(done => {
+    resolveDefault = done
+  })
   const a = 'setup-engine-a'
   const b = 'setup-engine-b'
   let watching = false
@@ -107,7 +116,7 @@ it('keeps a queued implicit start on the same Harness as its saved gateway', asy
           version: '1',
           capabilities: { models: { owner: 'harness', wires: ['chat-completions'] } },
           status() {
-            if (id === a && watching) resolvingDefault.resolve()
+            if (id === a && watching) resolveDefault()
             return { status: 'ready' }
           },
           create: () => ({
@@ -120,8 +129,8 @@ it('keeps a queued implicit start on the same Harness as its saved gateway', asy
             async createTask(input) {
               starts.push({ harnessId: id, prompt: input.prompt, route: input.modelRoute })
               if (input.prompt === 'Hold') {
-                entered.resolve()
-                await held.promise
+                enter()
+                await held
               }
               return { sessionId: randomUUID() }
             },
@@ -173,7 +182,7 @@ it('keeps a queued implicit start on the same Harness as its saved gateway', asy
   let queued: ReturnType<typeof start> | undefined
   try {
     await Promise.race([
-      entered.promise,
+      entered,
       first.then(async reply => {
         throw new Error(`The fixture driver did not receive the held start (${reply.status}).`)
       }),
@@ -181,7 +190,7 @@ it('keeps a queued implicit start on the same Harness as its saved gateway', asy
     watching = true
     queued = start('Queued')
     await Promise.race([
-      resolvingDefault.promise,
+      resolvingDefault,
       queued.then(reply => {
         throw new Error(`The start did not wait in the project queue (${reply.status}).`)
       }),
@@ -190,7 +199,7 @@ it('keeps a queued implicit start on the same Harness as its saved gateway', asy
     expect(starts.map(item => item.prompt)).toEqual(['Hold'])
     expect((await choose({ harnessId: b })).status).toBe(200)
   } finally {
-    held.resolve()
+    release()
   }
   expect((await first).status).toBe(201)
   const started = await queued!
