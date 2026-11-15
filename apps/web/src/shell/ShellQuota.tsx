@@ -3,6 +3,7 @@ import { ChartNoAxesColumn } from 'lucide-react'
 import { CloseGlyph, Icon, IconButton, Sheet } from '@latch/ui'
 import type { HarnessInfo } from '@latch/protocol'
 import { HarnessTile } from '../components/BrandTile.tsx'
+import { harnessName } from '../composerChoice.ts'
 import { QuotaPanel } from '../composer/HarnessQuota.tsx'
 import { quotaView } from '../composer/harnessQuota.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
@@ -38,10 +39,10 @@ function QuotaContents({ harnesses, offline }: { harnesses: readonly HarnessInfo
       {offline && <p className="host-quota-note">连接中断，显示上次收到的额度。</p>}
       {reports.length === 0 && <p className="host-quota-note">尚未收到有效额度。</p>}
       {reports.map(({ harness, view }) => (
-        <section className="host-quota-harness" key={harness.id} aria-label={harness.name}>
+        <section className="host-quota-harness" key={harness.id} aria-label={harnessName(harness)}>
           <h3>
             <HarnessTile harness={harness} size={20} />
-            {harness.name}
+            {harnessName(harness)}
           </h3>
           {view.state === 'limited' && view.rows.every(row => row.state !== 'limited') && <p className="host-quota-limit">额度已用尽</p>}
           <QuotaPanel view={view} showUsed />
