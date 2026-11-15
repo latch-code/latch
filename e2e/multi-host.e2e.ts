@@ -389,8 +389,11 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         })
         await openSessions(page)
         const elsewhere = page.locator(`[data-computer-item="${bId}"]`)
-        await elsewhere.locator(`[data-attention-task="${waitingId}"]`).waitFor()
-        await elsewhere.getByText(bName, { exact: true }).waitFor()
+        const waitingRow = elsewhere
+          .getByRole('button', { name: new RegExp(bName, 'u') })
+          .and(elsewhere.locator(`[data-attention-task="${waitingId}"]`))
+        await waitingRow.waitFor()
+        expect(await waitingRow.getAttribute('title')).toBe(`${bName} · ${waitingTitle}`)
         await page.locator('.other-computers-label').getByText('其他电脑', { exact: true }).waitFor()
         await page.locator('.sidebar-host-menu').click()
         const menu = page.getByRole('menu', { name: '电脑' })
@@ -413,7 +416,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         await openSessions(page)
 
         // Clicking it brings B's window forward on that session, where the request waits.
-        await elsewhere.locator(`[data-attention-task="${waitingId}"]`).click()
+        await waitingRow.click()
         await vi.waitFor(async () =>
           expect(
             await app.evaluate(
