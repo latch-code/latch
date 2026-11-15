@@ -945,6 +945,48 @@ describe('streaming render', () => {
       return row.top >= track.top - 1 && row.bottom <= track.bottom + 1
     })
 
+  it('remeasures the rail for a different marker order, and not for a reply settling in the same turn', async () => {
+    await open()
+    const messages = [...prose(299, 1), { id: 'user-live', role: 'user', text: '继续检查' }] satisfies Message[]
+    const liveId = 'reply-live'
+    const liveText = '当前回复的文本'
+    await show(detail(messages, { running: true, liveText, liveId }))
+    const reply = page.locator(`[data-message-id="${liveId}"] .message-content`)
+    await expect.poll(() => reply.getAttribute('aria-busy')).toBe('true')
+    const track = page.locator('.conversation-rail-track')
+    const current = track.locator('[aria-current="true"]')
+    await expect.poll(() => markerInView(current)).toBe(true)
+    expect(await current.getAttribute('value')).toBe('user-live')
+    await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
+    const measures = await track.evaluateHandle(element => {
+      const reads = { count: 0 }
+      const original = element.getBoundingClientRect.bind(element)
+      element.getBoundingClientRect = () => {
+        reads.count++
+        return original()
+      }
+      return reads
+    })
+
+    const settled: Message[] = [...messages, { id: liveId, role: 'assistant', text: liveText }]
+    await show(detail(settled, { cursor: 2 }))
+    await expect.poll(() => reply.getAttribute('aria-busy')).toBeNull()
+    expect((await measures.jsonValue()).count).toBe(0)
+    expect(await current.getAttribute('value')).toBe('user-live')
+    expect(await markerInView(current)).toBe(true)
+
+    // The target index and the number of marks stay the same when earlier turns are reordered.
+    await track.evaluate(element => {
+      element.scrollTop = 0
+    })
+    await show(detail([...settled.slice(2, 4), ...settled.slice(0, 2), ...settled.slice(4)], { cursor: 3 }))
+    await expect.poll(() => track.getByRole('button').first().getAttribute('value')).toBe('user-1')
+    expect((await measures.jsonValue()).count).toBeGreaterThan(1)
+    expect(await current.getAttribute('value')).toBe('user-live')
+    await expect.poll(() => markerInView(current)).toBe(true)
+    await measures.dispose()
+  })
+
   it('reaches the oldest turn by keyboard, previews independently, and restores each session’s marker', async () => {
     await open()
     const rail = page.getByRole('navigation', { name: '会话定位' })

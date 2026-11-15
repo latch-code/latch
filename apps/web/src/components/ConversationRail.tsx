@@ -34,7 +34,7 @@ function projectMarkers(turns: readonly Turn[]) {
     byMessage.set(target.id, index)
     for (const reply of turn.replies) byMessage.set(reply.id, index)
   }
-  return { markers, byMessage }
+  return { markers, byMessage, markerOrder: JSON.stringify(markers.map(marker => marker.id)) }
 }
 
 /** Only this scroller moves when changing which marks are in view. */
@@ -62,7 +62,7 @@ export const ConversationRail = memo(function ConversationRail({
   subscribeToReadingAnchor: (listener: () => void) => () => void
   onReveal: (messageId: string) => void
 }) {
-  const { markers, byMessage } = useMemo(() => projectMarkers(turns), [turns])
+  const { markers, byMessage, markerOrder } = useMemo(() => projectMarkers(turns), [turns])
   const visible = markers.length >= MIN_TURNS
   const readCurrentIndex = useCallback(() => {
     const anchor = getReadingMessageId()
@@ -81,6 +81,8 @@ export const ConversationRail = memo(function ConversationRail({
   const [focusPreview, setFocusPreview] = useState<HTMLButtonElement | null>(null)
   const trigger = hovered ?? focusPreview
   const excerpt = trigger ? markers[byMessage.get(trigger.value) ?? -1]?.excerpt : undefined
+  const tabIndex = (focused === null ? undefined : byMessage.get(focused)) ?? currentIndex ?? 0
+  const viewIndex = currentIndex ?? tabIndex
 
   const keepCurrentInView = useCallback(() => {
     const scroller = track.current
@@ -89,7 +91,8 @@ export const ConversationRail = memo(function ConversationRail({
       keepMarkerInView(scroller, current)
     }
   }, [])
-  useLayoutEffect(keepCurrentInView, [keepCurrentInView, currentIndex, markers])
+  // The rows are fixed-height. A reply can change the anchor lookup while leaving all marks in place.
+  useLayoutEffect(keepCurrentInView, [keepCurrentInView, viewIndex, markerOrder])
   useEffect(() => {
     const scroller = track.current
     if (!visible || !scroller) return
@@ -213,7 +216,6 @@ export const ConversationRail = memo(function ConversationRail({
   }
 
   if (!visible) return null
-  const tabIndex = (focused === null ? undefined : byMessage.get(focused)) ?? currentIndex ?? 0
   return (
     <nav
       className="conversation-rail"
