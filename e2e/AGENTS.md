@@ -11,11 +11,11 @@ Vitest 驱动浏览器、Electron 与原生；剪贴板回归用独立命名板�
 
 `desktop-native.e2e.ts` 检查 Mac 手机配置、系统确认接线、三宽浅深色和样式覆盖；只截无邀请的设置，生成的二维码不截图。
 `workbench-scroll.e2e.ts`、`workbench-keyboard.e2e.ts` 验证三宽队列、矮窗输入、审批菜单、键盘和焦点。截图见 TESTING。
-`desktop-terminal.e2e.ts` 使用假 shell 验证底部终端、并排右栏、拖动与键盘、会话和项目切换、刷新与关停确认。真实组件目录身份与退出由 Host Vitest 夹具验证。
+`desktop-terminal.e2e.ts` 用假 shell（TERMINAL）。
 
 `ios-app.e2e.ts` 用临时 DerivedData、固定依赖和禁签名的 iOS Simulator SDK 构建真实 App，检查 Mach-O 产物不含夹具身份；不启动模拟器或访问钥匙串。SDK 编译不能代替运行时布局、平台许可或真机验收。
 
-`changes-panel.e2e.ts` 和 `git-hunks.e2e.ts` 在临时仓库验证撤销、冲突、按行暂存、只读历史与回执。截图见 TESTING。
+`changes-panel.e2e.ts`、`git-hunks.e2e.ts` 用临时仓库验证撤销、冲突、按行暂存、只读历史与回执。
 
 `webkit.e2e.ts` 用 Playwright WebKit 检查三宽、授权文件与引用发送；不称为真机 Safari 验收。`desktop-models.e2e.ts` 在隔离 Electron 和假 ACP 中检查真实配置读回、失回执不重发及三宽菜单；不调用真实 Agent 或模型。
 
@@ -36,6 +36,6 @@ node 环境；Host、protocol、sdk、testkit、relay、link-client、link-wire�
 - 只用临时目录、端口 0、测试确认后端与本地假模型；Electron 用例另用临时 `--latch-user-data` 与 `--use-mock-keychain`。截图写入 `test-results/`，不含凭据。
 - 视觉截图每次运行结果相同：时钟、名称、内容与项目路径固定，画面中没有随机值。截图冻结用 `data-capture`，独立于 `data-motion`。改截取的状态或稳定措施前读 [docs/TESTING.md](../docs/TESTING.md#视觉截图)「视觉截图」。
 
-改动前读 [TESTING](../docs/TESTING.md#浏览器-e2e) 中的浏览器、视觉与 Electron 验收。
+改动前读 [TESTING](../docs/TESTING.md#浏览器-e2e) 的验收规则。
 
 `helper-home.e2e.ts`：假 ACP，家/默认项/人工任务，三宽深浅、权限失败与平板定时片；跨断点同表单/焦点/未知请求（CUSTOM-AGENTS）。
