@@ -161,7 +161,10 @@ it('finds real evidence on the home, decides there, and continues the original s
     const approval = home.locator(`[data-work-session="${sessions[1]}"]`)
     const question = home.locator(`[data-work-session="${sessions[2]}"]`)
     await approval.locator('.approval-panel').waitFor()
+    await home.locator(`[data-request-session="${sessions[2]}"]`).click()
     await question.locator('.question-card').waitFor()
+    await home.locator(`[data-request-session="${sessions[1]}"]`).click()
+    await approval.locator('.approval-panel').waitFor()
     // The row's second line is the evidence itself; the reason another session holds it back is behind 原因.
     await expect.poll(() => home.locator('[data-group="delivery"]').textContent(), { timeout: 10_000 }).toContain('未提交 1 个文件')
     expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain('目录未提交')
@@ -239,6 +242,8 @@ it('finds real evidence on the home, decides there, and continues the original s
     await page.setViewportSize({ width: 1440, height: 1000 })
     await page.getByRole('button', { name: '总览', exact: true }).click()
     await approval.locator('.approval-panel').waitFor()
+    await home.locator(`[data-request-session="${sessions[2]}"]`).click()
+    await question.locator('.question-card').waitFor()
     // Digits typed in the new task must never answer a visible question in another session.
     await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('1')
     await page.keyboard.press('1')
@@ -247,8 +252,8 @@ it('finds real evidence on the home, decides there, and continues the original s
     await reachable(question.getByRole('button', { name: /先做预览/u }))
     await question.getByRole('button', { name: /先做预览/u }).focus()
     await expect.poll(() => question.locator('.question-option kbd').count()).toBe(2)
-    expect(await approval.getByRole('button', { name: '允许', exact: true }).locator('kbd').filter({ visible: true }).count()).toBe(0)
-    // A snapshot refresh can reorder document listeners while focus stays in the second card.
+    expect(await approval.count()).toBe(0)
+    // A snapshot refresh can reorder document listeners while focus stays in the selected question.
     await owner.json(`workspaces/${workspace.id}`, { method: 'PATCH', body: { name: '设置项目 · 已核对' } })
     await expect.poll(() => question.textContent()).toContain('设置项目 · 已核对')
     const focusedDecision = page.waitForRequest(

@@ -18,6 +18,7 @@ import { useViewport } from '../breakpoints.ts'
 import { findProvider, harnessName, sameModel, serviceModels, thinkingLevels } from '../composerChoice.ts'
 import { HarnessLoginSteps, useLoginStatus } from '../components/HarnessLogin.tsx'
 import { MarkTile } from '../components/BrandTile.tsx'
+import { BrandMark } from '../components/ui.tsx'
 import { AgentSetupPanel, ProviderSetupPanel } from '../components/SetupPanels.tsx'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
 import { PairingSheet } from '../settings/devices/PairingSheet.tsx'
@@ -303,12 +304,13 @@ export function FirstSetup({
       dismissible={manual && !busy && !providerWriting}>
       <div className="first-setup-content">
         <header>
-          <h1>欢迎使用 Latch</h1>
-          <p>准备这台电脑</p>
+          <BrandMark size={32} />
+          <h1>准备这台电脑</h1>
+          <p>会话记录保存在这台电脑。</p>
         </header>
         <Group title="Harness 和模型">
           {agents.map(item => (
-            <div className="first-setup-row" key={item.id}>
+            <div className="first-setup-row" data-current-harness={item.id === harness?.id ? '' : undefined} key={item.id}>
               <span className="first-setup-label">
                 <MarkTile mark={item.capabilities.display.mark} size={20} />
                 {harnessName(item)}

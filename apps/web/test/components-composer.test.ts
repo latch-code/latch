@@ -358,6 +358,16 @@ describe('approval cards', () => {
     expect(offersMore(html)).toBe(false)
   })
 
+  it('keeps the unknown outcome visible after losing the original approval option', () => {
+    const html = approvalCard(
+      { risk: 'R1', options: [...ALWAYS] },
+      { uncertain: { decision: 'allow', optionId: 'allow_always' } },
+      { kind: 'R1', badge: { label: APPROVAL_COPY.waiting, tone: 'warn' }, explicit: true, options: [ALWAYS[0]] },
+    )
+    expect(html).toContain(APPROVAL_COPY.uncertainApproval)
+    expect(buttonLabels(html)).toEqual(['拒绝'])
+  })
+
   it("shows an agent's options in the product's words", () => {
     const html = approvalCard({ advisory: true, options: [{ id: 'r', label: 'Reject', kind: 'reject_once' }] }, undefined, {
       kind: 'advisory',

@@ -114,6 +114,7 @@ export const APPROVAL_COPY = {
   noRun: '这台设备不能允许这一步',
   /** The choice whose outcome is unknown, by the label of its button. */
   uncertainTitle: (choice: string) => `「${choice}」的结果未知`,
+  uncertainApproval: '审批结果尚未确认',
   retry: '重试',
   /** The drawer above the composer. */
   drawerCount: (index: number, total: number) => `${index}/${total}`,

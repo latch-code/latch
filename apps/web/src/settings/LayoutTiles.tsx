@@ -12,11 +12,6 @@ function LayoutPreview({ layout }: { layout: WorkbenchLayout }) {
         <i />
       </span>
       <span className="layout-preview-content">
-        <span className="layout-preview-input">
-          想让 Agent 做什么？
-          <i />
-          <i />
-        </span>
         <span className="layout-preview-lines">
           <span className="layout-preview-attention">
             <b>等你处理</b>
@@ -38,6 +33,11 @@ function LayoutPreview({ layout }: { layout: WorkbenchLayout }) {
             <b>可交付</b>
             <i />
           </span>
+        </span>
+        <span className="layout-preview-input">
+          想让 Agent 做什么？
+          <i />
+          <i />
         </span>
       </span>
     </span>

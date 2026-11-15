@@ -10,7 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { writeClipboard } from '@latch/ui'
 import type { Approval, SessionConfigOption, TaskDetail, TaskSummary } from '@latch/protocol'
 import { api, ApiError, errorMessage, fromInput, inlineError, isUncertain } from '../core/api.ts'
-import { choiceKind, DecisionRequests, settledOutcome } from '../core/approvalDecision.ts'
+import { choiceKind, DecisionRequests, retryApprovalOption, settledOutcome, type UncertainChoice } from '../core/approvalDecision.ts'
 import { cancelAnswer, CancelRequests } from '../core/cancelRequest.ts'
 import { checkReasonText, ConfigRequests, configUncertain, type ConfigRequest } from '../core/configRequest.ts'
 import { browserDraftStorage, forgetStoredDrafts, listedSessions, SessionDrafts } from '../core/sessionDrafts.ts'
@@ -74,6 +74,7 @@ type Harness = ReturnType<typeof useHarness>
 type ToastMessage = { text: string; tone: 'ok' | 'error' }
 /** Results of session actions belong to the session they were made in, not whichever is open when they settle. */
 type ActionError = { sessionId: string; text: string }
+type TrackedApprovalStatus = ApprovalStatus & { sessionId: string }
 
 /** An explicit input action consumes only the draft it was offered for, after every leave guard passes. */
 export interface SessionSelectionIntent {
@@ -132,7 +133,7 @@ export function useSessionController({
   const [toast, setToast] = useState<ToastMessage | null>(null)
   const [actionError, setActionError] = useState<ActionError | null>(null)
   const [approvalBusy, setApprovalBusy] = useState<ReadonlyMap<string, string>>(new Map())
-  const [approvalStatuses, setApprovalStatuses] = useState<ReadonlyMap<string, ApprovalStatus>>(new Map())
+  const [approvalStatuses, setApprovalStatuses] = useState<ReadonlyMap<string, TrackedApprovalStatus>>(new Map())
   const approvalFlights = useRef(new Set<string>())
   const [cancelling, setCancelling] = useState<ReadonlySet<string>>(new Set())
   const stoppedRuns = useRef(new Map<string, string>())
@@ -164,6 +165,10 @@ export function useSessionController({
   const owner = access.admin
   const canQueue = catalog?.features?.queue === true
   const gateFor = useCallback((approval: Approval) => approvalActions(approval, access.device), [access])
+  const canRetryApproval = useStableCallback(
+    (choice: UncertainChoice) =>
+      harness.connection === 'connected' && (access.legacy || (access.scopes.has('view') && (!choice.note || access.scopes.has('run')))),
+  )
   const approvals = useMemo(
     () => current?.approvals ?? snapshot.approvals.filter(approval => approval.sessionId === selectedId),
     [current, snapshot.approvals, selectedId],
@@ -575,10 +580,17 @@ export function useSessionController({
       const next = new Set([...previous].filter(running))
       return next.size === previous.size ? previous : next
     })
-    // An approval the Host no longer lists was settled, by this device or another: nothing is left to retry or explain.
+    // Absence only settles what the current projection is allowed to observe.
     setApprovalStatuses(previous => {
       const open = new Set(snapshot.approvals.map(approval => approval.id))
-      const next = new Map([...previous].filter(([id]) => open.has(id)))
+      const visible = new Set(snapshot.tasks.map(task => task.id))
+      const canRead = snapshot.device.scopes.includes('view')
+      const complete = snapshot.device.dataScope === 'all' && snapshot.tasksComplete === true
+      const next = new Map(
+        [...previous].filter(
+          ([id, status]) => open.has(id) || (status.uncertain && !(canRead && (visible.has(status.sessionId) || complete))),
+        ),
+      )
       return next.size === previous.size ? previous : next
     })
   }, [snapshot])
@@ -749,35 +761,46 @@ export function useSessionController({
   }, [nextApproval])
   // `note`: with a rejection, for a harness that hands it on, what to do instead (see `rejectionNoteFor`).
   const decide = useCallback(
-    async (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined, note?: string): Promise<boolean> => {
-      if (approvalFlights.current.has(approval.id)) return false
+    async (
+      approval: Approval,
+      decision: 'allow' | 'reject',
+      optionId: string | undefined,
+      note?: string,
+      retry = false,
+    ): Promise<boolean> => {
+      if (approvalFlights.current.has(approval.id) || (!retry && approvalStatuses.get(approval.id)?.uncertain)) return false
+      const requestId = retry
+        ? decisions.current.retryId(approval.id, decision, optionId, note)
+        : decisions.current.idFor(approval.id, decision, optionId, note)
+      if (!requestId) return false
       // False once the choice definitely did not take effect; an unknown outcome keeps its note on the card's retry.
       let taken = true
       approvalFlights.current.add(approval.id)
       setApprovalBusy(previous => new Map(previous).set(approval.id, optionId ?? (decision === 'allow' ? 'allow_once' : 'reject_once')))
       clearAction(approval.sessionId)
-      // One requestId per decision, reused when the same choice is retried after an unknown outcome.
-      const requestId = decisions.current.idFor(approval.id, decision, optionId, note)
       const body = { decision, requestId, ...(optionId ? { optionId } : {}), ...(note && decision === 'reject' ? { note } : {}) }
       const mark = (status: ApprovalStatus) => {
         setApprovalStatuses(previous => {
           if (Object.keys(status).length === 0 && !previous.has(approval.id)) return previous
           const next = new Map(previous)
-          if (Object.keys(status).length > 0) next.set(approval.id, status)
+          if (Object.keys(status).length > 0) next.set(approval.id, { ...status, sessionId: approval.sessionId })
           else next.delete(approval.id)
           return next
         })
       }
-      mark({})
+      if (!retry) mark({})
       try {
         await api<unknown>(`approvals/${encodeURIComponent(approval.id)}`, { method: 'POST', body })
         decisions.current.settle(approval.id)
+        mark({})
         await refresh()
       } catch (cause) {
-        decisions.current.settle(approval.id, cause)
+        // Refusing the retry after a scope change does not tell us whether the first attempt took effect.
+        const retryDenied = retry && cause instanceof ApiError && (cause.status === 401 || cause.status === 403)
+        if (!retryDenied) decisions.current.settle(approval.id, cause)
         const optionKind = choiceKind(approval, decision, optionId)
         const settled = settledOutcome(cause, { decision, ...(optionKind ? { optionKind } : {}) })
-        const unknown = settled === undefined && isUncertain(cause)
+        const unknown = settled === undefined && (retryDenied || isUncertain(cause))
         taken = unknown || settled?.applied === true
         // An unknown outcome stays on the card, which offers to send the same choice again with the same requestId; a
         // reason the card already shows (a confirmation that did not pass) stays too; anything else clears it.
@@ -799,7 +822,7 @@ export function useSessionController({
       }
       return taken
     },
-    [refresh],
+    [refresh, approvalStatuses],
   )
 
   const cancelSession = useStableCallback(async (id: string) => {
@@ -1230,7 +1253,13 @@ export function useSessionController({
   const rejection = useRejectionNote({
     selectedId,
     approval: shownApproval,
-    mayType: inputId !== null && gate.kind === 'open' && sessionBlock === undefined && submission.pending === null && !earlierDraft.held,
+    mayType:
+      inputId !== null
+      && gate.kind === 'open'
+      && sessionBlock === undefined
+      && submission.pending === null
+      && !earlierDraft.held
+      && !(shownApproval && approvalStatuses.get(shownApproval.id)?.uncertain),
     harnessTakesNote: harnessInfo?.capabilities.permission.rejectionNote === true,
     draft: submission.draft,
     clearDraft: () => {
@@ -1251,8 +1280,20 @@ export function useSessionController({
   })
   const onDecide = useStableCallback(
     (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined, again?: { note?: string }) => {
+      const uncertain = approvalStatuses.get(approval.id)?.uncertain
+      if (again !== undefined) {
+        if (
+          !uncertain
+          || uncertain.decision !== decision
+          || uncertain.optionId !== optionId
+          || uncertain.note !== again.note
+          || !canRetryApproval(uncertain)
+          || !retryApprovalOption(gateFor(approval), uncertain)
+        )
+          return
+      } else if (uncertain) return
       if (decision === 'reject' && again === undefined) rejection.reject(approval, optionId)
-      else void decide(approval, decision, optionId, again?.note)
+      else void decide(approval, decision, optionId, again?.note, again !== undefined)
     },
   )
   const statuses = approvalStatuses
@@ -1454,6 +1495,7 @@ export function useSessionController({
     canQueue,
     steer,
     gateFor,
+    canRetryApproval,
     approvals,
     active,
     harnessInfo,

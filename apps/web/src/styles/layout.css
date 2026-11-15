@@ -1183,6 +1183,16 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   bottom: var(--shell-inset);
   right: calc(var(--inspector-width) - 3px);
 }
+.inspector-resize::before {
+  content: '';
+  position: absolute;
+  inset: calc(50% - 14px) auto auto 2px;
+  width: 2px;
+  height: 28px;
+  border-radius: var(--r-2);
+  background: var(--line-strong);
+  pointer-events: none;
+}
 /* Narrowed until it fits, a sheet takes its place beside the conversation. */
 .app-shell[data-inspector='sheet'] .inspector-resize {
   z-index: 7;

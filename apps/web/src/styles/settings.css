@@ -40,6 +40,7 @@
   min-height: 52px;
   padding: var(--sp-4) var(--sp-12) var(--sp-4) var(--sp-20);
   border-bottom: 1px solid var(--line);
+  background: var(--raised);
 }
 .settings-overlay-header h2 {
   margin: 0;
@@ -198,6 +199,9 @@
   max-width: calc(640px + 2 * var(--gutter));
   margin: 0 auto;
   padding: var(--sp-12) var(--gutter) var(--sp-48);
+}
+.settings-overlay .settings-content {
+  padding-block-start: var(--sp-20);
 }
 .settings-subpage {
   display: grid;

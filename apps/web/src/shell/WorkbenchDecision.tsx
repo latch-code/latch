@@ -19,6 +19,7 @@ import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { composerGate } from '../core/permissions.ts'
+import { APPROVAL_COPY } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
 import { workStatus } from './workOverview.ts'
 import { hostNow } from '../core/hostClock.ts'
@@ -66,8 +67,12 @@ export function WorkbenchDecision({
     },
   })
   const status = workStatus(task, { connected: enabled, now: hostNow() })
-  const [index, setIndex] = useState(0)
-  const approval = detail?.approvals[0]
+  const [index, setIndex] = useState<number>()
+  const unknownIndex = detail?.approvals.findIndex(item => shell.statuses.get(item.id)?.uncertain) ?? -1
+  const position = index ?? Math.max(0, unknownIndex)
+  const approval = detail?.approvals[Math.min(position, detail.approvals.length - 1)]
+  const approvalUnknown =
+    unknownIndex >= 0 || shell.snapshot.approvals.some(item => item.sessionId === task.id && shell.statuses.get(item.id)?.uncertain)
   const toolMessage = approval ? detail?.messages.find(message => message.id === toolRowId(approval)) : undefined
   const action = approval ? toolHeading(toolMessage?.tool ?? approval.tool, toolMessage?.toolName ?? approval.toolName) : undefined
   const failure = detail?.messages.findLast(message => message.role === 'system' && message.state === 'failed')
@@ -120,13 +125,12 @@ export function WorkbenchDecision({
           {harnessName(harness)}
         </span>
       )}
+      {approval && approvalUnknown && !shell.statuses.get(approval.id)?.uncertain && (
+        <StatusWord tone="warn">{APPROVAL_COPY.uncertainApproval}</StatusWord>
+      )}
     </div>
   )
-  const unknown = detail?.approvals.some(item => shell.statuses.get(item.id)?.uncertain)
-    ? '决定结果未知'
-    : asked?.draft.pending
-      ? '回答结果未知'
-      : undefined
+  const unknown = approvalUnknown ? APPROVAL_COPY.uncertainApproval : asked?.draft.pending ? '回答结果未知' : undefined
   return (
     <article
       ref={read.element}
@@ -134,7 +138,7 @@ export function WorkbenchDecision({
       data-work-session={task.id}
       data-expanded={expanded ? '' : undefined}
       data-kind={approval ? 'approval' : asked ? 'question' : status.tone}>
-      {!expanded && asked ? (
+      {!expanded && asked && !approvalUnknown ? (
         <QuestionDrawer
           presentation="workbench"
           compact
@@ -195,7 +199,7 @@ export function WorkbenchDecision({
           {...(person ? { requester: person.name } : {})}
           approvals={detail.approvals}
           messages={detail.messages}
-          index={index}
+          index={position}
           onIndex={setIndex}
           gateFor={approval =>
             enabled ? shell.gateFor(approval) : { ...shell.gateFor(approval), options: [], hint: '连接恢复后可以处理' }
@@ -203,6 +207,7 @@ export function WorkbenchDecision({
           busy={shell.approvalBusy}
           statuses={shell.statuses}
           onDecide={shell.onDecide}
+          canRetry={shell.canRetryApproval}
         />
       ) : asked ? (
         <QuestionDrawer
@@ -217,7 +222,7 @@ export function WorkbenchDecision({
         />
       ) : (
         <div className="work-decision-result">
-          <strong data-tone={status.tone}>
+          <strong data-tone={approvalUnknown ? 'warn' : status.tone}>
             <Icon icon={resultIcon} size={16} />
             {resultVerb ? (
               <>
@@ -226,6 +231,8 @@ export function WorkbenchDecision({
                   <VisibleText text={sessionTitle} />
                 </Button>
               </>
+            ) : approvalUnknown ? (
+              APPROVAL_COPY.uncertainApproval
             ) : (
               status.words
             )}

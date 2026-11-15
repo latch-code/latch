@@ -150,7 +150,7 @@ it.each(
     await expect.poll(async () => ({ moved: (await inner()) > 0, ...(await outer()) })).toEqual({ moved: true, home: 0, document: 0 })
     expect(await frame()).toEqual(before)
 
-    const list = attention.getByRole('list').first()
+    const list = attention.getByRole('list', { name: '待处理会话', exact: true })
     const more = attention.getByRole('button', { name: '还有 4 件', exact: true })
     await reachable(more)
     await more.click()
@@ -186,6 +186,12 @@ it.each(
     expect(await frame()).toEqual(drafted)
     await noHorizontalOverflow(page, attention)
     await page.screenshot({ path: `${shot}-draft.png`, animations: 'disabled' })
+    if (width === 390) {
+      await last.tap()
+      expect(await last.getAttribute('aria-current')).toBe('true')
+      await attention.locator('.work-overview-review-detail .work-decision-result').waitFor()
+      expect(await input.inputValue()).toBe(draft)
+    }
   } finally {
     await context.close()
   }
