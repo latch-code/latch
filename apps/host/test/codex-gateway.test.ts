@@ -160,3 +160,115 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
     }
   },
 )
+
+it.each([
+  ['openai-responses', 'responses'],
+  ['openai-compatible', 'chat-completions'],
+  ['anthropic', 'anthropic-messages'],
+] as const)('keeps Codex Team members on the %s gateway lease and counts them in the root turn', async (kind, wire) => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-codex-team-gateway-'))
+  const bin = join(root, 'bin')
+  await mkdir(bin)
+  const command = join(bin, 'codex')
+  const log = join(root, 'agent.jsonl')
+  await writeFile(
+    command,
+    `#!/bin/sh\nexport FAKE_ACP_LOG='${log}' FAKE_CODEX_STATE='${join(root, 'threads.json')}'\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`,
+  )
+  await chmod(command, 0o755)
+  const models = await startFakeModels({ replies: [{ text: 'Team summary' }, { text: 'Cedar report' }, { text: 'Maple report' }] })
+  const host = await startTestHost({
+    demo: false,
+    dataDir: join(root, 'data'),
+    workspaceRoot: join(root, 'project'),
+    commandDirectories: () => [bin],
+    loginPrograms: (name: string) => (name === 'codex' ? command : undefined),
+    detectPreset: (preset: { id: string }) => (preset.id === 'codex' ? { found: true, path: command } : { found: false }),
+  })
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const key = 'sk-test-codex-team-loopback-only'
+    const model = 'service-team-model'
+    const created = await owner.confirmed('providers', {
+      method: 'POST',
+      body: {
+        name: 'Team service',
+        kind,
+        baseURL: `${models.origin}/v1`,
+        apiKey: key,
+        models: [model],
+        defaultModel: model,
+        confirmOrigin: true,
+      },
+    })
+    expect(created.status).toBe(201)
+    const { provider } = (await created.json()) as { provider: ProviderSettings }
+    expect(
+      (
+        await owner.confirmed('agents', {
+          method: 'POST',
+          body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex', args: [], env: {} },
+        })
+      ).status,
+    ).toBe(201)
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { harnessId: 'codex', prompt: 'team 服务模型分工', requestId: randomUUID(), model: { providerId: provider.id, model } },
+    })
+    const read = () => owner.json<TaskDetail>(`tasks/${sessionId}`)
+    await vi.waitFor(async () => expect((await read()).summary.status).toBe('idle'), { timeout: 10_000 })
+    const detail = await read()
+    expect(detail.codexTeam).toBe('available')
+    expect(detail.summary.modelRoute).toEqual({ providerId: provider.id, model, name: 'Team service' })
+    expect(
+      detail.messages.flatMap(message => (message.subagent?.team ? [message.subagent] : [])).sort((a, b) => a.title.localeCompare(b.title)),
+    ).toMatchObject([
+      { title: 'Cedar', status: 'done', team: { result: 'Cedar report' } },
+      { title: 'Maple', status: 'done', team: { result: 'Maple report' } },
+      { title: 'Pine', status: 'failed', team: { failure: expect.stringContaining('gateway-model') } },
+    ])
+    expect(detail.messages.find(message => message.role === 'user')?.turn?.routed).toMatchObject({
+      chosen: model,
+      requests: 4,
+      models: [
+        { model, requests: 3, measured: 3 },
+        { model: 'model-outside-this-lease', requests: 1, failed: 1 },
+      ],
+    })
+    expect(models.requests).toHaveLength(3)
+    expect(models.requests).toMatchObject(Array.from({ length: 3 }, () => ({ wire, model, key })))
+    expect(JSON.stringify(detail)).not.toMatch(/lmg1\.|sk-test-codex-team-loopback-only|child-[a-f0-9]/u)
+    const trace = await readFile(log, 'utf8')
+    expect(trace).not.toContain('lmg1.')
+    expect(trace).not.toContain(key)
+    expect(trace).not.toContain('"method":"model/list"')
+    if (kind === 'openai-responses') {
+      const member = detail.messages.find(message => message.subagent?.team)!
+      const stop = (target: string, subagentId: string) =>
+        owner.request(`tasks/${target}/stop-subagent`, {
+          method: 'POST',
+          body: { subagentId },
+        })
+      expect((await stop(sessionId, 'foreign-upstream-thread')).status).toBe(409)
+      const otherHost = await startTestHost()
+      try {
+        const otherOwner = await otherHost.enroll({ listener: 'unix' })
+        expect((await otherOwner.request(`tasks/${sessionId}`)).status).toBe(404)
+        expect(
+          (
+            await otherOwner.request(`tasks/${sessionId}/stop-subagent`, {
+              method: 'POST',
+              body: { subagentId: member.id },
+            })
+          ).status,
+        ).toBe(404)
+      } finally {
+        await otherHost.close()
+      }
+    }
+  } finally {
+    await host.close()
+    await models.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})

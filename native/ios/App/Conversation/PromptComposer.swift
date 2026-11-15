@@ -124,6 +124,10 @@ struct PromptComposer: View {
                     maximumHeight: slashSpace, retry: { slash.retry += 1 }, choose: { slash.complete(menu, option: $0, text: $text, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) })
                     .padding(.horizontal, 12)
             }
+            if let draftId {
+                CodexTeamView(sessionId: draftId, draft: $text,
+                    canPrepare: gate == nil && model.canRun && model.connected && !running && !drawerOpen && !sending && !model.busy && model.pending.isEmpty)
+            }
             if let gate { gateLine(gate) } else { field }
             if !person && gate == nil && model.sessionId != nil && (focused || !controls.isEmpty) { chips }
         }

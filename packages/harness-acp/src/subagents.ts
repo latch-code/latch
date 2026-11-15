@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { sha256Hex } from '@latch/core/node-kit'
 import { z } from 'zod'
 import type { Message, Subagent } from '@latch/protocol'
 import { append, clip, mergeTool, settleToolMessage, TOOL_TEXT_LIMIT, toolMessage, type ToolState } from './mapping.ts'
@@ -23,6 +24,23 @@ export const subagentUpdate = z.object({
   sessionId: z.string().min(1).max(512),
   title: z.string().nullish(),
   description: z.string().nullish(),
+  /** Sent by the Codex wire only; never copied as a public parent or member ID. */
+  team: z
+    .object({
+      rootThreadId: z.string().min(1).max(512),
+      parentTurnId: z.string().min(1).max(512).optional(),
+      childTurnId: z.string().min(1).max(512).optional(),
+      result: z
+        .string()
+        .max(64 * 1024)
+        .optional(),
+      failure: z
+        .string()
+        .max(64 * 1024)
+        .optional(),
+      recovered: z.literal(true).optional(),
+    })
+    .optional(),
   state: z
     .object({ state: z.string().max(64), stopReason: z.string().max(64).nullish(), error: z.unknown().optional() })
     .nullish()
@@ -192,7 +210,12 @@ export function childCall(child: Child, row: Message | undefined, fields: ToolFi
 function looseTool(child: Child, fields: ToolFields, at: string): ToolState {
   let state = child.loose.get(fields.toolCallId)
   if (!state) {
-    state = { id: `tool:${child.acpSessionId}:${fields.toolCallId}`, content: [], locations: [], awaiting: 0 }
+    state = {
+      id: `tool:${sha256Hex(JSON.stringify([child.taskId, child.acpSessionId, fields.toolCallId]))}`,
+      content: [],
+      locations: [],
+      awaiting: 0,
+    }
     if (child.loose.size >= MAX_LOOSE) {
       const kept = [...child.loose]
       const settled = kept.find(([, item]) => !item.awaiting && (item.status === 'completed' || item.status === 'failed'))
@@ -209,7 +232,12 @@ function childTool(child: Child, row: Message, fields: ToolFields, at: string): 
   let state = child.tools.get(fields.toolCallId)
   if (!state) {
     if (!room(row)) return undefined
-    state = { id: `tool:${child.acpSessionId}:${fields.toolCallId}`, content: [], locations: [], awaiting: 0 }
+    state = {
+      id: `tool:${sha256Hex(JSON.stringify([child.taskId, child.acpSessionId, fields.toolCallId]))}`,
+      content: [],
+      locations: [],
+      awaiting: 0,
+    }
     child.tools.set(fields.toolCallId, state)
   }
   mergeTool(state, fields, at)
