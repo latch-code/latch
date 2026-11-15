@@ -1,11 +1,11 @@
 # AGENTS.md
 
-Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）持有会话、执行权限、密钥、设备登记与审计；Electron 桌面端经 `host.sock`、浏览器经回环地址、手机经运营者提供证书的 HTTPS 连接同一个 Host（HTTP + SSE）。会话组合 Harness（内置 `standard`，或经 ACP 接入的本机 Agent）、模型服务与项目目录；Provider、Tool 与 HarnessDriver 都以 Cordis 插件注册。安全优先：拿不准时拒绝。
+Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）持有会话、执行权限、密钥、设备登记与审计。Electron 经 `host.sock`、浏览器经回环、手机经运营者提供证书的 HTTPS 接入同一 Host（HTTP + SSE）。会话组合 Harness（内置 `standard` 或 ACP 本机 Agent）、模型与项目目录。Provider、Tool、HarnessDriver 经 Cordis 注册。拿不准则拒绝。
 
 ## 开始之前
 
-1. 运行 `git status`，保留已有的未提交改动。
-2. 编辑某目录前，先读该目录及其上层目录中的 `AGENTS.md`，再按「改动前先读」打开文档；以源码与测试为准，不凭记忆推断现状。
+1. 先运行 `git status`，保留未提交改动。
+2. 编辑前读当前及上层目录的 `AGENTS.md` 和「改动前先读」的对应文档。以源码与测试为准。
 3. 遵守「本机运行安全」，不碰用户的 Host 与数据。
 
 ## 代码地图
@@ -116,13 +116,13 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 - 蓝白为主，主色只给执行与勾选，琥珀只表示警告与等你处理，红色只表示真实风险或失败，都配文字；令牌只在 `packages/ui/src/tokens.css`；应用图标不改动图形（[DESIGN](docs/DESIGN.md)）。
 - 模型密钥只在这台 Mac 上填写，不返回任何设备；其他事设备凭 scope 都能做。Latch 不替人预选宽松档位。
 - Harness 预设只收录开源 Agent 或厂商官方命令，记录许可证或条款，不下载不修改，不碰凭据；只给命令自己的登录命令，Claude Agent 不给。
-- 只展示真实能力：不在界面或文档中声称未实现的功能、集成或隔离；未实现的写明「尚未实现」与原因。
+- 界面与文档只展示真实功能、集成与隔离能力。缺失的写明「尚未实现」及原因。
 
 ## 完成标准
 
 1. 先 `pnpm build` 再 `pnpm check`，都通过（确认组件自检需先构建）；构建后 `dist/` 中没有测试代码。
-2. 其余检查由 `pnpm check -- --plan` 按改动列出（e2e、Electron、`check:supply`、[安全定向用例](docs/TESTING.md#按改动选择回归)），技能 `latch-verify` 按它运行并汇报。
-3. UI 改动在手机、平板、桌面宽度检查真实渲染，覆盖正常、进行中、失败或等待状态与深色模式（`e2e/design.e2e.ts`、`e2e/visual.e2e.ts` 的截图）。测试夹具、测试确认后端与演示模型不等于真实模型、Touch ID 或真机验收；系统确认表单只能由用户本人用 `pnpm latch presence test` 人工检查。
+2. 按 `pnpm check -- --plan` 和 `latch-verify` 跑并汇报 e2e、Electron、`check:supply` 与[定向安全用例](docs/TESTING.md#按改动选择回归)。
+3. UI 在手机、平板、桌面宽度检查真实渲染，覆盖正常、进行中、失败或等待与深色（`e2e/design.e2e.ts`、`e2e/visual.e2e.ts`）。夹具、测试确认和演示模型无法替代真实模型、Touch ID 或真机验证。系统确认只由本人用 `pnpm latch presence test` 检查。
 4. 行为变化时运行 `pnpm docs:affected`，更新对应的 `docs/` 机制文档与 `AGENTS.md`。
 5. 汇报时区分已执行与未执行的检查。
 
