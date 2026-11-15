@@ -33,6 +33,7 @@ const fixture: HarnessPlugin = {
 
 /** The same state at other widths and schemes, then back to 1440 light. */
 async function shoot(page: Page, name: string, sizes: ReadonlyArray<readonly [number, 'light' | 'dark']>) {
+  const desktopDepth = await page.evaluate(() => (history.state as { latchLayer?: number } | null)?.latchLayer ?? 0)
   for (const [width, scheme] of sizes) {
     await page.emulateMedia({ colorScheme: scheme })
     await page.setViewportSize({ width, height: width < 768 ? 844 : 900 })
@@ -46,6 +47,13 @@ async function shoot(page: Page, name: string, sizes: ReadonlyArray<readonly [nu
   }
   await page.emulateMedia({ colorScheme: 'light' })
   await page.setViewportSize({ width: 1440, height: 900 })
+  // The phone layer gives back its history entry after React switches layouts.
+  await page.waitForFunction(
+    depth =>
+      document.querySelector('.app-shell[data-viewport="desktop"]') !== null
+      && ((history.state as { latchLayer?: number } | null)?.latchLayer ?? 0) === depth,
+    desktopDepth,
+  )
 }
 
 async function browserWithScope(page: Page, host: TestHost, owner: TestDevice, name: string, dataScope: 'work' | 'all') {
