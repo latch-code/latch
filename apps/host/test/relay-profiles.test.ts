@@ -106,7 +106,13 @@ it('abandoning a reserved relay keeps its receipt and blocks a late install', as
   const node = input()
   const base = profiles.configHash()
   const pending = await profiles.reserveRelay(node, request, base, () => {})
-  expect(await profiles.cancelRelay(request.requestId, () => {})).toBe(true)
+  expect(
+    await profiles.cancelRelay(
+      request.requestId,
+      () => {},
+      async () => true,
+    ),
+  ).toEqual({ cancelled: true, audited: true })
   await expect(profiles.installRelay(pending, base, () => {})).rejects.toMatchObject({ code: 'native-relay-cancelled' })
   const saved = await RelayProfiles.open(directory)
   expect(saved.snapshot().pendingRelay).toBeUndefined()

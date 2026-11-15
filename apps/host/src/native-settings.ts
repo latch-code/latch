@@ -146,7 +146,10 @@ export class NativeSettings {
     return new AppError(409, 'request-conflict', '同一个请求标识不能用于不同的中继配置。')
   }
   async settleRelayWrite(): Promise<void> {
-    if (!(await this.options.profiles.settleWrite())) return
+    const { profiles, directory } = this.options
+    const hadDirectory = Boolean(profiles.snapshot().directory)
+    if (!(await profiles.settleWrite())) return
+    if (hadDirectory && !profiles.snapshot().directory) await directory?.configure()
     this.options.controller.reconcile()
     this.options.changed?.()
   }
@@ -184,43 +187,44 @@ export class NativeSettings {
       this.adding = false
     }
   }
-  async cancelRelay(requestId: string, actor: AuditActor, authorize: () => void): Promise<{ audited: boolean }> {
-    const { profiles, controller, audit } = this.options
-    const pending = profiles.snapshot().pendingRelay
-    if (!pending || pending.requestId !== requestId) return { audited: true }
-    if (!(await profiles.cancelRelay(requestId, authorize))) return { audited: true }
-    controller.cancelVerification()
-    let audited = true
-    await audit.append({ action: 'native.relay.add.abandoned', actor, detail: { profile: pending.requestHash } }).catch(() => {
-      audited = false
-    })
+  async cancelRelay(requestId: string, actor: AuditActor, authorize: () => void, auditFailed?: () => void): Promise<{ audited: boolean }> {
+    const { profiles, controller } = this.options
+    const { cancelled, audited } = await profiles.cancelRelay(requestId, authorize, profile =>
+      this.recordLowering({ action: 'native.relay.add.abandoned', actor, detail: { profile } }, auditFailed),
+    )
+    if (cancelled) controller.cancelVerification()
     return { audited }
   }
-  removeRelay(relayId: string, actor: AuditActor): Promise<{ audited: boolean }> {
-    return this.lower(actor, { relayId })
+  removeRelay(relayId: string, actor: AuditActor, auditFailed?: () => void): Promise<{ audited: boolean }> {
+    return this.lower(actor, { relayId }, auditFailed)
   }
-  removeDirectory(actor: AuditActor): Promise<{ audited: boolean }> {
-    return this.lower(actor, { directory: true })
+  removeDirectory(actor: AuditActor, auditFailed?: () => void): Promise<{ audited: boolean }> {
+    return this.lower(actor, { directory: true }, auditFailed)
   }
-  private lower(actor: AuditActor, target: { relayId: string } | { directory: true }): Promise<{ audited: boolean }> {
+  private lower(
+    actor: AuditActor,
+    target: { relayId: string } | { directory: true },
+    auditFailed?: () => void,
+  ): Promise<{ audited: boolean }> {
     return this.serial(async () => {
-      const result = await this.options.profiles.removeObserver(target)
+      const result = await this.options.profiles.removeObserver(target, detail =>
+        this.recordLowering({ action: 'native.config.changed', actor, detail: { ...detail, lowering: true, direct: false } }, auditFailed),
+      )
       if ('directory' in target) await this.options.directory?.configure()
       this.options.changed?.()
       this.options.controller.reconcile()
-      let audited = true
-      // A removal only takes an observer away, so a failed record does not stop it.
-      await this.options.audit
-        .append({
-          action: 'native.config.changed',
-          actor,
-          detail: { ...result, lowering: true, direct: false },
-        })
-        .catch(() => {
-          audited = false
-        })
-      return { audited }
+      return result
     })
+  }
+  private async recordLowering(entry: Parameters<AuditLog['append']>[0], auditFailed?: () => void): Promise<boolean> {
+    try {
+      await this.options.audit.append(entry)
+      return true
+    } catch {
+      // Leave a trace before replacement can become visible, and never hold a reduction back on audit failure.
+      auditFailed?.()
+      return false
+    }
   }
   /** Runs `issue` with the listener open, the sheet's first act: it fails with the reason when there is no network. */
   async whileOpen<T>(issue: () => Promise<T>): Promise<T> {

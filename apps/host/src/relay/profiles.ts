@@ -64,8 +64,9 @@ const receiptSchema = z.strictObject({
   requestId: z.uuid(),
   requestHash: z.string().regex(/^[a-f0-9]{64}$/u),
   cancelled: z.literal(true).optional(),
+  cancelAuditFailed: z.literal(true).optional(),
 })
-const pendingRelaySchema = receiptSchema.omit({ cancelled: true }).extend({
+const pendingRelaySchema = receiptSchema.omit({ cancelled: true, cancelAuditFailed: true }).extend({
   deviceId: z.string().min(1).max(128),
   profile: profile.omit({ builtIn: true }),
 })
@@ -206,26 +207,37 @@ export class RelayProfiles {
       this.advanceConfiguration(draft, { requestId: pending.requestId, requestHash: pending.requestHash })
     }, authorize)
   }
-  cancelRelay(requestId: string, authorize: () => void): Promise<boolean> {
-    return this.change(draft => {
+  cancelRelay(
+    requestId: string,
+    authorize: () => void,
+    record: (profileHash: string) => Promise<boolean>,
+  ): Promise<{ cancelled: boolean; audited: boolean }> {
+    return this.change(async draft => {
       authorize()
-      if (draft.pendingRelay?.requestId !== requestId) return false
-      this.keepReceipt(draft, { requestId, requestHash: draft.pendingRelay.requestHash, cancelled: true })
+      if (draft.pendingRelay?.requestId !== requestId)
+        return { cancelled: false, audited: !draft.configReceipts?.find(item => item.requestId === requestId)?.cancelAuditFailed }
+      const { requestHash } = draft.pendingRelay
+      const audited = await record(requestHash)
+      this.keepReceipt(draft, { requestId, requestHash, cancelled: true, ...(!audited ? { cancelAuditFailed: true } : {}) })
       delete draft.pendingRelay
-      return true
+      return { cancelled: true, audited }
     }, authorize)
   }
-  removeObserver(target: { relayId: string } | { directory: true }): Promise<{ before: string; after: string; relayCount: number }> {
-    return this.change(draft => {
+  removeObserver(
+    target: { relayId: string } | { directory: true },
+    record: (detail: { before: string; after: string; relayCount: number }) => Promise<boolean>,
+  ): Promise<{ audited: boolean }> {
+    return this.change(async draft => {
       const before = this.hashConfiguration(draft)
       if ('relayId' in target) draft.profiles = draft.profiles.filter(profile => profile.builtIn || profile.relayId !== target.relayId)
       else draft.directory = null
       this.advanceConfiguration(draft)
-      return {
+      const audited = await record({
         before,
         after: this.hashConfiguration(draft),
         relayCount: draft.profiles.filter(profile => !profile.builtIn).length,
-      }
+      })
+      return { audited }
     })
   }
   private checkBase(expectedHash?: string): void {
@@ -265,11 +277,11 @@ export class RelayProfiles {
     )
     return operation
   }
-  private change<Result>(edit: (draft: State) => Result, authorize?: () => void): Promise<Result> {
+  private change<Result>(edit: (draft: State) => Result | Promise<Result>, authorize?: () => void): Promise<Result> {
     return this.serial(async () => {
       await this.confirmDurability()
       const draft = this.snapshot(),
-        result = edit(draft)
+        result = await edit(draft)
       schema.parse(draft)
       let renamed = false
       try {

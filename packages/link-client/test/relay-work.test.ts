@@ -4,6 +4,13 @@ import { encodeMessage, registrationWorkInput, routeId, workDigestMeetsBits, typ
 import { RelayControl } from '../src/relay-control.ts'
 import { nodeCrypto } from '../src/crypto.ts'
 import * as registrationWork from '../src/registration-work.ts'
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(done => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
 const mocked = vi.hoisted(() => ({ peer: undefined as unknown }))
 vi.mock('../src/websocket.ts', async original => ({ ...(await original<object>()), connectRelay: async () => mocked.peer }))
 let control: RelayControl | undefined
@@ -99,8 +106,8 @@ async function fixture(
 it('closes without sending REGISTER if authority expires while signing', async () => {
   let permitted = true
   const f = await fixture('valid', () => permitted)
-  const { promise: signing, resolve: started } = Promise.withResolvers<void>()
-  const { promise: blocked, resolve: release } = Promise.withResolvers<void>()
+  const { promise: signing, resolve: started } = deferred()
+  const { promise: blocked, resolve: release } = deferred()
   const sign = nodeCrypto.sign
   vi.spyOn(nodeCrypto, 'sign').mockImplementationOnce(async (...args) => {
     started()
@@ -118,8 +125,8 @@ it('closes without sending REGISTER if authority expires while signing', async (
 it('closes without sending the challenge proof if authority expires during work', async () => {
   let permitted = true
   const f = await fixture('valid', () => permitted)
-  const { promise: solving, resolve: started } = Promise.withResolvers<void>()
-  const { promise: blocked, resolve: release } = Promise.withResolvers<void>()
+  const { promise: solving, resolve: started } = deferred()
+  const { promise: blocked, resolve: release } = deferred()
   vi.spyOn(registrationWork, 'solveRegistrationWork').mockImplementationOnce(async () => {
     started()
     await blocked

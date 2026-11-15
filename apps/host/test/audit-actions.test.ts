@@ -212,6 +212,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'migration.devices.v2': { revoked: 1, legacy: 0 },
   'device.revocations.torn-tail-removed': { bytes: 40 },
   'native.relay.conflict': { relayHash: hex },
+  'native.relay.add.requested': { base: hex, profile: hex },
+  'native.relay.add.abandoned': { profile: hex },
   'native.network.remembered': { networkHash: hex },
   'native.config.changed': { before: hex, after: hex, lowering: false, direct: true, relayCount: 1 },
   'native.inputs.paused': {},

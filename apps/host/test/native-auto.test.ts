@@ -13,6 +13,13 @@ import type { HostRelayController } from '../src/relay/controller.ts'
 import type { NativeNetworkSnapshot } from '../src/native-network-backend.ts'
 import type { startNativeHost } from '../src/native.ts'
 
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(done => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
   vi.restoreAllMocks()
@@ -71,11 +78,12 @@ async function setup(options: { managedDirect?: { host: string; port: number } }
     async close() {},
   }
   const resolve = vi.fn(async (direct: NativeDirect, current: NativeDirect | null) => selectAutoDirect(snapshot, direct, current))
+  const audit = vi.fn<AuditLog['append']>().mockResolvedValue({ seq: 1 } as Awaited<ReturnType<AuditLog['append']>>)
   const settings = new NativeSettings({
     profiles,
     native,
-    audit: { append: async () => ({ seq: 1 }) } as unknown as AuditLog,
-    controller: { status: () => [], reconcile() {} } as unknown as HostRelayController,
+    audit: { append: audit } as unknown as AuditLog,
+    controller: { status: () => [], reconcile() {}, cancelVerification() {} } as unknown as HostRelayController,
     pairing: () => pairing,
     reachable: () => reachable,
     changed,
@@ -91,6 +99,7 @@ async function setup(options: { managedDirect?: { host: string; port: number } }
     canceled,
     resolve,
     changed,
+    audit,
     phones(value: boolean) {
       reachable = value
     },
@@ -107,8 +116,8 @@ it.each(['relay', 'directory'] as const)('keeps an installed relay when a concur
   const request = { requestId: randomUUID(), requestHash: 'e'.repeat(64), deviceId: 'fixture' }
   const base = profiles.configHash()
   const pending = await profiles.reserveRelay(added, request, base, () => {})
-  const { promise: writing, resolve: start } = Promise.withResolvers<void>()
-  const { promise: paused, resolve: continueWriting } = Promise.withResolvers<void>()
+  const { promise: writing, resolve: start } = deferred()
+  const { promise: paused, resolve: continueWriting } = deferred()
   const save = files.writeFileAtomic
   const atomic = vi.spyOn(files, 'writeFileAtomic').mockImplementationOnce(async (...args) => {
     start()
@@ -130,6 +139,60 @@ it.each(['relay', 'directory'] as const)('keeps an installed relay when a concur
   const installed = saved.snapshot().profiles.find(profile => profile.relayId === added.relayId)
   expect(installed?.seeds.every((seed, slot) => seed === pending.profile.seeds[slot])).toBe(true)
   expect(saved.relayReceipt(request.requestId)?.requestHash).toBe(request.requestHash)
+})
+it.each(['relay', 'directory'] as const)(
+  'audits the original %s removal before a directory sync failure and does not repeat it on recovery',
+  async target => {
+    const { settings, profiles, directory, audit } = await setup()
+    const old = { relayId: 'a'.repeat(32), url: 'https://old.example/', spkiHash: 'b'.repeat(64) }
+    const source = { anchors: ['c'.repeat(64)], mirrors: ['https://directory.example/'] }
+    await profiles.configure(null, [old], undefined, undefined, source)
+    const before = profiles.configHash()
+    const write = files.writeFileAtomic
+    vi.spyOn(files, 'writeFileAtomic').mockImplementationOnce(async (...args) => {
+      expect(audit).toHaveBeenCalledOnce()
+      await write(...args)
+      throw new Error('Directory sync outcome unavailable')
+    })
+    const actor = { listener: 'unix', deviceId: 'fixture' } as const
+    const remove = target === 'relay' ? settings.removeRelay(old.relayId, actor) : settings.removeDirectory(actor)
+    await expect(remove).rejects.toMatchObject({ code: 'native-relay-write-unknown' })
+    expect(profiles.configHash()).toBe(before)
+    await settings.settleRelayWrite()
+    const saved = await RelayProfiles.open(directory)
+    expect(saved.snapshot().profiles).toHaveLength(target === 'relay' ? 0 : 1)
+    expect(saved.snapshot().directory).toEqual(target === 'directory' ? null : source)
+    expect(audit).toHaveBeenCalledOnce()
+    expect(audit).toHaveBeenCalledWith({
+      action: 'native.config.changed',
+      actor,
+      detail: { before, after: saved.configHash(), lowering: true, direct: false, relayCount: target === 'relay' ? 0 : 1 },
+    })
+  },
+)
+it('reports a failed abandon audit on the uncertain write and the recovered original request', async () => {
+  const { settings, profiles, directory, audit } = await setup()
+  const node = { relayId: 'a'.repeat(32), url: 'https://new.example/', spkiHash: 'b'.repeat(64) }
+  const request = { requestId: randomUUID(), requestHash: 'd'.repeat(64), deviceId: 'fixture' }
+  await profiles.reserveRelay(node, request, profiles.configHash(), () => {})
+  audit.mockRejectedValueOnce(new Error('Audit storage unavailable'))
+  const auditFailed = vi.fn()
+  const write = files.writeFileAtomic
+  vi.spyOn(files, 'writeFileAtomic').mockImplementationOnce(async (...args) => {
+    expect(auditFailed).toHaveBeenCalledOnce()
+    await write(...args)
+    throw new Error('Directory sync outcome unavailable')
+  })
+  const actor = { listener: 'unix', deviceId: request.deviceId } as const
+  await expect(settings.cancelRelay(request.requestId, actor, () => {}, auditFailed)).rejects.toMatchObject({
+    code: 'native-relay-write-unknown',
+  })
+  await settings.settleRelayWrite()
+  const saved = await RelayProfiles.open(directory)
+  expect(saved.snapshot().pendingRelay).toBeUndefined()
+  expect(saved.relayReceipt(request.requestId)).toMatchObject({ cancelled: true, cancelAuditFailed: true })
+  await expect(settings.cancelRelay(request.requestId, actor, () => {})).resolves.toEqual({ audited: false })
+  expect(audit).toHaveBeenCalledOnce()
 })
 it('opens the listener for the sheet, keeps it while a phone exists, and closes it after the last one', async () => {
   const s = await setup()
