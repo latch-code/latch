@@ -71,7 +71,7 @@ async function shot(page: Page, name: string, width: number, theme: 'light' | 'd
   await writeFile(`${OUT}/${name}--${theme}--${width}.json`, JSON.stringify(geometry, null, 2))
 }
 
-it('renders the v8 empty, loading, many, limited, read-only and offline states from the real Host permissions', async () => {
+it('renders the empty, loading, many, limited, read-only and offline states from the real Host permissions', async () => {
   let releaseRead: (() => void) | undefined
   const plugin: HarnessPlugin = {
     id: 'workbench-states',
@@ -170,7 +170,13 @@ it('renders the v8 empty, loading, many, limited, read-only and offline states f
     releaseRead?.()
     await page.unrouteAll({ behavior: 'wait' })
     const home = page.locator('.workbench-home')
-    await home.locator('.approval-panel').waitFor()
+    const review = home.locator('.approval-panel[data-document-review]')
+    await review.getByText('拟议改动', { exact: true }).waitFor()
+    expect(await review.locator('.approval-preview').textContent()).toContain('settings-7.ts')
+    await review
+      .locator('.diff-text')
+      .filter({ hasText: /export const keep = true/u })
+      .waitFor()
     await expect.poll(() => home.locator('.approval-panel').getByRole('button', { name: '允许', exact: true }).isDisabled()).toBe(false)
     expect(await home.locator('[data-group="attention"] [data-work-session]').count()).toBe(5)
     await home.getByRole('button', { name: '还有 2 件', exact: true }).click()
@@ -179,6 +185,16 @@ it('renders the v8 empty, loading, many, limited, read-only and offline states f
       .locator('.work-overview-more')
       .filter({ hasText: /^收起$/u })
       .click()
+    await layout(page, 'triage')
+    await expect.poll(() => review.count()).toBe(1)
+    const earlier = home.locator(`[data-work-session="${ids[5]}"]`)
+    await earlier.getByRole('button', { expanded: false }).press('Enter')
+    await review.locator('.approval-document-header').getByText('settings-6.ts', { exact: true }).waitFor()
+    await expect.poll(() => earlier.evaluate(element => document.activeElement === element)).toBe(true)
+    expect(await review.count()).toBe(1)
+    await home.locator(`[data-work-session="${ids[6]}"]`).getByRole('button', { expanded: false }).click()
+    await review.locator('.approval-document-header').getByText('settings-7.ts', { exact: true }).waitFor()
+    await layout(page, 'overview')
     for (const theme of ['light', 'dark'] as const) {
       await shot(page, 'overview-many', 1440, theme)
       for (const value of ['overview', 'triage'] as const) {
@@ -197,6 +213,7 @@ it('renders the v8 empty, loading, many, limited, read-only and offline states f
     await connected(page)
     await home.locator('.approval-panel').waitFor()
     expect(await home.locator('.diff-line').count()).toBe(0)
+    expect(await home.locator('.approval-panel[data-document-review]').count()).toBe(0)
     const limited = await page.evaluate(async id => {
       const current: TaskDetail = await (await fetch(`/link/api/tasks/${id}`)).json()
       return current.approvals[0]

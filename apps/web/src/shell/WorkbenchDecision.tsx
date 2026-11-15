@@ -131,6 +131,7 @@ export function WorkbenchDecision({
     <article
       ref={read.element}
       className="work-decision"
+      tabIndex={onExpand ? -1 : undefined}
       data-work-session={task.id}
       data-expanded={expanded ? '' : undefined}
       data-kind={approval ? 'approval' : asked ? 'question' : status.tone}>
@@ -147,7 +148,14 @@ export function WorkbenchDecision({
         />
       ) : !expanded ? (
         <div className="work-decision-compact-row">
-          <Button variant="ghost" className="work-decision-compact" aria-expanded={false} onClick={onExpand}>
+          <Button
+            variant="ghost"
+            className="work-decision-compact"
+            aria-expanded={false}
+            onClick={() => {
+              onExpand?.()
+              requestAnimationFrame(() => read.element.current?.focus())
+            }}>
             <span className="work-decision-compact-title">
               {!action && resultVerb ? (
                 <>

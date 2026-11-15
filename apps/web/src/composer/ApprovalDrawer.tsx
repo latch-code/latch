@@ -459,6 +459,20 @@ function ApprovalPanel({
   const previousNotes = (['unavailable', 'unknown'] as const)
     .filter(state => diffs.some(diff => previousState(diff) === state))
     .map(state => PREVIOUS_NOTES[state]!)
+  // Read the already projected diff as a document for an ordinary one-file edit. Requests with additional safety
+  // information retain the ordinary card and its complete preview.
+  const documentReview =
+    presentation === 'workbench'
+    && requester === undefined
+    && approval.risk === 'R1'
+    && gate.kind === 'R1'
+    && !approval.advisory
+    && !hidden
+    && !uncertain
+    && !gate.note
+    && tool?.kind === 'edit'
+    && diffs.length === 1
+    && previousNotes.length === 0
   const uncertainOption =
     uncertain && (gate.options.find(option => option.id === uncertain.optionId) ?? (uncertain.decision === 'allow' ? allow : reject))
   const menuItems: MenuItem[] = [
@@ -536,6 +550,7 @@ function ApprovalPanel({
       className="composer-drawer approval-panel"
       data-secure=""
       data-presentation={presentation}
+      data-document-review={documentReview && open ? '' : undefined}
       data-single-file={fileInHeading ? '' : undefined}
       data-risky={risky ? '' : undefined}
       data-approval-id={approval.id}
@@ -690,6 +705,16 @@ function ApprovalPanel({
       {hasPreview && (
         <div className="approval-preview" id={previewId} data-open={open ? '' : undefined}>
           <div className="approval-preview-inner" inert={!open}>
+            {documentReview && (
+              <div className="approval-document-header">
+                {fileInHeading && path && (
+                  <code>
+                    <VisibleText text={path} />
+                  </code>
+                )}
+                <span>拟议改动</span>
+              </div>
+            )}
             {!quietReason && approval.reason && approval.reason !== action && approval.reason !== riskSentence && (
               <p className="approval-reason">
                 <VisibleText text={approval.reason} />

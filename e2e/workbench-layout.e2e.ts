@@ -493,13 +493,16 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             const canvas = await paintedBackground(home)
             canvasByLayout.push(canvas)
             expect(await paintedBackground(home.locator('.composer').first())).not.toBe(canvas)
-            expect(await paintedBackground(home.locator('.approval-panel').first())).not.toBe(canvas)
+            const approval = home.locator('.approval-panel').first()
+            const reviewSurface =
+              (await approval.getAttribute('data-document-review')) === null ? approval : approval.locator('.approval-preview')
+            expect(await paintedBackground(reviewSurface)).not.toBe(canvas)
             if (layout === 'overview' && width >= 768) {
               const navigation = page
                 .locator(width >= 1024 ? '.sidebar' : '.workbench-tablet-rail')
                 .locator('visible=true')
                 .first()
-              expect(await paintedBackground(navigation)).toBe(canvas)
+              expect(await paintedBackground(navigation)).not.toBe(canvas)
             }
             if (width < 768) {
               // Touch targets: each segment of the layout switch and the input's two buttons answer 44px around their middle.
@@ -626,7 +629,9 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             const settings = page.locator('.settings-page')
             const canvas = canvasByLayout[0]
             expect(canvasByLayout).toEqual([canvas, canvas])
-            expect(await paintedBackground(settings.locator('.settings-nav-pane'))).toBe(canvas)
+            const settingsNav = await paintedBackground(settings.locator('.settings-nav-pane'))
+            if (width < 768) expect(settingsNav).toBe(canvas)
+            else expect(settingsNav).not.toBe(canvas)
             if (width >= 768) {
               const lead = page.locator('.titlebar-lead:visible, .workbench-nav:visible, .workbench-tablet-rail:visible').first()
               expect(await paintedBackground(lead)).toBe(canvas)

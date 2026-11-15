@@ -236,17 +236,3 @@
     flex: 0 0 auto;
   }
 }
-/* The narrowest phones: the place you are not in keeps its glyph and its name for a screen reader only. */
-@media (max-width: 359.98px) {
-  .workbench-phone-heading .space-switch .ui-segmented-option[aria-checked='false'] .ui-segmented-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-  .workbench-phone-heading .space-switch .ui-segmented-option[aria-checked='false'] {
-    flex: 0 0 44px;
-    padding-inline: 0;
-  }
-}

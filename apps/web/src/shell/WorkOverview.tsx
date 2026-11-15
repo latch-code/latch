@@ -232,7 +232,10 @@ export function WorkOverview({
   const [lane, setLane] = useState<WorkGroupId>('attention')
   const [opened, setOpened] = useState<string>()
   const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<WorkGroupId>>(new Set())
-  const activeDecision = groups[0]!.tasks.some(task => task.id === opened) ? opened : groups[0]!.tasks[0]?.id
+  const attention = groups[0].tasks
+  const attentionPreview = attention.slice(0, 5)
+  const visibleAttention = expandedGroups.has('attention') ? attention : attentionPreview
+  const activeDecision = visibleAttention.some(task => task.id === opened) ? opened : visibleAttention[0]?.id
   const connected = connection === 'connected'
   const deliveryNotice =
     snapshot.device.dataScope !== 'all'
@@ -330,7 +333,7 @@ export function WorkOverview({
             ) : (
               <ul className="work-overview-list">
                 {(compact || expandedGroups.has(group.id) ? group.tasks : group.tasks.slice(0, group.id === 'delivery' ? 2 : 5)).map(
-                  (task, index) => {
+                  task => {
                     const status = workStatus(task, {
                       connected,
                       now: hostNow(),
@@ -350,10 +353,10 @@ export function WorkOverview({
                           <WorkbenchDecision
                             task={task}
                             shell={shell}
-                            emphasis={layout === 'overview' ? task.id === activeDecision : index === 0}
-                            expanded={layout === 'triage' || task.id === activeDecision}
+                            emphasis={task.id === activeDecision}
+                            expanded={task.id === activeDecision}
                             onExpand={() => setOpened(task.id)}
-                            firstKeys={layout === 'triage' && index === 0}
+                            firstKeys={layout === 'triage' && task.id === attention[0]?.id}
                           />
                         ) : !compact && group.id === 'delivery' && evidence?.entries.get(task.id) ? (
                           <DeliveryRow
@@ -411,14 +414,16 @@ export function WorkOverview({
               <Button
                 variant="ghost"
                 className="work-overview-more"
-                onClick={() =>
+                onClick={() => {
+                  if (group.id === 'attention' && expandedGroups.has('attention') && !attentionPreview.some(task => task.id === opened))
+                    setOpened(undefined)
                   setExpandedGroups(previous => {
                     const next = new Set(previous)
                     if (next.has(group.id)) next.delete(group.id)
                     else next.add(group.id)
                     return next
                   })
-                }>
+                }}>
                 {expandedGroups.has(group.id) ? '收起' : `还有 ${group.tasks.length - (group.id === 'delivery' ? 2 : 5)} 件`}
               </Button>
             )}
