@@ -429,6 +429,9 @@ describe('the shell', () => {
     await page.getByRole('tab', { name: '文件', exact: true }).click()
     await page.getByRole('treeitem', { name: '验收文档.txt', exact: true }).waitFor()
     await page.locator('.app-shell[data-inspector="open"]').waitFor()
+    const computer = page.locator('.workspace .topbar-computer .topbar-crumb-text')
+    await computer.getByText('验收电脑', { exact: true }).waitFor()
+    expect(await computer.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
     for (const colorScheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme })
       expect(await divider()).toBe('1px')

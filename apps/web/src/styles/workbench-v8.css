@@ -802,8 +802,7 @@
   overflow: hidden;
 }
 .topbar-computer {
-  flex: 0 0 auto;
-  max-width: 40%;
+  max-width: 180px;
 }
 .topbar-session-branch > svg,
 .topbar-computer > svg {
