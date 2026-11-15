@@ -83,6 +83,7 @@ import { FieldDialog } from './dialogs.tsx'
 import { dropProviderDraft, keepProviderDraft, peekProviderDraft, type ProviderDraft } from './providerDraft.ts'
 import { ModelVisibilitySettings } from './ModelVisibilitySettings.tsx'
 import { fallbackLabel, ModelFallbacksDialog } from './ModelFallbacks.tsx'
+import { BudgetRow, PricesDialog, useModelSpend } from './ModelSpend.tsx'
 import { HealthLine } from '../components/ServiceHealth.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import { UsageSettings } from './UsageSettings.tsx'
@@ -400,6 +401,8 @@ function ModelsGroups({
   fallbacks,
   services,
   onFallbacks,
+  priced,
+  onPrices,
 }: {
   models: string[]
   defaultModel: string
@@ -424,6 +427,9 @@ function ModelsGroups({
   fallbacks?: Record<string, ModelFallback[]>
   services?: readonly Pick<ProviderSettings, 'id' | 'name'>[]
   onFallbacks?: (model: string) => void
+  /** The models the person entered prices for, and the way to 「单价」. Absent on the add form. */
+  priced?: ReadonlySet<string>
+  onPrices?: (model: string) => void
 }) {
   const group = useId()
   const [filter, setFilter] = useState('')
@@ -498,6 +504,7 @@ function ModelsGroups({
                     {fallbacks[model]!.length > 1 ? ` 等 ${fallbacks[model]!.length} 个` : ''}
                   </span>
                 ) : null}
+                {priced?.has(model) && <span className="model-fallback-note">已填单价</span>}
               </span>
             </span>
             <span className="settings-row-end">
@@ -518,6 +525,17 @@ function ModelsGroups({
                             onFallbacks(model)
                           },
                         },
+                        ...(onPrices
+                          ? [
+                              {
+                                id: 'prices',
+                                label: '单价…',
+                                onSelect: () => {
+                                  onPrices(model)
+                                },
+                              },
+                            ]
+                          : []),
                       ],
                     },
                   ]}
@@ -1082,6 +1100,7 @@ function ThinkingPicker({
  * confirmed says so first, with the way to confirm it from here or where to go.
  */
 function ProviderPage({
+  admin,
   supportsAttachments,
   provider,
   data,
@@ -1094,6 +1113,7 @@ function ProviderPage({
   onSaved,
   onDeleted,
 }: {
+  admin: boolean
   supportsAttachments?: boolean
   /** The Host computer's name, for the lines that send another device there. */
   computer: string
@@ -1116,6 +1136,10 @@ function ProviderPage({
   const [dialog, setDialog] = useState<null | 'name' | 'address' | 'key'>(null)
   const [confirm, setConfirm] = useState<null | 'delete' | 'clear-key'>(null)
   const [fallbacksFor, setFallbacksFor] = useState<string | null>(null)
+  const [pricesFor, setPricesFor] = useState<string | null>(null)
+  if (!admin && pricesFor !== null) setPricesFor(null)
+  const spending = useModelSpend(true, provider.id)
+  const prices = spending.spend?.prices.filter(item => item.providerId === provider.id) ?? []
   // The switch moves at once and goes back if the Host refuses.
   const [enabled, setEnabled] = useState(provider.enabled)
   const [seen, setSeen] = useState(provider.enabled)
@@ -1348,6 +1372,8 @@ function ProviderPage({
             />
           }
         />
+        {/* 模型 is shown only to a device that may manage this Mac; the Host checks the scope again on every change. */}
+        <BudgetRow scope="service" id={provider.id} spend={spending.spend} admin={admin} disabled={busy} onChanged={spending.reload} />
         <CheckRow
           busy={probe.busy === 'check'}
           disabled={busy || unconfirmed || keyless}
@@ -1451,7 +1477,23 @@ function ProviderPage({
         fallbacks={provider.fallbacks}
         services={data.providers}
         onFallbacks={setFallbacksFor}
+        priced={new Set(prices.map(item => item.model))}
+        {...(admin && spending.spend ? { onPrices: setPricesFor } : {})}
       />
+      {admin && pricesFor !== null && spending.spend && (
+        <PricesDialog
+          key={pricesFor}
+          providerId={provider.id}
+          model={pricesFor}
+          saved={prices.find(item => item.model === pricesFor)}
+          revision={spending.spend.revision}
+          disabled={busy}
+          reload={spending.reload}
+          onClose={() => {
+            setPricesFor(null)
+          }}
+        />
+      )}
       <ModelFallbacksDialog
         open={fallbacksFor !== null}
         provider={provider}
@@ -2038,6 +2080,7 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
           {notice}
           <ProviderPage
             key={selected.id}
+            admin={access.admin}
             supportsAttachments={snapshot.catalog?.features?.attachments === true}
             provider={selected}
             data={data}

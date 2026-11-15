@@ -110,6 +110,27 @@ export const HOST_ACTIONS = {
     action: presenceAction,
     result: z.enum(['denied', 'timeout', 'cancelled', 'error']),
   }),
+  /**
+   * The prices a person entered for one model were saved, changed or (`removed`) forgotten: which service, the model's
+   * name as a hash, and which of the five fields differ. Never an amount.
+   */
+  'model.prices.changed': z.strictObject({
+    providerId: opaqueId,
+    modelHash: hex64,
+    fields: z.array(z.enum(['currency', 'input', 'output', 'cacheRead', 'cacheWrite'])).max(5),
+    removed: z.boolean(),
+  }),
+  /**
+   * The monthly budget of a service or an Agent was set, changed or (`removed`) taken away: whose and which fields
+   * differ, never an amount. `widening`: more may be spent than before.
+   */
+  'model.budget.changed': z.strictObject({
+    scope: z.enum(['service', 'agent']),
+    id: opaqueId,
+    fields: z.array(z.enum(['unit', 'currency', 'limit'])).max(3),
+    removed: z.boolean(),
+    widening: z.boolean(),
+  }),
   'provider.secret.set': z.strictObject({ providerId: opaqueId, originHash: hex64 }),
   /**
    * 「出错时改用」 of a service's models was edited: where its sessions' requests may go from then on. Only IDs and

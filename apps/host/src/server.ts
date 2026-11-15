@@ -159,6 +159,9 @@ import { loadOrCreateHostIdentity } from './identity.ts'
 import { ModelGatewayServer, type GatewayService } from './model-gateway.ts'
 import { ModelRequestQueue } from './model-request-queue.ts'
 import { ModelScheduler } from './model-scheduler.ts'
+import { createModelMeter, ModelSpendStore } from './model-budgets.ts'
+import { UsageLedger } from './model-usage.ts'
+import { createModelUsageRoutes } from './model-usage-routes.ts'
 import { scheduledProvider, scheduledRequest, type ProviderCandidate } from './scheduled-provider.ts'
 import { readSessionSkills, type SessionSkill } from '@latch/protocol'
 import {
@@ -1573,6 +1576,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (sessionId) refresh(sessionId)
       },
     })
+    // One ledger and one set of budgets for the gateway and the built-in harness: usage metadata, never audit.
+    const usageLedger = await UsageLedger.open(dataDir, { now, log })
+    const modelSpend = await ModelSpendStore.open(dataDir)
+    const modelMeter = createModelMeter({
+      ledger: usageLedger,
+      store: modelSpend,
+      session: sessionId => {
+        const agentId = sessionOwner(sessionId) ?? hub?.startingAgentId()
+        const harness = hub?.ownerOf(sessionId)
+        return { ...(agentId ? { agentId } : {}), ...(harness ? { harness } : {}) }
+      },
+      builtIn: STANDARD,
+    })
     /** Service providers as their plugins registered them, before scheduling: what another service's fallback calls. */
     const serviceProviders = new Map<string, ModelProvider>()
     /** On record before a request leaves the service it was meant for; a failed write keeps it there. */
@@ -2090,6 +2106,33 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     const templateStore = await PromptTemplateStore.open(dataDir)
+    const modelUsageRoutes = createModelUsageRoutes<Caller>({
+      ledger: usageLedger,
+      store: modelSpend,
+      meter: modelMeter,
+      now,
+      authorize: requireScope,
+      recheck,
+      seesAgents: caller => !!caller.device && devices.get(caller.device.id)?.dataScope === 'all',
+      requireAgentData,
+      sessions: () => harnessHub.listTasks(),
+      sessionVisible: (summary, seesAgents) =>
+        harnessHub.ownerOf(summary.id) !== undefined && (seesAgents || (!privateSession(summary) && !harnessHub.agentPrivate(summary.id))),
+      models: providerId => effectiveProvider(providerId)?.models,
+      agentModels: agentId => {
+        // 通用 has no model of its own.
+        const model = customAgents.list().find(agent => agent.id === agentId)?.model
+        const service = model && effectiveProvider(model.providerId)
+        return service && model ? [{ providerId: model.providerId, model: model.model }, ...(service.fallbacks?.[model.model] ?? [])] : []
+      },
+      hasModel: (providerId, model) => effectiveProvider(providerId)?.models.includes(model) === true,
+      hasService: providerId => effectiveProvider(providerId) !== undefined,
+      hasAgent: agentId => agentId === GENERAL_AGENT_ID || customAgents.list().some(agent => agent.id === agentId),
+      changed: () => refresh(),
+      actorOf,
+      audited,
+      auditFailed,
+    })
     const sessionRoutes = createSessionRoutes<Caller>({
       now,
       templates: templateStore,
@@ -2136,6 +2179,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       queue: modelRequests,
       scheduler: modelScheduler,
       fallback: modelFallback,
+      meter: modelMeter,
     })
     await modelGateway.start()
     startupCleanup.push(() => modelGateway.close())
@@ -2420,6 +2464,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       terminals,
       agents: {
         agents: customAgents,
+        // Only once it is really gone: a deletion still being confirmed keeps its budget.
+        removed: async id => {
+          if (customAgents.list().some(agent => agent.id === id)) return
+          await modelSpend.forget('agent', id).catch(error => log(`清除预算失败：${errorText(error)}`))
+        },
         plans: () => agentPlans,
         automations: () => automations,
         access: agentAccess,
@@ -2813,12 +2862,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     /** The person's 「记住…」 the Host did not keep, per session, newest last; in memory only, never the text. */
     const memoryRefusals = new Map<string, Array<{ requestId: string; reason: string }>>()
+    function requireAgentData(caller: Caller): void {
+      requireDevice(caller)
+      if (devices.get(caller.device.id)?.dataScope !== 'all')
+        throw new AppError(403, 'agent-scope-required', 'Agent 含有私有记忆，请先在电脑上允许这台设备使用。')
+    }
     function agentAccess(caller: Caller, write = false): AgentActor {
       requireScope(caller, write ? 'run' : 'view')
       const authorize = () => {
         recheck(caller, write ? 'run' : 'view')
-        if (devices.get(caller.device!.id)?.dataScope !== 'all')
-          throw new AppError(403, 'agent-scope-required', 'Agent 含有私有记忆，请先在电脑上允许这台设备使用。')
+        requireAgentData(caller)
       }
       authorize()
       return { actor: { ...actorOf(caller), deviceId: caller.device.id }, authorize }
@@ -3379,6 +3432,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                     return current ? providerFingerprint(current) : ''
                   },
                   fallback: modelFallback,
+                  meter: modelMeter,
+                  now,
                 }),
               )
               // After the registry took it: a provider it refused is nobody's fallback.
@@ -6056,6 +6111,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           promptTemplates: true,
           pluginPackages: true,
           usage: true,
+          modelUsage: true,
           fileSearch: true,
           ...(directoryReader.available ? { fileTree: true as const } : {}),
           filePreview: true,
@@ -8352,6 +8408,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               )
             await deleteProvider(caller, id)
             await pruneFallbacks(item => item.providerId === id)
+            // What was kept for the service goes with it; a failure here never undoes the deletion.
+            await modelSpend.forget('service', id).catch(error => log(`清除单价与预算失败：${errorText(error)}`))
           })
           refresh()
           json(res, { deleted: true })
@@ -9226,6 +9284,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (await handleQueue(req, res, caller, path, method)) return
       if (await handleQuestion(req, res, caller, path, method)) return
       if (await sessionRoutes.handle(req, res, caller, path, method)) return
+      if (await modelUsageRoutes.handle(req, res, caller, path, method)) return
       if (await attachmentRoutes.handle(req, res, caller, path, method)) return
       if (await fileRoutes.handle(req, res, caller, path, method)) return
       if (await pluginPackageRoutes.handle(req, res, caller, path, method)) return
@@ -9691,6 +9750,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             () => agentProbes.close(),
             () => harnessHub.close(),
             () => modelGateway.close(),
+            // Lines of requests that ended as the Host stops are written before it is gone.
+            () => usageLedger.flushed(),
             () => toolGateway?.close(),
             () => questions.close(),
             () => clearInterval(purgeTimer),

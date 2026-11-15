@@ -40,7 +40,7 @@ export const isProviderKind = (kind: unknown): kind is ProviderKind => (PROVIDER
  * fault. `forbidden`: any other 403. `quota`: 402 or the
  * balance ran out. `rate`: 429. `server`: 5xx or 529. `network`: no connection. `timeout`: no first byte in time.
  * `stream`: the reply broke after it began. `unavailable`: the service is off, removed or changed. `circuit-open`: the
- * Host is not sending to it for now.
+ * Host is not sending to it for now. `budget`: the service's monthly budget is used up.
  */
 export const MODEL_FAILURE_CLASSES = [
   'request',
@@ -54,6 +54,7 @@ export const MODEL_FAILURE_CLASSES = [
   'stream',
   'unavailable',
   'circuit-open',
+  'budget',
 ] as const
 export type ModelFailureClass = (typeof MODEL_FAILURE_CLASSES)[number]
 
@@ -69,6 +70,7 @@ export const MODEL_FAILURE_NAMES: Readonly<Record<ModelFailureClass, string>> = 
   stream: '回复中断',
   unavailable: '不能用',
   'circuit-open': '暂停发送',
+  budget: '预算用完',
 }
 
 /**

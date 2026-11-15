@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
-import { ArrowLeft, Cable } from 'lucide-react'
+import { ArrowLeft, BarChart3, Cable } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
@@ -46,6 +46,7 @@ const ProvidersSettings = deferredComponent(
   async () => ({ default: (await import('./ProvidersSettings.tsx')).ProvidersSettings }),
   '模型服务设置',
 )
+const ModelUsagePage = deferredComponent(async () => ({ default: (await import('./ModelUsagePage.tsx')).ModelUsagePage }), '用量')
 const McpSettings = deferredComponent(async () => ({ default: (await import('./McpSettings.tsx')).McpSettings }), 'MCP')
 const ShortcutsSettings = deferredComponent(
   async () => ({ default: (await import('./ShortcutsSettings.tsx')).ShortcutsSettings }),
@@ -60,6 +61,7 @@ const WorkspacesSettings = deferredComponent(
 const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   general: '外观 主题 深色 浅色 布局 侧栏 顶栏 按项目 按状态 发送消息 回车 新文档 自动打开 通知 唤醒 名称',
   providers: '服务 密钥 key 添加服务 添加模型服务 用量 tokens 显示的模型 已确认的地址 地址 出站',
+  usage: '用量 tokens 请求 失败 花费 预算',
   engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
   mcp: 'mcp 服务器 工具 连接器 npx 命令',
   workspaces: '文件夹 添加项目 新建项目 快照',
@@ -91,10 +93,11 @@ const sections: Array<{
   secured?: boolean
   shell?: boolean
   /** A Host feature the section's routes need. */
-  feature?: 'mcp'
+  feature?: 'mcp' | 'modelUsage'
 }> = [
   { id: 'general', label: '通用', icon: SettingsGlyph, admin: false },
   { id: 'providers', label: '模型', icon: ModelGlyph, admin: true, catalog: true },
+  { id: 'usage', label: '用量', icon: BarChart3, admin: false, catalog: true, feature: 'modelUsage' },
   { id: 'engines', label: 'Harness', icon: HarnessGlyph, admin: true, catalog: true },
   { id: 'mcp', label: 'MCP', icon: Cable, admin: true, catalog: true, feature: 'mcp' },
   { id: 'workspaces', label: '项目', icon: FolderGlyph, admin: true, catalog: true },
@@ -363,6 +366,7 @@ export function SettingsPage({
                     {!phone && depth === 0 && current && <h1 className="settings-title">{current.label}</h1>}
                     {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
                     {panel === 'providers' && <ProvidersSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
+                    {panel === 'usage' && <ModelUsagePage snapshot={snapshot} access={access} />}
                     {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}
                     {panel === 'mcp' && <McpSettings snapshot={snapshot} />}
                     {panel === 'shortcuts' && (

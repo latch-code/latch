@@ -29,6 +29,8 @@ import { CONFIG_BODY_LIMIT, type Caller, type RouteContext, type RouteModule } f
 
 export interface AgentRouteDeps {
   agents: CustomAgents
+  /** After an Agent is deleted: what other stores kept for it goes too. Never rejects. */
+  removed?: (agentId: string) => Promise<void>
   plans: () => AgentPlans
   automations: () => Automations
   /** The same gate a session of an agent uses: its instructions and memories are private. */
@@ -429,6 +431,7 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
         const { requestId } = deletion.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
         await edit(id, () => agents.remove(id, requestId, actor))
         sweepAvatars()
+        await deps.removed?.(id)
       } else throw new AppError(404, 'not-found', '接口不存在。')
       return true
     },

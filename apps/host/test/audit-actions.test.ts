@@ -132,6 +132,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'policy.changed-outside': { expected: hex, actual: hex },
   'presence.helper.pinned': { cdhash: 'b'.repeat(40) },
   'presence.result': { confirmationId: `cfm_${'E'.repeat(22)}`, action: 'agent.define', result: 'denied' },
+  'model.prices.changed': { providerId: 'openai-compatible', modelHash: hex, fields: ['input', 'output'], removed: false },
+  'model.budget.changed': { scope: 'service', id: 'openai-compatible', fields: ['limit'], removed: false, widening: true },
   'provider.secret.set': { providerId: 'openai-compatible', originHash: hex },
   'provider.fallbacks.changed': { providerId: 'openai-compatible', models: 1, candidates: ['deepseek'], widened: true },
   'provider.secret.cleared': { providerId: 'openai-compatible', reason: 'path-changed' },

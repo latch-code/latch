@@ -118,6 +118,8 @@ const usageSchema = z.object({
   // Optional parts some services report; a gateway that sends them malformed just loses the part.
   prompt_tokens_details: z.object({ cached_tokens: z.number().int().nonnegative().nullish() }).nullish().catch(undefined),
   completion_tokens_details: z.object({ reasoning_tokens: z.number().int().nonnegative().nullish() }).nullish().catch(undefined),
+  // What the request cost, from services that say so themselves (OpenRouter).
+  cost: z.number().nonnegative().nullish().catch(undefined),
 })
 const chunkSchema = z.object({
   choices: z
@@ -166,6 +168,7 @@ function readChatUsage(usage: z.infer<typeof usageSchema>): ChatUsage {
     outputTokens: usage.completion_tokens,
     ...(cached != null ? { cacheReadTokens: cached } : {}),
     ...(reasoning != null ? { reasoningTokens: reasoning } : {}),
+    ...(usage.cost != null && Number.isFinite(usage.cost) ? { cost: usage.cost } : {}),
   }
 }
 

@@ -23,6 +23,7 @@ import { isolationBrief } from './helpers.ts'
 import { writeFor, type AgentWrites, type WriteState } from './useAgentWrites.ts'
 import { MessageError } from '../core/api.ts'
 import { AgentDefaults } from './AgentDefaults.tsx'
+import { BudgetControl, useModelSpend } from '../settings/ModelSpend.tsx'
 
 /** When a change reaches the Agent's sessions: the fine print behind ⓘ. */
 export function TakesEffect({ label = '何时生效' }: { label?: string }) {
@@ -162,6 +163,8 @@ export function AgentForm({
   homePath?: string | undefined
 }) {
   const base = useMemo(() => draftOf(agent), [agent])
+  // The Agent's monthly budget is kept beside its definition, not in it: it saves on its own and needs no 保存 here.
+  const spending = useModelSpend(catalog.features?.modelUsage === true, agent.id)
   const [draft, setDraft] = useState<AgentDraft>(base)
   const [deleting, setDeleting] = useState(false)
   // A new revision from the Host (a save, a new avatar, an edit elsewhere) keeps what the person is in the middle of
@@ -270,6 +273,21 @@ export function AgentForm({
             {...(onOptionsRead ? { onRead: onOptionsRead } : {})}
             {...(onManageProviders ? { onManage: onManageProviders } : {})}
           />
+          {catalog.features?.modelUsage && (
+            <>
+              <dt>本月预算</dt>
+              <dd>
+                <BudgetControl
+                  scope="agent"
+                  id={agent.id}
+                  spend={spending.spend}
+                  admin={access.admin}
+                  disabled={disabled}
+                  onChanged={spending.reload}
+                />
+              </dd>
+            </>
+          )}
         </dl>
       </Section>
 

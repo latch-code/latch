@@ -3,6 +3,7 @@ import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import {
+  COST_CURRENCIES,
   isFileMention,
   isFileChange,
   type FileChange,
@@ -70,6 +71,14 @@ const usageSchema = z.object({
   cacheWriteTokens: z.number().nonnegative().optional(),
   reasoningTokens: z.number().nonnegative().optional(),
 })
+// What a turn's model requests cost, when the Host knew, and a budget's state: amounts and enums only.
+const spendSchema = z.object({
+  cost: z
+    .array(z.object({ currency: z.enum(COST_CURRENCIES), micros: z.number().nonnegative(), priced: z.literal(true).optional() }))
+    .max(COST_CURRENCIES.length)
+    .optional(),
+  budget: z.enum(['near', 'over']).optional(),
+})
 const count = z.number().int().nonnegative()
 const turnSchema = z.object({
   endedAt: z.string().optional(),
@@ -93,6 +102,7 @@ const turnSchema = z.object({
       direct: z.literal(true).optional(),
     })
     .optional(),
+  spend: spendSchema.optional(),
 })
 // Every persisted field must be listed: z.object drops unknown keys on load.
 const toolDetailSchema = z.object({

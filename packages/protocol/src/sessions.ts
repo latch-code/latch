@@ -7,6 +7,7 @@ import type { AgentQuestion } from './questions.ts'
 import type { ScheduleResult } from './automations.ts'
 import type { AgentBrief, SessionAgentRef } from './custom-agents.ts'
 import type { GatewayLoss } from './gateway-translations.ts'
+import type { TurnSpend } from './model-usage.ts'
 
 export interface SessionCommand {
   name: string
@@ -57,6 +58,8 @@ export interface TurnStats {
   waitMs?: number
   /** A session on a model route: what the turn sent through Latch, as the gateway counted it. */
   routed?: RoutedTurn
+  /** The built-in harness: what the turn's model requests cost, when known, and a budget that is nearly used. */
+  spend?: TurnSpend
 }
 
 /**
@@ -77,6 +80,8 @@ export interface RoutedTurn {
    * counted here, and nothing else of the turn.
    */
   direct?: true
+  /** What the turn's requests cost, when known, and a budget that is nearly used. */
+  spend?: TurnSpend
 }
 
 export interface RoutedModel {

@@ -45,7 +45,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」与另一台电脑的「复制链接」（主进程申请邀请，写成剪贴板上的隐藏项，10 分钟后仍在就清除；页面看不到链接）、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告）、其他电脑（见「桌面端与其他电脑」） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`remote-proxy.cjs`、`computers.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
 | Host | 监听入口（含 HTTPS 证书热加载）、HTTP/SSE、运行状态通告、流量计数、访问规则、配置读写、插件挂载、密钥文件排除在时间机器之外 | `apps/host/src/server.ts`、`listeners.ts`、`lifecycle.ts`、`traffic.ts`、`access.ts`、`config.ts`、`providers.ts`、`backup.ts` |
 | HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），交付的状态、暂存、历史、提交、推送与 PR 在 `git.ts`（[GIT-DELIVERY.md](GIT-DELIVERY.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
-| 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、工具网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`model-gateway/`、`tool-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
+| 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、工具网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`model-gateway/`、`model-usage.ts`、`model-budgets.ts`、`tool-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
 | 共享安全文本 | 确认内容转义、设备名称规则、「这台电脑」的判定 `isLocalListener`（浏览器可用） | `packages/protocol/src/text.ts`、`listeners.ts` |
 | 本机确认组件 | 核对确认内容，以 macOS 系统表单调用 Touch ID / 登录密码 | `native/macos/LatchPresence.swift`（`pnpm build:presence` 构建到 `dist/native/latch-presence`） |
 | 进程发现 | `host.json`、数据目录锁、经 `host.sock` 核对 Host | `apps/host/src/host-state.ts` |
@@ -347,6 +347,9 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `audit/audit.jsonl` | 哈希链审计记录 |
 | `policy.json` | 本机安全策略 |
 | `providers.json` | 模型服务、密钥及其绑定的源与路径，每个模型的「出错时改用」（`fallbacks`）与服务的「同时请求」上限（`maxConcurrent`）（0600，不进入时间机器备份）；项目的「默认模型」在 `settings.json` 的 `workspaces[].defaultModel`；改动「出错时改用」写审计 `provider.fallbacks.changed`，两者都不计入服务的执行修订；服务的健康状态只在内存（[调度](MODEL-GATEWAY.md#调度)） |
+| `gateway/usage-YYYY-MM.jsonl` | 用量账本：每个模型请求一行元数据（会话、Agent、Harness、服务、模型、结果分类、次数、时长、服务报告的 tokens、已知的花费），按 Host 电脑的时间分月，保留 90 天（目录 0700、文件 0600、只追加、strict）。不含正文、请求头与任何密钥，不是审计，照常进入备份；见 [MODEL-GATEWAY.md](./MODEL-GATEWAY.md#用量账本) |
+| `gateway/totals-YYYY-MM.json` | 按服务与按 Agent 汇总账本已写入的前缀，供预算使用（0600、strict、追加成功后原子替换）。与账本大小对不上时重建 |
+| `gateway/budgets.json` | 模型单价、服务和 Agent 的每月预算、修订号与有界修改收据（0600、strict、整份原子替换）。见 [MODEL-GATEWAY.md](./MODEL-GATEWAY.md#预算) |
 | `mcp/servers.json`、`mcp/secrets.json` | Latch 的 MCP 服务器定义与它们变量、远程地址请求头的值、登录的令牌与客户端密钥（目录 0700、文件 0600、strict，不进入时间机器备份），见 [MCP.md](./MCP.md) |
 | `mcp-ended.json` | 登录已结束、但令牌没能从 `mcp/` 删除的服务器 ID（没有别的内容）；Host 启动时先删除再去掉记号，见 [MCP.md](./MCP.md#登录) |
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
@@ -560,7 +563,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。`POST /l
 
 ## 用量汇总
 
-`catalog.features.usage` 声明 `POST /link/api/usage {days: 7 | 30}`，需要 `view`，异步读取前后重新检查授权。Host 只统计期间内带有效时间的助手消息实际记录的 `usage`；按 Harness、该消息记录的模型服务与模型分组，不用会话当前模型替代历史上缺失的身份。输入包含缓存、输出包含推理，细分字段只有同组每条参与记录都完整报告且总和可安全表示时才返回；缺失、无效或溢出的拆分省略并以 `partial` 标记，不把部分合计当作完整数字。真实零值保留，页面对省略值写「未报告」。外部 Agent 报告明确标识来源，不推算价格或把报告当账单。没有有效时间或有效计数的消息单独计数；读取预算为五秒，Driver 不应答或某些会话不可用时返回部分结果与 `truncated`，而不是估计未读取部分。
+`catalog.features.modelUsage` 声明用量账本的汇总 `POST /link/api/model-usage`、单价与预算 `GET /link/api/model-spend`（都要 `view`）及 `PUT /link/api/model-prices`、`PUT /link/api/model-budgets`。写入需要 `admin`，Agent 预算同时需要 `all` 数据范围。写入携带请求 ID 和读到的基版，回执可用于核对未知结果。见 [MODEL-GATEWAY.md](./MODEL-GATEWAY.md#用量花费与预算)。`catalog.features.usage` 声明 `POST /link/api/usage {days: 7 | 30}`，需要 `view`，异步读取前后重新检查授权。Host 只统计期间内带有效时间的助手消息实际记录的 `usage`；按 Harness、该消息记录的模型服务与模型分组，不用会话当前模型替代历史上缺失的身份。输入包含缓存、输出包含推理，细分字段只有同组每条参与记录都完整报告且总和可安全表示时才返回；缺失、无效或溢出的拆分省略并以 `partial` 标记，不把部分合计当作完整数字。真实零值保留，页面对省略值写「未报告」。外部 Agent 报告明确标识来源，不推算价格或把报告当账单。没有有效时间或有效计数的消息单独计数；读取预算为五秒，Driver 不应答或某些会话不可用时返回部分结果与 `truncated`，而不是估计未读取部分。
 
 文件预览见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。只读目录树同样经文件服务授权，session 和绑定 Harness 的 workspace 是两个显式上下文；文档内容由会话文件服务授权，字节请求的 `If-Match` 约束同一版本。浏览器文档框不承诺数据不会经浏览器侧通道外泄。
 

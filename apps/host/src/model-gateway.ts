@@ -20,6 +20,8 @@ import {
   type RoutedModel,
   type RoutedTurn,
   type TokenUsage,
+  type TurnSpend,
+  type UsageOutcome,
 } from '@latch/protocol'
 import { AppError, type ModelGateway, type ModelGatewayLease, type ModelRoute } from '@latch/sdk'
 import { redactKnownSecrets } from '@latch/core/node-kit'
@@ -39,6 +41,7 @@ import { decodeAnthropicReply, decodeAnthropicStream } from './model-gateway/out
 import type { GatewayRequest, GatewayDelta, GatewayReasoning } from './model-gateway/ir.ts'
 import type { ToolNames } from './model-gateway/tools.ts'
 import { exactJson } from './model-gateway/json.ts'
+import { addSpend, type ModelMeter } from './model-budgets.ts'
 import { ModelRequestQueue } from './model-request-queue.ts'
 import { ModelScheduler, classifyStatus, retryAfterMs, type AttemptResult, type AttemptTimer } from './model-scheduler.ts'
 
@@ -67,6 +70,8 @@ export interface ModelGatewayDeps {
    * record, and a throw keeps the request where it is.
    */
   fallback?(event: { sessionId: string; providerId: string; candidate: number; reason: ModelFailureClass }): Promise<void>
+  /** Monthly budgets and the usage ledger; without it nothing is refused for a budget and no line is written. */
+  meter?: ModelMeter
 }
 
 /** One service a request may go to: the session's own first, then what the model falls back to. */
@@ -130,6 +135,8 @@ interface Tally {
   dropped: Set<GatewayLoss>
   /** By model: the candidate this turn moved to, so the rest of the turn stays with it. */
   moved: Map<string, number>
+  /** What the turn's settled requests cost, when known, and a budget of theirs that is nearly or fully used. */
+  spend?: TurnSpend
 }
 
 /** A forwarded request until its result is counted: its reply, once the service answers, is read as it passes. */
@@ -138,6 +145,14 @@ interface OpenRequest {
   entry: RoutedModel
   apiKey: string
   reply?: ReplyReader
+  /** Called once with the result, for the usage ledger. */
+  settled?(facts?: ReplyFacts): void
+}
+
+/** What the usage ledger reads of a reply, on its own: the reader while the reply passes, and what it said at its end. */
+interface Metered {
+  reply?: ReplyReader
+  facts?: ReplyFacts
 }
 
 /** How many models one turn lists; requests naming yet another are counted in the turn's total only. */
@@ -215,6 +230,7 @@ function finish(request: OpenRequest | undefined, facts?: ReplyFacts): void {
   if (!request?.tally.open.delete(request)) return
   if (facts) settle(request.entry, facts, request.apiKey)
   else failed(request.entry)
+  request.settled?.(facts)
 }
 
 /** The token a harness sent, in whichever header its protocol puts a key. */
@@ -298,6 +314,10 @@ const ANTHROPIC_ERRORS: Readonly<Record<number, string>> = {
 /** Whether a path is one of Anthropic's, so that an answer to it is in Anthropic's shape before its token is read. */
 const anthropicPath = (path: string) => path === '/v1/messages' || path.startsWith('/v1/messages/')
 
+/** A monthly budget is used up: 402 in every protocol, so a harness stops instead of trying again as after a 429. */
+const BUDGET_EXCEEDED = 'budget-exceeded'
+const BUDGET_MESSAGE = '本月预算已用完'
+
 /**
  * An error in the shape the harness's protocol reads: Anthropic's `{type: 'error', error: {type, message}}`, else
  * `error.message`, which the OpenAI protocols read.
@@ -308,7 +328,14 @@ function refusal(status: number, code: string, message: string, shape: 'anthropi
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
     body: JSON.stringify(
       shape === 'anthropic'
-        ? { type: 'error', error: { type: ANTHROPIC_ERRORS[status] ?? 'api_error', message, ...(code === 'gateway-busy' ? { code } : {}) } }
+        ? {
+            type: 'error',
+            error: {
+              type: code === BUDGET_EXCEEDED ? 'billing_error' : (ANTHROPIC_ERRORS[status] ?? 'api_error'),
+              message,
+              ...(code === 'gateway-busy' || code === BUDGET_EXCEEDED ? { code } : {}),
+            },
+          }
         : { error: { code, message } },
     ),
   }
@@ -610,7 +637,7 @@ export class ModelGatewayServer implements ModelGateway {
       token,
       requests: () => binding.count,
       takeTurn: (): RoutedTurn => {
-        const { requests, models, open, dropped } = binding.turn
+        const { requests, models, open, dropped, spend } = binding.turn
         binding.turn = newTally()
         // Copies: a reply still under way settles into the counts just taken, which nobody reads again, never into what
         // the caller keeps.
@@ -628,7 +655,12 @@ export class ModelGatewayServer implements ModelGateway {
             if (facts?.model) copy.used = usedModel(facts.model, request.apiKey)
           }
         }
-        return { requests, models: [...copies.values()], ...(dropped.size ? { dropped: [...dropped] } : {}) }
+        return {
+          requests,
+          models: [...copies.values()],
+          ...(dropped.size ? { dropped: [...dropped] } : {}),
+          ...(spend ? { spend } : {}),
+        }
       },
       models: [...models],
       setThinking: (model, effort) => {
@@ -797,11 +829,60 @@ export class ModelGatewayServer implements ModelGateway {
     }
     const asked = { model, body, fields }
     const own: Candidate = { providerId: binding.providerId, upstream: binding.upstream, model, fingerprint: binding.fingerprint }
+    // The request's line in the usage ledger, written once when its result is known: names and numbers, nothing it said.
+    // A token count is no model request and has none.
+    const meter = target.count ? undefined : this.deps.meter
+    const { clock } = this.scheduler
+    const arrived = clock.now()
+    const usage: {
+      written: boolean
+      attempts: number
+      /** How it ended when no reply settled it. */
+      ending?: UsageOutcome
+      candidate: Candidate
+      fallback: boolean
+      firstByteMs?: number
+      apiKey: string
+    } & Metered = { written: false, attempts: 0, candidate: own, fallback: false, apiKey: service.apiKey }
+    /** The harness went away before the reply was over. */
+    let gaveUp = (): boolean => false
+    const writeUsage = (given?: ReplyFacts): void => {
+      if (!meter || usage.written) return
+      usage.written = true
+      // The ledger reads the reply itself, whatever the turn's tally kept of it: a request the turn no longer lists is
+      // still counted, and what a reply reported before it broke or was given up on still is.
+      const facts = given ?? usage.facts ?? usage.reply?.facts()
+      const over = given !== undefined || facts?.ended === true
+      const spend = meter.record({
+        at: arrived,
+        sessionId: binding.sessionId,
+        providerId: usage.candidate.providerId,
+        model: usage.candidate.model,
+        ...(facts?.model ? { used: usedModel(facts.model, usage.apiKey) } : {}),
+        outcome: over ? (facts?.failed ? 'stream' : 'ok') : (usage.ending ?? (gaveUp() ? 'aborted' : 'stream')),
+        attempts: usage.attempts,
+        fallback: usage.fallback,
+        ...(usage.firstByteMs !== undefined ? { firstByteMs: usage.firstByteMs } : {}),
+        totalMs: clock.now() - arrived,
+        ...(facts?.usage ? { usage: facts.usage } : {}),
+        ...(facts?.cost !== undefined ? { reportedCost: facts.cost } : {}),
+      })
+      tally.spend = addSpend(tally.spend, spend)
+    }
+    // An Agent's budget is that Agent's alone: used up, its request goes nowhere, to no other service either.
+    if (meter?.agentOver(binding.sessionId)) {
+      failed(entry)
+      usage.ending = 'budget'
+      writeUsage()
+      return refuse(res, 402, BUDGET_EXCEEDED, BUDGET_MESSAGE, shape)
+    }
     let prepared: Prepared
     try {
       prepared = this.prepare(binding, own, service, asked)
     } catch (error) {
       failed(entry)
+      usage.ending = 'request'
+      writeUsage()
       return refuse(
         res,
         400,
@@ -814,6 +895,8 @@ export class ModelGatewayServer implements ModelGateway {
     service = this.current(hash, binding)
     if (!service) {
       failed(entry)
+      usage.ending = 'unavailable'
+      writeUsage()
       return refuse(res, 401, 'gateway-token', '模型服务的设置已经变了，这个凭据不再有效。下一条消息会重新连接。', shape)
     }
     // A token count belongs to the session's own service; a model's reply may come from what it falls back to. So does a
@@ -836,12 +919,15 @@ export class ModelGatewayServer implements ModelGateway {
     res.once('close', disconnected)
     if (res.destroyed) controller.abort()
     const { signal } = controller
+    gaveUp = () => signal.aborted
     let request: OpenRequest | undefined
     /** The Host-wide permit of the reply that began; a try that failed gave its own back already. */
     let permit: (() => void) | undefined
+    /** A candidate was passed over because its service's monthly budget is used up. */
+    let overBudget = false
     try {
       signal.throwIfAborted()
-      request = entry ? { tally, entry, apiKey: service.apiKey } : undefined
+      request = entry ? { tally, entry, apiKey: service.apiKey, settled: writeUsage } : undefined
       if (request) tally.open.add(request)
       const moved = tally.moved.get(model)
       const start = moved === undefined ? -1 : candidates.findIndex(item => item.place === moved)
@@ -857,6 +943,12 @@ export class ModelGatewayServer implements ModelGateway {
           const { candidate } = candidates[index]!
           const usable = () => (index === 0 ? this.current(hash, binding) : this.candidateService(candidate))
           if (!usable()) return index === 0 ? { ok: false, class: 'request', reply: revoked() } : { skip: true }
+          // A service's budget is used up like its balance at the service: the request goes to the next candidate, on
+          // record first, and nothing is sent here.
+          if (meter?.serviceOver(candidate.providerId)) {
+            overBudget = true
+            return { skip: true, reason: 'budget' }
+          }
           let body = prepared
           if (index > 0) {
             try {
@@ -874,6 +966,10 @@ export class ModelGatewayServer implements ModelGateway {
             // Waiting is not authorization: the process and service must still match when its permit arrives.
             const current = usable()
             if (!current) return index === 0 ? { ok: false, class: 'request', reply: revoked() } : { skip: true }
+            usage.attempts++
+            usage.candidate = candidate
+            usage.fallback = candidates[index]!.place > 0
+            usage.apiKey = current.apiKey
             const sent = await this.send(
               req,
               binding,
@@ -908,16 +1004,26 @@ export class ModelGatewayServer implements ModelGateway {
         },
       })
       if (!result.ok) {
+        // A candidate that is only held back opens again by itself: that is a pause to wait out, whatever another
+        // candidate's budget says. The month's budget is the answer only when nothing else could have answered.
+        const refused = overBudget && result.failure === undefined && !result.changed && result.retryAfterMs === undefined
+        usage.ending = result.failure ? result.failure.class : result.changed ? 'unavailable' : refused ? 'budget' : 'circuit-open'
         finish(request)
+        writeUsage()
         if (result.failure) return answer(res, result.failure.reply)
         // The session's own service is not what this token was issued for any more: as before, the token is what fails.
         if (result.changed) return answer(res, revoked())
+        if (refused) return refuse(res, 402, BUDGET_EXCEEDED, BUDGET_MESSAGE, shape)
         const wait = Math.ceil((result.retryAfterMs ?? 1000) / 1000)
         res.setHeader('retry-after', String(wait))
         return refuse(res, 503, 'gateway-circuit-open', '这个模型服务一直出错，Latch 暂时没有向它发送请求。', shape)
       }
       const opened = result.value
       const { place } = candidates[result.index]!
+      usage.candidate = opened.candidate
+      usage.fallback = place > 0
+      usage.apiKey = opened.service.apiKey
+      usage.firstByteMs = clock.now() - arrived
       // The rest of the turn stays where this request was answered; the next turn starts from the first candidate again.
       if (place > 0) tally.moved.set(model, place)
       else tally.moved.delete(model)
@@ -931,14 +1037,19 @@ export class ModelGatewayServer implements ModelGateway {
       for (const loss of opened.prepared.translated?.request.dropped ?? []) tally.dropped.add(loss)
       let end: 'complete' | 'broken' | 'aborted' = 'broken'
       try {
-        end = await this.relay(res, binding, opened, request, signal)
+        end = await this.relay(res, binding, opened, request, signal, usage)
       } finally {
+        // With no entry of the turn to settle, how the relay ended is all that is known of the reply.
+        usage.ending = signal.aborted || end === 'aborted' ? 'aborted' : end === 'complete' ? 'ok' : 'stream'
         finish(request)
+        writeUsage()
         result.done(signal.aborted ? 'aborted' : end)
       }
     } catch (error) {
+      usage.ending ??= signal.aborted ? 'aborted' : error instanceof AppError && error.code === 'gateway-busy' ? 'busy' : 'request'
       if (request) finish(request)
       else failed(entry)
+      writeUsage()
       if (signal.aborted) return
       if (!(error instanceof AppError)) throw error
       if (error.code === 'gateway-busy') res.setHeader('retry-after', '1')
@@ -1063,6 +1174,7 @@ export class ModelGatewayServer implements ModelGateway {
     opened: Opened,
     request: OpenRequest | undefined,
     signal: AbortSignal,
+    metered: Metered,
   ): Promise<'complete' | 'broken' | 'aborted'> {
     const { candidate, service, response, returned, reader } = opened
     const gone = () => signal.aborted || res.destroyed
@@ -1078,12 +1190,14 @@ export class ModelGatewayServer implements ModelGateway {
         opened.prepared.translated,
         returned,
         signal,
+        metered,
       )
     res.writeHead(response.status, returned)
     const reply = replyReader(binding.entry, response.headers.get('content-type'))
     if (request) request.reply = reply
+    metered.reply = reply
     if (!reader) {
-      finish(request, reply.end())
+      finish(request, (metered.facts = reply.end()))
       res.end()
       return 'complete'
     }
@@ -1112,7 +1226,7 @@ export class ModelGatewayServer implements ModelGateway {
     } finally {
       // Read before the reply ends, so the turn that waits on it finds it counted. A reply that said it is over counts
       // as such though the stream broke after: the harness may stop reading once it has the last event.
-      const facts = reply.end()
+      const facts = (metered.facts = reply.end())
       ended = complete || facts.ended === true
       finish(request, ended ? facts : undefined)
       await reader.cancel().catch(() => {})
@@ -1135,6 +1249,7 @@ export class ModelGatewayServer implements ModelGateway {
     translated: { request: GatewayRequest; tools: ToolNames },
     returned: Record<string, string>,
     signal: AbortSignal,
+    metered: Metered,
   ): Promise<'complete' | 'broken' | 'aborted'> {
     const { request: input, tools } = translated
     const safe = (text: string) => withoutKey(text, service.apiKey)
@@ -1144,6 +1259,7 @@ export class ModelGatewayServer implements ModelGateway {
       binding.entry === 'anthropic-messages' ? new AnthropicOutput(input, tools, seal, safe) : new ResponsesOutput(input, tools, seal, safe)
     const reply = replyReader(candidate.upstream, response.headers.get('content-type'))
     if (request) request.reply = reply
+    metered.reply = reply
     const write = async (events: Array<Record<string, unknown> & { type: string }>) => {
       for (const event of events) {
         if (res.destroyed || signal.aborted) return
@@ -1202,7 +1318,7 @@ export class ModelGatewayServer implements ModelGateway {
           }
         }
         await write(output.finish())
-        finish(request, reply.end())
+        finish(request, (metered.facts = reply.end()))
         res.end()
       } else {
         const reader = body.getReader()
@@ -1231,12 +1347,13 @@ export class ModelGatewayServer implements ModelGateway {
           else output.push(delta)
         }
         output.finish()
-        finish(request, reply.end())
+        finish(request, (metered.facts = reply.end()))
         res.writeHead(200, { ...returned, 'content-type': 'application/json; charset=utf-8' })
         res.end(safeJson(output.result(), service.apiKey))
       }
       return 'complete'
     } catch (error) {
+      metered.facts = reply.facts()
       finish(request)
       if (res.destroyed || signal.aborted) return 'aborted'
       const message = error instanceof AppError ? safe(error.message) : '模型回复未完整转换，本轮没有确认完成'

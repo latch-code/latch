@@ -96,9 +96,13 @@ export interface AttemptFailure<R> {
 
 /**
  * How one try at one candidate ended. `skip`: this candidate cannot take the request now (it is off, removed, changed, or
- * cannot do what the request asks), and nothing was sent to it.
+ * cannot do what the request asks, or its monthly budget is used up), and nothing was sent to it.
  */
-export type AttemptResult<T, R> = { ok: true; value: T } | ({ ok: false } & AttemptFailure<R>) | { skip: true }
+export type AttemptResult<T, R> =
+  | { ok: true; value: T }
+  | ({ ok: false } & AttemptFailure<R>)
+  /** `reason`: why, when the record of moving on should say more than that it could not be used. */
+  | { skip: true; reason?: 'budget' }
 
 /** The first-byte clock of one try, as the try itself moves it. */
 export interface AttemptTimer {
@@ -278,7 +282,13 @@ export class ModelScheduler {
       error instanceof AppError && error.code === 'gateway-busy' && (last ?? refused) !== undefined
     /** The first candidate after `position` that may be tried now. */
     const nextAfter = (position: number): number | undefined => {
-      for (let next = position + 1; next < order.length; next++) if (this.gate(candidates[order[next]!]!) !== 'open') return next
+      for (let next = position + 1; next < order.length; next++) {
+        const candidate = candidates[order[next]!]!
+        if (this.gate(candidate) !== 'open') return next
+        // Passed over only for now: when it opens again is part of the answer if nothing else can be tried.
+        const opened = this.state(candidate.providerId, candidate.fingerprint).openedAt ?? clock.now()
+        reopens = Math.min(reopens ?? Infinity, Math.max(opened + SCHEDULE.breaker.openMs - clock.now(), 1000))
+      }
       return undefined
     }
     /** Moves on from `position` for `reason`, on record first; undefined when it stays. */
@@ -334,7 +344,7 @@ export class ModelScheduler {
           const result = await this.timed(index, limited ? Math.min(SCHEDULE.firstByteMs, remaining) : undefined, input, waited)
           signal.throwIfAborted()
           if ('skip' in result) {
-            moved = await moveOn(position, 'unavailable')
+            moved = await moveOn(position, result.reason ?? 'unavailable')
             break
           }
           if (result.ok) {

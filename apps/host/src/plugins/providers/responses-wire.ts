@@ -155,6 +155,8 @@ const usageSchema = z.object({
   // Optional parts some services report; a gateway that sends them malformed just loses the part.
   input_tokens_details: z.object({ cached_tokens: count.nullish() }).nullish().catch(undefined),
   output_tokens_details: z.object({ reasoning_tokens: count.nullish() }).nullish().catch(undefined),
+  // What the request cost, from services that say so themselves.
+  cost: z.number().nonnegative().nullish().catch(undefined),
 })
 
 /** A Responses usage object as Latch counts tokens: cached input inside the input, reasoning inside the output. */
@@ -305,7 +307,7 @@ async function* decodeResponsesStream(
   }
   const layout = finished.length ? layoutOf(items) : undefined
   if (layout) finished[0]!.signature = { by: signer, value: layout, scope: 'turn' }
-  if (usage) yield { type: 'usage', ...tokensOf(usage) }
+  if (usage) yield { type: 'usage', ...tokensOf(usage), ...(usage.cost != null && Number.isFinite(usage.cost) ? { cost: usage.cost } : {}) }
   for (const call of finished) yield { type: 'tool-call', call }
   yield { type: 'finish', reason: finished.length ? 'tool-calls' : 'stop' }
 }

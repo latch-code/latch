@@ -5,7 +5,8 @@ import { turnRoute, turnText, turnTimes, turnTimeTip, turnUsage, type Turn, type
 import { formatDuration, formatTokens, tokenAmount, tokenParts } from '../format.ts'
 import { TimeLabel } from './MessageRow.tsx'
 import { Menu } from './overlays.tsx'
-import { Button, IconButton, Tooltip, Popover, InfoGlyph, CopyButton, CopyGlyph, EnterGlyph, MoreGlyph } from '@latch/ui'
+import { budgetWords, turnCostWords } from '../settings/modelSpend.ts'
+import { Button, IconButton, Tooltip, Popover, StatusWord, InfoGlyph, CopyButton, CopyGlyph, EnterGlyph, MoreGlyph } from '@latch/ui'
 
 /** A fact of the footer with its details in a tooltip; it takes keyboard focus so the details are reachable. */
 function Fact({ tip, className, children }: { tip?: ReactNode; className?: string; children: ReactNode }) {
@@ -78,6 +79,10 @@ function SettledFacts({
   const requests = route ? [`这一轮经 Latch ${route.requests} 次请求`, ...route.models.map(modelLine)] : []
   const incomplete = routedUsage && (routedUsage.unmeasured > 0 || routedUsage.open > 0)
   const spent = outcome === 'interrupted' || times.activeMs === undefined ? undefined : formatDuration(times.activeMs)
+  // What the Host knows the turn's model requests cost, and a monthly budget of theirs at 80% or used up.
+  const spend = person ? undefined : (turn.user?.turn?.routed?.spend ?? turn.user?.turn?.spend)
+  const cost = turnCostWords(spend)
+  const budget = budgetWords(spend?.budget)
   return (
     <>
       {times.sentAt !== undefined && (
@@ -99,6 +104,12 @@ function SettledFacts({
           {`输出 ${formatTokens(usage.outputTokens)}`}
           <span className="turn-fact-unit"> tokens</span>
         </Fact>
+      )}
+      {cost && <Fact tip={cost.note}>{cost.text}</Fact>}
+      {budget && (
+        <span className="turn-fact">
+          <StatusWord tone={budget.tone}>{budget.text}</StatusWord>
+        </span>
       )}
       {incomplete && (
         <Popover

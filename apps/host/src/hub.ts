@@ -217,7 +217,7 @@ export class HarnessHub implements Bridge {
    * The project of the session being created. A driver starts the first run before `createTask` returns and the session's
    * project is recorded, so that run's lookup would otherwise file its changes under the default project.
    */
-  private readonly creatingProject = new AsyncLocalStorage<string | undefined>()
+  private readonly creatingTask = new AsyncLocalStorage<{ workspaceId: string | undefined; agentId: string | undefined }>()
   private readonly personalOwners = new Map<string, NonNullable<TaskSummary['personal']>>()
   private readonly agentOwners = new Map<string, NonNullable<TaskSummary['agent']>>()
   private readonly briefSessions = new Set<string>()
@@ -544,7 +544,7 @@ export class HarnessHub implements Bridge {
     const found = (await this.member(harnessId)?.bridge.listTasks())?.find(task => task.id === sessionId)
     if (!found || !this.claim(harnessId, sessionId)) return undefined
     const summary = this.present(harnessId, found)
-    const creating = this.creatingProject.getStore()
+    const creating = this.creatingTask.getStore()?.workspaceId
     return creating !== undefined && summary.workspaceId === undefined ? { ...summary, workspaceId: creating } : summary
   }
 
@@ -614,7 +614,7 @@ export class HarnessHub implements Bridge {
     }
     const result = await this.accept(entry as Member, bridge =>
       withHarnessPromptSource({ method: 'create', requestId: input.requestId, text: input.prompt }, () =>
-        this.creatingProject.run(workspaceId, () => bridge.createTask(task)),
+        this.creatingTask.run({ workspaceId, agentId: input.agentContext?.agent?.customAgentId }, () => bridge.createTask(task)),
       ),
     )
     if (!this.claim(id, result.sessionId)) {
@@ -732,6 +732,11 @@ export class HarnessHub implements Bridge {
   /** The session's agent, which makes its contents private; available even when the driver cannot list its tasks. */
   agentOf(sessionId: string): TaskSummary['agent'] {
     return this.agentOwners.get(sessionId) ?? this.meta.get(sessionId)?.agent
+  }
+
+  /** The Host's owner in an async task creation, even if its first model request runs before the driver returns the ID. */
+  startingAgentId(): string | undefined {
+    return this.creatingTask.getStore()?.agentId
   }
   private rememberAgent(sessionId: string, owner: NonNullable<TaskSummary['agent']>): void {
     if (!/^agt_[a-f0-9-]{36}$/u.test(owner.customAgentId)) throw new AppError(502, 'agent-owner-invalid', '执行端返回了无效的 Agent 归属。')

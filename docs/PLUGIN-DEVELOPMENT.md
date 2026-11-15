@@ -289,7 +289,7 @@ interface ModelProvider {
 | `{ type: 'text', text }` | 本次新增文字，不是累计全文 |
 | `{ type: 'reasoning', text }` | 模型报告的思考片段；展示给用户，不进入后续请求的历史 |
 | `{ type: 'tool-call', call }` | 已完整解析的 `{ id, name, arguments }`；arguments 必须是对象 |
-| `{ type: 'usage', inputTokens, outputTokens, cacheReadTokens?, cacheWriteTokens?, reasoningTokens? }` | 计入消息与会话用量。`inputTokens` 是全部输入（含缓存），`outputTokens` 是全部输出（含推理）；三个可选部分只在模型服务报告时填写，没报告就省略，不要填 0（合计时某一部分只有每一步都报告了才保留） |
+| `{ type: 'usage', inputTokens, outputTokens, cacheReadTokens?, cacheWriteTokens?, reasoningTokens?, cost? }` | 计入消息与会话用量。`cost` 只在服务自己在回复里报告这次请求的花费时填写（如 `usage.cost`），不由 Provider 估算；Host 把它记进用量账本。`inputTokens` 是全部输入（含缓存），`outputTokens` 是全部输出（含推理）；三个可选部分只在模型服务报告时填写，没报告就省略，不要填 0（合计时某一部分只有每一步都报告了才保留） |
 | `{ type: 'finish', reason: 'stop' \| 'tool-calls' }` | 必须是最后一个事件；之后仍有内容或流直接断开都视为协议失败 |
 
 把 `signal` 交给底层请求，并在退出时释放读取器。调用 ID 在同一会话历史中须唯一；处理 `ModelMessage.isError`，不要把拒绝或工具错误变成成功信息。`tools: []` 表示对话模式，不能发送工具声明。日志与错误不要包含密钥。
@@ -411,7 +411,7 @@ pnpm test:e2e
 
 `HarnessDriver.capabilities.attachments?: { images?: boolean; text?: boolean; textBytes?: number }` 声明接收能力，缺少即不展示；能力要等 Harness 启动后才知道的 Driver 另实现可选的 `Bridge.promptCapabilities()`，返回它最近一次为当前定义启动时报告的 `{ images, text }`，之前返回 `undefined`；返回了就以它为准（使用 Latch 模型服务的 Harness 也一样，图片仍要模型声明视觉），没返回时用声明。`CreateTaskInput.attachments?` 与 `PromptOptions.attachments?` 是 `AttachmentRef[]`；`HarnessHostOptions.readAttachment?(ref, signal?)` 返回本轮的 `AttachmentContent`（`{type:'image',mimeType,data}` 或 `{type:'text',name,text}`），`saveAttachment?({sessionId,mime,data})` 保存 Agent 输出图片。持久化只保存引用，不保存物化内容，不把附件复制到项目目录。Host 仍验证设备、会话、文件类型和限额。
 
-`stream()` 的可选 `run` 是内置 Harness 传入的会话与本轮 ID，供 Host 自己的服务按轮调度，插件 Provider 可以忽略；`ModelDelta` 的 `{ type: 'route', providerId, model }` 只由 Host 的调度层在「出错时改用」的服务回答前发出，插件 Provider 不发。
+`stream()` 的可选 `run` 是内置 Harness 传入的会话与本轮 ID，供 Host 自己的服务按轮调度，插件 Provider 可以忽略；`ModelDelta` 的 `{ type: 'route', providerId, model }` 只由 Host 的调度层在「出错时改用」的服务回答前发出，插件 Provider 不发。`{ type: 'spend', spend }` 同样只由调度层发出，在 `finish` 之前：这次请求已知的花费与所属预算的状态（[MODEL-GATEWAY.md](MODEL-GATEWAY.md#用量花费与预算)）。
 
 `ModelProvider.modelCapabilities?: Readonly<Record<string,{vision?:boolean;thinking?:string[]}>>` 按模型显式声明视觉输入与可接受的思考深度（上线值，由弱到强）；`stream()` 的 `effort` 只会是该模型声明过的一项，未声明的必须拒绝（`effort-unavailable`），不发 `effort` 时用模型自己的默认值。`ModelMessage.attachments?` 承载执行前物化的内容块。没有声明视觉能力的模型收到图片时应拒绝，不能忽略或偷偷换模型。内置适配器保持原出站 fetch 与密钥边界。完整协议与限额见 [ATTACHMENTS.md](ATTACHMENTS.md)。
 

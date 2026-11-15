@@ -19,6 +19,7 @@ import type {
   TaskStatus,
   DriverTaskSummary,
   TokenUsage,
+  TurnSpend,
   ToolDecision,
   ToolDetail,
   UnknownResult,
@@ -225,6 +226,8 @@ interface PendingApproval {
 interface Run {
   /** Steps of this turn that a 「出错时改用」 service answered, for the turn's record; absent when none did. */
   routed?: RoutedTurn
+  /** What the turn's model requests cost, when the Host knows, and a budget of theirs that is nearly or fully used. */
+  spend?: TurnSpend
   /** The approval the person gave the call about to run, for its own record (the browser's audit). */
   approved?: { callId: string; approvalId: string }
   instructions?: string
@@ -377,6 +380,20 @@ function addUsage(total: TokenUsage | undefined, delta: UsageDelta): TokenUsage 
     if (reported && (total === undefined || total[part] !== undefined)) sum[part] = (total?.[part] ?? 0) + tokens(delta[part])
   }
   return sum
+}
+/** Adds one request's spend to the turn's: cost by currency, and the nearer budget state of the two. */
+function addSpend(total: TurnSpend | undefined, next: TurnSpend): TurnSpend {
+  const cost = (total?.cost ?? []).map(item => ({ ...item }))
+  for (const item of next.cost ?? []) {
+    const same = cost.find(entry => entry.currency === item.currency)
+    if (!same) cost.push({ ...item })
+    else {
+      same.micros += item.micros
+      if (item.priced) same.priced = true
+    }
+  }
+  const budget = total?.budget === 'over' || next.budget === 'over' ? 'over' : (next.budget ?? total?.budget)
+  return { ...(cost.length ? { cost } : {}), ...(budget ? { budget } : {}) }
 }
 const PREVIOUS: ReadonlySet<unknown> = new Set(['none', 'text', 'unavailable'])
 /** What a row keeps of a preview: the approval card's label (`summary`) is the approval's alone. */
@@ -1634,6 +1651,7 @@ class HarnessRuntime implements Bridge {
             seen.add(call.id)
             calls.push(call)
           } else if (delta.type === 'usage') live.usage = addUsage(live.usage, delta)
+          else if (delta.type === 'spend') run.spend = addSpend(run.spend, delta.spend)
           else if (delta.type === 'finish') finished = true
         }
         signal.throwIfAborted()
@@ -1731,7 +1749,8 @@ class HarnessRuntime implements Bridge {
               createdAt: at,
             })
           const prompt = task.messages.find(message => message.id === run.userMessageId)
-          if (prompt) prompt.turn = { ...run.clock.turn(), ...(run.routed ? { routed: run.routed } : {}) }
+          if (prompt)
+            prompt.turn = { ...run.clock.turn(), ...(run.routed ? { routed: run.routed } : {}), ...(run.spend ? { spend: run.spend } : {}) }
           const result = this.fileTracking.capture(run.id)
           if (result) {
             const turn = task.messages.slice(

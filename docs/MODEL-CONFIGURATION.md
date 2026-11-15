@@ -5,6 +5,9 @@ sources:
   - packages/protocol/src/model-route.ts
   - apps/web/src/composer/modelReasoning.ts
   - apps/web/src/settings/ProvidersSettings.tsx
+  - apps/web/src/settings/ModelSpend.tsx
+  - apps/web/src/settings/ModelUsagePage.tsx
+  - apps/web/src/settings/modelSpend.ts
   - apps/host/src/plugins/providers/chat-wire.ts
   - apps/host/src/plugins/providers/responses-wire.ts
   - apps/host/src/plugins/providers/anthropic-wire.ts
@@ -79,3 +82,11 @@ Latch 内置直接调模型服务，所以思考深度来自 设置 › 模型 �
 经 Latch 的会话在模型菜单下方写「经 Latch 用「X」」，有备选时下一行写「出错时改用「Y」」，都是会话开始时定下的。由备选回答的一轮，作者行写回答的服务与模型，后面一个「备选」标签；请求记录里写几次由备选回答。内置 Harness 的这种轮次只记由备选回答的步骤（`routed.direct`），不显示「经 Latch」的请求数。
 
 项目设置的「默认模型」列出每个服务的模型与「不设」。草稿所在项目有可用的默认模型、而这台设备还没有在 Latch 内置上选过模型时，草稿从它开始；选过的模型照旧被记住并排在它之前。自己带模型的 Harness 在没有为它选过模型时把它当作服务选择；在菜单里选回它自己的默认模型是一次明确的选择，会被记住，排在项目的默认模型之前。
+
+## 单价、预算与用量
+
+模型行的「⋯」里另有「单价」：币种（美元、人民币）与输入、输出、缓存输入、缓存写入四项，每百万 tokens；输入与输出必填，缓存两项留空时按输入单价算。填过的模型行写「已填单价」。服务页「连接」里的「本月预算」与 Agent 设置「执行方式」里的「本月预算」各设一个每月上限：按 tokens，或按某一币种的花费；行里是格子进度、已用与上限，到 80% 写琥珀色「预算已用 80%」，用完写红色「本月预算已用完」。对话框的说明写明按这台 Mac 的时间算月。单价与预算都单独保存，不跟服务或 Agent 的其他修改一起提交；改它们要 `admin`，规则与存储见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#用量花费与预算)。
+
+设置 › 用量 对所有能查看的设备开放（模型一节只给能管理这台 Mac 的设备）：选期间（本月、7 天、30 天、90 天）与分组（服务、模型、Agent、会话），表里是请求、失败、备选、输入、输出、花费；没有服务报告的数写「未报告」，由你填的单价算出的花费下面写「按你填的单价」，行的悬停给出精确数与没报告的项。这台设备读不到的会话、已删除的会话与没有会话的请求并成「其他会话」一行，不属于 Agent 或这台设备不能读 Agent 时并成「其他」。下面的「本月预算」列出每个预算的进度，只读；按花费的预算有算不出花费的请求时，旁边写「未计入 N 次」。按花费设预算前，它覆盖的模型都要先填这个币种的单价，否则保存被拒绝并写明缺哪些模型。模型一节里原有的「用量」仍按会话消息统计，含 Harness 自己报告的数。
+
+一轮的页脚在花费已知时写「花费 $0.0021」，悬停写「按你填的单价」；这一轮让某个预算到 80% 或用完时写对应的琥珀或红色字样。

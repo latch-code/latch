@@ -3,6 +3,7 @@ import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import {
+  COST_CURRENCIES,
   GATEWAY_LOSSES,
   MAX_MODEL_FALLBACKS,
   MODEL_WIRES,
@@ -189,6 +190,14 @@ const usage = z.object({
   cacheWriteTokens: z.number().optional(),
   reasoningTokens: z.number().optional(),
 })
+// What a turn's model requests cost, when the Host knew, and a budget's state: amounts and enums only.
+const spendSchema = z.object({
+  cost: z
+    .array(z.object({ currency: z.enum(COST_CURRENCIES), micros: z.number().nonnegative(), priced: z.literal(true).optional() }))
+    .max(COST_CURRENCIES.length)
+    .optional(),
+  budget: z.enum(['near', 'over']).optional(),
+})
 const count = z.number().int().nonnegative()
 const routedTurn = z.object({
   requests: count,
@@ -209,6 +218,7 @@ const routedTurn = z.object({
       }),
     )
     .max(16),
+  spend: spendSchema.optional(),
 })
 const toolDetail = z.object({
   kind: z.enum(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other']).optional(),

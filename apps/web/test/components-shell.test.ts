@@ -180,6 +180,7 @@ describe('shell routes', () => {
     expect(settingsSectionsAt(false)).toEqual([
       'general',
       'providers',
+      'usage',
       'engines',
       'mcp',
       'workspaces',
@@ -192,6 +193,7 @@ describe('shell routes', () => {
     expect(settingsSectionsAt(true)).toEqual([
       'general',
       'providers',
+      'usage',
       'engines',
       'mcp',
       'workspaces',

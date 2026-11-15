@@ -2111,3 +2111,38 @@
     flex-direction: column;
   }
 }
+
+/* 本月预算: the meter, what is used of what, and the state in words once it is near or used up. */
+.budget-control {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.budget-progress {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+.budget-progress-share,
+.budget-none {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+/* 设置 › 用量: the grouping sits above the table; the table scrolls inside itself on a narrow screen. */
+.model-usage-bar {
+  display: flex;
+  margin-block: var(--sp-8);
+}
+.model-usage-table td small {
+  display: block;
+}

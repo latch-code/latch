@@ -18,6 +18,8 @@ export interface FakeReply {
   text?: string
   /** One tool call; the reply ends asking for it. A pattern names the first tool the request offers that matches it. */
   tool?: { name: string | RegExp; namespace?: string; input: Record<string, unknown> }
+  /** Chat only: the reply's `usage` exactly as given, for a service that reports more than tokens (its own cost). */
+  usage?: Record<string, unknown>
   /** A Responses client-executed search call. The real client must discover and return its own tool catalog. */
   search?: { input: Record<string, unknown> }
   /**
@@ -128,7 +130,7 @@ function named(reply: FakeReply, body: Record<string, unknown>): FakeReply {
 
 function chat(reply: FakeReply, model: string, stream: boolean, served: number): { events?: Array<{ data: unknown }>; body?: unknown } {
   const id = 'chatcmpl-fake'
-  const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
+  const usage = reply.usage ?? { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
   const call = reply.tool && {
     id: `call_fake_${served}`,
     type: 'function',

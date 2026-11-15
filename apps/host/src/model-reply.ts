@@ -10,6 +10,8 @@ export interface ReplyFacts {
   /** The model the reply says answered. */
   model?: string
   usage?: TokenUsage
+  /** What the reply's own `usage.cost` says the request cost, as OpenRouter and gateways like it report; never worked out here. */
+  cost?: number
   /** The reply said the request failed: an `error` event or object, a Responses `response.failed`. */
   failed?: true
   /**
@@ -45,6 +47,11 @@ const NEWLINE = 0x0a
 const record = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
 const text = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined)
+/** `usage.cost` when the service reports one as a plain amount. */
+function reportedCost(usage: unknown): number | undefined {
+  const cost = record(usage)?.cost
+  return typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? cost : undefined
+}
 
 function parse(data: string): unknown {
   try {
@@ -68,6 +75,8 @@ function responsesFacts(facts: ReplyFacts, value: unknown, event?: string): void
   if (model) facts.model = model
   const usage = responsesUsage(response.usage)
   if (usage) facts.usage = usage
+  const cost = reportedCost(response.usage)
+  if (cost !== undefined) facts.cost = cost
   if (response.status === 'failed') facts.failed = true
 }
 
@@ -83,6 +92,8 @@ function chatFacts(facts: ReplyFacts, value: unknown): void {
   if (model) facts.model = model
   const usage = chatUsage(chunk.usage)
   if (usage) facts.usage = usage
+  const cost = reportedCost(chunk.usage)
+  if (cost !== undefined) facts.cost = cost
 }
 
 /** Facts from one Anthropic event, or a whole message; `usage` sums what its `message_start` and `message_delta` said. */

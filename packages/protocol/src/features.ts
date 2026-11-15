@@ -26,6 +26,8 @@ export interface HostFeatures {
   attachments?: true
   agentProbe?: true
   usage?: true
+  /** `/model-usage`, `/model-spend`: the usage ledger's sums, prices and monthly budgets (docs/MODEL-GATEWAY.md). */
+  modelUsage?: true
   changes?: true
   /** `/tasks/:id/review-notes`: line feedback kept on the Host (docs/CHANGES.md). */
   reviewNotes?: true

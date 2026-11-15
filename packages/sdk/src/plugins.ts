@@ -2,7 +2,7 @@
 import type { HarnessDriver } from './harness.ts'
 import type { TransportDriver } from './transports.ts'
 export type * from './transports.ts'
-import type { ModelCapabilities, TaskSummary, UiPanelDocument, UiPanelInfo } from '@latch/protocol/types'
+import type { ModelCapabilities, TaskSummary, TurnSpend, UiPanelDocument, UiPanelInfo } from '@latch/protocol/types'
 
 export type { PluginInfo } from '@latch/protocol/types'
 
@@ -47,7 +47,14 @@ export type ModelDelta =
       cacheReadTokens?: number
       cacheWriteTokens?: number
       reasoningTokens?: number
+      /** What the service's reply itself says this request cost (`usage.cost`), when it says so; never worked out by the provider. */
+      cost?: number
     }
+  /**
+   * What this request cost, when known, and where a monthly budget that covers it stands. Sent only by the Host's own
+   * scheduling, before `finish`; a plugin's provider never sends it.
+   */
+  | { type: 'spend'; spend: TurnSpend }
   | { type: 'finish'; reason: 'stop' | 'tool-calls' }
 export interface ToolPreview {
   /** Short human summary shown on the tool row and approval card. */

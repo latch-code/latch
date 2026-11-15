@@ -5,6 +5,7 @@ import { useHarness } from './core/useHarness.ts'
 import { AppShell } from './shell/AppShell.tsx'
 import { ConnectScreen, CrashScreen, EnrollmentPage } from './components/EnrollmentPage.tsx'
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
+import { ModelSpendWritesProvider } from './settings/modelSpendWrites.tsx'
 
 /** Composition root: theme, authority from the Host, then enrollment or the workspace shell. */
 export function App() {
@@ -18,7 +19,7 @@ export function App() {
   const page =
     harness.snapshot !== null ? (
       <ErrorBoundary
-        key={harness.snapshot.device.id}
+        key={JSON.stringify([harness.snapshot.host?.hostId, harness.snapshot.device.id])}
         resetKey={harness.selectedId}
         fallback={reset => (
           <CrashScreen
@@ -28,7 +29,9 @@ export function App() {
             }}
           />
         )}>
-        <AppShell harness={harness} snapshot={harness.snapshot} />
+        <ModelSpendWritesProvider>
+          <AppShell harness={harness} snapshot={harness.snapshot} />
+        </ModelSpendWritesProvider>
       </ErrorBoundary>
     ) : harness.auth !== null ? (
       <EnrollmentPage key={harness.auth.reason} auth={harness.auth} onEnrolled={harness.confirmEnrollment} />

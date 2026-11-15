@@ -1,6 +1,7 @@
 export type SettingsSection =
   | 'general'
   | 'providers'
+  | 'usage'
   | 'engines'
   | 'mcp'
   | 'workspaces'
@@ -59,6 +60,7 @@ export interface MyAgentTarget {
 const WIDE_SECTIONS: readonly SettingsSection[] = [
   'general',
   'providers',
+  'usage',
   'engines',
   'mcp',
   'workspaces',
