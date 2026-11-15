@@ -464,9 +464,13 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
     await pick(page, 'plan').click()
     if (sticky) {
       const refused = await modeReply
-      expect(refused.status()).toBe(409)
-      expect(await refused.json()).toMatchObject({ error: 'permission-unverified' })
-      await currentChat.getByText('没能确认权限已经切换', { exact: true }).filter({ visible: true }).waitFor()
+      expect(refused.status()).toBe(503)
+      expect(await refused.json()).toMatchObject({ error: 'config-outcome-unknown' })
+      await currentChat
+        .getByText('没有收到 Agent 的确认。核对会向它读取当前设置，不会再发送一次。', { exact: true })
+        .filter({ visible: true })
+        .waitFor()
+      await currentChat.getByRole('button', { name: '核对', exact: true }).filter({ visible: true }).waitFor()
     } else {
       expect((await modeReply).ok()).toBe(true)
       await expect

@@ -43,6 +43,7 @@ export function TopicFrame({
   // The permission chip is not in a helper's input, so what it would warn of is said here: the open topic's own mode
   // as its session reports it, or on a new topic what the helper's Harness declares.
   const detail = shell.current
+  const configFeedback = current === null ? undefined : shell.configFeedback?.get(current)
   const topicHarness =
     current !== null && detail?.summary.id === current
       ? shell.catalog?.harnesses.find(item => item.id === detail.summary.harnessId)
@@ -71,7 +72,9 @@ export function TopicFrame({
             withLadderMode(freshHarness, draftConfig(freshHarness, fresh.config)?.config, fresh.config),
           )
         : undefined,
-    current !== null && detail?.summary.id === current && helperPermissionBlocked(detail),
+    current !== null
+      && detail?.summary.id === current
+      && helperPermissionBlocked(detail, configFeedback?.kind === 'unknown' ? configFeedback.configId : undefined),
   )
   const boundary = (topicHarness ?? freshHarness)?.level === 'L3' ? MODE_COPY.firstStart(name).detail : undefined
   // The state is said once per screen: where the 顶栏 layout's queue stands beside the conversation it already says it,

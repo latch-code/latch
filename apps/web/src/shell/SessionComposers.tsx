@@ -352,7 +352,9 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
   // helper's settings, and what the permission means for safety stays in its frame (TopicFrame), not here.
   const speaker = selectedId !== null ? speakerOf(shell.snapshot, summary) : undefined
   const showControls = speaker === undefined && (selectedId === null || (!!summary && !summary.personal && gate.kind !== 'stopped'))
-  const permissionBlocked = selectedId !== null && helperPermissionBlocked(current)
+  const permissionChange = selectedId !== null ? configFeedback.get(selectedId) : undefined
+  const permissionBlocked =
+    selectedId !== null && helperPermissionBlocked(current, permissionChange?.kind === 'unknown' ? permissionChange.configId : undefined)
   const worktreeOffer = selectedId === null ? worktreeProject(catalog, choice, submission.fork !== null) : undefined
   const status = (() => {
     if (selectedId === null) {
