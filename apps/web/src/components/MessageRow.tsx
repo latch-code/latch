@@ -1,6 +1,6 @@
 import { MentionedText } from './MentionedText.tsx'
 import { MessageAttachments } from './MessageAttachments.tsx'
-import { Fragment, memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, Fragment, memo, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { GitFork, RotateCcw } from 'lucide-react'
 import { splitChangeNote, type HarnessInfo, type Message } from '@latch/protocol'
 import { MessageContent, ReasoningContent } from '../MessageContent.tsx'
@@ -256,6 +256,13 @@ export function AuthorLine({
 /** A bubble taller than this clamps behind a fade with 「显示全部」. */
 const BUBBLE_CLAMP = 176
 
+export const TurnEditLocked = createContext(false)
+
+function EditTurnButton({ message, onEdit }: { message: Message; onEdit: (message: Message) => void }) {
+  if (useContext(TurnEditLocked)) return null
+  return <IconButton icon={UndoGlyph} size="xs" label="从这里编辑" onClick={() => onEdit(message)} />
+}
+
 function UserMessage({
   message,
   coarse,
@@ -378,16 +385,7 @@ function UserMessage({
             <TimeLabel at={at} tip={queuedAt !== undefined ? () => `${absoluteTime(at)} · 排队于 ${absoluteTime(queuedAt)}` : undefined} />
           )}
           {text && <CopyButton text={text} label="复制" size="xs" />}
-          {onEdit && (
-            <IconButton
-              icon={UndoGlyph}
-              size="xs"
-              label="从这里编辑"
-              onClick={() => {
-                onEdit(message)
-              }}
-            />
-          )}
+          {onEdit && <EditTurnButton message={message} onEdit={onEdit} />}
           {onHandoff && text && (
             <IconButton
               icon={EnterGlyph}

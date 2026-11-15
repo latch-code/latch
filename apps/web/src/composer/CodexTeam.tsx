@@ -6,7 +6,6 @@ import { MessageContent } from '../MessageContent.tsx'
 import { SUBAGENT_STATUS } from '../components/SubagentRow.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { RunState } from './Composer.tsx'
-import '../styles/codex-team.css'
 
 interface Member {
   rowId: string

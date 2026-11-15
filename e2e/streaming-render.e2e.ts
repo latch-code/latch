@@ -258,6 +258,36 @@ describe('streaming render', () => {
     expect(await page.evaluate(() => window.renders.ConversationRail)).toBe(railRenders)
   })
 
+  it('keeps history settled while a new run locks and restores editing', async () => {
+    await open()
+    await page.evaluate(() => {
+      window.transcriptActions = []
+      window.showTranscriptOptions({ onFork: id => window.transcriptActions.push(id) })
+    })
+    const past = prose(300, 1)
+    await show(detail(past))
+    const oldPrompt = page.locator('[data-message-id="user-298"]')
+    const edit = oldPrompt.getByRole('button', { name: '从这里编辑', exact: true })
+    await edit.waitFor()
+    const countTurns = () => page.evaluate(() => window.renders.TurnView ?? 0)
+    const user: Message = { id: 'user-live', role: 'user', text: '继续' }
+    const before = await countTurns()
+    await show(detail([...past, user], { running: true, liveId: 'reply-live', liveText: '开始', cursor: 2 }))
+    const reply = page.locator('[data-message-id="reply-live"]')
+    await reply.waitFor()
+    expect(await edit.count()).toBe(0)
+    const running = await countTurns()
+    expect(running - before).toBeLessThanOrEqual(6)
+
+    await show(detail([...past, user, { id: 'reply-live', role: 'assistant', text: '完成' }], { cursor: 3 }))
+    await expect.poll(() => reply.textContent()).toContain('完成')
+    await edit.waitFor()
+    expect((await countTurns()) - running).toBeLessThanOrEqual(6)
+    await oldPrompt.hover()
+    await edit.click()
+    expect(await page.evaluate(() => window.transcriptActions)).toEqual(['reply-297'])
+  })
+
   it.each([2, 23])('keeps the old tail DOM, work expansion and text selection after %i earlier turns', async rounds => {
     await open()
     // The second case starts a new group when the old tail becomes history.
@@ -807,6 +837,49 @@ describe('streaming render', () => {
     await expect.poll(() => status.textContent()).toBe('0/0')
     await page.getByRole('button', { name: /展开全部/u }).click()
     await expect.poll(() => status.textContent()).toBe('1/1')
+  })
+
+  it('follows each observed growth of the live reply before paint', async () => {
+    await open(390, 844)
+    await show(
+      detail([...prose(30, 5), { id: 'user-live', role: 'user', text: '继续' }], {
+        running: true,
+        liveText: '正在回复',
+        liveId: 'reply-live',
+      }),
+    )
+    const transcript = page.locator('.transcript')
+    await expect
+      .poll(() => transcript.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop))
+      .toBeLessThanOrEqual(2)
+    const paintGaps = await transcript.evaluate(
+      element =>
+        new Promise<number[]>(done => {
+          const content = element.querySelector('.transcript-content')!
+          let extent = element.scrollHeight
+          const gaps: number[] = []
+          const grow = () => window.appendLive(`\n\n第 ${gaps.length + 1} 段回复增加两行。先看已有证据，再把差异说清楚。`)
+          const finished = () => {
+            clearTimeout(timeout)
+            observer.disconnect()
+            done(gaps)
+          }
+          // The hook already observes this box. Sample each actual resize in the same notification, before the next paint.
+          const observer = new ResizeObserver(() => {
+            const next = element.scrollHeight
+            if (next === extent) return
+            extent = next
+            gaps.push(next - element.clientHeight - element.scrollTop)
+            if (gaps.length >= 6) finished()
+            else requestAnimationFrame(grow)
+          })
+          const timeout = setTimeout(finished, 5000)
+          observer.observe(content, { box: 'border-box' })
+          requestAnimationFrame(grow)
+        }),
+    )
+    expect(paintGaps).toHaveLength(6)
+    expect(Math.max(...paintGaps.map(Math.abs))).toBeLessThanOrEqual(2)
   })
 
   it('holds the reader’s place above a stream, and jumps back to the latest', async () => {
