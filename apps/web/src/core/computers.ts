@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AttentionItem, AttentionKind, ComputerSummary } from '@latch/protocol'
+import { isLoopbackHost, type AttentionItem, type AttentionKind, type ComputerSummary } from '@latch/protocol'
 import { shellComputers, type ComputersView } from './shell.ts'
 
 /** A state colour for the status words: the tones of `StatusWord` in @latch/ui. */
@@ -40,6 +40,21 @@ export function computerState(computer: Pick<ComputerSummary, 'state' | 'reason'
     case 'outdated':
       return { text: '版本较旧', tone: 'warn' }
   }
+}
+
+export function connectionTransport(
+  location: Pick<Location, 'protocol' | 'hostname'>,
+  { local, remote, hostId }: { local: boolean; remote: boolean; hostId: string | undefined },
+): string {
+  const { protocol, hostname } = location
+  if (protocol === 'latch:') {
+    if (local && hostname === 'app') return 'host.sock'
+    return remote ? 'HTTPS' : ''
+  }
+  if (protocol === 'https:') return 'HTTPS'
+  // The Host binds a dedicated localhost alias for this identity (apps/host/src/listeners.ts).
+  const loopback = isLoopbackHost(hostname) || (hostId !== undefined && hostname === `h-${hostId}.localhost`)
+  return protocol === 'http:' && loopback ? '回环 HTTP' : ''
 }
 
 /** The computers list of the desktop app, kept current by main's pushes; undefined outside it or until it arrives. */

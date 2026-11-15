@@ -31,6 +31,20 @@ export type BackdropPreference = 'off' | 'light' | 'standard'
 export type MotionPreference = 'system' | 'reduce'
 /** 密度: 标准 or 紧凑. */
 export type DensityPreference = 'standard' | 'compact'
+export const BACKDROP_CHOICES = [
+  { value: 'off', label: '关' },
+  { value: 'light', label: '轻' },
+  { value: 'standard', label: '标准' },
+] as const satisfies readonly { value: BackdropPreference; label: string }[]
+export const MOTION_CHOICES = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'reduce', label: '减弱' },
+] as const satisfies readonly { value: MotionPreference; label: string }[]
+export const DENSITY_CHOICES = [
+  { value: 'standard', label: '标准' },
+  { value: 'compact', label: '紧凑' },
+] as const satisfies readonly { value: DensityPreference; label: string }[]
+
 export interface Preferences {
   autoOpenDocuments: boolean
   diffLayout: 'unified' | 'split'

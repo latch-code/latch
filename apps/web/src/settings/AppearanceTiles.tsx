@@ -1,7 +1,5 @@
 import { Backdrop, RunningEdge, SegmentedControl, Spinner, TileChoice, type BackdropLevel } from '@latch/ui'
-import type { DensityPreference, MotionPreference } from '../preferences.ts'
-
-/* The density tiles are mounted when product rows use the density preference. */
+import { BACKDROP_CHOICES, DENSITY_CHOICES, MOTION_CHOICES, type DensityPreference, type MotionPreference } from '../preferences.ts'
 
 /**
  * 背景效果 as a small window: the real layer (粒子场) at this strength behind two opaque cards, drawn at two and a half
@@ -26,11 +24,7 @@ export function BackdropTiles({ value, onValueChange }: { value: BackdropLevel; 
       label="背景效果"
       value={value}
       onValueChange={onValueChange}
-      options={[
-        { value: 'off', label: '关', tile: <BackdropPreview level="off" /> },
-        { value: 'light', label: '轻', tile: <BackdropPreview level="light" /> },
-        { value: 'standard', label: '标准', tile: <BackdropPreview level="standard" /> },
-      ]}
+      options={BACKDROP_CHOICES.map(option => ({ ...option, tile: <BackdropPreview level={option.value} /> }))}
     />
   )
 }
@@ -56,10 +50,7 @@ export function DensityTiles({ value, onValueChange }: { value: DensityPreferenc
       label="密度"
       value={value}
       onValueChange={onValueChange}
-      options={[
-        { value: 'standard', label: '标准', tile: <DensityPreview density="standard" /> },
-        { value: 'compact', label: '紧凑', tile: <DensityPreview density="compact" /> },
-      ]}
+      options={DENSITY_CHOICES.map(option => ({ ...option, tile: <DensityPreview density={option.value} /> }))}
     />
   )
 }
@@ -72,15 +63,7 @@ export function DensityTiles({ value, onValueChange }: { value: DensityPreferenc
 export function MotionChoice({ value, onValueChange }: { value: MotionPreference; onValueChange: (value: MotionPreference) => void }) {
   return (
     <div className="appearance-motion">
-      <SegmentedControl<MotionPreference>
-        label="动效"
-        value={value}
-        options={[
-          { value: 'system', label: '跟随系统' },
-          { value: 'reduce', label: '减弱' },
-        ]}
-        onValueChange={onValueChange}
-      />
+      <SegmentedControl<MotionPreference> label="动效" value={value} options={MOTION_CHOICES} onValueChange={onValueChange} />
       <span className="appearance-motion-sample" aria-hidden="true">
         <Spinner size={12} />
         <i />

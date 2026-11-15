@@ -22,7 +22,7 @@ import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
 import { LayoutTiles } from './LayoutTiles.tsx'
 import { CustomizationSettings } from './CustomizationSettings.tsx'
-import { BackdropTiles, MotionChoice } from './AppearanceTiles.tsx'
+import { BackdropTiles, DensityTiles, MotionChoice } from './AppearanceTiles.tsx'
 
 const THEMES: Array<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: '跟随系统' },
@@ -197,6 +197,16 @@ export function GeneralSettings({
           value={backdropLevel(preferences, phone)}
           onValueChange={value => {
             setPreference('backdrop', value)
+          }}
+        />
+        <div className="layout-choice-head">
+          <span>密度</span>
+          <span>仅此设备</span>
+        </div>
+        <DensityTiles
+          value={preferences.density}
+          onValueChange={value => {
+            setPreference('density', value)
           }}
         />
         <div className="layout-choice-head">

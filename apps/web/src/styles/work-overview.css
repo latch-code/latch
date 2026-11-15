@@ -201,7 +201,7 @@
   width: 100%;
   height: auto;
   min-height: 44px;
-  padding: var(--sp-8) var(--sp-6);
+  padding: calc(var(--density-row) - var(--sp-4)) var(--sp-6);
   text-align: start;
 }
 
@@ -390,10 +390,11 @@
   width: 100%;
   min-width: 0;
   height: auto;
+  min-height: var(--touch);
   align-items: stretch;
   flex-direction: column;
   gap: var(--sp-8);
-  padding: var(--sp-16) var(--sp-8);
+  padding: calc(var(--density-row) + var(--sp-4)) var(--sp-8);
   border-radius: var(--r-8);
   text-align: start;
   white-space: normal;
@@ -514,7 +515,7 @@
 }
 
 .work-overview[data-compact] .work-overview-row.ui-button {
-  padding: var(--sp-12) var(--sp-8);
+  padding: var(--density-row) var(--sp-8);
 }
 
 .work-overview[data-compact] .work-overview-row-title {

@@ -5,7 +5,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
+import { closeSettings, noHorizontalOverflow, openSection, openSettings, reachable } from './helpers/layout.ts'
 import { homeInput, switchLayout } from './helpers/workbench.ts'
 
 const OUT = 'test-results/home-focus'
@@ -467,6 +467,70 @@ it('takes Escape after the returned card has armed, without moving its focus aga
     expect((await rejected).postDataJSON()).toMatchObject({ decision: 'reject' })
     await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${started.sessionId}`)).approvals).toHaveLength(0)
     expect(writes).toHaveLength(1)
+  } finally {
+    await context.close()
+  }
+})
+
+it('persists list density in both layouts and preserves approval and touch geometry', async () => {
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    locale: 'zh-CN',
+    colorScheme: 'light',
+    reducedMotion: 'reduce',
+    hasTouch: true,
+  })
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const title = '复核已完成的发布说明'
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { requestId: randomUUID(), prompt: title, model: MODEL, mode: 'chat' },
+    })
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+    const page = await context.newPage()
+    await enrollBrowser(page, host, { name: '工作台密度验收', scopes: ['admin'] })
+    const row = page.locator('.work-overview-recent-row').filter({ hasText: title })
+    const card = page.locator(`.code-home-queue [data-work-session="${waiting}"] .approval-panel[data-secure]`)
+    const dimensions = async () => ({
+      row: (await row.boundingBox())!.height,
+      approval: (await card.boundingBox())!.height,
+    })
+    const standard = []
+    for (const layout of ['overview', 'triage'] as const) {
+      await switchLayout(page, layout)
+      await row.waitFor()
+      await card.waitFor()
+      standard.push(await dimensions())
+    }
+    const shots = 'test-results/workbench-density'
+    await mkdir(shots, { recursive: true })
+    await page.screenshot({ path: `${shots}/standard-1440-light.png`, animations: 'disabled' })
+
+    const settings = await openSettings(page)
+    await openSection(settings, '通用')
+    const density = settings.getByRole('radiogroup', { name: '密度', exact: true })
+    await density.getByRole('radio', { name: '紧凑', exact: true }).click()
+    await closeSettings(settings)
+    await expect.poll(() => page.locator('html').getAttribute('data-density')).toBe('compact')
+    for (const [index, layout] of (['overview', 'triage'] as const).entries()) {
+      await switchLayout(page, layout)
+      const compact = await dimensions()
+      expect(compact.row).toBeLessThan(standard[index]!.row)
+      expect(compact.row).toBeGreaterThanOrEqual(44)
+      expect(compact.approval).toBe(standard[index]!.approval)
+    }
+    await page.screenshot({ path: `${shots}/compact-1440-light.png`, animations: 'disabled' })
+    await page.reload()
+    await expect.poll(() => page.locator('html').getAttribute('data-density')).toBe('compact')
+    await reachable(row)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.locator('.app-shell[data-viewport="phone"]').waitFor()
+    await row.scrollIntoViewIfNeeded()
+    await reachable(row)
+    expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.screenshot({ path: `${shots}/compact-390-dark.png`, animations: 'disabled' })
   } finally {
     await context.close()
   }

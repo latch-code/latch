@@ -33,7 +33,7 @@ import { HARNESS_MARKS, presetOf } from '../brands.ts'
 import { harnessName } from '../composerChoice.ts'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { currentShell } from '../core/shell.ts'
-import { setPreference, toggleWorkbenchLayout } from '../preferences.ts'
+import { BACKDROP_CHOICES, DENSITY_CHOICES, MOTION_CHOICES, setPreference, toggleWorkbenchLayout } from '../preferences.ts'
 import { projectOf } from '../sessions.ts'
 import { sectionLabel, settingsSections } from '../settings/SettingsPage.tsx'
 import { settingsSectionsAt, type SettingsSection } from '../shell/routes.ts'
@@ -382,6 +382,27 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       run: () => {
         setPreference('theme', theme)
       },
+    })),
+    ...BACKDROP_CHOICES.map(({ value, label }) => ({
+      id: `backdrop:${value}`,
+      label: `背景效果：${label}`,
+      keywords: '外观 粒子',
+      icon: glyph(SunMoon),
+      run: () => setPreference('backdrop', value),
+    })),
+    ...MOTION_CHOICES.map(({ value, label }) => ({
+      id: `motion:${value}`,
+      label: `动效：${label}`,
+      keywords: '外观 动画',
+      icon: glyph(SunMoon),
+      run: () => setPreference('motion', value),
+    })),
+    ...DENSITY_CHOICES.map(({ value, label }) => ({
+      id: `density:${value}`,
+      label: `密度：${label}`,
+      keywords: '外观',
+      icon: glyph(SunMoon),
+      run: () => setPreference('density', value),
     })),
   ]
 

@@ -190,7 +190,7 @@
   border-left: 1px solid var(--line);
 }
 .sidebar .session-item-main {
-  height: 34px;
+  height: max(var(--touch), calc(2 * var(--density-row) + var(--sp-10)));
   padding: var(--sp-4) var(--sp-8);
 }
 .sidebar .session-meta {
@@ -760,9 +760,9 @@
   font-size: var(--fs-ui);
 }
 .triage-sidebar .work-overview-row.ui-button {
-  padding: var(--sp-8) var(--sp-10);
+  padding: calc(var(--density-row) - var(--sp-4)) var(--sp-10);
   gap: 0;
-  min-height: 36px;
+  min-height: max(var(--touch), calc(2 * var(--density-row) + var(--sp-12)));
 }
 .triage-sidebar .work-overview-row-head {
   gap: var(--sp-8);
@@ -1637,7 +1637,7 @@
 /* Name and time, then the activity with the project at its end; the wide lanes add a line for project and computer. */
 .work-running .work-overview-row.ui-button {
   gap: var(--sp-4);
-  padding-block: var(--sp-12);
+  padding-block: var(--density-row);
 }
 .work-running-line {
   display: flex;

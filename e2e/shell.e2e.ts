@@ -11,6 +11,8 @@ import { homeInput, switchLayout } from './helpers/workbench.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, noHorizontalOverflow, openEntry, openSession, openSessions, settleShell } from './helpers/layout.ts'
 
+const CONNECTION_SHOTS = 'test-results/workbench-connection'
+
 /** The frame of the shell at each width: the title row, the sidebar or the tab bar, and what moving to a page keeps. */
 describe('the shell', () => {
   let host: TestHost
@@ -52,19 +54,44 @@ describe('the shell', () => {
     expect(await box(page, '.titlebar')).toMatchObject({ left: 0, top: 0, width: 1440, height: 52 })
     expect(await box(page, '#session-navigation')).toMatchObject({ left: 0, top: 52, width: 264 })
     expect((await box(page, 'main.workspace')).left).toBe(264)
-    // A browser, even over loopback on the Mac, is told which computer it reads; its foot has 设置 alone, with its word.
+    // A browser knows its transport and the current computer. The desktop's computer list is absent.
     const foot = page.getByRole('navigation', { name: '主导航', exact: true })
     expect(await foot.getByRole('button').allTextContents()).toEqual(['设置'])
-    const computer = page.locator('#session-navigation .workbench-computer-button')
-    expect((await computer.textContent())?.trim()).not.toBe('')
-    // A keeps the computer at the sidebar's foot and Code / 我的 Agent above its navigation rows.
-    expect((await computer.boundingBox())!.y).toBeGreaterThan((await box(page, '#session-navigation .space-switch')).top)
+    const connection = page.getByRole('group', { name: '连接状态', exact: true })
+    const computer = connection.getByRole('button', { name: '验收电脑', exact: true })
+    await computer.waitFor()
+    expect(await connection.getByText('回环 HTTP', { exact: true }).count()).toBe(1)
+    expect(await connection.getByText(/host\.sock|台在线/u).count()).toBe(0)
+    const strip = await box(page, '.workbench-connection')
+    expect(strip.top + strip.height).toBe(900)
+    expect(await page.getByRole('button', { name: '验收电脑', exact: true }).count()).toBe(1)
     expect((await box(page, '#session-navigation .space-switch')).top).toBeLessThan(
       (await box(page, '#session-navigation .sidebar-top .sidebar-nav-row >> nth=0')).top,
     )
     await page.locator('.workbench-home').waitFor()
     expect(await page.locator('main.workspace').getAttribute('inert')).not.toBeNull()
     expect(await page.getByRole('textbox', { name: '新会话消息', exact: true }).count()).toBe(1)
+    await mkdir(CONNECTION_SHOTS, { recursive: true })
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.screenshot({ path: `${CONNECTION_SHOTS}/overview-1440-light.png`, animations: 'disabled' })
+    await switchLayout(page, 'triage')
+    await computer.waitFor()
+    expect(await page.getByRole('button', { name: '验收电脑', exact: true }).count()).toBe(1)
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.screenshot({ path: `${CONNECTION_SHOTS}/triage-1440-dark.png`, animations: 'disabled' })
+    await homeInput(page).click()
+    await page.locator('.home-focus-frame[data-active]').waitFor()
+    await connection.waitFor({ state: 'hidden' })
+    await page.keyboard.press('Escape')
+    await connection.waitFor()
+    await page.context().setOffline(true)
+    await expect.poll(() => page.locator('.app-shell').getAttribute('data-connection')).toMatch(/^(reconnecting|offline)$/u)
+    await expect.poll(() => connection.locator('.ui-status-strip-fact').first().textContent()).toMatch(/(正在重连|离线)$/u)
+    expect(await connection.locator('.ui-live-dot[data-live]').count()).toBe(0)
+    expect(await connection.getByText('回环 HTTP', { exact: true }).count()).toBe(0)
+    await page.screenshot({ path: `${CONNECTION_SHOTS}/offline-1440-dark.png`, animations: 'disabled' })
+    await page.context().setOffline(false)
+    await connection.getByText('回环 HTTP', { exact: true }).waitFor()
     await noHorizontalOverflow(page)
     await page.context().close()
   })
@@ -117,10 +144,15 @@ describe('the shell', () => {
 
   it('slides the session list over on tablets, with 设置 at its foot', async () => {
     const page = await open(768, 1024, '壳层平板')
+    const connection = page.getByRole('group', { name: '连接状态', exact: true })
+    const computer = connection.getByRole('button', { name: '验收电脑', exact: true })
+    expect((await computer.boundingBox())!.height).toBeGreaterThanOrEqual(44)
     await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
     const list = page.getByRole('dialog', { name: '会话导航', exact: true })
     await list.waitFor()
+    expect(await page.locator('.workbench-connection').evaluate(element => (element as HTMLElement).inert)).toBe(true)
     await list.getByRole('button', { name: '关闭会话列表', exact: true }).click()
+    await computer.waitFor()
     await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
     await list.getByRole('button', { name: '设置', exact: true }).click()
     await page.locator('.settings-page').waitFor()
@@ -140,10 +172,13 @@ describe('the shell', () => {
   it('gives a phone a tab bar with Settings and quota, and a full-screen settings stack', async () => {
     const page = await open(390, 844, '壳层手机')
     expect(await page.locator('.titlebar').count()).toBe(0)
+    expect(await page.locator('.workbench-connection').count()).toBe(0)
     const tabs = page.getByRole('navigation', { name: '主导航', exact: true })
     expect(await tabs.getByRole('button').allTextContents()).toEqual(['Code', '我的 Agent', '设置', '额度'])
     const bar = await box(page, '.phone-tabs')
     expect(bar.top + bar.height).toBe(844)
+    await mkdir(CONNECTION_SHOTS, { recursive: true })
+    await page.screenshot({ path: `${CONNECTION_SHOTS}/phone-tabs-390.png`, animations: 'disabled' })
     await tabs.getByRole('button', { name: '设置', exact: true }).click()
     await page.locator('.settings-page').waitFor()
     await page.getByRole('tab', { name: '通用', exact: true }).click()

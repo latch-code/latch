@@ -190,6 +190,10 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await resize(1440)
       await page.getByRole('button', { name: '继续', exact: true }).click()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
+      const connection = page.getByRole('group', { name: '连接状态', exact: true })
+      await connection.getByText('host.sock', { exact: true }).waitFor()
+      await connection.getByText('1 台在线', { exact: true }).waitFor()
+      await connection.getByText('⌘K', { exact: true }).waitFor()
       // Recorded in main instead of opening the browser.
       await app.evaluate(({ shell }) => {
         const opened: string[] = []
@@ -417,6 +421,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         .poll(async () => {
           const right = (await rightPanel.boundingBox())!
           const dock = (await terminalDock.boundingBox())!
+          const strip = (await connection.boundingBox())!
+          expect(dock.y + dock.height).toBeLessThanOrEqual(strip.y)
           return right.y + right.height - dock.y
         })
         .toBeLessThanOrEqual(1)

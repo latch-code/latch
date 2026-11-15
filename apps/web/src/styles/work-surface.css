@@ -10,6 +10,67 @@
   background: transparent;
 }
 
+.app-shell[data-connection-strip] {
+  --workbench-connection-height: 26px;
+  padding-block-end: var(--workbench-connection-height);
+}
+
+.workbench-connection {
+  position: absolute;
+  inset: auto 0 0;
+  block-size: var(--workbench-connection-height);
+}
+
+.app-shell[data-home-focus] > .workbench-connection {
+  visibility: hidden;
+}
+
+.workbench-connection .ui-status-strip {
+  height: 100%;
+}
+
+.workbench-connection :is(.sidebar-host, .workbench-computer-button, .workbench-computer) {
+  width: auto;
+  max-width: min(42vw, 240px);
+  margin: 0;
+  font-family: inherit;
+}
+
+.workbench-connection :is(.sidebar-host, .workbench-computer-button) {
+  min-height: 0;
+  height: calc(var(--workbench-connection-height) - 1px);
+  padding-inline: var(--sp-4);
+}
+
+.workbench-connection .sidebar-host-name {
+  font: inherit;
+}
+
+.app-shell[data-connection-strip] .sidebar-resize {
+  bottom: var(--workbench-connection-height);
+}
+
+.app-shell[data-connection-strip] .inspector-resize,
+.app-shell[data-connection-strip][data-inspector='sheet'] .inspector-column {
+  bottom: calc(var(--shell-inset) + var(--workbench-connection-height));
+}
+
+.app-shell[data-connection-strip][data-inspector='sheet'][data-terminal-dock] :is(.inspector-column, .inspector-resize) {
+  bottom: calc(var(--shell-inset) + var(--dock-height) + var(--workbench-connection-height));
+}
+
+@media (max-width: 1023.98px), (pointer: coarse) {
+  .app-shell[data-connection-strip] {
+    --workbench-connection-height: 45px;
+  }
+}
+
+@media (max-width: 1023.98px) {
+  .app-shell[data-connection-strip] .sidebar {
+    bottom: calc(var(--shell-inset) + var(--workbench-connection-height));
+  }
+}
+
 /* Keep the reading column clear without measuring a transcript whose text is changing. */
 .transcript-backdrop-clear {
   position: absolute;
