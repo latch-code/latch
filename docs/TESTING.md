@@ -430,6 +430,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 ## 浏览器 e2e
 
+`shell.e2e.ts` 使用临时 Git 项目在两布局的 390、768、1440 宽核对会话标题与重命名。桌面压窄至并排面板时长标题省略，铅笔仍在标题行。悬停和键盘聚焦保持位置，取消与保存走原对话框，手机使用标题菜单。截图在 `test-results/session-title-icon/`。同文件检查并排侧栏的分隔线、键盘与拖动高亮，以及覆盖时的样式。
+
 `codex-chat-gateway.live.test.ts` 的 deepseek-flash 场景不声明 thinking，并用官方启动配置模拟已有 medium 默认；真实 CLI 必须正常读写、回复与取消，转发不带继承的 effort。其他声明了思考的场景实际选择 high，再恢复默认，逐请求检查而不是只看菜单。`codex-model-gateway.e2e.ts` 从正常页面验证默认、显式选择、尚未使用便重启以及换回无档位模型；只用真实已安装 Codex 和临时受控上游，不能称为真实 DeepSeek 付费服务通过。Host 假协议回归另核持久恢复及下一轮意图；fake Codex 真实转发它当前 thread 的 effort，避免无字段的替身掩盖默认值问题。
 
 `helpers/layout.ts` 的 `openSession(page, sessionId)` 按 Host ID 走正常入口：手机从 Code 首页进入「全部会话」，平板展开会话抽屉，桌面从可见项目树或完整历史选择。`backToPhoneSessions` 回到显式历史；`openSessions` 从设置返回 Code 首页或原会话，不把 Code 首页等同于历史列表。`phone.e2e.ts` 覆盖两个布局在 320 / 390 的首页、历史与会话往返、草稿、菜单与平台返回；`shell.e2e.ts` 另外检查发送回执晚到不会抢走设置或历史页面。

@@ -356,7 +356,7 @@
 /*
  * A session row, always two lines (52): the title in ink-2 with the time or what the run is doing, then the Harness's
  * 12px mark and the model in mono, in muted. The selected row is the neutral selection; hover swaps the status for 归档
- * and ⋯ in the same place.
+ * and ⋯ in a reserved row-end area.
  */
 .session-item {
   position: relative;
@@ -426,9 +426,14 @@
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  /* A long title fades out over its last 16px instead of ending in an ellipsis. */
+  /* Other-computer rows share this title style and keep their soft edge. */
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+}
+.session-item:has(> .session-actions) .session-title {
+  text-overflow: ellipsis;
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 /* Running work is the one thing that spins, in blue; its words stay ink. */
 .session-status .ui-spinner,
@@ -513,11 +518,11 @@
   line-height: var(--lh-meta);
 }
 .session-actions {
-  position: absolute;
-  top: 6px;
-  right: 6px;
   display: flex;
+  flex: none;
+  align-self: center;
   gap: var(--sp-2);
+  margin-inline-end: var(--sp-6);
   opacity: 0;
   transition: opacity var(--m-micro) var(--e-micro);
 }
@@ -550,10 +555,9 @@
   .session-item-main {
     padding-right: 0;
   }
-  /* In the row's flow on touch screens: the status stays, and ⋯ is the way to the rest. */
+  /* On touch screens the status stays, and ⋯ is the way to the rest. */
   .session-actions {
-    position: static;
-    align-self: center;
+    margin-inline-end: 0;
     opacity: 1;
   }
   .session-item-archive {

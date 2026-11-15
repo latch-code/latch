@@ -21,13 +21,22 @@ export const projectFolders = (project: WorkspaceInfo): WorkspaceFolder[] =>
   project.folders?.length ? project.folders : [{ id: 'default', path: project.path }]
 export const projectName = (project: WorkspaceInfo) => project.name || basename(project.path)
 
-export function ProjectIcon({ project, size = 16 }: { project: WorkspaceInfo; size?: 12 | 14 | 16 | 20 | 24 }) {
+export function ProjectIcon({
+  project,
+  size = 16,
+  className,
+}: {
+  project: WorkspaceInfo
+  size?: 12 | 14 | 16 | 20 | 24
+  className?: string
+}) {
   return (
     <Icon
       icon={
         project.glyph ? (PROJECT_ICONS[project.glyph]?.icon ?? FolderGlyph) : projectFolders(project).length > 1 ? Folders : FolderGlyph
       }
       size={size}
+      className={className}
     />
   )
 }

@@ -510,6 +510,12 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   flex: 1;
   min-width: 0;
 }
+.topbar-title-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
 .topbar-title h1 {
   display: flex;
   min-width: 0;

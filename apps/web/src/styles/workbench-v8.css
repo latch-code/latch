@@ -35,7 +35,10 @@
 .app-shell[data-workbench-layout='triage'] .inspector-column-inner {
   border-radius: 0;
   box-shadow: none;
-  border-left: 1px solid var(--line);
+  border-inline-start: 1px solid var(--line);
+}
+.app-shell[data-inspector='open'] .inspector-column-inner {
+  border-inline-start: 1px solid var(--line-strong);
 }
 .app-shell::before {
   display: none;
@@ -746,9 +749,23 @@
   row-gap: var(--sp-6);
   align-content: center;
 }
-.workspace .topbar-title h1 {
-  order: -1;
+.workspace .topbar-title-line {
   flex-basis: 100%;
+}
+.topbar-session-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-16);
+  min-width: 0;
+  max-width: 100%;
+}
+.topbar-session-meta:empty {
+  display: none;
+}
+.topbar-session-meta .topbar-crumb {
+  min-width: 0;
+}
+.workspace .topbar-title h1 {
   font-size: var(--fs-work-title);
   line-height: var(--lh-work-title);
   letter-spacing: var(--ls-work-title);
@@ -766,7 +783,6 @@
   max-width: min(100%, 480px);
 }
 .workspace .topbar-crumb-button {
-  flex-shrink: 0;
   max-width: 180px;
 }
 .topbar-session-branch,
@@ -786,7 +802,11 @@
   overflow: hidden;
 }
 .topbar-computer {
-  margin-left: var(--sp-8);
+  max-width: 180px;
+}
+.topbar-session-branch > svg,
+.topbar-computer > svg {
+  flex-shrink: 0;
 }
 .workspace .topbar-actions {
   align-self: end;
