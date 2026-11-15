@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -24,8 +24,8 @@ const THEMES = ['light', 'dark'] as const
  * the test wrote into its control file and goes on when it grows. It speaks the few ACP methods a turn needs and sends
  * nothing anywhere else.
  */
-const agentSource = (control: string) => `
-import { readFileSync } from 'node:fs'
+const agentSource = (control: string, railExit: string) => `
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 const control = ${JSON.stringify(control)}
 const send = message => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\\n')
@@ -169,7 +169,9 @@ turns.thinking = async ({ say, think }) => {
   say(Array.from({ length: 10 }, (_, index) => '结论 ' + (index + 1) + '：页面包含核心概念、数据类型和常用命令。').join('\\n\\n'), 'answer')
   await reached(3)
 }
+let locatedHistory = false
 turns['定位'] = async ({ say }) => {
+  locatedHistory = true
   say(Array.from({ length: 9 }, (_, index) => '第 ' + (index + 1) + ' 段：说明本地检查完成，输出已记录到会话。').join('\\n\\n'))
 }
 const rl = createInterface({ input: process.stdin })
@@ -198,6 +200,9 @@ rl.on('line', async line => {
   send({ id: message.id, error: { code: -32601, message: 'Method not found' } })
 })
 rl.on('close', () => process.exit(0))
+process.on('exit', code => {
+  if (code === 0 && locatedHistory) writeFileSync(${JSON.stringify(railExit)}, '')
+})
 `
 
 /**
@@ -211,6 +216,7 @@ describe('how a turn of work is drawn', () => {
   let browser: Browser
   let scratch = ''
   let control = ''
+  let railExit = ''
   let phone: Page
   let wide: Page
 
@@ -236,9 +242,10 @@ describe('how a turn of work is drawn', () => {
   beforeAll(async () => {
     scratch = await mkdtemp(join(tmpdir(), 'latch-render-'))
     control = join(scratch, 'step')
+    railExit = join(scratch, 'rail-exit')
     await advance(0)
     const agent = join(scratch, 'render-agent.mjs')
-    await writeFile(agent, agentSource(control))
+    await writeFile(agent, agentSource(control, railExit))
     // A stand-in for the `codex` program: the test kit's app-server, which reports commands with Codex's own actions.
     const bin = join(scratch, 'bin')
     await mkdir(bin)
@@ -306,8 +313,25 @@ describe('how a turn of work is drawn', () => {
     page.screenshot({ path: `${OUTPUT}/${name}--${width}--${theme}.png`, animations: 'disabled' })
   const command = (page: Page, words: string) => page.locator('.tool-card.is-command').filter({ hasText: words })
 
-  it('locates history in both workbench layouts and with the side panel and find open', async () => {
+  it('locates history in both workbench layouts and with the side panel and find open', async ({ onTestFinished }) => {
+    await rm(railExit, { force: true })
     const id = await start('定位 第 1 轮\n核对上次本地检查结果。\n确认内容后继续往下读。', '长会话回看')
+    onTestFinished(async () => {
+      await poll(async () => {
+        const { status } = (await detail(id)).summary
+        return status !== 'running' && status !== 'waiting-approval'
+      }, 'the navigation turn to finish')
+      await owner.json(`tasks/${id}`, { method: 'DELETE' })
+      // ACP process cleanup continues after the Host replies to DELETE.
+      await poll(
+        () =>
+          access(railExit).then(
+            () => true,
+            () => false,
+          ),
+        'the navigation agent to exit',
+      )
+    })
     await settled(id)
     for (let turn = 2; turn <= 8; turn++) {
       await owner.json(`tasks/${id}/prompt`, {
