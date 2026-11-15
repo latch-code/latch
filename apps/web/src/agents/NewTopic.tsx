@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 
 import { GENERAL_AGENT_ID, type CustomAgentSummary, type HarnessInfo, type HostCatalog, type WorktreeStart } from '@latch/protocol'
-import { Badge, ICON_STROKE, IconButton, FolderGlyph, HistoryGlyph, PlusGlyph, CloseGlyph } from '@latch/ui'
+import { Badge, Button, ICON_STROKE, IconButton, FolderGlyph, HistoryGlyph, PlusGlyph, CloseGlyph } from '@latch/ui'
 import { Composer } from '../composer/Composer.tsx'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
@@ -12,7 +12,7 @@ import { useAttachments } from '../hooks/useAttachments.ts'
 import { projectFolders, projectName } from '../projects.tsx'
 import { CODE_ROOT_COPY } from '../core/securityCopy.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
-import { generalSubmission, newTopicShowing } from './chat.ts'
+import { generalSubmission, newTopicShowing, personalChat } from './chat.ts'
 import { agentHarnesses, agentSessions, delegationChoice, delegationSubmission, generalChoice } from './model.ts'
 import { CarryResults } from './CarryResults.tsx'
 import { carriedText } from './scheduleModel.ts'
@@ -101,10 +101,7 @@ function TopicPlus({ sections, disabled }: { sections: MenuSection[]; disabled: 
 }
 
 /**
- * A new topic's input: the next message starts a new session of the helper, on its own Harness, model and project; this
- * topic alone may work in another project, and 带入上次成果 quotes earlier topics. With 通用 it is a conversation without a
- * project. The request this device sent and has no answer for is kept apart from any session's draft and retried with
- * its own requestId; once the Host answers, the new topic opens.
+ * The first message uses the Agent's Harness and model. A pending attempt retains its own requestId.
  */
 export function NewTopic({
   shell,
@@ -152,6 +149,7 @@ export function NewTopic({
   const harness = agentHarnesses(catalog ?? undefined).find(item => item.id === (agent ? agent.harnessId : choice.harnessId))
   const pending = delegation.pending
   const mine = pending?.customAgentId === owner
+  const chat = personalChat(snapshot, owner)
   const refused = delegation.refused?.customAgentId === owner ? delegation.refused : null
   const locked = delegation.sending || pending !== null
   const attachable = catalog?.features?.attachments === true && access.scopes.has('run')
@@ -176,20 +174,26 @@ export function NewTopic({
   const sessions = agentSessions(snapshot.tasks, owner)
   const generalBlock = general ? startBlock(snapshot, generalChoice(catalog)) : null
   const available = agent ? agent.available : generalBlock === null
-  const canStart = !offline && available && harness !== undefined && access.scopes.has('run')
+  const canStart = chat?.state === 'empty' && !offline && available && harness !== undefined && access.scopes.has('run')
   const blockReason = offline
     ? 'Mac 不在线，恢复后再发'
     : !access.scopes.has('run')
       ? '这台设备不能开始会话'
-      : !available
-        ? (agent?.unavailableReason
-          ?? (generalBlock?.kind === 'model-required' ? '先在这台 Mac 的 设置 › 模型服务 接上一个' : generalBlock?.message)
-          ?? '现在不能开始')
-        : !harness
-          ? general
-            ? '先在这台 Mac 的 设置 › Harness 里准备一个'
-            : '现在不能开始'
-          : undefined
+      : catalog.features?.singleAgentChat !== true
+        ? 'Mac 需要更新后才能开始聊天'
+        : !chat || chat.state === 'starting'
+          ? '正在确认聊天'
+          : chat.state === 'ready'
+            ? '打开聊天继续'
+            : !available
+              ? (agent?.unavailableReason
+                ?? (generalBlock?.kind === 'model-required' ? '先在这台 Mac 的 设置 › 模型服务 接上一个' : generalBlock?.message)
+                ?? '现在不能开始')
+              : !harness
+                ? general
+                  ? '先在这台 Mac 的 设置 › Harness 里准备一个'
+                  : '现在不能开始'
+                : undefined
   const opened = (sessionId: string | undefined) => {
     if (!sessionId || !mounted.current) return
     attachments.clear()
@@ -221,83 +225,98 @@ export function NewTopic({
     onCarry: () => setCarrying(true),
     onProject: chooseProject,
   })
+  const ready = chat?.state === 'ready' && !mine ? chat : undefined
+  const continueChat = ready ? (
+    <div className="agent-continue">
+      <Button
+        variant="primary"
+        disabled={attachments.items.length > 0}
+        onClick={() => shell.choose(ready.sessionId, () => setDraft(''), draft.trim() ? { appendDraft: draft } : undefined)}>
+        {draft.trim() ? '带上草稿打开聊天' : '打开聊天'}
+      </Button>
+      {attachments.items.length > 0 && <p>打开聊天前请先在此移除附件，再到聊天中添加。</p>}
+    </div>
+  ) : null
   return (
     <div className="agent-delegate">
       {lead}
-      <Composer
-        showSlashButton={false}
-        textareaRef={input}
-        variant="new"
-        label={`给${name}发消息`}
-        placeholder={`给${name}发消息…`}
-        draft={draft}
-        onDraft={setDraft}
-        pending={pending}
-        {...(pending && !mine && pending.customAgentId
-          ? {
-              onOpenPending: () => {
-                shell.openMyAgent({ id: pending.customAgentId!, topic: 'new' })
-              },
-            }
-          : {})}
-        sending={delegation.sending}
-        error={refused ? `没有开始：${refused.message}` : ''}
-        {...(mine && delegation.reason ? { pendingReason: delegation.reason } : {})}
-        onRetry={() => {
-          void delegation.retry().then(opened)
-        }}
-        {...(mine
-          ? {
-              onAbandon: () => {
-                const back = delegation.abandon()
-                if (back) {
-                  if (pending?.attachmentIds?.length) {
-                    attachments.clear()
-                    attachments.explain('附件需要重新添加。')
+      {continueChat}
+      {(!ready || draft.trim() || attachments.items.length > 0) && (
+        <Composer
+          showSlashButton={false}
+          textareaRef={input}
+          variant="new"
+          label={`给${name}发消息`}
+          placeholder={`给${name}发消息…`}
+          draft={draft}
+          onDraft={setDraft}
+          pending={pending}
+          {...(pending && !mine && pending.customAgentId
+            ? {
+                onOpenPending: () => {
+                  shell.setRoute({ entry: 'agents', myAgent: { id: pending.customAgentId! } })
+                },
+              }
+            : {})}
+          sending={delegation.sending}
+          error={refused ? `没有开始：${refused.message}` : ''}
+          {...(mine && delegation.reason ? { pendingReason: delegation.reason } : {})}
+          onRetry={() => {
+            void delegation.retry().then(opened)
+          }}
+          {...(mine
+            ? {
+                onAbandon: () => {
+                  const back = delegation.abandon()
+                  if (back) {
+                    if (pending?.attachmentIds?.length) {
+                      attachments.clear()
+                      attachments.explain('附件需要重新添加。')
+                    }
+                    setDraft(previous => (previous.trim() ? previous : back.text))
                   }
-                  setDraft(previous => (previous.trim() ? previous : back.text))
-                }
-              },
-            }
-          : {})}
-        canSend={canStart}
-        {...(blockReason ? { blockReason } : {})}
-        onSubmit={() => {
-          void send()
-        }}
-        sendKey={preferences.sendKey}
-        coarse={coarse}
-        attachments={attachable ? attachments : undefined}
-        attachmentMenu={menu}
-        controls={attachable ? undefined : <TopicPlus sections={menu} disabled={draftLocked || offline} />}
-        below={
-          place ? (
-            <div className="agent-delegate-where">
-              <span className="agent-delegate-place">
-                <FolderGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-                <span>
-                  在 <VisibleText text={projectName(place)} /> 做
+                },
+              }
+            : {})}
+          canSend={canStart}
+          {...(blockReason ? { blockReason } : {})}
+          onSubmit={() => {
+            void send()
+          }}
+          sendKey={preferences.sendKey}
+          coarse={coarse}
+          attachments={attachable ? attachments : undefined}
+          attachmentMenu={menu}
+          controls={attachable ? undefined : <TopicPlus sections={menu} disabled={draftLocked || offline} />}
+          below={
+            place ? (
+              <div className="agent-delegate-where">
+                <span className="agent-delegate-place">
+                  <FolderGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                  <span>
+                    在 <VisibleText text={projectName(place)} /> 做
+                  </span>
+                  {place.id !== agent?.defaultProjectId && (
+                    <IconButton
+                      icon={CloseGlyph}
+                      size="xs"
+                      label="不在这个项目里做"
+                      disabled={draftLocked || offline}
+                      onClick={() => {
+                        chooseProject(agent?.defaultProjectId ?? 'default')
+                      }}
+                    />
+                  )}
                 </span>
-                {place.id !== agent?.defaultProjectId && (
-                  <IconButton
-                    icon={CloseGlyph}
-                    size="xs"
-                    label="不在这个项目里做"
-                    disabled={draftLocked || offline}
-                    onClick={() => {
-                      chooseProject(agent?.defaultProjectId ?? 'default')
-                    }}
-                  />
+                {project && (
+                  <FolderControl project={project} worktree={worktree} onWorktree={setWorktree} disabled={draftLocked || offline} />
                 )}
-              </span>
-              {project && (
-                <FolderControl project={project} worktree={worktree} onWorktree={setWorktree} disabled={draftLocked || offline} />
-              )}
-            </div>
-          ) : undefined
-        }
-      />
-      {sessions.length > 0 && (
+              </div>
+            ) : undefined
+          }
+        />
+      )}
+      {!ready && sessions.length > 0 && (
         <CarryResults
           sessions={sessions}
           disabled={draftLocked}

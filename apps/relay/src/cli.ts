@@ -1,5 +1,6 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, randomBytes, X509Certificate } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { isIP } from 'node:net'
 import { resolve, join, isAbsolute } from 'node:path'
 import { parseArgs } from 'node:util'
 import { loadRelayConfig } from './config.ts'
@@ -30,11 +31,20 @@ async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     strict: true,
-    options: { 'data-dir': { type: 'string' }, config: { type: 'string' }, help: { type: 'boolean' }, worker: { type: 'boolean' } },
+    options: {
+      'data-dir': { type: 'string' },
+      config: { type: 'string' },
+      url: { type: 'string' },
+      output: { type: 'string' },
+      help: { type: 'boolean' },
+      worker: { type: 'boolean' },
+    },
   })
   if (values.help) {
     process.stdout.write(
-      'latch-relay init|check|start|status|health|drain|reload-tls|quota set-used <bytes> --data-dir <absolute-directory> [--config <absolute-file>]\nlatch-relay directory --help\n',
+      'latch-relay init|check|start|status|health|drain|reload-tls|quota set-used <bytes> --data-dir <absolute-directory> [--config <absolute-file>]\n'
+        + 'latch-relay profile --data-dir <absolute-directory> [--config <absolute-file>] --url <https-origin> --output <new-absolute-file>\n'
+        + 'latch-relay directory --help\n',
     )
     return
   }
@@ -45,7 +55,8 @@ async function main(): Promise<void> {
     command === 'quota' && positionals.length === 3 && positionals[1] === 'set-used' && /^\d{1,16}$/u.test(positionals[2] ?? '')
   if (
     (!quotaCommand && positionals.length !== 1)
-    || !['init', 'check', 'start', 'status', 'health', 'drain', 'reload-tls', 'quota'].includes(command ?? '')
+    || !['init', 'check', 'profile', 'start', 'status', 'health', 'drain', 'reload-tls', 'quota'].includes(command ?? '')
+    || (command !== 'profile' && (values.url !== undefined || values.output !== undefined))
   )
     throw new Error('Invalid relay command')
   assertPrivateRuntime()
@@ -77,6 +88,35 @@ async function main(): Promise<void> {
   if (command === 'quota') throw new Error('Invalid calibration command')
   const configPath = values.config ?? join(directory, 'relay.json')
   const config = await loadRelayConfig(configPath)
+  if (command === 'profile') {
+    if (!values.url || !values.output || !isAbsolute(values.output) || values.url.length > 512) throw new Error('Invalid profile output')
+    const url = new URL(values.url)
+    if (url.protocol !== 'https:' || url.username || url.password || url.href !== `${url.origin}/`) throw new Error('Invalid relay origin')
+    const certificate = new X509Certificate(config.cert)
+    const hostname = url.hostname.replace(/^\[|\]$/gu, '')
+    if (!(isIP(hostname) ? certificate.checkIP(hostname) : certificate.checkHost(hostname)))
+      throw new Error('Certificate does not match relay origin')
+    const spkiHash = createHash('sha256')
+      .update(certificate.publicKey.export({ type: 'spki', format: 'der' }))
+      .digest('hex')
+    const registrationKey =
+      !config.openRegistration && config.registrationToken ? `lrt1.${config.registrationToken.toString('base64url')}` : undefined
+    await writeFile(
+      values.output,
+      `${JSON.stringify({
+        version: 1,
+        profile: {
+          url: url.href,
+          relayId: Buffer.from(config.relayId).toString('hex'),
+          spkiHash,
+          ...(registrationKey ? { registrationKey } : {}),
+        },
+      })}\n`,
+      { flag: 'wx', mode: 0o600 },
+    )
+    process.stdout.write('{"written":true}\n')
+    return
+  }
   if (command === 'check') {
     process.stdout.write('{"valid":true}\n')
     return

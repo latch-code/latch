@@ -21,6 +21,7 @@ import { AgentAvatar } from './AgentAvatar.tsx'
 import { AgentHome } from './AgentHome.tsx'
 import { AgentExport } from './AgentTransfer.tsx'
 import { AgentForm, GeneralForm, WriteNotice } from './AgentForm.tsx'
+import { CurrentAgentOptions } from './AgentDefaults.tsx'
 import { AvatarPicker } from './AvatarPicker.tsx'
 import { type ProfileSection } from './chat.ts'
 import { ActivityTab, LibraryTab } from './Activity.tsx'
@@ -379,6 +380,7 @@ export function AgentProfile({
         )}
         {!locked && view === 'settings' && !value && detail.read.state === 'loading' && <Loading label="正在读取" />}
         {!locked && view === 'settings' && value && <AgentHome key={owner} home={home.value} local={access.local} admin={access.admin} />}
+        {!locked && view === 'settings' && <CurrentAgentOptions shell={shell} owner={owner} />}
         {!locked && view === 'settings' && value?.kind === 'custom' && catalog && (
           <AgentForm
             catalog={catalog}

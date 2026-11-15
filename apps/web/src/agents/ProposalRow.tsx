@@ -21,7 +21,7 @@ export function ProposalRow({
   owner: string
   proposal: MemoryProposal
   writes: AgentWrites
-  /** 已生效, or 从下一个话题起; absent where the Harness is not known here. */
+  /** 已生效, or 清空上下文后生效; absent where the Harness is not known here. */
   effect?: string | undefined
   /** This device cannot write now (offline, no scope). */
   disabled: boolean

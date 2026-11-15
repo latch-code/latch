@@ -152,9 +152,9 @@ it('a run comes back to the conversation as a card, the Agent proposes a schedul
 
     // 打开运行 opens the run's session.
     const run = (await owner.json<AutomationDetail>(`automations/${schedule.id}`)).automation.lastRun!.sessionId!
+    const runPrompt = (await owner.json<TaskDetail>(`tasks/${run}`)).messages.find(message => message.role === 'user')!.text
     await card.getByRole('button', { name: '打开运行', exact: true }).click()
-    await page.locator(`[data-task-id="${run}"][aria-current="page"]`).waitFor()
-    await page.getByText('shell-edit').first().waitFor()
+    await page.locator('.transcript-shell').getByText(runPrompt, { exact: true }).waitFor()
 
     // Back in the topic, 打开 on the proposal opens the schedule editor filled in from it; saving it creates the schedule.
     await openConversation(page, 1440)
@@ -190,7 +190,7 @@ it('a run comes back to the conversation as a card, the Agent proposes a schedul
     await profile.getByRole('radio', { name: '动态', exact: true }).click()
     await profile.getByText(/定时结果 · 早间精选/u).waitFor()
     await profile.getByText('提议定时').waitFor()
-    await profile.getByText(/新话题 ·/u).waitFor()
+    await profile.getByText(/开始聊天 ·/u).waitFor()
     await still(page)
     await page.screenshot({ path: `${OUT}/activity-1440-light.png` })
     await profile.getByRole('radio', { name: '资料库', exact: true }).click()
@@ -204,7 +204,7 @@ it('a run comes back to the conversation as a card, the Agent proposes a schedul
     await still(page)
     await page.screenshot({ path: `${OUT}/library-1440-light.png` })
     await group.getByRole('button', { name: 'agent-edit.txt' }).click()
-    await page.locator(`[data-task-id="${run}"][aria-current="page"]`).waitFor()
+    await page.locator('.transcript-shell').getByText(runPrompt, { exact: true }).waitFor()
     await page.locator('.file-preview').filter({ hasText: 'edited by the agent' }).first().waitFor()
     await context.close()
 

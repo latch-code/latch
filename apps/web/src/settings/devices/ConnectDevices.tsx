@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AppWindow, Link, QrCode } from 'lucide-react'
-import type { NativeLinkInfo } from '@latch/protocol'
+import type { NativeLinkInfo, NativeRelayProfile } from '@latch/protocol'
 import { Button, Icon, InlineNotice, LaptopGlyph, LockGlyph, PhoneGlyph } from '@latch/ui'
 import { api, inlineError } from '../../core/api.ts'
+import { withConfirmation } from '../../core/confirmations.ts'
 import { describeFailure, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
 import type { LatchShell } from '../../core/shell.ts'
 import { IconTile, NoteLine, SettingsGroup, SettingsRow } from '../common.tsx'
@@ -203,41 +204,166 @@ function ConnectRows({
   )
 }
 
-/**
- * A relay or address directory saved by an earlier build: nothing can add one now, so this only offers the way to take it
- * back, and only to someone who has one. It is the one place these are named, beside the sentence about relays.
- */
+function readRelayProfile(text: string): NativeRelayProfile {
+  const file = JSON.parse(text) as { version?: unknown; profile?: Partial<NativeRelayProfile> } | null
+  const profile = file?.profile
+  if (
+    file?.version !== 1
+    || typeof profile?.url !== 'string'
+    || profile.url.length > 512
+    || typeof profile.relayId !== 'string'
+    || !/^[a-f0-9]{32}$/u.test(profile.relayId)
+    || typeof profile.spkiHash !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(profile.spkiHash)
+    || (profile.registrationKey !== undefined
+      && (typeof profile.registrationKey !== 'string' || !/^lrt1\.[A-Za-z0-9_-]{43}$/u.test(profile.registrationKey)))
+  )
+    throw new Error('Invalid relay profile')
+  const url = new URL(profile.url)
+  if (url.protocol !== 'https:' || url.username || url.password || profile.url !== `${url.origin}/`) throw new Error('Invalid relay origin')
+  return {
+    url: profile.url,
+    relayId: profile.relayId,
+    spkiHash: profile.spkiHash,
+    ...(profile.registrationKey === undefined ? {} : { registrationKey: profile.registrationKey }),
+  }
+}
+
+const RELAY_STATUS = { connecting: '正在连接', connected: '已连接', waiting: '等待重连', attention: '需要检查' } as const
+
 function SavedRoutes() {
+  const file = useRef<HTMLInputElement>(null)
   const [info, setInfo] = useState<NativeLinkInfo | null>(null)
+  const [candidate, setCandidate] = useState<{ requestId: string; profile: NativeRelayProfile } | null>(null)
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
-    let active = true
-    void api<NativeLinkInfo>('native/info').then(
-      value => {
-        if (active) setInfo(value)
-      },
-      () => {},
-    )
-    return () => {
-      active = false
+    if (busy) return
+    const controller = new AbortController()
+    let reading = false
+    const load = async () => {
+      if (reading) return
+      reading = true
+      try {
+        const value = await api<NativeLinkInfo>('native/info', { signal: controller.signal })
+        if (!controller.signal.aborted) setInfo(value)
+      } catch {
+        // The main settings connection owns connection feedback.
+      } finally {
+        reading = false
+      }
     }
-  }, [])
-  const remove = (path: string) => {
+    void load()
+    const timer = window.setInterval(() => void load(), 5000)
+    return () => {
+      window.clearInterval(timer)
+      controller.abort()
+    }
+  }, [busy])
+  const run = async (operation: () => Promise<NativeLinkInfo>, added = false) => {
+    setBusy(true)
     setError('')
-    void api<NativeLinkInfo>(path, { method: 'DELETE' }).then(setInfo, (cause: unknown) => {
+    try {
+      setInfo(await operation())
+      if (added) setCandidate(null)
+    } catch (cause) {
       setError(inlineError(cause))
-    })
+    } finally {
+      setBusy(false)
+    }
   }
-  if (!info?.directory && (info?.relays.length ?? 0) === 0 && !error) return null
+  const remove = (path: string) => void run(() => api<NativeLinkInfo>(path, { method: 'DELETE' }))
+  const add = (body: { requestId: string; profile?: NativeRelayProfile }) =>
+    void run(
+      () =>
+        withConfirmation(confirmation =>
+          api<NativeLinkInfo>('native/relays', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }),
+        ),
+      true,
+    )
+  const pending = info?.pendingRelay
   return (
-    <div className="settings-card device-saved-list">
+    <div className="settings-card device-saved-list" data-secure="">
+      <input
+        ref={file}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        onChange={event => {
+          const chosen = event.currentTarget.files?.[0]
+          event.currentTarget.value = ''
+          if (!chosen || busy) return
+          setError('')
+          setCandidate(null)
+          if (chosen.size > 4096) {
+            setError('这个文件不是中继 CLI 导出的连接配置。')
+            return
+          }
+          setBusy(true)
+          void chosen
+            .text()
+            .then(text => {
+              setCandidate({ requestId: crypto.randomUUID(), profile: readRelayProfile(text) })
+            })
+            .catch(() => {
+              setError('这个文件不是中继 CLI 导出的连接配置。')
+            })
+            .finally(() => setBusy(false))
+        }}
+      />
+      <div className="device-saved">
+        <span className="device-saved-text">
+          <b>自建中继</b>
+          <span>导入中继 CLI 导出的连接配置</span>
+        </span>
+        <Button disabled={busy || info === null || Boolean(pending)} onClick={() => file.current?.click()}>
+          导入配置
+        </Button>
+      </div>
+      {candidate && !pending && (
+        <div className="device-saved">
+          <span className="device-saved-text">
+            <b>添加中继</b>
+            <span title={candidate.profile.url}>{candidate.profile.url}</span>
+          </span>
+          <Button disabled={busy} onClick={() => setCandidate(null)}>
+            取消
+          </Button>
+          <Button loading={busy} onClick={() => add(candidate)}>
+            验证并添加
+          </Button>
+        </div>
+      )}
+      {pending && (
+        <div className="device-saved">
+          <span className="device-saved-text">
+            <b>添加结果待确认</b>
+            <span title={pending.url}>{pending.url}</span>
+          </span>
+          <Button
+            disabled={busy}
+            onClick={() => {
+              setCandidate(null)
+              remove(`native/relay-requests/${pending.requestId}`)
+            }}>
+            放弃
+          </Button>
+          {pending.canRetry && (
+            <Button loading={busy} onClick={() => add({ requestId: pending.requestId })}>
+              继续验证
+            </Button>
+          )}
+        </div>
+      )}
       {info?.relays.map(relay => (
         <div key={relay.relayId} className="device-saved">
           <span className="device-saved-text">
             <b>{COPY.savedRelay}</b>
-            <span>{relay.url}</span>
+            <span title={relay.url}>{relay.url}</span>
+            <span>{RELAY_STATUS[relay.status]}</span>
           </span>
           <Button
+            disabled={busy}
             onClick={() => {
               remove(`native/relays/${relay.relayId}`)
             }}>
@@ -251,6 +377,7 @@ function SavedRoutes() {
             <b>{COPY.savedDirectory}</b>
           </span>
           <Button
+            disabled={busy}
             onClick={() => {
               remove('native/directory')
             }}>
@@ -258,15 +385,18 @@ function SavedRoutes() {
           </Button>
         </div>
       )}
-      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {error && (
+        <InlineNotice tone="error" secure>
+          {error}
+        </InlineNotice>
+      )}
     </div>
   )
 }
 
 /**
  * 关于连接, what the rows above do not say: that another computer cannot connect yet (and why, behind ⓘ) and that the
- * phone connects directly, end to end encrypted. A relay or directory saved by an earlier build is listed under them on
- * the Latch app on this Mac, to be removed.
+ * phone connects end to end encrypted. Self-hosted relays and any earlier address directory are managed on this Mac.
  */
 export function AboutConnection({ entry, canManageRoutes }: { entry: boolean; canManageRoutes: boolean }) {
   return (

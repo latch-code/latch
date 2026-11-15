@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto'
-import { constants } from 'node:fs'
+import { constants, renameSync } from 'node:fs'
 import { lstat, mkdir, open } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { isIP } from 'node:net'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
-import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
+import { canonicalJson, sha256Hex, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
 import type { OfficialRelay } from './official.ts'
 import {
   directoryConfigSchema,
@@ -60,6 +60,16 @@ const profile = relayProfileInput.omit({ registrationKey: true }).extend({
   /** Compiled in (`official.ts`); no UI edits it, and it runs only while a phone is paired. */
   builtIn: z.literal(true).optional(),
 })
+const receiptSchema = z.strictObject({
+  requestId: z.uuid(),
+  requestHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  cancelled: z.literal(true).optional(),
+  cancelAuditFailed: z.literal(true).optional(),
+})
+const pendingRelaySchema = receiptSchema.omit({ cancelled: true, cancelAuditFailed: true }).extend({
+  deviceId: z.string().min(1).max(128),
+  profile: profile.omit({ builtIn: true }),
+})
 const schema = z.strictObject({
   version: z.literal(1),
   generation: z.int().nonnegative(),
@@ -72,17 +82,17 @@ const schema = z.strictObject({
   direct: nativeDirectSchema.nullable().optional(),
   directory: directoryConfigSchema.nullable().optional(),
   directoryFloor: directoryFloorSchema.optional(),
-  configReceipts: z
-    .array(z.strictObject({ requestId: z.uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/u) }))
-    .max(32)
-    .optional(),
+  configReceipts: z.array(receiptSchema).max(32).optional(),
+  pendingRelay: pendingRelaySchema.optional(),
   profiles: z
     .array(profile)
     .max(6)
     .refine(items => new Set(items.map(item => item.relayId)).size === items.length),
 })
 export type RelayProfile = z.infer<typeof profile>
+export type PendingRelay = z.infer<typeof pendingRelaySchema>
 type State = z.infer<typeof schema>
+const writeUnknown = () => new AppError(503, 'native-relay-write-unknown', '中继配置的保存结果尚未确认，请继续原请求。')
 export function secretBytes(value: string): Buffer {
   return Buffer.from(value.slice(value.indexOf('.') + 1), 'base64url')
 }
@@ -91,6 +101,7 @@ export function secretBytes(value: string): Buffer {
 export class RelayProfiles {
   private readonly path: string
   private state: State
+  private pendingWrite?: State
   private tail = Promise.resolve()
   private constructor(path: string, state: State) {
     this.path = path
@@ -127,32 +138,174 @@ export class RelayProfiles {
     return structuredClone(this.state)
   }
   configHash(): string {
+    return this.hashConfiguration(this.state)
+  }
+  private hashConfiguration(state: State): string {
     return sha256Hex(
       canonicalJson({
-        direct: this.state.direct ?? null,
-        directory: this.state.directory ?? null,
-        profiles: this.state.profiles,
-        revision: this.state.configRevision ?? 0,
+        direct: state.direct ?? null,
+        directory: state.directory ?? null,
+        profiles: state.profiles,
+        revision: state.configRevision ?? 0,
       }),
     )
   }
   configReceipt(requestId: string): string | undefined {
     return this.state.configReceipts?.find(item => item.requestId === requestId)?.requestHash
   }
-  private change<Result>(edit: (draft: State) => Result): Promise<Result> {
-    const operation = this.tail.then(async () => {
-      const draft = this.snapshot(),
-        result = edit(draft)
-      schema.parse(draft)
-      await writeFileAtomic(this.path, `${JSON.stringify(draft)}\n`)
-      this.state = draft
-      return result
-    })
+  relayReceipt(requestId: string): z.infer<typeof receiptSchema> | undefined {
+    return this.state.configReceipts?.find(item => item.requestId === requestId)
+  }
+  assertNewRelay(input: Pick<RelayProfileInput, 'relayId' | 'url'>): void {
+    if (this.state.profiles.some(profile => profile.relayId === input.relayId || profile.url === input.url))
+      throw new AppError(409, 'native-relay-duplicate', '每个中继节点只能添加一次。')
+    if (this.state.profiles.filter(profile => !profile.builtIn).length >= 4)
+      throw new AppError(409, 'native-relay-limit', '最多添加四个自建中继。')
+  }
+  /** Save the exact route seed before REGISTER, so replay after a crash uses the same relay resources. */
+  reserveRelay(
+    input: RelayProfileInput,
+    request: Omit<PendingRelay, 'profile'>,
+    base: string,
+    authorize: () => void,
+  ): Promise<PendingRelay> {
+    return this.change(draft => {
+      authorize()
+      this.checkBase(base)
+      this.assertNewRelay(input)
+      if (draft.configReceipts?.some(receipt => receipt.requestId === request.requestId))
+        throw new AppError(409, 'native-config-changed', '手机连接配置已变化，请查询原请求。')
+      if (draft.pendingRelay) {
+        const current = draft.pendingRelay
+        if (current.requestId === request.requestId && current.requestHash === request.requestHash && current.deviceId === request.deviceId)
+          return current
+        throw new AppError(409, 'native-relay-pending', '请先继续或放弃未确认的中继。')
+      }
+      const { registrationKey, ...publicFields } = input
+      return (draft.pendingRelay = {
+        ...request,
+        profile: {
+          ...publicFields,
+          ...(registrationKey ? { registrationKey } : {}),
+          seeds: [secret('lrs1'), secret('lrs1')],
+          activeSlot: 0,
+          rotationDay: 0,
+          rotations: 0,
+        },
+      })
+    }, authorize)
+  }
+  installRelay(pending: PendingRelay, base: string, authorize: () => void): Promise<void> {
+    return this.change(draft => {
+      authorize()
+      this.checkBase(base)
+      this.assertNewRelay(pending.profile)
+      if (draft.pendingRelay?.requestId !== pending.requestId || draft.pendingRelay.requestHash !== pending.requestHash)
+        throw new AppError(409, 'native-relay-cancelled', '这次中继添加已放弃。')
+      draft.profiles.push(draft.pendingRelay.profile)
+      delete draft.pendingRelay
+      this.advanceConfiguration(draft, { requestId: pending.requestId, requestHash: pending.requestHash })
+    }, authorize)
+  }
+  cancelRelay(
+    requestId: string,
+    authorize: () => void,
+    record: (profileHash: string) => Promise<boolean>,
+  ): Promise<{ cancelled: boolean; audited: boolean }> {
+    return this.change(async draft => {
+      authorize()
+      if (draft.pendingRelay?.requestId !== requestId)
+        return { cancelled: false, audited: !draft.configReceipts?.find(item => item.requestId === requestId)?.cancelAuditFailed }
+      const { requestHash } = draft.pendingRelay
+      const audited = await record(requestHash)
+      this.keepReceipt(draft, { requestId, requestHash, cancelled: true, ...(!audited ? { cancelAuditFailed: true } : {}) })
+      delete draft.pendingRelay
+      return { cancelled: true, audited }
+    }, authorize)
+  }
+  removeObserver(
+    target: { relayId: string } | { directory: true },
+    authorize: () => void,
+    record: (detail: { before: string; after: string; relayCount: number }) => Promise<boolean>,
+  ): Promise<{ audited: boolean }> {
+    return this.change(async draft => {
+      authorize()
+      const before = this.hashConfiguration(draft)
+      if ('relayId' in target) draft.profiles = draft.profiles.filter(profile => profile.builtIn || profile.relayId !== target.relayId)
+      else draft.directory = null
+      this.advanceConfiguration(draft)
+      const audited = await record({
+        before,
+        after: this.hashConfiguration(draft),
+        relayCount: draft.profiles.filter(profile => !profile.builtIn).length,
+      })
+      return { audited }
+    }, authorize)
+  }
+  private checkBase(expectedHash?: string): void {
+    if (expectedHash !== undefined && this.configHash() !== expectedHash)
+      throw new AppError(409, 'native-config-changed', '手机连接配置已变化，请刷新后重试')
+  }
+  private keepReceipt(draft: State, receipt: z.infer<typeof receiptSchema>): void {
+    draft.configReceipts = [...(draft.configReceipts ?? []).filter(item => item.requestId !== receipt.requestId), receipt].slice(-32)
+  }
+  private advanceConfiguration(draft: State, receipt?: z.infer<typeof receiptSchema>): void {
+    if ((draft.configRevision ?? 0) >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接配置代次已耗尽')
+    if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
+    draft.configRevision = (draft.configRevision ?? 0) + 1
+    draft.generation++
+    if (receipt) this.keepReceipt(draft, receipt)
+  }
+  settleWrite(): Promise<boolean> {
+    return this.pendingWrite ? this.serial(() => this.confirmDurability()) : Promise.resolve(false)
+  }
+  private async confirmDurability(): Promise<boolean> {
+    const pending = this.pendingWrite
+    if (!pending) return false
+    try {
+      await syncDirectory(dirname(this.path))
+    } catch {
+      throw writeUnknown()
+    }
+    this.state = pending
+    this.pendingWrite = undefined
+    return true
+  }
+  private serial<Result>(run: () => Promise<Result>): Promise<Result> {
+    const operation = this.tail.then(run)
     this.tail = operation.then(
       () => {},
       () => {},
     )
     return operation
+  }
+  private change<Result>(edit: (draft: State) => Result | Promise<Result>, authorize?: () => void): Promise<Result> {
+    return this.serial(async () => {
+      await this.confirmDurability()
+      const draft = this.snapshot(),
+        result = await edit(draft)
+      schema.parse(draft)
+      let renamed = false
+      try {
+        await writeFileAtomic(this.path, `${JSON.stringify(draft)}\n`, {
+          fs: {
+            open: (path, flags, mode) => open(path, flags, mode),
+            async rename(from, to) {
+              // A revocation cannot interleave with the last permission check and the irreversible replacement.
+              authorize?.()
+              renameSync(from, to)
+              renamed = true
+            },
+          },
+        })
+      } catch (error) {
+        if (!renamed) throw error
+        this.pendingWrite = draft
+        throw writeUnknown()
+      }
+      this.state = draft
+      return result
+    })
   }
   /** The caller must obtain local OS consent and record its intent before replacing observers or their fixed values. */
   replace(input: RelayProfileInput[]): Promise<void> {
@@ -171,15 +324,10 @@ export class RelayProfiles {
       .refine(items => new Set(items.map(item => item.relayId)).size === items.length)
       .parse(input)
     return this.change(draft => {
-      if (expectedHash !== undefined && this.configHash() !== expectedHash)
-        throw new AppError(409, 'native-config-changed', '手机连接配置已变化，请刷新后重试')
+      this.checkBase(expectedHash)
       draft.direct = direct === null ? null : nativeDirectSchema.parse(direct)
       if (directory !== undefined) draft.directory = directory === null ? null : directoryConfigSchema.parse(directory)
-      if ((draft.configRevision ?? 0) >= Number.MAX_SAFE_INTEGER)
-        throw new AppError(503, 'native-generation-exhausted', '连接配置代次已耗尽')
-      draft.configRevision = (draft.configRevision ?? 0) + 1
-      if (receipt)
-        draft.configReceipts = [...(draft.configReceipts ?? []).filter(item => item.requestId !== receipt.requestId), receipt].slice(-32)
+      this.advanceConfiguration(draft, receipt)
       const builtIn = draft.profiles.filter(item => item.builtIn)
       const custom = checked.map(item => {
         const previous = draft.profiles.find(old => old.relayId === item.relayId)
@@ -201,8 +349,6 @@ export class RelayProfiles {
         }
       })
       draft.profiles = [...builtIn, ...custom]
-      if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
-      draft.generation++
     })
   }
   /** Brings the persisted built-in relays in line with the compiled list. Their seeds survive, and only they change. */

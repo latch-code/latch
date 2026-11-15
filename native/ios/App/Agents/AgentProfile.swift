@@ -89,10 +89,11 @@ struct AgentProfileSheet: View {
                 if !general && summary != .null { section("通知") { NotificationSection(agent: summary) } }
                 section("工作位置") { Text(entry.place ?? "不带项目").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }
                 if model.canRun, PhoneAgentChat.owner(model.currentSummary) == id,
+                   PhoneAgentChat.isCurrent(model.snapshot, task: model.currentSummary),
                    model.detail["summary"]["id"].string == model.sessionId {
                     let controls = PhoneSessionConfig.controls(model.detail, harness: model.engineInfo(model.currentSummary["harnessId"].string))
                     if !controls.isEmpty {
-                        section("当前话题") {
+                        section("当前聊天") {
                             ViewThatFits(in: .horizontal) {
                                 HStack(spacing: 12) { ConfigChips(controls: controls, chip: { AnyView($0.font(PhoneTheme.caption)) }) }
                                 VStack(alignment: .leading, spacing: 12) { ConfigChips(controls: controls, chip: { AnyView($0.font(PhoneTheme.caption)) }) }
@@ -291,7 +292,7 @@ private struct MemorySection: View {
             }
             HStack(spacing: 6) {
                 Text("只给这个 Agent").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
-                HintButton(label: "只给这个 Agent", text: "只有你能写或保存，只有这个 Agent 会用，工具不会改写它。内置 Harness 每轮重新读取；外部 Harness 从下一个话题起才收到。")
+                HintButton(label: "只给这个 Agent", text: "只有你能写或保存，只有这个 Agent 会用，工具不会改写它。内置 Harness 每轮重新读取；外部 Harness 在清空上下文后重新读取。")
                 Spacer()
                 Button("添加", systemImage: "plus") { editing = MemoryDraft(memory: nil, text: "") }
                     .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small).tint(PhoneTheme.ink).disabled(!canWrite || !held.isEmpty)

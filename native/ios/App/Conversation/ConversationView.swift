@@ -22,6 +22,9 @@ struct ConversationView: View {
     private var hasContent: Bool { model.detail["summary"]["id"].string == id }
     private var inputReason: String? {
         if let reason = PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) { return reason }
+        if PhoneAgentChat.owner(summary) != nil, !PhoneAgentChat.isCurrent(model.snapshot, task: summary) {
+            return "聊天记录 · 请在这个 Agent 的当前聊天发送"
+        }
         if frame != nil, hasContent, PhoneHelperSpeech.permission(model.detail, harness: model.engineInfo(summary["harnessId"].string))?.blocked == true { return "权限没确认，暂不能发送" }
         return nil
     }
@@ -205,13 +208,7 @@ struct ConversationView: View {
                 // A stop needs no window, so it stays in reach while the content is closed.
                 PromptComposer(draftId: id, placeholder: frame.map { PhoneAgentChat.placeholder($0.entry.name) }, gate: rebuiltInto != nil ? "已按文字重建为新会话 · 这个会话只能查看"
                     : hasContent || !model.connected ? inputReason : PromptComposer.closedWindow, engine: engine, person: frame != nil,
-                    newTopic: frame.map { person in { prompt in
-                        guard model.sessionId == id, hasContent, model.pending.isEmpty else { return }
-                        let key = PhoneModel.topicTray(person.owner)
-                        let held = model.takeDraft(for: key) ?? ""
-                        model.holdDraft(PhonePending.joined(held, prompt), for: key)
-                        person.newTopic()
-                    } })
+                    newTopic: nil)
             }
         }.frame(maxWidth: 760).frame(maxWidth: .infinity)
     }

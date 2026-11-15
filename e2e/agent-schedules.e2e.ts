@@ -50,7 +50,7 @@ async function openConversation(page: Page) {
     await tabs.getByRole('button', { name: '我的 Agent', exact: true }).click()
     await page
       .getByRole('list', { name: '我的 Agent', exact: true })
-      .getByRole('button', { name: /资料助手/u })
+      .getByRole('button', { name: /^资料助手/u })
       .click()
     return
   }
@@ -62,7 +62,7 @@ async function openConversation(page: Page) {
   await where
     .getByRole('navigation', { name: '我的 Agent', exact: true })
     .getByRole('region', { name: 'Agent', exact: true })
-    .getByRole('button', { name: /资料助手/u })
+    .getByRole('button', { name: /^资料助手/u })
     .click()
 }
 
@@ -79,19 +79,7 @@ async function openSchedules(page: Page) {
   return profile
 }
 
-/** A new topic with 资料助手, from 话题 ▾. */
-async function newTopic(page: Page) {
-  await page.getByRole('button', { name: '话题', exact: true }).first().click()
-  await page.getByRole('menuitemradio', { name: /新话题/u }).click()
-  return page.getByRole('textbox', { name: '给资料助手发消息', exact: true })
-}
-
-async function openCarry(page: Page) {
-  await page.locator('.agent-delegate').getByRole('button', { name: '更多', exact: true }).click()
-  await page.getByRole('menuitem', { name: '带入上次成果…', exact: true }).click()
-}
-
-it('creates, runs, pauses and resumes a schedule, shows a missed time, and carries an earlier result into a new topic', async () => {
+it('creates, runs, pauses and resumes a schedule, shows a missed time, and delivers results to the only chat', async () => {
   await mkdir(OUT, { recursive: true })
   // The Host's clock, moved forward to pass a scheduled time while the Host is "asleep".
   let shift = 0
@@ -218,45 +206,19 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     await expect.poll(async () => (await automations())[0]?.schedule.kind).toBe('weekdays')
     await card.getByText(new RegExp(`工作日 ${time}`, 'u')).waitFor()
 
-    // 带入上次成果: a topic's last reply goes into a new topic's draft as quoted text, in a new session.
+    // The first chat receives the result card; the run remains a separate session.
     await page.getByRole('button', { name: '关闭资料', exact: true }).click()
-    const input = await newTopic(page)
+    await openConversation(page)
+    const input = page.getByRole('textbox', { name: '给资料助手发消息', exact: true })
     await input.fill('比较三家汇率接口')
     await input.press('Meta+Enter')
-    const delegated = async () =>
-      (await owner.json<AppSnapshot>('snapshot')).tasks.filter(task => task.agent?.customAgentId === agent.id && !task.automationId)
-    await expect.poll(async () => (await delegated()).length, { timeout: 15_000 }).toBe(1)
-    const [first] = await delegated()
-    await expect
-      .poll(async () => (await owner.json<TaskDetail>(`tasks/${first!.id}`)).messages.some(item => item.role === 'assistant'), {
-        timeout: 15_000,
-      })
-      .toBe(true)
-    // The automation's run is among the Agent's topics.
-    await page.locator(`[data-task-id="${first!.id}"][aria-current="page"]`).waitFor()
-    await page.getByRole('button', { name: '话题', exact: true }).first().click()
-    await page.getByRole('menuitemradio', { name: /汇率周报/u }).waitFor()
-    await page.keyboard.press('Escape')
-    await newTopic(page)
-    await openCarry(page)
-    const dialog = page.getByRole('dialog', { name: '带入上次成果' })
-    await dialog.getByRole('checkbox', { name: first!.title }).check()
-    await dialog.getByRole('checkbox', { name: '最后的回复' }).waitFor()
-    expect(await dialog.getByRole('checkbox', { name: '最后的回复' }).isChecked()).toBe(true)
-    await page.screenshot({ path: `${OUT}/carry-1440.png` })
-    await dialog.getByRole('button', { name: '带入', exact: true }).click()
-    await expect.poll(() => input.inputValue()).toContain(`> 上次成果「${first!.title}」：\n> echo:`)
-    await input.press('End')
-    await input.pressSequentially('按这个结论写一页摘要')
-    await input.press('Meta+Enter')
-    await expect.poll(async () => (await delegated()).length, { timeout: 15_000 }).toBe(2)
-    const second = (await delegated()).find(task => task.id !== first!.id)!
-    const opened = await owner.json<TaskDetail>(`tasks/${second.id}`)
-    const prompt = opened.messages.find(item => item.role === 'user')!.text
-    expect(prompt).toContain(`上次成果「${first!.title}」：`)
-    expect(prompt).toContain('按这个结论写一页摘要')
-    // The title skips the quoted block in front of what the person wrote.
-    expect(second.title).toBe('按这个结论写一页摘要')
+    const chat = async () => (await owner.json<AppSnapshot>('snapshot')).agentChats?.[agent.id]
+    await expect.poll(async () => (await chat())?.state, { timeout: 15_000 }).toBe('ready')
+    const current = await chat()
+    if (current?.state !== 'ready') throw new Error('No confirmed chat')
+    expect(current.sessionId).not.toBe(ran.sessionId)
+    await page.getByRole('button', { name: '打开运行' }).first().waitFor()
+    await page.screenshot({ path: `${OUT}/result-card-1440.png` })
     await context.close()
     // Back to the real time, which a new browser's enrollment is checked against.
     shift = 0
@@ -277,14 +239,9 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
     await narrow.screenshot({ path: `${OUT}/form-390-dark.png`, fullPage: true })
     await narrow.getByRole('button', { name: '取消', exact: true }).click()
     await narrow.getByRole('button', { name: '完成', exact: true }).click()
-    await newTopic(narrow)
-    await openCarry(narrow)
-    const sheet = narrow.getByRole('dialog', { name: '带入上次成果' })
-    await sheet.getByRole('checkbox').first().check()
-    await sheet.getByRole('checkbox', { name: '最后的回复' }).waitFor()
-    await narrow.evaluate(() => Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => undefined))))
+    await narrow.getByRole('button', { name: '打开运行' }).first().waitFor()
     await noHorizontalOverflow(narrow)
-    await narrow.screenshot({ path: `${OUT}/carry-390-dark.png` })
+    await narrow.screenshot({ path: `${OUT}/result-card-390-dark.png` })
     await phone.close()
 
     // The tab at the other widths and themes: a tablet, the narrowest phone, and a dark desktop.
@@ -306,12 +263,9 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and carri
       await view.screenshot({ path: `${OUT}/schedules-${width}-${scheme}.png`, fullPage: true })
       if (width < 768) await view.getByRole('button', { name: '完成', exact: true }).click()
       else await view.getByRole('button', { name: '关闭资料', exact: true }).click()
-      await newTopic(view)
-      await view.locator('.agent-delegate').getByRole('button', { name: '更多', exact: true }).click()
-      expect(await view.getByRole('menuitem', { name: '带入上次成果…', exact: true }).isEnabled()).toBe(true)
-      await view.keyboard.press('Escape')
+      await view.getByRole('button', { name: '打开运行' }).first().waitFor()
       await noHorizontalOverflow(view)
-      await view.screenshot({ path: `${OUT}/delegate-${width}-${scheme}.png` })
+      await view.screenshot({ path: `${OUT}/chat-${width}-${scheme}.png` })
       await sized.close()
     }
 

@@ -132,7 +132,7 @@ struct SessionMenuButtons: View {
         let clear = open ? (offered: model.detail["clearContext"].bool && model.detail["summary"]["id"].string == task["id"].string,
             clearing: task["id"].string.map { model.clearing.contains($0) } ?? false) : nil
         let copy = open && model.detail["summary"]["id"].string == task["id"].string && !model.detail["messages"].array.isEmpty
-        ForEach(Array(PhoneSessionMenu.sections(task, canRun: model.canRun, clear: clear, copy: copy).enumerated()), id: \.offset) { _, section in
+        ForEach(Array(PhoneSessionMenu.sections(task, canRun: model.canRun, clear: clear, copy: copy, retained: PhoneAgentChat.isCurrent(model.snapshot, task: task)).enumerated()), id: \.offset) { _, section in
             Section {
                 ForEach(section) { item in
                     Button(role: item.action == .delete ? .destructive : nil) { Task { await model.choose(item.action, task: task) } } label: {

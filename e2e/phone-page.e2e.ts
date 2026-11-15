@@ -2,7 +2,7 @@ import { chromium, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Device, NativeLinkInfo, NativePairingStatus, WaitingEnrollmentView } from '@latch/protocol'
+import type { Device, NativeLinkInfo, NativePairingStatus, NativeRelayProfile, WaitingEnrollmentView } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
@@ -129,6 +129,69 @@ describe('设置 › 设备', () => {
   afterAll(async () => {
     await browser.close()
     await testHost.close()
+  })
+
+  it('imports a private relay file and continues the same uncertain request without showing the secret', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    try {
+      const page = await context.newPage()
+      const state: PageState = { devices: [], pairing: { state: 'ready', offNetwork: false }, create: 'ok', relays: [] }
+      await enrollBrowser(page, testHost, { name: '中继设置验收', scopes: ['admin'] })
+      await asDesktop(page, state)
+      const relay: NativeRelayProfile = {
+        url: 'https://relay.fixture.test/',
+        relayId: 'a'.repeat(32),
+        spkiHash: 'b'.repeat(64),
+        registrationKey: `lrt1.${'C'.repeat(43)}`,
+      }
+      let requestId: string | undefined
+      let completed = false
+      let originalFileMatched = false
+      let retriedOriginal = false
+      const info = (): NativeLinkInfo => ({
+        version: 1,
+        enabled: true,
+        directManaged: false,
+        listening: null,
+        directory: false,
+        relays: completed ? [{ url: relay.url, relayId: relay.relayId, status: 'connected' }] : [],
+        ...(requestId && !completed ? { pendingRelay: { requestId, url: relay.url, canRetry: true } } : {}),
+      })
+      await page.route('**/link/api/native/info', route => route.fulfill({ json: info() }))
+      await page.route('**/link/api/native/relays', route => {
+        const body = route.request().postDataJSON() as { requestId: string; profile?: NativeRelayProfile }
+        if (!requestId) {
+          requestId = body.requestId
+          originalFileMatched = JSON.stringify(body.profile) === JSON.stringify(relay)
+          return route.fulfill({ status: 503, json: { error: 'native-relay-unconfirmed', message: '未确认' } })
+        }
+        retriedOriginal = body.requestId === requestId && body.profile === undefined
+        completed = true
+        return route.fulfill({ status: 201, json: info() })
+      })
+      await page.reload()
+      await connected(page)
+      await openEntry(page, '设备')
+      const list = page.locator('.device-saved-list')
+      await list.getByRole('button', { name: '导入配置', exact: true }).waitFor()
+      await list.locator('input[type=file]').setInputFiles({
+        name: 'connection.json',
+        mimeType: 'application/json',
+        buffer: Buffer.from(JSON.stringify({ version: 1, profile: relay })),
+      })
+      await list.getByRole('button', { name: '验证并添加', exact: true }).click()
+      await list.getByText('添加结果待确认', { exact: true }).waitFor()
+      expect(originalFileMatched).toBe(true)
+      expect((await list.innerText()).includes(relay.registrationKey!)).toBe(false)
+      await page.screenshot({ path: `${OUTPUT}/relay-pending.png`, animations: 'disabled' })
+      await list.getByRole('button', { name: '继续验证', exact: true }).click()
+      await list.getByText('已连接', { exact: true }).waitFor()
+      expect(retriedOriginal).toBe(true)
+      expect((await list.innerText()).includes(relay.registrationKey!)).toBe(false)
+      await page.screenshot({ path: `${OUTPUT}/relay-connected.png`, animations: 'disabled' })
+    } finally {
+      await context.close()
+    }
   })
 
   for (const size of SIZES)

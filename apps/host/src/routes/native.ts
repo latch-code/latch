@@ -16,7 +16,7 @@ import { nodeCrypto } from '@latch/link-client'
 import { authFailure } from '../access.ts'
 import { parseP256Spki, randomNonce, verifyP256 } from '../crypto.ts'
 import { createRelayEgress, type LookupFunction } from '../egress.ts'
-import { json, jsonBody, optionalJsonBody, safeDecode } from '../http-util.ts'
+import { json, jsonBody, KIB, optionalJsonBody, safeDecode } from '../http-util.ts'
 import type { HostIdentity } from '../identity.ts'
 import type { ListenerContext } from '../listeners.ts'
 import { startNativeHost, type NativeOpening } from '../native.ts'
@@ -29,7 +29,7 @@ import type { HostAddressBooks } from '../relay/address-book.ts'
 import { HostRelayController } from '../relay/controller.ts'
 import type { HostRelayDirectory } from '../relay/directory.ts'
 import { OFFICIAL_RELAYS, type OfficialRelay } from '../relay/official.ts'
-import type { RelayProfiles } from '../relay/profiles.ts'
+import { relayProfileInput, type RelayProfiles } from '../relay/profiles.ts'
 import { signatureSchema } from './devices.ts'
 import { type Caller, type CallerRequest, type RouteContext, type RouteModule, type RouteRequest } from './registry.ts'
 
@@ -417,7 +417,9 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       requireLocal(caller)
       if (caller.device) requireScope(caller, 'admin')
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
-      json(res, nativeSettings.info())
+      await nativeSettings.settleRelayWrite()
+      if (caller.device) recheck(caller, 'admin')
+      json(res, nativeSettings.info(caller.device?.id))
       return true
     }
     if (path === '/link/api/native/pairings' && method === 'POST') {
@@ -447,17 +449,72 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       json(res, { removed: true })
       return true
     }
+    if (path === '/link/api/native/relays' && method === 'POST') {
+      requireLocal(caller)
+      requireScope(caller, 'admin')
+      if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+      const settings = nativeSettings
+      const { requestId, profile } = z
+        .strictObject({ requestId: z.uuid(), profile: relayProfileInput.refine(value => !/[?#]/u.test(value.url)).optional() })
+        .parse(await jsonBody(req, 4 * KIB))
+      const current = () => {
+        if (closing()) throw new AppError(503, 'host-closing', '电脑正在停止，请稍后查询原请求。')
+        recheck(caller, 'admin')
+      }
+      await settings.settleRelayWrite()
+      current()
+      const plan = settings.planRelay(requestId, caller.device.id, profile)
+      if (plan) {
+        const url = new URL(plan.input.url)
+        const target = `${url.hostname}:${url.port || 443}`
+        const stepup = await context.confirm(
+          req,
+          caller,
+          'policy.change',
+          { base: plan.base, requestId, profile: plan.request.requestHash },
+          { form: 'origin.confirm', slots: { target } },
+          [
+            { label: '自建中继', value: plan.input.url },
+            { label: '中继标识', value: plan.input.relayId },
+            { label: '证书公钥 SHA-256', value: plan.input.spkiHash },
+          ],
+          [],
+          target,
+        )
+        await settings.addRelay(plan, actorOf(caller), stepup, current)
+        refresh()
+      }
+      current()
+      json(res, settings.info(caller.device.id), plan ? 201 : 200)
+      return true
+    }
+    const auditFailed = () => res.setHeader('x-latch-audit', 'failed')
+    const addRequest = /^\/link\/api\/native\/relay-requests\/([^/]+)$/u.exec(path)
+    if (addRequest && method === 'DELETE') {
+      requireLocal(caller)
+      requireScope(caller, 'admin')
+      if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+      const id = z.uuid().parse(addRequest[1])
+      await nativeSettings.settleRelayWrite()
+      const result = await nativeSettings.cancelRelay(id, actorOf(caller), () => recheck(caller, 'admin'), auditFailed)
+      if (!result.audited) res.setHeader('x-latch-audit', 'failed')
+      recheck(caller, 'admin')
+      json(res, nativeSettings.info(caller.device.id))
+      return true
+    }
     const relay = /^\/link\/api\/native\/relays\/([a-f0-9]{32})$/u.exec(path)
     if ((relay || path === '/link/api/native/directory') && method === 'DELETE') {
       requireLocal(caller)
       requireScope(caller, 'admin')
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+      const authorize = () => recheck(caller, 'admin')
       const result = relay
-        ? await nativeSettings.removeRelay(relay[1]!, actorOf(caller))
-        : await nativeSettings.removeDirectory(actorOf(caller))
+        ? await nativeSettings.removeRelay(relay[1]!, actorOf(caller), authorize, auditFailed)
+        : await nativeSettings.removeDirectory(actorOf(caller), authorize, auditFailed)
       if (!result.audited) res.setHeader('x-latch-audit', 'failed')
       refresh()
-      json(res, nativeSettings.info())
+      authorize()
+      json(res, nativeSettings.info(caller.device.id))
       return true
     }
     const pairing = /^\/link\/api\/native\/pairings\/([^/]+)$/u.exec(path)

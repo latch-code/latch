@@ -644,8 +644,7 @@ button.agent-memory-topic:hover {
 }
 
 /*
- * A new topic: the Agent in the middle while nothing is said yet, the input at the bottom where a session's stands, and
- * on wide windows the profile beside it in the right panel's place.
+ * First-message page: the header and input keep their positions when the conversation opens.
  */
 .agent-chat-panel {
   display: flex;
@@ -674,6 +673,9 @@ button.agent-memory-topic:hover {
   min-width: 0;
   min-height: 0;
 }
+.agent-chat-main > .topbar-frame {
+  flex: none;
+}
 .agent-chat-body {
   display: grid;
   place-items: center;
@@ -682,28 +684,12 @@ button.agent-memory-topic:hover {
   padding: var(--sp-24) var(--gutter);
   overflow-y: auto;
 }
-.agent-chat-intro {
-  display: grid;
-  justify-items: center;
-  gap: var(--sp-8);
-  max-width: 420px;
-  text-align: center;
-}
-.agent-chat-intro h1 {
-  font-size: var(--fs-title);
-  line-height: var(--lh-title);
-  font-weight: 600;
-}
-.agent-chat-intro p {
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-}
 .agent-chat-composer {
   width: 100%;
   max-width: calc(var(--content-width) + 2 * var(--gutter));
   margin-inline: auto;
-  padding: 0 var(--gutter) var(--sp-16);
+  margin-block-start: auto;
+  padding: var(--sp-16) var(--gutter);
 }
 .agent-chat-profile {
   flex-shrink: 0;
@@ -1340,19 +1326,6 @@ button.agent-library-file:focus-visible {
 .agent-notification-switches > .ui-switch-row + .ui-switch-row {
   border-top: 1px solid var(--line);
 }
-.agent-role-templates {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-6);
-  min-width: 0;
-}
-.agent-role-templates > span {
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-
 /* The profile's MCP: one line per server, its state or 所有会话, and on this Mac a switch that puts it on the Agent. */
 .agent-mcp-list {
   display: grid;
@@ -1531,10 +1504,6 @@ button.helper-card:focus-visible {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-.agent-chat-greeting {
-  max-width: 36ch;
-}
-
 /*
  * 不先问你 or 权限没确认 beside a helper's name: amber, with its ⓘ; a mode Latch has no word for, in the quiet colour. On
  * every width the words stay; a narrow frame cuts them with an ellipsis.
@@ -1599,13 +1568,12 @@ button.helper-card:focus-visible {
 
 /*
  * 我的 Agent as people. 侧栏 layout: the roster, one 34px row per Agent (a 22px face, the name, the state icon at the end),
- * and under the Agent in view its topics on a tree line, as a project's sessions hang in Code. 顶栏 layout: the queue, one
+ * and its sibling action button. 顶栏 layout: the queue, one
  * 56px row per person (a 32px face, the name, and the state in a person's words on the second line). The icon and the
  * second line take the state's colour: amber waits for you, blue works, red failed; frozen or at rest they are muted.
  */
 .agent-roster,
-.agent-queue,
-.agent-tree {
+.agent-queue {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 1px;
@@ -1638,78 +1606,19 @@ button.helper-card:focus-visible {
 .agent-mark[data-tone='failed'] {
   color: var(--red);
 }
-/* Over the list reset of .space-group ul: the tree stands in from the face's centre, on its line. */
-.space-group ul.agent-tree {
-  margin: 1px 0 var(--sp-4) var(--sp-16);
-  padding-left: var(--sp-6);
-  border-left: 1px solid var(--line);
-}
-.agent-tree-topic {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  width: 100%;
-  min-width: 0;
-  height: 34px;
-  padding: 0 var(--sp-8);
-  border: 0;
-  border-radius: var(--r-9);
-  background: transparent;
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  text-align: left;
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-.agent-tree-topic > svg {
-  flex-shrink: 0;
-  color: var(--muted);
-}
-.agent-tree-topic:hover,
 .agent-person:hover,
 .agent-queue-new:hover {
   background: var(--hover);
 }
-.agent-tree-topic:active,
 .agent-person:active,
 .agent-queue-new:active {
   background: var(--press);
 }
-.agent-tree-topic[aria-current='page'],
 .agent-person[aria-current='page'],
 .agent-queue-new[aria-current='page'] {
   background: var(--selected);
   box-shadow: var(--selected-ring);
   color: var(--ink);
-}
-.agent-tree-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agent-tree-more {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  height: 28px;
-  padding: 0 var(--sp-8);
-  border: 0;
-  border-radius: var(--r-6);
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-variant-numeric: tabular-nums;
-  text-align: left;
-  transition:
-    background-color var(--m-micro) var(--e-micro),
-    color var(--m-micro) var(--e-micro);
-}
-.agent-tree-more:hover {
-  background: var(--hover);
-  color: var(--ink-2);
 }
 .agent-person {
   display: flex;
@@ -1808,8 +1717,6 @@ button.helper-card:focus-visible {
 }
 @media (hover: none), (pointer: coarse) {
   .space-list[data-people='roster'] .space-agent,
-  .agent-tree-topic,
-  .agent-tree-more,
   .agent-queue-new {
     height: 44px;
   }
@@ -2115,4 +2022,48 @@ button.helper-card:focus-visible {
   -webkit-line-clamp: 3;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.agent-continue {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-8);
+  padding-block: var(--sp-8);
+}
+.agent-continue p {
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+}
+
+.agent-row {
+  position: relative;
+}
+.agent-row:has(.agent-row-more) :is(.space-agent, .agent-person) {
+  padding-inline-end: var(--sp-32);
+}
+.agent-row-more {
+  position: absolute;
+  inset-inline-end: var(--sp-4);
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+}
+@media (pointer: coarse) {
+  .agent-row:has(.agent-row-more) :is(.space-agent, .agent-person) {
+    padding-inline-end: var(--sp-48);
+  }
+  .agent-row-more.ui-icon-button {
+    inline-size: 44px;
+    block-size: 44px;
+  }
+}
+@media (hover: hover) and (pointer: fine) {
+  .agent-row:not(:hover, :focus-within) .agent-row-more:not([aria-expanded='true']) {
+    opacity: 0;
+  }
+}
+
+.agent-current-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
 }

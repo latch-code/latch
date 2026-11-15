@@ -1,12 +1,14 @@
 import type { HostCatalog } from '@latch/protocol'
 import { Button } from '@latch/ui'
-import { DraftModelControl } from '../composer/ModelControl.tsx'
-import { DraftThinkingControl } from '../composer/ThinkingControl.tsx'
+import { DraftModelControl, SessionModelControl } from '../composer/ModelControl.tsx'
+import { ConfigFeedback, DraftThinkingControl, SessionThinkingControl } from '../composer/ThinkingControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
-import { draftPermission, draftRead } from '../composer/permission.ts'
+import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
 import { draftConfig, withLadderMode, type ComposerChoice } from '../composerChoice.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
+import type { ShellState } from '../shell/useShellLayout.tsx'
+import { isPersonalChat, topicOwner } from './chat.ts'
 import { agentDefaultChoice, usesHostModels, withAgentDefaultChoice, type AgentDraft } from './model.ts'
 
 /** The same controls as a new Code session, saved as defaults without writing to any existing topic. */
@@ -86,5 +88,75 @@ export function AgentDefaults({
         </dd>
       )}
     </>
+  )
+}
+
+/** Live options for the currently bound external Harness, with the same receipts as Code. */
+export function CurrentAgentOptions({ shell, owner }: { shell: ShellState; owner: string }) {
+  const { current, catalog, harnessInfo, access } = shell
+  if (
+    !current
+    || !catalog
+    || harnessInfo?.level !== 'L3'
+    || topicOwner(current.summary) !== owner
+    || !isPersonalChat(shell.snapshot, current.summary)
+  )
+    return null
+  const id = current.summary.id
+  const busy = shell.configBusy.get(id) ?? null
+  const feedback = shell.configFeedback.get(id)
+  const config = current.config ?? []
+  if (!config.length && !feedback) return null
+  const locked = !access.scopes.has('run')
+    ? '这台设备只能查看'
+    : shell.connection === 'offline'
+      ? 'Mac 不在线'
+      : shell.active
+        ? '这一轮结束后可用'
+        : busy
+          ? '正在确认会话选项'
+          : undefined
+  const permission = permissionView({
+    harness: harnessInfo,
+    mode: current.summary.mode,
+    permission: current.permission,
+    config,
+    access,
+    ...(locked ? { locked } : {}),
+  })
+  const options = {
+    catalog,
+    harness: harnessInfo,
+    model: shell.effectiveModel,
+    current: shell.currentModel,
+    config,
+    busy,
+    ...(feedback ? { feedback } : {}),
+    ...(locked ? { locked } : {}),
+    onModel: (model: ShellState['effectiveModel']) => shell.submission.setOverride(id, model),
+    onConfig: shell.setConfig,
+    onRefresh: shell.refreshConfig,
+  }
+  return (
+    <section className="agent-form-section" aria-label="当前聊天">
+      <header>
+        <h3>当前聊天</h3>
+      </header>
+      {config.length > 0 && (
+        <div className="agent-current-options">
+          <SessionModelControl {...options} reported={current.summary.model} route={current.summary.modelRoute} />
+          <SessionThinkingControl {...options} />
+          {permission?.option && (
+            <PermissionChip
+              view={permission}
+              onChoose={(option, value) => {
+                void shell.setConfig(option.id, value)
+              }}
+            />
+          )}
+        </div>
+      )}
+      {feedback && <ConfigFeedback feedback={feedback} onRefresh={shell.refreshConfig} />}
+    </section>
   )
 }

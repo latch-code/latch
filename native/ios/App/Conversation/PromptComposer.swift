@@ -303,7 +303,7 @@ struct PromptComposer: View {
     /** One scrolling row above the keyboard. The built-in engine takes a model for each message; the Host offers no other choice before a send. */
     private var chips: some View {
         let summary = model.currentSummary, models = PhoneStart.models(model.snapshot["catalog"])
-        let current = nextModel?.model ?? summary["model"].string
+        let current = nextModel?.model ?? PhoneAgentChat.model(model.snapshot, task: summary)?.model ?? summary["model"].string
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ConfigChips(controls: controls) { label in AnyView(chip { label }) }

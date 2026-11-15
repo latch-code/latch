@@ -9,6 +9,7 @@ import { RelayProfiles, secretBytes, type RelayProfile } from './profiles.ts'
 import type { HostRelayDirectory } from './directory.ts'
 
 type Lease = { address: string; permitted(): boolean }
+type Verification = { routeId: Uint8Array; token: Uint8Array; permitted(): boolean }
 interface NodeState {
   fingerprint: string
   abort: AbortController
@@ -39,6 +40,7 @@ export class HostRelayController {
   private readonly retiring = new Map<string, Promise<void>>()
   private readonly resumeTokens = new Map<string, { fingerprint: string; tokens: Map<string, Uint8Array> }>()
   private readonly timer: ReturnType<typeof setInterval>
+  private checking?: { state: Pick<NodeState, 'abort' | 'leases'>; done: Promise<Verification> }
   private stopped = false
   constructor(options: RelayControllerOptions) {
     this.options = options
@@ -56,11 +58,15 @@ export class HostRelayController {
   /** Called synchronously after policy/config updates; old sockets cannot keep an allowance that was removed. */
   reconcile(): void {
     if (this.stopped) return
+    if (this.checking?.state.leases.some(lease => !lease.permitted())) this.checking.state.abort.abort()
     // The built-in relays run while a phone can use them, and only a phone paired on the LAN can get here.
     const reachable = this.options.devices.nativeReachable()
-    const profiles = this.options.profiles.snapshot().profiles.filter(profile => !profile.builtIn || reachable)
+    const snapshot = this.options.profiles.snapshot()
+    const profiles = snapshot.profiles.filter(profile => !profile.builtIn || reachable)
     for (const [id, retained] of this.resumeTokens) {
-      const profile = profiles.find(item => item.relayId === id)
+      const profile =
+        profiles.find(item => item.relayId === id)
+        ?? (snapshot.pendingRelay?.profile.relayId === id ? snapshot.pendingRelay.profile : undefined)
       if (!profile || retained.fingerprint !== sha256Hex(canonicalJson(profile))) this.resumeTokens.delete(id)
     }
     for (const [id, state] of this.nodes) {
@@ -97,7 +103,11 @@ export class HostRelayController {
       state.done = this.run(profile, state)
     }
   }
-  private async resolve(state: NodeState, url: URL, fixed?: { address: string; permitted(): boolean }): Promise<string> {
+  private async resolve(
+    state: Pick<NodeState, 'abort' | 'leases'>,
+    url: URL,
+    fixed?: { address: string; permitted(): boolean },
+  ): Promise<string> {
     const operation = fixed
       ? (this.options
           .resolvePublic?.(url, fixed.address)
@@ -123,6 +133,82 @@ export class HostRelayController {
       state.leases.push(lease)
     }
     return lease.address
+  }
+  /** Proves outbound policy, pin, relay ID and real registration before this profile can enter a signed address book. */
+  async verify(profile: RelayProfile, authorize: () => void): Promise<Verification> {
+    const state = { abort: new AbortController(), leases: [] as Lease[] }
+    if (this.stopped || this.checking) throw new Error('Relay verification unavailable')
+    const done = this.verifyRegistration(profile, authorize, state)
+    this.checking = { state, done }
+    try {
+      return await done
+    } finally {
+      this.checking = undefined
+    }
+  }
+  private async verifyRegistration(
+    profile: RelayProfile,
+    authorize: () => void,
+    state: Pick<NodeState, 'abort' | 'leases'>,
+  ): Promise<Verification> {
+    const relayId = Buffer.from(profile.relayId, 'hex')
+    const url = new URL(profile.url)
+    const signal = state.abort.signal
+    const permitted = () => !signal.aborted && !this.stopped && state.leases.every(lease => lease.permitted())
+    const check = () => {
+      authorize()
+      if (!permitted()) throw new Error('Relay egress unavailable')
+    }
+    check()
+    const control = await RelayControl.connect({
+      url,
+      relayId,
+      spki: Buffer.from(profile.spkiHash, 'hex'),
+      profile: 'outer-pad-v2',
+      resolveAddress: async () => {
+        const address = await this.resolve(state, url)
+        check()
+        return address
+      },
+      ...(this.options.ca ? { ca: this.options.ca } : {}),
+      registrationToken: profile.registrationKey ? secretBytes(profile.registrationKey) : undefined,
+      guardWrites: () => {
+        try {
+          check()
+          return true
+        } catch {
+          return false
+        }
+      },
+      signal,
+    })
+    const abort = () => control.close()
+    signal.addEventListener('abort', abort, { once: true })
+    try {
+      const day = Math.floor(Date.now() / 1000 / UTC_DAY)
+      const routeKeyBytes = await routeKey(nodeCrypto, secretBytes(profile.seeds[profile.activeSlot]), relayId, day)
+      const currentRoute = hex(await routeId(nodeCrypto, await nodeCrypto.publicKey(routeKeyBytes)))
+      const retained = this.resumeTokens.get(profile.relayId)
+      const previous = retained?.fingerprint === sha256Hex(canonicalJson(profile)) ? retained.tokens.get(currentRoute) : undefined
+      check()
+      const { routeId: registeredRoute, token } = await control.register({ routeKey: routeKeyBytes, day, previous, alternate: false })
+      check()
+      return { routeId: registeredRoute, token, permitted }
+    } finally {
+      signal.removeEventListener('abort', abort)
+      control.close()
+      await control.closed
+    }
+  }
+  rememberVerifiedRegistration(profile: RelayProfile, verification: Verification): void {
+    const fingerprint = sha256Hex(canonicalJson(profile))
+    const retained = this.resumeTokens.get(profile.relayId)
+    const tokens = retained?.fingerprint === fingerprint ? retained.tokens : new Map<string, Uint8Array>()
+    tokens.set(hex(verification.routeId), verification.token)
+    this.resumeTokens.set(profile.relayId, { fingerprint, tokens })
+  }
+  cancelVerification(): void {
+    this.checking?.state.abort.abort()
   }
   private async connect(profile: RelayProfile, state: NodeState): Promise<RelayControl> {
     const create = (url: string, fixed?: { address: string; permitted(): boolean }) =>
@@ -310,12 +396,14 @@ export class HostRelayController {
   async close(): Promise<void> {
     this.stopped = true
     clearInterval(this.timer)
+    const checking = this.checking
+    checking?.state.abort.abort()
     const states = [...this.nodes.values()]
     for (const state of states) {
       state.abort.abort()
       state.control?.close()
     }
-    await Promise.allSettled([...states.map(state => state.done), ...this.retiring.values()])
+    await Promise.allSettled([...states.map(state => state.done), ...this.retiring.values(), ...(checking ? [checking.done] : [])])
     this.nodes.clear()
     this.resumeTokens.clear()
   }

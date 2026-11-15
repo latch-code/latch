@@ -34,7 +34,6 @@ import { DraftAvatarPicker } from './AvatarPicker.tsx'
 import { ABILITY_WORDS, firstFace, helperCandidates, helperMode, isolationBrief, type HelperCandidate } from './helpers.ts'
 import { usesHostModels } from './model.ts'
 import { BeforeActing } from './parts.tsx'
-import { ROLE_TEMPLATES } from './roleTemplates.ts'
 import { writeFor, type AgentWrites } from './useAgentWrites.ts'
 import type { HelperAbility } from '@latch/protocol'
 
@@ -169,8 +168,8 @@ export function helperRequest(harness: Pick<HarnessInfo, 'id' | 'modes' | 'capab
 
 /**
  * Creating a helper, in two steps on one page. First 「你想让谁成为你的帮手？」: a card for each ready Harness that can
- * take an Agent, Latch 内置 first, and below the ones not ready. Then who it is: the face, a name, its duty (from a
- * template or written), 多说几句 for the instructions, and 更多 for the model, 做事前 and 在哪做. Nothing exists until
+ * take an Agent, Latch 内置 first, and below the ones not ready. Then who it is: the face, a name, its duty,
+ * 多说几句 for the instructions, and 更多 for the model, 做事前 and 在哪做. Nothing exists until
  * 创建, which writes with a requestId; its Harness is fixed from then on.
  */
 export function HelperCreate({
@@ -357,24 +356,6 @@ export function HelperCreate({
           }}
         />
       </div>
-      <div className="agent-role-templates" role="group" aria-label="从模板开始">
-        {ROLE_TEMPLATES.map(template => (
-          <Button
-            key={template.label}
-            size="sm"
-            variant="ghost"
-            disabled={locked}
-            onClick={() => {
-              update({
-                ...(draft.name.trim() ? {} : { name: template.label }),
-                description: template.description,
-                instructions: template.instructions,
-              })
-            }}>
-            {template.label}
-          </Button>
-        ))}
-      </div>
       <TextField
         label="职责"
         value={draft.description}
@@ -450,7 +431,7 @@ export function HelperCreate({
             <dd>
               {!draft.defaultProjectId && (
                 <Hint label="它自己的文件夹" moreLabel="在哪做：说明">
-                  不是隔离：它仍能读写这台 Mac 上别处的文件。选了项目，新话题就在项目里做。
+                  不是隔离：它仍能读写这台 Mac 上别处的文件。选了项目，首次聊天就在项目里做。
                 </Hint>
               )}
               <ProjectPicker

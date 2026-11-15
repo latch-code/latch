@@ -549,6 +549,7 @@ describe('route guards', () => {
       ['POST', 'native/proximity', { gatewayHash: '0'.repeat(64) }, { phone: [403, 'native-verification-required'] }],
       ['GET', 'devices', undefined, { phone: [403, 'native-verification-required'] }],
       ['GET', 'native/info', undefined, { phone: [403, 'native-verification-required'] }],
+      ['POST', 'native/relays', {}, { phone: [403, 'native-verification-required'] }],
       ['POST', 'pairings', {}, { phone: [403, 'native-verification-required'] }],
       ['GET', 'custom-agents', undefined, { phone: [403, 'native-verification-required'] }],
       ['GET', 'automations', undefined, { phone: [403, 'native-verification-required'] }],
@@ -570,6 +571,7 @@ describe('route guards', () => {
       ['GET', 'enrollments', undefined, { phone: [403, 'local-only'] }],
       ['POST', 'pairings', {}, { phone: [403, 'local-only'] }],
       ['GET', 'native/info', undefined, { phone: [403, 'local-only'] }],
+      ['POST', 'native/relays', {}, { phone: [403, 'local-only'] }],
       ['POST', 'native/pairings', {}, { phone: [403, 'local-only'] }],
       ['POST', 'native/proximity', { gatewayHash: '0'.repeat(64) }, { phone: [200] }],
     ])

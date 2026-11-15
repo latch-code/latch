@@ -41,7 +41,16 @@ export interface NativeLinkInfo {
   listening: { host: string; port: number } | null
   /** A saved address directory is in use. */
   directory: boolean
+  /** Local administrators can retry or abandon a reserved addition; its private profile never comes back. */
+  pendingRelay?: { requestId: string; url: string; canRetry: boolean }
   relays: Array<{ relayId: string; url: string; status: 'connecting' | 'connected' | 'waiting' | 'attention'; retryAt?: number }>
+}
+/** The local relay CLI exports this to a private file. The Host never sends it back to any client. */
+export interface NativeRelayProfile {
+  relayId: string
+  url: string
+  spkiHash: string
+  registrationKey?: string
 }
 /** One QR on the Mac's pairing sheet. Its payload is the secret: the sheet renders it and closes it, nothing else. */
 export interface NativePairingInvitation {
