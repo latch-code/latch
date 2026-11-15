@@ -3,7 +3,7 @@
 // closes the terminal or goes away, ends every process group on it.
 //
 // A frame is one type byte, the payload's length as a 4-byte big-endian integer, then the payload.
-// Host to helper, on stdin: 1 start (JSON with the shell's file, argv, env, cwd, cols and rows; first and only once),
+// Host to helper, on stdin: 1 start (JSON with file, argv, env, cwd, pinnedCwd, cols and rows; first and only once),
 // 2 input (bytes). On fd 3, so input a program does not read cannot hold them back: 3 resize (columns and rows, 2 bytes
 // each), 4 signal (1 byte: SIGHUP, SIGINT, SIGTERM or SIGKILL, for the foreground process group). The end of either
 // pipe, or SIGTERM, closes the terminal.
@@ -27,6 +27,7 @@ private let outputHighWater = 262_144
 private let inputHighWater = 262_144
 private let pathLimit = 4096
 private let controlDescriptor: Int32 = 3
+private let pinnedDirectory: Int32 = 4
 private let variableLimit = 256
 private let sizeLimit: ClosedRange<Int64> = 1...1000
 private let allowedSignals: Set<Int32> = [SIGHUP, SIGINT, SIGTERM, SIGKILL]
@@ -105,11 +106,11 @@ private struct Start {
 
   init(_ payload: [UInt8]) throws {
     guard let value = try? JSONSerialization.jsonObject(with: Data(payload)) as? [String: Any],
-      Set(value.keys) == Set(["file", "argv", "env", "cwd", "cols", "rows"]),
+      Set(value.keys) == Set(["file", "argv", "env", "cwd", "pinnedCwd", "cols", "rows"]),
       let file = value["file"] as? String, let argv = value["argv"] as? [String], let cwd = value["cwd"] as? String,
       let env = value["env"] as? [String: String], let cols = dimension(value["cols"]), let rows = dimension(value["rows"]),
       absolute(file), absolute(cwd), (1...64).contains(argv.count), argv.allSatisfy({ !$0.utf8.contains(0) }),
-      env.count <= variableLimit, env.allSatisfy({ variable($0.key, $0.value) })
+      (value["pinnedCwd"] as? Bool) == true, env.count <= variableLimit, env.allSatisfy({ variable($0.key, $0.value) })
     else { throw Failure.invalidInput }
     self.file = file
     self.argv = argv
@@ -148,8 +149,16 @@ private func closeOnExec() {
  * makes system calls, never allocates. A close-on-exec pipe tells whether exec succeeded.
  */
 private func launch(_ start: Start) throws -> (shell: pid_t, master: Int32) {
-  let directory = open(start.cwd, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+  var expected = stat()
+  guard fstat(pinnedDirectory, &expected) == 0, (expected.st_mode & S_IFMT) == S_IFDIR else { throw Failure.cwd }
+  let directory = open(start.cwd, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
   guard directory >= 0 else { throw Failure.cwd }
+  var actual = stat()
+  guard fstat(directory, &actual) == 0, actual.st_dev == expected.st_dev, actual.st_ino == expected.st_ino else {
+    close(directory)
+    throw Failure.cwd
+  }
+  close(pinnedDirectory)
   var report: [Int32] = [-1, -1]
   guard pipe(&report) == 0 else { close(directory); throw Failure.pty }
   _ = fcntl(report[0], F_SETFD, FD_CLOEXEC)

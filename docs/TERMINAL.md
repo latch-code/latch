@@ -35,14 +35,14 @@ Harness 的登录命令也在这里运行：「在终端里登录」在会话里
 
 帧是 1 字节类型、4 字节大端长度和载荷，载荷最多 64 KiB，超出即协议错误。
 
-- Host 发给组件，stdin 上：`start`（JSON：`file`、`argv`、`env`、`cwd`、`cols`、`rows`，必须最先且只有一次）、`input`。fd 3 上：`resize`（列与行各 2 字节，1 到 1000）、`signal`（SIGHUP、SIGINT、SIGTERM 或 SIGKILL，发给前台进程组）；分开是为了让程序不读的输入挡不住它们。任一管道结束或收到 SIGTERM 即关闭终端。
+- Host 发给组件，stdin 上：`start`（JSON：`file`、`argv`、`env`、`cwd`、`pinnedCwd`、`cols`、`rows`，必须最先且只有一次）、`input`。fd 3 上：`resize`（列与行各 2 字节，1 到 1000）、`signal`（SIGHUP、SIGINT、SIGTERM 或 SIGKILL，发给前台进程组）；分开是为了让程序不读的输入挡不住它们。任一管道结束或收到 SIGTERM 即关闭终端。fd 4 继承 Host 已打开的只读工作目录描述符。
 - 组件发给 Host：`started`、`output`、`foreground`（是否有 shell 以外的程序在前台，及其进程名）、`exit`（退出码或信号）、`error`（`invalid-input`、`cwd`、`pty`、`exec`）。运行中收到格式不符的帧时报告 `invalid-input` 并结束终端。
 
 启动：
 
 - 组件自身以空环境运行，shell 的整个环境只来自 `start` 帧；组件自己的环境（CoreFoundation 会往里加变量）从不传给 shell。
 - `forkpty` 之前准备好子进程需要的一切，fork 与 exec 之间只做系统调用。
-- 子进程进入 `cwd` 后再 exec；exec 失败报告为 `exec`。
+- 组件核对 `cwd` 仍对应继承目录的设备号、inode。目录被替换时报告 `cwd`，不启动 shell。子进程用刚核验的描述符 `fchdir` 后再 exec；目录描述符不会交给 shell。
 - 组件忽略 SIGHUP、SIGINT、SIGQUIT 与 SIGPIPE，只由 Host 的帧、stdin 关闭或 SIGTERM 结束；shell 启动前恢复这些信号的默认处理。
 
 运行：单线程 kqueue 循环。
@@ -68,6 +68,7 @@ shell 自行退出时，组件再读取最多 0.5 秒输出，然后报告退出
 - **文件夹。** 服务经 Host 注入的 `sessionFolder` 从会话记录取主文件夹，调用方从不传路径。没有这个会话时 404，文件夹已不可用或不存在时 409 `terminal-folder-unavailable`（判断与继续这个会话时相同），已归档的会话 409 `terminal-session-archived`，早先助手跑过的会话没有项目文件夹，409 `terminal-personal-session`。
 - **环境。** 登录 shell：账户数据库中的 shell，`argv[0]` 以 `-` 开头；不可用时用 `/bin/zsh`。`TERM_PROGRAM=Latch` 与 `LC_TERMINAL=Latch` 标记 Latch 终端；没有区域设置时设 `LANG=en_US.UTF-8`，否则中文输入输出会被当作单字节。模型密钥、设备凭据与 Host 设置不进入 shell。之后 shell 照常读取你自己的 profile。
 - **项目文件夹。** 项目终端独立于会话，Host 由已保存项目的 ID 取得并复查主文件夹。选用默认目录时核对 Host 启动时的目录身份。调用方不传路径，打开和移除项目用同一队列。打开经审计后，在启动前复核设备权限和目录身份。项目尚有终端运行时，移除项目需要人在这台 Mac 上关闭终端。
+- **工作树移除。** 终端以 Host 内部目录判断是否占用一个工作树，包含该工作树中其他项目的独立终端。正在启动、运行或等待组件真实结束的终端仍占用目录；工作树进入移除流程后，其目录中不能再打开终端。
 - **上限。** 每个会话和每个项目分别最多 8 个终端，全部最多 32 个（每个 512 KiB 回滚缓冲，合计 16 MiB）。等待文件夹检查与审计前计入名额，同时打开也不会超出；组件真实退出后才释放。一次输入最多 64 KiB；组件尚未读取的输入超过 1 MiB 时拒绝新的输入（429）。每个终端最多 8 个观看流（429 `terminal-streams`）。
 - **回滚缓冲。** 只在内存中，每个终端 512 KiB，先丢弃最旧的输出；Host 停止后不保留。
 - **尺寸归属。** 打开终端的设备决定它的大小。这台电脑上的其他设备调整大小被拒绝（409 `terminal-size-owner`），观看从不改变大小。

@@ -170,15 +170,19 @@ describe('terminal routes', () => {
     expect(launched).toHaveLength(2)
   })
 
-  it('checks the same workspace directory again after the open audit', async () => {
+  it.each(['default', 'project'])('checks the same %s workspace directory again after the open audit', async target => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-terminal-folder-')))
     cleanups.push(() => rm(root, { force: true, recursive: true }))
-    const folder = join(root, 'project')
-    await mkdir(folder)
     const { t, desktop, launched } = await hostWithTerminals()
-    const created = await desktop.addFolders({ paths: [folder] })
-    expect(created.status).toBe(201)
-    const { workspace } = (await created.json()) as { workspace: WorkspaceInfo }
+    let workspaceId = 'default'
+    const folder = target === 'default' ? t.workspaceRoot : join(root, 'project')
+    if (target === 'project') {
+      await mkdir(folder)
+      const created = await desktop.addFolders({ paths: [folder] })
+      expect(created.status).toBe(201)
+      const { workspace } = (await created.json()) as { workspace: WorkspaceInfo }
+      workspaceId = workspace.id
+    }
     const { audit } = t.host.security
     const write = audit.append.bind(audit)
     const append = vi.spyOn(audit, 'append').mockImplementation(async event => {
@@ -188,7 +192,7 @@ describe('terminal routes', () => {
       }
       return write(event)
     })
-    const response = await desktop.request(`workspaces/${workspace.id}/terminals`, { body: { cols: 80, rows: 24 } })
+    const response = await desktop.request(`workspaces/${workspaceId}/terminals`, { body: { cols: 80, rows: 24 } })
     append.mockRestore()
     expect(await refusal(response)).toEqual([409, 'terminal-folder-unavailable'])
     expect(launched).toEqual([])

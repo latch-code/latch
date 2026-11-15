@@ -36,7 +36,7 @@ import type { LatchWorktree, WorktreeBase, WorktreeInventory, WorktreeRemoval } 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 export { loadPluginPackage } from './plugin-packages.ts'
-import { existsSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, realpathSync, statSync, type BigIntStats } from 'node:fs'
 import { lstat, mkdir, mkdtemp, chmod, open as openFile, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -2399,6 +2399,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       {
         sessionFolder: terminalFolder,
         workspaceFolder: terminalWorkspaceFolder,
+        checkWorkingDirectory: cwd => {
+          if (worktrees.removingWithin(cwd)) throw new AppError(409, 'worktree-removing', '正在移除这个工作树，不能打开终端。')
+        },
         // The service opens terminals for host.sock alone, so that is where this request came from.
         beforeOpen: async ({ deviceId, ...detail }) => {
           await audited({ action: 'terminal.open', actor: { deviceId, listener: 'unix', via: 'http' }, detail })
@@ -5389,7 +5392,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ? 'delivery'
           : (await turnIn(path))
             ? 'turn'
-            : terminals.openIn(await worktreeSessions(path)) || terminals.openInside(path)
+            : terminals.openIn(await worktreeSessions(path)) || terminals.openInside(await canonicalPath(path))
               ? 'terminal'
               : undefined)
       return { ...facts, ...(busy ? { busy } : {}) }
@@ -5484,8 +5487,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               if (await turnIn(path)) throw new AppError(409, 'worktree-turn-running', '这个工作树里有一轮正在运行，结束后再试。')
             }
             const owners = await worktreeSessions(path)
+            const worktreeDirectory = await canonicalPath(path)
             const refuseTerminal = () => {
-              if (terminals.openIn(owners) || terminals.openInside(path))
+              if (terminals.openIn(owners) || terminals.openInside(worktreeDirectory))
                 throw new AppError(409, 'worktree-terminal-open', '这个工作树还有打开的终端，关闭后再移除。')
             }
             await refuseTurn()
@@ -5493,6 +5497,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             // No await between this check and remove(), which marks the worktree as removing: no terminal opens after it.
             refuseTerminal()
             const removing = worktrees.remove(path, {
+              directory: worktreeDirectory,
               ...(body.discard !== undefined ? { discard: body.discard } : {}),
               ...(body.digest !== undefined ? { digest: body.digest } : {}),
               ...(body.deleteBranch ? { deleteBranch: true } : {}),
@@ -5590,7 +5595,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return { path: sessionFolders(task, workspaceRoot)[0]! }
     }
 
-    async function terminalWorkspaceFolder(workspaceId: string): Promise<{ path: string; check(): void }> {
+    async function terminalWorkspaceFolder(workspaceId: string): Promise<{ path: string; check(opened: BigIntStats): void }> {
       const unavailable = () => new AppError(409, 'terminal-folder-unavailable', '项目的主文件夹已不可用，不能在这里打开终端')
       const record = workspaceId === 'default' ? undefined : requireProject(workspaceId)
       const requested = record?.folders[0].path ?? workspaceRoot
@@ -5600,7 +5605,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const initial = record ? await stat(path, { bigint: true }).catch(() => undefined) : defaultFolder
       if (!initial?.isDirectory()) throw unavailable()
       if (record) await assertWorkspaceUsable(record)
-      const check = () => {
+      const check = (opened: BigIntStats) => {
+        if (opened.dev !== initial.dev || opened.ino !== initial.ino) throw unavailable()
         try {
           const current = statSync(requested, { bigint: true, throwIfNoEntry: false })
           if (current?.isDirectory() && current.dev === initial.dev && current.ino === initial.ino && realpathSync(requested) === path)
@@ -5610,7 +5616,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         throw unavailable()
       }
-      check()
+      check(initial)
       return { path, check }
     }
 

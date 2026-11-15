@@ -1,6 +1,7 @@
 // The real latch-pty, built from native/macos/LatchTerminal.swift into a temporary directory, running /bin/sh -c on
 // harmless commands in temporary folders. No login shell, profile or network is involved.
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { closeSync, constants, mkdirSync, openSync, renameSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +12,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { z } from 'zod'
 import { buildTerminalHelper } from '../scripts/build-terminal.ts'
 import { FROM_HELPER, FrameReader, TO_HELPER, encodeFrame, encodeSize } from '../src/terminal/frames.ts'
+import { helperLauncher } from '../src/terminal/helper.ts'
 import { TerminalService, type TerminalRequester, type TerminalStreamEvent } from '../src/terminal/service.ts'
 
 const run = promisify(execFile)
@@ -35,10 +37,16 @@ class Helper {
   constructor(start: object | Buffer | undefined, options: { extraPipe?: boolean } = {}) {
     // As the Host runs it: the helper's own environment is empty, the shell's comes in the start frame.
     // Resize and signal frames go on fd 3, so input a program does not read cannot hold them back.
-    const child = spawn(binary, [], {
-      env: {},
-      stdio: options.extraPipe ? ['pipe', 'pipe', 'ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'ignore', 'pipe'],
-    })
+    const directory = openSync(folder, constants.O_RDONLY | constants.O_DIRECTORY)
+    let child: ChildProcess
+    try {
+      child = spawn(binary, [], {
+        env: {},
+        stdio: ['pipe', 'pipe', 'ignore', 'pipe', directory, ...(options.extraPipe ? ['pipe' as const] : [])],
+      })
+    } finally {
+      closeSync(directory)
+    }
     const { stdin, stdout } = child
     const control = child.stdio[3]
     if (!stdin || !stdout || !(control instanceof Writable)) throw new Error('no pipes')
@@ -88,7 +96,7 @@ class Helper {
 }
 
 function shell(script: string, env: Record<string, string> = { PATH: '/usr/bin:/bin' }) {
-  return { file: '/bin/sh', argv: ['sh', '-c', script], env, cwd: folder, cols: 80, rows: 24 }
+  return { file: '/bin/sh', argv: ['sh', '-c', script], env, cwd: folder, pinnedCwd: true, cols: 80, rows: 24 }
 }
 
 /** Whether a process (a zombie included) still exists. */
@@ -178,6 +186,46 @@ describe.skipIf(process.platform !== 'darwin')('latch-pty', () => {
     expect(names.filter(name => !['PATH', 'PROBE', 'PWD', 'SHLVL', '_'].includes(name))).toEqual([])
   })
 
+  it.each(['default', 'project'])('refuses a replaced %s directory at the real helper after the Host check', async workspaceId => {
+    const selected = join(folder, workspaceId)
+    await mkdir(selected)
+    const start = helperLauncher(binary)
+    const verified = { checked: false, launchedOutside: false, started: false }
+    const service = await TerminalService.open({
+      sessionFolder: async () => undefined,
+      workspaceFolder: async id => {
+        expect(id).toBe(workspaceId)
+        return {
+          path: selected,
+          check: () => {
+            verified.checked = true
+          },
+        }
+      },
+      shell: { file: '/bin/sh', argv: ['sh', '-c', 'echo wrong-pty; exit'] },
+      launch(spec, onEvent) {
+        expect(verified.checked).toBe(true)
+        expect(spec.cwd).toBe(selected)
+        renameSync(selected, `${selected}-old`)
+        mkdirSync(selected)
+        return start(spec, event => {
+          if (event.type === 'started') verified.started = true
+          if (event.type === 'output') verified.launchedOutside = true
+          onEvent(event)
+        })
+      },
+    })
+    try {
+      await expect(service.create({ workspaceId }, mac, { cols: 80, rows: 24 })).rejects.toMatchObject({
+        code: 'terminal-folder-unavailable',
+      })
+      expect(verified).toEqual({ checked: true, launchedOutside: false, started: false })
+      expect(service.list({ workspaceId }, mac)).toEqual([])
+    } finally {
+      await service.shutdown()
+    }
+  })
+
   it('applies the size, resizes, delivers input and signals the foreground program', async () => {
     // The shell waits in its own read for the signal: a program that exits by itself just as it lands lets sh skip the trap.
     const helper = new Helper(
@@ -226,7 +274,9 @@ describe.skipIf(process.platform !== 'darwin')('latch-pty', () => {
 
   it('never hands the shell a descriptor other than its terminal, even one the helper inherited', async () => {
     const helper = new Helper(
-      shell('for fd in 3 4 5 6 7 8 9; do if { true >&$fd; } 2>/dev/null; then echo "open $fd"; fi; done; echo checked'),
+      shell(
+        'for fd in 3 4 5 6 7 8 9; do if [ -d "/dev/fd/$fd" ] || { true >&$fd; } 2>/dev/null; then echo "open $fd"; fi; done; echo checked',
+      ),
       {
         extraPipe: true,
       },

@@ -628,7 +628,15 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
     expect((await f.start(f.owner, { worktree: { from: 'reuse', name } })).status).toBe(201)
   })
 
-  it('refuses to remove a worktree while any session’s terminal works in a folder inside it', async () => {
+  it.each(['session', 'workspace'])('refuses worktree removal while an inner %s terminal is open or settling', async target => {
+    let startedClosing!: () => void
+    let settle!: () => void
+    const closing = new Promise<void>(resolve => {
+      startedClosing = resolve
+    })
+    const stopping = new Promise<void>(resolve => {
+      settle = resolve
+    })
     const launch: LaunchTerminal = (_spec, onEvent) => {
       onEvent({ type: 'started', pid: 1 })
       return {
@@ -638,10 +646,11 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
         signal() {},
         pauseOutput() {},
         resumeOutput() {},
-        close() {
+        async close() {
           onEvent({ type: 'exit', signal: 1 })
+          startedClosing()
+          await stopping
           onEvent({ type: 'gone' })
-          return Promise.resolve()
         },
       }
     }
@@ -649,15 +658,75 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
     const { sessionId } = (await (await f.start(f.owner)).json()) as { sessionId: string }
     await vi.waitFor(async () => expect((await summaryOf(f.owner, sessionId)).status).toBe('idle'), SLOW)
     const cwd = (await summaryOf(f.owner, sessionId)).cwd!
-    // Another project whose folder lies inside the worktree, with a session and a terminal of its own.
+    // The terminal belongs to an independent project inside the worktree.
     const inner = join(cwd, 'pkg')
     await mkdir(inner)
     const { workspace } = (await (await f.owner.addFolders({ paths: [inner] })).json()) as { workspace: { id: string } }
-    const other = (await (await f.start(f.owner, { workspaceId: workspace.id, worktree: undefined })).json()) as { sessionId: string }
-    await vi.waitFor(async () => expect((await summaryOf(f.owner, other.sessionId)).status).toBe('idle'), SLOW)
-    expect((await f.owner.request(`tasks/${other.sessionId}/terminals`, { body: { cols: 80, rows: 24 } })).status).toBe(201)
-    const refused = await f.owner.request(`tasks/${sessionId}/worktree/remove`, { method: 'POST', body: { requestId: randomUUID() } })
-    expect(await refused.json()).toMatchObject({ error: 'worktree-terminal-open' })
-    expect(existsSync(cwd)).toBe(true)
+    let base = `workspaces/${workspace.id}/terminals`
+    if (target === 'session') {
+      const other = (await (await f.start(f.owner, { workspaceId: workspace.id, worktree: undefined })).json()) as { sessionId: string }
+      await vi.waitFor(async () => expect((await summaryOf(f.owner, other.sessionId)).status).toBe('idle'), SLOW)
+      base = `tasks/${other.sessionId}/terminals`
+    }
+    let close: Promise<Response> | undefined
+    try {
+      const opened = await f.owner.request(base, { body: { cols: 80, rows: 24 } })
+      expect(opened.status).toBe(201)
+      const { terminal } = (await opened.json()) as { terminal: { id: string; folder: string } }
+      expect(terminal.folder).toBe('pkg')
+      const attempt = () =>
+        f.owner.request(`tasks/${sessionId}/worktree/remove`, {
+          method: 'POST',
+          body: { requestId: randomUUID() },
+        })
+      expect(await (await attempt()).json()).toMatchObject({ error: 'worktree-terminal-open' })
+      expect((await f.owner.json<WorktreeInventory>(`tasks/${sessionId}/worktree`)).busy).toBe('terminal')
+      close = f.owner.request(`${base}/${terminal.id}/close`, { body: {} })
+      await closing
+      expect(await (await attempt()).json()).toMatchObject({ error: 'worktree-terminal-open' })
+      expect(existsSync(cwd)).toBe(true)
+    } finally {
+      settle()
+      if (close) expect((await close).status).toBe(200)
+    }
+    const facts = await f.owner.json<WorktreeInventory>(`tasks/${sessionId}/worktree`)
+    expect(facts.busy).toBeUndefined()
+    if (target === 'workspace') {
+      let inAudit = false
+      let allowRemoval!: () => void
+      const paused = new Promise<void>(resolve => {
+        allowRemoval = resolve
+      })
+      const { audit } = f.t.host.security
+      const append = audit.append.bind(audit)
+      const record = vi.spyOn(audit, 'append').mockImplementation(async event => {
+        if (event.action === 'worktree.remove') {
+          inAudit = true
+          await paused
+        }
+        return append(event)
+      })
+      const removing = f.owner.request(`tasks/${sessionId}/worktree/remove`, {
+        method: 'POST',
+        body: { requestId: randomUUID() },
+      })
+      try {
+        await Promise.race([
+          vi.waitFor(() => expect(inAudit).toBe(true), { timeout: 4000 }),
+          removing.then(async response => {
+            const body = (await response.json()) as { error?: string }
+            throw new Error(`Removal completed before its audit pause: ${response.status} ${body.error ?? ''}`)
+          }),
+        ])
+        expect(existsSync(inner)).toBe(true)
+        const refused = await f.owner.request(base, { body: { cols: 80, rows: 24 }, signal: AbortSignal.timeout(4000) })
+        expect(refused.status).toBe(409)
+        expect(await refused.json()).toMatchObject({ error: 'worktree-removing' })
+      } finally {
+        allowRemoval()
+        record.mockRestore()
+      }
+      expect((await removing).status).toBe(200)
+    }
   })
 })

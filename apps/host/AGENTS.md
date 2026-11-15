@@ -20,7 +20,7 @@
 - `latchCodeRoot()` 定位仓库根，不随项目目录（ARCHITECTURE）。
 - 同项目的变更与启动串行、跨项目不等，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。分支与工作树规则见 [BRANCHES.md](../../docs/BRANCHES.md)。
 - 本机确认只经 `PresenceService` 的系统表单（`PRESENCE_ACTIONS`），没有设备签名批准的路径。
-- 终端限 `host.sock`、数据范围 `all`，环境只经 `terminalEnvironment`。项目目标由 Host 解析，在项目队列内开终端，审计后复核目录身份（[TERMINAL.md](../../docs/TERMINAL.md)）。
+- 终端限 `host.sock`、数据范围 `all`，环境只经 `terminalEnvironment`。项目目标由 Host 解析，在项目队列内开终端，审计后复核目录身份，组件再用继承的描述符核对实际进程目录。工作树占用检查保留到组件真正结束（[TERMINAL.md](../../docs/TERMINAL.md)）。
 - 本机 MCP 提示先审计、持久化来源再转发；远程拒绝（MCP.md）。
 - 构建禁测试代码；目录组件自检。
 - work剥文件差异；输出投影不改执行参数、回执和终态（STREAMING）。
