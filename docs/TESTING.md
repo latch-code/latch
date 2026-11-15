@@ -460,6 +460,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `workbench-git-eligibility.e2e.ts` 经真实 Host API 对照普通文件夹、损坏 HEAD 与实际 Git 改动，再从首页刷新、打开概要和交付，截图覆盖三宽、两布局、浅深色。不适用不冒称读取失败，损坏状态不冒称没有改动。Host 的同名测试另检查权限、链接、目录及祖先替换后还原的拒绝。`desktop-workbench.e2e.ts` 使用真实临时 Git 仓库验证有内容的三道与布局/空间切换，并在 Electron 正常入口从首页批准写入、继续原会话和查看 Git 改动，保留两套草稿与附件。
 
+同一文件也从 Electron 的个人 Agent 入口发送首条消息和下一轮，刷新并核对 Host 的唯一聊天 ID，再检查行菜单和取消删除。深色截图仍写在 `test-results/desktop-workbench`。
+
 `palette.e2e.ts` 在六种宽度/配色下用受控 Provider 实际追加新匹配，核对运行中即更新计数、保留选中位置；旧行插入/移除、完成、重开查找和键盘退回仍覆盖。`agent-activity.e2e.ts` 的外部 L3 任务保存为关闭后人工运行，不为展示结果卡开启后台执行。
 
 `agent-computer.e2e.ts` 使用内置 Harness 与演示模型，实际启用定时后模拟 Host 睡眠越过运行时间，检查错过记录、手动补跑及保持唤醒和通知设置；不为外部 L3 放宽无人值守上限。
