@@ -1,7 +1,7 @@
 // The primitives of the browser client. Their styles are in ./ui.css (and ./base.css), loaded after ./tokens.css.
 export { Button, ButtonLink, IconButton, type ButtonSize, type ButtonVariant, type IconButtonSize } from './button.tsx'
 export { SelectButton, SplitButton } from './split-button.tsx'
-export { LiveChanges, useLiveChange, useLivePrevious } from './changes.ts'
+export { LiveChanges, captureStill, motionAllowed, setReducedMotion, useLiveChange, useLivePrevious, watchMotion } from './changes.ts'
 export { Checkbox, ChoiceList, Radio, type ChoiceOption } from './choice.tsx'
 export { Suggest, SuggestPanel, type SuggestProps, type SuggestPanelProps, type SuggestGroup, type SuggestItem } from './suggest.tsx'
 export { Dialog, DialogSurface, LayerHistory, Sheet, SheetSurface, type DialogSize, type OpenLayer, type SheetDetent } from './dialog.tsx'
@@ -12,6 +12,23 @@ export { DemoMark, DevMark } from './marks.tsx'
 export { FoldHeader } from './fold.tsx'
 export { Meter, type MeterSize } from './meter.tsx'
 export { Collapse, EASING, MOTION, Shimmer, Swap, usePresence } from './motion.tsx'
+export { crossFade, enter, exit, flip, moveLane, moving, resolveAndRise, sendLift, sheenOnce, stagger } from './moves.ts'
+export { markStreaming, onStreamingLayer, streamingInView, useStreamingLayer, watchStreaming } from './stream.ts'
+export {
+  ChecksBar,
+  Fact,
+  KeyHint,
+  LiveDot,
+  PillMove,
+  Roll,
+  RunningEdge,
+  SectionTitle,
+  StatusStrip,
+  TickFrame,
+  type StripFact,
+} from './facts.tsx'
+export { Backdrop, type BackdropKind, type BackdropLevel, type BackdropStats } from './backdrop.tsx'
+export { FRAME_INTERVAL, particleCount } from './backdrop-engine.ts'
 export {
   Menu,
   MenuFooterLink,

@@ -75,7 +75,15 @@ describe('motion tokens', () => {
       push: value('--m-push'),
     }
     const exits = Object.fromEntries(Object.entries(durations).map(([name, ms]) => [`${name}Exit`, Math.round(ms * 0.7)]))
-    expect({ ...durations, ...exits }).toEqual(MOTION)
+    // The v9 durations have no exit of their own: what they time leaves on one of the five above.
+    const named = Object.fromEntries(
+      ['press', 'wipe', 'settle', 'roll', 'stagger', 'edge', 'breath', 'sheen'].map(name => [name, value(`--m-${name}`)]),
+    )
+    expect({ ...durations, ...exits, ...named }).toEqual(MOTION)
+    const spring = (name: string) =>
+      new RegExp(`${name}:\\s*(linear\\([^)]*\\));`, 'u').exec(tokens)?.[1]?.replace(/\s+/gu, ' ').replace('( ', '(').replace(' )', ')')
+    expect({ spring: spring('--e-spring'), settle: spring('--e-settle') }).toEqual({ spring: EASING.spring, settle: EASING.settle })
+    const { spring: _spring, settle: _settle, ...curves } = EASING
     expect({
       micro: curve('--e-micro'),
       enter: curve('--e-enter'),
@@ -83,7 +91,7 @@ describe('motion tokens', () => {
       sheet: curve('--e-sheet'),
       push: curve('--e-push'),
       exit: curve('--e-exit'),
-    }).toEqual(EASING)
+    }).toEqual(curves)
   })
 
   it('resolves to the same values on the page', () => {

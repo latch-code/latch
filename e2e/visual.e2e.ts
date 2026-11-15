@@ -1795,7 +1795,7 @@ describe('visual capture of the real product', () => {
         await recorder.capture(target, viewport, 'settings', 'section list')
         await openSection(settings, '通用')
       }
-      await settings.getByRole('radio', { name: '跟随系统' }).waitFor()
+      await settings.getByRole('radiogroup', { name: '外观', exact: true }).getByRole('radio', { name: '跟随系统', exact: true }).waitFor()
       await recorder.capture(target, viewport, 'settings-general', 'general')
       for (const [surface, section, ready] of [
         ['settings-providers', '模型', settings.getByText('本地模型服务').first()],
@@ -1825,8 +1825,8 @@ describe('visual capture of the real product', () => {
           await settings.getByRole('button', { name: '添加模型服务', exact: true }).click()
           const sheet = target.getByRole('dialog', { name: '添加模型服务', exact: true })
           const presets = sheet.locator('.preset-card')
-          await expect.poll(() => presets.count()).toBe(13)
-          expect(await presets.locator('.ui-tile').count()).toBe(13)
+          await expect.poll(() => presets.count()).toBe(12)
+          expect(await presets.locator('.ui-tile').count()).toBe(12)
           await recorder.capture(target, viewport, 'settings-provider-presets', 'choosing a model-service preset')
           // Adding one: the address, the check, the models and 保存; a browser cannot set keys.
           await sheet.getByRole('button', { name: 'OpenAI', exact: true }).click()
@@ -1896,7 +1896,10 @@ describe('visual capture of the real product', () => {
       {
         const settings = await openSettings(target, '设置')
         await openSection(settings, '通用')
-        await settings.getByRole('radio', { name: '跟随系统' }).waitFor()
+        await settings
+          .getByRole('radiogroup', { name: '外观', exact: true })
+          .getByRole('radio', { name: '跟随系统', exact: true })
+          .waitFor()
         // Only what this device may use is listed, and the list says where the rest is.
         expect(await settings.getByRole('tab', { name: '模型', exact: true }).count()).toBe(0)
         await noHorizontalOverflow(target, settings)

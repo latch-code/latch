@@ -1,7 +1,8 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { parsePreferences } from '../src/preferences.ts'
+import { applyAppearance, backdropLevel, parsePreferences } from '../src/preferences.ts'
+import { BackdropTiles, DensityTiles, MotionChoice } from '../src/settings/AppearanceTiles.tsx'
 import { LayoutTiles } from '../src/settings/LayoutTiles.tsx'
 
 afterEach(() => {
@@ -58,6 +59,57 @@ describe('the workbench layout on this device', () => {
       expect(html).toContain('按状态')
       expect(html).not.toContain('分拣台')
     }
+  })
+
+  it('reads 背景效果, 动效 and 密度 from this device, with their defaults for old or invalid values', () => {
+    for (const raw of [null, '{}', '{"backdrop":"heavy","motion":"fast","density":3}']) {
+      const parsed = parsePreferences(raw)
+      expect([parsed.backdrop, parsed.motion, parsed.density]).toEqual([undefined, 'system', 'standard'])
+    }
+    expect(parsePreferences('{"backdrop":"off","motion":"reduce","density":"compact"}')).toMatchObject({
+      backdrop: 'off',
+      motion: 'reduce',
+      density: 'compact',
+    })
+    // Forcing motion on is not offered yet: such a value follows the system.
+    expect(parsePreferences('{"backdrop":"light","motion":"full"}')).toMatchObject({ backdrop: 'light', motion: 'system' })
+  })
+
+  it('starts 背景效果 at 标准 on a desktop and at 轻 on a phone until the person chooses', () => {
+    expect(backdropLevel({}, false)).toBe('standard')
+    expect(backdropLevel({}, true)).toBe('light')
+    for (const backdrop of ['off', 'light', 'standard'] as const) {
+      expect(backdropLevel({ backdrop }, false)).toBe(backdrop)
+      expect(backdropLevel({ backdrop }, true)).toBe(backdrop)
+    }
+  })
+
+  it('puts 动效 and 密度 on the root for the stylesheets, and leaves every other attribute of the root alone', () => {
+    // A page frozen for a capture carries data-capture; the page applying its preferences must not unfreeze it.
+    const dataset: Record<string, string> = { capture: 'still', theme: 'dark' }
+    vi.stubGlobal('document', { documentElement: { dataset } })
+    applyAppearance('reduce', 'compact')
+    expect(dataset).toEqual({ capture: 'still', theme: 'dark', motion: 'reduce', density: 'compact' })
+    applyAppearance('system', 'standard')
+    expect(dataset).toEqual({ capture: 'still', theme: 'dark' })
+  })
+
+  it('draws the choices as named controls: three strengths, two densities, and 动效 as 跟随系统 or 减弱', () => {
+    const backdrop = renderToStaticMarkup(createElement(BackdropTiles, { value: 'standard', onValueChange: () => {} }))
+    expect(backdrop).toContain('aria-label="背景效果"')
+    expect(['>关<', '>轻<', '>标准<'].every(label => backdrop.includes(label))).toBe(true)
+    expect(backdrop.match(/role="radio"/gu)).toHaveLength(3)
+    // Each tile holds the real layer; 关 holds none.
+    expect(backdrop.match(/class="ui-backdrop"/gu)).toHaveLength(2)
+    const density = renderToStaticMarkup(createElement(DensityTiles, { value: 'compact', onValueChange: () => {} }))
+    expect(density).toContain('aria-label="密度"')
+    expect(density.match(/data-density="(?:standard|compact)"/gu)).toEqual(['data-density="standard"', 'data-density="compact"'])
+    const motion = renderToStaticMarkup(createElement(MotionChoice, { value: 'system', onValueChange: () => {} }))
+    expect(['跟随系统', '减弱'].every(label => motion.includes(label))).toBe(true)
+    // No choice that only partly works: motion cannot be forced on against the system yet.
+    expect(motion.match(/role="radio"/gu)).toHaveLength(2)
+    expect(motion).not.toContain('>开<')
+    expect(motion.match(/aria-checked="true"/gu)).toHaveLength(1)
   })
 
   it('keeps a choice saved before the layouts were renamed', () => {

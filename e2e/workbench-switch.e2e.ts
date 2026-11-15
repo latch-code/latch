@@ -114,7 +114,10 @@ it('switches the two layouts and spaces without replacing the sender, losing inp
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     const reading = await transcript.evaluate(element => element.scrollTop)
     await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    await home.locator('.approval-panel').waitFor()
+    const approval = home.locator('.approval-panel')
+    await approval.waitFor()
+    const approvalId = await approval.getAttribute('data-approval-id')
+    expect(approvalId).not.toBeNull()
     expect(await home.locator('[data-group="running"] [data-work-session]').count()).toBe(1)
     const newInput = home.getByRole('textbox', { name: '新会话消息', exact: true })
     await newInput.fill('首页草稿保留')
@@ -140,6 +143,7 @@ it('switches the two layouts and spaces without replacing the sender, losing inp
       expect(await sender!.evaluate(element => element.isConnected)).toBe(true)
       expect(await input.inputValue()).toBe('会话草稿保留')
       expect(await transcript.evaluate(element => element.scrollTop)).toBe(reading)
+      expect(await approval.getAttribute('data-approval-id')).toBe(approvalId)
       expect(await radio(target).evaluate(element => element === document.activeElement)).toBe(true)
       expect(await page.locator('.workbench-home').getAttribute('aria-label')).toBe('总览')
     }
@@ -182,14 +186,12 @@ it('switches the two layouts and spaces without replacing the sender, losing inp
     expect(reduced.fades).toEqual([])
     expect(reduced.transitions).toEqual([])
     expect(reduced.marked).toBe(false)
-    // A layout change is the window's cross-fade (--m-enter) and no page's own fade; a space change is the page's fade.
+    // The visible approval stays out of the window snapshot; switching spaces still fades the page.
     const [toTriage, toOverview, toAgents, toCode] = results
     for (const result of [toTriage!, toOverview!]) {
       expect(result.fades).toEqual([])
-      if (await page.evaluate(() => typeof document.startViewTransition === 'function')) {
-        expect(result.transitions).toEqual([160])
-        expect(result.marked).toBe(true)
-      } else expect(result.transitions).toEqual([])
+      expect(result.transitions).toEqual([])
+      expect(result.marked).toBe(false)
     }
     for (const result of [toAgents!, toCode!]) {
       expect(result.fades).toEqual([120])

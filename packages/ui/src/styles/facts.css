@@ -1,0 +1,253 @@
+/*
+ * The small parts of the v9 workbench: facts in the mono face, the checks of a PR as segments, the status strip, a
+ * section's title on its rule, the corner ticks and the key hint. They read the surface they sit on through the
+ * common roles, so they look right on the canvas, a card and the frame alike.
+ */
+
+/* A fact: mono, tabular figures, a touch tighter. Added and removed lines are the only coloured ones. */
+.ui-fact {
+  font-family: var(--mono);
+  font-size: var(--fs-fact);
+  line-height: var(--lh-fact);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-fact);
+  white-space: nowrap;
+}
+.ui-fact[data-tone='add'] {
+  color: var(--green);
+}
+.ui-fact[data-tone='del'] {
+  color: var(--red);
+}
+.ui-fact[data-tone='warn'] {
+  color: var(--amber);
+}
+
+/* Checks: 6 × 8 segments two apart, one per check; passed green, failed red, the rest the track. Nothing animates. */
+.ui-checks {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-2);
+  vertical-align: middle;
+}
+.ui-checks > i {
+  width: 6px;
+  height: 8px;
+  border-radius: var(--r-2);
+  background: var(--track);
+}
+.ui-checks > i[data-state='passed'] {
+  background: var(--green);
+}
+.ui-checks > i[data-state='failed'] {
+  background: var(--red);
+}
+/* Forced colours drop backgrounds: the segments keep their shape, a failed one hollow. */
+@media (forced-colors: active) {
+  .ui-checks > i {
+    forced-color-adjust: none;
+    background: GrayText;
+  }
+  .ui-checks > i[data-state='passed'] {
+    background: CanvasText;
+  }
+  .ui-checks > i[data-state='failed'] {
+    background: Canvas;
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+}
+
+/* The status strip: 26 high along the bottom of the window, a hairline over it, facts in mono 16 apart. */
+.ui-status-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-16);
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--sp-16);
+  overflow: hidden;
+  border-top: 1px solid var(--hairline);
+  background: var(--canvas);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-strip);
+  line-height: var(--lh-strip);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ui-status-strip-fact {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-6);
+}
+.ui-status-strip-fact[data-end] {
+  margin-inline-start: auto;
+}
+.ui-status-strip-fact[data-end] ~ .ui-status-strip-fact[data-end] {
+  margin-inline-start: 0;
+}
+
+/* A section's title: glyph, words, count, and an action at the end, over a 1px rule that draws once from the start. */
+.ui-section-title {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding-bottom: var(--sp-10);
+  color: var(--ink);
+}
+.ui-section-title::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--rule);
+  transform-origin: 0 50%;
+}
+/* Drawn only for a section the page saw appear (SectionTitle sets data-draw); otherwise the rule is simply there. */
+.ui-section-title[data-draw]::after {
+  animation: ui-rule-in var(--m-settle) var(--e-settle) backwards;
+}
+:dir(rtl) .ui-section-title::after {
+  transform-origin: 100% 50%;
+}
+@keyframes ui-rule-in {
+  from {
+    transform: scaleX(0);
+  }
+}
+.ui-section-title-words {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-work-section);
+  line-height: var(--lh-work-section);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-section-title-count {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-fact-count);
+  line-height: var(--lh-fact-count);
+  letter-spacing: var(--ls-fact);
+}
+.ui-section-title-action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  margin-inline-start: auto;
+}
+.ui-section-title[data-zero] {
+  color: var(--faint);
+}
+.ui-section-title[data-zero] .ui-section-title-count {
+  color: var(--faint);
+}
+
+/* Corner ticks: four 9px corners standing 7px outside the frame; with data-lock each closes in 6px as it appears, after --m-enter. */
+.ui-tick-frame {
+  position: relative;
+}
+.ui-ticks {
+  position: absolute;
+  inset: calc(var(--tick-gap) * -1);
+  pointer-events: none;
+}
+.ui-ticks > i {
+  --tick-x: calc(var(--tick-travel) * -1);
+  --tick-y: calc(var(--tick-travel) * -1);
+  position: absolute;
+  width: var(--tick-size);
+  height: var(--tick-size);
+  border: 0 solid var(--tick);
+}
+.ui-ticks > i:nth-child(1) {
+  top: 0;
+  left: 0;
+  border-width: 1px 0 0 1px;
+}
+.ui-ticks > i:nth-child(2) {
+  --tick-x: var(--tick-travel);
+  top: 0;
+  right: 0;
+  border-width: 1px 1px 0 0;
+}
+.ui-ticks > i:nth-child(3) {
+  --tick-y: var(--tick-travel);
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 1px 1px;
+}
+.ui-ticks > i:nth-child(4) {
+  --tick-x: var(--tick-travel);
+  --tick-y: var(--tick-travel);
+  right: 0;
+  bottom: 0;
+  border-width: 0 1px 1px 0;
+}
+.ui-ticks[data-lock] {
+  animation: ui-fade-in var(--m-enter) linear var(--m-enter) backwards;
+}
+.ui-ticks[data-lock] > i {
+  animation: ui-tick-lock var(--m-sheet) var(--e-settle) var(--m-enter) backwards;
+}
+@keyframes ui-tick-lock {
+  from {
+    transform: translate(var(--tick-x), var(--tick-y));
+  }
+}
+
+/* A key hint: quiet mono without a box; while its key is down, ink on the press fill (on an accent fill, the sheen). */
+.ui-key-hint {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ui-key-hint-key {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-4);
+  color: var(--faint);
+  transition:
+    background-color var(--m-press) linear,
+    color var(--m-press) linear;
+}
+.ui-key-hint-key[data-down] {
+  background: var(--press);
+  color: var(--ink);
+}
+.ui-button[data-variant='primary'] .ui-key-hint-key {
+  color: var(--on-accent);
+}
+.ui-button[data-variant='primary'] .ui-key-hint-key[data-down] {
+  background: var(--sheen);
+}
+
+/* Reduced motion: the rule and the ticks are simply there. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-section-title[data-draw]::after,
+  .ui-ticks[data-lock],
+  .ui-ticks[data-lock] > i {
+    animation: none;
+  }
+}
+:root[data-motion='reduce'] .ui-section-title[data-draw]::after,
+:root[data-motion='reduce'] .ui-ticks[data-lock],
+:root[data-motion='reduce'] .ui-ticks[data-lock] > i {
+  animation: none;
+}

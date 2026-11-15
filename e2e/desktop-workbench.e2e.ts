@@ -179,7 +179,10 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
         if (prompt === '等待批准配置') waiting = started.sessionId
       }
       await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-      await home.locator('.approval-panel').waitFor()
+      const approval = home.locator('.approval-panel')
+      await approval.waitFor()
+      const approvalId = await approval.getAttribute('data-approval-id')
+      expect(approvalId).not.toBeNull()
       const delivery = home.locator('[data-group="delivery"]')
       await expect.poll(() => delivery.textContent(), { timeout: 10_000 }).toContain('未提交 1 个文件')
       expect(await delivery.locator('.work-delivery').count()).toBe(1)
@@ -198,9 +201,11 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
         const radio = layoutSwitch(page).getByRole('radio', { name: LAYOUT_NAMES[target], exact: true })
         const metric = await measureWorkbenchSwitch(page, OUT, name, () => radio.click())
         metrics.push(metric)
-        // The window cross-fades as a whole; the page keeps no fade of its own, and the chosen segment keeps the focus.
+        // The visible approval stays out of the window snapshot, and the chosen segment keeps the focus.
         expect(metric.fades).toEqual([])
-        expect(metric.transitions).toEqual([160])
+        expect(metric.transitions).toEqual([])
+        expect(metric.marked).toBe(false)
+        expect(await approval.getAttribute('data-approval-id')).toBe(approvalId)
         expect(await radio.evaluate(element => element === document.activeElement)).toBe(true)
         expect(await sender!.evaluate(element => element.isConnected)).toBe(true)
         expect(await input.inputValue()).toBe('原会话草稿')

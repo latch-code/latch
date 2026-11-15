@@ -131,6 +131,10 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 - 用例导入的依赖在第一个用例之前就预构建（`optimizeDeps.entries` 指向这些用例），运行中途不会因发现新依赖而重新加载页面。
 - `test/gallery/` 是原语总览页：`Gallery.tsx` 由用例渲染（检查每个样式表画的原语都在页上、每个控件都有名称、总览页的排版不改原语的标题、手机宽度下就地画出的对话框与弹层不超出卡片、深色与减少动效），`index.html` 与 `main.tsx` 由视觉截图构建（见[视觉截图](#视觉截图)）。它只在测试中构建，不进入 `dist/web`。
 
+`packages/ui/test/v9-performance.test.tsx` 是 v9 背景层与动效的测量：1440×900、CPU 4 倍降速，记录背景层每帧的脚本耗时（三种效果、两档强度、是否专注）与每个动效在起始帧里的脚本耗时，对照每帧 8ms 的预算，写入 `test-results/v9-foundation/performance.json`。默认跳过，在安静的机器上用 `VITE_LATCH_UI_PERF=1 pnpm exec vitest run --config vitest.config.ts packages/ui/test/v9-performance.test.tsx` 运行；`VITE_LATCH_UI_PERF_ENFORCE=1` 时超预算即失败。只量脚本，合成时间量不到；读数用于同机对比，不作跨机器阈值。截图用 `data-capture="still"` 冻结头像与背景层（`e2e/helpers/visual.ts` 的 `stillMotion`），它与设置写的 `data-motion` 是两个属性。
+
+`e2e/design.e2e.ts` 在三宽从「设置 › 通用」切换「减弱」与「跟随系统」，核对预览的活动边并截图。`e2e/streaming-ui.e2e.ts` 用可控的临时模型验证回复进行中打开「减弱」后，后续文字仍完整，回复结算保留原消息 ID。`e2e/desktop-terminal.e2e.ts` 用假终端验证减弱和恢复动效时光标的闪烁、终端焦点和输入。
+
 `packages/ui/test/button-width.test.tsx` 在真实浏览器中检查 Button 的自然宽度缓存、外部 minWidth、连续忙态、字体/语言变化、隐藏恢复、容器缩放与减少动效；三宽深浅截图写入 `test-results/button-width/`。固定 16 个按钮随父组件更新 50 次，在 CPU 4 倍降速下记录全部提交耗时与同步宽度读取次数到同目录 `performance.json`；读取次数是回归断言，耗时用于同机安静窗口前后对比，不作为跨机器的固定性能阈值。
 
 ### 报告与用例集合
@@ -436,7 +440,7 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `apps/host/test/antigravity.live.test.ts` 默认跳过；所有者授权后设置 `LATCH_AGY_BINARY` 为已安装的 `agy` 才运行。它与其他真实 CLI 用例不同，使用 CLI 自己已有的登录与真实模型（没有可指向的本地假服务），所以只发几条极短的提示，全部在临时项目里；不读取 CLI 自己的任何文件。经临时 Host 依次核对：检测与版本门槛、按请求读取的模型目录、读文件的一轮、允许与拒绝各一次审批、模式与模型和思考的设置读回、取消、同一数据目录上重启后的 `session/resume`（之后模型与思考仍是重启前所选）、项目配置变化的拒绝与第二个文件夹。设置 `LATCH_AGY_EVIDENCE_DIR` 时把去掉正文的 ACP 帧与各步结果写到那里。CLI 回答「Agent execution terminated due to error」时在第一轮后停止并报告。
 
-`workbench-layout.e2e.ts` 验证侧栏与顶栏两种布局的共用会话、草稿与布局偏好，布局开关、⌥⌘L 与命令面板三个入口，切换后停在同一页并保留焦点，以及手机、平板、桌面的浅深色截图。分类的失败、未知、停止与归档/私有话题边界见 `apps/web/test/work-overview.test.ts`；默认偏好、旧数据和本地存储见 `workbench-preferences.test.ts`。
+`workbench-layout.e2e.ts` 验证侧栏与顶栏两种布局的共用会话、草稿与布局偏好，布局开关、⌥⌘L 与命令面板三个入口，切换后停在同一页并保留焦点，以及手机、平板、桌面的浅深色截图。支持视图过渡的浏览器在普通会话切换两种布局时有淡化，等待审批的会话直接切换并保留同一张卡、风险与按钮。分类的失败、未知、停止与归档/私有话题边界见 `apps/web/test/work-overview.test.ts`；默认偏好、旧数据和本地存储见 `workbench-preferences.test.ts`。
 
 `workbench-scroll.e2e.ts` 用真实滚轮验证三种宽度和两种布局：外层首页与文档不滚，队列内容滚动，导航与输入框留在原处；展开更多后最后一项可点击，矮窗长草稿仍可用 Harness 选择和附件。`workbench-layout.e2e.ts` 读取页面实际画出的底色，核对两种布局的工作面、设置标题与导航、两张布局预览一致，以及输入框和决定卡与画布有层次。
 

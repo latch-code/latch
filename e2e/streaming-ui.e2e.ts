@@ -384,6 +384,43 @@ describe('streamed messages in the real workspace', () => {
     }
   })
 
+  it('keeps all of a live reply when the device changes its motion preference', async () => {
+    const { context, page } = await open(1280, 820)
+    try {
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      const { reply, id } = await start(page, '在回复进行中减弱动效')
+      const prefix = '甲乙丙。'
+      const middle = '丁戊己庚辛。'
+      const tail = '壬癸。'
+      reply.append(prefix)
+      const live = page.locator('.message-assistant.is-live').filter({ hasText: prefix })
+      await live.waitFor()
+      const replyId = await live.getAttribute('data-message-id')
+      expect(replyId).toEqual(expect.any(String))
+      const answer = page.locator(`.message-assistant[data-message-id="${replyId}"]`)
+      const content = answer.locator('.message-content')
+
+      reply.append(middle)
+      await page.evaluate(() => {
+        document.documentElement.dataset.motion = 'reduce'
+      })
+      await expect.poll(() => content.textContent()).toBe(prefix + middle)
+      expect(await live.count()).toBe(1)
+      reply.append(tail)
+      await expect.poll(() => content.textContent()).toBe(prefix + middle + tail)
+
+      reply.finish()
+      await answer.locator('.message-content').waitFor()
+      await expect.poll(() => live.count()).toBe(0)
+      expect(await answer.count()).toBe(1)
+      expect(await content.textContent()).toBe(prefix + middle + tail)
+      const messages = (await host.bridge.detail(id)).messages.filter(message => message.id === replyId)
+      expect(messages).toEqual([expect.objectContaining({ text: prefix + middle + tail })])
+    } finally {
+      await context.close()
+    }
+  })
+
   it('grows the input a line at a time over the motion tokens, and at once under reduced motion', async () => {
     const { context, page } = await open(1280, 820)
     try {

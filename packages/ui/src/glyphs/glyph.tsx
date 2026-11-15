@@ -2,11 +2,15 @@ import { forwardRef, useId, type ForwardRefExoticComponent, type ReactNode, type
 import type { LucideProps } from 'lucide-react'
 
 /**
- * The width of an icon's line on the screen, in CSS pixels, at each of the five sizes: it grows a little with the icon
- * so a 12px glyph does not go faint and a 24px one does not go heavy. Latch's glyphs always draw at these widths; a
- * Lucide glyph is told to (`nonScalingStroke`), since it would otherwise scale its 24-grid line with the icon.
+ * The width of an icon's line on the screen, in CSS pixels, at each of the five sizes: it grows with the icon, so a
+ * 12px glyph stays open (1.2) and a 20px one in a phone's tab bar does not go thin (1.75, as at 24). Latch's glyphs always draw
+ * at these widths; a Lucide glyph is told to (`nonScalingStroke`), since it would otherwise scale its 24-grid line
+ * with the icon.
  */
-export const ICON_STROKE = { 12: 1.25, 14: 1.35, 16: 1.5, 20: 1.6, 24: 1.75 } as const
+export const ICON_STROKE = { 12: 1.2, 14: 1.35, 16: 1.5, 20: 1.75, 24: 1.75 } as const
+
+/** At this size and below a glyph that has a small drawing uses it. */
+const SMALL = 12
 export type IconSize = keyof typeof ICON_STROKE
 
 /** What every icon takes: Lucide's props, so both sets fit the same places. */
@@ -38,7 +42,7 @@ const lineWidth = (size: number, strokeWidth: LucideProps['strokeWidth']) => {
 
 const accessible = (props: object) => Object.keys(props).some(key => key.startsWith('aria-') || key === 'role' || key === 'title')
 
-function draw(name: string, variant: 'outline' | 'solid', heavier: boolean, content: (mask: string) => ReactNode) {
+function draw(name: string, variant: 'outline' | 'solid', heavier: boolean, content: (mask: string, size: number) => ReactNode) {
   const Glyph = forwardRef<SVGSVGElement, GlyphProps>(function Glyph(
     {
       size = 16,
@@ -71,7 +75,7 @@ function draw(name: string, variant: 'outline' | 'solid', heavier: boolean, cont
         className={['latch-glyph', `latch-glyph-${name}`, variant === 'solid' && 'latch-glyph-solid', className].filter(Boolean).join(' ')}
         {...(accessible(rest) || children ? {} : { 'aria-hidden': true })}
         {...rest}>
-        {content(mask)}
+        {content(mask, px)}
         {children}
       </svg>
     )
@@ -84,10 +88,11 @@ function draw(name: string, variant: 'outline' | 'solid', heavier: boolean, cont
  * Makes a Latch glyph from its drawing on the 16 grid: square line ends, mitred joints, at most one solid part placed
  * where the meaning is. Lines inherit the size's width; a solid part is drawn with `fill="currentColor" stroke="none"`.
  * `solid` is the variant for the selected or current item; without one, the solid variant is the same drawing at a
- * heavier line.
+ * heavier line. `small` is the drawing for 12px, where nodes become solid squares and small parts are dropped so
+ * nothing closes up; the solid variant is not drawn that small and keeps its one drawing.
  */
-export function defineGlyph(name: string, outline: ReactNode, solid?: SolidDrawing): IconComponent {
-  const Outline = draw(name, 'outline', false, () => outline)
+export function defineGlyph(name: string, outline: ReactNode, solid?: SolidDrawing, small?: ReactNode): IconComponent {
+  const Outline = draw(name, 'outline', false, (_mask, size) => (small !== undefined && size <= SMALL ? small : outline))
   const Solid = draw(name, 'solid', !solid, mask =>
     !solid ? (
       outline

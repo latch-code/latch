@@ -14,6 +14,8 @@ import {
   PanelTabs,
   Spinner,
   Tooltip,
+  motionAllowed,
+  watchMotion,
   type PanelTab,
   GlobeGlyph,
   ShieldGlyph,
@@ -361,11 +363,12 @@ export function TerminalScreen({
       const element = host.current
       if (disposed || !element) return
       const { fontFamily, fontSize, ...theme } = terminalTheme(element)
+      const cursorBlink = () => summary.current.status === 'running' && motionAllowed()
       const terminal = new Terminal({
         fontFamily,
         fontSize,
         lineHeight: LINE_HEIGHT,
-        cursorBlink: true,
+        cursorBlink: cursorBlink(),
         scrollback: 5000,
         cols: summary.current.cols,
         rows: summary.current.rows,
@@ -406,7 +409,11 @@ export function TerminalScreen({
       scheme.addEventListener('change', retheme)
       const attributes = new MutationObserver(retheme)
       attributes.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
+      const unwatchMotion = watchMotion(() => {
+        terminal.options.cursorBlink = cursorBlink()
+      })
       cleanup.push(() => {
+        unwatchMotion()
         typed.dispose()
         binary.dispose()
         selected.dispose()
@@ -433,7 +440,7 @@ export function TerminalScreen({
     const current = term.current
     if (!current) return
     current.terminal.options.disableStdin = tab.summary.status !== 'running'
-    current.terminal.options.cursorBlink = tab.summary.status === 'running'
+    current.terminal.options.cursorBlink = tab.summary.status === 'running' && motionAllowed()
     layout()
   }, [ready, tab.summary.status, tab.summary.cols, tab.summary.rows, tab.summary.sizeOwner, layout])
 

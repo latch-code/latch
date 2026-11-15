@@ -489,3 +489,177 @@ ol.gallery-sheet-card > li {
 .gallery-group {
   max-width: 560px;
 }
+
+/* ---- v9: moves, small parts and the background layer ---- */
+.gallery-move {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.gallery-move-wide {
+  display: grid;
+  gap: var(--sp-8);
+  width: min(100%, 360px);
+}
+.gallery-move-list {
+  display: grid;
+  gap: var(--sp-8);
+  width: 200px;
+}
+.gallery-move-row,
+.gallery-move-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--density-row) var(--sp-8);
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.gallery-move-card {
+  --surface: var(--card);
+  border: 0;
+  border-radius: var(--r-8);
+  background: var(--card);
+  box-shadow: var(--sh-panel);
+}
+.gallery-move-lanes {
+  display: flex;
+  align-items: start;
+  gap: var(--sp-16);
+}
+.gallery-move-lanes > .gallery-move-list {
+  width: 160px;
+  min-height: 80px;
+}
+.gallery-move-layout {
+  display: flex;
+  gap: var(--sp-4);
+  width: 96px;
+  height: 60px;
+  padding: var(--sp-4);
+  border-radius: var(--r-6);
+  background: var(--sidebar);
+}
+.gallery-move-layout[data-layout='top'] {
+  flex-direction: column;
+}
+.gallery-move-layout > i {
+  flex: 1;
+  border-radius: var(--r-4);
+  background: var(--canvas);
+}
+.gallery-move-layout > i:first-child {
+  flex: 0 0 24%;
+  background: var(--line-strong);
+}
+.gallery-move-slot {
+  display: inline-grid;
+  place-items: center;
+  width: 96px;
+  height: 36px;
+}
+.gallery-move-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--sp-12);
+  border-radius: var(--r-full);
+  background: var(--raised);
+  box-shadow: var(--sh-pop);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.gallery-move-send {
+  display: grid;
+  justify-items: end;
+  gap: var(--sp-24);
+  width: 200px;
+}
+.gallery-move-bubble {
+  padding: var(--sp-6) var(--sp-10);
+  border-radius: var(--r-12);
+  background: var(--bubble);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.gallery-move-input {
+  justify-self: stretch;
+  height: 32px;
+  border-radius: var(--r-8);
+  box-shadow: var(--sh-well);
+}
+.gallery-move-figure {
+  font-family: var(--mono);
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
+}
+.gallery-move-chip {
+  height: 28px;
+  padding: 0 var(--sp-10);
+  border: 0;
+  border-radius: var(--r-8);
+  background: var(--tag);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.gallery-move-running {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  width: 240px;
+  padding: var(--density-row) 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.gallery-move-running > .ui-fact {
+  margin-inline-start: auto;
+  color: var(--muted);
+}
+.gallery-move-ticked {
+  margin: var(--sp-8);
+}
+/* Frames held in the middle of a move: the cover half across, the light half across, a figure half rolled. */
+.gallery-frame-wipe {
+  transform: scaleX(0.5);
+}
+.gallery-frame-sheen {
+  transform: translateX(80%);
+}
+.gallery-frame-roll .ui-roll-out {
+  animation: none;
+  opacity: 0.5;
+  transform: translateY(50%);
+}
+.gallery-frame-roll .ui-roll[data-roll] > .ui-roll-in {
+  animation: none;
+  opacity: 0.5;
+  transform: translateY(-50%);
+}
+.gallery-backdrop {
+  display: grid;
+  place-items: center;
+  width: 280px;
+  height: 160px;
+  overflow: hidden;
+  border-radius: var(--r-8);
+  background: var(--work-canvas);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.gallery-backdrop-card {
+  --surface: var(--work-raised);
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--r-8);
+  background: var(--work-raised);
+  box-shadow: var(--work-card-shadow);
+  color: var(--work-ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}

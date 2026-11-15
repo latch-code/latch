@@ -35,7 +35,7 @@ node 环境；Host、protocol、sdk、testkit、relay、link-client、link-wire�
 - 页面来自 `dist/web`（或 `LATCH_E2E_UI_DIR`），改客户端后先 `pnpm build`。浏览器用 `pnpm --filter @latch/e2e exec playwright install chromium` 安装的 Chromium，或 `LATCH_BROWSER_PATH` 指定的 Chrome。
 - Playwright 从自己的安装位置解析 `electron`，只能找到根 `node_modules` 中的那一份，所以根 `package.json` 保留 `electron`。
 - 只用临时目录、端口 0、测试确认后端与本地假模型；Electron 用例另用临时 `--latch-user-data` 与 `--use-mock-keychain`。截图写入 `test-results/`，不含凭据。
-- 视觉截图每次运行结果相同：时钟、名称、内容与项目路径固定，画面中没有随机值；改截取的状态或稳定措施前读 [docs/TESTING.md](../docs/TESTING.md#视觉截图)「视觉截图」。
+- 视觉截图每次运行结果相同：时钟、名称、内容与项目路径固定，画面中没有随机值。截图冻结用 `data-capture`，独立于 `data-motion`。改截取的状态或稳定措施前读 [docs/TESTING.md](../docs/TESTING.md#视觉截图)「视觉截图」。
 
 改动前先读 [docs/TESTING.md](../docs/TESTING.md#浏览器-e2e)「浏览器 e2e」、「视觉截图」与「Electron e2e」。
 

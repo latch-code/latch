@@ -140,7 +140,22 @@ kbd {
 }
 
 /*
- * Reduced motion has no global rule here: the motion tokens shorten every duration to 120ms or less, and each
- * stylesheet keeps only the fades of what it moves (no slide, scale, growth or turn) and stops its loops on a still
- * frame that still reads.
+ * Reduced motion by the system's preference has no global rule here: the motion tokens shorten every duration to 120ms
+ * or less, and each stylesheet keeps only the fades of what it moves (no slide, scale, growth or turn) and stops its
+ * loops on a still frame that still reads.
+ *
+ * 减弱 (动效 in 设置 › 通用, data-motion="reduce" on the root) is the person's own choice on this device, whatever the
+ * system says, so it cannot rest on the media query: every transition and animation of the page ends at once, each
+ * loop after one pass, on the frame it would have come to rest on. Scripts ask `motionAllowed`.
  */
+:root[data-motion='reduce'],
+:root[data-motion='reduce'] *,
+:root[data-motion='reduce'] *::before,
+:root[data-motion='reduce'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+  scroll-behavior: auto !important;
+}

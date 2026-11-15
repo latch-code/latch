@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import { EASING, MOTION } from '@latch/ui'
+import { EASING, MOTION, motionAllowed } from '@latch/ui'
 
 /** How long a leaving row takes to fold away (--m-micro in the stylesheets, plus a frame). */
 const LEAVE_MS = MOTION.micro + 20
 
-const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+/** The system's preference, or 减弱 on this device. */
+const reducedMotion = () => !motionAllowed()
 
 /**
  * Motion for a list the Host reorders: a row that moves slides from where it was and a row that arrives fades in while

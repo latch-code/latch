@@ -17,6 +17,21 @@ export const MOTION = {
   panelExit: 140,
   sheetExit: 182,
   pushExit: 224,
+  /** A control going down; its release settles over `settle`. */
+  press: 80,
+  /** The cover that crosses a resolved card. */
+  wipe: 140,
+  /** A spring coming to rest. */
+  settle: 420,
+  /** A count's figure rolling to its new value. */
+  roll: 240,
+  /** The step between a menu's items as they arrive. */
+  stagger: 18,
+  /** One pass of a running row's light, and one pulse of the live dot. */
+  edge: 2400,
+  breath: 2400,
+  /** The light that crosses a finished action once. */
+  sheen: 480,
 } as const
 
 /** The easing tokens of tokens.css, for animations started from scripts (the Web Animations API). */
@@ -27,6 +42,12 @@ export const EASING = {
   sheet: 'cubic-bezier(0.32, 0.72, 0, 1)',
   push: 'cubic-bezier(0.32, 0.72, 0, 1)',
   exit: 'cubic-bezier(0.4, 0, 1, 1)',
+  /** What a person set off and lands: damping 0.72, 3.8% past its target. */
+  spring:
+    'linear(0, 0.088, 0.277, 0.487, 0.675, 0.822, 0.925, 0.989, 1.023, 1.037, 1.038, 1.032, 1.025, 1.017, 1.01, 1.005, 1.002, 1, 0.999, 0.999, 1)',
+  /** What must arrive exactly: damping 0.85, 0.6% past its target. */
+  settle:
+    'linear(0, 0.064, 0.203, 0.364, 0.519, 0.652, 0.76, 0.841, 0.901, 0.943, 0.97, 0.988, 0.998, 1.003, 1.006, 1.006, 1.005, 1.003, 1.001, 1)',
 } as const
 
 /** The working label's sweep; ui-working in motion.css runs the same length. */

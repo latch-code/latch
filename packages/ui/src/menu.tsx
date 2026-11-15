@@ -13,6 +13,7 @@ import {
 } from 'react'
 import { CheckGlyph, ChevronDownGlyph, ChevronRightGlyph, UpDownGlyph, BlockedGlyph, LockGlyph, ShieldAlertGlyph } from './glyphs/index.tsx'
 import { Button } from './button.tsx'
+import { motionAllowed } from './changes.ts'
 import { ChoiceList } from './choice.tsx'
 import { Sheet } from './dialog.tsx'
 import { Icon, Spinner, type IconComponent } from './icon.tsx'
@@ -689,8 +690,7 @@ export function ValuePicker<T extends string>({
   useLayoutEffect(() => {
     if (shownLabel.current === currentLabel) return
     shownLabel.current = currentLabel
-    if (!matchMedia('(prefers-reduced-motion: reduce)').matches)
-      text.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'cubic-bezier(0.2, 0, 0, 1)' })
+    if (motionAllowed()) text.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'cubic-bezier(0.2, 0, 0, 1)' })
   }, [currentLabel])
 
   const showingForm = form !== undefined

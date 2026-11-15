@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, type RefObject } from 'react'
-import { defineGlyph } from '@latch/ui'
+import { captureStill, defineGlyph, motionAllowed } from '@latch/ui'
 import type { AgentAvatar as Avatar } from '@latch/protocol'
 import {
   avatarName,
@@ -28,6 +28,8 @@ function Eye({ shape }: { shape: EyeShape }) {
 function targetOf(svg: SVGSVGElement): MotionTarget {
   return {
     play(part: MotionPart, keyframes: Keyframe[], duration: number) {
+      // The scheduler already stands still then; a face is never moved past the person's choice by a late call.
+      if (!motionAllowed() || captureStill()) return
       for (const element of svg.querySelectorAll(`[data-part='${part}']`))
         if (typeof element.animate === 'function') element.animate(keyframes, { duration, easing: 'ease-in-out' })
     },

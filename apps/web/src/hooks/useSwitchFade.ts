@@ -1,7 +1,5 @@
 import { useLayoutEffect, useRef, type RefObject } from 'react'
-import { EASING, MOTION } from '@latch/ui'
-
-const motionAllowed = () => typeof matchMedia !== 'function' || matchMedia('(prefers-reduced-motion: no-preference)').matches
+import { EASING, MOTION, motionAllowed } from '@latch/ui'
 
 /**
  * Fades the element in over --m-micro when the session it shows changes (`key`, null while nothing is shown yet): a switch

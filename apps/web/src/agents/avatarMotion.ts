@@ -1,10 +1,11 @@
+import { captureStill, motionAllowed, watchMotion } from '@latch/ui'
 import type { AvatarState, AvatarTier } from './avatarFace.ts'
 
 /**
  * One scheduler moves every avatar on the page: one interval, running only while some avatar is in view and the page
  * is shown. Each motion is a short Web Animation of transform or opacity, so no avatar keeps a timer of its own. Under
- * reduced motion, or while the page is frozen for tests and captures (`data-motion="still"` on the root element), nothing
- * moves and the state props stand still.
+ * reduced motion (the system's preference, or 减弱 on this device), or while the page is frozen for tests and captures
+ * (`data-capture="still"` on the root element), nothing moves and the state props stand still.
  */
 
 /** What the scheduler needs of a page; a test passes its own. */
@@ -259,11 +260,8 @@ export class AvatarScheduler {
   }
 }
 
-const STILL_QUERY = '(prefers-reduced-motion: reduce)'
-
 /** The browser's page for the scheduler. */
 export function browserMotionHost(): MotionHost {
-  const media = typeof matchMedia === 'function' ? matchMedia(STILL_QUERY) : undefined
   const observers = new Map<Element, (visible: boolean) => void>()
   let intersection: IntersectionObserver | undefined
   return {
@@ -274,16 +272,14 @@ export function browserMotionHost(): MotionHost {
       window.clearInterval(handle as number)
     },
     hidden: () => document.visibilityState === 'hidden',
-    still: () => media?.matches === true || document.documentElement.dataset.motion === 'still',
+    still: () => !motionAllowed() || captureStill(),
     watch(changed) {
       document.addEventListener('visibilitychange', changed)
-      media?.addEventListener('change', changed)
-      const attributes = new MutationObserver(changed)
-      attributes.observe(document.documentElement, { attributes: true, attributeFilter: ['data-motion'] })
+      // The system's preference, 减弱 (data-motion) and the capture freeze (data-capture).
+      const unwatch = watchMotion(changed)
       return () => {
         document.removeEventListener('visibilitychange', changed)
-        media?.removeEventListener('change', changed)
-        attributes.disconnect()
+        unwatch()
       }
     },
     observe(element, seen) {

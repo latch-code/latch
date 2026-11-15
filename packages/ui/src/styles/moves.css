@@ -1,0 +1,232 @@
+/*
+ * The v9 moves that a stylesheet can run by itself, and the parts the scripted ones (moves.ts) add to the page. Only
+ * transform and opacity move. Loops (the running edge, the live dot) run only when motion is allowed, pause out of
+ * view (data-offscreen) and while a streaming reply is in view (data-streaming-view on the root), and are simply
+ * absent with reduced motion. 减弱 (data-motion="reduce" on the root) stills everything, here and in base.css.
+ */
+
+/* press: a control goes down to .97 in 80ms and its release settles on the spring. A row does not scale: it only
+ * deepens its fill. */
+.ui-press {
+  transition: transform var(--m-settle) var(--e-spring);
+}
+.ui-press:active:not([aria-disabled='true']) {
+  transform: scale(var(--s-press));
+  transition: transform var(--m-press) var(--e-micro);
+}
+
+/* pill: what comes up from below (回到最新) rises twice --rise on the spring as it fades in, and leaves on the exit curve. */
+.ui-pill-move {
+  animation: ui-pill-in var(--m-settle) var(--e-spring) backwards;
+}
+.ui-pill-move[data-leaving] {
+  animation: ui-pill-out calc(var(--m-enter) * 0.7) var(--e-exit) forwards;
+  pointer-events: none;
+}
+@keyframes ui-pill-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--rise) * 2));
+  }
+}
+@keyframes ui-pill-out {
+  to {
+    opacity: 0;
+    transform: translateY(var(--rise));
+  }
+}
+
+/* roll: a count's old figure rolls out and the new one in, up when the count rises and down when it falls. */
+.ui-roll {
+  --roll-from: 100%;
+  position: relative;
+  display: inline-block;
+  overflow: clip;
+  font-variant-numeric: tabular-nums;
+  vertical-align: bottom;
+}
+.ui-roll-out {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 0;
+  animation: ui-roll-out var(--m-roll) var(--e-enter) forwards;
+}
+.ui-roll-in {
+  display: inline-block;
+}
+.ui-roll[data-roll] > .ui-roll-in {
+  animation: ui-roll-in var(--m-roll) var(--e-enter) backwards;
+}
+.ui-roll[data-roll='down'] {
+  --roll-from: -100%;
+}
+@keyframes ui-roll-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--roll-from));
+  }
+}
+@keyframes ui-roll-out {
+  to {
+    opacity: 0;
+    transform: translateY(calc(var(--roll-from) * -1));
+  }
+}
+
+/* resolve: the cover that crosses a resolved card, one block in the colour of the surface under the card. */
+[data-resolving] {
+  position: relative;
+}
+.ui-wipe {
+  position: absolute;
+  z-index: 1;
+  inset: calc(var(--sp-2) * -1);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  transform-origin: 0 50%;
+}
+
+/* done-sheen: one light across a finished action; the control's own corners clip it. */
+.ui-sheen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.ui-sheen > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, var(--sheen), transparent);
+}
+
+/* run-edge: one thin light travelling along the bottom of a row the Host reports as running. */
+.ui-running-edge {
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 1px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ui-running-edge > i {
+  display: none;
+  width: 28%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--work-running), transparent);
+}
+
+/* live dot: the connected dot, with a ring that widens and fades every 2.4s while the connection is live. */
+.ui-live-dot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.ui-live-dot[data-live] {
+  background: var(--green);
+}
+.ui-live-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--green);
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ui-running-edge > i {
+    display: block;
+    animation: ui-run-edge var(--m-edge) linear infinite;
+  }
+  .ui-live-dot[data-live]::after {
+    animation: ui-live-pulse var(--m-breath) ease-out infinite;
+  }
+  /* After the shorthands, each of which resets the play state. */
+  .ui-running-edge[data-offscreen] > i,
+  .ui-live-dot[data-offscreen]::after,
+  :root[data-streaming-view] .ui-running-edge > i,
+  :root[data-streaming-view] .ui-live-dot::after {
+    animation-play-state: paused;
+  }
+}
+/* 减弱: neither is drawn moving. */
+:root[data-motion='reduce'] .ui-running-edge > i {
+  display: none;
+}
+:root[data-motion='reduce'] .ui-live-dot::after {
+  animation: none;
+}
+@keyframes ui-run-edge {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(460%);
+  }
+}
+@keyframes ui-live-pulse {
+  0% {
+    opacity: 0.6;
+    transform: scale(0.5);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}
+
+/* layout-switch: the window cross-fades as a whole over --m-enter; the group's own default would hold the window out
+ * of reach after the fade is over. */
+:root[data-cross-fade]::view-transition-group(root),
+:root[data-cross-fade]::view-transition-old(root),
+:root[data-cross-fade]::view-transition-new(root) {
+  animation-duration: var(--m-enter);
+  animation-timing-function: var(--e-enter);
+}
+
+/* Reduced motion: a press does not scale, a pill and a count only fade or simply change. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-press,
+  .ui-press:active:not([aria-disabled='true']) {
+    transform: none;
+    transition: none;
+  }
+  .ui-pill-move {
+    animation-name: ui-fade-in;
+  }
+  .ui-pill-move[data-leaving] {
+    animation-name: ui-fade-out;
+  }
+  .ui-roll-out {
+    display: none;
+  }
+  .ui-roll[data-roll] > .ui-roll-in {
+    animation: none;
+  }
+}
+:root[data-motion='reduce'] .ui-press,
+:root[data-motion='reduce'] .ui-press:active:not([aria-disabled='true']) {
+  transform: none;
+  transition: none;
+}
+:root[data-motion='reduce'] .ui-pill-move {
+  animation-name: ui-fade-in;
+}
+:root[data-motion='reduce'] .ui-pill-move[data-leaving] {
+  animation-name: ui-fade-out;
+}
+:root[data-motion='reduce'] .ui-roll-out {
+  display: none;
+}
+:root[data-motion='reduce'] .ui-roll[data-roll] > .ui-roll-in {
+  animation: none;
+}

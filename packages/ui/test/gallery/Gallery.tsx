@@ -98,6 +98,7 @@ import {
 } from '../../src/index.ts'
 import { Cell, Row, Section } from './parts.tsx'
 import { Kit } from './Kit.tsx'
+import { V9 } from './V9.tsx'
 
 /**
  * Every primitive of @latch/ui in every state, on one page, for the design review and the visual capture (surface
@@ -2101,6 +2102,7 @@ export function Gallery() {
         <States />
         <Live />
         <Motion />
+        <V9 />
         <Tiles />
         <TileChoices />
         <Resize />

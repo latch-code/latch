@@ -131,7 +131,8 @@
     transform: translate(3px, -6px);
   }
 }
-:root[data-motion='still'] .agent-avatar *,
+:root[data-capture='still'] .agent-avatar *,
+:root[data-motion='reduce'] .agent-avatar *,
 .agent-avatar:not([data-moving]) * {
   transition: none;
 }

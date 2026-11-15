@@ -1,5 +1,6 @@
 /*
- * Buttons. Fills change over --m-micro and a press scales the button to .97 (not one that opens a menu). Sizes: xs 24
+ * Buttons. Fills change over --m-micro; a press takes the button down to .97 in 80ms and its release settles on the
+ * spring (not one that opens a menu). Sizes: xs 24
  * (6px corners, 12/16), sm 28 (the desktop default), md 32 (dialog and panel footers), lg 44 (phones, a pill). A
  * leading glyph takes 4px off the start padding. A disabled button (aria-disabled, still focusable) is the whole
  * control at 45%; a running one keeps its colours and ignores the pointer. The keyboard ring is drawn inside the edge,
@@ -30,10 +31,16 @@
     color var(--m-micro) var(--e-micro),
     box-shadow var(--m-micro) var(--e-micro),
     opacity var(--m-micro) var(--e-micro),
-    transform var(--m-micro) var(--e-micro);
+    transform var(--m-settle) var(--e-spring);
 }
 .ui-button:active:not([aria-disabled='true'], [aria-busy='true'], [data-menu], [aria-haspopup], [aria-expanded]) {
-  transform: scale(0.97);
+  transform: scale(var(--s-press));
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro),
+    box-shadow var(--m-micro) var(--e-micro),
+    opacity var(--m-micro) var(--e-micro),
+    transform var(--m-press) var(--e-micro);
 }
 .ui-button[data-leading] {
   padding-inline-start: var(--sp-6);
@@ -319,6 +326,10 @@
   }
   .ui-button:active:not([aria-disabled='true'], [aria-busy='true'], [data-menu], [aria-haspopup], [aria-expanded]) {
     transform: none;
+    transition:
+      background-color var(--m-micro) var(--e-micro),
+      color var(--m-micro) var(--e-micro),
+      box-shadow var(--m-micro) var(--e-micro);
   }
 }
 

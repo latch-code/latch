@@ -1,10 +1,18 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AGENT_BRACKETS, AGENT_EYES, type AgentAvatar as Avatar, type AgentFace } from '@latch/protocol'
 import { AgentAvatar } from '../src/agents/AgentAvatar.tsx'
 import { BRACKET_PATHS, type AvatarState } from '../src/agents/avatarFace.ts'
-import { AvatarScheduler, LOOP_MS, MAX_FEATURED, TICK_MS, type MotionHost, type MotionPart } from '../src/agents/avatarMotion.ts'
+import {
+  AvatarScheduler,
+  browserMotionHost,
+  LOOP_MS,
+  MAX_FEATURED,
+  TICK_MS,
+  type MotionHost,
+  type MotionPart,
+} from '../src/agents/avatarMotion.ts'
 
 const face = (extra: Partial<AgentFace> = {}): Avatar => ({ kind: 'face', bracket: 'round', eyes: 'dot', hue: 'pine', ...extra })
 const render = (props: Parameters<typeof AgentAvatar>[0]) => renderToStaticMarkup(createElement(AgentAvatar, props))
@@ -191,6 +199,71 @@ describe('the motion scheduler', () => {
     expect(page.state.setIntervalCalls).toBe(0)
     expect(avatar.played).toEqual([])
     expect(avatar.moving.every(value => !value)).toBe(true)
+  })
+
+  it('reads 减弱 on this device and the capture freeze from the page, each by its own attribute, and watches both', () => {
+    const dataset: Record<string, string> = {}
+    const system = { matches: false, addEventListener: () => {}, removeEventListener: () => {} }
+    const observed: Array<{ attributeFilter?: string[] }> = []
+    let disconnected = 0
+    vi.stubGlobal('document', {
+      documentElement: { dataset },
+      visibilityState: 'visible',
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })
+    // The system does not ask for less motion: `no-preference` matches, `reduce` does not.
+    vi.stubGlobal('matchMedia', (query: string) => ({ ...system, matches: query.includes('no-preference') }))
+    vi.stubGlobal(
+      'MutationObserver',
+      class {
+        observe(_target: unknown, options: { attributeFilter?: string[] }) {
+          observed.push(options)
+        }
+        disconnect() {
+          disconnected++
+        }
+      },
+    )
+    try {
+      const host = browserMotionHost()
+      expect(host.still()).toBe(false)
+      dataset.motion = 'reduce'
+      expect(host.still()).toBe(true)
+      delete dataset.motion
+      // The capture freeze is its own attribute: the setting writing or removing data-motion never clears it.
+      dataset.capture = 'still'
+      expect(host.still()).toBe(true)
+      dataset.motion = 'still'
+      delete dataset.capture
+      expect(host.still()).toBe(false)
+      const stop = host.watch(() => {})
+      expect(observed.map(options => options.attributeFilter)).toEqual([['data-motion', 'data-capture']])
+      stop()
+      expect(disconnected).toBe(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('stands the faces still for 减弱: the scheduler of a page that chose it starts no timer and plays nothing', () => {
+    const dataset: Record<string, string> = { motion: 'reduce' }
+    vi.stubGlobal('document', { documentElement: { dataset } })
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('no-preference') }))
+    try {
+      const page = fakeHost()
+      // The real host's answer, on the fake page's clock and timers.
+      const scheduler = new AvatarScheduler({ ...page.host, still: browserMotionHost().still })
+      const avatar = fakeAvatar()
+      const handle = scheduler.add(avatar.element, avatar.target, 'full', 'running')
+      page.show(avatar.element)
+      handle.celebrate()
+      page.advance(20_000)
+      expect(page.state.setIntervalCalls).toBe(0)
+      expect(avatar.played).toEqual([])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('squints or shows a prop on at most three faces at once', () => {

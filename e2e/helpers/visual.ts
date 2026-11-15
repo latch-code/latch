@@ -42,12 +42,14 @@ const CAPTURE_STYLE = `${VOLATILE_TEXT.join(', ')} { color: transparent !importa
 
 /**
  * Freezes the motion that runs on its own (the faces of 我的 Agent blink, glance and squint at random): the page reads
- * `data-motion="still"` on its root, as it reads reduced motion, so every capture shows the same frame with the state
- * props at rest. It sits with the fixed clock, in visualContext; other captures call it on their context.
+ * `data-capture="still"` on its root, as it reads reduced motion, so every capture shows the same frame with the state
+ * props at rest; the background layer holds its still frame for it too. The attribute is its own, apart from the
+ * `data-motion` the 动效 setting writes and removes, so applying preferences leaves the screenshot freeze in place.
+ * visualContext installs it with the fixed clock. Other captures can install it on their own context.
  */
 export async function stillMotion(context: BrowserContext): Promise<void> {
   await context.addInitScript(() => {
-    document.documentElement.dataset.motion = 'still'
+    document.documentElement.dataset.capture = 'still'
   })
 }
 

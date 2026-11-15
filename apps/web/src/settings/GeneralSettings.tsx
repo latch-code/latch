@@ -19,6 +19,7 @@ import { NotificationSettings } from './NotificationSettings.tsx'
 import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
 import { LayoutTiles } from './LayoutTiles.tsx'
+import { MotionChoice } from './AppearanceTiles.tsx'
 
 const THEMES: Array<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: '跟随系统' },
@@ -174,6 +175,16 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
           <span>仅此设备</span>
         </div>
         <LayoutTiles value={preferences.workbenchLayout} onValueChange={switchWorkbenchLayout} />
+        <div className="layout-choice-head">
+          <span>动效</span>
+          <span>仅此设备</span>
+        </div>
+        <MotionChoice
+          value={preferences.motion}
+          onValueChange={value => {
+            setPreference('motion', value)
+          }}
+        />
       </SettingsGroup>
       <SettingsGroup title="使用">
         {usage && (

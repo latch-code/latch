@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { flushSync } from 'react-dom'
-import { switchTheme } from '@latch/ui'
+import { crossFade, setReducedMotion, switchTheme } from '@latch/ui'
 import { readStorage } from './core/storageKeys.ts'
 import {
   parseRightPanelPreference,
@@ -20,6 +20,15 @@ export type WorkbenchLayout = 'overview' | 'triage'
 /** How much of a turn's work the conversation shows: every row, only what went wrong, or one folded row. */
 export type WorkDisplay = 'all' | 'failures' | 'folded'
 export const LAYOUT_NAMES: Record<WorkbenchLayout, string> = { overview: '侧栏', triage: '顶栏' }
+/** 背景效果: 关, 轻 or 标准. */
+export type BackdropPreference = 'off' | 'light' | 'standard'
+/**
+ * 动效: 跟随系统 or 减弱. Forcing motion on against a system that asks for less is not offered until every older
+ * reduced-motion rule follows the setting; a stored value other than these two reads as 跟随系统.
+ */
+export type MotionPreference = 'system' | 'reduce'
+/** 密度: 标准 or 紧凑. */
+export type DensityPreference = 'standard' | 'compact'
 export interface Preferences {
   autoOpenDocuments: boolean
   diffLayout: 'unified' | 'split'
@@ -34,6 +43,12 @@ export interface Preferences {
   workbenchLayout: WorkbenchLayout
   /** 工作过程: this device only. Approvals, questions, failures and unknown results show at every level. */
   workDisplay: WorkDisplay
+  /** 背景效果 on this device; absent until the person chooses, so a phone starts lighter than a desktop (`backdropLevel`). */
+  backdrop?: BackdropPreference
+  /** 动效 on this device. */
+  motion: MotionPreference
+  /** 密度 on this device. */
+  density: DensityPreference
   /** Desktop only; touch keyboards always insert a newline on Enter. */
   sendKey: SendKey
   /** The right panel: whether it is open and its dragged width (local only). */
@@ -56,6 +71,8 @@ const defaults: Preferences = {
   theme: 'system',
   workbenchLayout: 'overview',
   workDisplay: 'all',
+  motion: 'system',
+  density: 'standard',
   sendKey: 'enter',
   rightPanel: { open: true },
   sidebar: { collapsed: false },
@@ -91,6 +108,9 @@ export function parsePreferences(raw: string | null): Preferences {
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
       workbenchLayout: item.workbenchLayout === 'triage' ? 'triage' : 'overview',
       workDisplay: item.workDisplay === 'failures' || item.workDisplay === 'folded' ? item.workDisplay : 'all',
+      ...(item.backdrop === 'off' || item.backdrop === 'light' || item.backdrop === 'standard' ? { backdrop: item.backdrop } : {}),
+      motion: item.motion === 'reduce' ? 'reduce' : 'system',
+      density: item.density === 'compact' ? 'compact' : 'standard',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
       rightPanel: item.rightPanel === undefined ? { open: item.workbenchLayout !== 'triage' } : parseRightPanelPreference(item.rightPanel),
       sidebar: parseSidebarPreference(item.sidebar),
@@ -122,31 +142,34 @@ export function setPreference<K extends keyof Preferences>(key: K, value: Prefer
 
 /**
  * Changes the workbench layout on this device; nothing is sent to the Host. The page under the navigation stays mounted,
- * so the window cross-fades as a whole (160ms) where the browser can do that, and changes at once with reduced motion.
+ * so the window cross-fades as a whole (160ms) where the browser can do that. Reduced motion or an open security surface
+ * skips the cross-fade.
  */
 export function switchWorkbenchLayout(layout: WorkbenchLayout): void {
   if (snapshot().workbenchLayout === layout) return
   const apply = () => {
     setPreference('workbenchLayout', layout)
   }
-  if (
-    typeof document === 'undefined'
-    || typeof document.startViewTransition !== 'function'
-    || !matchMedia('(prefers-reduced-motion: no-preference)').matches
-  ) {
-    apply()
-    return
-  }
-  const root = document.documentElement
-  root.dataset.layoutSwitch = ''
-  const transition = document.startViewTransition(() => {
+  void crossFade(() => {
     flushSync(apply)
-  })
-  void transition.finished
-    .catch(() => {})
-    .then(() => {
-      delete root.dataset.layoutSwitch
-    })
+  }, 'layoutSwitch')
+}
+
+/** 背景效果 as it applies here: the person's choice, else 标准 on a desktop or tablet and 轻 on a phone. */
+export function backdropLevel(preferences: Pick<Preferences, 'backdrop'>, phone: boolean): BackdropPreference {
+  return preferences.backdrop ?? (phone ? 'light' : 'standard')
+}
+
+/**
+ * 动效 and 密度 are attributes of the root that the design system's tokens and stylesheets read: `data-motion` is
+ * "reduce" for 减弱 and absent while the page follows the system, and `data-density` is absent while it is 标准. No
+ * other attribute is touched: a page frozen for a capture carries `data-capture`, which this never clears.
+ */
+export function applyAppearance(motion: MotionPreference, density: DensityPreference): void {
+  const root = document.documentElement
+  setReducedMotion(motion === 'reduce')
+  if (density === 'compact') root.dataset.density = 'compact'
+  else delete root.dataset.density
 }
 
 export function toggleWorkbenchLayout(): void {

@@ -25,3 +25,6 @@
 @import './styles/drawer.css' layer(ui);
 @import './styles/group.css' layer(ui);
 @import './styles/motion.css' layer(ui);
+@import './styles/moves.css' layer(ui);
+@import './styles/facts.css' layer(ui);
+@import './styles/backdrop.css' layer(ui);

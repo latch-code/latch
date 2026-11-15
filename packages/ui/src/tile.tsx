@@ -72,7 +72,7 @@ export type TileArt = { mark: TileMark; icon?: undefined } | { icon: IconCompone
 /** The tile holds a glyph at 60% of its size; a plain tile is the glyph alone. */
 const glyphSize = (size: TileSize, plain: boolean) => (plain ? size : size * 0.6)
 
-/** A glyph's line is the icon scale's on the screen: 1.5px, and 1.25px in the smallest tiles, where it is 10px across. */
+/** A glyph's line is the icon scale's on the screen: 1.5px, and 1.2px in the smallest tiles, where it is 10px across. */
 const glyphStroke = (size: TileSize, plain: boolean) => (size <= 16 && !plain ? ICON_STROKE[12] : ICON_STROKE[16])
 
 function Glyph({ icon: Drawn, size, strokeWidth }: { icon: IconComponent; size: number; strokeWidth: number }) {

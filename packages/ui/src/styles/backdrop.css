@@ -1,0 +1,30 @@
+/*
+ * The background layer: one canvas behind the content of its host, as its own layer. The host isolates its stacking
+ * so the canvas, at z-index -1, sits over the host's own background and under everything the host holds; it takes no
+ * pointer events and no part in layout. It is never shown inside a security surface.
+ */
+.ui-backdrop-host {
+  position: relative;
+  isolation: isolate;
+}
+.ui-backdrop {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  contain: strict;
+}
+.ui-backdrop[data-fixed] {
+  position: fixed;
+}
+[data-secure] .ui-backdrop {
+  display: none;
+}
+@media (forced-colors: active) {
+  .ui-backdrop {
+    display: none;
+  }
+}

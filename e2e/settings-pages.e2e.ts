@@ -106,7 +106,10 @@ describe('settings pages', () => {
           await shot('sections')
           await openSection(settings, '通用')
         }
-        await settings.getByRole('radio', { name: '跟随系统' }).waitFor()
+        await settings
+          .getByRole('radiogroup', { name: '外观', exact: true })
+          .getByRole('radio', { name: '跟随系统', exact: true })
+          .waitFor()
         await noHorizontalOverflow(page, settings)
         await shot('general')
 

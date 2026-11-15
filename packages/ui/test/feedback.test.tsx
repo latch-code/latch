@@ -211,7 +211,7 @@ describe('tiles', () => {
     })
   })
 
-  it('draws a glyph with the same line weight at every tile size, 1.25px when small and 1.5px from 20', async () => {
+  it('draws a glyph with the same line weight at every tile size, 1.2px when small and 1.5px from 20', async () => {
     const screen = await render(
       <div>
         {([16, 20, 24, 32, 40, 56] as const).map(size => (
@@ -223,7 +223,7 @@ describe('tiles', () => {
     // A glyph is 60% of its tile (9.6 to 33.6px), but its line is set on the screen, not scaled with it: a Lucide glyph
     // draws every line with a non-scaling stroke at the width the tile gives.
     const glyphs = Array.from(screen.container.querySelectorAll<SVGSVGElement>('.ui-tile-face svg'))
-    expect(glyphs.map(glyph => Number(glyph.getAttribute('stroke-width')))).toEqual([1.25, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5])
+    expect(glyphs.map(glyph => Number(glyph.getAttribute('stroke-width')))).toEqual([1.2, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5])
     for (const glyph of glyphs) {
       expect([...glyph.querySelectorAll('path')].every(line => line.getAttribute('vector-effect') === 'non-scaling-stroke')).toBe(true)
     }

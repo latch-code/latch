@@ -220,11 +220,28 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await panel.getByText('你的账户，不是沙箱', { exact: true }).waitFor()
       expect(host.security.audit.lastOf('terminal.open')).toMatchObject({ detail: { sessionId } })
 
+      // Device motion changes stop only the cursor blink, without taking focus or changing the shell.
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      const blinking = rows.locator('.xterm-cursor-blink')
+      const editorFocused = screen.locator('.xterm-helper-textarea:focus')
+      await editorFocused.waitFor({ state: 'attached' })
+      await blinking.waitFor({ state: 'attached' })
+      await page.evaluate(() => {
+        document.documentElement.dataset.motion = 'reduce'
+      })
+      await blinking.waitFor({ state: 'detached' })
+      expect(await editorFocused.count()).toBe(1)
+
       // Typing reaches the shell in order and its output shows; the focus is in the terminal.
       await page.keyboard.type('echo hi')
       await page.keyboard.press('Enter')
       await expect.poll(() => rows.innerText()).toContain('ran echo hi')
       expect(shells[0]!.text).toBe('echo hi\r')
+      await page.evaluate(() => {
+        delete document.documentElement.dataset.motion
+      })
+      await blinking.waitFor({ state: 'attached' })
+      expect(await editorFocused.count()).toBe(1)
 
       // Ctrl-B is the shell's (tmux and readline use it), not the workbench's sidebar key; ⌘ keys stay the app's.
       const sidebar = () => page.locator('.app-shell').getAttribute('data-sidebar')

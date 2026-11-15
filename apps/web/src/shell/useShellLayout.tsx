@@ -73,7 +73,8 @@ import { useSessionSearch } from '../hooks/useSessionSearch.ts'
 import { SessionSearchResults } from '../components/SessionSearchResults.tsx'
 import { ArchiveBatch } from '../components/ArchiveBatch.tsx'
 import type { PanelSurface } from '../components/SessionPanels.tsx'
-import { EASING, MOTION, usePresence, type ResizePhase, EnterGlyph } from '@latch/ui'
+import { EASING, MOTION, motionAllowed, usePresence, type ResizePhase, EnterGlyph } from '@latch/ui'
+import { popWait } from './popWait.ts'
 import { settingsSections, type SettingsSection } from '../settings/SettingsPage.tsx'
 import { useSessionController, type SessionSelectionIntent } from './useSessionController.ts'
 import type { ChangesLink, ChangesTarget } from '../conversation/changesLink.ts'
@@ -626,11 +627,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
             if (id !== null) document.querySelector<HTMLElement>(`#session-navigation [data-task-id="${CSS.escape(id)}"]`)?.focus()
           })
         })
-      if (instant || !matchMedia('(prefers-reduced-motion: no-preference)').matches) arrive()
+      const wait = popWait(instant)
+      if (wait === 0) arrive()
       else {
         setPopping(true)
         clearTimeout(popTimer.current)
-        popTimer.current = setTimeout(arrive, MOTION.pushExit)
+        popTimer.current = setTimeout(arrive, wait)
       }
       return
     }
@@ -650,13 +652,14 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         if (id !== null) document.querySelector<HTMLElement>(`#session-navigation [data-task-id="${CSS.escape(id)}"]`)?.focus()
       })
     }
-    if (instant || away || !matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+    const wait = away ? 0 : popWait(instant)
+    if (wait === 0) {
       arrive()
       return
     }
     setPopping(true)
     clearTimeout(popTimer.current)
-    popTimer.current = setTimeout(arrive, MOTION.pushExit)
+    popTimer.current = setTimeout(arrive, wait)
   }
   // The confirmation dock opens the session that holds a confirmation back, from settings too.
   useEffect(
@@ -723,7 +726,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (shownSpace.current === space) return
     shownSpace.current = space
     const frame = appShell.current
-    if (!frame || !matchMedia('(prefers-reduced-motion: no-preference)').matches) return
+    if (!frame || !motionAllowed()) return
     const target = frame.querySelector<HTMLElement>(
       route.entry === 'agents'
         ? '.agents-page'

@@ -297,7 +297,10 @@ describe('buttons', () => {
       }
     }
     for (const sheet of Array.from(document.styleSheets)) walk(sheet.cssRules)
-    expect(presses.map(rule => [rule.style.transform, /\[data-menu\]/u.test(rule.selectorText)])).toContainEqual(['scale(0.97)', true])
+    expect(presses.map(rule => [rule.style.transform, /\[data-menu\]/u.test(rule.selectorText)])).toContainEqual([
+      'scale(var(--s-press))',
+      true,
+    ])
     // A filled button draws the keyboard ring outside it; a quiet one inside its own edge.
     await userEvent.tab()
     expect(document.activeElement).toBe(button)

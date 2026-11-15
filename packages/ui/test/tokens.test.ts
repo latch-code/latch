@@ -146,10 +146,23 @@ describe('design tokens', () => {
     expect([...system.keys()].filter(name => !light.has(name))).toEqual([])
   })
 
-  it('times motion with the five tokens and their curves, and shortens them to 120ms or less for reduced motion', () => {
+  it('times motion with the five tokens and their curves, the v9 ones beside them, and shortens them for reduced motion', () => {
     const light = block(':root')
     const motion = Object.fromEntries([...light].filter(([name]) => /^--[me]-/u.test(name)))
-    expect(motion).toEqual({
+    const base = [
+      '--m-micro',
+      '--m-enter',
+      '--m-panel',
+      '--m-sheet',
+      '--m-push',
+      '--e-micro',
+      '--e-enter',
+      '--e-panel',
+      '--e-sheet',
+      '--e-push',
+      '--e-exit',
+    ]
+    expect(Object.fromEntries(base.map(name => [name, motion[name]]))).toEqual({
       '--m-micro': '120ms',
       '--m-enter': '160ms',
       '--m-panel': '200ms',
@@ -162,9 +175,98 @@ describe('design tokens', () => {
       '--e-push': 'cubic-bezier(0.32, 0.72, 0, 1)',
       '--e-exit': 'cubic-bezier(0.4, 0, 1, 1)',
     })
-    const reduced = block(':root', tokens.indexOf('@media (prefers-reduced-motion: reduce)'))
-    expect([...reduced.keys()]).toEqual(['--m-micro', '--m-enter', '--m-panel', '--m-sheet', '--m-push'])
-    expect([...reduced.values()].every(value => parseFloat(value) <= 120)).toBe(true)
+    // Every other motion token is a duration in milliseconds or one of the two springs, which start at 0 and end at 1.
+    const rest = Object.entries(motion).filter(([name]) => !base.includes(name))
+    const springs = rest.filter(([name]) => name.startsWith('--e-'))
+    expect(springs.map(([name]) => name)).toEqual(['--e-spring', '--e-settle'])
+    for (const [name, value] of springs) expect(value, name).toMatch(/^linear\(\s*0,[\d.,\s]+,\s*1\s*\)$/u)
+    for (const [name, value] of rest.filter(([key]) => key.startsWith('--m-'))) expect(value, name).toMatch(/^\d+ms$/u)
+    // The spring passes its target by a few percent and the settle by less than one: it lands, it does not bounce.
+    const peak = (value: string) => Math.max(...value.slice(7, -1).split(',').map(Number))
+    expect(peak(motion['--e-spring']!)).toBeGreaterThan(peak(motion['--e-settle']!))
+    expect(peak(motion['--e-spring']!)).toBeLessThan(1.05)
+    expect(peak(motion['--e-settle']!)).toBeLessThan(1.01)
+    // Reduced by the system or by 减弱 on this device: the same block twice, nothing longer than 120ms, no spring.
+    const system = block(':root', tokens.indexOf('@media (prefers-reduced-motion: reduce)'))
+    const chosen = block(":root[data-motion='reduce']")
+    expect([...chosen]).toEqual([...system])
+    expect(base.filter(name => name.startsWith('--m-')).every(name => system.has(name))).toBe(true)
+    for (const [name, value] of system) {
+      if (name.startsWith('--m-')) expect(parseFloat(value), name).toBeLessThanOrEqual(120)
+      else expect(value, name).toBe('linear')
+    }
+    expect([...system.keys()].filter(name => !light.has(name))).toEqual([])
+    // No rule anywhere forces motion on against the system: no setting produces that state.
+    expect(tokens).not.toContain("data-motion='full'")
+  })
+
+  it('reduces motion for 减弱 on this device, whatever the system says', () => {
+    const root = document.documentElement
+    const panel = () => getComputedStyle(root).getPropertyValue('--m-panel').trim()
+    const before = panel()
+    try {
+      root.dataset.motion = 'reduce'
+      expect(parseFloat(panel())).toBeLessThan(parseFloat(before))
+      expect(parseFloat(panel())).toBeLessThanOrEqual(120)
+    } finally {
+      delete root.dataset.motion
+    }
+    expect(panel()).toBe(before)
+  })
+
+  it('gives the shared workbench and v9 roles in both themes', () => {
+    const { light, dark } = themes()
+    for (const name of ['--work-canvas', '--work-raised', '--work-sunken']) {
+      const [darkRed, , darkBlue] = colour(dark.get(name))
+      expect(darkBlue, name).toBeGreaterThan(darkRed)
+      const paper = colour(light.get(name))
+      expect(paper[2], name).toBeGreaterThanOrEqual(paper[0])
+      expect(luminance(paper), name).toBeGreaterThan(0.75)
+    }
+    // Lines and ticks are built from the surface's own roles, so they follow whatever surface they sit on.
+    expect(['--hairline', '--rule', '--tick'].map(name => light.get(name))).toEqual(['var(--line)', 'var(--line-strong)', 'var(--muted)'])
+    // The background ink is a blue-grey of its own, never one of the four state colours, in both themes.
+    for (const theme of [light, dark]) {
+      const ink = /^rgb\((\d+), (\d+), (\d+)\)$/u.exec(theme.get('--fx-ink') ?? '')
+      expect(ink).not.toBeNull()
+      const [red, , blue] = ink!.slice(1).map(Number)
+      expect(blue).toBeGreaterThan(red!)
+      for (const state of ['--accent', '--amber', '--red', '--green']) expect(theme.get('--fx-ink')).not.toBe(theme.get(state))
+    }
+    // Every v9 role has a reader: none is declared for a later batch.
+    for (const gone of [
+      '--fx-glow',
+      '--s-recede',
+      '--fs-work-focus',
+      '--lh-work-focus',
+      '--density-card',
+      '--density-gap',
+      '--density-section',
+    ])
+      expect(light.has(gone), gone).toBe(false)
+    // 紧凑 tightens the density roles and nothing else; a part of the page can keep the standard ones inside it.
+    const density = [...light.keys()].filter(name => name.startsWith('--density-'))
+    expect(density.length).toBeGreaterThan(0)
+    const compact = block("[data-density='compact']")
+    expect([...compact.keys()]).toEqual(density)
+    expect([...block("[data-density='standard']")]).toEqual(density.map(name => [name, light.get(name)]))
+    const px = (value: string | undefined) => parseFloat(light.get(/var\((--sp-\d+)\)/u.exec(value ?? '')?.[1] ?? '') ?? '')
+    for (const name of density) expect(px(compact.get(name)), name).toBeLessThan(px(light.get(name)))
+  })
+
+  it('keeps a security surface on the standard density when the page is compact', () => {
+    const root = document.documentElement
+    const surface = document.createElement('div')
+    surface.dataset.secure = ''
+    document.body.append(surface)
+    root.dataset.density = 'compact'
+    try {
+      expect(getComputedStyle(root).getPropertyValue('--density-row').trim()).toBe('8px')
+      expect(getComputedStyle(surface).getPropertyValue('--density-row').trim()).toBe('12px')
+    } finally {
+      delete root.dataset.density
+      surface.remove()
+    }
   })
 
   it('paints flat: no gradient anywhere in the tokens, and the page shows the sidebar grey alone', () => {
@@ -339,7 +441,7 @@ describe('design tokens', () => {
     for (const [theme, values] of Object.entries(themes())) {
       const get = (token: string) => colour(values.get(token))
       for (const background of ['canvas', 'raised', 'sunken'])
-        for (const text of ['ink', 'ink-2', 'muted']) {
+        for (const text of ['ink', 'ink-2', 'muted', 'faint']) {
           const foreground = `--work-${text}`,
             surface = `--work-${background}`
           expect(contrast(get(foreground), get(surface)), `${theme} ${foreground} on ${surface}`).toBeGreaterThanOrEqual(4.5)

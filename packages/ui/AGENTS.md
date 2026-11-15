@@ -7,7 +7,7 @@
 不变量：
 
 - 样式的颜色、阴影、间距、圆角与动效只用令牌；原语可声明几何变量。字号、行高用角色令牌，字重为 400、500、600（`apps/web/test/styles.test.ts`）。工作台两布局和预览共用 `--work-*` 底色。
-- 每种颜色只表达一件事：蓝色只给主按钮、被勾选的控件、焦点、链接与执行状态；琥珀只表示等你处理与警告；红色只表示真实风险或失败；绿色只给差异的新增与短暂的成功对勾。选中行与计数是墨色，琥珀与红色都配文字。
+- 每种颜色只表达一件事：蓝色只给主按钮、被勾选的控件、焦点、链接与执行状态；琥珀只表示等你处理与警告；红色只表示真实风险或失败；绿色只给新增行、通过的检查、在线点与短暂的成功对勾。选中行与计数是墨色，琥珀与红色都配文字。
 - 深色在系统偏好（页面没有选浅色时）与 `data-theme="dark"` 下各写一份，两份相同，并重写每个含颜色的令牌（`test/tokens.test.ts#gives every colour token a dark value, identical under the system preference and under data-theme`）。换主题经 `switchTheme`，不播放过渡。
 - 层叠层顺序固定为 `tokens, base, ui, app, security`；原语的规则都在 ui 层（`test/stylesheet.test.ts`），安全相关的界面在最上层。安全界面带 `data-secure`（`Dialog`、`Modal`、`InlineNotice` 的 `secure`），tokens.css 末尾为它们以 `!important` 锁住主题令牌，新增令牌时一并加入（`test/tokens.test.ts`）。
 - `src/plugins.ts` 定义 `PluginPanelProps`，共享 React 与控件；`StatusPill` 是插件 API，不改名。
@@ -16,12 +16,13 @@
 - `Drawer` 的 `arming`：到达或回到最前后 320ms inert。
 - 只做真实能力需要的原语，不为还没有的功能提前做界面。
 - 图标：常用的在 `src/glyphs/`，线宽 `ICON_STROKE`，选中项 `solid`（`test/icon.test.tsx`）。
-- 状态（`src/status.tsx`）：状态是状态词加至多一个 12px 图形，只有运行中的转圈会动，没有装饰背景动画；变化只为 `LiveChanges` 纪元不变时看见的变化交叉淡化；循环在视野外暂停，减少动效时停在静帧（`test/status.test.tsx`）。
+- 状态（`src/status.tsx`）：状态是状态词加至多一个 12px 图形，只有运行中的转圈会动；变化只为 `LiveChanges` 纪元不变时看见的变化交叉淡化；循环在视野外暂停，减少动效时停在静帧（`test/status.test.tsx`）。
 - 动效（`src/motion.tsx`）：时长 `--m-*` 与曲线 `--e-*`，离开用 70%，`MOTION`、`EASING` 与令牌一致；高度只经网格行展开，其余只动不透明度与位移；收起的身体是 `hidden="until-found"`；减少动效只剩不超过 120ms 的淡入淡出（`test/motion.test.tsx`）。
+- v9 动效与背景层见 DESIGN；播放只问 `motionAllowed`。
 - `TileChoice` 的 `compact` 用 20px 图标，键盘与不可选语义不变。
 - 圆角只取台阶上的值，不用 `corner-shape`（`apps/web/test/styles.test.ts`）。
 - 键位（`Kbd`、按钮的 `keys`）是一段淡色字「⌘N」，不画框。
 
 `test/` 在真实浏览器中跑（见 [docs/TESTING.md](../../docs/TESTING.md)「组件测试」）；`test/gallery/` 是只供测试的原语总览页。新增或改动原语时在 gallery 补上每种状态，并补聚焦的浏览器用例。
 
-改动后跑 `pnpm test --project @latch/ui --project @latch/web`、`pnpm build`、`pnpm test:e2e`，在三种宽度与深色下看 `e2e/visual.e2e.ts` 的截图（含 `ui-gallery`）。
+改动后跑 `pnpm test --project @latch/ui --project @latch/web`、`pnpm build`、`pnpm test:e2e`，看 `e2e/visual.e2e.ts` 截图（含 `ui-gallery`）。

@@ -9,9 +9,44 @@ import { createContext, useContext, useLayoutEffect, useRef, useState } from 're
  */
 export const LiveChanges = createContext<string | number | null>(null)
 
-/** Motion is allowed unless the person asked for less; one-shot cross-fades play only then. */
-export const motionAllowed = (): boolean =>
-  typeof matchMedia !== 'function' || matchMedia('(prefers-reduced-motion: no-preference)').matches
+/**
+ * Motion is allowed unless the person asked for less: 减弱 on this device (data-motion="reduce" on the root) or the
+ * system's reduced-motion preference. One-shot cross-fades and every scripted move play only then; every script that
+ * moves something asks here, never the media query alone.
+ */
+export const motionAllowed = (): boolean => {
+  if (typeof document !== 'undefined' && document.documentElement.dataset.motion === 'reduce') return false
+  return typeof matchMedia !== 'function' || matchMedia('(prefers-reduced-motion: no-preference)').matches
+}
+
+/**
+ * The page is frozen for a capture (data-capture="still" on the root, set by the visual tests): what moves by itself
+ * (the faces of 我的 Agent, the background layer) holds its still frame. It is its own attribute, so the 动效 setting,
+ * which writes and removes data-motion, never clears it.
+ */
+export const captureStill = (): boolean => typeof document !== 'undefined' && document.documentElement.dataset.capture === 'still'
+
+/**
+ * Calls `changed` when `motionAllowed` or `captureStill` may answer differently: the system's preference flipped, or
+ * the root's data-motion or data-capture changed. Returns the unsubscribe.
+ */
+export function watchMotion(changed: () => void): () => void {
+  const media = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : undefined
+  media?.addEventListener('change', changed)
+  const attributes = typeof MutationObserver === 'function' ? new MutationObserver(changed) : undefined
+  attributes?.observe(document.documentElement, { attributes: true, attributeFilter: ['data-motion', 'data-capture'] })
+  return () => {
+    media?.removeEventListener('change', changed)
+    attributes?.disconnect()
+  }
+}
+
+/** 动效 on this device: 减弱 puts data-motion="reduce" on the root, 跟随系统 removes it. Nothing else is touched. */
+export function setReducedMotion(reduce: boolean): void {
+  const root = document.documentElement
+  if (reduce) root.dataset.motion = 'reduce'
+  else delete root.dataset.motion
+}
 
 /**
  * Calls `onChange(previous, live, appeared)` after a render in which `value` changed. `live` is true when the page saw

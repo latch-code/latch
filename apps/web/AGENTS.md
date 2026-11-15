@@ -33,7 +33,7 @@ browser 环境：不用 Node 全局变量与模块；Host、core、testkit 只�
 - 分支只用 Host 摘要，可见时每 30 秒同步快照，页面不运行 Git。
 - 桌面文件夹操作需 `folders.protocolVersion === 1`；旧壳同名接口不证明支持签名请求（`test/shell-folders.test.ts`）。
 
-仅消息内容淡入，滚动容器不透明度动画会丢命中。
+仅淡入消息。脚本用 `motionAllowed`。
 
 切换保留会话（DESIGN/STREAMING）。暂存回执见 GIT-DELIVERY。Agent 设置复用控件。ProfileLayer 单实例跨断点保留草稿/焦点/未知写，撤权卸载（CUSTOM-AGENTS）。
 

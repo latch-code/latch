@@ -2,10 +2,10 @@
  * Latch design tokens: every colour, shadow, type size, space, radius and duration the browser client uses.
  *
  * Colour is restrained: neutral ink on near-white or near-black. Blue (accent) is only for the primary action, focus,
- * links and checked controls, and, as the one decorative exception, every seventh point of the light theme's field
- * behind the work panel; amber only for 等你处理 and warnings; red only for a real failure or a real risk; green
- * only for added lines and a short-lived success tick. Amber and red always come with words. Running work, counts,
- * selected rows and every resting icon are neutral.
+ * links and checked controls; amber only for 等你处理 and warnings; red only for a real failure or a real risk; green
+ * only for added lines, a passed check, a live connection's dot and a short-lived success tick. Amber and red always
+ * come with words. Running work, counts, selected rows and every resting icon are neutral. The background layer
+ * (Backdrop) is the one decoration: its points take --fx-ink, a blue-grey that is none of the four.
  *
  * Surfaces are stepped, with almost no lines: sunken < sidebar < canvas < raised < card < pop. The sidebar grey is the
  * ground of the window; the canvas holds the work (conversation, panels); raised layers (the composer, menus,
@@ -37,7 +37,7 @@
     --work-ink: #111419;
     --work-ink-2: #343a42;
     --work-muted: #5d6570;
-    --work-faint: #737a84;
+    --work-faint: #5f6671;
     --work-line: rgba(16, 20, 26, 0.085);
     --work-line-strong: rgba(16, 20, 26, 0.15);
     --work-running: #2c5ad6;
@@ -63,6 +63,33 @@
     --r-14: 14px;
     --sp-14: 14px;
     --sp-28: 28px;
+
+    /* v9. Lines: hairline between rows, rule under a section title (it draws once from the left). tick: the four
+     * corner ticks round the card or input the keys act on (size, the gap they stand off by, the distance they close
+     * in from). fx-ink: the points and the soft light of the background layer (Backdrop), a blue-grey that is none of
+     * the state colours, decoration only and never under words; sheen: the light that crosses an accent fill once
+     * when its action is done, and the key hint held down on it. Facts (durations, counts, +/-, branches, paths, keys,
+     * times) are set in the mono face with tabular figures: fact in a row, fact-count beside a section title, strip
+     * in the status strip. density-row: the row padding a 紧凑 window tightens (data-density). rise: how far an arriving
+     * row travels (a pill twice that); s-press: the scale of a pressed control. */
+    --hairline: var(--line);
+    --rule: var(--line-strong);
+    --tick: var(--muted);
+    --tick-size: 9px;
+    --tick-gap: 7px;
+    --tick-travel: 6px;
+    --fx-ink: rgb(44, 66, 110);
+    --sheen: rgba(255, 255, 255, 0.22);
+    --fs-fact: 12px;
+    --lh-fact: 18px;
+    --ls-fact: -0.01em;
+    --fs-fact-count: 15px;
+    --lh-fact-count: 20px;
+    --fs-strip: 11.5px;
+    --lh-strip: 16px;
+    --density-row: var(--sp-12);
+    --rise: 4px;
+    --s-press: 0.97;
 
     color-scheme: light;
 
@@ -145,8 +172,6 @@
     --track: rgba(18, 18, 28, 0.11);
     --meter: #45454e;
     --band: rgba(18, 18, 28, 0.025);
-    /* The field behind the work panel (ParticleField in apps/web): slate points, every seventh in the execute blue, and
-     * the whole field a little stronger so it reads on white; in the dark theme every point is white. Decoration only. */
 
     /* Accent: fills under white words (the primary button and send), focus rings and checked controls (switch,
      * checkbox, radio); a hover is darker. accent-ink is blue words on a surface (links), at 4.5:1 or more on each.
@@ -281,6 +306,64 @@
     --e-sheet: cubic-bezier(0.32, 0.72, 0, 1);
     --e-push: cubic-bezier(0.32, 0.72, 0, 1);
     --e-exit: cubic-bezier(0.4, 0, 1, 1);
+    /* v9. press: a control going down (its release settles over settle); wipe: the cover that crosses a resolved card;
+     * settle: a spring coming to rest; roll: a count's figure rolling; stagger: the step between a menu's items; edge:
+     * one pass of a running row's light; breath: one pulse of the live dot; sheen: the light across a finished action.
+     * spring (damping 0.72, 3.8% over) is for what a person set off and lands: a release, rows closing a gap, a pill
+     * rising; settle (damping 0.85, 0.6% over) for what must arrive exactly: the focused input, corner ticks, a send. */
+    --m-press: 80ms;
+    --m-wipe: 140ms;
+    --m-settle: 420ms;
+    --m-roll: 240ms;
+    --m-stagger: 18ms;
+    --m-edge: 2400ms;
+    --m-breath: 2400ms;
+    --m-sheen: 480ms;
+    --e-spring: linear(
+      0,
+      0.088,
+      0.277,
+      0.487,
+      0.675,
+      0.822,
+      0.925,
+      0.989,
+      1.023,
+      1.037,
+      1.038,
+      1.032,
+      1.025,
+      1.017,
+      1.01,
+      1.005,
+      1.002,
+      1,
+      0.999,
+      0.999,
+      1
+    );
+    --e-settle: linear(
+      0,
+      0.064,
+      0.203,
+      0.364,
+      0.519,
+      0.652,
+      0.76,
+      0.841,
+      0.901,
+      0.943,
+      0.97,
+      0.988,
+      0.998,
+      1.003,
+      1.006,
+      1.006,
+      1.005,
+      1.003,
+      1.001,
+      1
+    );
 
     /* Layout. The content canvas is inset from the window by --shell-inset on every side but the sidebar's. From
      * 1024px the page sets the sidebar's width (it can be dragged, and is 0 while shut) and the width its content
@@ -347,7 +430,25 @@
     }
   }
 
-  /* Reduced motion: only fades remain, and none is longer than 120ms (each stylesheet drops its movement and loops). */
+  /* A browser without linear() easing lands on the panel curve instead of the springs. */
+  @supports not (transition-timing-function: linear(0, 1)) {
+    :root {
+      --e-spring: var(--e-panel);
+      --e-settle: var(--e-panel);
+    }
+  }
+
+  /* Compact rows use less padding. data-density can describe the page or a local preview. */
+  [data-density='compact'] {
+    --density-row: var(--sp-8);
+  }
+  [data-density='standard'] {
+    --density-row: var(--sp-12);
+  }
+
+  /* Reduced motion: only fades remain, and none is longer than 120ms (each stylesheet drops its movement and loops).
+   * 减弱 (动效 in 设置, data-motion="reduce" on the root) asks for the same whatever the system says. The two blocks
+   * stay identical. */
   @media (prefers-reduced-motion: reduce) {
     :root {
       --m-micro: 100ms;
@@ -355,7 +456,26 @@
       --m-panel: 120ms;
       --m-sheet: 120ms;
       --m-push: 120ms;
+      --m-wipe: 100ms;
+      --m-settle: 120ms;
+      --m-roll: 0ms;
+      --m-stagger: 0ms;
+      --e-spring: linear;
+      --e-settle: linear;
     }
+  }
+  :root[data-motion='reduce'] {
+    --m-micro: 100ms;
+    --m-enter: 120ms;
+    --m-panel: 120ms;
+    --m-sheet: 120ms;
+    --m-push: 120ms;
+    --m-wipe: 100ms;
+    --m-settle: 120ms;
+    --m-roll: 0ms;
+    --m-stagger: 0ms;
+    --e-spring: linear;
+    --e-settle: linear;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -371,7 +491,10 @@
       --work-line: rgba(214, 224, 238, 0.08);
       --work-line-strong: rgba(214, 224, 238, 0.14);
       --work-running: #86a8ff;
-      --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07);
+      --work-card-shadow:
+        inset 0 1px 0 rgba(206, 218, 238, 0.04), 0 0 0 1px rgba(206, 218, 238, 0.07), 0 12px 28px -16px rgba(0, 0, 0, 0.7);
+      --fx-ink: rgb(206, 218, 238);
+      --sheen: rgba(255, 255, 255, 0.22);
 
       color-scheme: dark;
       --ink: #ececef;
@@ -473,7 +596,9 @@
     --work-line: rgba(214, 224, 238, 0.08);
     --work-line-strong: rgba(214, 224, 238, 0.14);
     --work-running: #86a8ff;
-    --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07);
+    --work-card-shadow: inset 0 1px 0 rgba(206, 218, 238, 0.04), 0 0 0 1px rgba(206, 218, 238, 0.07), 0 12px 28px -16px rgba(0, 0, 0, 0.7);
+    --fx-ink: rgb(206, 218, 238);
+    --sheen: rgba(255, 255, 255, 0.22);
 
     color-scheme: dark;
     --ink: #ececef;
@@ -577,7 +702,7 @@
     --work-ink: #111419 !important;
     --work-ink-2: #343a42 !important;
     --work-muted: #5d6570 !important;
-    --work-faint: #737a84 !important;
+    --work-faint: #5f6671 !important;
     --work-line: rgba(16, 20, 26, 0.085) !important;
     --work-line-strong: rgba(16, 20, 26, 0.15) !important;
     --work-running: #2c5ad6 !important;
@@ -604,6 +729,24 @@
     --r-14: 14px !important;
     --sp-14: 14px !important;
     --sp-28: 28px !important;
+    --hairline: var(--line) !important;
+    --rule: var(--line-strong) !important;
+    --tick: var(--muted) !important;
+    --tick-size: 9px !important;
+    --tick-gap: 7px !important;
+    --tick-travel: 6px !important;
+    --fx-ink: rgb(44, 66, 110) !important;
+    --sheen: rgba(255, 255, 255, 0.22) !important;
+    --fs-fact: 12px !important;
+    --lh-fact: 18px !important;
+    --ls-fact: -0.01em !important;
+    --fs-fact-count: 15px !important;
+    --lh-fact-count: 20px !important;
+    --fs-strip: 11.5px !important;
+    --lh-strip: 16px !important;
+    --density-row: var(--sp-12) !important;
+    --rise: 4px !important;
+    --s-press: 0.97 !important;
 
     --font:
       -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', system-ui, sans-serif !important;
@@ -782,7 +925,10 @@
       --work-line: rgba(214, 224, 238, 0.08) !important;
       --work-line-strong: rgba(214, 224, 238, 0.14) !important;
       --work-running: #86a8ff !important;
-      --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07) !important;
+      --work-card-shadow:
+        inset 0 1px 0 rgba(206, 218, 238, 0.04), 0 0 0 1px rgba(206, 218, 238, 0.07), 0 12px 28px -16px rgba(0, 0, 0, 0.7) !important;
+      --fx-ink: rgb(206, 218, 238) !important;
+      --sheen: rgba(255, 255, 255, 0.22) !important;
 
       --ink: #ececef !important;
       --ink-2: #c9c9d0 !important;
@@ -883,7 +1029,10 @@
     --work-line: rgba(214, 224, 238, 0.08) !important;
     --work-line-strong: rgba(214, 224, 238, 0.14) !important;
     --work-running: #86a8ff !important;
-    --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07) !important;
+    --work-card-shadow:
+      inset 0 1px 0 rgba(206, 218, 238, 0.04), 0 0 0 1px rgba(206, 218, 238, 0.07), 0 12px 28px -16px rgba(0, 0, 0, 0.7) !important;
+    --fx-ink: rgb(206, 218, 238) !important;
+    --sheen: rgba(255, 255, 255, 0.22) !important;
 
     --ink: #ececef !important;
     --ink-2: #c9c9d0 !important;

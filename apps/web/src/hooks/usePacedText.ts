@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
+import { motionAllowed, watchMotion } from '@latch/ui'
 import { CATCH_UP_CHARS, FenceTracker, revealCut, revealRate, revealStep } from '../core/pacedText.ts'
 
 const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
-const lessMotion = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : undefined
 
 /**
  * The part of a reply's text to draw now. While the reply is live, text that just arrived shows at an even pace over
@@ -12,7 +12,7 @@ const lessMotion = typeof matchMedia === 'function' ? matchMedia('(prefers-reduc
  * are the text itself.
  */
 export function usePacedText(text: string, live: boolean): string {
-  const paced = live && lessMotion?.matches === false && !hidden()
+  const paced = live && motionAllowed() && !hidden()
   // A reply's first words are paced like the rest; one already long when the page first shows it is not replayed.
   // One mutable record for the timer and the render: `shown` moves between renders, and each move asks for a redraw.
   const [pace] = useState(() => {
@@ -46,19 +46,22 @@ export function usePacedText(text: string, live: boolean): string {
   }, [text, paced, pace])
 
   useEffect(() => {
-    // A hidden page has no frames: what waited shows as soon as anything is drawn again.
+    if (!live) return
+    // Reveal the rest when the page stops pacing, including when the preference changes mid-reply.
     const caughtUp = () => {
-      if (!hidden() || pace.shown >= pace.target) return
+      if ((motionAllowed() && !hidden()) || pace.shown >= pace.target) return
       pace.shown = pace.target
       redraw(count => count + 1)
     }
     document.addEventListener('visibilitychange', caughtUp)
+    const unwatch = watchMotion(caughtUp)
     return () => {
+      unwatch()
       document.removeEventListener('visibilitychange', caughtUp)
       cancelAnimationFrame(pace.frame)
       pace.frame = 0
     }
-  }, [pace])
+  }, [live, pace])
 
   if (!paced || pace.shown >= text.length) {
     pace.drawn = text.length

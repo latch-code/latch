@@ -203,13 +203,15 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       const settings = page.locator('.settings-page')
       const nowhere = async () => expect(await page.evaluate(() => document.body.innerText)).not.toContain('分拣台')
       const marked = () => page.evaluate(() => (window as unknown as { layoutSwitchMarks: number }).layoutSwitchMarks)
-      await page.evaluate(() => {
-        const state = window as unknown as { layoutSwitchMarks: number }
-        state.layoutSwitchMarks = 0
-        new MutationObserver(() => {
-          if (document.documentElement.hasAttribute('data-layout-switch')) state.layoutSwitchMarks++
-        }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-layout-switch'] })
-      })
+      const watchLayout = () =>
+        page.evaluate(() => {
+          const state = window as unknown as { layoutSwitchMarks: number }
+          state.layoutSwitchMarks = 0
+          new MutationObserver(() => {
+            if (document.documentElement.hasAttribute('data-layout-switch')) state.layoutSwitchMarks++
+          }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-layout-switch'] })
+        })
+      await watchLayout()
       const fades = await page.evaluate(() => typeof document.startViewTransition === 'function')
       const still = () => expect.poll(() => page.evaluate(() => document.documentElement.hasAttribute('data-layout-switch'))).toBe(false)
 
@@ -252,9 +254,11 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       // The switch itself: the chosen segment keeps the focus.
       await layoutMenu(page, 'overview')
       await still()
+      if (fades) expect(await marked()).toBe(2)
       await sameSession()
       await layoutMenu(page, 'triage')
       await still()
+      if (fades) expect(await marked()).toBe(3)
       await sameSession()
       // The palette's command names the layout it leads to.
       await choose(page, '切换到侧栏布局')
@@ -415,6 +419,15 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       const approval = page.locator(`[data-approval-id="${waiting.approvals[0].id}"]`)
       await expect.poll(() => approval.getByRole('button', { name: '拒绝', exact: true }).isEnabled()).toBe(true)
       await reachable(approval.getByRole('button', { name: '拒绝', exact: true }))
+      const risk = await approval.getAttribute('data-risk')
+      expect(risk).not.toBeNull()
+      await watchLayout()
+      for (const layout of ['overview', 'triage'] as const) {
+        await layoutMenu(page, layout)
+        await reachable(approval.getByRole('button', { name: '拒绝', exact: true }))
+        expect(await approval.getAttribute('data-risk')).toBe(risk)
+      }
+      expect(await marked()).toBe(0)
       await openHome(page)
       await page.keyboard.press('Escape')
       await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => done())))

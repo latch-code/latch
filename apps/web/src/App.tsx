@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect } from 'react'
 import { followSystemTheme } from '@latch/ui'
-import { applyTheme, usePreferences } from './preferences.ts'
+import { applyAppearance, applyTheme, usePreferences } from './preferences.ts'
 import { useHarness } from './core/useHarness.ts'
 import { AppShell } from './shell/AppShell.tsx'
 import { ConnectScreen, CrashScreen, EnrollmentPage } from './components/EnrollmentPage.tsx'
@@ -14,6 +14,9 @@ export function App() {
   useLayoutEffect(() => {
     applyTheme(preferences.theme)
   }, [preferences.theme])
+  useLayoutEffect(() => {
+    applyAppearance(preferences.motion, preferences.density)
+  }, [preferences.motion, preferences.density])
   // A flip of the system's light or dark preference switches the colours at once too.
   useEffect(() => followSystemTheme(), [])
   const page =

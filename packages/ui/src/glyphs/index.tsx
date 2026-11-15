@@ -128,12 +128,12 @@ export const RefreshGlyph = defineGlyph(
     <path d="M12.75 1.5 V5 H9.25" />
   </>,
 )
-/** Running work at rest: the spinner's ring with its one full quarter, for a heading or a stopped clock. */
+/** 进行中: three quarters of the ring with a solid head on its leading end; still it reads as progress, never as reload. */
 export const RunningGlyph = defineGlyph(
   'running',
   <>
-    <circle cx="8" cy="8" r="5.75" opacity="0.22" />
-    <path d="M8 2.25 A5.75 5.75 0 0 1 13.75 8" />
+    <path d="M8 2.25 A5.75 5.75 0 1 1 2.25 8" />
+    <Dot x={1} y={6.75} w={2.5} h={2.5} />
   </>,
 )
 export const ExternalGlyph = defineGlyph(
@@ -404,25 +404,34 @@ export const PanelRightGlyph = defineGlyph(
   },
 )
 
-const BRANCH_LINE = 'M4.75 5.25 V10.75 M11.25 5 C11.25 8.75 4.75 7.75 4.75 10.75'
+/** A node of a graph as a solid square, centred on the 4.25 / 11.75 lines the branch glyphs share. */
+const Node = ({ x, y }: { x: number; y: number }) => <Dot x={x - 1.25} y={y - 1.25} w={2.5} h={2.5} />
+
+const BRANCH_LINE = 'M4.25 5.25 V10.75 M11.75 5 C11.75 8.5 4.25 7.5 4.25 10.75'
 export const BranchGlyph = defineGlyph(
   'branch',
   <>
-    <circle cx="4.75" cy="3.75" r="1.5" />
-    <circle cx="4.75" cy="12.25" r="1.5" />
+    <circle cx="4.25" cy="3.75" r="1.5" />
+    <circle cx="4.25" cy="12.25" r="1.5" />
     <path d={BRANCH_LINE} />
-    <Dot x={10} y={2.5} w={2.5} h={2.5} />
+    <Node x={11.75} y={3.75} />
   </>,
   {
     plane: (
       <>
-        <circle cx="4.75" cy="3.75" r="1.5" fill="currentColor" />
-        <circle cx="4.75" cy="12.25" r="1.5" fill="currentColor" />
+        <circle cx="4.25" cy="3.75" r="1.5" fill="currentColor" />
+        <circle cx="4.25" cy="12.25" r="1.5" fill="currentColor" />
         <path d={BRANCH_LINE} />
-        <Dot x={9.75} y={2.25} w={3} h={3} />
+        <Dot x={10.25} y={2.25} w={3} h={3} />
       </>
     ),
   },
+  <>
+    <Node x={4.25} y={3.5} />
+    <Node x={4.25} y={12.5} />
+    <Node x={11.75} y={3.5} />
+    <path d="M4.25 4.5 V11.5 M11.75 4.5 C11.75 8.5 4.25 7.5 4.25 11" />
+  </>,
 )
 export const CommitGlyph = defineGlyph(
   'commit',
@@ -442,6 +451,44 @@ export const CommitGlyph = defineGlyph(
 
 const SHIELD = 'M8 1.75 L13.25 3.5 V7.75 C13.25 10.75 11.25 12.9 8 14.25 C4.75 12.9 2.75 10.75 2.75 7.75 V3.5 Z'
 export const ShieldGlyph = defineGlyph('shield', <path d={SHIELD} />, { plane: <Plane d={SHIELD} /> })
+/** 权限 自动改文件: the shield's left half solid. */
+export const ShieldHalfGlyph = defineGlyph(
+  'shield-half',
+  <>
+    <path d={SHIELD} />
+    <path d="M8 1.75 L2.75 3.5 V7.75 C2.75 10.75 4.75 12.9 8 14.25 Z" fill="currentColor" />
+  </>,
+  { plane: <Plane d={SHIELD} />, cut: <Slit d="M8 1 V15" /> },
+)
+const STRIKE = 'M2.5 13.5 L13.5 2.5'
+/** 权限 比所选宽松: the shield struck through; shown only when the Harness reports a looser mode than the one chosen. */
+export const ShieldOffGlyph = defineGlyph(
+  'shield-off',
+  <>
+    <path d={SHIELD} />
+    <path d={STRIKE} />
+  </>,
+  { plane: <Plane d={SHIELD} />, cut: <Slit d={STRIKE} /> },
+)
+const SHIELD_HOOK = 'M6.5 6.25 A1.5 1.5 0 0 1 9.5 6.25 C9.5 7.2 8 7.2 8 8.5'
+/** 权限未知: a question in the shield, its dot solid. */
+export const ShieldUnknownGlyph = defineGlyph(
+  'shield-unknown',
+  <>
+    <path d={SHIELD} />
+    <path d={SHIELD_HOOK} />
+    <Dot x={7.25} y={9.75} w={1.5} h={1.5} />
+  </>,
+  {
+    plane: <Plane d={SHIELD} />,
+    cut: (
+      <>
+        <Slit d={SHIELD_HOOK} />
+        <Hole x={7.25} y={9.75} w={1.5} h={1.5} />
+      </>
+    ),
+  },
+)
 export const ShieldAlertGlyph = defineGlyph(
   'shield-alert',
   <>
@@ -479,17 +526,19 @@ export const LockGlyph = defineGlyph(
   },
 )
 
+const LID_SCREEN = 'M3.75 11 V4.25 A1 1 0 0 1 4.75 3.25 H11.25 A1 1 0 0 1 12.25 4.25 V11'
+/** 电脑: the screen stands on its base, with no gap that would make it a monitor on a line. */
 export const LaptopGlyph = defineGlyph(
   'laptop',
   <>
-    <rect x="3.25" y="3.25" width="9.5" height="7.25" rx="1" />
-    <path d="M1.25 12.75 H14.75" />
+    <path d={LID_SCREEN} />
+    <path d="M1.5 11.75 H14.5" />
   </>,
   {
     plane: (
       <>
-        <rect x="3.25" y="3.25" width="9.5" height="7.25" rx="1" fill="currentColor" />
-        <path d="M1.25 12.75 H14.75" />
+        <Plane d={`${LID_SCREEN} Z`} />
+        <path d="M1.5 11.75 H14.5" />
       </>
     ),
   },
@@ -587,11 +636,10 @@ export const ReasonGlyph = defineGlyph('reason', <path d="M2.75 4.25 H13.25 M2.7
 /** Sliders, for 设置 and 通用 (never a gear). */
 export const SettingsGlyph = defineGlyph(
   'settings',
+  // Two sliders: one solid knob and one tick, so the glyph keeps to a single solid part.
   <>
-    <path d="M2 4.25 H8.25 M12.25 4.25 H14 M2 8 H3.25 M7.25 8 H14 M2 11.75 H7.25 M11.25 11.75 H14" />
-    <Dot x={9} y={2.75} w={2.5} h={3} />
-    <Dot x={4} y={6.5} w={2.5} h={3} />
-    <Dot x={8} y={10.25} w={2.5} h={3} />
+    <path d="M2 5 H7.5 M12 5 H14 M2 11 H14 M5.75 9 V13" />
+    <Dot x={8.25} y={3.5} w={3} h={3} />
   </>,
 )
 
@@ -617,7 +665,7 @@ export const PluginsGlyph = defineGlyph(
 )
 
 const PINS = 'M6 1.75 V4 M10 1.75 V4 M6 12 V14.25 M10 12 V14.25 M1.75 6 H4 M1.75 10 H4 M12 6 H14.25 M12 10 H14.25'
-/** A model service: a chip, its core solid. */
+/** A model service: a chip, its core solid; at 12px it keeps four pins of the eight. */
 export const ModelGlyph = defineGlyph(
   'model',
   <>
@@ -634,6 +682,11 @@ export const ModelGlyph = defineGlyph(
     ),
     cut: <Hole x={6.5} y={6.5} w={3} h={3} />,
   },
+  <>
+    <rect x="3.75" y="3.75" width="8.5" height="8.5" rx="1" />
+    <Dot x={6.5} y={6.5} w={3} h={3} />
+    <path d="M8 1.5 V3.75 M8 12.25 V14.5 M1.5 8 H3.75 M12.25 8 H14.5" />
+  </>,
 )
 
 const CUBE = 'M8 1.75 L13.75 4.75 V11.25 L8 14.25 L2.25 11.25 V4.75 Z'
@@ -653,9 +706,10 @@ export const HarnessGlyph = defineGlyph(
 /** Workbench navigation and evidence, on the same 16 grid. */
 export const OverviewGlyph = defineGlyph(
   'overview',
+  // The three rows sit on 4.25 / 8 / 11.75, whole pixels at 1×.
   <>
-    <Dot x={2} y={3.25} w={2.75} h={2.75} />
-    <path d="M7 4.625 H14 M2 8.25 H4.75 M7 8.25 H14 M2 11.875 H4.75 M7 11.875 H11.5" />
+    <Dot x={2} y={3} w={2.5} h={2.5} />
+    <path d="M6.75 4.25 H14 M2 8 H4.5 M6.75 8 H14 M2 11.75 H4.5 M6.75 11.75 H11.5" />
   </>,
 )
 const WAITING_FLAG = 'M3.5 2.75 H12.75 L10.5 6.125 L12.75 9.5 H3.5'
@@ -674,23 +728,103 @@ export const WaitingGlyph = defineGlyph(
     ),
   },
 )
-const PR_BRANCH = (
+/** PR: both uprights on the grid lines the branch uses, the arrow half a unit larger; at 12px the arrow goes. */
+export const PullRequestGlyph = defineGlyph(
+  'pull-request',
   <>
-    <circle cx="4.5" cy="3.75" r="1.5" />
-    <path d="M4.5 5.25 V10.75" />
-    <circle cx="4.5" cy="12.25" r="1.5" />
-    <path d="M11.5 10.5 V6.25 A1.5 1.5 0 0 0 10 4.75 H6.75 M8.5 3 L6.75 4.75 L8.5 6.5" />
-    <Dot x={10.25} y={10.75} w={2.5} h={2.5} />
-  </>
+    <circle cx="4.25" cy="3.75" r="1.5" />
+    <path d="M4.25 5.25 V10.75" />
+    <circle cx="4.25" cy="12.25" r="1.5" />
+    <path d="M11.75 11 V6.25 A1.5 1.5 0 0 0 10.25 4.75 H7.5 M9.25 2.75 L7.25 4.75 L9.25 6.75" />
+    <Node x={11.75} y={12.25} />
+  </>,
+  undefined,
+  <>
+    <Node x={4.25} y={3.5} />
+    <Node x={4.25} y={12.5} />
+    <Node x={11.75} y={12.5} />
+    <path d="M4.25 4.5 V11.5 M11.75 11.5 V5.75 A1.5 1.5 0 0 0 10.25 4.25 H7.5" />
+  </>,
 )
-export const PullRequestGlyph = defineGlyph('pull-request', PR_BRANCH)
+/** 已合并: the trunk between its two nodes, and the merged head (solid) joining it at the middle. */
+export const MergedGlyph = defineGlyph(
+  'merged',
+  <>
+    <circle cx="4.25" cy="3.75" r="1.5" />
+    <circle cx="4.25" cy="12.25" r="1.5" />
+    <path d="M4.25 5.25 V10.75 M4.25 5.5 C4.25 8 6.5 8.75 10.5 8.75" />
+    <Node x={11.75} y={8.75} />
+  </>,
+  undefined,
+  <>
+    <Node x={4.25} y={3.5} />
+    <Node x={4.25} y={12.5} />
+    <Node x={11.75} y={8.75} />
+    <path d="M4.25 4.5 V11.5 M4.25 5 C4.25 8 6.5 8.75 10.75 8.75" />
+  </>,
+)
+const HOOK = 'M6 6.4 A2 2 0 0 1 10 6.4 C10 7.6 8 7.5 8 9.25'
+/** 结果未知: a question in the ring, with a hook large enough to survive 12px, where its dot grows to two units. */
 export const UnknownGlyph = defineGlyph(
   'unknown',
   <>
-    <circle cx="8" cy="8" r="5.75" />
-    <path d="M6.25 6.5 A1.75 1.75 0 1 1 8.75 8.1 C8.2 8.4 8 8.75 8 9.5" />
-    <Dot x={7.25} y={10.5} w={1.5} h={1.5} />
+    <Ring />
+    <path d={HOOK} />
+    <Dot x={7.25} y={10.25} w={1.5} h={1.5} />
   </>,
+  {
+    plane: <Disc />,
+    cut: (
+      <>
+        <Slit d={HOOK} />
+        <Hole x={7.25} y={10.25} w={1.5} h={1.5} />
+      </>
+    ),
+  },
+  <>
+    <Ring />
+    <path d="M6 6.4 A2 2 0 0 1 10 6.4 C10 7.5 8 7.4 8 8.75" />
+    <Dot x={7} y={9.75} w={2} h={2} />
+  </>,
+)
+const CROSS = 'M5.75 5.75 L10.25 10.25 M10.25 5.75 L5.75 10.25'
+/** 失败: a cross in the ring, for a failure alone; the alert ring stays for notices. */
+export const FailedGlyph = defineGlyph(
+  'failed',
+  <>
+    <Ring />
+    <path d={CROSS} />
+  </>,
+  { plane: <Disc />, cut: <Slit d={CROSS} /> },
+)
+/** 项目: the folder with its top band solid; 当前目录 keeps the plain folder, so the two never look alike in one row. */
+export const ProjectGlyph = defineGlyph(
+  'project',
+  <>
+    <path d={FOLDER} />
+    <path d="M2.75 7 V4.75 A1 1 0 0 1 3.75 3.75 H6.5 L8 5.25 H12.25 A1 1 0 0 1 13.25 6.25 V7 Z" fill="currentColor" />
+  </>,
+  { plane: <Plane d={FOLDER} />, cut: <Slit d="M1.5 8 H14.5" /> },
+)
+/** 我的 Agent: ( ·· ), the round brackets of the default avatar with the eyes a little low; at 12px the eyes widen. */
+export const FaceGlyph = defineGlyph(
+  'face',
+  <>
+    <path d="M5.5 2.75 C3.25 5.5 3.25 10.5 5.5 13.25 M10.5 2.75 C12.75 5.5 12.75 10.5 10.5 13.25" />
+    <Dot x={6} y={7.25} w={1.5} h={2.25} />
+    <Dot x={8.5} y={7.25} w={1.5} h={2.25} />
+  </>,
+  undefined,
+  <>
+    <path d="M5 2.5 C2.75 5.5 2.75 10.5 5 13.5 M11 2.5 C13.25 5.5 13.25 10.5 11 13.5" />
+    <Dot x={5.75} y={7} w={1.75} h={2.5} />
+    <Dot x={8.5} y={7} w={1.75} h={2.5} />
+  </>,
+)
+/** 附件: a paperclip, for an attachment that is not a picture. */
+export const ClipGlyph = defineGlyph(
+  'clip',
+  <path d="M12.75 7.5 L7.75 12.5 A2.6 2.6 0 0 1 4 8.75 L9 3.75 A1.75 1.75 0 0 1 11.5 6.25 L6.75 11" />,
 )
 const CLOCK_EARS = 'M2 4.25 L4.25 2 M14 4.25 L11.75 2'
 export const ScheduleGlyph = defineGlyph(
@@ -708,6 +842,11 @@ export const ScheduleGlyph = defineGlyph(
     ),
     cut: <Slit d="M8 6.25 V8.75 H10.25" />,
   },
+  // At 12px the two ears go: the face and its hands alone.
+  <>
+    <circle cx="8" cy="8" r="5.75" />
+    <path d="M8 4.75 V8 H10.75" />
+  </>,
 )
 
 /** Every Latch glyph by its name, for the gallery's sheet and the tests. */
@@ -715,8 +854,13 @@ export const LATCH_GLYPHS = {
   overview: OverviewGlyph,
   waiting: WaitingGlyph,
   'pull-request': PullRequestGlyph,
+  merged: MergedGlyph,
   schedule: ScheduleGlyph,
   unknown: UnknownGlyph,
+  failed: FailedGlyph,
+  project: ProjectGlyph,
+  face: FaceGlyph,
+  clip: ClipGlyph,
   alert: AlertGlyph,
   warning: WarningGlyph,
   info: InfoGlyph,
@@ -760,6 +904,9 @@ export const LATCH_GLYPHS = {
   commit: CommitGlyph,
   shield: ShieldGlyph,
   'shield-alert': ShieldAlertGlyph,
+  'shield-half': ShieldHalfGlyph,
+  'shield-off': ShieldOffGlyph,
+  'shield-unknown': ShieldUnknownGlyph,
   lock: LockGlyph,
   laptop: LaptopGlyph,
   devices: DevicesGlyph,
@@ -776,3 +923,6 @@ export const LATCH_GLYPHS = {
   model: ModelGlyph,
   harness: HarnessGlyph,
 } as const
+
+/** The glyphs that have their own drawing at 12px, by name. */
+export const SMALL_GLYPHS = ['branch', 'pull-request', 'merged', 'schedule', 'unknown', 'face', 'model'] as const
