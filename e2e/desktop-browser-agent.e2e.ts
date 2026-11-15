@@ -12,6 +12,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { openSession } from './helpers/layout.ts'
 
 const electronE2E = latchEnv(process.env, 'ELECTRON_E2E') === '1'
 const CAPTURES = 'test-results/desktop-browser-agent'
@@ -418,7 +419,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         context.setDefaultTimeout(20_000)
         const phone = await context.newPage()
         await enrollBrowser(phone, testHost, { name: `手机-${scheme}` })
-        await phone.locator(`#session-navigation [data-task-id="${sessionId}"]`).click()
+        await openSession(phone, sessionId)
         await phone
           .getByText(/^已工作/u)
           .first()
