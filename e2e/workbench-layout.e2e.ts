@@ -491,6 +491,33 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
               await capture(page, 'triage-delivery-empty', width, theme)
               await home.getByRole('button', { name: '等你处理 2', exact: true }).click()
             }
+            if (width === 768 && theme === 'light' && layout === 'overview') {
+              // 设置 takes the rail's column for its section list: nothing of the rail is painted there or in the focus order.
+              await generalSettings(page)
+              await settleShell(page)
+              expect(await page.locator('.workbench-tablet-rail').getAttribute('inert')).not.toBeNull()
+              const through = await page.evaluate(() => {
+                const list = document.querySelector('.settings-page .settings-nav-pane')!.getBoundingClientRect()
+                const rail = document.querySelector('.workbench-tablet-rail')!
+                return [rail, ...rail.querySelectorAll('*')]
+                  .filter(element => element.checkVisibility({ visibilityProperty: true, opacityProperty: true }))
+                  .filter(element => {
+                    const box = element.getBoundingClientRect()
+                    return (
+                      box.width > 0
+                      && box.height > 0
+                      && box.left < list.right - 0.5
+                      && box.right > list.left + 0.5
+                      && box.top < list.bottom - 0.5
+                      && box.bottom > list.top + 0.5
+                    )
+                  })
+                  .map(element => element.getAttribute('aria-label') ?? element.className.toString())
+              })
+              expect(through).toEqual([])
+              await closeSettings(page.locator('.settings-page'))
+              await openHome(page)
+            }
             if (width === 768 && theme === 'light' && layout === 'triage') {
               // 顶栏 has no session list over its home: with nothing open under it the key opens nothing unseen.
               await page.keyboard.press('Alt+b')

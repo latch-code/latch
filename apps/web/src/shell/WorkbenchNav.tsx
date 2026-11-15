@@ -27,7 +27,8 @@ export function TabletRail({ shell }: { shell: ShellState }) {
   const home = shellOverview(shell)
   const inAgents = spaces?.space === 'agents'
   return (
-    <nav className="workbench-tablet-rail" aria-label="工作台导航">
+    // Under a page the rail's column is the page's own list: nothing here is in the focus order then.
+    <nav className="workbench-tablet-rail" aria-label="工作台导航" inert={shell.route.entry !== 'sessions' || undefined}>
       <span className="workbench-rail-brand">
         <BrandMark size={24} />
       </span>

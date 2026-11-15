@@ -1216,6 +1216,19 @@
   .workbench-rail-spacer {
     flex: 1;
   }
+  /*
+   * A page (设置, 我的 Agent, 应用) takes the rail's column below the title row for its own list, on its own ground. The
+   * rail then keeps only its mark, in the title row as the lead does on wider windows: its buttons and its ground would
+   * show through the list.
+   */
+  .app-shell:not([data-entry='sessions']) .workbench-tablet-rail {
+    grid-row: 1 / 2;
+    overflow: hidden;
+    border-right-color: transparent;
+  }
+  .app-shell:not([data-entry='sessions']) .workbench-tablet-rail > :not(.workbench-rail-brand) {
+    visibility: hidden;
+  }
   .app-shell[data-workbench-layout='overview'] .workspace .topbar {
     padding-right: 110px;
   }
