@@ -1,7 +1,7 @@
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { DeviceScope, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
@@ -360,19 +360,37 @@ describe('the shell', () => {
 
   it('lets a sheet be dragged narrower, until it fits beside the conversation', async () => {
     const page = await open(1200, 850, '壳层面板拖动')
+    await allData(page)
+    await writeFile(resolve(host.workspaceRoot, '验收文档.txt'), '面板验收文件\n')
     const { sessionId } = await host.host.bridge.createTask({ prompt: '面板拖动的会话', requestId: randomUUID(), mode: 'agent' })
     await page.locator(`[data-task-id="${sessionId}"]`).first().click()
     await page.locator('.app-shell[data-inspector="open"]').waitFor()
     await settleShell(page)
     // The default summary is a column; make it wider through its real handle before testing a sheet becoming a column.
     const initialHandle = page.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
-    await initialHandle.click({ trial: true })
+    const divider = () => page.locator('.inspector-column-inner').evaluate(element => getComputedStyle(element).borderInlineStartWidth)
+    const highlight = () => initialHandle.evaluate(element => getComputedStyle(element, '::after').opacity)
+    expect(await divider()).toBe('1px')
+    await expect.poll(highlight).toBe('0')
+    await initialHandle.hover()
+    await expect.poll(highlight).toBe('1')
+    await page.mouse.move(0, 0)
+    await expect.poll(highlight).toBe('0')
     expect(await initialHandle.getAttribute('aria-valuenow')).toBe('400')
     const initialEdge = (await initialHandle.boundingBox())!
     expect(Math.round(initialEdge.x + initialEdge.width / 2)).toBe(800)
     const initialY = initialEdge.y + initialEdge.height / 2
+    await initialHandle.focus()
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => initialHandle.getAttribute('aria-valuenow')).toBe('392')
+    await expect.poll(highlight).toBe('1')
+    await page.keyboard.press('ArrowLeft')
+    await expect.poll(() => initialHandle.getAttribute('aria-valuenow')).toBe('400')
+    await settleShell(page)
     await page.mouse.move(initialEdge.x + initialEdge.width / 2, initialY)
     await page.mouse.down()
+    expect(await initialHandle.getAttribute('data-dragging')).not.toBeNull()
+    await expect.poll(highlight).toBe('1')
     await page.mouse.move(1200 - 520, initialY, { steps: 4 })
     await page.mouse.up()
     await settleShell(page)
@@ -383,6 +401,7 @@ describe('the shell', () => {
     }).toEqual({ width: '520', placement: 'sheet', sidebar: '264' })
     await page.locator('.app-shell[data-inspector="sheet"]').waitFor()
     await settleShell(page)
+    expect(await divider()).toBe('0px')
     const edge = page.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
     const handle = await edge.boundingBox()
     expect(handle).not.toBeNull()
@@ -395,6 +414,26 @@ describe('the shell', () => {
     await page.mouse.up()
     await page.locator('.app-shell[data-inspector="open"]').waitFor()
     expect((await box(page, '.inspector-column')).width).toBeGreaterThanOrEqual(399)
+    const output = 'test-results/session-title-icon'
+    await mkdir(output, { recursive: true })
+    await page.mouse.move(0, 0)
+    for (const layout of ['overview', 'triage'] as const) {
+      await switchLayout(page, layout)
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme })
+        expect(await divider()).toBe('1px')
+        await page.screenshot({ path: `${output}/pane-${layout}-${colorScheme}.png`, animations: 'disabled' })
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.getByRole('tab', { name: '文件', exact: true }).click()
+    await page.getByRole('treeitem', { name: '验收文档.txt', exact: true }).waitFor()
+    await page.locator('.app-shell[data-inspector="open"]').waitFor()
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme })
+      expect(await divider()).toBe('1px')
+      await page.screenshot({ path: `${output}/pane-files-1440-${colorScheme}.png`, animations: 'disabled' })
+    }
     await page.context().close()
   })
 

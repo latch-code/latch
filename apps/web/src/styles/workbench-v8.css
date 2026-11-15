@@ -35,7 +35,10 @@
 .app-shell[data-workbench-layout='triage'] .inspector-column-inner {
   border-radius: 0;
   box-shadow: none;
-  border-left: 1px solid var(--line);
+  border-inline-start: 1px solid var(--line);
+}
+.app-shell[data-inspector='open'] .inspector-column-inner {
+  border-inline-start: 1px solid var(--line-strong);
 }
 .app-shell::before {
   display: none;
