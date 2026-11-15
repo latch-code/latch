@@ -1,6 +1,6 @@
 import { escapeSecurityText, type TaskSummary } from '@latch/protocol'
 import { Button, ChevronRightGlyph, FolderGlyph, Icon, StatusWord } from '@latch/ui'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { harnessName } from '../composerChoice.ts'
 import { hostNow } from '../core/hostClock.ts'
 import { APPROVAL_COPY } from '../core/securityCopy.ts'
@@ -11,14 +11,20 @@ import type { ShellState } from './useShellLayout.tsx'
 
 const PREVIEW_COUNT = 5
 
+export interface WorkbenchReviewHandle {
+  focusDecision(id: string, focusOverview: () => void): void
+}
+
 export function WorkbenchReviewQueue({
   tasks,
   shell,
   layout,
+  ref,
 }: {
   tasks: readonly TaskSummary[]
   shell: ShellState
   layout: 'overview' | 'triage'
+  ref?: Ref<WorkbenchReviewHandle>
 }) {
   const [selection, setSelection] = useState<{ id: string; position: number }>()
   const [all, setAll] = useState(false)
@@ -40,6 +46,28 @@ export function WorkbenchReviewQueue({
         ? [...tasks.slice(0, PREVIEW_COUNT - 1), active]
         : tasks.slice(0, PREVIEW_COUNT)
   const visibleIds = visible.map(task => task.id).join('\n')
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusDecision(id, focusOverview) {
+        const position = tasks.findIndex(task => task.id === id)
+        if (position >= 0) setSelection({ id, position })
+        requestAnimationFrame(() => {
+          const preview = detail.current
+          if (!preview || preview.closest('[inert]') || !preview.checkVisibility({ visibilityProperty: true })) {
+            focusOverview()
+            return
+          }
+          const card = preview.querySelector<HTMLElement>(`[data-work-session="${CSS.escape(id)}"]`)
+          const target = card?.querySelector<HTMLElement>('.approval-panel, .question-card') ?? card ?? preview
+          if (!target.hasAttribute('tabindex')) target.tabIndex = -1
+          target.scrollIntoView({ block: 'nearest' })
+          target.focus({ preventScroll: true })
+        })
+      },
+    }),
+    [tasks],
+  )
 
   useEffect(() => {
     if (selection && activeId && (selection.id !== activeId || selection.position !== index))
@@ -74,7 +102,14 @@ export function WorkbenchReviewQueue({
   return (
     <div className="work-overview-review" data-multiple={multiple ? '' : undefined}>
       <div className="work-overview-review-layout">
-        <div ref={detail} className="work-overview-review-detail" id={detailId} tabIndex={-1}>
+        <div
+          ref={detail}
+          className="work-overview-review-detail"
+          id={detailId}
+          role="region"
+          aria-label="当前请求"
+          data-work-decision-navigation=""
+          tabIndex={-1}>
           <WorkbenchDecision key={activeId} task={active} shell={shell} emphasis firstKeys={layout === 'triage' && index === 0} />
         </div>
         {multiple && (

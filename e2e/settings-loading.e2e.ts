@@ -6,6 +6,7 @@ import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { closeSettings, openEntry } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { returnFromHomeFocus } from './helpers/workbench.ts'
 
 describe('optional settings chunk lifecycle', () => {
   let host: TestHost
@@ -34,6 +35,7 @@ describe('optional settings chunk lifecycle', () => {
       const device = host.host.security.devices.list().find(item => item.name === `加载设置 ${width}`)!
       const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
       await draft.fill('Retain this unsent draft while settings loads')
+      await returnFromHomeFocus(page)
       const resources = () =>
         page.evaluate(() =>
           performance

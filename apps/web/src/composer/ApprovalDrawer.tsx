@@ -206,15 +206,16 @@ export function approvalKeyCaps(input: {
  * Where focus is, for the key caps: a cap is drawn only on a button its key presses at this moment. Read again whenever
  * focus moves or text is typed, from the same tests the key handlers use, so a cap and its key cannot disagree.
  */
-function useKeyPlaces(card: RefObject<HTMLElement | null>): { inCard: boolean; escapeRefuses: boolean; numeric: boolean } {
+function useKeyPlaces(card: RefObject<HTMLElement | null>, armed: boolean): { inCard: boolean; escapeRefuses: boolean; numeric: boolean } {
   const [places, setPlaces] = useState({ inCard: false, escapeRefuses: false, numeric: false })
   useEffect(() => {
     const read = () => {
       const active = document.activeElement
-      const inCard = card.current?.contains(active) === true && cardTakesKeys(card.current, active) && takesKeysAt(active)
+      const inCard = armed && card.current?.contains(active) === true && cardTakesKeys(card.current, active) && takesKeysAt(active)
       const escapeRefuses = escapeRefusesAt(active)
       const numeric =
-        cardTakesKeys(card.current, active)
+        armed
+        && cardTakesKeys(card.current, active)
         && !(
           active instanceof Element
           && active.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], .ui-popover')
@@ -231,7 +232,7 @@ function useKeyPlaces(card: RefObject<HTMLElement | null>): { inCard: boolean; e
     return () => {
       for (const name of events) document.removeEventListener(name, read, true)
     }
-  }, [card])
+  }, [armed, card])
   return places
 }
 
@@ -355,7 +356,7 @@ function ApprovalPanel({
   const phone = useViewport() === 'phone'
   const armed = useArmed(approval.id)
   const card = useRef<HTMLElement>(null)
-  const places = useKeyPlaces(card)
+  const places = useKeyPlaces(card, armed)
   const tool = message?.tool ?? approval.tool
   const toolName = message?.toolName ?? approval.toolName
   // The tool's own title and ID both remain available to the approver.

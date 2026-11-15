@@ -11,7 +11,7 @@ import { installFakeGh } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
-import { switchLayout } from './helpers/workbench.ts'
+import { switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
 
 const OUT = 'test-results/workbench-evidence'
 const EDIT = '修正设置页的保存行为'
@@ -253,6 +253,7 @@ it('finds real evidence on the home, decides there, and continues the original s
     await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('1')
     await page.keyboard.press('1')
     expect((await owner.json<TaskDetail>(`tasks/${sessions[2]}`)).questions).toHaveLength(1)
+    await returnFromHomeFocus(page)
     await expect.poll(() => question.getByRole('button', { name: /先做预览/u }).isDisabled()).toBe(false)
     await reachable(question.getByRole('button', { name: /先做预览/u }))
     await question.getByRole('button', { name: /先做预览/u }).focus()

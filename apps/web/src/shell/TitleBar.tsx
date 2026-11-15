@@ -45,6 +45,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
     <div
       ref={titlebar}
       className="titlebar"
+      inert={shell.homeFocused || undefined}
       data-lights={lights ? '' : undefined}
       style={lightsStyle(desktop)}
       data-shut={shut ? '' : undefined}

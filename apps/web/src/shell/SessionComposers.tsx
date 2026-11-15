@@ -198,7 +198,15 @@ function useDraftHarnessCommands(shell: ShellState, enabled: boolean) {
 }
 
 /** The input of the open session, or the home's, which starts one. */
-export function SessionComposer({ shell: base, home = false }: { shell: ShellState; home?: boolean }) {
+export function SessionComposer({
+  shell: base,
+  home = false,
+  homeFocus,
+}: {
+  shell: ShellState
+  home?: boolean
+  homeFocus?: { engage: () => void; close?: (() => void) | undefined; onSend?: (() => void) | undefined }
+}) {
   const shell = home
     ? { ...base, ...base.homeComposerState, composerRef: base.homeComposerRef }
     : base.inputTarget === 'new'
@@ -527,6 +535,8 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
     <Composer
       showSlashButton={speaker === undefined}
       textareaRef={composerRef}
+      onEngage={homeFocus?.engage}
+      closeFocus={homeFocus?.close}
       lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
       fileMentions={mentionChoice}
@@ -609,7 +619,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       drawers={drawers}
       stepBack={approvals.length > 0 || answersQuestion}
       status={home ? undefined : status}
-      locationPosition={base.preferences.workbenchLayout === 'triage' ? 'toolbar' : 'top'}
+      locationPosition={base.preferences.workbenchLayout === 'triage' && !homeFocus?.close ? 'toolbar' : 'top'}
       location={
         home ? (
           <div className="home-composer-location">
@@ -686,6 +696,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
         <InlineConfirm active={submission.sending || (selectedId !== null && configBusy.has(selectedId))} className="composer-confirm" />
       }
       onSubmit={() => {
+        homeFocus?.onSend?.()
         void sendDraft()
       }}
       sendKey={preferences.sendKey}

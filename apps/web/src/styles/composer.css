@@ -353,7 +353,11 @@
 .composer-chips::-webkit-scrollbar {
   display: none;
 }
+.composer-inline-controls {
+  display: contents;
+}
 .composer-chips > *,
+.composer-inline-controls > *,
 .composer-chips .home-composer-location > * {
   flex: 0 0 auto;
 }

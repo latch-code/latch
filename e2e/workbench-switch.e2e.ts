@@ -8,7 +8,7 @@ import { expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { LAYOUT_NAMES, layoutSwitch } from './helpers/workbench.ts'
+import { LAYOUT_NAMES, layoutSwitch, returnFromHomeFocus } from './helpers/workbench.ts'
 import { measureWorkbenchSwitch } from './helpers/workbenchSwitch.ts'
 
 const OUT = 'test-results/workbench-switch-populated'
@@ -126,6 +126,7 @@ it('switches the two layouts and spaces without replacing the sender, losing inp
       .setInputFiles({ name: 'switch.txt', mimeType: 'text/plain', buffer: Buffer.from('retained attachment') })
     await expect.poll(() => home.getByRole('button', { name: 'switch.txt', exact: true }).isEnabled()).toBe(true)
     const homeSender = await newInput.elementHandle()
+    await returnFromHomeFocus(page)
     // A layout change is this device's own; nothing that starts, answers or stops work may leave during one.
     const writes: string[] = []
     page.on('request', request => {

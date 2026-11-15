@@ -47,6 +47,7 @@
 @import './workbench-v8.css' layer(app);
 @import './workbench-sessions.css' layer(app);
 @import './work-surface.css' layer(app);
+@import './home-focus.css' layer(app);
 @import './auth.css' layer(security);
 @import './confirm.css' layer(security);
 @import './security-approval.css' layer(security);

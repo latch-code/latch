@@ -32,6 +32,7 @@ export function SegmentedControl<T extends string>({
   onValueChange,
   size = 'sm',
   disabled = false,
+  inert,
   className,
 }: {
   label: string
@@ -45,6 +46,7 @@ export function SegmentedControl<T extends string>({
    */
   size?: 'xs' | 'sm' | 'md'
   disabled?: boolean
+  inert?: boolean | undefined
   className?: string
 }) {
   const buttons = useRef<Array<HTMLButtonElement | null>>([])
@@ -67,6 +69,7 @@ export function SegmentedControl<T extends string>({
       role="radiogroup"
       aria-label={label}
       aria-disabled={disabled || undefined}
+      inert={inert || undefined}
       data-size={size}
       onKeyDown={keydown}>
       {options.map((option, index) => (

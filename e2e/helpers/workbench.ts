@@ -28,3 +28,9 @@ export async function switchLayout(page: Page, layout: WorkbenchLayout): Promise
 export function homeInput(page: Page): Locator {
   return page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
 }
+
+/** Return to the same workbench after editing its draft. */
+export async function returnFromHomeFocus(page: Page): Promise<void> {
+  const exit = page.getByRole('button', { name: '退出专注', exact: true })
+  if (await exit.isVisible()) await exit.click()
+}

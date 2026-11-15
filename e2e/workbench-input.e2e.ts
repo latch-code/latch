@@ -6,7 +6,7 @@ import { expect, it } from 'vitest'
 import type { Device, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { switchLayout } from './helpers/workbench.ts'
+import { switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
 import { startTestHost } from './helpers/host.ts'
 
 async function choose(page: Page, title: string) {
@@ -123,6 +123,7 @@ it.each([
         .setInputFiles({ name: 'home.txt', mimeType: 'text/plain', buffer: Buffer.from('home attachment') })
       await expect.poll(() => home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       expect(await home.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
+      await returnFromHomeFocus(page)
       // 新建会话 is the home with its input focused: the reading session stays open under it, so its unsaved edit is
       // not asked about, and the home keeps its route, draft and attachment target.
       await home.getByRole('button', { name: 'home.txt', exact: true }).focus()
@@ -154,6 +155,7 @@ it.each([
       expect(await home.locator('.composer-line .send-button').getAttribute('aria-label')).toBe('发送')
       expect(await home.isVisible()).toBe(true)
       await page.setViewportSize({ width: 1440, height: 1000 })
+      await returnFromHomeFocus(page)
       // The session under the home is still the current row; it leads back.
       await page.locator(`.sidebar [data-task-id="${sessionId}"]`).filter({ visible: true }).click()
       expect(await input.inputValue()).toBe('只属于原会话的草稿')
@@ -288,6 +290,7 @@ it('retries a failed session through the one sender while preserving the home dr
       .getByLabel('选择附件', { exact: true })
       .setInputFiles({ name: 'keep-home.txt', mimeType: 'text/plain', buffer: Buffer.from('home only') })
     await expect.poll(() => home.getByRole('button', { name: 'keep-home.txt', exact: true }).isEnabled()).toBe(true)
+    await returnFromHomeFocus(page)
     const retry = home.locator(`[data-work-session="${sessionId}"]`).getByRole('button', { name: '重试', exact: true })
     await retry.waitFor()
     await retry.click()

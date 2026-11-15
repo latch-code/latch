@@ -10,7 +10,7 @@ import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSession, reachable } from './helpers/layout.ts'
 import { motions, tokens } from './helpers/motion.ts'
-import { homeInput, switchLayout } from './helpers/workbench.ts'
+import { homeInput, switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
 
 /**
  * A phone stacks its pages: the session list is the root, a session's page is pushed over it and slides back, and a new
@@ -86,6 +86,7 @@ describe('the phone stack', () => {
           await home.waitFor()
           const input = home.getByRole('textbox', { name: '新会话消息', exact: true })
           await input.fill('首页尚未发送的草稿')
+          await returnFromHomeFocus(page)
           const before = (await local.json<{ tasks: unknown[] }>('snapshot')).tasks.length
           const request = home.locator(`[data-work-session="${sessions[1]}"]`)
           await request.locator('.work-decision-session').click()

@@ -113,7 +113,19 @@ function focusNextFrame(target: RefObject<HTMLElement | null>) {
 }
 
 /** Everything the signed-in shell holds beside the open session: its columns, its pages, its keys and its lists. */
-export function useShellLayout({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
+export function useShellLayout({
+  harness,
+  snapshot,
+  homeFocus = false,
+  onHomeShortcut,
+  onOpenHomeFiles,
+}: {
+  harness: Harness
+  snapshot: AppSnapshot
+  homeFocus?: boolean
+  onHomeShortcut?: () => void
+  onOpenHomeFiles?: () => void
+}) {
   const { selectedId, refresh, resync, connection } = harness
   const viewport = useViewport()
   const phone = viewport === 'phone'
@@ -186,6 +198,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     },
   })
   parkInput.current = session.parkInputDraft
+  const homeFocused = homeFocus && route.entry === 'sessions' && route.overview === true && session.homeComposerState.gate.kind === 'open'
   const {
     openNotified,
     archivedLast,
@@ -544,14 +557,14 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         || (!!summary && preferences.rightPanel.open && (infoPage || (hasRememberedSurface && placement.kind === 'column'))))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
   const drawer = useDrawer({
-    enabled: drawerMode,
+    enabled: drawerMode && !homeFocused,
     navigation,
     inertWhenOpen: [
       { ref: main, base: route.entry !== 'sessions' || route.overview === true || route.allSessions === true },
-      { ref: titlebar },
-      { ref: terminalDock, base: !terminalOpen },
+      { ref: titlebar, base: homeFocused },
+      { ref: terminalDock, base: !terminalOpen || homeFocused },
     ],
-    shut: sidebarCollapsed,
+    shut: sidebarCollapsed || homeFocused,
   })
   /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
   const focusAfterToggle = useRef<{ target: RefObject<HTMLElement | null>; shut: boolean } | null>(null)
@@ -589,6 +602,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
           || target.harnessId !== draftFileContext.harnessId
         )
           return
+        onOpenHomeFiles?.()
         draftFileTabs.open(target)
         setDraftFilesOpen(true)
         return
@@ -1263,6 +1277,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     const typing = focused?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') != null
     const action = workbenchShortcut({ ...stroke(event), typing }, currentShell() !== null)
     if (!action) return
+    if (homeFocused && (action === 'layout' || action === 'sidebar' || action === 'side-panel' || action === 'terminal')) return
     const dialogs = document.querySelectorAll('dialog[open]')
     const only = dialogs.length === 1 ? dialogs[0]! : null
     // An open dialog keeps the keys, but for the one key of what it is: ⌘/ closes the shortcuts it opened.
@@ -1348,7 +1363,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
     if (action === 'new') {
       if (space === 'agents') delegate()
-      else startNew()
+      else if (routeRef.current.entry === 'sessions' && routeRef.current.overview) {
+        drawer.setOpen(false)
+        onHomeShortcut?.()
+        if (!homeComposerRef.current?.closest('.composer')?.querySelector(':popover-open:not([role="tooltip"])'))
+          focusNextFrame(homeComposerRef)
+      } else startNewDraft(undefined, onHomeShortcut)
       return
     }
     if (action === 'sidebar') {
@@ -1583,6 +1603,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const browseFiles = () => {
     if (route.overview) {
       if (canBrowseDraftFiles) {
+        onOpenHomeFiles?.()
         draftFileTabs.select(undefined)
         setDraftFilesOpen(true)
       }
@@ -1710,6 +1731,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     ...session,
     folding,
     route,
+    homeFocused,
     setRoute,
     entries,
     goEntry,

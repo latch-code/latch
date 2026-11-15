@@ -375,13 +375,22 @@
 .home-composer-location .project-picker {
   width: auto;
 }
-.composer-toolbar > .home-composer-location {
-  padding: 0;
-  margin-right: auto;
-  flex: 1 1 auto;
+.workbench-home-composer .composer[data-location-position='toolbar'] {
+  display: grid;
+  grid-template:
+    'fields fields' auto
+    'location actions' auto / minmax(0, 1fr) minmax(0, max-content);
 }
-.composer-toolbar:has(> .home-composer-location) > .composer-end {
-  margin-left: 0;
+.workbench-home-composer .composer[data-location-position='toolbar'] > .home-composer-location {
+  grid-area: location;
+  padding: 0 0 var(--sp-12) var(--sp-12);
+}
+.workbench-home-composer .composer[data-location-position='toolbar'] > .composer-home-fields {
+  grid-area: fields;
+  min-width: 0;
+}
+.workbench-home-composer .composer[data-location-position='toolbar'] > .composer-toolbar {
+  grid-area: actions;
 }
 .workbench-home-composer .composer-input {
   padding-top: var(--sp-8);
@@ -1412,8 +1421,11 @@
   .workbench-nav .space-switch {
     width: 244px;
   }
-  .composer-toolbar > .home-composer-location {
-    flex-basis: 100%;
+  .workbench-home-composer .composer[data-location-position='toolbar'] {
+    grid-template: 'fields' 'location' 'actions' / minmax(0, 1fr);
+  }
+  .workbench-home-composer .composer[data-location-position='toolbar'] > .home-composer-location {
+    padding-block-end: var(--sp-4);
   }
 }
 @media (max-width: 767.98px) {
@@ -1447,10 +1459,10 @@
     margin: 0;
     padding: 0;
   }
-  .code-home > .code-home-input > .workbench-home-composer {
+  .code-home > .code-home-input .workbench-home-composer {
     position: static;
   }
-  .code-home-input > .workbench-home-demo {
+  .code-home-input .workbench-home-demo {
     margin: var(--sp-8) var(--sp-12);
   }
   :is(.workbench-home, .code-home-queue) > .work-overview {

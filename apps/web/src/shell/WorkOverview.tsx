@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
 import {
   Button,
@@ -30,7 +30,7 @@ import { runClock, runElapsed } from '../conversation.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
 import { recentCodeWork, workGroups, workStatus, type WorkGroupId } from './workOverview.ts'
-import { WorkbenchReviewQueue } from './WorkbenchReviewQueue.tsx'
+import { WorkbenchReviewQueue, type WorkbenchReviewHandle } from './WorkbenchReviewQueue.tsx'
 import {
   deliveryCheckSummary,
   deliverySessions,
@@ -41,6 +41,10 @@ import {
 import type { ShellState } from './useShellLayout.tsx'
 
 const GROUP_ICONS = { attention: WaitingGlyph, running: RunningGlyph, delivery: PullRequestGlyph }
+
+export interface WorkOverviewHandle {
+  focusAttention(id: string): void
+}
 
 /** `overview`: name and time, then the activity with the project at the end. `triage` adds a line for project and computer. */
 function WorkRunning({
@@ -219,6 +223,7 @@ export function WorkOverview({
   cancelling,
   evidence,
   shell,
+  ref,
 }: {
   snapshot: AppSnapshot
   layout: 'overview' | 'triage'
@@ -233,12 +238,31 @@ export function WorkOverview({
   cancelling?: ReadonlySet<string>
   evidence?: DeliveryRead
   shell?: ShellState
+  ref?: Ref<WorkOverviewHandle>
 }) {
   const delivered = deliverySessions(snapshot.tasks, evidence?.entries ?? new Map())
   const groups = workGroups(snapshot.tasks, cancelling, delivered)
   const codeHome = !compact && shell !== undefined
   const recent = codeHome ? recentCodeWork(snapshot.tasks, groups) : []
   const [lane, setLane] = useState<WorkGroupId>('attention')
+  const overview = useRef<HTMLElement>(null)
+  const review = useRef<WorkbenchReviewHandle>(null)
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusAttention(id) {
+        setLane('attention')
+        const focusOverview = () => {
+          const region = overview.current
+          if (!region || region.closest('[inert]')) return
+          region.focus({ preventScroll: true })
+        }
+        if (review.current) review.current.focusDecision(id, focusOverview)
+        else requestAnimationFrame(focusOverview)
+      },
+    }),
+    [],
+  )
   const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<WorkGroupId>>(new Set())
   const connected = connection === 'connected'
   const deliveryNotice =
@@ -256,7 +280,7 @@ export function WorkOverview({
   const allEmpty = !compact && groups.every(group => group.tasks.length === 0) && !deliveryPartial && !evidence?.error
   if (!compact && !snapshot.tasks.some(task => !task.archived && spaceOf(task) === 'code'))
     return (
-      <section className="workbench-empty" aria-label="工作总览">
+      <section ref={overview} className="workbench-empty" aria-label="工作总览" data-work-decision-navigation="" tabIndex={-1}>
         <h2>还没有会话</h2>
         {shell && (
           <div className="workbench-empty-actions">
@@ -272,7 +296,10 @@ export function WorkOverview({
     )
   return (
     <section
+      ref={ref ? overview : undefined}
       className="work-overview"
+      data-work-decision-navigation={ref ? '' : undefined}
+      tabIndex={ref ? -1 : undefined}
       data-layout={layout}
       data-compact={compact ? '' : undefined}
       data-code-work={codeHome ? '' : undefined}
@@ -337,7 +364,7 @@ export function WorkOverview({
                 )}
               </p>
             ) : !compact && group.id === 'attention' && shell ? (
-              <WorkbenchReviewQueue tasks={group.tasks} shell={shell} layout={layout} />
+              <WorkbenchReviewQueue ref={review} tasks={group.tasks} shell={shell} layout={layout} />
             ) : (
               <ul className="work-overview-list">
                 {(compact || expandedGroups.has(group.id) ? group.tasks : group.tasks.slice(0, group.id === 'delivery' ? 2 : 5)).map(
