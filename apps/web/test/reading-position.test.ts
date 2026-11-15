@@ -53,6 +53,22 @@ it('waits for detail readiness before restoring or following content', () => {
   expect(f.geometry.top).toBe(950)
 })
 
+it('follows same-session growth after the observed layout', () => {
+  const f = fixture()
+  const measure = vi.spyOn(f.viewport, 'measure')
+  f.controller.sync('a', true, f.viewport, true)
+  expect(f.geometry.top).toBe(800)
+  measure.mockClear()
+  f.geometry.extent = 1150
+  f.controller.sync('a', true, f.viewport, true)
+  expect(measure).not.toHaveBeenCalled()
+  f.controller.layout(f.viewport)
+  expect(f.geometry.top).toBe(950)
+  f.geometry.extent = 650
+  f.controller.sync('b', true, f.viewport, true)
+  expect(f.geometry.top).toBe(450)
+})
+
 it('releases follow on upward reader intent and does not follow new output while reading', () => {
   const f = fixture()
   f.controller.sync('a', true, f.viewport)
@@ -72,9 +88,11 @@ it('preserves the visible message offset when rows above it grow', () => {
   f.controller.input(-1, f.viewport)
   f.userScroll(530)
   f.settle()
-  for (const row of f.rows) if (row.top >= 300) row.top += 80
-  f.geometry.extent += 80
-  f.controller.layout(f.viewport)
+  // A change above the anchor can be balanced by a change below it, with no resize notification.
+  f.rows[2].height += 80
+  for (const row of f.rows) if (row.top >= 300 && row.top <= 800) row.top += 80
+  f.rows[8].height -= 80
+  f.controller.sync('a', true, f.viewport, true)
   expect(f.geometry.top).toBe(610)
   expect(f.viewport.anchor()).toEqual({ messageId: 'message-5', offset: -30 })
   f.controller.scroll(f.viewport)

@@ -64,7 +64,8 @@ export class ReadingPositionController {
     return this.pointerHeld || this.touchHeld || this.now() < this.inputUntil
   }
 
-  sync(sessionId: string | null, ready: boolean, viewport: ReadingViewport | null): void {
+  sync(sessionId: string | null, ready: boolean, viewport: ReadingViewport | null, observesSize = false): void {
+    const layoutNow = !observesSize || !this.following || sessionId !== this.sessionId || ready !== this.ready
     if (sessionId !== this.sessionId) {
       this.sessionId = sessionId
       this.previous = null
@@ -80,7 +81,7 @@ export class ReadingPositionController {
       this.report(this.position?.mode !== 'read')
     }
     this.ready = ready
-    if (viewport) this.layout(viewport)
+    if (viewport && layoutNow) this.layout(viewport)
     this.settleRequest(viewport)
   }
 
@@ -263,6 +264,7 @@ export function useReadingPosition({
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const observedSize = useRef<{ container: HTMLDivElement; content: HTMLDivElement } | null>(null)
   const [isFollowing, setFollowing] = useState(true)
   const controllerRef = useRef<ReadingPositionController | null>(null)
   if (controllerRef.current === null) controllerRef.current = new ReadingPositionController(setFollowing)
@@ -335,7 +337,12 @@ export function useReadingPosition({
   }, [])
 
   useLayoutEffect(() => {
-    controller.sync(sessionId, ready, containerRef.current && contentRef.current ? viewport : null)
+    const container = containerRef.current
+    const content = contentRef.current
+    const observed = observedSize.current
+    // Only the already observed viewport can follow after browser layout. Restoring a reader still applies at commit.
+    const observesSize = observed !== null && observed.container === container && observed.content === content
+    controller.sync(sessionId, ready, container && content ? viewport : null, observesSize)
   }, [controller, sessionId, ready, contentVersion, viewport])
 
   useEffect(() => {
@@ -344,15 +351,24 @@ export function useReadingPosition({
     if (!container || !content || typeof ResizeObserver === 'undefined') return
     let frame: number | null = null
     const observer = new ResizeObserver(() => {
+      if (containerRef.current !== container || contentRef.current !== content) return
+      if (controller.isFollowing) {
+        // Geometry is current and the scroll write does not resize either box. Follow before this paint.
+        controller.layout(viewport)
+        return
+      }
+      // Restoring an anchor may draw hidden turns and resize the content.
       if (frame !== null) return
       frame = requestAnimationFrame(() => {
         frame = null
-        controller.layout(viewport)
+        if (containerRef.current === container && contentRef.current === content && !controller.isFollowing) controller.layout(viewport)
       })
     })
     observer.observe(container)
-    observer.observe(content)
+    observer.observe(content, { box: 'border-box' })
+    observedSize.current = { container, content }
     return () => {
+      observedSize.current = null
       observer.disconnect()
       if (frame !== null) cancelAnimationFrame(frame)
     }

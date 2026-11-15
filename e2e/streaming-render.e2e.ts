@@ -809,6 +809,49 @@ describe('streaming render', () => {
     await expect.poll(() => status.textContent()).toBe('1/1')
   })
 
+  it('follows each observed growth of the live reply before paint', async () => {
+    await open(390, 844)
+    await show(
+      detail([...prose(30, 5), { id: 'user-live', role: 'user', text: '继续' }], {
+        running: true,
+        liveText: '正在回复',
+        liveId: 'reply-live',
+      }),
+    )
+    const transcript = page.locator('.transcript')
+    await expect
+      .poll(() => transcript.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop))
+      .toBeLessThanOrEqual(2)
+    const paintGaps = await transcript.evaluate(
+      element =>
+        new Promise<number[]>(done => {
+          const content = element.querySelector('.transcript-content')!
+          let extent = element.scrollHeight
+          const gaps: number[] = []
+          const grow = () => window.appendLive(`\n\n第 ${gaps.length + 1} 段回复增加两行。先看已有证据，再把差异说清楚。`)
+          const finished = () => {
+            clearTimeout(timeout)
+            observer.disconnect()
+            done(gaps)
+          }
+          // The hook already observes this box. Sample each actual resize in the same notification, before the next paint.
+          const observer = new ResizeObserver(() => {
+            const next = element.scrollHeight
+            if (next === extent) return
+            extent = next
+            gaps.push(next - element.clientHeight - element.scrollTop)
+            if (gaps.length >= 6) finished()
+            else requestAnimationFrame(grow)
+          })
+          const timeout = setTimeout(finished, 5000)
+          observer.observe(content, { box: 'border-box' })
+          requestAnimationFrame(grow)
+        }),
+    )
+    expect(paintGaps).toHaveLength(6)
+    expect(Math.max(...paintGaps.map(Math.abs))).toBeLessThanOrEqual(2)
+  })
+
   it('holds the reader’s place above a stream, and jumps back to the latest', async () => {
     await open()
     const past = history(30)
