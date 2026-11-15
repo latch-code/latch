@@ -1209,6 +1209,28 @@ describe('streaming render', () => {
     })
   })
 
+  it('only reads message rectangles in visible turns when the reader starts scrolling up', async () => {
+    await open()
+    await show(detail(prose(300, 10)))
+    await page.locator('[data-message-id="reply-299"]').waitFor()
+    const reads = await page.locator('.transcript').evaluate(view => {
+      const measure = Element.prototype.getBoundingClientRect
+      let messages = 0
+      Element.prototype.getBoundingClientRect = function (this: Element) {
+        if (this.hasAttribute('data-message-id')) messages++
+        return measure.call(this)
+      }
+      try {
+        view.dispatchEvent(new WheelEvent('wheel', { deltaY: -900, bubbles: true }))
+        return messages
+      } finally {
+        Element.prototype.getBoundingClientRect = measure
+      }
+    })
+    expect(reads).toBeGreaterThan(0)
+    expect(reads).toBeLessThan(32)
+  })
+
   it('moves by what the wheel asks when scrolling up through turns not drawn yet, and prints every turn', async () => {
     await open()
     await show(detail(history(80)))
