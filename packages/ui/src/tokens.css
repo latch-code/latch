@@ -120,7 +120,7 @@
     /* A selected row: a white card with a hairline ring on the grey sidebar (a soft fill in the dark theme). */
     --selected: #ffffff;
     --selected-ring: 0 0 0 1px rgba(18, 18, 28, 0.05), 0 1px 2px rgba(18, 18, 28, 0.08);
-    --bubble: #f1f1f4;
+    --bubble: #e9edf3;
     /* Glass, only for floating layers (menus, the composer): raised at 88% behind a blur. */
     --glass: rgba(255, 255, 255, 0.88);
     --scrim: rgba(18, 18, 28, 0.14);
@@ -512,7 +512,7 @@
       --press: rgba(255, 255, 255, 0.09);
       --selected: rgba(255, 255, 255, 0.075);
       --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-      --bubble: #1e1e22;
+      --bubble: #242831;
       --glass: rgba(27, 27, 31, 0.88);
       --scrim: rgba(0, 0, 0, 0.44);
       --preview-light-a: #ffffff;
@@ -616,7 +616,7 @@
     --press: rgba(255, 255, 255, 0.09);
     --selected: rgba(255, 255, 255, 0.075);
     --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    --bubble: #1e1e22;
+    --bubble: #242831;
     --glass: rgba(27, 27, 31, 0.88);
     --scrim: rgba(0, 0, 0, 0.44);
     --preview-light-a: #ffffff;
@@ -770,7 +770,7 @@
     --press: rgba(18, 18, 28, 0.09) !important;
     --selected: #ffffff !important;
     --selected-ring: 0 0 0 1px rgba(18, 18, 28, 0.05), 0 1px 2px rgba(18, 18, 28, 0.08) !important;
-    --bubble: #f1f1f4 !important;
+    --bubble: #e9edf3 !important;
     --glass: rgba(255, 255, 255, 0.88) !important;
     --scrim: rgba(18, 18, 28, 0.14) !important;
     --preview-light-a: #ffffff !important;
@@ -949,7 +949,7 @@
       --press: rgba(255, 255, 255, 0.09) !important;
       --selected: rgba(255, 255, 255, 0.075) !important;
       --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
-      --bubble: #1e1e22 !important;
+      --bubble: #242831 !important;
       --glass: rgba(27, 27, 31, 0.88) !important;
       --scrim: rgba(0, 0, 0, 0.44) !important;
       --preview-light-a: #ffffff !important;
@@ -1053,7 +1053,7 @@
     --press: rgba(255, 255, 255, 0.09) !important;
     --selected: rgba(255, 255, 255, 0.075) !important;
     --selected-ring: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
-    --bubble: #1e1e22 !important;
+    --bubble: #242831 !important;
     --glass: rgba(27, 27, 31, 0.88) !important;
     --scrim: rgba(0, 0, 0, 0.44) !important;
     --preview-light-a: #ffffff !important;

@@ -93,6 +93,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await openSection(settings, '通用')
         await settings.getByRole('button', { name: '打开准备页' }).click()
         await setup.getByText('已就绪', { exact: true }).waitFor()
+        await page.screenshot({ path: 'test-results/first-setup/ready-390-dark.png', animations: 'disabled' })
         await start.click()
         await setup.waitFor({ state: 'detached' })
         expect((await owner.json<AppSnapshot>('snapshot')).firstSetup).toBe('completed')

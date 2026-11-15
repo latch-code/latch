@@ -18,6 +18,16 @@
 .terminal-resize {
   inset: -3px 0 auto;
 }
+.terminal-resize::before {
+  content: '';
+  position: absolute;
+  inset: 2px auto auto calc(50% - 14px);
+  width: 28px;
+  height: 2px;
+  border-radius: var(--r-2);
+  background: var(--line-strong);
+  pointer-events: none;
+}
 
 /*
  * The terminal strip: 终端 1, 2… with the local services, 「加入对话」 and +, the screen on the canvas, and a 28 foot
@@ -77,6 +87,10 @@
   position: relative;
   flex: 1;
   min-height: 0;
+}
+.terminal-dock .terminal-screens {
+  --canvas: var(--work-sunken);
+  background: var(--canvas);
 }
 .terminal-screen {
   position: absolute;
