@@ -335,7 +335,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       expect((await rows(app))[3]).toEqual({ title: 'Latch', body: '有一个问题等你回答。' })
       await app.evaluate(() => (Reflect.get(globalThis, 'notificationFixture') as MainFixture).items[3]!.emit('click'))
       await page.locator(`[data-task-id="${question.sessionId}"][aria-current="page"]`).waitFor()
-      await page.locator('.question-label', { hasText: 'Pick one' }).waitFor()
+      await page.getByRole('region', { name: 'Harness 提问', exact: true }).getByRole('group', { name: 'Pick one', exact: true }).waitFor()
       await host.bridge.cancel(question.sessionId)
       await settled(host, question.sessionId, 'cancelled')
       await poll(app)
