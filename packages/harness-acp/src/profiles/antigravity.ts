@@ -1,3 +1,4 @@
+import { antigravityQuotaCommand } from './antigravity-quota.ts'
 import type { HarnessProfile } from './types.ts'
 
 const CUSTOMIZATIONS = ['.agents', '.agent', '_agents', '_agent', '.gemini/config.json'] as const
@@ -5,6 +6,8 @@ const CUSTOMIZATIONS = ['.agents', '.agent', '_agents', '_agent', '.gemini/confi
 export const antigravityProfile: HarnessProfile = {
   presetId: 'antigravity',
   version: 3,
+  // Its own `/usage`, run beside a session: it starts no turn (checked on 1.5.8) and nothing waits for it.
+  quota: { command: antigravityQuotaCommand },
   // Opening a session can load the person's hooks and plugins.
   catalogueRead: { when: 'request' },
   permission: {

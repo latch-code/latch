@@ -13,6 +13,7 @@ import type {
   HarnessCatalogue,
   HarnessCommandCatalogue,
   HarnessOwnMcp,
+  HarnessQuota,
   CatalogueRead,
 } from '@latch/protocol/types'
 
@@ -332,6 +333,11 @@ export interface Bridge {
    * harness that does not report them.
    */
   ownMcp?(): HarnessOwnMcp | undefined
+  /**
+   * Optional. What the harness's own program last said about its subscription's limits (`HarnessInfo.quota`): numbers
+   * and values of the protocol's fixed sets only. Undefined: nothing that still holds.
+   */
+  quota?(): HarnessQuota | undefined
   /**
    * Optional, with `ownMcp`. 读取: asks the harness, in a process with no session, for every MCP server it has
    * configured, which it starts to answer; one read at a time. `before` runs once, just before the process starts.

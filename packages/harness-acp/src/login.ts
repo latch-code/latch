@@ -8,7 +8,8 @@ import { authFacts, type TerminalLogin } from './auth.ts'
 import { redactor, resolveCommand } from './command.ts'
 import { agentEnvironment } from './environment.ts'
 import { selectProfile } from './permission.ts'
-import type { LoginCheck } from './profiles/index.ts'
+import type { LoginCheck, QuotaCommand } from './profiles/index.ts'
+import type { QuotaReport } from './quota.ts'
 
 const STATUS_TIMEOUT_MS = 10_000
 const MAX_OUTPUT = 16 * 1024
@@ -106,6 +107,8 @@ export function harnessLogin(record: AgentRecord): HarnessLogin | undefined {
 interface RunOptions {
   signal?: AbortSignal
   timeoutMs?: number
+  /** A read that is not a status check: its own ceiling for the wait and the output, and variables for this run only. */
+  quota?: { timeoutMs: number; maxOutput: number; env: Readonly<Record<string, string>> }
 }
 
 /**
@@ -120,18 +123,23 @@ function runProgram(
   options: RunOptions,
 ): Promise<{ code: number | null; output: string; stdout: string } | undefined> {
   if (options.signal?.aborted) return Promise.resolve(undefined)
-  const env = agentEnvironment({
-    resolvedCommand: path,
-    profile: selectProfile(record).profile?.permission,
-    definitionEnv: record.env,
-    sessionTmpDir: tmpdir(),
-  })
+  const env = {
+    ...agentEnvironment({
+      resolvedCommand: path,
+      profile: selectProfile(record).profile?.permission,
+      definitionEnv: record.env,
+      sessionTmpDir: tmpdir(),
+    }),
+    ...options.quota?.env,
+  }
+  const ceiling = options.quota?.timeoutMs ?? STATUS_TIMEOUT_MS
+  const maxOutput = options.quota?.maxOutput ?? MAX_OUTPUT
   return new Promise(resolve => {
     const child = spawn(path, [...args], { cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
     let output = ''
     let stdout = ''
     const keep = (chunk: string) => {
-      if (output.length < MAX_OUTPUT) output += chunk
+      if (output.length < maxOutput) output += chunk
     }
     const kill = () => {
       try {
@@ -141,11 +149,11 @@ function runProgram(
       }
     }
     // A caller may shorten the wait, never lengthen it.
-    const timer = setTimeout(kill, Math.min(options.timeoutMs ?? STATUS_TIMEOUT_MS, STATUS_TIMEOUT_MS))
+    const timer = setTimeout(kill, Math.min(options.timeoutMs ?? ceiling, ceiling))
     options.signal?.addEventListener('abort', kill, { once: true })
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
       keep(chunk)
-      if (stdout.length < MAX_OUTPUT) stdout += chunk
+      if (stdout.length < maxOutput) stdout += chunk
     })
     child.stderr.setEncoding('utf8').on('data', keep)
     let fallback: NodeJS.Timeout | undefined
@@ -237,6 +245,30 @@ export async function readOwnVersion(
   const result = await runProgram(record, path, gate.args, options)
   // Standard output only: a notice on standard error (an update available, a deprecation) may name other versions.
   return result?.code === 0 ? gate.read(result.stdout) : undefined
+}
+
+const QUOTA_MAX_OUTPUT = 256 * 1024
+
+/**
+ * Runs a profile's limits command, the preset's own program with `command.args`, by the rules a login check follows:
+ * only once the start script has let the Host run the person's programs, in the harness's environment, without a shell,
+ * a prompt or a secret in the arguments, and killed with its group at `command.timeoutMs`. Standard output of a run that
+ * exited 0 goes to `command.read` and nowhere else. Undefined: not allowed, failed, timed out, or a shape it does not know.
+ */
+export async function readQuotaCommand(
+  record: AgentRecord,
+  command: QuotaCommand,
+  now: number,
+  options: { signal?: AbortSignal } = {},
+): Promise<QuotaReport | undefined> {
+  const preset = selectProfile(record).preset
+  const path = preset && locate?.(preset.command)
+  if (!path) return undefined
+  const result = await runProgram(record, path, command.args, {
+    ...(options.signal ? { signal: options.signal } : {}),
+    quota: { timeoutMs: command.timeoutMs, maxOutput: QUOTA_MAX_OUTPUT, env: command.env ?? {} },
+  })
+  return result?.code === 0 ? command.read(result.stdout, now) : undefined
 }
 
 /** Where the Host finds one of the person's programs for version and login reads; undefined while it may not run them. */

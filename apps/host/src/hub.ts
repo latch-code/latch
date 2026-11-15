@@ -1395,8 +1395,10 @@ export class HarnessHub implements Bridge {
     let customModels: string[] | undefined
     let reported: HarnessInfo['attachmentsReported']
     let ownMcp: HarnessInfo['ownMcp']
+    let quota: HarnessInfo['quota']
     try {
       ownMcp = entry.bridge?.ownMcp?.()
+      quota = entry.bridge?.quota?.()
       reported = entry.bridge?.promptCapabilities?.()
       catalogue = entry.bridge?.catalogue?.()
       catalogueRead = entry.bridge?.readCatalogue ? entry.bridge.catalogueRead?.() : undefined
@@ -1426,6 +1428,7 @@ export class HarnessHub implements Bridge {
       ...(entry.bridge?.commandCatalogue ? { commandCatalogue: { generation: entry.generation } } : {}),
       ...(customModels?.length ? { customModels: [...customModels] } : {}),
       ...(ownMcp ? { ownMcp: structuredClone(ownMcp) } : {}),
+      ...(quota ? { quota: structuredClone(quota) } : {}),
       ...(driver.historyImport || driver.seededStart
         ? {
             history: {

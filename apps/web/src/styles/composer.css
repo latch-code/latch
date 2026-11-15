@@ -1328,3 +1328,101 @@
   font-family: var(--mono);
   font-size: var(--fs-caption);
 }
+
+/*
+ * A Harness's subscription limits, beside its control: a 14 ring and the fullest window's figure. Ink until 80%, then
+ * amber, red at the limit; the colour is on the figure as well as the ring. A warning the Harness gave without a
+ * figure is the alert mark with its reset time.
+ */
+.quota-mark {
+  gap: var(--sp-4);
+  padding: 0 var(--sp-6);
+  font-variant-numeric: tabular-nums;
+}
+.quota-ring {
+  flex: none;
+}
+.quota-ring > circle {
+  fill: none;
+  stroke-width: 2;
+}
+.quota-ring-track {
+  stroke: var(--track);
+}
+.quota-ring-fill {
+  stroke: var(--meter);
+}
+.quota-mark[data-state='near'],
+.quota-mark[data-state='near']:hover:not(:disabled) {
+  color: var(--amber);
+}
+.quota-mark[data-state='near']:hover:not(:disabled),
+.quota-mark[data-state='near'][aria-expanded='true'] {
+  background: var(--amber-soft);
+}
+.quota-mark[data-state='near'] > svg {
+  color: var(--amber-icon);
+}
+.quota-mark[data-state='near'] .quota-ring-fill {
+  stroke: var(--amber-icon);
+}
+.quota-mark[data-state='limited'],
+.quota-mark[data-state='limited']:hover:not(:disabled) {
+  color: var(--red);
+}
+.quota-mark[data-state='limited']:hover:not(:disabled),
+.quota-mark[data-state='limited'][aria-expanded='true'] {
+  background: var(--red-soft);
+}
+.quota-mark[data-state='limited'] > svg {
+  color: var(--red);
+}
+.quota-mark[data-state='limited'] .quota-ring-fill {
+  stroke: var(--red);
+}
+/* The panel: one window a row, the name and the figure on a line, the meter and the reset time under it. */
+.quota-panel {
+  display: grid;
+  gap: var(--sp-12);
+  padding: var(--sp-12);
+}
+.quota-rows {
+  display: grid;
+  gap: var(--sp-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.quota-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sp-4) var(--sp-8);
+  align-items: baseline;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.quota-row-value {
+  font-variant-numeric: tabular-nums;
+}
+.quota-row[data-state='near'] .quota-row-value {
+  color: var(--amber);
+}
+.quota-row[data-state='limited'] .quota-row-value {
+  color: var(--red);
+}
+.quota-row-meter,
+.quota-row-reset {
+  grid-column: 1 / -1;
+}
+.quota-group,
+.quota-row-reset,
+.quota-facts {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.quota-facts {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

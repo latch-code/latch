@@ -1,3 +1,4 @@
+import { claudeErrorQuota, claudeUsageQuota } from '../quota.ts'
 import type { HarnessProfile, LoginCheck, SessionUpdate, ToolDenial } from './types.ts'
 
 const DAY_MS = 24 * 60 * 60_000
@@ -185,4 +186,6 @@ export const claudeAgentProfile: HarnessProfile = {
     read: ({ output }) => readClaudeStatus(output),
   },
   readDenial: readClaudeDenial,
+  // A window's status as each turn reports it; Claude gives no steady figure, and Latch never sends `/usage` for one.
+  quota: { update: claudeUsageQuota, error: claudeErrorQuota },
 }

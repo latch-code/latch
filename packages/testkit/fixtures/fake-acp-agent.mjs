@@ -439,7 +439,12 @@ function receive(message) {
         // As the adapters do: the first push comes after the answer to initialize.
         if (message.method === 'initialize') setTimeout(pushAuthStatus, Number(env.FAKE_ACP_AUTH_STATUS_DELAY ?? 0))
       },
-      error => send({ jsonrpc: '2.0', id: message.id, error: { code: error.code ?? -32603, message: error.message } }),
+      error =>
+        send({
+          jsonrpc: '2.0',
+          id: message.id,
+          error: { code: error.code ?? -32603, message: error.message, ...(error.data === undefined ? {} : { data: error.data }) },
+        }),
     )
 }
 
@@ -948,6 +953,10 @@ async function handle(method, params) {
       if (!caps.has('close')) throw rpcError(-32601, 'Method not found')
       existing(params.sessionId)
       return {}
+    // Grok Build's billing extension: FAKE_ACP_BILLING is the JSON it answers; without it the agent has no such method.
+    case '_x.ai/billing':
+      if (!env.FAKE_ACP_BILLING) throw rpcError(-32601, `Method not found: ${method}`)
+      return JSON.parse(env.FAKE_ACP_BILLING)
     default:
       throw rpcError(-32601, `Method not found: ${method}`)
   }
@@ -1926,6 +1935,18 @@ const scenarios = {
   },
   reuse: ({ input, tool }) => {
     tool({ toolCallId: 'call_1', title: input, kind: 'read', status: 'completed', content: [text(input)] })
+    return END
+  },
+  // `limit <json>`: a usage update carrying the adapter's copy of Claude's rate-limit event, as claude-agent-acp sends
+  // it; `limit refuse <json>` ends the turn with the error a turn refused for the limit ends with.
+  limit: ({ sessionId, input, say }) => {
+    const rest = input.slice('limit'.length).trim()
+    if (rest.startsWith('refuse'))
+      throw Object.assign(rpcError(-32603, 'Internal error'), {
+        data: { errorKind: 'rate_limit', rateLimit: JSON.parse(rest.slice('refuse'.length)) },
+      })
+    update(sessionId, { sessionUpdate: 'usage_update', used: 10, size: 100, _meta: { '_claude/rateLimit': JSON.parse(rest) } })
+    say('limit')
     return END
   },
   plan: ({ sessionId, say }) => {

@@ -6741,6 +6741,22 @@ describe('sessions on a model service through the gateway', () => {
     }
   })
 
+  it('does not ask Grok Build for its billing on a model service, where it runs in a home with no login', async () => {
+    const billing = JSON.stringify({ config: { creditUsagePercent: 82 }, subscriptionTier: 'SuperGrok' })
+    const { fixture, route } = await routed(
+      'grok',
+      { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume', FAKE_ACP_GATEWAY: 'grok', FAKE_ACP_BILLING: billing },
+      { providerId: 'svc', model: 'fake-model', wire: 'responses' },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    await bridge.prompt(sessionId, 'echo again', rid())
+    await settled(bridge, sessionId)
+    expect(received(await fixture.log(), '_x.ai/billing')).toHaveLength(0)
+    expect(bridge.quota?.()).toBeUndefined()
+  })
+
   it('records on each turn what went through the gateway, with the chosen model as the service names it, and keeps it', async () => {
     const { fixture, stub, route } = await routed('opencode', LAUNCHED, {
       providerId: 'svc',

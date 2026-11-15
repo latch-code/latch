@@ -58,6 +58,7 @@ import type {
   HarnessCommandCatalogue,
   HarnessMcpReport,
   HarnessOwnMcp,
+  HarnessQuota,
   CatalogueRead,
   ToolDecision,
   UnknownResult,
@@ -112,7 +113,9 @@ import {
   withModelOptions,
 } from './catalogue.ts'
 import { authFacts, reportedLogin, terminalLogins, type AuthFacts } from './auth.ts'
+import { QUOTA_UPDATE, QuotaFacts, quotaReport, type QuotaReport } from './quota.ts'
 import { codexOptions, readCodexModels } from './codex-models.ts'
+import { readQuotaCommand } from './login.ts'
 import { commandMoved, commandUnconfirmed, harnessRetired, redactor, resolveCommand } from './command.ts'
 import { openWire, wireArgs } from './wires/index.ts'
 import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './wires/process.ts'
@@ -300,6 +303,9 @@ interface Live {
 
 /** How long 读取 of a harness's own MCP servers waits: the harness starts each one, `npx` downloads included. */
 const MCP_READ_MS = 60_000
+/** A harness is asked for its limits no more often than this, however many sessions open or turns end. */
+const QUOTA_ASK_FLOOR_MS = 5 * 60_000
+const QUOTA_ASK_TIMEOUT_MS = 15_000
 
 /** Why a Latch MCP server did not start, as the session says it. */
 const MCP_FAILURE_TEXT: Readonly<Record<McpStartFailure, string>> = {
@@ -861,6 +867,11 @@ export class AgentRuntime implements Bridge {
   private ownMcpState?: { definitionHash: string; last?: HarnessMcpReport; failed?: { at: string; message: string } }
   /** 读取 of the harness's own MCP servers in progress; a second request shares it. */
   private mcpReading?: Promise<void>
+  /** The subscription's limits as this definition's processes said them. Memory only. */
+  private readonly quotaFacts = new QuotaFacts()
+  private quotaDefinition?: string
+  /** When the harness was last asked for its limits, by a request or by its command; one floor for both. */
+  private quotaAskedAt?: number
   private started?: Promise<void>
   private closing?: Promise<void>
   private closed = false
@@ -1364,6 +1375,52 @@ export class AgentRuntime implements Bridge {
     }
   }
 
+  /** The subscription's limits as the harness's own program last said them; see `HarnessInfo.quota`. */
+  quota(): HarnessQuota | undefined {
+    if (this.quotaDefinition === undefined || this.quotaDefinition !== this.definitionNow()) return undefined
+    return this.quotaFacts.snapshot(this.clock())
+  }
+
+  /** `source`: the process that said it. Clients hear of it only when what they would be shown changes. */
+  private noteQuota(source: object, report: QuotaReport | undefined): void {
+    const definitionHash = this.definitionNow()
+    if (!report || !definitionHash) return
+    // Another command, variable or home may be another account.
+    if (this.quotaDefinition !== definitionHash) this.quotaFacts.clear()
+    this.quotaDefinition = definitionHash
+    const shown = (quota: HarnessQuota | undefined) => JSON.stringify(quota && { ...quota, observedAt: '' })
+    const now = this.clock()
+    const before = shown(this.quotaFacts.snapshot(now))
+    this.quotaFacts.note(source, report, now)
+    if (shown(this.quotaFacts.snapshot(now)) !== before) this.notify()
+  }
+
+  /**
+   * Asks the harness for its limits where its profile names a way that runs no turn: a request on `live`, a process that
+   * already runs a session, or the program's own command. At most once in `QUOTA_ASK_FLOOR_MS`, and never on a timer:
+   * only as a session opens and as a turn ends. A failure says nothing and is not reported.
+   */
+  private askQuota(live: Live | undefined): void {
+    const quota = this.selection.profile?.quota
+    if (!quota?.request && !quota?.command) return
+    if (!live?.initialized || live.wire.stopping || this.lives.get(live.key) !== live || this.closed) return
+    // A session on a model service runs without the harness's own login: there is no subscription to ask about.
+    if (this.state.tasks[live.key]?.acp.route) return
+    const now = Date.now()
+    if (this.quotaAskedAt !== undefined && now - this.quotaAskedAt < QUOTA_ASK_FLOOR_MS) return
+    this.quotaAskedAt = now
+    const { request, command } = quota
+    const asked = request
+      ? live.wire.request(request.method, {}, QUOTA_ASK_TIMEOUT_MS, this.lifetime.signal).then(result => request.read(result, this.clock()))
+      : readQuotaCommand(this.agent, command!, this.clock(), { signal: this.lifetime.signal })
+    void asked.then(
+      report => {
+        if (!this.closed) this.noteQuota(live, report)
+      },
+      () => {},
+    )
+  }
+
   private noteOwnMcp(reported: unknown, via: HarnessMcpReport['via']): void {
     const parsed = ownMcpStatus.safeParse(reported)
     const definitionHash = this.definitionNow()
@@ -1475,6 +1532,7 @@ export class AgentRuntime implements Bridge {
       await rm(cwd, { recursive: true, force: true }).catch(() => {})
     }
     this.auth.forgetReports()
+    this.quotaFacts.clear()
     // Only processes whose sessions can be restored; another keeps its session, with the login it read when it started.
     for (const live of [...this.lives.values()])
       if (live.initialized && (live.capabilities.resume || live.capabilities.load) && !this.busy(live.key) && !live.wire.stopping)
@@ -4064,6 +4122,7 @@ export class AgentRuntime implements Bridge {
   }
 
   private outcome(run: Run, result: unknown, notes: string[]): TaskStatus {
+    this.askQuota(run.live)
     const parsed = promptResult.safeParse(result)
     const task = this.state.tasks[run.taskId]
     if (parsed.success && parsed.data.usage && task) {
@@ -4143,6 +4202,8 @@ export class AgentRuntime implements Bridge {
         notes.push(`${this.agent.name} 找不到这个会话，请新建会话。`)
         return 'failed'
       }
+      if (run.live && !this.state.tasks[run.taskId]?.acp.route)
+        this.noteQuota(run.live, this.selection.profile?.quota?.error?.(error.data, this.clock()))
       notes.push(
         run.attachments?.length || run.sensitiveOutput
           ? `${this.agent.name} 未能处理本轮附件请求。`
@@ -4664,6 +4725,7 @@ export class AgentRuntime implements Bridge {
     if (this.lives.get(live.key) === live) this.lives.delete(live.key)
     live.tools?.close()
     this.auth.forget(live)
+    this.quotaFacts.gone(live)
     clearTimeout(live.idleTimer)
     live.sessions.clear()
     for (const permission of [...this.permissions.values()]) {
@@ -4927,6 +4989,7 @@ export class AgentRuntime implements Bridge {
     const target = this.state.tasks[taskId]
     if (!target) throw new AppError(404, 'task-not-found', '找不到该任务')
     live.sessions.set(acpSessionId, taskId)
+    this.askQuota(live)
     // What the process was answered for before this session was on record goes into it now.
     for (const note of live.heldNotes?.splice(0) ?? [])
       target.messages.push({ id: randomUUID(), role: 'system', text: clip(this.redact(note), 4000), createdAt: this.now() })
@@ -5717,6 +5780,12 @@ export class AgentRuntime implements Bridge {
       if (this.reportsOwnMcp()) this.noteOwnMcp(update, 'session')
       return
     }
+    // The plan's limits as Codex's app-server read them: Latch's own wire sends this, so no ACP agent's word is taken for it.
+    if (update.sessionUpdate === QUOTA_UPDATE) {
+      const report = this.selection.profile?.wire === 'codex' ? quotaReport.safeParse(update) : undefined
+      if (report?.success) this.noteQuota(live, report.data as QuotaReport)
+      return
+    }
     const candidate = this.runs.get(taskId)
     const run = candidate?.sent && candidate.live === live ? candidate : undefined
     if (run) run.lastEventAt = this.clock()
@@ -5826,6 +5895,7 @@ export class AgentRuntime implements Bridge {
       }
       case 'usage_update': {
         // A report about the session, not output: it does not move lastOutputAt.
+        if (!task.acp.route) this.noteQuota(live, this.selection.profile?.quota?.update?.(update, this.clock()))
         const parsed = usageUpdate.safeParse(update)
         if (!parsed.success) return
         const { used, size, cost } = parsed.data

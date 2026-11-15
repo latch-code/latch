@@ -1,5 +1,6 @@
 import { dirname } from 'node:path'
 import type { ModelWire } from '@latch/protocol'
+import { GROK_BILLING_METHOD, grokQuota } from '../quota.ts'
 import type { HarnessProfile } from './types.ts'
 
 const GATEWAY_CONFIG = 'config.toml'
@@ -82,6 +83,8 @@ export const grokProfile: HarnessProfile = {
     notes: ['Grok 以 default 启动，仍按自己的权限规则运行；当前 ACP 接口不报告有效权限档位'],
   },
   projectConfigPaths: ['.grok'],
+  // The request Grok's own `/usage` makes; it needs no turn.
+  quota: { request: { method: GROK_BILLING_METHOD, read: grokQuota } },
   minimumVersion: {
     args: ['--version'],
     read: output => /^grok (\d+\.\d+\.\d+)(?:\s|$)/u.exec(output.trim())?.[1],

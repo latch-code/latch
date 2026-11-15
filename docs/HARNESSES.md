@@ -299,6 +299,25 @@ Latch 从不替人登录，不调用 `authenticate`，不读凭据文件或钥�
   - 其他设备（手机、远程浏览器、其他电脑）两个都没有，只看到命令和「在这台 Mac 的终端里运行」；macOS 以外的 Host 上终端与默认终端的路径都尚未实现，同样只有命令。Claude Agent 没有登录命令，也就没有按钮。
 - **测试 Host。** `startServer` 没有 `loginPrograms` 时不运行任何登录命令，也不显示命令；没有 `commandDirectories` 时只认绝对路径，按名字找命令一律找不到（Agent 的命令、适配器、`programEnv` 指向的程序与预设检测都一样）。只有启动脚本传 `resolveCommand` 与 `personCommandDirectories`。这样带预设定义和假适配器的测试 Host 碰不到同一台电脑上真实安装的程序；测试要找命令时把自己的临时目录传给 `commandDirectories`。
 
+## 额度
+
+Harness 用自己的订阅登录时，Latch 把它自己的程序报告的额度显示在输入框的 Harness 控件旁：一个小环加用得最多的那个窗口的百分比；悬停一行（「7 天额度已用 68% · 5 天 23 小时后重置」）；点开列出每个窗口的格条、百分比与重置时间，下面是套餐与遮住的账号（手机上是底部面板）。80% 起是琥珀，到上限是红，都带数字。Latch 只听它已经为会话运行的那个进程：不读任何 CLI 的令牌或存储，不自己调用厂商接口，不为额度启动进程，不发模型轮次，不定时轮询。
+
+| Harness | 来源 | 显示 |
+| --- | --- | --- |
+| Codex（app-server 直连） | 会话的线程打开后在同一进程上发一次 `account/rateLimits/read`（带 `excludeResetCreditDetails`）与 `account/read`，之后每轮的 `account/rateLimits/updated` 按 Codex 的说明并入（稀疏更新不清除已知的值） | 套餐自己的桶（`rateLimitsByLimitId.codex`，没有时用 `rateLimits`）的两个窗口：`windowDurationMins` 为 300 的是「5 小时」，10080 的是「每周」，其他长度按分钟数显示，没有长度的不显示；`resetsAt`（秒）、`planType`；ChatGPT 登录的邮箱遮成 `n•••@f•••.com`。按模型的其他桶不显示（名字是 Codex 起的文字）。经 Latch 使用模型服务的会话不读也不显示 |
+| Codex（经 codex-acp） | 适配器不转发 | 不显示 |
+| Claude Agent | 适配器放在 `usage_update._meta["_claude/rateLimit"]` 里的限额事件，以及一轮因限额失败时错误 `data` 里的 `{ errorKind: "rate_limit", rateLimit }` | 没有常驻的百分比：只在某个窗口 `allowed_warning`（琥珀）或 `rejected`（红）时显示警告标记与重置时间，同一窗口再报 `allowed` 就消失。只认 `five_hour`、`seven_day`、`seven_day_opus`、`seven_day_sonnet`；`utilization` 不用（不一定有，刻度没有文档）。Latch 不自动发送 `/usage`，也不解析它的文字 |
+| Grok Build | ACP 扩展请求 `_x.ai/billing`（Grok 自己的 `/usage` 用的那个），在会话接上进程时与每轮结束时发，两次之间至少 5 分钟；经 Latch 使用模型服务的会话在自己的 `GROK_HOME` 里没有登录，不问 | 本计费周期一行（`creditUsagePercent`、`currentPeriod.end`），不是 5 小时或每周；`subscriptionTier` 在已知集合里时显示；`prepaidBalance`（分）显示为余额 |
+| Antigravity | 它自己的命令 `agy -p /usage --output-format json`（`profiles/antigravity-quota.ts`；在 agy 1.5.8 上确认：不提问、约 6 秒退出、`num_turns` 为 0、不起模型轮次），在会话接上进程时与每轮结束时在旁边运行，两次之间至少 5 分钟，不等它；按登录状态命令的规则运行（只在启动脚本允许 Host 运行本机程序之后、Harness 的环境加 `AGY_CLI_DISABLE_AUTO_UPDATE=true`、不经 shell、没有输入、20 秒后连同进程组结束），失败不说任何话 | `command.data.groups[].buckets[]` 的 `remaining_fraction` 是剩余比例，已用是 1 减它；`window` 只认 `5h` 与 `weekly`，`reset_time` 是重置时间。只显示两个通用的组，面板里各成一节：「Gemini 模型」（`Gemini Models`）与「Claude 与 GPT 模型」（`Claude and GPT models`），小环取其中用得最多的窗口；单个模型的组与不认识的组整个丢掉，不显示它们的名字；`num_turns` 不为 0 或形状不同的输出整个不用 |
+| Cursor、OpenCode、Qwen Code、goose、pi、DeepSeek Harness | 它们的程序不报告订阅额度 | 不显示，也没有占位 |
+
+- **形状。** `HarnessInfo.quota`（`packages/protocol/src/quota.ts`）：`windows`（`kind`、`group?`（分开计量的模型组，固定集合）、`usedPercent?`、`resetsAt?`、`windowMinutes?`、`state?`）、`plan?`、`account?`、`balanceCents?`、`state`（`ok`、`near`、`limited`）、`observedAt`。全部是数字与固定集合里的值，没有厂商写的文字：不认识的窗口种类整个丢掉，不在集合里的套餐名不显示（`packages/harness-acp/src/quota.ts` 的 `harnessQuota`）。Codex 的 `rateLimitUpsell`、`limitName`、`accountId` 与完整邮箱不离开读它的进程；邮箱在读到时就遮住，只留两边的首字符与最后一段。
+- **只在内存里。** 按 Agent 定义保存在驱动里，不写磁盘、日志与审计。窗口过了重置时间就不再显示（页面也按自己的时钟隐藏）；报告它的进程退出后，有重置时间的窗口留到重置为止，因为额度属于账号；没有重置时间的随进程一起消失。退出登录、定义变化（命令、参数、环境变量）后全部清除。同一个窗口以最新的报告为准。
+- **谁能看到。** 随 Harness 目录（快照的 `catalog.harnesses`）发给能看到这个 Harness 的设备，没有单独的接口与权限；没有凭据的请求拿不到目录。内容变了才推送。
+- **不显示的时候。** Harness 什么都没报、所有窗口都已重置、会话经 Latch 使用模型服务（订阅的额度不是它的），都不画任何东西。经模型服务的会话也不读、不问、不记：Codex 不发 `account/rateLimits/read`，Grok 不发 `_x.ai/billing`，Claude Agent 的限额事件不读。
+- **到上限。** 百分比到 100、Claude 报 `rejected`、或 Codex 的 `rateLimitReachedType` 不为空时是 `limited`。Latch 不因此拦截发送：能不能继续由 Harness 自己决定，被拒绝的一轮照常显示它的错误。
+
 ## 权限菜单
 
 有 profile 的预设给每个模式一个档位和一句话（`modeTiers`），随 `HarnessInfo.permission` 与 `TaskDetail.permission` 发给页面与 iPhone。档位从严到宽是「只看不改」（`plan`）、「先问你」（`ask`）、「按规则放行」（`rule`）、「由模型判断」（`model`，Agent 自己的模型代人决定）与「不再询问」（`never`）；菜单的标题用档位词（Cursor 保留官方名称），「权限说明」按需展开这个 Harness 在每一档实际怎么做：
@@ -529,11 +548,16 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 | Qwen Code 经 Latch 时的思考档位与子 Agent | 未实现；思考只提供它自己经 ACP 报告的选项。子 Agent 在经 Latch 的会话里被关掉，直到 Qwen Code 能把子 Agent 的模型限制在指定的服务上 |
 | goose 固定 `delegate` 子 Agent 的服务 | 未实现；goose 没有文档化的设置能固定或关掉它（见「经 Latch 使用模型服务」），所以它的路线标「实验性」 |
 | Antigravity、Cursor 经 Latch 使用模型服务 | 做不了：两者都不接受别人的模型服务地址（见「经 Latch 使用模型服务」的表），模型菜单只列它们自己的模型 |
+| Claude Agent 常驻的额度百分比 | 尚未实现；适配器只转发每轮的限额事件，完整的用量要发 `/usage` 或等适配器暴露结构化用量，Latch 不自动发 |
+| Codex 按模型的额度桶、Codex 开会话前的额度 | 尚未实现；只显示套餐自己的桶，并且要等第一个会话的线程打开后才读 |
+| Cursor、OpenCode、Qwen Code、goose、pi、DeepSeek Harness 的额度 | 未实现；它们的程序不经协议或命令报告订阅额度，Latch 不读它们的令牌去问厂商 |
 | 其他协议翻译方向 | 未实现；当前只开放 Responses/Anthropic→Chat 与 Responses↔Anthropic，其余组合列出但不能选 |
 
 ## 测试
 
 `packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数；`FAKE_ACP_GATEWAY=opencode|dsh|qwen|goose|grok` 让它按对应程序的方式读网关配置并用声明的协议请求一次（Qwen Code 的系统设置文件与 `envKey`，`FAKE_QWEN_USER_SETTINGS` 代表这个人自己的设置、按 Qwen Code 的规则合并在系统设置之下；goose 的环境变量与路径规则；Grok Build 家目录里的 `config.toml`；这些是照源码与文档读出来写的，不是真实程序的录制），没有登录的假 Agent 被指向一个服务后照常回答，覆盖流式、思考、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。`test/connect.test.ts` 与 `apps/host/test/harness-connect.test.ts` 覆盖版本门槛（太旧、升级后重新检测、读不出版本、测试 Host 不读）、不回答 `initialize`（`FAKE_ACP_INIT_SILENT=1`）与不回答 `session/new`（`FAKE_ACP_NEW_SILENT=1`）的 Agent、pi 1.5 的回答顺序；`e2e/harness-connect.e2e.ts` 在 1440 与 390、浅色与深色下检查设置与新会话里的说法。默认测试不启动真实 Agent。显式授权的本机验收独立运行、使用临时 Host 与项目；测试确认后端不等于系统确认。
+
+额度（见「额度」）：`packages/harness-acp/test/quota.test.ts` 用 Codex 0.167 自己的 schema 形状、Claude Agent SDK 的 `SDKRateLimitInfo` 与 Grok 的 `BillingConfigResponse` 字段核对解析、遮住账号、丢掉未知种类与文字、只在内存里、过了重置时间与进程退出后的保留，并用假 app-server（`FAKE_CODEX_RATE_LIMITS`、`FAKE_CODEX_RATE_LIMITS_UPDATE`）与假 ACP Agent（`limit <json>` 一轮、`FAKE_ACP_BILLING`）走驱动，Antigravity 用一个对 `-p /usage` 打印录制形状的假 `agy`；`apps/host/test/harness-quota.test.ts` 核对随目录发给谁、原始内容不进快照、日志与数据目录；`apps/web/test/harness-quota.test.ts` 与 `e2e/harness-quota.e2e.ts` 核对界面。
 
 ### 会话命令
 

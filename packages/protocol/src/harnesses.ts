@@ -1,6 +1,7 @@
 import type { AgentPreset, HelperCard } from './agent-presets.ts'
 import type { AgentProbeResult } from './features.ts'
 import type { HarnessOwnMcp } from './mcp.ts'
+import type { HarnessQuota } from './quota.ts'
 import type { ModeTier, SessionCommand, SessionConfigOption, SessionSkill, TaskMode } from './sessions.ts'
 
 /** How a person logs in to a harness: its own program, in a terminal on the computer that runs it. */
@@ -241,6 +242,11 @@ export interface HarnessInfo {
   ownMcp?: HarnessOwnMcp
   /** Absent: Latch knows no login command for it. */
   login?: HarnessLogin
+  /**
+   * What its own program last said about the subscription it is logged in to (docs/HARNESSES.md#额度). Kept in memory
+   * only. Absent: it has said nothing that still holds, or it never does; a client then shows nothing.
+   */
+  quota?: HarnessQuota
   /**
    * 接入已有会话 (docs/HARNESSES.md#接入已有会话). `list`: it lists and brings in its own earlier sessions. `rebuild`: a
    * session brought in from another harness can be rebuilt as text on it. Absent: neither.

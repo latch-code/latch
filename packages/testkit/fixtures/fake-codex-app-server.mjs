@@ -34,6 +34,10 @@
 // whose runtimeStatus is `failed` (with `reauthenticationRequired` for `authenticationRequired`). FAKE_CODEX_MCP_LIMIT
 // makes its pages smaller and FAKE_CODEX_MCP_PAGE_MS answers each page that much later.
 //
+// The plan's limits: FAKE_CODEX_RATE_LIMITS is the JSON account/rateLimits/read answers (`GetAccountRateLimitsResponse`;
+// without it Codex has no such method), and FAKE_CODEX_RATE_LIMITS_UPDATE the `RateLimitSnapshot` it pushes as
+// account/rateLimits/updated when a turn ends, or the path of a file holding it, read at each turn's end.
+//
 // A model provider of its own: `-c model_provider="<id>"` with `-c model_providers.<id>.base_url=…` and `.env_key=…`
 // (TOML values, as Codex reads them) makes it the process's provider, as Codex does. account/read then says no OpenAI
 // login is needed, and every turn calls `<base_url>/responses` for real, streamed, with the variable `env_key` names as
@@ -686,6 +690,9 @@ async function runTurn(input) {
   const done = turn
   turn = undefined
   log('completed', { turnId: done.id, status })
+  const pushed = env.FAKE_CODEX_RATE_LIMITS_UPDATE
+  const limits = pushed?.startsWith('/') ? (existsSync(pushed) ? readFileSync(pushed, 'utf8') : undefined) : pushed
+  if (limits) notify('account/rateLimits/updated', { rateLimits: JSON.parse(limits) })
   notify('turn/completed', {
     threadId: thread.id,
     turn: { id: done.id, status, error: typeof outcome === 'object' ? outcome.error : null, items: [] },
@@ -787,6 +794,10 @@ async function handle(method, params) {
     case 'account/logout':
       if (env.FAKE_ACP_LOGIN_FILE && existsSync(env.FAKE_ACP_LOGIN_FILE)) rmSync(env.FAKE_ACP_LOGIN_FILE)
       return {}
+    case 'account/rateLimits/read':
+      log('rate-limits-read', { params })
+      if (!env.FAKE_CODEX_RATE_LIMITS) throw Object.assign(new Error(`Method not found: ${method}`), { code: -32601 })
+      return JSON.parse(env.FAKE_CODEX_RATE_LIMITS)
     case 'account/read':
       if (provider) return { account: null, requiresOpenaiAuth: false }
       return env.FAKE_CODEX_LOGGED_OUT === '1' || (env.FAKE_ACP_LOGIN_FILE && !existsSync(env.FAKE_ACP_LOGIN_FILE))

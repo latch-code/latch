@@ -1,5 +1,6 @@
 import type { ModeTier, ModelCapabilities, ModelWire, SessionConfigOption } from '@latch/protocol'
 import type { ModelRoute } from '@latch/sdk'
+import type { QuotaReport } from '../quota.ts'
 import type { WireKind } from '../wires/index.ts'
 
 /**
@@ -251,6 +252,27 @@ export interface HistoryImportRule {
   readonly useUnknown?: true
 }
 
+/** A command of the harness's own program that prints its limits and exits: no prompt, no model turn, no session. */
+export interface QuotaCommand {
+  /** After the preset's command. Never a secret: arguments are visible to every process of this person. */
+  readonly args: readonly string[]
+  /** Set for this run only, over the harness's environment. */
+  readonly env?: Readonly<Record<string, string>>
+  readonly timeoutMs: number
+  /** Standard output of a run that exited 0. Anything but the exact shape it knows is undefined. */
+  read(stdout: string, now: number): QuotaReport | undefined
+}
+
+interface ProfileQuota {
+  /** Reads a `usage_update` as the agent sent it. */
+  update?(update: SessionUpdate, now: number): QuotaReport | undefined
+  /** Reads the `data` of the error a failed turn ended with. */
+  error?(data: unknown, now: number): QuotaReport | undefined
+  /** An extension request the agent answers without a turn, sent on a process that runs a session. */
+  readonly request?: { readonly method: string; read(result: unknown, now: number): QuotaReport | undefined }
+  readonly command?: QuotaCommand
+}
+
 export interface HarnessProfile {
   /** Equals `AgentPreset.id`. */
   readonly presetId: string
@@ -368,6 +390,11 @@ export interface HarnessProfile {
    * Code's writes the person's own settings unless told otherwise.
    */
   readonly modelSetMeta?: Readonly<Record<string, unknown>>
+  /**
+   * How the harness's own program reports the limits of its subscription (docs/HARNESSES.md#额度). Latch only listens
+   * to a process it already runs for a session; it changes nothing that runs, so the version stays.
+   */
+  readonly quota?: ProfileQuota
   /**
    * Latch never points this harness at the gateway: it reaches its vendor's models through its own login only. Shown
    * to clients as `HarnessCapabilities.models.ownOnly`; it changes nothing that runs, so the version stays.

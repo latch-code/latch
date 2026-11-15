@@ -25,6 +25,7 @@ import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
 import { useHarnessCommands } from '../hooks/useHarnessCommands.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
+import { HarnessQuotaMark } from '../composer/HarnessQuota.tsx'
 import { ComposerControl, openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { composerActions } from './composerActions.ts'
 import { MoreMenu } from '../composer/Footer.tsx'
@@ -696,6 +697,10 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
                 computer={computer}
               />
             </ComposerControl>
+            {/* The subscription's limits are not those of a model service the draft runs on instead. */}
+            {chosenHarness && !servicePick(catalog, chosenHarness, choice.config) && (
+              <HarnessQuotaMark quota={chosenHarness.quota} harness={harnessName(chosenHarness)} />
+            )}
             <ComposerControl name="model">
               <DraftModelControl
                 catalog={catalog}
@@ -720,6 +725,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
                   <SessionHarnessControl harness={harnessInfo} onNewSession={startNew} fork={fork} />
                 </ComposerControl>
               )}
+              {harnessInfo && !summary.modelRoute && <HarnessQuotaMark quota={harnessInfo.quota} harness={harnessName(harnessInfo)} />}
               <ComposerControl name="model">
                 <SessionModelControl
                   catalog={catalog}

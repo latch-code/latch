@@ -21,6 +21,7 @@ import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
 import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
 import { MCP_STATUS_METHOD, MCP_STATUS_UPDATE, RPC, RpcError, STEER_METHOD, SESSION_SKILLS_UPDATE, type RpcId } from '../protocol.ts'
+import { QUOTA_UPDATE, codexQuota, codexQuotaUpdate } from '../quota.ts'
 import {
   AgentProcess,
   ConnectionClosed,
@@ -628,6 +629,7 @@ export class CodexWire implements AgentWire {
     this.effort = this.route?.setThinking && this.routeEffort !== undefined ? this.routeEffort : (read.data.reasoningEffort ?? this.effort)
     await this.readSkills(timeoutMs, signal)
     this.reportMcp(timeoutMs)
+    this.reportQuota(timeoutMs)
     return { sessionId: this.threadId, configOptions: this.options() }
   }
 
@@ -813,6 +815,24 @@ export class CodexWire implements AgentWire {
 
   private sendMcp(truncated?: true): void {
     this.update({ sessionUpdate: MCP_STATUS_UPDATE, servers: [...this.ownMcp.values()], ...(truncated ? { truncated } : {}) })
+  }
+
+  /**
+   * Once a thread is open on Codex's own login: the plan's limits as Codex reads them for its own status line, then as
+   * each turn updates them. It starts nothing and runs no turn, and never fails the thread. The account's address is
+   * masked before it leaves this method.
+   */
+  private reportQuota(timeoutMs?: number): void {
+    if (this.route || !this.threadId) return
+    void Promise.all([
+      this.send('account/rateLimits/read', { excludeResetCreditDetails: true }, timeoutMs),
+      this.send('account/read', {}, timeoutMs).catch(() => undefined),
+    ])
+      .then(([limits, who]) => {
+        const report = codexQuota(limits, who, Date.now())
+        if (report) this.update({ sessionUpdate: QUOTA_UPDATE, ...report })
+      })
+      .catch(() => {})
   }
 
   /** A thread's turns as the updates a session would have had: what the person said, Codex's replies and its calls. */
@@ -1537,6 +1557,12 @@ export class CodexWire implements AgentWire {
         this.ownMcp.set(read.data.name, codexMcpServer(read.data.name, state, { tools: before?.tools, origin: before?.origin }))
         this.mcpSeen?.add(read.data.name)
         this.sendMcp()
+        return
+      }
+      case 'account/rateLimits/updated': {
+        // On a route the turns run on a model service, and the plan's limits are not theirs.
+        const report = this.route ? undefined : codexQuotaUpdate(params, Date.now())
+        if (report) this.update({ sessionUpdate: QUOTA_UPDATE, ...report })
         return
       }
       case 'error': {
