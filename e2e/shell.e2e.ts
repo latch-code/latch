@@ -454,13 +454,19 @@ describe('the shell', () => {
         const page = await context.newPage()
         await enrollBrowser(page, host, { name: `标题验收 ${width}` })
         await connected(page)
-        await openSession(page, sessionId)
+        if (!phone) await openSession(page, sessionId)
         await page.evaluate(() => document.fonts.ready)
         const header = page.locator('main.workspace .topbar')
         const heading = (name: string) => header.getByRole('heading', { name, exact: true })
         const pencil = header.getByRole('button', { name: '重命名会话', exact: true })
         const dialog = page.getByRole('dialog', { name: '重命名会话', exact: true })
         const field = dialog.getByRole('textbox', { name: '会话名称', exact: true })
+        const shoot = async (name: string) => {
+          for (const colorScheme of ['light', 'dark'] as const) {
+            await page.emulateMedia({ colorScheme })
+            await page.screenshot({ path: `${output}/${name}-${page.viewportSize()?.width}-${colorScheme}.png`, animations: 'disabled' })
+          }
+        }
         const checkLine = async (clipped: boolean) => {
           const rects = await header.evaluate(element => {
             const rect = ({ x, y, width, height, right, bottom }: DOMRect) => ({ x, y, width, height, right, bottom })
@@ -474,11 +480,12 @@ describe('the shell', () => {
             return {
               heading: rect(heading),
               rename: rect(rename),
+              meta: meta.map(rect),
               secondLine: meta.every(item => item.top >= heading.bottom) && Math.max(...centers) - Math.min(...centers) <= 1,
               clipped: text.scrollWidth > text.clientWidth && getComputedStyle(text).textOverflow === 'ellipsis',
             }
           })
-          expect(rects.secondLine).toBe(true)
+          expect(rects.secondLine, JSON.stringify({ width, meta: rects.meta, heading: rects.heading })).toBe(true)
           expect(rects.clipped).toBe(clipped)
           expect(rects.rename.y + rects.rename.height / 2).toBeCloseTo(rects.heading.y + rects.heading.height / 2, 0)
           expect(rects.rename.x - rects.heading.right).toBeGreaterThanOrEqual(0)
@@ -489,11 +496,18 @@ describe('the shell', () => {
 
         for (const layout of ['overview', 'triage'] as const) {
           await owner.json(`tasks/${sessionId}`, { method: 'PATCH', body: { title: short } })
+          if (phone) {
+            await backToPhoneSessions(page)
+            await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
+            await page.locator('.workbench-home').waitFor()
+          }
           await switchLayout(page, layout)
+          if (phone) await openSession(page, sessionId)
           await heading(short).waitFor()
           if (phone) {
             expect(await pencil.count()).toBe(0)
             await header.locator('.topbar-subline').getByText(branch, { exact: true }).waitFor()
+            await shoot(`short-${layout}`)
             await heading(short).getByRole('button', { name: short, exact: true }).click()
             await page.getByRole('menuitem', { name: '重命名', exact: true }).click()
           } else {
@@ -505,7 +519,7 @@ describe('the shell', () => {
             await title.hover()
             await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
             expect(await checkLine(false)).toEqual(initial)
-            await page.screenshot({ path: `${output}/short-${layout}-${width}.png`, animations: 'disabled' })
+            await shoot(`short-${layout}`)
             await page.mouse.move(0, 0)
             await title.focus()
             await page.keyboard.press('Tab')
@@ -533,6 +547,9 @@ describe('the shell', () => {
             expect(await header.locator('.topbar-title-text').evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
           } else {
             if (width === 1440) {
+              await heading(long).hover()
+              await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+              await shoot(`long-${layout}`)
               const panel = header.getByRole('button', { name: '侧边面板', exact: true })
               if ((await panel.getAttribute('aria-pressed')) !== 'true') await panel.click()
               await page.setViewportSize({ width: 1200, height })
@@ -544,7 +561,7 @@ describe('the shell', () => {
             await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
           }
           await noHorizontalOverflow(page)
-          await page.screenshot({ path: `${output}/long-${layout}-${page.viewportSize()?.width}.png`, animations: 'disabled' })
+          await shoot(`long-${layout}`)
           if (width === 1440) {
             await page.setViewportSize({ width, height })
             await settleShell(page)
