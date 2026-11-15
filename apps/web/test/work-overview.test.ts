@@ -54,17 +54,22 @@ describe('work overview', () => {
         renewAfter: '',
       },
       host: { hostId: 'h', devMode: true, presence: { status: 'available' }, tls: null },
-      tasks: [task('running', { status: 'running', live }), task('silent', { status: 'running', live: { ...live, silent: true } })],
+      tasks: [
+        task('running', { status: 'running', live }),
+        task('silent', { status: 'running', live: { ...live, silent: true } }),
+        task('waiting', { status: 'waiting-approval' }),
+      ],
       approvals: [],
       demo: false,
       hostName: 'Host',
     }
-    const render = (connection: 'connected' | 'offline') =>
+    const render = (connection: 'connected' | 'offline', cancelling?: ReadonlySet<string>) =>
       renderToStaticMarkup(
         createElement(WorkOverview, {
           snapshot,
           layout: 'overview',
           connection,
+          cancelling,
           now: deviceNow,
           onSelect: () => {},
           onNew: () => {},
@@ -74,8 +79,11 @@ describe('work overview', () => {
     expect(render('connected')).toContain('在跑命令 1:00')
     expect(render('connected')).toContain('没有动静 1 分钟')
     expect(render('connected')).not.toContain('没有动静 2 小时')
+    expect(render('connected').match(/class="ui-running-edge"/gu)).toHaveLength(1)
+    expect(render('connected', new Set(['running']))).not.toContain('class="ui-running-edge"')
     expect(render('offline')).toContain('上次状态：在跑命令')
     expect(render('offline')).not.toContain('在跑命令 1:00')
+    expect(render('offline')).not.toContain('class="ui-running-edge"')
   })
 
   it('shows only unarchived Code sessions, sorted within each group without claiming delivery readiness', () => {

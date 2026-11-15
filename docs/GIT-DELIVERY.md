@@ -153,6 +153,8 @@ Git 会把换行转成 LF 的文件（`text`、`eol` 属性或 `core.autocrlf`�
 
 ## PR 与检查
 
+总览用已授权的检查文字说明结果。当前读取有效，且 PR 与仓库的头提交均已知并相同时，另画至多 12 个分段。通过与失败分别着色，仍在进行或跳过的用轨道色，并由文字说明。头提交不同、缺头提交、无结果、草稿、读取失败或超出分段数量时只留文字。
+
 PR 只做 GitHub，只经你的 `gh`（GitHub CLI）。`GET /link/api/tasks/:id/git/pr` 读，`POST …/git/pr` 创建或绑定，`GET …/git/pr/checks/:job/log` 读一个失败任务的日志；其他平台的 PR 尚未实现。
 
 - **你的 `gh`。** 与提交、推送同一个运行器与环境：你的登录 shell 读完 profile 后 `exec gh`（profile 设定的 PATH 找到哪个就是哪个），先去掉 profile 可能设下的 `GH_ENTERPRISE_TOKEN`、`GITHUB_ENTERPRISE_TOKEN`、`GH_HOST`、`GH_REPO`、`GH_DEBUG`、`DEBUG`（企业版 token 会发往 `--repo` 指的任何主机），另加 `GH_PROMPT_DISABLED=1`、`GH_NO_UPDATE_NOTIFIER=1`、`GH_NO_EXTENSION_UPDATE_NOTIFIER=1`、`GH_SPINNER_DISABLED=1`、`GH_PAGER=cat`、`NO_COLOR=1`，标准输入为空。`gh` 用它自己的登录（它的配置与系统钥匙串）；Latch 从不运行 `gh auth token`，不读取、不保存 token，Host 环境里的 `GH_TOKEN`、`GITHUB_TOKEN` 不在白名单里，也不进参数。

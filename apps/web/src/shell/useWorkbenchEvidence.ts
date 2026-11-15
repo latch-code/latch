@@ -215,20 +215,31 @@ export function deliverySessions(tasks: readonly TaskSummary[], entries: Readonl
 }
 
 /** Zero checks, a stale head and skipped checks are never described as a successful check run. */
-export function deliveryChecks(entry: WorkbenchDeliveryEntry): string | undefined {
-  if (entry.prError) return entry.prError.message
+export function deliveryCheckSummary(
+  entry: WorkbenchDeliveryEntry,
+): { text: string; segments?: { passed: number; failed: number; total: number } } | undefined {
+  if (entry.prError) return { text: entry.prError.message }
   const pr = entry.pr?.pr
   if (!pr) return undefined
-  if (pr.state === 'merged') return '已合并'
-  if (pr.draft) return '草稿 PR'
+  if (pr.state === 'merged') return { text: '已合并' }
+  if (pr.draft) return { text: '草稿 PR' }
   const checks = entry.pr?.checks ?? []
-  if (!checks.length) return '没有检查结果'
-  if (pr.headSha && entry.state?.head && pr.headSha !== entry.state.head) return '检查对应旧提交'
-  const failed = checks.filter(check => check.state === 'fail').length
-  if (failed) return `${failed} 项检查失败`
-  const pending = checks.filter(check => check.state === 'pending').length
-  if (pending) return `${pending} 项检查中`
-  const passed = checks.filter(check => check.state === 'pass').length
-  const skipped = checks.filter(check => check.state === 'skipped').length
-  return passed === checks.length ? `检查通过 ${passed}/${checks.length}` : `${passed} 项通过${skipped ? ` · ${skipped} 项跳过` : ''}`
+  if (!checks.length) return { text: '没有检查结果' }
+  const head = entry.state?.head
+  if (pr.headSha && head && pr.headSha !== head) return { text: '检查对应旧提交' }
+
+  const counts = { pass: 0, fail: 0, pending: 0, skipped: 0 }
+  for (const check of checks) counts[check.state]++
+  const { pass: passed, fail: failed, pending, skipped } = counts
+  const total = checks.length
+  let text = `${passed} 项通过${skipped ? ` · ${skipped} 项跳过` : ''}`
+  if (failed) text = `${failed} 项检查失败`
+  else if (pending) text = `${pending} 项检查中`
+  else if (passed === total) text = `检查通过 ${passed}/${total}`
+  if (!head || head !== pr.headSha || entry.error) return { text }
+  return { text, segments: { passed, failed, total } }
+}
+
+export function deliveryChecks(entry: WorkbenchDeliveryEntry): string | undefined {
+  return deliveryCheckSummary(entry)?.text
 }
