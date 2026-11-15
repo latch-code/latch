@@ -391,7 +391,7 @@ describe('how a turn of work is drawn', () => {
     }
 
     await page.setViewportSize({ width: 1280, height: 900 })
-    const panel = page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true })
+    const panel = page.getByRole('button', { name: '侧边面板', exact: true })
     if ((await panel.getAttribute('aria-pressed')) !== 'true') await panel.click()
     await page.getByRole('tablist', { name: '会话面板', exact: true }).waitFor()
     await settleShell(page)

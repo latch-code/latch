@@ -1,6 +1,6 @@
 import { _electron, type ElectronApplication, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -9,7 +9,10 @@ import type { ServerOptions } from '@latch/host'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
+import type { AppSnapshot, TerminalListResponse, WorkspaceInfo } from '@latch/protocol'
 import { startTestHost } from './helpers/host.ts'
+import { closeSettings, openSettings } from './helpers/layout.ts'
+import { homeInput, switchLayout } from './helpers/workbench.ts'
 
 type Launch = NonNullable<NonNullable<ServerOptions['terminal']>['launch']>
 type Spec = Parameters<Launch>[0]
@@ -206,13 +209,14 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const cwd = (await host.bridge.detail(sessionId)).summary.cwd
       await page.locator(`[data-task-id="${sessionId}"]`).click()
 
-      // The header's 终端 opens the tab, which opens 终端 1 in the session's folder at the size of the area.
-      await page.getByRole('button', { name: '终端', exact: true }).click()
+      const panes = page.getByRole('group', { name: '工作台面板', exact: true })
+      const terminalToggle = panes.getByRole('button', { name: '终端', exact: true })
+      await terminalToggle.click()
       const panel = page.getByRole('region', { name: '终端', exact: true })
       const tabs = panel.getByRole('tablist', { name: '终端', exact: true })
       await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
       await waitFor(() => shells.length === 1)
-      expect(shells[0]!.spec.cwd).toBe(cwd)
+      expect(shells[0]!.spec.cwd).toBe(await realpath(cwd!))
       expect(shells[0]!.spec.cols).toBeGreaterThan(40)
       const screen = panel.locator('.terminal-screen:not([hidden])')
       const rows = screen.locator('.xterm-rows')
@@ -242,6 +246,60 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       })
       await blinking.waitFor({ state: 'attached' })
       expect(await editorFocused.count()).toBe(1)
+
+      // The three pane controls work independently. Real dragging changes the pty's rows, while the keyboard changes
+      // the inspector's width. Neither the file pane nor a layout change remounts the terminal.
+      const terminalDock = page.getByRole('complementary', { name: '底部终端', exact: true })
+      const rightToggle = panes.getByRole('button', { name: '侧边面板', exact: true })
+      const rightPanel = page.getByRole('complementary', { name: '侧边面板', exact: true })
+      if ((await rightToggle.getAttribute('aria-pressed')) !== 'true') await rightToggle.click()
+      await rightPanel.getByRole('tab', { name: '文件', exact: true }).click()
+      await rightPanel.getByRole('region', { name: '项目文件', exact: true }).waitFor()
+      const resizer = terminalDock.getByRole('separator', { name: '调整终端高度', exact: true })
+      const dockBefore = (await terminalDock.boundingBox())!
+      const handle = (await resizer.boundingBox())!
+      const beforePty = shells[0]!.sizes.length
+      await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(handle.x + handle.width / 2, handle.y - 61, { steps: 5 })
+      await page.mouse.up()
+      await expect.poll(async () => Math.round((await terminalDock.boundingBox())!.height - dockBefore.height)).toBeGreaterThan(55)
+      await waitFor(() => shells[0]!.sizes.length > beforePty)
+      const widthAdjust = page.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
+      const width = Number(await widthAdjust.getAttribute('aria-valuenow'))
+      await widthAdjust.focus()
+      await page.keyboard.press('ArrowLeft')
+      await expect.poll(async () => Number(await widthAdjust.getAttribute('aria-valuenow'))).toBe(width + 8)
+      const savedWidth = Number(await widthAdjust.getAttribute('aria-valuenow'))
+      await resizer.focus()
+      const height = Number(await resizer.getAttribute('aria-valuenow'))
+      await page.keyboard.press('ArrowUp')
+      await expect.poll(async () => Number(await resizer.getAttribute('aria-valuenow'))).toBe(height + 8)
+      const savedHeight = Number(await resizer.getAttribute('aria-valuenow'))
+      await screen.locator('.xterm').evaluate(element => element.setAttribute('data-test-mounted', 'retained'))
+      await panes.getByRole('button', { name: '收起侧栏', exact: true }).click()
+      await expect.poll(() => page.locator('.app-shell').getAttribute('data-sidebar')).toBe('collapsed')
+      await rightPanel.getByRole('region', { name: '项目文件', exact: true }).waitFor()
+      await panel.getByRole('button', { name: '收起终端', exact: true }).click()
+      await panel.waitFor({ state: 'hidden' })
+      await rightPanel.getByRole('region', { name: '项目文件', exact: true }).waitFor()
+      await terminalToggle.click()
+      await screen.locator('.xterm[data-test-mounted="retained"]').waitFor()
+      await expect.poll(() => rows.innerText()).toContain('ran echo hi')
+      await switchLayout(page, 'triage')
+      await screen.locator('.xterm[data-test-mounted="retained"]').waitFor()
+      await capture(page, 'independent-panes-1440')
+      await switchLayout(page, 'overview')
+      await panes.getByRole('button', { name: '展开侧栏', exact: true }).click()
+      await rightToggle.click()
+      await rightPanel.waitFor({ state: 'hidden' })
+      await panel.waitFor()
+      const settings = await openSettings(page, '设置')
+      expect(await page.locator('.terminal-dock .xterm[data-test-mounted="retained"]').count()).toBe(1)
+      await closeSettings(settings)
+      await screen.locator('.xterm[data-test-mounted="retained"]').waitFor()
+      expect(shells).toHaveLength(1)
+      await screen.locator('.xterm').click()
 
       // Ctrl-B is the shell's (tmux and readline use it), not the workbench's sidebar key; ⌘ keys stay the app's.
       const sidebar = () => page.locator('.app-shell').getAttribute('data-sidebar')
@@ -301,10 +359,12 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       // A reload shows the same terminal with its output replayed from the Host's scrollback.
       await page.reload()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
-      await page.locator(`[data-task-id="${sessionId}"]`).click()
-      await page.keyboard.press('Meta+j')
       await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
       await expect.poll(() => rows.innerText()).toContain('ran echo hi')
+      expect(Number(await resizer.getAttribute('aria-valuenow'))).toBe(savedHeight)
+      await rightToggle.click()
+      await expect.poll(async () => Number(await widthAdjust.getAttribute('aria-valuenow'))).toBe(savedWidth)
+      await rightToggle.click()
       expect(shells).toHaveLength(1)
 
       // A second terminal: 终端 2, its own shell, and the tab moves to it.
@@ -322,6 +382,11 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await page.keyboard.press('Delete')
       const confirm = page.getByRole('dialog', { name: '关闭终端 2？', exact: true })
       await confirm.getByText('「sleep」还在运行，关闭会结束它。', { exact: true }).waitFor()
+      await confirm.getByRole('button', { name: '取消', exact: true }).click()
+      await tabs.getByRole('tab', { name: '终端 2', exact: true }).waitFor()
+      await tabs.getByRole('tab', { name: '终端 2', exact: true }).focus()
+      await page.keyboard.press('Delete')
+      await confirm.waitFor()
       await confirm.getByRole('button', { name: '关闭终端', exact: true }).click()
       await tabs.getByRole('tab', { name: '终端 2', exact: true }).waitFor({ state: 'detached' })
       await tabs.getByRole('tab', { name: '终端 1', exact: true, selected: true }).waitFor()
@@ -338,16 +403,80 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await expect.poll(() => panel.getByText('已退出 · 代码 3', { exact: true }).count()).toBe(0)
       expect(await tabs.getByRole('tab').count()).toBe(1)
 
-      // 768: the panel goes over the conversation and the terminal still fits it.
+      // 768: the dock fits below the conversation and leaves its input reachable.
       await resize(768, 1000)
       await page.getByRole('button', { name: '终端', exact: true }).first().waitFor()
       await capture(page, 'running-768')
+      const tabletPanelToggle = page.getByRole('button', { name: '侧边面板', exact: true })
+      await tabletPanelToggle.click()
+      await page.locator('.app-shell[data-inspector="sheet"]').waitFor()
+      await expect
+        .poll(async () => {
+          const right = (await rightPanel.boundingBox())!
+          const dock = (await terminalDock.boundingBox())!
+          return right.y + right.height - dock.y
+        })
+        .toBeLessThanOrEqual(1)
+      await capture(page, 'sheet-above-dock-768')
+      await tabletPanelToggle.click()
+      await expect.poll(() => tabletPanelToggle.getAttribute('aria-pressed')).toBe('false')
       await resize(1440)
 
-      // ⌘J from inside the terminal is the app's: it closes the tab.
+      // ⌘J from inside the terminal folds the dock.
       await screen.locator('.xterm').click()
       await page.keyboard.press('Meta+j')
       await panel.waitFor({ state: 'hidden' })
+
+      // Open a plain shell from the new-conversation input, first at the default folder, then at a chosen project.
+      await page.keyboard.press('Meta+n')
+      const input = homeInput(page)
+      await input.waitFor()
+      await input.fill('项目草稿仍在')
+      const chatIds = (await owner.json<AppSnapshot>('snapshot')).tasks.map(task => task.id)
+      await terminalToggle.click()
+      await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
+      expect(shells[3]!.spec.cwd).toBe(await realpath(testHost.workspaceRoot))
+      const defaultTerminal = (await owner.json<TerminalListResponse>('workspaces/default/terminals')).terminals[0]!
+      expect(defaultTerminal).toMatchObject({ workspaceId: 'default' })
+      const projectPath = join(testHost.root, 'terminal-project')
+      await mkdir(projectPath)
+      await writeFile(join(projectPath, 'README.md'), 'Dock fixture\n')
+      const selected = await owner.addFolders({ name: '终端验收项目', paths: [projectPath] })
+      expect(selected.status).toBe(201)
+      const { workspace } = (await selected.json()) as { workspace: WorkspaceInfo }
+      const projectPicker = page.locator('.workbench-home .home-composer-location').getByRole('button').first()
+      await projectPicker.click()
+      await page.getByRole('menu', { name: '项目', exact: true }).getByText('终端验收项目', { exact: true }).click()
+      await panel.getByRole('button', { name: '打开终端', exact: true }).waitFor()
+      expect(shells).toHaveLength(4)
+      await panel.getByRole('button', { name: '打开终端', exact: true }).click()
+      await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
+      expect(shells[4]!.spec.cwd).toBe(await realpath(projectPath))
+      await rows.waitFor()
+      await screen.locator('.xterm').click()
+      await page.keyboard.type('echo dock')
+      await page.keyboard.press('Enter')
+      await expect.poll(() => rows.innerText()).toContain('ran echo dock')
+      await rightToggle.click()
+      await rightPanel.getByRole('treeitem', { name: 'README.md', exact: true }).waitFor()
+      await capture(page, 'project-dock-1440')
+      const {
+        terminals: [projectTerminal],
+      } = await owner.json<TerminalListResponse>(`workspaces/${workspace.id}/terminals`)
+      expect(projectTerminal).toMatchObject({ workspaceId: workspace.id })
+      await page.locator(`[data-task-id="${sessionId}"]`).click()
+      await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
+      await expect.poll(() => screen.getAttribute('data-terminal-id')).not.toBe(projectTerminal!.id)
+      // 总览 returns to the saved draft choice. 新会话 deliberately starts in the just-read session's project.
+      await page.getByRole('button', { name: '总览', exact: true }).click()
+      await expect.poll(() => screen.getAttribute('data-terminal-id')).toBe(projectTerminal!.id)
+      await expect.poll(() => rows.innerText()).toContain('ran echo dock')
+      expect(await input.inputValue()).toBe('项目草稿仍在')
+      expect((await owner.json<AppSnapshot>('snapshot')).tasks.map(task => task.id)).toEqual(chatIds)
+      expect(shells).toHaveLength(5)
+      await resizer.focus()
+      await page.keyboard.press('Enter')
+      await expect.poll(() => resizer.getAttribute('aria-valuenow')).toBe('220')
     } finally {
       await application?.close()
       await testHost.close()

@@ -12,6 +12,9 @@ export const SIDEBAR_SNAP_MS = MOTION.panel + 20
 /** The right panel: 520 by default, from 360 up to 70% of the window. */
 export const RIGHT_PANEL_DEFAULT = 520
 export const RIGHT_PANEL_MIN = 360
+export const DOCK_DEFAULT = 220
+export const DOCK_MIN = 140
+export const DOCK_MAX = 680
 /** 改动 asks for more, unless the person chose a width: 660, or 860 when its file tree is wanted, down to what the conversation leaves. */
 const CHANGES_PANEL = 660
 const CHANGES_PANEL_TREE = 860
@@ -68,6 +71,15 @@ export function rightPanelMax(windowWidth: number): number {
 
 export function clampRightPanel(width: number, windowWidth: number): number {
   return Math.round(Math.min(Math.max(width, RIGHT_PANEL_MIN), rightPanelMax(windowWidth)))
+}
+
+/** A short window lends the dock less space so the composer and a strip of dialogue remain reachable. */
+export function dockMax(windowHeight: number): number {
+  return Math.max(96, Math.min(DOCK_MAX, windowHeight - 250, Math.round(windowHeight * 0.57)))
+}
+
+export function clampDockHeight(height: number, windowHeight: number): number {
+  return Math.round(Math.min(dockMax(windowHeight), Math.max(height, DOCK_MIN)))
 }
 
 export type RightPanelPlacement =

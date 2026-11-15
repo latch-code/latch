@@ -1,7 +1,7 @@
-import type { TerminalStreamEvents, TerminalSummary } from '@latch/protocol'
+import type { TerminalStreamEvents, TerminalSummary, TerminalTarget } from '@latch/protocol'
 import { ApiError, api } from '../../core/api.ts'
 import { backoffDelay, EventStreamParser } from '../../core/eventStream.ts'
-import { fromBase64, inputChunks, PARSE_HIGH_WATER, streamPath, toBase64 } from './model.ts'
+import { fromBase64, inputChunks, PARSE_HIGH_WATER, streamPath, terminalPath, toBase64 } from './model.ts'
 
 /** Where a terminal's output and changes go: the screen, and the tab's state. */
 export interface TerminalSink {
@@ -49,7 +49,7 @@ export class TerminalLink {
   private readonly fetchImpl: typeof fetch
 
   constructor(
-    readonly sessionId: string,
+    readonly target: TerminalTarget | string,
     readonly terminalId: string,
     private readonly sink: TerminalSink,
     private readonly options: TerminalLinkOptions = {},
@@ -58,7 +58,7 @@ export class TerminalLink {
   }
 
   private get base() {
-    return `tasks/${encodeURIComponent(this.sessionId)}/terminals/${encodeURIComponent(this.terminalId)}`
+    return `${terminalPath(this.target)}/${encodeURIComponent(this.terminalId)}`
   }
 
   start(): void {
@@ -111,7 +111,7 @@ export class TerminalLink {
     }
     try {
       armStall()
-      const response = await this.fetchImpl(`/link/api/${streamPath(this.sessionId, this.terminalId, this.offset)}`, {
+      const response = await this.fetchImpl(`/link/api/${streamPath(this.target, this.terminalId, this.offset)}`, {
         credentials: 'same-origin',
         cache: 'no-store',
         headers: { Accept: 'text/event-stream' },

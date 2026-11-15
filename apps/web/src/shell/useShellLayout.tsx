@@ -1,5 +1,5 @@
 import { requestLeave } from '../preview/editDrafts.ts'
-import type { AppSnapshot } from '@latch/protocol'
+import type { AppSnapshot, TerminalTarget } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import { mentionMarker } from '../fileMentions.ts'
 import type { ChangeTotals, FileMention } from '@latch/protocol'
@@ -23,7 +23,7 @@ import {
 } from 'react'
 import type { SearchHit } from '@latch/protocol'
 import { useAuditCheckpoint } from '../core/auditCheckpoint.ts'
-import { usesDrawer, useCoarsePointer, useViewport, useWindowWidth } from '../breakpoints.ts'
+import { usesDrawer, useCoarsePointer, useViewport, useWindowHeight, useWindowWidth } from '../breakpoints.ts'
 import { findHarness, projectFor, usesDemoModel } from '../composerChoice.ts'
 import { setSessionOpener } from '../core/blocking.ts'
 import { ArchiveUndo } from '../components/ArchiveUndo.tsx'
@@ -34,10 +34,14 @@ import { frameShortcutAllowed } from '../plugin-pages/model.ts'
 import { conversationShown } from '../composer/useArmed.ts'
 import {
   RIGHT_PANEL_DEFAULT,
+  DOCK_DEFAULT,
+  DOCK_MIN,
   SIDEBAR_SNAP_MS,
   changesPanelWidth,
+  clampDockHeight,
   clampRightPanel,
   clampSidebar,
+  dockMax,
   placeRightPanel,
   sidebarAfterDrag,
   sidebarMax,
@@ -56,7 +60,7 @@ import { api, newRequestId, setErrorComputer } from '../core/api.ts'
 import type { Handoff } from '@latch/protocol'
 
 import type { PaletteLevel } from '../palette/model.ts'
-import { projectOf, listedSessions, readFolded, shelvesKey, steppedSession, type SessionFilter } from '../sessions.ts'
+import { projectOf, listedSessions, readFolded, shelvesKey, spaceOf, steppedSession, type SessionFilter } from '../sessions.ts'
 import { connectionWords, hostNoticeCopy } from '../core/hostState.ts'
 import { computerLabel } from '../core/securityCopy.ts'
 import { hostIsOlder, oldHostWords } from '../core/build.ts'
@@ -65,6 +69,7 @@ import { currentShell, shellBrowser, shellFolders } from '../core/shell.ts'
 import { useDrawer } from '../hooks/useDrawer.ts'
 import { useEndedSessionTabs } from '../panel/browser/useBrowserTabs.ts'
 import { useRevealedLogin } from '../panel/terminal/loginRuns.ts'
+import { terminalPath } from '../panel/terminal/model.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { usePhoneReview } from '../phone-review/usePhoneReview.ts'
@@ -72,7 +77,7 @@ import { usePromptTemplates } from '../hooks/usePromptTemplates.ts'
 import { useSessionSearch } from '../hooks/useSessionSearch.ts'
 import { SessionSearchResults } from '../components/SessionSearchResults.tsx'
 import { ArchiveBatch } from '../components/ArchiveBatch.tsx'
-import type { PanelSurface } from '../components/SessionPanels.tsx'
+import { offersPluginPanel, type PanelSurface } from '../components/SessionPanels.tsx'
 import { EASING, MOTION, motionAllowed, usePresence, type ResizePhase, EnterGlyph } from '@latch/ui'
 import { popWait } from './popWait.ts'
 import { settingsSections, type SettingsSection } from '../settings/SettingsPage.tsx'
@@ -220,6 +225,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   // From 1024px the sidebar can be dragged wider or narrower, or shut.
   const sidebarColumn = viewport === 'laptop' || viewport === 'desktop'
   const windowWidth = useWindowWidth()
+  const windowHeight = useWindowHeight()
   /** A drag in progress, and whether it is past the snap point; the width under the pointer goes straight to the page. */
   const [sidebarDrag, setSidebarDrag] = useState<{ collapsed: boolean } | null>(null)
   /** The panel as a page in the conversation's place: on phones, and on tablets too narrow for the column. */
@@ -233,8 +239,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const popTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   /** The right panel's edge is being dragged; its width goes straight to the page. */
   const [inspectorDrag, setInspectorDrag] = useState(false)
+  const [dockDrag, setDockDrag] = useState(false)
   const appShell = useRef<HTMLDivElement>(null)
   const titlebar = useRef<HTMLDivElement>(null)
+  const terminalDock = useRef<HTMLElement>(null)
+  const terminalToggle = useRef<HTMLButtonElement>(null)
   /** The current entry, its section, and where a page puts its title. */
   // A wide window opens where this device was last; a session the page restores keeps its own place.
   const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null)
@@ -396,10 +405,35 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const canDeliver = catalog?.features?.gitDelivery === true && access.scopes.has('view') && !!summary && summary.mode !== 'chat'
   const [deliveryWanted, setDeliveryWanted] = useState(false)
   const deliveryOpen = deliveryWanted && canDeliver
-  // Only where the Host offers one (this Mac, a device with run and the full data scope); nowhere else is there a tab.
-  const canTerminal = catalog?.features?.terminal === true && !!summary && !summary.archived && !summary.personal
-  const [terminalWanted, setTerminalWanted] = useState(false)
-  const terminalOpen = terminalWanted && canTerminal
+  const hasTerminal =
+    catalog?.features?.terminal === true && access.local && access.scopes.has('run') && snapshot.device.dataScope === 'all'
+  const sessionTerminal = hasTerminal && !!summary && !summary.archived && !summary.personal
+  const workspaceId = choice.workspaceId ?? catalog?.defaults.workspaceId ?? 'default'
+  const terminalWorkspace = catalog?.workspaces.find(item => item.id === workspaceId)
+  const terminalTarget: TerminalTarget | undefined = !hasTerminal
+    ? undefined
+    : route.overview || selectedId === null
+      ? { workspaceId }
+      : sessionTerminal && summary.id === selectedId
+        ? { sessionId: summary.id }
+        : undefined
+  const terminalKey = terminalTarget && terminalPath(terminalTarget)
+  const terminalUnavailable =
+    terminalTarget?.workspaceId === undefined
+      ? undefined
+      : (terminalWorkspace?.unavailable ?? (terminalWorkspace ? undefined : '找不到所选项目的文件夹'))
+  const terminalLocation = terminalTarget?.workspaceId !== undefined ? terminalWorkspace?.name : summary?.cwd && basename(summary.cwd)
+  const canTerminal = terminalTarget !== undefined && !phone && route.entry === 'sessions' && !route.allSessions
+  const terminalOpen = canTerminal && preferences.dockOpen
+  const [terminalIntent, setTerminalIntent] = useState<string>()
+  useLayoutEffect(() => {
+    setTerminalIntent(undefined)
+  }, [terminalKey, route.entry])
+  const dockHeight = clampDockHeight(preferences.dockHeight ?? DOCK_DEFAULT, windowHeight)
+  const dockLimit = dockMax(windowHeight)
+  useLayoutEffect(() => {
+    if (!terminalOpen || dockLimit < DOCK_MIN) setDockDrag(false)
+  }, [terminalOpen, dockLimit])
   // Only the desktop app's own window on this Mac (`latchShell.browser` version 2), for a live session of a project.
   const browserShell = shellBrowser()
   const browserProject =
@@ -449,7 +483,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setFileExpanded(false)
     setChangesWanted(false)
     setDeliveryWanted(false)
-    setTerminalWanted(false)
     setBrowserWanted(false)
     setBrowserRequest(undefined)
     setChangesTarget(undefined)
@@ -459,42 +492,55 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const sidebarWidth = clampSidebar(storedSidebar, windowWidth)
   const sidebarCollapsed = sidebarShut
   const panelLeft = sidebarColumn && !sidebarCollapsed ? sidebarWidth : 0
+  const homeInspector = route.overview === true && !phone && canBrowseDraftFiles
+  const homeInspectorOpen = homeInspector && draftFilesOpen
   const showingChanges = changesOpen && !fileTabs.active
   const panelWidth =
     preferences.rightPanel.width
-    ?? (showingChanges
-      ? changesPanelWidth(windowWidth, panelLeft, preferences.diffTree ?? (changesTotals?.files ?? 0) >= TREE_FROM_FILES)
-      : !filesVisible && !deliveryOpen && !terminalOpen && !browserOpen && pluginPanel === undefined
-        ? 400
-        : undefined)
+    ?? (homeInspector
+      ? undefined
+      : showingChanges
+        ? changesPanelWidth(windowWidth, panelLeft, preferences.diffTree ?? (changesTotals?.files ?? 0) >= TREE_FROM_FILES)
+        : !filesVisible && !deliveryOpen && !browserOpen && pluginPanel === undefined
+          ? 400
+          : undefined)
   const placed = placeRightPanel({
     windowWidth,
     ...(panelWidth !== undefined ? { width: panelWidth } : {}),
-    left: panelLeft,
+    left: homeInspector && preferences.workbenchLayout === 'triage' ? 0 : panelLeft,
   })
-  const placement =
-    !summary && !filesVisible
+  const placement = homeInspector
+    ? placed
+    : !summary && !filesVisible
       ? null
-      : !profileColumn
-          && (filesVisible || changesOpen || deliveryOpen || terminalOpen || browserOpen || pluginPanel !== undefined)
-          && fileExpanded
+      : !profileColumn && (filesVisible || changesOpen || deliveryOpen || browserOpen || pluginPanel !== undefined) && fileExpanded
         ? { kind: 'page' as const }
         : profileColumn && placed.kind === 'page'
           ? null
           : placed
   const pageMode = placement?.kind === 'page'
+  const hasRememberedSurface =
+    !!summary
+    && (!entries.includes('agents')
+      || spaceOf(summary) === 'code'
+      || canBrowseFiles
+      || canViewChanges
+      || canDeliver
+      || canBrowser
+      || catalog?.uiPanels?.some(panel => offersPluginPanel(panel, summary)) === true)
   const columnOpen =
     placement !== null
     && placement.kind !== 'page'
     && !(findOpen && placement.kind === 'sheet')
-    && (profileColumn
-      || filesVisible
-      || changesOpen
-      || deliveryOpen
-      || terminalOpen
-      || browserOpen
-      // The remembered desktop column must not cover a tablet's conversation without an explicit open action.
-      || (!!summary && preferences.rightPanel.open && (placement.kind === 'column' || infoPage)))
+    && (route.overview === true
+      ? homeInspectorOpen
+      : profileColumn
+        || filesVisible
+        || changesOpen
+        || deliveryOpen
+        || browserOpen
+        // A saved layout opens real surfaces on wide windows; a tablet overlay or an empty launcher needs an explicit action.
+        || (!!summary && preferences.rightPanel.open && (infoPage || (hasRememberedSurface && placement.kind === 'column'))))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
   const drawer = useDrawer({
     enabled: drawerMode,
@@ -502,6 +548,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     inertWhenOpen: [
       { ref: main, base: route.entry !== 'sessions' || route.overview === true || route.allSessions === true },
       { ref: titlebar },
+      { ref: terminalDock, base: !terminalOpen },
     ],
     shut: sidebarCollapsed,
   })
@@ -1086,7 +1133,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     launcherAsked.current = surface.kind === 'launcher'
     setChangesWanted(surface.kind === 'changes')
     setDeliveryWanted(surface.kind === 'delivery')
-    setTerminalWanted(surface.kind === 'terminal')
     setBrowserWanted(surface.kind === 'browser')
     setFilesOpen(surface.kind === 'files')
     setPluginPanel(surface.kind === 'plugin' ? surface.id : undefined)
@@ -1107,21 +1153,18 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         ? { kind: 'changes' }
         : deliveryOpen
           ? { kind: 'delivery' }
-          : terminalOpen
-            ? { kind: 'terminal' }
-            : browserOpen
-              ? { kind: 'browser' }
-              : filesOpen
-                ? { kind: 'files' }
-                : pluginPanel !== undefined
-                  ? { kind: 'plugin', id: pluginPanel }
-                  : { kind: 'launcher' }
+          : browserOpen
+            ? { kind: 'browser' }
+            : filesOpen
+              ? { kind: 'files' }
+              : pluginPanel !== undefined
+                ? { kind: 'plugin', id: pluginPanel }
+                : { kind: 'launcher' }
   const closePanel = () => {
     setProfile(null)
     lastSurface.current = shownSurface()
     setChangesWanted(false)
     setDeliveryWanted(false)
-    setTerminalWanted(false)
     setBrowserWanted(false)
     setFilesOpen(false)
     fileTabs.select(undefined)
@@ -1135,24 +1178,46 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setProfile(null)
     setChangesWanted(true)
     setDeliveryWanted(false)
-    setTerminalWanted(false)
     setBrowserWanted(false)
     setFilesOpen(false)
     fileTabs.select(undefined)
     setInfoPage(true)
     if (target) setChangesTarget(previous => ({ ...target, nonce: (previous?.nonce ?? 0) + 1 }))
   }
-  const toggleTerminal = () => {
-    if (terminalOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
-    else if (canTerminal) showSurface({ kind: 'terminal' })
+  const closeTerminal = () => {
+    setTerminalIntent(undefined)
+    setPreference('dockOpen', false)
+    requestAnimationFrame(() => terminalToggle.current?.focus({ preventScroll: true }))
   }
-  // A Harness's login started from this session runs in its 终端 tab: the tab comes forward once for each start.
-  const revealedLogin = useRevealedLogin(canTerminal ? summary?.id : undefined)?.nonce
+  const openTerminal = () => {
+    if (!canTerminal) return
+    setTerminalIntent(terminalKey)
+    if (!terminalOpen) setPreference('dockOpen', true)
+    else terminalDock.current?.querySelector<HTMLElement>('.terminal-screen:not([hidden]) .xterm-helper-textarea')?.focus()
+  }
+  const toggleTerminal = () => {
+    if (terminalOpen) closeTerminal()
+    else openTerminal()
+  }
+  const resizeTerminal = (raw: number, step: ResizePhase) => {
+    const height = clampDockHeight(raw, windowHeight)
+    if (step === 'drag') {
+      if (!dockDrag) setDockDrag(true)
+      appShell.current?.style.setProperty('--dock-height', `${height}px`)
+      return
+    }
+    setDockDrag(false)
+    if (height >= DOCK_MIN) setPreference('dockHeight', height)
+  }
+  const resetTerminal = () => setPreference('dockHeight', undefined)
+  // A Harness's login started from the visible session brings its dock forward once for each start.
+  const revealedLogin = useRevealedLogin(canTerminal ? terminalTarget?.sessionId : undefined)?.nonce
   const shownLogin = useRef<number | undefined>(undefined)
   useEffect(() => {
     if (revealedLogin === undefined || shownLogin.current === revealedLogin) return
     shownLogin.current = revealedLogin
-    showSurface({ kind: 'terminal' })
+    setTerminalIntent(terminalKey)
+    setPreference('dockOpen', true)
   })
   const toggleBrowser = () => {
     if (browserOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
@@ -1170,6 +1235,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     else openChangesTab()
   }
   const togglePanel = () => {
+    if (homeInspector) {
+      setDraftFilesOpen(!homeInspectorOpen)
+      if (homeInspectorOpen) requestAnimationFrame(() => panelToggle.current?.focus({ preventScroll: true }))
+      return
+    }
+    if (!summary && canBrowseFiles && !filesVisible) {
+      showSurface({ kind: 'files' })
+      return
+    }
     if (profileColumn) {
       // The profile stands in the panel's place: the toggle brings the panel back in its stead.
       const shown = shownSurface()
@@ -1198,7 +1272,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     const homeInputKey =
       route.entry === 'sessions'
       && route.overview === true
-      && ((typeof action === 'object' && action.kind === 'control') || action === 'files')
+      && ((typeof action === 'object' && action.kind === 'control')
+        || action === 'files'
+        || action === 'terminal'
+        || action === 'side-panel')
     if ((route.entry !== 'sessions' || route.overview || route.allSessions) && !shortcutWorksOnPage(action) && !homeInputKey) return
     if (typeof action === 'object') {
       // Held outside a field, or where the layout makes no character of it, the key is the app's even where it finds nothing.
@@ -1279,7 +1356,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     }
     if (action === 'side-panel') {
-      if (summary || filesVisible) togglePanel()
+      if (summary || canBrowseFiles || homeInspector) togglePanel()
       return
     }
     if (action === 'changes') {
@@ -1514,7 +1591,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (!canBrowseFiles) return
     setChangesWanted(false)
     setDeliveryWanted(false)
-    setTerminalWanted(false)
     setBrowserWanted(false)
     if (filesOpen && !fileTabs.active && (!pageMode || infoPage)) {
       setFilesOpen(false)
@@ -1737,6 +1813,23 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     deliveryOpen,
     canTerminal,
     terminalOpen,
+    terminalTarget,
+    terminalKey,
+    terminalUnavailable,
+    terminalLocation,
+    terminalRequested: terminalKey !== undefined && terminalIntent === terminalKey,
+    terminalDock,
+    terminalToggle,
+    closeTerminal,
+    openTerminal,
+    dockHeight,
+    dockLimit,
+    dockDrag,
+    resizeTerminal,
+    resetTerminal,
+    sessionTerminal,
+    homeInspector,
+    homeInspectorOpen,
     toggleTerminal,
     browserShell,
     browserProject,

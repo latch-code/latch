@@ -5,7 +5,9 @@ import {
   SIDEBAR_MAX,
   SIDEBAR_MIN,
   clampRightPanel,
+  clampDockHeight,
   clampSidebar,
+  dockMax,
   parseRightPanelPreference,
   parseSidebarPreference,
   placeRightPanel,
@@ -13,6 +15,16 @@ import {
   sidebarAfterDrag,
   sidebarMax,
 } from '../src/shell/panelLayout.ts'
+
+describe('the terminal dock', () => {
+  it('clamps the saved height to the room the conversation leaves', () => {
+    expect(clampDockHeight(380, 900)).toBe(380)
+    expect(clampDockHeight(380, 550)).toBe(300)
+    expect(clampDockHeight(380, 360)).toBe(110)
+    expect(clampDockHeight(90, 900)).toBe(140)
+    expect(dockMax(2000)).toBe(680)
+  })
+})
 
 describe('the panel next to the rail', () => {
   it('stays between 220 and 400, and leaves the conversation 480', () => {

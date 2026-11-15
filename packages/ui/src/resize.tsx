@@ -4,13 +4,12 @@ import { cx } from './internal.ts'
 export type ResizePhase = 'drag' | 'commit'
 
 /**
- * The edge of a side column that changes its width, as in a code editor: an invisible 6px hit zone straddling the
- * edge with the col-resize cursor, which shows a 1px line in line-strong after a 300ms hover (at once while dragging,
+ * The edge of a pane: an invisible 6px hit zone which shows a 1px line in line-strong after a 300ms hover (at once while dragging,
  * and with the focus ring from the keyboard). It never moves the layout and is never blue.
  *
- * It reports widths and leaves the rules to its owner: a drag reports the raw width under the pointer as it moves and
- * once more when it ends (the owner clamps it, may snap the column shut, and remembers it); ←/→ step 8px (32 with
- * Shift), Home and End go to `min` and `max`; Enter toggles the column shut and open; a double click resets it. The
+ * It reports dimensions and leaves the rules to its owner: a drag reports the raw size under the pointer as it moves and
+ * once more when it ends; arrows step 8px (32 with
+ * Shift), Home and End go to `min` and `max`. Enter toggles a collapsible column or resets the other panes. A double click resets it. The
  * pointer is captured while dragging, so text is not selected and no frame takes the pointer. `edge` is the side of
  * the column the handle is on: `end` for a column on the left (the sidebar), `start` for one on the right.
  */
@@ -21,6 +20,7 @@ export function ResizeHandle({
   max,
   collapsed = false,
   edge = 'end',
+  orientation = 'vertical',
   onResize,
   onReset,
   onToggle,
@@ -29,19 +29,20 @@ export function ResizeHandle({
 }: {
   /** What the handle resizes, for example 「调整侧栏宽度」. */
   label: string
-  /** The column's width in px (0 while shut). */
+  /** The pane's width or height in px (0 while shut). */
   value: number
   min: number
   max: number
   collapsed?: boolean
   edge?: 'start' | 'end'
-  onResize: (width: number, phase: ResizePhase) => void
+  orientation?: 'vertical' | 'horizontal'
+  onResize: (size: number, phase: ResizePhase) => void
   onReset: () => void
   onToggle?: () => void
   className?: string
   style?: CSSProperties
 }) {
-  const drag = useRef<{ pointer: number; x: number; from: number } | null>(null)
+  const drag = useRef<{ pointer: number; position: number; from: number } | null>(null)
   const [dragging, setDragging] = useState(false)
   // Removed in the middle of a drag (the window crossed a breakpoint): the page must not keep the resize cursor and
   // its text unselectable.
@@ -52,31 +53,36 @@ export function ResizeHandle({
     [],
   )
   const direction = edge === 'end' ? 1 : -1
-  const widthAt = (x: number) => (drag.current ? drag.current.from + (x - drag.current.x) * direction : value)
+  const horizontal = orientation === 'horizontal'
+  const position = (event: PointerEvent<HTMLDivElement>) => (horizontal ? event.clientY : event.clientX)
+  const sizeAt = (at: number) => (drag.current ? drag.current.from + (at - drag.current.position) * direction : value)
 
   const end = (event: PointerEvent<HTMLDivElement>) => {
     const current = drag.current
     if (!current || current.pointer !== event.pointerId) return
-    const width = widthAt(event.clientX)
+    const size = sizeAt(position(event))
     drag.current = null
     setDragging(false)
     delete document.documentElement.dataset.resizing
-    onResize(width, 'commit')
+    onResize(size, 'commit')
   }
 
   const keydown = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = event.shiftKey ? 32 : 8
-    const grow = edge === 'end' ? 'ArrowRight' : 'ArrowLeft'
-    const shrink = edge === 'end' ? 'ArrowLeft' : 'ArrowRight'
+    const before = horizontal ? 'ArrowUp' : 'ArrowLeft'
+    const after = horizontal ? 'ArrowDown' : 'ArrowRight'
+    const grow = direction === 1 ? after : before
+    const shrink = direction === 1 ? before : after
     const from = collapsed ? min : value
     let next: number | undefined
     if (event.key === grow) next = Math.min(max, from + step)
     else if (event.key === shrink) next = Math.max(min, from - step)
     else if (event.key === 'Home') next = min
     else if (event.key === 'End') next = max
-    else if (event.key === 'Enter' && onToggle) {
+    else if (event.key === 'Enter') {
       event.preventDefault()
-      onToggle()
+      if (onToggle) onToggle()
+      else onReset()
       return
     }
     if (next === undefined) return
@@ -87,7 +93,7 @@ export function ResizeHandle({
   return (
     <div
       role="separator"
-      aria-orientation="vertical"
+      aria-orientation={orientation}
       aria-label={label}
       aria-valuenow={collapsed ? min : value}
       aria-valuemin={min}
@@ -107,12 +113,12 @@ export function ResizeHandle({
         // No text selection starts, and the pointer stays with the handle over frames and other elements.
         event.preventDefault()
         event.currentTarget.setPointerCapture(event.pointerId)
-        drag.current = { pointer: event.pointerId, x: event.clientX, from: collapsed ? 0 : value }
-        document.documentElement.dataset.resizing = ''
+        drag.current = { pointer: event.pointerId, position: position(event), from: collapsed ? 0 : value }
+        document.documentElement.dataset.resizing = horizontal ? 'horizontal' : ''
         setDragging(true)
       }}
       onPointerMove={event => {
-        if (drag.current?.pointer === event.pointerId) onResize(widthAt(event.clientX), 'drag')
+        if (drag.current?.pointer === event.pointerId) onResize(sizeAt(position(event)), 'drag')
       }}
       onPointerUp={event => {
         end(event)

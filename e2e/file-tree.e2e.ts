@@ -66,6 +66,7 @@ it.each([
       expect((await owner.confirmed(`devices/${deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
       await page.reload()
       await connected(page)
+      expect(await page.getByRole('button', { name: '终端', exact: true }).count()).toBe(0)
       const openOld = () =>
         page.locator(`.workbench-home [data-work-session="${sessionId}"] :is(.work-decision-session, .work-decision-object)`).click()
       await openOld()

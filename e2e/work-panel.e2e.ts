@@ -184,6 +184,7 @@ describe('the v8 work canvas in both layouts', () => {
     await page.reload()
     await page.locator('.app-shell[data-connection="connected"]').waitFor()
     await settleShell(page)
+    expect(await page.getByRole('button', { name: '终端', exact: true }).count()).toBe(0)
     return page
   }
 
@@ -205,6 +206,7 @@ describe('the v8 work canvas in both layouts', () => {
     await page.locator('.transcript-content').waitFor()
     await page.locator('.transcript .ui-loading').waitFor({ state: 'detached' })
     await settleShell(page)
+    expect(await page.getByRole('button', { name: '终端', exact: true }).count()).toBe(0)
   }
 
   const shot = (page: Page, name: string, width: number, theme: string) =>

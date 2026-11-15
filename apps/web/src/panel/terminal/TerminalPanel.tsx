@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import { MessageSquarePlus, RotateCcw, SquareActivity, SquareX } from 'lucide-react'
-import { TERMINALS_PER_SESSION, type TerminalSize, type TerminalSummary } from '@latch/protocol'
+import { TERMINALS_PER_SESSION, type TerminalSize, type TerminalSummary, type TerminalTarget } from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
@@ -21,6 +21,7 @@ import {
   ShieldGlyph,
   PlusGlyph,
   TerminalGlyph,
+  ChevronDownGlyph,
 } from '@latch/ui'
 import { errorMessage, MessageError } from '../../core/api.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
@@ -37,9 +38,14 @@ const PAD = { x: 24, y: 16 }
 const RESIZE_SETTLE_MS = 120
 
 export interface TerminalPanelProps {
-  sessionId: string
-  /** The tab is on screen: the list is read, and a terminal opened, only once it is. */
+  target: TerminalTarget
+  /** The dock is on screen. */
   shown: boolean
+  /** The person explicitly opened the dock for this target. */
+  requested: boolean
+  unavailable?: string
+  location?: string
+  onCollapse(): void
   /** Puts text into the session's composer draft without sending it; absent while the composer takes none. */
   onCompose?: ((text: string) => void) | undefined
   /** Opens a local service in the 浏览器 tab (the desktop app); ⌘-click still goes to the system browser. */
@@ -66,14 +72,28 @@ function measuredSize(element: HTMLElement | null): TerminalSize {
 const tabIcon = (summary: TerminalSummary) => (summary.status !== 'running' ? SquareX : summary.busy ? SquareActivity : TerminalGlyph)
 
 /**
- * The 终端 tab: the session's terminals, 终端 1, 2…, each a login shell in the session's folder that the Host chose. The
- * screen follows the Host's stream; the bar holds the local services the output announced and 「加入对话」. Only this Mac
- * gets here (the Host offers `catalog.features.terminal` nowhere else).
+ * The target's terminals, each a shell in the folder the Host chose. Hiding the dock keeps its screens and streams.
  */
-export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: TerminalPanelProps) {
+export function TerminalPanel({
+  target,
+  shown,
+  requested,
+  unavailable,
+  location,
+  onCollapse,
+  onCompose,
+  onOpenService,
+}: TerminalPanelProps) {
   const id = useId()
   const screens = useRef<HTMLDivElement>(null)
-  const terminals = useTerminals({ sessionId, shown, size: () => measuredSize(screens.current) })
+  const usableCompose = useRef<typeof onCompose>(undefined)
+  useLayoutEffect(() => {
+    usableCompose.current = shown ? onCompose : undefined
+    return () => {
+      usableCompose.current = undefined
+    }
+  }, [shown, onCompose])
+  const terminals = useTerminals({ target, shown, autoOpen: requested && !unavailable, size: () => measuredSize(screens.current) })
   const { tabs, active, read, opening, failure, list, setActive } = terminals
   const current = tabs.find(tab => tab.id === active)
   const [selection, setSelection] = useState<Record<string, string>>({})
@@ -81,9 +101,10 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
   const [notice, setNotice] = useState<{ tone: 'warn' | 'error'; text: string }>()
   const [attaching, setAttaching] = useState(false)
   const [connection, setConnection] = useState<Record<string, 'live' | 'reconnecting'>>({})
+  const [focusScreen, setFocusScreen] = useState(false)
 
   // A Harness's login was started for this session: its terminal joins the tabs and comes to the front.
-  const revealed = useRevealedLogin(sessionId)
+  const revealed = useRevealedLogin(target.sessionId)
   const revealedId = revealed?.terminalId
   const revealedNonce = revealed?.nonce
   useEffect(() => {
@@ -118,7 +139,7 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
         setNotice({ tone: 'warn', text: '没有可以加入的输出' })
         return
       }
-      onCompose(draftText(tabLabel(current.number), extract))
+      usableCompose.current?.(draftText(tabLabel(current.number), extract))
       if (extract.mayContainSecret) setNotice({ tone: 'warn', text: '加入的内容可能含密钥，发送前检查草稿' })
     } catch (cause) {
       setNotice({ tone: 'error', text: errorMessage(cause) })
@@ -139,19 +160,27 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
   const services = current?.summary.status === 'running' ? current.summary.services : []
 
   return (
-    <section className="terminal-panel" aria-label="终端">
+    <section className="terminal-panel" aria-label="终端" data-secure="">
       <PanelTabs
         label="终端"
         className="terminal-tabs"
         value={active ?? ''}
         tabs={panelTabs}
-        onValueChange={terminals.setActive}
+        onValueChange={value => {
+          setFocusScreen(true)
+          terminals.setActive(value)
+        }}
         onClose={value => {
           const tab = tabs.find(item => item.id === value)
           if (tab) void close(tab)
         }}
         actions={
           <>
+            {!current && location && (
+              <span className="terminal-location">
+                <VisibleText text={location} />
+              </span>
+            )}
             {services.map(service => (
               <Tooltip
                 key={service.origin}
@@ -186,10 +215,16 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
               size="xs"
               icon={PlusGlyph}
               label="新终端"
-              {...(full ? { tooltip: `每个会话最多 ${TERMINALS_PER_SESSION} 个终端` } : {})}
-              disabled={full || opening}
-              onClick={() => void terminals.open()}
+              {...(full
+                ? { tooltip: `每个${target.workspaceId === undefined ? '会话' : '项目'}最多 ${TERMINALS_PER_SESSION} 个终端` }
+                : {})}
+              disabled={full || opening || Boolean(unavailable) || read.kind !== 'ready'}
+              onClick={() => {
+                setFocusScreen(true)
+                void terminals.open()
+              }}
             />
+            <IconButton size="xs" icon={ChevronDownGlyph} label="收起终端" onClick={onCollapse} />
           </>
         }
       />
@@ -207,9 +242,10 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
         {tabs.map(tab => (
           <TerminalScreen
             key={tab.id}
-            sessionId={sessionId}
+            target={target}
             tab={tab}
             visible={shown && tab.id === active}
+            focusOnShow={requested || focusScreen}
             onSummary={updated}
             onClosed={() => gone(tab.id)}
             onSelection={text => setSelection(previous => ({ ...previous, [tab.id]: text }))}
@@ -219,7 +255,9 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
         ))}
         {tabs.length === 0 && (
           <div className="terminal-empty">
-            {read.kind === 'loading' || opening ? (
+            {unavailable ? (
+              <InlineNotice tone="warn">{unavailable}</InlineNotice>
+            ) : read.kind === 'loading' || opening ? (
               <Loading label="正在打开终端…" />
             ) : read.kind === 'failed' ? (
               <InlineNotice
@@ -232,7 +270,13 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
                 {read.text}
               </InlineNotice>
             ) : (
-              <Button size="sm" icon={TerminalGlyph} onClick={() => void terminals.open()}>
+              <Button
+                size="sm"
+                icon={TerminalGlyph}
+                onClick={() => {
+                  setFocusScreen(true)
+                  void terminals.open()
+                }}>
                 打开终端
               </Button>
             )}
@@ -306,18 +350,20 @@ const loadXterm = () =>
  * opened the terminal sizes it to the area; any other shows it at the Host's size.
  */
 export function TerminalScreen({
-  sessionId,
+  target,
   tab,
   visible,
+  focusOnShow = true,
   onSummary,
   onClosed,
   onSelection,
   onConnection,
   onInputFailed,
 }: {
-  sessionId: string
+  target: TerminalTarget
   tab: TerminalTab
   visible: boolean
+  focusOnShow?: boolean
   onSummary(summary: TerminalSummary): void
   onClosed(): void
   onSelection(text: string): void
@@ -333,6 +379,7 @@ export function TerminalScreen({
   summary.current = tab.summary
   const visibleRef = useRef(visible)
   visibleRef.current = visible
+  const { sessionId, workspaceId } = target
 
   /** Sizes the screen: to the area for the owner (and tells the Host), to the Host's size for anyone else. */
   const settle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -380,7 +427,7 @@ export function TerminalScreen({
       const fit = new FitAddon()
       terminal.loadAddon(fit)
       terminal.open(element)
-      const link = new TerminalLink(sessionId, tab.id, {
+      const link = new TerminalLink(workspaceId === undefined ? { sessionId } : { workspaceId }, tab.id, {
         write: bytes => new Promise<void>(resolve => terminal.write(bytes, resolve)),
         reset: () => terminal.reset(),
         summary: next => handlers.current.onSummary(next),
@@ -433,7 +480,7 @@ export function TerminalScreen({
       for (const step of cleanup) step()
       term.current = null
     }
-  }, [sessionId, tab.id, layout])
+  }, [sessionId, workspaceId, tab.id, layout])
 
   // The Host's word on size and state: a screen that is not the owner follows it; an ended one takes no more input.
   useEffect(() => {
@@ -447,8 +494,8 @@ export function TerminalScreen({
   useEffect(() => {
     if (!visible || !ready) return
     layout()
-    term.current?.terminal.focus()
-  }, [visible, ready, layout])
+    if (focusOnShow) term.current?.terminal.focus()
+  }, [visible, ready, layout, focusOnShow])
 
   return <div className="terminal-screen" ref={host} hidden={!visible} data-terminal-id={tab.id} data-status={tab.summary.status} />
 }

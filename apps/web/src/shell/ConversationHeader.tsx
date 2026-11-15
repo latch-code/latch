@@ -21,7 +21,6 @@ import {
   MoreGlyph,
   FolderGlyph,
   HistoryGlyph,
-  TerminalGlyph,
   PanelRightGlyph,
   EditGlyph,
   BranchGlyph,
@@ -485,7 +484,6 @@ export function SessionHeader({
         imported={imported}
       />
     )
-  const desktop = currentShell() !== null
   return (
     <header className="topbar">
       <div className="topbar-title">
@@ -541,20 +539,9 @@ export function SessionHeader({
           </StatusPill>
         )}
         {slots.gitAction}
-        {slots.terminal && <Toggle toggle={slots.terminal} />}
         {slots.changes && <ChangesToggle toggle={slots.changes} totals={changesTotals} />}
         {/* A session reaches its files through the panel; a new one has no panel yet, only this. */}
         {onFiles && !summary && <IconButton label="浏览项目文件" icon={FolderGlyph} pressed={filesOpen} onClick={onFiles} />}
-        {summary && (
-          <IconButton
-            ref={panelRef}
-            label="侧边面板"
-            icon={PanelRightGlyph}
-            shortcut={desktop ? '⌥⌘B' : 'Alt Shift B'}
-            pressed={panelOpen}
-            onClick={onPanel}
-          />
-        )}
         {summary && menu.length > 0 && (
           <Menu
             label="会话操作"
@@ -596,9 +583,6 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     canViewChanges,
     changesOpen,
     toggleChanges,
-    canTerminal,
-    terminalOpen,
-    toggleTerminal,
     fileTabs,
     current,
     snapshot,
@@ -745,17 +729,6 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
           }
         : {})}
       slots={{
-        ...(canTerminal && !phone
-          ? {
-              terminal: {
-                label: '终端',
-                icon: TerminalGlyph,
-                shortcut: desktop ? '⌘J' : 'Alt J',
-                pressed: terminalOpen && !fileTabs.active,
-                onToggle: toggleTerminal,
-              },
-            }
-          : {}),
         ...(canViewChanges
           ? {
               changes: {

@@ -5,6 +5,8 @@ import { readStorage } from './core/storageKeys.ts'
 import {
   parseRightPanelPreference,
   parseSidebarPreference,
+  DOCK_MAX,
+  DOCK_MIN,
   type RightPanelPreference,
   type SidebarPreference,
 } from './shell/panelLayout.ts'
@@ -57,6 +59,7 @@ export interface Preferences {
   sidebar: SidebarPreference
   /** The terminal dock's dragged height; absent means the default. */
   dockHeight?: number
+  dockOpen: boolean
   /** Shelves of the session list the person folded, by ID. */
   foldedShelves: string[]
 }
@@ -76,6 +79,7 @@ const defaults: Preferences = {
   sendKey: 'enter',
   rightPanel: { open: true },
   sidebar: { collapsed: false },
+  dockOpen: false,
   foldedShelves: [],
 }
 
@@ -114,7 +118,11 @@ export function parsePreferences(raw: string | null): Preferences {
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
       rightPanel: item.rightPanel === undefined ? { open: item.workbenchLayout !== 'triage' } : parseRightPanelPreference(item.rightPanel),
       sidebar: parseSidebarPreference(item.sidebar),
-      ...(typeof item.dockHeight === 'number' && Number.isInteger(item.dockHeight) && item.dockHeight >= 140 && item.dockHeight <= 680
+      dockOpen: item.dockOpen === true,
+      ...(typeof item.dockHeight === 'number'
+      && Number.isInteger(item.dockHeight)
+      && item.dockHeight >= DOCK_MIN
+      && item.dockHeight <= DOCK_MAX
         ? { dockHeight: item.dockHeight }
         : {}),
       foldedShelves: Array.isArray(item.foldedShelves)

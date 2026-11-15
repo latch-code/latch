@@ -20,6 +20,7 @@ import { ComputerMenu } from '../components/Computers.tsx'
 import { useComputers } from '../core/computers.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { ShellQuota } from './ShellQuota.tsx'
+import { WorkbenchPanes } from './WorkbenchPanes.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** On tablets the project tree is a drawer beside a persistent 60px navigation rail. */
@@ -87,7 +88,7 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
         <BrandMark size={24} />
       </span>
       {spaces && <SpaceSwitch {...spaces} />}
-      {!shell.route.overview && !shell.route.allSessions && shell.route.entry === 'sessions' && (
+      {!shell.sidebarColumn && !shell.route.overview && !shell.route.allSessions && shell.route.entry === 'sessions' && (
         <IconButton
           ref={shell.sidebarToggle}
           label={shell.sidebarColumn ? (shell.sidebarCollapsed ? '展开侧栏' : '收起侧栏') : '打开会话列表'}
@@ -130,6 +131,7 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
       <ShellQuota shell={shell} />
       {shell.entries.includes('apps') && <IconButton label="应用" icon={PluginsGlyph} onClick={() => shell.openApp()} />}
       {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}
+      <WorkbenchPanes shell={shell} />
       {/* The layout switch is the shell's, drawn over this reserved end in both layouts. */}
       <span className="layout-switch-space" aria-hidden="true" />
     </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { TerminalSize, TerminalSummary, TerminalText } from '@latch/protocol'
+import type { TerminalSize, TerminalSummary, TerminalTarget, TerminalText } from '@latch/protocol'
 import { api, ApiError, errorMessage, isUncertain } from '../../core/api.ts'
-import { ATTACH_LAST_LINES, keepActive, nameTabs, type TerminalTab } from './model.ts'
+import { ATTACH_LAST_LINES, keepActive, nameTabs, terminalPath, type TerminalTab } from './model.ts'
 
 export type TerminalsRead = { kind: 'loading' } | { kind: 'ready' } | { kind: 'failed'; text: string }
 
@@ -9,12 +9,11 @@ export type TerminalsRead = { kind: 'loading' } | { kind: 'ready' } | { kind: 'f
 export type CloseResult = { kind: 'closed' } | { kind: 'busy'; program?: string } | { kind: 'failed'; text: string }
 
 /**
- * The session's terminals as the Host lists them, in tabs named 终端 1, 2…. The list is read when the tab first shows
- * and after anything this page could not confirm; each terminal's own stream keeps its summary current. Opening the tab
- * of a session with no terminal opens one, once; after the last one is closed the tab offers to open another.
+ * The target's terminals as the Host lists them. A first explicit reveal may open one after a successful empty list.
+ * Restoring the dock or changing the target only reads, so a layout change never starts another shell.
  */
-export function useTerminals(input: { sessionId: string; shown: boolean; size: () => TerminalSize }) {
-  const { sessionId, shown } = input
+export function useTerminals(input: { target: TerminalTarget; shown: boolean; autoOpen: boolean; size: () => TerminalSize }) {
+  const { target, shown, autoOpen } = input
   const sizeRef = useRef(input.size)
   sizeRef.current = input.size
   const [tabs, setTabs] = useState<TerminalTab[]>([])
@@ -24,7 +23,8 @@ export function useTerminals(input: { sessionId: string; shown: boolean; size: (
   const [failure, setFailure] = useState<string>()
   const started = useRef(false)
   const autoOpened = useRef(false)
-  const base = `tasks/${encodeURIComponent(sessionId)}/terminals`
+  const openingNow = useRef(false)
+  const base = terminalPath(target)
 
   const apply = useCallback((next: (previous: TerminalTab[]) => TerminalTab[]) => {
     setTabs(previous => {
@@ -48,6 +48,9 @@ export function useTerminals(input: { sessionId: string; shown: boolean; size: (
 
   const open = useCallback(
     async (number?: number) => {
+      if (openingNow.current) return
+      openingNow.current = true
+      autoOpened.current = true
       setOpening(true)
       setFailure(undefined)
       try {
@@ -61,6 +64,7 @@ export function useTerminals(input: { sessionId: string; shown: boolean; size: (
         if (isUncertain(cause)) await list()
         else setFailure(errorMessage(cause))
       } finally {
+        openingNow.current = false
         setOpening(false)
       }
     },
@@ -70,13 +74,11 @@ export function useTerminals(input: { sessionId: string; shown: boolean; size: (
   useEffect(() => {
     if (!shown || started.current) return
     started.current = true
-    void list().then(terminals => {
-      if (terminals?.length === 0 && !autoOpened.current) {
-        autoOpened.current = true
-        void open()
-      }
-    })
-  }, [shown, list, open])
+    void list()
+  }, [shown, list])
+  useEffect(() => {
+    if (shown && autoOpen && read.kind === 'ready' && tabs.length === 0 && !autoOpened.current) void open()
+  }, [shown, autoOpen, read.kind, tabs.length, open])
 
   const updated = useCallback(
     (summary: TerminalSummary) => {

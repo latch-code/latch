@@ -20,7 +20,7 @@ async function openSession(page: Page, id: string) {
   await page.getByRole('textbox', { name: '继续对话', exact: true }).waitFor()
 }
 async function openPanel(page: Page, name: string) {
-  const toggle = page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true })
+  const toggle = page.getByRole('button', { name: '侧边面板', exact: true })
   if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
   await page.getByRole('tab', { name, exact: true }).click()
 }

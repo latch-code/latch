@@ -674,7 +674,7 @@ pnpm latch presence test --data-dir <临时目录>
 
 `delivery.e2e.ts` 用真实临时仓库、本地裸远端与假 ACP Agent 走完交付页签：逐个暂存与取消暂存、通过与失败的提交钩子（「加入对话」只进草稿不发送）、跳过钩子、推送并设上游、远端 `pre-receive` 拒绝的行、没有远端、推送结果未知后用同一请求重试、回合等审批时停用写入，以及 390 与 320 宽和数据范围不足的设备仍能提交与推送（截图在 `test-results/delivery/`，含 768 与深色）。
 
-`desktop-terminal.e2e.ts`（`LATCH_ELECTRON_E2E=1`）让桌面端经 `host.sock` 连接配假终端组件的测试 Host（不启动真实 shell）：打开、输入与回显、Ctrl-B 留在终端、本地服务链接、15 万字节的括号粘贴完整送达、按窗口调整大小与其他设备不能调整、「加入对话」只进草稿、重新载入后重放、第二个终端、忙碌时关闭要确认、退出码与重新打开、⌘J 仍归 Latch（截图在 `test-results/desktop-terminal/`，含 768 与深色）。`desktop-login-terminal.e2e.ts`（同一开关）用真实终端组件配 `/bin/sh` 运行夹具里的假 `codex login`（打印一个假设备码、等回车，从不运行真实 CLI 的登录）：草稿里的登录对话框、会话「终端」页签里的登录标签、设置里的登录，退出码与重新检查，以及假设备码不出现在审计、会话与快照里（截图在 `test-results/desktop-login-terminal/`）。`desktop-first-use.e2e.ts` 的登录用例把终端组件指向不存在的文件，保留「没有 Latch 终端时用默认终端」的路径；它等登录请求回答之后才触发重新检查，因为夹具在请求回答之前就运行登录，早到的检查会并入登录还没完成时开始的那一次。
+`desktop-terminal.e2e.ts`（`LATCH_ELECTRON_E2E=1`）让桌面端经 `host.sock` 连接配假终端组件的测试 Host（不启动真实 shell）：打开、输入与回显、Ctrl-B 留在终端、本地服务链接、15 万字节的括号粘贴完整送达、底部终端与左右栏独立、拖动和按键调节、布局与设置保持终端实例、默认目录和选定项目独立于会话、其他设备不能调整、「加入对话」只进草稿、重新载入后重放、第二个终端、忙碌时关闭要确认、退出码与重新打开、⌘J 仍归 Latch（截图在 `test-results/desktop-terminal/`，含 768 与深色）。`desktop-login-terminal.e2e.ts`（同一开关）用真实终端组件配 `/bin/sh` 运行夹具里的假 `codex login`（打印一个假设备码、等回车，从不运行真实 CLI 的登录）：草稿里的登录对话框、会话「终端」页签里的登录标签、设置里的登录，退出码与重新检查，以及假设备码不出现在审计、会话与快照里（截图在 `test-results/desktop-login-terminal/`）。`desktop-first-use.e2e.ts` 的登录用例把终端组件指向不存在的文件，保留「没有 Latch 终端时用默认终端」的路径；它等登录请求回答之后才触发重新检查，因为夹具在请求回答之前就运行登录，早到的检查会并入登录还没完成时开始的那一次。
 
 `pr-checks.e2e.ts` 用假 `gh`（远端名为 GitHub、推送到本地裸仓库）走完 PR 一节：创建 PR、另一个会话按同一分支绑定而不新建、失败检查的日志与「加入对话」只进草稿、审阅与行级评论进草稿、「旧提交」、gh 未登录与没有 gh，以及 390 与 320 宽（截图在 `test-results/pr-checks/`，含 768 与深色）；假 `gh` 没有记下任何 token 违规。
 

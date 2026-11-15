@@ -22,6 +22,12 @@
   height: 52px;
   margin-top: var(--shell-inset);
 }
+.workbench-pane-controls {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
 .triage-sidebar {
   display: flex;
   flex-direction: column;
@@ -47,7 +53,8 @@
   margin: 0 var(--shell-inset) var(--shell-inset) 0;
   border-radius: var(--r-12);
 }
-.app-shell:is([data-overview], [data-all-sessions]) :is(.workspace, .inspector-column, .inspector-resize) {
+.app-shell:is([data-overview], [data-all-sessions]) .workspace,
+.app-shell:is([data-overview]:not([data-home-inspector]), [data-all-sessions]) :is(.inspector-column, .inspector-resize) {
   visibility: hidden;
   /* Protected approval descendants set their own visibility; hide the whole retained surface without changing its layout. */
   opacity: 0;
@@ -55,6 +62,9 @@
 .app-shell[data-workbench-layout='triage'][data-overview] .workbench-home {
   grid-column: 1 / -1;
   margin-left: var(--shell-inset);
+}
+.app-shell[data-overview][data-home-inspector][data-inspector='open'] .workbench-home {
+  grid-column-end: 3;
 }
 .app-shell[data-workbench-layout='triage']:is([data-overview], [data-all-sessions]) :is(.sidebar, .sidebar-resize) {
   visibility: hidden;

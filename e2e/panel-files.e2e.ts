@@ -97,7 +97,7 @@ describe('the right panel', () => {
     page.screenshot({ path: `${OUTPUT}/${name}--${width}-${theme}.png`, animations: 'disabled' })
   const row = (page: Page, name: string): Locator => page.getByRole('treeitem', { name, exact: true })
   const openPanel = async (page: Page) => {
-    const toggle = page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true })
+    const toggle = page.getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true })
     if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
     const tabs = page.getByRole('tablist', { name: '会话面板', exact: true })
     await tabs.waitFor()
@@ -209,7 +209,7 @@ describe('the right panel', () => {
           // × shuts the panel and the toggle brings back what was showing, tabs and all.
           await tabs.locator('..').getByRole('button', { name: '关闭', exact: true }).click()
           await expect.poll(() => page.locator('.session-panels').count()).toBe(0)
-          await page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).click()
+          await page.getByRole('button', { name: '侧边面板', exact: true }).click()
           await viewer.getByRole('button', { name: '文件操作', exact: true }).waitFor()
         }
       } finally {
@@ -401,7 +401,7 @@ describe('the right panel', () => {
   it('brings back the file a page was showing when it was sent back', async () => {
     const page = await open(390, 'light')
     try {
-      const toggle = page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true })
+      const toggle = page.getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true })
       await openFiles(page)
       await row(page, 'guide.md').click()
       const viewer = page.getByRole('region', { name: '文件预览', exact: true })
