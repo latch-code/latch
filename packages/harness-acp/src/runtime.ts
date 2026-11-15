@@ -635,6 +635,10 @@ function routeSummary(route: ModelRoute): NonNullable<DriverTaskSummary['modelRo
 }
 
 /** A fork's position, as a creation's payload names it. */
+function codexMemberTurnHash(memberId: string, childTurnId: string): string {
+  return sha256Hex(JSON.stringify([memberId, childTurnId]))
+}
+
 function forkKey(fork: unknown): { taskId: unknown; upToMessageId: unknown } {
   const { taskId, upToMessageId } = (fork ?? {}) as Record<string, unknown>
   return { taskId, upToMessageId }
@@ -1057,8 +1061,8 @@ export class AgentRuntime implements Bridge {
     const run = this.runs.get(sessionId)
     const active = isActive(task.summary) || (run !== undefined && this.preparing(task, run))
     const segment = active ? run?.segment : undefined
-    const codexTeam =
-      this.selection.profile?.wire === 'codex' ? (this.lives.get(sessionId)?.wire.codexTeam ?? task.acp.codexTeam) : undefined
+    const wire = this.lives.get(sessionId)?.wire
+    const codexTeam = this.selection.profile?.wire === 'codex' && !wire?.stopping ? wire?.codexTeam : undefined
     const detail: DriverTaskDetail = structuredClone({
       summary: this.projected(task),
       messages: task.messages,
@@ -5080,7 +5084,14 @@ export class AgentRuntime implements Bridge {
     if (live.wire.reconcileCodexTeam) {
       const memberIds = new Set(target.messages.flatMap(message => (message.subagent?.team ? [message.subagent.team.memberId] : [])))
       live.wire.reconcileCodexTeam(
-        memberIds.size ? (root, child) => memberIds.has(sha256Hex(JSON.stringify([taskId, root, child]))) : undefined,
+        memberIds.size
+          ? (root, child, turn) => {
+              const member = sha256Hex(JSON.stringify([taskId, root, child]))
+              return (
+                memberIds.has(member) && (turn === undefined || target.acp.codexMemberTurns?.[member] === codexMemberTurnHash(member, turn))
+              )
+            }
+          : undefined,
       )
     }
     this.askQuota(live)
@@ -6051,7 +6062,6 @@ export class AgentRuntime implements Bridge {
       }
       case 'latch/codex-team-availability':
         if (this.selection.profile?.wire !== 'codex') return
-        if (live.wire.codexTeam === 'available' || live.wire.codexTeam === 'disabled') task.acp.codexTeam = live.wire.codexTeam
         break
       case 'compaction_update':
       case 'compaction_summary_chunk': {
@@ -6378,7 +6388,15 @@ export class AgentRuntime implements Bridge {
     const evidenceId = evidence ? sha256Hex(JSON.stringify([task.summary.id, evidence.rootThreadId, update.sessionId])) : undefined
     const teamRowId = evidenceId ? `subagent:${evidenceId}` : undefined
     const existingTeamRow = evidenceId ? task.messages.find(item => item.subagent?.team?.memberId === evidenceId) : undefined
-    if (evidence?.recovered && !existingTeamRow) return
+    if (update.team && !evidence) return
+    if (evidence && !evidence.parentTurnId && !existingTeamRow) return
+    if (
+      evidence?.recovered
+      && (!evidenceId
+        || !evidence.childTurnId
+        || task.acp.codexMemberTurns?.[evidenceId] !== codexMemberTurnHash(evidenceId, evidence.childTurnId))
+    )
+      return
     let child = live.children.get(update.sessionId)
     if (child) {
       // A session is never re-parented, and one Latch already serves is no subagent.
@@ -6466,9 +6484,16 @@ export class AgentRuntime implements Bridge {
       }
     const team = row.subagent.team
     if (!team) return
+    if (!evidence.childTurnId) return
+    const turns = (task.acp.codexMemberTurns ??= {})
+    const work = codexMemberTurnHash(memberId, evidence.childTurnId)
+    if (!evidence.recovered && turns[memberId] !== work) {
+      turns[memberId] = work
+      delete team.result
+      delete team.failure
+    }
     if (evidence.result && (!evidence.recovered || team.result === undefined)) team.result = clip(this.redact(evidence.result), 16_000)
     if (evidence.failure && (!evidence.recovered || team.failure === undefined)) team.failure = clip(this.redact(evidence.failure), 2_000)
-    if (row.subagent.status === 'running') delete team.failure
   }
 
   /**

@@ -57,8 +57,8 @@ export interface AcpRecord {
   definitionHash?: string
   /** Mode the owner chose through Latch; overrides the profile's expected mode. */
   expectedMode?: string
-  /** The last enabled report of the session's own Codex feature. */
-  codexTeam?: 'available' | 'disabled'
+  /** For each opaque Codex member, the Host's hash of its last observed work turn. */
+  codexMemberTurns?: Record<string, string>
   /** Process-level permission selection included in this session's launch fingerprint. */
   launchMode?: string
   /** A Host-owned per-model generation setting written into a private process configuration. */
@@ -443,7 +443,7 @@ const stateSchema = z.object({
           .regex(/^[0-9a-f]{64}$/)
           .optional(),
         expectedMode: z.string().optional(),
-        codexTeam: z.enum(['available', 'disabled']).optional(),
+        codexMemberTurns: z.record(z.string().regex(/^[0-9a-f]{64}$/u), z.string().regex(/^[0-9a-f]{64}$/u)).optional(),
         launchMode: z.string().optional(),
         launchThinking: z.object({ model: z.string(), value: z.string() }).optional(),
         drift: z.object({ at: z.string(), observed: z.string() }).optional(),

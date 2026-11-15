@@ -29,6 +29,7 @@ export const subagentUpdate = z.object({
     .object({
       rootThreadId: z.string().min(1).max(512),
       parentTurnId: z.string().min(1).max(512).optional(),
+      childTurnId: z.string().min(1).max(512).optional(),
       result: z
         .string()
         .max(64 * 1024)

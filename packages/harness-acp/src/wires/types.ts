@@ -51,7 +51,7 @@ export interface AgentWire {
   /** It answers `FORK_METHOD`. */
   readonly forks?: true
   readonly codexTeam?: 'available' | 'disabled' | undefined
-  reconcileCodexTeam?(savedMember?: (rootThreadId: string, childThreadId: string) => boolean): void
+  reconcileCodexTeam?(savedMember?: (rootThreadId: string, childThreadId: string, childTurnId?: string) => boolean): void
 }
 
 /** The agent cannot fork its own record of that session, and the process has no session of Latch's open: why, in Chinese. */

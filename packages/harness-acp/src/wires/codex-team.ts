@@ -74,9 +74,8 @@ const historyItem = z.object({
   text: z.string().max(64 * 1024),
   phase: z.enum(['commentary', 'final_answer']).nullish(),
 })
-export const codexTeamHistory = z.object({
-  data: z.array(codexTeamTurn.extend({ items: z.array(z.unknown()).max(1000) })).max(1),
-})
+export const codexTeamHistory = z.object({ data: z.array(codexTeamTurn).max(8) })
+export const codexTeamHistoryItems = z.object({ data: z.array(z.unknown()).max(24) })
 
 export function teamHistoryResult(items: unknown[]): string | undefined {
   const messages = items.flatMap(item => {
@@ -100,6 +99,7 @@ export interface CodexMemberUpdate {
   title?: string
   description?: string
   parentTurnId?: string
+  childTurnId?: string
   result?: string
   failure?: string
   state?: TeamWorkState
@@ -112,6 +112,7 @@ interface Member {
   title?: string
   childTurnId?: string
   terminal?: TeamWorkState
+  restored?: true
   result?: string
   failure?: string
   previousTurns?: Set<string>
@@ -167,7 +168,7 @@ export class CodexTeam {
       } else if (item.tool === 'wait') {
         const member = this.members.get(id)
         const reported = item.agentsStates[id]
-        if (member?.parentTurnId !== turnId || !reported || member.result) continue
+        if (member?.parentTurnId !== turnId || !member.childTurnId || !reported || member.result) continue
         if (reported.status === 'completed' && reported.message) this.reportResult(id, member, reported.message)
       }
     }
@@ -189,7 +190,12 @@ export class CodexTeam {
     delete member.terminal
     delete member.result
     delete member.failure
-    if (member.parentTurnId) this.publish(id, { parentTurnId: member.parentTurnId, state: { state: 'running' } })
+    if (member.parentTurnId || member.restored)
+      this.publish(id, {
+        ...(member.parentTurnId ? { parentTurnId: member.parentTurnId } : {}),
+        childTurnId: turnId,
+        state: { state: 'running' },
+      })
   }
 
   finish(id: string, turnId: string, status: string, failure?: string): void {
@@ -200,9 +206,10 @@ export class CodexTeam {
     member.childTurnId = turnId
     member.terminal = state
     if (status === 'failed' && failure) member.failure = failure
-    if (member.parentTurnId)
+    if (member.parentTurnId || member.restored)
       this.publish(id, {
-        parentTurnId: member.parentTurnId,
+        ...(member.parentTurnId ? { parentTurnId: member.parentTurnId } : {}),
+        childTurnId: turnId,
         state,
         ...(member.result ? { result: member.result } : {}),
         ...(member.failure ? { failure: member.failure } : {}),
@@ -216,16 +223,37 @@ export class CodexTeam {
     this.reportResult(id, member, text)
   }
 
-  recover(thread: CodexTeamThread, status?: 'completed' | 'failed', result?: string, failure?: string): void {
-    if (thread.parentThreadId !== this.rootId || !this.acceptThread(thread)) return
+  restoreMember(thread: CodexTeamThread): boolean {
+    if (thread.parentThreadId !== this.rootId || !this.acceptThread(thread)) return false
     const member = this.members.get(thread.id)!
+    if (member.restored) return true
+    member.restored = true
+    if (!member.parentTurnId && member.childTurnId)
+      this.publish(thread.id, {
+        childTurnId: member.childTurnId,
+        ...(member.title ? { title: member.title } : {}),
+        ...(member.result ? { result: member.result } : {}),
+        ...(member.failure ? { failure: member.failure } : {}),
+        state: member.terminal ?? { state: 'running' },
+      })
+    return true
+  }
+
+  recover(id: string, childTurnId: string, status: 'completed' | 'failed', result?: string, failure?: string): void {
+    const member = this.members.get(id)
     // A live event may have proven a more recent turn while the read was in flight.
-    if (member.parentTurnId || member.childTurnId) return
-    const state = status && terminalState(status)
-    this.publish(thread.id, {
+    if (!member?.restored || member.parentTurnId || member.childTurnId) return
+    const state = terminalState(status)
+    if (!state) return
+    member.childTurnId = childTurnId
+    member.terminal = state
+    if (result) member.result = result
+    if (status === 'failed' && failure) member.failure = failure
+    this.publish(id, {
       recovered: true,
+      childTurnId,
       ...(member.title ? { title: member.title } : {}),
-      ...(state ? { state } : {}),
+      state,
       ...(result ? { result } : {}),
       ...(status === 'failed' && failure ? { failure } : {}),
     })
@@ -248,6 +276,7 @@ export class CodexTeam {
     if (title) member.title ??= title
     this.publish(id, {
       parentTurnId: turnId,
+      ...(member.childTurnId ? { childTurnId: member.childTurnId } : {}),
       ...(member.title ? { title: member.title } : {}),
       ...(description ? { description } : {}),
       ...(member.result ? { result: member.result } : {}),
@@ -259,7 +288,12 @@ export class CodexTeam {
   private reportResult(id: string, member: Member, text: string): void {
     if (!text.trim() || text === member.result) return
     member.result = text.slice(0, 16_000)
-    if (member.parentTurnId) this.publish(id, { parentTurnId: member.parentTurnId, result: member.result })
+    if (member.childTurnId && (member.parentTurnId || member.restored))
+      this.publish(id, {
+        ...(member.parentTurnId ? { parentTurnId: member.parentTurnId } : {}),
+        childTurnId: member.childTurnId,
+        result: member.result,
+      })
   }
 }
 

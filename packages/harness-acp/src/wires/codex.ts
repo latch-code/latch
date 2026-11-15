@@ -39,6 +39,7 @@ import {
   CodexTeam,
   codexTeamFeatures,
   codexTeamHistory,
+  codexTeamHistoryItems,
   codexTeamItem,
   codexTeamThread,
   codexTeamThreadPage,
@@ -646,7 +647,7 @@ export class CodexWire implements AgentWire {
     this.threadId = read.data.thread.id
     if (this.team?.rootId !== this.threadId) {
       const rootThreadId = this.threadId
-      this.team = new CodexTeam(rootThreadId, (id, { parentTurnId, result, failure, recovered, ...update }) => {
+      this.team = new CodexTeam(rootThreadId, (id, { parentTurnId, childTurnId, result, failure, recovered, ...update }) => {
         if (this.threadId !== rootThreadId || this.stopping) return
         this.update({
           sessionUpdate: 'subagent_update',
@@ -655,6 +656,7 @@ export class CodexWire implements AgentWire {
           team: {
             rootThreadId,
             ...(parentTurnId ? { parentTurnId } : {}),
+            ...(childTurnId ? { childTurnId } : {}),
             ...(result ? { result } : {}),
             ...(failure ? { failure } : {}),
             ...(recovered ? { recovered } : {}),
@@ -678,7 +680,7 @@ export class CodexWire implements AgentWire {
     if (this.teamEnabled !== undefined) return this.teamEnabled ? 'available' : 'disabled'
   }
 
-  reconcileCodexTeam(savedMember?: (rootThreadId: string, childThreadId: string) => boolean): void {
+  reconcileCodexTeam(savedMember?: (rootThreadId: string, childThreadId: string, childTurnId?: string) => boolean): void {
     const team = this.team
     if (!team || this.stopping) return
     void this.readCodexTeamFeatures(team)
@@ -707,7 +709,7 @@ export class CodexWire implements AgentWire {
     }
   }
 
-  private async readCodexTeamHistory(team: CodexTeam, savedMember: (root: string, child: string) => boolean): Promise<void> {
+  private async readCodexTeamHistory(team: CodexTeam, savedMember: (root: string, child: string, turn?: string) => boolean): Promise<void> {
     let cursor: string | undefined
     let reads = 0
     for (let index = 0; index < 4; index++) {
@@ -719,16 +721,29 @@ export class CodexWire implements AgentWire {
       for (const value of list.data.data) {
         const thread = codexTeamThread.safeParse(value)
         if (!thread.success || thread.data.parentThreadId !== team.rootId || !savedMember(team.rootId, thread.data.id)) continue
-        if (!team.acceptThread(thread.data)) continue
-        const page = await this.send('thread/turns/list', { threadId: thread.data.id, limit: 1, itemsView: 'full' }, 750).catch(
-          () => undefined,
-        )
+        if (!team.restoreMember(thread.data)) continue
+        const child = thread.data.id
+        const page = await this.send('thread/turns/list', { threadId: child, limit: 8, itemsView: 'notLoaded' }, 750).catch(() => undefined)
         if (this.team !== team || this.stopping) return
         const read = codexTeamHistory.safeParse(page)
-        const turn = read.success ? read.data.data[0] : undefined
-        // Readback can synthesize an interrupted turn after a restart. Only completion or failure is recovered here.
-        const status = turn?.status === 'completed' || turn?.status === 'failed' ? turn.status : undefined
-        team.recover(thread.data, status, status && turn ? teamHistoryResult(turn.items) : undefined, turn?.error?.message)
+        const turn = read.success ? read.data.data.find(record => savedMember(team.rootId, child, record.id)) : undefined
+        // Readback can synthesize interruption. Only fetch output for the exact prior work and a proved terminal state.
+        if (turn?.status === 'completed' || turn?.status === 'failed') {
+          const rawItems = await this.send(
+            'thread/items/list',
+            { threadId: child, turnId: turn.id, limit: 24, sortDirection: 'desc' },
+            750,
+          ).catch(() => undefined)
+          if (this.team !== team || this.stopping || !savedMember(team.rootId, child, turn.id)) return
+          const items = codexTeamHistoryItems.safeParse(rawItems)
+          team.recover(
+            child,
+            turn.id,
+            turn.status,
+            items.success ? teamHistoryResult(items.data.data.toReversed()) : undefined,
+            turn.error?.message,
+          )
+        }
         if (++reads >= 24) return
       }
       if (!list.data.nextCursor || cursor === list.data.nextCursor) return

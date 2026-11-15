@@ -1287,6 +1287,17 @@ describe('Codex over its app-server', () => {
     expect(sent(log, 'turn/interrupt')).toHaveLength(1)
   })
 
+  it('clears a native Team member’s previous result when its newly reported work fails', async () => {
+    const t = await computer({ FAKE_CODEX_TEAM_SECOND_TURN: '1' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'team 真实委派')
+    const waiting = await until(bridge, id, value => value.summary.status === 'waiting-approval')
+    await bridge.decide(waiting.approvals[0]!.id, 'reject')
+    const cedar = (await settled(bridge, id)).messages.find(message => message.subagent?.title === 'Cedar')
+    expect(cedar?.subagent).toMatchObject({ status: 'failed', team: { failure: '下一轮失败' } })
+    expect(cedar?.subagent?.team?.result).toBeUndefined()
+  })
+
   it('recovers only known native Team results and never treats a restart as a stop receipt', async () => {
     const t = await computer({ FAKE_CODEX_TEAM_RECOVERY: '1' })
     let bridge = await t.open()
@@ -1299,6 +1310,17 @@ describe('Codex over its app-server', () => {
     expect(rows.every(message => message.subagent?.status === 'unknown' && message.subagent.team?.result === undefined)).toBe(true)
     await bridge.close()
 
+    // The same member did another turn outside the one this Host witnessed. Its newest output cannot stand in for the tracked turn.
+    const statePath = join(t.root, 'threads.json')
+    const threads = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, { agentNickname?: string; turns: unknown[] }>
+    Object.values(threads)
+      .find(thread => thread.agentNickname === 'Cedar')!
+      .turns.push({
+        id: 'unrelated-later-turn',
+        status: 'completed',
+        items: [{ type: 'agentMessage', id: 'unrelated-result', text: '这轮属于别的工作' }],
+      })
+    await writeFile(statePath, JSON.stringify(threads))
     bridge = await t.open()
     expect((await bridge.detail(id)).messages.filter(message => message.subagent?.team).map(message => message.id)).toEqual(
       rows.map(row => row.id),
@@ -1307,7 +1329,7 @@ describe('Codex over its app-server', () => {
     const restored = await until(
       bridge,
       id,
-      detail => detail.summary.status === 'idle' && detail.messages.some(message => message.subagent?.team?.result === '已核对手机布局'),
+      detail => detail.summary.status === 'idle' && detail.messages.some(message => message.subagent?.status === 'done'),
     )
     const members = restored.messages.filter(message => message.subagent?.team)
     expect(members.map(member => member.id)).toEqual(rows.map(row => row.id))
@@ -1317,6 +1339,16 @@ describe('Codex over its app-server', () => {
     const log = await t.log()
     expect(sent(log, 'thread/turns/list')).toHaveLength(2)
     expect(sent(log, 'turn/start')).toHaveLength(2)
+  })
+
+  it('does not show native Team availability after reconnect until this process reports it', async () => {
+    const t = await computer()
+    let bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo one')
+    await until(bridge, id, detail => detail.codexTeam === 'available')
+    await bridge.close()
+    bridge = await t.open()
+    expect((await bridge.detail(id)).codexTeam).toBeUndefined()
   })
 
   it('reads native Team capability without changing a user-disabled feature', async () => {

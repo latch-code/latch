@@ -499,6 +499,11 @@ async function play(text) {
     log('answered', { method: 'foreign-team-approval', answer: rejected })
     const answer = await (earlyApproval ?? memberApproval())
     finishMember(a, '已核对手机布局', 'completed')
+    if (env.FAKE_CODEX_TEAM_SECOND_TURN === '1') {
+      const id = 'cedar-second-turn'
+      notify('turn/started', { threadId: a.id, turn: { id, status: 'inProgress' } })
+      notify('turn/completed', { threadId: a.id, turn: { id, status: 'failed', error: { message: '下一轮失败' } } })
+    }
     if (env.FAKE_CODEX_TEAM_SETTLE_MS && answer?.decision === 'accept') {
       const call = { type: 'commandExecution', id: 'team-command', command: 'ls -la', cwd: thread.cwd, status: 'inProgress' }
       notify('item/started', { threadId: b.id, turnId: memberTurn(b), item: call })
@@ -1022,7 +1027,18 @@ async function handle(method, params) {
     case 'thread/turns/list': {
       const found = threads()[params.threadId]
       if (!found) throw Object.assign(new Error('thread not found'), { code: -32600 })
-      return { data: found.turns.slice(-1), nextCursor: null, backwardsCursor: null }
+      const turns = found.turns.toReversed().slice(0, params.limit ?? 1)
+      return {
+        data: turns.map(turn => ({ ...turn, items: params.itemsView === 'notLoaded' ? [] : turn.items })),
+        nextCursor: null,
+        backwardsCursor: null,
+      }
+    }
+    case 'thread/items/list': {
+      const found = threads()[params.threadId]
+      const selected = found?.turns.find(turn => turn.id === params.turnId)
+      if (!selected) throw Object.assign(new Error('turn not found'), { code: -32600 })
+      return { data: selected.items.toReversed().slice(0, params.limit ?? 24), nextCursor: null, backwardsCursor: null }
     }
     case 'experimentalFeature/list':
       return { data: [{ name: 'multi_agent', enabled: env.FAKE_CODEX_TEAM !== 'off' }], nextCursor: null }
