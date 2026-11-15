@@ -234,9 +234,10 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
         expect(await settings.count()).toBe(0)
       }
       const place = async () => {
-        const box = await layoutSwitch(page).boundingBox()
+        const control = page.locator('.shell-layout-switch:visible')
+        expect(await control.count()).toBe(1)
+        const box = await control.boundingBox()
         if (!box) throw new Error('The layout switch is not drawn')
-        expect(await page.getByRole('radiogroup', { name: '布局', exact: true }).locator('visible=true').count()).toBe(1)
         return box
       }
       const places: Array<{ x: number; y: number; width: number; height: number }> = [await place()]
@@ -301,7 +302,7 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       await layoutSwitch(page).getByRole('radio', { name: LAYOUT_NAMES.overview, exact: true }).focus()
       await page.keyboard.press('Alt+,')
       await page.locator('.settings-page').waitFor({ state: 'visible' })
-      await page.locator('.settings-page').getByRole('button', { name: '返回', exact: true }).click()
+      await closeSettings(settings)
       await home.waitFor({ state: 'visible' })
       expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
       await sameComposer()
@@ -317,35 +318,32 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       expect(await homeInput.inputValue()).toBe('首页自己的新任务草稿')
       await sameComposer()
 
-      // Settings stays settings.
+      // Settings can change the layout without replacing the current workbench or its forms.
       await generalSettings(page)
       const tiles = settings.getByRole('radiogroup', { name: '工作台布局', exact: true })
       places.push(await place())
       await nowhere()
-      await layoutMenu(page, 'overview')
-      await still()
-      expect(await settings.isVisible()).toBe(true)
-      await expect.poll(() => tiles.getByRole('radio', { name: /^侧栏/u }).getAttribute('aria-checked')).toBe('true')
-      places.push(await place())
-      await nowhere()
-      for (const layout of ['triage', 'overview'] as const) {
-        await page.keyboard.press('Alt+Shift+L')
+      for (const layout of ['overview', 'triage', 'overview'] as const) {
+        const tile = tiles.getByRole('radio', { name: new RegExp(`^${LAYOUT_NAMES[layout]}`, 'u') })
+        await tile.click()
         await expect.poll(() => shell.getAttribute('data-workbench-layout')).toBe(layout)
         await still()
         expect(await settings.isVisible()).toBe(true)
-        expect(await tiles.isVisible()).toBe(true)
-        // The shortcuts list names the layouts as the switch does.
-        await page.keyboard.press('Alt+/')
-        const overlay = page.getByRole('dialog', { name: '快捷键', exact: true })
-        await overlay.waitFor()
-        expect(await overlay.locator('.shortcuts-overlay-row', { hasText: '切换侧栏、顶栏布局' }).count()).toBe(1)
-        expect(await overlay.locator('.shortcuts-overlay-row', { hasText: '顶栏布局：拒绝、允许聚焦的请求' }).count()).toBe(1)
+        await expect.poll(() => tile.getAttribute('aria-checked')).toBe('true')
+        places.push(await place())
         await nowhere()
-        await page.keyboard.press('Escape')
-        await overlay.waitFor({ state: 'hidden' })
       }
-      await layoutMenu(page, 'triage')
       await closeSettings(settings)
+      await page.keyboard.press('Alt+Shift+L')
+      await expect.poll(() => shell.getAttribute('data-workbench-layout')).toBe('triage')
+      await still()
+      await page.keyboard.press('Alt+/')
+      const overlay = page.getByRole('dialog', { name: '快捷键', exact: true })
+      await overlay.waitFor()
+      expect(await overlay.locator('.shortcuts-overlay-row', { hasText: '切换侧栏、顶栏布局' }).count()).toBe(1)
+      expect(await overlay.locator('.shortcuts-overlay-row', { hasText: '顶栏布局：拒绝、允许聚焦的请求' }).count()).toBe(1)
+      await page.keyboard.press('Escape')
+      await overlay.waitFor({ state: 'hidden' })
       await openHome(page)
       // One place for the switch: the end of the window's top row, whatever the layout and the page.
       for (const box of places)
@@ -527,29 +525,25 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
               await home.getByRole('button', { name: '等你处理 2', exact: true }).click()
             }
             if (width === 768 && theme === 'light' && layout === 'overview') {
-              // 设置 takes the rail's column for its section list: nothing of the rail is painted there or in the focus order.
+              // Settings has its own centered two-column surface. The rail stays where it was and cannot take focus through it.
+              const rail = page.locator('.workbench-tablet-rail')
+              const before = await rail.boundingBox()
               await generalSettings(page)
               await settleShell(page)
-              expect(await page.locator('.workbench-tablet-rail').getAttribute('inert')).not.toBeNull()
-              const through = await page.evaluate(() => {
-                const list = document.querySelector('.settings-page .settings-nav-pane')!.getBoundingClientRect()
-                const rail = document.querySelector('.workbench-tablet-rail')!
-                return [rail, ...rail.querySelectorAll('*')]
-                  .filter(element => element.checkVisibility({ visibilityProperty: true, opacityProperty: true }))
-                  .filter(element => {
-                    const box = element.getBoundingClientRect()
-                    return (
-                      box.width > 0
-                      && box.height > 0
-                      && box.left < list.right - 0.5
-                      && box.right > list.left + 0.5
-                      && box.top < list.bottom - 0.5
-                      && box.bottom > list.top + 0.5
-                    )
-                  })
-                  .map(element => element.getAttribute('aria-label') ?? element.className.toString())
-              })
-              expect(through).toEqual([])
+              const panel = page.locator('.settings-overlay:modal')
+              const categories = panel.locator('.settings-nav-pane')
+              expect((await panel.boundingBox())!.x).toBeGreaterThan(0)
+              expect(Math.round((await categories.boundingBox())!.width)).toBe(200)
+              expect(await rail.boundingBox()).toEqual(before)
+              expect(
+                await rail
+                  .locator('button')
+                  .first()
+                  .evaluate(button => {
+                    button.focus()
+                    return button === document.activeElement
+                  }),
+              ).toBe(false)
               await closeSettings(page.locator('.settings-page'))
               await openHome(page)
             }

@@ -132,7 +132,6 @@ const isPhone = async (page: Page) => (await page.locator('.phone-tabs').count()
 
 /** The foot stands in the sidebar: away from a page, and on a tablet inside its drawer. */
 async function footInReach(page: Page): Promise<void> {
-  if ((await page.locator('.settings-page').count()) > 0) await openSessions(page)
   const drawer = page.getByRole('button', { name: '打开会话列表', exact: true })
   if (await drawer.isVisible()) await drawer.click()
   const shut = page.getByRole('button', { name: '展开侧栏', exact: true })
@@ -145,33 +144,24 @@ async function footInReach(page: Page): Promise<void> {
  * session's page is pushed over it). Tests do not select a breakpoint.
  */
 export async function openEntry(page: Page, name: string): Promise<void> {
-  await settleShell(page)
-  await backToPhoneSessions(page)
-  const phone = await isPhone(page)
   if (name !== '设置') {
     await openEntry(page, '设置')
     await openSection(page.locator('.settings-page'), name)
     return
   }
-  if (!phone && (await page.locator('.settings-page[data-entry="settings"]').count()) > 0) return
+  if (await page.locator('.settings-page').isVisible()) return
+  await settleShell(page)
+  await backToPhoneSessions(page)
+  const phone = await isPhone(page)
   if (!phone && !(await entryButton(page, name).isVisible())) await footInReach(page)
   const button = entryButton(page, name)
   await reachable(button)
   await button.click()
 }
 
-/** Back to the session list or conversation: the way back at the top of a page, the title row's while shut, or the tab. */
+/** Back to the workbench from the settings panel. */
 export async function openSessions(page: Page): Promise<void> {
-  if (await isPhone(page)) await mainNavigation(page).getByRole('button', { name: 'Code', exact: true }).click()
-  else
-    await page
-      .locator('.settings-back-line')
-      .getByRole('button', { name: '返回', exact: true })
-      .or(page.locator('.titlebar').getByRole('button', { name: '返回会话', exact: true }))
-      .locator('visible=true')
-      .first()
-      .click()
-  await page.locator('.settings-page').waitFor({ state: 'detached' })
+  await closeSettings(page.locator('.settings-page'))
 }
 
 /** Returns the opened 设置 page, on its 设备 section when `section` names it. */
@@ -225,10 +215,10 @@ export async function openSection(settings: Locator, name: string): Promise<void
   await tab.click()
 }
 
-/** Leaves a page for the conversation. */
+/** Closes the whole panel from any settings level. */
 export async function closeSettings(settings: Locator): Promise<void> {
-  await backToSections(settings)
-  await openSessions(settings.page())
+  await settings.getByRole('button', { name: '关闭设置', exact: true }).click()
+  await settings.waitFor({ state: 'detached' })
 }
 
 /** The selected file tab goes the way a keyboard closes it: its × only shows under the pointer. */

@@ -1,15 +1,48 @@
 /*
- * 设置: it covers the session's columns from the window's left edge to the right, so they keep their state. Its sections
- * stand where the sidebar stands, on the ground, under the way back and the search well, and the chosen one is in the work
- * panel under its 20/28 name; on phones the section list is the root page and a section, and each page inside it, is
- * pushed over the level before. A section, or a page inside one, fades in from 4px lower.
+ * The native modal keeps the workbench mounted beneath it. Its layout is independent of the sidebar and the way the
+ * workbench is arranged. The same surface fills the phone and contains the existing section and page stack.
  */
+.settings-overlay.ui-modal-page {
+  width: min(980px, calc(100vw - 56px));
+  height: min(760px, calc(100dvh - 56px));
+  margin: auto;
+}
+.settings-overlay.ui-modal-page::backdrop {
+  animation: none;
+}
+.settings-overlay.ui-modal-page > .ui-modal-surface {
+  border: 1px solid var(--line);
+  border-radius: var(--r-16);
+  box-shadow: var(--sh-dialog);
+}
 .settings-page {
-  grid-area: 2 / 1 / 3 / -1;
-  z-index: 5;
+  --entry-nav-width: clamp(200px, 26vw, 232px);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
   min-width: 0;
   min-height: 0;
   background: var(--canvas);
+}
+.settings-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: var(--sp-8);
+  min-height: 52px;
+  padding: var(--sp-4) var(--sp-12) var(--sp-4) var(--sp-20);
+  border-bottom: 1px solid var(--line);
+}
+.settings-overlay-header h2 {
+  margin: 0;
+  font-size: var(--fs-heading);
+  line-height: var(--lh-heading);
+  font-weight: 600;
+}
+.settings-page > .settings-layout {
+  flex: 1;
+  height: auto;
 }
 .settings-layout {
   display: grid;
@@ -41,7 +74,7 @@
     box-shadow: inset -1px 0 var(--line);
   }
   /* Shut, the panel's width is 0 and its list leaves the reading order with it. */
-  .app-shell[data-sidebar='collapsed'] .settings-nav-pane {
+  .app-shell[data-sidebar='collapsed'] > :not(.settings-overlay) .settings-nav-pane {
     visibility: hidden;
   }
 }
@@ -55,22 +88,9 @@
   align-content: start;
   gap: 1px;
 }
-/* The way back: the sidebar's top row. */
-.settings-back-line {
-  display: flex;
-  padding: var(--sp-4) var(--sp-8) 0;
-  width: var(--entry-nav-width);
-}
-@media (min-width: 1024px) {
-  .settings-back-line {
-    width: var(--sidebar-open-width);
-  }
-}
-.settings-back-line .sidebar-nav-row {
-  padding-inline: var(--sp-8);
-}
-.settings-back-line .ui-count {
-  margin-inline-start: auto;
+.settings-page .settings-nav,
+.settings-page .settings-search {
+  width: auto;
 }
 /* A device without 管理此 Host: one quiet line under the sections says what is hidden and where to grant it. */
 .settings-nav-caption {
@@ -138,22 +158,6 @@
   min-height: 0;
   overflow: clip;
   background: var(--canvas);
-}
-/*
- * From 768px the page sits on the same ground as the sessions: its list where the sidebar stands, its content in the work
- * panel (the shell draws it) under the title row, so the page's own surfaces give way to it.
- */
-@media (min-width: 768px) {
-  .app-shell > .settings-page,
-  .app-shell > .settings-page .settings-nav-pane {
-    background: transparent;
-    box-shadow: none;
-  }
-  .app-shell > .settings-page .settings-panel {
-    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) max(0px, var(--shell-inset) - var(--entry-nav-width));
-    border-radius: 0 0 var(--r-12) var(--r-12);
-    background: transparent;
-  }
 }
 /* The open section's name, above its content (a page inside it names itself under its way back). */
 .settings-title {
@@ -233,14 +237,20 @@
   display: none;
 }
 @media (max-width: 767.98px) {
-  /* The root list stands above the tab bar; a pushed level covers it. */
-  .settings-page {
-    position: absolute;
-    inset: 0 0 var(--phone-tabs-height);
-    z-index: 5;
+  .settings-overlay.ui-modal-page {
+    width: 100vw;
+    height: 100dvh;
+    margin: 0;
   }
-  .settings-page:has(.settings-layout:not([data-level='root'])) {
-    bottom: 0;
+  .settings-overlay.ui-modal-page > .ui-modal-surface {
+    border: 0;
+    border-radius: 0;
+  }
+  .settings-overlay-header {
+    padding-top: calc(var(--sp-4) + env(safe-area-inset-top));
+  }
+  .settings-page .settings-bar {
+    padding-top: var(--sp-4);
   }
   .settings-layout {
     position: relative;

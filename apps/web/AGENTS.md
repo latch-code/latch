@@ -35,7 +35,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 
 仅淡入消息。脚本用 `motionAllowed`。
 
-切换保留会话（DESIGN/STREAMING）。暂存回执见 GIT-DELIVERY。Agent 设置复用控件。ProfileLayer 单实例跨断点保留草稿/焦点/未知写，撤权卸载（CUSTOM-AGENTS）。
+设置模态保留会话与草稿（DESIGN/STREAMING）。暂存回执见 GIT-DELIVERY。ProfileLayer 单实例跨断点保留草稿/焦点/未知写，撤权卸载（CUSTOM-AGENTS）。
 
 - 附件专用上传，未知提交保留原请求与引用；裸 `@` 无预选（ATTACHMENTS.md）。
 - Slash 透传 Harness 命令；技能只补全，pi 限开头（HARNESSES.md）。

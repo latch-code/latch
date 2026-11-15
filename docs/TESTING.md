@@ -137,6 +137,10 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 `packages/ui/test/button-width.test.tsx` 在真实浏览器中检查 Button 的自然宽度缓存、外部 minWidth、连续忙态、字体/语言变化、隐藏恢复、容器缩放与减少动效；三宽深浅截图写入 `test-results/button-width/`。固定 16 个按钮随父组件更新 50 次，在 CPU 4 倍降速下记录全部提交耗时与同步宽度读取次数到同目录 `performance.json`；读取次数是回归断言，耗时用于同机安静窗口前后对比，不作为跨机器的固定性能阈值。
 
+`e2e/harness-quota.e2e.ts` 在三宽浅深色浏览 Host 额度，核对多个 Harness、已用比例、遮蔽账号、鼠标预览不抢焦点、键盘打开与触屏底部面板。短高窗口检查滚动，用浏览器时钟核对离线报告到期，再切到另一台临时 Host 检查无数据串用。
+
+`e2e/shell.e2e.ts` 与 `e2e/workbench-layout.e2e.ts` 核对设置覆盖时底下的原草稿、原控件与抽屉保留，键盘不穿透、关闭后焦点归还，手机返回逐层关闭。设置内的未知写和撤权见 `e2e/customization.e2e.ts`。
+
 ### 报告与用例集合
 
 - Vitest 的报告与附件写入 `.vitest/`（已在 `.gitignore` 中）：`--reporter=json` 写 `.vitest/json/output.json`，`--reporter=junit` 写 `.vitest/junit/output.xml`，附件在 `.vitest/attachments/`。e2e 截图仍由用例写入 `test-results/`。

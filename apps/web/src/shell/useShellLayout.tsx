@@ -79,6 +79,7 @@ import { settingsSections, type SettingsSection } from '../settings/SettingsPage
 import { useSessionController, type SessionSelectionIntent } from './useSessionController.ts'
 import type { ChangesLink, ChangesTarget } from '../conversation/changesLink.ts'
 import { useFrozenAt } from '../conversation/useFrozenAt.ts'
+import { overlayDismissed } from '../escapeGrace.ts'
 
 type Harness = ReturnType<typeof useHarness>
 
@@ -129,6 +130,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     [phone, storedRoute, selectedId],
   )
   const routeRef = useRef(route)
+  const [settings, setSettings] = useState<Pick<ShellRoute, 'section' | 'projectId' | 'agent'> | null>(null)
+  const closeSettings = useCallback(() => setSettings(null), [])
   const fromAllSessions = useRef(false)
   const fromOverview = useRef(false)
   routeRef.current = route
@@ -312,6 +315,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   // Back on the conversation (from a page, or a tab shown again): its approval cards arm again before they take a press.
   const conversationVisible = route.entry === 'sessions' && !route.overview && !route.allSessions
   const wasConversationVisible = useRef(conversationVisible)
+  const settingsOpen = settings !== null && entries.includes('settings')
+  const wereSettingsOpen = useRef(settingsOpen)
+  useLayoutEffect(() => {
+    if (wereSettingsOpen.current && !settingsOpen) {
+      conversationShown()
+      overlayDismissed()
+    }
+    wereSettingsOpen.current = settingsOpen
+  }, [settingsOpen])
   useLayoutEffect(() => {
     if (conversationVisible && !wasConversationVisible.current) conversationShown()
     wasConversationVisible.current = conversationVisible
@@ -329,7 +341,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   // An entry this device can no longer use closes at once.
   useLayoutEffect(() => {
     if (!entries.includes(route.entry)) setRoute({ entry: 'sessions' })
-  }, [entriesKey, route.entry])
+    if (!entries.includes('settings')) closeSettings()
+  }, [closeSettings, entriesKey, route.entry])
   const panelToggle = useRef<HTMLButtonElement>(null)
   const infoPageRef = useRef<HTMLElement>(null)
   const infoBack = useRef<HTMLButtonElement>(null)
@@ -666,16 +679,19 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     () =>
       setSessionOpener(id => {
         setRoute({ entry: 'sessions' })
-        choose(id)
+        choose(id, closeSettings)
       }),
-    [choose],
+    [choose, closeSettings],
   )
   const openSettings = (section?: SettingsSection) => {
-    drawer.setOpen(false)
-    setRoute({ entry: 'settings', ...(section ? { section } : {}) })
+    setSettings(section ? { section } : {})
   }
-  /** 设置 at the sidebar's foot, a tab or the way back. 会话 returns to the last open session. */
+  /** 会话 returns to the last open session. 设置 covers the current route without changing it. */
   const goEntry = (entry: ShellEntry) => {
+    if (entry === 'settings') {
+      openSettings()
+      return
+    }
     drawer.setOpen(false)
     setRoute(entry === 'sessions' && routeRef.current.entry !== 'sessions' ? { entry, ...codePlace.current } : { entry })
   }
@@ -776,17 +792,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     }
     const page = frame.querySelector<HTMLElement>(
-      route.entry === 'settings'
-        ? '.settings-page'
-        : route.entry === 'agents'
-          ? '.agents-page'
-          : route.entry === 'apps'
-            ? '.apps-page'
-            : route.overview
-              ? '.workbench-home'
-              : route.allSessions
-                ? '.workbench-sessions'
-                : 'main.workspace',
+      route.entry === 'agents'
+        ? '.agents-page'
+        : route.entry === 'apps'
+          ? '.apps-page'
+          : route.overview
+            ? '.workbench-home'
+            : route.allSessions
+              ? '.workbench-sessions'
+              : 'main.workspace',
     )
     if (!page) return
     // The page is a region, not a control: it takes the keys without joining the tab order or drawing a ring.
@@ -895,12 +909,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setRoute({ entry: 'apps', ...(target ? { app: target } : {}) })
   }
   const openProjectSettings = (projectId: string) => {
-    drawer.setOpen(false)
-    setRoute({ entry: 'settings', section: 'workspaces', projectId })
+    setSettings({ section: 'workspaces', projectId })
   }
   const openAgentPage = (target: AgentPageTarget) => {
-    drawer.setOpen(false)
-    setRoute({ entry: 'settings', section: 'engines', agent: target })
+    setSettings({ section: 'engines', agent: target })
   }
   /** Home and the full-history page keep their inputs underneath search; the phone's old list has its own field. */
   const openSearch = () => {
@@ -952,9 +964,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   }, [searchShortcut])
 
   // 「检查更新…」 in the desktop app's menu: Settings › 关于 shows the update area (main has started the check).
-  const showAbout = useRef(openSettings)
-  showAbout.current = openSettings
-  useEffect(() => currentShell()?.updates?.onShow?.(() => showAbout.current('about')), [])
+  const showAbout = useRef(() => {})
+  showAbout.current = () => {
+    if (!document.querySelector('dialog:modal:not(.settings-overlay)')) openSettings('about')
+  }
+  useEffect(() => currentShell()?.updates?.onShow?.(() => showAbout.current()), [])
   // The desktop app reads the Host itself, so its notification can be ahead of this page, even about a session the page
   // already lists: go as soon as the session is known, and keep looking for its request until the page has read again.
   const [notified, setNotified] = useState<{ id: string; read: boolean; arrived: boolean } | null>(null)
@@ -1759,6 +1773,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     startNewDraft,
     back,
     openSettings,
+    settings: settingsOpen ? settings : null,
+    closeSettings,
     openAgentPage,
     openMyAgent,
     openAgentTopics,

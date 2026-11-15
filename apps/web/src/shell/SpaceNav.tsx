@@ -317,8 +317,8 @@ export function NavFoot({
 /** The switch's state and way, where the Host has 我的 Agent. */
 export function shellSpaces(shell: Pick<ShellState, 'entries' | 'space' | 'goSpace' | 'waits' | 'route'>): SpacesProps | undefined {
   if (!shell.entries.includes('agents')) return undefined
-  // 应用 and 设置 belong to both places: neither segment is chosen there, and either goes back to its place.
-  const shared = shell.route.entry === 'apps' || shell.route.entry === 'settings'
+  // 应用 belongs to both places: either segment goes back to its own place.
+  const shared = shell.route.entry === 'apps'
   return { space: shared ? null : shell.route.overview ? 'code' : shell.space, onSpace: shell.goSpace, waits: shell.waits }
 }
 

@@ -15,6 +15,7 @@ import {
   IconButton,
   LiveChanges,
   LayerHistory,
+  Modal,
   ResizeHandle,
   Scrim,
   ChevronLeftGlyph,
@@ -33,7 +34,6 @@ import { ProfileLayer } from '../agents/AgentProfile.tsx'
 import { AppsPage } from '../plugin-pages/AppsPage.tsx'
 import { AgentsSpaceList } from '../agents/AgentsSpaceList.tsx'
 import { ShellNewAgent, SpaceSwitch, shellOverview, shellSpaces } from './SpaceNav.tsx'
-import { waitingCount } from '../sessions.ts'
 import { ConversationView } from './ConversationView.tsx'
 import { Overlays } from './Overlays.tsx'
 import { EditLeaveGuard } from '../preview/EditLeaveGuard.tsx'
@@ -68,7 +68,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     appShell,
     sidebarColumn,
     resetInspector,
-    titleSlot,
     choose,
     access,
     refresh,
@@ -121,6 +120,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     openFile,
     startNew,
     openSettings,
+    settings,
+    closeSettings,
     openProjectSettings,
     createProjectAndStart,
     sidebarLimit,
@@ -571,33 +572,26 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             {allSessions && !phone && <WorkbenchSessions shell={shell} snapshot={listed} />}
             {route.entry === 'agents' && <AgentsPage shell={shell} />}
             {route.entry === 'apps' && <AppsPage shell={shell} />}
-            {route.entry === 'settings' && (
-              <SettingsPage
-                snapshot={snapshot}
-                access={access}
-                entry={route.entry}
-                waiting={waitingCount(snapshot)}
-                onBack={() => {
-                  goEntry('sessions')
-                }}
-                section={route.section}
-                initialProjectId={route.projectId}
-                {...(route.agent ? { initialAgent: route.agent } : {})}
-                titleSlot={titleSlot}
-                onSection={section => {
-                  if (section) openSettings(section)
-                  else setRoute({ entry: route.entry })
-                }}
-                onOpenSession={id => {
-                  choose(id)
-                }}
-                onOpenApp={app => {
-                  setRoute({ entry: 'apps', app })
-                }}
-                onChanged={() => {
-                  void refresh()
-                }}
-              />
+            {settings && (
+              <Modal label="设置" variant="page" className="settings-overlay" onClose={closeSettings}>
+                <SettingsPage
+                  snapshot={snapshot}
+                  access={access}
+                  onClose={closeSettings}
+                  section={settings.section}
+                  initialProjectId={settings.projectId}
+                  {...(settings.agent ? { initialAgent: settings.agent } : {})}
+                  onSection={openSettings}
+                  onOpenSession={id => choose(id, closeSettings)}
+                  onOpenApp={app => {
+                    closeSettings()
+                    setRoute({ entry: 'apps', app })
+                  }}
+                  onChanged={() => {
+                    void refresh()
+                  }}
+                />
+              </Modal>
             )}
             {phone && phoneReview.present && phoneReview.target && phoneReview.summary && (
               <PhoneReview

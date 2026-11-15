@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
-import { ArrowLeft, BarChart3, Cable } from 'lucide-react'
+import { BarChart3, Cable } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
@@ -10,7 +10,7 @@ import { useBackLayer } from '../hooks/backStack.ts'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
 import {
-  ICON_STROKE,
+  CloseGlyph,
   Icon,
   IconButton,
   Kbd,
@@ -29,7 +29,7 @@ import {
   HarnessGlyph,
   ModelGlyph,
 } from '@latch/ui'
-import { settingsSectionsAt, type AgentPageTarget, type PageEntry, type SettingsSection } from '../shell/routes.ts'
+import { settingsSectionsAt, type AgentPageTarget, type SettingsSection } from '../shell/routes.ts'
 
 export type { SettingsSection }
 
@@ -158,7 +158,7 @@ export function SettingsPage({
   section: chosen = null,
   initialProjectId,
   initialAgent,
-  onBack,
+  onClose,
   onSection,
   onChanged,
   onOpenSession,
@@ -166,18 +166,12 @@ export function SettingsPage({
 }: {
   snapshot: AppSnapshot
   access?: DeviceAccess
-  /** Always 设置; the shell names the entry it shows. */
-  entry?: PageEntry
   /** The chosen section; absent, a wide window shows the first and a phone shows the list. */
   section?: SettingsSection | null
   initialProjectId?: string
   initialAgent?: AgentPageTarget
-  /** The title row; the page names itself above its content instead, so it leaves the row empty. */
-  titleSlot?: HTMLElement | null
-  /** Not drawn here: the count of what waits is the space switch's and the home's. */
-  waiting?: number
-  /** Back to the sessions, on wide windows. */
-  onBack?: () => void
+  /** Closes the settings panel, returning to the underlying workbench. */
+  onClose: () => void
   /** Opens a section. Without an argument, goes back to the section list. */
   onSection: (section?: SettingsSection) => void
   onChanged: () => void
@@ -210,7 +204,6 @@ export function SettingsPage({
     }
   }, [chosenAllowed, shownAllowed])
   const tabs = useRef<HTMLDivElement>(null)
-  const layout = useRef<HTMLDivElement>(null)
   const current = available.find(section => section.id === panel)
   const pushed = phone && active !== null
 
@@ -258,13 +251,20 @@ export function SettingsPage({
   }
   const escape = (event: KeyboardEvent<HTMLElement>) => {
     // A sheet or menu inside the page takes its own Esc; React would bubble it here through a portal too.
-    if (event.key !== 'Escape' || !phone || event.defaultPrevented) return
-    if (event.target instanceof Element && event.target.closest('dialog, [popover]')) return
+    if (event.key !== 'Escape' || event.defaultPrevented) return
+    if (event.target instanceof Element && event.target.closest('dialog:not(.settings-overlay), [popover]')) return
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+      event.preventDefault()
+      return
+    }
+    if (!pushed) return
+    event.preventDefault()
     if (level === 'page') levelBack.current?.()
-    else if (pushed) back()
+    else back()
   }
   // On a phone the section pushed over its list holds a place in the browser's history (the pages inside a section hold
   // theirs in SettingsPages), so the platform's back returns one level.
+  useBackLayer(phone, onClose)
   useBackLayer(pushed, back)
 
   // `/` goes to the search unless the person is typing somewhere or a sheet is open.
@@ -273,8 +273,8 @@ export function SettingsPage({
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return
       const target = event.target
-      if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select, dialog, [popover]')))
-        return
+      if (!(target instanceof HTMLElement) || !target.closest('.settings-page')) return
+      if (target.isContentEditable || target.closest('input, textarea, select, dialog:not(.settings-overlay), [popover]')) return
       event.preventDefault()
       search.current?.querySelector('input')?.focus()
     }
@@ -285,24 +285,14 @@ export function SettingsPage({
   }, [searchable, phone])
 
   return (
-    <section aria-label="设置" className="settings-page" data-entry="settings" onKeyDown={escape}>
+    <section className="settings-page" data-entry="settings" onKeyDown={escape}>
+      <header className="settings-overlay-header">
+        <h2>设置</h2>
+        <IconButton label="关闭设置" icon={CloseGlyph} data-autofocus="" onClick={onClose} />
+      </header>
       <SettingsNavigationProvider value={navigation}>
-        <div ref={layout} className="settings-layout" data-level={level}>
+        <div className="settings-layout" data-level={level}>
           <div className="settings-nav-pane" inert={pushed || undefined}>
-            {phone && (
-              <header className="settings-bar">
-                <span />
-                <h2>设置</h2>
-              </header>
-            )}
-            {!phone && onBack && (
-              <div className="settings-back-line">
-                <button type="button" className="sidebar-nav-row" onClick={onBack}>
-                  <ArrowLeft size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-                  <span>返回</span>
-                </button>
-              </div>
-            )}
             {searchable && (
               <div ref={search} className="settings-search">
                 <SearchField
