@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-react'
 import { Circle, CircleDot } from 'lucide-react'
 import {
@@ -12,6 +12,7 @@ import {
   StatusSlot,
   StatusWord,
   StatusWords,
+  setReducedMotion,
   useLivePrevious,
   type SlotStatus,
   CheckGlyph,
@@ -179,6 +180,32 @@ describe('the spinner', () => {
     await expect.poll(() => turns[1]!.playState).toBe('paused')
     element.removeAttribute('data-offscreen')
     await expect.poll(() => turns[1]!.playState).toBe('running')
+  })
+
+  it.each(['system', 'device'] as const)('does not enumerate animations when %s motion is reduced at mount', async preference => {
+    let spinner: Element | undefined
+    const mount = async () => {
+      const lookups = vi.spyOn(Element.prototype, 'getAnimations')
+      try {
+        const screen = await render(<Spinner label="正在载入" />)
+        spinner = screen.getByRole('img', { name: '正在载入' }).element()
+        expect(lookups.mock.contexts.filter(element => element === spinner)).toHaveLength(0)
+        expect(getComputedStyle(spinner).borderTopColor).not.toBe(getComputedStyle(spinner).borderRightColor)
+      } finally {
+        lookups.mockRestore()
+      }
+    }
+    if (preference === 'system') await reducedMotion(mount)
+    else {
+      setReducedMotion(true)
+      try {
+        await mount()
+      } finally {
+        setReducedMotion(false)
+      }
+    }
+    // The ring is still mounted when the preference is restored.
+    await expect.poll(() => animation(spinner!)?.playState).toBe('running')
   })
 
   it('pauses out of view and stops on its still frame under reduced motion', async () => {

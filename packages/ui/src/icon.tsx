@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react'
 import { ICON_STROKE, type IconComponent, type IconSize } from './glyphs/glyph.tsx'
+import { motionAllowed } from './changes.ts'
 import { cx } from './internal.ts'
 import { usePausedOffscreen } from './motion.tsx'
 
@@ -52,6 +53,7 @@ export type SpinnerSize = Exclude<IconSize, 24>
 export function Spinner({ size = 14, label, className }: { size?: SpinnerSize; label?: string; className?: string }) {
   const ref = useRef<HTMLSpanElement>(null)
   useLayoutEffect(() => {
+    if (!motionAllowed()) return undefined
     const turn = ref.current
       ?.getAnimations()
       .find((item): item is CSSAnimation => item instanceof CSSAnimation && item.animationName === 'ui-spin')
