@@ -35,7 +35,7 @@ sources:
 
 可能含密钥的文件名或文本需要明确确认。
 
-模型能力由 Provider 的 `modelCapabilities[model].vision` 显式声明，未声明就不能发送图片；不按模型名称猜测。Host 托管服务把声明保存在配置，插件也可声明它。Harness 必须显式声明接收附件，第三方 Harness 没有声明时保持不可用；插件 Harness 实现了 `Bridge.promptCapabilities` 时，以它报告的为准。ACP Agent 以它最近一次为当前定义启动时 `initialize` 报告的能力为准：会话启动、新会话选中时读取可选项、「测试启动」都算（`Bridge.promptCapabilities`，随驱动状态持久化，定义改了就作废）；`HarnessInfo.attachmentsReported` 把它带给页面，页面在它或 Harness 状态变化时重读能力，不必刷新。没启动过时 `reason` 是一个短标签「发出第一条消息后可添加文件」，`reasonDetail` 是放在 ⓘ 后的说明（还不知道它接收哪些文件，也可以先测试启动）；都不接收、或只收一种时也说明。能力同时给出这条连接每个文件与每张图片的上限（`fileBytes`、`imageBytes`）。内置的四种协议各自生成图片块（Chat Completions 的 `image_url`、Responses 的 `input_image`、Anthropic 的 base64 `image`、Gemini 的 `inlineData`），仍只调用 Host 注入的出站 fetch，密钥绑定与出站策略不变。
+模型能力由 Provider 的 `modelCapabilities[model].vision` 显式声明，未声明就不能发送图片；不按模型名称猜测。Host 托管服务把声明保存在配置，插件也可声明它。Harness 必须显式声明接收附件，第三方 Harness 没有声明时保持不可用；插件 Harness 实现了 `Bridge.promptCapabilities` 时，以它报告的为准。ACP Agent 以它最近一次为当前定义启动时 `initialize` 报告的能力为准：会话启动、新会话选中时读取可选项、「测试启动」都算（`Bridge.promptCapabilities`，随驱动状态持久化，定义改了就作废）；`HarnessInfo.attachmentsReported` 把它带给页面，页面在它或 Harness 状态变化时重读能力，不必刷新。没启动过时 `reason` 是一个短标签「发出第一条消息后可添加文件」，`reasonDetail` 是放在 ⓘ 后的说明（还不知道它接收哪些文件，也可以先测试启动）；都不接收、或只收一种时也说明。能力同时给出这条连接每个文件与每张图片的上限（`fileBytes`、`imageBytes`）。内置的三种协议各自生成图片块（Chat Completions 的 `image_url`、Responses 的 `input_image`、Anthropic 的 base64 `image`），仍只调用 Host 注入的出站 fetch，密钥绑定与出站策略不变。
 
 夹具、测试 Provider 与假 ACP Agent 用于协议和权限回归，不代表真实模型、真实 CLI 或真机验收。
 

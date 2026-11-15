@@ -55,7 +55,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 扩展接口 | Provider、Tool、插件、HarnessDriver、Transport、`AppError` | `packages/sdk/src/plugins.ts`、`harness.ts`、`transports.ts`、`errors.ts` |
 | Standard | 模型循环、审批、取消、消息与幂等记录 | `packages/core/src/runtime.ts`、`store.ts` |
 | Node 工具 | Host 与 Harness 共用：`canonicalJson` 与 `sha256Hex`、原子写入 `writeFileAtomic`、日志脱敏 `redactSecrets` | `packages/core/src/node-kit/` |
-| 内置插件 | 每个插件一个目录 `<种类>/<id>/`：Chat Completions、Responses、Anthropic Messages 与 Gemini 四种模型协议（共用 `providers/http.ts` 与插件工厂 `providers/service.ts`，协议编码、流解码、用量与模型列表在 `providers/{chat,responses,anthropic,gemini}-wire.ts`）、演示模型、项目文件、演示工具、Standard Driver | `apps/host/src/plugins/`：`providers/{openai-compatible,openai-responses,anthropic,gemini,demo}`、`tools/{workspace-files,safe-tools}`、`standard` |
+| 内置插件 | 每个插件一个目录 `<种类>/<id>/`：Chat Completions、Responses 与 Anthropic Messages 三种模型协议（共用 `providers/http.ts` 与插件工厂 `providers/service.ts`，协议编码、流解码、用量与模型列表在 `providers/{chat,responses,anthropic}-wire.ts`）、演示模型、项目文件、演示工具、Standard Driver | `apps/host/src/plugins/`：`providers/{openai-compatible,openai-responses,anthropic,demo}`、`tools/{workspace-files,safe-tools}`、`standard` |
 | ACP Driver | 外部 Agent 的进程、协议、映射、权限配置、启动指纹与存储 | `packages/harness-acp/src`（会话在 `runtime.ts`，进程与协议在 `wires/`，权限配置在 `profiles/`） |
 | 预设 | 浏览器可用的模型服务与 Agent 预设 | `packages/protocol/src/presets.ts`、`agent-presets.ts` |
 | 命令行 | 启动、停止、设备管理、离线连接、密钥、本机确认组件、审计校验、流量计数 | `apps/host/scripts/start.ts`、`stop.ts`、`latch.ts` |
@@ -240,7 +240,7 @@ Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠
 
 `POST /tasks` 仍只带 `workspaceId`；带 `worktree: true` 时会话在 Host 为它新建的工作树里开始，见 [BRANCHES.md](BRANCHES.md#在工作树里开始会话)。Host 检查项目可用、所选 Harness 能接受这些文件夹的数量（`HarnessInfo.projectFolders.max`，超出返回 409 `harness-folder-limit`），会话在主文件夹中启动；Host 把项目标识记在会话元数据（`sessions-meta.json` 的 `workspaceId`，摘要中的 `workspaceId`），写入失败只影响分组。L3 会话在写启动审计之前算出启动指纹（含交给 Harness 的其他文件夹）；ACP Driver 启动 Agent 时，如果交给它的文件夹已与那时不同，返回 409 `workspace-changed`。
 
-Host 只把项目标识与全部文件夹交给声明 `projectFolders: 'all'` 的 Driver（内置 Standard，以及预设为 Codex、Gemini CLI、Qwen Code 的 ACP Driver），同时给它 `projects()` 供它自己再核对一次（声明 `historyImport` 的 Driver 也拿到 `projects()`，只用来核对接入的会话目录，不因此收到其他文件夹）；其他 Driver 只收到主文件夹作为 `cwd`，摘要的 `folderAccess` 由 Host 设为 `primary`。`HarnessInfo.projectFolders` 告诉客户端每个 Harness 怎样对待其他文件夹：Standard 与 Codex 为 `{ access: 'all' }`，Gemini CLI 与 Qwen Code 为 `{ access: 'all', max: 5 }`，OpenCode 为 `primary-asks`，DeepSeek Harness 为 `primary`，pi 与 goose 为 `primary-unbounded`；没有这一项的 Harness 只使用主文件夹，只有声明 `projectFolders: 'all'` 的 Driver 才显示为 `all`。L3 的启动审计记下包含 Host 交给 Driver 的其他文件夹与 `launchPreview` 声明的其他文件夹的启动指纹；有这样的文件夹时还记下文件夹总数 `folderCount`（含工作目录）。没有预览方法的插件，这些文件夹计入通用启动指纹。各 ACP Agent 的做法见 [HARNESSES.md](./HARNESSES.md#项目的多个文件夹)。会话的文件夹在创建时固定（由 Driver 记在摘要的 `folders` 中；没有时就是 `cwd`）。之后加入项目的文件夹只用于新会话；会话记下的文件夹被移出项目、被替换或找不到时，继续该会话返回 409 `workspace-changed`，项目因其他原因不可用时返回 409 `workspace-disabled`。
+Host 只把项目标识与全部文件夹交给声明 `projectFolders: 'all'` 的 Driver（内置 Standard，以及预设为 Codex、Qwen Code 的 ACP Driver），同时给它 `projects()` 供它自己再核对一次（声明 `historyImport` 的 Driver 也拿到 `projects()`，只用来核对接入的会话目录，不因此收到其他文件夹）；其他 Driver 只收到主文件夹作为 `cwd`，摘要的 `folderAccess` 由 Host 设为 `primary`。`HarnessInfo.projectFolders` 告诉客户端每个 Harness 怎样对待其他文件夹：Standard 与 Codex 为 `{ access: 'all' }`，Qwen Code 为 `{ access: 'all', max: 5 }`，OpenCode 为 `primary-asks`，DeepSeek Harness 为 `primary`，pi 与 goose 为 `primary-unbounded`；没有这一项的 Harness 只使用主文件夹，只有声明 `projectFolders: 'all'` 的 Driver 才显示为 `all`。L3 的启动审计记下包含 Host 交给 Driver 的其他文件夹与 `launchPreview` 声明的其他文件夹的启动指纹；有这样的文件夹时还记下文件夹总数 `folderCount`（含工作目录）。没有预览方法的插件，这些文件夹计入通用启动指纹。各 ACP Agent 的做法见 [HARNESSES.md](./HARNESSES.md#项目的多个文件夹)。会话的文件夹在创建时固定（由 Driver 记在摘要的 `folders` 中；没有时就是 `cwd`）。之后加入项目的文件夹只用于新会话；会话记下的文件夹被移出项目、被替换或找不到时，继续该会话返回 409 `workspace-changed`，项目因其他原因不可用时返回 409 `workspace-disabled`。
 
 改变主文件夹不改变已有会话的工作目录。Driver 的 `workspaces()` 列出可用项目的全部文件夹，供已有会话继续使用原目录；新会话仍只在主文件夹启动。调整主文件夹之前，Host 为目录能唯一对应旧主文件夹、尚无 `workspaceId` 的旧会话补记项目标识；不按跨项目共享的非主文件夹猜测会话属于哪个项目。其他升级前的旧会话按目录处理：目录是某个不可用项目的文件夹时返回 409 `workspace-disabled`。
 
@@ -494,6 +494,14 @@ Host 约每 40ms 合并一次变化，把选中会话的 `task-state` 推送给�
 - **审计。** 审计动作表保留 `personal.changed`（`apps/host/src/audit-actions/personal.ts`），否则带这一行的审计链在启动时校验失败，Host 不能启动。
 - **数据目录。** `personal/` 仍在私有目录列表 `PRIVATE_ENTRIES` 中；`policy.json` 的 strict schema 不变。
 
+数据目录里还可能有三个 Latch 不再使用的标识，照样能读，数据不删除也不迁移，启动时不改写任何文件：
+
+- **模型服务的协议 `gemini`**（`RETIRED_PROVIDER_KINDS`）。`providers.json` 里这样的服务原样读回、原样写回；它不注册 Provider，不在目录里，`unusableProviders` 以 `unsupported` 列出，界面写「不再支持」。给它开会话、改它或读它的模型列表返回 409 `provider-unsupported`，没有请求发往它的地址；只能移除，密钥随之删除。指向它的「出错时改用」与默认模型按已不在的服务处理。设备提交这个协议一律 400。
+- **Harness 预设 `gemini`**（`RETIRED_AGENT_PRESETS`）。`settings.json` 里带这个 `presetId` 的定义保留，Driver 照常挂载以便读取它的会话：状态是不可用，写「<名称> 不再支持，已有会话只能查看」；会话可以看、可以删，新开或继续返回 409，命令不被查找也不被启动（`harness-retired`），也不按命令名套用别的预设。绑定它的 Agent 与定时任务同样不运行，不换用其他 Harness 或模型。
+- **会话路由的协议 `gemini`**。`acp.json` 里保存过的路由照样读回；继续这样的会话时在打开路由处被拒绝（409 `model-route-unsupported`），网关不为它签发凭据，它的路径与密钥头也到不了任何服务。
+
+回归用例在 `apps/host/test/retired-data.test.ts` 与 `apps/host/test/model-gateway.test.ts`。
+
 ## 尚未实现
 
 | 项目 | 原因 |
@@ -595,7 +603,7 @@ Driver 声明 `capabilities.fork: 'native'`（现在只有 pi）时，分叉到�
 
 ## 会话配置修改回执
 
-`SessionConfigOption.source: launch` 表示 Host 已按选择启动进程，不是 Agent 有效值的独立报告；这类修改完成回执只证明启动设置已应用。Gemini 的私有思考设置、Cursor force 没有独立读回接口，核对保持 `unread`，不得由本地保存值结清未知结果。进程级换档与核对共用互斥范围：异步准备后及启动/恢复前再查设备授权，运行中或仍有子 Agent 时拒绝重启。
+`SessionConfigOption.source: launch` 表示 Host 已按选择启动进程，不是 Agent 有效值的独立报告；这类修改完成回执只证明启动设置已应用。Cursor force 没有独立读回接口，核对保持 `unread`，不得由本地保存值结清未知结果。进程级换档与核对共用互斥范围：异步准备后及启动/恢复前再查设备授权，运行中或仍有子 Agent 时拒绝重启。
 
 `catalog.features.configReceipts` 表示 Host 支持配置修改的设备绑定回执。旧客户端可不传 `requestId`；新客户端为一次不可变的 `{configId,value}` 保留原编号，超时后只查询 `GET /tasks/:id/config-requests/:requestId`。结果为 `pending`、`applied`、`failed` 或 `unknown`；Agent 收到之前就被拒绝的修改记为 `failed`，例如这一轮还在启动时 ACP 会话回答的 409 `task-running`，页面可以直接说没有改；其他设备和没有回执的编号只看到 `unknown`。读取仍检查原设备、会话可见范围与当前手机正文窗口，不能读取另一台设备的结果。接口不返回原始配置内容。
 

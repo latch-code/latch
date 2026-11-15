@@ -23,13 +23,12 @@ Host 为经 Latch 使用模型服务的 Harness 提供单独的回环临时端�
 | Responses | `POST /v1/responses` | `GET /v1/models`，OpenAI 形状 |
 | Chat Completions | `POST /v1/chat/completions` | 同上 |
 | Anthropic Messages | `POST /v1/messages`、`POST /v1/messages/count_tokens` | `GET /v1/models`，Anthropic 形状 |
-| Gemini | `POST /v1{beta,alpha}/models/<模型>:generateContent`、`streamGenerateContent`、`countTokens`，也接受 `v1` | 相应版本的 `/models` |
 
-凭据只开放自己协议的路径。模型列表只返回绑定的服务模型，不访问上游；请求体最多 32 MiB，模型必须在绑定列表里。Gemini 的上游版本按服务地址决定，未指定时用 `v1beta`，查询参数只保留 `alt=sse`。Chat 流式请求未指定 `stream_options.include_usage` 时补为 true，明确给出的值不覆盖；其他正文保持原样。
+凭据只开放自己协议的路径。模型列表只返回绑定的服务模型，不访问上游；请求体最多 32 MiB，模型必须在绑定列表里。Chat 流式请求未指定 `stream_options.include_usage` 时补为 true，明确给出的值不覆盖；其他正文保持原样。
 
 只接受预期回环 Host，不接受 Origin、浏览器的 Sec-Fetch-Site/Dest/User 等标记或未知 Sec-Fetch 字段；兼容 Node fetch 单独发送的 `Sec-Fetch-Mode: cors`。这个传输标记不构成身份验证，仍须有效进程凭据，不返回 CORS 头。入站认证、Cookie 和未列出的头不转发。Chat/Responses 只转发 accept、openai-beta；Anthropic 同协议透传另外保留 anthropic-version、anthropic-beta。回复只保留 content-type、retry-after、x-request-id、request-id，保留的值也脱敏。
 
-读取完整请求体后，发出请求前再次核对进程凭据和服务指纹；上传期间撤销或变更的请求不转发。上游不跟随重定向。错误正文最多读取 64 KiB，去掉真实密钥的原文、JSON 转义、URL 编码和截断尾部等形式后返回；成功状态的 JSON 与 SSE 也可能包含错误，沿流跨字节块脱敏，只暂存可能的密钥前缀。日志经过 Host 秘密脱敏。下游断开时中止上游请求。开始回复后断流记录为未完成，不重发、不回退到其他服务或演示模型；同协议透传的事件流以入口协议的流内错误结束（Responses 的 `response.failed`、Anthropic 的 `error` 事件、Gemini 与 Chat 的 `error` 数据），不再安静地收尾。
+读取完整请求体后，发出请求前再次核对进程凭据和服务指纹；上传期间撤销或变更的请求不转发。上游不跟随重定向。错误正文最多读取 64 KiB，去掉真实密钥的原文、JSON 转义、URL 编码和截断尾部等形式后返回；成功状态的 JSON 与 SSE 也可能包含错误，沿流跨字节块脱敏，只暂存可能的密钥前缀。日志经过 Host 秘密脱敏。下游断开时中止上游请求。开始回复后断流记录为未完成，不重发、不回退到其他服务或演示模型；同协议透传的事件流以入口协议的流内错误结束（Responses 的 `response.failed`、Anthropic 的 `error` 事件、Chat 的 `error` 数据），不再安静地收尾。
 
 ### Responses 转 Chat
 
@@ -59,7 +58,7 @@ CLI 使用这条转换时启用官方 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`�
 
 工具参数的对象与 JSON 字符串互换时，用 Node 24 标准 JSON source/rawJSON 保留有限数值的原始词元，包括大整数、长小数和 -0；共用的参数检查仍限制嵌套、非有限数值与脱敏后的键冲突，只改动字符串词元。Anthropic 回复要求用量字段：message_start 的零值仅作流开始时的暂存，最终 message_delta 必须使用上游实际 usage；缺少 usage 时返回错误且不发布工具或 message_stop。Host 的用量始终取上游证据，不计暂存值。429 与 retry-after 保留，错误使用 Anthropic 形状；取消中止上游，不重试或回退。
 
-非 Gemini 协议的模型 ID 完全匹配服务清单，不去掉 `models/`；只有 Gemini 的资源名称使用该协议的前缀归一化。
+模型 ID 完全匹配服务清单，不去掉 `models/` 之类的前缀。
 
 ### Anthropic Messages 转 Responses
 
@@ -85,7 +84,6 @@ Responses 的文字增量与最终内容前缀、输出项身份和索引逐项�
 | --- | --- |
 | Codex 直连 | 至少 0.167.0；自定义 `latch` provider 使用 Responses 入口，可接同协议服务或转换到 Chat、Anthropic；凭据从 `LMG_TOKEN` 读取，参数只有地址、变量名和公开选项 |
 | codex-acp | `providers/set`，仅在适配器声明并列出对应 provider/API 类型时使用；凭据经 ACP 头字段 |
-| Gemini CLI | 至少 0.44.0；GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY 与会话私有系统设置 |
 | OpenCode | 经网关至少 2.2.6；私有 `providers.latch` 配置与 shell hook；四种同协议服务 |
 | DeepSeek Harness | 至少 0.2.2-rc.1；私有 Cordis patch 配置 llm provider、ACP 与默认模型；四种同协议服务 |
 | Claude Agent | 适配器实际运行的 Claude Code 至少 2.1.318；Anthropic 同协议服务与实验性 Chat、Responses 转换；官方环境变量控制路由、模型发现与子进程凭据清理 |
@@ -100,11 +98,10 @@ Profile 的 launch 交付统一返回环境变量、参数、私有文件与公�
 
 Codex 在开线程和恢复线程前，以相同 cwd 调用官方 `config/read`，只投影有效的命令环境过滤规则。旧 exclude/include_only 与新 filters 保持原表示，只额外排除 LMG_TOKEN；大小写冲突、混合表示、畸形或读取失败均拒绝开线程。不复制 set 或其他配置值，不读写 Codex 私有文件。规则通过线程 config 覆盖，既有规则不会被启动参数的数组替换。每次 turn/start 仍给出当前模型与权限。经网关的模型列表取服务声明，允许 Codex 原生目录之外的模型；导入历史仍经 thread/list/read，并包含自定义 provider 的线程。
 
-Gemini 的系统设置把主模型、已知辅助模型别名和内置子 Agent 指向会话开始时的模型，同时合并所选思考启动设置；文件写好不等于 Agent 独立读回思考。辅助别名的其他生成参数保留，之后会话切模型时辅助调用仍可用开始时模型。新的别名、用户自定义子 Agent、重试条件覆盖等可能指定其他模型，网关只允许绑定列表里的请求，其他请求失败。私有系统设置替代了系统设置路径，不承诺保留另一个系统设置文件里的管理策略。
 
 OpenCode 的公开启动配置同时设置主模型与小模型，保留原权限与 Agent 档位。模型值采用 `latch/<模型>`；它自己的原生模型路线保持兼容 1.x。会话私有插件使用官方 `shell.create.before` hook 清空工具子进程的 LMG_TOKEN 值；2.2.6 的环境合并会保留空变量名，因此不把它说成变量不存在。插件目录与源码属于 profile 的启动行为和版本指纹。
 
-DeepSeek Harness 的网关 patch 与权限服务 patch 同时交付。Chat、Responses、Anthropic 使用私有 `latch-gateway` provider；0.2.2-rc.1 的自定义 API 注册仅有这三种，Gemini 复用官方 `google` provider 的实现并替换该进程的地址和模型列表。会话日志与包清单遥测插件在这条路线关闭；工具子进程的敏感变量清除由 dsh 自身提供。配置值严格解码为该协议指定的 provider 与模型二元组，恢复不接受其他 provider 的同名模型。0.2.2-rc.1 的 Google 序列化器按型号决定发送 thinkingLevel 还是 token 预算；当前仅为已核对的官方目录精确型号提供人声明的离散档位。未知 Gemini 别名不显示和接受离散思考选项；已有非默认档位时换入这类别名、或恢复含该旧档位的状态，都明确拒绝，不能静默变成自动预算。私有会话字段 routeThinking 保留需要保持或核对的档位，不能被一次不支持的模型报告抹掉；Agent 在运行中主动报告这种变化时，Host 作废该进程凭据并取消本轮。重新选中支持的模型或明确选中有效档位后可继续，核对回执只有真正读到所请求的有效值才结清这项记录。通用别名的离散档位桥尚未实现。该版本 ACP initialize 不声明图片输入，所以模型支持图片也不等于可以经这个 ACP 入口发送图片。
+DeepSeek Harness 的网关 patch 与权限服务 patch 同时交付。Chat、Responses、Anthropic 使用私有 `latch-gateway` provider；会话日志与包清单遥测插件在这条路线关闭；工具子进程的敏感变量清除由 dsh 自身提供。配置值严格解码为该协议指定的 provider 与模型二元组，恢复不接受其他 provider 的同名模型。该版本 ACP initialize 不声明图片输入，所以模型支持图片也不等于可以经这个 ACP 入口发送图片。
 
 Codex 经网关时，思考的「默认」指模型服务默认；它自己的 `model_reasoning_effort` 可能仍被原生请求补成 medium 等值，不代表人在 Latch 选了该档位。wire 用 Host 内部租约的 `setThinking(model, effort)` 明确登记当前模型意图：null 为默认，出站只删除该模型请求的 `reasoning.effort`，保留 summary、其他字段和数字词元；显式选择只允许服务声明的档位，实际请求必须匹配。其他模型及未登记意图的租约仍按原规则校验，不能借此放宽整个服务。菜单只列默认和该模型已声明的档位，不读取 Codex 原生模型的档位来猜网关模型。
 
@@ -155,7 +152,7 @@ Codex 经网关时，思考的「默认」指模型服务默认；它自己的 `
 
 pi 的模型注册 API 必须有输入上下文和输出上限。私有扩展优先用已安装 pi 官方公开目录中模型 ID 与协议都精确匹配、且边界一致的数值；没有精确值时不推测模型容量。可以在该 Harness 的高级环境中显式配置 `PI_GATEWAY_CONTEXT_TOKENS`（1–16777216）与 `PI_GATEWAY_OUTPUT_TOKENS`（1–1048576），两个都要为正整数，输出不得大于上下文。这是适配器的运行预算，修改后启动指纹改变；不表示模型标称容量，也不产生价格或余额。缺少有效预算的未选模型不注册，所选模型缺少预算则明确拒绝开始。
 
-扩展在进程内用官方 `registerProvider` 注册服务，网关凭据只留在进程内存，并从子进程继承环境删除。pi 恢复会话时会重新加载扩展，因此同一进程的扩展实例从自己的私有槽取回凭据；新进程总由 Host 重新发放。扩展数据文件不含凭据。pi 强制要求的价格字段只作内部占位；经服务的会话不把它们或运行预算转换成 Agent 报告的费用、上下文容量。实际 token 用量仍从服务的响应记录。Pi 仅为私有 provider 注册官方 streamSimple 委托，沿用官方 SDK 的消息、工具、推理回放与取消转换，覆盖普通回复、压缩与分支摘要。每次以 options.reasoning 为准；在原 onPayload 回调之后核对模型并限制输出上限，删除上限的回调不能消除运行预算。Gemini 只注册服务声明且可原样发送的离散档位，Host 再过滤选项并拒绝旧的不支持值；最终 thinkingConfig 写对应档位并删除自动预算。payload 失配直接在官方 SDK 发网前失败。该桥允许服务使用自己的模型别名，不靠修改模型 ID 触发 SDK 的型号判断；其他 provider 不受影响。
+扩展在进程内用官方 `registerProvider` 注册服务，网关凭据只留在进程内存，并从子进程继承环境删除。pi 恢复会话时会重新加载扩展，因此同一进程的扩展实例从自己的私有槽取回凭据；新进程总由 Host 重新发放。扩展数据文件不含凭据。pi 强制要求的价格字段只作内部占位；经服务的会话不把它们或运行预算转换成 Agent 报告的费用、上下文容量。实际 token 用量仍从服务的响应记录。Pi 仅为私有 provider 注册官方 streamSimple 委托，沿用官方 SDK 的消息、工具、推理回放与取消转换，覆盖普通回复、压缩与分支摘要。每次以 options.reasoning 为准；在原 onPayload 回调之后核对模型并限制输出上限，删除上限的回调不能消除运行预算。payload 失配直接在官方 SDK 发网前失败。该桥允许服务使用自己的模型别名，不靠修改模型 ID 触发 SDK 的型号判断；其他 provider 不受影响。
 
 ## 调度
 
@@ -168,7 +165,7 @@ pi 的模型注册 API 必须有输入上下文和输出上限。私有扩展优
 - **经 Latch 的会话**在开始时把所选服务每个模型的备选写进 `ModelRoute.fallbacks`（服务 ID、模型、上游协议、来源），随会话持久化，计入 `routeHash` 与启动指纹；没有备选时指纹不变。入口协议不能直接说、也没有已实现转换的备选在这一步略去。之后改设置只影响新会话。
 - **凭据**签发时绑定每个候选当时的服务指纹。签发时或之后被停用、删除、改了地址密钥或模型的备选只让那个候选失效并被跳过，不作废会话；第一个候选不能用时仍照原规则失败。
 - **内置 Harness**每轮可以换模型，所以它的候选在这一轮第一次请求时按当时的设置定下，这一轮内不变。
-- 透传给备选时只把请求体的 `model` 改成那个服务里的名字（数字词元保留原样），Gemini 改路径里的模型；协议不同的备选走同一套转换，思考档位在那个模型没有声明时改用它的默认值。推理封装仍只回放给签发它的服务与模型。token 计数请求只发给会话自己的服务。
+- 透传给备选时只把请求体的 `model` 改成那个服务里的名字（数字词元保留原样）；协议不同的备选走同一套转换，思考档位在那个模型没有声明时改用它的默认值。推理封装仍只回放给签发它的服务与模型。token 计数请求只发给会话自己的服务。
 
 ### 错误分类与故障切换
 
@@ -185,7 +182,7 @@ pi 的模型注册 API 必须有输入上下文和输出上限。私有扩展优
 | 流式请求 60 秒内没有开始回复 | 有下一个候选就立刻换；没有就把超时按入口协议返回。超时后从不向同一个服务再发一次：它可能还在处理第一份 | 计 |
 | 已开始回复后断开 | 不换，按入口协议发流内错误 | 计 |
 
-- **首字节时限只给流式请求**，量的是到响应头或流的任何字节（含注释与保活）的时间，不是到第一段正文；内置 Harness 的路径量到服务的响应到达。响应到了以后模型可以安静地想很久，不会被切断或重发。非流式请求（`stream` 不为 true、Gemini 的 `generateContent`、token 计数）整份回答一次到达，没有首字节时限，耗时也不计入健康。
+- **首字节时限只给流式请求**，量的是到响应头或流的任何字节（含注释与保活）的时间，不是到第一段正文；内置 Harness 的路径量到服务的响应到达。响应到了以后模型可以安静地想很久，不会被切断或重发。非流式请求（`stream` 不为 true、token 计数）整份回答一次到达，没有首字节时限，耗时也不计入健康。
 - 一个请求在回复开始前最多 90 秒，等位置与等名额的时间不算在内，到时返回最后一个错误。一个 60 秒不出声的服务不会把这 90 秒用完：有备选时，备选在同一个请求里、大约第 60 秒接手。
 - **备选自己拒绝这个请求**（400 类）时跳过它，返回前一个候选的真实失败；会话自己的服务返回 400 类时仍原样返回、不换候选。
 - **带服务端状态的请求**（`previous_response_id`、`store: true`、`conversation`、`container`）从不发给另一个服务，只在同一服务的候选之间切换，否则返回第一个失败。
@@ -224,6 +221,6 @@ Host 的内置模型服务与 Harness 网关共用 32 个上游请求名额，�
 
 一轮有回复而没有任何请求到网关时，会话如实标记 bypassed 并写 task.model.bypassed；这只能发现整轮绕过，不能证明所有辅助调用都经过网关。Agent、插件和扩展是可信本机代码，网关不是 OS 隔离。
 
-一个 Harness 请求在上游重试或换候选时仍算一次请求；失败的尝试没有回复可读，所以只有最终回答的那次回复的 token 计入，重试不重复计量。每轮只保存模型 ID、请求/失败/未结束数、由备选回答的请求数与那个服务的 ID、转换损耗枚举及服务报告的 token 用量。Responses、Chat、Anthropic、Gemini 的流与非流式回答分别读取原生 usage 字段；缓存读写和推理只在服务报告时存在。超过读取预算的事件继续透传但用量未知。模型回复正文不进入网关账本，模型 ID 先脱敏。费用不从 token 或未知价格猜算。凭据不进入审计、SSE、启动预览或持久化会话。
+一个 Harness 请求在上游重试或换候选时仍算一次请求；失败的尝试没有回复可读，所以只有最终回答的那次回复的 token 计入，重试不重复计量。每轮只保存模型 ID、请求/失败/未结束数、由备选回答的请求数与那个服务的 ID、转换损耗枚举及服务报告的 token 用量。Responses、Chat、Anthropic 的流与非流式回答分别读取原生 usage 字段；缓存读写和推理只在服务报告时存在。超过读取预算的事件继续透传但用量未知。模型回复正文不进入网关账本，模型 ID 先脱敏。费用不从 token 或未知价格猜算。凭据不进入审计、SSE、启动预览或持久化会话。
 
 验证见 [TESTING.md](TESTING.md)。测试确认后端与本地假模型不等于本人系统确认或真实 BYOK 成功；真实 CLI 的临时验收与实际上游证据分别记录。

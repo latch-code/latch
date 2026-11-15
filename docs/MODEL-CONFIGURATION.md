@@ -8,7 +8,6 @@ sources:
   - apps/host/src/plugins/providers/chat-wire.ts
   - apps/host/src/plugins/providers/responses-wire.ts
   - apps/host/src/plugins/providers/anthropic-wire.ts
-  - apps/host/src/plugins/providers/gemini-wire.ts
   - packages/core/src/runtime.ts
   - apps/web/test/model-reasoning.test.ts
   - packages/protocol/src/types.ts
@@ -24,7 +23,7 @@ sources:
 
 新会话用 Harness 上次会话报告或不开会话读到的选项列表（见 [HARNESSES.md](HARNESSES.md#开始前的选项)），和会话里是同一个组件；还没有列表时也不虚构推理能力：`DraftModelControl` 写「默认模型」、`DraftThinkingControl` 写「默认」，模型菜单里是读取的入口（打开思考也会读取），不能读取时各自说明发第一条消息后可以换。
 
-自己带模型的 Harness 的模型菜单先列它原生报告的模型，未报告时保留「默认模型」。之后按 Host 的 `models.wires` 与 `pairRoute` 列出可转发的已保存服务，分组写「<服务> · 经 Latch」；只有路线声明 `experimental` 时显示实验性。原生 Codex 通过 app-server 使用 Responses 服务，可选服务声明但原生 `model/list` 没有的模型，不带 `knownOnly` 限制。仍走 `codex-acp` 后备适配器的定义保留 `models.knownOnly`：只有适配器认识的服务模型可选。Claude Agent 使用 Anthropic 同协议服务或实验性 Chat、Responses 转换，公开会话设置中的 modelPicker 保留服务的原始模型 ID；Gemini CLI 使用 Gemini 服务；OpenCode、pi 和 DeepSeek Harness 可以分别使用四种同协议服务。Host 从实际命令所选的 profile 投影能力，客户端不维护另一份预设协议表。协议入口、最低版本与交付见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
+自己带模型的 Harness 的模型菜单先列它原生报告的模型，未报告时保留「默认模型」。之后按 Host 的 `models.wires` 与 `pairRoute` 列出可转发的已保存服务，分组写「<服务> · 经 Latch」；只有路线声明 `experimental` 时显示实验性。原生 Codex 通过 app-server 使用 Responses 服务，可选服务声明但原生 `model/list` 没有的模型，不带 `knownOnly` 限制。仍走 `codex-acp` 后备适配器的定义保留 `models.knownOnly`：只有适配器认识的服务模型可选。Claude Agent 使用 Anthropic 同协议服务或实验性 Chat、Responses 转换，公开会话设置中的 modelPicker 保留服务的原始模型 ID；OpenCode、pi 和 DeepSeek Harness 可以分别使用三种同协议服务。Host 从实际命令所选的 profile 投影能力，客户端不维护另一份预设协议表。协议入口、最低版本与交付见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
 
 网关优先同协议转发；只有已实现的 Responses→Chat、Anthropic→Chat、Anthropic→Responses 互译可选，分组标「实验性」，菜单末尾的「协议转换」说明可能略去的能力。其他方向仍不可选。用不了的服务收在「N 个服务用不了」，展开显示原因；`models.wires` 为空的 Harness 只用自己的模型。服务选择按 Harness 分别保存，换 Harness 不带过去。控件显示模型 ID 与服务标记，避免同名模型混淆；草稿思考选项仍以该 Harness 对所选模型实际能提供的列表为准，服务声明不会被误当成原生会话读回。手机与桌面使用同一份能力与模型列表，不能以菜单出现代替 Agent 已应用。
 
@@ -36,11 +35,11 @@ Codex 使用网关模型时，思考菜单只列「默认」与该服务明确�
 
 ## Latch 内置的思考深度
 
-Latch 内置直接调模型服务，所以思考深度来自 设置 › 模型 里对每个模型的声明：`modelCapabilities[model].thinking`，由弱到强的上线值。服务的 `/models` 只给 ID，Latch 不按模型名称猜；设置页按协议给几组常见档位（Chat Completions 的 `reasoning_effort`；Responses 的 `reasoning.effort`；Anthropic 的 `output_config.effort`；Gemini 3 及以后的 `thinkingLevel`），默认不设置。没有声明时思考写「默认」，点开说明去哪里设置。
+Latch 内置直接调模型服务，所以思考深度来自 设置 › 模型 里对每个模型的声明：`modelCapabilities[model].thinking`，由弱到强的上线值。服务的 `/models` 只给 ID，Latch 不按模型名称猜；设置页按协议给几组常见档位（Chat Completions 的 `reasoning_effort`；Responses 的 `reasoning.effort`；Anthropic 的 `output_config.effort`），默认不设置。没有声明时思考写「默认」，点开说明去哪里设置。
 
 选择随 `ModelRef.effort` 走，与模型一样是「下一条」生效：模型控件写模型，思考控件写「高」，思考菜单里「默认 · 低 · 中 · 高」只列声明过的档位；换档时思考写「下一条：低」，换模型时模型写「下一条：…」，两个菜单都有「撤销切换」。会话记在 `TaskSummary.effort`；之后不带模型的输入沿用它，带模型却不带档位的输入回到模型默认值。换到另一个模型时，它也声明了同一档位才保留。Host 在开始前核对档位：请求里未声明的返回 400 `effort-unavailable`，会话记着的档位后来被取消时返回 409，要求重新选择；插件发送前再查一次，从不改成别的档位。Anthropic 的档位是这一强度下的自适应思考：同时发 `thinking: {type: "adaptive"}` 与 `output_config.effort`，不发 token 预算。必须写明 `thinking`，因为 Opus 4.6–4.8 与 Sonnet 4.6 不带它就不思考；Claude 5 系列默认就是自适应思考。Opus 4.5 及更早的模型不接受自适应思考，会返回 400，不要给它们声明档位。
 
-各协议的细节：Responses 发 `reasoning: {effort}`，不请求推理摘要（没有验证的组织请求摘要会被拒），所以只有服务自己发来推理文字时才显示；请求带 `store: false`，因为 Latch 自己保存对话，从不按响应 ID 引用。Gemini 的档位与其他协议一样写成小写（`minimal`、`low`、`medium`、`high`），上线时转成 API 的大写枚举，同时发 `includeThoughts: true`，思考摘要显示在思考里；Gemini 2.5 的 `thinkingBudget` 是 token 数，不是档位，不要给 2.5 声明。思考 tokens 计入输出，也单独记为推理。
+各协议的细节：Responses 发 `reasoning: {effort}`，不请求推理摘要（没有验证的组织请求摘要会被拒），所以只有服务自己发来推理文字时才显示；请求带 `store: false`，因为 Latch 自己保存对话，从不按响应 ID 引用。思考 tokens 计入输出，也单独记为推理。
 
 **工具循环里的推理。** 一轮里模型调用工具、拿到结果再继续时，Anthropic 与 Responses 要求把这一轮已经给出的推理原样带回，否则模型失去这一轮前面的推理，Anthropic 还可能悄悄关掉这次请求的思考。Latch 内置因此保存服务签过名或加密的推理，并在同一轮的后续请求里带回：
 
@@ -48,7 +47,7 @@ Latch 内置直接调模型服务，所以思考深度来自 设置 › 模型 �
 - Responses：请求带 `store: false`；选了思考深度时同时请求 `include: ["reasoning.encrypted_content"]`（不推理的模型会拒绝这个字段，所以没有档位时不发）。回复里带加密内容的推理项与同一回复的消息项原样发回，工具调用带上它的项 ID；只在完成事件里补上加密内容的服务也能用。推理项没有加密内容时整段不带，因为不存储时服务找不到它。
 - 只在当前这一轮（最后一条用户消息之后）带回；之前各轮按原来的样子发送，不带推理。这样 Latch 改了系统说明或工具列表之后，旧的推理不会让服务拒绝请求，代价是新的一轮不能读到上一轮的推理。
 - 只带回同一协议、同一服务、同一模型给出的推理；换了模型、服务换了协议，或历史与当时的回复对不上时，都按原来的样子发送。
-- 推理保存在 Host 的会话历史里（每个工具调用至多 1 MiB，超过就不保存），下一条用户输入开始新的一轮时删除，因为之后不会再发回；Gemini 的 `thoughtSignature` 之后各轮都带回，一直保留。推理不进入会话详情、SSE、快照、审计与日志；界面只显示服务给出的推理文字。Opus 4.7、4.8 与 Claude 5 系列默认不返回思考文字（`display: "omitted"`），Responses 也不请求推理摘要，所以界面常常没有推理文字，推理照样带回。
+- 推理保存在 Host 的会话历史里（每个工具调用至多 1 MiB，超过就不保存），下一条用户输入开始新的一轮时删除，因为之后不会再发回。推理不进入会话详情、SSE、快照、审计与日志；界面只显示服务给出的推理文字。Opus 4.7、4.8 与 Claude 5 系列默认不返回思考文字（`display: "omitted"`），Responses 也不请求推理摘要，所以界面常常没有推理文字，推理照样带回。
 - 真实服务上的表现没有在测试里核对过；测试用本机的假模型服务。
 
 服务换协议（设置 › 模型 › 服务页的「协议」，只在这个地址说多种协议时出现）时，Host 清除它为各模型声明的思考深度，图片开关保留；同一请求里给出的新声明照常保存。会话记着的档位随之失效，下一条按上文要求重新选择。
@@ -69,7 +68,7 @@ Latch 内置直接调模型服务，所以思考深度来自 设置 › 模型 �
 
 `apps/web/test/model-reasoning.test.ts` 验证语义分类、真实值、排序、无推理能力时不显示空槽、忙碌与未知写入门禁、回调 resolve 不改变选中、手机入口以及安全文本。既有 `components-*.test.ts` 保留 Standard 下一条模型切换覆盖。纯 Node 用例不证明手机面板、键盘焦点或三宽布局已在浏览器通过；这些由真实渲染验证。
 
-草稿换模型时按 Harness 的读取策略获取这个模型的思考选项，不沿用另一个模型的档位；人选择的每项在发送前必须成功应用，否则拒绝本轮。已知权限预设的完整梯度在草稿即可选，列表读回不能覆盖先前选择。Gemini 的私有系统设置与 Cursor force 显示「启动设置 · 未独立读回」；它们的 `source: launch` 与原生报告严格区分，未知回执不能靠本地设置值结清。
+草稿换模型时按 Harness 的读取策略获取这个模型的思考选项，不沿用另一个模型的档位；人选择的每项在发送前必须成功应用，否则拒绝本轮。已知权限预设的完整梯度在草稿即可选，列表读回不能覆盖先前选择。Cursor force 显示「启动设置 · 未独立读回」；它的 `source: launch` 与原生报告严格区分，未知回执不能靠本地设置值结清。
 
 ## 出错时改用、健康与默认模型
 

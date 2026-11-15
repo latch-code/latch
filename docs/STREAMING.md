@@ -211,7 +211,7 @@ SSE 逐读者先投影再 `TaskDeltaStream.encode`，原事件和 Driver 对象�
 
 源码：[runtime.ts](../packages/core/src/runtime.ts)、[Transcript.tsx](../apps/web/src/components/Transcript.tsx)、[ToolCard.tsx](../apps/web/src/components/ToolCard.tsx)、[MessageRow.tsx](../apps/web/src/components/MessageRow.tsx)、[approvalDecision.ts](../apps/web/src/core/approvalDecision.ts)、[confirmations.ts](../apps/web/src/core/confirmations.ts)。
 
-- 每次模型调用在收到文字前创建 `liveMessageId`。文字只更新内存里的累计 `liveText`，思考更新 `liveReasoning`；正常完成或异常保留部分内容时，最终 assistant 消息沿用该 ID，思考保存在其 `reasoning` 中。Harness 说这条回复中途断开、从头重新生成时（Gemini CLI 的重试，见 [HARNESSES.md](HARNESSES.md#通知与压缩)），`liveText` 清空后重新累计，ID 不变。detail 不同时暴露同 ID 的 live 与已提交消息。
+- 每次模型调用在收到文字前创建 `liveMessageId`。文字只更新内存里的累计 `liveText`，思考更新 `liveReasoning`；正常完成或异常保留部分内容时，最终 assistant 消息沿用该 ID，思考保存在其 `reasoning` 中。Harness 说这条回复中途断开、从头重新生成时（profile 的 `readRetry`，见 [HARNESSES.md](HARNESSES.md#通知与压缩)），`liveText` 清空后重新累计，ID 不变。detail 不同时暴露同 ID 的 live 与已提交消息。
 - React 按 message.id 渲染，并为消息行设置 `data-message-id`。消息组件比较 ID、正文、状态和角色等字段，未变化的历史行不因每次状态替换而重渲染。
 - Transcript 按会话和不可变 `messages` 引用缓存已提交轮次、切换标记、时间索引与运行工具事实；追加帧只合成尾轮。完整消息列表变化仍比较全部字段，包含同 ID 重写与未知新字段。历史 JSX 缓存保留全部共享展示输入，审批、提问、人物、权限、文件记录和其他新增 prop 变化都会重新核对；只有已知正文帧字段与稳定回调身份不使历史重复投影。列表保持原来的平级 key，旧尾轮成为历史时不重挂载，展开、选择、复制和查找锚点保留。状态词与时钟每次仍读最新 detail，不缓存状态结果；React 的列表协调仍有线性工作，不能由此声称整个渲染为常数成本。
 - 收到完整模型终止事件后，先持久化助手文字和工具批次，再串行执行工具。工具消息使用 `tool:<callId>`，按 `queued → awaiting-approval（若需要）→ running → completed/failed/cancelled` 更新同一行。拒绝不会经过 running。
@@ -467,4 +467,4 @@ Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入
 
 文件列按 session 与 workspace/Harness 分开保留相对引用；切换上下文取消旧解析、目录读取与搜索，迟到结果不更新新上下文。项目预览不创建会话。目录与句柄见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
 
-Harness 的进程级换档在空闲时结束旧进程、恢复同一外部会话；准备与恢复期间拒绝发送、追加和其他配置写入。dsh 以官方服务报告同会话的实际权限为证据；Gemini 启动设置与 Cursor force 只表示新进程的启动配置，界面明确标为未独立读回，未知结果仍沿原 requestId 保留。
+Harness 的进程级换档在空闲时结束旧进程、恢复同一外部会话；准备与恢复期间拒绝发送、追加和其他配置写入。dsh 以官方服务报告同会话的实际权限为证据；Cursor force 只表示新进程的启动配置，界面明确标为未独立读回，未知结果仍沿原 requestId 保留。

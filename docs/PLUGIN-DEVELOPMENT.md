@@ -46,7 +46,7 @@ pnpm desktop -- --plugin ./examples/text-statistics.mjs
 
 通过 `--plugin` 加载的插件，其启停保存在 `settings.json`；修改原目录源码仍需重启 Host。应用内管理的自定义插件把草稿、已应用版本和批准摘要保存在私有 `plugin-packages/assets.json`，应用后立即发布新代，重启恢复已应用快照；保存草稿不改变正在运行的版本。设置页管理的模型服务与 ACP Agent 也使用插件生命周期（`managed` 为 `provider` / `agent`），应在对应设置页中修改；内置插件（`managed: 'core'`）不能停用。
 
-内置插件与第三方插件用同一组接口：它们在 `apps/host/src/plugins/<种类>/<id>/`，每个插件一个目录（`providers/openai-compatible`、`providers/openai-responses`、`providers/anthropic`、`providers/gemini`、`providers/demo`、`tools/workspace-files`、`tools/safe-tools`、`standard`），ACP Driver 是单独的包 `@latch/harness-acp`。插件目录只导入 `@latch/sdk`、`@latch/protocol`、已安装的包、本目录的文件与同一种类共用的文件（如 `providers/http.ts`），不导入 Host 或其他插件目录；Host 需要提供的能力（出站 `fetch`、受保护路径）经插件参数传入。`pnpm lint` 检查这些边界（见 [ARCHITECTURE.md](./ARCHITECTURE.md)「Workspace 项目」）。
+内置插件与第三方插件用同一组接口：它们在 `apps/host/src/plugins/<种类>/<id>/`，每个插件一个目录（`providers/openai-compatible`、`providers/openai-responses`、`providers/anthropic`、`providers/demo`、`tools/workspace-files`、`tools/safe-tools`、`standard`），ACP Driver 是单独的包 `@latch/harness-acp`。插件目录只导入 `@latch/sdk`、`@latch/protocol`、已安装的包、本目录的文件与同一种类共用的文件（如 `providers/http.ts`），不导入 Host 或其他插件目录；Host 需要提供的能力（出站 `fetch`、受保护路径）经插件参数传入。`pnpm lint` 检查这些边界（见 [ARCHITECTURE.md](./ARCHITECTURE.md)「Workspace 项目」）。
 
 ## 组合一个自定义插件
 
@@ -230,7 +230,7 @@ export default {
 - 可选的 `title` 是工具做什么的简短说法，用产品的语言写（「读取文件」「写入文件」）。过程行与审批卡写它加这次调用的对象（路径、命令、搜索词或地址，从参数 `path`、`command`、`query`、`url` 等读出）：「写入文件 notes/plan.md」，运行中是「正在写入文件 notes/plan.md」。标题只用于显示：Host 截到 40 个字符、把不可见与改变方向的字符显示为 `\u{…}`，它不参与风险分级，审批卡仍写出工具名。没有 `title` 时过程行按 `kind` 写动词与对象，读不出对象时写工具名（等宽），不猜。
 - 把 `signal` 传给网络与子进程；在不可逆写入前再次检查；取消清理完成后才结束 Promise。`callId` 可作为外部系统的幂等键，但本身不提供幂等性。
 - 工具 SDK 返回一次最终结果，没有 stdout 分片或百分比进度。
-- 结果可以带图片：`images: [{ mimeType, data }]`（`image/png | jpeg | gif | webp`，base64，每张不超过 5 MB，每个结果最多 4 张）。Standard 把它们存进 Host 的私有附件存储，历史只存引用，工具卡里是附件按钮，按附件的规则在能读这个会话的设备上打开；存不下的图片丢掉，并在结果文字里说明。模型协议能在工具结果里带图的（Anthropic Messages）放在结果里；不能的（Chat Completions、Responses、Gemini）放在这一步全部结果之后的一条用户消息里，前面写明「工具调用 … 返回的图片，不是用户发送的」。声明 `returnsImages: true` 的工具，在模型没有 `vision` 的运行里不提供；别的工具在这样的运行里返回图片会被丢掉，换了没有 `vision` 的模型后，历史里工具的图片也不再发送。每次请求只再发最近 3 张工具图片（`TOOL_IMAGES_SENT`），更早的结果只带文字与一句说明，截图不会在每一步越积越多。
+- 结果可以带图片：`images: [{ mimeType, data }]`（`image/png | jpeg | gif | webp`，base64，每张不超过 5 MB，每个结果最多 4 张）。Standard 把它们存进 Host 的私有附件存储，历史只存引用，工具卡里是附件按钮，按附件的规则在能读这个会话的设备上打开；存不下的图片丢掉，并在结果文字里说明。模型协议能在工具结果里带图的（Anthropic Messages）放在结果里；不能的（Chat Completions、Responses）放在这一步全部结果之后的一条用户消息里，前面写明「工具调用 … 返回的图片，不是用户发送的」。声明 `returnsImages: true` 的工具，在模型没有 `vision` 的运行里不提供；别的工具在这样的运行里返回图片会被丢掉，换了没有 `vision` 的模型后，历史里工具的图片也不再发送。每次请求只再发最近 3 张工具图片（`TOOL_IMAGES_SENT`），更早的结果只带文字与一句说明，截图不会在每一步越积越多。
 - 人批准过的调用，`execute` 的上下文带 `approvalId`（审批的 ID），工具可以拿它与自己的记录对应；`callId` 是运行时的工具调用 ID，`approval.decided` 审计同样记它。
 - `execute` 的上下文还有 `waitForUser()`：调用它开始一段「等人」的时间、调用它返回的函数结束，这段时间不计入工作用时（例如浏览器工具等人交还标签）；旧的 Driver 可能没有它。
 - 等待用户输入的协作式工具可设 `waitsForUser: true`：Standard 将等待排除在工作用时之外；这不改变 Host 的风险分级。可选的 `resultCommitted({sessionId, callId, state})` 在工具结果落盘后、模型继续前调用，`state` 为 `completed | failed | cancelled`。回调必须真实结算，不能确认尚未落盘的结果。内置问答使用这一回调确认回答。
@@ -270,7 +270,7 @@ Standard 在每次工具调用执行前请 Host 分级（`HarnessHostOptions.cla
 
 ## 注册模型 Provider
 
-设置页可以直接添加用 Chat Completions、Responses、Anthropic Messages 或 Gemini 协议的模型服务。只有接入其他协议时才需要编写 Provider 插件：
+设置页可以直接添加用 Chat Completions、Responses 或 Anthropic Messages 协议的模型服务。只有接入其他协议时才需要编写 Provider 插件：
 
 ```ts
 interface ModelProvider {
@@ -294,7 +294,7 @@ interface ModelProvider {
 
 把 `signal` 交给底层请求，并在退出时释放读取器。调用 ID 在同一会话历史中须唯一；处理 `ModelMessage.isError`，不要把拒绝或工具错误变成成功信息。`tools: []` 表示对话模式，不能发送工具声明。日志与错误不要包含密钥。
 
-内置的四种协议是完整参考：每种协议一个文件（[chat-wire.ts](../apps/host/src/plugins/providers/chat-wire.ts)、[responses-wire.ts](../apps/host/src/plugins/providers/responses-wire.ts)、[anthropic-wire.ts](../apps/host/src/plugins/providers/anthropic-wire.ts)、[gemini-wire.ts](../apps/host/src/plugins/providers/gemini-wire.ts)）负责地址、请求体、分片组装、完整参数解析、终止校验与大小限制，插件工厂 [service.ts](../apps/host/src/plugins/providers/service.ts) 负责模型与思考深度的选择、取消与密钥脱敏；共用的 SSE 分帧、错误响应读取、密钥脱敏与参数解析在 [http.ts](../apps/host/src/plugins/providers/http.ts)。服务给工具调用附带、之后必须原样带回的数据（Gemini 的 `thoughtSignature`；Anthropic 与 Responses 一次回复里签过名或加密的推理，放在这次回复的第一个调用上）放在 `ToolCall.signature` 的 `value`，至多 1 MiB，`by` 写协议、服务与模型；会话历史保存它，界面、审批、审计与日志看不到，Provider 只把 `by` 是自己的发回。只在产生它的这一轮里带回的写 `scope: 'turn'`，下一条用户输入开始新的一轮时 Host 从历史里删掉它；Anthropic 与 Responses 就是这样，见 [MODEL-CONFIGURATION.md](MODEL-CONFIGURATION.md#latch-内置的思考深度)。
+内置的三种协议是完整参考：每种协议一个文件（[chat-wire.ts](../apps/host/src/plugins/providers/chat-wire.ts)、[responses-wire.ts](../apps/host/src/plugins/providers/responses-wire.ts)、[anthropic-wire.ts](../apps/host/src/plugins/providers/anthropic-wire.ts)）负责地址、请求体、分片组装、完整参数解析、终止校验与大小限制，插件工厂 [service.ts](../apps/host/src/plugins/providers/service.ts) 负责模型与思考深度的选择、取消与密钥脱敏；共用的 SSE 分帧、错误响应读取、密钥脱敏与参数解析在 [http.ts](../apps/host/src/plugins/providers/http.ts)。服务给工具调用附带、之后必须原样带回的数据（Anthropic 与 Responses 一次回复里签过名或加密的推理，放在这次回复的第一个调用上）放在 `ToolCall.signature` 的 `value`，至多 1 MiB，`by` 写协议、服务与模型；会话历史保存它，界面、审批、审计与日志看不到，Provider 只把 `by` 是自己的发回。只在产生它的这一轮里带回的写 `scope: 'turn'`，下一条用户输入开始新的一轮时 Host 从历史里删掉它；Anthropic 与 Responses 就是这样，见 [MODEL-CONFIGURATION.md](MODEL-CONFIGURATION.md#latch-内置的思考深度)。
 
 ### 出站请求与密钥
 

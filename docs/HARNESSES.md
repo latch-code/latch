@@ -41,7 +41,7 @@ Agent 自己提供官方的机器协议时，Latch 直接说这个协议，ACP �
 | Codex | `codex app-server`（见「Codex 的 app-server」） | Codex 自己的客户端用的 JSON-RPC 协议；codex-acp 本身也是启动它再转成 ACP。需要 Codex 0.156.0 或更高：它的发布说明从这一版起在一轮被中断或失败时保留已经流出的回答与计划，另一个直连 app-server 的开源客户端也以 0.156.0 为支持下限。`codex` 低于 0.156.0 时以 409 `harness-version-unsupported` 拒绝并给出升级命令，不改用 codex-acp：适配器会经 `CODEX_PATH` 运行同一个旧 Codex。只有这台电脑没有 `codex`、却装了 `codex-acp` 时，从草稿选 Codex 才保存为 `codex-acp`，它运行自己随包带的 Codex（[codex-acp 的 README](https://github.com/agentclientprotocol/codex-acp)：npm 包依赖一个兼容的 `@openai/codex`，`CODEX_PATH` 只用来换成别的 Codex；Codex 没装时 Latch 不设它），预设列表这时写它经适配器运行。定义的命令是 `codex-acp`（之前保存的定义）或任何别的命令时走 ACP，「设置 › Harness」在它的行上写「经 codex-acp」，ⓘ 后是直连需要的版本；两者都没装时，预设就是 Codex 本身，给出它的安装命令 |
 | pi | `pi --mode rpc`（见「pi 的 RPC 模式」） | pi 官方的 RPC 模式 |
 | DeepSeek Harness | `dsh --profile acp` | dsh 随包提供的 `acp` 配置就是它给自动化客户端的官方协议；`--profile sdk` 是给它自己的 SDK 用的 JSON-RPC，换过去没有收益 |
-| 其他预设 | ACP | 它们的官方集成方式就是 ACP（OpenCode、Gemini CLI、Qwen Code、goose、Cursor 的 `acp` 命令，Claude Agent 的官方适配器） |
+| 其他预设 | ACP | 它们的官方集成方式就是 ACP（OpenCode、Qwen Code、goose、Cursor 的 `acp` 命令，Claude Agent 的官方适配器） |
 
 预设收录开源 Agent，以及厂商官方文档支持的已安装命令（Claude Agent、Cursor）；都只使用本机已安装的命令，不使用 `npx` 等运行时下载，不捆绑、不修改它们：
 
@@ -51,7 +51,6 @@ Agent 自己提供官方的机器协议时，Latch 直接说这个协议，ACP �
 | pi | `pi --mode rpc` | MIT | `npm i -g @earendil-works/pi-coding-agent`，0.84.4 或更高版本（与 1.5.0 核对过握手）；不用适配器；Latch 的私有 pi 扩展提供四档权限，默认先问你 |
 | OpenCode | `opencode acp` | MIT | `npm i -g @opencode/cli`；当前安装包为 2.x，仍支持已有 1.x 与 2.x |
 | DeepSeek Harness | `dsh --profile acp` | MIT | 需要 `@deepseek-ai/dsh` 0.2.2-rc.1 或更高（`acp` 配置自 0.1.2 起随包提供；0.2.1-rc.1 起它的 ACP 一轮等子 Agent 结束才结算、取消等真实停止，见 `@deepseek-ai/dsh-acp` 0.2.0-rc.2 与 0.2.1-rc.1 的 README；2026-11 的 latest 是 0.2.2-rc.1，参数不变）；它要求 Node.js 24.9 或更高；按完整消息回复 |
-| Gemini CLI | `gemini --acp --approval-mode default` | Apache-2.0 | `npm i -g @google/gemini-cli` |
 | Qwen Code | `qwen --acp` | Apache-2.0 | `npm i -g @qwen-code/qwen-code` |
 | goose | `goose acp` | Apache-2.0 | 见项目文档 |
 | Claude Agent | `claude-agent-acp` | Apache-2.0 适配器；Claude Code 专有（Anthropic 条款） | `npm i -g @agentclientprotocol/claude-agent-acp`；用这个人在 Claude Code 中已有的登录（或它设置里的 API key、Bedrock、Vertex）。名称只用「Claude Agent」，图标使用官方 Claude 品牌资源；来源与商标使用条件见界面的开源许可 |
@@ -79,10 +78,10 @@ profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本�
 
 每个预设的权限配置是 `packages/harness-acp/src/profiles/` 下的一个 `HarnessProfile`，只在 Host 上使用；浏览器只看到复制进 `TaskDetail.permission` 的展示字段。
 
-- `permission`（`AcpPermissionProfile`）：`approvals`（Agent 是否请求审批）、`defaultEnv`、`expectedMode`、`modeLadder`（严格 → 宽松，由模型代为批准的模式排在询问与不再询问之间）、`modeTiers`（每个模式的档位与一句话，见「权限菜单」）、`reviewCallPrefix`（Agent 把自己的模型审阅一次请求报告成工具调用时，调用 ID 的前缀）、`hiddenOptionIds`（精确 ID，或以 `*` 结尾的前缀）、`readback`、`versionRule`（见「版本规则」）、`systemSettings`（Gemini CLI）、`configEnv`（见下）与中文 `notes`。
+- `permission`（`AcpPermissionProfile`）：`approvals`（Agent 是否请求审批）、`defaultEnv`、`expectedMode`、`modeLadder`（严格 → 宽松，由模型代为批准的模式排在询问与不再询问之间）、`modeTiers`（每个模式的档位与一句话，见「权限菜单」）、`reviewCallPrefix`（Agent 把自己的模型审阅一次请求报告成工具调用时，调用 ID 的前缀）、`hiddenOptionIds`（精确 ID，或以 `*` 结尾的前缀）、`readback`、`versionRule`（见「版本规则」）、`configEnv`（见下）与中文 `notes`。
 - `version`：计入启动指纹。改变配置的行为时应递增它，已有会话因此停止接受输入，换新会话继续。
 - `projectConfigPaths`、`projectConfigManaged`：见「项目配置」。
-- `materialize`：启动前在 Host 上准备 Agent 需要的文件，返回要加入的环境变量（目前只有 Gemini CLI 使用）。
+- `materialize`：启动前在 Host 上准备 Agent 需要的文件，返回要加入的环境变量（目前没有预设使用）。
 - `normalizeUpdate`、`readRetry`：见「通知与压缩」。
 
 选择规则：按定义的 `presetId`，否则按命令的文件名匹配预设的命令。只要选中了预设，它的环境变量和模式规则就生效；只有 `presetId` 与参数都与预设完全一致、命令就是预设的命令，并且定义没有设置会改变该 Agent 读取配置位置的变量（`configEnv`）时，定义才算「已验证的预设」，否则显示为「未验证的定义」。「就是预设的命令」指只写命令名（由 Host 自己查找），或写 Host 按这个命令名查找到的那个文件（按真实路径比较，指向它的链接也算）；其他目录里同名的文件（例如项目 `node_modules/.bin` 里的 `codex-acp`）不算，每次启动时重新判断。没有匹配任何预设的定义不设置模式，但会话中 Agent 自行改变模式一律按漂移处理。
@@ -94,7 +93,6 @@ profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本�
 | Codex（经 codex-acp；直连见「Codex 的 app-server」） | `INITIAL_AGENT_MODE=read-only` | `read-only` | `read-only`、`workspace-write`、`agent`、`agent-full-access` | — | `accept_execpolicy_amendment`、`apply_network_policy_amendment*` | 可读回 |
 | Qwen Code | — | `default` | `plan`、`default`、`auto-edit`、`auto`、`yolo` | — | — | 可读回；恢复会话会恢复旧模式，Latch 每轮前重新设置 |
 | goose | `GOOSE_MODE=approve` | `approve` | `chat`、`approve`、`smart_approve`、`auto` | — | — | 可读回 |
-| Gemini CLI | `GEMINI_CLI_SYSTEM_SETTINGS_PATH` | `default` | `plan`、`default`、`autoEdit`、`yolo` | — | `proceed_always_and_save`、`ProceedAlwaysAndSave` | 可读回 |
 | DeepSeek Harness | 私有 `--patch` 插件、`DSH_PERMISSION_MODE`、`DSH_TELEMETRY_DISABLED=1` | `read-only` | `read-only`、`workspace-write`、`danger-full-access` | — | — | 公共权限服务读回；空闲换档重启恢复 |
 | OpenCode | `OPENCODE_CONFIG_CONTENT`（见下） | `build` | `plan`、`build`、`auto-edit`、`yolo` | — | — | 可读回 |
 | pi | 私有 `-e` 扩展 | `ask` | `plan`、`ask`、`rule`、`never` | — | — | 扩展报告当前档位 |
@@ -110,7 +108,6 @@ Antigravity 1.5.8 宣告 `session/resume`、`session/load`、`session/list`、`s
 Grok Build 的 stdio 模式是独立 Agent 进程，不连接终端使用的共享 leader。Latch 不运行 `grok leader kill`，只停止自己启动的进程。项目 `.grok` 计入启动指纹；继承 `GROK_HOME` 的变量名和路径，不读取其中的登录或历史文件。经 Latch 使用模型服务见「经 Latch 使用模型服务」。Antigravity 同样不把 CCPA 地址选项当作 Gemini API 网关地址。
 
 - DeepSeek Harness：Latch 保持 `DSH_TELEMETRY_DISABLED=1`。每次启动在会话私有临时目录写入 0600 的 `--patch` 文件和插件，经公开 `permissionPresets.set/current` 设置与报告当前档位；不读写 dsh 自己的会话文件。报告同时绑定当前进程与 ACP session ID，未知组合拒绝发送。草稿选择计入启动指纹；会话空闲、没有后台子 Agent 时换档，结束旧进程、带选择启动新进程并恢复同一会话，真实读到目标值才完成。核对省略 setter，只报告服务当前值。`workspace-write` 直接允许工作目录及许可临时目录写入，扩大范围才询问。会话仍为 L3，模式不是 Latch 的 OS 隔离。
-- Gemini CLI：每次启动在会话自己的临时目录写 0600 系统设置文件，经 `GEMINI_CLI_SYSTEM_SETTINGS_PATH` 传入；保留关闭永久审批的设置（这些审批键尚未在正式版本上实测）。已知精确模型可选思考：Gemini 3/3.1 的已核对文本模型按其支持的 level，2.5 按 budget，Pro 不提供关闭。选择只写该模型的 `modelConfigs.customAliases`，不借用其他模型的限制、不改人的文件。空闲换档重启恢复；默认不添加思考覆盖。ACP 未独立报告有效值，所以选项带 `source: launch`，界面写「启动设置 · 未独立读回」，核对返回 `unread`。系统设置高于用户与项目同名设置，但 CLI 的 model-config overrides（包括更精确条件与运行时覆盖）在 alias 之后生效，可能覆盖此选择；不能凭文件写入断言 Agent 已采用。原生 ACP 已有思考选项时优先用它。
 - OpenCode：`OPENCODE_CONFIG_CONTENT` 让除读取、glob、grep、list 以外的工具都先询问，访问工作目录以外的路径（`external_directory`）先询问，拒绝读取 `.env` 与 `.env.*`；同样的规则也写进 `build` 与 `plan` 两个 Agent，避免它们各自的设置覆盖全局设置，`plan` 在这些规则之后再拒绝 `edit`（也管写入与补丁工具）和 `bash`，所以计划模式不改文件也不运行命令，它自己的计划文件也不写。子 Agent：规则先写 `task: 'deny'`，再写 `subagent: 'ask'`。1.x 只认 `task`，子 Agent 保持禁用，因为 1.x 的 ACP 不回答子会话的权限请求，子 Agent 会一直等下去；2.x 把 `task` 读作 `subagent`，后写的 `subagent: 'ask'` 生效，`build` 中启动子 Agent 先问你，子 Agent 的请求出现在启动它的会话里；在后来的一轮里被继续的子 Agent 例外，OpenCode 不转发它的请求（见「子 Agent」）。`plan` 另写 `subagent: 'deny'`，因为子 Agent 按它自己的 Agent（`general`、`explore`）加上这些全局规则工作，不受 `plan` 的拒绝约束。2.x 自带的 `explore` 本来放行命令与工作目录以外的路径，全局规则排在它自己的规则之后，所以它同样先问。2.x 默认不允许子 Agent 再启动子 Agent（`experimental.subagent_depth` 为 1）。这些规则只是默认值：OpenCode 还会合并用户与项目的配置（用户配置目录、从工作目录向上查找的 `opencode.json`/`opencode.jsonc`、项目与主目录下 `.opencode` 目录中的配置和 Agent 定义），其中一部分在 Latch 的规则之后加载，可以把询问改成直接允许，模式读回仍显示 `build`。Latch 无法关闭这些来源；项目中的这些配置计入启动指纹（见「项目配置」），用户配置不计入。OpenCode 启动时还会在 `.opencode` 目录中安装依赖并加载插件，因此在不信任的项目中使用 OpenCode 会运行项目里的代码。OpenCode 会话的权限说明注明了这两点，以及 2.x 的子 Agent 可以在一轮结束或停止后继续（见「子 Agent」）。OpenCode 2.x 把 `OPENCODE_CONFIG_CONTENT` 放在用户与项目的配置文件之后、系统托管设置之前读取，所以那些文件里给 `build`、`plan` 写的规则排在 Latch 的规则之前；托管设置、`.opencode` 中的插件（插件可以改变询问的结果）和项目新定义的 Agent 仍不受这些规则约束；这样的 Agent 不在模式顺序里，按更宽的模式对待，2.x 也可以把它作为子 Agent 启动（启动前先问你，请求里写着它的名字）。2.x 默认放行工作目录以外的路径，Latch 的 `external_directory: 'ask'` 让它照样先询问。
 - Cursor：保留官方 Ask、Plan、Agent 名称，最宽档用 `Agent --force`。前两档以 `--mode` 启动，Agent 不传 mode，force 只在明确选择时附加；空闲换档重启恢复并核对 ACP 模式。`--force` 不覆盖显式拒绝，ACP 不独立报告此标志，当前 force 档带 `source: launch`，不能把一次重启当成旧标志的只读核对。尚未做真实 Cursor 验收。
 - OpenCode 的新增主 Agent：`auto-edit` 沿用 build，只将文件编辑放行；`yolo` 直接允许工具。默认仍为 build，plan 的拒绝保留。这些主 Agent 由同一个 `OPENCODE_CONFIG_CONTENT` 声明，模式读回仍来自 OpenCode。
@@ -130,7 +127,6 @@ Grok Build 的 stdio 模式是独立 Agent 进程，不连接终端使用的共�
 | --- | --- | --- |
 | OpenCode | `opencode.json`、`opencode.jsonc`、`.opencode/` | `.opencode/` 下的 `node_modules`、`bun.lock`、`bun.lockb`、`.gitignore`、`plans`；`.opencode/package.json` 中 OpenCode 自己添加的 `@opencode-ai/plugin` 依赖（文件只剩这一项时整个不计入） |
 | Codex | `.codex/`；收到其他文件夹的会话还有 `.agents/skills/` | — |
-| Gemini CLI | `.gemini/` | — |
 | Qwen Code | `.qwen/` | — |
 | pi | `.pi/`、`.agents/skills/` | `.pi/npm`、`.pi/git`（pi 按项目设置安装的包；项目设置本身计入） |
 | Claude Agent | `.claude/`、`.mcp.json` | `.claude/worktrees`（Claude 为子 Agent 建的工作区） |
@@ -151,13 +147,13 @@ Grok Build 的 stdio 模式是独立 Agent 进程，不连接终端使用的共�
 | 预设 | 其他文件夹怎样交给它 | `HarnessInfo.projectFolders` | 说明 |
 | --- | --- | --- | --- |
 | Codex | 直连时是 `workspace-write` 一轮的可写根（`sandboxPolicy.writableRoots`）；经 codex-acp 时是 ACP 的 `additionalDirectories`：`session/new`、`session/resume` 与 `session/load` 每次都发送完整列表 | `{ access: 'all' }` | 只在 `initialize` 声明了 `sessionCapabilities.additionalDirectories`（一个对象）时发送。没有声明时 Latch 结束该进程并返回 409 `agent-folders-unsupported`，会话不会创建。codex-acp 把每个文件夹当作受信项目并加载其中的 `.agents/skills`；在 `workspace-write` 模式下这些文件夹也可写 |
-| Gemini CLI、Qwen Code | 在定义的参数之后，每个其他文件夹追加一次 `--include-directories <真实路径>`；每个会话有自己的进程，参数只对它生效 | `{ access: 'all', max: 5 }` | 最多 4 个其他文件夹，超出时返回 409 `harness-folder-limit`，不启动进程。它们按逗号拆分这个参数，含逗号的路径返回 400 `workspace-folder-chars`（Host 本来就不接受这样的新文件夹） |
+| Qwen Code | 在定义的参数之后，每个其他文件夹追加一次 `--include-directories <真实路径>`；每个会话有自己的进程，参数只对它生效 | `{ access: 'all', max: 5 }` | 最多 4 个其他文件夹，超出时返回 409 `harness-folder-limit`，不启动进程。它按逗号拆分这个参数，含逗号的路径返回 400 `workspace-folder-chars`（Host 本来就不接受这样的新文件夹） |
 | OpenCode | 不传（1.x 的 ACP 不支持；2.x 声明支持，Latch 尚未使用） | `primary-asks` | Latch 设置的 `external_directory: 'ask'` 让它访问工作目录以外的路径之前先询问；2.x 默认放行这类访问，这条规则让它照样先询问 |
 | DeepSeek Harness | 不传（它拒绝这个字段） | `primary` | — |
 | pi、goose | 不传（它们没有这个概念） | `primary-unbounded` | 它们不限制工具能访问的路径 |
 | 未匹配预设的定义 | 不传 | 无（客户端按 `primary` 显示） | — |
 
-- 只有 Codex、Gemini CLI 与 Qwen Code 的 Driver 声明 `projectFolders: 'all'`，Host 只把项目标识与文件夹交给它们，其他 ACP Driver 只收到主文件夹。声明 `historyImport` 的 Driver（现在另有 OpenCode）也拿到 `projects()`，只用来核对接入的会话目录仍在项目主文件夹之内，不因此收到其他文件夹。Driver 用 Host 的 `projects()` 再核对一次：项目在列表中、`folders[0]` 是主文件夹，每个文件夹的标识与真实路径都属于这个项目，否则 400 `workspace-unavailable`。交给 Agent 的是各文件夹的真实路径，按项目中的顺序，不含主文件夹，也不重复。
+- 只有 Codex 与 Qwen Code 的 Driver 声明 `projectFolders: 'all'`，Host 只把项目标识与文件夹交给它们，其他 ACP Driver 只收到主文件夹。声明 `historyImport` 的 Driver（现在另有 OpenCode）也拿到 `projects()`，只用来核对接入的会话目录仍在项目主文件夹之内，不因此收到其他文件夹。Driver 用 Host 的 `projects()` 再核对一次：项目在列表中、`folders[0]` 是主文件夹，每个文件夹的标识与真实路径都属于这个项目，否则 400 `workspace-unavailable`。交给 Agent 的是各文件夹的真实路径，按项目中的顺序，不含主文件夹，也不重复。
 - 只收到主文件夹的 Driver，其会话摘要由 Host 标记 `folderAccess: 'primary'`。`workspaces()` 也列出项目内仍可用的旧主文件夹，调整顺序后的已有会话继续使用原工作目录。
 - 其他文件夹计入启动指纹与项目配置（见「项目配置」），审计记下文件夹数量（`folderCount`）。文件夹范围由 Agent 自己执行，不是隔离。
 - 会话把项目与文件夹记在摘要中（`workspaceId`、`folders`、`folderAccess: 'all'`），把交给 Agent 的真实路径与方式记在 `acp.folders` 与 `acp.folderVia`，之后不再改变：项目新加的文件夹只用于新会话，改变主文件夹也不影响已有会话。每次输入、修改设置、启动进程、恢复或加载会话，以及为删除会话临时启动进程之前，Latch 确认这些文件夹仍属于该项目且仍在原来的真实路径；文件夹被移出项目、被替换、找不到，或项目已不在列表中时返回 409 `workspace-changed`，删除时只删除 Latch 的记录。之后启动的进程不再声明支持时，本轮不发送，返回 409 `agent-folders-unsupported`，进程被结束。
@@ -184,7 +180,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 ## 进程与环境
 
 - 会话、启动指纹、权限模式、审批与取消只有一份，在 `runtime.ts`；它说 ACP 的方法、读 ACP 的会话更新，经 `wires/` 里的一条线与进程交谈。`wires/process.ts` 启动、读写与停止进程，`wires/acp.ts` 把 ACP 原样经 JSON-RPC 发出。
-- 每个 Latch 会话有自己的 Agent 子进程（一个 ACP 会话），首次需要时启动，工作目录为该会话的主文件夹；Gemini CLI 与 Qwen Code 的参数之后追加其他文件夹（见「项目的多个文件夹」）。同一个 Agent 定义最多同时运行 8 个进程（`AcpAgentOptions.maxProcesses`）；达到上限时，Latch 停止最久未使用的、可以恢复的空闲进程，没有可停的进程时返回 503 `agent-busy`（`同时运行的 <名称> 会话过多，请先结束一些会话`）。
+- 每个 Latch 会话有自己的 Agent 子进程（一个 ACP 会话），首次需要时启动，工作目录为该会话的主文件夹；Qwen Code 的参数之后追加其他文件夹（见「项目的多个文件夹」）。同一个 Agent 定义最多同时运行 8 个进程（`AcpAgentOptions.maxProcesses`）；达到上限时，Latch 停止最久未使用的、可以恢复的空闲进程，没有可停的进程时返回 503 `agent-busy`（`同时运行的 <名称> 会话过多，请先结束一些会话`）。
 - 子进程在独立进程组中运行。stderr 持续读取到 64 KiB 环形缓冲，只在启动失败或崩溃时以脱敏的短摘要写入 Host 日志，不进入会话记录。
 - Agent 自己写的文字（回复、思考、工具输出）原样进入会话。它报告的错误、提示（`notice`）、压缩失败与停止原因先遮蔽定义的变量值、Host 的秘密变量与网关凭据，再经 `redactSecrets` 去掉认得出形状的密钥，才进入会话记录：模型服务的报错常带着密钥的一部分。
 - Agent 得到的环境来自 `agentEnvironment`，后者覆盖前者：Host 的白名单（`HOME`、`LANG`、`LC_*`、`TERM`、`USER`、`SHELL`）；代理（`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写）、CA 文件（`SSL_CERT_FILE`、`SSL_CERT_DIR`、`NODE_EXTRA_CA_CERTS`、`REQUESTS_CA_BUNDLE`、`CURL_CA_BUNDLE`）与 `__MISE_DIFF`；profile 的 `inheritEnv`（各家的 home，见下表）；profile 的 `programEnv`（`CODEX_PATH`，指向 Host 找到的程序，没装就不设，适配器用自带的）；Agent 定义的变量；profile 的 `defaultEnv` 和 Latch 强制的值（`TMPDIR`、`NODE_TLS_REJECT_UNAUTHORIZED=1`、Git 设置）。最后删除 `NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`。从终端启动的 Host 已有的变量优先于登录 shell 读到的。
@@ -195,7 +191,6 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
   | pi | `PI_CODING_AGENT_DIR` |
   | OpenCode | `XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_STATE_HOME`、`XDG_CACHE_HOME` |
   | DeepSeek Harness | `DSH_HOME` |
-  | Gemini CLI | `GEMINI_CLI_HOME` |
   | Qwen Code | `QWEN_HOME`、`QWEN_RUNTIME_DIR` |
   | goose | `GOOSE_PATH_ROOT`、`XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_STATE_HOME` |
   | Claude Agent | `CLAUDE_CONFIG_DIR`（定义不能设置） |
@@ -216,9 +211,8 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 | --- | --- | --- |
 | Codex 直连 | Responses；Chat、Anthropic 需实验性转换 | 自定义 provider 的启动参数；LMG_TOKEN 环境变量；config/read 保留原命令环境规则后在线程配置中额外排除令牌 |
 | codex-acp | Responses；Chat、Anthropic 需转换（实验性） | ACP providers/set；仅使用适配器声明且列出的 provider/API，模型限于适配器认识的服务模型 |
-| Gemini CLI | Gemini，至少 0.44.0 | 环境变量与 0600 会话私有系统设置，合并思考启动设置，不声称独立读回 |
 | OpenCode | 四种同协议服务，至少 2.2.6 | 私有 provider 配置与官方 shell hook；工具环境清空令牌值 |
-| DeepSeek Harness | 四种同协议服务，至少 0.2.2-rc.1 | 私有 Cordis patch 与原生 llm provider；未知 Gemini 别名不提供离散思考档位 |
+| DeepSeek Harness | 三种同协议服务，至少 0.2.2-rc.1 | 私有 Cordis patch 与原生 llm provider |
 | Claude Agent | Anthropic 同协议服务；Chat、Responses 需实验性转换，实际 Claude Code 至少 2.1.318 | 官方环境变量与会话 modelPicker；逐次核对适配器自带 CLI 版本，精确模型 ID 与子进程凭据清理 |
 | pi | 四种同协议服务，至少 1.5.0 | 官方 provider 扩展；精确目录上限或显式运行预算；凭据仅在进程内存 |
 | Qwen Code | Chat、Responses、Anthropic 同协议服务，实验性，至少 0.26.8 | `QWEN_CODE_SYSTEM_SETTINGS_PATH` 指向 0600 会话私有系统设置（`modelProviders` 的 `envKey` 只写变量名 `LMG_TOKEN`，其他内置协议的列表置空）；模型经 `session/set_config_option` 只对会话生效；经 Latch 的会话没有子 Agent |
@@ -284,7 +278,7 @@ pi 不经适配器：`wires/pi.ts` 启动 `pi --mode rpc`（这两个参数接�
 
 - **通知（`notice`）。** Agent 不属于对话历史的提示，例如 Codex 的配置警告。每条在时间线上一行系统消息：「Codex 警告：……」，`severity` 为 `error` 时写「报告错误」，其他写「提示」，`description` 另起一行。它不改变本轮状态，也不让本轮失败。
 - **压缩（`compaction_update`、`compaction_summary_chunk`）。** 一次压缩一行，按 `compactionId` 找到同一行并就地更新：「正在压缩上下文……」「已压缩上下文」「压缩上下文失败：原因」「已取消压缩上下文」；Agent 给出的摘要接在后面。行的位置是第一次报告到达时，在它之前的回复先结束。压缩失败不让本轮失败。
-- **重试（Gemini CLI）。** Gemini CLI 把重试写成思考：重新请求模型服务前一条 `[Retry n/m] <原因>. Retrying in Ns...`；回复中途断开、要从头重新生成时一条带 `_meta.retry` 的思考；重新生成的第一段文字带 `_meta.retry` 与 `_meta.reset`。只有它的 profile 的 `readRetry` 读这些，其他 Agent 的 `_meta` 不解释。重试成为一行系统消息「Gemini CLI 重试：<原因>」，第二行「第 n 次重试，最多 m 次」，不进思考；这一行是记录，回合结束后不改写：Gemini CLI 不说重试是否成功，它自己的辅助请求重试时也发同样的 `[Retry n/m]`，后面的输出证明不了什么；结果看这一轮停止、失败还是完成。回复中途断开时写「回复中途中断（<原因>），从头重新生成」，这条回复已经收到的文字丢掉，重新生成的文字接在同一条消息里（消息 ID 不变），已经收到的思考保留。Gemini CLI 先发 `[Retry n/m]`、等待之后才标明从头重新生成；这一行总在被它打断的文字之后：等待时那段文字照常显示、还没有这一行，标明重新生成时文字丢掉、这一行出现；等待中停止或失败时那段回复按停止或失败留下，这一行在它后面。紧接着的几次重试在同一行就地更新，中间出现新的文字或别的行后，下一次重试另起一行。原因可能是模型服务的报错：它是服务整段的 JSON 报错时取其中 `error.message`（本身又是这样的 JSON 时再取一层），前面加上 `error.code`，像 Gemini CLI 自己的报错行那样读；先遮蔽像密钥的部分，最多 300 字。
+- **重试。** profile 的 `readRetry` 把 Agent 标明的重试读成一行系统消息「<Harness> 重试：<原因>」，第二行「第 n 次重试，最多 m 次」，不进思考；回复中途断开、从头重新生成时，已经收到的文字丢掉，重新生成的文字接在同一条消息里（消息 ID 不变），已经收到的思考保留。原因先遮蔽像密钥的部分，最多 300 字。目前没有预设声明 `readRetry`，其他 Agent 的 `_meta` 不解释。
 - **各家说法不同的地方。** profile 的 `normalizeUpdate` 把 Agent 自己的说法换成 ACP 的，只换不添：Qwen Code 只在 `_meta.toolName` 里给出工具名，填进 `name`；OpenCode 把回复的思考放在推理片段的 ID 下，会把一条回复拆成两条，去掉这个 ID 后思考归入它所属的回复。调用的 `kind` 只是 `other` 时用它的标题命名（DeepSeek Harness 的 `bash`）。
 - **用量。** `session/prompt` 的 `usage` 只取 `inputTokens` 与 `outputTokens`。缓存与思考的令牌数各家含义不同：Codex 的输入含缓存读取，OpenCode 的不含，所以不映射。
 
@@ -293,7 +287,7 @@ pi 不经适配器：`wires/pi.ts` 启动 `pi --mode rpc`（这两个参数接�
 Latch 从不替人登录，不调用 `authenticate`，不读凭据文件或钥匙串。它只运行程序自己的命令，并听 Agent 自己怎么说。
 
 - **Agent 声明的终端登录。** `initialize` 声明 `clientCapabilities.auth.terminal: true`（写了 `signIn` 的预设除外，见下），Agent 于是可以在 `authMethods` 里列出 `type: "terminal"` 的方法（如 OpenCode 2.x 的 `opencode acp --login`）。会话、读取可选项与「测试启动」的握手都记下这些方法，以及宣告它们的程序路径（`src/auth.ts`，只在内存）。方法本身不能指定程序：登录时运行的就是会话运行的那个程序，加定义的参数，再加方法的 `args`；方法的 `env` 只接受普通变量名，点名 Latch 设置或清除的变量（`PATH`、`NODE_OPTIONS`、`DYLD_*`、`CODEX_HOME` 等）的整个方法丢弃，参数与变量有数量和长度上限。打开终端之前重新查找程序，路径和宣告时不同就拒绝（409 `login-program-changed`）。定义自己的环境变量不写进登录脚本，因为里面可能有密钥；脚本在终端自己的环境里运行，结束时按退出码说完成或没有完成。Agent 列了方法时，页面用它们代替预设的命令。
-- **预设的命令。** Agent 没列方法时用 `AgentPreset.login`（`codex login`、`opencode auth login`、`goose configure`、`cursor-agent login`；pi、Gemini CLI、Qwen Code 是进入程序后按说明操作；DeepSeek Harness 没有记录）。Codex 没单独安装时用适配器自带的 `codex-acp cli login`。经 `HarnessInfo.login` 发给客户端。
+- **预设的命令。** Agent 没列方法时用 `AgentPreset.login`（`codex login`、`opencode auth login`、`goose configure`、`cursor-agent login`；pi、Qwen Code 是进入程序后按说明操作；DeepSeek Harness 没有记录）。Codex 没单独安装时用适配器自带的 `codex-acp cli login`。经 `HarnessInfo.login` 发给客户端。
 - **Claude Agent。** 预设写了 `signIn`：Latch 不对它声明 terminal auth（适配器于是不列出 claude.ai 登录），也不运行它列出的任何登录；说怎么登录时，页面只给出 `signIn` 这句话，没有登录命令，也没有「在终端里登录」。页面显示它报告的登录状态、标签与到期日（见下）；适配器宣告 `logout` 时也显示「退出登录」，之后要在 Claude Code 里自己重新登录。Latch 不读取它的凭据。
 - **Agent 推送的状态。** 经 codex-acp 的 Codex 与 Claude Agent 的适配器推送 `_auth/status_update`（以 `agentCapabilities._meta.authStatus` 宣告）：`initialize` 之后一次，之后只在内容变化时。Codex 的适配器把 Codex 的 `account/updated` 转成推送，在别的终端里登录或退出也会推送。Claude Agent 的只在 `initialize`、建会话与每轮开始时重新读取登录，所以进程空闲时，别的终端里的登录或退出要到下一轮才推送，在那之前推送可能是旧的。Latch 只读 `kind` 与 `label`：`none` 是未登录，`account`、`api_key`、`gateway`、`external` 是已登录，其他是 `unknown`；`label` 显出不可见字符、遮住像密钥的部分、最多 80 字，含 `@` 的整个不用。`account`（email、组织、套餐）在解析时就丢掉，不进内存里的记录、日志、SSE、快照或磁盘。推送只在发出它的进程还在时算数，进程退出就忘掉，回到状态命令。`HarnessInfo.login.reported` 把它发给客户端。
 - **三态。** `POST /link/api/harnesses/:id/login-status`（`run`，可带 `fresh`）返回 `{ status, label?, expiresAt? }`，`status` 是 `authenticated`、`unauthenticated` 或 `unknown`。有正在运行的进程推送过、而状态命令说不出推送没有的东西时，直接用推送，不运行程序；否则运行状态命令。Codex 的命令是 `codex login status`：退出 0 算已登录；退出 1 且文字是 `Not logged in` 才算未登录，它的其他错误也退出 1，所以都算 `unknown`。Claude Agent 的是适配器自带 CLI 的 `claude-agent-acp --cli auth status --json`：只读 `loggedIn`、`apiKeySource`、`apiProvider` 与 `loginExpiresAt`，claude.ai 登录、密钥或其他服务都算已登录，存下的登录到期日期（ISO 字符串或秒、毫秒数，不合理的丢掉）作为 `expiresAt` 返回；有推送时它仍运行，因为推送里没有日期，而且可能是旧的。两者都有时较新的说了算：命令运行之后推送变了，用推送；否则用命令的明确结论，命令说不清时用推送。标签只取推送的，日期只取命令的，各自只在结果与它的来源都说已登录时给出。页面对 Host 的回答也这样：提问之后到达的推送比回答新，否则显示回答，所以「重新检查」显示的是程序刚说的。超时 10 秒。输出只在判断时读一次，可能含账号或部分密钥，不返回、不记录。其他 Harness 始终 `unknown`，要到 `session/new` 被拒绝才知道。结果缓存 30 秒；「测试启动」读到的明确登录状态与缓存不同，或测试结束时还有检查在运行，缓存作废，下一次提问重新运行状态命令（`agent-login.ts` 的 `probed`）。每次实际运行之前写审计 `agent.login.requested`（写不进就不运行），结束后写 `agent.login.checked`，只含 ID 与状态。「测试启动」的结果带 `login`：宣告了推送的 Agent 在握手后最多等 5 秒，收到就不再运行状态命令。页面打开期间完成的测试启动说的与「登录」一组显示的不同时，这一组带 `fresh` 再问一次；页面只显示最后一次提问的回答。
@@ -311,7 +305,6 @@ Latch 从不替人登录，不调用 `authenticate`，不读凭据文件或钥�
 | Codex | — | `read-only` | `workspace-write` | `agent`（Codex 的 Auto review，直连与经 codex-acp 都有：沙箱同 `workspace-write`，本来要问的由 Codex 的审阅模型放行或拦下，不转给人） | `agent-full-access` |
 | Qwen Code | `plan` | `default` | `auto-edit` | `auto`（用户自己的允许规则、只读工具与项目里的文件编辑先放行，`.git`、`package.json` 等会影响之后运行的文件除外；其余由它的分类器判断，判断不了时问） | `yolo` |
 | goose | `chat` | `approve` | — | `smart_approve`（工具声明或模型判断为只读的不问，其余问） | `auto` |
-| Gemini CLI | `plan` | `default` | `autoEdit` | — | `yolo` |
 | OpenCode | `plan`（不改文件、不运行命令） | `build` | `auto-edit` | — | `yolo` |
 | pi | `plan` | `ask` | `rule` | — | `never` |
 | DeepSeek Harness | `read-only` | — | `workspace-write` | — | `danger-full-access` |
@@ -352,14 +345,14 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 - **记录。** 每个新会话的 `session/new` 回答记为这个 Harness 的选项列表（`HarnessInfo.catalogue`：`options` 与会话的 `config` 同形状，`perModel` 是各模型下跟着模型变的选项，如思考深度，`reportedAt` 是时间，`source` 是 `session` 或 `check`）。会话之后报告的选项（换模型后、`config_option_update`）只更新 `perModel`。列表存在该 Harness 的 `acp.json`，按定义指纹（`definitionHash`）保存，同时记下启动指纹与 Agent 版本；定义一变就不再下发，读坏时丢弃，不影响会话。模式的当前值写成预设每次开始前设好的模式（如 Codex 的 `read-only`），不是 Agent 碰巧报告的那个。条目数、文字长度与总大小（64 KiB，超出时先丢最早见过的模型，再整份不下发）有上限，因为每份目录都带着它，手机整份读取，超过 1 MiB 就拒收。
 - **读取。** 还没有列表时，可以不开始会话就读一次（`HarnessInfo.catalogueRead`，`POST /link/api/agents/:id/catalogue { auto?, model? }`）：在 Host 临时目录下新建的空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多等 20 秒。Codex 预设不开会话：用定义的命令加 `cli app-server`（codex-acp 用 `CODEX_PATH` 指向的 Codex，没有就用自带的），只发 `initialize`、`config/read` 与 `model/list`（按 `nextCursor` 翻页，最多 5 页），不开线程；结果写成 codex-acp 会话里同样的 `model` 与 `reasoning_effort` 选项，所以开始前的选择能直接用在随后的会话上，列表里原有的其他选项保留。它不报告模式，所以 `catalogueRead.modes` 是 `false`；开会话的读取和开始时一样报告模式，是 `true`。
   - 什么时候读：新会话里选中这个 Harness，或打开它的模型菜单，或打开读取会报告模式的 Harness 的权限菜单（`catalogueRead.modes`；Codex 的模型列表不报告，所以打开它的权限菜单不读取），而它既没有列表、这份定义也没读过时，自动读一次（`auto: true`；Host 再查一遍，不符合就不读，返回 `ran: false`）。从不按时间读，失败后也不再自动重读。
-  - 哪些自动读：每个预设在 profile 里写明（`catalogueRead`）。只有读取不跑一轮、不调模型、也不运行人自己的会话钩子或扩展时才自动读：Codex（直连与 codex-acp）的 `model/list` 不开线程；DeepSeek Harness、Cursor、Gemini CLI、Goose、Qwen Code、OpenCode 与没有 profile 的自定义命令是不发提示的空会话。pi 与 Claude Agent 只在菜单里点「读取 <Harness> 的模型列表」时读，因为它们启动会话时会加载人的扩展或插件、运行会话开始的钩子。
+  - 哪些自动读：每个预设在 profile 里写明（`catalogueRead`）。只有读取不跑一轮、不调模型、也不运行人自己的会话钩子或扩展时才自动读：Codex（直连与 codex-acp）的 `model/list` 不开线程；DeepSeek Harness、Cursor、Goose、Qwen Code、OpenCode 与没有 profile 的自定义命令是不发提示的空会话。pi 与 Claude Agent 只在菜单里点「读取 <Harness> 的模型列表」时读，因为它们启动会话时会加载人的扩展或插件、运行会话开始的钩子。
   - 只读确认过的定义：自动读取遇到这台 Mac 没确认过的定义，或命令已解析到别的程序，直接不读（`ran: false`，不写审计、不启动）；人点读取时返回原因（409 `harness-unconfirmed` 等）。新会话里还没有定义的预设（`offer`）从不自动读；菜单里「读取 <Harness> 的模型列表」先保存它的定义（这台 Mac 上确认），再读取。
   - 菜单：读取中写「正在读取 <Harness> 的模型列表…」；失败写「没有读到：…」与「重新读取」；有列表时是「刷新模型列表」，读一次并替换列表；还没有列表时是「读取 <Harness> 的模型列表」。
   - 谁能读：和开始会话同一道门，要 `run` 范围，Harness 可以开始（不可用时 409）；只读设备只看已有列表。同一定义同时只读一次；同一模型请求共用结果，不同模型排队各读自己的结果。启动进程之前写审计 `agent.catalogue.requested`（写不进就不启动），结束后写 `agent.catalogue.read`（只记成功与否）。
   - 结果：成功时列表来源为 `check`；失败时保存 `last: { ok: false, message }`，消息经过脱敏，菜单写「没有读到：…」，如「OpenCode 还没登录。按它自己的方式登录后重试。」，不弹登录。定义一变，上次读取的结果也不再下发。
 - **自己填的模型 ID。** 菜单里「填写模型 ID…」把 Harness 没列出的模型 ID 存进这个 Harness 的 `acp.json`（`HarnessInfo.customModels`，`PUT /link/api/agents/:id/models { models }`，要 `run`，最多 32 个，每个最多 256 字符、不能换行，审计 `agent.models.changed` 只记个数），在模型列表里标「自己填写」，换定义也保留。只有列表里有模型选项时才能填，因为 ACP 只能经这个选项设置模型。开始时和会话里都原样发给 Agent；开始时 Agent 拒绝或没换过去，这一轮失败，文字和不再提供时一样说出下一次会用什么（「<名称> 没有换到模型「…」，这条消息没有发出。再发送会用「…」，也可以先在模型里换一个。」），之后的发送用会话显示的模型。
 - **显示与换模型。** 新会话与会话里共用控件。已知权限预设在草稿就给出从严到宽的全部档位（`permission.modes/startMode`，暂用 `~mode` ID）；列表随后到达不能抹掉人的选择，开始时再匹配 Agent 实际模式 ID。草稿换模型后，在私有空会话切到该模型读取选项，绝不发提示；自动读取与需人请求的边界同上。OpenCode、dsh 明确按模型报告思考，没有时写「这个模型没有思考档位」；Cursor 写「在模型列表里选」。无法读取或失败保持实际未知，不把别的模型的档位搬过来。设备按 Harness 记住选择，默认从预设严格档开始。Harness、模型和思考列表主要显示名称、分组与勾选，不常驻普通描述、成功读取时间或快捷键；未知结果、不可用原因与启动设置边界仍直接显示。权限的档位说明按需展开。显式重选当前权限或启动设置仍交给 Host，取代未完成的旧草稿。
-- **应用。** 开始请求带 `config: [{ configId, value }]`（最多 16 项，同一项只能一次），计入请求摘要；Latch 内置 Harness 用 `model`，带 `config` 返回 400 `config-unsupported`。`session/new` 之后、第一条提示之前，依次设置模型、Agent 为这个模型提供的其他选项（思考等）、模式；模式交给「权限模式」的设置与读回。原生选项从 Agent 的回答读回；Gemini 启动设置与 Cursor force 仅报告其启动配置完成，不冒充有效值独立读回。
+- **应用。** 开始请求带 `config: [{ configId, value }]`（最多 16 项，同一项只能一次），计入请求摘要；Latch 内置 Harness 用 `model`，带 `config` 返回 400 `config-unsupported`。`session/new` 之后、第一条提示之前，依次设置模型、Agent 为这个模型提供的其他选项（思考等）、模式；模式交给「权限模式」的设置与读回。原生选项从 Agent 的回答读回；Cursor force 仅报告其启动配置完成，不冒充有效值独立读回。
 - **我的 Agent 默认项。** Host 从定义的 `engineOptions` 生成同一份开始配置并冻结在原 `requestId` 的选择回执中；开始之后改定义不改已有话题。网页设置复用同样的模型、思考与权限控件；它自己的选项与 Latch 服务路由分别保存，合成菜单标识不传给 Agent。权限回读不符时新话题停在失败并锁住继续输入，修改默认项后开新话题；不隐藏未知状态（[CUSTOM-AGENTS](CUSTOM-AGENTS.md#家与工具)）。
 - **不再提供时。** 选的模型或模式 Agent 不再提供：这一轮失败，不发提示，文字说出它的名字和下一次会用什么（「Codex 现在没有模型「Large」，这条消息没有发出。再发送会用「Small」，也可以先在模型里换一个。」）。失败之前照常设好草稿里的其他选择，再设好并读回模式，没有哪一项留到下一次，所以会话显示的就是之后运行的。明确选择的思考等其他选项不再提供、被拒绝或没采用时同样拒绝本轮；说出下次会使用的值，不悄悄用默认值发送。会话里改了某一项，就取代开始前对这一项的选择。Agent 要先登录时，还没设好的选择留到登录后的那次发送；在那之前会话显示不出它们（尚未实现：会话详情不带还没设好的选择）。
 - **审计。** `task.l3.start-requested` 与 `task.l3.started` 带 `configHash`（所选内容的摘要，值是 Agent 自己的文字，不原样记录）。开始前选更宽的模式和会话里一样不弹确认。
@@ -474,7 +467,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
   - pi：它的 RPC（1.5.0 的 `rpc-types.ts`）没有列出会话的命令，`switch_session` 只接受 pi 自己存储里的会话文件路径；发现会话只能读它的存储或用它 SDK 里扫描存储的 `SessionManager.list`，这违反「外部会话只经适配器」，所以不做，等 pi 提供列出会话的 RPC。
   - OpenCode 1.x：ACP 没有 `session/list`，不做。
   - Qwen Code（0.27.3）、goose（1.59.0）：源码声明了 `session/list` 与 `loadSession`，但加载对原会话的影响（恢复旧模式、写回设置等）还没有读完，也没有用真实程序核对，暂不开放。
-  - Claude Agent、Grok Build、Antigravity：适配器或官方文档有列出与加载，没有核对；Claude 的会话记录按所有者的规定不碰。Gemini CLI 没有 `session/list`，Cursor 不开放。
+  - Claude Agent、Grok Build、Antigravity：适配器或官方文档有列出与加载，没有核对；Claude 的会话记录按所有者的规定不碰。Cursor 不开放。
   - iPhone/iPad 的列表与预览还不显示「未列出」的数量与「看不出是否在别处使用」这两处。
 
 ## 错误
@@ -494,7 +487,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 | `workspace-folder-chars`（400） | 要以参数交给 Agent 的文件夹路径含逗号 |
 | `workspace-changed`（409） | 会话使用的文件夹已不在项目中、被替换或找不到，或项目已不在 Host 的项目列表中；新建会话的过程中交给 Agent 的文件夹变了 |
 | `agent-folders-unsupported`（409） | Agent 的当前版本没有声明 `additionalDirectories`，会话没有开始或本轮没有发送 |
-| `harness-folder-limit`（409） | 项目的文件夹超过 Agent 能使用的数量（Gemini CLI、Qwen Code 最多 5 个） |
+| `harness-folder-limit`（409） | 项目的文件夹超过 Agent 能使用的数量（Qwen Code 最多 5 个） |
 | `agent-auth-required`（409） | Agent 要求登录；按它自己的方式登录后点重试 |
 | `harness-no-login`（404） | Latch 不知道这个 Harness 的登录命令 |
 | `login-program-changed`（409） | 登录方式来自之前找到的程序，现在找到的不是它；重新检测后再试 |
@@ -537,7 +530,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 
 ## 测试
 
-`packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数；`FAKE_ACP_GATEWAY=opencode|dsh|qwen|goose|grok` 让它按对应程序的方式读网关配置并用声明的协议请求一次（Qwen Code 的系统设置文件与 `envKey`，`FAKE_QWEN_USER_SETTINGS` 代表这个人自己的设置、按 Qwen Code 的规则合并在系统设置之下；goose 的环境变量与路径规则；Grok Build 家目录里的 `config.toml`；这些是照源码与文档读出来写的，不是真实程序的录制），没有登录的假 Agent 被指向一个服务后照常回答，覆盖流式、思考、Gemini CLI 的重试、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Gemini CLI 与 Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。`test/connect.test.ts` 与 `apps/host/test/harness-connect.test.ts` 覆盖版本门槛（太旧、升级后重新检测、读不出版本、测试 Host 不读）、不回答 `initialize`（`FAKE_ACP_INIT_SILENT=1`）与不回答 `session/new`（`FAKE_ACP_NEW_SILENT=1`）的 Agent、pi 1.5 的回答顺序；`e2e/harness-connect.e2e.ts` 在 1440 与 390、浅色与深色下检查设置与新会话里的说法。默认测试不启动真实 Agent。显式授权的本机验收独立运行、使用临时 Host 与项目；测试确认后端不等于系统确认。
+`packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数；`FAKE_ACP_GATEWAY=opencode|dsh|qwen|goose|grok` 让它按对应程序的方式读网关配置并用声明的协议请求一次（Qwen Code 的系统设置文件与 `envKey`，`FAKE_QWEN_USER_SETTINGS` 代表这个人自己的设置、按 Qwen Code 的规则合并在系统设置之下；goose 的环境变量与路径规则；Grok Build 家目录里的 `config.toml`；这些是照源码与文档读出来写的，不是真实程序的录制），没有登录的假 Agent 被指向一个服务后照常回答，覆盖流式、思考、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。`test/connect.test.ts` 与 `apps/host/test/harness-connect.test.ts` 覆盖版本门槛（太旧、升级后重新检测、读不出版本、测试 Host 不读）、不回答 `initialize`（`FAKE_ACP_INIT_SILENT=1`）与不回答 `session/new`（`FAKE_ACP_NEW_SILENT=1`）的 Agent、pi 1.5 的回答顺序；`e2e/harness-connect.e2e.ts` 在 1440 与 390、浅色与深色下检查设置与新会话里的说法。默认测试不启动真实 Agent。显式授权的本机验收独立运行、使用临时 Host 与项目；测试确认后端不等于系统确认。
 
 ### 会话命令
 
