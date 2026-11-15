@@ -19,6 +19,7 @@ import { BrandMark } from '../components/ui.tsx'
 import { ComputerMenu } from '../components/Computers.tsx'
 import { useComputers } from '../core/computers.ts'
 import { computerName } from '../core/securityCopy.ts'
+import { ShellQuota } from './ShellQuota.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** On tablets the project tree is a drawer beside a persistent 60px navigation rail. */
@@ -48,6 +49,7 @@ export function TabletRail({ shell }: { shell: ShellState }) {
         onClick={() => shell.drawer.show()}
       />
       <span className="workbench-rail-spacer" />
+      <ShellQuota shell={shell} />
       {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}
     </nav>
   )
@@ -125,6 +127,7 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
         <Kbd>⌘K</Kbd>
       </Button>
       <WorkbenchComputer shell={shell} />
+      <ShellQuota shell={shell} />
       {shell.entries.includes('apps') && <IconButton label="应用" icon={PluginsGlyph} onClick={() => shell.openApp()} />}
       {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}
       {/* The layout switch is the shell's, drawn over this reserved end in both layouts. */}

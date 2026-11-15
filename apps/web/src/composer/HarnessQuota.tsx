@@ -24,11 +24,11 @@ function Ring({ percent }: { percent: number }) {
   )
 }
 
-function Row({ row }: { row: QuotaRow }) {
+function Row({ row, showUsed }: { row: QuotaRow; showUsed: boolean }) {
   return (
     <li className="quota-row" data-state={row.state} data-quota-window={row.key}>
       <span className="quota-row-name">{row.name}</span>
-      <span className="quota-row-value">{row.percent !== undefined ? `${row.percent}%` : row.status}</span>
+      <span className="quota-row-value">{row.percent !== undefined ? `${showUsed ? '已用 ' : ''}${row.percent}%` : row.status}</span>
       {row.percent !== undefined && (
         <Meter
           className="quota-row-meter"
@@ -46,14 +46,14 @@ function Row({ row }: { row: QuotaRow }) {
 }
 
 /** Each window with its figure and reset time, then the plan and the masked account. */
-export function QuotaPanel({ view }: { view: QuotaView }) {
+export function QuotaPanel({ view, showUsed = false }: { view: QuotaView; showUsed?: boolean }) {
   return (
     <div className="quota-panel">
       <ul className="quota-rows">
         {view.rows.map((row, index) => (
           <Fragment key={row.key}>
             {row.group && row.group !== view.rows[index - 1]?.group && <li className="quota-group">{row.group}</li>}
-            <Row row={row} />
+            <Row row={row} showUsed={showUsed} />
           </Fragment>
         ))}
       </ul>
