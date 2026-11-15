@@ -27,7 +27,7 @@ import { SessionRowGlyph } from '../components/SessionStatus.tsx'
 import { runClock, runElapsed } from '../conversation.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
-import { workGroups, workStatus, type WorkGroupId } from './workOverview.ts'
+import { recentCodeWork, workGroups, workStatus, type WorkGroupId } from './workOverview.ts'
 import { WorkbenchDecision } from './WorkbenchDecision.tsx'
 import {
   deliveryChecks,
@@ -229,6 +229,8 @@ export function WorkOverview({
 }) {
   const delivered = deliverySessions(snapshot.tasks, evidence?.entries ?? new Map())
   const groups = workGroups(snapshot.tasks, cancelling, delivered)
+  const codeHome = !compact && shell !== undefined
+  const recent = codeHome ? recentCodeWork(snapshot.tasks, groups) : []
   const [lane, setLane] = useState<WorkGroupId>('attention')
   const [opened, setOpened] = useState<string>()
   const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<WorkGroupId>>(new Set())
@@ -271,6 +273,7 @@ export function WorkOverview({
       className="work-overview"
       data-layout={layout}
       data-compact={compact ? '' : undefined}
+      data-code-work={codeHome ? '' : undefined}
       aria-label={compact ? '会话队列' : '工作总览'}>
       <header className="work-overview-heading">
         <h2>{compact ? '会话' : '总览'}</h2>
@@ -284,7 +287,7 @@ export function WorkOverview({
         </div>
       </header>
       {!connected && <p className="work-overview-connection">{connection === 'connecting' ? '正在连接' : '显示上次同步的会话'}</p>}
-      {allEmpty && <p className="work-overview-empty">{groups[0]!.empty}</p>}
+      {allEmpty && recent.length === 0 && <p className="work-overview-empty">{groups[0]!.empty}</p>}
       {!allEmpty && (
         <FilterPills
           className="work-overview-lanes"
@@ -303,6 +306,7 @@ export function WorkOverview({
             key={group.id}
             className="work-overview-group"
             data-group={group.id}
+            data-empty={group.tasks.length === 0 ? '' : undefined}
             data-active={lane === group.id ? '' : undefined}
             aria-label={group.label}>
             <header className="work-overview-group-heading">
@@ -463,6 +467,31 @@ export function WorkOverview({
               )}
           </section>
         ))}
+        {recent.length > 0 && (
+          <section className="work-overview-recent" aria-label="接着做">
+            <header className="work-overview-group-heading">
+              <h3>接着做</h3>
+            </header>
+            <ul className="work-overview-recent-list">
+              {recent.map(task => {
+                const project = projectOf(task, snapshot.catalog?.workspaces ?? [])
+                const title = escapeSecurityText(task.title || '未命名会话')
+                return (
+                  <li key={task.id}>
+                    <Button variant="ghost" className="work-overview-recent-row" title={title} onClick={() => onSelect(task.id)}>
+                      <span className="work-overview-recent-title">{title}</span>
+                      <QueueTime task={task} connected={connected} now={now} />
+                      <span className="work-overview-recent-project">
+                        <Icon icon={FolderGlyph} size={12} />
+                        <span>{escapeSecurityText(project?.name ?? '无项目')}</span>
+                      </span>
+                    </Button>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        )}
       </div>
     </section>
   )

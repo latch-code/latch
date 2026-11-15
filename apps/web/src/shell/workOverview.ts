@@ -10,6 +10,19 @@ export interface WorkGroup {
   tasks: TaskSummary[]
 }
 
+function latestWorkFirst(a: TaskSummary, b: TaskSummary): number {
+  return (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0) || a.id.localeCompare(b.id)
+}
+
+/** Resume a session that is not already represented by a decision, a live run, or delivery evidence. */
+export function recentCodeWork(tasks: readonly TaskSummary[], groups: readonly WorkGroup[]): TaskSummary[] {
+  const listed = new Set(groups.flatMap(group => group.tasks.map(task => task.id)))
+  return tasks
+    .filter(task => task.status === 'idle' && !task.archived && spaceOf(task) === 'code' && !listed.has(task.id))
+    .toSorted(latestWorkFirst)
+    .slice(0, 3)
+}
+
 /**
  * A navigation projection of the Host's summaries, never an assertion that a change is ready to deliver. `space` is the
  * place whose sessions are grouped: Code's, or the topics of 我的 Agent (which have no delivery).
@@ -25,9 +38,7 @@ export function workGroups(
     running: { id: 'running', label: '进行中', empty: '没有进行中的', tasks: [] },
     delivery: { id: 'delivery', label: '可交付', empty: '没有可交付的', tasks: [] },
   }
-  const visible = tasks
-    .filter(task => !task.archived && spaceOf(task) === space)
-    .toSorted((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0) || a.id.localeCompare(b.id))
+  const visible = tasks.filter(task => !task.archived && spaceOf(task) === space).toSorted(latestWorkFirst)
   for (const task of visible) {
     const status = rowStatus(task, { stopping: cancelling.has(task.id) })
     const live = task.status === 'running' || task.status === 'waiting-approval'

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { TaskSummary, WorkbenchDeliveryEntry } from '@latch/protocol'
 import { deliveryChecks, deliverySessions, hasDelivery } from '../src/shell/useWorkbenchEvidence.ts'
+import { recentCodeWork, workGroups } from '../src/shell/workOverview.ts'
 
 const task = (id: string, extra: Partial<TaskSummary> = {}): TaskSummary => ({
   id,
@@ -26,6 +27,27 @@ const pr = {
   draft: false,
   headSha: 'head',
 }
+
+it('offers the latest idle Code sessions once, alongside their real work states', () => {
+  const tasks = [
+    task('older'),
+    task('ready', { updatedAt: '2026-11-13T04:00:00Z' }),
+    task('normal', { updatedAt: '2026-11-13T02:00:00Z' }),
+    task('recent', { updatedAt: '2026-11-13T03:00:00Z' }),
+    task('oldest', { updatedAt: '2026-11-12T23:00:00Z' }),
+    task('running', { status: 'running' }),
+    task('approval', { status: 'waiting-approval' }),
+    task('failed', { status: 'failed' }),
+    task('unknown', { runEnd: { reason: 'host-stopped', at: '2026-11-13T01:00:00Z', unknownResultCount: 1 } }),
+    task('archive', { archived: true }),
+    task('agent', { agent: { customAgentId: 'a' } }),
+  ]
+  expect(recentCodeWork(tasks, workGroups(tasks, undefined, new Set(['ready']))).map(task => task.id)).toEqual([
+    'recent',
+    'normal',
+    'older',
+  ])
+})
 
 describe('workbench delivery evidence', () => {
   it('requires actual changes, unpublished commits or an open PR, never a completed task or closed PR alone', () => {

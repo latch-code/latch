@@ -364,7 +364,12 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       expect(await home.locator('[data-group="attention"]').textContent()).toContain(failed.summary.title)
       expect(await home.locator('[data-group="running"]').textContent()).toContain(running.summary.title)
       expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain(recent.summary.title)
-      await choose(page, recent.summary.title)
+      const resume = home.getByRole('region', { name: '接着做', exact: true })
+      const recentRow = resume.getByRole('button', { name: new RegExp(recent.summary.title, 'u') })
+      expect(await recentRow.textContent()).toContain(project.name)
+      expect(await resume.textContent()).not.toContain(waiting.summary.title)
+      expect(await resume.textContent()).not.toContain(running.summary.title)
+      await recentRow.click()
       await sameComposer()
       await layoutMenu(page, 'overview')
       await sameComposer()
@@ -537,7 +542,8 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
               await settleShell(page)
               await openHome(page)
             }
-            expect(await home.locator(`[data-work-session="${recent.summary.id}"]`).count()).toBe(0)
+            const resume = home.getByRole('region', { name: '接着做', exact: true })
+            await reachable(resume.getByRole('button', { name: new RegExp(recent.summary.title, 'u') }))
             if (width < 768 && layout === 'triage') {
               await home.getByRole('button', { name: '可交付', exact: true }).click()
               expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain('没有可交付的')
