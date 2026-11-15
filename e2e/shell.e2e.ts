@@ -187,14 +187,20 @@ describe('the shell', () => {
       const selected = () => page.locator('#session-navigation [aria-current="true"], #session-navigation [aria-current="page"]').count()
       const before = await selected()
       const panelBefore = await page.locator('.app-shell').getAttribute('data-inspector')
-      const prevented = page.evaluate(
-        () =>
-          new Promise<boolean>(done => {
-            window.addEventListener('keydown', event => setTimeout(() => done(event.defaultPrevented)), { once: true })
-          }),
-      )
+      const findKey = await page.evaluateHandle(() => ({
+        prevented: new Promise<boolean>(done => {
+          const onFind = (event: KeyboardEvent) => {
+            if (!event.ctrlKey || event.code !== 'KeyF') return
+            window.removeEventListener('keydown', onFind)
+            setTimeout(() => done(event.defaultPrevented))
+          }
+          window.addEventListener('keydown', onFind)
+        }),
+      }))
       await page.keyboard.press('Control+F')
-      expect(await prevented).toBe(false)
+      const prevented = await findKey.evaluate(result => result.prevented)
+      await findKey.dispose()
+      expect(prevented).toBe(false)
       for (const keys of ['Alt+]', 'Alt+Shift+B', 'Alt+Shift+E', 'Alt+P', 'Alt+W', 'Alt+L']) {
         await page.keyboard.press(keys)
         await page.locator('.settings-page').waitFor()
