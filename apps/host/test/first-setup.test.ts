@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, onTestFinished, vi } from 'vitest'
@@ -199,6 +199,77 @@ it('keeps a queued implicit start on the same Harness as its saved gateway', asy
   expect((await start('Next')).status).toBe(201)
   expect(starts[2]).toEqual({ harnessId: b, prompt: 'Next', route: undefined })
   expect((await choose({ gateway })).status).toBe(400)
+})
+
+it('keeps accepted preparation receipts when their durable capacity is full', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'latch-setup-receipts-'))
+  onTestFinished(() => rm(dir, { recursive: true, force: true }))
+  const choicesFile = join(dir, 'settings.json')
+  const providersFile = join(dir, 'providers.json')
+  const prior = () => ({ deviceId: 'fixture-other', requestId: randomUUID(), inputHash: 'a'.repeat(64) })
+  await writeFile(
+    choicesFile,
+    JSON.stringify({
+      version: 1,
+      firstSetup: { status: 'pending' },
+      setupChoices: Array.from({ length: 127 }, prior),
+    }),
+    { mode: 0o600 },
+  )
+  await writeFile(
+    providersFile,
+    JSON.stringify({
+      version: 1,
+      providers: [],
+      additions: Array.from({ length: 511 }, () => ({ ...prior(), providerId: 'previous-provider', recordHash: 'b'.repeat(64) })),
+    }),
+    { mode: 0o600 },
+  )
+  const t = await startTestHost({ dataDir: dir, demo: false })
+  onTestFinished(() => t.close())
+  const desktop = await t.enroll({ listener: 'unix' })
+  const models = await startFakeModels()
+  const other = await startFakeModels()
+  onTestFinished(() => models.close())
+  onTestFinished(() => other.close())
+  const add = {
+    id: 'setup-at-capacity',
+    requestId: randomUUID(),
+    name: 'Fixture service',
+    kind: 'openai-compatible',
+    baseURL: `${models.origin}/v1`,
+    models: ['fake-model'],
+    defaultModel: 'fake-model',
+    confirmOrigin: true,
+  }
+  const choice = { defaults: { mode: 'agent' }, setupRequestId: randomUUID() }
+  const choose = (body: unknown) => desktop.request('preferences', { method: 'PUT', body })
+  expect((await choose(choice)).status).toBe(200)
+  expect((await desktop.confirmed('providers', { method: 'POST', body: add })).status).toBe(201)
+  const presence = t.presence.requests.length
+  const atCapacity = await choose({ defaults: { mode: 'chat' }, setupRequestId: randomUUID() })
+  expect(atCapacity.status).toBe(409)
+  expect(await atCapacity.json()).toMatchObject({ error: 'setup-choice-capacity' })
+  expect((await desktop.json<AppSnapshot>('snapshot')).catalog?.defaults.mode).toBe('agent')
+  const refusedAdd = await desktop.request('providers', {
+    method: 'POST',
+    body: { ...add, id: 'not-added', requestId: randomUUID(), baseURL: `${other.origin}/v1` },
+  })
+  expect(refusedAdd.status).toBe(409)
+  expect(await refusedAdd.json()).toMatchObject({ error: 'provider-addition-capacity' })
+  expect(t.presence.requests).toHaveLength(presence)
+  expect(await desktop.json('policy')).toMatchObject({ policy: { hostEgressAllow: [new URL(add.baseURL).host] } })
+
+  expect((await choose({ defaults: { mode: 'chat' } })).status).toBe(200)
+  expect(await desktop.json(`first-setup/choices/${choice.setupRequestId}`)).toMatchObject({ state: 'saved', defaults: { mode: 'chat' } })
+  expect(await (await choose(choice)).json()).toMatchObject({ defaults: { mode: 'chat' } })
+  expect(await desktop.json(`providers/additions/${add.requestId}`)).toMatchObject({ state: 'saved', provider: { id: add.id } })
+  expect((await desktop.request('providers', { method: 'POST', body: add })).status).toBe(200)
+  expect((await desktop.request(`providers/${add.id}`, { method: 'DELETE' })).status).toBe(200)
+  expect((await desktop.request('providers', { method: 'POST', body: add })).status).toBe(409)
+  expect((await desktop.json<AppSnapshot>('snapshot')).catalog?.providers).toEqual([])
+  const { requestId: _previous, ...regular } = add
+  expect((await desktop.confirmed('providers', { method: 'POST', body: { ...regular, id: 'regular-settings' } })).status).toBe(201)
 })
 
 it('keeps a fresh preparation local and requires real model choices before completion', async () => {

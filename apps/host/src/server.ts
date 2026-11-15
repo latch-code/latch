@@ -235,6 +235,7 @@ import { MIME, UI_CSP, KIB, codeOf, errorText, isWithin, json, jsonBody, optiona
 import {
   FOLDER_ID,
   HostConfig,
+  MAX_SETUP_CHOICES,
   PROVIDER_ID,
   BACKUP_EXCLUDED_CONFIG_FILES,
   availableId,
@@ -6266,6 +6267,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       await writeSettings(
         caller,
         draft => {
+          if (receipt && (draft.setupChoices?.length ?? 0) >= MAX_SETUP_CHOICES)
+            throw new AppError(409, 'setup-choice-capacity', '准备页的选择记录已满。可核对原请求，或在设置中更改默认选择。')
           if (input.harnessId !== undefined) draft.defaults.harnessId = input.harnessId
           if (input.mode !== undefined) draft.defaults.mode = input.mode
           if (input.workspaceId !== undefined) draft.defaults.workspaceId = input.workspaceId
@@ -6274,7 +6277,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (input.model === null) delete draft.defaults.model
           else if (input.model) draft.defaults.model = input.model
           if (harnessId && gateway !== undefined) draft.defaults.gateway = { harnessId, model: gateway }
-          if (receipt) draft.setupChoices = [...(draft.setupChoices ?? []), receipt].slice(-128)
+          if (receipt) (draft.setupChoices ??= []).push(receipt)
         },
         'admin',
         authorize,
@@ -8698,6 +8701,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           json(res, { provider: providerView(record) })
           return true
         }
+        if (requestId) config.requireProviderAdditionRoom()
         const id = input.id ?? newProviderId(input.presetId ?? input.name)
         if (idTaken(id)) throw new AppError(409, 'provider-exists', `标识 ${id} 已被占用`)
         const plan = await planDestination(input.baseURL, { key: Boolean(apiKey), confirm: input.confirmOrigin === true })
@@ -8712,6 +8716,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const record = await serial(caller, 'admin', async () => {
           const replayed = requestId && addedProvider(caller, requestId, inputHash)
           if (replayed) return settleProviderAddition(caller, replayed)
+          if (requestId) config.requireProviderAdditionRoom()
           if (idTaken(id)) throw new AppError(409, 'provider-exists', `标识 ${id} 已被占用`)
           const next: ProviderRecord = {
             id,
@@ -9566,7 +9571,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             await config.settleSettings()
             return saved.status
           }
-          if (saved?.status === 'completed') {
+          if (saved?.status === 'completed' || (saved?.status === 'deferred' && input.status === 'deferred')) {
             await config.settleSettings()
             return saved.status
           }

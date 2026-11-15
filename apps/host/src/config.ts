@@ -287,6 +287,7 @@ const providersSchema = storedProvidersSchema.superRefine((providers, context) =
   })
 })
 const MAX_PROVIDER_ADDITIONS = 512
+export const MAX_SETUP_CHOICES = 128
 const additionHash = z.string().regex(/^[a-f0-9]{64}$/u)
 const providersFileSchema = z.object({
   version: z.literal(1),
@@ -433,7 +434,7 @@ const settingsSchema = z
           inputHash: additionHash,
         }),
       )
-      .max(128)
+      .max(MAX_SETUP_CHOICES)
       .optional(),
     plugins: z.object({ disabled: z.array(z.string().min(1).max(128)).max(256) }).default({ disabled: [] }),
     workspaces: z.array(workspaceSchema).max(100, '项目数量过多').default([]),
@@ -556,6 +557,11 @@ export class HostConfig {
     return receipt && { ...receipt }
   }
 
+  requireProviderAdditionRoom(): void {
+    if (this.providerAdditions.length >= MAX_PROVIDER_ADDITIONS)
+      throw new AppError(409, 'provider-addition-capacity', '准备页的模型服务记录已满。可核对原请求，或在设置的模型服务中新增。')
+  }
+
   settings(): HostSettings {
     return structuredClone(this.hostSettings)
   }
@@ -594,7 +600,8 @@ export class HostConfig {
       const checked = providersSchema.safeParse(draft)
       if (!checked.success) throw new AppError(400, 'invalid-provider', `模型服务配置无效：${issueText(checked.error, false)}`)
       const next = checked.data
-      const additions = addition ? [...this.providerAdditions, addition].slice(-MAX_PROVIDER_ADDITIONS) : this.providerAdditions
+      if (addition) this.requireProviderAdditionRoom()
+      const additions = addition ? [...this.providerAdditions, addition] : this.providerAdditions
       await this.persist(
         PROVIDERS_FILE,
         { version: 1, providers: next, ...(additions.length ? { additions } : {}) },
