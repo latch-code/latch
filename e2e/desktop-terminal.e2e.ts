@@ -12,7 +12,7 @@ import { latchEnv } from '@latch/host/env'
 import type { AppSnapshot, TerminalListResponse, WorkspaceInfo } from '@latch/protocol'
 import { startTestHost } from './helpers/host.ts'
 import { closeSettings, openSettings } from './helpers/layout.ts'
-import { homeInput, switchLayout } from './helpers/workbench.ts'
+import { homeInput, switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
 
 type Launch = NonNullable<NonNullable<ServerOptions['terminal']>['launch']>
 type Spec = Parameters<Launch>[0]
@@ -150,6 +150,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
     }
     const testHost = await startTestHost({
       demo: true,
+      hostName: '验收电脑',
       uiDir: resolve('dist/web'),
       presenceMode: 'manual',
       plugins: [plugin],
@@ -434,6 +435,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const input = homeInput(page)
       await input.waitFor()
       await input.fill('项目草稿仍在')
+      await returnFromHomeFocus(page)
       const chatIds = (await owner.json<AppSnapshot>('snapshot')).tasks.map(task => task.id)
       await terminalToggle.click()
       await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
@@ -479,6 +481,30 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await resizer.focus()
       await page.keyboard.press('Enter')
       await expect.poll(() => resizer.getAttribute('aria-valuenow')).toBe('220')
+      await resize(768)
+      if ((await page.locator('.app-shell').getAttribute('data-home-inspector')) === null) await rightToggle.click()
+      await rightPanel.getByRole('treeitem', { name: 'README.md', exact: true }).waitFor()
+      const panelNode = await rightPanel.elementHandle()
+      const inputNode = await input.elementHandle()
+      await input.click({ position: { x: 12, y: 12 } })
+      await page.locator('.app-shell[data-home-focus]').waitFor()
+      for (const selector of ['.titlebar', '#session-navigation', '#terminal-dock', '.inspector-column'])
+        await expect.poll(() => page.locator(selector).evaluate(element => (element as HTMLElement).inert)).toBe(true)
+      await capture(page, 'home-focus-768')
+      await returnFromHomeFocus(page)
+      await expect.poll(() => terminalDock.evaluate(element => (element as HTMLElement).inert)).toBe(false)
+      expect(await panelNode!.evaluate(element => element.isConnected && !(element as HTMLElement).inert)).toBe(true)
+      expect(await inputNode!.evaluate(element => element === document.activeElement)).toBe(true)
+      expect(await input.inputValue()).toBe('项目草稿仍在')
+      await expect.poll(() => rows.innerText()).toContain('ran echo dock')
+      await capture(page, 'home-focus-returned-768')
+      await rightToggle.click()
+      await rightPanel.waitFor({ state: 'hidden' })
+      await input.click()
+      await page.locator('.app-shell[data-home-focus]').waitFor()
+      await page.keyboard.press('Meta+Shift+e')
+      await page.locator('.app-shell[data-home-focus]').waitFor({ state: 'detached' })
+      await rightPanel.getByRole('treeitem', { name: 'README.md', exact: true }).waitFor()
     } finally {
       await application?.close()
       await testHost.close()

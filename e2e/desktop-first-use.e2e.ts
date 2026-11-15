@@ -15,6 +15,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, closeSettings, noHorizontalOverflow, openSection, openSettings, reachable } from './helpers/layout.ts'
+import { returnFromHomeFocus } from './helpers/workbench.ts'
 
 function localProvider(calls = { count: 0 }): HarnessPlugin {
   return {
@@ -128,6 +129,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const missingDraft = '缺少模型时也不能丢掉这份草稿。'
         await input.fill(missingDraft)
         expect((await owner.request('plugins/' + provider.id, { method: 'POST', body: { enabled: false } })).status).toBe(200)
+        await returnFromHomeFocus(page)
         // Nothing else can run here, so the page says what to install; the built-in Harness is one quiet line.
         const setup = page.getByRole('region', { name: '安装 Harness', exact: true })
         await setup.getByText('没有找到可用的 Harness', { exact: true }).waitFor()

@@ -30,7 +30,10 @@ export function TabletRail({ shell }: { shell: ShellState }) {
   const inAgents = spaces?.space === 'agents'
   return (
     // Under a page the rail's column is the page's own list: nothing here is in the focus order then.
-    <nav className="workbench-tablet-rail" aria-label="工作台导航" inert={shell.route.entry !== 'sessions' || undefined}>
+    <nav
+      className="workbench-tablet-rail"
+      aria-label="工作台导航"
+      inert={shell.route.entry !== 'sessions' || shell.homeFocused || undefined}>
       <span className="workbench-rail-brand">
         <BrandMark size={24} />
       </span>
@@ -83,7 +86,12 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
   const inAgents = spaces?.space === 'agents'
   const allActive = inAgents ? shell.route.entry === 'agents' && shell.route.topics === true : shell.route.allSessions === true
   return (
-    <div ref={shell.titlebar} className="titlebar workbench-nav" data-lights={lights ? '' : undefined} style={lightsStyle(currentShell())}>
+    <div
+      ref={shell.titlebar}
+      className="titlebar workbench-nav"
+      inert={shell.homeFocused || undefined}
+      data-lights={lights ? '' : undefined}
+      style={lightsStyle(currentShell())}>
       <span className="workbench-brand" aria-label="Latch">
         <BrandMark size={24} />
       </span>

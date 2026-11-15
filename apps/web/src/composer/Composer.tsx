@@ -24,6 +24,7 @@ import {
   Tooltip,
   useLiveChange,
   LockGlyph,
+  CloseGlyph,
   SendGlyph,
 } from '@latch/ui'
 
@@ -97,6 +98,8 @@ export function Composer({
   placeholder,
   draft,
   onDraft,
+  onEngage,
+  closeFocus,
   pending,
   onOpenPending,
   sending,
@@ -158,6 +161,8 @@ export function Composer({
   /** The optional insertion shortcut; typing slash commands uses the same sender either way. */
   showSlashButton?: boolean
   textareaRef: RefObject<HTMLTextAreaElement | null>
+  onEngage?: (() => void) | undefined
+  closeFocus?: (() => void) | undefined
   variant: 'new' | 'session'
   label: string
   placeholder: string
@@ -433,10 +438,17 @@ export function Composer({
       value={draft}
       rows={1}
       disabled={locked}
+      onClick={event => {
+        if (event.isTrusted) onEngage?.()
+      }}
+      onCompositionStart={event => {
+        if (event.isTrusted) onEngage?.()
+      }}
       onChange={event => {
         mentions.setCaret(event.target.selectionStart)
         setSlashCaret({ draft: event.target.value, at: event.target.selectionStart })
         onDraft(event.target.value)
+        if (event.isTrusted && event.target.value) onEngage?.()
       }}
       onKeyDown={keydown}
       onSelect={event => {
@@ -446,7 +458,14 @@ export function Composer({
       onScroll={event => {
         if (commandMirror.current) commandMirror.current.scrollTop = event.currentTarget.scrollTop
       }}
-      onPaste={attachments ? event => pasteAttachments(event, attachments) : undefined}
+      onPaste={
+        attachments
+          ? event => {
+              pasteAttachments(event, attachments)
+              if (event.isTrusted && event.defaultPrevented) onEngage?.()
+            }
+          : undefined
+      }
     />
   )
   // The prompt glyph says where to tell it what to do; the phone's sheet is a page of its own and has none.
@@ -482,7 +501,7 @@ export function Composer({
       label="插入命令"
       icon={Slash}
       disabled={locked || answer !== undefined}
-      onClick={() => {
+      onClick={event => {
         const input = textareaRef.current
         const start = input?.selectionStart ?? draft.length
         const end = input?.selectionEnd ?? start
@@ -493,6 +512,7 @@ export function Composer({
         slash.reopen()
         onDraft(value)
         input?.focus({ preventScroll: true })
+        if (event.isTrusted) onEngage?.()
       }}
     />
   )
@@ -558,6 +578,20 @@ export function Composer({
     </div>
   )
 
+  const desktopLocation = !inline && !!location
+  const fields = (
+    <>
+      <RunBar run={run} />
+      <ConfigUnknownBar state={configUnknown} />
+      {actionBlock && <InlineNotice>{actionBlock}</InlineNotice>}
+      {queueTray}
+      {!locked && readOnly === undefined && mentions.menu}
+      {attachments && (
+        <AttachmentDrafts controller={attachments} locked={locked} onRestore={text => onDraft(draft ? `${draft}\n${text}` : text)} />
+      )}
+      <SlashCommands menu={slash} anchorRef={commandAnchor} onCreateTemplate={onCreateTemplate} />
+    </>
+  )
   return (
     <div className={`composer-stack composer-${variant}`} ref={box}>
       {error && (
@@ -616,6 +650,7 @@ export function Composer({
         ref={commandAnchor}
         className={`composer ${run ? 'is-running' : ''}`}
         data-inline={inline ? '' : undefined}
+        data-location-position={desktopLocation ? locationPosition : undefined}
         data-variant={readOnly !== undefined ? 'read-only' : undefined}
         onDragOver={
           attachments
@@ -629,25 +664,31 @@ export function Composer({
           event.preventDefault()
           if (sendable) submit()
         }}>
-        <RunBar run={run} />
-        {!inline && locationPosition === 'top' && location}
-        <ConfigUnknownBar state={configUnknown} />
-        {actionBlock && <InlineNotice>{actionBlock}</InlineNotice>}
-        {queueTray}
-        {!locked && readOnly === undefined && mentions.menu}
-        {attachments && (
-          <AttachmentDrafts controller={attachments} locked={locked} onRestore={text => onDraft(draft ? `${draft}\n${text}` : text)} />
+        {closeFocus && (
+          <IconButton className="home-focus-close" size={inline ? 'lg' : 'sm'} label="退出专注" icon={CloseGlyph} onClick={closeFocus} />
         )}
-        <SlashCommands menu={slash} anchorRef={commandAnchor} onCreateTemplate={onCreateTemplate} />
+        {desktopLocation ? (
+          <>
+            {location}
+            <div className="composer-home-fields">
+              {fields}
+              {input}
+            </div>
+          </>
+        ) : (
+          fields
+        )}
         {inline ? (
           <>
             {/* A phone: what the message goes with is one row of chips that scrolls sideways; under it ＋, the input, send. */}
             {(location || controls || trailing || meta) && (
               <div className="composer-chips" role="group" aria-label="会话选项">
                 {location}
-                {controls}
-                {trailing}
-                {meta}
+                <div className="composer-inline-controls">
+                  {controls}
+                  {trailing}
+                  {meta}
+                </div>
               </div>
             )}
             <div className="composer-line">
@@ -658,9 +699,8 @@ export function Composer({
           </>
         ) : (
           <>
-            {input}
+            {!desktopLocation && input}
             <div className="composer-toolbar">
-              {locationPosition === 'toolbar' && location}
               <div className="composer-controls">
                 {attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
                 {slashButton}

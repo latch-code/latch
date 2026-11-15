@@ -14,7 +14,7 @@ import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 import { measureWorkbenchSwitch } from './helpers/workbenchSwitch.ts'
 import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
-import { LAYOUT_NAMES, layoutSwitch, switchLayout } from './helpers/workbench.ts'
+import { LAYOUT_NAMES, layoutSwitch, switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
 
 const OUT = 'test-results/desktop-workbench'
 
@@ -304,6 +304,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
         .getByLabel('选择附件', { exact: true })
         .setInputFiles({ name: 'desktop.txt', mimeType: 'text/plain', buffer: Buffer.from('desktop draft attachment') })
       await expect.poll(() => home.getByRole('button', { name: 'desktop.txt', exact: true }).isEnabled()).toBe(true)
+      await returnFromHomeFocus(page)
       const metrics = []
       for (const [name, target] of [
         ['a-to-b', 'triage'],

@@ -158,6 +158,7 @@ export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap
     layer.dataset.align = align
   }
   place()
+  pinnedLayers.set(layer, place)
   addEventListener('resize', place)
   // What the layer holds, not the layer: placing changes only the layer's own box (its max-height), which is not
   // watched, so a placement never reports itself back. Content swapped in is watched from its first report.
@@ -169,10 +170,18 @@ export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap
   const swapped = new MutationObserver(watch)
   swapped.observe(layer, { childList: true })
   return () => {
+    if (pinnedLayers.get(layer) === place) pinnedLayers.delete(layer)
     removeEventListener('resize', place)
     resized.disconnect()
     swapped.disconnect()
   }
+}
+
+const pinnedLayers = new WeakMap<Element, () => void>()
+
+/** Keep an open layer with a trigger whose surface moved without a resize. */
+export function repositionPinnedLayers(surface: Element): void {
+  for (const layer of surface.querySelectorAll(':popover-open:not([role="tooltip"])')) pinnedLayers.get(layer)?.()
 }
 
 /**

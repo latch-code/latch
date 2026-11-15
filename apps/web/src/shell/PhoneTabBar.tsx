@@ -19,7 +19,7 @@ const TABS: Partial<Record<ShellEntry, { label: string; icon: IconComponent }>> 
 export function PhoneTabBar({ shell }: { shell: ShellState }) {
   const { entries, route, goEntry, snapshot } = shell
   return (
-    <nav className="phone-tabs" aria-label="主导航">
+    <nav className="phone-tabs" aria-label="主导航" inert={shell.homeFocused || undefined}>
       {entries.flatMap(entry => {
         const tab = TABS[entry]
         if (!tab) return []

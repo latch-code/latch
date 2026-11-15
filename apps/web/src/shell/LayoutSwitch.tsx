@@ -8,7 +8,7 @@ import { shortcutKeys } from '../workbenchShortcuts.ts'
  * 侧栏 | 顶栏: the two workbench layouts as two icon segments. The shell draws it once, at the end of the window's top
  * row in either layout, so the control (and the focus on it) stays where it is while everything around it changes.
  */
-export function LayoutSwitch({ value, className }: { value: WorkbenchLayout; className?: string }) {
+export function LayoutSwitch({ value, className, inert }: { value: WorkbenchLayout; className?: string; inert?: boolean }) {
   const keys = shortcutKeys('layout', currentShell() !== null)
   const option = (layout: WorkbenchLayout) => ({
     value: layout,
@@ -20,6 +20,7 @@ export function LayoutSwitch({ value, className }: { value: WorkbenchLayout; cla
     <SegmentedControl
       className={className ? `layout-switch ${className}` : 'layout-switch'}
       label="布局"
+      inert={inert}
       value={value}
       options={[option('overview'), option('triage')]}
       onValueChange={switchWorkbenchLayout}

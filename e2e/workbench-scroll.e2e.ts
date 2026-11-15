@@ -8,7 +8,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
-import { homeInput, layoutSwitch, switchLayout } from './helpers/workbench.ts'
+import { homeInput, layoutSwitch, switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
 
 const OUT = 'test-results/workbench-scroll'
 const LONG_APPROVAL_TITLE = '发布记录开头与改动来源说明'.repeat(8) + '，保留末尾核对信息'
@@ -180,6 +180,7 @@ it.each(
     await reachable(page.getByRole(width === 390 ? 'radio' : 'menuitemradio', { name: /Latch.*内置/u }))
     await page.keyboard.press('Escape')
     expect(await input.inputValue()).toBe(draft)
+    await returnFromHomeFocus(page)
     const drafted = await frame()
     await reachable(last)
     expect(await outer()).toEqual({ home: 0, document: 0 })

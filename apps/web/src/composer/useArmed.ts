@@ -5,7 +5,8 @@ const ARMING_MS = 320
 
 /** A document-level key must never act on a conversation covered by another page. */
 export function cardTakesKeys(card: HTMLElement | null, target?: EventTarget | null): boolean {
-  if (card === null || card.closest('[inert]') || !card.checkVisibility({ visibilityProperty: true })) return false
+  if (card === null || card.hasAttribute('data-arming') || card.closest('[inert]') || !card.checkVisibility({ visibilityProperty: true }))
+    return false
   // Native modal inertness is implicit and does not add an inert attribute to the retained page.
   const active = target instanceof Element ? target : document.activeElement
   if (document.querySelector('dialog:modal') && !active?.closest('dialog:modal')?.contains(card)) return false

@@ -1,5 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
+import { conversationShown } from '../composer/useArmed.ts'
+import { overlayDismissed } from '../escapeGrace.ts'
+import { useStableCallback } from '../hooks/useStableCallback.ts'
+import { useVisualViewportFit } from '../hooks/useVisualViewportFit.ts'
 import { FileOpenContext } from '../preview/fileContext.ts'
 
 import { SIDEBAR_MIN } from './panelLayout.ts'
@@ -49,7 +53,10 @@ import { SendingBubble, SessionComposer, SetupNotices } from './SessionComposers
 import { useSideQuestionForks, withoutSideForks } from '../conversation/SideQuestion.tsx'
 import { useShellLayout } from './useShellLayout.tsx'
 import { OverviewGlyph } from '@latch/ui'
-import { WorkOverview } from './WorkOverview.tsx'
+import { WorkOverview, type WorkOverviewHandle } from './WorkOverview.tsx'
+import { HomeFocusSummary } from './HomeFocusSummary.tsx'
+import { HOME_FOCUS_LAYER, useHomeFocus } from './useHomeFocus.ts'
+import { workGroups } from './workOverview.ts'
 import { TabletRail, WorkbenchComputer, WorkbenchNav } from './WorkbenchNav.tsx'
 import { ShellQuota } from './ShellQuota.tsx'
 import { LayoutSwitch } from './LayoutSwitch.tsx'
@@ -62,7 +69,10 @@ type Harness = ReturnType<typeof useHarness>
 
 /** The signed-in shell. Mounted once per device identity, so per-device state starts fresh. */
 export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
-  const shell = useShellLayout({ harness, snapshot })
+  const focus = useHomeFocus()
+  const shell = useShellLayout({ harness, snapshot, homeFocus: focus.active, onHomeShortcut: focus.enter, onOpenHomeFiles: focus.reset })
+  const homeQueue = useRef<WorkOverviewHandle>(null)
+  const focusWasVisible = useRef(false)
   const [preparing, setPreparing] = useState(false)
   const [preparationFinished, setPreparationFinished] = useState(false)
   const {
@@ -187,6 +197,50 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   }
   const mayPrepare = access.local && access.admin && snapshot.firstSetup !== undefined
   const showPreparation = mayPrepare && (preparing || (!preparationFinished && snapshot.firstSetup === 'pending'))
+  const canFocusHome = overview && homeShell.gate.kind === 'open' && !settings && !showPreparation
+  const homeFocused = shell.homeFocused && canFocusHome
+  const { reset: resetHomeFocus } = focus
+  useLayoutEffect(() => {
+    const reveal = overview && focusWasVisible.current && !homeFocused
+    focusWasVisible.current = homeFocused
+    if (reveal) {
+      conversationShown()
+      overlayDismissed()
+    }
+  }, [homeFocused, overview])
+  useEffect(() => {
+    if (focus.active && !canFocusHome) resetHomeFocus()
+  }, [canFocusHome, focus.active, resetHomeFocus])
+  useVisualViewportFit(focus.frame, phone && homeFocused)
+  const closeHomeFocus = useStableCallback((restoreInput = true) => {
+    focus.leave()
+    if (!restoreInput) return
+    if (phone) shell.homeComposerRef.current?.blur()
+    else shell.homeComposerRef.current?.focus({ preventScroll: true })
+  })
+  useEffect(() => {
+    if (!homeFocused) return undefined
+    const keydown = (event: KeyboardEvent) => {
+      if (
+        event.key !== 'Escape'
+        || event.defaultPrevented
+        || event.repeat
+        || event.isComposing
+        || event.keyCode === 229
+        || event.altKey
+        || event.ctrlKey
+        || event.metaKey
+        || event.shiftKey
+        || document.querySelector(HOME_FOCUS_LAYER)
+      )
+        return
+      event.preventDefault()
+      closeHomeFocus()
+    }
+    window.addEventListener('keydown', keydown)
+    return () => window.removeEventListener('keydown', keydown)
+  }, [homeFocused, closeHomeFocus])
+  const focusGroups = homeFocused ? workGroups(listed.tasks, stopping) : undefined
   return (
     <FileOpenContext.Provider value={catalog?.features?.filePreview ? openFile : undefined}>
       <LayerHistory value={phone ? openLayer : null}>
@@ -199,6 +253,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             data-entry={route.entry}
             data-workbench-layout={shell.preferences.workbenchLayout}
             data-overview={overview ? '' : undefined}
+            data-home-focus={homeFocused ? '' : undefined}
             data-all-sessions={allSessions ? '' : undefined}
             data-folding={folding ? '' : undefined}
             data-sidebar={sidebarColumn ? (sidebarCollapsed ? 'collapsed' : 'open') : undefined}
@@ -216,7 +271,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             }}>
             {!phone && (triage ? <WorkbenchNav shell={shell} /> : <TitleBar shell={shell} />)}
             {/* One switch for both layouts, at the end of the window's top row: it stays mounted through a change. */}
-            {!phone && <LayoutSwitch className="shell-layout-switch" value={shell.preferences.workbenchLayout} />}
+            {!phone && <LayoutSwitch className="shell-layout-switch" value={shell.preferences.workbenchLayout} inert={homeFocused} />}
             {!triage && viewport === 'tablet' && <TabletRail shell={shell} />}
             <Scrim
               open={drawerMode && drawer.open}
@@ -282,7 +337,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 ref={navigation}
                 id="session-navigation"
                 className={`sidebar ${drawer.open ? 'is-open' : ''}`}
-                inert={route.entry !== 'sessions' || undefined}
+                inert={route.entry !== 'sessions' || homeFocused || undefined}
                 aria-label="会话导航"
                 role={drawerMode && drawer.open ? 'dialog' : undefined}
                 aria-modal={drawerMode && drawer.open ? true : undefined}
@@ -477,7 +532,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 <aside
                   className="inspector-column"
                   aria-label="侧边面板"
-                  inert={!columnOpen || route.entry !== 'sessions' || (covered && !shell.homeInspectorOpen) || undefined}>
+                  inert={!columnOpen || route.entry !== 'sessions' || homeFocused || (covered && !shell.homeInspectorOpen) || undefined}>
                   {column.present && (
                     <div className="inspector-column-inner">
                       {shell.homeInspector ? (
@@ -536,14 +591,14 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   </div>
                 )}
                 {phone && (
-                  <header className="workbench-phone-heading">
+                  <header className="workbench-phone-heading" inert={homeFocused || undefined}>
                     {triage && shellSpaces(shell) ? <SpaceSwitch {...shellSpaces(shell)!} /> : <h1>Code</h1>}
                     {!triage && <IconButton label="搜索" icon={SearchGlyph} onClick={openSearch} />}
                     <LayoutSwitch value={shell.preferences.workbenchLayout} />
                   </header>
                 )}
                 {phone && (
-                  <nav className="workbench-phone-code-nav" aria-label="会话导航">
+                  <nav className="workbench-phone-code-nav" aria-label="会话导航" inert={homeFocused || undefined}>
                     <Button variant="ghost" onClick={shell.openAllSessions}>
                       全部会话
                     </Button>
@@ -562,19 +617,64 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     )}
                   </nav>
                 )}
-                <div className="code-home-input">
-                  {usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId) && (
-                    <p className="workbench-home-demo">
-                      <StatusPill tone="warn">演示模型</StatusPill>
-                    </p>
-                  )}
-                  <ConnectionBanners shell={shell} />
-                  <div className="workbench-home-composer">
-                    <SendingBubble shell={homeShell} />
-                    <SessionComposer shell={shell} home />
+                <div ref={focus.slot} className="code-home-input">
+                  <div
+                    ref={focus.frame}
+                    className="home-focus-frame"
+                    data-active={homeFocused ? '' : undefined}
+                    role={homeFocused ? 'region' : undefined}
+                    aria-label={homeFocused ? '专注输入' : undefined}
+                    onPointerDown={event => {
+                      // A dismissal must not leave the pointer over a newly revealed decision.
+                      if (homeFocused && event.target === event.currentTarget) event.preventDefault()
+                    }}
+                    onClick={event => {
+                      if (homeFocused && event.target === event.currentTarget) closeHomeFocus()
+                    }}
+                    onBlur={event => {
+                      const frame = event.currentTarget
+                      if (!homeFocused || frame.contains(event.relatedTarget) || homeShell.submission.draft.trim()) return
+                      requestAnimationFrame(() => {
+                        if (document.hasFocus() && !frame.contains(document.activeElement) && !document.querySelector(HOME_FOCUS_LAYER))
+                          closeHomeFocus(false)
+                      })
+                    }}>
+                    <div ref={focus.composer} className="home-focus-input">
+                      {usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId) && (
+                        <p className="workbench-home-demo">
+                          <StatusPill tone="warn">演示模型</StatusPill>
+                        </p>
+                      )}
+                      <ConnectionBanners shell={shell} />
+                      <div className="workbench-home-composer">
+                        <SendingBubble shell={homeShell} />
+                        <SessionComposer
+                          shell={shell}
+                          home
+                          {...(canFocusHome && {
+                            homeFocus: {
+                              engage: focus.enter,
+                              ...(homeFocused && { close: () => closeHomeFocus(), onSend: () => closeHomeFocus(false) }),
+                            },
+                          })}
+                        />
+                      </div>
+                    </div>
+                    {focusGroups && (
+                      <HomeFocusSummary
+                        attention={focusGroups[0]!.tasks}
+                        running={focusGroups[1]!.tasks.length}
+                        connected={connection === 'connected'}
+                        onAttention={id => {
+                          closeHomeFocus(false)
+                          homeQueue.current?.focusAttention(id)
+                        }}
+                        onClose={() => closeHomeFocus()}
+                      />
+                    )}
                   </div>
                 </div>
-                <div className="code-home-queue">
+                <div className="code-home-queue" inert={homeFocused || undefined}>
                   <div className="code-home-notices">
                     <SetupNotices shell={homeShell} />
                     {!showPreparation && listsFoundHarnesses(catalog, snapshot.tasks.length, shell.access) && (
@@ -586,7 +686,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       <HistoryImportEntry snapshot={snapshot} workspaceId={choice.workspaceId} phone={phone} onOpen={choose} />
                     </div>
                   )}
-                  <WorkOverview {...work} />
+                  <WorkOverview ref={homeQueue} {...work} />
                 </div>
               </section>
             )}

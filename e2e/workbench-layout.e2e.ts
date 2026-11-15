@@ -10,7 +10,7 @@ import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browse
 import { startTestHost } from './helpers/host.ts'
 import { backToPhoneSessions, closeSettings, noHorizontalOverflow, openSection, reachable, settleShell } from './helpers/layout.ts'
 import { VISUAL_TIME, visualContext } from './helpers/visual.ts'
-import { LAYOUT_NAMES, homeInput as homeInputOf, layoutSwitch, switchLayout } from './helpers/workbench.ts'
+import { LAYOUT_NAMES, homeInput as homeInputOf, layoutSwitch, switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
 
 const OUTPUT = 'test-results/workbench-layout'
 const MODEL = { providerId: 'workbench-fixture', model: 'fixture' }
@@ -301,6 +301,7 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       await nowhere()
       await homeInput.fill('首页自己的新任务草稿')
       await sameComposer()
+      await returnFromHomeFocus(page)
       // Home stays home, with its own draft, in either layout.
       await layoutMenu(page, 'overview')
       await still()

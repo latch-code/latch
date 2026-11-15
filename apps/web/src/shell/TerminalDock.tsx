@@ -35,7 +35,13 @@ export function TerminalDock({ shell }: { shell: ShellState }) {
     composerRef.current?.focus()
   }
   return (
-    <aside ref={terminalDock} id="terminal-dock" className="terminal-dock" aria-label="底部终端" hidden={!terminalOpen}>
+    <aside
+      ref={terminalDock}
+      id="terminal-dock"
+      className="terminal-dock"
+      aria-label="底部终端"
+      hidden={!terminalOpen}
+      inert={shell.homeFocused || undefined}>
       {terminalOpen && dockLimit >= DOCK_MIN && (
         <ResizeHandle
           className="terminal-resize"
