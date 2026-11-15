@@ -465,7 +465,7 @@ Host 约每 40ms 合并一次变化，把选中会话的 `task-state` 推送给�
 | `GET /mcp/import?project=<ID>` | `host.sock` 的 `admin` | 从项目导入：读项目的 `.mcp.json` 作数据，什么都不运行，见 [MCP.md](./MCP.md#从项目导入) |
 | `POST /agents/:id/mcp` | `run` | 读取 Harness 自己的 MCP（现在只有 Codex 直连），结果在 `HarnessInfo.ownMcp`，见 [MCP.md](./MCP.md#harness-自己的-mcp) |
 | `POST /agents/:id/catalogue`、`PUT /agents/:id/models` | `run` | 不开始会话读一次 Harness 的模型与选项 `{ auto?, model? }`，返回 `{ ran, catalogueRead }`；保存自己填写的模型 ID `{ models }`。见 [HARNESSES.md](./HARNESSES.md#开始前的选项) |
-| `POST /harnesses/:id/login-status`、`POST /harnesses/:id/logout`、`POST /harnesses/:id/login-terminal` | `run`；打开终端只在桌面端 | 登录状态 `{ status, label?, expiresAt? }`、请 Harness 退出登录、在这台电脑的终端里运行它的登录 `{ method? }`。见 [HARNESSES.md](./HARNESSES.md#登录) |
+| `POST /harnesses/:id/login-status`、`POST /harnesses/:id/logout`、`POST /harnesses/:id/login-terminal` | `run`；打开终端只在桌面端 | 登录状态 `{ status, label?, expiresAt? }`、请 Harness 退出登录、在这台电脑的终端里运行它的登录 `{ method?, terminal? }`：带 `terminal` 时在 Latch 自己的终端里（另需数据范围 `all`，见 [TERMINAL.md](./TERMINAL.md#登录命令)），不带时用默认终端。见 [HARNESSES.md](./HARNESSES.md#登录) |
 | `GET /enrollments` | 桌面端 `admin` | 仍在等待的登记及其指纹与系统表单的理由；以及会挡住新配对的完全访问会话。页面已不读取它，配对表单跟随 `GET /native/pairings/:id` |
 | `POST /folder-grants` | 桌面端 `admin` | `{ nonce, expiresAt }`：一次添加文件夹的 nonce |
 | `POST /workspaces`、`POST /workspaces/:id/folders` | 桌面端 `admin` + 签名 | `{ nonce, via, paths, name? \| replace?, signature }`：添加项目（201）、加入或重新选择文件夹（200），返回 `{ workspace, refused }`；`POST /workspaces` 也接受 `{ nonce, via: 'session', sessionId, signature }`，把会话自己的文件夹存为项目（201） |
