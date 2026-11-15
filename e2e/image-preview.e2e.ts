@@ -2,6 +2,7 @@ import { chromium } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { crc32 } from 'node:zlib'
 import { expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
@@ -54,10 +55,11 @@ it('uses true image pixels, retains zoom on refresh, refuses unknown or excessiv
   const host = await startTestHost({ demo: false, plugins: [plugin] })
   try {
     await writeFile(join(host.workspaceRoot, 'large.png'), initial)
-    const huge = Buffer.alloc(24)
-    huge.set([137, 80, 78, 71, 13, 10, 26, 10])
-    huge.writeUInt32BE(20000, 16)
-    huge.writeUInt32BE(20000, 20)
+    // Keep the PNG header and its CRC valid; the pixel limit must be checked before decoding any image data.
+    const huge = Buffer.from(initial.subarray(0, 33))
+    huge.writeUInt32BE(20_000, 16)
+    huge.writeUInt32BE(20_000, 20)
+    huge.writeUInt32BE(crc32(huge.subarray(12, 29)), 29)
     await writeFile(join(host.workspaceRoot, 'oversize.png'), huge)
     await writeFile(join(host.workspaceRoot, 'unknown.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0, 4, 0, 0]))
     await writeFile(

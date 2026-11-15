@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { mkdtemp, mkdir, open, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { crc32 } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isFileMetadata, type Device, type TaskDetail } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
@@ -400,10 +401,16 @@ describe('adjudicated file content', () => {
   })
   it('refuses pixel-heavy previews in metadata before loading and keeps unknown image headers as download-only', async () => {
     const f = await fixture()
-    const image = Buffer.alloc(24)
+    // A complete IHDR is enough: the preview must refuse the dimensions without reading any pixels.
+    const image = Buffer.alloc(33)
     image.set([137, 80, 78, 71, 13, 10, 26, 10])
+    image.writeUInt32BE(13, 8)
+    image.write('IHDR', 12, 'ascii')
     image.writeUInt32BE(10_000, 16)
     image.writeUInt32BE(6_000, 20)
+    image[24] = 8
+    image[25] = 6
+    image.writeUInt32BE(crc32(image.subarray(12, 29)), 29)
     await writeFile(join(f.workspace, 'large.png'), image)
     await writeFile(join(f.workspace, 'unknown.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0, 4, 0, 0]))
     const remote = await f.resolve('all', ['large.png', 'unknown.jpg'])

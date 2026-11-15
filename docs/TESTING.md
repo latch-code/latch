@@ -274,7 +274,7 @@ GUI 模式另开本轮 `127.0.0.1:0` 公开阶段页，不含邀请码、Host �
 
 改共享协议（`packages/protocol/src/types.ts`、`packages/sdk/src/bridge.ts`、`plugins.ts`、`harness.ts`）时，先跑定向用例，再跑完整的 `pnpm test` 与 `pnpm test:e2e`。
 
-文件内容回归在 `apps/host/test/file-content.test.ts` 与 `files.test.ts`：真实临时文件与端口 0，覆盖引用持久化、设备/会话绑定、秘密复核、Range/ETag、审计失败、撤销、目录变动、搜索与限额。桌面代理覆盖安全读取白名单与不透明来源拒绝；这些用例不代表 Quick Look 的外部资源验收。
+文件内容回归在 `apps/host/test/file-content.test.ts` 与 `files.test.ts`：真实临时文件与端口 0，覆盖引用持久化、设备/会话绑定、秘密复核、Range/ETag、审计失败、撤销、目录变动、搜索与限额。`file-content.test.ts` 和 `image-preview.e2e.ts` 用带正确长度与 CRC 的 PNG IHDR 声明超限尺寸，验证只读头部就拒绝预览；未知尺寸的 JPEG 另作对照。桌面代理覆盖安全读取白名单与不透明来源拒绝；这些用例不代表 Quick Look 的外部资源验收。
 
 本机 MCP 提示由 `mcp-bridge.test.ts` 和 Host 的 `mcp-prompts.test.ts` 覆盖，包括本机命令收到原参数、来源标签、只有名称哈希的审计、标记或审计失败时零额外转发、撤权与远程两种提示请求的拒绝。夹具还挡住本机进程在许可前的抢答，检查网关关闭只结算一次、启动未获准时不接受取提示请求，以及清空后保留新会话绑定时实际读取的提示来源。`hub.test.ts` 与 `acp.test.ts` 验证驱动缺少标记能力或会话时拒绝。夹具验证桥与命令透传，不能代替真实 Harness 的命令报告和执行、或 iOS 来源标签的界面验收。
 
