@@ -7,7 +7,7 @@ import { isActive } from './format.ts'
 export interface SessionActions {
   rename: () => void
   pin: () => void
-  archive: () => void
+  archive?: () => void
   export: () => void
   /** The open session: its next prompt starts a new context, or (`clearing`) no longer does. */
   clear?: () => void
@@ -18,7 +18,7 @@ export interface SessionActions {
   copy?: () => void
   /** A session in a Latch worktree that is still there: 移除工作树…, which shows what it has first. */
   removeWorktree?: () => void
-  remove: () => void
+  remove?: () => void
 }
 
 /**
@@ -66,43 +66,55 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
           },
         ]
       : []),
-    {
-      id: 'archive',
-      items: [
-        {
-          id: 'archive',
-          label: task.archived ? '取消归档' : '归档',
-          icon: task.archived ? ArchiveRestore : ArchiveGlyph,
-          onSelect: actions.archive,
-        },
-        // Archiving keeps the worktree; removing it is its own step.
-        ...(actions.removeWorktree
-          ? [
+    ...(actions.archive || actions.removeWorktree
+      ? [
+          {
+            id: 'archive',
+            items: [
+              ...(actions.archive
+                ? [
+                    {
+                      id: 'archive',
+                      label: task.archived ? '取消归档' : '归档',
+                      icon: task.archived ? ArchiveRestore : ArchiveGlyph,
+                      onSelect: actions.archive,
+                    },
+                  ]
+                : []),
+              // Archiving keeps the worktree; removing it is its own step.
+              ...(actions.removeWorktree
+                ? [
+                    {
+                      id: 'remove-worktree',
+                      label: '移除工作树…',
+                      icon: FolderX,
+                      disabled: isActive(task.status),
+                      disabledReason: '这一轮结束后才能移除工作树',
+                      onSelect: actions.removeWorktree,
+                    },
+                  ]
+                : []),
+            ],
+          },
+        ]
+      : []),
+    ...(actions.remove
+      ? [
+          {
+            id: 'danger',
+            items: [
               {
-                id: 'remove-worktree',
-                label: '移除工作树…',
-                icon: FolderX,
+                id: 'delete',
+                label: '删除',
+                icon: TrashGlyph,
+                danger: true,
                 disabled: isActive(task.status),
-                disabledReason: '这一轮结束后才能移除工作树',
-                onSelect: actions.removeWorktree,
+                disabledReason: '运行中的会话需要先停止',
+                onSelect: actions.remove,
               },
-            ]
-          : []),
-      ],
-    },
-    {
-      id: 'danger',
-      items: [
-        {
-          id: 'delete',
-          label: '删除',
-          icon: TrashGlyph,
-          danger: true,
-          disabled: isActive(task.status),
-          disabledReason: '运行中的会话需要先停止',
-          onSelect: actions.remove,
-        },
-      ],
-    },
+            ],
+          },
+        ]
+      : []),
   ]
 }

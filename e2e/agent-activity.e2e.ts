@@ -190,7 +190,7 @@ it('a run comes back to the conversation as a card, the Agent proposes a schedul
     await profile.getByRole('radio', { name: '动态', exact: true }).click()
     await profile.getByText(/定时结果 · 早间精选/u).waitFor()
     await profile.getByText('提议定时').waitFor()
-    await profile.getByText(/新话题 ·/u).waitFor()
+    await profile.getByText(/开始聊天 ·/u).waitFor()
     await still(page)
     await page.screenshot({ path: `${OUT}/activity-1440-light.png` })
     await profile.getByRole('radio', { name: '资料库', exact: true }).click()

@@ -146,6 +146,7 @@ export class AgentPlans {
     return {
       ...(base ?? { instructions: '', revision: this.options.agents.definitionHash(GENERAL_AGENT_ID) }),
       proposals: true,
+      ...(harnessId === STANDARD ? { generalChat: true as const } : {}),
     }
   }
 

@@ -13,8 +13,6 @@ import {
   rosterRows,
   rosterTopics,
   topicState,
-  topicTree,
-  TREE_TOPICS,
   waitingTopic,
 } from '../src/agents/roster.ts'
 import { TopicFrame } from '../src/agents/TopicFrame.tsx'
@@ -217,29 +215,6 @@ describe('the queue of people', () => {
   })
 })
 
-describe('the topics on an Agent’s tree', () => {
-  const many = Array.from({ length: 9 }, (_, index) => topic(`t${index}`, 'man', 60 - index))
-
-  it('shows the newest few and folds the rest into 「还有 N 个」', () => {
-    const tree = topicTree(many)
-    expect(tree.shown.map(task => task.id)).toEqual(['t0', 't1', 't2', 't3', 't4'])
-    expect(tree.shown).toHaveLength(TREE_TOPICS)
-    expect(tree.hidden).toBe(4)
-    expect(topicTree(many, { expanded: true })).toMatchObject({ hidden: 0 })
-    expect(topicTree(many.slice(0, 3))).toMatchObject({ hidden: 0 })
-  })
-
-  it('never folds away the open topic or one that waits for you', () => {
-    const waiting = many.map(task => (task.id === 't8' ? { ...task, status: 'waiting-approval' as const, live: live('approval') } : task))
-    const tree = topicTree(waiting, { selectedId: 't6' })
-    expect(tree.shown.map(task => task.id)).toEqual(['t0', 't1', 't2', 't3', 't4', 't6', 't8'])
-    expect(tree.hidden).toBe(2)
-    expect(topicTree(many, { asking: new Set(['t7']) }).shown.map(task => task.id)).not.toContain('t7')
-    const asked = many.map(task => (task.id === 't7' ? { ...task, status: 'running' as const } : task))
-    expect(topicTree(asked, { asking: new Set(['t7']) }).shown.map(task => task.id)).toContain('t7')
-  })
-})
-
 describe('the space’s own 总览', () => {
   const tasks = [
     topic('wait', 'man', 9, { status: 'waiting-approval', live: live('approval') }),
@@ -375,18 +350,16 @@ describe('what the rows draw', () => {
   const list = (layout: 'overview' | 'triage', extra: Partial<ShellState> = {}, rail = false) =>
     renderToStaticMarkup(createElement(AgentsSpaceList, { shell: shell(layout, extra), rail }))
 
-  it('侧栏: hangs the topics under the Agent in view only, the open one selected, and never names a Harness or model', () => {
+  it('侧栏: selects one Agent row, and leaves its history out of the roster', () => {
     const html = list('overview')
     expect(html).toContain('data-people="roster"')
-    expect(html).toContain('aria-label="小满 的话题"')
-    expect(html).not.toContain('老周 的话题')
-    expect(html).toMatch(/data-task-id="m1" aria-current="page"/u)
-    expect(html).toContain('上周没看的 PR')
+    expect(html).toMatch(/data-agent-id="man" aria-current="page"/u)
+    expect(html).not.toContain('agent-tree')
+    expect(html).not.toContain('上周没看的 PR')
     // The row says its state by icon alone: the word is the header's, written once.
     expect(html).not.toMatch(/>等你点头</u)
     expect(html).not.toMatch(ENGINE_WORDS)
-    // On the space's 总览 nobody is in view, so no tree hangs.
-    expect(list('overview', { route: { entry: 'agents' } } as never)).not.toContain('agent-tree')
+    expect(list('overview', { route: { entry: 'agents' } } as never)).not.toContain('aria-current="page"')
   })
 
   it('顶栏: a queue sorted by who waits, with the person-words on the second line and 新建 Agent leading its rail', () => {
@@ -476,15 +449,15 @@ describe('the topic header', () => {
     return renderToStaticMarkup(createElement(TopicFrame, { shell, owner: 'man', current: 'm1', title: '今天的晨报' }))
   }
 
-  // The header's own state word; the closed 话题 menu lists each topic's state too, out of sight.
+  // The header's own state word.
   const said = (html: string) => html.match(/class="ui-status-word agent-activity"[^>]*>(?:<[^>]*>)*在跑命令/gu) ?? []
 
-  it('侧栏: the role line, one state word in the person’s words, and the switcher named by the open topic', () => {
+  it('侧栏: the role line, one state word and one identity entry', () => {
     const html = frame('overview')
     expect(html).toContain('小满的职责')
     expect(said(html)).toHaveLength(1)
-    expect(html).toContain('aria-label="话题"')
-    expect(html).toContain('今天的晨报')
+    expect(html).toContain('aria-label="小满 的资料"')
+    expect(html).not.toContain('aria-label="话题"')
     expect(html).not.toMatch(/standard|Harness|模型/u)
   })
 
@@ -510,7 +483,7 @@ describe('the topic header', () => {
     expect(html).toContain('已删除的 Agent')
     expect(html).toContain('data-tone="neutral">已删除')
     expect(said(html)).toHaveLength(0)
-    expect(html).toContain('这个 Agent 已删除')
+    expect(html).not.toContain('新话题')
   })
 })
 

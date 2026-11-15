@@ -274,7 +274,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
                           writes.clear()
                           void shell.refresh()
                           askDelegateFocus()
-                          shell.setRoute({ entry: 'agents', myAgent: { id: agent.id, topic: 'new' } })
+                          shell.setRoute({ entry: 'agents', myAgent: { id: agent.id } })
                         }}
                         onCancel={back}
                         {...(shell.owner

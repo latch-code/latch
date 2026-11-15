@@ -1,3 +1,4 @@
+import { isPersonalChat, personalChatModel, topicOwner } from '../agents/chat.ts'
 import { sessionAgent } from '../agents/model.ts'
 import type { AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
@@ -78,6 +79,7 @@ type ActionError = { sessionId: string; text: string }
 export interface SessionSelectionIntent {
   consumeDraft?: { inputId: string | null; text: string }
   draft?: string
+  appendDraft?: string
 }
 
 const without = <T>(set: ReadonlySet<T>, value: T): ReadonlySet<T> => {
@@ -324,6 +326,8 @@ export function useSessionController({
   const setFileMentions = inputId === null ? setNewMentions : setSessionMentions
   const released = useRef<((text: string) => void) | null>(null)
   const attachHarness = selectedId === null ? findHarness(catalog, choice.harnessId ?? catalog?.defaults.harnessId) : harnessInfo
+  const effectiveModel = submission.override ?? personalChatModel(snapshot, summary) ?? sessionModel(summary)
+  const attachmentModel = selectedId === null ? choice.model : effectiveModel
   const sessionAttachments = useAttachments({
     // A Harness that just started, or was just tested, may take files now: read again without a reload.
     revision: JSON.stringify([attachHarness?.status, attachHarness?.attachmentsReported ?? null]),
@@ -332,9 +336,7 @@ export function useSessionController({
       // Attachments are off until the catalog arrives, and then one of these is there.
       harnessId: (selectedId === null ? choice.harnessId : summary?.harnessId) ?? catalog?.defaults.harnessId ?? '',
       ...(selectedId === null ? { workspaceId: choice.workspaceId ?? catalog?.defaults.workspaceId } : {}),
-      ...((selectedId === null ? choice.model : (submission.override ?? sessionModel(summary)))
-        ? { model: selectedId === null ? choice.model : (submission.override ?? sessionModel(summary)) }
-        : {}),
+      ...(attachmentModel ? { model: attachmentModel } : {}),
     },
     ...(selectedId ? { sessionId: selectedId } : {}),
     locked: submission.sending || submission.pending !== null,
@@ -608,7 +610,9 @@ export function useSessionController({
       }
       // 新会话 pressed on 新会话 starts over; coming back from a session finds what was being written.
       if (inputId === null && id === null) sessionDrafts.current.remove(NEW_SESSION_DRAFT)
-      const restored = intent?.draft ?? joinDraft(sessionDrafts.current.read(id ?? NEW_SESSION_DRAFT, privateVisible), handed)
+      const restored =
+        intent?.draft
+        ?? joinDraft(joinDraft(sessionDrafts.current.read(id ?? NEW_SESSION_DRAFT, privateVisible), handed), intent?.appendDraft)
       restoringDraft.current = restored
       submission.setDraft(restored)
       draftSessionId.current = id
@@ -616,6 +620,8 @@ export function useSessionController({
       const restored = intent.draft ?? ''
       restoringDraft.current = restored
       submission.setDraft(restored)
+    } else if (intent?.appendDraft) {
+      submission.setDraft(previous => joinDraft(previous, intent.appendDraft))
     }
     if (intent?.consumeDraft) setFileMentions([])
     setQueuedRetry(null)
@@ -1062,17 +1068,25 @@ export function useSessionController({
           pin: () => {
             void patchTask(task, { pinned: !task.pinned })
           },
-          archive: () => {
-            void patchTask(task, { archived: !task.archived }).then(done => {
-              if (done) setArchivedLast(task.archived ? null : task)
-            })
-          },
+          ...(!isPersonalChat(snapshot, task)
+            ? {
+                archive: () => {
+                  void patchTask(task, { archived: !task.archived }).then(done => {
+                    if (done) setArchivedLast(task.archived ? null : task)
+                  })
+                },
+              }
+            : {}),
           export: () => {
             void exportTask(task)
           },
-          remove: () => {
-            setDeleting(task)
-          },
+          ...(!isPersonalChat(snapshot, task)
+            ? {
+                remove: () => {
+                  setDeleting(task)
+                },
+              }
+            : {}),
           ...(task.worktree
           && !task.worktree.removed
           && catalog?.features?.worktreeLifecycle
@@ -1116,6 +1130,7 @@ export function useSessionController({
       setDeleting,
       access,
       catalog,
+      snapshot.agentChats,
       saveSessionProject,
       clearable,
       selectedId,
@@ -1157,6 +1172,7 @@ export function useSessionController({
   }
   // Rebuilt as text into another session: this one stays to read, and links there.
   const rebuiltInto = summary ? rebuiltFrom(snapshot.tasks, summary.id) : undefined
+  const personalOwner = topicOwner(summary)
   const gate =
     rebuiltInto !== undefined
       ? { kind: 'read-only' as const, text: '已按文字重建为新会话 · 这个会话只能查看' }
@@ -1164,12 +1180,14 @@ export function useSessionController({
         ? access.legacy || access.scopes.has('run')
           ? { kind: 'open' as const }
           : { kind: 'read-only' as const, text: '此设备没有「发起和继续会话」权限' }
-        : composerGate({
-            summary,
-            permission: current?.permission,
-            access,
-            stopped: stopCode !== undefined && stopLocksInput(stopCode),
-          })
+        : personalOwner && summary && !isPersonalChat(snapshot, summary)
+          ? { kind: 'read-only' as const, text: '聊天记录 · 请在这个 Agent 的当前聊天发送' }
+          : composerGate({
+              summary,
+              permission: current?.permission,
+              access,
+              stopped: stopCode !== undefined && stopLocksInput(stopCode),
+            })
   const sessionBlock =
     selectedId === null
       ? undefined
@@ -1231,7 +1249,6 @@ export function useSessionController({
       ? codeRootWorkspace(catalog?.workspaces, { id: choice.workspaceId })
       : undefined
   const currentModel = sessionModel(summary)
-  const effectiveModel = submission.override ?? currentModel
   const mode = selectedId === null ? choice.mode : (summary?.mode ?? 'agent')
   const phase = current?.activity?.phase
   const cancelState =

@@ -181,7 +181,7 @@ public enum PhoneAgents {
     /** The snapshot with what only a content window may show taken out, for when a window closes. */
     public static func withoutPrivate(_ snapshot: NativeJSON) -> NativeJSON {
         guard case var .object(value) = snapshot else { return snapshot }
-        for key in ["customAgents", "automations", "agentProposals", "agentResults", "computer"] { value.removeValue(forKey: key) }
+        for key in ["customAgents", "agentChats", "automations", "agentProposals", "agentResults", "computer"] { value.removeValue(forKey: key) }
         return .object(value)
     }
     public static func validId(_ id: String) -> Bool { id == generalId || LinkBytes.matches(id, "agt_[a-f0-9-]{36}") }
@@ -418,7 +418,7 @@ public enum PhonePending {
     public static func words(_ write: NativePendingWrite) -> String {
         if let words = PhoneHistory.pendingWords(write) { return words }
         switch kind(write) {
-        case .topic: return "新话题结果待确认"
+        case .topic: return "第一条消息结果待确认"
         case .memory: return "记忆的修改结果待确认"
         case .proposal: return "提议的结果待确认"
         case .schedule: return "定时任务的开关结果待确认"

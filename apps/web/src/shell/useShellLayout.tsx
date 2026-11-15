@@ -846,21 +846,20 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     openMyAgent()
   }
   /**
-   * 我的 Agent: the list, the form for a new Agent, or a conversation with an Agent. A conversation opens on its current
-   * topic, or on a new topic when it has none or one is asked for; a link to a section of the old tabs also opens the
-   * profile there.
+   * 我的 Agent opens its Host-selected chat. The first-message page also holds this device's unconfirmed receipt.
    */
   const openMyAgent = (target?: MyAgentTarget) => {
     drawer.setOpen(false)
-    const opening = openAgent(target, snapshot.tasks)
-    const owner = opening.kind === 'topic' ? opening.owner : opening.target?.topic === 'new' ? opening.target.id : undefined
+    const opening = openAgent(target, snapshot)
+    const owner = opening.kind === 'topic' ? opening.owner : opening.target?.id !== 'new' ? opening.target?.id : undefined
     if (owner && opening.section) setProfile(previous => ({ owner, section: opening.section, nonce: (previous?.nonce ?? 0) + 1 }))
-    if (opening.kind === 'topic') {
+    if (opening.kind === 'topic' && (target?.tab || delegation.pending?.customAgentId !== opening.owner)) {
       if (opening.sessionId !== selectedId) choose(opening.sessionId)
       setRoute({ entry: 'sessions' })
       return
     }
-    setRoute({ entry: 'agents', ...(opening.target ? { myAgent: opening.target } : {}) })
+    const page = opening.kind === 'topic' ? { id: opening.owner } : opening.target
+    setRoute({ entry: 'agents', ...(page ? { myAgent: page } : {}) })
   }
   /**
    * The profile of the Agent in view, at a section; again on the same section brings it back to the top. `prefill` opens

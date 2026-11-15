@@ -431,7 +431,7 @@ export function HelperCreate({
             <dd>
               {!draft.defaultProjectId && (
                 <Hint label="它自己的文件夹" moreLabel="在哪做：说明">
-                  不是隔离：它仍能读写这台 Mac 上别处的文件。选了项目，新话题就在项目里做。
+                  不是隔离：它仍能读写这台 Mac 上别处的文件。选了项目，首次聊天就在项目里做。
                 </Hint>
               )}
               <ProjectPicker

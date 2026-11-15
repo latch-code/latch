@@ -596,7 +596,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
           : gate.kind === 'stopped'
             ? placeholder
             : permissionBlocked
-              ? '权限没确认，修改默认选项后开新话题'
+              ? '权限没确认，暂不能发送'
               : undefined
       }
       {...(gate.kind === 'read-only' && gate.reason ? { readOnlyReason: gate.reason } : {})}

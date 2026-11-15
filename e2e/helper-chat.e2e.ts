@@ -1,8 +1,9 @@
 import { chromium, type BrowserContext, type Page } from '@playwright/test'
 import { mkdir, rmdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { expect, it } from 'vitest'
-import type { AppSnapshot, CustomAgentList, TaskDetail, WorkspaceInfo } from '@latch/protocol'
+import type { AppSnapshot, CustomAgent, CustomAgentList, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
@@ -493,9 +494,21 @@ it('keeps one topic and the same attachments when the first send reaches the Hos
     ])
     await shoot(page, 'attachments-recovered-390-light')
     await page.unroute('**/link/api/tasks')
-    await page.getByRole('button', { name: '话题', exact: true }).filter({ visible: true }).click()
-    await page.getByRole('menuitemradio', { name: /新话题/u }).click()
-    await input.waitFor()
+    const another = await owner.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        name: '附件复核',
+        description: '',
+        harnessId: 'standard',
+        mode: 'agent',
+        model: { providerId: 'helper-attachments', model: 'fixture' },
+      },
+    })
+    await page.getByRole('button', { name: '返回', exact: true }).filter({ visible: true }).first().click()
+    await page.locator(`[data-agent-id="${another.id}"]`).filter({ visible: true }).click()
+    const laterInput = page.getByRole('textbox', { name: '给附件复核发消息', exact: true })
+    await laterInput.waitFor()
     await composer.getByRole('button', { name: '更多', exact: true }).click()
     const laterChooser = page.waitForEvent('filechooser')
     await page.getByRole('menuitem', { name: /添加文件/u }).click()
@@ -507,10 +520,10 @@ it('keeps one topic and the same attachments when the first send reaches the Hos
       expect(response.ok()).toBe(true)
       await route.abort('failed')
     })
-    await input.fill('放下等待后不要自动重发')
-    await input.press('Meta+Enter')
+    await laterInput.fill('放下等待后不要自动重发')
+    await laterInput.press('Meta+Enter')
     await page.getByRole('button', { name: '放弃这次提交', exact: true }).click()
-    expect(await input.inputValue()).toBe('放下等待后不要自动重发')
+    expect(await laterInput.inputValue()).toBe('放下等待后不要自动重发')
     expect(await page.locator('.attachment-draft').count()).toBe(0)
     await page.getByText('附件需要重新添加。', { exact: true }).waitFor()
     expect(calls).toBe(2)
@@ -653,7 +666,7 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
     const form = page.getByRole('form', { name: '新建 Agent' })
     await form.getByText('选了').waitFor()
     await form.getByLabel('名字').fill('晨报')
-    await form.getByRole('button', { name: '资料整理', exact: true }).click()
+    expect(await form.getByRole('button', { name: '资料整理', exact: true }).count()).toBe(0)
     expect(await form.getByLabel('名字').inputValue()).toBe('晨报')
     await form.getByRole('button', { name: '更多' }).click()
     await form.getByText('做事前', { exact: true }).waitFor()
@@ -666,7 +679,7 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
     // Created: its new topic greets with fixed words, which are no message.
     const input = page.getByRole('textbox', { name: '给晨报发消息', exact: true })
     await input.waitFor()
-    await page.getByText('你好，我是晨报。').waitFor()
+    expect(await page.getByText('你好，我是晨报。').count()).toBe(0)
     const { agents } = await owner.json<CustomAgentList>('custom-agents')
     const morning = agents.find(agent => agent.name === '晨报')!
     expect(morning).toMatchObject({ harnessId: 'standard', mode: 'agent', model: { providerId: 'helper-fixture', model: 'fixture-one' } })
@@ -700,18 +713,16 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
       .poll(async () => (await owner.json<CustomAgentList>('custom-agents')).agents.find(agent => agent.id === morning.id)?.model)
       .toEqual({ providerId: 'helper-fixture', model: 'fixture-two' })
     await panel.getByRole('button', { name: '关闭资料', exact: true }).click()
-    // The next topic uses it, and still says nothing of it.
-    await page.locator('.topbar').getByRole('button', { name: '话题', exact: true }).click()
-    await page.getByRole('menuitemradio', { name: /新话题/u }).click()
+    // The existing chat uses the selected default for its next turn.
     await input.fill('明天呢')
     await input.press('Meta+Enter')
-    await expect.poll(async () => (await topics()).length, { timeout: 15_000 }).toBe(2)
-    const second = (await topics()).find(task => task.id !== first!.id)!
     await expect
-      .poll(async () => (await owner.json<TaskDetail>(`tasks/${second.id}`)).summary.model, { timeout: 15_000 })
+      .poll(async () => (await owner.json<TaskDetail>(`tasks/${first!.id}`)).summary.model, { timeout: 15_000 })
       .toBe('fixture-two')
-    await expect.poll(() => page.locator(`[data-task-id="${second.id}"][aria-current="page"]`).count()).toBe(1)
-    await page.getByText('好的，我来整理。').first().waitFor()
+    expect(await topics()).toHaveLength(1)
+    await expect
+      .poll(async () => (await owner.json<TaskDetail>(`tasks/${first!.id}`)).messages.filter(message => message.role === 'user').length)
+      .toBe(2)
     await expectPersonOnly(page)
 
     // A helper on the fake ACP Harness: the same two steps; its permission cannot be read back, and the frame says so.
@@ -875,7 +886,7 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
       .click()
     await commandInput.fill('失败一轮')
     await commandInput.press('Meta+Enter')
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${second.id}`)).summary.status).toBe('failed')
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${first!.id}`)).summary.status).toBe('failed')
     await page.getByText(/晨报 没能回复：.*本地验收模型暂时不可用/u).waitFor()
     await stateShots('topic-failed')
   } finally {

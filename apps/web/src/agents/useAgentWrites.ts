@@ -282,6 +282,7 @@ export function useDelegation(
           message: outcome.message,
           ...(outcome.kind === 'refused' && outcome.code ? { code: outcome.code } : {}),
         })
+        if (outcome.kind === 'refused' && (outcome.code === 'agent-chat-exists' || outcome.code === 'agent-chat-starting')) void refresh()
       }
       return undefined
     } finally {
@@ -302,7 +303,7 @@ export function useDelegation(
     reason,
     /**
      * 放弃这次提交: this device stops waiting for the start's answer and gets its text back. A start the Host did get
-     * shows up as a topic; sending the text again starts another one with a new requestId.
+     * appears as the Agent's chat. Its draft remains separate until the person opens that chat.
      */
     abandon: (): { customAgentId: string | undefined; text: string } | null => {
       if (busy.current || pending === null) return null

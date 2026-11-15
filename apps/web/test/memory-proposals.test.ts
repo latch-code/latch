@@ -71,7 +71,7 @@ describe('a memory proposal row', () => {
 
   it('says when a saved one takes effect, and keeps the request of an unknown result for 重试同一请求', () => {
     expect(render(proposal({ state: 'saved' }), null, '已生效')).toContain('已生效')
-    expect(render(proposal({ state: 'saved' }), null, '从下一个话题起')).toContain('从下一个话题起')
+    expect(render(proposal({ state: 'saved' }), null, '清空上下文后生效')).toContain('清空上下文后生效')
     expect(render(proposal({ state: 'dismissed' }), null)).toContain('不要了')
     const unknown = render(proposal(), { write: write('save'), kind: 'unknown', message: '连接中断，Mac 可能已经保存。' })
     expect(unknown).toContain('结果未知')
@@ -84,7 +84,7 @@ describe('a memory proposal row', () => {
 
   it('names effect and origin as the product does', () => {
     expect(effectWords({ agentContext: 'private' })).toBe('已生效')
-    expect(effectWords({ agentContext: 'first-turn' })).toBe('从下一个话题起')
+    expect(effectWords({ agentContext: 'first-turn' })).toBe('清空上下文后生效')
     expect(originWords('user')).toBe('你说的')
     expect(originWords('agent')).toBe('它推断的')
   })

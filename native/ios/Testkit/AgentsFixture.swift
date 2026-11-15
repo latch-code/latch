@@ -69,7 +69,7 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         "topics": ([PhoneAgents.generalId] + agents.compactMap { $0["id"].string }).map { id -> [String: Any] in
             let topics = PhoneAgentChat.topics(snapshot["tasks"].array, id: id)
             return ["open": topics.open.compactMap { $0["id"].string }, "archived": topics.archived.compactMap { $0["id"].string },
-                    "current": PhoneAgentChat.current(snapshot["tasks"].array, id: id)?["id"].string ?? NSNull()]
+                    "current": PhoneAgentChat.session(snapshot, owner: id) ?? NSNull()]
         },
         "topicWords": snapshot["tasks"].array.map { PhoneAgentChat.topicWords($0, frozen: false) ?? "" },
         "placeholder": PhoneAgentChat.placeholder("代码审阅"),
@@ -249,13 +249,13 @@ private func deliveredCases() throws -> [Bool] {
         let after = try await workspace.snapshot()
         guard let task = after["tasks"].array.first(where: { $0["id"].string == sessionId }),
               PhoneAgents.ownerName(after, task: task) == "代码审阅", PhoneAgents.ownerName(after, task: task, windowOpen: false) == "我的 Agent",
-              PhoneAgentChat.current(after["tasks"].array, id: agentId)?["id"].string == sessionId,
+              PhoneAgentChat.session(after, owner: agentId) == sessionId,
               !PhoneSpaces.tasks(after, in: .code).contains(where: { $0["id"].string == sessionId }),
               after["tasks"].array.filter({ $0["agent"]["customAgentId"].string == agentId }).count == 1 else { throw NativeFailure.invalidRecord }
         // The list kept for offline still knows the session's Agent and the tabs.
         guard let cached = try await workspace.cachedSnapshot(), PhoneTabs.entries(cached).map(\.id).contains(.agents),
               cached["tasks"].array.contains(where: { $0["agent"]["customAgentId"].string == agentId }),
-              cached["customAgents"] == .null, cached["automations"] == .null,
+              cached["customAgents"] == .null, cached["automations"] == .null, cached["agentChats"] == .null,
               PhoneAgents.access(snapshot, windowOpen: false) == .closed else { throw NativeFailure.storageUnavailable }
         // 记忆: a write keeps its request; the Host answers a retry by its receipt.
         let create = try PhoneMemoryWrite.create(owner: agentId, text: "这个仓库用 pnpm")
@@ -330,10 +330,16 @@ private func deliveredCases() throws -> [Bool] {
               let generalSession = try await workspace.submit(generalStart)["sessionId"].string else { throw NativeFailure.invalidRecord }
         _ = try await settle(generalSession)
         let withGeneral = try await workspace.snapshot()
-        guard PhoneAgentChat.current(withGeneral["tasks"].array, id: PhoneAgents.generalId)?["id"].string == generalSession,
+        guard PhoneAgentChat.session(withGeneral, owner: PhoneAgents.generalId) == generalSession,
               PhoneSpaces.tasks(withGeneral, in: .agents).contains(where: { $0["id"].string == generalSession }),
               try await workspace.cachedSnapshot()?["tasks"].array.first(where: { $0["id"].string == generalSession })?["generalChat"].bool == true else { throw NativeFailure.invalidRecord }
-        _ = try await workspace.submit(NativePendingWrite(method: .delete, path: "/link/api/tasks/" + generalSession, fields: [:]))
+        let removeGeneral = try NativePendingWrite(method: .delete, path: "/link/api/tasks/" + generalSession, fields: [:])
+        var retained = false
+        do { _ = try await workspace.submit(removeGeneral, explain: true) }
+        catch let refusal as NativeHostRefusal { retained = refusal.status == 409 && refusal.code == "agent-chat-retained" }
+        guard retained, try await workspace.snapshot()["agentChats"][PhoneAgents.generalId]["sessionId"].string == generalSession else {
+            throw NativeFailure.invalidRecord
+        }
         // 通用 has its own memories through the same routes.
         _ = try await workspace.submit(PhoneMemoryWrite.create(owner: PhoneAgents.generalId, text: "回答用中文"))
         let general = try await workspace.read("/link/api/custom-agents/general", body: true)
@@ -385,6 +391,7 @@ private func queuedCases() throws -> [String] {
 func phoneAgentPagesFixture(_ input: [String: Any]) throws -> [String: Any] {
     let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
     let tasks = value["tasks"].array, owner = value["owner"].string ?? ""
+    let snapshot = value["snapshot"]
     let topic = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("你好"), "customAgentId": .string(owner)])
     let other = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("别的"), "customAgentId": .string(PhoneAgents.generalId)])
     let proposal = try PhoneProposals.save(owner: owner, proposalId: "prp_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d")
@@ -406,14 +413,16 @@ func phoneAgentPagesFixture(_ input: [String: Any]) throws -> [String: Any] {
     let closedAdopted = closed.finish(owner, token: closedToken, list: list, windowOpen: false)
     return [
         "shown": [
-            PhoneAgentChat.shown(tasks, owner: owner, picked: nil, newTopic: false) ?? "",
-            PhoneAgentChat.shown(tasks, owner: owner, picked: "old", newTopic: false) ?? "",
-            PhoneAgentChat.shown(tasks, owner: owner, picked: "code", newTopic: false) ?? "",
-            PhoneAgentChat.shown(tasks, owner: owner, picked: "theirs", newTopic: false) ?? "",
-            PhoneAgentChat.shown(tasks, owner: owner, picked: "gone", newTopic: false) ?? "",
-            PhoneAgentChat.shown(tasks, owner: owner, picked: "old", newTopic: true) ?? "",
-            PhoneAgentChat.shown(tasks, owner: PhoneAgents.generalId, picked: "code", newTopic: false) ?? "",
+            PhoneAgentChat.session(snapshot, owner: owner) ?? "",
+            PhoneAgentChat.session(snapshot, owner: PhoneAgents.generalId) ?? "",
+            PhoneAgentChat.slot(snapshot, owner: PhoneAgents.generalId)["state"].string ?? "",
+            PhoneAgentChat.session(.object(["agentChats": snapshot["agentChats"]]), owner: owner) ?? "",
+            PhoneAgentChat.session(PhoneAgents.withoutPrivate(snapshot), owner: owner) ?? "",
         ],
+        "history": tasks.map { [
+            PhoneAgentChat.home(tasks, session: $0["id"].string ?? "", owner: owner).rawValue,
+            PhoneAgentChat.isCurrent(snapshot, task: $0) ? "current" : "",
+        ] },
         "prompts": [held, PhonePending.joined(held, "你好"), PhoneAgentChat.promptAfterStart("你好", pending: [], owner: owner, started: false),
             PhoneAgentChat.promptAfterStart("你好", pending: [other], owner: owner, started: false), PhoneAgentChat.promptAfterStart("你好", pending: [], owner: owner, started: true)],
         "abandonable": [PhonePending.prompt(topic) ?? "", PhonePending.prompt(proposal) ?? "", PhonePending.prompt(schedule) ?? ""],

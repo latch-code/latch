@@ -118,7 +118,7 @@ it('an Agent proposes, the person decides in the conversation, and 记忆 shows 
     // 保存 one: only the Host's answer shows it saved, with when it takes effect on this external Harness.
     await inferred.getByRole('button', { name: '保存', exact: true }).click()
     await inferred.getByText('已保存').waitFor()
-    await inferred.getByText('从下一个话题起').waitFor()
+    await inferred.getByText('清空上下文后生效').waitFor()
     // 不要 another.
     await mine.getByRole('button', { name: '不要', exact: true }).click()
     await mine.getByText('不要了').waitFor()

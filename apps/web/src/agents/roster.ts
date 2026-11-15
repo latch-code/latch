@@ -148,28 +148,6 @@ export function queueOrder(rows: readonly RosterRow[]): RosterRow[] {
     .map(item => item.row)
 }
 
-/** How many topics hang under an Agent before 「还有 N 个」. */
-export const TREE_TOPICS = 5
-
-/**
- * The topics drawn under an Agent: the newest few, and past the cut any that waits for you or is the one open, so the
- * fold never hides what the flag or the selection points at. `hidden` is how many 「还有 N 个」 opens.
- */
-export function topicTree(
-  topics: readonly TaskSummary[],
-  {
-    expanded = false,
-    selectedId = null,
-    asking = new Set<string>(),
-    limit = TREE_TOPICS,
-  }: { expanded?: boolean; selectedId?: string | null; asking?: ReadonlySet<string>; limit?: number } = {},
-): { shown: TaskSummary[]; hidden: number } {
-  const shown = expanded
-    ? [...topics]
-    : topics.filter((task, index) => index < limit || task.id === selectedId || topicState(task, asking) === 'waiting')
-  return { shown, hidden: topics.length - shown.length }
-}
-
 /** The rows the keys step through in 我的 Agent, as the roster draws them: each Agent's topics in turn. */
 export function rosterTopics(rows: readonly RosterRow[]): TaskSummary[] {
   return rows.flatMap(row => row.topics)

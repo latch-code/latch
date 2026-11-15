@@ -9,13 +9,13 @@ import {
   UpdateWindow,
   updateWindowInputSchema,
 } from './update-window.ts'
-import { CustomAgents, harnessFixed, rememberRequest, type AgentActor } from './custom-agents.ts'
+import { CustomAgents, harnessFixed, rememberRequest, type AgentActor, type FirstChatStart } from './custom-agents.ts'
 import { Automations, automationSummary, type AutomationStartInput } from './automations.ts'
 import { Handoffs } from './handoffs.ts'
 import { HistoryImports, HistoryReceipts } from './history-import.ts'
 import { ReviewNotes } from './review-notes.ts'
 import { AgentPlans, canPropose } from './agent-plans.ts'
-import { currentTopic, resultContent } from './agent-activity.ts'
+import { resultContent } from './agent-activity.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
 import { GENERAL_AGENT_ID, refusedBeforeAccepting, type AgentExecutionContext, type AutomationConfig } from '@latch/protocol'
@@ -1692,12 +1692,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     await toolGateway?.start()
     startupCleanup.push(() => toolGateway?.close())
     /** Names and schedules of private definitions: for a device that may read them, and on a phone only while verified. */
+    function privateAgentView(caller: Caller): boolean {
+      return fullData(caller) && (!caller.nativeOpening || nativeRoutes.verifiedUntil(caller.nativeOpening) > now())
+    }
+
     function agentSummaries(
       caller: Caller,
       tasks: readonly TaskSummary[],
     ): Pick<AppSnapshot, 'customAgents' | 'automations' | 'agentProposals' | 'agentResults' | 'computer'> {
-      if (!caller.device || devices.get(caller.device.id)?.dataScope !== 'all') return {}
-      if (caller.nativeOpening && nativeRoutes.verifiedUntil(caller.nativeOpening) <= now()) return {}
+      if (!privateAgentView(caller)) return {}
       // Absent, as on a Host without them, while a write is being confirmed: the rest of the app has nothing to wait for.
       if (customAgents.hasPending() || automations.hasPending()) return {}
       return {
@@ -2047,6 +2050,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               && pluginInfo(record.id)?.enabled === true),
         )
     }
+
+    async function migrateAgentChats(caller: Caller, listing?: Awaited<ReturnType<HarnessHub['listTasksProven']>>): Promise<void> {
+      const actor = agentAccess(caller)
+      if (!customAgents.needsChatMigration()) return
+      const current = listing ?? (await hub!.listTasksProven())
+      actor.authorize()
+      if (!wholeListing(current)) return
+      await customAgents.migrateChats(current.tasks, actor.authorize)
+      for (const [owner, chat] of Object.entries(customAgents.chats())) {
+        if (chat.state === 'ready') void automations?.adoptResults(owner, chat.sessionId).catch(() => log('聊天中的定时成果卡片带入失败'))
+      }
+    }
+
+    function restrictChatRemoval(id: string): void {
+      const owner = hub!.agentOf(id)?.customAgentId ?? (hub!.generalChatOf(id) ? GENERAL_AGENT_ID : undefined)
+      if (!owner || hub!.automationOf(id)) return
+      const chat = customAgents.chats()[owner]
+      if (!chat && (owner === GENERAL_AGENT_ID || customAgents.list().some(agent => agent.id === owner)))
+        throw new AppError(503, 'agent-chat-history-unknown', '旧会话尚未核对完成，请稍后再试。')
+      if (chat?.state === 'starting') throw new AppError(409, 'agent-chat-starting', '第一条消息仍在确认，请确认聊天后再管理历史。')
+      if (chat?.state === 'ready' && chat.sessionId === id)
+        throw new AppError(409, 'agent-chat-retained', '这个 Agent 的聊天不能归档或删除。')
+    }
     /** A create, prompt or queued prompt with this request ID is on its way, was accepted in this run, or waits in a queue. */
     function reservationBusy(deviceId: string, requestId: string): boolean {
       return (
@@ -2144,10 +2170,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       list: async () => (await harnessHub.listTasks()).map(questionSummary),
       detail: id => harnessHub.detail(id),
       patch: (id, patch) => {
-        if (patch.archived) memoryRefusals.delete(id)
+        if (patch.archived) {
+          restrictChatRemoval(id)
+          memoryRefusals.delete(id)
+        }
         return harnessHub.updateMeta(id, patch)
       },
       remove: async id => {
+        restrictChatRemoval(id)
         memoryRefusals.delete(id)
         await keepWorktreePrivacy(id)
         await harnessHub.remove(id)
@@ -2957,12 +2987,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       detail: id => hub!.detail(id),
       cancel: (id, runId) => hub!.cancel(id, runId ? { runId } : undefined),
       approvalTtlMs: () => policy.get().unattended.approvalTtlHours.standard * 3600000,
-      /** The owner's current topic, and what the run said and touched; read when the run settles. */
+      /** The owner's interactive chat, and what the run said and touched; read when the run settles. */
       async resultContent(run) {
-        const tasks = await hub!.listTasks().catch(() => [] as TaskSummary[])
-        const topic = currentTopic(tasks, run.owner)
+        const chat = customAgents.hasPending() ? undefined : customAgents.chats()[run.owner]
         const files = run.sessionId && run.detail ? await changeRoutes.sessionFiles(run.sessionId) : undefined
-        return { ...(topic ? { topicId: topic.id } : {}), ...resultContent(run.outcome, run.detail, files, run.refused) }
+        return {
+          ...(chat?.state === 'ready' ? { topicId: chat.sessionId } : {}),
+          ...resultContent(run.outcome, run.detail, files, run.refused),
+        }
       },
       async exists(id) {
         if (!hub) throw new Error('Sessions are not ready.')
@@ -6116,6 +6148,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           sessionBatch: true,
           promptTemplates: true,
           pluginPackages: true,
+          singleAgentChat: true,
           usage: true,
           modelUsage: true,
           fileSearch: true,
@@ -7076,6 +7109,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const input = createTaskSchema.parse(body)
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
+      if (input.customAgentId) agentAccess(caller, true)
       assertGeneralStartCompatible(input)
       const agentHarness =
         input.customAgentId && input.customAgentId !== GENERAL_AGENT_ID
@@ -7085,21 +7119,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // An Agent's start on another Harness is refused before anything else: no confirmation is asked and nothing is
       // written for a Harness it will not run on. A retry of a start recorded before this rule keeps its receipt below.
       if (agentHarness && input.harnessId && input.harnessId !== agentHarness && !recorded) throw harnessFixed(400)
-      await bindUnconfirmedHarness(
-        req,
-        caller as DeviceCaller,
-        recorded?.harnessId
-          ?? agentHarness
-          ?? (input.customAgentId === GENERAL_AGENT_ID ? 'standard' : (input.harnessId ?? config.settings().defaults.harnessId)),
-      )
-      const started = await startSession(caller, input, res)
-      // A new topic of 我的 Agent keeps the result cards that waited for one.
-      if (input.customAgentId && !input.forkOf)
+      const start = async (dispatched?: () => void) => {
+        await bindUnconfirmedHarness(
+          req,
+          caller,
+          recorded?.harnessId
+            ?? agentHarness
+            ?? (input.customAgentId === GENERAL_AGENT_ID ? 'standard' : (input.harnessId ?? config.settings().defaults.harnessId)),
+        )
+        return startSession(caller, input, res, dispatched)
+      }
+      const started = input.customAgentId ? await startAgentChat(caller, input, start) : await start()
+      const chat = input.customAgentId && !customAgents.hasPending() ? customAgents.chats()[input.customAgentId] : undefined
+      const current = chat?.state === 'ready' && chat.sessionId === started.sessionId
+      if (current && input.customAgentId)
         await automations
           .adoptResults(input.customAgentId, started.sessionId)
-          .catch(error => log(`新话题没有收下定时结果：${errorText(error)}`))
+          .catch(error => log(`Agent 聊天没有收下定时结果：${errorText(error)}`))
       const refused =
-        input.customAgentId && input.prompt && !input.forkOf
+        current && input.prompt
           ? await rememberFromPerson(
               { deviceId: caller.device.id, actor: actorOf(caller) },
               started.sessionId,
@@ -7107,17 +7145,141 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               input.requestId,
             )
           : undefined
+      if (input.customAgentId) agentAccess(caller, true)
       json(res, { ...started, ...(refused ? { memoryRefused: refused } : {}) }, 201)
+    }
+
+    const firstChatsInFlight = new Map<string, Promise<{ sessionId: string }>>()
+
+    function agentChatUnconfirmed(): AppError {
+      return new AppError(503, 'agent-chat-start-unconfirmed', '这个 Agent 的第一条消息尚未确认，请重试同一次提交。')
+    }
+
+    async function historicalChat(caller: DeviceCaller, id: string): Promise<boolean> {
+      const owner = hub!.agentOf(id)?.customAgentId ?? (hub!.generalChatOf(id) ? GENERAL_AGENT_ID : undefined)
+      if (!owner) return false
+      await migrateAgentChats(caller)
+      const chat = customAgents.chats()[owner]
+      if (!chat && (owner === GENERAL_AGENT_ID || customAgents.list().some(agent => agent.id === owner)))
+        throw new AppError(503, 'agent-chat-history-unknown', '旧会话尚未核对完成，请稍后再试。')
+      return chat?.state !== 'ready' || chat.sessionId !== id
+    }
+
+    /**
+     * A stored first message is evidence of an accepted start, even if its response or the Host's binding was lost.
+     * Another task using the same request ID is ambiguous. Only a whole inventory with readable relevant records can
+     * establish absence before replaying a held start.
+     */
+    async function findAgentChatStart(
+      owner: string,
+      actor: AgentActor,
+      input: z.infer<typeof createTaskSchema>,
+    ): Promise<{ sessionId: string } | undefined> {
+      const listing = await hub!.listTasksProven()
+      const harnessId =
+        customAgents.recordedStart(owner, actor.actor.deviceId, input.requestId)?.harnessId
+        ?? (owner === GENERAL_AGENT_ID ? STANDARD : customAgents.get(owner).harnessId)
+      if (!listing.listed.has(harnessId)) throw agentChatUnconfirmed()
+      let found: string | undefined
+      for (const task of listing.tasks) {
+        if (task.harnessId !== harnessId) continue
+        const account = task.agent?.customAgentId ?? (task.generalChat ? GENERAL_AGENT_ID : undefined)
+        const detail = await hub!.detail(task.id).catch(() => {
+          throw agentChatUnconfirmed()
+        })
+        actor.authorize()
+        const message = detail.messages.find(item => item.role === 'user')
+        if (message?.requestId !== input.requestId) continue
+        if (account !== owner || task.automationId || task.forkOf || found) throw agentChatUnconfirmed()
+        if (
+          message.text !== input.prompt
+          || canonicalJson(message.attachments?.map(ref => ref.id) ?? []) !== canonicalJson(input.attachmentIds ?? [])
+        )
+          throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入。')
+        if (canonicalJson(message.fileRefs ?? []) !== canonicalJson(input.fileRefs ?? [])) throw agentChatUnconfirmed()
+        found = task.id
+      }
+      if (found) return { sessionId: found }
+      if (!wholeListing(listing)) throw agentChatUnconfirmed()
+      return undefined
+    }
+
+    async function startAgentChat(
+      caller: DeviceCaller,
+      input: z.infer<typeof createTaskSchema>,
+      start: (dispatched: () => void) => Promise<{ sessionId: string }>,
+    ): Promise<{ sessionId: string }> {
+      const owner = input.customAgentId!
+      const actor = agentAccess(caller, true)
+      if (input.forkOf || input.appDraft) throw new AppError(409, 'agent-chat-fork', '请在 Code 中复制或继续这个会话。')
+      await migrateAgentChats(caller)
+      const first: FirstChatStart = {
+        deviceId: caller.device.id,
+        requestId: input.requestId,
+        hash: sha256Hex(canonicalJson(input)),
+      }
+      if (
+        customAgents.recordedStart(owner, first.deviceId, first.requestId)
+        && !customAgents.knowsChatStart(owner, first.deviceId, first.requestId)
+      ) {
+        const existing = await findAgentChatStart(owner, actor, input)
+        actor.authorize()
+        if (existing) return existing
+        throw agentChatUnconfirmed()
+      }
+      const held = await customAgents.reserveChat(owner, first, actor.authorize)
+      if (held.state === 'ready') return { sessionId: held.sessionId }
+      const inFlight = firstChatsInFlight.get(owner)
+      if (inFlight) {
+        const existing = await inFlight
+        actor.authorize()
+        return existing
+      }
+      const run = async () => {
+        let dispatched = false
+        try {
+          const recovered = held.fresh ? undefined : await findAgentChatStart(owner, actor, input)
+          actor.authorize()
+          if (recovered && input.attachmentIds?.length)
+            await attachmentStore.bind(first.deviceId, input.attachmentIds, recovered.sessionId, first.requestId)
+          const created =
+            recovered
+            ?? (await start(() => {
+              dispatched = true
+            }))
+          await customAgents.settleChat(owner, first, created.sessionId)
+          refresh()
+          return created
+        } catch (error) {
+          if (held.fresh && !dispatched) {
+            await customAgents.settleChat(owner, first)
+            refresh()
+          } else if (error instanceof AppError && refusedBeforeAccepting(error.status, error.code)) {
+            if (!held.fresh || (await findAgentChatStart(owner, actor, input))) throw agentChatUnconfirmed()
+            await customAgents.settleChat(owner, first)
+            refresh()
+          }
+          throw error
+        }
+      }
+      const operation = run().finally(() => {
+        firstChatsInFlight.delete(owner)
+      })
+      firstChatsInFlight.set(owner, operation)
+      const created = await operation
+      actor.authorize()
+      return created
     }
 
     // Old General starts had no Host selection receipt. Native and Standard chat requests cannot be replayed through
     // the new Standard Agent/home path: rejection or a payload conflict would incorrectly clear their unknown outcome.
-    function assertGeneralStartCompatible(input: Pick<z.infer<typeof createTaskSchema>, 'customAgentId' | 'harnessId' | 'mode'>): void {
-      if (
-        input.customAgentId === GENERAL_AGENT_ID
-        && ((input.harnessId !== undefined && input.harnessId !== 'standard') || input.mode === 'chat')
-      )
+    function assertGeneralStartCompatible(input: z.infer<typeof createTaskSchema>): void {
+      if (input.customAgentId !== GENERAL_AGENT_ID) return
+      if ((input.harnessId !== undefined && input.harnessId !== 'standard') || input.mode === 'chat')
         throw new AppError(503, 'general-start-unconfirmed', '这次旧版通用启动尚未确认。请核对已有话题，或放弃这次提交后再开始。')
+      if (input.forkOf || input.worktree || input.appDraft || (input.workspaceId !== undefined && input.workspaceId !== 'default'))
+        throw new AppError(400, 'general-chat-project', '和通用的对话不带项目、工作树或分叉。')
+      if (input.config?.length) throw new AppError(400, 'config-unsupported', '通用不使用外部 Harness 的设置。')
     }
 
     /**
@@ -7129,19 +7291,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       caller: DeviceCaller,
       start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string; withoutPrivateContext?: true; seed?: string },
       res: ServerResponse,
+      dispatched?: () => void,
     ): Promise<{ sessionId: string }> {
       // A retry of a start this Host has in flight or accepted gets its original answer, window or not; only new starts
       // are refused (a handoff's start is keyed by its own start request ID). A start that failed is forgotten.
       const startKey = `${caller.device.id}:${start.requestId}`
-      if (startRequests.has(startKey)) return startSessionChecked(caller, start, res)
+      if (startRequests.has(startKey)) return startSessionChecked(caller, start, res, dispatched)
       refuseWhileUpdating('session')
-      return tracked(startRequests, startKey, () => startSessionChecked(caller, start, res))
+      return tracked(startRequests, startKey, () => startSessionChecked(caller, start, res, dispatched))
     }
 
     async function startSessionChecked(
       caller: DeviceCaller,
       start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string; withoutPrivateContext?: true; seed?: string },
       res: ServerResponse,
+      dispatched?: () => void,
     ): Promise<{ sessionId: string }> {
       // A plugin page's start carries no private context, as from a device without all data: its reply goes back to the page.
       const { privateFrom, title, withoutPrivateContext, seed, ...requested } = start
@@ -7157,9 +7321,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (generalChat) {
         const actor = agentAccess(caller, true)
         assertGeneralStartCompatible(input)
-        if (input.forkOf || input.worktree || input.appDraft || (input.workspaceId !== undefined && input.workspaceId !== 'default'))
-          throw new AppError(400, 'general-chat-project', '和通用的对话不带项目、工作树或分叉。')
-        if (input.config?.length) throw new AppError(400, 'config-unsupported', '通用不使用外部 Harness 的设置。')
         const chosen = await customAgents.reserveStart(
           GENERAL_AGENT_ID,
           input.requestId,
@@ -7330,6 +7491,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               if (!(await ownFolders.verify(helperHome.path))) throw workspaceChanged()
             }
             checkStart()
+            dispatched?.()
             return await operation()
           } catch (cause) {
             if (cause instanceof AppError && refusedBeforeAccepting(cause.status, cause.code) && attachments.length)
@@ -7600,7 +7762,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       id: string,
       input: z.infer<typeof queuedPromptSchema>,
       withoutPrivateContext = false,
-    ): Promise<'steered' | 'accepted' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
+    ): Promise<'steered' | 'accepted' | 'replayed' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       // The install window: a retry of a turn this Host has on record gets its original answer; a new plain message, and a
       // queued or steered one on a session that is not running (it would start a turn at once), are refused.
       const turnKey = `${id}:${caller.device.id}:${input.requestId}`
@@ -7619,7 +7781,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       id: string,
       input: z.infer<typeof queuedPromptSchema>,
       withoutPrivateContext: boolean,
-    ): Promise<'steered' | 'accepted' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
+    ): Promise<'steered' | 'accepted' | 'replayed' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       recheck(caller, 'run')
       await assertSessionAccess(caller, id)
       checkPrivateSession(caller, id, true)
@@ -7637,6 +7799,27 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
           })
         return 'accepted'
+      }
+      if (!promptQueues.knows(id, caller.device.id, input.requestId) && (await historicalChat(caller, id))) {
+        // A receipt from before migration may still be retried, including after a Host restart. Nothing new runs here.
+        const detail = await hub!.detail(id)
+        agentAccess(caller, true)
+        const prior = detail.messages.find(message => message.role === 'user' && message.requestId === input.requestId)
+        if (!prior) {
+          const owner = hub!.agentOf(id)?.customAgentId
+          if (owner && !customAgents.list().some(agent => agent.id === owner))
+            throw new AppError(409, 'agent-deleted', '这个 Agent 已删除，可以查看旧聊天。')
+          throw new AppError(409, 'agent-chat-history-read-only', '之前的聊天仍可查看，请到这个 Agent 的当前聊天发送。')
+        }
+        if (
+          prior.text !== input.prompt
+          || canonicalJson(prior.attachments?.map(ref => ref.id) ?? []) !== canonicalJson(input.attachmentIds ?? [])
+          || canonicalJson(prior.fileRefs ?? []) !== canonicalJson(input.fileRefs ?? [])
+        )
+          throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入。')
+        if (input.attachmentIds?.length) await attachmentStore.bind(caller.device.id, input.attachmentIds, id)
+        agentAccess(caller, true)
+        return 'replayed'
       }
       await assertSessionWorkspace(id)
       if (input.model) {
@@ -7662,11 +7845,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       await rereadOutdated(sessionHarness)
       refuseOutdated(sessionHarness)
       const harnessId = sessionHarness,
-        agentTurn = turnContext(id, harnessId, withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope),
+        agentTurn = turnContext(
+          id,
+          harnessId,
+          withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope,
+          input.freshContext,
+        ),
+        attachmentModel = input.model ?? agentTurn?.defaultModel,
         attachments = await promptAttachments(
           caller,
           input.attachmentIds,
-          { harnessId, ...(input.model ? { model: input.model } : {}) },
+          { harnessId, ...(attachmentModel ? { model: attachmentModel } : {}) },
           id,
           input.requestId,
         )
@@ -7750,20 +7939,33 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (!owner) return context ? { agentContext: context } : undefined
       if (hub!.info(harnessId)?.agentContext !== 'private') return undefined
       const session = await hub!.summary(sessionId)
-      const model = session.providerId && session.model ? { providerId: session.providerId, model: session.model } : undefined
+      const model =
+        context?.defaultModel
+        ?? (session.providerId && session.model ? { providerId: session.providerId, model: session.model } : undefined)
       if (!context || !model) throw queueContextChanged()
       return { binding: context.revision, model, agentContext: context }
     }
     /** What this turn of a session sends: an engine that got the first-turn block keeps it in its own history. */
-    function turnContext(sessionId: string, harnessId: string, dataScope: 'work' | 'all' | undefined): AgentExecutionContext | undefined {
-      if (hub!.info(harnessId)?.agentContext !== 'private') return undefined
+    function turnContext(
+      sessionId: string,
+      harnessId: string,
+      dataScope: 'work' | 'all' | undefined,
+      freshContext = false,
+    ): AgentExecutionContext | undefined {
+      const contextKind = hub!.info(harnessId)?.agentContext
       const owner = hub!.agentOf(sessionId)
+      if (contextKind !== 'private' && !(contextKind === 'first-turn' && freshContext && owner && dataScope === 'all')) return undefined
       if (!owner) {
         const general = generalContextFor(dataScope, harnessId)
         return dataScope === 'all' && hub!.generalChatOf(sessionId) ? agentPlans.generalChatContext(harnessId, general) : general
       }
       try {
-        return agentPlans.agentContext(owner.customAgentId, harnessId)
+        const context = agentPlans.agentContext(owner.customAgentId, harnessId)
+        if (harnessId !== STANDARD) return context
+        const chat = customAgents.chats()[owner.customAgentId]
+        if (chat?.state !== 'ready' || chat.sessionId !== sessionId) return context
+        const agent = customAgents.get(owner.customAgentId)
+        return agent.harnessId === STANDARD && agent.model ? { ...context, defaultModel: agent.model } : context
       } catch (error) {
         if (codeOf(error) === 'agent-not-found') throw new AppError(409, 'agent-deleted', '这个 Agent 已删除，请在新会话中继续。')
         throw error
@@ -7925,7 +8127,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireScope(caller, 'run')
         const input = taskPatchSchema.parse(await jsonBody(req))
         recheck(caller, 'run')
-        if (input.archived) terminalRoutes.checkSessionEnd(caller, id)
+        if (input.archived) {
+          restrictChatRemoval(id)
+          terminalRoutes.checkSessionEnd(caller, id)
+        }
         const summary = await hub!.updateMeta(id, input)
         if (input.archived) memoryRefusals.delete(id)
         json(res, { summary })
@@ -7934,6 +8139,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (method === 'DELETE' && !action) {
         requireScope(caller, 'run')
         await assertSessionAccess(caller, id)
+        restrictChatRemoval(id)
         terminalRoutes.checkSessionEnd(caller, id)
         await keepWorktreePrivacy(id)
         await hub!.remove(id)
@@ -7964,12 +8170,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const sent = await sendPrompt(caller, id, input)
         // A queued message proposes when it is sent from the queue, not now.
         const refused =
-          input.prompt && typeof sent !== 'object'
+          input.prompt && typeof sent !== 'object' && sent !== 'replayed'
             ? await rememberFromPerson({ deviceId: caller.device.id, actor: actorOf(caller) }, id, input.prompt, input.requestId)
             : undefined
         const memory = refused ? { memoryRefused: refused } : {}
         if (sent === 'steered') json(res, { steered: true, ...memory })
-        else if (sent === 'accepted') json(res, { accepted: true, ...memory })
+        else if (sent === 'accepted' || sent === 'replayed') json(res, { accepted: true, ...memory })
         else json(res, sent.queued, 'queued' in sent.queued ? 202 : 200)
         return true
       }
@@ -9111,6 +9317,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               }
             : { ready: true }
         const listing = await hub!.listTasksProven()
+        if (privateAgentView(caller) && !customAgents.hasPending())
+          await migrateAgentChats(caller, listing).catch(error => log(`Agent 聊天未能核对：${errorText(error)}`))
         const tasks = listing.tasks.filter(task => privateVisible(caller, task)).map(questionSummary)
         const whole = wholeListing(listing)
         const snapshot: AppSnapshot = {
@@ -9149,6 +9357,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         recheck(caller, 'view')
         if (snapshot.device.dataScope !== currentDevice(caller).dataScope)
           throw new AppError(403, 'device-scope-changed', '设备的数据范围已变化，请重新读取。')
+        if (privateAgentView(caller) && !customAgents.hasPending()) snapshot.agentChats = customAgents.chats()
         snapshot.tasks = snapshot.tasks.filter(task => privateVisible(caller, task))
         snapshot.approvals = snapshot.approvals.filter(approval => snapshot.tasks.some(task => task.id === approval.sessionId))
         snapshot.approvals = snapshot.approvals.map(fullData(caller) ? allApproval : workApproval)

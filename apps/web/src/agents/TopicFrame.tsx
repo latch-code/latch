@@ -4,9 +4,7 @@ import { Button, ScheduleGlyph, StatusWord } from '@latch/ui'
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { useLastConfirmed } from '../components/SessionStatus.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
-import { AgentFrame, TopicMenu } from './AgentFrame.tsx'
-import { agentTopics } from './chat.ts'
-import { askDelegateFocus } from './delegateFocus.ts'
+import { AgentFrame } from './AgentFrame.tsx'
 import { draftPermission, permissionView } from '../composer/permission.ts'
 import { ACTIVITY_WORDS, agentActivity, agentLiveWord, dutyLine, generalChoice, scheduleWords, sessionAgent } from './model.ts'
 import { ActivityWord, IsolationNote, PermissionNote, Unavailable } from './parts.tsx'
@@ -40,7 +38,6 @@ export function TopicFrame({
   const name = named?.name ?? 'Agent'
   const generalBlock = general ? startBlock(snapshot, generalChoice(shell.catalog ?? undefined)) : null
   const state = agentActivity(snapshot, found ?? { id: owner, available: generalBlock === null })
-  const offline = connection === 'offline'
   const gone = !general && snapshot.customAgents !== undefined && !found
   const schedules = snapshot.automations?.filter(item => (general ? !item.customAgentId : item.customAgentId === owner)) ?? []
   // The permission chip is not in a helper's input, so what it would warn of is said here: the open topic's own mode
@@ -77,15 +74,6 @@ export function TopicFrame({
     current !== null && detail?.summary.id === current && helperPermissionBlocked(detail),
   )
   const boundary = (topicHarness ?? freshHarness)?.level === 'L3' ? MODE_COPY.firstStart(name).detail : undefined
-  const canStart = offline
-    ? 'Mac 不在线'
-    : !access.scopes.has('run')
-      ? '这台设备不能开始会话'
-      : gone
-        ? '这个 Agent 已删除'
-        : found && !found.available
-          ? (found.unavailableReason ?? '现在不能开始')
-          : generalBlock?.message
   // The state is said once per screen: where the 顶栏 layout's queue stands beside the conversation it already says it,
   // in the same words, so the presence block does not repeat it.
   const queueSays =
@@ -137,22 +125,6 @@ export function TopicFrame({
               </span>
             </Button>
           )}
-          <TopicMenu
-            topics={agentTopics(snapshot.tasks, owner)}
-            current={current}
-            title={title}
-            frozen={frozen !== null}
-            canStart={canStart}
-            compact={phone}
-            onTopic={id => {
-              if (id !== shell.selectedId) shell.choose(id)
-              shell.setRoute({ entry: 'sessions' })
-            }}
-            onNewTopic={() => {
-              askDelegateFocus()
-              shell.openMyAgent({ id: owner, topic: 'new' })
-            }}
-          />
           {actions}
         </>
       }
