@@ -187,7 +187,9 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
               if (await drawer.isVisible()) await drawer.click()
               await page.locator('[data-other-computers]').waitFor()
               if (menu) {
-                await page.locator('.sidebar-host-menu').click()
+                if ((await drawer.isVisible()) && (await drawer.getAttribute('aria-expanded')) === 'true')
+                  await page.locator('.sidebar').getByRole('button', { name: '关闭会话列表', exact: true }).click()
+                await page.getByRole('group', { name: '连接状态', exact: true }).locator('.sidebar-host-menu').click()
                 await page.getByRole('menu', { name: '电脑' }).waitFor()
               }
               await page.evaluate(() => document.fonts.ready)

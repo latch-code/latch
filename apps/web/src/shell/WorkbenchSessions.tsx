@@ -20,7 +20,6 @@ import { MarkTile } from '../components/BrandTile.tsx'
 import { ProjectGroupHeading } from '../components/ProjectNavigation.tsx'
 import { SessionRowGlyph } from '../components/SessionStatus.tsx'
 import { hostNow, useTicker } from '../core/hostClock.ts'
-import { WorkbenchComputer } from './WorkbenchNav.tsx'
 import { workStatus } from './workOverview.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -64,7 +63,6 @@ export function WorkbenchSessions({ shell, snapshot }: { shell: ShellState; snap
               },
             ]}
           />
-          <WorkbenchComputer shell={shell} />
           <Button variant="ghost" icon={ArchiveGlyph} aria-pressed={archived} onClick={() => setArchived(value => !value)}>
             已归档
           </Button>

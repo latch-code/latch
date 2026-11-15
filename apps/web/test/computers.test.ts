@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ComputerSummary } from '@latch/protocol'
-import { computerState, olderVersion, otherWaiting } from '../src/core/computers.ts'
+import { computerState, connectionTransport, olderVersion, otherWaiting } from '../src/core/computers.ts'
 
 const HOST_A = 'a'.repeat(52)
 const HOST_B = 'b'.repeat(52)
@@ -35,4 +35,14 @@ describe('other computers on this Mac’s page', () => {
     expect(olderVersion(undefined, '0.9.3')).toBe(false)
     expect(olderVersion('x', '0.9.3')).toBe(false)
   })
+})
+
+it('recognizes the synchronized Host’s loopback alias without trusting similar names', () => {
+  const current = { local: false, remote: false, hostId: HOST_A }
+  const alias = `h-${HOST_A}.localhost`
+  expect(connectionTransport({ protocol: 'http:', hostname: alias }, current)).toBe('回环 HTTP')
+  expect(connectionTransport({ protocol: 'http:', hostname: '::1' }, current)).toBe('回环 HTTP')
+  expect(connectionTransport({ protocol: 'http:', hostname: `h-${HOST_B}.localhost` }, current)).toBe('')
+  expect(connectionTransport({ protocol: 'http:', hostname: `${alias}.example.test` }, current)).toBe('')
+  expect(connectionTransport({ protocol: 'http:', hostname: alias }, { ...current, hostId: undefined })).toBe('')
 })

@@ -12,13 +12,18 @@ import {
   HistoryGlyph,
   LaptopGlyph,
   Kbd,
+  LiveDot,
+  StatusStrip,
+  type StripFact,
 } from '@latch/ui'
-import { currentShell, lightsStyle, useTrafficLights } from '../core/shell.ts'
+import { currentShell, lightsStyle, useTrafficLights, type ComputersView } from '../core/shell.ts'
 import { ShellNewAgent, SpaceButtons, SpaceSwitch, shellOverview, shellSpaces } from './SpaceNav.tsx'
 import { BrandMark } from '../components/ui.tsx'
 import { ComputerMenu } from '../components/Computers.tsx'
-import { useComputers } from '../core/computers.ts'
+import { connectionTransport, useComputers } from '../core/computers.ts'
+import { hostView } from '../core/permissions.ts'
 import { computerName } from '../core/securityCopy.ts'
+import { shortcutKeys } from '../workbenchShortcuts.ts'
 import { ShellQuota } from './ShellQuota.tsx'
 import { WorkbenchPanes } from './WorkbenchPanes.tsx'
 import type { ShellState } from './useShellLayout.tsx'
@@ -60,20 +65,62 @@ export function TabletRail({ shell }: { shell: ShellState }) {
 }
 
 export function WorkbenchComputer({ shell }: { shell: ShellState }) {
-  const computers = useComputers()
+  return <ComputerControl shell={shell} computers={useComputers()} />
+}
+
+function ComputerControl({ shell, computers }: { shell: ShellState; computers: ComputersView | undefined }) {
+  const name = computerName(shell.snapshot.hostName)
   if (!shell.entries.includes('settings'))
     return (
       <span className="workbench-computer">
         <Icon icon={LaptopGlyph} size={16} />
-        {computerName(shell.snapshot.hostName)}
+        <span className="sidebar-host-name">{name}</span>
       </span>
     )
   return computers && computers.computers.length > 1 ? (
     <ComputerMenu snapshot={shell.snapshot} view={computers} onManage={() => shell.openSettings('computers')} />
   ) : (
     <Button variant="ghost" className="workbench-computer-button" icon={LaptopGlyph} onClick={() => shell.openSettings('computers')}>
-      {computerName(shell.snapshot.hostName)}
+      <span className="sidebar-host-name">{name}</span>
     </Button>
+  )
+}
+
+const CONNECTION_WORDS = { connecting: '正在连接', connected: '已连接', reconnecting: '正在重连', offline: '离线' } as const
+
+/** Uses the connection of this page and the computers this desktop has actually listed. */
+export function WorkbenchConnection({ shell, inert }: { shell: ShellState; inert: boolean }) {
+  const computers = useComputers()
+  const desktop = currentShell()
+  const connected = shell.connection === 'connected'
+  const transport = connected
+    ? connectionTransport(window.location, {
+        local: shell.access.local,
+        remote: desktop?.remote === true,
+        hostId: hostView(shell.snapshot)?.hostId,
+      })
+    : ''
+  const online =
+    connected && computers && !computers.problem ? computers.computers.filter(computer => computer.state === 'online').length : null
+  const facts: StripFact[] = [
+    {
+      id: 'connection',
+      text: CONNECTION_WORDS[shell.connection],
+      lead: (
+        <>
+          <LiveDot live={connected} />
+          <ComputerControl shell={shell} computers={computers} />
+        </>
+      ),
+    },
+    { id: 'transport', text: transport },
+    { id: 'online', text: online === null ? '' : `${online} 台在线` },
+    { id: 'search', text: shortcutKeys('palette', desktop !== null) ?? '', end: true },
+  ]
+  return (
+    <footer className="workbench-connection" inert={inert || undefined}>
+      <StatusStrip facts={facts} label="连接状态" />
+    </footer>
   )
 }
 
@@ -135,7 +182,7 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
         <span className="workbench-nav-label">搜索</span>
         <Kbd>⌘K</Kbd>
       </Button>
-      <WorkbenchComputer shell={shell} />
+      {shell.route.entry !== 'sessions' && <WorkbenchComputer shell={shell} />}
       <ShellQuota shell={shell} />
       {shell.entries.includes('apps') && <IconButton label="应用" icon={PluginsGlyph} onClick={() => shell.openApp()} />}
       {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}

@@ -58,7 +58,7 @@ import { WorkOverview, type WorkOverviewHandle } from './WorkOverview.tsx'
 import { HomeFocusSummary } from './HomeFocusSummary.tsx'
 import { HOME_FOCUS_LAYER, useHomeFocus } from './useHomeFocus.ts'
 import { workGroups } from './workOverview.ts'
-import { TabletRail, WorkbenchComputer, WorkbenchNav } from './WorkbenchNav.tsx'
+import { TabletRail, WorkbenchConnection, WorkbenchNav } from './WorkbenchNav.tsx'
 import { ShellQuota } from './ShellQuota.tsx'
 import { LayoutSwitch } from './LayoutSwitch.tsx'
 import { WorkbenchSessions } from './WorkbenchSessions.tsx'
@@ -207,6 +207,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const showPreparation = mayPrepare && (preparing || (!preparationFinished && snapshot.firstSetup === 'pending'))
   const canFocusHome = overview && homeShell.gate.kind === 'open' && !settings && !showPreparation
   const homeFocused = shell.homeFocused && canFocusHome
+  const hasConnectionStrip = !phone && route.entry === 'sessions'
   const { reset: resetHomeFocus } = focus
   useLayoutEffect(() => {
     const reveal = overview && focusWasVisible.current && !homeFocused
@@ -277,6 +278,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             data-workbench-layout={shell.preferences.workbenchLayout}
             data-overview={overview ? '' : undefined}
             data-home-focus={homeFocused ? '' : undefined}
+            data-connection-strip={hasConnectionStrip ? '' : undefined}
             data-all-sessions={allSessions ? '' : undefined}
             data-folding={folding ? '' : undefined}
             data-sidebar={sidebarColumn ? (sidebarCollapsed ? 'collapsed' : 'open') : undefined}
@@ -385,12 +387,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       onSchedules={
                         catalog?.features?.automations ? () => shell.openMyAgent({ id: 'general', tab: 'schedules' }) : undefined
                       }
-                      computer={
-                        <>
-                          <WorkbenchComputer shell={shell} />
-                          {!triage && viewport !== 'tablet' && <ShellQuota shell={shell} appearance="row" />}
-                        </>
-                      }
+                      computer={!triage && viewport !== 'tablet' ? <ShellQuota shell={shell} appearance="row" /> : undefined}
                       snapshot={listed}
                       archiveBatch={archiveBatch}
                       archiveUndo={archiveUndo}
@@ -725,6 +722,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               </section>
             )}
             {allSessions && !phone && <WorkbenchSessions shell={shell} snapshot={listed} />}
+            {hasConnectionStrip && (
+              <WorkbenchConnection shell={shell} inert={homeFocused || drawer.open || !!settings || showPreparation} />
+            )}
             {route.entry === 'agents' && <AgentsPage shell={shell} />}
             {route.entry === 'apps' && <AppsPage shell={shell} />}
             {settings && (
