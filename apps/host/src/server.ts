@@ -6217,14 +6217,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (input.model.effort && !declaredThinking(input.model).includes(input.model.effort))
           throw new AppError(400, 'model-effort-unavailable', '这个模型没有声明所选的思考深度。')
       }
-      const harnessId = input.harnessId ?? defaultHarnessId()
-      if (input.gateway !== undefined) {
+      const { harnessId, gateway } = input
+      if (gateway !== undefined) {
         requireScope(caller, 'admin')
         requireDesktop(caller)
+        if (!harnessId) throw new AppError(400, 'harness-required', '保存模型来源时请同时选择它所属的 Harness。')
         const harness = hub!.info(harnessId)
         if (!harness || harness.status !== 'ready' || harness.capabilities.models.owner === 'latch')
           throw new AppError(400, 'model-route-unavailable', '这个 Harness 不能保存外部模型来源。')
-        if (input.gateway !== null) modelRouteFor(harness, input.gateway)
+        if (gateway !== null) modelRouteFor(harness, gateway)
       }
       const authorize = receipt ? () => requireSetupAccess(caller) : undefined
       await writeSettings(
@@ -6237,7 +6238,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           else if (input.pinned === false) delete draft.defaults.pinned
           if (input.model === null) delete draft.defaults.model
           else if (input.model) draft.defaults.model = input.model
-          if (input.gateway !== undefined) draft.defaults.gateway = { harnessId, model: input.gateway }
+          if (harnessId && gateway !== undefined) draft.defaults.gateway = { harnessId, model: gateway }
           if (receipt) draft.setupChoices = [...(draft.setupChoices ?? []), receipt].slice(-128)
         },
         'admin',
@@ -6250,7 +6251,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const device = devices.get(caller.device.id)
       if (!device || !isLocalListener(device.listener) || !device.scopes.includes('admin') || !device.scopes.includes('run'))
         return undefined
-      return config.settings().firstSetup?.status ?? 'existing'
+      return config.setupStatus() ?? 'existing'
     }
 
     function requireSetupAccess(caller: Caller): void {
@@ -6260,7 +6261,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     function setupChoice(caller: DeviceCaller, requestId: string): SetupChoiceReceipt | undefined {
       requireSetupAccess(caller)
-      return config.settings().setupChoices?.find(item => item.deviceId === caller.device.id && item.requestId === requestId)
+      return config.setupChoice(caller.device.id, requestId)
     }
 
     /** A completion records the combination that the Host can offer now, without making a model request or logging in. */
@@ -7574,9 +7575,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(startWorkspace ? { workspaceId: startWorkspace } : {}),
         }
       }
-      // The session or Agent's explicit choice comes first, then the project, then the configured Harness default.
+      const harnessId = input.harnessId ?? defaultHarnessId()
+      // The session or Agent's explicit choice comes first, then the project, then this Harness's default.
       if (!input.model && !input.ownModel && !input.forkOf) {
-        const harnessId = input.harnessId ?? defaultHarnessId()
         const harness = hub!.info(harnessId)
         const ownPick = input.config?.some(pick =>
           harness?.catalogue?.options.some(option => option.id === pick.configId && option.category === 'model'),
@@ -7601,7 +7602,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             })()
           : undefined
         const prompt = fork ? fork.text + (input.prompt || '请接着这个会话继续。') : input.prompt
-        const harnessId = input.harnessId ?? defaultHarnessId()
         const baseContext: AgentExecutionContext | undefined =
           (customAgentId
             ? agentPlans.agentContext(customAgentId, harnessId)
@@ -9504,6 +9504,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const receipt = setupChoice(caller, requestId)
           if (!receipt) return savePreferences(caller, input.defaults, { deviceId: caller.device.id, requestId, inputHash })
           if (receipt.inputHash !== inputHash) throw new AppError(409, 'request-id-conflict', '这次选择请求已用于不同的值。')
+          await config.settleSettings()
         })
         if (requestId) setupChoice(caller, requestId)
         refresh()
@@ -9513,7 +9514,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const setupChoiceMatch = /^\/link\/api\/first-setup\/choices\/([A-Za-z0-9_-]{8,128})$/u.exec(path)
       if (setupChoiceMatch && method === 'GET') {
         requireScope(caller, 'admin')
-        const receipt = setupChoice(caller, setupChoiceMatch[1]!)
+        requireSetupAccess(caller)
+        const receipt = config.setupChoice(caller.device.id, setupChoiceMatch[1]!, true)
         json(res, receipt ? { state: 'saved', defaults: sessionDefaults(), instanceId, revision } : { state: 'unknown' })
         return true
       }
@@ -9526,9 +9528,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const saved = config.settings().firstSetup
           if (saved && saved.status !== 'pending' && saved.requestId === input.requestId) {
             if (saved.status !== input.status) throw new AppError(409, 'request-id-conflict', '这次准备请求已用于不同的操作。')
+            await config.settleSettings()
             return saved.status
           }
-          if (saved?.status === 'completed') return saved.status
+          if (saved?.status === 'completed') {
+            await config.settleSettings()
+            return saved.status
+          }
           if (input.status === 'completed') requireSetupReady()
           await writeSettings(
             caller,

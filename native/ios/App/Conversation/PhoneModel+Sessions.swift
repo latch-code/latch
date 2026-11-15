@@ -93,7 +93,7 @@ extension PhoneModel {
             try await ensureVerified()
             guard current == generation else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
-            var fields = PhoneStart.fields(snapshot["catalog"], choice: choice, prompt: prompt)
+            var fields = PhoneStart.newSessionFields(snapshot["catalog"], choice: choice, prompt: prompt)
             if !attachments.isEmpty { fields["attachmentIds"] = .array(attachments.map { .string($0) }) }
             let done = await submit(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: fields))
             if done, sessionId != nil { startEvents() }

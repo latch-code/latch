@@ -32,8 +32,6 @@ public struct PhoneHelperModel: Sendable, Identifiable {
 public enum PhoneHelperCreate {
     private static let base = "/link/api/custom-agents"
     private static let abilities = ["files", "commands", "mcp", "ask", "memory", "schedule"]
-    private static let wires = ["openai-compatible": "chat-completions", "openai-responses": "responses", "anthropic": "anthropic-messages"]
-    private static let translations = ["responses:chat-completions", "anthropic-messages:chat-completions", "anthropic-messages:responses", "responses:anthropic-messages"]
     private static func same(_ left: String?, _ right: String?) -> Bool {
         guard let left, let right else { return false }; return left.utf8.elementsEqual(right.utf8)
     }
@@ -90,19 +88,16 @@ public enum PhoneHelperCreate {
     public static func services(_ catalog: NativeJSON, harnessId: String) -> [PhoneHelperModel] {
         guard let selected = harness(catalog, id: harnessId) else { return [] }
         let capabilities = selected["capabilities"]["models"], direct = PhoneStart.usesServices(selected)
-        let accepted = capabilities["wires"].array.compactMap(\.string)
         let known = selected["catalogue"]["options"].array.filter { $0["category"].string == "model" }
             .flatMap { $0["options"].array.compactMap { $0["value"].string.map(modelKey) } }
         return catalog["providers"].array.flatMap { provider -> [PhoneHelperModel] in
             guard let id = provider["id"].string else { return [] }
-            let wire = provider["kind"].string.flatMap { wires[$0] }
-            let passed = wire.map { accepted.contains($0) } ?? false
-            let translated = wire.map { upstream in accepted.contains { translations.contains($0 + ":" + upstream) } } ?? false
-            guard direct || passed || translated else { return [] }
+            let route = PhoneStart.serviceRoute(selected, provider: provider)
+            guard direct || route != nil else { return [] }
             return provider["models"].array.compactMap { value in
                 guard let model = value.string, direct || !capabilities["knownOnly"].bool || known.contains(where: { same($0, modelKey(model)) }) else { return nil }
                 return PhoneHelperModel(choice: PhoneModelChoice(providerId: id, providerName: provider["name"].string ?? id, model: model),
-                    experimental: !direct && (capabilities["experimental"].bool || !passed))
+                    experimental: !direct && (capabilities["experimental"].bool || route != .passthrough))
             }
         }
     }

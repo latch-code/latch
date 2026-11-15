@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AGENT_PRESETS,
+  LADDER_MODE,
   pairRoute,
   GATEWAY_LOSSES,
   type AppSnapshot,
@@ -34,6 +35,7 @@ import {
   projectDefault,
   loginHarness,
   servicePick,
+  startConfig,
   withOwnDefault,
   withServicePick,
   type ComposerChoice,
@@ -406,6 +408,44 @@ describe('composer choice', () => {
     expect(servicePick(prepared, opencode, resolve(null).config)).toEqual(gateway)
     expect(pickedOwnDefault(resolve({ config: withOwnDefault(undefined) }).config)).toBe(true)
     expect(resolve({ harnessId: 'standard' }).model).toEqual(model)
+    const remote = { legacy: false, local: false }
+    const remoteChoice = (config?: ComposerChoice['config']) =>
+      resolveChoice(prepared, draftStart(prepared, { harnessId: 'opencode', config }, null, remote))
+    expect(servicePick(prepared, opencode, remoteChoice().config)).toEqual(gateway)
+    expect(pickedOwnDefault(remoteChoice(withOwnDefault(undefined)).config)).toBe(true)
+    const project = catalog({
+      ...prepared,
+      workspaces: [...prepared.workspaces, { id: 'model-project', name: 'Project', path: '/work/project', defaultModel: model }],
+    })
+    const onProject = resolveChoice(project, draftStart(project, { harnessId: opencode.id, workspaceId: 'model-project' }, null, remote))
+    expect(servicePick(project, opencode, onProject.config)).toEqual(model)
+  })
+
+  it('keeps a configured service and a shared wider permission value with the Harness that picked them', () => {
+    const local = { legacy: false, local: true }
+    const engines = ['qwen', 'opencode'].map(id => {
+      const engine = testHarness(id, { permission: { startMode: 'default', modes: ['default', 'yolo'] } })
+      return {
+        ...engine,
+        capabilities: { ...engine.capabilities, models: { ...engine.capabilities.models, wires: ['chat-completions' as const] } },
+      }
+    })
+    const [qwen, opencode] = engines
+    const gateway = { providerId: 'local', model: 'qwen3' }
+    const pin = catalog({ harnesses: engines, defaults: { harnessId: 'qwen', workspaceId: 'default', mode: 'agent', pinned: true } })
+    const memory = { harnessId: 'qwen', config: withServicePick({ [LADDER_MODE]: 'yolo' }, gateway) }
+    const changed = resolveChoice(pin, draftStart(pin, memory, { harnessId: 'opencode', config: undefined }, local))
+    expect(changed.harnessId).toBe('opencode')
+    expect(startConfig(opencode, changed.config)).toEqual([])
+    expect(servicePick(pin, opencode, changed.config)).toBeUndefined()
+    const fallback = catalog({ ...pin, defaults: { ...pin.defaults, harnessId: 'opencode', gatewayUnavailable: true } })
+    const other = resolveChoice(fallback, draftStart(fallback, memory, null, local))
+    expect(other.harnessId).toBe('opencode')
+    expect(startConfig(opencode, other.config)).toEqual([])
+    expect(servicePick(fallback, opencode, other.config)).toBeUndefined()
+    const home = resolveChoice(pin, draftStart(pin, changed, null, local))
+    expect(startConfig(qwen, home.config)).toEqual([{ configId: LADDER_MODE, value: 'yolo' }])
+    expect(servicePick(pin, qwen, home.config)).toEqual(gateway)
   })
 
   it('says plainly when there is no engine or no model service', () => {

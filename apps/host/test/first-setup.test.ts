@@ -4,22 +4,201 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import type { AppSnapshot, ProviderSettings } from '@latch/protocol'
+import { AppError, type CreateTaskInput, type HarnessPlugin } from '@latch/sdk'
 import { startFakeModels } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 
-const directoryFault = vi.hoisted(() => ({ path: '', providerId: '' }))
+const directoryFault = vi.hoisted(() => ({ path: '', providerId: '', setupRequestId: '' }))
 vi.mock('@latch/core/node-kit', async original => {
   const actual = await original<typeof import('@latch/core/node-kit')>()
   return {
     ...actual,
     async syncDirectory(directory: string) {
       if (directory === directoryFault.path) {
-        const contents = await readFile(join(directory, 'providers.json'), 'utf8').catch(() => '')
-        if (contents.includes(JSON.stringify(directoryFault.providerId))) throw new Error('Fixture directory sync failed after rename')
+        const { providerId, setupRequestId } = directoryFault
+        if (providerId || setupRequestId) {
+          const file = providerId ? 'providers.json' : 'settings.json'
+          const content = await readFile(join(directory, file), 'utf8').catch(() => '')
+          if (content.includes(JSON.stringify(providerId || setupRequestId))) throw new Error('Fixture directory sync failed after rename')
+        }
       }
       await actual.syncDirectory(directory)
     },
   }
+})
+
+it('holds renamed setup choices and completion until their settings directory entry is synchronized', async () => {
+  const t = await startTestHost({ demo: false })
+  onTestFinished(() => t.close())
+  const desktop = await t.enroll({ listener: 'unix' })
+  const models = await startFakeModels()
+  onTestFinished(() => models.close())
+  const service = { providerId: 'setup-durable', model: 'fake-model' }
+  const add = await desktop.confirmed('providers', {
+    method: 'POST',
+    body: {
+      id: service.providerId,
+      name: 'Fixture model',
+      kind: 'openai-compatible',
+      requestId: randomUUID(),
+      baseURL: `${models.origin}/v1`,
+      models: [service.model],
+      defaultModel: service.model,
+      confirmOrigin: true,
+    },
+  })
+  expect(add.status).toBe(201)
+  directoryFault.path = t.dataDir
+  const choice = { defaults: { model: service, mode: 'agent', pinned: true }, setupRequestId: randomUUID() }
+  const choices = `first-setup/choices/${choice.setupRequestId}`
+  const choose = (body: unknown) => desktop.request('preferences', { method: 'PUT', body })
+  const done = { status: 'completed', requestId: randomUUID() }
+  const complete = () => desktop.request('first-setup', { method: 'PUT', body: done })
+  try {
+    directoryFault.setupRequestId = choice.setupRequestId
+    expect((await choose(choice)).status).toBeGreaterThanOrEqual(500)
+    expect(JSON.parse(await readFile(join(t.dataDir, 'settings.json'), 'utf8'))).toMatchObject({
+      setupChoices: [{ requestId: choice.setupRequestId }],
+    })
+    expect(await desktop.json(choices)).toEqual({ state: 'unknown' })
+    expect((await choose(choice)).status).toBeGreaterThanOrEqual(500)
+    expect((await choose({ ...choice, defaults: { mode: 'chat' } })).status).toBe(409)
+    // A newer settings rename can settle the earlier receipt without replaying the old choice.
+    directoryFault.setupRequestId = ''
+    expect((await choose({ defaults: { mode: 'chat' } })).status).toBe(200)
+    expect(await desktop.json(choices)).toMatchObject({ state: 'saved', defaults: { mode: 'chat' } })
+    expect(await (await choose(choice)).json()).toMatchObject({ defaults: { mode: 'chat' } })
+
+    directoryFault.setupRequestId = done.requestId
+    expect((await complete()).status).toBeGreaterThanOrEqual(500)
+    expect(JSON.parse(await readFile(join(t.dataDir, 'settings.json'), 'utf8'))).toMatchObject({ firstSetup: done })
+    expect((await desktop.json<AppSnapshot>('snapshot')).firstSetup).toBe('pending')
+    expect((await complete()).status).toBeGreaterThanOrEqual(500)
+    expect((await desktop.request('first-setup', { method: 'PUT', body: { status: 'deferred', requestId: done.requestId } })).status).toBe(
+      409,
+    )
+    directoryFault.setupRequestId = ''
+    expect(await (await complete()).json()).toEqual({ status: 'completed' })
+    expect((await desktop.json<AppSnapshot>('snapshot')).firstSetup).toBe('completed')
+  } finally {
+    directoryFault.path = ''
+    directoryFault.setupRequestId = ''
+  }
+})
+
+it('keeps a queued implicit start on the same Harness as its saved gateway', async () => {
+  const entered = Promise.withResolvers<void>()
+  const held = Promise.withResolvers<void>()
+  const resolvingDefault = Promise.withResolvers<void>()
+  const a = 'setup-engine-a'
+  const b = 'setup-engine-b'
+  let watching = false
+  const starts: Array<{ harnessId: string; prompt: string; route: CreateTaskInput['modelRoute'] }> = []
+  const plugin: HarnessPlugin = {
+    id: 'setup-engine-fixture',
+    name: 'Setup engine fixture',
+    version: '1',
+    description: 'fixture',
+    activate(ctx) {
+      for (const id of [a, b]) {
+        ctx.registerHarness({
+          id,
+          name: id,
+          version: '1',
+          capabilities: { models: { owner: 'harness', wires: ['chat-completions'] } },
+          status() {
+            if (id === a && watching) resolvingDefault.resolve()
+            return { status: 'ready' }
+          },
+          create: () => ({
+            start: async () => {},
+            close: async () => {},
+            listTasks: async () => [],
+            detail: async () => {
+              throw new AppError(404, 'task-not-found', '找不到该任务')
+            },
+            async createTask(input) {
+              starts.push({ harnessId: id, prompt: input.prompt, route: input.modelRoute })
+              if (input.prompt === 'Hold') {
+                entered.resolve()
+                await held.promise
+              }
+              return { sessionId: randomUUID() }
+            },
+            prompt: async () => {},
+            cancel: async () => {},
+            approvals: () => [],
+            decide: async () => false,
+            subscribe: () => () => {},
+            launchPreview: async ({ cwd }) => ({
+              launchHash: 'a'.repeat(64),
+              command: '/usr/bin/true',
+              args: [],
+              envNames: [],
+              cwd,
+              approvals: 'none',
+              readback: 'none',
+              verified: false,
+            }),
+          }),
+        })
+      }
+    },
+  }
+  const t = await startTestHost({ plugins: [plugin], demo: false })
+  onTestFinished(() => t.close())
+  const desktop = await t.enroll({ listener: 'unix' })
+  const models = await startFakeModels()
+  onTestFinished(() => models.close())
+  const gateway = { providerId: 'setup-route', model: 'fake-model' }
+  const add = await desktop.confirmed('providers', {
+    method: 'POST',
+    body: {
+      id: gateway.providerId,
+      name: 'Fixture model',
+      kind: 'openai-compatible',
+      requestId: randomUUID(),
+      baseURL: `${models.origin}/v1`,
+      models: [gateway.model],
+      defaultModel: gateway.model,
+      confirmOrigin: true,
+    },
+  })
+  expect(add.status).toBe(201)
+  const choose = (defaults: Record<string, unknown>) => desktop.request('preferences', { method: 'PUT', body: { defaults } })
+  expect((await choose({ harnessId: a, gateway })).status).toBe(200)
+  const start = (prompt: string, choice: Record<string, unknown> = {}) =>
+    desktop.request('tasks', { method: 'POST', body: { requestId: randomUUID(), prompt, mode: 'chat', ...choice } })
+  const first = start('Hold', { harnessId: a, ownModel: true })
+  let queued: ReturnType<typeof start> | undefined
+  try {
+    await Promise.race([
+      entered.promise,
+      first.then(async reply => {
+        throw new Error(`The fixture driver did not receive the held start (${reply.status}).`)
+      }),
+    ])
+    watching = true
+    queued = start('Queued')
+    await Promise.race([
+      resolvingDefault.promise,
+      queued.then(reply => {
+        throw new Error(`The start did not wait in the project queue (${reply.status}).`)
+      }),
+    ])
+    watching = false
+    expect(starts.map(item => item.prompt)).toEqual(['Hold'])
+    expect((await choose({ harnessId: b })).status).toBe(200)
+  } finally {
+    held.resolve()
+  }
+  expect((await first).status).toBe(201)
+  const started = await queued!
+  expect(started.status, await started.text()).toBe(201)
+  expect(starts[1]).toMatchObject({ harnessId: a, prompt: 'Queued', route: gateway })
+  expect((await start('Next')).status).toBe(201)
+  expect(starts[2]).toEqual({ harnessId: b, prompt: 'Next', route: undefined })
+  expect((await choose({ gateway })).status).toBe(400)
 })
 
 it('keeps a fresh preparation local and requires real model choices before completion', async () => {

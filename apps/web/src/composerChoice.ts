@@ -364,17 +364,30 @@ export function draftStart(
   access?: PinAccess,
 ): Partial<ComposerChoice> | null {
   const pin = pinnedChoice(catalog, access)
-  let base = pin ? { ...memory, ...pin } : memory
-  const gateway = catalog?.defaults.gateway
-  if (pin?.harnessId && gateway !== undefined && !pick?.config && (pick?.harnessId === undefined || pick.harnessId === pin.harnessId)) {
-    const harness = findHarness(catalog, pin.harnessId)
-    const config = memory?.harnessId === pin.harnessId ? memory?.config : memory?.otherPicks?.[pin.harnessId]
-    const modelOption = harness && draftConfig(harness, config)?.config.find(option => option.category === 'model')
-    const source = gateway ? withServicePick(config, gateway, modelOption?.id) : withOwnDefault(config, modelOption?.id)
-    base = { ...base, ...(source ? { config: source } : {}) }
-  }
+  const harnessId = pick?.harnessId ?? pin?.harnessId
+  const base =
+    harnessId && harnessId !== memory?.harnessId
+      ? { ...memory, ...pin, ...harnessPicks(memory ?? {}, harnessId), harnessId }
+      : pin
+        ? { ...memory, ...pin }
+        : memory
   const project = projectStart(catalog, base, pick)
-  return pin || project || pick ? { ...base, ...project, ...pick } : memory
+  const choice = pin || project || pick ? { ...base, ...project, ...pick } : memory
+  const gateway = catalog?.defaults.gateway
+  if (!catalog || gateway === undefined || project?.config || pick?.config) return choice
+  const resolved = resolveChoice(catalog, choice)
+  const harness = findHarness(catalog, resolved.harnessId)
+  if (!harness || harness.id !== catalog.defaults.harnessId || harness.capabilities.models.owner === 'latch') return choice
+  const modelOption = draftConfig(harness, resolved.config)?.config.find(option => option.category === 'model')
+  if (
+    !pin
+    && (servicePick(catalog, harness, resolved.config)
+      || pickedOwnDefault(resolved.config)
+      || (modelOption && resolved.config?.[modelOption.id] !== undefined))
+  )
+    return choice
+  const config = gateway ? withServicePick(resolved.config, gateway, modelOption?.id) : withOwnDefault(resolved.config, modelOption?.id)
+  return { ...resolved, config }
 }
 
 /**

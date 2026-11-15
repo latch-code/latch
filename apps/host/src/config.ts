@@ -501,6 +501,7 @@ export class HostConfig {
   private providerList: ProviderRecord[] = []
   private providerAdditions: ProviderAddition[] = []
   private hostSettings: HostSettings = emptySettings()
+  private syncedSettings = this.hostSettings
   private readonly queues = { providers: Promise.resolve(), settings: Promise.resolve() }
 
   private constructor(private readonly dataDir: string) {}
@@ -514,7 +515,7 @@ export class HostConfig {
     await mkdir(config.dataDir, { recursive: true, mode: 0o700 })
     const stored = await readConfig(join(config.dataDir, PROVIDERS_FILE), providersFileSchema, true)
     const settings = await readConfig(join(config.dataDir, SETTINGS_FILE), settingsSchema, true)
-    if (settings) config.hostSettings = settings
+    if (settings) config.syncedSettings = config.hostSettings = settings
     if (stored) {
       config.providerList = stored.providers
       config.providerAdditions = stored.additions
@@ -559,6 +560,25 @@ export class HostConfig {
     return structuredClone(this.hostSettings)
   }
 
+  setupStatus(): NonNullable<HostSettings['firstSetup']>['status'] | undefined {
+    return this.syncedSettings.firstSetup?.status
+  }
+
+  setupChoice(deviceId: string, requestId: string, synced = false): SetupChoiceReceipt | undefined {
+    const settings = synced ? this.syncedSettings : this.hostSettings
+    const receipt = settings.setupChoices?.find(item => item.deviceId === deviceId && item.requestId === requestId)
+    return receipt && { ...receipt }
+  }
+
+  /** Retry synchronizing the current rename, never write the settings snapshot from a receipt. */
+  settleSettings(): Promise<void> {
+    return this.serialize('settings', async () => {
+      if (this.hostSettings === this.syncedSettings) return
+      await syncDirectory(this.dataDir)
+      this.syncedSettings = this.hostSettings
+    })
+  }
+
   /**
    * Serialized: mutate a draft, validate it, call `beforePublish` (may throw to abort), atomically write, then publish in memory.
    * `beforePublish` may call `commit` itself to place the durable write inside its own transaction, e.g. a registry replace.
@@ -595,8 +615,9 @@ export class HostConfig {
       const checked = settingsSchema.safeParse(draft)
       if (!checked.success) throw new AppError(400, 'invalid-settings', `设置无效：${issueText(checked.error, false)}`)
       const next = checked.data
-      await this.persist(SETTINGS_FILE, next, next, beforePublish, () => {
+      await this.persist(SETTINGS_FILE, next, next, beforePublish, synced => {
         this.hostSettings = next
+        if (synced) this.syncedSettings = next
       })
     })
   }
@@ -616,7 +637,7 @@ export class HostConfig {
     content: unknown,
     next: T,
     beforePublish: BeforePublish<T> | undefined,
-    publish: () => void,
+    publish: (synced: boolean) => void,
   ): Promise<void> {
     const target = join(this.dataDir, fileName)
     const temporary = join(this.dataDir, `.${fileName}-${randomUUID()}.tmp`)
@@ -633,18 +654,20 @@ export class HostConfig {
     // A rename replaces the file, and with it the old file's backup exclusion, so the new one carries its own.
     if (BACKUP_EXCLUDED_CONFIG_FILES.includes(fileName)) await excludeFromBackup([temporary])
     let renamed = false
+    let synced = false
     let committing: Promise<void> | undefined
     const commit = () =>
       (committing ??= (async () => {
         await rename(temporary, target)
         renamed = true
         await syncDirectory(this.dataDir)
+        synced = true
       })())
     try {
       await beforePublish?.(structuredClone(next), commit)
       await commit()
     } finally {
-      if (renamed) publish()
+      if (renamed) publish(synced)
       else await unlink(temporary).catch(() => {})
     }
   }

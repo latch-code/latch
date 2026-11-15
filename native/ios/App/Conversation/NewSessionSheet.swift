@@ -44,7 +44,7 @@ struct NewSessionSheet: View {
     private let attachKey = PhoneModel.newSessionTray
     /** A fork carries its source's conversation; attachments go with a plain new session only. */
     private var attaches: Bool { fork == nil }
-    private var attachSelection: NativeJSON? { PhoneAttachments.selection(startFields: PhoneStart.fields(catalog, choice: choice, prompt: "")) }
+    private var attachSelection: NativeJSON? { PhoneAttachments.selection(startFields: PhoneStart.newSessionFields(catalog, choice: choice, prompt: "")) }
     private var catalog: NativeJSON { model.snapshot["catalog"] }
     /** The source's detail when it is the open session, else its list row: what a fork can carry. */
     private var source: NativeJSON {
@@ -138,7 +138,19 @@ struct NewSessionSheet: View {
             }
         }
         // The Host's model choice belongs to the Harness it was saved for.
-        .onChange(of: choice.harnessId) { old, new in if old != nil, old != new { choice.model = PhoneStart.defaultModel(catalog, harnessId: new); picked = nil } }
+        .onChange(of: choice.harnessId) { old, new in
+            if old != nil, old != new {
+                choice.model = fork == nil
+                    ? PhoneStart.newSessionModel(catalog, harnessId: new, workspaceId: choice.workspaceId)
+                    : PhoneStart.defaultModel(catalog, harnessId: new)
+                picked = nil
+            }
+        }
+        .onChange(of: choice.workspaceId) { _, new in
+            if fork == nil, !PhoneStart.usesServices(harness) {
+                choice.model = PhoneStart.newSessionModel(catalog, harnessId: choice.harnessId, workspaceId: new)
+            }
+        }
         .onChange(of: prompt) { _, value in slash.changed(value) }
         .onChange(of: model.privateSnapshot.epoch) { _, _ in slash.clear(); modelPicker = false }
         .task(id: slashRead) { await slash.load(model, key: slashRead) }

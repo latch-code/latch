@@ -287,8 +287,11 @@ struct PromptComposer: View {
         case .clear: if !model.openClearing { model.toggleClearing(id) }
         case .new:
             if person { guard let newTopic else { return }; newTopic(argument) }
-            else { slashStart = SlashStartDraft(choice: PhoneStartChoice(harnessId: model.currentSummary["harnessId"].string,
-                workspaceId: model.currentSummary["workspaceId"].string, model: PhoneStart.defaultModel(model.snapshot["catalog"], harnessId: model.currentSummary["harnessId"].string)), prompt: argument) }
+            else {
+                let harnessId = model.currentSummary["harnessId"].string, workspaceId = model.currentSummary["workspaceId"].string
+                let service = PhoneStart.newSessionModel(model.snapshot["catalog"], harnessId: harnessId, workspaceId: workspaceId)
+                slashStart = SlashStartDraft(choice: PhoneStartChoice(harnessId: harnessId, workspaceId: workspaceId, model: service), prompt: argument)
+            }
         case .fork:
             guard let draft = forkDraft else { return }
             slashStart = SlashStartDraft(choice: draft.choice(model.snapshot["catalog"], source: model.currentSummary),

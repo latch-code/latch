@@ -3698,10 +3698,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
             modes: ['chat', 'agent'],
             capabilities: { models: { owner: 'latch' }, permission: { enforcement: 'latch' } },
           },
-          { id: 'codex', status: 'ready', modes: ['agent'], capabilities: { models: { owner: 'harness' } } },
+          { id: 'codex', status: 'ready', modes: ['agent'], capabilities: { models: { owner: 'harness', wires: ['chat-completions'] } } },
         ],
         workspaces: [{ id: 'latch', name: 'latch' }],
-        providers: [{ id: 'p', name: 'P', models: ['m1', 'm2'] }],
+        providers: [{ id: 'p', name: 'P', kind: 'openai-compatible', models: ['m1', 'm2'] }],
         defaults: { harnessId: 'codex', workspaceId: 'latch', model: { providerId: 'p', model: 'm2' } },
       },
       setupDefaults: {
@@ -3999,6 +3999,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.startDefault).toBe('')
     expect(result.preparedStart).toEqual({ providerId: 'p', model: 'm1' })
     expect(result.preparedBuiltIn).toBe('m2')
+    expect(result.preparedThenOwn).toEqual({ providerId: 'p', model: 'm1' })
+    expect(result.preparedThenChanged).toEqual({ providerId: 'p', model: 'm1' })
+    expect(result.ownThenPrepared).toEqual({ prompt: 'x', harnessId: 'codex', mode: 'agent', workspaceId: 'latch', ownModel: true })
+    expect(result.projectBeforePrepared).toBe('m2')
+    expect(result.preparedHandoff).toEqual({ kind: 'new-session', mode: 'chat', harnessId: 'codex' })
     // A stop goes on failure and once the Host shows the subagent stopping or no longer stoppable, nested rows too.
     expect(result.stops).toEqual([['s1', 's2', 's3', 's4'], ['s1', 's3', 's4'], ['s1']])
     expect(result.search).toEqual({

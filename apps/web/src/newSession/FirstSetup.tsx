@@ -215,6 +215,7 @@ export function FirstSetup({
   }
   const select = (defaults: PickDefaults) => saveChoice({ requestId: newRequestId(), defaults }, false)
   const setModel = (model: ModelRef | null) => {
+    if (!harness) return
     if (latchModels) {
       if (
         model
@@ -224,9 +225,9 @@ export function FirstSetup({
         && levels.includes(picked.effort)
       )
         model = { ...model, effort: picked.effort }
-      return select({ model, pinned: true })
+      return select({ harnessId: harness.id, model, pinned: true })
     }
-    return select({ gateway: model, pinned: true })
+    return select({ harnessId: harness.id, gateway: model, pinned: true })
   }
 
   const enable = async (id: string, presetId: string | undefined) => {
@@ -484,7 +485,7 @@ export function FirstSetup({
                 onCancel={() => setProviderForm(false)}
                 onSaved={model => {
                   setProviderForm(false)
-                  void (latchModels ? select({ model, pinned: true }) : setModel(model))
+                  void setModel(model)
                 }}
               />
             </div>

@@ -197,15 +197,23 @@ export function useSubmission({
       patch = { ...patch, ...harnessPicks(remembered, patch.harnessId) }
     if (pinnedChoice(catalog, { legacy, local })) {
       const { harnessId, model, ...rest } = patch
-      setDraftPick(previous => ({
-        ...previous,
-        ...(harnessId ? { harnessId } : {}),
-        ...(model ? { model } : {}),
-        ...(rest.config ? { config: rest.config } : {}),
-      }))
-      const kept = { ...stored, ...rest }
+      const pickedHarness = harnessId ?? remembered.harnessId
+      const changesConfig = harnessId !== undefined || 'config' in rest
+      if (changesConfig || model) {
+        setDraftPick(previous => ({
+          ...previous,
+          ...(pickedHarness ? { harnessId: pickedHarness } : {}),
+          ...(model ? { model } : {}),
+          ...(changesConfig ? { config: rest.config } : {}),
+        }))
+      }
+      const kept = {
+        ...stored,
+        ...(changesConfig && pickedHarness ? { harnessId: pickedHarness, ...harnessPicks(stored ?? {}, pickedHarness) } : {}),
+        ...rest,
+      }
       setStored(kept)
-      writeChoice(deviceId, { ...kept, harnessId: harnessId ?? remembered.harnessId, mode: kept.mode ?? remembered.mode })
+      writeChoice(deviceId, { ...kept, mode: kept.mode ?? remembered.mode })
       return
     }
     // Keep the remembered model when a harness without host models is picked, so switching back restores it.
@@ -349,7 +357,9 @@ export function useSubmission({
             ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
             ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
             ...(service ? { model: service } : choice.model ? { model: choice.model } : {}),
-            ...(!service && pickedOwnDefault(choice.config) ? { ownModel: true as const } : {}),
+            ...(!service && (pickedOwnDefault(choice.config) || (!fork && harness?.capabilities.models.owner === 'harness'))
+              ? { ownModel: true as const }
+              : {}),
             ...(picks.length ? { config: picks } : {}),
             ...(worktree ? { worktree: worktree.from === 'head' ? (true as const) : worktree } : {}),
           }
