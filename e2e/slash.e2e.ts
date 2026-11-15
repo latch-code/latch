@@ -100,9 +100,12 @@ describe('slash suggestions in the real composer', () => {
               expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages).toHaveLength(before)
               await input.press('Backspace')
               expect(await input.inputValue()).toBe('')
+              // A phone's input is one line of ＋, the input and send: there is no 插入命令 button, the key opens the list.
               if (width === 390) {
-                await page.getByRole('button', { name: '插入命令', exact: true }).click()
-                expect(await input.inputValue()).toBe('/')
+                expect(await page.getByRole('button', { name: '插入命令', exact: true }).count()).toBe(0)
+                await input.pressSequentially('/')
+                await list.waitFor()
+                await input.press('Backspace')
               }
               await input.fill('/model Large')
               await input.press('Control+Enter')

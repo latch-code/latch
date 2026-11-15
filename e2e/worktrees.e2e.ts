@@ -142,8 +142,8 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     const label = `工作树 · ${task.worktree!.branch}`
     expect(await page.locator('.topbar-crumb-worktree').innerText()).toBe(label)
     expect(await page.locator('.session-worktree').first().getAttribute('aria-label')).toBe(label)
-    // The status line's branch segment says it, where the branch alone was.
-    await expect.poll(() => row.locator('[data-seg="branch"]').innerText()).toBe(label)
+    // A session's input has no status line: the title row above is the one place that says the worktree.
+    expect(await page.locator('main.workspace .composer-status [data-seg="branch"]').count()).toBe(0)
     // The count is the label; that Git LFS files stay pointers and what to run stays behind its ⓘ.
     const unfiltered = page.locator('.session-start-note .ui-hint', { hasText: '1 个文件的 filter 没有运行' })
     await unfiltered.waitFor()

@@ -239,9 +239,11 @@ export function Composer({
   // The input grows with its content a line at a time, up to eight lines, its height moving over 120ms (composer.css).
   // Measuring needs the height let go for a moment; it is put back without a transition, so the move then starts from
   // the height the input had and not from the measurement.
+  // A phone lays the input out in another row (`inline`), which is another element: crossing that width with words in
+  // the input must measure the new element and watch it, or it stays one line high whatever it holds.
   useLayoutEffect(() => {
     sizeComposerInput(textareaRef.current)
-  }, [draft, textareaRef])
+  }, [draft, textareaRef, inline])
   useLayoutEffect(() => {
     const element = textareaRef.current
     if (!element) return undefined
@@ -266,7 +268,7 @@ export function Composer({
       observer.disconnect()
       document.fonts.removeEventListener('loadingdone', measure)
     }
-  }, [textareaRef, readOnly])
+  }, [textareaRef, readOnly, inline])
 
   const locked = sending || pending !== null || attachments?.preparing === true
   const empty = draft.trim().length === 0 && !attachments?.items.length

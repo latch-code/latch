@@ -438,10 +438,12 @@ describe('permission states in a browser', () => {
     const before = testHost.presence.requests.length
 
     await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-    await page.locator('.composer .harness-picker').click()
+    // 新建会话 is the home's input; the session it covers keeps its own composer mounted under it, hidden and inert.
+    const home = page.locator('.workbench-home')
+    await home.locator('.composer .harness-picker').click()
     await page.getByRole('menuitemradio', { name: /Fake Agent/ }).click()
     expect(await page.getByText('只能在 Mac 上开始', { exact: false }).count()).toBe(0)
-    await page.locator('.composer textarea').fill('permission')
+    await home.locator('.composer textarea').fill('permission')
     await page.keyboard.press('Enter')
     const card = page.locator('[data-approval-id]')
     await card.waitFor()

@@ -45,6 +45,9 @@ describe('read output highlighting', () => {
   const show = (value: TaskDetail) => page.evaluate(next => window.showDetail(next), value)
   const row = (id: string) => page.locator(`[data-message-id="${id}"]`)
   const expand = async (id: string) => {
+    // A run of finished reads folds into one row (「读取 3 个文件」): open it to reach the read itself.
+    const group = page.locator('.reads-row', { has: row(id) }).locator('> .process-row[aria-expanded="false"]')
+    if (await group.count()) await group.click()
     await row(id).locator('.tool-card-header').click()
     await row(id).locator('.tool-output').waitFor()
   }
