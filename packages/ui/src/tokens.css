@@ -30,33 +30,16 @@
 
 @layer tokens {
   :root {
-    /* The two workbench layouts share roles, with a charcoal frame for the overview. */
-    --work-a-canvas: #f6f6f3;
-    --work-a-raised: #fefefd;
-    --work-a-sunken: #efefeb;
-    --work-a-ink: #17171a;
-    --work-a-ink-2: #3a3a3c;
-    --work-a-muted: #67676a;
-    --work-a-faint: #77777a;
-    --work-a-line: rgba(22, 22, 26, 0.08);
-    --work-a-line-strong: rgba(22, 22, 26, 0.14);
-    --work-b-canvas: #eceef1;
-    --work-b-raised: #fbfcfd;
-    --work-b-sunken: #e3e6ea;
-    --work-b-ink: #111419;
-    --work-b-ink-2: #343a42;
-    --work-b-muted: #5d6570;
-    --work-b-faint: #737a84;
-    --work-b-line: rgba(16, 20, 26, 0.085);
-    --work-b-line-strong: rgba(16, 20, 26, 0.15);
-    --work-frame: #eaeae5;
-    --work-frame-raised: #dfdfd9;
-    --work-frame-ink: #17171a;
-    --work-frame-ink-2: #3a3a3c;
-    --work-frame-muted: #67676a;
-    --work-frame-line: rgba(22, 22, 26, 0.09);
-    --work-frame-hover: rgba(22, 22, 26, 0.05);
-    --work-frame-selected: #fdfdfb;
+    /* Shared workbench surfaces in both layouts. */
+    --work-canvas: #eceef1;
+    --work-raised: #fbfcfd;
+    --work-sunken: #e3e6ea;
+    --work-ink: #111419;
+    --work-ink-2: #343a42;
+    --work-muted: #5d6570;
+    --work-faint: #737a84;
+    --work-line: rgba(16, 20, 26, 0.085);
+    --work-line-strong: rgba(16, 20, 26, 0.15);
     --work-running: #2c5ad6;
     --work-card-shadow: 0 0 0 1px rgba(16, 20, 26, 0.07), 0 1px 2px rgba(16, 20, 26, 0.04), 0 10px 24px -16px rgba(16, 20, 26, 0.2);
     --fs-work-ui: 13.5px;
@@ -377,33 +360,16 @@
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) {
-      /* The two workbench layouts share roles, with a charcoal frame for the overview. */
-      --work-a-canvas: #17181b;
-      --work-a-raised: #1e1f23;
-      --work-a-sunken: #121315;
-      --work-a-ink: #edebe6;
-      --work-a-ink-2: #c9c7c1;
-      --work-a-muted: #a3a19b;
-      --work-a-faint: #908e89;
-      --work-a-line: rgba(237, 235, 230, 0.075);
-      --work-a-line-strong: rgba(237, 235, 230, 0.13);
-      --work-b-canvas: #0e1013;
-      --work-b-raised: #15181c;
-      --work-b-sunken: #0b0d10;
-      --work-b-ink: #e6e9ee;
-      --work-b-ink-2: #c1c7cf;
-      --work-b-muted: #9ba3ae;
-      --work-b-faint: #8b939e;
-      --work-b-line: rgba(214, 224, 238, 0.08);
-      --work-b-line-strong: rgba(214, 224, 238, 0.14);
-      --work-frame: #0f1012;
-      --work-frame-raised: #17181b;
-      --work-frame-ink: #edebe6;
-      --work-frame-ink-2: #c9c7c1;
-      --work-frame-muted: #a19f99;
-      --work-frame-line: rgba(237, 235, 230, 0.07);
-      --work-frame-hover: rgba(237, 235, 230, 0.05);
-      --work-frame-selected: rgba(237, 235, 230, 0.085);
+      /* Shared workbench surfaces in both layouts. */
+      --work-canvas: #0e1013;
+      --work-raised: #15181c;
+      --work-sunken: #0b0d10;
+      --work-ink: #e6e9ee;
+      --work-ink-2: #c1c7cf;
+      --work-muted: #9ba3ae;
+      --work-faint: #8b939e;
+      --work-line: rgba(214, 224, 238, 0.08);
+      --work-line-strong: rgba(214, 224, 238, 0.14);
       --work-running: #86a8ff;
       --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07);
 
@@ -496,33 +462,16 @@
   }
 
   :root[data-theme='dark'] {
-    /* The two workbench layouts share roles, with a charcoal frame for the overview. */
-    --work-a-canvas: #17181b;
-    --work-a-raised: #1e1f23;
-    --work-a-sunken: #121315;
-    --work-a-ink: #edebe6;
-    --work-a-ink-2: #c9c7c1;
-    --work-a-muted: #a3a19b;
-    --work-a-faint: #908e89;
-    --work-a-line: rgba(237, 235, 230, 0.075);
-    --work-a-line-strong: rgba(237, 235, 230, 0.13);
-    --work-b-canvas: #0e1013;
-    --work-b-raised: #15181c;
-    --work-b-sunken: #0b0d10;
-    --work-b-ink: #e6e9ee;
-    --work-b-ink-2: #c1c7cf;
-    --work-b-muted: #9ba3ae;
-    --work-b-faint: #8b939e;
-    --work-b-line: rgba(214, 224, 238, 0.08);
-    --work-b-line-strong: rgba(214, 224, 238, 0.14);
-    --work-frame: #0f1012;
-    --work-frame-raised: #17181b;
-    --work-frame-ink: #edebe6;
-    --work-frame-ink-2: #c9c7c1;
-    --work-frame-muted: #a19f99;
-    --work-frame-line: rgba(237, 235, 230, 0.07);
-    --work-frame-hover: rgba(237, 235, 230, 0.05);
-    --work-frame-selected: rgba(237, 235, 230, 0.085);
+    /* Shared workbench surfaces in both layouts. */
+    --work-canvas: #0e1013;
+    --work-raised: #15181c;
+    --work-sunken: #0b0d10;
+    --work-ink: #e6e9ee;
+    --work-ink-2: #c1c7cf;
+    --work-muted: #9ba3ae;
+    --work-faint: #8b939e;
+    --work-line: rgba(214, 224, 238, 0.08);
+    --work-line-strong: rgba(214, 224, 238, 0.14);
     --work-running: #86a8ff;
     --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07);
 
@@ -621,33 +570,16 @@
    * match); layout, motion and the contextual --surface stay free.
    */
   :where([data-secure], [data-secure] *) {
-    /* The two workbench layouts share roles, with a charcoal frame for the overview. */
-    --work-a-canvas: #f6f6f3 !important;
-    --work-a-raised: #fefefd !important;
-    --work-a-sunken: #efefeb !important;
-    --work-a-ink: #17171a !important;
-    --work-a-ink-2: #3a3a3c !important;
-    --work-a-muted: #67676a !important;
-    --work-a-faint: #77777a !important;
-    --work-a-line: rgba(22, 22, 26, 0.08) !important;
-    --work-a-line-strong: rgba(22, 22, 26, 0.14) !important;
-    --work-b-canvas: #eceef1 !important;
-    --work-b-raised: #fbfcfd !important;
-    --work-b-sunken: #e3e6ea !important;
-    --work-b-ink: #111419 !important;
-    --work-b-ink-2: #343a42 !important;
-    --work-b-muted: #5d6570 !important;
-    --work-b-faint: #737a84 !important;
-    --work-b-line: rgba(16, 20, 26, 0.085) !important;
-    --work-b-line-strong: rgba(16, 20, 26, 0.15) !important;
-    --work-frame: #eaeae5 !important;
-    --work-frame-raised: #dfdfd9 !important;
-    --work-frame-ink: #17171a !important;
-    --work-frame-ink-2: #3a3a3c !important;
-    --work-frame-muted: #67676a !important;
-    --work-frame-line: rgba(22, 22, 26, 0.09) !important;
-    --work-frame-hover: rgba(22, 22, 26, 0.05) !important;
-    --work-frame-selected: #fdfdfb !important;
+    /* Shared workbench surfaces in both layouts. */
+    --work-canvas: #eceef1 !important;
+    --work-raised: #fbfcfd !important;
+    --work-sunken: #e3e6ea !important;
+    --work-ink: #111419 !important;
+    --work-ink-2: #343a42 !important;
+    --work-muted: #5d6570 !important;
+    --work-faint: #737a84 !important;
+    --work-line: rgba(16, 20, 26, 0.085) !important;
+    --work-line-strong: rgba(16, 20, 26, 0.15) !important;
     --work-running: #2c5ad6 !important;
     --work-card-shadow:
       0 0 0 1px rgba(16, 20, 26, 0.07), 0 1px 2px rgba(16, 20, 26, 0.04), 0 10px 24px -16px rgba(16, 20, 26, 0.2) !important;
@@ -839,33 +771,16 @@
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) :where([data-secure], [data-secure] *) {
-      /* The two workbench layouts share roles, with a charcoal frame for the overview. */
-      --work-a-canvas: #17181b !important;
-      --work-a-raised: #1e1f23 !important;
-      --work-a-sunken: #121315 !important;
-      --work-a-ink: #edebe6 !important;
-      --work-a-ink-2: #c9c7c1 !important;
-      --work-a-muted: #a3a19b !important;
-      --work-a-faint: #908e89 !important;
-      --work-a-line: rgba(237, 235, 230, 0.075) !important;
-      --work-a-line-strong: rgba(237, 235, 230, 0.13) !important;
-      --work-b-canvas: #0e1013 !important;
-      --work-b-raised: #15181c !important;
-      --work-b-sunken: #0b0d10 !important;
-      --work-b-ink: #e6e9ee !important;
-      --work-b-ink-2: #c1c7cf !important;
-      --work-b-muted: #9ba3ae !important;
-      --work-b-faint: #8b939e !important;
-      --work-b-line: rgba(214, 224, 238, 0.08) !important;
-      --work-b-line-strong: rgba(214, 224, 238, 0.14) !important;
-      --work-frame: #0f1012 !important;
-      --work-frame-raised: #17181b !important;
-      --work-frame-ink: #edebe6 !important;
-      --work-frame-ink-2: #c9c7c1 !important;
-      --work-frame-muted: #a19f99 !important;
-      --work-frame-line: rgba(237, 235, 230, 0.07) !important;
-      --work-frame-hover: rgba(237, 235, 230, 0.05) !important;
-      --work-frame-selected: rgba(237, 235, 230, 0.085) !important;
+      /* Shared workbench surfaces in both layouts. */
+      --work-canvas: #0e1013 !important;
+      --work-raised: #15181c !important;
+      --work-sunken: #0b0d10 !important;
+      --work-ink: #e6e9ee !important;
+      --work-ink-2: #c1c7cf !important;
+      --work-muted: #9ba3ae !important;
+      --work-faint: #8b939e !important;
+      --work-line: rgba(214, 224, 238, 0.08) !important;
+      --work-line-strong: rgba(214, 224, 238, 0.14) !important;
       --work-running: #86a8ff !important;
       --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07) !important;
 
@@ -957,33 +872,16 @@
   }
 
   :root[data-theme='dark'] :where([data-secure], [data-secure] *) {
-    /* The two workbench layouts share roles, with a charcoal frame for the overview. */
-    --work-a-canvas: #17181b !important;
-    --work-a-raised: #1e1f23 !important;
-    --work-a-sunken: #121315 !important;
-    --work-a-ink: #edebe6 !important;
-    --work-a-ink-2: #c9c7c1 !important;
-    --work-a-muted: #a3a19b !important;
-    --work-a-faint: #908e89 !important;
-    --work-a-line: rgba(237, 235, 230, 0.075) !important;
-    --work-a-line-strong: rgba(237, 235, 230, 0.13) !important;
-    --work-b-canvas: #0e1013 !important;
-    --work-b-raised: #15181c !important;
-    --work-b-sunken: #0b0d10 !important;
-    --work-b-ink: #e6e9ee !important;
-    --work-b-ink-2: #c1c7cf !important;
-    --work-b-muted: #9ba3ae !important;
-    --work-b-faint: #8b939e !important;
-    --work-b-line: rgba(214, 224, 238, 0.08) !important;
-    --work-b-line-strong: rgba(214, 224, 238, 0.14) !important;
-    --work-frame: #0f1012 !important;
-    --work-frame-raised: #17181b !important;
-    --work-frame-ink: #edebe6 !important;
-    --work-frame-ink-2: #c9c7c1 !important;
-    --work-frame-muted: #a19f99 !important;
-    --work-frame-line: rgba(237, 235, 230, 0.07) !important;
-    --work-frame-hover: rgba(237, 235, 230, 0.05) !important;
-    --work-frame-selected: rgba(237, 235, 230, 0.085) !important;
+    /* Shared workbench surfaces in both layouts. */
+    --work-canvas: #0e1013 !important;
+    --work-raised: #15181c !important;
+    --work-sunken: #0b0d10 !important;
+    --work-ink: #e6e9ee !important;
+    --work-ink-2: #c1c7cf !important;
+    --work-muted: #9ba3ae !important;
+    --work-faint: #8b939e !important;
+    --work-line: rgba(214, 224, 238, 0.08) !important;
+    --work-line-strong: rgba(214, 224, 238, 0.14) !important;
     --work-running: #86a8ff !important;
     --work-card-shadow: inset 0 1px 0 rgba(214, 224, 238, 0.035), 0 0 0 1px rgba(214, 224, 238, 0.07) !important;
 

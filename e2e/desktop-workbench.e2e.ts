@@ -13,7 +13,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 import { measureWorkbenchSwitch } from './helpers/workbenchSwitch.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
 import { LAYOUT_NAMES, layoutSwitch, switchLayout } from './helpers/workbench.ts'
 
 const OUT = 'test-results/desktop-workbench'
@@ -33,6 +33,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
           model: 'fixture',
           async *stream({ messages, signal }) {
             const prompt = messages.findLast(message => message.role === 'user')?.content
+            if (prompt?.startsWith('重试桌面验收任务 ')) throw new Error('暂时无法生成验收记录。')
             if (prompt === '等待批准配置' && messages.at(-1)?.role !== 'tool') {
               yield {
                 type: 'tool-call',
@@ -227,11 +228,52 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
           await switchLayout(page, layout)
           await noHorizontalOverflow(page)
           expect(await delivery.textContent()).toContain('未提交 1 个文件')
+          await expect.poll(() => home.locator('.approval-panel[data-arming]').count()).toBe(0)
           await page.screenshot({ path: `${OUT}/${layout}-home-1440-${theme}.png`, animations: 'disabled' })
         }
       }
+      for (let index = 1; index <= 7; index++) {
+        const failure = await owner.json<{ sessionId: string }>('tasks', {
+          method: 'POST',
+          body: {
+            requestId: randomUUID(),
+            prompt: `重试桌面验收任务 ${index}`,
+            model: { providerId: 'desktop-workbench-model', model: 'fixture' },
+          },
+        })
+        await expect.poll(async () => (await host.host.bridge.detail(failure.sessionId)).summary.status).toBe('failed')
+      }
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1440, 560))
+      await expect.poll(() => page.evaluate(() => innerHeight)).toBe(560)
+      const attention = home.getByRole('region', { name: '等你处理', exact: true })
+      for (const layout of ['overview', 'triage'] as const) {
+        await switchLayout(page, layout)
+        const more = attention.getByRole('button', { name: /^还有 3 件$|^收起$/u, exact: true })
+        await more.waitFor()
+        const composer = home.locator('.workbench-home-composer')
+        const composerBox = await composer.boundingBox()
+        const switchBox = await layoutSwitch(page).boundingBox()
+        const heading = attention.getByRole('heading')
+        await heading.scrollIntoViewIfNeeded()
+        const wheelBox = await heading.boundingBox()
+        const start = await attention.evaluate(element => element.scrollTop)
+        await page.mouse.move(wheelBox!.x + wheelBox!.width / 2, wheelBox!.y + wheelBox!.height / 2)
+        await page.mouse.wheel(0, 600)
+        await expect.poll(() => attention.evaluate(element => element.scrollTop)).toBeGreaterThan(start)
+        if ((await more.textContent()) === '还有 3 件') await more.click()
+        const last = attention.locator('.work-overview-list > li').last().getByRole('button').first()
+        await reachable(last)
+        await reachable(home.getByRole('button', { name: 'desktop.txt', exact: true }))
+        await settleShell(page)
+        expect(await home.evaluate(element => [element.scrollTop, document.scrollingElement?.scrollTop])).toEqual([0, 0])
+        expect(await composer.boundingBox()).toEqual(composerBox)
+        expect(await layoutSwitch(page).boundingBox()).toEqual(switchBox)
+        await page.screenshot({ path: `${OUT}/${layout}-short-queue-1440-dark.png`, animations: 'disabled' })
+      }
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1440, 1000))
       // The actual home decision changes the file and continues that session without consuming either draft.
       const allow = home.locator('.approval-panel').getByRole('button', { name: '允许', exact: true })
+      await allow.scrollIntoViewIfNeeded()
       await expect.poll(() => allow.isEnabled()).toBe(true)
       await allow.click()
       await expect.poll(async () => (await host.host.bridge.detail(waiting)).summary.status).toBe('idle')

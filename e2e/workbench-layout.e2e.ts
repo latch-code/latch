@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { chromium, type Page } from '@playwright/test'
+import { chromium, type Locator, type Page } from '@playwright/test'
 import { expect, it } from 'vitest'
 import type { TaskDetail, TaskStatus, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
@@ -62,6 +62,16 @@ async function capture(page: Page, surface: string, width: number, theme: 'light
   await expect.poll(() => page.locator('.approval-panel[data-arming], .question-card[data-arming]').count()).toBe(0)
   await noHorizontalOverflow(page)
   await page.screenshot({ path: `${OUTPUT}/${surface}--${width}--${theme}.png`, animations: 'disabled', caret: 'hide' })
+}
+
+function paintedBackground(locator: Locator): Promise<string> {
+  return locator.evaluate(element => {
+    for (let layer: Element | null = element; layer; layer = layer.parentElement) {
+      const color = getComputedStyle(layer).backgroundColor
+      if (color !== 'rgba(0, 0, 0, 0)') return color
+    }
+    throw new Error('No painted background')
+  })
 }
 
 it('keeps real sessions and drafts through layout changes, and shows both homes across widths and themes', async () => {
@@ -434,6 +444,7 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
         for (const theme of ['light', 'dark'] as const) {
           await page.emulateMedia({ colorScheme: theme })
           await openHome(page)
+          const canvasByLayout = []
           for (const layout of ['overview', 'triage'] as const) {
             await layoutMenu(page, layout)
             const home = page.locator('.workbench-home')
@@ -451,6 +462,17 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             }
             await capture(page, layout, width, theme)
             await noHorizontalOverflow(page, home)
+            const canvas = await paintedBackground(home)
+            canvasByLayout.push(canvas)
+            expect(await paintedBackground(home.locator('.composer').first())).not.toBe(canvas)
+            expect(await paintedBackground(home.locator('.approval-panel').first())).not.toBe(canvas)
+            if (layout === 'overview' && width >= 768) {
+              const navigation = page
+                .locator(width >= 1024 ? '.sidebar' : '.workbench-tablet-rail')
+                .locator('visible=true')
+                .first()
+              expect(await paintedBackground(navigation)).toBe(canvas)
+            }
             if (width < 768) {
               // Touch targets: each segment of the layout switch and the input's two buttons answer 44px around their middle.
               const hits = await page.evaluate(() =>
@@ -556,7 +578,31 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
           expect(await layouts.getByRole('radio', { name: /^顶栏/u }).getAttribute('aria-checked')).toBe('true')
           expect(await page.evaluate(() => document.body.innerText)).not.toContain('分拣台')
           await noHorizontalOverflow(page, layouts)
-          await capture(page, 'settings', width, theme)
+          for (const layout of ['triage', 'overview'] as const) {
+            if (layout === 'overview') {
+              await layouts.getByRole('radio', { name: /^侧栏/u }).click()
+              await expect.poll(() => page.locator('.app-shell').getAttribute('data-workbench-layout')).toBe(layout)
+            }
+            await capture(page, `${layout}-settings`, width, theme)
+            const settings = page.locator('.settings-page')
+            const canvas = canvasByLayout[0]
+            expect(canvasByLayout).toEqual([canvas, canvas])
+            expect(await paintedBackground(settings.locator('.settings-nav-pane'))).toBe(canvas)
+            if (width >= 768) {
+              const lead = page.locator('.titlebar-lead:visible, .workbench-nav:visible, .workbench-tablet-rail:visible').first()
+              expect(await paintedBackground(lead)).toBe(canvas)
+            }
+            const previews = layouts.locator('.layout-preview')
+            const [side, top] = [previews.first(), previews.last()]
+            expect(await paintedBackground(side)).toBe(canvas)
+            expect(await paintedBackground(top)).toBe(canvas)
+            expect(await paintedBackground(side.locator('.layout-preview-rail'))).toBe(canvas)
+            expect(await paintedBackground(top.locator('.layout-preview-rail'))).toBe(canvas)
+            const previewInput = await paintedBackground(side.locator('.layout-preview-input'))
+            expect(previewInput).not.toBe(canvas)
+            expect(await paintedBackground(top.locator('.layout-preview-input'))).toBe(previewInput)
+          }
+          await closeSettings(page.locator('.settings-page'))
         }
       } finally {
         await screenshotContext.close()

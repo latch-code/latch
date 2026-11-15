@@ -40,8 +40,8 @@
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--r-6);
-  background: var(--work-a-canvas);
-  color: var(--work-a-muted);
+  background: var(--work-canvas);
+  color: var(--work-muted);
   font-size: var(--fs-meta);
   line-height: var(--lh-meta);
   text-align: left;
@@ -52,16 +52,15 @@
   flex-direction: column;
   gap: var(--sp-4);
   padding: var(--sp-8) var(--sp-4);
-  background: var(--work-frame);
-  color: var(--work-frame-muted);
+  border-inline-end: 1px solid var(--work-line);
 }
 .layout-preview-rail b {
   font-weight: 600;
-  color: var(--work-frame-ink);
+  color: var(--work-ink);
 }
 .layout-preview-current {
-  background: var(--work-frame-selected);
-  color: var(--work-frame-ink);
+  background: var(--selected);
+  color: var(--work-ink);
   border-radius: var(--r-2);
   padding: var(--sp-2);
 }
@@ -85,9 +84,9 @@
 }
 .layout-preview-input {
   padding: var(--sp-6);
-  border: 1px solid var(--work-a-line);
+  border: 1px solid var(--work-line);
   border-radius: var(--r-4);
-  background: var(--work-a-raised);
+  background: var(--work-raised);
   white-space: nowrap;
   overflow: hidden;
 }
@@ -121,7 +120,7 @@
   padding: var(--sp-4);
   border: 1px solid var(--amber-line);
   border-radius: var(--r-4);
-  background: var(--work-a-raised);
+  background: var(--work-raised);
 }
 .layout-preview-card > i:first-child {
   width: 70%;
@@ -150,23 +149,17 @@
 }
 .layout-preview[data-layout='triage'] {
   flex-direction: column;
-  background: var(--work-b-canvas);
 }
 .layout-preview[data-layout='triage'] .layout-preview-rail {
   flex: 0;
   flex-direction: row;
   gap: var(--sp-8);
   padding: var(--sp-4) var(--sp-8);
-  background: var(--work-b-canvas);
-  color: var(--work-b-muted);
-  border-bottom: 1px solid var(--work-b-line);
-}
-.layout-preview[data-layout='triage'] .layout-preview-rail b {
-  color: var(--work-b-ink);
+  border-inline-end: 0;
+  border-bottom: 1px solid var(--work-line);
 }
 .layout-preview[data-layout='triage'] .layout-preview-current {
   background: transparent;
-  color: var(--work-b-ink);
 }
 .layout-preview[data-layout='triage'] .layout-preview-rail i {
   display: none;
@@ -179,11 +172,8 @@
   gap: var(--sp-4);
 }
 .layout-preview[data-layout='triage'] .layout-preview-lines > span + span {
-  border-left: 1px solid var(--work-b-line);
+  border-left: 1px solid var(--work-line);
   padding-left: var(--sp-4);
-}
-.layout-preview[data-layout='triage'] :is(.layout-preview-input, .layout-preview-card) {
-  background: var(--work-b-raised);
 }
 
 /*

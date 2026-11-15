@@ -1,15 +1,15 @@
 /* Two shells for the same work: a project frame, or a sorting desk and its queue. */
 .app-shell {
-  --canvas: var(--work-a-canvas);
-  --raised: var(--work-a-raised);
-  --card: var(--work-a-raised);
-  --sunken: var(--work-a-sunken);
-  --ink: var(--work-a-ink);
-  --ink-2: var(--work-a-ink-2);
-  --muted: var(--work-a-muted);
-  --faint: var(--work-a-faint);
-  --line: var(--work-a-line);
-  --line-strong: var(--work-a-line-strong);
+  --canvas: var(--work-canvas);
+  --raised: var(--work-raised);
+  --card: var(--work-raised);
+  --sunken: var(--work-sunken);
+  --ink: var(--work-ink);
+  --ink-2: var(--work-ink-2);
+  --muted: var(--work-muted);
+  --faint: var(--work-faint);
+  --line: var(--work-line);
+  --line-strong: var(--work-line-strong);
   --sidebar: var(--canvas);
   --shell-inset: 0px;
   --fs-ui: var(--fs-work-ui);
@@ -22,16 +22,6 @@
   background: var(--canvas);
 }
 .app-shell[data-workbench-layout='triage'] {
-  --canvas: var(--work-b-canvas);
-  --raised: var(--work-b-raised);
-  --card: var(--work-b-raised);
-  --sunken: var(--work-b-sunken);
-  --ink: var(--work-b-ink);
-  --ink-2: var(--work-b-ink-2);
-  --muted: var(--work-b-muted);
-  --faint: var(--work-b-faint);
-  --line: var(--work-b-line);
-  --line-strong: var(--work-b-line-strong);
   --content-width: 820px;
   --gutter: 48px;
   grid-template-rows: 56px minmax(0, 1fr);
@@ -52,27 +42,6 @@
 }
 .app-shell[data-layout-changing] {
   transition-duration: var(--m-micro);
-}
-.app-shell[data-workbench-layout='overview'] :is(.sidebar, .titlebar-lead, .agents-sidebar, .workbench-tablet-rail) {
-  --canvas: var(--work-frame);
-  --sidebar: var(--work-frame);
-  --sunken: var(--work-frame-raised);
-  --raised: var(--work-frame-raised);
-  --ink: var(--work-frame-ink);
-  --ink-2: var(--work-frame-ink-2);
-  --muted: var(--work-frame-muted);
-  --faint: var(--work-frame-muted);
-  --line: var(--work-frame-line);
-  --hover: var(--work-frame-hover);
-  --press: var(--work-frame-selected);
-  --selected: var(--work-frame-selected);
-  --selected-ring: none;
-  --seg-on: var(--work-frame-selected);
-  --seg-on-shadow: none;
-  --surface: var(--work-frame);
-  --accent: var(--work-running);
-  background: var(--work-frame);
-  color: var(--ink);
 }
 .titlebar-wordmark {
   display: inline-flex;
@@ -548,7 +517,7 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-.workbench-home > .work-overview {
+:is(.workbench-home, .code-home-queue) > .work-overview {
   max-width: 1088px;
   padding: var(--sp-40) 0 0;
 }
@@ -573,11 +542,11 @@
   padding: var(--sp-28) var(--sp-40) var(--sp-32);
 }
 .app-shell[data-workbench-layout='triage'] .workbench-home-composer,
-.app-shell[data-workbench-layout='triage'] .workbench-home > .work-overview {
+.app-shell[data-workbench-layout='triage'] :is(.workbench-home, .code-home-queue) > .work-overview {
   max-width: 1296px;
   margin-inline: auto;
 }
-.app-shell[data-workbench-layout='triage'] .workbench-home > .work-overview {
+.app-shell[data-workbench-layout='triage'] :is(.workbench-home, .code-home-queue) > .work-overview {
   padding-top: var(--sp-32);
 }
 .app-shell[data-workbench-layout='triage'] .workbench-home .work-overview-groups {
@@ -598,30 +567,107 @@
 .app-shell[data-workbench-layout='triage'] .sidebar {
   border-right: 1px solid var(--line);
 }
+
+/* Code keeps the navigation and composer outside the queue, even when the window is short. */
+.workbench-home.code-home {
+  display: flex;
+  flex-direction: column;
+  overflow: clip;
+}
+.code-home > :not(.code-home-queue) {
+  flex-shrink: 0;
+}
+.code-home-input {
+  max-height: 60dvh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* Leave room for the composer's outer edge inside its fallback scroll area. */
+  margin: -1px;
+  padding: 1px;
+}
+.code-home .workbench-home-composer textarea {
+  max-height: min(232px, 24dvh);
+}
+.code-home-queue {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.code-home-queue > * {
+  flex-shrink: 0;
+}
+.code-home-queue > .work-overview {
+  width: 100%;
+}
+
+@media (min-width: 1024px) and (min-height: 480px) {
+  .app-shell[data-workbench-layout='triage'] .code-home:has(.work-overview) {
+    padding-bottom: 0;
+  }
+  /* Setup cards share the whole content scroller; with room, each desktop lane can be read on its own. */
+  .code-home-queue:not(:has(> .code-home-notices > *)) > .work-overview {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .code-home-queue:not(:has(> .code-home-notices > *)) > .work-overview > .work-overview-groups {
+    flex: 1;
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+    min-height: 0;
+  }
+  .code-home-queue:not(:has(> .code-home-notices > *)) > .work-overview[data-layout='overview'] > .work-overview-groups {
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+  .code-home-queue > .work-overview[data-layout='overview'] .work-overview-group[data-group='attention'] {
+    grid-column: 1;
+    grid-row: 1 / 3;
+  }
+  .code-home-queue > .work-overview[data-layout='overview'] .work-overview-group[data-group='delivery'] {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .code-home-queue:not(:has(> .code-home-notices > *)) > .work-overview .work-overview-group {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    padding-bottom: var(--sp-8);
+  }
+}
+@media (min-width: 768px) and (max-height: 479.98px) {
+  .app-shell .workbench-home.code-home {
+    padding-bottom: var(--sp-8);
+  }
+}
 /* 顶栏: the three lanes reach the window's foot and each scrolls by itself, so their dividing lines never stop short. */
 @media (min-width: 1024px) {
-  .app-shell[data-workbench-layout='triage'] .workbench-home:has(> .work-overview) {
+  .app-shell[data-workbench-layout='triage'] .agents-home:has(> .work-overview) {
     display: flex;
     flex-direction: column;
     padding-bottom: 0;
   }
-  .app-shell[data-workbench-layout='triage'] .workbench-home > :not(.work-overview) {
+  .app-shell[data-workbench-layout='triage'] .agents-home > :not(.work-overview) {
     flex-shrink: 0;
     width: 100%;
   }
-  .app-shell[data-workbench-layout='triage'] .workbench-home > .work-overview {
+  .app-shell[data-workbench-layout='triage'] .agents-home > .work-overview {
     display: flex;
     flex: 1 0 320px;
     flex-direction: column;
     width: 100%;
     min-height: 0;
   }
-  .app-shell[data-workbench-layout='triage'] .workbench-home > .work-overview > .work-overview-groups {
+  .app-shell[data-workbench-layout='triage'] .agents-home > .work-overview > .work-overview-groups {
     flex: 1 1 0;
     grid-template-rows: minmax(0, 1fr);
     min-height: 0;
   }
-  .app-shell[data-workbench-layout='triage'] .workbench-home > .work-overview .work-overview-group {
+  .app-shell[data-workbench-layout='triage'] .agents-home > .work-overview .work-overview-group {
     min-height: 0;
     overflow-y: auto;
     padding-bottom: var(--sp-32);
@@ -1290,7 +1336,29 @@
   .app-shell[data-workbench-layout='triage'] .workbench-home {
     padding: var(--sp-16) var(--sp-16) 140px;
   }
-  .workbench-home > .work-overview {
+  .app-shell .workbench-home.code-home {
+    padding: var(--sp-16) 0 0;
+  }
+  .code-home > :is(.workbench-phone-heading, .workbench-phone-code-nav) {
+    margin-inline: var(--sp-16);
+  }
+  .code-home-queue {
+    padding: 0 var(--sp-16) var(--sp-16);
+  }
+  .code-home-input {
+    order: 1;
+    max-height: 52dvh;
+    background: var(--canvas);
+    margin: 0;
+    padding: 0;
+  }
+  .code-home > .code-home-input > .workbench-home-composer {
+    position: static;
+  }
+  .code-home-input > .workbench-home-demo {
+    margin: var(--sp-8) var(--sp-12);
+  }
+  :is(.workbench-home, .code-home-queue) > .work-overview {
     padding-top: var(--sp-20);
   }
   .workbench-phone-code-nav {

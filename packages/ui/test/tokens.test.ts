@@ -335,18 +335,15 @@ describe('design tokens', () => {
     }
   })
 
-  it('keeps both workbench surfaces and the charcoal frame readable in either theme', () => {
+  it('keeps the shared workbench surfaces readable in either theme', () => {
     for (const [theme, values] of Object.entries(themes())) {
       const get = (token: string) => colour(values.get(token))
-      for (const layout of ['a', 'b'])
-        for (const background of ['canvas', 'raised', 'sunken'])
-          for (const text of ['ink', 'ink-2', 'muted']) {
-            const foreground = `--work-${layout}-${text}`,
-              surface = `--work-${layout}-${background}`
-            expect(contrast(get(foreground), get(surface)), `${theme} ${foreground} on ${surface}`).toBeGreaterThanOrEqual(4.5)
-          }
-      for (const text of ['ink', 'ink-2', 'muted'])
-        expect(contrast(get(`--work-frame-${text}`), get('--work-frame')), `${theme} frame ${text}`).toBeGreaterThanOrEqual(4.5)
+      for (const background of ['canvas', 'raised', 'sunken'])
+        for (const text of ['ink', 'ink-2', 'muted']) {
+          const foreground = `--work-${text}`,
+            surface = `--work-${background}`
+          expect(contrast(get(foreground), get(surface)), `${theme} ${foreground} on ${surface}`).toBeGreaterThanOrEqual(4.5)
+        }
     }
   })
 

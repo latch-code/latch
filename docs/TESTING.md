@@ -429,6 +429,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `workbench-layout.e2e.ts` 验证侧栏与顶栏两种布局的共用会话、草稿与布局偏好，布局开关、⌥⌘L 与命令面板三个入口，切换后停在同一页并保留焦点，以及手机、平板、桌面的浅深色截图。分类的失败、未知、停止与归档/私有话题边界见 `apps/web/test/work-overview.test.ts`；默认偏好、旧数据和本地存储见 `workbench-preferences.test.ts`。
 
+`workbench-scroll.e2e.ts` 用真实滚轮验证三种宽度和两种布局：外层首页与文档不滚，队列内容滚动，导航与输入框留在原处；展开更多后最后一项可点击，矮窗长草稿仍可用 Harness 选择和附件。`workbench-layout.e2e.ts` 读取页面实际画出的底色，核对两种布局的工作面、设置标题与导航、两张布局预览一致，以及输入框和决定卡与画布有层次。
+
 `workbench-git-eligibility.e2e.ts` 经真实 Host API 对照普通文件夹、损坏 HEAD 与实际 Git 改动，再从首页刷新、打开概要和交付，截图覆盖三宽、两布局、浅深色。不适用不冒称读取失败，损坏状态不冒称没有改动。Host 的同名测试另检查权限、链接、目录及祖先替换后还原的拒绝。`desktop-workbench.e2e.ts` 使用真实临时 Git 仓库验证有内容的三道与布局/空间切换，并在 Electron 正常入口从首页批准写入、继续原会话和查看 Git 改动，保留两套草稿与附件。
 
 `palette.e2e.ts` 在六种宽度/配色下用受控 Provider 实际追加新匹配，核对运行中即更新计数、保留选中位置；旧行插入/移除、完成、重开查找和键盘退回仍覆盖。`agent-activity.e2e.ts` 的外部 L3 任务保存为关闭后人工运行，不为展示结果卡开启后台执行。

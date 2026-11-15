@@ -481,7 +481,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             </LiveChanges>
             {overview && (
               <section
-                className="workbench-home"
+                className="workbench-home code-home"
                 aria-label="总览"
                 onDragEnter={event => {
                   if (
@@ -533,24 +533,30 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     )}
                   </nav>
                 )}
-                {usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId) && (
-                  <p className="workbench-home-demo">
-                    <StatusPill tone="warn">演示模型</StatusPill>
-                  </p>
-                )}
-                <ConnectionBanners shell={shell} />
-                <div className="workbench-home-composer">
-                  <SendingBubble shell={homeShell} />
-                  <SessionComposer shell={shell} home />
-                </div>
-                <SetupNotices shell={homeShell} />
-                {listsFoundHarnesses(catalog, snapshot.tasks.length, shell.access) && <FoundHarnessesCard onRecheck={refresh} />}
-                {!submission.fork && work.snapshot.tasks.some(task => !task.archived) && (
-                  <div className="workbench-home-history">
-                    <HistoryImportEntry snapshot={snapshot} workspaceId={choice.workspaceId} phone={phone} onOpen={choose} />
+                <div className="code-home-input">
+                  {usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId) && (
+                    <p className="workbench-home-demo">
+                      <StatusPill tone="warn">演示模型</StatusPill>
+                    </p>
+                  )}
+                  <ConnectionBanners shell={shell} />
+                  <div className="workbench-home-composer">
+                    <SendingBubble shell={homeShell} />
+                    <SessionComposer shell={shell} home />
                   </div>
-                )}
-                <WorkOverview {...work} />
+                </div>
+                <div className="code-home-queue">
+                  <div className="code-home-notices">
+                    <SetupNotices shell={homeShell} />
+                    {listsFoundHarnesses(catalog, snapshot.tasks.length, shell.access) && <FoundHarnessesCard onRecheck={refresh} />}
+                  </div>
+                  {!submission.fork && work.snapshot.tasks.some(task => !task.archived) && (
+                    <div className="workbench-home-history">
+                      <HistoryImportEntry snapshot={snapshot} workspaceId={choice.workspaceId} phone={phone} onOpen={choose} />
+                    </div>
+                  )}
+                  <WorkOverview {...work} />
+                </div>
               </section>
             )}
             {allSessions && !phone && <WorkbenchSessions shell={shell} snapshot={listed} />}

@@ -23,6 +23,7 @@
 .approval-panel[data-presentation] {
   margin: 0 !important;
   border: 0 !important;
+  background: var(--work-raised) !important;
   border-radius: var(--r-14) !important;
   padding: var(--sp-16) var(--sp-20) !important;
   box-shadow:
@@ -76,12 +77,6 @@
 }
 .approval-panel[data-presentation] .approval-buttons > .ui-button {
   border-radius: var(--r-9) !important;
-}
-.app-shell[data-workbench-layout='overview'] .approval-panel[data-presentation] {
-  background: var(--work-a-raised) !important;
-}
-.app-shell[data-workbench-layout='triage'] .approval-panel[data-presentation] {
-  background: var(--work-b-raised) !important;
 }
 .approval-panel[data-presentation] .approval-meta > .work-decision-context {
   flex: 1;

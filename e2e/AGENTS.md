@@ -10,7 +10,7 @@ Vitest 驱动浏览器、Electron 与原生；剪贴板回归用独立命名板�
 | `vitest.config.ts` | 文件依次运行，用例与钩子超时 120 秒 |
 
 `desktop-native.e2e.ts` 检查 Mac 手机配置、系统确认接线、三宽浅深色和样式覆盖；只截无邀请的设置，生成的二维码不截图。
-`workbench-keyboard.e2e.ts` 在临时 Host、Chromium/WebKit 验证三宽键盘、浮层、焦点和草稿；截图在 `test-results/workbench-keyboard/`。
+`workbench-scroll.e2e.ts`、`workbench-keyboard.e2e.ts` 验证三宽的队列、矮窗输入、菜单、键盘和焦点；截图见 TESTING。
 
 `ios-app.e2e.ts` 用临时 DerivedData、固定依赖和禁签名的 iOS Simulator SDK 构建真实 App，检查 Mach-O 产物不含夹具身份；不启动模拟器或访问钥匙串。SDK 编译不能代替运行时布局、平台许可或真机验收。
 

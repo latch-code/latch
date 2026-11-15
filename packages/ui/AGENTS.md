@@ -6,7 +6,7 @@
 
 不变量：
 
-- 页面与原语的颜色、阴影、字号与行高、间距、圆角与动效只来自这里的令牌：样式表只读已定义的令牌（原语可以声明自己的几何变量），颜色不写字面值，字号与行高只用角色令牌（`apps/web/test/styles.test.ts` 的 `#takes every colour from the tokens`、`#sets type only through the role tokens, with weights 400, 500 and 600`）。
+- 样式的颜色、阴影、间距、圆角与动效只用令牌；原语可声明几何变量。字号、行高用角色令牌，字重为 400、500、600（`apps/web/test/styles.test.ts`）。工作台两布局和预览共用 `--work-*` 底色。
 - 每种颜色只表达一件事：蓝色只给主按钮、被勾选的控件、焦点、链接与执行状态；琥珀只表示等你处理与警告；红色只表示真实风险或失败；绿色只给差异的新增与短暂的成功对勾。选中行与计数是墨色，琥珀与红色都配文字。
 - 深色在系统偏好（页面没有选浅色时）与 `data-theme="dark"` 下各写一份，两份相同，并重写每个含颜色的令牌（`test/tokens.test.ts#gives every colour token a dark value, identical under the system preference and under data-theme`）。换主题经 `switchTheme`，不播放过渡。
 - 层叠层顺序固定为 `tokens, base, ui, app, security`；原语的规则都在 ui 层（`test/stylesheet.test.ts`），安全相关的界面在最上层。安全界面带 `data-secure`（`Dialog`、`Modal`、`InlineNotice` 的 `secure`），tokens.css 末尾为它们以 `!important` 锁住主题令牌，新增令牌时一并加入（`test/tokens.test.ts`）。
