@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
 import {
   Button,
+  ChecksBar,
   Count,
   EditGlyph,
   FilterPills,
@@ -31,7 +32,7 @@ import { HistoryImportEntry } from '../history/HistoryImport.tsx'
 import { recentCodeWork, workGroups, workStatus, type WorkGroupId } from './workOverview.ts'
 import { WorkbenchReviewQueue } from './WorkbenchReviewQueue.tsx'
 import {
-  deliveryChecks,
+  deliveryCheckSummary,
   deliverySessions,
   useWorkbenchSession,
   type DeliveryRead,
@@ -117,6 +118,7 @@ function DeliveryRow({
   entry,
   snapshot,
   canWrite,
+  showChecksBar,
   onOpen,
 }: {
   task: TaskSummary
@@ -124,11 +126,12 @@ function DeliveryRow({
   snapshot: AppSnapshot
   /** This device may write through the delivery panel now: connected, with the scope to run. */
   canWrite: boolean
+  showChecksBar: boolean
   onOpen: () => void
 }) {
   const pr = entry.pr?.pr
   const state = entry.state
-  const checks = deliveryChecks(entry)
+  const checks = deliveryCheckSummary(entry)
   const changing =
     task.cwd
     && snapshot.tasks.some(
@@ -159,7 +162,8 @@ function DeliveryRow({
         {escapeSecurityText(pr?.title ?? (task.title || '未命名会话'))}
       </Button>
       <div className="work-delivery-state">
-        <span>{checks ?? pending ?? '查看交付状态'}</span>
+        <span>{checks?.text ?? pending ?? '查看交付状态'}</span>
+        {showChecksBar && checks?.segments && <ChecksBar {...checks.segments} />}
         {changing && (
           <Hint className="work-delivery-hint" label="" moreLabel="原因">
             其他会话正在改动这个目录
@@ -357,6 +361,7 @@ export function WorkOverview({
                             entry={evidence.entries.get(task.id)!}
                             snapshot={snapshot}
                             canWrite={connected && shell?.access.scopes.has('run') === true}
+                            showChecksBar={connected && evidence.ready}
                             onOpen={() => {
                               onSelect(task.id)
                               if (shell) requestAnimationFrame(() => shell.showSurface({ kind: 'delivery' }))

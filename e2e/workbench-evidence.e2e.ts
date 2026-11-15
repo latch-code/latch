@@ -190,6 +190,10 @@ it('finds real evidence on the home, decides there, and continues the original s
     expect(await approval.textContent()).toContain('keep')
     expect(await home.locator('[data-group="delivery"] .work-delivery').count()).toBe(1)
     await expect.poll(() => home.locator('[data-group="delivery"]').textContent(), { timeout: 10_000 }).toContain('检查通过 2/2')
+    const delivery = home.locator('[data-group="delivery"]')
+    const checks = delivery.getByRole('img', { name: '检查 2/2 通过' })
+    await checks.waitFor()
+    expect(await checks.locator('i[data-state="passed"]').count()).toBe(2)
     await mkdir(OUT, { recursive: true })
     for (const theme of ['light', 'dark'] as const)
       for (const layout of ['overview', 'triage'] as const) {
@@ -198,6 +202,7 @@ it('finds real evidence on the home, decides there, and continues the original s
         await settleShell(page)
         await page.evaluate(() => document.fonts.ready)
         await expect.poll(() => approval.getByRole('button', { name: '允许', exact: true }).isDisabled()).toBe(false)
+        await checks.waitFor()
         await noHorizontalOverflow(page)
         await page.screenshot({ path: `${OUT}/${layout}-home--1440--${theme}.png`, animations: 'disabled' })
       }
@@ -310,6 +315,18 @@ it('finds real evidence on the home, decides there, and continues the original s
     }
     await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
     await expect.poll(() => home.locator('[data-group="delivery"]').textContent(), { timeout: 10_000 }).toContain('检查通过 2/2')
+    await checks.waitFor()
+    git('commit', '--allow-empty', '-m', 'Prepare a new head without checks')
+    await expect
+      .poll(
+        async () => {
+          await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+          return delivery.textContent()
+        },
+        { timeout: 10_000 },
+      )
+      .toContain('检查对应旧提交')
+    expect(await checks.count()).toBe(0)
     // A revoked read is authoritative even before the device snapshot has caught up.
     let revokedReads = 0
     await page.route('**/link/api/workbench/delivery', route => {
@@ -332,6 +349,7 @@ it('finds real evidence on the home, decides there, and continues the original s
     await expect.poll(() => home.locator('[data-group="delivery"] .work-delivery').count()).toBe(0)
     expect(await home.locator('[data-group="delivery"] .ui-count').count()).toBe(0)
     expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain('检查通过')
+    expect(await delivery.getByRole('img').count()).toBe(0)
     expect(await gh.violations()).toEqual([])
   } finally {
     for (const id of sessions) await host.host.bridge.cancel(id).catch(() => {})

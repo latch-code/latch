@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TaskSummary, WorkbenchDeliveryEntry } from '@latch/protocol'
-import { deliveryChecks, deliverySessions, hasDelivery } from '../src/shell/useWorkbenchEvidence.ts'
+import { deliveryChecks, deliveryCheckSummary, deliverySessions, hasDelivery } from '../src/shell/useWorkbenchEvidence.ts'
 import { recentCodeWork, workGroups } from '../src/shell/workOverview.ts'
 
 const task = (id: string, extra: Partial<TaskSummary> = {}): TaskSummary => ({
@@ -93,6 +93,28 @@ describe('workbench delivery evidence', () => {
     expect(deliveryChecks(withChecks([{ name: 'test', state: 'pass' }]))).toBe('检查通过 1/1')
     expect(deliveryChecks(withChecks([{ name: 'test', state: 'pending' }]))).toBe('1 项检查中')
     expect(deliveryChecks(withChecks([{ name: 'test', state: 'fail' }]))).toBe('1 项检查失败')
+  })
+
+  it('only shows check counts for an observed repository head matching the PR', () => {
+    const checks: NonNullable<WorkbenchDeliveryEntry['pr']>['checks'] = [
+      { name: 'test', state: 'pass' },
+      { name: 'types', state: 'fail' },
+      { name: 'lint', state: 'pending' },
+      { name: 'desktop', state: 'skipped' },
+    ]
+    const current = entry('s', { pr: { pr, checks } })
+    expect(deliveryCheckSummary(current)).toEqual({
+      text: '1 项检查失败',
+      segments: { passed: 1, failed: 1, total: 4 },
+    })
+    expect(deliveryCheckSummary({ ...current, state: undefined })).toEqual({ text: '1 项检查失败' })
+    expect(deliveryCheckSummary({ ...current, state: { ...current.state!, head: 'new-head' } })).toEqual({ text: '检查对应旧提交' })
+    expect(deliveryCheckSummary({ ...current, pr: { pr: { ...pr, headSha: undefined }, checks } })).toEqual({ text: '1 项检查失败' })
+    expect(deliveryCheckSummary({ ...current, pr: { pr: { ...pr, draft: true }, checks } })).toEqual({ text: '草稿 PR' })
+    expect(deliveryCheckSummary({ ...current, pr: { pr, checks: [] } })).toEqual({ text: '没有检查结果' })
+    const problem = { code: 'gh-unreachable', message: '暂时无法读取 PR' }
+    expect(deliveryCheckSummary({ ...current, error: problem })).toEqual({ text: '1 项检查失败' })
+    expect(deliveryCheckSummary({ ...current, prError: problem })).toEqual({ text: problem.message })
   })
 
   it('keeps the bound PR when another settled session in its working tree is more recent', () => {
