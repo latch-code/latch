@@ -234,3 +234,70 @@ export function isFileMetadata(value: unknown): value is FileMetadata {
     if (value[key] !== undefined && (typeof value[key] !== 'number' || !Number.isInteger(value[key]) || value[key] < 1)) return false
   return true
 }
+
+/** Fixed-header dimensions only: no pixel decoding. */
+export function imageDimensions(bytes: Uint8Array, mime: string): { width: number; height: number } | undefined {
+  const at = (offset: number, text: string) =>
+    bytes.length >= offset + text.length && [...text].every((character, index) => bytes[offset + index] === character.charCodeAt(0))
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  let width = 0,
+    height = 0
+  if (mime === 'image/png' && bytes.length >= 33 && view.getUint32(8) === 13 && at(12, 'IHDR')) {
+    width = view.getUint32(16)
+    height = view.getUint32(20)
+  } else if (mime === 'image/gif' && bytes.length >= 10) {
+    width = view.getUint16(6, true)
+    height = view.getUint16(8, true)
+  } else if (mime === 'image/bmp' && bytes.length >= 26) {
+    width = view.getUint32(14, true) === 12 ? view.getUint16(18, true) : Math.abs(view.getInt32(18, true))
+    height = view.getUint32(14, true) === 12 ? view.getUint16(20, true) : Math.abs(view.getInt32(22, true))
+  } else if (mime === 'image/webp' && bytes.length >= 30 && at(12, 'VP8X') && view.getUint32(16, true) === 10) {
+    width = 1 + bytes[24]! + (bytes[25]! << 8) + (bytes[26]! << 16)
+    height = 1 + bytes[27]! + (bytes[28]! << 8) + (bytes[29]! << 16)
+  } else if (
+    mime === 'image/webp'
+    && bytes.length >= 30
+    && at(12, 'VP8 ')
+    && view.getUint32(16, true) >= 10
+    && at(23, '\u009d\u0001\u002a')
+  ) {
+    width = view.getUint16(26, true) & 0x3fff
+    height = view.getUint16(28, true) & 0x3fff
+  } else if (mime === 'image/webp' && bytes.length >= 25 && at(12, 'VP8L') && view.getUint32(16, true) >= 5 && bytes[20] === 0x2f) {
+    const bits = view.getUint32(21, true)
+    width = 1 + (bits & 0x3fff)
+    height = 1 + ((bits >>> 14) & 0x3fff)
+  } else if (mime === 'image/x-icon' && bytes.length >= 22) {
+    const count = Math.min(view.getUint16(4, true), Math.floor((bytes.length - 6) / 16), 1024)
+    for (let index = 0; index < count; index++) {
+      const w = bytes[6 + 16 * index] || 256
+      const h = bytes[7 + 16 * index] || 256
+      if (w * h > width * height) {
+        width = w
+        height = h
+      }
+    }
+  } else if (mime === 'image/jpeg') {
+    let offset = 2
+    while (offset + 1 < bytes.length && bytes[offset] === 0xff) {
+      while (bytes[offset + 1] === 0xff) offset++
+      const marker = bytes[offset + 1]!
+      if (marker === 0xda || marker === 0xd9) break
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+        offset += 2
+        continue
+      }
+      if (offset + 3 >= bytes.length) break
+      const size = view.getUint16(offset + 2)
+      if (size < 2 || offset + 2 + size > bytes.length) break
+      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        if (size < 8) break
+        height = view.getUint16(offset + 5)
+        width = view.getUint16(offset + 7)
+        break
+      }
+      offset += 2 + size
+    }
+  }
+  return width > 0 && height > 0 ? { width, height } : undefined
+}

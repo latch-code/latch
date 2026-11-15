@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useId, useRef, type RefObject } from 'react'
 import { defineGlyph } from '@latch/ui'
 import type { AgentAvatar as Avatar } from '@latch/protocol'
 import {
@@ -16,6 +16,7 @@ import {
   type AvatarState,
   type EyeShape,
 } from './avatarFace.ts'
+import { useAvatarImage } from './avatarImage.ts'
 import { avatarScheduler, type MotionPart, type MotionTarget } from './avatarMotion.ts'
 
 function Eye({ shape }: { shape: EyeShape }) {
@@ -73,6 +74,9 @@ function useAvatarMotion(ref: RefObject<SVGSVGElement | null>, size: number, sta
  * From 32px it blinks, glances and now and then squints, and wears a small prop for its state: a cursor while running,
  * an amber ? while it waits for you, a red ! after a failure, a drifting z while it cannot start. The state word stays
  * beside it; the face only goes along. Beside a name it is decorative.
+ *
+ * An Agent with a picture shows it on the same plate once this page has read it, with the same props for its state; until
+ * then, and whenever the picture cannot be read, it is the face.
  */
 export function AgentAvatar({
   avatar,
@@ -94,6 +98,8 @@ export function AgentAvatar({
   const ref = useRef<SVGSVGElement>(null)
   useAvatarMotion(ref, size, state, still)
   const face = avatar === 'general' ? GENERAL_AVATAR : avatar
+  const picture = useAvatarImage(avatar !== 'general' && avatar.kind === 'image' ? avatar.image : undefined)
+  const clip = useId()
   const tier = avatarTier(size)
   const props = tier === 'full'
   const resting = state === 'resting'
@@ -107,13 +113,20 @@ export function AgentAvatar({
       data-hue={face.hue}
       data-state={state}
       data-tier={tier}
+      data-picture={picture ? '' : undefined}
       focusable="false"
       {...(decorative || avatar === 'general' ? { 'aria-hidden': true } : { role: 'img', 'aria-label': avatarName(avatar) })}>
       <rect className="agent-avatar-plate" width="40" height="40" rx="13" />
-      {BRACKET_PATHS[face.bracket].map(d => (
-        <path key={d} d={d} strokeWidth={BRACKET_STROKE} className="agent-avatar-line" />
-      ))}
-      <g className="agent-avatar-gaze">
+      {picture && (
+        <>
+          <clipPath id={clip}>
+            <rect width="40" height="40" rx="13" />
+          </clipPath>
+          <image href={picture} width="40" height="40" preserveAspectRatio="xMidYMid slice" clipPath={`url(#${clip})`} />
+        </>
+      )}
+      {!picture && BRACKET_PATHS[face.bracket].map(d => <path key={d} d={d} strokeWidth={BRACKET_STROKE} className="agent-avatar-line" />)}
+      <g className="agent-avatar-gaze" display={picture ? 'none' : undefined}>
         <g data-part="eyes">
           <g className="agent-avatar-base" data-part="base" opacity={resting ? 0 : undefined}>
             {EYE_X.map(x => (

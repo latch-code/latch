@@ -4670,6 +4670,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           model: { providerId: 'svc', model: 'm2' },
           available: true,
           canAutomate: true,
+          // A picture this App does not show yet: the Agent stays in the list, drawn with the face kept beside it.
+          avatar: { kind: 'image', image: 'a'.repeat(64), bracket: 'square', eyes: 'oval', hue: 'moss' },
         },
         {
           id: docs,
@@ -4880,7 +4882,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         place: '家',
         available: true,
         reason: null,
-        avatar: ['round', 'dot', 'neutral'],
+        avatar: ['square', 'oval', 'moss'],
         face: 'idle',
       },
       {

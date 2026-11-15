@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import type { AgentMemory, AgentMemoryChange, MemoryProposal } from '@latch/protocol'
+import { outsideMemory, type AgentMemory, type AgentMemoryChange, type MemoryProposal } from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
@@ -118,7 +118,8 @@ export function MemoryTab({
     <div className="agent-memory">
       <div className="agent-memory-bar">
         <Hint label="只给这个 Agent">
-          只有你能写，只有这个 Agent 会用，工具不会改写它。在这里删除只删 Latch 保存的这一条，不会抹掉上游服务里已有的记录。
+          只有你能写，只有这个 Agent 会用，工具不会改写它。在这里删除只删 Latch
+          保存的这一条，不会抹掉上游服务里已有的记录。导入的和来自外部内容的记忆只作为资料带给 Agent，点「设为我说的」后才算你的话。
         </Hint>
         <TakesEffect />
         <span className="agent-form-spacer" />
@@ -187,7 +188,11 @@ export function MemoryTab({
       ) : (
         <ul className="agent-memory-list" aria-label="记忆">
           {memories.map(memory => {
-            const state = writeFor(writes.state, `memory:${memory.id}`) ?? writeFor(writes.state, `memory:${memory.id}:undo`)
+            const state =
+              writeFor(writes.state, `memory:${memory.id}`)
+              ?? writeFor(writes.state, `memory:${memory.id}:undo`)
+              ?? writeFor(writes.state, `memory:${memory.id}:own`)
+            const material = outsideMemory(memory)
             const saved = state !== null && 'phase' in state && state.phase === 'done' && state.write.method === 'PATCH'
             const undone = state !== null && 'phase' in state && state.phase === 'done' && state.write.key.endsWith(':undo')
             const edited = changes.some(change => change.memoryId === memory.id && change.operation === 'update')
@@ -258,10 +263,30 @@ export function MemoryTab({
                       <StatusWord tone="done">已撤销</StatusWord>
                     ) : memory.source ? (
                       <MemorySource memory={memory} topicTitle={topicTitle} onOpenTopic={onOpenTopic} />
+                    ) : memory.imported ? (
+                      <span className="agent-memory-source">
+                        <span>导入</span>
+                        {memory.imported.external && <StatusWord tone="warn">来自外部内容</StatusWord>}
+                        <time dateTime={memory.createdAt}>{relativeTime(memory.createdAt)}</time>
+                      </span>
                     ) : (
                       <time dateTime={memory.updatedAt}>{relativeTime(memory.updatedAt)}</time>
                     )}
+                    {memory.owned && <span>已设为你说的</span>}
+                    {material && <span>作为资料</span>}
                   </span>
+                  {material && (
+                    <div>
+                      <Button
+                        variant="ghost"
+                        disabled={locked}
+                        onClick={() => {
+                          void writes.run(`memory:${memory.id}:own`, `${base}/${memory.id}/own`, 'POST', { baseRevision: memory.revision })
+                        }}>
+                        设为我说的
+                      </Button>
+                    </div>
+                  )}
                   {state && 'kind' in state && <WriteNotice state={state} onRetry={() => void writes.retry()} onReload={onReload} />}
                 </div>
                 {edited && (
@@ -362,7 +387,7 @@ export function MemoryTab({
           title="删除这条记忆？"
           danger
           confirmLabel="删除"
-          message="这个 Agent 之后不再收到它。已经开始的外部 Harness 会话里已发出的内容不会撤回。"
+          message="新话题不会收到这条记忆。已发给外部 Harness 的内容仍留在原话题里。"
           onClose={() => {
             setDeleting(null)
           }}

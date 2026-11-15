@@ -121,6 +121,8 @@ export function activityPage(input: {
   memories: readonly AgentMemory[]
   changes: readonly AgentMemoryChange[]
   proposals: readonly MemoryProposal[]
+  /** The turns whose agent searched its memories. */
+  recalls?: ReadonlyArray<{ sessionId: string; messageId?: string; at: string; count: number }>
   before?: string | null
   limit?: number
 }): AgentActivityPage {
@@ -174,6 +176,14 @@ export function activityPage(input: {
       proposal: proposal.kind === 'schedule' ? 'schedule' : 'memory',
       state: proposal.state,
       sessionId: proposal.source.sessionId,
+    })
+  for (const recall of input.recalls ?? [])
+    items.push({
+      kind: 'recall',
+      id: `recall:${recall.sessionId}:${(recall.messageId ?? '').replace(/[^A-Za-z0-9_.@-]/gu, '_').slice(0, 200)}`,
+      at: recall.at,
+      sessionId: recall.sessionId,
+      count: recall.count,
     })
   const shown = items.filter(item => before(item, cursor)).toSorted(newer)
   const page = shown.slice(0, limit)

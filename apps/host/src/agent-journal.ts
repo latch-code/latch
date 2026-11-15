@@ -26,6 +26,9 @@ export interface JournalChange<Value> {
   changed?: boolean
 }
 
+const DEFAULT_MAXIMUM_BYTES = 16 * 1024 * 1024
+const journalText = (state: unknown): string => JSON.stringify(state) + '\n'
+
 /** Private domain state only. A recovered write publishes the same intent; it never calls an execution callback. */
 export class AgentJournal<State> {
   private tail: Promise<unknown> = Promise.resolve()
@@ -49,7 +52,7 @@ export class AgentJournal<State> {
     const directory = options.directory ? join(dataDir, options.directory) : dataDir,
       path = join(directory, name),
       uid = process.getuid?.(),
-      maximum = options.maximumBytes ?? 16 * 1024 * 1024
+      maximum = options.maximumBytes ?? DEFAULT_MAXIMUM_BYTES
     if (!Number.isSafeInteger(maximum) || maximum < 1024 || maximum > 32 * 1024 * 1024)
       throw new AppError(500, 'agent-journal-budget', 'Agent 记录容量无效。')
     await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -83,11 +86,15 @@ export class AgentJournal<State> {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
         throw new AppError(500, 'agent-journal-invalid', 'Agent 记录无法读取，原文件已保留。')
       state = schema.parse(structuredClone(initial))
-      if (Buffer.byteLength(JSON.stringify(state)) > maximum) throw new AppError(500, 'agent-journal-budget', 'Agent 初始记录超过容量。')
-      await writeFileAtomic(path, JSON.stringify(state) + '\n')
+      const text = journalText(state)
+      if (Buffer.byteLength(text) > maximum) throw new AppError(500, 'agent-journal-budget', 'Agent 初始记录超过容量。')
+      await writeFileAtomic(path, text)
     }
     // The upgraded file goes back at once; a failed write leaves the original, upgraded again next time or by the next change.
-    if (upgraded) await writeFileAtomic(path, JSON.stringify(state) + '\n', { fs: options.atomicFs }).catch(() => {})
+    if (upgraded) {
+      const text = journalText(state)
+      if (Buffer.byteLength(text) <= maximum) await writeFileAtomic(path, text, { fs: options.atomicFs }).catch(() => {})
+    }
     return new AgentJournal(path, state, schema, options)
   }
   read(): State {
@@ -121,7 +128,7 @@ export class AgentJournal<State> {
         if (result.changed !== false) {
           if (!this.schema.safeParse(draft).success)
             throw new AppError(409, 'agent-storage-limit', 'Agent 记录已达到容量上限，请先整理记录。')
-          if (Buffer.byteLength(JSON.stringify(draft)) > (this.options.maximumBytes ?? 16 * 1024 * 1024))
+          if (Buffer.byteLength(journalText(draft)) > (this.options.maximumBytes ?? DEFAULT_MAXIMUM_BYTES))
             throw new AppError(409, 'agent-storage-limit', 'Agent 记录已达到存储上限。')
           await this.publish({ key, hash, state: draft, value: structuredClone(result.value) })
         }
@@ -143,7 +150,7 @@ export class AgentJournal<State> {
   }
   private async publish(pending: Pending<State>): Promise<void> {
     try {
-      await writeFileAtomic(this.path, JSON.stringify(pending.state) + '\n', { fs: this.options.atomicFs })
+      await writeFileAtomic(this.path, journalText(pending.state), { fs: this.options.atomicFs })
     } catch {
       this.pending = pending
       this.retryLater()

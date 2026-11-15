@@ -1,6 +1,6 @@
 # @latch/protocol
 
-浏览器与 Host 共用 DTO：会话、消息与审批 `src/sessions.ts`，快照（含 `HostCatalog`）与事件 `src/snapshot.ts`，正文增量 `src/task-delta.ts`，设备、登记、邀请、本机确认与 `ApiFailure` `src/devices.ts`，Harness 与 Agent 定义 `src/harnesses.ts`（`AgentRecord` 只在 Host 使用），模型服务、项目、默认值与插件 `src/settings.ts`，能力开关 `src/features.ts`，交接 `src/handoffs.ts`，接入 `src/history.ts`，改动范围、撤销回执与下一条消息的说明 `src/changes.ts`，行级反馈 `src/review-notes.ts`。另有模型服务预设 `src/presets.ts` 与 Agent 预设 `src/agent-presets.ts`、`escapeSecurityText` 与设备名称规则 `src/text.ts`、「这台电脑」的判定 `isLocalListener`（`src/listeners.ts`）、拒绝说明的规则 `rejectionNote`（`src/decision.ts`），以及高风险原因的文字 `RISK_REASON_TEXT`（`src/risk.ts`，审批卡与本机确认共用）。`src/ui.ts` 定义插件面板与技能的展示数据，以及数据面板的有限文档校验；`src/files.ts` 定义预览句柄元数据与打开目标。不做持久化或 I/O。
+浏览器与 Host 共用 DTO。会话与审批见 `src/sessions.ts`，快照与事件见 `src/snapshot.ts`，正文增量见 `src/task-delta.ts`，设备、登记与本机确认见 `src/devices.ts`。Harness 与 Agent 见 `src/harnesses.ts`（`AgentRecord` 限 Host），模型服务和设置见 `src/settings.ts`，能力、交接、导入会话见 `src/{features,handoffs,history}.ts`，改动与行级反馈见 `src/{changes,review-notes}.ts`。预设及安全文字见 `src/{presets,agent-presets,text,listeners,decision,risk}.ts`，审批卡与本机确认共用 `RISK_REASON_TEXT`。`src/ui.ts` 定义插件面板、技能与有限数据文档，`src/files.ts` 定义预览元数据与目标。不做持久化或 I/O。
 
 运行环境 isomorphic：只用 ECMAScript 标准库，不导入 `node:*`，不用 DOM 或 Node 的全局变量（`tsconfig.isomorphic.json`、`.oxlintrc.json`）。没有依赖，不使用其他 workspace 包；模块没有副作用。入口 `@latch/protocol` 导出类型与值；`@latch/protocol/types`（`src/types.ts`）只有类型。
 
@@ -17,6 +17,8 @@
 
 改动后运行 `pnpm typecheck`、`pnpm test` 与 `pnpm test:e2e`。消息与快照见 [docs/STREAMING.md](../../docs/STREAMING.md)，代码地图见 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
 
+- Agent 便携文件的大小上限由 `src/custom-agents.ts` 的 `AGENT_FILE_BYTES` 定义，导入与导出共用。
+- `src/files.ts` 的 `imageDimensions` 只读有界文件头，供 Host 的文件元数据与浏览器头像解码前检查共用。
 - `src/file-refs.ts` 定义显式相对引用；`src/attachments.ts` 仅定义有限的元数据、上传上下文与能力；`AttachmentRef` 不含内容或私有路径，新增字段须同步两个 Harness 的持久化 schema。
 - 文件上下文区分 session 和带 Harness 的 workspace；目录 DTO 不含绝对路径，旧会话 `FileOpenTarget` 继续兼容。
 - `plugin-packages.ts` 定义可编辑插件资产与有限模板；摘要区分草稿、已应用版本及真实不可用原因，不含 Host 私有路径。

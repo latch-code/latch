@@ -230,6 +230,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'agent.deleted': { agentId: 'codex' },
   'agent.changed': { kind: 'agent', operation: 'update', before: hex, after: hex, customAgentId: 'agt_1' },
   'agent.home.assigned': { homeHash: hex },
+  'agent.exported': { customAgentId: 'agt_1', memories: 3, schedules: 1 },
+  'agent.imported': { customAgentId: 'agt_1', memories: 3, schedules: 1, fileHash: hex },
   'agent.memory.proposed': { origin: 'agent', external: true, customAgentId: 'agt_1', kind: 'schedule' },
   'automation.changed': { operation: 'create', before: hex, after: hex },
   'automation.ran': { trigger: 'schedule', attempt: hex },

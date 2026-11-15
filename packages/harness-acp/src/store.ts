@@ -242,7 +242,7 @@ const toolDetail = z.object({
   judged: z.object({ by: z.string(), outcome: z.enum(['approved', 'denied', 'none', 'unasked']) }).optional(),
   blocked: z.object({ by: z.string(), source: z.enum(['model', 'rule']), reason: z.string().optional() }).optional(),
 })
-const agentBrief = z.object({ segments: z.array(z.object({ source: z.enum(['latch', 'user']), text: z.string() })) })
+const agentBrief = z.object({ segments: z.array(z.object({ source: z.enum(['latch', 'user', 'material']), text: z.string() })) })
 // Its steps are messages, and may hold its own subagents.
 const subagent: z.ZodType = z.lazy(() =>
   z.object({

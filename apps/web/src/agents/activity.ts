@@ -110,6 +110,8 @@ export function activityWords(item: AgentActivityItem): { lead: string; subject?
       return { lead: '定时结果', subject: item.name, state: outcomeWord(item.outcome) }
     case 'memory':
       return { lead: MEMORY_WORDS[item.change] }
+    case 'recall':
+      return { lead: '查记忆', subject: `${item.count} 次` }
     case 'proposal':
       return {
         lead: item.proposal === 'schedule' ? '提议定时' : '提议记忆',
@@ -128,6 +130,7 @@ export function activityTarget(item: AgentActivityItem): { session: string } | {
     case 'result':
       return item.topicId ? { session: item.topicId } : undefined
     case 'proposal':
+    case 'recall':
       return { session: item.sessionId }
     case 'memory':
       return { memory: true }

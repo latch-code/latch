@@ -104,3 +104,66 @@ test('retains malformed private files and bounds initial and saved state', async
     code: 'agent-journal-budget',
   })
 })
+
+const limit = { maximumBytes: 1024 }
+
+/** A compact JSON record that fits only when the trailing newline is counted correctly. */
+function boundary(extra = 0): typeof initial {
+  const record = { id: randomUUID(), value: '' }
+  const state = { ...initial, records: [record] }
+  record.value = 'x'.repeat(limit.maximumBytes - Buffer.byteLength(JSON.stringify(state)) - 1 + extra)
+  return state
+}
+
+test('the initial record fits exactly including the newline and can be reopened', async () => {
+  const dir = await root()
+  await expect(AgentJournal.open(dir, 'oversized.json', schema, boundary(1), limit)).rejects.toMatchObject({
+    code: 'agent-journal-budget',
+  })
+  await expect(readFile(join(dir, 'oversized.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+
+  const exact = boundary()
+  const journal = await AgentJournal.open(dir, 'exact.json', schema, exact, limit)
+  journals.push(journal as AgentJournal<unknown>)
+  expect((await readFile(join(dir, 'exact.json'))).length).toBe(limit.maximumBytes)
+  const reopened = await AgentJournal.open(dir, 'exact.json', schema, initial, limit)
+  journals.push(reopened as AgentJournal<unknown>)
+  expect(reopened.read()).toEqual(exact)
+})
+
+test('a change over the byte limit leaves the previous record readable across restart', async () => {
+  const dir = await root()
+  const journal = await AgentJournal.open(dir, 'change.json', schema, initial, limit)
+  journals.push(journal as AgentJournal<unknown>)
+  const exact = boundary()
+  await journal.change('fits', 'hash', draft => {
+    draft.records = structuredClone(exact.records)
+    return { value: true }
+  })
+  await expect(
+    journal.change('oversized', 'hash', draft => {
+      draft.records[0]!.value += 'x'
+      return { value: true }
+    }),
+  ).rejects.toMatchObject({ code: 'agent-storage-limit' })
+  expect(journal.read()).toEqual(exact)
+  const reopened = await AgentJournal.open(dir, 'change.json', schema, initial, limit)
+  journals.push(reopened as AgentJournal<unknown>)
+  expect(reopened.read()).toEqual(exact)
+})
+
+test('retains the original when the upgraded record does not fit with its newline', async () => {
+  const dir = await root()
+  const path = join(dir, 'upgrade.json')
+  const original = '{"version":0}\n'
+  await writeFile(path, original, { mode: 0o600 })
+  const upgraded = boundary(1)
+  const options = { ...limit, upgrade: () => upgraded }
+  const first = await AgentJournal.open(dir, 'upgrade.json', schema, initial, options)
+  journals.push(first as AgentJournal<unknown>)
+  expect(first.read()).toEqual(upgraded)
+  expect(await readFile(path, 'utf8')).toBe(original)
+  const reopened = await AgentJournal.open(dir, 'upgrade.json', schema, initial, options)
+  journals.push(reopened as AgentJournal<unknown>)
+  expect(reopened.read()).toEqual(upgraded)
+})

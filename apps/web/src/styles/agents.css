@@ -2045,3 +2045,77 @@ button.helper-card:focus-visible {
   flex-shrink: 0;
   overflow: visible;
 }
+
+/* The creation page's other way in. */
+.agents-import {
+  justify-self: start;
+}
+
+/* 导出: what the file would hold, before anything is downloaded. */
+.agent-export-preview {
+  display: grid;
+  gap: var(--sp-8);
+  justify-items: start;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+/* 导入: what the file holds, before anything is created. */
+.agent-import-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-12);
+  min-width: 0;
+}
+.agent-import-name {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agent-import-name > span {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-import-facts {
+  display: grid;
+  gap: var(--sp-4);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.agent-import-facts > div {
+  display: flex;
+  gap: var(--sp-12);
+  min-width: 0;
+}
+.agent-import-facts dt {
+  flex: none;
+  width: 5em;
+  color: var(--muted);
+}
+.agent-import-facts dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agent-import-text {
+  max-height: 16rem;
+  overflow: auto;
+  padding: var(--sp-10) var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--raised);
+  font: inherit;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-import-prompt {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

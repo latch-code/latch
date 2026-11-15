@@ -1,12 +1,12 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { AGENT_BRACKETS, AGENT_EYES, type AgentAvatar as Avatar } from '@latch/protocol'
+import { AGENT_BRACKETS, AGENT_EYES, type AgentAvatar as Avatar, type AgentFace } from '@latch/protocol'
 import { AgentAvatar } from '../src/agents/AgentAvatar.tsx'
 import { BRACKET_PATHS, type AvatarState } from '../src/agents/avatarFace.ts'
 import { AvatarScheduler, LOOP_MS, MAX_FEATURED, TICK_MS, type MotionHost, type MotionPart } from '../src/agents/avatarMotion.ts'
 
-const face = (extra: Partial<Avatar> = {}): Avatar => ({ kind: 'face', bracket: 'round', eyes: 'dot', hue: 'pine', ...extra })
+const face = (extra: Partial<AgentFace> = {}): Avatar => ({ kind: 'face', bracket: 'round', eyes: 'dot', hue: 'pine', ...extra })
 const render = (props: Parameters<typeof AgentAvatar>[0]) => renderToStaticMarkup(createElement(AgentAvatar, props))
 
 describe('the bracket face', () => {

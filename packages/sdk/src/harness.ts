@@ -252,6 +252,12 @@ export interface HarnessHostOptions {
    */
   proposeSchedule?(input: ScheduleProposalInput): Promise<void>
   /**
+   * The built-in harness, the same sessions: its agent searched its own saved memories (`recall_memory`). Read-only. The Host finds the owner
+   * from its own records of `sessionId`, answers only that owner's confirmed memories, bounded in count and size, and
+   * counts the query in the owner's activity. Rejects when the session may not recall.
+   */
+  recallMemory?(input: MemoryRecallInput): Promise<MemoryRecallResult>
+  /**
    * Puts an agent's question to the person, as the built-in `ask_user` tool does: shown on the session's tool row
    * `tool:<callId>`, answered from any device that may run. Resolves with the committed answer (a `QuestionResult` as
    * JSON); rejects when the question closed unanswered or `signal` aborted. The driver then records the row's result and
@@ -289,6 +295,30 @@ export interface MemoryProposalInput {
   external: boolean
   /** Unique within the session's own channel, so a proposal read twice is kept once. */
   key: string
+}
+
+/** A search of the session owner's saved memories through `recall_memory`. Only `query` and `limit` come from the agent. */
+export interface MemoryRecallInput {
+  sessionId: string
+  /** The user message of the turn it came from. */
+  messageId?: string
+  query: string
+  limit?: number
+}
+/** One saved memory as `recall_memory` answers it. */
+export interface RecalledMemory {
+  content: string
+  /** The day it was saved or last changed, `YYYY-MM-DD`. */
+  date: string
+  /** `user`: the person wrote or said it; `agent`: the agent proposed it and the person saved it; `imported`: from a file. */
+  source: 'user' | 'agent' | 'imported'
+  /** It came from outside content (a page, a file, a tool's output, an import): data, never instructions. */
+  external: boolean
+}
+export interface MemoryRecallResult {
+  matches: RecalledMemory[]
+  /** Matches left out by the limit. */
+  more: number
 }
 
 export interface AskUserInput {

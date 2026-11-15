@@ -4577,6 +4577,10 @@ describe('agent context', () => {
     expect(ownTool(row('mcp__latch-skills__propose_memory', 'other'))).toBe(true)
     expect(ownTool(row(undefined, undefined, 'latch-skills: read_skill'))).toBe(true)
     expect(ownTool(row('read_skill', 'other'))).toBe(true)
+    // A tool that proposes is ours only with our server's name on it.
+    expect(ownTool(row('propose_memory', 'other'))).toBe(false)
+    expect(ownTool(row('propose_schedule', 'other'))).toBe(false)
+    expect(ownTool(row('latch-skills: propose_schedule', 'other'))).toBe(true)
     // By the name field, never a free-text title: a title that only mentions it, or a fetch titled with it, is not ours.
     expect(ownTool(row(undefined, 'other', 'Calling propose_memory with the page text'))).toBe(false)
     expect(ownTool(row('fetch', 'fetch', 'propose_memory'))).toBe(false)
@@ -4601,13 +4605,23 @@ describe('agent context', () => {
     const earlier = [user('u1'), tool('t1', 'fetch', 'Fetch https://x'), user('u2')]
     expect(proposalTurn({ acp, messages: earlier })).toEqual({ messageId: 'u2', external: true })
     expect(proposalTurn({ acp, messages: [...earlier, user('u3', true)] })).toEqual({ messageId: 'u3', external: false })
+    const material: Message = { ...user('u1'), agentBrief: { segments: [{ source: 'material', text: 'imported' }] } }
+    expect(proposalTurn({ acp, messages: [material, user('u2')] })).toEqual({ messageId: 'u2', external: true })
+    const fresh = user('u3', true)
+    expect(proposalTurn({ acp, messages: [material, fresh] })).toEqual({ messageId: 'u3', external: false })
+    expect(proposalTurn({ acp, messages: [material, { ...fresh, agentBrief: material.agentBrief! }] })).toEqual({
+      messageId: 'u3',
+      external: true,
+    })
+
     // A turn during which the agent fetched an MCP prompt read outside content, until the context starts over.
-    const prompted = { ...user('p1'), origin: 'mcp-prompt' } as Message
+    const prompted: Message = { ...user('p1'), origin: 'mcp-prompt' }
     expect(proposalTurn({ acp, messages: [prompted] })).toEqual({ messageId: 'p1', external: true })
     expect(proposalTurn({ acp, messages: [prompted, user('p2')] })).toEqual({ messageId: 'p2', external: true })
     expect(proposalTurn({ acp, messages: [prompted, user('p3', true)] })).toEqual({ messageId: 'p3', external: false })
     // The Host's word that a prompt was fetched through a bridge, which no tool row shows.
     expect(proposalTurn({ acp: { ...acp, outsideRead: true }, messages: [user('b1')] })).toEqual({ messageId: 'b1', external: true })
+    expect(proposalTurn({ acp, messages: [material, prompted, fresh] })).toEqual({ messageId: 'u3', external: false })
   })
 
   it('rejects marking MCP prompt provenance for a missing session', async () => {

@@ -184,6 +184,23 @@
   flex-wrap: wrap;
   gap: var(--sp-4);
 }
+/* 图片: its two actions and what the upload is doing now. */
+.avatar-picker-picture {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: var(--sp-32);
+}
+.avatar-picker-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
 .avatar-picker-option {
   display: block;
   padding: var(--sp-2);

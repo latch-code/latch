@@ -97,7 +97,10 @@ public enum PhoneAgentAccess: String, Equatable, Sendable {
     case ready
 }
 
-/** The bracket face the Host gave an Agent: brackets around two eyes in one muted hue. 通用 is the same face in grey. */
+/**
+ * The bracket face the Host gave an Agent: brackets around two eyes in one muted hue. 通用 is the same face in grey. An
+ * Agent with a picture (`kind: "image"`) keeps its face beside it, and this App draws that face until it shows pictures.
+ */
 public struct PhoneAgentAvatar: Equatable, Sendable {
     public static let brackets = ["round", "curly", "square", "angle"]
     public static let eyeKinds = ["dot", "arc", "oval", "sleepy"]
@@ -106,9 +109,12 @@ public struct PhoneAgentAvatar: Equatable, Sendable {
     public let bracket: String
     public let eyes: String
     public let hue: String
-    /** Only a face of known parts; anything else (a kind or value from a later Host) draws as 通用's grey face. */
+    /**
+     * A face of known parts, alone or kept under a picture; the picture's own fields are not read. Anything else (a kind
+     * or value from a later Host) draws as 通用's grey face: an Agent is never left out for its avatar.
+     */
     public static func parse(_ value: NativeJSON) -> PhoneAgentAvatar {
-        guard value["kind"].string == "face", let bracket = value["bracket"].string, brackets.contains(bracket),
+        guard let kind = value["kind"].string, kind == "face" || kind == "image", let bracket = value["bracket"].string, brackets.contains(bracket),
               let eyes = value["eyes"].string, eyeKinds.contains(eyes), let hue = value["hue"].string, hues.contains(hue) else { return general }
         return PhoneAgentAvatar(bracket: bracket, eyes: eyes, hue: hue)
     }

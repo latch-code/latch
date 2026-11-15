@@ -59,6 +59,18 @@ export class AgentPlans {
     return undefined
   }
 
+  /** For an import: whether the Harness a file names is here and ready, takes an Agent's instructions, and can run schedules. */
+  harnessFor(harnessId: string): { id: string; ready: boolean; label?: string; canSchedule: boolean } {
+    const harness = this.options.harness(harnessId)
+    const ready = harness?.status === 'ready' && harness.agentContext !== undefined
+    return {
+      id: harnessId,
+      ready,
+      ...(harness ? { label: harness.capabilities.display.label } : {}),
+      canSchedule: ready && this.options.automationAllowed(harnessId),
+    }
+  }
+
   summary(agent: CustomAgent, tasks: readonly TaskSummary[]): CustomAgentSummary {
     const { instructions: _i, skills, tools: _t, createdAt: _c, updatedAt: _u, ...rest } = agent
     const unavailableReason = this.unavailable(agent)

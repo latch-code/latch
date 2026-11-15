@@ -3,10 +3,10 @@ import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rename, rm } fr
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { isAttachmentRef, type AttachmentRef } from '@latch/protocol'
+import { imageDimensions, isAttachmentRef, type AttachmentRef } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, redactSecrets, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
-import { fileFormat, imageDimensions } from './files/metadata.ts'
+import { fileFormat } from './files/metadata.ts'
 import { hasSecretContent, isSecretPath } from './files/secrets.ts'
 export const ATTACHMENT_TTL = 60 * 60_000
 /** How long a draft reserved for a request its session proved not to hold stays, counted from its upload. */

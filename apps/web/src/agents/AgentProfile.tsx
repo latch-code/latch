@@ -19,6 +19,7 @@ import {
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { AgentHome } from './AgentHome.tsx'
+import { AgentExport } from './AgentTransfer.tsx'
 import { AgentForm, GeneralForm, WriteNotice } from './AgentForm.tsx'
 import { AvatarPicker } from './AvatarPicker.tsx'
 import { type ProfileSection } from './chat.ts'
@@ -400,6 +401,7 @@ export function AgentProfile({
             {...(shell.owner ? { onManageProviders: shell.manageProviders } : {})}
           />
         )}
+        {!locked && view === 'settings' && value?.kind === 'custom' && <AgentExport agent={value.detail.agent} offline={offline} />}
         {!locked && view === 'settings' && value?.kind === 'general' && catalog && (
           <GeneralForm catalog={catalog} detail={value.detail} writes={writes} disabled={held} onReload={settle} />
         )}

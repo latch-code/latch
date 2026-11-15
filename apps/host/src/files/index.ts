@@ -8,6 +8,7 @@ import { basename } from 'node:path'
 import { z } from 'zod'
 import {
   FILE_EDIT_LIMIT,
+  imageDimensions,
   isLocalListener,
   type Device,
   type DeviceScope,
@@ -27,7 +28,7 @@ import { type FileDirectoryReader, validDirectory } from './directory.ts'
 import { auditType } from './kinds.ts'
 import { mixedLineEndings, readCurrent, replaceFile, shapeContent, sha256, fileChanged, validContent } from './edit.ts'
 import { isInsidePath, isProtectedWorkspacePath } from '../paths.ts'
-import { canTruncate, contentLimit, fileEtag, fileFormat, imageDimensions } from './metadata.ts'
+import { canTruncate, contentLimit, fileEtag, fileFormat } from './metadata.ts'
 import { isReferenced, isReferenceListed, sessionReferences } from './references.ts'
 import { openContent, sendContent } from './read.ts'
 import { FileReadQuota } from './quota.ts'

@@ -1,9 +1,17 @@
 import { useRef, useState, type KeyboardEvent } from 'react'
-import { AGENT_BRACKETS, AGENT_EYES, AGENT_HUES, type AgentAvatar as Avatar, type CustomAgentSummary } from '@latch/protocol'
-import { Popover } from '@latch/ui'
+import {
+  AGENT_BRACKETS,
+  AGENT_EYES,
+  AGENT_HUES,
+  type AgentAvatar as Avatar,
+  type AgentFace,
+  type CustomAgentSummary,
+} from '@latch/protocol'
+import { Button, InlineNotice, Popover } from '@latch/ui'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { WriteNotice } from './AgentForm.tsx'
 import { BRACKET_NAMES, EYES_NAMES, HUE_NAMES, type AvatarState } from './avatarFace.ts'
+import { PictureRow, useAvatarUpload } from './AvatarPicture.tsx'
 import { writeFor, type AgentWrites } from './useAgentWrites.ts'
 
 type Part = 'bracket' | 'eyes' | 'hue'
@@ -30,6 +38,9 @@ function PartRow({
   onPick: (next: Avatar) => void
 }) {
   const group = useRef<HTMLDivElement>(null)
+  // Under a picture the rows show the face it would go back to, with none of them checked as what is shown now.
+  const pictured = avatar.kind === 'image'
+  const parts: AgentFace = { bracket: avatar.bracket, eyes: avatar.eyes, hue: avatar.hue }
   const current = avatar[row.part]
   const [focused, setFocused] = useState<number | null>(null)
   const stop = focused ?? row.values.indexOf(current)
@@ -58,8 +69,8 @@ function PartRow({
           if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null)
         }}>
         {row.values.map((value, index) => {
-          const option = { ...avatar, [row.part]: value } as Avatar
-          const checked = value === current
+          const option = { kind: 'face', ...parts, [row.part]: value } as Avatar
+          const checked = !pictured && value === current
           return (
             <button
               key={value}
@@ -87,9 +98,10 @@ function PartRow({
 }
 
 /**
- * The Agent page's face, which opens the picker: the moving face above three rows of 括号, 眼睛 and 颜色. A choice is sent
- * at once with the Agent's revision and shows only once the Host has it; a refusal, a conflict or an unknown result
- * says so here, and retrying an unknown one repeats the same request.
+ * The Agent page's face, which opens the picker: the moving face above three rows of 括号, 眼睛 and 颜色, and a last row,
+ * 图片, to put a picture in the face's place or clear it. A choice is sent at once with the Agent's revision and shows
+ * only once the Host has it; a refusal, a conflict or an unknown result says so here, and retrying an unknown one repeats
+ * the same request. Choosing a face while a picture shows puts the face back.
  */
 export function AvatarPicker({
   agent,
@@ -106,7 +118,8 @@ export function AvatarPicker({
 }) {
   const key = `avatar:${agent.id}`
   const write = writeFor(writes.state, key)
-  const locked = disabled || writes.saving || writes.held
+  const upload = useAvatarUpload(agent, onReload)
+  const locked = disabled || writes.saving || writes.held || upload.held
   const [open, setOpen] = useState(false)
   const notice = (
     <WriteNotice
@@ -119,7 +132,12 @@ export function AvatarPicker({
     />
   )
   const pick = (avatar: Avatar) => {
+    upload.clear()
     void writes.run(key, `custom-agents/${encodeURIComponent(agent.id)}`, 'PATCH', { avatar, baseRevision: agent.revision })
+  }
+  const clearPicture = () => {
+    upload.clear()
+    void writes.run(key, `custom-agents/${encodeURIComponent(agent.id)}/avatar-image`, 'DELETE', { baseRevision: agent.revision })
   }
   return (
     <>
@@ -141,11 +159,33 @@ export function AvatarPicker({
           {ROWS.map(row => (
             <PartRow key={row.part} row={row} avatar={agent.avatar} disabled={locked} onPick={pick} />
           ))}
+          <PictureRow
+            hasPicture={agent.avatar.kind === 'image'}
+            upload={upload.state}
+            disabled={disabled || writes.saving || writes.held}
+            onChoose={file => {
+              writes.clear()
+              void upload.choose(file)
+            }}
+            onRetry={() => void upload.retry()}
+            onClear={clearPicture}
+            onReload={() => {
+              upload.clear()
+              onReload()
+            }}
+          />
           {notice}
         </div>
       </Popover>
       {/* Closed, the header still says what became of the last choice, since it holds every other change back. */}
       {!open && write && 'kind' in write && <div className="avatar-picker-notice">{notice}</div>}
+      {!open && upload.state.phase === 'unknown' && (
+        <div className="avatar-picker-notice">
+          <InlineNotice tone="warn" title="头像上传结果未知" action={<Button onClick={() => void upload.retry()}>重试同一请求</Button>}>
+            {upload.state.message}
+          </InlineNotice>
+        </div>
+      )}
     </>
   )
 }

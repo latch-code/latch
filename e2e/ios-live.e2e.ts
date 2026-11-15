@@ -7,14 +7,14 @@ import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { FAKE_ACP_AGENT, fakeConversation, writeFakeHistory, type TestDevice } from '@latch/testkit'
 import { expect, it } from 'vitest'
-import type { AutomationDetail, AutomationList, TaskDetail } from '@latch/protocol'
+import type { AutomationDetail, AutomationList, CustomAgent, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { clipboardLease, compileClipboardLease } from './helpers/iosClipboardLease.ts'
 import { clipboardGui, validateGuiPairing } from './helpers/iosClipboardValidation.ts'
 import { readDeviceClipboard, writeDeviceClipboard } from './helpers/iosDeviceClipboard.ts'
 import { pairingStagePage } from './helpers/iosPairingStage.ts'
-import { iosSlashEnvironment, prepareIosSlash } from './helpers/iosSlash.ts'
+import { iosSlashEnvironment, prepareIosSlash, seedIosPromptHistory } from './helpers/iosSlash.ts'
 import { iosLiveMetricRecorder, seedIosStream } from './helpers/iosLiveMetrics.ts'
 
 const run = promisify(execFile)
@@ -333,7 +333,9 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
           body: { name: 'Fake Agent', command: process.execPath, args: [FAKE_ACP_AGENT], env: LIVE_AGENT_ENV },
         })
         expect(saved.status).toBe(201)
-        agents.set(target, ((await saved.json()) as { agent: { id: string } }).agent.id)
+        const { agent } = (await saved.json()) as { agent: { id: string } }
+        agents.set(target, agent.id)
+        if (SLASH) await seedIosPromptHistory(enrolled, agent.id)
         return enrolled
       }
       const owner = await prepare(host, 'A')
@@ -641,7 +643,7 @@ async function addHistory(host: TestHost, owner: TestDevice): Promise<void> {
 }
 
 it('reads the live fake Agent configuration and continues its same session without touching a simulator', async () => {
-  const host = await startTestHost()
+  const host = await startTestHost(AGENTS ? { plugins: [scheduledProvider] } : {})
   try {
     const owner = await host.enroll({ listener: 'unix' })
     if (SLASH) await prepareIosSlash(owner)
@@ -681,6 +683,8 @@ it('reads the live fake Agent configuration and continues its same session witho
       continued.messages.some(message => message.role === 'user' && message.text === 'second' && message.requestId === requestId),
     ).toBe(true)
     expect(continued.permission?.drift).toBeUndefined()
+    if (SLASH) await seedIosPromptHistory(owner, harnessId)
+    if (AGENTS) await addAgent(owner)
   } finally {
     await host.close()
   }
@@ -738,7 +742,8 @@ it('prepares native manual runs and an allowed missed schedule without touching 
 
 /** A Standard Agent with a local fixture provider and one allowed daily schedule, for 我的 Agent. */
 async function addAgent(owner: TestDevice): Promise<void> {
-  const agent = await owner.json<{ id: string }>('custom-agents', {
+  const face = { bracket: 'square', eyes: 'oval', hue: 'moss' } as const
+  const agent = await owner.json<CustomAgent>('custom-agents', {
     method: 'POST',
     body: {
       requestId: randomUUID(),
@@ -749,8 +754,18 @@ async function addAgent(owner: TestDevice): Promise<void> {
       model: SCHEDULE_MODEL,
       instructions: '只报真实的问题。',
       skills: [],
+      avatar: { kind: 'face', ...face },
     },
   })
+  const picture = await owner.json<CustomAgent>(
+    `custom-agents/${agent.id}/avatar-image?requestId=${randomUUID()}&baseRevision=${agent.revision}`,
+    {
+      method: 'PUT',
+      rawBody: await readFile('apps/web/public/favicon.png'),
+      headers: { 'content-type': 'application/octet-stream' },
+    },
+  )
+  expect(picture.avatar).toMatchObject({ kind: 'image', ...face })
   await owner.json('automations', {
     method: 'POST',
     body: {

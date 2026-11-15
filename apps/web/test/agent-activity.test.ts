@@ -191,6 +191,9 @@ describe('动态', () => {
   it('leads each row where it happened', () => {
     expect(activityTarget(items[0]!)).toEqual({ session: 't' })
     expect(activityTarget(items[1]!)).toEqual({ memory: true })
+    const recall = { kind: 'recall' as const, id: 'recall:s:m', at: '2026-11-14T00:00:00.000Z', sessionId: 's', count: 3 }
+    expect(activityWords(recall)).toEqual({ lead: '查记忆', subject: '3 次' })
+    expect(activityTarget(recall)).toEqual({ session: 's' })
     expect(activityTarget({ kind: 'run', id: 'x', at: '', automationId: 'a', name: 'n', state: 'missed' })).toBeUndefined()
   })
 })

@@ -205,6 +205,51 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   throw failure
 }
 
+/**
+ * An Agent's picture, as raw bytes with its progress: `requestId` and the revision the person saw go beside it, so a
+ * retry of a result that stayed unknown is the same request with the same Blob. Answers the Host's reply as it is.
+ */
+export async function uploadAgentAvatar<T>(
+  agentId: string,
+  picture: Blob,
+  request: { requestId: string; baseRevision: number },
+  options: { onProgress?: (loaded: number, total: number) => void; retried?: boolean } = {},
+): Promise<T> {
+  if (!/^agt_[a-f0-9-]{36}$/u.test(agentId) || picture.size <= 0) throw new ClientError('图片不可用。', 'agent-avatar-invalid')
+  const query = new URLSearchParams({ requestId: request.requestId, baseRevision: String(request.baseRevision) })
+  const response = await new Promise<Response>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', `/link/api/custom-agents/${agentId}/avatar-image?${query.toString()}`)
+    xhr.withCredentials = true
+    xhr.timeout = 60_000
+    xhr.setRequestHeader('content-type', 'application/octet-stream')
+    xhr.setRequestHeader('accept', 'application/json')
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable) options.onProgress?.(Math.min(event.loaded, picture.size), picture.size)
+    }
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status > 599 || xhr.responseText.length > 1024 * 1024) {
+        reject(new ClientError('上传响应无效，请重试。', 'agent-avatar-response', { definitive: false }))
+        return
+      }
+      resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'content-type': 'application/json' } }))
+    }
+    xhr.onerror = () => {
+      reject(new ClientError('上传连接中断，Mac 可能已经保存。', 'agent-avatar-upload', { definitive: false }))
+    }
+    xhr.ontimeout = () => {
+      reject(new ApiTimeoutError())
+    }
+    xhr.send(picture)
+  })
+  if (response.ok) return (await response.json()) as T
+  const failure = await failureOf(response)
+  if (!options.retried && failure.status === 401 && failure.code === 'renewal-required' && (await authHooks.renew?.().catch(() => false)))
+    return uploadAgentAvatar<T>(agentId, picture, request, { ...options, retried: true })
+  if (failure.status === 401 && failure.code !== 'renewal-required') authHooks.unauthorized?.(failure)
+  throw failure
+}
+
 /** Raw upload keeps file bytes out of JSON; every retry carries the same immutable Blob and requestId. */
 export async function uploadAttachment(
   file: Blob,

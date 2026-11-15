@@ -6821,8 +6821,11 @@ const LOCAL_KINDS: ReadonlySet<string> = new Set(['read', 'edit', 'delete', 'mov
 export function ownTool(message: Pick<Message, 'toolName' | 'tool'>): boolean {
   const kind = message.tool?.kind
   if (kind !== undefined && kind !== 'other') return false
-  const name = message.toolName ?? message.tool?.title
-  return name !== undefined && OWN_TOOLS.has(name.trim().replace(SERVER_PREFIX, ''))
+  const named = (message.toolName ?? message.tool?.title)?.trim()
+  if (named === undefined) return false
+  const own = named.replace(SERVER_PREFIX, '')
+  // A tool that proposes is Latch's only with the Latch server's prefix: another server's tool of that name is not.
+  return OWN_TOOLS.has(own) && (own !== named || !own.startsWith('propose_'))
 }
 
 /** A path as the file system resolves it: `..` collapsed, and symlinks followed as far as the path exists. */
@@ -6844,9 +6847,9 @@ function canonical(path: string): string {
 /**
  * The turn a proposal came from (its user message) and whether, since the context last started over, a tool may have read
  * outside content: a fetch, search, command, thought or tool of unknown kind, a subagent, or a read or edit whose
- * locations are absent or outside the session's folders after resolving them. The context keeps what it read until it
- * starts over, so the mark holds for every later turn. An agent reports its calls in its own words, so this errs toward
- * external.
+ * locations are absent or outside the session's folders after resolving them. Material in a delivered brief also
+ * stays in the context even after the stored memory changes. An agent reports its calls in its own words, so this errs
+ * toward external.
  */
 export function proposalTurn(task: { messages: Message[]; acp: { cwd: string; folders?: string[]; outsideRead?: true } }): {
   messageId?: string
@@ -6858,6 +6861,7 @@ export function proposalTurn(task: { messages: Message[]; acp: { cwd: string; fo
   const inside = (path: string) =>
     isAbsolute(path) && roots.some(root => (canonical(path) + sep).startsWith(root.endsWith(sep) ? root : root + sep))
   const external = task.messages.slice(Math.max(fresh, 0)).some(message => {
+    if (message.role === 'user' && message.agentBrief?.segments.some(segment => segment.source === 'material')) return true
     // The local MCP bridge was allowed to fetch a prompt during this turn (`markOutsideContent`).
     if (message.origin === 'mcp-prompt') return true
     if (message.subagent) return true

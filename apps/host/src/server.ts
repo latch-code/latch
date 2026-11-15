@@ -109,6 +109,8 @@ import {
   type HarnessDriver,
   type HarnessSecurityEvent,
   type MemoryProposalInput,
+  type MemoryRecallInput,
+  type MemoryRecallResult,
   type ScheduleProposalInput,
   type HostProject,
   type ModelProvider,
@@ -2738,6 +2740,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       refresh()
     }
     /**
+     * A driver's `recall_memory`, read-only: the same session check as a proposal, then only that owner's confirmed
+     * memories, bounded. The query is counted in the owner's activity; a count that cannot be written fails nothing.
+     */
+    async function recallFromAgent(driver: HarnessDriver, input: MemoryRecallInput): Promise<MemoryRecallResult> {
+      const { owner } = await proposingSession(driver, { sessionId: input.sessionId, external: false })
+      const result = customAgents.recall(owner, input.query, input.limit)
+      await recalledByAgent(owner, { sessionId: input.sessionId, ...(input.messageId ? { messageId: input.messageId } : {}) })
+      return result
+    }
+    async function recalledByAgent(owner: string, turn: { sessionId: string; messageId?: string }): Promise<void> {
+      await customAgents.noteRecall(owner, turn).catch(error => log(`记忆查询没有计入动态：${errorText(error)}`))
+    }
+    /**
      * The owner of a session a driver proposes into, from the Host's records; a first turn may ask before its start has
      * been recorded, so it waits a little for that. A driver proposes only into its own sessions, of an Agent or 通用, on a
      * Harness the Host gives `proposals` to.
@@ -2755,8 +2770,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         throw new AppError(409, 'agent-proposal-session', 'This session cannot propose.')
       // Only Latch's own loops can tell what a turn read; another driver's word that it read nothing is not taken.
       const trusted = kindOf(driver) !== 'plugin'
-      // Nobody watched what a scheduled run read; the driver says so too, this covers a run it could not tell.
-      return { owner, external: input.external || !trusted || hub?.automationOf(input.sessionId) !== undefined }
+      // Nobody watched what a scheduled run read; the driver says so too, this covers a run it could not tell. A session
+      // whose memories include material (imported, or from outside content, not yet 设为我说的) has it in its context.
+      return {
+        owner,
+        external: input.external || !trusted || hub?.automationOf(input.sessionId) !== undefined || customAgents.hasOutsideMemories(owner),
+      }
     }
     /**
      * The person's own 「记住…」 in a session of 我的 Agent: a proposal from their words, which they still save. Their
@@ -4673,6 +4692,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             clock,
             proposeMemory: input => proposeFromAgent(driver, input),
             proposeSchedule: input => proposeScheduleFromAgent(driver, input),
+            // Only Latch 内置 searches memories: other Harnesses get them in their first-turn block, as before.
+            ...(driver.id === STANDARD ? { recallMemory: (input: MemoryRecallInput) => recallFromAgent(driver, input) } : {}),
             // Only a driver that says it can be pointed at a service gets tokens for one.
             ...(hub!.info(driver.id)?.capabilities.models.wires.length ? { modelGateway } : {}),
             // Only ACP harnesses, which take MCP servers: their agent's `latch-browser` server reaches the browser tools.

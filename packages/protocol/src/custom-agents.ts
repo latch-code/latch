@@ -10,13 +10,22 @@ export type AgentEyes = (typeof AGENT_EYES)[number]
 /** Muted hues only: red, orange, yellow, bright green and bright blue already say something in the interface. */
 export const AGENT_HUES = ['ink', 'slate', 'pine', 'plum', 'wisteria', 'cocoa', 'sand', 'moss', 'mist'] as const
 export type AgentHue = (typeof AGENT_HUES)[number]
-/** The Host assigns one when an agent is created; the user changes it. `kind` leaves room for another kind later. */
-export interface AgentAvatar {
-  kind: 'face'
+/**
+ * The Host assigns a face when an agent is created; the user changes it. `kind: 'image'`: a picture the person gave it,
+ * named by the SHA-256 of the Host's own re-encoded copy and read through `custom-agents/avatar-images/<hash>`; the face
+ * stays as what is shown wherever the picture cannot be.
+ */
+export type AgentAvatar = AgentFace & ({ kind: 'face' } | { kind: 'image'; image: string })
+export interface AgentFace {
   bracket: AgentBracket
   eyes: AgentEyes
   hue: AgentHue
 }
+/**
+ * A picture for an Agent: what a person may give (`bytes` and `maxSide` at most, `minSide` at least), and the one square
+ * size the Host keeps and serves, as its own PNG.
+ */
+export const AGENT_AVATAR_IMAGE = { bytes: 2 * 1024 * 1024, maxSide: 1024, minSide: 16, size: 256 } as const
 
 export const GENERAL_AGENT_ID = 'general'
 
@@ -85,12 +94,13 @@ export type CustomAgentSummary = Omit<CustomAgent, 'instructions' | 'skills' | '
   /** Automations run on the built-in engine only. */
   canAutomate: boolean
 }
-/** `avatar`: the face chosen while creating; absent, the Host assigns an unused one. */
+/** `avatar`: the face chosen while creating (never a picture); absent, the Host assigns an unused one. */
 export type CustomAgentCreate = CustomAgentConfig & { requestId: string; avatar?: AgentAvatar }
 /** `harnessId` may only repeat the Agent's own: another one is refused with 409 `agent-harness-fixed`. */
 export type CustomAgentPatch = Partial<Omit<CustomAgentConfig, 'model' | 'tools' | 'defaultProjectId' | 'engineOptions'>> & {
   requestId: string
   baseRevision: number
+  /** A face: choosing one also puts the face back in a picture's place. A picture is set only by its upload. */
   avatar?: AgentAvatar
   /** Null: back to every notification. */
   notifications?: AgentNotifications | null
@@ -154,6 +164,91 @@ export interface AgentMemory {
   source?: AgentMemoryOrigin
   /** The person changed its text since it was saved from that proposal. */
   edited?: true
+  /** It came with an imported Agent file (shown as 「导入」): who wrote it there, and when it was saved there. */
+  imported?: { origin: MemoryOrigin; external: boolean; savedAt: string }
+  /**
+   * 「设为我说的」: the person confirmed an imported memory, or one saved from outside content, as their own words. Until
+   * then such a memory reaches the Agent as material, never under the person's own heading.
+   */
+  owned?: true
+}
+
+/**
+ * Whether a memory is material rather than the person's own words: it came with an imported file or was saved from a
+ * proposal marked as from outside content, and the person has not confirmed it as their own.
+ */
+export function outsideMemory(memory: Pick<AgentMemory, 'source' | 'imported' | 'owned'>): boolean {
+  return memory.owned !== true && (memory.imported !== undefined || memory.source?.external === true)
+}
+
+/** The one file 「导出」 writes and 「导入」 reads. */
+export const AGENT_FILE_FORMAT = 'latch-agent'
+export const AGENT_FILE_VERSION = 1
+/** The largest portable file that can be exported or imported, in bytes. */
+export const AGENT_FILE_BYTES = 4 * 1024 * 1024
+/** How many schedules a file may carry. */
+export const AGENT_FILE_SCHEDULES = 16
+export interface AgentFileMemory {
+  content: string
+  /** When it was saved on the computer it came from. */
+  savedAt: string
+  origin: MemoryOrigin
+  external: boolean
+}
+/** A schedule as a definition: what and when. It is imported switched off. */
+export interface AgentFileSchedule {
+  name: string
+  prompt: string
+  schedule: AutomationSchedule
+  notify: boolean
+}
+/**
+ * An Agent as a file: its definition, its confirmed memories with where each came from, and its schedules as
+ * definitions. Nothing of a computer's own: no model service, project, plugin, skill or MCP choice, no secret, token,
+ * device or audit record, no topic, proposal or image.
+ */
+export interface AgentFile {
+  format: typeof AGENT_FILE_FORMAT
+  version: typeof AGENT_FILE_VERSION
+  exportedAt: string
+  agent: {
+    name: string
+    description: string
+    harnessId: string
+    mode: TaskMode
+    instructions: string
+    /** The bracket face only. */
+    avatar: AgentFace
+  }
+  memories: AgentFileMemory[]
+  schedules: AgentFileSchedule[]
+  /** Left out by the export because their text looked like a secret: how many memories, and how many schedules. */
+  omitted?: { secretMemories: number; secretSchedules?: number }
+}
+/** What 「导出」 shows before anything is downloaded: how much the file would hold and what would be left out. */
+export interface AgentExportPreview {
+  memories: number
+  schedules: number
+  omitted: { secretMemories: number; secretSchedules: number }
+}
+/** What the import page shows before anything is created: the file as the Host read it, and what this computer can do with it. */
+export interface AgentImportPreview {
+  file: AgentFile
+  harness: { id: string; ready: boolean; label?: string }
+  /** Whether its schedules can be imported here (switched off); otherwise they are left out. */
+  canSchedule: boolean
+  /** An Agent of this name exists already; the import still creates a new one. */
+  nameTaken: boolean
+}
+/** `file`: the parsed JSON of the chosen file, as it is. */
+export interface AgentImportRequest {
+  requestId: string
+  file: unknown
+}
+export interface AgentImportResult {
+  agent: CustomAgent
+  memories: number
+  schedules: number
 }
 
 /**
@@ -275,6 +370,8 @@ export type AgentActivityItem =
     }
   | { kind: 'result'; id: string; at: string; resultId: string; name: string; outcome: ScheduleResultOutcome; topicId?: string }
   | { kind: 'memory'; id: string; at: string; change: 'added' | 'updated' | 'deleted'; memoryId: string }
+  /** The agent searched its own saved memories (`recall_memory`) in a turn: how many times, never the words. */
+  | { kind: 'recall'; id: string; at: string; sessionId: string; count: number }
   | {
       kind: 'proposal'
       id: string
@@ -358,10 +455,11 @@ export interface SessionAgentRef {
 
 /**
  * What an external engine was sent as its first-turn context: each part keeps who wrote it, so a client can show Latch's
- * framing apart from the user's words. Joined with newlines, these are exactly the characters sent.
+ * framing apart from the user's words, and both apart from `material` (imported memories and ones saved from outside
+ * content, which are not the person's words). Joined with newlines, these are exactly the characters sent.
  */
 export interface AgentBrief {
-  segments: Array<{ source: 'latch' | 'user'; text: string }>
+  segments: Array<{ source: 'latch' | 'user' | 'material'; text: string }>
 }
 
 /** A skill's text, handed only to a driver that serves skills to its engine (`HarnessInfo.skills: 'server'`). */

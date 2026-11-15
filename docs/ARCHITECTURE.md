@@ -352,7 +352,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
 | `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及交付绑定的 PR，接入的来源（`imported`，见 [HARNESSES.md](HARNESSES.md#接入已有会话)），以及审批决定、取消与交付（按行暂存和取消暂存、提交、推送、创建 PR，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#回执与结果未知)）的回执 |
 | `agents/computer.json` | 桌面端报告的睡眠与醒来、Host 有序停止到下次启动的时段（版本 1，各最多 32 段，只有时间，strict schema，0600），用于「电脑」的上次唤醒与错过的原因；读不了时移到一边从空开始（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#界面)） |
-| `agents/custom.json` | 我的 Agent 与「通用」的定义、记忆、记忆提议（`proposals`）、每条记忆可撤销的最近一次修改（`changes`）、委托与修改的回执（版本 2，0600，目录 0700，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)）。没有 `proposals` 与 `changes` 的旧文件按空读入，下次写入时补上。版本 1 的 `glyph` 在读取时按旧图标的序号固定映射为 `avatar`（括号取序号模 4、眼睛取序号整除 4 再模 4、颜色取序号模 9），立即写回版本 2，不再写版本 1；未知的图标或头像取值拒绝读取并保留原文件 |
+| `agents/custom.json` | 我的 Agent 与「通用」的定义、记忆、记忆提议（`proposals`）、每条记忆可撤销的最近一次修改（`changes`）、委托与修改的回执（版本 2，0600，目录 0700，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)）。没有 `proposals` 与 `changes` 的旧文件按空读入，下次写入时补上。同一个文件里还有：每个归属最近 64 轮的记忆查询计数（只有内置 Harness 的 `recall_memory` 会记；`recalls`：会话、那一轮的消息、次数，不含查询的词；旧文件按空读入）；导入的记忆带 `imported`（文件里的来源、是否来自外部内容、原保存时间），人「设为我说的」之后的记忆带 `owned`；头像除括号脸外可以是 `kind: 'image'` 加 `image`（Host 重新编码后那份图片的 SHA-256，括号脸字段保留）。版本 1 的 `glyph` 在读取时按旧图标的序号固定映射为 `avatar`（括号取序号模 4、眼睛取序号整除 4 再模 4、颜色取序号模 9），立即写回版本 2，不再写版本 1；未知的图标或头像取值拒绝读取并保留原文件 |
 | `handoffs/handoffs.json` | 交接记录与回执（0600，目录 0700，见 [HANDOFFS.md](HANDOFFS.md)） |
 | `history-imports.json` | 接入已有会话的回执：请求 ID、来源 Harness 与它的会话 ID、方式与 Latch 会话 ID；目录与标题只在完成之前保存（见 [HARNESSES.md](HARNESSES.md#接入已有会话)） |
 | `review-notes/<会话 ID 的 SHA-256>.json` | 会话的行级反馈、未定的发送与回执（0600，目录 0700，见 [CHANGES.md](CHANGES.md#行级反馈)） |
@@ -360,6 +360,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `session-folders.json` | 会话启动请求键的哈希与自有文件夹名、启动目录哈希；Agent 固定家的 owner、根/父/叶目录身份（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
 | `sessions/runtime.json`、`runtime.lock` | Standard 的会话、请求回执与删除记录 |
+| `agents/avatars/<哈希>.png` | Agent 的图片头像：Host 的解码进程重新编码出的 256×256 PNG（只有 `IHDR`、`IDAT`、`IEND`），按内容的 SHA-256 命名，0600，目录 0700；没有任何 Agent 再用的会被删掉，Host 启动时再清一遍。只经 `GET /custom-agents/avatar-images/<哈希>` 读取，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#图片头像) |
 | `harnesses/<id>/` | 外部 Harness 的私有数据；ACP 为 `acp.json`、`acp.lock`，以及 `skills/<会话 ID 的 SHA-256 前 32 位>/`（0700）：技能服务读取的 `skills.json`，和 `propose_memory`、`propose_schedule` 追加的 `proposals.jsonl`（0600，一行一条，有行数与大小上限，ACP 驱动读后交给 Host 建提议，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)） |
 | `host.json` | 运行中 Host 的 PID、hostId、实例 ID、`host.sock` 路径与地址（版本 2，0600） |
 | `host.lock` | 数据目录锁：持有者的 PID、实例 ID、角色与开机时间（0600，正常退出时删除）；取锁与接管时的临时条目以 `.host-lock-` 开头 |

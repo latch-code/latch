@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { hex64, opaqueId } from './fields.ts'
+import { count, hex64, opaqueId } from './fields.ts'
 
 /** Engine definitions and their probes; 我的 Agent and 通用; 定时任务. */
 export const AGENT_ACTIONS = {
@@ -10,9 +10,12 @@ export const AGENT_ACTIONS = {
     before: hex64,
     after: hex64,
     customAgentId: opaqueId.optional(),
-    /** A memory saved from a proposal, or put back by 撤销. */
-    via: z.enum(['proposal', 'undo']).optional(),
+    /** A memory saved from a proposal, put back by 撤销, or confirmed as the person's own (设为我说的). */
+    via: z.enum(['proposal', 'undo', 'own']).optional(),
   }),
+  /** An Agent written to a file for the person, and one created from such a file: IDs and counts only. */
+  'agent.exported': z.strictObject({ customAgentId: opaqueId, memories: count, schedules: count }),
+  'agent.imported': z.strictObject({ customAgentId: opaqueId, memories: count, schedules: count, fileHash: hex64 }),
   /** A memory proposal kept pending for the person; never its text. */
   'agent.memory.proposed': z.strictObject({
     origin: z.enum(['user', 'agent']),

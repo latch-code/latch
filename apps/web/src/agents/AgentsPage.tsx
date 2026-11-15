@@ -1,4 +1,4 @@
-import { useCallback, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 
 import { GENERAL_AGENT_ID } from '@latch/protocol'
@@ -20,6 +20,7 @@ import { WorkbenchComputer } from '../shell/WorkbenchNav.tsx'
 import { AgentsSpaceList } from './AgentsSpaceList.tsx'
 import { askDelegateFocus } from './delegateFocus.ts'
 import { HelperCreate } from './HelperCreate.tsx'
+import { AgentImport } from './AgentTransfer.tsx'
 import { AgentChat } from './AgentChat.tsx'
 import { AgentsHome, WaitingCards } from './AgentsHome.tsx'
 import { AgentTopics } from './AgentTopics.tsx'
@@ -78,6 +79,13 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
   const target = route.myAgent
   const id = target?.id
   const chat = id !== undefined && id !== 'new'
+  // 导入 is the creation page's other way in: from a file instead of the two steps. It has no route of its own and closes
+  // when the creation page does.
+  const [importing, setImporting] = useState(false)
+  useEffect(() => {
+    if (id !== 'new') setImporting(false)
+  }, [id])
+  const creating = importing ? '导入 Agent' : '新建 Agent'
   const topics = id === undefined && route.topics === true
   const home = id === undefined && !topics
   const locked = !readsAgents(snapshot)
@@ -130,7 +138,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
         && id === 'new'
         && createPortal(
           <div className="agents-crumb">
-            <span className="titlebar-page-title">新建 Agent</span>
+            <span className="titlebar-page-title">{creating}</span>
             {offline && (
               <span className="agents-offline">
                 <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
@@ -208,7 +216,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
                 ? '全部话题'
                 : home
                   ? '总览'
-                  : '新建 Agent'
+                  : creating
           }
           aria-hidden={(phone && !pushed) || undefined}
           inert={(phone && !pushed) || undefined}>
@@ -221,14 +229,40 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
               {phone && (
                 <header className="settings-bar">
                   <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
-                  <h2>新建 Agent</h2>
+                  <h2>{creating}</h2>
                 </header>
               )}
               <div className="settings-scroll">
                 <div className="settings-content agents-content settings-enter">
                   {locked && <LockedAgents />}
-                  {!locked && snapshot.catalog && (
+                  {!locked && importing && (
+                    <AgentImport
+                      writes={writes}
+                      offline={offline}
+                      onImported={agent => {
+                        writes.clear()
+                        void shell.refresh()
+                        shell.setRoute({ entry: 'agents', myAgent: { id: agent.id } })
+                      }}
+                      onCancel={() => {
+                        if (writes.saving || writes.held) return
+                        writes.clear()
+                        setImporting(false)
+                      }}
+                    />
+                  )}
+                  {!locked && !importing && snapshot.catalog && (
                     <div className="agent-page">
+                      <Button
+                        variant="ghost"
+                        className="agents-import"
+                        disabled={offline || writes.saving || writes.held}
+                        onClick={() => {
+                          writes.clear()
+                          setImporting(true)
+                        }}>
+                        从文件导入
+                      </Button>
                       <HelperCreate
                         key={snapshot.device.id}
                         catalog={snapshot.catalog}
