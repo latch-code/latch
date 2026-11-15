@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import type { Duplex } from 'node:stream'
 import * as files from '@latch/core/node-kit'
+import { AppError } from '@latch/sdk'
 import { afterEach, expect, it, vi } from 'vitest'
 import { NativeSettings } from '../src/native-settings.ts'
 import { selectAutoDirect } from '../src/native-network.ts'
@@ -127,7 +128,7 @@ it.each(['relay', 'directory'] as const)('keeps an installed relay when a concur
   const install = profiles.installRelay(pending, base, () => {})
   await writing
   const actor = { listener: 'unix' } as const
-  const removal = target === 'relay' ? settings.removeRelay(old.relayId, actor) : settings.removeDirectory(actor)
+  const removal = target === 'relay' ? settings.removeRelay(old.relayId, actor, () => {}) : settings.removeDirectory(actor, () => {})
   await Promise.resolve()
   continueWriting()
   await Promise.all([install, removal])
@@ -155,7 +156,7 @@ it.each(['relay', 'directory'] as const)(
       throw new Error('Directory sync outcome unavailable')
     })
     const actor = { listener: 'unix', deviceId: 'fixture' } as const
-    const remove = target === 'relay' ? settings.removeRelay(old.relayId, actor) : settings.removeDirectory(actor)
+    const remove = target === 'relay' ? settings.removeRelay(old.relayId, actor, () => {}) : settings.removeDirectory(actor, () => {})
     await expect(remove).rejects.toMatchObject({ code: 'native-relay-write-unknown' })
     expect(profiles.configHash()).toBe(before)
     await settings.settleRelayWrite()
@@ -170,6 +171,41 @@ it.each(['relay', 'directory'] as const)(
     })
   },
 )
+it.each(['relay', 'directory'] as const)('refuses a %s removal when admin is revoked just before replacement', async target => {
+  const { settings, profiles, directory, audit } = await setup()
+  const old = { relayId: 'a'.repeat(32), url: 'https://old.example/', spkiHash: 'b'.repeat(64) }
+  const source = { anchors: ['c'.repeat(64)], mirrors: ['https://directory.example/'] }
+  await profiles.configure(null, [old], undefined, undefined, source)
+  let permitted = true
+  const authorize = () => {
+    if (!permitted) throw new AppError(403, 'scope-required', 'Fixture permission revoked')
+  }
+  const write = files.writeFileAtomic
+  vi.spyOn(files, 'writeFileAtomic').mockImplementationOnce((path, contents, options) => {
+    const commit = options?.fs
+    if (!commit) {
+      permitted = false
+      return write(path, contents, options)
+    }
+    return write(path, contents, {
+      ...options,
+      fs: {
+        ...commit,
+        rename(from, to) {
+          permitted = false
+          return commit.rename(from, to)
+        },
+      },
+    })
+  })
+  const actor = { listener: 'unix' } as const
+  const removal = target === 'relay' ? settings.removeRelay(old.relayId, actor, authorize) : settings.removeDirectory(actor, authorize)
+  await expect(removal).rejects.toMatchObject({ code: 'scope-required' })
+  const saved = await RelayProfiles.open(directory)
+  expect(saved.snapshot().profiles.map(profile => profile.relayId)).toEqual([old.relayId])
+  expect(saved.snapshot().directory).toEqual(source)
+  expect(audit).toHaveBeenCalledOnce()
+})
 it('reports a failed abandon audit on the uncertain write and the recovered original request', async () => {
   const { settings, profiles, directory, audit } = await setup()
   const node = { relayId: 'a'.repeat(32), url: 'https://new.example/', spkiHash: 'b'.repeat(64) }

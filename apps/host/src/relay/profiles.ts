@@ -225,9 +225,11 @@ export class RelayProfiles {
   }
   removeObserver(
     target: { relayId: string } | { directory: true },
+    authorize: () => void,
     record: (detail: { before: string; after: string; relayCount: number }) => Promise<boolean>,
   ): Promise<{ audited: boolean }> {
     return this.change(async draft => {
+      authorize()
       const before = this.hashConfiguration(draft)
       if ('relayId' in target) draft.profiles = draft.profiles.filter(profile => profile.builtIn || profile.relayId !== target.relayId)
       else draft.directory = null
@@ -238,7 +240,7 @@ export class RelayProfiles {
         relayCount: draft.profiles.filter(profile => !profile.builtIn).length,
       })
       return { audited }
-    })
+    }, authorize)
   }
   private checkBase(expectedHash?: string): void {
     if (expectedHash !== undefined && this.configHash() !== expectedHash)

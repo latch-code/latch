@@ -507,11 +507,13 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       requireLocal(caller)
       requireScope(caller, 'admin')
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+      const authorize = () => recheck(caller, 'admin')
       const result = relay
-        ? await nativeSettings.removeRelay(relay[1]!, actorOf(caller), auditFailed)
-        : await nativeSettings.removeDirectory(actorOf(caller), auditFailed)
+        ? await nativeSettings.removeRelay(relay[1]!, actorOf(caller), authorize, auditFailed)
+        : await nativeSettings.removeDirectory(actorOf(caller), authorize, auditFailed)
       if (!result.audited) res.setHeader('x-latch-audit', 'failed')
       refresh()
+      authorize()
       json(res, nativeSettings.info(caller.device.id))
       return true
     }

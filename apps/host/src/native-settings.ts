@@ -195,19 +195,20 @@ export class NativeSettings {
     if (cancelled) controller.cancelVerification()
     return { audited }
   }
-  removeRelay(relayId: string, actor: AuditActor, auditFailed?: () => void): Promise<{ audited: boolean }> {
-    return this.lower(actor, { relayId }, auditFailed)
+  removeRelay(relayId: string, actor: AuditActor, authorize: () => void, auditFailed?: () => void): Promise<{ audited: boolean }> {
+    return this.lower(actor, { relayId }, authorize, auditFailed)
   }
-  removeDirectory(actor: AuditActor, auditFailed?: () => void): Promise<{ audited: boolean }> {
-    return this.lower(actor, { directory: true }, auditFailed)
+  removeDirectory(actor: AuditActor, authorize: () => void, auditFailed?: () => void): Promise<{ audited: boolean }> {
+    return this.lower(actor, { directory: true }, authorize, auditFailed)
   }
   private lower(
     actor: AuditActor,
     target: { relayId: string } | { directory: true },
+    authorize: () => void,
     auditFailed?: () => void,
   ): Promise<{ audited: boolean }> {
     return this.serial(async () => {
-      const result = await this.options.profiles.removeObserver(target, detail =>
+      const result = await this.options.profiles.removeObserver(target, authorize, detail =>
         this.recordLowering({ action: 'native.config.changed', actor, detail: { ...detail, lowering: true, direct: false } }, auditFailed),
       )
       if ('directory' in target) await this.options.directory?.configure()
