@@ -351,6 +351,55 @@ export async function unstageRestricted(
   })
 }
 
+/** The index entry a line write meant to replace is no longer there: something else wrote the index meanwhile. */
+export class IndexMovedError extends Error {
+  constructor() {
+    super('git-index-moved')
+  }
+}
+
+/**
+ * One path's index entry set to new content, for staging by line: the blob is written without any filter and the entry
+ * (stage 0, its mode kept) replaced, with no look at the work tree. Refused when Git names the blob otherwise than the
+ * Host computed, so what is staged is exactly what was built, and when the entry is not `previous` right before it is
+ * replaced (`IndexMovedError`). Git has no compare-and-swap for one entry: a program outside the Host that writes the
+ * index between that last look and `update-index` taking `index.lock` is overwritten for this one path.
+ */
+export async function setIndexBlob(
+  git: GitReader,
+  layout: GitLayout,
+  entry: { path: string; mode: string; oid: string },
+  previous: string,
+  content: string,
+  timeoutMs: number,
+  authorize: () => Promise<void>,
+): Promise<void> {
+  const written = (
+    await git.run(layout, [...WRITE_CONFIG, 'hash-object', '-w', '--no-filters', '-t', 'blob', '--stdin'], {
+      input: content,
+      maxBytes: 256,
+      timeoutMs,
+      authorize,
+    })
+  )
+    .toString('utf8')
+    .trim()
+  if (written !== entry.oid) throw new GitError('failed')
+  const now = (
+    await git.run(layout, ['ls-files', '-s', '-z', '--', entry.path], { maxBytes: 64 * 1024, env: { GIT_LITERAL_PATHSPECS: '1' } })
+  )
+    .toString('utf8')
+    .split('\0')
+    .filter(record => record.slice(record.indexOf('\t') + 1) === entry.path)
+  if (now.length !== 1 || now[0]!.split('\t')[0] !== `${entry.mode} ${previous} 0`) throw new IndexMovedError()
+  await git.run(layout, [...WRITE_CONFIG, 'update-index', '-z', '--index-info'], {
+    input: `${entry.mode} ${entry.oid} 0\t${entry.path}\0`,
+    maxBytes: 1024 * 1024,
+    timeoutMs,
+    authorize,
+  })
+}
+
 /** The tree the index would commit; Git writes the tree objects it needs, which changes nothing a person sees. */
 export async function indexTree(git: GitReader, layout: GitLayout): Promise<string> {
   const out = (await git.run(layout, ['write-tree'], { maxBytes: 256 })).toString('utf8').trim()

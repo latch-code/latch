@@ -12,6 +12,7 @@ import {
   CodeGlyph,
   CopyGlyph,
   FileGlyph,
+  HistoryGlyph,
   MessageGlyph,
   PlusGlyph,
   UndoGlyph,
@@ -69,6 +70,8 @@ export interface FileRowProps {
   onOpenFile: () => void
   /** 在 <编辑器> 中打开, in the desktop app's own window: the label, and what it does. */
   editor?: { label: string; run(): void }
+  /** 文件历史: the commits that changed this file. */
+  onHistory?: () => void
   notes?: FileNotes
   read: (file: Pick<ChangedFile, 'root' | 'path'>, signal: AbortSignal) => Promise<FileChangeDetail>
   /** The phone's rows: the name over its folder, with the note. */
@@ -175,13 +178,17 @@ function HeadFacts({ file, lines, only }: { file: ChangedFile; lines?: number; o
 }
 
 const whyEmpty = (file: ChangedFile) =>
-  file.binary
-    ? '二进制文件，没有可比较的文字'
-    : file.status === 'R'
-      ? '内容相同，只是换了路径'
-      : file.modeChanged
-        ? '内容没有变化，只改了执行位'
-        : '内容没有变化'
+  file.secret
+    ? '可能含密钥，不显示内容'
+    : file.large
+      ? '超过 1 MB，不显示内容'
+      : file.binary
+        ? '二进制文件，没有可比较的文字'
+        : file.status === 'R'
+          ? '内容相同，只是换了路径'
+          : file.modeChanged
+            ? '内容没有变化，只改了执行位'
+            : '内容没有变化'
 
 export function FileBody({
   file,
@@ -392,6 +399,7 @@ export function ChangesFile({
   onToggle,
   onOpenFile,
   editor,
+  onHistory,
   notes,
   read,
   twoLines,
@@ -454,6 +462,7 @@ export function ChangesFile({
             {editor && !file.secret && !file.binary && file.status !== 'D' && (
               <IconButton size="xs" icon={CodeGlyph} label={editor.label} onClick={editor.run} />
             )}
+            {onHistory && <IconButton size="xs" icon={HistoryGlyph} label="文件历史" onClick={onHistory} />}
             {onUndo && <IconButton size="xs" icon={UndoGlyph} label="撤销此文件" onClick={onUndo} />}
             <IconButton
               size="xs"

@@ -14,7 +14,7 @@ Vitest 驱动浏览器、Electron 与原生；剪贴板回归用独立命名板�
 
 `ios-app.e2e.ts` 用临时 DerivedData、固定依赖和禁签名的 iOS Simulator SDK 构建真实 App，检查 Mach-O 产物不含夹具身份；不启动模拟器或访问钥匙串。SDK 编译不能代替运行时布局、平台许可或真机验收。
 
-`changes-panel.e2e.ts` 在真实临时仓库走完改动页签的范围、撤销与恢复、回执和合并中的拒绝，并按 Host 的答复画出每个状态，截图写入 `test-results/changes-panel/`。
+`changes-panel.e2e.ts` 和 `git-hunks.e2e.ts` 在临时仓库验证撤销、冲突、按行暂存、只读历史与回执。截图见 TESTING。
 
 `webkit.e2e.ts` 用 Playwright WebKit 检查三宽、授权文件与引用发送；不称为真机 Safari 验收。`desktop-models.e2e.ts` 在隔离 Electron 和假 ACP 中检查真实配置读回、失回执不重发及三宽菜单；不调用真实 Agent 或模型。
 

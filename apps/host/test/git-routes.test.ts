@@ -4,7 +4,16 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { GitPrResult, GitPrState, GitDeliveryState, TaskDetail, WorkbenchDelivery } from '@latch/protocol'
+import type {
+  GitCommitDiff,
+  GitDeliveryState,
+  GitHistory,
+  GitHunkDiff,
+  GitPrResult,
+  GitPrState,
+  TaskDetail,
+  WorkbenchDelivery,
+} from '@latch/protocol'
 import { FAKE_ACP_AGENT, installFakeGh, type FakeGh, type TestDevice } from '@latch/testkit'
 import { AuditLog } from '../src/audit.ts'
 import { GitDelivery } from '../src/git-delivery.ts'
@@ -21,13 +30,14 @@ afterEach(async () => {
 const SLOW = { timeout: 20_000 }
 
 /** A Host whose start directory is a repository, and one settled `shell-edit` turn of the fake agent there. */
-async function fixture(options: { gh?: (scratch: string) => Promise<FakeGh> } = {}) {
+async function fixture(options: { gh?: (scratch: string) => Promise<FakeGh>; rateLimits?: 'default' } = {}) {
   const scratch = await mkdtemp(join(tmpdir(), 'latch-git-routes-'))
   cleanups.push(() => rm(scratch, { recursive: true, force: true }))
   const home = join(scratch, 'home')
   await mkdir(home)
   const gh = await options.gh?.(scratch)
   const t = await startTestHost({
+    ...(options.rateLimits ? { rateLimits: options.rateLimits } : {}),
     gitDelivery: {
       home,
       hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: scratch, GH_TOKEN: 'ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
@@ -118,6 +128,152 @@ describe('git delivery routes', () => {
     await t.host.security.devices.setScopes(viewer.id, { dataScope: 'work' }, { listener: 'unix' }, 'lpc-local')
     release()
     expect(await errorOf(await request)).toEqual({ status: 403, error: 'file-scope' })
+  })
+
+  it('stages by line for a device that may stage files, and gives a work-scope device no line, name or subject', SLOW, async () => {
+    const { t, owner, path, git } = await fixture()
+    const snapshot = await owner.json<{ catalog: { features: { gitHunks?: true } } }>('snapshot')
+    expect(snapshot.catalog.features.gitHunks).toBe(true)
+    await writeFile(join(t.workspaceRoot, 'tracked.txt'), 'committed\nsecond\nthird\n')
+    const query = `${path}/diff?view=unstaged&path=tracked.txt`
+    const diff = await owner.json<GitHunkDiff>(query)
+    expect(diff).toMatchObject({ view: 'unstaged', path: 'tracked.txt', add: 2, del: 0 })
+    const body = { requestId: randomUUID(), path: 'tracked.txt', base: diff.base, new: [[2, 2]] }
+    // Patch text, or anything else beside the line numbers, is not a request.
+    expect((await post(owner, `${path}/stage-lines`, { ...body, patch: '@@ -1 +1,2 @@' })).status).toBe(400)
+    expect((await post(owner, `${path}/stage-lines`, { ...body, new: [[2, 'x']] })).status).toBe(400)
+    expect((await owner.request(`${path}/diff?view=other&path=tracked.txt`)).status).toBe(400)
+    expect(await audited(t)).toEqual([])
+    expect(await owner.json(`${path}/stage-lines`, { method: 'POST', body })).toEqual({ lines: 1 })
+    expect(git('show', ':tracked.txt')).toBe('committed\nsecond')
+    expect(await audited(t)).toEqual(['git.stage', 'git.result'])
+    const staged = await owner.json<GitHunkDiff>(`${path}/diff?view=staged&path=tracked.txt`)
+    expect(
+      await owner.json(`${path}/unstage-lines`, {
+        method: 'POST',
+        body: { requestId: randomUUID(), path: 'tracked.txt', base: staged.base, new: [[2, 2]] },
+      }),
+    ).toEqual({ lines: 1 })
+    expect(git('diff', '--cached', '--name-only')).toBe('')
+    // A stale request is told what changed.
+    const stale = await post(owner, `${path}/stage-lines`, {
+      ...body,
+      requestId: randomUUID(),
+      base: { ...diff.base, worktree: 'a'.repeat(64) },
+    })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toMatchObject({ error: 'git-file-changed', changed: 'worktree' })
+    git('add', 'tracked.txt')
+    git('commit', '-q', '-m', 'private subject')
+    const sha = git('rev-parse', 'HEAD')
+    // A device with `view` and the files reads history but stages nothing.
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    await t.host.security.devices.setScopes(viewer.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
+    expect((await post(viewer, `${path}/stage-lines`, body)).status).toBe(403)
+    const full = await viewer.json<GitHistory>(`${path}/history`)
+    expect(full.commits[0]).toMatchObject({ sha, subject: 'private subject' })
+    expect((await viewer.json<GitCommitDiff>(`${path}/history/${sha}`)).files).toEqual([
+      { path: 'tracked.txt', status: 'M', add: 2, del: 0 },
+    ])
+    expect((await viewer.request(`${path}/history/${sha}?path=tracked.txt`)).status).toBe(200)
+    expect(await errorOf(await viewer.request(`${path}/compare`))).toEqual({ status: 409, error: 'git-no-base' })
+    // The default data scope (`work`): history names commits and files, so none of it is for this device. A commit ID
+    // it guesses is answered like one that does not exist.
+    const narrow = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'] })
+    for (const refused of [
+      `${path}/history`,
+      `${path}/history/${sha}`,
+      `${path}/history/${'0'.repeat(40)}`,
+      `${path}/compare`,
+      `${path}/history?path=tracked.txt`,
+      `${path}/history/${sha}?path=tracked.txt`,
+      `${path}/compare?path=tracked.txt`,
+      `${path}/diff?view=unstaged&path=tracked.txt`,
+    ]) {
+      const response = await narrow.request(refused)
+      const text = await response.text()
+      expect({ status: response.status, error: (JSON.parse(text) as { error: string }).error }, refused).toEqual({
+        status: 403,
+        error: 'file-scope',
+      })
+      expect(text).not.toContain(sha)
+      expect(text).not.toContain('private subject')
+    }
+    expect(await errorOf(await post(narrow, `${path}/stage-lines`, body))).toEqual({ status: 403, error: 'file-scope' })
+    expect((await t.raw('loopback-tcp', `api/${path}/history`)).status).toBe(401)
+  })
+
+  it('takes only rising, disjoint, bounded line ranges, and keeps a private session private on the new routes', SLOW, async () => {
+    const { t, owner, sessionId, path, git } = await fixture()
+    await writeFile(join(t.workspaceRoot, 'tracked.txt'), 'committed\nsecond\nthird\n')
+    const diff = await owner.json<GitHunkDiff>(`${path}/diff?view=unstaged&path=tracked.txt`)
+    const body = (lines: unknown) => ({ requestId: randomUUID(), path: 'tracked.txt', base: diff.base, new: lines })
+    for (const lines of [
+      [
+        [3, 3],
+        [2, 2],
+      ],
+      [
+        [2, 3],
+        [3, 3],
+      ],
+      [[3, 2]],
+      [[1, 20_001]],
+      [[1, 9_000_000]],
+      Array.from({ length: 501 }, (_, index) => [index * 2 + 1, index * 2 + 1]),
+    ])
+      expect((await post(owner, `${path}/stage-lines`, body(lines))).status, JSON.stringify(lines).slice(0, 40)).toBe(400)
+    expect(await audited(t)).toEqual([])
+    expect(git('diff', '--cached', '--name-only')).toBe('')
+    // A private session's routes need the full data scope here too.
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'] })
+    vi.spyOn(t.host.bridge, 'agentPrivate').mockImplementation(id => id === sessionId)
+    for (const refused of [`${path}/history`, `${path}/compare`, `${path}/diff?view=staged&path=tracked.txt`])
+      expect((await viewer.request(refused)).status, refused).toBe(403)
+    expect((await post(viewer, `${path}/unstage-lines`, body([[2, 2]]))).status).toBe(403)
+    expect((await owner.request(`${path}/history`)).status).toBe(200)
+  })
+
+  it('counts the new routes against the device limits before anything is read or run', SLOW, async () => {
+    const { t, owner, path, git } = await fixture({ rateLimits: 'default' })
+    // Writes by the action limit, reads by the file limit: both are taken before the body or the repository is looked at.
+    const writes = await Promise.all(Array.from({ length: 70 }, () => post(owner, `${path}/stage-lines`, { requestId: 'short' })))
+    expect(writes.map(response => response.status)).toContain(429)
+    expect(await errorOf(writes.find(response => response.status === 429)!)).toEqual({ status: 429, error: 'rate-limited' })
+    const reads = await Promise.all(Array.from({ length: 90 }, () => owner.request('tasks/no-such-session/git/history')))
+    expect(reads.map(response => response.status)).toContain(429)
+    expect(await audited(t)).toEqual([])
+    expect(git('diff', '--cached', '--name-only')).toBe('')
+  })
+
+  it('rechecks the data scope after a history read, and returns nothing read for the wider one', SLOW, async () => {
+    const { t, path } = await fixture()
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    await t.host.security.devices.setScopes(viewer.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
+    for (const [method, url] of [
+      ['history', `${path}/history`],
+      ['treeDiff', `${path}/compare`],
+      ['hunkDiff', `${path}/diff?view=unstaged&path=tracked.txt`],
+    ] as const) {
+      await t.host.security.devices.setScopes(viewer.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
+      let release!: () => void
+      const gate = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const read = vi.spyOn(GitDelivery.prototype, method).mockImplementation(async () => {
+        await gate
+        return { commits: [{ sha: 'a'.repeat(40), at: '', subject: 'read for the wider scope' }], files: [], hunks: [] } as never
+      })
+      const request = viewer.request(url)
+      await expect.poll(() => read.mock.calls.length).toBe(1)
+      await t.host.security.devices.setScopes(viewer.id, { dataScope: 'work' }, { listener: 'unix' }, 'lpc-local')
+      release()
+      const response = await request
+      const text = await response.text()
+      expect({ status: response.status, text }, method).toMatchObject({ status: 403 })
+      expect(text).not.toContain('read for the wider scope')
+      read.mockRestore()
+    }
   })
 
   it('announces the feature, lists the status and stages and commits with the audit record first', SLOW, async () => {

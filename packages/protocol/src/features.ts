@@ -32,6 +32,8 @@ export interface HostFeatures {
   gitWrites?: true
   /** `/tasks/:id/git` and its stage, unstage, commit and push routes (docs/GIT-DELIVERY.md). */
   gitDelivery?: true
+  /** `…/git/diff`, `stage-lines`, `unstage-lines`, `history` and `compare`: staging by line and the history views. */
+  gitHunks?: true
   /** Worktree start points (`POST /tasks` `worktree` objects), `…/worktree` inventories and removal (docs/BRANCHES.md). */
   worktreeLifecycle?: true
   terminal?: true

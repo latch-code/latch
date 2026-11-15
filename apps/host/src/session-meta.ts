@@ -86,7 +86,7 @@ const prBindingSchema = z.strictObject({
  */
 const gitReceiptSchema = z.strictObject({
   kind: z.literal('git'),
-  operation: z.enum(['commit', 'push', 'pr']),
+  operation: z.enum(['commit', 'push', 'pr', 'stage', 'unstage']),
   requestId: requestIdText,
   deviceId: deviceIdText,
   payloadHash: hex64Text,
@@ -114,6 +114,13 @@ const gitReceiptSchema = z.strictObject({
   via: z.enum(['upstream', 'push-remote', 'origin']).optional(),
   /** The commit made, once done. */
   commit: oidText.optional(),
+  /**
+   * Staging by line: the index entry the write replaces, the blob it puts there, and how many changed lines it picks.
+   * A retry whose answer was lost is settled by which of the two the index holds.
+   */
+  preIndex: oidText.optional(),
+  resultOid: oidText.optional(),
+  lines: z.number().int().min(1).max(40_000).optional(),
   /** PR: the pull request made or bound, once done; `linked` when it was found open rather than made. */
   pr: prBindingSchema.optional(),
   linked: z.literal(true).optional(),

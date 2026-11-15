@@ -73,6 +73,10 @@ import { useReviewNotes } from './useReviewNotes.ts'
 import { noteTally, sameFile } from './notes.ts'
 import { NoteCard, NotesFoot, type NoteWriting } from './ReviewNotes.tsx'
 import { PARTIAL_NOTE } from '../../conversation/turnChanges.ts'
+import { GitHistoryView, type HistoryMode } from './GitHistoryView.tsx'
+import { StagingFeedback, StagingView } from './StagingView.tsx'
+import { useStaging, type useStagingWrites } from './useStaging.ts'
+import type { GitStagingView } from '@latch/protocol'
 
 /** Where the conversation sends the person: a turn and, when it names one, a file of it. */
 export interface ChangesTarget {
@@ -94,6 +98,7 @@ export interface ChangesPanelProps {
   canRun: boolean
   /** The device's data scope covers the session's folders; the routes refuse it otherwise. */
   canRead: boolean
+  stagingWrites: ReturnType<typeof useStagingWrites>
   phone: boolean
   /** The Host's computer by the name it reports (`Snapshot.hostName`), for where to grant access. */
   hostName?: string
@@ -116,6 +121,19 @@ export interface ChangesPanelProps {
   onDeliver?: () => void
   /** 「作为应用草稿」 for a session whose folder holds a page draft (`AppDraftEntry`). */
   appDraft?: ReactNode
+  /**
+   * The Host stages by line and reads history (`features.gitHunks`). Left out, the views are offered wherever 交付 is
+   * (`onDeliver`): the page and its Host are one build.
+   */
+  gitHunks?: boolean
+}
+
+/** A Git view shown in place of a scope's list: the staging views, or one of the history views. */
+type GitPane = { kind: 'staging'; view: GitStagingView } | { kind: 'history'; mode: HistoryMode; back?: GitPane }
+
+function paneLabel(pane: GitPane, base: string | undefined): string {
+  if (pane.kind === 'staging') return pane.view === 'unstaged' ? '未暂存' : '已暂存'
+  return pane.mode.kind === 'commits' ? '提交' : pane.mode.kind === 'compare' ? `分支与 ${base ?? '主分支'}` : '文件历史'
 }
 
 /** Notes on files this scope does not list: they stay in reach with their original lines. */
@@ -537,12 +555,16 @@ function LineFor({
   }
 }
 
+function FilesRestricted({ hostName }: { hostName: string | undefined }) {
+  return <Empty title="这台设备看不到会话文件夹里的文件" detail={SETUP_COPY.filesNeedScope(computerName(hostName))} />
+}
+
 /** The right panel's 改动 tab: what this session changed, who changed it, and taking it back. */
 export function ChangesPanel(props: ChangesPanelProps) {
   if (!props.canRead)
     return (
       <div className="changes-panel">
-        <Empty title="这台设备看不到会话文件夹里的文件" detail={SETUP_COPY.filesNeedScope(computerName(props.hostName))} />
+        <FilesRestricted hostName={props.hostName} />
       </div>
     )
   return <ReadableChanges key={props.summary.id} {...props} />
@@ -568,8 +590,11 @@ function ReadableChanges({
   onTotals,
   onDeliver,
   appDraft,
+  gitHunks = onDeliver !== undefined,
+  stagingWrites,
 }: ChangesPanelProps) {
   const preferences = usePreferences()
+  const [git, setGit] = useState<GitPane>()
   const [choice, setChoice] = useState<ScopeChoice>(
     target?.turnId
       ? { kind: 'turn', turnId: target.turnId }
@@ -582,6 +607,9 @@ function ReadableChanges({
     choice,
     offline,
   )
+  const stagingView = git?.kind === 'staging'
+  const staging = useStaging(summary.id, `${summary.status}:${summary.runId ?? ''}:${revision}`, offline, stagingView, stagingWrites)
+  const stagingPending = staging.busy !== undefined || staging.unknown !== undefined
   const review = useReviewNotes(summary.id, {
     enabled: reviewNotes,
     revision: notesRevision,
@@ -615,6 +643,10 @@ function ReadableChanges({
   const [limit, setLimit] = useState(LIST_PAGE)
   const [base, setBase] = useState<string>()
   const [discard, setDiscard] = useState<{ warning: string; planHash: string; removes: string[]; missed: MissedFile[] }>()
+  const pickScope = (next: ScopeChoice) => {
+    setGit(undefined)
+    setChoice(next)
+  }
   const numbers = useMemo(() => turnNumbers(messages), [messages])
   const panel = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(660)
@@ -640,6 +672,7 @@ function ReadableChanges({
   // A link from the conversation goes to its turn and file, and the file opens.
   useEffect(() => {
     if (!target) return
+    setGit(undefined)
     if (target.turnId) setChoice({ kind: 'turn', turnId: target.turnId })
     else if (target.scope === 'uncommitted') setChoice({ kind: 'uncommitted' })
   }, [target?.nonce])
@@ -662,9 +695,9 @@ function ReadableChanges({
   const shownTurnId = list?.turnId
   const turn: TurnChanges | undefined =
     choice.kind === 'latest' ? turns.at(-1) : choice.kind === 'turn' ? turns.find(item => item.turnId === choice.turnId) : undefined
-  const rights = { canRun, local, active: running, offline, readOnly: sessionReadOnly(summary) !== undefined }
+  const rights = { canRun: canRun && !stagingPending, local, active: running, offline, readOnly: sessionReadOnly(summary) !== undefined }
   const action = scopeAction(list, turn, rights)
-  const label = scopeLabel(choice, numbers, base)
+  const label = git ? paneLabel(git, base) : scopeLabel(choice, numbers, base)
   const rootNames = useMemo(() => {
     const names = new Map<string, string>()
     for (const folder of summary.folders ?? []) names.set(folder.id, folder.path.split('/').at(-1) || folder.id)
@@ -673,10 +706,11 @@ function ReadableChanges({
   const lines = changeLines(list, turn, id => rootNames.get(id) ?? id, summary.branch, running && choice.kind !== 'turn')
   const empty = emptyState(list)
 
-  const treeOn = !phone && (preferences.diffTree ?? treeOpensAlone(files.length, width)) && files.length > 0
+  const treeOn = !git && !phone && (preferences.diffTree ?? treeOpensAlone(files.length, width)) && files.length > 0
   const treeW = treeOn ? treeWidth(width) : 0
   const layout = phone ? 'unified' : layoutFor(preferences.diffMode, width - treeW)
   const narrow = width < 520
+  const canArrange = !stagingView && !phone
   const modes = [
     { value: 'auto', label: '自动' },
     { value: 'stacked', label: '上下' },
@@ -748,8 +782,9 @@ function ReadableChanges({
         id: `turn:${item.turnId}`,
         label: row.label,
         meta: row.meta,
-        checked: choice.kind === 'turn' ? choice.turnId === item.turnId : choice.kind === 'latest' && item === turns.at(-1),
+        checked: !git && (choice.kind === 'turn' ? choice.turnId === item.turnId : choice.kind === 'latest' && item === turns.at(-1)),
         onSelect: () => {
+          setGit(undefined)
           setChoice(item === turns.at(-1) ? { kind: 'latest' } : { kind: 'turn', turnId: item.turnId })
         },
       }
@@ -758,13 +793,13 @@ function ReadableChanges({
   const others: MenuSection = {
     id: 'scopes',
     items: [
-      { id: 'session', label: '这个会话', checked: choice.kind === 'session', onSelect: () => setChoice({ kind: 'session' }) },
+      { id: 'session', label: '这个会话', checked: !git && choice.kind === 'session', onSelect: () => pickScope({ kind: 'session' }) },
       {
         id: 'uncommitted',
         label: '未提交',
         meta: '和 HEAD 比较',
-        checked: choice.kind === 'uncommitted',
-        onSelect: () => setChoice({ kind: 'uncommitted' }),
+        checked: !git && choice.kind === 'uncommitted',
+        onSelect: () => pickScope({ kind: 'uncommitted' }),
       },
       ...(offersBase(summary.branch)
         ? [
@@ -772,13 +807,57 @@ function ReadableChanges({
               id: 'base',
               label: baseLabel(base),
               meta: '从分叉点开始',
-              checked: choice.kind === 'base',
-              onSelect: () => setChoice({ kind: 'base' }),
+              checked: !git && choice.kind === 'base',
+              onSelect: () => pickScope({ kind: 'base' }),
             },
           ]
         : []),
     ],
   }
+  const gitViews: MenuSection = {
+    id: 'git',
+    label: 'Git',
+    items: [
+      {
+        id: 'unstaged',
+        label: '未暂存',
+        meta: '按行暂存',
+        checked: git?.kind === 'staging' && git.view === 'unstaged',
+        onSelect: () => setGit({ kind: 'staging', view: 'unstaged' }),
+      },
+      {
+        id: 'staged',
+        label: '已暂存',
+        meta: '和 HEAD 比较',
+        checked: git?.kind === 'staging' && git.view === 'staged',
+        onSelect: () => setGit({ kind: 'staging', view: 'staged' }),
+      },
+      {
+        id: 'commits',
+        label: '提交',
+        meta: '这个分支的',
+        checked: git?.kind === 'history' && git.mode.kind === 'commits',
+        onSelect: () => setGit({ kind: 'history', mode: { kind: 'commits' } }),
+      },
+      ...(offersBase(summary.branch)
+        ? [
+            {
+              id: 'compare',
+              label: `分支与 ${base ?? '主分支'}`,
+              meta: '已提交的改动',
+              checked: git?.kind === 'history' && git.mode.kind === 'compare',
+              onSelect: () => setGit({ kind: 'history', mode: { kind: 'compare' } }),
+            },
+          ]
+        : []),
+    ],
+  }
+  const primaryRoot = summary.folders?.[0]?.id ?? 'default'
+  const fileHistory = (path: string) => {
+    setGit(current => ({ kind: 'history', mode: { kind: 'file', path }, ...(current ? { back: current } : {}) }))
+  }
+  const readOnly = sessionReadOnly(summary) !== undefined
+  const stagingWhy = offline ? '不在线' : !canRun || readOnly ? '只读' : running ? 'Agent 正在改这个文件夹' : undefined
   const dropped = droppedTurns(numbers, turns)
   const kept = review.notes ?? []
   const writing: NoteWriting | undefined =
@@ -788,6 +867,14 @@ function ReadableChanges({
   const anchor = list && !list.unavailable ? { scope: anchorScope, ...(list.turnId ? { turnId: list.turnId } : {}) } : undefined
   const apart = kept.filter(note => !files.some(file => sameFile(note, file)))
   const undone = list?.undone && !(result?.kind === 'turn' && result.receipt.turnId === list.turnId)
+
+  // The HTTP refusal can reach the page before the device snapshot that revoked the scope.
+  if (failure?.kind === 'denied' || staging.read.kind === 'denied')
+    return (
+      <div ref={panel} className="changes-panel">
+        <FilesRestricted hostName={hostName} />
+      </div>
+    )
 
   return (
     <div
@@ -803,7 +890,7 @@ function ReadableChanges({
           width={288}
           selection
           align="start"
-          sections={[...(turns.length ? [keptTurns] : []), others]}
+          sections={[...(turns.length ? [keptTurns] : []), others, ...(gitHunks ? [gitViews] : [])]}
           footer={
             dropped > 0 ? <MenuFooterNote icon={InfoGlyph}>{`还有 ${dropped} 轮 · 只保留最近 ${KEPT_TURNS} 轮`}</MenuFooterNote> : undefined
           }
@@ -814,22 +901,24 @@ function ReadableChanges({
             </button>
           )}
         />
-        {list && !list.unavailable && list.files.length > 0 && (
+        {!git && list && !list.unavailable && list.files.length > 0 && (
           <span className="changes-stat changes-stat-total">
             <span className="changes-add">+{list.totals.add}</span>
             <span className="changes-del">−{list.totals.del}</span>
           </span>
         )}
-        <span className="changes-scope-action">
-          <ScopeOptions action={action} list={list} actions={actions} busy={busy} turnId={shownTurnId} onDiscard={askDiscard} />
-        </span>
-        {choice.kind === 'uncommitted' && onDeliver && (
+        {!git && !stagingPending && (
+          <span className="changes-scope-action">
+            <ScopeOptions action={action} list={list} actions={actions} busy={busy} turnId={shownTurnId} onDiscard={askDiscard} />
+          </span>
+        )}
+        {(git ? git.kind === 'staging' : choice.kind === 'uncommitted') && onDeliver && (
           <Button size="xs" variant="ghost" onClick={onDeliver}>
             去交付
           </Button>
         )}
         <span className="changes-scope-space" />
-        {!narrow && !phone && (
+        {!narrow && canArrange && (
           <SegmentedControl
             label="排列"
             size="xs"
@@ -849,7 +938,7 @@ function ReadableChanges({
             setPreference('diffWrap', !preferences.diffWrap)
           }}
         />
-        {!phone && (
+        {!git && !phone && (
           <IconButton
             size="xs"
             icon={FolderTree}
@@ -860,181 +949,229 @@ function ReadableChanges({
             }}
           />
         )}
-        <Menu
-          label="更多"
-          align="end"
-          sections={[
-            ...(narrow && !phone
-              ? [
-                  {
-                    id: 'modes',
-                    items: modes.map(mode => ({
-                      id: mode.value,
-                      label: mode.label,
-                      checked: preferences.diffMode === mode.value,
-                      onSelect: () => {
-                        setPreference('diffMode', mode.value)
-                      },
-                    })),
-                  },
-                ]
-              : []),
-            { id: 'copy', items: [{ id: 'patch', label: '复制补丁', onSelect: copyPatch }] },
-          ]}
-          trigger={menu => <IconButton {...menu} size="xs" icon={MoreGlyph} label="更多" />}
-        />
+        {(!git || (narrow && canArrange)) && (
+          <Menu
+            label="更多"
+            align="end"
+            sections={[
+              ...(narrow && canArrange
+                ? [
+                    {
+                      id: 'modes',
+                      items: modes.map(mode => ({
+                        id: mode.value,
+                        label: mode.label,
+                        checked: preferences.diffMode === mode.value,
+                        onSelect: () => {
+                          setPreference('diffMode', mode.value)
+                        },
+                      })),
+                    },
+                  ]
+                : []),
+              ...(!git ? [{ id: 'copy', items: [{ id: 'patch', label: '复制补丁', onSelect: copyPatch }] }] : []),
+            ]}
+            trigger={menu => <IconButton {...menu} size="xs" icon={MoreGlyph} label="更多" />}
+          />
+        )}
       </div>
-      {result && <Receipt result={result} engine={engine} />}
-      {(actionError || editorError) && (
-        <Line tone="amber" icon={WarningGlyph}>
-          {actionError || editorError}
-        </Line>
-      )}
-      {undone && (
+      <StagingFeedback staging={staging} offline={offline} />
+      {git?.kind === 'staging' ? (
+        <StagingView
+          staging={staging}
+          view={git.view}
+          onView={view => {
+            setGit({ kind: 'staging', view })
+          }}
+          canWrite={stagingWhy === undefined}
+          {...(stagingWhy ? { whyNot: stagingWhy } : {})}
+          onOpenFile={path => {
+            onOpenFile({ root: primaryRoot, path })
+          }}
+          onHistory={fileHistory}
+        />
+      ) : git ? (
+        <GitHistoryView
+          sessionId={summary.id}
+          root={primaryRoot}
+          mode={git.mode}
+          layout={layout}
+          phone={phone}
+          poke={`${summary.status}:${summary.runId ?? ''}`}
+          offline={offline}
+          onOpenFile={onOpenFile}
+          onHistory={fileHistory}
+          {...(git.back
+            ? {
+                onBack: () => {
+                  setGit(git.back)
+                },
+              }
+            : {})}
+        />
+      ) : (
         <>
-          <Line icon={UndoGlyph}>已撤销本轮改动{turn?.notePending ? ` · 下一条消息会告诉 ${engine}` : ''}</Line>
-          {!!list.notCovered?.length && (
-            <Line tone="muted" sub={<MissedList files={list.notCovered.map(path => ({ path, why: NOT_COVERED_WHY }))} />}>
-              {list.notCovered.length} 个文件不在撤销范围
+          {result && <Receipt result={result} engine={engine} />}
+          {(actionError || editorError) && (
+            <Line tone="amber" icon={WarningGlyph}>
+              {actionError || editorError}
             </Line>
           )}
-        </>
-      )}
-      {failure?.kind === 'failed' && list && (
-        <button
-          type="button"
-          className="changes-line changes-line-button"
-          data-tone="muted"
-          title="点按刷新"
-          onClick={() => {
-            void reload()
-          }}>
-          <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-          <span className="changes-line-text">没有刷新成功 · 这是上次的列表</span>
-        </button>
-      )}
-      {lines.map(line => (
-        <LineFor
-          key={line.kind}
-          line={line}
-          onOpenSession={onOpenSession}
-          knownSession={knownSession}
-          onRefresh={() => {
-            void reload()
-          }}
-        />
-      ))}
-      {failure?.kind === 'turn-gone' ? (
-        <Empty title={missingTurnTitle(choice, numbers, turns)} />
-      ) : failure?.kind === 'denied' ? (
-        <Empty title="这台设备看不到会话文件夹里的文件" detail={SETUP_COPY.filesNeedScope(computerName(hostName))} />
-      ) : failure && !list ? (
-        <Empty title="读不到改动" detail={failure.text}>
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => {
-              void reload()
-            }}>
-            重试
-          </Button>
-        </Empty>
-      ) : !list ? (
-        <Empty title="正在读取…" />
-      ) : empty ? (
-        <Empty title={empty.title} detail={empty.detail}>
-          {empty.retry && (
-            <Button
-              size="xs"
-              variant="outline"
+          {undone && (
+            <>
+              <Line icon={UndoGlyph}>已撤销本轮改动{turn?.notePending ? ` · 下一条消息会告诉 ${engine}` : ''}</Line>
+              {!!list.notCovered?.length && (
+                <Line tone="muted" sub={<MissedList files={list.notCovered.map(path => ({ path, why: NOT_COVERED_WHY }))} />}>
+                  {list.notCovered.length} 个文件不在撤销范围
+                </Line>
+              )}
+            </>
+          )}
+          {failure?.kind === 'failed' && list && (
+            <button
+              type="button"
+              className="changes-line changes-line-button"
+              data-tone="muted"
+              title="点按刷新"
               onClick={() => {
                 void reload()
               }}>
-              重试
-            </Button>
+              <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+              <span className="changes-line-text">没有刷新成功 · 这是上次的列表</span>
+            </button>
           )}
-        </Empty>
-      ) : (
-        <div className="changes-body">
-          {treeOn && (
-            <TreeRows
-              files={files}
-              selected={selected}
-              rootNames={rootNames}
-              undoable={canUndoRow}
-              onSelect={reveal}
-              onUndo={setAskUndoFile}
+          {lines.map(line => (
+            <LineFor
+              key={line.kind}
+              line={line}
+              onOpenSession={onOpenSession}
+              knownSession={knownSession}
+              onRefresh={() => {
+                void reload()
+              }}
             />
-          )}
-          <div ref={listRef} className="changes-list" data-undone={list.undone ? '' : undefined}>
-            {files.slice(0, limit).map(file => {
-              const id = fileId(file)
-              return (
-                <div key={id} data-file={id}>
-                  <ChangesFile
-                    file={file}
-                    open={opened.has(id)}
-                    selected={selected === id}
-                    undone={undoneFiles.has(id)}
-                    layout={layout}
-                    revision={revision}
-                    read={readFile}
-                    twoLines={phone}
-                    onToggle={() => {
-                      const next = new Set(opened)
-                      if (next.has(id)) next.delete(id)
-                      else next.add(id)
-                      setOpened(next)
-                    }}
-                    onOpenFile={() => {
-                      onOpenFile(file)
-                    }}
-                    {...(editorText ? { editor: { label: editorText, run: () => void openEditor(file) } } : {})}
-                    {...(canUndoRow(file)
-                      ? {
-                          onUndo: () => {
-                            setAskUndoFile(file)
-                          },
-                        }
-                      : {})}
-                    {...(reviewNotes
-                      ? {
-                          notes: {
-                            notes: kept.filter(note => sameFile(note, file)),
-                            ...(anchor ? { anchor } : {}),
-                            ...(writing ? { writing } : {}),
-                          },
-                        }
-                      : {})}
-                  />
-                </div>
-              )
-            })}
-            {files.length > limit && (
-              <button
-                type="button"
-                className="diff-more"
+          ))}
+          {failure?.kind === 'turn-gone' ? (
+            <Empty title={missingTurnTitle(choice, numbers, turns)} />
+          ) : failure && !list ? (
+            <Empty title="读不到改动" detail={failure.text}>
+              <Button
+                size="xs"
+                variant="outline"
                 onClick={() => {
-                  setLimit(limit + LIST_PAGE)
+                  void reload()
                 }}>
-                再显示 {Math.min(LIST_PAGE, files.length - limit)} 个文件
-              </button>
-            )}
-            {apart.length > 0 && <ApartNotes notes={apart} writing={writing} />}
-          </div>
-        </div>
+                重试
+              </Button>
+            </Empty>
+          ) : !list ? (
+            <Empty title="正在读取…" />
+          ) : empty ? (
+            <Empty title={empty.title} detail={empty.detail}>
+              {empty.retry && (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => {
+                    void reload()
+                  }}>
+                  重试
+                </Button>
+              )}
+            </Empty>
+          ) : (
+            <div className="changes-body">
+              {treeOn && (
+                <TreeRows
+                  files={files}
+                  selected={selected}
+                  rootNames={rootNames}
+                  undoable={canUndoRow}
+                  onSelect={reveal}
+                  onUndo={setAskUndoFile}
+                />
+              )}
+              <div ref={listRef} className="changes-list" data-undone={list.undone ? '' : undefined}>
+                {files.slice(0, limit).map(file => {
+                  const id = fileId(file)
+                  return (
+                    <div key={id} data-file={id}>
+                      <ChangesFile
+                        file={file}
+                        open={opened.has(id)}
+                        selected={selected === id}
+                        undone={undoneFiles.has(id)}
+                        layout={layout}
+                        revision={revision}
+                        read={readFile}
+                        twoLines={phone}
+                        onToggle={() => {
+                          const next = new Set(opened)
+                          if (next.has(id)) next.delete(id)
+                          else next.add(id)
+                          setOpened(next)
+                        }}
+                        onOpenFile={() => {
+                          onOpenFile(file)
+                        }}
+                        {...(editorText ? { editor: { label: editorText, run: () => void openEditor(file) } } : {})}
+                        {...(gitHunks
+                        && file.root === primaryRoot
+                        && (choice.kind === 'uncommitted' || choice.kind === 'base')
+                        && file.status !== 'A'
+                          ? {
+                              onHistory: () => {
+                                fileHistory(file.path)
+                              },
+                            }
+                          : {})}
+                        {...(canUndoRow(file)
+                          ? {
+                              onUndo: () => {
+                                setAskUndoFile(file)
+                              },
+                            }
+                          : {})}
+                        {...(reviewNotes
+                          ? {
+                              notes: {
+                                notes: kept.filter(note => sameFile(note, file)),
+                                ...(anchor ? { anchor } : {}),
+                                ...(writing ? { writing } : {}),
+                              },
+                            }
+                          : {})}
+                      />
+                    </div>
+                  )
+                })}
+                {files.length > limit && (
+                  <button
+                    type="button"
+                    className="diff-more"
+                    onClick={() => {
+                      setLimit(limit + LIST_PAGE)
+                    }}>
+                    再显示 {Math.min(LIST_PAGE, files.length - limit)} 个文件
+                  </button>
+                )}
+                {apart.length > 0 && <ApartNotes notes={apart} writing={writing} />}
+              </div>
+            </div>
+          )}
+          {list && empty && apart.length > 0 && (
+            <div className="changes-list">
+              <ApartNotes notes={apart} writing={writing} />
+            </div>
+          )}
+        </>
       )}
-      {list && empty && apart.length > 0 && (
-        <div className="changes-list">
-          <ApartNotes notes={apart} writing={writing} />
-        </div>
-      )}
-      {reviewNotes && review.readError && !review.notes && (
+      {!git && reviewNotes && review.readError && !review.notes && (
         <Line tone="muted" icon={AlertGlyph}>
           读不到反馈 · {review.readError}
         </Line>
       )}
-      {reviewNotes && (
+      {!git && reviewNotes && (
         <NotesFoot
           notes={{
             ready: tally.ready.length,

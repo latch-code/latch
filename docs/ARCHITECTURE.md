@@ -44,7 +44,7 @@ Cordis Context → 每个插件一个 fiber → 清理 effect
 | 客户端 | 会话、选择器、消息、审批、设置、设备登记与本机确认对话框；断线后重新同步 | `apps/web/src`（入口 `App.tsx` → `shell/AppShell.tsx`；与 Host 通信、同步与阅读位置等无布局的核心在 `core/`） |
 | 桌面端 | Electron 主进程：`latch://app/` 协议、经 `host.sock` 转发并附加凭据、设备密钥与凭据、渲染进程限制、经系统文件管理器添加项目与在访达中显示、文件快速查看与默认应用打开、「在浏览器中打开」与另一台电脑的「复制链接」（主进程申请邀请，写成剪贴板上的隐藏项，10 分钟后仍在就清除；页面看不到链接）、「浏览器」标签的预览页（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md)）、Host 的生命周期（崩溃后重启、忙时防睡、登录项、睡眠与停止报告）、其他电脑（见「桌面端与其他电脑」） | `apps/desktop/src`（`main.cjs`、`proxy.cjs`、`remote-proxy.cjs`、`computers.cjs`、`credentials.cjs`、`host.cjs`、`folders.cjs`、`lifecycle.cjs`、`files.cjs`、`browser.cjs`、`preload.cjs`） |
 | Host | 监听入口（含 HTTPS 证书热加载）、HTTP/SSE、运行状态通告、流量计数、访问规则、配置读写、插件挂载、密钥文件排除在时间机器之外 | `apps/host/src/server.ts`、`listeners.ts`、`lifecycle.ts`、`traffic.ts`、`access.ts`、`config.ts`、`providers.ts`、`backup.ts` |
-| HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），交付的状态、暂存、提交、推送与 PR 在 `git.ts`（[GIT-DELIVERY.md](GIT-DELIVERY.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
+| HTTP 路由模块 | 按领域分组的路由，各自带守卫与 `catalog.features` 标记；设备、登记与配对邀请在 `devices.ts`，改动记录与撤销在 `changes.ts`（[CHANGES.md](CHANGES.md)），交付的状态、暂存、历史、提交、推送与 PR 在 `git.ts`（[GIT-DELIVERY.md](GIT-DELIVERY.md)），原生连接（验证窗口、撤销通知、地址簿、配对二维码与手机接入的生命周期）与中继的启动在 `native.ts`（见「HTTP API」） | `apps/host/src/routes/`（`registry.ts`、`index.ts`） |
 | 安全核心 | 设备与登记、本机确认、审计、安全策略、出站策略、模型网关、工具网关、路径与项目文件夹规则、风险分级、会话文件裁决 | `apps/host/src/auth.ts`、`presence.ts`、`presence-reason.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-gateway.ts`、`model-gateway/`、`tool-gateway.ts`、`paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`risk.ts`、`identity.ts`、`crypto.ts`、`files/` |
 | 共享安全文本 | 确认内容转义、设备名称规则、「这台电脑」的判定 `isLocalListener`（浏览器可用） | `packages/protocol/src/text.ts`、`listeners.ts` |
 | 本机确认组件 | 核对确认内容，以 macOS 系统表单调用 Touch ID / 登录密码 | `native/macos/LatchPresence.swift`（`pnpm build:presence` 构建到 `dist/native/latch-presence`） |
@@ -350,7 +350,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `mcp/servers.json`、`mcp/secrets.json` | Latch 的 MCP 服务器定义与它们变量、远程地址请求头的值、登录的令牌与客户端密钥（目录 0700、文件 0600、strict，不进入时间机器备份），见 [MCP.md](./MCP.md) |
 | `mcp-ended.json` | 登录已结束、但令牌没能从 `mcp/` 删除的服务器 ID（没有别的内容）；Host 启动时先删除再去掉记号，见 [MCP.md](./MCP.md#登录) |
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
-| `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及交付绑定的 PR，接入的来源（`imported`，见 [HARNESSES.md](HARNESSES.md#接入已有会话)），以及审批决定、取消与交付（提交、推送、创建 PR，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#回执与结果未知)）的回执 |
+| `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及交付绑定的 PR，接入的来源（`imported`，见 [HARNESSES.md](HARNESSES.md#接入已有会话)），以及审批决定、取消与交付（按行暂存和取消暂存、提交、推送、创建 PR，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#回执与结果未知)）的回执 |
 | `agents/computer.json` | 桌面端报告的睡眠与醒来、Host 有序停止到下次启动的时段（版本 1，各最多 32 段，只有时间，strict schema，0600），用于「电脑」的上次唤醒与错过的原因；读不了时移到一边从空开始（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#界面)） |
 | `agents/custom.json` | 我的 Agent 与「通用」的定义、记忆、记忆提议（`proposals`）、每条记忆可撤销的最近一次修改（`changes`）、委托与修改的回执（版本 2，0600，目录 0700，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)）。没有 `proposals` 与 `changes` 的旧文件按空读入，下次写入时补上。版本 1 的 `glyph` 在读取时按旧图标的序号固定映射为 `avatar`（括号取序号模 4、眼睛取序号整除 4 再模 4、颜色取序号模 9），立即写回版本 2，不再写版本 1；未知的图标或头像取值拒绝读取并保留原文件 |
 | `handoffs/handoffs.json` | 交接记录与回执（0600，目录 0700，见 [HANDOFFS.md](HANDOFFS.md)） |
@@ -442,6 +442,7 @@ Host 约每 40ms 合并一次变化，把选中会话的 `task-state` 推送给�
 | `DELETE /tasks/:id` | `run` | |
 | `PATCH /tasks/:id` | `run` | 重命名、置顶、归档；会话还有终端时归档可能被拒绝（见 [TERMINAL.md](./TERMINAL.md)） |
 | `GET /tasks/:id/git`、`POST /tasks/:id/git/{stage,unstage,commit,push}` | 读：`view` + 数据范围 `all`；暂存与取消暂存：`run` + `all`；提交与推送：`run`，私有会话另需 `all` | 交付：仓库状态、按文件暂存、提交（默认运行钩子）、推送到上游或 `origin`；提交、推送与有 filter 时的暂存以你的账户运行你的 Git，先写审计，见 [GIT-DELIVERY.md](GIT-DELIVERY.md) |
+| `GET /tasks/:id/git/{diff,history,compare}`、`GET /tasks/:id/git/history/:sha`、`POST /tasks/:id/git/{stage-lines,unstage-lines}` | 读：`view` + 数据范围 `all`。写：`run` + `all` | 历史只读 HEAD 的祖先。暂存由 Host 核对工作区、HEAD 与索引后按选择的行更新索引，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#按块与按行暂存) |
 | `GET /tasks/:id/git/pr`、`POST /tasks/:id/git/pr`、`GET /tasks/:id/git/pr/checks/:job/log` | 读 PR：`view`（评论与默认标题另需 `all`）；创建或绑定：`run`，私有会话另需 `all`；检查日志：`view` + `all` | 交付的 PR：以你的账户运行你的 `gh`，建前先按分支查找已开的 PR 并绑定，先写审计；检查与评论只读，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#pr-与检查) |
 | `POST /tasks/:id/cancel` | `view` | `{ requestId?, runId? }`，回答取消的回执 |
 | `POST /tasks/:id/stop-subagent` | `view` | `{ subagentId }`，单独停止一个宣告能单独停止的子 Agent，先写 `task.subagent.stopped`，见 [HARNESSES.md](./HARNESSES.md#子-agent) |

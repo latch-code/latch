@@ -3,6 +3,7 @@ import { ProfileSlot } from '../agents/AgentProfile.tsx'
 import { SessionPanels } from '../components/SessionPanels.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
+import type { useStagingWrites } from '../panel/changes/useStaging.ts'
 import { AppDraftEntry } from '../plugin-pages/AppDraftEntry.tsx'
 import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
 import { TerminalPanel } from '../panel/terminal/TerminalPanel.tsx'
@@ -16,7 +17,7 @@ import type { ShellState } from './useShellLayout.tsx'
 import { SessionOverview } from './SessionOverview.tsx'
 
 /** The session's panels: the same surfaces in the column beside the conversation and in the page over it. */
-export function RightPanel({ shell }: { shell: ShellState }) {
+export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagingWrites: ReturnType<typeof useStagingWrites> }) {
   const {
     current,
     summary,
@@ -111,12 +112,14 @@ export function RightPanel({ shell }: { shell: ShellState }) {
                 engine={topHarness ? harnessName(topHarness) : 'Harness'}
                 local={access.local}
                 canRun={access.scopes.has('run')}
+                stagingWrites={stagingWrites}
                 canRead={snapshot.device.dataScope === 'all'}
                 hostName={snapshot.hostName}
                 phone={phone}
                 offline={offline}
                 {...(changesTarget ? { target: changesTarget } : {})}
                 reviewNotes={catalog?.features?.reviewNotes === true}
+                gitHunks={catalog?.features?.gitHunks === true}
                 canQueue={catalog?.features?.queue === true}
                 notesRevision={snapshot.reviewNotes?.find(counts => counts.sessionId === summary.id)?.revision ?? 0}
                 onOpenFile={file => {

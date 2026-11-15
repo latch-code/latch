@@ -5,16 +5,40 @@ import { AppError, type ProjectFolder } from '@latch/sdk'
 import { sha256Hex } from '@latch/core/node-kit'
 import { GitDelivery, MESSAGE_LIMIT, type DeliveryCaller, type GitDeliveryOptions } from '../git-delivery.ts'
 import { BODY_LIMIT, TITLE_LIMIT } from '../git-pr.ts'
+import { RANGE_LIMIT, validRanges } from '../changes/git-hunks.ts'
 import { json, jsonBody, safeDecode } from '../http-util.ts'
 import { isInsidePath } from '../paths.ts'
 import type { Caller, CallerRequest, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 
 const PATH = /^\/link\/api\/tasks\/([^/]+)\/git(?:\/(stage|unstage|commit|push|pr))?$/u
+const LINES_PATH = /^\/link\/api\/tasks\/([^/]+)\/git\/(stage|unstage)-lines$/u
+const READ_PATH = /^\/link\/api\/tasks\/([^/]+)\/git\/(diff|compare|history(?:\/([0-9a-f]{40}|[0-9a-f]{64}))?)$/u
 const LOG_PATH = /^\/link\/api\/tasks\/([^/]+)\/git\/pr\/checks\/(\d{1,20})\/log$/u
 const ACTIVE_STATUSES = new Set(['running', 'waiting-approval'])
 const requestId = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
 const pathsSchema = z.strictObject({ requestId, paths: z.array(z.string().min(1).max(4096)).min(1).max(1000) })
 const commitSchema = z.strictObject({ requestId, message: z.string().min(1).max(MESSAGE_LIMIT), skipHooks: z.boolean().optional() })
+const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u)
+const ranges = z
+  .array(z.tuple([z.number().int().min(1).max(10_000_000), z.number().int().min(1).max(10_000_000)]))
+  .max(RANGE_LIMIT)
+  // Rising, disjoint and bounded in all: refused on the numbers, before any range is walked.
+  .refine(validRanges, '行号要从小到大、互不重叠，一次最多两万行。')
+  .optional()
+const linesSchema = z.strictObject({
+  requestId,
+  path: z.string().min(1).max(4096),
+  base: z.strictObject({
+    worktree: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/u)
+      .optional(),
+    index: oid.optional(),
+    head: oid.optional(),
+  }),
+  old: ranges,
+  new: ranges,
+})
 const pushSchema = z.strictObject({ requestId })
 const workbenchSchema = z.strictObject({ ids: z.array(z.string().min(1).max(256)).max(12) })
 const prSchema = z.strictObject({
@@ -34,10 +58,13 @@ const TURN_SENSITIVE: ReadonlySet<GitDeliveryKind> = new Set(['stage', 'unstage'
  * These list or name files of the session's folder, or (a check's log) may hold its code, so they are for devices that
  * may browse it, like 改动.
  */
-const FILE_LEVEL: ReadonlySet<Access> = new Set(['state', 'stage', 'unstage', 'pr-log'])
-/** Reads: the repository's state, the pull request's state, and a failed check's log. */
-type Access = GitDeliveryKind | 'state' | 'pr-state' | 'pr-log'
-const READS: ReadonlySet<Access> = new Set(['state', 'pr-state', 'pr-log'])
+const FILE_LEVEL: ReadonlySet<Access> = new Set(['state', 'stage', 'unstage', 'pr-log', 'file'])
+/**
+ * Reads: the repository's state, the pull request's state, a failed check's log, and `file`: a file's staging lines and
+ * every history read (the commit lists, a commit's or the comparison's files, and their lines).
+ */
+type Access = GitDeliveryKind | 'state' | 'pr-state' | 'pr-log' | 'file'
+const READS: ReadonlySet<Access> = new Set(['state', 'pr-state', 'pr-log', 'file'])
 
 export function createGitRoutes(context: RouteContext, options: GitRouteOptions = {}): RouteModule {
   const { audited, actorOf, devices, hub, lifecycle, limits, recheck, refresh, sessionRoots } = context
@@ -179,6 +206,69 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
       json(res, excerpt)
       return true
     }
+    const read = READ_PATH.exec(path)
+    if (read && method === 'GET') {
+      const sessionId = safeDecode(read[1]!)
+      const params = new URL(req.url ?? '/', 'http://latch.invalid').searchParams
+      const filePath = params.get('path') ?? undefined
+      requireScope(caller, 'view')
+      if (read[2] === 'diff') {
+        const view = params.get('view')
+        if ((view !== 'unstaged' && view !== 'staged') || !filePath) throw new AppError(400, 'bad-request', '请求无效。')
+        permitted(caller, sessionId, 'file')
+        limits.files.take(caller.device.id)
+        const diff = await delivery.hunkDiff(await folderOf(sessionId), view, filePath)
+        permitted(caller, sessionId, 'file')
+        json(res, diff)
+        return true
+      }
+      // Commits, their files and a file's lines all name the session's files: for devices that may read them, like 改动.
+      permitted(caller, sessionId, 'file')
+      limits.files.take(caller.device.id)
+      const folder = await folderOf(sessionId)
+      const sha = read[3]
+      const answer =
+        read[2] === 'history'
+          ? await delivery.history(folder, filePath !== undefined ? { path: filePath } : {})
+          : filePath !== undefined
+            ? await delivery.treeFile(folder, { ...(sha ? { sha } : {}), path: filePath })
+            : await delivery.treeDiff(folder, sha ? { sha } : {})
+      // The scope may have been narrowed while Git ran: nothing read for the wider one leaves.
+      permitted(caller, sessionId, 'file')
+      json(res, answer)
+      return true
+    }
+    const lines = LINES_PATH.exec(path)
+    if (lines && method === 'POST') {
+      const sessionId = safeDecode(lines[1]!),
+        kind = lines[2] as 'stage' | 'unstage'
+      requireScope(caller, 'run')
+      const leave = context.repositoryHolds.enter()
+      try {
+        permitted(caller, sessionId, kind)
+        limits.classC.take(caller.device.id)
+        const input = linesSchema.parse(await jsonBody(req))
+        await context.assertSessionInput(caller, sessionId)
+        const folder = await folderOf(sessionId)
+        json(
+          res,
+          await delivery.stageLines(callerOf(caller, sessionId, folder, input.requestId), kind, {
+            requestId: input.requestId,
+            path: input.path,
+            base: {
+              ...(input.base.worktree ? { worktree: input.base.worktree } : {}),
+              ...(input.base.index ? { index: input.base.index } : {}),
+              ...(input.base.head ? { head: input.base.head } : {}),
+            },
+            ...(input.old ? { old: input.old } : {}),
+            ...(input.new ? { new: input.new } : {}),
+          }),
+        )
+      } finally {
+        leave()
+      }
+      return true
+    }
     const match = PATH.exec(path)
     if (!match) return false
     const sessionId = safeDecode(match[1]!),
@@ -266,5 +356,5 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
     return true
   }
 
-  return { route, features: () => ({ gitDelivery: true }) }
+  return { route, features: () => ({ gitDelivery: true, gitHunks: true }) }
 }

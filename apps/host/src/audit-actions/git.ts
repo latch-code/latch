@@ -12,6 +12,9 @@ const worktree = { workspaceId: opaqueId, sessionId: opaqueId.optional(), worktr
 /** Why a write that ran did not succeed. */
 export const RESULT_CODES = [
   'git-stage-failed',
+  'git-file-changed',
+  'git-file-whole',
+  'git-selection-invalid',
   'git-hook-failed',
   'git-identity-missing',
   'git-commit-failed',
@@ -37,8 +40,9 @@ export const RESULT_CODES = [
  * rule that chose it and the hash of its name.
  */
 export const GIT_ACTIONS = {
-  'git.stage': z.strictObject({ ...request, files: count, filtered: z.boolean() }),
-  'git.unstage': z.strictObject({ ...request, files: count }),
+  /** `lines`: staging by line, the number of changed lines picked in the one file. */
+  'git.stage': z.strictObject({ ...request, files: count, filtered: z.boolean(), lines: count.optional() }),
+  'git.unstage': z.strictObject({ ...request, files: count, lines: count.optional() }),
   'git.commit': z.strictObject({ ...request, preHead: oid.optional(), hooks, skipHooks: z.boolean() }),
   'git.push': z.strictObject({
     ...request,

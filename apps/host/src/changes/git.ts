@@ -107,6 +107,8 @@ interface RunOptions {
   env?: Readonly<Record<string, string>>
   exitCodes?: readonly number[]
   timeoutMs?: number
+  /** Recheck a write after reading its hook configuration and before starting the command. */
+  authorize?: () => Promise<void>
 }
 
 /** Runs fixed Git commands in a work tree whose metadata `readGitLayout` checked, with a scrubbed environment. */
@@ -122,6 +124,7 @@ export class GitReader {
    */
   async run(layout: GitLayout, args: readonly string[], options: RunOptions): Promise<Buffer> {
     const disabled = await this.configHooks(layout, options.env)
+    if (options.authorize) await options.authorize()
     return this.spawn(layout, [...disabled, ...args], options)
   }
 

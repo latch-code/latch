@@ -875,3 +875,125 @@
   margin-left: auto;
   font-family: inherit;
 }
+
+/*
+ * Staging by line: 未暂存 and 已暂存 are two lists; an open file has a box on every changed line, a picked line carries
+ * the selection's blue edge, and 「暂存所选」 is the view's one blue action.
+ */
+.staging-bar {
+  min-height: 36px;
+}
+.staging-tools {
+  position: sticky;
+  top: 32px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-height: 32px;
+  padding: 0 var(--sp-12);
+  background: var(--canvas);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+.staging-count {
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-meta);
+}
+.staging-diff .diff-gutter {
+  opacity: 1;
+}
+.staging-check {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.staging-check::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: var(--sp-4);
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-2);
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transform: translateY(-50%);
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.staging-check[aria-checked='true']::before {
+  background: var(--accent);
+  box-shadow: none;
+}
+.staging-check:focus-visible {
+  outline: none;
+}
+.staging-check:focus-visible::before {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.staging-file-actions .ui-button {
+  flex: none;
+}
+.history-commit-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--sp-12);
+  border: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--line);
+  color: var(--ink);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-align: left;
+}
+.history-commit-head:hover {
+  background: var(--hover);
+}
+.history-commit-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.history-commit-head > svg {
+  flex: none;
+  color: var(--muted);
+}
+.history-commit[data-open] > .history-commit-head .changes-chevron {
+  transform: rotate(90deg);
+}
+.history-commit-subject {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-commit-body {
+  padding-inline-start: var(--sp-12);
+}
+@media (hover: none) {
+  .staging-check::before {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+@media (pointer: coarse) {
+  .staging-tools .ui-button,
+  .staging-receipt .ui-button,
+  .history-commit-head,
+  .staging-diff .diff-line:is(.diff-add, .diff-remove) {
+    min-height: var(--touch);
+  }
+  .staging-diff .diff-line:is(.diff-add, .diff-remove) {
+    align-items: center;
+  }
+}

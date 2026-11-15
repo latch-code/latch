@@ -39,6 +39,7 @@ import { Overlays } from './Overlays.tsx'
 import { EditLeaveGuard } from '../preview/EditLeaveGuard.tsx'
 import { EditorChooser } from '../components/OpenInEditor.tsx'
 import { RightPanel } from './RightPanel.tsx'
+import { useStagingWrites } from '../panel/changes/useStaging.ts'
 import { DraftFilePanel } from './DraftFilePanel.tsx'
 import { SendingBubble, SessionComposer, SetupNotices } from './SessionComposers.tsx'
 import { useSideQuestionForks, withoutSideForks } from '../conversation/SideQuestion.tsx'
@@ -147,6 +148,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     goEntry,
     hostProblem,
   } = shell
+  const stagingWrites = useStagingWrites(summary, snapshot)
   // The fork behind an open /btw panel is the panel's: it joins the list once opened as a session.
   const sideForks = useSideQuestionForks()
   const listed = withoutSideForks(snapshot, sideForks, selectedId)
@@ -448,7 +450,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         </div>
                       </header>
                       <div className="info-page-body">
-                        <RightPanel shell={shell} />
+                        <RightPanel shell={shell} stagingWrites={stagingWrites} />
                       </div>
                     </section>
                   )}
@@ -461,7 +463,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   inert={!columnOpen || route.entry !== 'sessions' || covered || undefined}>
                   {column.present && (
                     <div className="inspector-column-inner">
-                      <RightPanel shell={shell} />
+                      <RightPanel shell={shell} stagingWrites={stagingWrites} />
                     </div>
                   )}
                 </aside>

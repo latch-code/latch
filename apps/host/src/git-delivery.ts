@@ -12,7 +12,14 @@ import { join } from 'node:path'
 import { AppError } from '@latch/sdk'
 import type {
   GitCheckLog,
+  GitCommitDiff,
+  GitCommitFileDiff,
   GitCommitResult,
+  GitHistory,
+  GitHunkDiff,
+  GitLineSelection,
+  GitStageLinesResult,
+  GitStagingView,
   GitDeliveryKind,
   GitDeliveryRunning,
   GitDeliveryState,
@@ -26,6 +33,17 @@ import { canonicalJson, redactKnownSecrets, sha256Hex } from '@latch/core/node-k
 import type { RESULT_CODES } from './audit-actions/git.ts'
 import { readGitLayout, type GitLayout } from './branch-reader.ts'
 import { GitError, GitReader, findGit, gitOperation } from './changes/git.ts'
+import { baseOfBranch, reachableCommit, readHistory, readTreeDiff, readTreeFile } from './changes/git-history.ts'
+import {
+  SelectionError,
+  baseOf,
+  comparable,
+  hunkDiff,
+  indexEntries,
+  readVersions,
+  selectionResult,
+  validRanges,
+} from './changes/git-hunks.ts'
 import {
   GitPathError,
   KNOWN_HOOKS,
@@ -40,7 +58,9 @@ import {
   indexTree,
   listHooks,
   readRepositoryConfig,
+  IndexMovedError,
   readStatus,
+  setIndexBlob,
   stageRestricted,
   subjectOf,
   unstageRestricted,
@@ -416,6 +436,18 @@ function storedFailure(receipt: GitRecord): AppError {
   return new AppError(status, code, '这个请求之前没有成功，没有再执行一次。', details)
 }
 
+/** Refusals of a line write that come from looking at the file and the index: nothing was written. */
+const LINE_REFUSALS = ['git-file-changed', 'git-file-whole', 'git-selection-invalid'] as const
+type LineRefusal = (typeof LINE_REFUSALS)[number]
+
+/** A line write's receipt says it did not write: the same answer again, marked as the receipt's. */
+function linesFailure(code: string | undefined): AppError {
+  const known = code ?? 'git-stage-failed'
+  return new AppError(LINE_REFUSALS.some(item => item === known) ? 409 : 422, known, '这个请求之前没有写入，没有再执行一次。', {
+    replay: true,
+  })
+}
+
 /** The writes of 交付, one at a time per repository, and its status read. */
 export class GitDelivery {
   private readonly binary: string | undefined
@@ -671,6 +703,242 @@ export class GitDelivery {
       while (this.answered.size > 512) this.answered.delete(this.answered.keys().next().value!)
       return result
     })
+  }
+
+  /** One path of a request, checked like the paths of a whole-file stage. */
+  private async onePath(layout: GitLayout, path: string): Promise<string> {
+    try {
+      return (await checkPaths(layout.root, [path]))[0]!
+    } catch (error) {
+      if (error instanceof GitPathError)
+        throw new AppError(400, 'git-paths-invalid', '文件路径无效：必须是仓库里的相对路径，不能经过符号链接。')
+      throw error
+    }
+  }
+
+  /** `GET …/git/diff`: one file's unstaged or staged lines, with what they were read against. */
+  async hunkDiff(folder: string, view: GitStagingView, path: string): Promise<GitHunkDiff> {
+    const git = this.git(),
+      layout = await this.layout(folder)
+    const checked = await this.onePath(layout, path)
+    try {
+      return hunkDiff(checked, view, await readVersions(git, layout, checked, view))
+    } catch (error) {
+      if (error instanceof GitError) throw gitFailed()
+      throw error
+    }
+  }
+
+  /**
+   * Stages or unstages the picked lines of one file. The index's new content is built here from the file and the index
+   * as they are now, and a request read against other versions is refused. The write has a receipt like a commit's:
+   * `pending` before it, `done` after. A retry of a request whose answer was lost never guesses: a `done` receipt
+   * answers it, and a receipt left open is settled by what the index holds (the blob the write puts there: it landed;
+   * the entry it replaces: it did not, and the request runs as new); anything else stays 「结果未知」.
+   */
+  async stageLines(caller: DeliveryCaller, kind: 'stage' | 'unstage', input: GitLineSelection): Promise<GitStageLinesResult> {
+    if (!validRanges(input.old) || !validRanges(input.new))
+      throw new AppError(400, 'git-selection-invalid', '选中的行无效：行号要从小到大、互不重叠，一次最多两万行。')
+    const payload = payloadHash({ kind, lines: true, path: input.path, base: input.base, old: input.old ?? [], new: input.new ?? [] })
+    return this.once(caller, input.requestId, payload, async () => {
+      const earlier = this.options.receipts.git(caller.sessionId, caller.deviceId, input.requestId)
+      if (earlier) {
+        if (earlier.operation !== kind || earlier.payloadHash !== payload)
+          throw refuse('request-conflict', '同一个请求标识不能用于不同的操作。')
+        if (earlier.state === 'done') return { lines: earlier.lines ?? 1, replay: true as const }
+        if (earlier.state === 'failed') throw linesFailure(earlier.code)
+      }
+      const layout = await this.layout(caller.folder)
+      const path = await this.onePath(layout, input.path)
+      const view: GitStagingView = kind === 'stage' ? 'unstaged' : 'staged'
+      return this.hold(caller, layout, kind, input.requestId, async running => {
+        const git = this.git()
+        const changed = (which: 'worktree' | 'index' | 'head' | 'both') =>
+          refuse('git-file-changed', '这个文件在读取之后又变了，没有写入。重新读取后再选。', { changed: which })
+        const invalid = (error: unknown) => {
+          if (!(error instanceof SelectionError)) return error
+          return error.reason === 'empty' || error.reason === 'out-of-range'
+            ? new AppError(400, 'git-selection-invalid', '没有选中可以暂存的行。')
+            : refuse('git-selection-invalid', '选中的行已不是这个文件的改动，没有写入。重新读取后再选。')
+        }
+        const stamp = () => new Date(this.now()).toISOString()
+        if (earlier) {
+          // An attempt of this request started and its end is not on record. Only the index says what it did.
+          let held: string | undefined
+          try {
+            held = (await indexEntries(git, layout, path)).find(entry => entry.stage === 0)?.oid
+          } catch {
+            throw unknown()
+          }
+          if (held !== undefined && held === earlier.resultOid) {
+            await this.record(caller, { ...earlier, state: 'done', at: stamp() })
+            await this.reportResult(caller, { operation: kind, outcome: 'done' })
+            return { lines: earlier.lines ?? 1, replay: true as const }
+          }
+          // Neither what it would have written nor what it would have replaced: it may have landed and been changed since.
+          if (held === undefined || held !== earlier.preIndex) throw unknown()
+        }
+        /** A refusal that came from looking at the repository settles an open receipt: that attempt did not write. */
+        const settle = async (error: unknown): Promise<LineRefusal | undefined> => {
+          const code = error instanceof AppError ? LINE_REFUSALS.find(item => item === error.code) : undefined
+          if (earlier && code) await this.record(caller, { ...earlier, state: 'failed', code, at: stamp() })
+          return code
+        }
+        /** What this request makes of the file as it is now: refusals first, then the index's new content. */
+        const plan = async () => {
+          const versions = await readVersions(git, layout, path, view)
+          const compared = comparable(path, versions, view)
+          const now = baseOf(versions)
+          const other = kind === 'stage' ? 'worktree' : 'head'
+          const otherSame = now[other] === input.base[other]
+          // A request that names the versions it read is told when they are gone, before why the file may go whole now.
+          const stale = now.index !== input.base.index ? changed(otherSame ? 'index' : 'both') : otherSame ? undefined : changed(other)
+          if (stale && input.base.index !== undefined) throw stale
+          if (typeof compared === 'string') throw refuse('git-file-whole', '这个文件只能整个暂存或取消暂存。', { whole: compared })
+          if (stale) throw stale
+          return { ...selectionResult(compared, input, kind), mode: versions.index!.mode, previous: versions.index!.oid! }
+        }
+        let result: Awaited<ReturnType<typeof plan>>
+        try {
+          result = await plan()
+        } catch (error) {
+          if (error instanceof GitError) throw earlier ? unknown() : gitFailed()
+          const refusal = invalid(error)
+          await settle(refusal)
+          throw refusal
+        }
+        await caller.authorize(kind)
+        await caller.audit({
+          action: kind === 'stage' ? 'git.stage' : 'git.unstage',
+          detail: {
+            sessionId: caller.sessionId,
+            requestHash: sha256Hex(input.requestId),
+            files: 1,
+            lines: result.lines,
+            ...(kind === 'stage' ? { filtered: false } : {}),
+          },
+        })
+        // From here every way out is told to the audit log as well.
+        const failed = async (code: (typeof RESULT_CODES)[number]) => {
+          await this.reportResult(caller, { operation: kind, outcome: 'failed', code })
+        }
+        let final: Awaited<ReturnType<typeof plan>>
+        try {
+          // The checks above awaited: the file is read once more, and nothing is written unless it is still the same.
+          final = await plan()
+          if (final.oid !== result.oid || final.previous !== result.previous) throw changed('both')
+        } catch (error) {
+          const refusal =
+            error instanceof GitError ? new AppError(422, 'git-stage-failed', '暂存没有完成：Git 没有读出这个文件。') : invalid(error)
+          await failed((await settle(refusal)) ?? 'git-stage-failed')
+          throw refusal
+        }
+        const pending: GitRecord = {
+          kind: 'git',
+          operation: kind,
+          requestId: input.requestId,
+          deviceId: caller.deviceId,
+          payloadHash: payload,
+          state: 'pending',
+          preIndex: final.previous,
+          resultOid: final.oid,
+          lines: final.lines,
+          startedAt: running.startedAt,
+          at: stamp(),
+        }
+        try {
+          await this.record(caller, pending, true)
+        } catch (error) {
+          await failed('git-stage-failed')
+          throw error
+        }
+        try {
+          await setIndexBlob(git, layout, { path, mode: final.mode, oid: final.oid }, final.previous, final.text, this.timeouts.stage, () =>
+            caller.authorize(kind),
+          )
+        } catch (error) {
+          if (error instanceof GitError && error.reason === 'timeout') {
+            await this.record(caller, { ...pending, state: 'unknown', at: stamp() })
+            await this.reportResult(caller, { operation: kind, outcome: 'unknown' })
+            throw unknown()
+          }
+          // Authorization was lost, the entry moved, or Git refused: the index was not updated.
+          const code = error instanceof IndexMovedError ? 'git-file-changed' : 'git-stage-failed'
+          await this.record(caller, { ...pending, state: 'failed', code, at: stamp() })
+          await failed(code)
+          if (error instanceof AppError) throw error
+          if (error instanceof IndexMovedError) throw changed('index')
+          throw new AppError(422, 'git-stage-failed', kind === 'stage' ? '暂存没有完成。' : '取消暂存没有完成。')
+        }
+        await this.record(caller, { ...pending, state: 'done', at: stamp() })
+        await this.reportResult(caller, { operation: kind, outcome: 'done' })
+        return { lines: final.lines }
+      })
+    })
+  }
+
+  /** `GET …/git/history`: the session's commits, or one file's. */
+  async history(folder: string, options: { path?: string } = {}): Promise<GitHistory> {
+    const git = this.git(),
+      layout = await this.layout(folder)
+    const path = options.path === undefined ? undefined : await this.onePath(layout, options.path)
+    try {
+      return await readHistory(git, layout, await readRepositoryConfig(git, layout), {
+        ...(path !== undefined ? { path } : {}),
+      })
+    } catch (error) {
+      if (error instanceof GitError) throw gitFailed()
+      throw error
+    }
+  }
+
+  /** Both ends of a history read: a commit HEAD reaches against its first parent, or HEAD against where it left main. */
+  private async ends(layout: GitLayout, sha: string | undefined): Promise<{ from?: string; to: string; base?: string }> {
+    const git = this.git()
+    try {
+      if (sha !== undefined) {
+        const commit = await reachableCommit(git, layout, sha)
+        if (!commit) throw new AppError(404, 'git-commit-not-found', '这个分支上没有这个提交。')
+        return { to: commit.sha, ...(commit.parent ? { from: commit.parent } : {}) }
+      }
+      const head = await git.commit(layout, 'HEAD')
+      const base = head ? await baseOfBranch(git, layout, head) : undefined
+      if (!head || !base) throw refuse('git-no-base', '没有可以比较的基线：不在分支上、就在主分支上，或没有主分支。')
+      return { from: base.fork, to: head, base: base.name }
+    } catch (error) {
+      if (error instanceof GitError) throw gitFailed()
+      throw error
+    }
+  }
+
+  /** `GET …/git/history/:sha` and `GET …/git/compare`: the files changed. */
+  async treeDiff(folder: string, options: { sha?: string } = {}): Promise<GitCommitDiff> {
+    const git = this.git(),
+      layout = await this.layout(folder)
+    const ends = await this.ends(layout, options.sha)
+    try {
+      const diff = await readTreeDiff(git, layout, ends.from, ends.to)
+      return { sha: ends.to, ...(ends.from ? { parent: ends.from } : {}), ...(ends.base ? { base: ends.base } : {}), ...diff }
+    } catch (error) {
+      if (error instanceof GitError) throw gitFailed()
+      throw error
+    }
+  }
+
+  /** One file of a commit or of the comparison, for a device that may read the session's files. */
+  async treeFile(folder: string, options: { sha?: string; path: string }): Promise<GitCommitFileDiff> {
+    const git = this.git(),
+      layout = await this.layout(folder)
+    const path = await this.onePath(layout, options.path)
+    const ends = await this.ends(layout, options.sha)
+    try {
+      const file = await readTreeFile(git, layout, ends.from, ends.to, path)
+      if (!file) throw new AppError(404, 'git-commit-not-found', '这个提交没有改这个文件。')
+      return { sha: ends.to, ...(ends.from ? { parent: ends.from } : {}), ...file }
+    } catch (error) {
+      if (error instanceof GitError) throw gitFailed()
+      throw error
+    }
   }
 
   async commit(caller: DeliveryCaller, input: { requestId: string; message: string; skipHooks?: boolean }): Promise<GitCommitResult> {

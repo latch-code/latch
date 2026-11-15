@@ -27,7 +27,7 @@
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。
 - 文件树/搜索限 `all`；macOS 仅经 `latch-files` 描述符。索引不存权限，预览绑定 Harness/根身份/版本，晚回复查设备与正文窗口（ARCHITECTURE）。
 - 自定义插件草稿与应用分离；批准执行摘要后才导入，旧租约真实释放后回收。边界见 [PLUGIN-DEVELOPMENT.md](../../docs/PLUGIN-DEVELOPMENT.md#应用内的自定义插件资产)（`test/plugin-package-api.test.ts`）。
-- 配置回执见 [Arch](../../docs/ARCHITECTURE.md)；交付摘要的限额与授权见 [交付](../../docs/GIT-DELIVERY.md#状态)。
+- 配置回执见 [Arch](../../docs/ARCHITECTURE.md)；交付授权、回执与受限 Git 见 [交付](../../docs/GIT-DELIVERY.md)。
 - 插件连接仅随原生入口启用；远程 review/正文窗口与真实关闭见 [TRANSPORT-PLUGINS.md](../../docs/TRANSPORT-PLUGINS.md)。
 
 - 家只由分配器生成并核对原目录身份；默认项走 startConfig。后台按实际等级核上限，手动运行不授后台权（CUSTOM-AGENTS、AUTOMATIONS）。

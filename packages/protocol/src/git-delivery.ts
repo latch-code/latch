@@ -1,4 +1,4 @@
-import type { GitOperation } from './changes.ts'
+import type { ChangeHunk, GitOperation } from './changes.ts'
 
 /** The writes a session's 交付 makes in its repository (`pr` creates or binds its pull request); each takes a `requestId`. */
 export type GitDeliveryKind = 'stage' | 'unstage' | 'commit' | 'push' | 'pr'
@@ -199,6 +199,147 @@ export type GitDeliveryError =
   | 'git-push-host-key'
   | 'git-push-failed'
   | 'git-stage-failed'
+  | 'git-file-changed'
+  | 'git-file-whole'
+  | 'git-selection-invalid'
+  | 'git-commit-not-found'
+  | 'git-no-base'
   | 'git-result-unknown'
   | 'git-receipt-unsaved'
   | 'git-failed'
+
+/** Which two versions of a file a staging diff compares: the work tree against the index, or the index against HEAD. */
+export type GitStagingView = 'unstaged' | 'staged'
+
+/**
+ * Why a file is staged whole or not at all: its lines cannot be picked. `new`/`deleted`: one side has no file (a rename
+ * is a deletion and a new file here). `converted`: Git rewrites its line endings or encoding on the way into the index.
+ * `filtered`: a filter driver (Git LFS, for one) applies to it. `unchanged`: the two versions hold the same text.
+ */
+export type GitWholeReason =
+  | 'binary'
+  | 'large'
+  | 'new'
+  | 'deleted'
+  | 'mode'
+  | 'link'
+  | 'submodule'
+  | 'conflicted'
+  | 'filtered'
+  | 'converted'
+  | 'secret'
+  | 'unchanged'
+
+/**
+ * What the lines were read against: a write that picks lines sends it back, and is refused (409 `git-file-changed`) once
+ * the file or its index entry is no longer this. `worktree`: SHA-256 of the file's bytes; `index` and `head`: Git's
+ * object IDs; absent where that side has no file.
+ */
+export interface GitHunkBase {
+  worktree?: string
+  index?: string
+  head?: string
+}
+
+/** `GET …/git/diff?view=&path=`: one file's unstaged or staged lines, for picking. */
+export interface GitHunkDiff {
+  view: GitStagingView
+  path: string
+  /** With `hunks`; a file that goes whole is not read against anything, so it has none. */
+  base?: GitHunkBase
+  /** The file's lines cannot be picked: it is staged or unstaged whole. No `hunks` then. */
+  whole?: GitWholeReason
+  /** Three lines of context; a changed line is named by its `oldLine` (removed) or `newLine` (added). */
+  hunks?: ChangeHunk[]
+  add?: number
+  del?: number
+}
+
+/** Line numbers, both ends included. */
+export type GitLineRange = [from: number, to: number]
+
+/**
+ * `POST …/git/stage-lines` and `unstage-lines`: the changed lines picked from a `GitHunkDiff`, by their numbers there.
+ * `old`: removed lines (`oldLine`); `new`: added lines (`newLine`). Never patch text: the Host builds the index's new
+ * content itself from the file and the index it reads.
+ */
+export interface GitLineSelection {
+  requestId: string
+  path: string
+  base: GitHunkBase
+  old?: GitLineRange[]
+  new?: GitLineRange[]
+}
+
+/** Which of the versions a line write was read against is no longer the same (409 `git-file-changed`, as `changed`). */
+export type GitFileChanged = 'worktree' | 'index' | 'head' | 'both'
+
+export interface GitStageLinesResult {
+  /** Changed lines staged or unstaged. */
+  lines: number
+  /** The index already held exactly this result: an earlier attempt of the same request made it. */
+  replay?: true
+}
+
+/** A commit in a history list. */
+export interface GitCommitEntry {
+  sha: string
+  /** Committer time. */
+  at: string
+  subject?: string
+  author?: string
+  /** A merge: its files are compared with its first parent. */
+  merge?: true
+}
+
+/**
+ * The history reads name commits and files of the session's folder, so every one of them is for devices whose data scope
+ * covers its files, like 改动; any other device is refused (403 `file-scope`).
+ *
+ * `GET …/git/history`: the session's commits, newest first, at most 50. `base`: the commits of this branch since it left
+ * `base` (main or master); `upstream`: the ones not on its upstream yet; `recent`: HEAD's latest, when neither applies.
+ * With `?path=`: the commits on HEAD's line that changed that file (`range` is `file`).
+ */
+export interface GitHistory {
+  range: 'base' | 'upstream' | 'recent' | 'file'
+  base?: string
+  head?: string
+  commits: GitCommitEntry[]
+  /** Older commits were left out. */
+  more?: true
+}
+
+export interface GitHistoryFile {
+  path: string
+  status: 'A' | 'M' | 'D' | 'T'
+  add?: number
+  del?: number
+  binary?: true
+}
+
+/**
+ * `GET …/git/history/:sha` (a commit against its first parent) and `GET …/git/compare` (the branch's HEAD against where
+ * it left `base`): the files changed, at most 500. With `?path=`: that one file's `hunks`.
+ */
+export interface GitCommitDiff {
+  /** The newer side. */
+  sha: string
+  /** The older side; absent for a root commit. */
+  parent?: string
+  /** Compare: the branch compared with. */
+  base?: string
+  files: GitHistoryFile[]
+  totals: { files: number; add: number; del: number }
+  /** Files left out past 500. */
+  more?: number
+}
+
+/** One file of a commit or of the comparison. */
+export interface GitCommitFileDiff {
+  sha: string
+  parent?: string
+  file: GitHistoryFile
+  /** Absent when the content is not shown: binary, over 1 MB or 20,000 lines, a link, or a file that may hold a secret (`hidden`). */
+  hunks?: ChangeHunk[]
+  hidden?: 'binary' | 'large' | 'secret' | 'link'
+}
