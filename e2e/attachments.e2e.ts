@@ -8,7 +8,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeActiveFile, openSession, openSettings } from './helpers/layout.ts'
+import { closeActiveFile, closeSettings, openSection, openSession, openSettings } from './helpers/layout.ts'
 /** The new draft is the home's input on every width: already in sight, or where 新建会话 leads. */
 async function newDraft(page: Page) {
   const home = page.locator('.workbench-home')
@@ -292,23 +292,56 @@ describe('private attachments through the composer', () => {
       await page.reload()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
 
+      const settings = await openSettings(page)
+      await openSection(settings, '通用')
+      await settings
+        .getByRole('radiogroup', { name: '发送消息', exact: true })
+        .getByRole('radio', { name: /^(?:⌘⏎|Ctrl ⏎) 发送$/u })
+        .click()
+      await closeSettings(settings)
       await openSession(page, sessionId)
       const input = page.getByRole('textbox', { name: '继续对话', exact: true })
       const chooser = page.getByRole('listbox', { name: '引用项目文件', exact: true })
       const row = chooser.getByRole('option', { name: /reference\.txt/u })
+      const openBareMention = async () => {
+        const search = page.waitForResponse(
+          response =>
+            response.request().method() === 'POST' && new URL(response.url()).pathname === `/link/api/tasks/${sessionId}/files/search`,
+        )
+        await input.fill('@')
+        const response = await search
+        expect(response.ok()).toBe(true)
+        expect(response.request().postDataJSON()).toMatchObject({ q: '' })
+        await row.waitFor()
+        expect(await input.getAttribute('aria-controls')).toBe(await chooser.getAttribute('id'))
+        expect(await input.getAttribute('aria-activedescendant')).toBeNull()
+      }
+      const selectWithArrow = async () => {
+        await input.press('ArrowDown')
+        expect(await input.getAttribute('aria-activedescendant')).toBeTruthy()
+      }
       await input.fill('user@example.com')
       expect(await chooser.count()).toBe(0)
-      await input.fill('@')
-      await row.waitFor()
-      expect(await input.getAttribute('aria-activedescendant')).toBeNull()
-      await input.press('ArrowDown')
-      expect(await input.getAttribute('aria-activedescendant')).toBeTruthy()
-      await input.press('Escape')
-      await chooser.waitFor({ state: 'hidden' })
-      await input.fill('')
-      await input.fill('@')
-      await row.waitFor()
-      expect(await input.getAttribute('aria-activedescendant')).toBeNull()
+      for (const escape of [false, true]) {
+        await openBareMention()
+        await selectWithArrow()
+        if (escape) {
+          await input.press('Escape')
+          await chooser.waitFor({ state: 'hidden' })
+          expect(await input.getAttribute('aria-controls')).toBeNull()
+        }
+        await input.fill('')
+        await chooser.waitFor({ state: 'hidden' })
+        expect(await input.getAttribute('aria-controls')).toBeNull()
+        await openBareMention()
+        await input.press('Enter')
+        expect(await input.inputValue()).toBe('@\n')
+        await chooser.waitFor({ state: 'hidden' })
+        await openBareMention()
+        await selectWithArrow()
+        await input.fill('')
+        await chooser.waitFor({ state: 'hidden' })
+      }
       await input.fill('@refer')
       // With a query, the first result is selected once the search returns.
       await row.waitFor()

@@ -653,6 +653,8 @@ pnpm latch presence test --data-dir <临时目录>
 
 `e2e/attachments.e2e.ts` 用真实 Host、浏览器与内存模型覆盖三种宽度、深色、仅图片消息、预览、失败重试、未知提交重试、长粘贴编辑、取消等待和显式文件选择；另在 390 与 1440 的浅色、深色下用假 ACP Agent 核对附件按钮按下即说明原因、Agent 在别的设备启动后不刷新就能添加、被拒绝的文件没有「重试上传」、不接收附件的 Harness 直接说明、数据范围不够时 @ 的说明，以及设备页的数据范围与「保留的附件」确认（保留数由路由替身给出，释放规则在 `apps/host/test/attachment-routes.test.ts`）；`e2e/desktop-attachments.e2e.ts` 在独立桌面数据目录验证实际 Electron 上传大于 JSON 限额的图片与私有预览。ACP 的真实假进程用例核对协商、输入块、Agent 图片输出和重启后的 metadata；它不是实际 Agent CLI 验收。
 
+文件引用的标记和按键判断在 `apps/web/test/file-mentions.test.ts`。`e2e/attachments.e2e.ts` 验证清空裸 `@` 或按 Escape 关闭后，再输入会重新查询 Host，方向键可重新选中，未选中时按 Enter 依照发送键设置换行。
+
 发送投影：`apps/web/test/sending-message.test.ts` 检查设备会话归属、旧 Host 降级、队列隐藏、各 Harness 的新会话立即显示，以及请求标识和附件/文件引用的精确匹配。`e2e/sending-message.e2e.ts` 在三种宽度延迟实际写请求、模拟连接中断，核对即时文字、发送中、未知状态、原请求重试和唯一的已确认消息，并核对完全访问 Harness 的新会话同样立即显示；Harness 起不来（503 `agent-start-failed`）是确定的拒绝：文字留在输入框、原因与「打开设置 › Harness」「重试」就地显示、刷新后没有未确认的消息，结果未知的原因刷新后照旧；iPhone 的同一规则在 `native-swift.test.ts`（`phoneRefusals`）。
 文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。
 

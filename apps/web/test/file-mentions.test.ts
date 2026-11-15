@@ -1,10 +1,6 @@
-// @vitest-environment happy-dom
-import { act, createElement, useRef, useState, type ChangeEvent } from 'react'
-import { createRoot } from 'react-dom/client'
-import { describe, expect, it, vi } from 'vitest'
-import * as client from '../src/core/api.ts'
+import { describe, expect, it } from 'vitest'
 import { hasFileMention, mentionRange } from '../src/fileMentions.ts'
-import { activeFileMention, mentionActive, mentionKey, useFileMentions } from '../src/hooks/useFileMentions.tsx'
+import { activeFileMention, mentionActive, mentionKey } from '../src/hooks/useFileMentions.tsx'
 
 describe('explicit file markers', () => {
   const ref = { root: 'web', path: 'report.txt' }
@@ -42,80 +38,6 @@ describe('the @ file list, by the slash menu’s keys', () => {
     expect(key('ArrowDown', { active: -1, query: '' })).toEqual({ do: 'move', index: 0 })
     expect(key('ArrowUp', { active: -1, query: '' })).toEqual({ do: 'move', index: 2 })
   })
-  it.each(['editing the token away', 'pressing Escape'])('starts a fresh bare @ list after %s', async close => {
-    const search = vi.spyOn(client, 'api').mockResolvedValue({ files: [{ root: 'web', path: 'report.txt', name: 'report.txt' }] })
-    const container = document.createElement('div')
-    document.body.append(container)
-    const root = createRoot(container)
-    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-    vi.useFakeTimers()
-
-    function Input() {
-      const [draft, setDraft] = useState('')
-      const textarea = useRef<HTMLTextAreaElement>(null)
-      const mentions = useFileMentions(
-        draft,
-        setDraft,
-        textarea,
-        { enabled: true, workspaceId: 'web', harnessId: 'standard', refs: [], onRefs: () => {} },
-        textarea,
-      )
-      return createElement('textarea', {
-        ref: textarea,
-        value: draft,
-        'aria-controls': mentions.open ? mentions.listId : undefined,
-        'aria-activedescendant': mentions.activeId,
-        onChange: (event: ChangeEvent<HTMLTextAreaElement>) => {
-          const input = event.currentTarget
-          mentions.setCaret(input.selectionStart)
-          setDraft(input.value)
-        },
-        onKeyDown: mentions.keydown,
-      })
-    }
-
-    try {
-      await act(async () => root.render(createElement(Input)))
-      const input = container.querySelector('textarea')!
-      const fill = (text: string) =>
-        act(async () => {
-          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text)
-          input.setSelectionRange(text.length, text.length)
-          input.dispatchEvent(new Event('input', { bubbles: true }))
-        })
-      const press = (key: string) =>
-        act(async () => {
-          input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
-        })
-      await fill('@')
-      await act(async () => vi.advanceTimersByTimeAsync(160))
-      expect(search).toHaveBeenCalledTimes(1)
-      expect(input.getAttribute('aria-activedescendant')).toBeNull()
-      await press('ArrowDown')
-      expect(input.getAttribute('aria-activedescendant')).toBeTruthy()
-      if (close === 'pressing Escape') {
-        await press('Escape')
-        expect(input.getAttribute('aria-controls')).toBeNull()
-      }
-      await fill('')
-      expect(input.getAttribute('aria-controls')).toBeNull()
-      await fill('@')
-      await act(async () => vi.advanceTimersByTimeAsync(160))
-      expect(search).toHaveBeenCalledTimes(2)
-      expect(input.getAttribute('aria-activedescendant')).toBeNull()
-      await press('Enter')
-      expect(input.value).toBe('@')
-      await press('ArrowDown')
-      expect(input.getAttribute('aria-activedescendant')).toBeTruthy()
-    } finally {
-      await act(async () => root.unmount())
-      container.remove()
-      vi.useRealTimers()
-      vi.unstubAllGlobals()
-      search.mockRestore()
-    }
-  })
-
   it('leaves Enter, Tab and Shift+Enter to the input when no row is chosen, and holds Enter while typed results load', () => {
     expect(key('Enter', { active: -1, query: '' })).toEqual({ do: 'pass' })
     expect(key('Tab', { active: -1, query: '' })).toEqual({ do: 'pass' })
