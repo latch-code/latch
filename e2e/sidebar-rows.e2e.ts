@@ -207,11 +207,32 @@ describe('sidebar rows', () => {
       expect(await row(page, 'long').locator('.session-model').isVisible()).toBe(false)
       expect(await row(page, 'long').locator('.session-item-main').ariaSnapshot()).toContain(LONG_MODEL)
       expect(await row(page, 'long').locator('.session-item-main').getAttribute('title')).toContain(LONG_MODEL)
-      expect(
-        await row(page, 'long')
-          .locator('.session-title')
-          .evaluate(item => item.scrollWidth > item.clientWidth),
-      ).toBe(true)
+      const long = row(page, 'long')
+      const actions = long.locator('.session-actions')
+      const measure = () =>
+        long.evaluate(item => {
+          const title = item.querySelector('.session-title')!
+          const titleRect = title.getBoundingClientRect()
+          const actionRect = item.querySelector('.session-actions')!.getBoundingClientRect()
+          return {
+            width: titleRect.width,
+            titleRight: titleRect.right,
+            actionLeft: actionRect.left,
+            clipped: title.scrollWidth > title.clientWidth && getComputedStyle(title).textOverflow === 'ellipsis',
+          }
+        })
+      const before = await measure()
+      expect(before.clipped).toBe(true)
+      expect(before.titleRight).toBeLessThanOrEqual(before.actionLeft)
+      await long.hover()
+      await expect.poll(() => actions.evaluate(item => getComputedStyle(item).opacity)).toBe('1')
+      expect(await measure()).toEqual(before)
+      await page.mouse.move(0, 0)
+      await long.locator('.session-item-main').focus()
+      await page.keyboard.press('Tab')
+      expect(await actions.evaluate(item => item.contains(document.activeElement))).toBe(true)
+      await expect.poll(() => actions.evaluate(item => getComputedStyle(item).opacity)).toBe('1')
+      expect(await measure()).toEqual(before)
       const [right, list] = await Promise.all([
         row(page, 'long').evaluate(item => item.getBoundingClientRect().right),
         page.locator('nav.session-list').evaluate(item => item.getBoundingClientRect().right),
