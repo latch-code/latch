@@ -424,6 +424,24 @@ describe('the login command', () => {
     await expect(stat(path)).rejects.toThrow()
   })
 
+  it('ends a Latch terminal’s script with the same command and its exit code, without words about a window', async () => {
+    const directory = await root()
+    const bin = join(directory, 'bin')
+    await mkdir(bin)
+    await writeFile(join(bin, 'codex'), '#!/bin/sh\necho "ran $*"\nexit 7\n')
+    await chmod(join(bin, 'codex'), 0o755)
+    useOnly(bin)
+    const record = codexAdapter()
+    const script = loginTerminalScript(record, undefined, { inLatch: true })!
+    // What the default terminal app is handed, less its closing line.
+    expect(loginTerminalScript(record)!.startsWith(script)).toBe(true)
+    expect(script).not.toContain('Latch')
+    const path = join(directory, 'run.command')
+    await writeFile(path, script, { mode: 0o700 })
+    await expect(run('/bin/sh', [path], { cwd: directory })).rejects.toMatchObject({ code: 7, stdout: 'ran login\n' })
+    await expect(stat(path)).rejects.toThrow()
+  })
+
   it('tells a person what to do in a program that logs in from inside, and says nothing for one it does not know', async () => {
     const directory = await root()
     const bin = join(directory, 'bin')

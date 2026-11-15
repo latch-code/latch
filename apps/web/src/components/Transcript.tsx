@@ -36,6 +36,7 @@ import {
   type TurnOutcome,
   type WorkItem,
 } from '../conversation.ts'
+import type { LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { TurnCards } from '../conversation/TurnCards.tsx'
 import { RunEndNote, StatusLine, type StatusLineProps } from '../conversation/StatusLine.tsx'
 import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
@@ -194,7 +195,7 @@ interface TurnViewProps {
   /** 我的 Agent's conversation: the helper answers, and the Harness and model are not named. */
   speaker?: Speaker
   /** How to log in to this session's harness, shown when a turn ends for want of it. */
-  login?: { harnessId: string; login: HarnessLogin; terminal: boolean } | undefined
+  login?: { harnessId: string; login: HarnessLogin; surface: LoginSurface } | undefined
   harness?: Pick<HarnessInfo, 'capabilities'> | undefined
   /** The model that answered, or that the run uses before its first step records one, and its service's name. */
   model?: string
@@ -633,7 +634,7 @@ interface TranscriptProps {
    */
   speaker?: Speaker
   /** How to log in to this session's harness, shown when a turn ends for want of it. */
-  login?: { harnessId: string; login: HarnessLogin; terminal: boolean } | undefined
+  login?: { harnessId: string; login: HarnessLogin; surface: LoginSurface } | undefined
   /** The session's harness, for the tile on each turn's author line. */
   harness?: Pick<HarnessInfo, 'capabilities'> | undefined
   /** The demo model answers, and every turn says so. */

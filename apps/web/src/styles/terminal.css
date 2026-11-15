@@ -112,3 +112,25 @@
 .terminal-hint {
   flex: none;
 }
+
+/*
+ * A Harness's login outside any session: the same screen in a 720 dialog, 360 tall, on the canvas inside a hairline.
+ * The foot carries the 「你的账户，不是沙箱」 hint and how the command stands.
+ */
+.login-terminal-screen {
+  flex: none;
+  height: min(360px, 50vh);
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  background: var(--canvas);
+  color: var(--ink);
+  overflow: hidden;
+}
+.login-terminal-dialog .terminal-notice {
+  margin: 0 0 var(--sp-8);
+}
+.login-terminal-dialog .terminal-running,
+.login-terminal-dialog .terminal-ended {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}

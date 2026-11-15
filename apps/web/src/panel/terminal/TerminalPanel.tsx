@@ -22,8 +22,9 @@ import {
 } from '@latch/ui'
 import { errorMessage, MessageError } from '../../core/api.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
-import { draftText, endedText, keyLeavesTerminal, serviceLabel, tabLabel, type TerminalTab } from './model.ts'
+import { draftText, endedText, keyLeavesTerminal, serviceLabel, tabLabel, tabName, type TerminalTab } from './model.ts'
 import { TerminalLink } from './link.ts'
+import { loginRuns, useRevealedLogin } from './loginRuns.ts'
 import { terminalTheme } from './theme.ts'
 import { useTerminals } from './useTerminals.ts'
 
@@ -71,7 +72,7 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
   const id = useId()
   const screens = useRef<HTMLDivElement>(null)
   const terminals = useTerminals({ sessionId, shown, size: () => measuredSize(screens.current) })
-  const { tabs, active, read, opening, failure } = terminals
+  const { tabs, active, read, opening, failure, list, setActive } = terminals
   const current = tabs.find(tab => tab.id === active)
   const [selection, setSelection] = useState<Record<string, string>>({})
   const [confirm, setConfirm] = useState<{ tab: TerminalTab; program?: string }>()
@@ -79,8 +80,28 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
   const [attaching, setAttaching] = useState(false)
   const [connection, setConnection] = useState<Record<string, 'live' | 'reconnecting'>>({})
 
+  // A Harness's login was started for this session: its terminal joins the tabs and comes to the front.
+  const revealed = useRevealedLogin(sessionId)
+  const revealedId = revealed?.terminalId
+  const revealedNonce = revealed?.nonce
+  useEffect(() => {
+    if (revealedId === undefined) return
+    void list().then(() => {
+      setActive(revealedId)
+    })
+  }, [revealedId, revealedNonce, list, setActive])
+  const updated = (summary: TerminalSummary) => {
+    terminals.updated(summary)
+    if (summary.login) loginRuns.report(summary)
+  }
+  const gone = (id: string) => {
+    terminals.gone(id)
+    loginRuns.gone(id)
+  }
+
   const close = async (tab: TerminalTab) => {
     const result = await terminals.close(tab.id)
+    if (result.kind === 'closed') loginRuns.gone(tab.id)
     if (result.kind === 'busy') setConfirm({ tab, ...(result.program ? { program: result.program } : {}) })
     else if (result.kind === 'failed') terminals.setFailure(result.text)
   }
@@ -106,10 +127,10 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
 
   const panelTabs: Array<PanelTab<string>> = tabs.map(tab => ({
     value: tab.id,
-    label: tabLabel(tab.number),
+    label: tabName(tab),
     icon: tabIcon(tab.summary),
     controls: id,
-    closeLabel: `关闭${tabLabel(tab.number)}`,
+    closeLabel: `关闭${tabName(tab)}`,
   }))
   const ended = current ? endedText(current.summary) : undefined
   const full = tabs.length >= TERMINALS_PER_SESSION
@@ -148,7 +169,7 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
                 </a>
               </Tooltip>
             ))}
-            {onCompose && current && (
+            {onCompose && current && !current.summary.login && (
               <Button
                 size="xs"
                 variant="ghost"
@@ -180,15 +201,15 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
           {failure}
         </InlineNotice>
       )}
-      <div className="terminal-screens" ref={screens} id={id} role="tabpanel" aria-label={current ? tabLabel(current.number) : '终端'}>
+      <div className="terminal-screens" ref={screens} id={id} role="tabpanel" aria-label={current ? tabName(current) : '终端'}>
         {tabs.map(tab => (
           <TerminalScreen
             key={tab.id}
             sessionId={sessionId}
             tab={tab}
             visible={shown && tab.id === active}
-            onSummary={terminals.updated}
-            onClosed={() => terminals.gone(tab.id)}
+            onSummary={updated}
+            onClosed={() => gone(tab.id)}
             onSelection={text => setSelection(previous => ({ ...previous, [tab.id]: text }))}
             onConnection={state => setConnection(previous => ({ ...previous, [tab.id]: state }))}
             onInputFailed={text => setNotice({ tone: 'error', text })}
@@ -223,9 +244,12 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
               <span className="terminal-ended" role="status">
                 {ended}
               </span>
-              <Button size="xs" variant="primary" icon={RotateCcw} loading={opening} onClick={() => void terminals.reopen(current)}>
-                重新打开
-              </Button>
+              {/* A login is started again from the row that offers it, never as a plain shell under the Harness's name. */}
+              {!current.summary.login && (
+                <Button size="xs" variant="primary" icon={RotateCcw} loading={opening} onClick={() => void terminals.reopen(current)}>
+                  重新打开
+                </Button>
+              )}
             </>
           ) : (
             <span className="terminal-facts">
@@ -247,13 +271,14 @@ export function TerminalPanel({ sessionId, shown, onCompose, onOpenService }: Te
       )}
       {confirm && (
         <ConfirmDialog
-          title={`关闭${tabLabel(confirm.tab.number)}？`}
+          title={`关闭${tabName(confirm.tab)}？`}
           message={confirm.program ? `「${confirm.program}」还在运行，关闭会结束它。` : '终端里还有程序在运行，关闭会结束它。'}
           confirmLabel="关闭终端"
           danger
           onConfirm={async () => {
             const result = await terminals.close(confirm.tab.id, true)
             if (result.kind === 'failed') throw new MessageError(result.text)
+            loginRuns.gone(confirm.tab.id)
           }}
           onClose={() => setConfirm(undefined)}
         />
@@ -278,7 +303,7 @@ const loadXterm = () =>
  * One terminal's screen. It keeps its stream while hidden, so switching tabs shows the output at once. The device that
  * opened the terminal sizes it to the area; any other shows it at the Host's size.
  */
-function TerminalScreen({
+export function TerminalScreen({
   sessionId,
   tab,
   visible,

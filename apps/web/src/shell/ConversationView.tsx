@@ -27,6 +27,7 @@ import { useTopicProposals } from '../agents/TopicProposals.tsx'
 import { SideQuestionPanel } from '../conversation/SideQuestion.tsx'
 import { useTopicResults } from '../agents/TopicResults.tsx'
 import { speakerOf } from '../agents/model.ts'
+import { loginSurface } from '../panel/terminal/loginRuns.ts'
 
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
 export function ConversationView({ shell }: { shell: ShellState }) {
@@ -272,7 +273,15 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                       {...(speaker ? { speaker } : {})}
                       login={
                         harnessInfo?.login
-                          ? { harnessId: harnessInfo.id, login: harnessInfo.login, terminal: catalog?.features?.loginTerminal === true }
+                          ? {
+                              harnessId: harnessInfo.id,
+                              login: harnessInfo.login,
+                              // In this session's 终端 tab, where it can have one.
+                              surface: loginSurface(
+                                catalog?.features,
+                                current.summary.archived || current.summary.personal ? undefined : current.summary.id,
+                              ),
+                            }
                           : undefined
                       }
                       harness={topHarness}

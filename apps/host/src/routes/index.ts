@@ -49,7 +49,7 @@ export function createRoutes(
   const native = createNativeRoutes(context, deps.native)
   const apps = createAppRoutes(context, deps.apps)
   const terminal = createTerminalRoutes(context, deps.terminals)
-  const agentLogin = createAgentLoginRoutes(context, deps.agentLogin)
+  const agentLogin = createAgentLoginRoutes(context, { ...deps.agentLogin, terminals: deps.terminals })
   const changes = createChangeRoutes(context)
   return {
     native,

@@ -251,8 +251,11 @@ const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`
  * `method`: one of the logins the harness advertised, run as the program the sessions run now with the definition's
  * arguments, then the method's own arguments and variables. The definition's variables are not written into the file,
  * since they may hold a key. A method is refused once the program found is no longer the one that advertised it.
+ *
+ * `inLatch`: for a Latch terminal, which shows how the command ended itself. The same command, last in the script so
+ * that its exit code is the script's, and no closing words about a window.
  */
-export function loginTerminalScript(record: AgentRecord, method?: string): string | undefined {
+export function loginTerminalScript(record: AgentRecord, method?: string, options: { inLatch?: boolean } = {}): string | undefined {
   if (method !== undefined) {
     const login = advertised(record)?.logins.find(item => item.id === method)
     if (!login) {
@@ -266,25 +269,19 @@ export function loginTerminalScript(record: AgentRecord, method?: string): strin
       ...Object.entries(login.env).map(([name, value]) => `${name}=${shellQuote(value)}`),
       ...[path, ...record.args, ...login.args].map(shellQuote),
     ].join(' ')
+    const head = ['#!/bin/sh', 'rm -f -- "$0"', `printf '%s\\n\\n' ${shellQuote(login.name)}`]
+    if (options.inLatch) return [...head, run, ''].join('\n')
     const done = shellQuote('完成后回到 Latch。这个窗口可以关闭。')
     const failed = shellQuote('登录没有完成。可以关掉这个窗口，回到 Latch 再试一次。')
-    return [
-      '#!/bin/sh',
-      'rm -f -- "$0"',
-      `printf '%s\\n\\n' ${shellQuote(login.name)}`,
-      `if ${run}; then printf '\\n%s\\n' ${done}; else printf '\\n%s\\n' ${failed}; fi`,
-      '',
-    ].join('\n')
+    return [...head, `if ${run}; then printf '\\n%s\\n' ${done}; else printf '\\n%s\\n' ${failed}; fi`, ''].join('\n')
   }
   const program = loginProgram(record)
   if (!program) return undefined
   const login = selectProfile(record).preset?.login
   const lines = ['#!/bin/sh', 'rm -f -- "$0"']
   if (login?.note) lines.push(`printf '%s\\n\\n' ${shellQuote(login.note)}`)
-  lines.push(
-    [program.path, ...program.args].map(shellQuote).join(' '),
-    `printf '\\n%s\\n' ${shellQuote('完成后回到 Latch。这个窗口可以关闭。')}`,
-  )
+  lines.push([program.path, ...program.args].map(shellQuote).join(' '))
+  if (!options.inLatch) lines.push(`printf '\\n%s\\n' ${shellQuote('完成后回到 Latch。这个窗口可以关闭。')}`)
   return `${lines.join('\n')}\n`
 }
 

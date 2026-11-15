@@ -175,6 +175,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         detectPreset: preset => (preset.id === 'codex' ? { found: true, path: join(bin, 'codex-acp') } : { found: false }),
         loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
         commandDirectories: () => [bin],
+        // No Latch terminal on this Host (its component is missing), so the login goes to the default terminal app:
+        // the path a window without one keeps. The login in Latch's own terminal is `desktop-login-terminal.e2e.ts`.
+        terminal: { binary: join(directory, 'no-latch-pty') },
         // Runs the script the terminal would, so what it logs in is what the page then finds.
         loginTerminal: async script => {
           if (terminal.fails) throw new Error('no terminal here')
@@ -202,9 +205,17 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await notice.getByRole('button', { name: '在终端里登录' }).click()
         await notice.getByText('没有打开终端。请自己在终端里运行这条命令。').waitFor()
         terminal.fails = false
+        // This stand-in runs the login before the request answers, where a real terminal app only opens. The request is
+        // waited for, so that the check below is asked after the Host dropped what it knew, and cannot join a check that
+        // started while the login still ran; the login itself starts a program, which takes more than a second on a busy
+        // machine.
+        const answered = page.waitForResponse(
+          response => response.request().method() === 'POST' && response.url().endsWith('/login-terminal') && response.ok(),
+        )
         await notice.getByRole('button', { name: '在终端里登录' }).click()
         await expect.poll(() => scripts.length).toBe(1)
-        await expect.poll(() => existsSync(loginFile)).toBe(true)
+        await expect.poll(() => existsSync(loginFile), { timeout: 15_000 }).toBe(true)
+        await answered
         expect(scripts[0]).toContain(`'${join(bin, 'codex')}' 'login'`)
 
         // Coming back to the window is enough.

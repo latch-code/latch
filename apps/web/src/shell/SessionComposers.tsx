@@ -51,6 +51,7 @@ import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
 import { HarnessInstallCard, SetupCard } from '../newSession/NewSession.tsx'
 import { DraftLoginNotice } from '../components/HarnessLogin.tsx'
+import { loginSurface } from '../panel/terminal/loginRuns.ts'
 import { SendingMessage } from '../components/SendingMessage.tsx'
 import { askSideQuestion, sideQuestionBlock, sideQuestionOf, sideQuestionRefusal } from '../conversation/SideQuestion.tsx'
 import type { ShellState } from './useShellLayout.tsx'
@@ -806,7 +807,7 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
       <DraftLoginNotice
         harness={loginHarness(catalog, chosenHarness, choice.config)}
         allowed={access.scopes.has('run')}
-        terminal={catalog?.features?.loginTerminal === true}
+        surface={loginSurface(catalog?.features)}
       />
       {submission.fork && (
         <InlineNotice

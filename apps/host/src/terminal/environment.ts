@@ -76,6 +76,15 @@ export async function loginShell(account: () => { shell: string | null } = userI
   return { file, argv: [`-${basename(file)}`] }
 }
 
+/**
+ * The same shell running one command line and ending with it, as a terminal app runs a `.command` file: still a login
+ * shell, and interactive, so the command finds what the person's profile sets up (a Node from a version manager).
+ * `command` is typed into no prompt and must read the same in any shell: plain words only.
+ */
+export function shellRunning(shell: ShellCommand, command: string): ShellCommand {
+  return { file: shell.file, argv: [...shell.argv, '-i', '-c', command] }
+}
+
 export function terminalEnvironment(input: { hostEnv: NodeJS.ProcessEnv; shell: string; folder: string }): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [name, value] of Object.entries(input.hostEnv)) {

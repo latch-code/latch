@@ -6,6 +6,7 @@ import { ConfirmDialog } from '../components/overlays.tsx'
 import { HarnessLoginSteps, loginDoubted, loginEndDay, loginEndsSoon, useLoginStatus } from '../components/HarnessLogin.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { api, errorMessage, MessageError } from '../core/api.ts'
+import type { LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
 
 /**
@@ -15,12 +16,12 @@ import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
 export function LoginGroup({
   harness,
   allowed,
-  terminal,
+  surface,
   probe,
 }: {
   harness: HarnessInfo
   allowed: boolean
-  terminal: boolean
+  surface: LoginSurface
   /** The last test start's result. */
   probe?: AgentProbeResult | undefined
 }) {
@@ -105,7 +106,7 @@ export function LoginGroup({
       />
       {steps && (
         <div className="settings-card-body">
-          <HarnessLoginSteps harnessId={harness.id} login={login} terminal={terminal} />
+          <HarnessLoginSteps harnessId={harness.id} login={login} surface={surface} onEnded={() => check(true)} />
         </div>
       )}
       {leaving && (

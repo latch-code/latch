@@ -7,6 +7,7 @@ import { toolRowId } from '../conversation.ts'
 import { Button, Toast } from '@latch/ui'
 import { settingsSections } from '../settings/SettingsPage.tsx'
 import { ShortcutsOverlay } from './ShortcutsOverlay.tsx'
+import { LoginTerminalDialog } from '../panel/terminal/LoginTerminalDialog.tsx'
 import { RemoveWorktreeDialog, removalWords } from '../components/RemoveWorktreeDialog.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { spaceOf } from '../sessions.ts'
@@ -128,6 +129,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
   return (
     <>
       {commandOpen && <ShellPalette shell={shell} />}
+      {snapshot.catalog?.features?.terminal === true && <LoginTerminalDialog />}
       {shortcutsOpen && (
         <ShortcutsOverlay
           spaces={shell.entries.includes('agents')}

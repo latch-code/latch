@@ -2,7 +2,9 @@
  * Whether a harness is logged in, a way to log in, and a way to log out. The Host only runs the program's own commands
  * and asks the harness itself: it never logs in for a person, and it reads nothing of the program's credentials. A status
  * check and a logout are what any device with `run` may ask for; the terminal opens on this computer alone, since that is
- * where the person is who would type into it.
+ * where the person is who would type into it. The login runs in a Latch terminal when the page asks for one (a device that
+ * may use Latch's terminals), otherwise in this computer's default terminal app. Either way the command is the one the
+ * Host resolves from the Harness's definition: a caller names the Harness and, at most, a login it advertised.
  */
 import { randomBytes } from 'node:crypto'
 import { execFile } from 'node:child_process'
@@ -12,16 +14,19 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { z } from 'zod'
 import {
+  HARNESS_LOGIN_SESSION,
   isLocalListener,
   settleLogin,
   type AgentRecord,
   type HarnessLogin,
   type HarnessLoginCheck,
   type HarnessLoginStatus,
+  type HarnessLoginTerminalResponse,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { checkLogin, loginCheckAddsDate, loginTerminalScript } from '@latch/harness-acp'
 import { json, jsonBody, safeDecode } from '../http-util.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import { CONFIG_BODY_LIMIT, type Caller, type RouteContext, type RouteModule } from './registry.ts'
 
 export interface AgentLoginDeps {
@@ -33,6 +38,8 @@ export interface AgentLoginDeps {
   logout: (id: string) => Promise<void>
   /** Tests: hands over the script instead of opening a terminal. Production never sets it. */
   openTerminal?: (script: string) => Promise<void>
+  /** Latch's own terminals, where a login runs when the page asks for one. */
+  terminals?: TerminalService
 }
 
 const STATUS_TTL_MS = 30_000
@@ -40,13 +47,24 @@ const STATUS_TTL_MS = 30_000
 const FRESH_FLOOR_MS = 2_000
 const PATH = /^\/link\/api\/harnesses\/([^/]+)\/(login-status|login-terminal|logout)$/u
 const statusBody = z.strictObject({ fresh: z.boolean().optional() })
-const terminalBody = z.strictObject({ method: z.string().min(1).max(128).optional() })
+const terminalBody = z.strictObject({
+  method: z.string().min(1).max(128).optional(),
+  terminal: z.strictObject({ sessionId: z.string().min(1).max(256).optional(), cols: z.number().int(), rows: z.number().int() }).optional(),
+})
 const run = promisify(execFile)
+/** A path every shell reads as one word, unquoted. */
+const PLAIN_PATH = /^\/[\w./-]+$/u
 
-/** The person's default handler for `.command` files, Terminal unless they chose another. The script removes itself. */
-async function openInSystemTerminal(script: string): Promise<void> {
-  const file = join(tmpdir(), `latch-login-${randomBytes(8).toString('hex')}.command`)
+/** The login script as a file only this account can read or run, under a random name; the script removes itself. */
+async function writeLoginScript(script: string, directory = tmpdir()): Promise<string> {
+  const file = join(directory, `latch-login-${randomBytes(8).toString('hex')}.command`)
   await writeFile(file, script, { mode: 0o700, flag: 'wx' })
+  return file
+}
+
+/** The person's default handler for `.command` files, Terminal unless they chose another. */
+async function openInSystemTerminal(script: string): Promise<void> {
+  const file = await writeLoginScript(script)
   try {
     await run('/usr/bin/open', [file], { timeout: 10_000 })
   } catch (error) {
@@ -111,9 +129,16 @@ export function createAgentLoginRoutes(context: RouteContext, deps: AgentLoginDe
       if (match[2] === 'login-terminal') {
         context.requireLocal(caller)
         context.requireScope(caller, 'run')
-        const { method } = terminalBody.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+        const { method, terminal } = terminalBody.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+        // A Latch terminal is a shell of this account, which reads whatever the account can: the devices that may open one.
+        const mayUseTerminal = () => {
+          context.recheck(caller, 'run')
+          if (context.devices.get(caller.device.id)?.dataScope !== 'all')
+            throw new AppError(403, 'terminal-scope', '这台设备的数据范围不包括终端')
+        }
+        if (terminal) mayUseTerminal()
         const record = deps.record(id, caller)
-        const script = record && loginTerminalScript(record, method)
+        const script = record && loginTerminalScript(record, method, terminal ? { inLatch: true } : {})
         if (!script) throw new AppError(404, 'harness-no-login', 'Latch 不知道这个 Harness 的登录命令。')
         await context.audit.append({
           action: 'agent.login.opened',
@@ -123,6 +148,38 @@ export function createAgentLoginRoutes(context: RouteContext, deps: AgentLoginDe
           detail: { agentId: id, ...(method !== undefined ? { source: 'harness' as const } : {}) },
         })
         context.recheck(caller, 'run')
+        if (terminal) {
+          const terminals = deps.terminals
+          if (!terminals) throw new AppError(503, 'terminal-unavailable', '终端组件不可用，请重新构建 Latch')
+          // The shell is handed a path, never the command: nothing of the script is parsed by the person's own shell.
+          const file = await writeLoginScript(script, PLAIN_PATH.test(tmpdir()) ? tmpdir() : '/tmp')
+          const discard = () => {
+            void rm(file, { force: true })
+          }
+          const opened = await terminals
+            .create(
+              terminal.sessionId ?? HARNESS_LOGIN_SESSION,
+              { listener: caller.connection.listener, deviceId: caller.device.id },
+              { cols: terminal.cols, rows: terminal.rows },
+              mayUseTerminal,
+              {
+                command: `exec /bin/sh ${file}`,
+                login: { harnessId: id, name: record.name },
+                // However it ended, what was known before is what the person just set out to change.
+                onEnd() {
+                  discard()
+                  forget(id)
+                },
+              },
+            )
+            .catch((error: unknown) => {
+              discard()
+              throw error
+            })
+          forget(id)
+          json(res, { opened: true, terminal: opened } satisfies HarnessLoginTerminalResponse)
+          return true
+        }
         await (deps.openTerminal ?? openInSystemTerminal)(script).catch((error: unknown) => {
           context.log(`打开终端失败：${error instanceof Error ? error.message : String(error)}`)
           throw new AppError(502, 'terminal-open-failed', '没有打开终端。请自己在终端里运行这条命令。')

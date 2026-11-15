@@ -2,12 +2,13 @@
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { HarnessInfo } from '@latch/protocol'
+import { HARNESS_LOGIN_SESSION, type HarnessInfo, type HarnessLoginTerminalResponse, type TerminalSummary } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
+import type { HelperEvent, LaunchTerminal, TerminalLaunch } from '../src/terminal/helper.ts'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
 
 const cleanups: Array<() => void | Promise<void>> = []
@@ -165,6 +166,154 @@ describe('harness login routes', () => {
     expect((await desktop.request('harnesses/codex/login-terminal', { body: {} })).status).toBe(404)
     await expect(stat(loginFile)).rejects.toThrow()
     await expect(readFile(loginFile)).rejects.toThrow()
+  })
+})
+
+describe('a harness login in a Latch terminal', () => {
+  /** The login fixture with stand-ins for latch-pty: nothing starts, and each launch is kept with a way to end it. */
+  async function withTerminals(options: TestHostOptions = {}) {
+    const launched: Array<{ launch: TerminalLaunch; emit: (event: HelperEvent) => void }> = []
+    const launch: LaunchTerminal = (spec, emit) => {
+      launched.push({ launch: spec, emit })
+      emit({ type: 'started', pid: 1 })
+      return {
+        pendingInput: 0,
+        input() {},
+        resize() {},
+        signal() {},
+        pauseOutput() {},
+        resumeOutput() {},
+        close() {
+          emit({ type: 'exit', signal: 1 })
+          emit({ type: 'gone' })
+          return Promise.resolve()
+        },
+      }
+    }
+    const made = await fixture({ terminal: { launch, shell: { file: '/bin/sh', argv: ['sh'] } }, ...options })
+    const desktop = await made.t.enroll({ listener: 'unix', name: 'Mac', scopes: ['view', 'run', 'admin'] })
+    const open = (device = desktop, body: Record<string, unknown> = {}) =>
+      device.request('harnesses/codex/login-terminal', { body: { terminal: { cols: 80, rows: 24 }, ...body } })
+    /** The script file the shell was handed, from the one command line it runs. */
+    const scriptOf = (index: number) => /^exec \/bin\/sh (\/[\w./-]+)$/u.exec(launched[index]!.launch.argv.at(-1)!)![1]!
+    return { ...made, desktop, launched, open, scriptOf }
+  }
+
+  it('runs the preset’s own command, which no caller can choose, in the home folder under the Harness’s name', async () => {
+    const { t, desktop, launched, open, scriptOf, scripts, bin } = await withTerminals()
+    const response = await open()
+    expect(response.status).toBe(200)
+    const { opened, terminal } = (await response.json()) as HarnessLoginTerminalResponse
+    expect(opened).toBe(true)
+    expect(terminal).toMatchObject({
+      sessionId: HARNESS_LOGIN_SESSION,
+      status: 'running',
+      busy: true,
+      login: { harnessId: 'codex', name: 'Codex' },
+    })
+    // The same login shell as any Latch terminal, interactive, running one path; the script is the external path's.
+    expect(launched).toHaveLength(1)
+    expect(launched[0]!.launch.argv.slice(0, 3)).toEqual(['sh', '-i', '-c'])
+    expect(launched[0]!.launch.cwd).toBe(homedir())
+    const script = await readFile(scriptOf(0), 'utf8')
+    expect(script).toContain(`'${join(bin, 'codex')}' 'login'`)
+    expect(script.trimEnd().split('\n').at(-1)).toBe(`'${join(bin, 'codex')}' 'login'`)
+    expect((await stat(scriptOf(0))).mode & 0o777).toBe(0o700)
+    // Not the default terminal app as well.
+    expect(scripts).toEqual([])
+    // Both records, the login's as the external path writes it, before the shell started.
+    expect((await audited(t, 'agent.login.opened')).map(entry => entry.detail)).toEqual([{ agentId: 'codex' }])
+    expect((await audited(t, 'terminal.open')).map(entry => entry.detail)).toEqual([
+      { sessionId: HARNESS_LOGIN_SESSION, terminalId: terminal!.id },
+    ])
+
+    // A caller names the Harness and nothing of the command: any other field is refused, and nothing starts.
+    for (const extra of [{ command: 'id' }, { argv: ['id'] }, { script: 'id' }, { terminal: { cols: 80, rows: 24, command: 'id' } }])
+      expect((await open(desktop, extra)).status).toBe(400)
+    expect(
+      await reply(await desktop.request('harnesses/nothing/login-terminal', { body: { terminal: { cols: 80, rows: 24 } } })),
+    ).toMatchObject([404, { error: 'harness-no-login' }])
+    expect(launched).toHaveLength(1)
+    // Nothing but a login opens outside a session.
+    expect((await desktop.request(`tasks/${HARNESS_LOGIN_SESSION}/terminals`, { body: { cols: 80, rows: 24 } })).status).toBe(404)
+    expect(launched).toHaveLength(1)
+
+    // Its output is not attached to a conversation, and closing it while the command runs asks first.
+    const base = `tasks/${HARNESS_LOGIN_SESSION}/terminals/${terminal!.id}`
+    expect(await reply(await desktop.request(`${base}/attach`, { body: {} }))).toMatchObject([409, { error: 'terminal-login-output' }])
+    expect(await reply(await desktop.request(`${base}/close`, { body: {} }))).toMatchObject([409, { error: 'terminal-busy' }])
+    expect((await desktop.request(`${base}/close`, { body: { force: true } })).status).toBe(200)
+    // A script the shell never ran is removed with its terminal.
+    await expect.poll(() => existsSync(scriptOf(0))).toBe(false)
+  })
+
+  it('opens for this computer alone, for a device that may use Latch’s terminals, and only a preset with a login', async () => {
+    const { t, desktop, launched, open } = await withTerminals()
+    const phone = await t.enroll({ listener: 'tls', name: 'Phone', scopes: ['view', 'run', 'admin'] })
+    const browser = await t.enroll({ name: 'Browser', scopes: ['view', 'run', 'admin'] })
+    for (const remote of [phone, browser]) expect(await reply(await open(remote))).toMatchObject([403, { error: 'local-only' }])
+    const viewer = await t.enroll({ listener: 'unix', name: 'Viewer', scopes: ['view'] })
+    expect((await open(viewer)).status).toBe(403)
+    // A shell reads whatever the account can: a window whose data scope is work gets none, as with any Latch terminal.
+    const work = await t.enroll({ listener: 'unix', name: 'Work window', scopes: ['view', 'run', 'admin'] })
+    expect((await desktop.request(`devices/${work.id}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
+    expect(await reply(await open(work))).toMatchObject([403, { error: 'terminal-scope' }])
+    // Claude Agent has no login command of its own to run.
+    expect(
+      await reply(await desktop.request('harnesses/claude-agent/login-terminal', { body: { terminal: { cols: 80, rows: 24 } } })),
+    ).toMatchObject([404, { error: 'harness-no-login' }])
+    expect(launched).toEqual([])
+    expect(await audited(t, 'agent.login.opened')).toEqual([])
+    expect(await audited(t, 'terminal.open')).toEqual([])
+  })
+
+  it('runs nothing in a Host that was not told where the person’s programs are', async () => {
+    const { launched, open } = await withTerminals({ loginPrograms: undefined })
+    expect(await reply(await open())).toMatchObject([404, { error: 'harness-no-login' }])
+    expect(launched).toEqual([])
+  })
+
+  it('asks the program again once the command has ended, whatever was remembered meanwhile', async () => {
+    const { desktop, launched, open, scriptOf, loginFile, ranFile } = await withTerminals()
+    const status = async () => (await reply(await desktop.request('harnesses/codex/login-status', { body: {} })))[1]
+    const ran = async () => (await readFile(ranFile, 'utf8')).length
+    expect(await status()).toEqual({ status: 'unauthenticated' })
+    expect(await ran()).toBe(1)
+    expect((await open()).status).toBe(200)
+    // While the person is still logging in, a question is answered and remembered as before.
+    expect(await status()).toEqual({ status: 'unauthenticated' })
+    expect(await status()).toEqual({ status: 'unauthenticated' })
+    expect(await ran()).toBe(2)
+    // The command logs in and leaves with code 0: the remembered answer is dropped, without waiting out its 30 seconds.
+    await writeFile(loginFile, 'yes')
+    launched[0]!.emit({ type: 'exit', code: 0 })
+    launched[0]!.emit({ type: 'gone' })
+    expect(await status()).toEqual({ status: 'authenticated' })
+    expect(await ran()).toBe(3)
+    expect(existsSync(scriptOf(0))).toBe(false)
+    // The terminal stays to be read, as one that ended: no longer busy, with the command's own code.
+    const { terminals } = await desktop.json<{ terminals: TerminalSummary[] }>(`tasks/${HARNESS_LOGIN_SESSION}/terminals`)
+    expect(terminals).toMatchObject([{ status: 'exited', exitCode: 0, busy: false, login: { harnessId: 'codex' } }])
+  })
+
+  it('runs in the session’s folder as one of its terminals when the page names a session', async () => {
+    const { desktop, launched, open } = await withTerminals({ demo: true })
+    const { sessionId } = await desktop.json<{ sessionId: string }>('tasks', { body: { requestId: randomUUID(), prompt: '你好' } })
+    const plain = await desktop.json<{ terminal: TerminalSummary }>(`tasks/${sessionId}/terminals`, { body: { cols: 80, rows: 24 } })
+    const { terminal } = (await (
+      await open(desktop, { terminal: { sessionId, cols: 100, rows: 30 } })
+    ).json()) as HarnessLoginTerminalResponse
+    expect(terminal).toMatchObject({ sessionId, cols: 100, rows: 30, login: { harnessId: 'codex', name: 'Codex' } })
+    expect(launched[1]!.launch.cwd).toBe(launched[0]!.launch.cwd)
+    expect(launched[0]!.launch.argv).toEqual(['sh'])
+    const { terminals } = await desktop.json<{ terminals: TerminalSummary[] }>(`tasks/${sessionId}/terminals`)
+    expect(terminals.map(item => [item.id, item.login?.harnessId])).toEqual([
+      [plain.terminal.id, undefined],
+      [terminal!.id, 'codex'],
+    ])
+    // A session that does not exist takes none.
+    expect((await open(desktop, { terminal: { sessionId: 'task_missing', cols: 80, rows: 24 } })).status).toBe(404)
+    expect(launched).toHaveLength(2)
   })
 })
 

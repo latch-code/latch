@@ -41,6 +41,7 @@ import { IconTile, Loading, MiddleEllipsis, NavRow, NoteLine, ObjectRow, Section
 import { FieldDialog } from './dialogs.tsx'
 import { AgentProbe } from './AgentProbe.tsx'
 import { LoginGroup } from './LoginGroup.tsx'
+import { loginSurface, type LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { HarnessMcpGroup } from './HarnessMcp.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 
@@ -485,7 +486,7 @@ function AgentPage({
   checking,
   probe,
   probeDisabledReason,
-  loginTerminal = false,
+  loginSurface: surface = { kind: 'none' },
   run = false,
   onRecheck,
   onSaved,
@@ -499,7 +500,7 @@ function AgentPage({
   checking: boolean
   probe: boolean
   probeDisabledReason?: string
-  loginTerminal?: boolean
+  loginSurface?: LoginSurface
   /** This device may start sessions, so it may ask about logging in and log out. */
   run?: boolean
   onRecheck: () => void
@@ -678,7 +679,7 @@ function AgentPage({
         />
         {preset && <InstallRows preset={preset} />}
       </SettingsGroup>
-      {harness?.login && <LoginGroup harness={harness} allowed={run} terminal={loginTerminal} probe={agent.lastProbe} />}
+      {harness?.login && <LoginGroup harness={harness} allowed={run} surface={surface} probe={agent.lastProbe} />}
       {harness && <HarnessMcpGroup harness={harness} title="MCP" run={run} />}
       {probe && <AgentProbe agent={agent} disabled={busy} disabledReason={probeDisabledReason} onSaved={onSaved} />}
       <SettingsGroup>
@@ -1120,7 +1121,7 @@ export function AgentsSettings({
           harness={snapshot.catalog?.harnesses.find(item => item.id === agent.id)}
           checking={checking}
           probe={snapshot.catalog?.features?.agentProbe === true}
-          loginTerminal={snapshot.catalog?.features?.loginTerminal === true}
+          loginSurface={loginSurface(snapshot.catalog?.features)}
           run={snapshot.device.scopes?.includes('run') === true}
           probeDisabledReason={
             !snapshot.device.scopes?.includes('admin')

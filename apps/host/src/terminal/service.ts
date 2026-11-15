@@ -4,9 +4,10 @@
 // alone: output is raw and may hold keys. Routes stay thin: each method takes the requester and does its own checks.
 import { randomUUID } from 'node:crypto'
 import { lstat, stat } from 'node:fs/promises'
-import { constants } from 'node:os'
+import { constants, homedir } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
 import {
+  HARNESS_LOGIN_SESSION,
   TERMINALS_PER_SESSION,
   isLocalListener,
   type ListenerClass,
@@ -19,7 +20,7 @@ import { AppError } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { localOnly } from '../access.ts'
 import { isInsidePath, latchCodeRoot } from '../paths.ts'
-import { loginShell, terminalEnvironment, type ShellCommand } from './environment.ts'
+import { loginShell, shellRunning, terminalEnvironment, type ShellCommand } from './environment.ts'
 import {
   helperLauncher,
   type HelperEvent,
@@ -69,6 +70,19 @@ export interface TerminalRequester {
 export interface TerminalRef {
   sessionId: string
   terminalId: string
+}
+
+/**
+ * A Harness's own login command in place of the plain shell. The Host resolves it from the Harness's definition; no
+ * caller's text is part of it.
+ */
+export interface TerminalRun {
+  /** One command line of plain words for the person's shell (`shellRunning`); the terminal ends when it does. */
+  command: string
+  /** Which Harness's login this is, and the name its tab carries. */
+  login: { harnessId: string; name: string }
+  /** Once, when the terminal is over or never started. `code`: the command's own exit code, when it ended by itself. */
+  onEnd?(exit: { code?: number }): void
 }
 
 export type TerminalStreamEvent =
@@ -142,6 +156,7 @@ interface Terminal {
   window: { start: number; bytes: number }
   outputPaused: boolean
   resumeTimer?: NodeJS.Timeout
+  run?: TerminalRun
 }
 
 function startFailure(reason: TerminalFailure): AppError {
@@ -162,6 +177,14 @@ function busyError(terminal: Terminal): AppError {
     terminal.foreground ? `「${terminal.foreground}」还在运行，确认后再关闭` : '终端里还有程序在运行，确认后再关闭',
     terminal.foreground ? { foreground: terminal.foreground } : undefined,
   )
+}
+
+/**
+ * Whether closing would end something: a program the system reports in the foreground, or a login command, which runs
+ * in the shell's own process group and so is never reported as one.
+ */
+function occupied(terminal: Terminal): boolean {
+  return terminal.busy || (terminal.run !== undefined && (terminal.status === 'running' || terminal.status === 'starting'))
 }
 
 function checkedSize(size: TerminalSize): TerminalSize {
@@ -228,7 +251,7 @@ export class TerminalService {
   activity(): { terminals: number; services: number } {
     const running = [...this.terminals.values()].filter(terminal => terminal.status === 'running')
     return {
-      terminals: running.filter(terminal => terminal.busy).length,
+      terminals: running.filter(occupied).length,
       services: running.reduce((sum, terminal) => sum + terminal.services.length, 0),
     }
   }
@@ -259,8 +282,18 @@ export class TerminalService {
       .map(terminal => this.summary(terminal, requester))
   }
 
-  /** `authorize` runs once the open has been audited, right before the shell starts, and refuses by throwing an AppError. */
-  async create(sessionId: string, requester: TerminalRequester, size: TerminalSize, authorize?: () => void): Promise<TerminalSummary> {
+  /**
+   * `authorize` runs once the open has been audited, right before the shell starts, and refuses by throwing an AppError.
+   * `run`: a Harness's login command instead of a plain shell; under `HARNESS_LOGIN_SESSION` it starts in the home
+   * folder, and nothing else opens there.
+   */
+  async create(
+    sessionId: string,
+    requester: TerminalRequester,
+    size: TerminalSize,
+    authorize?: () => void,
+    run?: TerminalRun,
+  ): Promise<TerminalSummary> {
     this.refuseWhileHeld()
     this.admit(requester)
     if (this.unavailable === 'platform') throw new AppError(501, 'terminal-unsupported', '终端尚未实现：目前只支持 macOS')
@@ -290,14 +323,17 @@ export class TerminalService {
       streams: new Set(),
       window: { start: 0, bytes: 0 },
       outputPaused: false,
+      ...(run ? { run: { ...run, login: { harnessId: run.login.harnessId, name: programName(run.login.name) ?? 'Harness' } } } : {}),
     }
     this.terminals.set(terminal.id, terminal)
     try {
-      const resolved = await this.options.sessionFolder(sessionId)
+      const resolved =
+        sessionId === HARNESS_LOGIN_SESSION ? (run ? { path: homedir() } : undefined) : await this.options.sessionFolder(sessionId)
       if (resolved === undefined) throw new AppError(404, 'task-not-found', '找不到该会话')
       if (resolved === 'removed' || !isAbsolute(resolved.path) || !(await isDirectory(resolved.path))) throw startFailure('cwd')
       const folder = resolved.path
-      const shell = this.options.shell ?? (await loginShell())
+      const plain = this.options.shell ?? (await loginShell())
+      const shell = run ? shellRunning(plain, run.command) : plain
       terminal.shell = basename(shell.file)
       terminal.folder = basename(folder)
       // Closed while the folder was resolved (its session ended, the Host stops): no audit record, no shell.
@@ -367,7 +403,7 @@ export class TerminalService {
   async close(ref: TerminalRef, requester: TerminalRequester, options: { force?: boolean } = {}): Promise<void> {
     this.admit(requester)
     const terminal = this.find(ref)
-    if (terminal.status === 'running' && terminal.busy && !options.force) throw busyError(terminal)
+    if (terminal.status === 'running' && occupied(terminal) && !options.force) throw busyError(terminal)
     await this.end(terminal)
   }
 
@@ -382,8 +418,8 @@ export class TerminalService {
     if (!isLocalListener(requester.listener)) {
       if (running.length > 0) throw new AppError(409, 'terminal-running', '这个会话还有终端在运行，请先在 Mac 上关闭终端')
     } else if (!options.force) {
-      const occupied = running.find(terminal => terminal.busy)
-      if (occupied) throw busyError(occupied)
+      const held = running.find(occupied)
+      if (held) throw busyError(held)
     }
   }
 
@@ -440,6 +476,8 @@ export class TerminalService {
   extract(ref: TerminalRef, requester: TerminalRequester, options: { lines?: number; selection?: string } = {}): TerminalText {
     this.admit(requester)
     const terminal = this.find(ref)
+    // A login prints device codes and links that carry them, which the best-effort redaction would not know.
+    if (terminal.run) throw new AppError(409, 'terminal-login-output', '登录的输出不加入对话')
     const lines = options.lines ?? ATTACH_LINE_LIMIT
     if (!Number.isInteger(lines) || lines < 1 || lines > ATTACH_LINE_LIMIT)
       throw new AppError(400, 'terminal-lines-invalid', `一次最多加入 ${ATTACH_LINE_LIMIT} 行`)
@@ -496,11 +534,12 @@ export class TerminalService {
       status: terminal.status === 'starting' ? 'running' : terminal.status,
       ...(terminal.exitCode !== undefined ? { exitCode: terminal.exitCode } : {}),
       ...(terminal.exitSignal !== undefined ? { exitSignal: terminal.exitSignal } : {}),
-      busy: terminal.busy,
+      busy: occupied(terminal),
       ...(terminal.foreground !== undefined ? { foreground: terminal.foreground } : {}),
       services: terminal.services.map(service => ({ ...service })),
       sizeOwner: requester.deviceId === terminal.owner,
       createdAt: new Date(terminal.createdAt).toISOString(),
+      ...(terminal.run ? { login: { ...terminal.run.login } } : {}),
     }
   }
 
@@ -547,7 +586,17 @@ export class TerminalService {
     }
   }
 
+  /** The login command is over: its caller hears once, with the exit code only when the command ended by itself. */
+  private runEnded(terminal: Terminal): void {
+    const run = terminal.run
+    if (!run?.onEnd) return
+    const { onEnd } = run
+    delete run.onEnd
+    onEnd(terminal.status === 'exited' && terminal.exitCode !== undefined ? { code: terminal.exitCode } : {})
+  }
+
   private ended(terminal: Terminal): void {
+    this.runEnded(terminal)
     terminal.busy = false
     terminal.foreground = undefined
     terminal.detector.clear()
@@ -625,6 +674,7 @@ export class TerminalService {
         await terminal.process?.close()
       } finally {
         this.ending.delete(terminal)
+        this.runEnded(terminal)
       }
     })()
     return terminal.ending

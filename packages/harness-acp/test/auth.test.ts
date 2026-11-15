@@ -213,6 +213,10 @@ describe('logging in through what the agent advertised', () => {
     const script = loginTerminalScript(t.record, 'fake-terminal')!
     expect(script).toContain(`FAKE_ACP_LOGIN_VIA='terminal' '${t.program}' 'login'`)
     expect(script.startsWith('#!/bin/sh\nrm -f -- "$0"\n')).toBe(true)
+    // In a Latch terminal the advertised login is the script's last command, so its exit code is the terminal's.
+    expect(loginTerminalScript(t.record, 'fake-terminal', { inLatch: true })!.trimEnd().split('\n').at(-1)).toBe(
+      `FAKE_ACP_LOGIN_VIA='terminal' '${t.program}' 'login'`,
+    )
     expect(loginTerminalScript(t.record, 'fake-loader')).toBeUndefined()
     expect(loginTerminalScript(t.record, 'nothing')).toBeUndefined()
 

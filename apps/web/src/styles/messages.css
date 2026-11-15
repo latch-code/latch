@@ -1457,6 +1457,19 @@ button.summary-file:hover {
 .harness-login-error {
   color: var(--red);
 }
+/* How a login command run in a Latch terminal stands: an icon and one word. */
+.harness-login-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.harness-login-state[data-state='failed'] {
+  color: var(--red);
+}
 .harness-login-card {
   gap: var(--sp-8);
 }

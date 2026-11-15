@@ -16,6 +16,9 @@ export interface TerminalTab {
 
 export const tabLabel = (number: number) => `终端 ${number}`
 
+/** A tab's name: the Harness whose login command runs in it, else 终端 N. */
+export const tabName = (tab: Pick<TerminalTab, 'number' | 'summary'>) => tab.summary.login?.name ?? tabLabel(tab.number)
+
 /**
  * The Host's list in tab order. A terminal keeps the number it was first shown with; a new one takes the lowest number
  * free, in the order the Host opened them, so a page that loads again names them 1, 2… once more.

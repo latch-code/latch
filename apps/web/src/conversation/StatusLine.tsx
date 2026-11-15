@@ -6,6 +6,7 @@ import { runEndLine, runStatus, type LivePhaseOptions, type RunMessageFacts, typ
 import { api } from '../core/api.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { HarnessLoginSteps } from '../components/HarnessLogin.tsx'
+import type { LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { personStatus } from '../agents/personWords.ts'
 import { silentWords } from '../sessions.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -171,7 +172,7 @@ export function RunEndNote({
   onRetry?: () => void
   onContinue?: () => void
   /** How to log in, when this run ended for want of it. */
-  login?: { harnessId: string; login: HarnessLogin; terminal: boolean } | undefined
+  login?: { harnessId: string; login: HarnessLogin; surface: LoginSurface } | undefined
 }) {
   const line = runEndLine(summary, harness, shown)
   if (!line) return null

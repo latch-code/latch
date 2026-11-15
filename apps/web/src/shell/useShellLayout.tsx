@@ -64,6 +64,7 @@ import { hostLine, useShellLifecycle } from '../core/shellLifecycle.ts'
 import { currentShell, shellBrowser, shellFolders } from '../core/shell.ts'
 import { useDrawer } from '../hooks/useDrawer.ts'
 import { useEndedSessionTabs } from '../panel/browser/useBrowserTabs.ts'
+import { useRevealedLogin } from '../panel/terminal/loginRuns.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { usePhoneReview } from '../phone-review/usePhoneReview.ts'
@@ -1128,6 +1129,14 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (terminalOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
     else if (canTerminal) showSurface({ kind: 'terminal' })
   }
+  // A Harness's login started from this session runs in its 终端 tab: the tab comes forward once for each start.
+  const revealedLogin = useRevealedLogin(canTerminal ? summary?.id : undefined)?.nonce
+  const shownLogin = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (revealedLogin === undefined || shownLogin.current === revealedLogin) return
+    shownLogin.current = revealedLogin
+    showSurface({ kind: 'terminal' })
+  })
   const toggleBrowser = () => {
     if (browserOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
     else if (canBrowser) showSurface({ kind: 'browser' })

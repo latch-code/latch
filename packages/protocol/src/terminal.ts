@@ -1,6 +1,12 @@
 /** The most terminals one session keeps open. */
 export const TERMINALS_PER_SESSION = 8
 
+/**
+ * Where a Harness's login runs when no session is in view (设置, a new session's draft): addressed like a session's
+ * terminals, but no session has this ID and nothing opens under it except a login command.
+ */
+export const HARNESS_LOGIN_SESSION = 'harness-login'
+
 export interface LocalService {
   /** `http://localhost:5173`: scheme, host and port only, so a token in the path or query never travels with it. */
   origin: string
@@ -32,6 +38,24 @@ export interface TerminalSummary {
   /** The requester decides this terminal's size. */
   sizeOwner: boolean
   createdAt: string
+  /** Runs this Harness's own login command instead of a plain shell, and ends when the command does. */
+  login?: { harnessId: string; name: string }
+}
+
+/**
+ * `POST /link/api/harnesses/:id/login-terminal`. With `terminal`, the login runs in a Latch terminal: the session's, or
+ * with no `sessionId` one under `HARNESS_LOGIN_SESSION`. Without it, in this computer's default terminal app.
+ */
+export interface HarnessLoginTerminalRequest {
+  /** One of the logins the harness advertised; absent for the preset's own command. */
+  method?: string
+  terminal?: TerminalSize & { sessionId?: string }
+}
+
+export interface HarnessLoginTerminalResponse {
+  opened: true
+  /** The Latch terminal the command runs in. */
+  terminal?: TerminalSummary
 }
 
 /** `GET /link/api/tasks/:id/terminals` */
