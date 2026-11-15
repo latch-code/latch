@@ -26,6 +26,7 @@ import { currentShell } from '../core/shell.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import type { Space } from '../sessions.ts'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
+import { ShellQuota } from './ShellQuota.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** The switch's state: the place shown (none on pages both places share), the way to a place, and where something waits. */
@@ -265,10 +266,12 @@ export function connectionTrouble(
  */
 export function NavFoot({
   apps,
+  quota,
   settings,
   trouble,
 }: {
   apps?: { current: boolean; onOpen: () => void } | undefined
+  quota?: ReactNode
   settings?: (() => void) | undefined
   trouble: { tone: 'warn' | 'error'; text: string } | null
 }) {
@@ -285,6 +288,7 @@ export function NavFoot({
           <span>应用</span>
         </button>
       )}
+      {quota}
       {(settings || trouble) && (
         <div className="sidebar-nav-line sidebar-foot-line">
           {settings ? (
@@ -354,6 +358,7 @@ export function ShellNavFoot({ shell }: { shell: ShellState }) {
   return (
     <NavFoot
       apps={shell.entries.includes('apps') ? { current: shell.route.entry === 'apps', onOpen: () => shell.openApp() } : undefined}
+      quota={<ShellQuota shell={shell} appearance="row" />}
       settings={shell.entries.includes('settings') ? () => shell.goEntry('settings') : undefined}
       trouble={connectionTrouble(shell.connection, shell.hostProblem)}
     />

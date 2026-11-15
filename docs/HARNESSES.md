@@ -313,10 +313,12 @@ Harness 用自己的订阅登录时，Latch 把它自己的程序报告的额度
 | Antigravity | 它自己的命令 `agy -p /usage --output-format json`（`profiles/antigravity-quota.ts`；在 agy 1.5.8 上确认：不提问、约 6 秒退出、`num_turns` 为 0、不起模型轮次），在会话接上进程时与每轮结束时在旁边运行，两次之间至少 5 分钟，不等它；按登录状态命令的规则运行（只在启动脚本允许 Host 运行本机程序之后、Harness 的环境加 `AGY_CLI_DISABLE_AUTO_UPDATE=true`、不经 shell、没有输入、20 秒后连同进程组结束），失败不说任何话 | `command.data.groups[].buckets[]` 的 `remaining_fraction` 是剩余比例，已用是 1 减它；`window` 只认 `5h` 与 `weekly`，`reset_time` 是重置时间。只显示两个通用的组，面板里各成一节：「Gemini 模型」（`Gemini Models`）与「Claude 与 GPT 模型」（`Claude and GPT models`），小环取其中用得最多的窗口；单个模型的组与不认识的组整个丢掉，不显示它们的名字；`num_turns` 不为 0 或形状不同的输出整个不用 |
 | Cursor、OpenCode、Qwen Code、goose、pi、DeepSeek Harness | 它们的程序不报告订阅额度 | 不显示，也没有占位 |
 
+工作台的电脑或设置旁有「额度」。面板按当前 Host 的 Harness 分开列出已收到且未重置的窗口，百分比注明「已用」，账号只展示遮蔽后的形式。连接中断时注明这是上次收到的信息，没有有效窗口时显示空状态。桌面或平板的鼠标悬停预览保留原焦点，可移入面板滚动；点击或用键盘打开后保持展开，Esc 关闭。触屏点击打开底部面板。
+
 - **形状。** `HarnessInfo.quota`（`packages/protocol/src/quota.ts`）：`windows`（`kind`、`group?`（分开计量的模型组，固定集合）、`usedPercent?`、`resetsAt?`、`windowMinutes?`、`state?`）、`plan?`、`account?`、`balanceCents?`、`state`（`ok`、`near`、`limited`）、`observedAt`。全部是数字与固定集合里的值，没有厂商写的文字：不认识的窗口种类整个丢掉，不在集合里的套餐名不显示（`packages/harness-acp/src/quota.ts` 的 `harnessQuota`）。Codex 的 `rateLimitUpsell`、`limitName`、`accountId` 与完整邮箱不离开读它的进程；邮箱在读到时就遮住，只留两边的首字符与最后一段。
 - **只在内存里。** 按 Agent 定义保存在驱动里，不写磁盘、日志与审计。窗口过了重置时间就不再显示（页面也按自己的时钟隐藏）；报告它的进程退出后，有重置时间的窗口留到重置为止，因为额度属于账号；没有重置时间的随进程一起消失。退出登录、定义变化（命令、参数、环境变量）后全部清除。同一个窗口以最新的报告为准。
 - **谁能看到。** 随 Harness 目录（快照的 `catalog.harnesses`）发给能看到这个 Harness 的设备，没有单独的接口与权限；没有凭据的请求拿不到目录。内容变了才推送。
-- **不显示的时候。** Harness 什么都没报、所有窗口都已重置、会话经 Latch 使用模型服务（订阅的额度不是它的），都不画任何东西。经模型服务的会话也不读、不问、不记：Codex 不发 `account/rateLimits/read`，Grok 不发 `_x.ai/billing`，Claude Agent 的限额事件不读。
+- **不显示的时候。** Harness 什么都没报、所有窗口都已重置、会话经 Latch 使用模型服务（订阅的额度不是它的），都不在输入框画额度。经模型服务的会话也不读、不问、不记：Codex 不发 `account/rateLimits/read`，Grok 不发 `_x.ai/billing`，Claude Agent 的限额事件不读。
 - **到上限。** 百分比到 100、Claude 报 `rejected`、或 Codex 的 `rateLimitReachedType` 不为空时是 `limited`。Latch 不因此拦截发送：能不能继续由 Harness 自己决定，被拒绝的一轮照常显示它的错误。
 
 ## 权限菜单

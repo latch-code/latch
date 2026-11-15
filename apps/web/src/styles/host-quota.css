@@ -1,0 +1,91 @@
+.host-quota-trigger {
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+.host-quota-trigger:not(.phone-tab) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-radius: var(--r-8);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.host-quota-trigger:is(:hover, [aria-expanded='true']) {
+  background: var(--hover);
+  color: var(--ink);
+}
+.host-quota-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (pointer: coarse), (max-width: 767.98px) {
+  .host-quota-trigger:not(.phone-tab) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+.host-quota-popover {
+  position: fixed;
+  inset: auto;
+  width: min(360px, calc(100vw - 24px));
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--pop);
+  color: var(--ink);
+  box-shadow: var(--sh-dialog);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.host-quota-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: var(--sp-4) var(--sp-12);
+  border-bottom: 1px solid var(--line);
+}
+.host-quota-heading h2,
+.host-quota-harness h3 {
+  margin: 0;
+  font-size: var(--fs-ui);
+  font-weight: 600;
+}
+.host-quota-content {
+  display: grid;
+  gap: var(--sp-12);
+}
+.host-quota-popover .host-quota-content {
+  padding: var(--sp-12);
+}
+.host-quota-harness + .host-quota-harness {
+  padding-top: var(--sp-12);
+  border-top: 1px solid var(--line);
+}
+.host-quota-harness h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  overflow-wrap: anywhere;
+}
+.host-quota-harness .quota-panel {
+  padding: var(--sp-8) 0 0;
+}
+.host-quota-note,
+.host-quota-limit {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+.host-quota-limit {
+  margin-top: var(--sp-4);
+  color: var(--red);
+}

@@ -47,6 +47,7 @@ import { useShellLayout } from './useShellLayout.tsx'
 import { OverviewGlyph } from '@latch/ui'
 import { WorkOverview } from './WorkOverview.tsx'
 import { TabletRail, WorkbenchComputer, WorkbenchNav } from './WorkbenchNav.tsx'
+import { ShellQuota } from './ShellQuota.tsx'
 import { LayoutSwitch } from './LayoutSwitch.tsx'
 import { WorkbenchSessions } from './WorkbenchSessions.tsx'
 import { useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
@@ -293,7 +294,12 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       onSchedules={
                         catalog?.features?.automations ? () => shell.openMyAgent({ id: 'general', tab: 'schedules' }) : undefined
                       }
-                      computer={<WorkbenchComputer shell={shell} />}
+                      computer={
+                        <>
+                          <WorkbenchComputer shell={shell} />
+                          {!triage && viewport !== 'tablet' && <ShellQuota shell={shell} appearance="row" />}
+                        </>
+                      }
                       snapshot={listed}
                       archiveBatch={archiveBatch}
                       archiveUndo={archiveUndo}
@@ -517,6 +523,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   <header className="workbench-phone-heading">
                     {triage && shellSpaces(shell) ? <SpaceSwitch {...shellSpaces(shell)!} /> : <h1>Code</h1>}
                     {!triage && <IconButton label="搜索" icon={SearchGlyph} onClick={openSearch} />}
+                    {triage && <ShellQuota shell={shell} />}
                     {triage && entries.includes('settings') && (
                       <IconButton label="设置" icon={SettingsGlyph} onClick={() => goEntry('settings')} />
                     )}

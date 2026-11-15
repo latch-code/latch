@@ -26,6 +26,7 @@
 @import './phone-review.css' layer(app);
 @import './overlays.css' layer(app);
 @import './settings.css' layer(app);
+@import './host-quota.css' layer(app);
 @import './customization.css' layer(app);
 @import './agents.css' layer(app);
 @import './agent-avatar.css' layer(app);
