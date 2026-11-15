@@ -21,6 +21,7 @@ import { useLastConfirmed } from '../components/SessionStatus.tsx'
 import { Menu } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { startBlock } from '../composerChoice.ts'
+import { MessageError } from '../core/api.ts'
 import { relativeTime } from '../format.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { WriteNotice } from './AgentForm.tsx'
@@ -325,7 +326,7 @@ export function AgentsSpaceList({ shell, rail = false }: { shell: ShellState; ra
             const done = writes.held
               ? await writes.retry()
               : await writes.run(`agent:${removing.id}`, `custom-agents/${encodeURIComponent(removing.id)}`, 'DELETE', {})
-            if (done === undefined) throw new Error('没有收到删除确认，请重试或返回列表查看。')
+            if (done === undefined) throw new MessageError('没有收到删除确认，请重试或返回列表查看。')
           }}
         />
       )}
