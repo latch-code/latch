@@ -258,9 +258,10 @@ describe('streaming render', () => {
     expect(await page.evaluate(() => window.renders.ConversationRail)).toBe(railRenders)
   })
 
-  it('keeps the old tail DOM, work expansion and text selection when a new turn makes it history', async () => {
+  it.each([2, 23])('keeps the old tail DOM, work expansion and text selection after %i earlier turns', async rounds => {
     await open()
-    const past = prose(2, 1)
+    // The second case starts a new group when the old tail becomes history.
+    const past = prose(rounds, 1)
     const current: Message[] = [
       ...past,
       { id: 'user-tail', role: 'user', text: '尾轮问题' },
@@ -289,10 +290,16 @@ describe('streaming render', () => {
     })
     const selected = await page.evaluate(() => document.getSelection()?.toString())
     expect(selected).toContain('保留这段选择')
-    await show(
-      detail([...current, { id: 'next-user', role: 'user', text: '继续' }], { running: true, liveId: 'next-reply', liveText: '新轮回复' }),
-    )
+    const next: Message[] = [...current, { id: 'next-user', role: 'user', text: '继续' }]
+    const live = { running: true, liveId: 'next-reply', liveText: '新轮回复' }
+    await show(detail(next, live))
     await expect.poll(() => page.locator('[data-message-id="next-reply"]').textContent()).toContain('新轮回复')
+    expect(await page.locator('[data-message-id="reply-tail"]').getAttribute('data-owned-node')).toBe('tail')
+    expect(await fold.getAttribute('aria-expanded')).toBe('true')
+    expect(await page.evaluate(() => document.getSelection()?.toString())).toBe(selected)
+
+    await show(detail([...prose(1, 1, 'earlier-'), ...next], { ...live, cursor: 2 }))
+    await expect.poll(() => page.locator('[data-message-id]').first().getAttribute('data-message-id')).toBe('earlier-user-0')
     expect(await page.locator('[data-message-id="reply-tail"]').getAttribute('data-owned-node')).toBe('tail')
     expect(await fold.getAttribute('aria-expanded')).toBe('true')
     expect(await page.evaluate(() => document.getSelection()?.toString())).toBe(selected)
@@ -1200,6 +1207,28 @@ describe('streaming render', () => {
       expect(after?.text).toBe(before!.text)
       expect(Math.abs(after!.at - before!.at)).toBeLessThanOrEqual(1)
     })
+  })
+
+  it('only reads message rectangles in visible turns when the reader starts scrolling up', async () => {
+    await open()
+    await show(detail(prose(300, 10)))
+    await page.locator('[data-message-id="reply-299"]').waitFor()
+    const reads = await page.locator('.transcript').evaluate(view => {
+      const measure = Element.prototype.getBoundingClientRect
+      let messages = 0
+      Element.prototype.getBoundingClientRect = function (this: Element) {
+        if (this.hasAttribute('data-message-id')) messages++
+        return measure.call(this)
+      }
+      try {
+        view.dispatchEvent(new WheelEvent('wheel', { deltaY: -900, bubbles: true }))
+        return messages
+      } finally {
+        Element.prototype.getBoundingClientRect = measure
+      }
+    })
+    expect(reads).toBeGreaterThan(0)
+    expect(reads).toBeLessThan(32)
   })
 
   it('moves by what the wheel asks when scrolling up through turns not drawn yet, and prints every turn', async () => {

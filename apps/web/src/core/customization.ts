@@ -1,4 +1,4 @@
-import { createContext, useSyncExternalStore } from 'react'
+import { createContext, useMemo, useSyncExternalStore } from 'react'
 import type { CustomizationDocument, CustomizationReceipt, CustomizationView } from '@latch/protocol'
 import { api, ApiError, errorMessage, isUncertain, MessageError, newRequestId } from './api.ts'
 import { customization, type CustomizationStatus } from './customBoot.ts'
@@ -116,17 +116,23 @@ export const CustomizationActionsContext = createContext<CustomizationActions>({
 })
 
 export function useCustomizationActions(writes: CustomizationWrites, identity: CustomizationIdentity | null): CustomizationActions {
+  const hostId = identity?.hostId
+  const deviceId = identity?.deviceId
   const pending = useSyncExternalStore(
     writes.subscribe,
     () => (identity ? writes.read(identity) : undefined),
     () => undefined,
   )
-  return {
-    pending,
-    submit: (change, baseRevision) => (identity ? writes.submit(identity, change, baseRevision) : busy()),
-    retry: () => (identity ? writes.retry(identity) : busy()),
-    abandon: () => {
-      if (identity) writes.abandon(identity)
-    },
-  }
+  // A streamed reply also updates App. Keep the provider stable until its recipient or pending request changes.
+  return useMemo<CustomizationActions>(() => {
+    const target = hostId !== undefined && deviceId !== undefined ? { hostId, deviceId } : null
+    return {
+      pending,
+      submit: (change, baseRevision) => (target ? writes.submit(target, change, baseRevision) : busy()),
+      retry: () => (target ? writes.retry(target) : busy()),
+      abandon: () => {
+        if (target) writes.abandon(target)
+      },
+    }
+  }, [writes, hostId, deviceId, pending])
 }

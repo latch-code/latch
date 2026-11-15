@@ -283,6 +283,45 @@ function sameHistoryInputs(before: Record<string, unknown>, next: Record<string,
   )
 }
 
+const TURNS_PER_GROUP = 24
+
+interface TurnGroups {
+  byTurn: Map<string, number>
+  nextId: number
+  starts: { id: number; index: number }[]
+}
+
+function groupTurns(turns: readonly Turn[], previous: TurnGroups | undefined): TurnGroups {
+  const known = turns.map(turn => previous?.byTurn.get(turn.key))
+  const upcoming = [...known]
+  for (let index = upcoming.length - 2; index >= 0; index--) upcoming[index] ??= upcoming[index + 1]
+
+  const byTurn = new Map<string, number>()
+  const starts: TurnGroups['starts'] = []
+  const used = new Set<number>()
+  let nextId = previous?.nextId ?? 0
+  for (const [index, turn] of turns.entries()) {
+    const last = starts.at(-1)
+    const oldId = known[index]
+    // Keep newly inserted content between members of the same group inside it, even when it was already full.
+    if (last && (oldId === last.id || (oldId === undefined && (last.id === upcoming[index] || index - last.index < TURNS_PER_GROUP)))) {
+      byTurn.set(turn.key, last.id)
+      continue
+    }
+    // A reordered snapshot can split an old group into multiple runs. Its key can only be used once.
+    const id = oldId !== undefined && !used.has(oldId) ? oldId : nextId++
+    starts.push({ id, index })
+    used.add(id)
+    byTurn.set(turn.key, id)
+  }
+  return { byTurn, nextId, starts }
+}
+
+// A stable group lets React skip its children on body-only frames. It adds no DOM parent to the turn list.
+const TurnGroup = memo(function TurnGroup({ rows }: { rows: ReactNode[] }) {
+  return rows
+})
+
 /** A line across the conversation where the session itself changed between two turns. */
 function TimelineDivider({ icon: Glyph, text }: { icon?: typeof Eraser; text: string }) {
   return (
@@ -873,7 +912,6 @@ export function Transcript(props: TranscriptProps) {
       </Fragment>
     )
   }
-  // Keep the same flat keyed siblings when a former live tail becomes history: its DOM and local state stay put.
   const historyInputs = {
     ...props,
     detail: historyDetail(detail),
@@ -894,12 +932,31 @@ export function Transcript(props: TranscriptProps) {
     cardsRevision,
     steps,
   }
-  const history = useRef<{ inputs: Record<string, unknown>; elements: ReactNode[] } | undefined>(undefined)
+  const history = useRef<
+    | {
+        inputs: Record<string, unknown>
+        sessionId: string
+        grouping: TurnGroups
+        groups: ReactNode[]
+        remainder: ReactNode[]
+      }
+    | undefined
+  >(undefined)
   if (!history.current || !sameHistoryInputs(history.current.inputs, historyInputs)) {
-    history.current = { inputs: historyInputs, elements: projection.history.map((turn, index) => renderTurn(turn, index, false)) }
+    const grouping = groupTurns(projection.turns, history.current?.sessionId === sessionId ? history.current.grouping : undefined)
+    const elements = projection.history.map((turn, index) => renderTurn(turn, index, false))
+    const groups = grouping.starts
+      .slice(0, -1)
+      .map(({ id, index }, group) => <TurnGroup key={id} rows={elements.slice(index, grouping.starts[group + 1]!.index)} />)
+    history.current = { inputs: historyInputs, sessionId, grouping, groups, remainder: elements.slice(grouping.starts.at(-1)?.index ?? 0) }
   }
-  // React still reconciles a flat sibling list; this removes historical projections and prop comparisons, not all O(n) work.
-  const rows = tail ? [...history.current.elements, renderTurn(tail, projection.history.length, true)] : history.current.elements
+  const { groups, remainder, grouping } = history.current
+  const rows = tail
+    ? [
+        ...groups,
+        <TurnGroup key={grouping.starts.at(-1)?.id ?? 0} rows={[...remainder, renderTurn(tail, projection.history.length, true)]} />,
+      ]
+    : groups
 
   return (
     <FileSession.Provider value={fileSession}>
