@@ -148,7 +148,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
           const shell: { files: object } = Reflect.get(globalThis, 'latchShell')
           return { files: Object.keys(shell.files), frozen: Object.isFrozen(shell.files) }
         }),
-      ).toEqual({ files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open'], frozen: true })
+      ).toEqual({ files: ['protocolVersion', 'inspect', 'known', 'reveal', 'quickLook', 'open', 'editor'], frozen: true })
 
       // The first connection on a Host with no enrolled device takes no confirmation.
       await page.getByRole('button', { name: '继续', exact: true }).click()
