@@ -523,6 +523,17 @@
 .model-note[data-tone='error'] {
   color: var(--red);
 }
+/* A state that waits on the person, such as a login: the alert mark and a short word, in amber. */
+.model-note[data-tone='warn'] {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--amber);
+}
+.model-note[data-tone='warn'] > svg {
+  flex: none;
+  color: var(--amber-icon);
+}
 /* A short label that waits on the person or warns (a turn that did not go through Latch): amber, glyph and words. */
 .ui-hint.is-warn,
 .ui-hint.is-warn > .ui-hint-lead {

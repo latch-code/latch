@@ -38,20 +38,43 @@ function windowName(window: QuotaWindow): string {
   }
 }
 
-/** A window as the one line names it: the weekly ones by their length. */
+/** The same name where the one line runs on into 「额度…」: a model's own window keeps a space before it. */
 function lineName(window: QuotaWindow): string {
   switch (window.kind) {
-    case 'weekly':
-      return '7 天'
     case 'weekly-opus':
-      return '7 天 Opus '
+      return '每周 Opus '
     case 'weekly-sonnet':
-      return '7 天 Sonnet '
-    case 'billing-period':
-      return '本期'
+      return '每周 Sonnet '
     default:
       return windowName(window)
   }
+}
+
+/** How long a window is, where its kind or the Harness says. */
+function windowLength(window: QuotaWindow): number | undefined {
+  switch (window.kind) {
+    case 'five-hour':
+      return 5 * HOUR
+    case 'weekly':
+    case 'weekly-opus':
+    case 'weekly-sonnet':
+      return 7 * DAY
+    case 'rolling':
+      return window.windowMinutes ? window.windowMinutes * MINUTE : undefined
+    case 'billing-period':
+      return undefined
+  }
+}
+
+/**
+ * When the window resets, as the row and the line say it. A window nothing was used of that resets a whole window from
+ * now has not started: its reset time only follows the clock, so none is shown.
+ */
+function windowReset(window: QuotaWindow, now: number): string | undefined {
+  const length = windowLength(window)
+  const left = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt) - now
+  if (window.usedPercent === 0 && length !== undefined && Math.abs(left - length) <= MINUTE) return undefined
+  return resetWords(window.resetsAt, now)
 }
 
 /**
@@ -123,13 +146,13 @@ export interface QuotaView {
   /** The one line of the tooltip, also the mark's accessible name. */
   line: string
   rows: QuotaRow[]
-  /** Plan, masked account and prepaid balance, in that order; each only when the Harness said it. */
+  /** Plan, masked account and prepaid balance, in that order; each only when the Harness said it, the balance only above zero. */
   facts: string[]
 }
 
 function row(window: QuotaWindow, now: number): QuotaRow {
   const state = quotaWindowState(window)
-  const reset = resetWords(window.resetsAt, now)
+  const reset = windowReset(window, now)
   return {
     key: `${window.group ?? ''}:${window.kind}:${window.windowMinutes ?? ''}`,
     ...(window.group ? { group: GROUPS[window.group] } : {}),
@@ -147,7 +170,7 @@ export function quotaView(quota: HarnessQuota | undefined, now: number): QuotaVi
   const lead = held && leadingQuotaWindow(held.windows)
   if (!held || !lead) return undefined
   const leadState = quotaWindowState(lead)
-  const reset = resetWords(lead.resetsAt, now)
+  const reset = windowReset(lead, now)
   const percent = lead.usedPercent === undefined ? undefined : shownPercent(lead.usedPercent)
   // A window without a figure is only kept while the Harness warns about it.
   const warned = STATUS[leadState === 'ok' ? 'near' : leadState]
@@ -164,7 +187,8 @@ export function quotaView(quota: HarnessQuota | undefined, now: number): QuotaVi
     facts: [
       ...(held.plan ? [PLANS[held.plan]] : []),
       ...(held.account ? [held.account] : []),
-      ...(held.balanceCents !== undefined ? [`余额 $${(held.balanceCents / 100).toFixed(2)}`] : []),
+      // No prepaid balance is not a balance of nothing worth a line.
+      ...(held.balanceCents !== undefined && held.balanceCents > 0 ? [`余额 $${(held.balanceCents / 100).toFixed(2)}`] : []),
     ],
   }
 }

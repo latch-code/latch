@@ -1138,15 +1138,24 @@ export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness
 
 /** How a run ended when it took more than a plain answer, for the line that stays under the turn. */
 export interface RunEndLine {
-  tone: 'red' | 'amber'
+  /** `plain`: nothing is left to warn of, as once the Harness says it is logged in after a turn it refused for that. */
+  tone: 'red' | 'amber' | 'plain'
   text: string
   /** What was running when it ended, and has no row of its own in the turn: nobody can vouch for these. */
   unknown: string[]
   retry: boolean
 }
 
-/** `shown`: the IDs of the turn's rows; a call with its own row already says 结果未知 there and is not listed twice. */
-export function runEndLine(summary: TaskDetail['summary'], harness: string, shown?: ReadonlySet<string>): RunEndLine | undefined {
+/**
+ * `shown`: the IDs of the turn's rows; a call with its own row already says 结果未知 there and is not listed twice.
+ * `loggedIn`: the Harness itself said it is logged in since this run was refused for want of it; 重试 is what is left.
+ */
+export function runEndLine(
+  summary: TaskDetail['summary'],
+  harness: string,
+  shown?: ReadonlySet<string>,
+  loggedIn = false,
+): RunEndLine | undefined {
   const end = summary.runEnd
   if (!end) return undefined
   const results = end.unknownResults ?? []
@@ -1161,7 +1170,9 @@ export function runEndLine(summary: TaskDetail['summary'], harness: string, show
     case 'host-stopped':
       return { tone: 'amber', text: `Latch 重启时中断${uncertain}`, unknown, retry: true }
     case 'login-required':
-      return { tone: 'amber', text: `${harness} 还没登录 · 登录后重试`, unknown, retry: true }
+      return loggedIn
+        ? { tone: 'plain', text: '已登录', unknown, retry: true }
+        : { tone: 'amber', text: `${harness} 还没登录 · 登录后重试`, unknown, retry: true }
     case 'turn-ended':
       return count > 0 ? { tone: 'amber', text: `${harness} 结束了这一轮${uncertain}`, unknown, retry: false } : undefined
   }

@@ -205,13 +205,16 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await capture(page, 'session-tab-running-768')
       await resize(1440)
 
-      // Enter finishes it with code 0. The Harness is asked, the row says 已登录 and still offers 重试; nothing is sent again.
+      // Enter finishes it with code 0. The Harness is asked, and the row reads as resolved: 已登录 with 重试 as the one
+      // thing left to press, the refusal and the login command gone; nothing is sent again.
       await screen.locator('.xterm').click()
       await page.keyboard.press('Enter')
       await panel.getByText('已退出 · 代码 0', { exact: true }).waitFor()
-      await expect.poll(() => end.locator('.harness-login-state').innerText()).toBe('已登录')
+      await end.getByText('已登录', { exact: true }).waitFor()
+      expect(await end.getByText(/还没登录/u).count()).toBe(0)
+      expect(await end.getByText('codex login', { exact: true }).count()).toBe(0)
+      expect(await end.getByRole('button').evaluateAll(buttons => buttons.map(button => button.textContent))).toEqual(['重试'])
       expect(await panel.getByRole('button', { name: '重新打开', exact: true }).count()).toBe(0)
-      await end.getByRole('button', { name: '重试', exact: true }).waitFor()
       const users = async () => (await owner.json<TaskDetail>(`tasks/${session.id}`)).messages.filter(message => message.role === 'user')
       expect((await users()).map(message => message.text)).toEqual(['echo 第一轮'])
       expect((await owner.json<TaskDetail>(`tasks/${session.id}`)).summary.runEnd?.reason).toBe('login-required')

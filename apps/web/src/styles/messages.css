@@ -850,6 +850,9 @@
 .run-end.is-amber .run-end-line {
   color: var(--amber);
 }
+.run-end.is-plain .run-end-line {
+  color: var(--ink-2);
+}
 .run-end-line > svg {
   flex-shrink: 0;
 }

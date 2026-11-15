@@ -1,7 +1,19 @@
 import { useState, useSyncExternalStore } from 'react'
 import { TextCursorInput } from 'lucide-react'
-import type { HarnessInfo } from '@latch/protocol'
-import { Button, Hint, IconButton, MenuFooterLink, TextField, useLayerClose, ChevronLeftGlyph, RefreshGlyph, CloseGlyph } from '@latch/ui'
+import type { CatalogueRead, HarnessInfo } from '@latch/protocol'
+import {
+  Button,
+  Hint,
+  Icon,
+  IconButton,
+  MenuFooterLink,
+  TextField,
+  useLayerClose,
+  AlertGlyph,
+  ChevronLeftGlyph,
+  RefreshGlyph,
+  CloseGlyph,
+} from '@latch/ui'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import { saveOfferedPreset } from '../core/offeredHarness.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
@@ -37,18 +49,31 @@ export function useReading(harness: HarnessInfo | undefined): boolean {
  * Reads what the Harness offers without a turn; the catalog the Host sends next carries it, or why it failed. `model`:
  * only what it offers for that model of its list, such as thinking.
  */
-export async function readHarnessCatalogue(harness: HarnessInfo, auto: boolean, model?: string): Promise<void> {
+export async function readHarnessCatalogue(harness: HarnessInfo, auto: boolean, model?: string): Promise<CatalogueRead | undefined> {
   waiting.add(harness.id)
   changed()
   try {
-    await api(`agents/${encodeURIComponent(harness.id)}/catalogue`, {
+    const answer = await api<{ catalogueRead?: CatalogueRead }>(`agents/${encodeURIComponent(harness.id)}/catalogue`, {
       method: 'POST',
       body: { auto, ...(model !== undefined ? { model } : {}) },
     })
+    return answer.catalogueRead
   } finally {
     waiting.delete(harness.id)
     changed()
   }
+}
+
+/**
+ * The last read was refused for want of a login, by the Harness's own error code, and nothing newer says otherwise: no
+ * running process of it reports a login, and no session has started with its lists since.
+ */
+export function readNeedsLogin(harness: Pick<HarnessInfo, 'catalogueRead' | 'catalogue' | 'login'> | undefined): boolean {
+  const last = harness?.catalogueRead?.last
+  if (!harness || !last || last.ok || !last.loginRequired) return false
+  if (harness.login?.reported?.status === 'authenticated') return false
+  const reportedAt = harness.catalogue?.reportedAt
+  return !(reportedAt !== undefined && Date.parse(reportedAt) > Date.parse(last.at))
 }
 
 /** Whether choosing this Harness in a draft reads its lists by itself: once, while nothing is known of it. */
@@ -93,11 +118,14 @@ export function CatalogueRows({
   harness,
   access,
   hasModels,
+  ownModels = true,
   onTypeModel,
   onRead,
 }: {
   harness: HarnessInfo
   access: Pick<DeviceAccess, 'scopes'>
+  /** The draft is on the Harness's own models, so its login is what the draft depends on. */
+  ownModels?: boolean
   /** It reported a model option, so a typed ID has something to be set as. */
   hasModels: boolean
   onTypeModel: () => void
@@ -132,11 +160,19 @@ export function CatalogueRows({
     }
   }
   const failed = error || (read?.last && !read.last.ok ? (read.last.message ?? '没有读到。') : '')
+  const needsLogin = !error && readNeedsLogin(harness)
   const label = failed ? '重新读取' : catalogue ? '刷新模型列表' : `读取 ${name} 的模型列表`
   return (
     <>
       {running && <p className="model-note">正在读取 {name} 的模型列表…</p>}
-      {!running && failed && (
+      {/* A missing login is a state, said above the composer with the way to log in; on a service's model it is not in the way. */}
+      {!running && needsLogin && ownModels && (
+        <p className="model-note" data-tone="warn">
+          <Icon icon={AlertGlyph} size={12} />
+          还没登录
+        </p>
+      )}
+      {!running && failed && !needsLogin && (
         <p className="model-note" data-tone="error">
           没有读到：
           <VisibleText text={failed} />

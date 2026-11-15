@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { HarnessInfo } from '@latch/protocol'
 import { api } from '../src/core/api.ts'
-import { readModelOnSelect, readOnSelect, readsOnPermission, readsOnSelect } from '../src/composer/harnessCatalogue.tsx'
+import { readModelOnSelect, readNeedsLogin, readOnSelect, readsOnPermission, readsOnSelect } from '../src/composer/harnessCatalogue.tsx'
 
 vi.mock('../src/core/api.ts', async original => ({ ...(await original<typeof import('../src/core/api.ts')>()), api: vi.fn() }))
 
@@ -41,4 +41,28 @@ it('reads a model again after the Host replaces the catalogue for a changed defi
   expect(api).toHaveBeenCalledTimes(1)
   readModelOnSelect({ ...first, catalogue: { ...first.catalogue, reportedAt: '2026-11-13T01:00:00Z' } }, 'large')
   await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(2))
+})
+
+describe('a read refused for want of a login', () => {
+  const at = '2026-11-15T03:00:00.000Z'
+  const refused = { when: 'select', modes: true, last: { at, ok: false, loginRequired: true, message: 'Qwen Code 还没登录。' } } as const
+  const list = (reportedAt: string) => ({ options: [], perModel: [], reportedAt, source: 'session' as const })
+
+  it('goes by the Host’s mark of the Harness’s error code, never by the words of the failure', () => {
+    expect(readNeedsLogin(harness(refused))).toBe(true)
+    // The same sentence without the mark is any other failure.
+    const { loginRequired: _mark, ...unmarked } = refused.last
+    expect(readNeedsLogin(harness({ ...refused, last: unmarked }))).toBe(false)
+    expect(readNeedsLogin(harness({ when: 'select', modes: true, last: { at, ok: true } }))).toBe(false)
+    expect(readNeedsLogin(harness({ when: 'select', modes: true }))).toBe(false)
+    expect(readNeedsLogin(undefined)).toBe(false)
+  })
+
+  it('stops once something newer says it is logged in: a running process, or a session started since', () => {
+    expect(readNeedsLogin({ ...harness(refused), login: { reported: { status: 'authenticated' } } })).toBe(false)
+    expect(readNeedsLogin({ ...harness(refused), login: { reported: { status: 'unknown' } } })).toBe(true)
+    expect(readNeedsLogin({ ...harness(refused), catalogue: list('2026-11-15T03:05:00.000Z') })).toBe(false)
+    // A list from before the refusal says nothing about now.
+    expect(readNeedsLogin({ ...harness(refused), catalogue: list('2026-11-14T00:00:00.000Z') })).toBe(true)
+  })
 })

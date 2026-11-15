@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { HarnessLogin, KeepWaitingResult, TaskDetail } from '@latch/protocol'
-import { Button, ICON_STROKE, Icon, AlertGlyph, WarningGlyph } from '@latch/ui'
+import { Button, ICON_STROKE, Icon, AlertGlyph, CircleCheckGlyph, WarningGlyph } from '@latch/ui'
 import { runEndLine, runStatus, type LivePhaseOptions, type RunMessageFacts, type RunStatus } from '../conversation.ts'
 import { api } from '../core/api.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
@@ -174,27 +174,38 @@ export function RunEndNote({
   /** How to log in, when this run ended for want of it. */
   login?: { harnessId: string; login: HarnessLogin; surface: LoginSurface } | undefined
 }) {
-  const line = runEndLine(summary, harness, shown)
+  const end = summary.runEnd
+  const refused = end?.reason === 'login-required'
+  // The run the Harness answered for: a later one refused the same way starts over with the command.
+  const [loggedInAt, setLoggedInAt] = useState<string>()
+  const endedAt = end?.at
+  const onLoggedIn = useCallback(() => {
+    setLoggedInAt(endedAt)
+  }, [endedAt])
+  const loggedIn = refused && loggedInAt !== undefined && loggedInAt === endedAt
+  const line = runEndLine(summary, harness, shown, loggedIn)
   if (!line) return null
+  const Glyph = line.tone === 'plain' ? CircleCheckGlyph : AlertGlyph
   return (
     <div className={`run-end is-${line.tone}`}>
       <div className="run-end-line">
-        <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <Glyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span>{line.text}</span>
         {line.retry && onRetry && (
-          <Button size="xs" variant="secondary" onClick={onRetry}>
+          // Logged in, sending again is the one thing left to do; it is still the person who sends.
+          <Button size="xs" variant={loggedIn ? 'primary' : 'secondary'} onClick={onRetry}>
             重试
           </Button>
         )}
-        {onContinue && summary.runEnd?.reason !== 'login-required' && (
+        {onContinue && !refused && (
           <Button size="xs" variant="secondary" onClick={onContinue}>
             在新会话中继续
           </Button>
         )}
       </div>
       {/* Without a command the turn's own note already says how to sign in. */}
-      {summary.runEnd?.reason === 'login-required' && login && (login.login.command !== undefined || login.login.methods) && (
-        <HarnessLoginSteps {...login} />
+      {refused && !loggedIn && login && (login.login.command !== undefined || login.login.methods) && (
+        <HarnessLoginSteps {...login} onLoggedIn={onLoggedIn} />
       )}
       {line.unknown.length > 0 && (
         <ul className="run-end-list">

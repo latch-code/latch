@@ -51,7 +51,7 @@ describe('the mark and its one line', () => {
   })
 
   it('shows the fullest window in ink below 80%', () => {
-    expect(quotaView(ok, NOW)).toMatchObject({ state: 'ok', percent: 68, text: '68%', line: '7 天额度已用 68% · 5 天 23 小时后重置' })
+    expect(quotaView(ok, NOW)).toMatchObject({ state: 'ok', percent: 68, text: '68%', line: '每周额度已用 68% · 5 天 23 小时后重置' })
   })
 
   it('turns to the warning state from 80%, with the figure', () => {
@@ -72,7 +72,7 @@ describe('the mark and its one line', () => {
       state: 'limited',
       percent: 100,
       text: '100%',
-      line: '7 天额度已用尽 · 5 天 23 小时后重置',
+      line: '每周额度已用尽 · 5 天 23 小时后重置',
     })
     // The account at a limit that no window shows: the same state, without naming a window.
     expect(quotaView({ ...ok, state: 'limited' }, NOW)).toMatchObject({ state: 'limited', text: '68%', line: '额度已用尽' })
@@ -90,7 +90,40 @@ describe('the mark and its one line', () => {
     expect(view.percent).toBeUndefined()
     expect(view.rows).toEqual([{ key: ':five-hour:', name: '5 小时', state: 'near', status: '将用尽', reset: '2 小时 29 分钟后重置' }])
     const refused: HarnessQuota = { windows: [{ kind: 'weekly-opus', state: 'limited' }], state: 'limited', observedAt }
-    expect(quotaView(refused, NOW)).toMatchObject({ state: 'limited', text: '已用尽', line: '7 天 Opus 额度已用尽' })
+    expect(quotaView(refused, NOW)).toMatchObject({ state: 'limited', text: '已用尽', line: '每周 Opus 额度已用尽' })
+  })
+
+  it('names a window in the line as its row of the panel does', () => {
+    for (const quota of [ok, { ...ok, windows: [ok.windows[0]!] }]) {
+      const view = quotaView(quota, NOW)!
+      const lead = view.rows.find(row => row.percent === view.percent)!
+      expect(view.line.startsWith(`${lead.name}额度已用`)).toBe(true)
+    }
+    expect(quotaView({ ...ok, windows: [ok.windows[0]!] }, NOW)?.line).toBe('5 小时额度已用 12% · 2 小时 5 分钟后重置')
+  })
+
+  it('shows no reset time for a window that has not started: nothing used, a whole window away', () => {
+    const idle = (windows: HarnessQuota['windows']): HarnessQuota => ({ windows, state: 'ok', observedAt })
+    const fresh = quotaView(
+      idle([
+        { kind: 'five-hour', usedPercent: 0, resetsAt: at(5 * HOUR - 20_000) },
+        { kind: 'weekly', usedPercent: 0, resetsAt: at(7 * 24 * HOUR + 40_000) },
+        { kind: 'rolling', usedPercent: 0, windowMinutes: 1440, resetsAt: at(24 * HOUR) },
+      ]),
+      NOW,
+    )!
+    expect(fresh.rows.map(row => row.reset)).toEqual([undefined, undefined, undefined])
+    expect(fresh.line).toBe('5 小时额度已用 0%')
+    // Started: something is used, or the reset is nearer than a whole window; and a period of unknown length says its time.
+    const started = quotaView(
+      idle([
+        { kind: 'five-hour', usedPercent: 0, resetsAt: at(3 * HOUR + 16 * MINUTE) },
+        { kind: 'weekly', usedPercent: 1, resetsAt: at(7 * 24 * HOUR) },
+        { kind: 'billing-period', usedPercent: 0, resetsAt: at(30 * 24 * HOUR) },
+      ]),
+      NOW,
+    )!
+    expect(started.rows.map(row => row.reset)).toEqual(['3 小时 16 分钟后重置', '7 天后重置', '30 天后重置'])
   })
 
   it('drops a window once it has reset and judges by the ones left', () => {
@@ -137,7 +170,7 @@ describe('what is drawn', () => {
     expect(markup).toContain('data-state="near"')
     expect(markup).toContain('class="quota-ring"')
     expect(markup).toContain('>86%<')
-    expect(markup).toMatch(/aria-label="Codex 额度：7 天额度已用 86% · \d+ 天/u)
+    expect(markup).toMatch(/aria-label="Codex 额度：每周额度已用 86% · \d+ 天/u)
   })
 
   it('is the alert mark with the reset time for a warning without a figure', () => {
@@ -163,5 +196,10 @@ describe('what is drawn', () => {
     )
     expect(panel.match(/role="meter"/gu)).toHaveLength(4)
     expect(panel).toContain('aria-valuetext="已用 68%"')
+  })
+
+  it('leaves the balance out for an account with no prepaid balance', () => {
+    expect(quotaView({ ...ok, plan: 'supergrok', balanceCents: 0 }, NOW)?.facts).toEqual(['SuperGrok', 'n•••@f•••.com'])
+    expect(quotaView({ ...ok, balanceCents: 1 }, NOW)?.facts.at(-1)).toBe('余额 $0.01')
   })
 })

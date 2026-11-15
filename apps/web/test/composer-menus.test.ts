@@ -10,6 +10,7 @@ import {
   ownModelGroups,
   ROUTE_NOTE,
   SessionHarnessControl,
+  SessionModelControl,
   unusableServices,
   UnusableServices,
 } from '../src/composer/ModelControl.tsx'
@@ -290,6 +291,53 @@ describe("a draft's model menu for a Harness with its own models", () => {
     expect(html).toContain('Codex 还没登录。')
     expect(html).toContain('重新读取')
     expect(html).not.toContain('刷新模型列表')
+  })
+
+  it('says a read refused for want of a login as a short state, and nothing of it on a service’s model', () => {
+    const last = {
+      at: '2026-11-15T03:00:00.000Z',
+      ok: false,
+      loginRequired: true as const,
+      message: 'Codex 还没登录。按它自己的方式登录后重试。',
+    }
+    const info = { ...codex(), catalogueRead: { when: 'select' as const, modes: false, last } }
+    const own = draftMenu(info)
+    expect(own).toMatch(/<p class="model-note" data-tone="warn"><svg[^>]*>.*?<\/svg>还没登录<\/p>/u)
+    for (const gone of ['没有读到：', '按它自己的方式登录后重试']) expect(own).not.toContain(gone)
+    expect(own).toContain('重新读取')
+    // With a service's model picked the Harness's login is not what the draft depends on.
+    const routed = draftMenu(info, { '~service': 'openai\u0000openai-model' })
+    for (const gone of ['还没登录', '没有读到：']) expect(routed).not.toContain(gone)
+    expect(routed).toContain('重新读取')
+  })
+
+  it('keeps the service’s mark on the model chip of a session that started on a service, as on the draft’s', () => {
+    const info = codex()
+    const chip = (markup: string) => /<button[^>]*class="[^"]*model-picker[^"]*"[^>]*>.*?<\/button>/su.exec(markup)![0]
+    const session = (route?: { providerId: string; model: string; name: string }) =>
+      chip(
+        renderToStaticMarkup(
+          createElement(SessionModelControl, {
+            catalog: catalogOf(info),
+            harness: info,
+            model: undefined,
+            current: undefined,
+            reported: route?.model ?? 'gpt-5.5',
+            onModel() {},
+            config: [],
+            busy: null,
+            onConfig() {},
+            ...(route ? { route } : {}),
+          }),
+        ),
+      )
+    const draft = chip(draftMenu(info, { '~service': 'openai\u0000openai-model' }))
+    const lead = /<span class="ui-value-picker-lead">.*?<span class="ui-value-picker-value">/su
+    expect(lead.exec(draft)?.[0]).toContain('openai.svg')
+    const routed = session({ providerId: 'openai', model: 'openai-model', name: 'OpenAI' })
+    expect(lead.exec(routed)?.[0]).toBe(lead.exec(draft)![0])
+    // On the Harness's own model there is no service to mark.
+    expect(session()).not.toMatch(lead)
   })
 
   it('offers a preset not saved yet the same read, which saves it on this Mac first', () => {

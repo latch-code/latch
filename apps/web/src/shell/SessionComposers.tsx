@@ -507,6 +507,17 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
             },
           }
         : undefined
+  // The subscription's limits are not those of a model service the draft or the session runs on instead.
+  const quotaHarness = !catalog
+    ? undefined
+    : selectedId === null
+      ? chosenHarness && !servicePick(catalog, chosenHarness, choice.config)
+        ? chosenHarness
+        : undefined
+      : summary && !summary.modelRoute
+        ? harnessInfo
+        : undefined
+  const quotaMark = quotaHarness && <HarnessQuotaMark quota={quotaHarness.quota} harness={harnessName(quotaHarness)} />
   return (
     <Composer
       showSlashButton={speaker === undefined}
@@ -663,7 +674,18 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       queueable={canQueue && !answer}
       steerable={steer && !answer}
       inline={phone}
-      meta={showControls && !phone ? <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} /> : undefined}
+      // The limits mark arrives seconds after a turn starts and leaves with the Host's memory: last before send at every
+      // width, so the controls before it stay where they are.
+      meta={
+        !showControls ? undefined : phone ? (
+          quotaMark
+        ) : (
+          <>
+            <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />
+            {quotaMark}
+          </>
+        )
+      }
       controls={
         !showControls ? null : !catalog ? (
           selectedId === null ? (
@@ -697,10 +719,6 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
                 computer={computer}
               />
             </ComposerControl>
-            {/* The subscription's limits are not those of a model service the draft runs on instead. */}
-            {chosenHarness && !servicePick(catalog, chosenHarness, choice.config) && (
-              <HarnessQuotaMark quota={chosenHarness.quota} harness={harnessName(chosenHarness)} />
-            )}
             <ComposerControl name="model">
               <DraftModelControl
                 catalog={catalog}
@@ -725,7 +743,6 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
                   <SessionHarnessControl harness={harnessInfo} onNewSession={startNew} fork={fork} />
                 </ComposerControl>
               )}
-              {harnessInfo && !summary.modelRoute && <HarnessQuotaMark quota={harnessInfo.quota} harness={harnessName(harnessInfo)} />}
               <ComposerControl name="model">
                 <SessionModelControl
                   catalog={catalog}
@@ -814,6 +831,7 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
         harness={loginHarness(catalog, chosenHarness, choice.config)}
         allowed={access.scopes.has('run')}
         surface={loginSurface(catalog?.features)}
+        onRead={refresh}
       />
       {submission.fork && (
         <InlineNotice

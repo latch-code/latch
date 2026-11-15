@@ -723,6 +723,7 @@ export function DraftModelControl({
         harness={harness}
         access={access}
         hasModels={modelOption !== undefined}
+        ownModels={!service}
         onRead={onRead}
         onTypeModel={() => {
           setTyping(true)
@@ -1040,15 +1041,16 @@ function HarnessModelPicker({
   const name = harness ? harnessName(harness) : 'Harness'
   const reportedOr = modelOption ? agentConfigLabel(modelOption) : reported
   const picked = service && 'picked' in service ? service.picked : undefined
-  const pickedProvider = findProvider(catalog, picked?.providerId)
-  // The same model can be listed by two services, so a service's model carries its service's mark.
+  const session = service && 'session' in service ? { route: service.route } : undefined
+  // The same model can be listed by two services, so a service's model carries its service's mark: a draft's pick, and
+  // the service a session started on.
+  const pickedProvider = findProvider(catalog, picked?.providerId ?? session?.route?.providerId)
   const text = picked ? picked.model : (reportedOr ?? DEFAULT_MODEL)
   const note = noteOverride === null ? undefined : (noteOverride ?? unreportedModelNote(name, true, config))
   // Writing the model or one of the settings in its menu; thinking and the mode say so on their own controls.
   const writing = busy !== null && (busy === modelOption?.id || others.some(option => option.id === busy))
   const slow = useSlowWrite(writing)
   const ownFeedback = feedbackFor(feedback, [modelOption?.id, ...others.map(option => option.id)])
-  const session = service && 'session' in service ? { route: service.route } : undefined
   const groups = ownModelGroups(
     catalog,
     harness,

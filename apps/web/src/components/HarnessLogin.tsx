@@ -10,6 +10,7 @@ import {
 } from '@latch/protocol'
 import { AlertGlyph, Button, CircleCheckGlyph, CopyButton, Icon, InlineNotice, RefreshGlyph, Spinner, TerminalGlyph } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
+import { readHarnessCatalogue, readNeedsLogin } from '../composer/harnessCatalogue.tsx'
 import { loginRuns, useLoginRun, type LoginRunState, type LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { VisibleText } from './VisibleText.tsx'
 
@@ -245,6 +246,7 @@ export function HarnessLoginSteps({
   surface,
   onCheck,
   onEnded: ended,
+  onLoggedIn,
 }: {
   harnessId: string
   login: HarnessLogin
@@ -254,6 +256,8 @@ export function HarnessLoginSteps({
   onCheck?: () => Promise<HarnessLoginStatus | undefined>
   /** The same question once a login command ended, for a caller that shows the answer itself; `onCheck` when absent. */
   onEnded?: () => Promise<HarnessLoginStatus | undefined>
+  /** A login command ended and the harness itself now says it is logged in. */
+  onLoggedIn?: (() => void) | undefined
 }) {
   const [checking, setChecking] = useState(false)
   const methods = login.methods ?? []
@@ -261,10 +265,11 @@ export function HarnessLoginSteps({
   const { checkable } = login
   // A harness that cannot say is not asked: its command having ended is all there is to show.
   const recheck = ended ?? onCheck
-  const onEnded = useCallback(
-    async () => (recheck ? recheck() : checkable ? (await askLogin(harnessId, true))?.status : undefined),
-    [recheck, checkable, harnessId],
-  )
+  const onEnded = useCallback(async () => {
+    const status = recheck ? await recheck() : checkable ? (await askLogin(harnessId, true))?.status : undefined
+    if (status === 'authenticated') onLoggedIn?.()
+    return status
+  }, [recheck, checkable, harnessId, onLoggedIn])
   return (
     <div className="harness-login">
       {methods.map(method => (
@@ -303,29 +308,54 @@ export function HarnessLoginSteps({
 }
 
 /**
- * Above a new session's composer: once the harness itself said it is not logged in, or that its login ends soon. Sending
- * stays possible either way.
+ * Above a new session's composer: once the harness itself said it is not logged in, or that its login ends soon. A
+ * harness that cannot be asked says so when reading its lists is refused for want of a login, and is asked again by
+ * reading them again. Sending stays possible either way.
  */
 export function DraftLoginNotice({
   harness,
   allowed,
   surface,
+  onRead,
 }: {
   harness: HarnessInfo | undefined
   allowed: boolean
   surface: LoginSurface
+  /** Brings the Host's catalog here after a read. */
+  onRead?: (() => void | Promise<void>) | undefined
 }) {
   const { status, expiresAt, check } = useLoginStatus(harness, allowed)
   const login = harness?.login
-  if (!harness || !login) return null
+  const refused = readNeedsLogin(harness)
+  // A Harness Latch knows no login of still says it has none; the row then only offers to look again.
+  if (!harness || (!login && !refused)) return null
   const name = harness.capabilities.display.label
-  if (status === 'unauthenticated')
+  if (status === 'unauthenticated' || refused) {
+    const readable = refused && allowed && harness.offer === undefined
+    /** The program's own answer where it has one; otherwise whether its lists can be read now. */
+    const recheck = async (): Promise<HarnessLoginStatus | undefined> => {
+      const [answer, read] = await Promise.all([
+        check(true),
+        readable ? readHarnessCatalogue(harness, false).catch(() => undefined) : undefined,
+      ])
+      if (readable) await onRead?.()
+      return answer ?? (read?.last?.ok === false && read.last.loginRequired ? 'unauthenticated' : undefined)
+    }
+    // A harness read only when asked is not started because a command ended: 重新检查 asks.
+    const bySelf = harness.catalogueRead?.when === 'select'
     return (
       <section className="setup-card harness-login-card" role="status" aria-label="登录">
         <strong>{name} 还没登录</strong>
-        <HarnessLoginSteps harnessId={harness.id} login={login} surface={surface} onCheck={() => check(true)} />
+        <HarnessLoginSteps
+          harnessId={harness.id}
+          login={login ?? {}}
+          surface={surface}
+          onCheck={recheck}
+          onEnded={() => (bySelf ? recheck() : check(true))}
+        />
       </section>
     )
+  }
   if (status === 'authenticated' && expiresAt && loginEndsSoon(expiresAt))
     return <InlineNotice tone="warn" title={`${name} 的登录 ${loginEndDay(expiresAt)}到期`} />
   return null

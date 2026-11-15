@@ -798,6 +798,12 @@ describe('the live run', () => {
         retry: true,
       },
     )
+    // Refused for want of a login: amber until the Harness itself says it is logged in, then 已登录 with 重试 alone. The
+    // record of the run does not change, and no other ending is ever read as resolved.
+    const refused = summary({ reason: 'login-required', at: at(0) })
+    expect(runEndLine(refused, 'Codex')).toEqual({ tone: 'amber', text: 'Codex 还没登录 · 登录后重试', unknown: [], retry: true })
+    expect(runEndLine(refused, 'Codex', undefined, true)).toEqual({ tone: 'plain', text: '已登录', unknown: [], retry: true })
+    expect(runEndLine(summary({ reason: 'process-exited', at: at(0) }), 'Codex', undefined, true)).toMatchObject({ tone: 'red' })
     // A call whose own row is in the turn already says 结果未知 there: the note counts it and does not list it again.
     const stopped = summary({ reason: 'host-stopped', at: at(0), unknownResults: [{ messageId: 'm', name: '运行长任务' }] })
     expect(runEndLine(stopped, 'Codex', new Set(['m']))).toMatchObject({

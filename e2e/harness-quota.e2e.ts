@@ -159,14 +159,15 @@ describe('a Harness’s limits beside its control', () => {
       await mark(page).getByText('68%', { exact: true }).waitFor()
       expect(await mark(page).getAttribute('data-state')).toBe('ok')
       expect(await mark(page).locator('.quota-ring').count()).toBe(1)
-      // The mark stands right after the Harness control, before the model.
+      // The mark stands after every control, right before send.
       const order = await page
         .locator('main.workspace:not([inert]) form.composer')
         .locator('[data-composer-control], .composer-quota')
         .evaluateAll(items => items.map(item => item.getAttribute('data-composer-control') ?? 'quota'))
-      expect(order.slice(0, 3)).toEqual(['harness', 'quota', 'model'])
+      expect(order).toEqual(['harness', 'model', 'thinking', 'permission', 'quota'])
+      // The line names the window as the panel's row does.
       await mark(page).hover()
-      await page.getByRole('tooltip').getByText('7 天额度已用 68% · 5 天 23 小时后重置', { exact: true }).waitFor()
+      await page.getByRole('tooltip').getByText('每周额度已用 68% · 5 天 23 小时后重置', { exact: true }).waitFor()
       await page.screenshot({ path: `${OUTPUT}/ok-hover--1440-light.png`, animations: 'disabled' })
 
       await mark(page).click()
@@ -198,6 +199,36 @@ describe('a Harness’s limits beside its control', () => {
     await push(12, 68)
     await expect.poll(async () => (await quota('codex'))?.state).toBe('ok')
     await capture('ok', sessions.codex, '68%', true)
+  })
+
+  it('moves no control when the mark comes or goes, at any width', async () => {
+    // The mark arrives seconds after a turn starts and leaves with the Host's memory. Its coming and going is drawn here
+    // by taking it out of the layout: where the Harness, model, thinking and permission controls stand must not change.
+    for (const width of [1440, 768, 390]) {
+      const page = await open(width, 'light', sessions.codex)
+      try {
+        await mark(page).getByText('68%', { exact: true }).waitFor()
+        const composer = page.locator('main.workspace:not([inert]) form.composer')
+        const boxes = () =>
+          composer.locator('[data-composer-control]').evaluateAll(items =>
+            items.map(item => {
+              const box = item.getBoundingClientRect()
+              return [item.getAttribute('data-composer-control'), Math.round(box.x), Math.round(box.y), Math.round(box.width)]
+            }),
+          )
+        const height = async () => Math.round((await composer.boundingBox())!.height)
+        const withMark = { boxes: await boxes(), height: await height() }
+        expect(withMark.boxes.map(box => box[0])).toEqual(['harness', 'model', 'thinking', 'permission'])
+        const hidden = await page.addStyleTag({ content: '.composer-quota { display: none !important; }' })
+        expect(await mark(page).isVisible()).toBe(false)
+        expect({ boxes: await boxes(), height: await height() }, `${width}`).toEqual(withMark)
+        await hidden.evaluate(style => style.parentNode?.removeChild(style))
+        await mark(page).getByText('68%', { exact: true }).waitFor()
+        expect({ boxes: await boxes(), height: await height() }, `${width}`).toEqual(withMark)
+      } finally {
+        await page.context().close()
+      }
+    }
   })
 
   it('opens the panel as a sheet on a phone', async () => {

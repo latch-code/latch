@@ -801,6 +801,16 @@ describe('composer', () => {
       'thinking',
       'send',
     ])
+    // What comes and goes by itself, as a Harness's limits mark, is given last, after every control and right before
+    // send at either width: when it appears or leaves, no control before it moves.
+    const meta = createElement('span', { 'data-composer-control': 'late' }, '68%')
+    expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls, trailing, meta }))).slice(-3)).toEqual([
+      'thinking',
+      'late',
+      'send',
+    ])
+    const chips = order(renderToStaticMarkup(createElement(Composer, { ...base, inline: true, controls, trailing, meta })))
+    expect(chips).toEqual(['model', 'thinking', 'late', 'send'])
     // A phone: the four controls are one row of chips above the line of ＋, the input and send; no toolbar.
     const phone = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', inline: true, controls, trailing }))
     expect(phone).not.toContain('composer-toolbar')
