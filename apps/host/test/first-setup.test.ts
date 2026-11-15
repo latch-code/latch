@@ -2,10 +2,25 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, it, onTestFinished } from 'vitest'
+import { expect, it, onTestFinished, vi } from 'vitest'
 import type { AppSnapshot, ProviderSettings } from '@latch/protocol'
 import { startFakeModels } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
+
+const directoryFault = vi.hoisted(() => ({ path: '', providerId: '' }))
+vi.mock('@latch/core/node-kit', async original => {
+  const actual = await original<typeof import('@latch/core/node-kit')>()
+  return {
+    ...actual,
+    async syncDirectory(directory: string) {
+      if (directory === directoryFault.path) {
+        const contents = await readFile(join(directory, 'providers.json'), 'utf8').catch(() => '')
+        if (contents.includes(JSON.stringify(directoryFault.providerId))) throw new Error('Fixture directory sync failed after rename')
+      }
+      await actual.syncDirectory(directory)
+    },
+  }
+})
 
 it('keeps a fresh preparation local and requires real model choices before completion', async () => {
   const t = await startTestHost({ demo: false })
@@ -94,4 +109,65 @@ it('resumes a partially configured Host, keeps a deliberate defer, and leaves an
   const upgraded = await startTestHost({ dataDir: join(root, 'old'), workspaceRoot, demo: false })
   onTestFinished(() => upgraded.close())
   expect((await (await upgraded.enroll({ listener: 'unix' })).json<AppSnapshot>('snapshot')).firstSetup).toBe('existing')
+})
+
+it.each(['kept', 'tightened'] as const)('settles the same renamed provider only with its %s outbound policy', async policyState => {
+  const t = await startTestHost({ demo: false })
+  onTestFinished(() => t.close())
+  const models = await startFakeModels()
+  onTestFinished(() => models.close())
+  const desktop = await t.enroll({ listener: 'unix' })
+  const add = {
+    id: 'setup-recover',
+    requestId: randomUUID(),
+    name: 'Fixture settings service',
+    kind: 'openai-compatible',
+    baseURL: `${models.origin}/v1`,
+    defaultModel: 'fake-model',
+    models: ['fake-model'],
+    confirmOrigin: true,
+  }
+  const path = `providers/additions/${add.requestId}`
+  const request = { method: 'POST', body: add }
+  directoryFault.path = t.dataDir
+  directoryFault.providerId = add.id
+  let confirmations = 0
+  try {
+    const stopped = await desktop.confirmed('providers', request)
+    expect(stopped.status).toBeGreaterThanOrEqual(500)
+    expect(JSON.parse(await readFile(join(t.dataDir, 'providers.json'), 'utf8'))).toMatchObject({
+      providers: [{ id: add.id }],
+      additions: [{ providerId: add.id, requestId: add.requestId }],
+    })
+    expect(await desktop.json(path)).toEqual({ state: 'unknown' })
+    expect((await desktop.request(path, { method: 'POST', body: {} })).status).toBe(503)
+    expect((await desktop.json<AppSnapshot>('snapshot')).catalog?.providers).toEqual([])
+    const { policy } = await desktop.json<{ policy: { confirmedAddresses: string[]; hostEgressAllow: string[] } }>('policy')
+    expect(policy.confirmedAddresses).toHaveLength(1)
+    expect(policy.hostEgressAllow).toEqual([new URL(add.baseURL).host])
+    confirmations = t.presence.requests.length
+  } finally {
+    directoryFault.path = ''
+    directoryFault.providerId = ''
+  }
+  if (policyState === 'tightened') {
+    const target = new URL(add.baseURL).host
+    expect((await desktop.request('policy', { method: 'PATCH', body: { hostEgressAllow: { remove: [target] } } })).status).toBe(200)
+    expect((await desktop.request(path, { method: 'POST', body: {} })).status).toBe(503)
+    expect((await desktop.request('providers', request)).status).toBe(503)
+    expect(await desktop.json(path)).toEqual({ state: 'unknown' })
+    expect(await desktop.json('policy')).toMatchObject({ policy: { hostEgressAllow: [] } })
+    expect(t.presence.requests).toHaveLength(confirmations)
+    expect((await desktop.json<AppSnapshot>('snapshot')).catalog?.providers).toEqual([])
+    return
+  }
+  expect(await desktop.json(path, { method: 'POST', body: {} })).toMatchObject({ state: 'saved', provider: { id: add.id } })
+  expect(await desktop.json(path)).toMatchObject({ state: 'saved', provider: { id: add.id } })
+  expect((await desktop.request('providers', request)).status).toBe(200)
+  expect(t.presence.requests).toHaveLength(confirmations)
+  expect((await desktop.json<AppSnapshot>('snapshot')).catalog?.providers).toMatchObject([{ id: add.id, models: add.models }])
+  expect(JSON.parse(await readFile(join(t.dataDir, 'providers.json'), 'utf8'))).toMatchObject({
+    providers: [{ id: add.id }],
+    additions: [{ providerId: add.id, requestId: add.requestId }],
+  })
 })

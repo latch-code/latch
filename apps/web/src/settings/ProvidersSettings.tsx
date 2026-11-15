@@ -918,7 +918,10 @@ export function ProviderAddForm({
       const input = retry ? previousProviderInput(additionOwner) : undefined
       const result = input
         ? { state: 'saved' as const, provider: await createProvider(input, { presenter }) }
-        : await api<{ state: 'unknown' } | { state: 'saved'; provider: ProviderSettings }>(`providers/additions/${addition.requestId}`)
+        : await api<{ state: 'unknown' } | { state: 'saved'; provider: ProviderSettings }>(`providers/additions/${addition.requestId}`, {
+            method: 'POST',
+            body: {},
+          })
       if (result.state === 'saved') {
         clearProviderAddition(additionOwner)
         setAddition(undefined)

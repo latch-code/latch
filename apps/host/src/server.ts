@@ -123,7 +123,7 @@ import {
   type SessionFolder,
 } from '@latch/sdk'
 import { PluginRegistry } from '@latch/core'
-import { canonicalJson, sha256Hex, redactKnownSecrets } from '@latch/core/node-kit'
+import { canonicalJson, sha256Hex, redactKnownSecrets, syncDirectory } from '@latch/core/node-kit'
 import {
   assertCommandVersion,
   createAcpAgentPlugin,
@@ -3612,6 +3612,61 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return record
     }
 
+    function providerAdditionVisible(addition: ProviderAddition): boolean {
+      const stored = config.providerAddition(addition.deviceId, addition.requestId)
+      if (
+        stored?.providerId !== addition.providerId
+        || stored.inputHash !== addition.inputHash
+        || stored.recordHash !== addition.recordHash
+      )
+        return false
+      const record = config.provider(addition.providerId)
+      return record !== undefined && sha256Hex(canonicalJson(record)) === addition.recordHash
+    }
+
+    function addedProviderReady(record: ProviderRecord): boolean {
+      return pluginInfo(record.id)?.managed === 'provider' && modelAvailable({ providerId: record.id, model: record.defaultModel })
+    }
+
+    const providerAdditionUnconfirmed = () => new AppError(503, 'provider-addition-unconfirmed', '模型服务添加结果未确认，请核对这次请求。')
+
+    /** Resume the published configuration without replaying its confirmation or changing the outbound policy. */
+    async function settleProviderAddition(caller: DeviceCaller, record: ProviderRecord): Promise<ProviderRecord> {
+      recheck(caller, 'admin')
+      requireDesktop(caller)
+      if (addedProviderReady(record)) return record
+      if (!record.enabled) throw providerAdditionUnconfirmed()
+      if (record.apiKey) recheck(caller, 'secrets')
+
+      await syncDirectory(dataDir).catch(() => {
+        throw providerAdditionUnconfirmed()
+      })
+      recheck(caller, 'admin')
+      if (record.apiKey) recheck(caller, 'secrets')
+      const plan = await planDestination(record.baseURL, { key: Boolean(record.apiKey), confirm: true })
+      const authorize = () => {
+        recheck(caller, 'admin')
+        if (record.apiKey) recheck(caller, 'secrets')
+        if (
+          plan.addAddress
+          || plan.egress !== undefined
+          || recordDestination(record) === 'unconfirmed'
+          || (plan.reason !== undefined && !policy.get().hostEgressAllow.includes(plan.hostPort) && !egressExtra.includes(plan.hostPort))
+        )
+          throw providerAdditionUnconfirmed()
+      }
+      authorize()
+      const registered = pluginInfo(record.id)
+      if (registered && registered.managed !== 'provider') throw new AppError(409, 'provider-changed', '模型服务的标识已被其他插件使用。')
+      if (!registered) registerProvider(record, buildProviderPlugin(record))
+      authorize()
+      if (!pluginInfo(record.id)?.enabled) await registry.enable(record.id)
+      authorize()
+      if (!addedProviderReady(record)) throw providerAdditionUnconfirmed()
+      refresh()
+      return record
+    }
+
     /** A service as the catalog lists it for every device: what its models fall back to and how its requests fare, no more. */
     function providerSummary(provider: ModelProvider): ProviderSummary {
       const record = pluginInfo(provider.id)?.managed === 'provider' ? effectiveProvider(provider.id) : undefined
@@ -3891,6 +3946,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return [edit(live), edit(config.provider(id) ?? { ...withoutKey, apiKey: '' })]
     }
 
+    function registerProvider(record: ProviderRecord, plugin: HarnessPlugin): void {
+      registry.register(plugin, { managed: 'provider', revision: providerExecutionRevision(record) })
+    }
+
     /** Persists `saved` and swaps the live plugin to `live` in one step; a failed write keeps the previous generation. */
     async function saveProvider(caller: Caller, live: ProviderRecord, saved = live, addition?: ProviderAddition): Promise<void> {
       const plugin = buildProviderPlugin(live)
@@ -3915,7 +3974,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               })
             else {
               await commit()
-              registry.register(plugin, { managed: 'provider', revision: providerExecutionRevision(live) })
+              registerProvider(live, plugin)
             }
           },
           addition,
@@ -4149,6 +4208,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       res: ServerResponse,
       input: { id: string; plan?: DestinationPlan; stepup: StepupMethod; scope?: KeyScope },
       save: () => Promise<void>,
+      accepted?: () => boolean,
     ): Promise<void> {
       const seq = input.scope
         ? await audited({
@@ -4169,8 +4229,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       try {
         await save()
       } catch (error) {
-        await undo(res)
-        auditFailed(seq, caller)
+        if (!accepted?.()) {
+          await undo(res)
+          auditFailed(seq, caller)
+        }
         throw error
       }
     }
@@ -8591,8 +8653,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (requestId) requireDesktop(caller)
         const inputHash = requestId ? sha256Hex(canonicalJson(input)) : undefined
         const replay = requestId && addedProvider(caller, requestId, inputHash)
-        if (replay) {
-          json(res, { provider: providerView(replay) })
+        if (replay && requestId) {
+          const record = await serial(caller, 'admin', () => {
+            const current = addedProvider(caller, requestId, inputHash)
+            if (!current) throw providerAdditionUnconfirmed()
+            return settleProviderAddition(caller, current)
+          })
+          recheck(caller, 'admin')
+          json(res, { provider: providerView(record) })
           return true
         }
         const id = input.id ?? newProviderId(input.presetId ?? input.name)
@@ -8608,7 +8676,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const scope = apiKey ? keyScopeOf(input.baseURL) : undefined
         const record = await serial(caller, 'admin', async () => {
           const replayed = requestId && addedProvider(caller, requestId, inputHash)
-          if (replayed) return replayed
+          if (replayed) return settleProviderAddition(caller, replayed)
           if (idTaken(id)) throw new AppError(409, 'provider-exists', `标识 ${id} 已被占用`)
           const next: ProviderRecord = {
             id,
@@ -8627,19 +8695,38 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             requestId && inputHash
               ? { deviceId: caller.device.id, requestId, providerId: id, inputHash, recordHash: sha256Hex(canonicalJson(next)) }
               : undefined
-          await saveAt(caller, res, { id, plan, stepup, ...(scope ? { scope } : {}) }, () => saveProvider(caller, next, next, addition))
+          await saveAt(
+            caller,
+            res,
+            { id, plan, stepup, ...(scope ? { scope } : {}) },
+            () => saveProvider(caller, next, next, addition),
+            addition ? () => providerAdditionVisible(addition) : undefined,
+          )
+          if (addition && !addedProviderReady(next)) throw providerAdditionUnconfirmed()
           return next
         })
+        if (requestId) recheck(caller, 'admin')
         refresh()
         json(res, { provider: providerView(record) }, 201)
         return true
       }
       const providerAddition = /^\/link\/api\/providers\/additions\/([A-Za-z0-9_-]{8,128})$/u.exec(path)
-      if (providerAddition && method === 'GET') {
+      if (providerAddition && (method === 'GET' || method === 'POST')) {
         requireScope(caller, 'admin')
         requireDesktop(caller)
-        const record = addedProvider(caller, providerAddition[1]!)
-        json(res, record ? { state: 'saved', provider: providerView(record) } : { state: 'unknown' })
+        const requestId = providerAddition[1]!
+        const record =
+          method === 'GET'
+            ? addedProvider(caller, requestId)
+            : await (async () => {
+                z.strictObject({}).parse(await jsonBody(req))
+                return serial(caller, 'admin', async () => {
+                  const current = addedProvider(caller, requestId)
+                  return current && (await settleProviderAddition(caller, current))
+                })
+              })()
+        recheck(caller, 'admin')
+        json(res, record && addedProviderReady(record) ? { state: 'saved', provider: providerView(record) } : { state: 'unknown' })
         return true
       }
       const providerMatch = path.match(/^\/link\/api\/providers\/([^/]+)(?:\/(models))?$/)

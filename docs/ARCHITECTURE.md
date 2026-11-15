@@ -180,7 +180,7 @@ Latch 不隔离执行的代码：插件、ACP Agent 与第三方 Harness 是可�
 
 首次准备状态作为无密钥字段保存在 Host 的 0600 `settings.json`。新建且没有既有配置的真实 Host 在第一次启动时写为 `pending`，持久写入失败时启动明确报未确认。已启动过或已有配置的安装沿用工作台。`firstSetup` 只出现在当前经 `host.sock` 的本机登记设备快照中，且设备须有 `admin` 与 `run`。准备页成功配置的项目、默认选择、模型服务各走平常的保存流程。`PUT /first-setup` 经真实就绪核对把状态记为 `completed`，或把暂缓记为 `deferred`。重试保留原请求号，完成状态不会被另一页的暂缓覆盖。
 
-准备页用 `PUT /preferences` 的 `setupRequestId` 持久化原请求摘要，同一请求不能覆盖更新的设置，已保存回执经 `GET /first-setup/choices/:requestId` 核对。本机 `POST /providers` 带 `requestId` 时在同一 `providers.json` 提交配置及回执。回执与设备、配置摘要和实际保存的服务摘要绑定，已变更或移除的服务得到冲突，`GET /providers/additions/:requestId` 不重新创建服务，只返回当前安全视图或未知结果。回执只给发起设备，设置选择保留最近 128 项，服务新增保留最近 512 项。客户端可以保存用于核对的非秘密请求号，模型密钥留在表单的短期内存中。
+准备页用 `PUT /preferences` 的 `setupRequestId` 持久化原请求摘要，同一请求不能覆盖更新的设置，已保存回执经 `GET /first-setup/choices/:requestId` 核对。本机 `POST /providers` 带 `requestId` 时在同一 `providers.json` 提交配置及回执。回执与设备、配置摘要和实际保存的服务摘要绑定，已变更或移除的服务得到冲突。若已替换文件而目录同步或注册未结算，`GET /providers/additions/:requestId` 仍返回未知。用户核对时以空请求体 `POST` 同一路径，或重试原新增请求。Host 在原授权范围内同步目录并恢复注册，复核当下设备与出站许可，不重新授予地址权限。达到模型目录可用状态才给完成回执。设置选择保留最近 128 项，服务新增保留最近 512 项。客户端可以保存用于核对的非秘密请求号，模型密钥留在表单的短期内存中。
 
 Host 自己负责宣布运行状态与重新加载证书；在 macOS 上让它常驻、重启和保持唤醒的是桌面端主进程（`apps/desktop/src/lifecycle.cjs`），因为登录项、电源断言与系统睡眠通知都只在 Electron 中可用。
 
