@@ -280,7 +280,13 @@ export function WorkOverview({
   const allEmpty = !compact && groups.every(group => group.tasks.length === 0) && !deliveryPartial && !evidence?.error
   if (!compact && !snapshot.tasks.some(task => !task.archived && spaceOf(task) === 'code'))
     return (
-      <section ref={overview} className="workbench-empty" aria-label="工作总览" data-work-decision-navigation="" tabIndex={-1}>
+      <section
+        ref={overview}
+        className="workbench-empty"
+        aria-label="工作总览"
+        data-backdrop-clear=""
+        data-work-decision-navigation=""
+        tabIndex={-1}>
         <h2>还没有会话</h2>
         {shell && (
           <div className="workbench-empty-actions">
