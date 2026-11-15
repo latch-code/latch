@@ -45,9 +45,13 @@ const ROWS: Array<{ id: string; wires: Wire[]; homes: string[]; env?: Record<str
 const binaryOf = (id: string) => process.env[`LATCH_NO_LOGIN_${id.toUpperCase()}`]
 const cases = ROWS.flatMap(row => (binaryOf(row.id) ? row.wires.map(wire => ({ ...row, wire, binary: binaryOf(row.id)! })) : []))
 
+// With no binary named, one skipped row per Harness: an empty table registers no test, and Vitest fails such a file.
+const optedIn = cases.length > 0
+const rows = optedIn ? cases : ROWS.map(row => ({ ...row, wire: row.wires[0]!, binary: '' }))
+
 afterEach(() => vi.unstubAllEnvs())
 
-it.skipIf(cases.length === 0).each(cases)(
+it.skipIf(!optedIn).each(rows)(
   'runs a real $id turn over $wire through the gateway with no login of its own',
   async ({ id, wire, binary, homes, env }) => {
     const preset = AGENT_PRESETS.find(item => item.id === id)!
