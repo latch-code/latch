@@ -42,6 +42,10 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
     stops.observe(value["stopsDetail"])
     stopTrace.append(stops.requested.sorted())
     let startCatalog = value["startCatalog"]
+    var setupCatalog = startCatalog.object
+    setupCatalog["defaults"] = value["setupDefaults"]
+    let prepared = NativeJSON.object(setupCatalog)
+    let preparedStart = PhoneStart.defaults(prepared)
     let search = PhoneSearch.results(value["search"])
     func controls(_ detail: NativeJSON) -> [[String: Any]] {
         PhoneSessionConfig.controls(detail, harness: value["harness"]).map { control -> [String: Any] in
@@ -115,6 +119,8 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
                     "forced": json(PhoneStart.fields(startCatalog, choice: forced, prompt: "x")["model"] ?? .null)]
         },
         "startDefault": PhoneStart.defaults(startCatalog).model?.model ?? "",
+        "preparedStart": json(PhoneStart.fields(prepared, choice: preparedStart, prompt: "x")["model"] ?? .null),
+        "preparedBuiltIn": PhoneStart.defaultModel(prepared, harnessId: "standard")?.model ?? "",
         "stops": stopTrace,
         "search": ["hits": search.hits.map { [$0.sessionId, $0.title, $0.before, $0.match, $0.after, $0.archived ? "archived" : ""] }, "truncated": search.truncated],
         "queries": ["  relay ", "", "   ", String(repeating: "q", count: 201)].map { PhoneSearch.query($0) ?? "" },

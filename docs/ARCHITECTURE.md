@@ -178,6 +178,10 @@ Latch 不隔离执行的代码：插件、ACP Agent 与第三方 Harness 是可�
 
 ### Host 的生命周期
 
+首次准备状态作为无密钥字段保存在 Host 的 0600 `settings.json`。新建且没有既有配置的真实 Host 在第一次启动时写为 `pending`，持久写入失败时启动明确报未确认。已启动过或已有配置的安装沿用工作台。`firstSetup` 只出现在当前经 `host.sock` 的本机登记设备快照中，且设备须有 `admin` 与 `run`。准备页成功配置的项目、默认选择、模型服务各走平常的保存流程。`PUT /first-setup` 经真实就绪核对把状态记为 `completed`，或把暂缓记为 `deferred`。重试保留原请求号，完成状态不会被另一页的暂缓覆盖。
+
+准备页用 `PUT /preferences` 的 `setupRequestId` 持久化原请求摘要，同一请求不能覆盖更新的设置，已保存回执经 `GET /first-setup/choices/:requestId` 核对。本机 `POST /providers` 带 `requestId` 时在同一 `providers.json` 提交配置及回执。回执与设备、配置摘要和实际保存的服务摘要绑定，已变更或移除的服务得到冲突，`GET /providers/additions/:requestId` 不重新创建服务，只返回当前安全视图或未知结果。回执只给发起设备，设置选择保留最近 128 项，服务新增保留最近 512 项。客户端可以保存用于核对的非秘密请求号，模型密钥留在表单的短期内存中。
+
 Host 自己负责宣布运行状态与重新加载证书；在 macOS 上让它常驻、重启和保持唤醒的是桌面端主进程（`apps/desktop/src/lifecycle.cjs`），因为登录项、电源断言与系统睡眠通知都只在 Electron 中可用。
 
 - **运行状态通告。** Host 在事件流上发送 `host-state`（帧的形状见 [STREAMING.md](./STREAMING.md)「Host 的状态流」，客户端的处理见同文「Host 宣布的停止与睡眠」）：`sleeping`（原因 `sleep`）与 `awake` 在收到报告时立即发出；`stopping` 在 Host 关闭时作为每条流的最后一帧发出，原因是此前 60 秒内报告的 `restart`、`update` 或 `shutdown`，没有报告时为 `shutdown`。`retryAfter`（秒）默认 `restart` 2、`update` 10、`sleep` 10、`shutdown` 15，报告可以给出 1–3600 之间的值。报告用 `POST /link/api/host/state`（`{ state: 'stopping', reason, retryAfter? }`、`{ state: 'sleeping' }` 或 `{ state: 'awake' }`；桌面端另报 `{ state: 'desktop', keepAwake }`，见 [AUTOMATIONS.md](AUTOMATIONS.md#到点前后保持唤醒)；这些报告不带设备凭据，与睡眠和停止的报告同一信任级别，只用于通告与展示），只在 `host.sock` 上接受（匿名或已登记设备均可），其他入口返回 404；桌面端页面经主进程转发的这类请求由主进程返回 403 `shell-managed`。`awake` 之后 Host 另发一次 `refresh`。

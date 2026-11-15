@@ -11,7 +11,7 @@ import {
   type ProviderPreset,
   type ProviderSettings,
 } from '@latch/protocol'
-import { api, errorMessage, inlineError, MessageError } from '../core/api.ts'
+import { api, ApiError, errorMessage, inlineError, isUncertain, MessageError } from '../core/api.ts'
 import { keepWhileAway } from '../core/blocking.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { hostView } from '../core/permissions.ts'
@@ -35,6 +35,7 @@ import {
   trackedPresenter,
   updateProvider,
   type Destination,
+  type NewProvider,
   type ProbeFailure,
   type ServiceHealth,
   type ProvidersResponse,
@@ -89,6 +90,7 @@ import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import { UsageSettings } from './UsageSettings.tsx'
 import { ConfirmedAddresses } from './ConfirmedAddresses.tsx'
 import { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
+import { clearProviderAddition, previousProviderInput, providerAddition, rememberProviderAddition } from '../core/providerAddition.ts'
 export { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
 
 type Selection = { kind: 'provider'; id: string; check?: boolean; fetch?: boolean } | null
@@ -683,6 +685,7 @@ export function ProviderAddForm({
   computer = 'Mac',
   footer,
   onBusy,
+  additionOwner,
 }: {
   compact?: boolean
   /** The Host computer's name, for the lines that send another device there (`computerName`). */
@@ -691,6 +694,7 @@ export function ProviderAddForm({
   footer?: HTMLElement | null
   /** A save is on its way: closing the form now would hide its failure, or its success after the person thought it cancelled. */
   onBusy?: (busy: boolean) => void
+  additionOwner?: string
   preset: ProviderPreset
   data: ProvidersResponse
   abilities: ProviderAbilities
@@ -725,6 +729,7 @@ export function ProviderAddForm({
   const [waiting, setWaiting] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
+  const [addition, setAddition] = useState(() => providerAddition(additionOwner))
   const [guide, setGuide] = useState('')
   const manual = useRef<HTMLInputElement>(null)
   const requiresKey = preset.requiresKey
@@ -843,23 +848,25 @@ export function ProviderAddForm({
       setDefaultModel(choice)
     }
     setSaving(true)
+    const body: NewProvider = {
+      name,
+      kind,
+      presetId: preset.id,
+      baseURL,
+      models: chosen,
+      defaultModel: choice,
+      ...(typedKey ? { apiKey: typedKey } : {}),
+      ...(abilities.confirm ? { confirmOrigin: true } : {}),
+    }
+    const input = additionOwner ? rememberProviderAddition(additionOwner, preset.id, body) : body
     try {
-      const provider = await createProvider(
-        {
-          name,
-          kind,
-          presetId: preset.id,
-          baseURL,
-          models: chosen,
-          defaultModel: choice,
-          ...(typedKey ? { apiKey: typedKey } : {}),
-          ...(abilities.confirm ? { confirmOrigin: true } : {}),
-        },
-        { presenter },
-      )
+      const provider = await createProvider(input, { presenter })
+      if (additionOwner) clearProviderAddition(additionOwner)
       // A check right after saving is a model listing: not when the form already showed there is none, nor without a key.
       onSaved(provider, !listingFailed && !missingKey(provider, data.presets))
     } catch (cause) {
+      if (additionOwner && isUncertain(cause)) setAddition(providerAddition(additionOwner))
+      else if (additionOwner) clearProviderAddition(additionOwner)
       const text = inlineError(cause)
       if (text) setError(text)
       setSaving(false)
@@ -902,6 +909,32 @@ export function ProviderAddForm({
   // The picker can live inside the composer's form. Its compact panel must not nest another native form there.
   const Form = compact ? 'div' : 'form'
   const formId = useId()
+  const recover = async (retry: boolean) => {
+    if (!addition || !additionOwner) return
+    setSaving(true)
+    setSubmitting(true)
+    setError('')
+    try {
+      const input = retry ? previousProviderInput(additionOwner) : undefined
+      const result = input
+        ? { state: 'saved' as const, provider: await createProvider(input, { presenter }) }
+        : await api<{ state: 'unknown' } | { state: 'saved'; provider: ProviderSettings }>(`providers/additions/${addition.requestId}`)
+      if (result.state === 'saved') {
+        clearProviderAddition(additionOwner)
+        setAddition(undefined)
+        onSaved(result.provider, false)
+      } else setError('还没有收到添加回执。')
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === 'provider-changed') {
+        clearProviderAddition(additionOwner)
+        setAddition(undefined)
+      }
+      setError(inlineError(cause))
+    } finally {
+      setSaving(false)
+      setSubmitting(false)
+    }
+  }
   /** The check is a listing, so what it finds fills the list at once instead of asking for a second press. */
   const checkAndTake = async () => {
     const listed = await probe.runCheck()
@@ -927,6 +960,34 @@ export function ProviderAddForm({
       </Button>
     </>
   )
+  if (addition && additionOwner)
+    return (
+      <div className="provider-add provider-add-inline">
+        <InlineNotice tone="neutral">添加结果未确认。</InlineNotice>
+        {error && <InlineNotice tone="error">{error}</InlineNotice>}
+        <InlineConfirm active={saving} rank={2} />
+        <div className="settings-actions">
+          <Button disabled={saving} onClick={() => void recover(false)}>
+            核对结果
+          </Button>
+          {previousProviderInput(additionOwner) && (
+            <Button loading={saving} onClick={() => void recover(true)}>
+              重试同一请求
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            disabled={saving}
+            onClick={() => {
+              clearProviderAddition(additionOwner)
+              setAddition(undefined)
+              setError('')
+            }}>
+            放下这次请求
+          </Button>
+        </div>
+      </div>
+    )
   return (
     <Form
       id={compact ? undefined : formId}

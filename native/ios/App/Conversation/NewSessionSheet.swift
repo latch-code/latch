@@ -137,7 +137,7 @@ struct NewSessionSheet: View {
                 }
             }
         }
-        // Another Harness starts on its own default model: Latch's for one that uses its services, none otherwise.
+        // The Host's model choice belongs to the Harness it was saved for.
         .onChange(of: choice.harnessId) { old, new in if old != nil, old != new { choice.model = PhoneStart.defaultModel(catalog, harnessId: new); picked = nil } }
         .onChange(of: prompt) { _, value in slash.changed(value) }
         .onChange(of: model.privateSnapshot.epoch) { _, _ in slash.clear(); modelPicker = false }
@@ -270,8 +270,8 @@ struct NewSessionSheet: View {
     }
     @ViewBuilder private var modelRow: some View {
         if !PhoneStart.usesServices(harness) {
-            // A fork that keeps the service Latch forwarded this Harness's requests to says so.
-            row("模型") { Text(plan?.forwarded?.model ?? "由 Harness 决定").foregroundStyle(plan?.forwarded == nil ? PhoneTheme.muted : PhoneTheme.ink2) }
+            let forwarded = plan?.forwarded ?? (fork == nil ? choice.model : nil)
+            row("模型") { Text(forwarded?.model ?? "由 Harness 决定").foregroundStyle(forwarded == nil ? PhoneTheme.muted : PhoneTheme.ink2) }
         } else {
             NavigationLink {
                 ModelList(models: PhoneStart.models(catalog), chosen: Binding(get: { shownModel }, set: { choice.model = $0; picked = fork == nil ? nil : $0 }))

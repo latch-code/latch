@@ -89,11 +89,13 @@ export function HistoryImportEntry({
   workspaceId,
   phone,
   onOpen,
+  showCount = false,
 }: {
   snapshot: AppSnapshot
   workspaceId: string | undefined
   phone: boolean
   onOpen: (taskId: string) => void
+  showCount?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const entry = historyEntry(snapshot, workspaceId)
@@ -107,6 +109,7 @@ export function HistoryImportEntry({
           catalog={snapshot.catalog}
           project={project}
           sources={entry.sources}
+          showCount={showCount}
           onClose={() => setOpen(false)}
           onOpen={taskId => {
             setOpen(false)
@@ -134,6 +137,7 @@ function HistoryImportDialog({
   catalog,
   project,
   sources,
+  showCount,
   onClose,
   onOpen,
 }: {
@@ -141,6 +145,7 @@ function HistoryImportDialog({
   catalog: HostCatalog
   project: WorkspaceInfo
   sources: HistorySource[]
+  showCount: boolean
   onClose: () => void
   /** A session brought in now or before: open it. */
   onOpen: (taskId: string) => void
@@ -206,6 +211,7 @@ function HistoryImportDialog({
             source={source}
             project={project}
             catalog={catalog}
+            showCount={showCount}
             onRetry={() => setListNonce(nonce => nonce + 1)}
             onRow={row => {
               lastRow.current = row.handle
@@ -277,6 +283,7 @@ function ListBody({
   source,
   project,
   catalog,
+  showCount,
   onRetry,
   onRow,
 }: {
@@ -284,6 +291,7 @@ function ListBody({
   source: HistorySource
   project: WorkspaceInfo
   catalog: HostCatalog
+  showCount: boolean
   onRetry: () => void
   onRow: (row: HistoryRow) => void
 }) {
@@ -366,6 +374,12 @@ function ListBody({
   const primary = basename(project.folders?.[0]?.path ?? project.path)
   return (
     <div className="history-list">
+      {showCount && (
+        <p className="history-others">
+          {view.truncated ? '最近 ' : ''}
+          {view.rows.length} 个会话
+        </p>
+      )}
       <ul aria-label={`${source.label} 的会话`}>
         {view.rows.map(row => (
           <li key={row.handle}>

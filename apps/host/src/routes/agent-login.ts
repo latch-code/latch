@@ -76,6 +76,8 @@ async function openInSystemTerminal(script: string): Promise<void> {
 export interface AgentLoginRoutes extends RouteModule {
   /** A test start ran the program and read its login; a remembered answer that differs, or one still being read, is older. */
   probed(id: string, status: HarnessLoginStatus): void
+  /** Login evidence already read by the Host, without running the agent again. */
+  reported(id: string): HarnessLoginCheck | undefined
 }
 
 export function createAgentLoginRoutes(context: RouteContext, deps: AgentLoginDeps): AgentLoginRoutes {
@@ -94,6 +96,12 @@ export function createAgentLoginRoutes(context: RouteContext, deps: AgentLoginDe
   })
   const opensHere = deps.openTerminal !== undefined || process.platform === 'darwin'
   return {
+    reported(id) {
+      const pushed = deps.login(id)?.reported
+      const cached = known.get(id)
+      if (cached && context.now() - cached.at < STATUS_TTL_MS) return settleLogin(cached.check, cached.pushed, pushed)
+      return pushed
+    },
     probed(id, status) {
       if (status === 'unknown') return
       if (running.has(id) || (known.get(id)?.check.status ?? status) !== status) forget(id)

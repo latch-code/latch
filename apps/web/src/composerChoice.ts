@@ -342,7 +342,7 @@ export function defaultModel(catalog: HostCatalog): ModelRef | undefined {
 }
 
 /** The engine and model a pick in a draft can change. */
-export type DraftPick = Partial<Pick<ComposerChoice, 'harnessId' | 'model'>>
+export type DraftPick = Partial<Pick<ComposerChoice, 'harnessId' | 'model' | 'config'>>
 
 /**
  * Where every new session starts on the Host computer, when it set one. Other devices cannot see or take back a pin,
@@ -364,7 +364,15 @@ export function draftStart(
   access?: PinAccess,
 ): Partial<ComposerChoice> | null {
   const pin = pinnedChoice(catalog, access)
-  const base = pin ? { ...memory, ...pin } : memory
+  let base = pin ? { ...memory, ...pin } : memory
+  const gateway = catalog?.defaults.gateway
+  if (pin?.harnessId && gateway !== undefined && !pick?.config && (pick?.harnessId === undefined || pick.harnessId === pin.harnessId)) {
+    const harness = findHarness(catalog, pin.harnessId)
+    const config = memory?.harnessId === pin.harnessId ? memory?.config : memory?.otherPicks?.[pin.harnessId]
+    const modelOption = harness && draftConfig(harness, config)?.config.find(option => option.category === 'model')
+    const source = gateway ? withServicePick(config, gateway, modelOption?.id) : withOwnDefault(config, modelOption?.id)
+    base = { ...base, ...(source ? { config: source } : {}) }
+  }
   const project = projectStart(catalog, base, pick)
   return pin || project || pick ? { ...base, ...project, ...pick } : memory
 }
@@ -573,6 +581,16 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice): Start
       ? { kind: 'model-required', message: `还没有可用的模型服务。${held.message}`, hint: held.hint, action: '打开模型服务' }
       : { kind: 'model-required', message: '还没有模型服务。' }
   }
+  if (
+    catalog.defaults.gatewayUnavailable
+    && catalog.defaults.harnessId === harness.id
+    && !servicePick(catalog, harness, choice.config)
+    && !pickedOwnDefault(choice.config)
+    && !startConfig(harness, choice.config).some(pick =>
+      harness.catalogue?.options.some(option => option.id === pick.configId && option.category === 'model'),
+    )
+  )
+    return { kind: 'model-required', message: '原来选择的模型服务暂不可用。', action: '打开模型服务' }
   return null
 }
 

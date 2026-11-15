@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { FAKE_ACP_AGENT } from '@latch/testkit'
+import { FAKE_ACP_AGENT, startFakeModels } from '@latch/testkit'
 import type { AgentSettings, AppSnapshot, TaskDetail } from '@latch/protocol'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
@@ -17,6 +17,92 @@ import { openSection, openSettings } from './helpers/layout.ts'
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'actual Agent model and reasoning controls',
   () => {
+    it('defers a fresh setup and can complete it with a real saved model', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'latch-electron-setup-'))
+      const host = await startTestHost({ demo: false, hostName: '验收电脑' })
+      const models = await startFakeModels()
+      let application: ElectronApplication | undefined
+      try {
+        const owner = await host.enroll({ listener: 'unix' })
+        await writeHostState(host.dataDir, {
+          version: 2,
+          pid: process.pid,
+          hostId: host.host.hostId,
+          instanceId: host.host.instanceId,
+          socketPath: host.host.socketPath,
+          loopbackOrigin: host.host.loopbackOrigin,
+          tlsOrigin: null,
+          startedAt: new Date().toISOString(),
+          dataDir: host.dataDir,
+        })
+        application = await _electron.launch({
+          args: [
+            resolve('apps/desktop/src/main.cjs'),
+            '--latch-host-state=' + join(host.dataDir, 'host.json'),
+            '--latch-user-data=' + join(root, 'electron'),
+            '--use-mock-keychain',
+          ],
+          cwd: process.cwd(),
+          env: Object.fromEntries(
+            Object.entries(desktopShellEnvironment(process.env)).filter((entry): entry is [string, string] => entry[1] !== undefined),
+          ),
+          timeout: 30_000,
+        })
+        const page = await application.firstWindow()
+        page.setDefaultTimeout(15_000)
+        await page.getByRole('button', { name: '继续', exact: true }).click()
+        const setup = page.getByRole('dialog', { name: '准备这台电脑' })
+        const start = setup.getByRole('button', { name: '开始使用 Latch' })
+        await setup.waitFor({ state: 'visible' })
+        expect(await start.isEnabled()).toBe(false)
+        await mkdir('test-results/first-setup', { recursive: true })
+        for (const width of [1440, 768, 390]) {
+          await application.evaluate(({ BrowserWindow }, size) => {
+            const window = BrowserWindow.getAllWindows()[0]!
+            window.setMinimumSize(320, 400)
+            window.setSize(size, 900)
+          }, width)
+          await page.waitForFunction(value => innerWidth === value, width)
+          for (const colorScheme of ['light', 'dark'] as const) {
+            await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+            const content = setup.locator('.ui-modal-surface')
+            expect(await content.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
+            await page.screenshot({ path: `test-results/first-setup/empty-${width}-${colorScheme}.png`, animations: 'disabled' })
+          }
+        }
+        await setup.getByRole('button', { name: '稍后配置' }).click()
+        await setup.waitFor({ state: 'detached' })
+        expect((await owner.json<AppSnapshot>('snapshot')).firstSetup).toBe('deferred')
+        await page.reload()
+        await page.locator('.app-shell[data-connection="connected"]').waitFor()
+        expect(await setup.count()).toBe(0)
+
+        const saved = await owner.confirmed('providers', {
+          method: 'POST',
+          body: {
+            name: '验收模型服务',
+            kind: 'openai-compatible',
+            baseURL: `${models.origin}/v1`,
+            models: ['fake-model'],
+            defaultModel: 'fake-model',
+            confirmOrigin: true,
+          },
+        })
+        expect(saved.status).toBe(201)
+        const settings = await openSettings(page)
+        await openSection(settings, '通用')
+        await settings.getByRole('button', { name: '打开准备页' }).click()
+        await setup.getByText('已就绪', { exact: true }).waitFor()
+        await start.click()
+        await setup.waitFor({ state: 'detached' })
+        expect((await owner.json<AppSnapshot>('snapshot')).firstSetup).toBe('completed')
+      } finally {
+        await application?.close()
+        await host.close()
+        await models.close()
+        await rm(root, { recursive: true, force: true })
+      }
+    })
     it('reads actual ACP options at three sizes and reconciles a lost response without sending again', async () => {
       const root = await mkdtemp(join(tmpdir(), 'latch-electron-models-')),
         host = await startTestHost()

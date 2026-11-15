@@ -206,6 +206,8 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 ## 经 Latch 使用模型服务
 
+首次准备中为自带模型的 Harness 选择网关模型时，Host 将组合写入 `settings.json`，有效范围是该 Harness 的默认选择。Host 投影前用当前启用的服务、模型清单和可用协议重新校验，Web 与 iPhone/iPad 从同一默认组合启动。模型或路由失效时页面提示重新选择，Host 不改走原生登录。显式的本会话模型仍优先。Latch 内置的默认模型另存，思考深度只使用模型服务声明的值。
+
 模型菜单同时保留 Harness 自己的模型与可经 Latch 使用的已保存服务。两组的前提不同：Harness 自己的模型要它自己的登录；服务的模型由 Latch 转发、用设置里的密钥，**不需要这个 Harness 登录**。新会话选了服务的模型时不显示「还没登录」那一行，模型菜单里也不写「还没登录」（`composerChoice.ts` 的 `loginHarness`），Codex 直连在这样的会话里也不查自己的账户。Host 根据实际协议能力和自己的服务记录重新核对每次开始，客户端不能决定转发地址或密钥。当前四种入口优先同协议透传，另支持实验性的 Responses/Anthropic→Chat，以及 Responses↔Anthropic 转换；其余组合明确不可选；模型、能力、令牌、用量和安全机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。会话开始时还定下所选服务各模型的「出错时改用」候选，计入路由与启动指纹；回复开始前的故障切换、健康与排队见[调度](MODEL-GATEWAY.md#调度)。
 
 | Harness | 当前支持 | 交给 Agent 的方式 |

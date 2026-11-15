@@ -385,6 +385,29 @@ describe('composer choice', () => {
     })
   })
 
+  it('starts the prepared Harness on its gateway while keeping explicit picks and the built-in model', () => {
+    const local = { legacy: false, local: true }
+    const standard = testHarness('standard', { kind: 'builtin' })
+    const engine = testHarness('opencode', { kind: 'agent', label: 'OpenCode' })
+    const opencode = {
+      ...engine,
+      capabilities: {
+        ...engine.capabilities,
+        models: { ...engine.capabilities.models, owner: 'harness' as const, wires: ['chat-completions' as const] },
+      },
+    }
+    const gateway = { providerId: 'local', model: 'qwen3' }
+    const model = { providerId: 'deepseek', model: 'deepseek-chat' }
+    const prepared = catalog({
+      harnesses: [standard, opencode],
+      defaults: { harnessId: 'opencode', workspaceId: 'default', mode: 'agent', gateway, model, pinned: true },
+    })
+    const resolve = (pick: DraftPick | null) => resolveChoice(prepared, draftStart(prepared, null, pick, local))
+    expect(servicePick(prepared, opencode, resolve(null).config)).toEqual(gateway)
+    expect(pickedOwnDefault(resolve({ config: withOwnDefault(undefined) }).config)).toBe(true)
+    expect(resolve({ harnessId: 'standard' }).model).toEqual(model)
+  })
+
   it('says plainly when there is no engine or no model service', () => {
     const none = catalog({ harnesses: [catalog().harnesses[2]!] })
     expect(startBlock(snapshot({ catalog: none }), resolveChoice(none, null))).toEqual({

@@ -197,7 +197,12 @@ export function useSubmission({
       patch = { ...patch, ...harnessPicks(remembered, patch.harnessId) }
     if (pinnedChoice(catalog, { legacy, local })) {
       const { harnessId, model, ...rest } = patch
-      setDraftPick(previous => ({ ...previous, ...(harnessId ? { harnessId } : {}), ...(model ? { model } : {}) }))
+      setDraftPick(previous => ({
+        ...previous,
+        ...(harnessId ? { harnessId } : {}),
+        ...(model ? { model } : {}),
+        ...(rest.config ? { config: rest.config } : {}),
+      }))
       const kept = { ...stored, ...rest }
       setStored(kept)
       writeChoice(deviceId, { ...kept, harnessId: harnessId ?? remembered.harnessId, mode: kept.mode ?? remembered.mode })
@@ -230,11 +235,13 @@ export function useSubmission({
     }
     if (stored.sessionId === undefined) {
       if (!stored.forkOf) {
-        setStored(previous => ({ ...previous, ...restoredChoice(stored) }))
+        const restored = restoredChoice(stored)
+        setStored(previous => ({ ...previous, ...restored }))
         // Under a pin too, what shows is what this unconfirmed request carries.
         setDraftPick({
           ...(stored.harnessId ? { harnessId: stored.harnessId } : {}),
           ...(stored.model ? { model: stored.model } : {}),
+          ...(restored.config ? { config: restored.config } : {}),
         })
       }
     } else if (stored.model) {

@@ -266,9 +266,18 @@ export interface SessionDefaults {
   mode: TaskMode
   workspaceId: string
   model?: ModelRef
+  /** An explicitly saved built-in default is currently unavailable. */
+  modelUnavailable?: true
+  /** Model source explicitly chosen for the pinned external Harness. Null uses the Harness's own model. */
+  gateway?: ModelRef | null
+  /** The saved gateway cannot be used now and does not fall back to the Harness's login. */
+  gatewayUnavailable?: true
   /** The engine and model were set on the Host computer as where every new session starts, not only a first-use fallback. */
   pinned?: true
 }
+
+/** The Host's preparation progress, visible only to this computer's administrator. */
+export type FirstSetupStatus = 'pending' | 'existing' | 'deferred' | 'completed'
 
 /**
  * An enabled model service the Host does not offer, and why: its address is not confirmed on the Host computer yet, it

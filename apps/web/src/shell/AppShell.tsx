@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
 
@@ -5,6 +6,7 @@ import { SIDEBAR_MIN } from './panelLayout.ts'
 import { keepAwakeLine } from '../core/shellLifecycle.ts'
 import { openLayer } from '../hooks/backStack.ts'
 import { FoundHarnessesCard } from '../newSession/NewSession.tsx'
+import { FirstSetup } from '../newSession/FirstSetup.tsx'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
 import { usesDemoModel, listsFoundHarnesses } from '../composerChoice.ts'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
@@ -59,6 +61,8 @@ type Harness = ReturnType<typeof useHarness>
 /** The signed-in shell. Mounted once per device identity, so per-device state starts fresh. */
 export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const shell = useShellLayout({ harness, snapshot })
+  const [preparing, setPreparing] = useState(false)
+  const [preparationFinished, setPreparationFinished] = useState(false)
   const {
     phoneSession,
     phoneReview,
@@ -179,6 +183,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     evidence,
     shell,
   }
+  const mayPrepare = access.local && access.admin && snapshot.firstSetup !== undefined
+  const showPreparation = mayPrepare && (preparing || (!preparationFinished && snapshot.firstSetup === 'pending'))
   return (
     <FileOpenContext.Provider value={catalog?.features?.filePreview ? openFile : undefined}>
       <LayerHistory value={phone ? openLayer : null}>
@@ -558,7 +564,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 <div className="code-home-queue">
                   <div className="code-home-notices">
                     <SetupNotices shell={homeShell} />
-                    {listsFoundHarnesses(catalog, snapshot.tasks.length, shell.access) && <FoundHarnessesCard onRecheck={refresh} />}
+                    {!showPreparation && listsFoundHarnesses(catalog, snapshot.tasks.length, shell.access) && (
+                      <FoundHarnessesCard onRecheck={refresh} />
+                    )}
                   </div>
                   {!submission.fork && work.snapshot.tasks.some(task => !task.archived) && (
                     <div className="workbench-home-history">
@@ -590,8 +598,24 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   onChanged={() => {
                     void refresh()
                   }}
+                  {...(mayPrepare && { onFirstSetup: () => setPreparing(true) })}
                 />
               </Modal>
+            )}
+            {showPreparation && (
+              <FirstSetup
+                snapshot={snapshot}
+                access={access}
+                manual={preparing && snapshot.firstSetup !== 'pending'}
+                onChanged={refresh}
+                onExit={finished => {
+                  setPreparing(false)
+                  if (finished) {
+                    setPreparationFinished(true)
+                    if (settings) closeSettings()
+                  }
+                }}
+              />
             )}
             {phone && phoneReview.present && phoneReview.target && phoneReview.summary && (
               <PhoneReview

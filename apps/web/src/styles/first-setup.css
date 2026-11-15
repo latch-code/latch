@@ -1,0 +1,116 @@
+.first-setup.ui-modal-page > .ui-modal-surface {
+  display: block;
+  overflow: auto;
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+.first-setup-content {
+  max-inline-size: 840px;
+  margin-inline: auto;
+  padding: clamp(var(--sp-48), 10vh, var(--sp-64)) var(--sp-32) var(--sp-40);
+}
+
+.first-setup-content > header {
+  margin-block-end: var(--sp-32);
+}
+
+.first-setup-content > header h1 {
+  margin: 0;
+  font-size: var(--fs-work-wide-title);
+  line-height: var(--lh-work-wide-title);
+  letter-spacing: var(--ls-work-title);
+  font-weight: 600;
+}
+
+.first-setup-content > header p {
+  margin: var(--sp-8) 0 0;
+  color: var(--muted);
+}
+
+.first-setup-group {
+  display: grid;
+  grid-template-columns: minmax(0, 10rem) minmax(0, 1fr);
+  gap: var(--sp-20);
+  border-block-start: 1px solid var(--line);
+  padding-block: var(--sp-20);
+}
+
+.first-setup-group > h2 {
+  min-width: 0;
+  margin: var(--sp-8) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-work-ui);
+  line-height: var(--lh-work-ui);
+  font-weight: 500;
+}
+
+.first-setup-group-body {
+  min-width: 0;
+}
+
+.first-setup-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: var(--sp-8);
+  padding-block: var(--sp-4);
+}
+
+.first-setup-label,
+.first-setup-ready {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.first-setup-label {
+  flex: 1;
+}
+
+.first-setup-meta,
+.first-setup-inset > p {
+  color: var(--muted);
+  font-size: var(--fs-work-caption);
+  line-height: var(--lh-work-caption);
+}
+
+.first-setup-inset {
+  margin-block: var(--sp-8);
+}
+
+.first-setup-inset > p {
+  margin: 0 0 var(--sp-8);
+}
+
+.first-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+  border-block-start: 1px solid var(--line);
+  padding-block-start: var(--sp-20);
+}
+
+.first-setup-actions > :not(button) {
+  flex-basis: 100%;
+}
+
+@media (max-width: 599px) {
+  .first-setup-content {
+    padding-inline: var(--sp-16);
+  }
+
+  .first-setup-group {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-8);
+    padding-block: var(--sp-16);
+  }
+
+  .first-setup-group > h2 {
+    margin: 0;
+  }
+}

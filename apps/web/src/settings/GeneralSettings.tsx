@@ -1,6 +1,6 @@
 import { useContext, useState } from 'react'
 import type { AppSnapshot } from '@latch/protocol'
-import { CodeGlyph, InlineNotice, Menu, SegmentedControl, SelectButton, SwitchRow } from '@latch/ui'
+import { Button, CodeGlyph, InlineNotice, Menu, SegmentedControl, SelectButton, SwitchRow } from '@latch/ui'
 import { useViewport } from '../breakpoints.ts'
 import { CustomizationActionsContext } from '../core/customization.ts'
 import { deviceAccess } from '../core/permissions.ts'
@@ -158,7 +158,17 @@ function ThisMac({ hostName, local }: { hostName: string; local: boolean }) {
   )
 }
 
-export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppSnapshot; admin: boolean; onChanged: () => void }) {
+export function GeneralSettings({
+  snapshot,
+  admin,
+  onChanged,
+  onFirstSetup,
+}: {
+  snapshot: AppSnapshot
+  admin: boolean
+  onChanged: () => void
+  onFirstSetup?: (() => void) | undefined
+}) {
   const preferences = usePreferences()
   const phone = useViewport() === 'phone'
   const writer = useContext(CustomizationActionsContext)
@@ -240,6 +250,18 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
       </SettingsGroup>
       <NotificationSettings />
       <ThisMac hostName={snapshot.hostName} local={deviceAccess(snapshot, currentShell()).local} />
+      {onFirstSetup && (
+        <SettingsGroup title="准备这台电脑">
+          <SettingsRow
+            title="本机配置"
+            trailing={
+              <Button size="sm" onClick={onFirstSetup}>
+                打开准备页
+              </Button>
+            }
+          />
+        </SettingsGroup>
+      )}
       {admin && snapshot.catalog?.features?.promptTemplates && <PromptTemplatesSettings snapshot={snapshot} onChanged={onChanged} />}
     </>
   )

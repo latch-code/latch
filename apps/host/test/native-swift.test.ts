@@ -3704,6 +3704,12 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         providers: [{ id: 'p', name: 'P', models: ['m1', 'm2'] }],
         defaults: { harnessId: 'codex', workspaceId: 'latch', model: { providerId: 'p', model: 'm2' } },
       },
+      setupDefaults: {
+        harnessId: 'codex',
+        workspaceId: 'latch',
+        model: { providerId: 'p', model: 'm2' },
+        gateway: { providerId: 'p', model: 'm1' },
+      },
       stopsDetail: {
         messages: [
           { id: 's1', role: 'tool', subagent: { title: 'a', stoppable: true, steps: [] } },
@@ -3991,6 +3997,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { default: 'm2', fields: { providerId: 'p', model: 'm2' }, forced: { providerId: 'p', model: 'm2' } },
     ])
     expect(result.startDefault).toBe('')
+    expect(result.preparedStart).toEqual({ providerId: 'p', model: 'm1' })
+    expect(result.preparedBuiltIn).toBe('m2')
     // A stop goes on failure and once the Host shows the subagent stopping or no longer stoppable, nested rows too.
     expect(result.stops).toEqual([['s1', 's2', 's3', 's4'], ['s1', 's3', 's4'], ['s1']])
     expect(result.search).toEqual({
