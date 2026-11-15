@@ -115,16 +115,6 @@ struct HelperCreateSheet: View {
             }
             field("名字") { LocalTextEditor(text: $draft.name, placeholder: "给它一个名字", maximumLines: 1) }
             if draft.name.utf16.count > 80 { limit("名字最多 80 字") }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(HelperWords.roles, id: \.name) { role in
-                        Button(role.name) {
-                            if draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { draft.name = role.name }
-                            draft.description = role.duty; draft.instructions = role.instructions
-                        }.font(PhoneTheme.caption).buttonStyle(.bordered).buttonBorderShape(.capsule).tint(PhoneTheme.ink)
-                    }
-                }
-            }.accessibilityLabel("从模板开始")
             field("职责") { LocalTextEditor(text: $draft.description, placeholder: "一句话，例如：查资料，写成一页摘要", maximumLines: 3) }
             if draft.description.utf16.count > 200 { limit("职责最多 200 字") }
             DisclosureGroup("多说几句", isExpanded: $words) {
@@ -194,13 +184,6 @@ struct HelperCreateSheet: View {
 
 enum HelperWords {
     static let abilities = ["files": "文件", "commands": "命令", "mcp": "MCP", "ask": "提问", "memory": "记事", "schedule": "定时"]
-    struct Role { let name: String; let duty: String; let instructions: String }
-    static let roles = [
-        Role(name: "代码审阅", duty: "审阅改动，指出问题和风险", instructions: "审阅我给你的改动或分支。\n先说结论，再按严重程度列出问题：正确性、安全、边界情况、可读性。\n每个问题写明文件与行号、原因和建议的改法。\n不确定的地方直接说不确定，不要猜。"),
-        Role(name: "周报", duty: "把这周做过的事写成一页周报", instructions: "根据我给你的记录、提交或笔记，写一份周报。\n分为：本周完成、进行中、下周计划、需要协助。\n每条一句话，写清结果，不写过程。\n没有依据的内容不要编。"),
-        Role(name: "发布检查", duty: "发布前逐项检查，列出没通过的", instructions: "发布前按清单逐项检查：版本号、更新说明、测试与构建结果、迁移、配置与回滚方案。\n每项写「通过」「没通过」或「无法确认」，并附依据。\n最后列出必须先处理的项。"),
-        Role(name: "资料整理", duty: "查资料，写成一页摘要", instructions: "围绕我给的主题收集和整理资料。\n写成一页摘要：要点、不同观点、还没弄清的问题。\n每条要点注明来源；读不到原文时说明。")
-    ]
 }
 
 struct HelperAvatarPicker: View {

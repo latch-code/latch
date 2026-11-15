@@ -1340,19 +1340,6 @@ button.agent-library-file:focus-visible {
 .agent-notification-switches > .ui-switch-row + .ui-switch-row {
   border-top: 1px solid var(--line);
 }
-.agent-role-templates {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-6);
-  min-width: 0;
-}
-.agent-role-templates > span {
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-
 /* The profile's MCP: one line per server, its state or 所有会话, and on this Mac a switch that puts it on the Agent. */
 .agent-mcp-list {
   display: grid;
