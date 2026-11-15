@@ -135,10 +135,10 @@ describe('the shell', () => {
     }
     const owner = await open(1440, 900, '壳层分区管理', true)
     await allData(owner)
-    expect(await tabsOf(owner)).toEqual(['通用', '模型', 'Harness', 'MCP', '项目', '插件', '设备', '快捷键', '关于'])
+    expect(await tabsOf(owner)).toEqual(['通用', '模型', '用量', 'Harness', 'MCP', '项目', '插件', '设备', '快捷键', '关于'])
     await owner.context().close()
     const guest = await open(1440, 900, '壳层分区只读')
-    expect(await tabsOf(guest)).toEqual(['通用', '设备', '快捷键', '关于'])
+    expect(await tabsOf(guest)).toEqual(['通用', '用量', '设备', '快捷键', '关于'])
     await guest.context().close()
   })
 
