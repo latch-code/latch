@@ -168,6 +168,19 @@
 .sidebar .session-meta {
   display: none;
 }
+/* Other computers need room for the source and waiting reason, or their last known connection state. */
+.sidebar .other-computers .session-item-main {
+  height: auto;
+}
+.sidebar .other-computers .session-meta {
+  display: flex;
+  align-items: baseline;
+  height: auto;
+}
+.sidebar .other-computers .session-computer {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .sidebar .session-line {
   gap: var(--sp-8);
 }

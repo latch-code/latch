@@ -394,6 +394,16 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
           .and(elsewhere.locator(`[data-attention-task="${waitingId}"]`))
         await waitingRow.waitFor()
         expect(await waitingRow.getAttribute('title')).toBe(`${bName} · ${waitingTitle}`)
+        const source = waitingRow.locator('.session-meta')
+        await source.getByText(bName, { exact: true }).waitFor()
+        await source.getByText('· 审批', { exact: true }).waitFor()
+        expect(
+          await waitingRow.evaluate(button => {
+            const title = button.querySelector('.session-line')!.getBoundingClientRect()
+            const meta = button.querySelector('.session-meta')!.getBoundingClientRect()
+            return meta.top >= title.bottom && meta.bottom <= button.getBoundingClientRect().bottom
+          }),
+        ).toBe(true)
         await page.locator('.other-computers-label').getByText('其他电脑', { exact: true }).waitFor()
         await page.locator('.sidebar-host-menu').click()
         const menu = page.getByRole('menu', { name: '电脑' })
