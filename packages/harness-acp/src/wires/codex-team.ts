@@ -113,7 +113,14 @@ export class CodexTeam {
   }
 
   hasActiveMember(id?: string): boolean {
-    const active = (member?: Member) => member?.active === true && (member.parentTurnId !== undefined || member.restored === true)
+    const active = (member?: Member) => {
+      if (!member?.active) return false
+      // A child can keep working after its direct Team ancestor has ended.
+      for (let ancestor: Member | undefined = member; ancestor; ancestor = this.members.get(ancestor.parentId)) {
+        if (ancestor.parentId === this.rootId) return ancestor.parentTurnId !== undefined || ancestor.restored === true
+      }
+      return false
+    }
     return id === undefined ? [...this.members.values()].some(active) : active(this.members.get(id))
   }
 

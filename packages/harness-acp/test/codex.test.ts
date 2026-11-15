@@ -1357,7 +1357,7 @@ describe('Codex over its app-server', () => {
       const t = await computer(
         {
           FAKE_CODEX_TEAM_BACKGROUND_MS: result === 'cancelled' ? '5000' : '1800',
-          ...(result === 'cancelled' ? { FAKE_CODEX_TEAM_BACKGROUND_COMMAND: '1' } : {}),
+          ...(result === 'cancelled' ? { FAKE_CODEX_TEAM_BACKGROUND_COMMAND: '1', FAKE_CODEX_TEAM_NESTED: '1' } : {}),
         },
         [],
         { maxProcesses: 1, idleMs: 100 },
@@ -1386,18 +1386,21 @@ describe('Codex over its app-server', () => {
         await vi.waitFor(async () => expect((await t.log()).some(entry => entry.event === 'background-member-interrupted')).toBe(true))
         expect((await bridge.detail(id)).summary.status).toBe('running')
         expect(member(await bridge.detail(id))?.status).toBe('running')
+        await vi.waitFor(async () => expect((await t.log()).some(entry => entry.event === 'background-command-ended')).toBe(true))
+        expect((await bridge.detail(id)).summary.status).toBe('running')
         expect(await cancellation).toBe(true)
         const after = await settled(bridge, id)
         expect(after.summary.status).toBe('cancelled')
         expect(member(after)?.status).toBe('cancelled')
         const log = await t.log()
         const interrupts = sent(log, 'turn/interrupt')
-        expect(interrupts).toHaveLength(1)
-        expect(interrupts[0]?.params).toMatchObject({
-          threadId: expect.stringMatching(/^child-/u),
-          turnId: expect.stringMatching(/^turn-child-/u),
-        })
-        expect(log.some(entry => entry.event === 'background-command-ended')).toBe(true)
+        expect(interrupts).toHaveLength(2)
+        for (const interrupt of interrupts)
+          expect(interrupt.params).toMatchObject({
+            threadId: expect.stringMatching(/^child-/u),
+            turnId: expect.stringMatching(/^turn-child-/u),
+          })
+        expect(log.some(entry => entry.event === 'nested-member-interrupted')).toBe(true)
       } else {
         const after = await settled(bridge, id)
         expect(member(after)?.team?.result).toBe('Cedar finished after the lead')

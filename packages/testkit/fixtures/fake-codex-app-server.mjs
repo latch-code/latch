@@ -419,9 +419,10 @@ async function play(text) {
   }
   if (word === 'team' || text.startsWith('请启动 Codex 的子 Agent')) {
     const source = thread.id
+    const ordering = text.includes('审批排序夹具')
     const a = announceMember(`child-${randomUUID()}`, 'Cedar')
-    const b = announceMember(`child-${randomUUID()}`, 'Maple', thread.id, false)
-    const c = provider ? announceMember(`child-${randomUUID()}`, 'Pine') : undefined
+    const b = announceMember(`child-${randomUUID()}`, 'Maple', thread.id, ordering)
+    const c = provider || ordering ? announceMember(`child-${randomUUID()}`, 'Pine') : undefined
     const assignments = [[a, '检查窄屏'], [b, '核对回执'], ...(c ? [[c, '检查模型授权']] : [])]
     const memberApproval = () =>
       ask('item/commandExecution/requestApproval', {
@@ -472,6 +473,20 @@ async function play(text) {
       }
       return reply(lead)
     }
+    if (ordering) {
+      const answers = assignments.map(([member], index) =>
+        ask('item/commandExecution/requestApproval', {
+          threadId: member.id,
+          turnId: memberTurn(member),
+          itemId: `ordered-${index}`,
+          command: `echo approval ${index + 1}`,
+          cwd: thread.cwd,
+        }),
+      )
+      await Promise.all(answers)
+      for (const [member] of assignments) finishMember(member, 'Member decisions settled', 'completed')
+      return reply('All member decisions settled')
+    }
     const background = Number(env.FAKE_CODEX_TEAM_BACKGROUND_MS ?? (text.includes('后台停止夹具') ? 5000 : 0))
     if (background) {
       const call =
@@ -485,6 +500,25 @@ async function play(text) {
         notify('item/completed', { threadId: b.id, turnId: memberTurn(b), item: { ...call, status: 'completed' } })
       }
       finishMember(b, 'Maple finished before the lead', 'completed')
+      if (env.FAKE_CODEX_TEAM_NESTED === '1') {
+        const descendant = announceMember(`child-${randomUUID()}`, 'Cedar delegate', a.id)
+        notify('turn/started', { threadId: descendant.id, turn: { id: memberTurn(descendant), status: 'inProgress' } })
+        const end = setTimeout(() => {
+          backgroundMembers.delete(descendant.id)
+          finishMember(descendant, 'Nested finished on its own', 'completed')
+        }, background)
+        backgroundMembers.set(descendant.id, {
+          id: memberTurn(descendant),
+          stop: () => {
+            clearTimeout(end)
+            backgroundMembers.delete(descendant.id)
+            setTimeout(() => {
+              finishMember(descendant, undefined, 'interrupted')
+              log('nested-member-interrupted')
+            }, 800)
+          },
+        })
+      }
       const commandEnded = () => {
         if (call)
           notify('item/completed', { threadId: a.id, turnId: memberTurn(a), item: { ...call, status: 'completed', aggregatedOutput: '' } })
@@ -502,10 +536,15 @@ async function play(text) {
           setTimeout(() => {
             finishMember(a, undefined, 'interrupted')
             log('background-member-interrupted')
-            setTimeout(() => {
+            const done = () => {
+              if (env.FAKE_CODEX_TEAM_STOP_GATE && !existsSync(env.FAKE_CODEX_TEAM_STOP_GATE)) {
+                setTimeout(done, 25)
+                return
+              }
               commandEnded()
               log('background-command-ended')
-            }, 350)
+            }
+            setTimeout(done, 350)
           }, 50)
         },
       })

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium } from '@playwright/test'
@@ -15,13 +15,15 @@ it('delegates from the same Codex chat, opens the actual member approval and res
   let host: Awaited<ReturnType<typeof startTestHost>> | undefined
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined
   const output = process.env.LATCH_TEAM_E2E_IMAGES
+  const trace = join(root, 'fixture-events.jsonl')
+  const stopGate = join(root, 'member-command-settled')
   try {
     const bin = join(root, 'bin')
     const command = join(bin, 'codex')
     await mkdir(bin)
     await writeFile(
       command,
-      `#!/bin/sh\nexport FAKE_CODEX_STATE='${join(root, 'threads.json')}'\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`,
+      `#!/bin/sh\nexport FAKE_CODEX_STATE='${join(root, 'threads.json')}' FAKE_ACP_LOG='${trace}' FAKE_CODEX_TEAM_STOP_GATE='${stopGate}'\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`,
     )
     await chmod(command, 0o755)
     host = await startTestHost({
@@ -106,6 +108,27 @@ it('delegates from the same Codex chat, opens the actual member approval and res
 
     await owner.json(`${path}/prompt`, {
       method: 'POST',
+      body: { prompt: 'team 审批排序夹具', requestId: randomUUID() },
+    })
+    await expect.poll(async () => (await read()).approvals.length).toBe(3)
+    const ordered = (await read()).approvals
+    expect(ordered.map(item => item.subagent)).toEqual(['Cedar', 'Maple', 'Pine'])
+    await teamEntry.click()
+    await maple.getByRole('button', { name: '查看此成员的审批', exact: true }).tap()
+    await expect.poll(() => card.getAttribute('data-approval-id')).toBe(ordered[1]!.id)
+    const reject = (id: string) =>
+      owner.json(`approvals/${id}`, {
+        method: 'POST',
+        body: { decision: 'reject', requestId: randomUUID() },
+      })
+    await reject(ordered[0]!.id)
+    await expect.poll(() => card.locator('.approval-pager').textContent()).toMatch(/1\s*[/／]\s*2/u)
+    expect(await card.getAttribute('data-approval-id')).toBe(ordered[1]!.id)
+    for (const item of ordered.slice(1)) await reject(item.id)
+    await expect.poll(async () => (await read()).summary.status).toBe('idle')
+
+    await owner.json(`${path}/prompt`, {
+      method: 'POST',
       body: { prompt: 'team 后台停止夹具', requestId: randomUUID() },
     })
     await expect
@@ -121,15 +144,36 @@ it('delegates from the same Codex chat, opens the actual member approval and res
       })
       .toBe('running')
     const runId = (await read()).summary.runId
-    const requestId = randomUUID()
-    const stop = () =>
-      owner.json<{ receipt: { outcome: string; status: string; replay?: true } }>(`${path}/cancel`, {
-        method: 'POST',
-        body: { runId, requestId },
-      })
-    const first = await stop()
+    await teamEntry.click()
+    await cedar.getByText('运行中', { exact: true }).waitFor()
+    const stop = dialog.getByRole('button', { name: '停止本轮', exact: true })
+    await reachable(stop)
+    if (output) await page.screenshot({ path: join(output, 'team-parent-completed-390-dark.png'), animations: 'disabled' })
+    const write = page.waitForResponse(response => response.url().endsWith(`/${path}/cancel`) && response.request().method() === 'POST')
+    await stop.tap()
+    await expect.poll(async () => (await readFile(trace, 'utf8')).includes('background-member-interrupted')).toBe(true)
+    expect((await read()).summary.status).toBe('running')
+    await dialog.getByRole('button', { name: '正在停止本轮…', exact: true }).waitFor()
+    await writeFile(stopGate, '', { flag: 'wx' })
+    const response = await write
+    expect(response.ok()).toBe(true)
+    const payload = response.request().postDataJSON() as { runId: string; requestId: string }
+    expect(payload).toMatchObject({ runId, requestId: expect.any(String) })
+    const first = (await response.json()) as { receipt: { outcome: string; status: string } }
     expect(first.receipt).toMatchObject({ outcome: 'stopped', status: 'cancelled' })
-    expect((await stop()).receipt).toEqual({ ...first.receipt, replay: true })
+    const replay = (await page.evaluate(
+      async ({ path, payload }) =>
+        (
+          await fetch(`/link/api/${path}/cancel`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+        ).json(),
+      { path, payload },
+    )) as { receipt: { replay?: true } }
+    expect(replay.receipt).toEqual({ ...first.receipt, replay: true })
     expect(
       (await read()).messages.filter(message => message.subagent?.team).filter(message => message.subagent?.status === 'cancelled'),
     ).toHaveLength(1)
