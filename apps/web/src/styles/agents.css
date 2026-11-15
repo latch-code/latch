@@ -2036,6 +2036,33 @@ button.helper-card:focus-visible {
   font-size: var(--fs-caption);
 }
 
+.agent-row {
+  position: relative;
+}
+.agent-row:has(.agent-row-more) :is(.space-agent, .agent-person) {
+  padding-inline-end: var(--sp-32);
+}
+.agent-row-more {
+  position: absolute;
+  inset-inline-end: var(--sp-4);
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+}
+@media (pointer: coarse) {
+  .agent-row:has(.agent-row-more) :is(.space-agent, .agent-person) {
+    padding-inline-end: var(--sp-48);
+  }
+  .agent-row-more.ui-icon-button {
+    inline-size: 44px;
+    block-size: 44px;
+  }
+}
+@media (hover: hover) and (pointer: fine) {
+  .agent-row:not(:hover, :focus-within) .agent-row-more:not([aria-expanded='true']) {
+    opacity: 0;
+  }
+}
+
 .agent-current-options {
   display: flex;
   flex-wrap: wrap;

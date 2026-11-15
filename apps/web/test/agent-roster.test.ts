@@ -362,6 +362,16 @@ describe('what the rows draw', () => {
     expect(list('overview', { route: { entry: 'agents' } } as never)).not.toContain('aria-current="page"')
   })
 
+  it('offers row settings for every visible Agent and leaves General and view-only menus without deletion', () => {
+    const html = list('overview')
+    expect(html).toContain('aria-label="更多操作：通用"')
+    const generalMenu = html.slice(html.indexOf('role="menu" aria-label="通用 的操作"'))
+    expect(generalMenu).toContain('data-label="设置"')
+    expect(generalMenu).not.toContain('data-label="删除 Agent"')
+    expect(html).toContain('data-label="删除 Agent"')
+    expect(list('overview', { access: { scopes: new Set(['view']) } } as never)).not.toContain('data-label="删除 Agent"')
+  })
+
   it('顶栏: a queue sorted by who waits, with the person-words on the second line and 新建 Agent leading its rail', () => {
     const html = list('triage', {}, true)
     expect(html).toContain('data-people="queue"')

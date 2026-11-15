@@ -729,3 +729,74 @@ it('decides a topic’s approval from the space’s 总览, raises the toast onl
     await host.close()
   }
 })
+
+it('opens the Agent row actions by keyboard and retries a lost deletion response without removing its chat', async () => {
+  await mkdir(OUT, { recursive: true })
+  const host = await startTestHost({ plugins: [fixture] })
+  const browser = await chromium.launch(browserLaunchOptions())
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const agent = await owner.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        name: '行操作夹具',
+        description: '',
+        harnessId: 'standard',
+        mode: 'agent',
+        model: { providerId: 'agents-fixture', model: 'fixture' },
+      },
+    })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { customAgentId: agent.id, prompt: '原聊天永久保留', requestId: randomUUID() },
+    })
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+    const page = await context.newPage()
+    await fullScopeBrowser(page, host, owner, 'Agent 行操作')
+    await place(page, '我的 Agent').click()
+    const more = (name: string) =>
+      agentsNav(page)
+        .getByRole('button', { name: `更多操作：${name}`, exact: true })
+        .filter({ visible: true })
+    await more('通用').focus()
+    await page.keyboard.press('Enter')
+    const general = page.getByRole('menu', { name: '通用 的操作' })
+    await general.getByRole('menuitem', { name: '设置' }).waitFor()
+    expect(await general.getByRole('menuitem', { name: '删除 Agent' }).count()).toBe(0)
+    await page.keyboard.press('Escape')
+
+    const writes: string[] = []
+    await page.route(`**/link/api/custom-agents/${agent.id}`, async route => {
+      if (route.request().method() !== 'DELETE') return route.continue()
+      writes.push(String(route.request().postDataJSON().requestId))
+      const response = await route.fetch()
+      expect(response.ok()).toBe(true)
+      if (writes.length === 1) await route.abort('failed')
+      else await route.fulfill({ response })
+    })
+    await more(agent.name).focus()
+    await page.keyboard.press('Enter')
+    const menu = page.getByRole('menu', { name: `${agent.name} 的操作` })
+    await menu.getByRole('menuitem', { name: '删除 Agent' }).waitFor()
+    await page.screenshot({ path: `${OUT}/agent-menu-1440.png` })
+    await menu.getByRole('menuitem', { name: '删除 Agent' }).click()
+    const confirm = page.getByRole('dialog', { name: `删除「${agent.name}」？` })
+    await confirm.getByText('它的记忆会删除，聊天记录和文件夹会保留。').waitFor()
+    await page.screenshot({ path: `${OUT}/agent-delete-1440.png` })
+    await confirm.getByRole('button', { name: '删除', exact: true }).click()
+    await confirm.getByRole('button', { name: '重试同一请求', exact: true }).click()
+    await confirm.waitFor({ state: 'hidden' })
+    expect(writes).toHaveLength(2)
+    expect(writes[1]).toBe(writes[0])
+    expect((await owner.json<CustomAgentList>('custom-agents')).agents.find(item => item.id === agent.id)).toBeUndefined()
+    expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.find(message => message.role === 'user')?.text).toBe(
+      '原聊天永久保留',
+    )
+  } finally {
+    await context.close()
+    await browser.close()
+    await host.close()
+  }
+})

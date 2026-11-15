@@ -1,10 +1,30 @@
-import type { CustomAgentSummary, TaskSummary } from '@latch/protocol'
-import { ICON_STROKE, Icon, StatusGlyph, AlertGlyph, ArchiveGlyph, BlockedGlyph, PlusGlyph, RunningGlyph, WaitingGlyph } from '@latch/ui'
+import { useCallback, useState, type ReactNode } from 'react'
+
+import { GENERAL_AGENT_ID, type CustomAgentSummary, type TaskSummary } from '@latch/protocol'
+import {
+  ICON_STROKE,
+  Icon,
+  StatusGlyph,
+  AlertGlyph,
+  ArchiveGlyph,
+  BlockedGlyph,
+  ConfirmDialog,
+  IconButton,
+  MoreGlyph,
+  SettingsGlyph,
+  TrashGlyph,
+  PlusGlyph,
+  RunningGlyph,
+  WaitingGlyph,
+} from '@latch/ui'
 import { useLastConfirmed } from '../components/SessionStatus.tsx'
+import { Menu } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { startBlock } from '../composerChoice.ts'
 import { relativeTime } from '../format.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
+import { WriteNotice } from './AgentForm.tsx'
+import { useAgentWrites } from './useAgentWrites.ts'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import type { AvatarState } from './avatarFace.ts'
 import { ownerName, topicOwner } from './chat.ts'
@@ -80,12 +100,14 @@ function openRow(shell: ShellState, row: RosterRow) {
   shell.openMyAgent({ id: row.id })
 }
 
-function Roster({ shell, rows, frozen }: { shell: ShellState; rows: RosterRow[]; frozen: boolean }) {
+type AgentRowMenu = (row: RosterRow) => ReactNode
+
+function Roster({ shell, rows, frozen, menu }: { shell: ShellState; rows: RosterRow[]; frozen: boolean; menu: AgentRowMenu }) {
   const current = currentAgent(shell)
   return (
     <ul className="agent-roster" aria-label="我的 Agent">
       {rows.map(row => (
-        <li key={row.id}>
+        <li key={row.id} className="agent-row">
           <button
             type="button"
             className="space-agent"
@@ -100,6 +122,7 @@ function Roster({ shell, rows, frozen }: { shell: ShellState; rows: RosterRow[];
             </span>
             <RosterMark state={row.state} frozen={frozen} unavailable={row.unavailable} words={row.word?.words} />
           </button>
+          {menu(row)}
         </li>
       ))}
     </ul>
@@ -145,12 +168,12 @@ function PersonLine({ row, frozen, now }: { row: RosterRow; frozen: boolean; now
  * The 顶栏 layout's queue of people: who waits for you first, then who works, then whoever was last heard from. Each row
  * is a 32px face, the name, and on the second line the state in a person's words.
  */
-function Queue({ shell, rows, frozen }: { shell: ShellState; rows: RosterRow[]; frozen: boolean }) {
+function Queue({ shell, rows, frozen, menu }: { shell: ShellState; rows: RosterRow[]; frozen: boolean; menu: AgentRowMenu }) {
   const current = currentAgent(shell)
   return (
     <ul className="agent-queue" aria-label="我的 Agent">
       {queueOrder(rows).map(row => (
-        <li key={row.id}>
+        <li key={row.id} className="agent-row">
           <button
             type="button"
             className="agent-person"
@@ -168,6 +191,7 @@ function Queue({ shell, rows, frozen }: { shell: ShellState; rows: RosterRow[]; 
               <PersonLine row={row} frozen={frozen} now={shell.now} />
             </span>
           </button>
+          {menu(row)}
         </li>
       ))}
     </ul>
@@ -190,6 +214,48 @@ export function AgentsSpaceList({ shell, rail = false }: { shell: ShellState; ra
   const canRun = shell.access.scopes.has('run') && !locked
   const offline = connection === 'offline'
   const archived = snapshot.tasks.filter(task => task.archived && topicOwner(task)).length
+  const [removing, setRemoving] = useState<Pick<RosterRow, 'id' | 'name'> | null>(null)
+  const refresh = shell.refresh
+  const writes = useAgentWrites(useCallback(() => void refresh(), [refresh]))
+  const canDelete = canRun && shell.access.scopes.has('view') && snapshot.device.dataScope === 'all'
+  const menu: AgentRowMenu = row => {
+    if (row.gone || row.confirming) return null
+    return (
+      <Menu
+        label={`${row.name} 的操作`}
+        placement="bottom-end"
+        sections={[
+          {
+            id: 'agent',
+            items: [
+              {
+                id: 'settings',
+                label: '设置',
+                leading: <Icon icon={SettingsGlyph} size={14} />,
+                onSelect: () => shell.openMyAgent({ id: row.id, tab: 'settings' }),
+              },
+              ...(row.id !== GENERAL_AGENT_ID && canDelete
+                ? [
+                    {
+                      id: 'delete',
+                      label: '删除 Agent',
+                      danger: true,
+                      leading: <Icon icon={TrashGlyph} size={14} />,
+                      disabled: offline || writes.held || writes.saving,
+                      onSelect: () => {
+                        writes.clear()
+                        setRemoving(row)
+                      },
+                    },
+                  ]
+                : []),
+            ],
+          },
+        ]}
+        trigger={props => <IconButton {...props} className="agent-row-more" icon={MoreGlyph} label={`更多操作：${row.name}`} size="xs" />}
+      />
+    )
+  }
   return (
     <nav className="space-list" aria-label="我的 Agent" data-people={queue ? 'queue' : 'roster'}>
       {rail && canRun && (
@@ -216,7 +282,11 @@ export function AgentsSpaceList({ shell, rail = false }: { shell: ShellState; ra
           <LockedAgents />
         ) : (
           <>
-            {queue ? <Queue shell={shell} rows={rows} frozen={frozen} /> : <Roster shell={shell} rows={rows} frozen={frozen} />}
+            {queue ? (
+              <Queue shell={shell} rows={rows} frozen={frozen} menu={menu} />
+            ) : (
+              <Roster shell={shell} rows={rows} frozen={frozen} menu={menu} />
+            )}
             {snapshot.customAgents === undefined ? (
               <p className="space-quiet" role="status">
                 正在确认上一项修改
@@ -241,6 +311,22 @@ export function AgentsSpaceList({ shell, rail = false }: { shell: ShellState; ra
           <span>已归档</span>
           <span className="archived-count">{archived}</span>
         </button>
+      )}
+      {canDelete && writes.held && !removing && <WriteNotice state={writes.state} onRetry={() => void writes.retry()} />}
+      {canDelete && removing && (
+        <ConfirmDialog
+          title={`删除「${removing.name}」？`}
+          message="它的记忆会删除，聊天记录和文件夹会保留。"
+          danger
+          confirmLabel={writes.held ? '重试同一请求' : '删除'}
+          onClose={() => setRemoving(null)}
+          onConfirm={async () => {
+            const done = writes.held
+              ? await writes.retry()
+              : await writes.run(`agent:${removing.id}`, `custom-agents/${encodeURIComponent(removing.id)}`, 'DELETE', {})
+            if (done === undefined) throw new Error('没有收到删除确认，请重试或返回列表查看。')
+          }}
+        />
       )}
     </nav>
   )
