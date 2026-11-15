@@ -7,7 +7,7 @@ import { ApiError } from '../src/core/api.ts'
 import { LoginRuns, loginRunState, loginSurface, type LoginSurface } from '../src/panel/terminal/loginRuns.ts'
 import { tabName } from '../src/panel/terminal/model.ts'
 
-const terminal = (over: Partial<TerminalSummary> = {}): TerminalSummary => ({
+const terminal = (over: Partial<TerminalSummary & { sessionId: string }> = {}): TerminalSummary => ({
   id: 'term_1',
   sessionId: HARNESS_LOGIN_SESSION,
   shell: 'zsh',
