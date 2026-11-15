@@ -8,7 +8,8 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeSettings, noHorizontalOverflow, openSection, openSession, openSettings, reachable } from './helpers/layout.ts'
+import { closeSettings, noHorizontalOverflow, openSection, openSession, openSettings, reachable, settleShell } from './helpers/layout.ts'
+import { switchLayout } from './helpers/workbench.ts'
 
 const OUTPUT = 'test-results/stream-render'
 const SIZES = [
@@ -168,6 +169,9 @@ turns.thinking = async ({ say, think }) => {
   say(Array.from({ length: 10 }, (_, index) => '结论 ' + (index + 1) + '：页面包含核心概念、数据类型和常用命令。').join('\\n\\n'), 'answer')
   await reached(3)
 }
+turns['定位'] = async ({ say }) => {
+  say(Array.from({ length: 9 }, (_, index) => '第 ' + (index + 1) + ' 段：说明本地检查完成，输出已记录到会话。').join('\\n\\n'))
+}
 const rl = createInterface({ input: process.stdin })
 rl.on('line', async line => {
   const message = JSON.parse(line)
@@ -245,6 +249,7 @@ describe('how a turn of work is drawn', () => {
     )
     await chmod(codex, 0o755)
     host = await startTestHost({
+      hostName: '验收电脑',
       commandDirectories: () => [bin],
       loginPrograms: name => (name === 'codex' ? codex : undefined),
       detectPreset: preset => (preset.id === 'codex' ? { found: true, path: codex } : { found: false }),
@@ -300,6 +305,106 @@ describe('how a turn of work is drawn', () => {
   const shot = (page: Page, name: string, width: number, theme: string) =>
     page.screenshot({ path: `${OUTPUT}/${name}--${width}--${theme}.png`, animations: 'disabled' })
   const command = (page: Page, words: string) => page.locator('.tool-card.is-command').filter({ hasText: words })
+
+  it('locates history in both workbench layouts and with the side panel and find open', async () => {
+    const id = await start('定位 第 1 轮\n核对上次本地检查结果。\n确认内容后继续往下读。', '长会话回看')
+    await settled(id)
+    for (let turn = 2; turn <= 8; turn++) {
+      await owner.json(`tasks/${id}/prompt`, {
+        method: 'POST',
+        body: { prompt: `定位 第 ${turn} 轮\n复核输出里的文件记录。\n完成后查看下一条。`, requestId: randomUUID() },
+      })
+      await settled(id)
+    }
+    const userMessages = (await detail(id)).messages
+      .filter(message => message.role === 'user' && !message.steered)
+      .map(message => message.id)
+    expect(userMessages).toHaveLength(8)
+    const page = await open(1440, 900, 'dark', id)
+    const rail = page.getByRole('navigation', { name: '会话定位', exact: true })
+    const target = rail.getByRole('button').nth(1)
+    const preview = page.locator('.conversation-rail-preview')
+    await expect.poll(() => page.locator('.conversation-rail').count()).toBe(1)
+    await expect.poll(() => rail.getByRole('button').count()).toBe(8)
+    expect(await rail.getByRole('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('value')))).toEqual(userMessages)
+    const composer = page.getByRole('textbox', { name: '继续对话', exact: true })
+    await composer.focus()
+    await target.hover()
+    await preview.waitFor()
+    await mkdir('test-results/conversation-rail', { recursive: true })
+    await page.screenshot({ path: 'test-results/conversation-rail/app-before-palette-1440-dark.png', animations: 'disabled' })
+    await page.keyboard.press('Meta+k')
+    const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+    await palette.waitFor()
+    // A top layer may open before the browser tells the rail that the pointer left.
+    await target.dispatchEvent('pointerover', { pointerType: 'mouse' })
+    await preview.waitFor()
+    const previousPreview = await preview.evaluateHandle(element => element)
+    await page.keyboard.press('Escape')
+    await palette.waitFor({ state: 'hidden' })
+    await settleShell(page)
+    expect(await previousPreview.evaluate(element => element.isConnected)).toBe(false)
+    await preview.waitFor({ state: 'detached' })
+    const anchor = (await target.boundingBox())!
+    await page.mouse.move(anchor.x + anchor.width / 2 + 2, anchor.y + anchor.height / 2)
+    await preview.waitFor()
+
+    for (const layout of ['triage', 'overview'] as const) {
+      await switchLayout(page, layout)
+      const content = page.locator('.transcript')
+      await target.hover()
+      await expect.poll(() => preview.textContent()).toContain('复核输出里的文件记录。')
+      await page.screenshot({ path: `test-results/conversation-rail/app-${layout}-1440-dark.png`, animations: 'disabled' })
+      await target.click()
+      await expect.poll(() => target.getAttribute('aria-current')).toBe('true')
+      const row = content.locator('.message-user').filter({ hasText: '定位 第 2 轮' })
+      await expect
+        .poll(() =>
+          row.evaluate(element => element.getBoundingClientRect().top - element.closest('.transcript')!.getBoundingClientRect().top),
+        )
+        .toBeCloseTo(24, 0)
+      await preview.waitFor({ state: 'detached' })
+    }
+
+    await page.setViewportSize({ width: 1280, height: 900 })
+    const panel = page.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true })
+    if ((await panel.getAttribute('aria-pressed')) !== 'true') await panel.click()
+    await page.getByRole('tablist', { name: '会话面板', exact: true }).waitFor()
+    await settleShell(page)
+    await page.keyboard.press('Meta+f')
+    const find = page.getByRole('search', { name: '会话内查找', exact: true })
+    const query = find.getByRole('searchbox')
+    const status = find.getByRole('status')
+    const previous = find.getByRole('button', { name: '上一个匹配', exact: true })
+    const next = find.getByRole('button', { name: '下一个匹配', exact: true })
+    const closeFind = find.getByRole('button', { name: '关闭查找', exact: true })
+    await query.fill('复核')
+    await expect.poll(() => status.textContent()).toBe('1/7')
+    await reachable(query)
+    await reachable(previous)
+    await reachable(next)
+    await reachable(closeFind)
+    await next.click()
+    await expect.poll(() => status.textContent()).toBe('2/7')
+    await previous.click()
+    await expect.poll(() => status.textContent()).toBe('1/7')
+    await query.fill('')
+    await expect.poll(() => status.textContent()).toBe('')
+    await query.fill('复核')
+    await expect.poll(() => status.textContent()).toBe('1/7')
+    await target.hover()
+    await preview.waitFor()
+    const previewBox = (await preview.boundingBox())!
+    const paneBox = (await page.locator('.transcript-shell').boundingBox())!
+    expect(previewBox.x + previewBox.width).toBeLessThanOrEqual(paneBox.x + paneBox.width)
+    await noHorizontalOverflow(page, find)
+    await page.screenshot({ path: 'test-results/conversation-rail/app-panel-find-1280-dark.png', animations: 'disabled' })
+    await page.keyboard.press('Escape')
+    await preview.waitFor({ state: 'detached' })
+    expect(await find.isVisible()).toBe(true)
+    await closeFind.click()
+    await panel.click()
+  })
 
   it('shows commands without their shell wrapper: a row once settled, a block with a five-line tail while running or failed', async () => {
     const id = await start('commands', '命令行的会话')

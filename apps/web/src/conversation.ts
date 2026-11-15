@@ -101,8 +101,10 @@ export function projectTurns(messages: Message[], previous: readonly Turn[] = []
   }
 }
 
+export type TranscriptProjection = ReturnType<typeof projectTurns>
+
 /** Only the last turn owns the synthetic reply; a committed ID always wins, just as in renderedMessages. */
-export function liveTurn(projection: ReturnType<typeof projectTurns>, detail: TaskDetail): Turn | undefined {
+export function liveTurn(projection: TranscriptProjection, detail: TaskDetail): Turn | undefined {
   const last = projection.turns.at(-1)
   const id = liveMessageId(detail)
   if (!isLive(detail) || projection.ids.has(id)) return last

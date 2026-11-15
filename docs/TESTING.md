@@ -462,6 +462,8 @@ Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没�
 
 `streaming-render.e2e.ts` 还在真实 DOM 中给已结算消息的字段读取计数，验证 300 轮历史的正文追加不重复投影；计数是工作量，不代表毫秒预算。回归覆盖尾轮晋升后的同节点/展开/文字选择、共享展示与未知 prop、审批/提问、文件记录刷新和权限撤回、空历史合成回复的记录与插入索引、已提交 live ID 的空值切换。`conversation.test.ts` 核对同 ID/新字段重写、运行事实清空与时间/状态的即时变化；正文与状态均不依赖缓存的旧权限。
 
+长会话定位条在 `streaming-render.e2e.ts` 用 300 轮验证首尾键盘可达、刻度独立滚动、历史锚点和会话切换，并核对正文增长的增量与完整帧均不重渲染刻度。另核对导入说明没有错误点亮最新轮次，以及原生对话框、弹层和被盖住的定位条怎样交还 Esc。100 轮夹具核对触屏滑动与命中区、预览与查找条及 Esc 的优先级，在 390、768、1440 宽以浅色和深色截图至 `test-results/conversation-rail/`。`stream-render.e2e.ts` 经临时 Host 和假 ACP 启动八轮会话，用构建后的页面实走命令面板、两种布局、右栏和查找同时打开时的跳转与点击，截图放同一目录。
+
 `stream-delta.e2e.ts` 经真实临时 Host 和正常输入框验证大历史的增量正文、同一消息节点、最终原文与草稿；测试传输故障只在 Host 已授权的响应之后注入，检查真正中断旧 reader、一次完整状态修复和换网后的新基线。远程壳标记的浏览器用例只验证前端省略协商头，不冒充真实原生链路；`native.test.ts` 用真实已验证的原生 HTTP/2 连接核对明确协商、首帧完整、增量 UTF-8 偏移、同连接旧客户端仍完整，以及按原 canonical cursor 重连后的新订阅。未知协商头仍完整；`native-replay.test.ts` 验证游标只属于实际发布的不可变事件。共享 UTF-8 标量与事件向量是 `packages/testkit/vectors/task-delta-v1.json`。
 
 `native-swift.test.ts` 统一编译 Core/Testkit，用真实临时 Host 和 HTTP/2 核对正文发布回执：公开 parser 或其他 reader 的事件不能确认游标，回调拒绝/重入不推进，选择/权限/窗口变化撤销旧候选，未知写保持原字节。共享 Unicode 帧及顺序故障只替换真实 Host 已授权成功的响应；覆盖 HTTP 领先时仍逐帧推进影子、相同 revision 的流优先、250ms 元数据响应期间不越过屏障、八条待处理上限、实际关闭旧流、一次完整修复、响应头迟到的旧打开被取消和换网后保留版本地板。统计写入 `test-results/native-body-publication/`；这些协议夹具不等于 App 已接入、真实 Face ID 或像素绘制验收。

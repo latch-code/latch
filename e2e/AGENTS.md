@@ -22,11 +22,9 @@ CLI 实测含命令与技能，须 opt-in（[TESTING](../docs/TESTING.md)）。
 
 `native-swift-relay.e2e.ts` 用真实双Go与Swift检查单流、旧能力兼容、首块前后取消与App换代，及移除手机后控制连接仍在；每块复核权限
 
-`stream-delta.e2e.ts` 验证正文增量与完整帧修复。
+`stream-delta.e2e.ts` 验证增量与修复；`streaming-render.e2e.ts` 检查长历史定位。
 
-`stream-performance.e2e.ts`：`LATCH_STREAM_BENCH=1`，[说明](../docs/TESTING.md)
-
-
+`stream-performance.e2e.ts`：`LATCH_STREAM_BENCH=1`（TESTING）。
 node 环境；Host、protocol、sdk、testkit、relay、link-client、link-wire、Playwright、Vite 只写 devDependencies；Vitest 使用根项目的版本，本项目不重复声明。
 
 不变量：
@@ -37,6 +35,6 @@ node 环境；Host、protocol、sdk、testkit、relay、link-client、link-wire�
 - 只用临时目录、端口 0、测试确认后端与本地假模型；Electron 用例另用临时 `--latch-user-data` 与 `--use-mock-keychain`。截图写入 `test-results/`，不含凭据。
 - 视觉截图每次运行结果相同：时钟、名称、内容与项目路径固定，画面中没有随机值。截图冻结用 `data-capture`，独立于 `data-motion`。改截取的状态或稳定措施前读 [docs/TESTING.md](../docs/TESTING.md#视觉截图)「视觉截图」。
 
-改动前先读 [docs/TESTING.md](../docs/TESTING.md#浏览器-e2e)「浏览器 e2e」、「视觉截图」与「Electron e2e」。
+改动前读 [TESTING](../docs/TESTING.md#浏览器-e2e) 中的浏览器、视觉与 Electron 验收。
 
 `helper-home.e2e.ts`：假 ACP，家/默认项/人工任务，三宽深浅、权限失败与平板定时片；跨断点同表单/焦点/未知请求（CUSTOM-AGENTS）。

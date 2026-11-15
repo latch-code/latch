@@ -643,6 +643,107 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   margin: 0 auto;
   padding: var(--sp-16) var(--gutter) var(--sp-32);
 }
+.transcript-shell:has(> .conversation-rail) {
+  --conversation-rail-width: 28px;
+  container-type: inline-size;
+}
+.transcript-shell:has(> .conversation-rail) > .transcript > .transcript-content {
+  padding-inline-start: max(var(--gutter), var(--conversation-rail-width));
+}
+.conversation-rail {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  z-index: 3;
+  width: var(--conversation-rail-width);
+  display: flex;
+  flex-direction: column;
+  padding-block: var(--sp-16) var(--sp-40);
+  pointer-events: none;
+}
+.transcript-shell:has(> .find-bar) > .conversation-rail {
+  padding-block-start: calc(36px + var(--sp-16));
+}
+.conversation-rail-track {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  touch-action: pan-y;
+  pointer-events: auto;
+}
+.conversation-rail-track > button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 24px;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-4);
+  background: transparent;
+  color: color-mix(in srgb, var(--muted) 60%, var(--canvas));
+  -webkit-tap-highlight-color: transparent;
+}
+.conversation-rail-track > button::before {
+  content: '';
+  width: 6px;
+  height: 2px;
+  border-radius: var(--r-full);
+  background: currentColor;
+}
+.conversation-rail-track > button:focus-visible {
+  outline-offset: -2px;
+}
+.conversation-rail-track > button:focus-visible::before,
+.conversation-rail-track > button[data-preview]::before {
+  width: 12px;
+  color: var(--ink-2);
+}
+.conversation-rail-track > button[aria-current='true']::before {
+  width: 18px;
+  height: 3px;
+  color: var(--ink);
+}
+.conversation-rail-preview {
+  position: absolute;
+  inset-inline-start: 100%;
+  width: min(320px, calc(100cqw - var(--conversation-rail-width) - var(--sp-8)));
+  max-height: 100%;
+  overflow: clip;
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--r-8);
+  background: var(--pop);
+  box-shadow: var(--sh-pop);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  pointer-events: auto;
+}
+.conversation-rail-preview > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+@media (pointer: coarse) {
+  .transcript-shell:has(> .conversation-rail) {
+    --conversation-rail-width: 44px;
+  }
+  .conversation-rail-track > button {
+    height: 44px;
+    padding-inline: var(--sp-12);
+  }
+}
+@media print {
+  .conversation-rail {
+    display: none;
+  }
+  .transcript-shell:has(> .conversation-rail) > .transcript > .transcript-content {
+    padding-inline-start: var(--gutter);
+  }
+}
 /* The timeline's first rows: a Hint, centred, its detail unfolding under the label. */
 .session-start-note {
   display: flex;

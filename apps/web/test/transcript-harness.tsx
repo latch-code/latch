@@ -2,10 +2,13 @@ import { useState, type ComponentProps } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { TaskDetail } from '@latch/protocol'
 import { FindBar } from '../src/components/FindBar.tsx'
+import { ConversationRail } from '../src/components/ConversationRail.tsx'
+import { isLive, liveMessageId } from '../src/conversation.ts'
 import { JumpLatest } from '../src/components/JumpLatest.tsx'
 import { Transcript } from '../src/components/Transcript.tsx'
 import { useReadingPosition } from '../src/core/useReadingPosition.ts'
 import { announceChangesWrite } from '../src/conversation/useTurnChanges.ts'
+import { useTranscriptProjection } from '../src/conversation/useTranscriptProjection.ts'
 import '../src/styles/index.css'
 
 declare global {
@@ -16,7 +19,7 @@ declare global {
     watchHistory: (detail: TaskDetail, committed: number) => void
     appendLive: (text: string) => void
     takeHistoryReads: () => number
-    showTranscriptOptions: (options: Partial<Omit<ComponentProps<typeof Transcript>, 'detail'>>) => void
+    showTranscriptOptions: (options: Partial<Omit<ComponentProps<typeof Transcript>, 'detail' | 'projection'>>) => void
     patchDetail: (patch: Partial<Omit<TaskDetail, 'messages'>>) => void
     refreshTurnRecords: () => void
     openFind: () => void
@@ -34,8 +37,9 @@ let historyReads = 0
 /** The real transcript, reading position and find bar in the page's own layout, with no Host behind them. */
 function Harness() {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
-  const [options, setOptions] = useState<Partial<Omit<ComponentProps<typeof Transcript>, 'detail'>>>({})
+  const [options, setOptions] = useState<Partial<Omit<ComponentProps<typeof Transcript>, 'detail' | 'projection'>>>({})
   const [find, setFind] = useState(false)
+  const projection = useTranscriptProjection(detail)
   const reading = useReadingPosition({
     sessionId: detail?.summary.id ?? null,
     ready: detail !== null,
@@ -88,11 +92,22 @@ function Harness() {
           }}
         />
       )}
+      {detail && (
+        <ConversationRail
+          key={`rail:${detail.summary.id}`}
+          turns={projection.turns}
+          liveId={isLive(detail) ? liveMessageId(detail) : undefined}
+          getReadingMessageId={reading.getReadingMessageId}
+          subscribeToReadingAnchor={reading.subscribeToReadingAnchor}
+          onReveal={reading.reveal}
+        />
+      )}
       <div className="transcript" ref={reading.containerRef} {...reading.handlers} tabIndex={0} aria-label="会话记录">
         <div className="transcript-content" ref={reading.contentRef}>
           {detail && (
             <Transcript
               detail={detail}
+              projection={projection}
               approvals={detail.approvals ?? none}
               harnessName="夹具"
               active={detail.summary.status === 'running' || detail.summary.status === 'waiting-approval'}
@@ -101,7 +116,7 @@ function Harness() {
           )}
         </div>
       </div>
-      <JumpLatest show={!reading.isFollowing} onJump={reading.jumpToLatest} />
+      <JumpLatest key={`latest:${detail?.summary.id}`} show={!reading.isFollowing} onJump={reading.jumpToLatest} />
     </div>
   )
 }

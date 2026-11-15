@@ -18,6 +18,7 @@ sources:
   - apps/web/src/core
   - apps/web/src/components
   - apps/web/src/conversation.ts
+  - apps/web/src/conversation/useTranscriptProjection.ts
   - apps/web/src/MessageContent.tsx
   - apps/desktop/src/proxy.cjs
   - native/ios/Sources/LatchNativeCore/TaskStreamProjection.swift
@@ -318,7 +319,7 @@ Standard 的工具与模型在进程内运行，没有可结束的进程：停�
 
 源码：[useReadingPosition.ts](../apps/web/src/core/useReadingPosition.ts)。
 
-滚动容器使用 hook 返回的 containerRef 与 handlers，正文 wrapper 使用 contentRef。`ready` 必须表示 detail 已加载且属于当前 session；在此之前不写滚动位置。App 不应再增加第二个 scrollTop 写入 effect。
+滚动容器使用 hook 返回的 containerRef 与 handlers，正文 wrapper 使用 contentRef。`ready` 必须表示 detail 已加载且属于当前 session；在此之前不写滚动位置。正文的 scrollTop 由这一处写入。
 
 | 模式 | 行为 |
 | --- | --- |
@@ -329,7 +330,9 @@ Standard 的工具与模型在进程内运行，没有可结束的进程：停�
 
 「回到最新」在会话区最下面 40px 的一条里居中（输入框正上方），显示时会话内容在这一条里淡出，不压在文字或行上；它写「回到最新」，读者离开后有新块到达时写「N 条新内容」。“回到最新”和成功提交输入显式恢复 follow；用户向下滚到接近底部也可恢复。`reveal(messageId)` 把指定消息行滚入视野（静默提示行的「查看」、回到等你允许的审批卡），它同样由 hook 执行，目标已在底部附近时等同于回到最新。目标在收起的折叠里时，页面先向它外层每个 `hidden="until-found"` 的容器派发 `beforematch`（与浏览器页内查找走同一条路径，各自的主人随之展开），下一帧再 `reveal`。展开块的高度动画对 hook 来说是内容尺寸变化，阅读模式按锚点保持位置。思考与运行中的工具输出这类嵌套滚动框用 `flex-direction: column-reverse` 从末尾排布，自然跟随最新内容，不写 `scrollTop`。切换会话保存独立模式与锚点，当前 hook 最多保留 100 个会话的内存记录。它不把阅读位置保存到磁盘或浏览器存储，刷新整页不保证恢复原锚点。锚点消息消失时使用限制在有效范围内的旧 offset。锚点只在读者滚动时更新，程序写入不替换它。
 
-当前使用完整消息列表，没有历史分页或虚拟列表；也没有“已发送”阅读状态或预留回复空间。手机视口变化通过 ResizeObserver 参与布局，但浏览器尺寸验收不能等同于 iPhone/Android 真机软键盘和全部惯性滚动行为已经验证。
+会话定位条与消息列表共用已提交轮次投影。刻度优先以用户消息为目标，导入的开头一轮可以用已有回复正文。摘录取已加载消息的开头，去掉附带的分叉上下文和变更备注后截断并转义不可见字符。当前刻度读已有消息锚点，跟随或阅读当轮的流式回复时指向最新轮次。阅读导入的开头说明等没有可定位轮次的内容时，刻度保持常态，键盘入口落在第一条。跳转直接使用 `reveal` 绘制视野外的轮次并定位到消息。仅正文增长的增量帧沿用同一份轮次投影，旧协议的完整帧核对已提交轮次相同后也沿用它。
+
+当前使用完整消息列表，视野外的历史轮次用 `content-visibility` 推迟绘制。消息列表没有历史分页或虚拟列表，也没有“已发送”阅读状态或预留回复空间。手机视口变化通过 ResizeObserver 参与布局，但浏览器尺寸验收不能等同于 iPhone/Android 真机软键盘和全部惯性滚动行为已经验证。
 
 ## 工作过程的行
 

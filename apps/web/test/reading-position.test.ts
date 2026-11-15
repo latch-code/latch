@@ -120,6 +120,29 @@ it('restores each session independently after its content becomes ready', () => 
   expect(f.geometry.top).toBe(430)
 })
 
+it('publishes the selected message identity only when reading reaches a different anchor', () => {
+  const f = fixture()
+  const observed: Array<string | null> = []
+  const stop = f.controller.subscribeToReadingAnchor(() => observed.push(f.controller.getReadingMessageId()))
+  f.controller.sync('a', true, f.viewport)
+  expect(observed).toEqual([])
+  f.controller.reveal('message-3', f.viewport)
+  f.geometry.extent += 100
+  f.controller.layout(f.viewport)
+  expect(observed).toEqual(['message-3'])
+  f.controller.input(1, f.viewport)
+  f.userScroll(415)
+  f.userScroll(445)
+  expect(observed).toEqual(['message-3', 'message-4'])
+  f.controller.sync('b', true, f.viewport)
+  f.controller.sync('a', true, f.viewport)
+  f.controller.jumpToLatest(f.viewport)
+  expect(observed).toEqual(['message-3', 'message-4', null, 'message-4', null])
+  stop()
+  f.controller.reveal('message-3', f.viewport)
+  expect(observed).toHaveLength(5)
+})
+
 it('records an explicit latest/send command while content is not ready', () => {
   const f = fixture()
   f.controller.sync('a', true, f.viewport)

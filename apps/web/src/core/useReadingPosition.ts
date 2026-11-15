@@ -30,6 +30,8 @@ const REVEAL_MARGIN = 24
 /** Input intent and session positions, independent of React and DOM measurement. */
 export class ReadingPositionController {
   private readonly positions = new Map<string, Position>()
+  private readonly readingListeners = new Set<() => void>()
+  private readingMessageId: string | null = null
   private sessionId: string | null = null
   private ready = false
   private previous: ViewportGeometry | null = null
@@ -47,6 +49,13 @@ export class ReadingPositionController {
 
   get isFollowing(): boolean {
     return this.following
+  }
+  readonly getReadingMessageId = (): string | null => this.readingMessageId
+  readonly subscribeToReadingAnchor = (listener: () => void): (() => void) => {
+    this.readingListeners.add(listener)
+    return () => {
+      this.readingListeners.delete(listener)
+    }
   }
   private get position(): Position | undefined {
     return this.sessionId === null ? undefined : this.positions.get(this.sessionId)
@@ -76,6 +85,11 @@ export class ReadingPositionController {
   }
 
   private report(following: boolean): void {
+    const messageId = following ? null : (this.position?.anchor?.messageId ?? null)
+    if (messageId !== this.readingMessageId) {
+      this.readingMessageId = messageId
+      for (const listener of this.readingListeners) listener()
+    }
     if (this.following === following) return
     this.following = following
     this.changed(following)
@@ -86,6 +100,7 @@ export class ReadingPositionController {
     if (!position) return
     position.top = viewport.measure().top
     if (position.mode === 'read') position.anchor = viewport.anchor()
+    this.report(position.mode === 'follow')
   }
 
   /** The only path that issues a programmatic scroll write. */
@@ -121,7 +136,6 @@ export class ReadingPositionController {
     if (direction < 0 && this.position.mode === 'follow' && bottom(viewport.measure()) > 1) {
       this.position.mode = 'read'
       this.capture(viewport)
-      this.report(false)
     }
   }
 
@@ -165,7 +179,6 @@ export class ReadingPositionController {
     if (delta < -0.75) position.mode = 'read'
     else if (delta > 0.75 && bottom(geometry) - geometry.top <= 4) position.mode = 'follow'
     this.capture(viewport)
-    this.report(position.mode === 'follow')
   }
 
   jumpToLatest(viewport: ReadingViewport | null): void {
@@ -427,5 +440,15 @@ export function useReadingPosition({
     },
     [controller, viewport],
   )
-  return { containerRef, contentRef, isFollowing, jumpToLatest, reveal, show, handlers }
+  return {
+    containerRef,
+    contentRef,
+    isFollowing,
+    jumpToLatest,
+    reveal,
+    show,
+    handlers,
+    getReadingMessageId: controller.getReadingMessageId,
+    subscribeToReadingAnchor: controller.subscribeToReadingAnchor,
+  }
 }

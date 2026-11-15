@@ -17,7 +17,6 @@ import {
   isLive,
   liveMessageId,
   outcomeWords,
-  projectTurns,
   liveTurn,
   resendText,
   resendWarning,
@@ -32,10 +31,12 @@ import {
   turnTimes,
   ownTextStart,
   workFolds,
+  type TranscriptProjection,
   type Turn,
   type TurnOutcome,
   type WorkItem,
 } from '../conversation.ts'
+import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
 import type { LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { TurnCards } from '../conversation/TurnCards.tsx'
 import { RunEndNote, StatusLine, type StatusLineProps } from '../conversation/StatusLine.tsx'
@@ -625,6 +626,7 @@ const TurnView = memo(function TurnView({
  */
 interface TranscriptProps {
   detail: TaskDetail
+  projection?: TranscriptProjection
   approvals: Approval[]
   /** This device's approval buttons; omitted, every offered option is shown. */
   harnessName: string
@@ -704,14 +706,8 @@ export function Transcript(props: TranscriptProps) {
     failureSteps,
     onFailureStep,
   } = props
-  // Kept from the previous render even if React discards it: a turn only ever stands in for one with the same data.
-  const lastTurns = useRef<{ sessionId: string; turns: Turn[] }>({ sessionId: '', turns: [] })
-  const projection = useMemo(() => {
-    const previous = lastTurns.current.sessionId === detail.summary.id ? lastTurns.current.turns : []
-    const next = projectTurns(detail.messages, previous)
-    lastTurns.current = { sessionId: detail.summary.id, turns: next.turns }
-    return next
-  }, [detail.messages, detail.summary.id])
+  const ownProjection = useTranscriptProjection(props.projection ? null : detail)
+  const projection = props.projection ?? ownProjection
   const tail = liveTurn(projection, detail)
   const switches = projection.switches
   const liveId = isLive(detail) ? liveMessageId(detail) : undefined

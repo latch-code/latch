@@ -11,9 +11,11 @@ import { RebuildLostDialog } from '../history/RebuildLost.tsx'
 import { harnessName as harnessLabel } from '../composerChoice.ts'
 import { Banner } from '../components/Banner.tsx'
 import { JumpLatest } from '../components/JumpLatest.tsx'
+import { ConversationRail } from '../components/ConversationRail.tsx'
 import { Transcript } from '../components/Transcript.tsx'
-import { renderedMessages } from '../conversation.ts'
+import { isLive, liveMessageId, renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
+import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
 import { Button, Hint, ICON_STROKE, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
@@ -78,6 +80,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     owner,
     openSettings,
   } = shell
+  const projection = useTranscriptProjection(current)
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
   // A topic of 我的 Agent is a conversation with the helper: it answers, under its own face and name.
   const speaker = current ? speakerOf(snapshot, current.summary) : undefined
@@ -225,6 +228,16 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                 onClose={() => setFindOpen(false)}
               />
             )}
+            {current && (
+              <ConversationRail
+                key={`rail:${current.summary.id}`}
+                turns={projection.turns}
+                liveId={isLive(current) ? liveMessageId(current) : undefined}
+                getReadingMessageId={reading.getReadingMessageId}
+                subscribeToReadingAnchor={reading.subscribeToReadingAnchor}
+                onReveal={reading.reveal}
+              />
+            )}
             <div className="transcript" ref={reading.containerRef} {...reading.handlers} tabIndex={0} aria-label="会话记录">
               <div className="transcript-content" ref={reading.contentRef}>
                 {current === null ? (
@@ -248,6 +261,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                     )}
                     <Transcript
                       detail={current}
+                      projection={projection}
                       onSource={choose}
                       failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
                       onFailureStep={step => takeFailureStep(step, openSettings)}
@@ -337,7 +351,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
             </div>
             {/* Keyed by session: another session's block count is not news here. */}
             <JumpLatest
-              key={selectedId ?? ''}
+              key={`latest:${selectedId}`}
               show={!reading.isFollowing}
               onJump={jumpToLatest}
               blocks={current ? renderedMessages(current).length : 0}

@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page } from '@playwright/test'
+import { chromium, type Browser, type BrowserContextOptions, type Locator, type Page } from '@playwright/test'
 import { mkdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { createServer, type ViteDevServer } from 'vite'
@@ -108,9 +108,9 @@ declare global {
 describe('streaming render', () => {
   let server: ViteDevServer, browser: Browser, page: Page
 
-  const open = async (width = 1000, height = 900) => {
+  const open = async (width = 1000, height = 900, options?: Pick<BrowserContextOptions, 'isMobile' | 'hasTouch' | 'colorScheme'>) => {
     await page?.close()
-    page = await browser.newPage({ viewport: { width, height }, reducedMotion: 'reduce' })
+    page = await browser.newPage({ viewport: { width, height }, reducedMotion: 'reduce', ...options })
     page.setDefaultTimeout(30_000)
     await page.addInitScript(COUNT_RENDERS)
     await page.goto(`${server.resolvedUrls!.local[0]!}test/transcript-harness.html`)
@@ -237,6 +237,8 @@ describe('streaming render', () => {
     const first = page.locator('[data-message-id="user-0"]')
     await first.evaluate(element => element.setAttribute('data-owned-node', 'history'))
     expect(await page.evaluate(() => window.takeHistoryReads())).toBeGreaterThan(0)
+    const railRenders = await page.evaluate(() => window.renders.ConversationRail)
+    expect(railRenders).toBeGreaterThan(0)
     const counts: number[] = []
     for (let frame = 1; frame <= 3; frame++) {
       await page.evaluate(text => window.appendLive(text), ` 新片段${frame}`)
@@ -247,6 +249,13 @@ describe('streaming render', () => {
     expect(await page.locator('[data-message-id]').count()).toBe(602)
     expect(await page.locator('[data-message-id="reply-299"]').textContent()).toContain('word299x0')
     expect(counts, 'settled history field reads in three actual DOM commits').toEqual([0, 0, 0])
+    expect(await page.evaluate(() => window.renders.ConversationRail)).toBe(railRenders)
+    for (let frame = 1; frame <= 3; frame++) {
+      const liveText = `旧 Host 发送完整帧 ${frame}`
+      await show({ ...value, cursor: value.cursor + frame, liveText })
+      await expect.poll(() => live.textContent()).toContain(liveText)
+    }
+    expect(await page.evaluate(() => window.renders.ConversationRail)).toBe(railRenders)
   })
 
   it('keeps the old tail DOM, work expansion and text selection when a new turn makes it history', async () => {
@@ -819,6 +828,285 @@ describe('streaming render', () => {
     await expect
       .poll(() => transcript.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop))
       .toBeLessThanOrEqual(2)
+  })
+
+  const turnOffset = (id: string) =>
+    page.locator(`[data-message-id="${id}"]`).evaluate(element => {
+      const view = document.querySelector('.transcript')!.getBoundingClientRect()
+      return element.getBoundingClientRect().top - view.top
+    })
+  const markerInView = (marker: Locator) =>
+    marker.evaluate(element => {
+      const row = element.getBoundingClientRect()
+      const track = element.parentElement!.getBoundingClientRect()
+      return row.top >= track.top - 1 && row.bottom <= track.bottom + 1
+    })
+
+  it('reaches the oldest turn by keyboard, previews independently, and restores each session’s marker', async () => {
+    await open()
+    const rail = page.getByRole('navigation', { name: '会话定位' })
+    await show(detail(prose(5, 2)))
+    await page.locator('[data-message-id="user-4"]').waitFor()
+    expect(await rail.count()).toBe(0)
+
+    const messages = prose(300, 8)
+    messages[0]!.text = '核对改动的来龙去脉。\n再看每一步的结果。\n<示例内容>\u202E不可见方向符。\n最后记录验证。'
+    const value = detail(messages, { running: true, liveText: '正在处理', liveId: 'reply-live' })
+    await show(value)
+    const markers = rail.getByRole('button')
+    const current = rail.locator('[aria-current="true"]')
+    const oldest = markers.first()
+    const newest = markers.last()
+    const preview = page.locator('.conversation-rail-preview')
+    await expect.poll(() => markers.count()).toBe(300)
+    await expect.poll(() => markerInView(newest)).toBe(true)
+    expect(await newest.getAttribute('aria-current')).toBe('true')
+    expect(await rail.locator('button[tabindex="0"]').count()).toBe(1)
+
+    const track = rail.locator('.conversation-rail-track')
+    const transcript = page.locator('.transcript')
+    const readingTop = () => transcript.evaluate(element => element.scrollTop)
+    const trackTop = () => track.evaluate(element => element.scrollTop)
+    const initialTop = await readingTop()
+    await newest.hover()
+    await page.mouse.wheel(0, -800)
+    await expect.poll(() => markerInView(newest)).toBe(false)
+    expect(await readingTop()).toBe(initialTop)
+    const browsingTop = await trackTop()
+    await page.evaluate(() => window.appendLive('，仍在处理'))
+    await expect.poll(() => page.locator('[data-message-id="reply-live"]').textContent()).toContain('仍在处理')
+    expect(await trackTop()).toBe(browsingTop)
+    await transcript.hover()
+    await expect.poll(() => markerInView(newest)).toBe(true)
+
+    await page.keyboard.press('Tab')
+    await expect.poll(() => newest.evaluate(element => element === document.activeElement)).toBe(true)
+    await page.keyboard.press('Home')
+    await expect.poll(() => markerInView(oldest)).toBe(true)
+    expect(await oldest.evaluate(element => element === document.activeElement)).toBe(true)
+    expect(await current.getAttribute('value')).toBe('user-299')
+    expect(await preview.textContent()).toContain('核对改动的来龙去脉。\n再看每一步的结果。\n<示例内容>\\u{202E}')
+    await page.keyboard.press('Escape')
+    await preview.waitFor({ state: 'detached' })
+    await page.keyboard.press('ArrowDown')
+    expect(await markers.nth(1).evaluate(element => element === document.activeElement)).toBe(true)
+    await page.keyboard.press('Home')
+    await page.keyboard.press('Enter')
+    await expect.poll(() => turnOffset('user-0')).toBeGreaterThanOrEqual(0)
+    const oldestOffset = await turnOffset('user-0')
+    expect(oldestOffset).toBeLessThanOrEqual(24)
+    expect(await current.getAttribute('value')).toBe('user-0')
+    await preview.waitFor({ state: 'detached' })
+
+    await markers.nth(2).hover()
+    await expect.poll(() => preview.textContent()).toContain('问题 2')
+    await preview.hover()
+    expect(await preview.textContent()).toContain('问题 2')
+    await page.evaluate(() => window.appendLive('，新的流式片段'))
+    await expect.poll(() => page.locator('[data-message-id="reply-live"]').textContent()).toContain('新的流式片段')
+    expect(await turnOffset('user-0')).toBeCloseTo(oldestOffset, 0)
+    expect(await current.getAttribute('value')).toBe('user-0')
+    expect(await preview.textContent()).toContain('问题 2')
+
+    await show(detail(prose(7, 2, 'other-'), { id: 'other' }))
+    await expect.poll(() => current.getAttribute('value')).toBe('other-user-6')
+    expect(await preview.count()).toBe(0)
+    await show(value)
+    await expect.poll(() => current.getAttribute('value')).toBe('user-0')
+    await expect.poll(() => markerInView(oldest)).toBe(true)
+
+    await transcript.hover()
+    await page.mouse.wheel(0, 1_200)
+    await expect.poll(() => current.getAttribute('value')).not.toBe('user-0')
+    await expect.poll(() => markerInView(current)).toBe(true)
+    await page.getByRole('button', { name: /回到最新/u }).click()
+    await expect.poll(() => current.getAttribute('value')).toBe('user-299')
+    await expect.poll(() => markerInView(newest)).toBe(true)
+  })
+
+  it('leaves the current mark empty while reading an imported note before the first marked turn', async () => {
+    await open()
+    const messages: Message[] = [
+      { id: 'import-note', role: 'system', text: '导入时仅保留最近的会话记录。' },
+      { id: 'import-tool', role: 'tool', text: '', toolName: 'read_file', state: 'completed' },
+      ...prose(8, 4),
+    ]
+    const liveId = 'import-live'
+    const liveText = '仍在检查刚导入的工作记录。\n\n'.repeat(45)
+    await show(detail(messages, { running: true, liveId, liveText }))
+    const rail = page.getByRole('navigation', { name: '会话定位' })
+    const current = rail.locator('[aria-current="true"]')
+    await expect.poll(() => current.getAttribute('value')).toBe('user-7')
+    await page.evaluate(() => window.revealMessage('import-note'))
+    await expect.poll(() => current.count()).toBe(0)
+    expect(await rail.getByRole('button').count()).toBe(8)
+    await expect.poll(() => rail.locator('button[tabindex="0"]').getAttribute('value')).toBe('user-0')
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Enter')
+    await expect.poll(() => current.getAttribute('value')).toBe('user-0')
+    await page.evaluate(id => window.revealMessage(id), liveId)
+    await expect.poll(() => turnOffset(liveId)).toBeCloseTo(24, 0)
+    expect(await current.getAttribute('value')).toBe('user-7')
+  })
+
+  it.each(['dialog', 'popover', 'inert'] as const)('leaves Escape to the active UI when the hovered rail is under %s', async kind => {
+    await open()
+    await show(detail(prose(8, 4)))
+    const marker = page.locator('.conversation-rail [aria-current="true"]')
+    await marker.hover()
+    const preview = page.locator('.conversation-rail-preview')
+    await preview.waitFor()
+    await page.evaluate(layer => {
+      const control = document.createElement(layer === 'dialog' ? 'dialog' : 'button')
+      control.id = 'escape-target'
+      document.body.append(control)
+      if (layer === 'dialog') (control as HTMLDialogElement).showModal()
+      else if (layer === 'popover') {
+        control.popover = 'auto'
+        control.showPopover()
+        control.focus()
+      } else {
+        document.querySelector<HTMLElement>('.conversation-rail')!.inert = true
+        control.focus()
+        control.addEventListener('keydown', event => {
+          if (event instanceof KeyboardEvent && event.key === 'Escape') control.remove()
+        })
+      }
+    }, kind)
+    // The browser can clear hover when it changes hit testing. Keep that event pending to reproduce the original race.
+    await marker.dispatchEvent('pointerover', { pointerType: 'mouse' })
+    await preview.waitFor()
+    await page.keyboard.press('Escape')
+    await preview.waitFor({ state: 'detached' })
+    await expect.poll(() => page.locator(kind === 'inert' ? '#escape-target' : '#escape-target:is([open], :popover-open)').count()).toBe(0)
+  })
+
+  it('keeps the preview dismissed when Escape closes a dialog under a stationary pointer', async () => {
+    await open()
+    await show(detail(prose(8, 4)))
+    const marker = page.locator('.conversation-rail [aria-current="true"]')
+    await marker.hover()
+    const preview = page.locator('.conversation-rail-preview')
+    const previousPreview = await preview.evaluateHandle(element => element)
+    await page.evaluate(() => {
+      const dialog = document.createElement('dialog')
+      dialog.id = 'rail-dialog'
+      document.body.append(dialog)
+      dialog.showModal()
+    })
+    await page.keyboard.press('Escape')
+    await page.locator('#rail-dialog').waitFor({ state: 'hidden' })
+    const target = (await marker.boundingBox())!
+    const x = target.x + target.width / 2
+    const y = target.y + target.height / 2
+    await marker.dispatchEvent('pointerover', { pointerType: 'mouse', clientX: x, clientY: y })
+    await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
+    expect(await previousPreview.evaluate(element => element.isConnected)).toBe(false)
+    expect(await preview.count()).toBe(0)
+    await page.mouse.move(x + 2, y)
+    await preview.waitFor()
+  })
+
+  it('dismisses a hovered preview before downstream Escape handlers and leaves IME in control', async () => {
+    await open(390, 710)
+    const value = detail(prose(100, 4))
+    await show(value)
+    await page.evaluate(() => window.openFind())
+    const searchbox = page.getByRole('searchbox')
+    await searchbox.waitFor()
+    const marker = page.getByRole('navigation', { name: '会话定位' }).locator('[aria-current]')
+    await expect.poll(() => markerInView(marker)).toBe(true)
+    await marker.hover()
+    const preview = page.locator('.conversation-rail-preview')
+    await preview.waitFor()
+    expect(await searchbox.evaluate(element => element === document.activeElement)).toBe(true)
+    const previewBox = (await preview.boundingBox())!
+    const findBox = (await page.getByRole('search').boundingBox())!
+    expect(previewBox.y).toBeGreaterThanOrEqual(findBox.y + findBox.height)
+    expect(previewBox.x + previewBox.width).toBeLessThanOrEqual(390)
+    await searchbox.evaluate(element => {
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true, cancelable: true }))
+    })
+    expect(await preview.count()).toBe(1)
+    await page.keyboard.press('Escape')
+    await preview.waitFor({ state: 'detached' })
+    expect(await searchbox.count()).toBe(1)
+    expect(await searchbox.evaluate(element => element === document.activeElement)).toBe(true)
+    await page.keyboard.press('Escape')
+    await searchbox.waitFor({ state: 'detached' })
+  })
+
+  it('leaves the touch rail where the reader swiped when a new turn arrives', async () => {
+    await open(390, 844, { isMobile: true, hasTouch: true })
+    const messages = prose(100, 4)
+    await show(detail(messages))
+    const rail = page.getByRole('navigation', { name: '会话定位' })
+    const current = rail.locator('[aria-current="true"]')
+    await expect.poll(() => markerInView(current)).toBe(true)
+    const track = rail.locator('.conversation-rail-track')
+    const top = () => track.evaluate(element => element.scrollTop)
+    const bottom = await top()
+    const box = (await track.boundingBox())!
+    const x = box.x + box.width / 2
+    const y = box.y + box.height / 2
+    const client = await page.context().newCDPSession(page)
+    await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+    await client.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + 160 }] })
+    await expect.poll(top).toBeLessThan(bottom - 40)
+    await show(detail(prose(101, 4), { running: true, liveText: '新一轮正在进行', cursor: 2 }))
+    await expect.poll(() => current.getAttribute('value')).toBe('user-100')
+    expect(await markerInView(current)).toBe(false)
+    await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await page.touchscreen.tap(200, 300)
+    await expect.poll(() => markerInView(current)).toBe(true)
+    expect(await page.locator('.conversation-rail-preview').count()).toBe(0)
+  })
+
+  it.each([
+    { width: 390, height: 844, touch: true },
+    { width: 768, height: 1024, touch: true },
+    { width: 1440, height: 900, touch: false },
+  ])('shows 100-turn markers and keeps the text clear at $width in both themes', async ({ width, height, touch }) => {
+    await mkdir('test-results/conversation-rail', { recursive: true })
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await open(width, height, { isMobile: touch, hasTouch: touch, colorScheme })
+      const messages = prose(100, 8)
+      messages[192]!.text = '从文件列表里的改动继续。\n先核对读取位置，再用本地夹具确认结果。\n把结果记在这段会话里，回到最新查看新的输出。'
+      await show(detail(messages, { running: true, liveText: '正在检查最后一轮的结果。', liveId: 'reply-live' }))
+      const rail = page.getByRole('navigation', { name: '会话定位' })
+      const marker = rail.getByRole('button').nth(96)
+      const preview = page.locator('.conversation-rail-preview')
+      await expect.poll(() => markerInView(marker)).toBe(true)
+      const box = (await marker.boundingBox())!
+      if (touch) {
+        expect(box.width).toBeGreaterThanOrEqual(44)
+        expect(box.height).toBeGreaterThanOrEqual(44)
+        await marker.tap()
+        expect(await preview.count()).toBe(0)
+        await expect.poll(() => turnOffset('user-96')).toBeCloseTo(24, 0)
+      } else {
+        await marker.hover()
+        await expect.poll(() => preview.textContent()).toContain('从文件列表里的改动继续。\n先核对读取位置')
+        const surface = (await preview.boundingBox())!
+        expect(surface.x).toBeGreaterThanOrEqual(box.x + box.width)
+        expect(surface.x + surface.width).toBeLessThanOrEqual(width)
+        expect(surface.y).toBeGreaterThanOrEqual(0)
+        expect(surface.y + surface.height).toBeLessThanOrEqual(height)
+      }
+      expect(
+        await page.locator('.transcript-content').evaluate(element => {
+          const { left } = element.getBoundingClientRect()
+          return left + Number.parseFloat(getComputedStyle(element).paddingInlineStart)
+        }),
+      ).toBeGreaterThanOrEqual(box.x + box.width)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)
+      await page.screenshot({ path: `test-results/conversation-rail/${width}-${colorScheme}.png`, animations: 'disabled' })
+      if (!touch) {
+        await marker.click()
+        await expect.poll(() => turnOffset('user-96')).toBeCloseTo(24, 0)
+        expect(await preview.count()).toBe(0)
+      }
+    }
   })
 
   // Far turns are placeholders of a guessed height, and a turn's rows measure in full whether it is drawn or not.
