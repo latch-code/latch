@@ -236,7 +236,7 @@ private func deliveredCases() throws -> [Bool] {
         guard let agent = snapshot["customAgents"].array.first(where: { $0["id"].string == agentId }) else { throw NativeFailure.invalidRecord }
         let choice = PhoneAgents.choice(catalog, agent: agent)
         guard PhoneAgents.blocker(catalog, agent: agent, choice: choice, connected: true, canRun: true) == nil else { throw NativeFailure.invalidRecord }
-        // A new topic through the same start path; the retry of the same request answers with the same session.
+        // The first message starts the Agent's chat; retrying the request answers with that session.
         let delegation = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: PhoneAgents.fields(catalog, agent: agent, choice: choice, prompt: "Review from the phone"))
         // The Agent has no project of its own, so the start folder goes as picked; since 45740a5d the Host takes it.
         guard PhonePending.kind(delegation) == .topic(owner: agentId), PhonePending.prompt(delegation) == "Review from the phone",
@@ -345,7 +345,13 @@ private func deliveredCases() throws -> [Bool] {
         let general = try await workspace.read("/link/api/custom-agents/general", body: true)
         guard general["memories"].array.count == 1, general["general"]["id"].string == PhoneAgents.generalId,
               try await workspace.pendingWrites().isEmpty else { throw NativeFailure.invalidRecord }
-        _ = try await workspace.submit(NativePendingWrite(method: .delete, path: "/link/api/tasks/" + sessionId, fields: [:]))
+        let removeChat = try NativePendingWrite(method: .delete, path: "/link/api/tasks/" + sessionId, fields: [:])
+        var customRetained = false
+        do { _ = try await workspace.submit(removeChat, explain: true) }
+        catch let refusal as NativeHostRefusal { customRetained = refusal.status == 409 && refusal.code == "agent-chat-retained" }
+        guard customRetained, PhoneAgentChat.session(try await workspace.snapshot(), owner: agentId) == sessionId else {
+            throw NativeFailure.invalidRecord
+        }
         await workspace.closeOpening(); await vault.lock()
         return ["delegated": true, "sameSession": true, "memoryReceipts": true, "staleRefused": true, "general": true, "cachedTabs": true,
                 "proposalSaved": true, "undone": true, "scheduleSwitched": true, "generalTopic": true]
