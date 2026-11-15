@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
+import { chromium, type Browser, type BrowserContext, type Cookie, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -363,11 +363,32 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
   it('keeps the reset request when leaving settings, switching to safe mode and losing permission', async () => {
     const before = await apply(EXTREME)
     const { context, page } = await open(768, 'dark', '重试外观的浏览器')
+    const other = await open(768, 'dark', '另一台浏览器')
     try {
       const { devices } = await owner.json<{ devices: Device[] }>('devices')
       const enrolled = devices.find(item => item.name === '重试外观的浏览器')!
+      const alternate = devices.find(item => item.name === '另一台浏览器')!
+      const originalCookies = await context.cookies(`${host.origin}/link/`)
+      const alternateCookies = await other.context.cookies(`${host.origin}/link/`)
+      const selectDevice = async (cookies: Cookie[], id: string) => {
+        // The same mounted App sees an authenticated snapshot for a different device.
+        await context.addCookies(cookies)
+        const selected = page.waitForResponse(
+          async response =>
+            response.url().endsWith('/link/api/snapshot') && response.ok() && ((await response.json()) as AppSnapshot).device.id === id,
+        )
+        await page.evaluate(() => window.dispatchEvent(new Event('online')))
+        await selected
+      }
       const requests: unknown[] = []
+      let alternateRequest: unknown
+      let recordingAlternate = true
       await page.route('**/link/api/customization/reset', async route => {
+        if (recordingAlternate) {
+          alternateRequest = route.request().postDataJSON()
+          await route.abort('failed')
+          return
+        }
         requests.push(route.request().postDataJSON())
         if (requests.length === 1) await route.abort('failed')
         else if (requests.length === 2) {
@@ -379,11 +400,23 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
         } else await route.continue()
       })
       const settings = await openSettings(page)
+      await selectDevice(alternateCookies, alternate.id)
+      await settings.waitFor({ state: 'detached' })
+      await openSettings(page)
       await openSection(settings, '通用')
       const group = settings.locator('.settings-group', { hasText: '自定义' })
       await group.getByRole('button', { name: '恢复默认', exact: true }).click()
       await group.getByText('结果未知', { exact: true }).waitFor()
+      expect(alternateRequest).toEqual({ requestId: expect.any(String), baseRevision: before.revision })
+      await selectDevice(originalCookies, enrolled.id)
+      await settings.waitFor({ state: 'detached' })
+      recordingAlternate = false
+      await openSettings(page)
+      await openSection(settings, '通用')
+      await group.getByRole('button', { name: '恢复默认', exact: true }).click()
+      await group.getByText('结果未知', { exact: true }).waitFor()
       expect(requests).toEqual([{ requestId: expect.any(String), baseRevision: before.revision }])
+      expect(requests[0]).not.toEqual(alternateRequest)
 
       await closeSettings(settings)
       await settings.waitFor({ state: 'detached' })
@@ -415,6 +448,7 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
       expect(requests).toEqual([requests[0], requests[0], requests[0]])
     } finally {
       await context.close()
+      await other.context.close()
     }
   })
 
