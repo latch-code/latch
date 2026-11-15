@@ -746,9 +746,11 @@
   row-gap: var(--sp-6);
   align-content: center;
 }
-.workspace .topbar-title h1 {
+.workspace .topbar-title-line {
   order: -1;
   flex-basis: 100%;
+}
+.workspace .topbar-title h1 {
   font-size: var(--fs-work-title);
   line-height: var(--lh-work-title);
   letter-spacing: var(--ls-work-title);

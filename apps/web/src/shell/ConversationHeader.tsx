@@ -510,12 +510,12 @@ export function SessionHeader({
           </span>
         )}
         {summary && !frame && (
-          <h1 title={title}>
-            <TitleMenu title={title} sections={sessionMenu} />
-          </h1>
-        )}
-        {summary && !frame && onRename && (
-          <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />
+          <div className="topbar-title-line">
+            <h1 title={title}>
+              <TitleMenu title={title} sections={sessionMenu} />
+            </h1>
+            {onRename && <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />}
+          </div>
         )}
         {summary && !frame && computer && (
           <span className="topbar-computer">
