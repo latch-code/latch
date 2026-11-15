@@ -5299,7 +5299,7 @@ export class AgentRuntime implements Bridge {
 
   /**
    * One option's write as the session's configuration style takes it. A model choice carries the profile's
-   * `modelSetMeta`, and on a route such a profile is never asked through the legacy `session/set_model`, which may store
+   * `modelSetMeta`. A profile that requires session-only writes must not use `session/set_model`, which may store
    * the choice in the person's own settings.
    */
   private configWrite(
@@ -5314,12 +5314,7 @@ export class AgentRuntime implements Bridge {
         method: 'session/set_config_option',
         params: { sessionId: acpSessionId, configId: option.id, value, ...(meta ? { _meta: { ...meta } } : {}) },
       }
-    if (meta && task.acp.route)
-      throw new AppError(
-        501,
-        'not-supported',
-        `${this.agent.name} 的这个版本换模型会改写它自己的设置，经 Latch 使用模型服务时不能在会话里换模型。`,
-      )
+    if (meta) throw new AppError(501, 'not-supported', `${this.agent.name} 的旧版会话接口可能改写原来的模型默认值，不能在 Latch 中切换。`)
     return { method: 'session/set_model', params: { sessionId: acpSessionId, modelId: value } }
   }
 

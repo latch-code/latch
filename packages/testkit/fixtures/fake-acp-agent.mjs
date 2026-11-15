@@ -1,7 +1,8 @@
 // Deterministic ACP v1 agent for tests. No model; it writes only FAKE_ACP_STATE and FAKE_ACP_LOG (and reads
 // FAKE_ACP_STORE, the client's own snapshot, to check what was durable when a prompt arrived), except the `shell-edit`
 // turn, which writes two files in the session's working directory, and the edits a test queues in FAKE_ACP_EDIT_QUEUE
-// (FAKE_ACP_REPLY_QUEUE queues whole replies the same way). Its only network use is the `model` turn, which calls
+// (FAKE_ACP_REPLY_QUEUE queues whole replies the same way), or the fixture's home settings when it imitates Qwen's
+// persistent legacy model setter. Its only network use is the `model` turn, which calls
 // the model service a client pointed it at, as Codex (`providers/set`) would.
 // Process-wide behaviour comes from environment variables; each turn's behaviour from the prompt's first word.
 // Several processes may share FAKE_ACP_STATE (one per session), so every save merges into what is on disk.
@@ -895,6 +896,12 @@ async function handle(method, params) {
       return {}
     }
     case 'session/set_model':
+      if (env.FAKE_QWEN_PERSIST_LEGACY_MODEL === '1' && params._meta?.['qwen.session.modelPersistDefault'] !== false) {
+        const file = join(env.HOME, '.qwen', 'settings.json')
+        const settings = JSON.parse(readFileSync(file, 'utf8'))
+        settings.model.name = params.modelId
+        writeFileSync(file, JSON.stringify(settings))
+      }
       existing(params.sessionId).model = params.modelId
       save()
       return {}

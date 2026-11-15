@@ -45,6 +45,7 @@
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
+import { join } from 'node:path'
 
 const env = process.env
 // Codex keeps its threads across processes; so does this fake, beside the fake ACP agent's state when no file is named.
@@ -824,6 +825,15 @@ async function handle(method, params) {
       return { data: data.slice(start, start + 2), nextCursor: next }
     }
     case 'thread/start': {
+      if (
+        env.FAKE_CODEX_PERSIST_START_TRUST === '1'
+        && params.cwd
+        && params.sandbox !== 'read-only'
+        && existsSync(join(params.cwd, '.git'))
+      ) {
+        const config = join(env.CODEX_HOME, 'config.toml')
+        writeFileSync(config, `${readFileSync(config, 'utf8')}\n[projects.${JSON.stringify(params.cwd)}]\ntrust_level = "trusted"\n`)
+      }
       thread = {
         id: `thread-${randomUUID()}`,
         cwd: params.cwd,

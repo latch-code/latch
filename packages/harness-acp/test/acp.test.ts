@@ -51,6 +51,7 @@ import { initializeResult } from '../src/protocol.ts'
 import { AgentHealth } from '../src/types.ts'
 import * as commandCache from '../src/command-cache.ts'
 import { withHarnessPromptSource } from '../src/prompt-source.ts'
+import { cliTree, fakeCli, seedCliFiles } from './helpers/cli-config.ts'
 
 const FAST: AcpAgentOptions = { cancelGraceMs: 300, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: 5_000 }
 const QWEN_MODES = 'plan,default,auto-edit,yolo,auto'
@@ -3513,6 +3514,69 @@ describe('ACP sessions across processes', () => {
 })
 
 describe('ACP session configuration', () => {
+  it.skipIf(process.platform === 'win32')('refuses the legacy Qwen model setter that persists the original CLI settings', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-qwen-cli-config-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const home = join(root, 'home')
+    const command = join(root, 'bin', 'qwen')
+    await seedCliFiles(home, {
+      '.qwen/settings.json': '{"model":{"name":"small"},"hooks":{}}\n',
+      '.zshrc': '# fixture shell configuration\n',
+    })
+    await fakeCli(command, FAKE_ACP_AGENT, home, {
+      QWEN_HOME: join(home, '.qwen'),
+      QWEN_RUNTIME_DIR: join(home, '.local', 'state', 'qwen'),
+    })
+    const fixture = await setup(
+      {
+        FAKE_ACP_CONFIG: 'legacy',
+        FAKE_ACP_CAPS: 'resume',
+        FAKE_ACP_MODES: QWEN_MODES,
+        FAKE_ACP_INITIAL_MODE: 'default',
+        FAKE_QWEN_PERSIST_LEGACY_MODEL: '1',
+      },
+      { idleMs: 60_000 },
+      { command, args: [], presetId: 'qwen' },
+    )
+    await seedCliFiles(fixture.workspace, {
+      '.qwen/settings.json': '{"permissions":{"deny":["Shell"]}}\n',
+      '.qwen/hooks.json': '{}\n',
+    })
+    const before = await Promise.all([cliTree(home), cliTree(fixture.workspace)])
+    let bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo first', requestId: rid() })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    expect(await Promise.all([cliTree(home), cliTree(fixture.workspace)])).toEqual(before)
+
+    const change = await bridge.setConfig!(sessionId, 'model', 'large').catch((error: unknown) => error)
+    expect(await Promise.all([cliTree(home), cliTree(fixture.workspace)])).toEqual(before)
+    expect(change).toMatchObject({ status: 501, code: 'not-supported', details: { configOutcome: 'not-sent' } })
+    await bridge.setConfig!(sessionId, 'mode', 'plan')
+    expect((await bridge.detail(sessionId)).permission?.expectedMode).toBe('plan')
+    await bridge.close()
+
+    bridge = await fixture.open()
+    await bridge.prompt(sessionId, 'echo restored', rid())
+    const resumed = await settled(bridge, sessionId)
+    expect(resumed.summary.status).toBe('idle')
+    expect(resumed.permission?.expectedMode).toBe('plan')
+    expect(resumed.config?.find(option => option.category === 'model')?.currentValue).toBe('small')
+    const attempted = await bridge.createTask({
+      prompt: 'echo must not be sent',
+      requestId: rid(),
+      config: [{ configId: 'model', value: 'large' }],
+    })
+    const refused = await settled(bridge, attempted.sessionId)
+    expect(refused.summary.status).toBe('failed')
+    expect(systemText(refused)).toContain('可能改写原来的模型默认值')
+    await bridge.close()
+    const log = await fixture.log()
+    expect(received(log, 'session/set_model')).toHaveLength(0)
+    expect(received(log, 'session/resume')).toHaveLength(1)
+    expect(received(log, 'session/prompt')).toHaveLength(2)
+    expect(await Promise.all([cliTree(home), cliTree(fixture.workspace)])).toEqual(before)
+  })
+
   it('starts dsh in its chosen process mode, changes it only while idle, and checks without applying it again', async () => {
     const fixture = await preset('dsh', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_PROCESS_MODE: '1', FAKE_ACP_CAPS: 'resume,close' })
     const bridge = await fixture.open()
@@ -6422,8 +6486,8 @@ describe('sessions on a model service through the gateway', () => {
     expect(stub.leases.every(lease => lease.closed)).toBe(true)
   })
 
-  it.each(['responses', 'chat-completions', 'anthropic-messages'] as const)(
-    'keeps pi gateway model identity and hides operating budgets from reported usage over %s',
+  it.skipIf(process.platform === 'win32').each(['responses', 'chat-completions', 'anthropic-messages'] as const)(
+    'keeps pi gateway model identity and the original CLI configuration through changes and recovery over %s',
     async wire => {
       const models = await startFakeModels({ replies: [{ text: 'pi service answer' }] })
       cleanups.push(() => models.close())
@@ -6431,18 +6495,39 @@ describe('sessions on a model service through the gateway', () => {
       const sessions = await mkdtemp(join(tmpdir(), 'latch-pi-routed-'))
       cleanups.push(() => rm(sessions, { recursive: true, force: true }))
       const command = join(sessions, 'pi')
-      await writeFile(
-        command,
-        `#!/bin/sh\nif [ "$1" = --version ]; then echo 1.5.0; exit 0; fi\nexec '${process.execPath}' '${FAKE_PI_AGENT}' "$@"\n`,
-      )
-      await chmod(command, 0o755)
+      const home = join(sessions, 'home')
+      const piHome = join(home, '.pi', 'agent')
+      const log = join(sessions, 'pi.log')
+      await seedCliFiles(home, {
+        '.pi/agent/settings.json': '{"defaultProvider":"openai","defaultModel":"gpt-5.5","defaultThinkingLevel":"low"}\n',
+        '.pi/agent/extensions/user-extension.ts': 'export default function fixture() {}\n',
+        '.zshrc': '# fixture shell configuration\n',
+      })
+      await fakeCli(command, FAKE_PI_AGENT, home, { PI_CODING_AGENT_DIR: piHome })
       setLoginPrograms(name => (name === 'pi' ? command : undefined))
       const fixture = await setup(
-        { FAKE_PI_GATEWAY: '1', FAKE_PI_SESSIONS: sessions, PI_GATEWAY_CONTEXT_TOKENS: '32768', PI_GATEWAY_OUTPUT_TOKENS: '4096' },
+        {
+          FAKE_PI_GATEWAY: '1',
+          FAKE_PI_LOG: log,
+          FAKE_PI_SESSIONS: sessions,
+          PI_GATEWAY_CONTEXT_TOKENS: '32768',
+          PI_GATEWAY_OUTPUT_TOKENS: '4096',
+        },
         {},
         { presetId: 'pi', command, args: [] },
-        { modelGateway: stub.access },
+        {
+          modelGateway: {
+            open(input) {
+              return { ...stub.access.open(input), modelCapabilities: { 'fake-model-large': { thinking: ['low', 'high'] } } }
+            },
+          },
+        },
       )
+      await seedCliFiles(fixture.workspace, {
+        '.pi/settings.json': '{"defaultThinkingLevel":"minimal"}\n',
+        '.pi/extensions/project-extension.ts': 'export default function fixture() {}\n',
+      })
+      const original = await Promise.all([cliTree(home), cliTree(fixture.workspace)])
       const route: ModelRoute = { providerId: 'svc', model: 'fake-model', wire, origin: models.origin }
       let bridge = await fixture.open()
       const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
@@ -6453,13 +6538,29 @@ describe('sessions on a model service through the gateway', () => {
       expect(option?.options.map(item => item.value)).toEqual(['latch-gateway/fake-model', 'latch-gateway/fake-model-large'])
       expect(detail.usageReport?.contextSize).toBeUndefined()
       expect(detail.usageReport?.cost).toBeUndefined()
+      expect(await Promise.all([cliTree(home), cliTree(fixture.workspace)])).toEqual(original)
+      const generated = (await cliTree(fixture.tmpRoot)).filter(entry => entry.name.endsWith('.ts') || entry.name.endsWith('.json'))
+      expect(generated.map(entry => [entry.name.split('/').at(-1), entry.mode & 0o777n]).sort()).toEqual([
+        ['latch-permission.ts', 0o600n],
+        ['pi-gateway.json', 0o600n],
+        ['pi-gateway.ts', 0o600n],
+      ])
       await expect(bridge.setConfig!(sessionId, option!.id, 'openai/fake-model-large')).rejects.toMatchObject({ status: 400 })
       await bridge.setConfig!(sessionId, option!.id, 'latch-gateway/fake-model-large')
+      const thinking = (await bridge.detail(sessionId)).config?.find(option => option.category === 'thought_level')
+      await bridge.setConfig!(sessionId, thinking!.id, 'high')
+      await bridge.setConfig!(sessionId, 'mode', 'plan')
+      expect((await bridge.detail(sessionId)).permission?.expectedMode).toBe('plan')
+      await bridge.prompt(sessionId, 'fail deliberately', rid())
+      expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+      expect(await Promise.all([cliTree(home), cliTree(fixture.workspace)])).toEqual(original)
       await bridge.close()
       bridge = await fixture.open()
       await bridge.prompt(sessionId, 'model restored', rid())
       detail = await settled(bridge, sessionId)
       expect(detail.config?.find(item => item.category === 'model')?.currentValue).toBe('latch-gateway/fake-model-large')
+      expect(detail.config?.find(item => item.category === 'thought_level')?.currentValue).toBe('high')
+      expect(detail.permission?.expectedMode).toBe('plan')
       expect(assistants(detail).at(-1)?.text).toBe('model: pi service answer')
       expect(models.requests.map(request => ({ model: request.model, wire: request.wire }))).toEqual([
         { model: 'fake-model', wire },
@@ -6467,6 +6568,11 @@ describe('sessions on a model service through the gateway', () => {
       ])
       await bridge.close()
       expect(stub.leases.every(lease => lease.closed)).toBe(true)
+      const trace = await readFile(log, 'utf8')
+      expect(trace).toContain('"type":"switch_session"')
+      expect(trace).toContain('"type":"set_model"')
+      expect(trace).toContain('"type":"set_thinking_level"')
+      expect(await Promise.all([cliTree(home), cliTree(fixture.workspace)])).toEqual(original)
     },
   )
 

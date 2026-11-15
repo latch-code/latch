@@ -386,7 +386,7 @@ export interface HarnessProfile {
   readonly gateway?: ProfileGateway
   /**
    * `_meta` sent with every `session/set_config_option` for the model, where the harness reads there that the choice is
-   * the session's alone. With it set, a session on a route never falls back to the legacy `session/set_model`: Qwen
+   * the session's alone. With it set, a session never falls back to the legacy `session/set_model`: Qwen
    * Code's writes the person's own settings unless told otherwise.
    */
   readonly modelSetMeta?: Readonly<Record<string, unknown>>

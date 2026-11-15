@@ -385,6 +385,7 @@ export class CodexWire implements AgentWire {
   private cwd = ''
   private folders: string[] = []
   private servers: Array<z.infer<typeof mcpServer>> = []
+  // Codex can persist project trust when opening a new thread with write access. Apply a chosen mode to turns after opening.
   private mode: Mode = 'read-only'
   private models: CodexModels = { models: [] }
   private model?: string

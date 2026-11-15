@@ -22,12 +22,16 @@ import { basename, dirname, join } from 'node:path'
 import { callFakeModel } from './fake-model-client.mjs'
 
 const env = process.env
+const argv = process.argv.slice(2)
+if (argv.includes('--version')) {
+  process.stdout.write(`${env.FAKE_PI_VERSION ?? '1.5.0'}\n`)
+  process.exit(0)
+}
 const log = event => {
   if (env.FAKE_PI_LOG) appendFileSync(env.FAKE_PI_LOG, `${JSON.stringify({ pid: process.pid, ...event })}\n`)
 }
 log({ event: 'start', argv: process.argv.slice(2), cwd: process.cwd() })
 
-const argv = process.argv.slice(2)
 const gatewayPath =
   env.FAKE_PI_GATEWAY === '1'
     ? argv.flatMap((arg, at) => (arg === '-e' && basename(argv[at + 1] ?? '') === 'pi-gateway.ts' ? [argv[at + 1]] : []))[0]

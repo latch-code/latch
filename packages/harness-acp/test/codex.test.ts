@@ -1,6 +1,6 @@
 // Codex over its own app-server (`wires/codex.ts`), driven against the fake app-server: no network, no model.
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -22,6 +22,7 @@ import {
 import { CodexWire, codexMcpServer, codexVersion, setCodexStopLimits } from '../src/wires/codex.ts'
 import { MCP_STATUS_METHOD } from '../src/protocol.ts'
 import { RequestTimeout, setProcessLister } from '../src/wires/process.ts'
+import { cliTree, seedCliFiles } from './helpers/cli-config.ts'
 
 const FAST: AcpAgentOptions = { cancelGraceMs: 2_000, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: 5_000, log: () => {} }
 const cleanups: Array<() => Promise<void> | void> = []
@@ -155,6 +156,71 @@ const said = (detail: DriverTaskDetail, role: string) =>
 const sent = (log: LogEntry[], method: string) => log.filter(entry => entry.event === 'recv' && entry.method === method)
 
 describe('Codex over its app-server', () => {
+  it.skipIf(process.platform === 'win32')('keeps original CLI configuration out of thread startup, turn changes and recovery', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'latch-codex-cli-config-'))
+    cleanups.push(() => rm(home, { recursive: true, force: true }))
+    await seedCliFiles(home, {
+      '.codex/config.toml': 'model = "gpt-fake"\nmodel_reasoning_effort = "high"\n',
+      '.codex/hooks.json': '{}\n',
+      '.zshrc': '# fixture shell configuration\n',
+      'Library/LaunchAgents/fixture.plist': '<plist version="1.0"><dict/></plist>\n',
+    })
+    const t = await computer({ HOME: home, CODEX_HOME: join(home, '.codex'), FAKE_CODEX_PERSIST_START_TRUST: '1' })
+    await seedCliFiles(t.main, {
+      '.codex/config.toml': '# fixture project configuration\n',
+      '.codex/hooks.json': '{}\n',
+      '.git/HEAD': 'ref: refs/heads/main\n',
+      '.git/hooks/pre-commit': '# fixture hook configuration\n',
+    })
+    const before = await Promise.all([cliTree(home), cliTree(t.main), cliTree(t.bin)])
+    let bridge = await t.open()
+    const config = [{ configId: 'mode', value: 'workspace-write' }]
+    const { launchHash } = await bridge.launchPreview!({ cwd: t.main, config })
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo first',
+      requestId: rid(),
+      cwd: t.main,
+      config,
+      expectedLaunchHash: launchHash,
+    })
+    const started = await settled(bridge, sessionId)
+    expect(started.summary.status).toBe('idle')
+    expect(started.permission?.expectedMode).toBe('workspace-write')
+    expect(await Promise.all([cliTree(home), cliTree(t.main), cliTree(t.bin)])).toEqual(before)
+
+    await bridge.setConfig!(sessionId, 'model', 'gpt-fake-mini')
+    const thinking = (await bridge.detail(sessionId)).config?.find(option => option.category === 'thought_level')
+    expect(thinking?.options.map(option => option.value)).toContain('medium')
+    await bridge.setConfig!(sessionId, thinking!.id, 'medium')
+    await bridge.setConfig!(sessionId, 'mode', 'read-only')
+    await bridge.prompt(sessionId, 'fail deliberately', rid())
+    expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+    expect(await Promise.all([cliTree(home), cliTree(t.main), cliTree(t.bin)])).toEqual(before)
+    await bridge.close()
+
+    bridge = await t.open()
+    await bridge.prompt(sessionId, 'echo recovered', rid())
+    const resumed = await settled(bridge, sessionId)
+    expect(resumed.summary.status).toBe('idle')
+    expect(resumed.config?.find(option => option.category === 'model')?.currentValue).toBe('gpt-fake-mini')
+    expect(resumed.config?.find(option => option.category === 'thought_level')?.currentValue).toBe('medium')
+    expect(resumed.permission?.expectedMode).toBe('read-only')
+    await bridge.close()
+
+    const trace = await t.log()
+    expect(sent(trace, 'thread/start').map(entry => entry.params?.sandbox)).toEqual(['read-only'])
+    expect(sent(trace, 'thread/resume').map(entry => entry.params?.sandbox)).toEqual(['read-only'])
+    expect(sent(trace, 'turn/start').map(entry => (entry.params?.sandboxPolicy as { type: string }).type)).toEqual([
+      'workspaceWrite',
+      'readOnly',
+      'readOnly',
+    ])
+    expect(sent(trace, 'config/value/write')).toHaveLength(0)
+    expect(sent(trace, 'config/batchWrite')).toHaveLength(0)
+    expect((await stat(join(t.root, 'data', 'acp.json'))).mode & 0o777).toBe(0o600)
+    expect(await Promise.all([cliTree(home), cliTree(t.main), cliTree(t.bin)])).toEqual(before)
+  })
+
   it('publishes only public skills and sends a native skill item from proven current user text and the official directory', async () => {
     const privatePath = '/private/official-skill-directory/public-work/SKILL.md'
     const fixture = await computer({
