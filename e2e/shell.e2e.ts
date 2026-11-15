@@ -475,7 +475,7 @@ describe('the shell', () => {
     })
     const detail = () => owner.json<TaskDetail>(`tasks/${sessionId}`)
     await expect.poll(async () => (await detail()).summary.status).toBe('idle')
-    const short = '测试一下'
+    const short = '估算机评流程所需 TPM'
     const long = '这是一条很长的会话标题，仍然需要保留重命名入口。'.repeat(5)
 
     for (const [width, height] of [
@@ -558,16 +558,89 @@ describe('the shell', () => {
             await header.locator('.topbar-computer').getByText('验收电脑', { exact: true }).waitFor()
             const initial = await checkLine(false)
             const title = heading(short).getByRole('button', { name: short, exact: true })
+            const pencilOpacity = () => pencil.evaluate(element => getComputedStyle(element).opacity)
+            const titleBackground = () => title.evaluate(element => getComputedStyle(element).backgroundColor)
+            const record = async (state: string) => {
+              if (width === 1440)
+                await page.screenshot({ path: `${output}/title-${state}-${layout}-${width}-dark.png`, animations: 'disabled' })
+            }
+            await page.mouse.move(0, 0)
+            await expect.poll(pencilOpacity).toBe('0')
+            const atRest = await titleBackground()
+            await record('rest')
+            await header.locator('.topbar-computer').hover()
+            expect(await titleBackground()).toBe(atRest)
+            const metaPencil = await pencil.evaluate(async element => {
+              await Promise.all(element.getAnimations().map(animation => animation.finished))
+              return getComputedStyle(element).opacity
+            })
+            await record('metadata-hover')
             await title.hover()
-            await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+            await expect.poll(pencilOpacity).toBe('1')
+            await expect.poll(titleBackground).not.toBe(atRest)
             expect(await checkLine(false)).toEqual(initial)
+            const titleGeometry = await title.evaluate(button => {
+              const text = button.querySelector('.topbar-title-text')!
+              const range = document.createRange()
+              range.selectNodeContents(text)
+              const line = range.getBoundingClientRect()
+              const span = text.getBoundingClientRect()
+              const box = button.getBoundingClientRect()
+              return {
+                buttonHeight: box.height,
+                spanHeight: span.height,
+                glyphHeight: line.height,
+                spanFits: span.top >= box.top && span.bottom <= box.bottom,
+                glyphFits: line.top >= box.top && line.bottom <= box.bottom,
+                x: (line.left + line.right) / 2,
+                edges: [line.top + 1, line.bottom - 1],
+              }
+            })
+            await record('title-hover')
+            expect.soft(metaPencil, `${width} ${layout} metadata hover`).toBe('0')
+            expect.soft(titleGeometry, `${width} ${layout} title hit box ${JSON.stringify(titleGeometry)}`).toMatchObject({
+              spanFits: true,
+              glyphFits: true,
+            })
             await shoot(`short-${layout}`)
+            const menu = header.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: '重命名', exact: true }) })
+            for (const [edge, y] of titleGeometry.edges.entries()) {
+              await page.mouse.move(titleGeometry.x, y)
+              await expect.poll(() => title.evaluate(element => element.matches(':hover'))).toBe(true)
+              const hit = await title.evaluate((element, point) => element.contains(document.elementFromPoint(point.x, point.y)), {
+                x: titleGeometry.x,
+                y,
+              })
+              expect(hit).toBe(true)
+              await page.mouse.click(titleGeometry.x, y)
+              await menu.waitFor()
+              expect(await title.getAttribute('aria-expanded')).toBe('true')
+              expect(await titleBackground()).not.toBe(atRest)
+              if (edge === 0) await record('menu-open')
+              await page.keyboard.press('Escape')
+              await menu.waitFor({ state: 'hidden' })
+              expect(await title.getAttribute('aria-expanded')).toBe('false')
+              await expect.poll(() => title.evaluate(element => element === document.activeElement)).toBe(true)
+            }
+            await page.mouse.click(1, 1)
+            await title.hover()
+            await pencil.hover()
+            expect(await title.evaluate(element => element.matches(':focus-visible'))).toBe(false)
+            await expect.poll(pencilOpacity).toBe('1')
+            await expect.poll(titleBackground).toBe(atRest)
+            await expect
+              .poll(() => pencil.evaluate(element => getComputedStyle(element, '::before').backgroundColor))
+              .not.toBe('rgba(0, 0, 0, 0)')
+            await record('pencil-hover')
             await page.mouse.move(0, 0)
             await title.focus()
+            await record('title-focus')
             await page.keyboard.press('Tab')
             expect(await pencil.evaluate(element => element === document.activeElement)).toBe(true)
             await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
             expect(await checkLine(false)).toEqual(initial)
+            expect(await pencil.evaluate(element => element.matches(':focus-visible'))).toBe(true)
+            await record('pencil-focus')
             await page.keyboard.press('Enter')
             await field.waitFor()
             expect(await field.inputValue()).toBe(short)
@@ -576,6 +649,10 @@ describe('the shell', () => {
             await dialog.waitFor({ state: 'hidden' })
             await heading(short).waitFor()
             expect((await detail()).summary.title).toBe(short)
+            await header.locator('.topbar-crumb-button').focus()
+            await expect.poll(pencilOpacity).toBe('0')
+            await record('blur')
+            await title.hover()
             await pencil.click()
           }
           await field.fill(long)
@@ -601,6 +678,12 @@ describe('the shell', () => {
             await checkLine(true)
             await heading(long).hover()
             await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+            await pencil.click()
+            await field.waitFor()
+            expect(await field.inputValue()).toBe(long)
+            await dialog.getByRole('button', { name: '取消', exact: true }).click()
+            await dialog.waitFor({ state: 'hidden' })
+            expect((await detail()).summary.title).toBe(long)
           }
           await noHorizontalOverflow(page)
           await shoot(`long-${layout}`)

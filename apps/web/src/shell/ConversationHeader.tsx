@@ -493,10 +493,12 @@ export function SessionHeader({
         {summary && !frame && (
           <>
             <div className="topbar-title-line">
-              <h1 title={title}>
-                <TitleMenu title={title} sections={sessionMenu} />
-              </h1>
-              {onRename && <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />}
+              <div className="topbar-title-controls">
+                <h1 title={title}>
+                  <TitleMenu title={title} sections={sessionMenu} />
+                </h1>
+                {onRename && <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />}
+              </div>
             </div>
             <div className="topbar-session-meta">
               {(project || (summary.mode !== 'chat' && summary.cwd)) && (
