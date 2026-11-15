@@ -7,11 +7,98 @@ import { expect, it } from 'vitest'
 import type { TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { closeSettings, noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
+import { homeInput, returnFromHomeFocus } from './helpers/workbench.ts'
 
 const OUTPUT = 'test-results/palette'
 const LONG = Array.from({ length: 40 }, (_, line) => `第 ${line} 段说明，这里有一句普通的话用来撑开页面的高度。`).join('\n\n')
+
+it('applies appearance commands locally and reads the same choices back in settings', async () => {
+  const host = await startTestHost({ hostName: '验收电脑' })
+  const browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', colorScheme: 'light' })
+    const page = await context.newPage()
+    await enrollBrowser(page, host, { name: '外观命令验收' })
+    const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+    const codeCanvas = page.locator('.code-home > canvas.workbench-backdrop')
+    const input = homeInput(page)
+    const nonGet: Record<'baseline' | 'commands' | 'readback', string[]> = { baseline: [], commands: [], readback: [] }
+    let phase: keyof typeof nonGet = 'baseline'
+    const readSearch = 'POST /link/api/search'
+    const readAttachmentCapabilities = 'POST /link/api/attachments/capabilities'
+    const requestRoute = (request: { method(): string; url(): string }) => `${request.method()} ${new URL(request.url()).pathname}`
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.startsWith('/link/api/') && !['GET', 'HEAD'].includes(request.method()))
+        nonGet[phase].push(requestRoute(request))
+    })
+    const baselineCapabilities = page.waitForResponse(response => requestRoute(response.request()) === readAttachmentCapabilities)
+    await page.reload()
+    await connected(page)
+    await baselineCapabilities
+    await closeSettings(await openSettings(page))
+    phase = 'commands'
+    await codeCanvas.waitFor()
+    await input.fill('切换外观前保留的草稿')
+    await returnFromHomeFocus(page)
+    const attribute = (name: string) => page.locator('html').getAttribute(name)
+    for (const [query, label] of [
+      ['背景效果', '背景效果：关'],
+      ['动效', '动效：减弱'],
+      ['密度', '密度：紧凑'],
+    ] as const) {
+      await page.keyboard.press('Meta+k')
+      const search = query === '密度' ? page.waitForRequest(request => requestRoute(request) === readSearch) : undefined
+      await palette.getByRole('searchbox').fill(query)
+      const option = palette.getByRole('option', { name: label, exact: true })
+      await option.waitFor()
+      if (search) {
+        await search
+        await mkdir(OUTPUT, { recursive: true })
+        await page.screenshot({ path: `${OUTPUT}/appearance-density-1440-light.png`, animations: 'disabled' })
+      }
+      await option.click()
+      await palette.waitFor({ state: 'detached' })
+    }
+    await codeCanvas.waitFor({ state: 'detached' })
+    expect(await attribute('data-motion')).toBe('reduce')
+    expect(await attribute('data-density')).toBe('compact')
+    expect(await input.inputValue()).toBe('切换外观前保留的草稿')
+
+    phase = 'readback'
+    await page.reload()
+    await connected(page)
+    expect(await codeCanvas.count()).toBe(0)
+    expect(await attribute('data-motion')).toBe('reduce')
+    expect(await attribute('data-density')).toBe('compact')
+    expect(await input.inputValue()).toBe('切换外观前保留的草稿')
+    const settings = await openSettings(page)
+    await openSection(settings, '通用')
+    for (const [group, label] of [
+      ['背景效果', '关'],
+      ['动效', '减弱'],
+      ['密度', '紧凑'],
+    ] as const) {
+      const choice = settings.getByRole('radiogroup', { name: group, exact: true }).getByRole('radio', { name: label, exact: true })
+      await choice.waitFor()
+      expect(await choice.getAttribute('aria-checked')).toBe('true')
+    }
+    await closeSettings(settings)
+    await writeFile(`${OUTPUT}/appearance-non-get.json`, JSON.stringify(nonGet, null, 2))
+    expect(nonGet.baseline).toContain(readAttachmentCapabilities)
+    expect(nonGet.commands).toContain(readSearch)
+    // These two existing reads take their parameters in the POST body.
+    expect(
+      Object.values(nonGet)
+        .flat()
+        .filter(request => request !== readSearch && request !== readAttachmentCapabilities),
+    ).toEqual([])
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+})
 
 it.each([
   [390, 844, 'light', true],
