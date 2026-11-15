@@ -476,6 +476,7 @@ Host 约每 40ms 合并一次变化，把选中会话的 `task-state` 推送给�
 | `POST /agents/:id/catalogue`、`PUT /agents/:id/models` | `run` | 不开始会话读一次 Harness 的模型与选项 `{ auto?, model? }`，返回 `{ ran, catalogueRead }`；保存自己填写的模型 ID `{ models }`。见 [HARNESSES.md](./HARNESSES.md#开始前的选项) |
 | `POST /harnesses/:id/login-status`、`POST /harnesses/:id/logout`、`POST /harnesses/:id/login-terminal` | `run`；打开终端只在桌面端 | 登录状态 `{ status, label?, expiresAt? }`、请 Harness 退出登录、在这台电脑的终端里运行它的登录 `{ method?, terminal? }`：带 `terminal` 时在 Latch 自己的终端里（另需数据范围 `all`，见 [TERMINAL.md](./TERMINAL.md#登录命令)），不带时用默认终端。见 [HARNESSES.md](./HARNESSES.md#登录) |
 | `GET /enrollments` | 桌面端 `admin` | 仍在等待的登记及其指纹与系统表单的理由；以及会挡住新配对的完全访问会话。页面已不读取它，配对表单跟随 `GET /native/pairings/:id` |
+| `GET /native/info`、`POST /native/relays`、`DELETE /native/relay-requests/:id`、`DELETE /native/relays/:id` | 本机；写入需要 `admin`，添加需要本机确认 | 自建中继的状态、验证与移除。添加用 `{requestId, profile?}`；同号可以继续验证，存下注册回执前不签发新地址。配置不返回注册令牌或种子，见 [RELAY.md](RELAY.md) |
 | `POST /folder-grants` | 桌面端 `admin` | `{ nonce, expiresAt }`：一次添加文件夹的 nonce |
 | `POST /workspaces`、`POST /workspaces/:id/folders` | 桌面端 `admin` + 签名 | `{ nonce, via, paths, name? \| replace?, signature }`：添加项目（201）、加入或重新选择文件夹（200），返回 `{ workspace, refused }`；`POST /workspaces` 也接受 `{ nonce, via: 'session', sessionId, signature }`，把会话自己的文件夹存为项目（201） |
 | `PATCH /workspaces/:id` | `admin` | `{ name?, glyph?, order? }`：重命名、图标、文件夹顺序（第一个是主文件夹） |
@@ -539,7 +540,7 @@ Host 约每 40ms 合并一次变化，把选中会话的 `task-state` 推送给�
 | 在手机、其他电脑或本机浏览器上添加文件夹（包括 Host 端的目录浏览） | 不提供：加入文件夹就是授予权限，只在 Host 所在电脑上进行 |
 | 跟随移动或改名的文件夹（书签、按身份追踪），运行中会话的文件夹变化 | 未实现；Latch 不是 App Sandbox 构建，Electron 只为 Mac App Store 构建创建安全范围书签 |
 | 按设备或文件夹的项目授权、只读文件夹、按文件夹的 Standard 风险级别 | 未实现；设备权限对所有项目生效 |
-| 原生中继、端到端连接与推送通知 | Host 直连与中继已接入授权与会话；Mac 可生成二维码、管理只读与正文窗口，并移除已保存的中继。官方中继尚未部署，新增自建中继与地址目录的入口尚未实现；可安装手机 App 与推送尚未提供 |
+| 原生中继、端到端连接与推送通知 | Host 直连与中继已接入授权与会话；Mac 可生成二维码、管理正文窗口与[自建中继](RELAY.md)。新增地址目录的入口、官方中继、可安装手机 App 与推送尚未提供 |
 
 尚未在真机上验证：Host 进程遇到 macOS「隐私与安全性」（TCC）时的行为与提示、外接与网络卷上的「在访达中显示」、iCloud「桌面与文稿」文件夹的真实路径。
 

@@ -1,10 +1,11 @@
 import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { connect as connectHttp2, type ClientHttp2Session } from 'node:http2'
 import { join, resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { startRelay } from '@latch/relay'
+import type { NativeLinkInfo } from '@latch/protocol'
 import {
   connectRelayTunnel,
   connectNative,
@@ -148,24 +149,12 @@ it('pairs on the LAN only, then uses a private relay, and preserves recovery and
     },
   })
   cleanup.push(() => relay.close())
-  const dataDir = join(directory, 'data'),
-    nativeDir = join(dataDir, 'native')
-  await mkdir(nativeDir, { recursive: true, mode: 0o700 })
   const profile = {
     relayId: relayId.toString('hex'),
     url: `https://localhost:${relay.port}/`,
     spkiHash: createHash('sha256').update(tls.spki).digest('hex'),
     registrationKey: `lrt1.${token.toString('base64url')}`,
-    seeds: [`lrs1.${randomBytes(32).toString('base64url')}`, `lrs1.${randomBytes(32).toString('base64url')}`],
-    activeSlot: 0,
-    rotationDay: 0,
-    rotations: 0,
   }
-  await writeFile(
-    join(nativeDir, 'relays.json'),
-    JSON.stringify({ version: 1, generation: 0, discoveryKey: `lnd1.${randomBytes(32).toString('base64url')}`, profiles: [profile] }),
-    { mode: 0o600 },
-  )
   const pieces = Array.from({ length: 3 }, () => {
     let release!: () => void
     const promise = new Promise<void>(resolve => {
@@ -175,7 +164,7 @@ it('pairs on the LAN only, then uses a private relay, and preserves recovery and
   })
   const activity = vi.spyOn(PaddedStream.prototype, 'activity')
   const host = await startTestHost({
-    dataDir,
+    dataDir: join(directory, 'data'),
     workspaceRoot: join(directory, 'workspace'),
     native: { host: '127.0.0.1', port: 0 },
     nativeRelayCa: tls.cert,
@@ -212,6 +201,23 @@ it('pairs on the LAN only, then uses a private relay, and preserves recovery and
   expect(
     (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`localhost:${relay.port}`] } } })).status,
   ).toBe(200)
+  const add = { requestId: randomUUID(), profile }
+  const wrong = { requestId: randomUUID(), profile: { ...profile, registrationKey: `lrt1.${randomBytes(32).toString('base64url')}` } }
+  expect((await desktop.confirmed('native/relays', { method: 'POST', body: wrong })).status).toBe(503)
+  const pending = await desktop.json<NativeLinkInfo>('native/info')
+  expect(pending.relays).toEqual([])
+  expect(pending.pendingRelay).toEqual({ requestId: wrong.requestId, url: profile.url, canRetry: true })
+  expect(JSON.stringify(pending).includes(wrong.profile.registrationKey)).toBe(false)
+  expect(relay.status().routes).toBe(0)
+  expect((await desktop.request('native/relays', { method: 'POST', body: { ...wrong, profile } })).status).toBe(409)
+  expect((await desktop.request(`native/relay-requests/${wrong.requestId}`, { method: 'DELETE' })).status).toBe(200)
+  const installed = await desktop.confirmed('native/relays', { method: 'POST', body: add })
+  expect(installed.status).toBe(201)
+  const installedInfo = (await installed.json()) as NativeLinkInfo
+  expect(installedInfo.pendingRelay).toBeUndefined()
+  expect(installedInfo.relays[0]).toMatchObject({ relayId: profile.relayId, url: profile.url })
+  expect(JSON.stringify(installedInfo).includes(profile.registrationKey)).toBe(false)
+  expect((await desktop.request('native/relays', { method: 'POST', body: add })).status).toBe(200)
   host.presence.mode = 'manual'
   await vi.waitFor(() => expect(relay.status().routes).toBe(3), { timeout: 3000 })
   expect(relay.status().connections).toBe(1)

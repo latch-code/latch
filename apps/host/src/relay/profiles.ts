@@ -60,6 +60,15 @@ const profile = relayProfileInput.omit({ registrationKey: true }).extend({
   /** Compiled in (`official.ts`); no UI edits it, and it runs only while a phone is paired. */
   builtIn: z.literal(true).optional(),
 })
+const receiptSchema = z.strictObject({
+  requestId: z.uuid(),
+  requestHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  cancelled: z.literal(true).optional(),
+})
+const pendingRelaySchema = receiptSchema.omit({ cancelled: true }).extend({
+  deviceId: z.string().min(1).max(128),
+  profile: profile.omit({ builtIn: true }),
+})
 const schema = z.strictObject({
   version: z.literal(1),
   generation: z.int().nonnegative(),
@@ -72,16 +81,15 @@ const schema = z.strictObject({
   direct: nativeDirectSchema.nullable().optional(),
   directory: directoryConfigSchema.nullable().optional(),
   directoryFloor: directoryFloorSchema.optional(),
-  configReceipts: z
-    .array(z.strictObject({ requestId: z.uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/u) }))
-    .max(32)
-    .optional(),
+  configReceipts: z.array(receiptSchema).max(32).optional(),
+  pendingRelay: pendingRelaySchema.optional(),
   profiles: z
     .array(profile)
     .max(6)
     .refine(items => new Set(items.map(item => item.relayId)).size === items.length),
 })
 export type RelayProfile = z.infer<typeof profile>
+export type PendingRelay = z.infer<typeof pendingRelaySchema>
 type State = z.infer<typeof schema>
 export function secretBytes(value: string): Buffer {
   return Buffer.from(value.slice(value.indexOf('.') + 1), 'base64url')
@@ -139,6 +147,83 @@ export class RelayProfiles {
   configReceipt(requestId: string): string | undefined {
     return this.state.configReceipts?.find(item => item.requestId === requestId)?.requestHash
   }
+  relayReceipt(requestId: string): z.infer<typeof receiptSchema> | undefined {
+    return this.state.configReceipts?.find(item => item.requestId === requestId)
+  }
+  assertNewRelay(input: Pick<RelayProfileInput, 'relayId' | 'url'>): void {
+    if (this.state.profiles.some(profile => profile.relayId === input.relayId || profile.url === input.url))
+      throw new AppError(409, 'native-relay-duplicate', '每个中继节点只能添加一次。')
+    if (this.state.profiles.filter(profile => !profile.builtIn).length >= 4)
+      throw new AppError(409, 'native-relay-limit', '最多添加四个自建中继。')
+  }
+  /** Save the exact route seed before REGISTER, so replay after a crash uses the same relay resources. */
+  reserveRelay(
+    input: RelayProfileInput,
+    request: Omit<PendingRelay, 'profile'>,
+    base: string,
+    authorize: () => void,
+  ): Promise<PendingRelay> {
+    return this.change(draft => {
+      authorize()
+      this.checkBase(base)
+      this.assertNewRelay(input)
+      if (draft.configReceipts?.some(receipt => receipt.requestId === request.requestId))
+        throw new AppError(409, 'native-config-changed', '手机连接配置已变化，请查询原请求。')
+      if (draft.pendingRelay) {
+        const current = draft.pendingRelay
+        if (current.requestId === request.requestId && current.requestHash === request.requestHash && current.deviceId === request.deviceId)
+          return current
+        throw new AppError(409, 'native-relay-pending', '请先继续或放弃未确认的中继。')
+      }
+      const { registrationKey, ...publicFields } = input
+      return (draft.pendingRelay = {
+        ...request,
+        profile: {
+          ...publicFields,
+          ...(registrationKey ? { registrationKey } : {}),
+          seeds: [secret('lrs1'), secret('lrs1')],
+          activeSlot: 0,
+          rotationDay: 0,
+          rotations: 0,
+        },
+      })
+    })
+  }
+  installRelay(pending: PendingRelay, base: string, authorize: () => void): Promise<void> {
+    return this.change(draft => {
+      authorize()
+      this.checkBase(base)
+      this.assertNewRelay(pending.profile)
+      if (draft.pendingRelay?.requestId !== pending.requestId || draft.pendingRelay.requestHash !== pending.requestHash)
+        throw new AppError(409, 'native-relay-cancelled', '这次中继添加已放弃。')
+      draft.profiles.push(draft.pendingRelay.profile)
+      delete draft.pendingRelay
+      this.advanceConfiguration(draft, { requestId: pending.requestId, requestHash: pending.requestHash })
+    })
+  }
+  cancelRelay(requestId: string, authorize: () => void): Promise<boolean> {
+    return this.change(draft => {
+      authorize()
+      if (draft.pendingRelay?.requestId !== requestId) return false
+      this.keepReceipt(draft, { requestId, requestHash: draft.pendingRelay.requestHash, cancelled: true })
+      delete draft.pendingRelay
+      return true
+    })
+  }
+  private checkBase(expectedHash?: string): void {
+    if (expectedHash !== undefined && this.configHash() !== expectedHash)
+      throw new AppError(409, 'native-config-changed', '手机连接配置已变化，请刷新后重试')
+  }
+  private keepReceipt(draft: State, receipt: z.infer<typeof receiptSchema>): void {
+    draft.configReceipts = [...(draft.configReceipts ?? []).filter(item => item.requestId !== receipt.requestId), receipt].slice(-32)
+  }
+  private advanceConfiguration(draft: State, receipt?: z.infer<typeof receiptSchema>): void {
+    if ((draft.configRevision ?? 0) >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接配置代次已耗尽')
+    if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
+    draft.configRevision = (draft.configRevision ?? 0) + 1
+    draft.generation++
+    if (receipt) this.keepReceipt(draft, receipt)
+  }
   private change<Result>(edit: (draft: State) => Result): Promise<Result> {
     const operation = this.tail.then(async () => {
       const draft = this.snapshot(),
@@ -171,15 +256,10 @@ export class RelayProfiles {
       .refine(items => new Set(items.map(item => item.relayId)).size === items.length)
       .parse(input)
     return this.change(draft => {
-      if (expectedHash !== undefined && this.configHash() !== expectedHash)
-        throw new AppError(409, 'native-config-changed', '手机连接配置已变化，请刷新后重试')
+      this.checkBase(expectedHash)
       draft.direct = direct === null ? null : nativeDirectSchema.parse(direct)
       if (directory !== undefined) draft.directory = directory === null ? null : directoryConfigSchema.parse(directory)
-      if ((draft.configRevision ?? 0) >= Number.MAX_SAFE_INTEGER)
-        throw new AppError(503, 'native-generation-exhausted', '连接配置代次已耗尽')
-      draft.configRevision = (draft.configRevision ?? 0) + 1
-      if (receipt)
-        draft.configReceipts = [...(draft.configReceipts ?? []).filter(item => item.requestId !== receipt.requestId), receipt].slice(-32)
+      this.advanceConfiguration(draft, receipt)
       const builtIn = draft.profiles.filter(item => item.builtIn)
       const custom = checked.map(item => {
         const previous = draft.profiles.find(old => old.relayId === item.relayId)
@@ -201,8 +281,6 @@ export class RelayProfiles {
         }
       })
       draft.profiles = [...builtIn, ...custom]
-      if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
-      draft.generation++
     })
   }
   /** Brings the persisted built-in relays in line with the compiled list. Their seeds survive, and only they change. */
