@@ -346,7 +346,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `auth/offline-enrollments.json` | 未使用的离线连接码哈希 |
 | `audit/audit.jsonl` | 哈希链审计记录 |
 | `policy.json` | 本机安全策略 |
-| `providers.json` | 模型服务、密钥及其绑定的源与路径（0600，不进入时间机器备份） |
+| `providers.json` | 模型服务、密钥及其绑定的源与路径，每个模型的「出错时改用」（`fallbacks`）与服务的「同时请求」上限（`maxConcurrent`）（0600，不进入时间机器备份）；项目的「默认模型」在 `settings.json` 的 `workspaces[].defaultModel`；改动「出错时改用」写审计 `provider.fallbacks.changed`，两者都不计入服务的执行修订；服务的健康状态只在内存（[调度](MODEL-GATEWAY.md#调度)） |
 | `mcp/servers.json`、`mcp/secrets.json` | Latch 的 MCP 服务器定义与它们变量、远程地址请求头的值（目录 0700、文件 0600、strict，不进入时间机器备份），见 [MCP.md](./MCP.md) |
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义、环境变量与 startedHash（0600，不进入时间机器备份） |
 | `sessions-meta.json` | 会话标题覆盖、置顶、归档，会话所属的项目，以及 Host 为会话新建的文件夹名或工作树（位置与分支，见 [BRANCHES.md](BRANCHES.md#新建工作树)），以及交付绑定的 PR，接入的来源（`imported`，见 [HARNESSES.md](HARNESSES.md#接入已有会话)），以及审批决定、取消与交付（提交、推送、创建 PR，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#回执与结果未知)）的回执 |
