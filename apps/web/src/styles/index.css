@@ -19,6 +19,7 @@
 @import './changes.css' layer(app);
 @import './delivery.css' layer(app);
 @import './composer.css' layer(app);
+@import './codex-team.css' layer(app);
 @import './phone.css' layer(app);
 @import './phone-sessions.css' layer(app);
 @import './phone-conversation.css' layer(app);
