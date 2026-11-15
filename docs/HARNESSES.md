@@ -9,6 +9,16 @@ sources:
 
 Latch 用 [Agent Client Protocol](https://agentclientprotocol.com)（ACP v1）驱动外部 Agent；Agent 自己有官方的机器协议时直连它（见「直连优先」）：Codex 用它的 app-server，pi 用它的 RPC 模式。每个启用的 Agent 定义成为一个 HarnessDriver，与内置 `standard` 并列出现在新会话的 Harness 选择器中。实现是包 `@latch/harness-acp`（`packages/harness-acp/`，只有 Host 依赖它）；浏览器可见的预设（命令、参数、许可证、安装提示）位于 `packages/protocol/src/agent-presets.ts`，只在 Host 上使用的权限配置位于 `packages/harness-acp/src/profiles/`（每个预设一个文件）。整体架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
+## 不修改原 CLI 配置
+
+直连与 ACP 接入都不得为同步会话、切换模型、权限或工具接线改写用户原有的 CLI 全局或项目配置，不向其中注册 hooks，不修改 shell 启动文件、替换命令或创建全局自动启动入口。界面中的 Latch 选项保存到 Host 自己的配置；需要传给 Agent 的值优先使用官方会话请求或进程参数。确需文件时只写 Latch 管理的独立目录，不把用户原配置复制成可写镜像，也不复制凭据。
+
+通过进程参数加载的适配扩展仅在 Latch 启动的该进程中生效；私有配置目录不等于 OS 沙箱。退出、启动失败和恢复不得把适配逻辑注册回原 CLI，卸载应用后留下的 Latch 数据也不得让独立 CLI 继续加载这些逻辑。
+
+不能仅因 Latch 没有直接写文件就判定没有污染：模型、思考档位和权限的 setter 也要核对受支持上游版本是否会持久修改全局默认。存在该副作用时改用官方非持久化接口或独立配置入口；不能干净接入的能力明确不提供，不用先写全局配置再尝试恢复的办法。用户在 CLI 自己发起的登录、会话记录及正常工作产物不属于 Latch 的配置覆盖。
+
+回归使用临时 HOME、项目和假 Agent，检查启动、切换、退出、失败恢复前后原配置与 hooks 哨兵文件不变，并核对只有 Latch 管理的私有目录产生适配文件。真实 CLI 行为仍须单列证据，夹具不能替代它。
+
 ## 权限级别：完全访问（L3）
 
 ACP Agent 是本机运行的可信代码，Latch 不给它加操作系统沙箱，也不代理它的网络。因此每个 ACP 会话都是完全访问（L3）：
