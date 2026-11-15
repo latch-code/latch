@@ -12,7 +12,7 @@ describe('saved projects', () => {
   let host: TestHost
   let browser: Browser
   beforeAll(async () => {
-    host = await startTestHost()
+    host = await startTestHost({ hostName: '验收电脑' })
     browser = await chromium.launch(browserLaunchOptions())
   })
   afterAll(async () => {
@@ -123,6 +123,8 @@ describe('saved projects', () => {
         await group.waitFor()
         await desktop.json(`workspaces/${project.id}`, { method: 'PATCH', body: { glyph: 'pen-tool' } })
         await group.locator('.project-group-heading svg.lucide-pen-tool').waitFor()
+        await mkdir('test-results/projects', { recursive: true })
+        await page.screenshot({ path: `test-results/projects/glyph-${width}-${theme}.png`, animations: 'disabled' })
         await group.getByRole('button', { name: `项目 ${width} 的项目操作`, exact: true }).click()
         await page.getByRole('menuitem', { name: '重命名', exact: true }).click()
         await group.getByLabel('项目名称', { exact: true }).fill(`服务 ${width}`)
@@ -148,7 +150,6 @@ describe('saved projects', () => {
         expect(
           (await desktop.json<{ workspaces: WorkspaceInfo[] }>('workspaces')).workspaces.find(item => item.id === project.id)?.path,
         ).toBe(await realpath(paths[1]!))
-        await mkdir('test-results/projects', { recursive: true })
         await page.screenshot({ path: `test-results/projects/editor-${width}-${theme}.png`, animations: 'disabled' })
         await closeSettings(settings)
         // A missing directory remains a project with its reason after a fresh snapshot.

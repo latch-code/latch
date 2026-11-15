@@ -58,7 +58,7 @@ describe('sidebar rows', () => {
   ]
 
   beforeAll(async () => {
-    host = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web') })
+    host = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'), hostName: '验收电脑' })
     browser = await chromium.launch(browserLaunchOptions())
     const owner = await host.enroll({ listener: 'unix' })
     realId = (
