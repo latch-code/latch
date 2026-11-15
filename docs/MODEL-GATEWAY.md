@@ -90,10 +90,13 @@ Responses 的文字增量与最终内容前缀、输出项身份和索引逐项�
 | DeepSeek Harness | 至少 0.2.2-rc.1；私有 Cordis patch 配置 llm provider、ACP 与默认模型；四种同协议服务 |
 | Claude Agent | 适配器实际运行的 Claude Code 至少 2.1.318；Anthropic 同协议服务与实验性 Chat、Responses 转换；官方环境变量控制路由、模型发现与子进程凭据清理 |
 | pi | 经网关至少 1.5.0；私有扩展调用官方 `registerProvider`，只在当前进程注册模型；四种同协议服务 |
+| Qwen Code | 实验性，经网关至少 0.26.8；`QWEN_CODE_SYSTEM_SETTINGS_PATH` 指向会话私有系统设置，`modelProviders` 条目用 `envKey: LMG_TOKEN`；Chat、Responses、Anthropic 同协议服务；没有子 Agent |
+| goose | 实验性，经网关至少 1.57.0；只用它文档里的环境变量，凭据在它的 provider 规定的 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`；Chat、Responses、Anthropic 同协议服务 |
+| Grok Build | 实验性，至少 1.0.77；`GROK_HOME` 指向会话私有的家目录，`config.toml` 里每个服务模型一个自定义模型，`env_key = "LMG_TOKEN"`；Chat、Responses、Anthropic 同协议服务 |
 
-Qwen Code 与 goose 的接线尚未实现，不在模型菜单中承诺转发。Cursor 与未知自定义命令只用自己的模型。订阅登录不进入网关；使用 Harness 自己的登录时仍由它原生处理。
+Antigravity 与 Cursor 不接受别人的模型服务地址，只用自己的模型；未知的自定义命令同样。订阅登录不进入网关。**经 Latch 的会话不需要 Harness 自己的登录**：上表每一行都在空的临时 HOME 下、不带任何登录，对本地假服务真实跑通过一轮（Codex 0.167.0、pi 1.5.0、OpenCode 2.2.6、DeepSeek Harness 0.2.2-rc.1 各一种协议，Qwen Code 0.26.8、goose 1.57.0、Grok Build 1.0.77 各三种协议；`apps/host/test/gateway-no-login.live.test.ts`，按 `LATCH_NO_LOGIN_<ID>` 指名程序才运行）；Claude Agent 见它自己的一节。使用 Harness 自己的模型时仍由它原生处理，要它自己的登录。
 
-Profile 的 launch 交付统一返回环境变量、参数、私有文件与公开的会话 metadata；文件以 0600 原子替换，只能写地址、模型、公开配置和变量名，不能含网关令牌。令牌只由 runtime 注入允许的环境变量。启动指纹覆盖 profile 版本、交法、变量名及参数/文件/会话模板版本，不含临时端口或令牌。新进程仍在全部异步准备后复查命令、项目与授权；准备失败会撤销已经创建的凭据。模式换档参数、权限插件与网关参数共同传入。网关声明最低版本时，初始化后还核对 Agent 报告的版本；没有协议版本报告时取官方命令的版本读数，两者都无法确认就拒绝开始。dsh 的 ACP 固定报告应用内部版本 0.0.1，与发行版本无关，所以它只接受已核对的官方命令版本证据。自定义包装命令不能靠跳过官方版本查询绕过网关门槛；普通原生模型路线保持原有版本策略。
+Profile 的 launch 交付统一返回环境变量、参数、私有文件与公开的会话 metadata；文件以 0600 原子替换，只能写地址、模型、公开配置和变量名，不能含网关令牌。令牌只由 runtime 注入允许的环境变量（profile 的 `tokenEnv`，或按协议的 `tokenEnvByWire`：goose 的 provider 规定了变量名）；profile 写出没有列在 `envNames` 里的变量时拒绝启动。启动指纹覆盖 profile 版本、交法、变量名及参数/文件/会话模板版本，不含临时端口或令牌。新进程仍在全部异步准备后复查命令、项目与授权；准备失败会撤销已经创建的凭据。模式换档参数、权限插件与网关参数共同传入。网关声明最低版本时，初始化后还核对 Agent 报告的版本；没有协议版本报告时取官方命令的版本读数，两者都无法确认就拒绝开始。dsh 的 ACP 固定报告应用内部版本 0.0.1，与发行版本无关，所以它只接受已核对的官方命令版本证据。自定义包装命令不能靠跳过官方版本查询绕过网关门槛；普通原生模型路线保持原有版本策略。
 
 Codex 在开线程和恢复线程前，以相同 cwd 调用官方 `config/read`，只投影有效的命令环境过滤规则。旧 exclude/include_only 与新 filters 保持原表示，只额外排除 LMG_TOKEN；大小写冲突、混合表示、畸形或读取失败均拒绝开线程。不复制 set 或其他配置值，不读写 Codex 私有文件。规则通过线程 config 覆盖，既有规则不会被启动参数的数组替换。每次 turn/start 仍给出当前模型与权限。经网关的模型列表取服务声明，允许 Codex 原生目录之外的模型；导入历史仍经 thread/list/read，并包含自定义 provider 的线程。
 
@@ -108,6 +111,37 @@ Codex 经网关时，思考的「默认」指模型服务默认；它自己的 `
 明确选择随已有会话 config 持久化，恢复后优先于 Codex 的旧配置，并在实际下一轮传入。运行中选择只保存下一轮意图，不能改当前工具循环的绑定；普通提示或原生命令真正开始时才更新。换模型清掉原模型选择。原生命令的上下文核对仍比较 Codex 实际设置，尚未应用的显式改档不能用 compact 绕过。
 
 工具与原生能力仍由 Codex 决定。0.167 的目录外模型使用它自己的后备描述，不提供独立的 custom apply_patch；它仍可沿原生命令工具执行 apply_patch。Latch 不改模型 ID 来套用另一个型号的能力，不把后备描述中的容量当作服务声明。可直接使用 Responses 的服务优先透传，不能把某一家服务固定视为必须转换。
+
+### Qwen Code
+
+以下每一条都出自 Qwen Code 的公开源码与文档（0.26.8 与 0.27.3 两个版本里都核对过）；0.26.8 在没有登录的临时 HOME 下经三种协议各跑通一轮。没有对真实服务、带工具跑过，所以仍标「实验性」。
+
+- **系统设置最后合并。** 路径由官方的 `QWEN_CODE_SYSTEM_SETTINGS_PATH` 指定（`docs/users/configuration/settings.md`）；合并顺序是系统默认、用户、项目、系统设置，后者覆盖前者（`packages/cli/src/config/settings.ts` 的 `mergeSettings`）。Latch 每次启动在会话私有目录原子写入 0600 的设置文件，文件不含凭据。
+- **列表整体替换，空列表也是。** 合并按键递归，数组只有声明了 `CONCAT`、`UNION` 的才拼接，其余由后者替换（`packages/cli/src/utils/deepMerge.ts`）；`modelProviders` 以下没有声明合并策略（`settingsSchema.ts`，`getMergeStrategyForPath` 对它的子键返回空）。所以文件写出每个内置协议键：`openai`、`anthropic`、`gemini`、`vertex-ai` 与仍可读的旧键 `openai-responses`。所选协议的列表是这个服务的模型（`id`、`baseUrl`、`envKey: "LMG_TOKEN"`，OpenAI 的两种协议用逐项 `wireApi` 区分，服务声明能看图的带 `generationConfig.modalities.image`），其余是空列表，这个人在这些键下的条目在这个进程里都不存在。
+- **`.env` 改不了条目的地址与密钥。** 逐字段的顺序是所选 `modelProviders` 条目、命令行、环境变量、设置（`packages/core/src/models/modelConfigResolver.ts`）：条目自己的 `baseUrl` 与 `envKey` 排在 `OPENAI_BASE_URL` 这类变量之前，项目或家目录的 `.env` 也只补没设的变量。`model.name` 与 `model.baseUrl` 同样写在系统设置里。
+- **辅助模型与档位。** `fastModel`、`visionModel`、`compactionModel`、`advisorModel`、`imageModel`、`voiceModel`、`modelFallbacks` 写成空串（它们的默认值，`settingsSchema.ts`），`agents.builtin.exploreModel` 写 `inherit`（默认值）。`agents.modelGrades` 是浅合并，删不掉这个人的键，所以写 `agents.allowedGrades: []`：它是文档化的白名单，空白名单下没有可用档位（`packages/core/src/subagents/subagent-manager.ts` 的 `getAvailableModelGrades`）。
+- **删不掉的两条路，和因此关掉的子 Agent。** 这个人自己起名的服务 ID（经 `providerProtocol` 映射，按键合并，系统设置只能加不能删）和内置的 Qwen OAuth 模型（文档写明不能覆盖）没有官方办法从这个进程里去掉。会话的主模型选不到它们（见下一条），但子 Agent 的定义文件可以用 `model:` 点名任何模型并为它另建请求通道（`subagent-manager.ts` 的 `resolveModelRoute`）。所以文件写 `permissions.deny: ["Agent"]`：规则名是 Agent 工具在权限规则里的名字（`packages/core/src/permissions/rule-parser.ts`），各层的拒绝规则取并集（`settingsSchema.ts`），这个人的设置不能把它拿回去。经 Latch 的 Qwen Code 会话因此没有子 Agent，内置的 Explore 也没有。
+- **主模型。** 模型值是 Qwen Code 的 ACP 自己的写法 `<模型>(<协议>)`（`packages/cli/src/utils/acpModelUtils.ts`）；`wireApi: "responses"` 的条目虽然写在 `openai` 列表里，却按它的实际协议列成 `<模型>(openai-responses)`（文档 `model-providers.md`；真实运行里见到，起初因此一个模型都选不到）；只有它实际报告的精确值才提供，同 ID 多条目时它改用不透明的 route ID，那样的模型不提供。换模型只走 `session/set_config_option`（`acpAgent.ts` 里它以 `persistDefault: false` 调用），并带 `_meta["qwen.session.modelPersistDefault"]: false`；报告旧式 `models` 的版本在经 Latch 的会话里不能换模型（501），因为 `session/set_model` 会写这个人的设置。Latch 不调用 `authenticate`。
+- **没有改动的。** 这个人的钩子（`prompt` 钩子可以带 `model`）、`tools.webSearch.model`、`batch.model`、实验性的 `experimental.liveVoice` 与 `omni` 各有自己的条目或地址，是这个人另外配置的功能，不是这个会话的模型路线；Latch 没有关掉钩子，因为其中可能有这个人自己的防护。
+- **凭据。** 只在环境变量 `LMG_TOKEN`，发请求时按 `envKey` 读取；工具子进程继承它，见 [HARNESSES.md](HARNESSES.md#经-latch-使用模型服务)。
+
+### goose
+
+出自 goose 的公开源码与文档（1.57.0 与 1.59.0 两个版本里都核对过）；1.57.0 在没有登录的临时 HOME 下经三种协议各跑通一轮。
+
+- **只用环境变量，不需要登录。** goose 先读环境变量、再读配置文件；密钥先读环境变量、再读钥匙串（`crates/goose/src/config/base.rs` 的 `get_param`）。Latch 设 `GOOSE_PROVIDER` 与 `GOOSE_SUBAGENT_PROVIDER`（`openai` 或 `anthropic`）、`GOOSE_MODEL` 与 `GOOSE_SUBAGENT_MODEL`、`GOOSE_TOOLSHIM=false`（工具垫片会把回复发给这个人本机的解释模型）、`OPENAI_HOST`（不带版本的地址）与 `OPENAI_BASE_PATH`，或 `ANTHROPIC_HOST`；凭据由 runtime 放进 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。没有私有文件，参数不变。
+- **路径。** `OPENAI_BASE_PATH` 对 Responses 写 `v1/responses`，对 Chat 写 `/v1/chat/completions`：goose 把恰好等于默认值 `v1/chat/completions` 的路径当作「未指定」，再按模型名决定是否改走 Responses；带前导斜杠的同一地址算显式路径，固定为 Chat（`crates/goose-providers/src/openai.rs` 的 `should_use_responses_api`）。
+- **不传 `_meta.provider`。** `session/new` 带上它时，goose 用该服务的默认模型而不是 `GOOSE_MODEL`（`crates/goose/src/model_config.rs` 的 `resolve_provider_and_model_config`）：第一次真实运行里它因此去请求自己的默认模型，被网关拒绝。模型经 `model` 选项按会话设置；`provider` 选项在经 Latch 的会话里隐藏并拒绝设置。Latch 不调用 goose 的 `_goose/*` 配置方法。
+- **为什么是实验性。** `delegate` 工具启动子 Agent 时，服务按「配方的 `settings.goose_provider`、环境变量 `GOOSE_SUBAGENT_PROVIDER`、调用参数 `provider`」的顺序取（`crates/goose/src/agents/platform_extensions/summon.rs` 的 `resolve_provider_config`），带 `model` 的 agent 来源会把模型自己传的 `provider` 写进配方设置（同文件 `build_recipe_from_agent`），于是也排在环境变量之前；配方来自项目的 `.goose/recipes`、`.agents/recipes`、`GOOSE_RECIPE_PATH` 与家目录。没有文档化的设置能固定或关掉这一点：这样的子 Agent 用这个人在 goose 里另外配置的服务，按轮的核对发现不了。1.57.0 与 1.59.0 的源码里没有 lead/worker 与 planner 的设置（`GOOSE_LEAD_*`、`GOOSE_PLANNER_*` 在 1.59.0 全树无匹配）。
+- **凭据。** 变量名是 goose 规定的，工具子进程继承它，会读这些变量的工具可能把它发给真实厂商，见 [HARNESSES.md](HARNESSES.md#经-latch-使用模型服务)。
+
+### Grok Build
+
+出自官方文档 [docs.x.ai/build/settings](https://docs.x.ai/build/settings) 与 1.0.77 的一次真实运行，没有读它的源码。
+
+- **自定义模型只在用户配置里。** `[model."<id>"]` 写 `model`、`base_url`、`env_key` 与 `api_backend`（`chat_completions`、`responses`、`messages`），`[models]` 的 `default` 是会话模型，`web_search` 是它自己的网页搜索工具用的模型，也指向会话模型。配置在 `$GROK_HOME/config.toml`，`--help` 里没有另指配置文件的参数；项目的 `.grok/config.toml` 只管 MCP、插件与权限规则。
+- **会话私有的家。** Latch 把 `GROK_HOME` 指向会话私有目录，里面只有它写的 0600 `config.toml`（模型 ID 与地址按 TOML 字符串转义，凭据只写变量名 `LMG_TOKEN`）。这个人自己的 Grok 登录、钩子、插件、MCP 与托管配置都不在这个家里：没有登录，xAI 自己的模型在这里答不了，所以不经过网关的请求没有去处。Grok 的会话记录也写在这个目录，进程重启后凭它恢复，随 Latch 会话删除。
+- **真实运行里见到的。** Chat、Responses 与 Anthropic 各跑通一轮。它给会话起标题时用内置的 `grok-4.6` 向同一个地址发请求，网关拒绝（403），它改用截断的用户文字；启动时拉取 xAI 的模型目录因为没有登录而失败并重试，不影响会话。它对流的字段比别的客户端严：Chat 的块要有 `created`，Responses 的 `response` 要有 `created_at`（测试用的假服务原先没有，已补上；真实服务都有）。
 
 ### Claude Agent
 

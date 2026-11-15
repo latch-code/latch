@@ -9,6 +9,7 @@ import {
   nothingInstalled,
   projectFor,
   sameModel,
+  loginHarness,
   servicePick,
   startConfig,
   withLadderMode,
@@ -799,11 +800,11 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
 }
 
 export function SetupNotices({ shell }: { shell: ShellState }) {
-  const { catalog, access, owner, submission, block, setupTrigger, openSettings, refresh, chosenHarness } = shell
+  const { catalog, access, owner, submission, block, setupTrigger, openSettings, refresh, chosenHarness, choice } = shell
   return (
     <>
       <DraftLoginNotice
-        harness={chosenHarness?.status === 'ready' ? chosenHarness : undefined}
+        harness={loginHarness(catalog, chosenHarness, choice.config)}
         allowed={access.scopes.has('run')}
         terminal={catalog?.features?.loginTerminal === true}
       />

@@ -82,6 +82,11 @@ export interface HarnessCapabilities {
      */
     knownOnly?: true
     /**
+     * Through Latch, commands the harness runs inherit the session's gateway credential: it has no switch that keeps
+     * its environment from them. Clients say so beside 经 Latch. The credential is not a service's key.
+     */
+    credentialInherited?: true
+    /**
      * Latch does not forward this harness's requests to a model service and is not going to: it uses its own login and
      * models (a vendor's agent reached through its own route, or a command Latch knows nothing of). Clients say so
      * instead of calling the forwarding unfinished.

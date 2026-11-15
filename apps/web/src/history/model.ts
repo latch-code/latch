@@ -94,8 +94,8 @@ export type ListState =
 /** What the list area shows. */
 export type ListView =
   | { kind: 'loading' }
-  | { kind: 'empty'; otherFolders: number }
-  | { kind: 'rows'; rows: HistoryRow[]; otherFolders: number; truncated: boolean }
+  | { kind: 'empty'; otherFolders: number; withheld?: number }
+  | { kind: 'rows'; rows: HistoryRow[]; otherFolders: number; truncated: boolean; withheld?: number }
   | { kind: 'not-supported' }
   | { kind: 'login' }
   | { kind: 'failed'; message: string }
@@ -112,8 +112,11 @@ export function listView(state: ListState): ListView {
     return { kind: 'failed', message: state.message }
   }
   const { rows, otherFolders, truncated } = state.list
-  if (!rows.length) return { kind: 'empty', otherFolders }
-  return { kind: 'rows', rows, otherFolders, truncated }
+  // Sessions the Harness lists and Latch leaves alone; an older Host sends no count.
+  const count = state.list.withheld
+  const withheld = typeof count === 'number' && count > 0 ? { withheld: count } : {}
+  if (!rows.length) return { kind: 'empty', otherFolders, ...withheld }
+  return { kind: 'rows', rows, otherFolders, truncated, ...withheld }
 }
 
 /** Where a row's session started, relative to the project's primary folder: nothing for the folder itself. */

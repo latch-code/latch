@@ -6766,6 +6766,311 @@ describe('sessions on a model service through the gateway', () => {
     expect(lease!.closed).toBe(true)
   })
 
+  const QWEN = {
+    FAKE_ACP_CONFIG: 'options',
+    FAKE_ACP_MODES: 'plan,default,auto-edit,auto,yolo',
+    FAKE_ACP_INITIAL_MODE: 'default',
+    FAKE_ACP_CAPS: 'resume',
+    FAKE_ACP_GATEWAY: 'qwen',
+  }
+  const GOOSE = {
+    FAKE_ACP_CONFIG: 'options',
+    FAKE_ACP_MODES: 'chat,approve,smart_approve,auto',
+    FAKE_ACP_INITIAL_MODE: 'approve',
+    FAKE_ACP_CAPS: 'resume',
+    FAKE_ACP_GATEWAY: 'goose',
+    FAKE_ACP_VERSION: '1.57.0',
+  }
+
+  it('routes Qwen Code through private system settings over each protocol, the token in LMG_TOKEN alone', async () => {
+    for (const wire of ['chat-completions', 'responses', 'anthropic-messages'] as const) {
+      const auth = wire === 'anthropic-messages' ? 'anthropic' : 'openai'
+      const { fixture, models, stub, route } = await routed('qwen', QWEN, { providerId: 'svc', model: 'fake-model', wire })
+      let bridge = await fixture.open()
+      const own = await bridge.launchPreview!({ cwd: fixture.workspace })
+      const preview = await bridge.launchPreview!({ cwd: fixture.workspace, modelRoute: route })
+      // The fingerprint is made before any token or gateway address exists, from names and template versions.
+      expect(stub.leases).toHaveLength(0)
+      expect(preview.launchHash).not.toBe(own.launchHash)
+      expect((await bridge.launchPreview!({ cwd: fixture.workspace, modelRoute: route })).launchHash).toBe(preview.launchHash)
+      expect(preview.envNames).toEqual(expect.arrayContaining(['LMG_TOKEN', 'QWEN_CODE_SYSTEM_SETTINGS_PATH', 'NO_PROXY']))
+
+      const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+      let detail = await settled(bridge, sessionId)
+      expect(detail.summary.status).toBe('idle')
+      expect(assistants(detail).at(-1)?.text).toBe('model: from the service')
+      expect(systemText(detail)).not.toContain('没有经过 Latch')
+      const model = detail.config?.find(option => option.category === 'model')
+      // A Responses entry is in the `openai` list and is named by its effective protocol.
+      const listed = wire === 'responses' ? 'openai-responses' : auth
+      expect(model?.currentValue).toBe(`fake-model(${listed})`)
+      expect(model?.options.map(option => option.value)).toEqual([`fake-model(${listed})`, `fake-model-large(${listed})`])
+      await expect(bridge.setConfig!(sessionId, model!.id, 'fake-model-large(qwen-oauth)')).rejects.toMatchObject({ status: 400 })
+      await bridge.setConfig!(sessionId, model!.id, `fake-model-large(${listed})`)
+      await bridge.close()
+      bridge = await fixture.open()
+      await bridge.prompt(sessionId, 'model restored', rid())
+      detail = await settled(bridge, sessionId)
+      expect(assistants(detail).at(-1)?.text).toBe('model: from the service')
+      expect(models.requests.map(request => ({ model: request.model, wire: request.wire, key: request.key }))).toEqual([
+        { model: 'fake-model', wire, key: stub.leases[0]!.token },
+        { model: 'fake-model-large', wire, key: stub.leases[1]!.token },
+      ])
+
+      const log = await fixture.log()
+      // The model is set for the session alone, and never through the methods that write the person's settings.
+      const sets = received(log, 'session/set_config_option').filter(entry => entry.params?.configId === model!.id)
+      expect(sets.length).toBeGreaterThan(0)
+      for (const set of sets) expect(set.params?._meta).toEqual({ 'qwen.session.modelPersistDefault': false })
+      for (const method of ['session/set_model', 'authenticate']) expect(received(log, method)).toHaveLength(0)
+
+      const [agentEnv] = envOf(log)
+      const [lease] = stub.leases
+      expect(agentEnv!.LMG_TOKEN).toBe(lease!.token)
+      expect(Object.entries(agentEnv!).filter(([, value]) => value.includes(lease!.token))).toEqual([['LMG_TOKEN', lease!.token]])
+      const path = agentEnv!.QWEN_CODE_SYSTEM_SETTINGS_PATH!
+      expect(path.startsWith(fixture.tmpRoot)).toBe(true)
+      expect((await stat(path)).mode & 0o777).toBe(0o600)
+      const text = await readFile(path, 'utf8')
+      expect(text).not.toContain('lmg1.')
+      const settings = JSON.parse(text) as Record<string, any>
+      expect(settings.security.auth.selectedType).toBe(auth)
+      expect(settings.modelProviders[auth].map((entry: { envKey: string }) => entry.envKey)).toEqual(['LMG_TOKEN', 'LMG_TOKEN'])
+      for (const name of ['fastModel', 'visionModel', 'compactionModel', 'advisorModel', 'modelFallbacks']) expect(settings[name]).toBe('')
+      // The token is in no argument, no stored record and nothing the session shows.
+      for (const held of stub.leases) {
+        expect(JSON.stringify(log.filter(entry => entry.event === 'start'))).not.toContain(held.token)
+        expect(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')).not.toContain(held.token)
+        expect(JSON.stringify(detail)).not.toContain(held.token)
+      }
+      await bridge.close()
+      expect(stub.leases.every(held => held.closed)).toBe(true)
+    }
+  })
+
+  it('refuses a Qwen Code older than the checked version before it gets a token, and leaves its own models usable', async () => {
+    const { fixture, models, stub, route } = await routed(
+      'qwen',
+      { ...QWEN, FAKE_ACP_VERSION: '0.26.7' },
+      { providerId: 'svc', model: 'fake-model', wire: 'responses' },
+    )
+    const bridge = await fixture.open()
+    const native = await bridge.createTask({ prompt: 'echo native', requestId: rid() })
+    expect((await settled(bridge, native.sessionId)).summary.status).toBe('idle')
+    const attempted = await bridge.createTask({ prompt: 'model must not run', requestId: rid(), modelRoute: route })
+    const refused = await settled(bridge, attempted.sessionId)
+    expect(refused.summary.status).toBe('failed')
+    expect(systemText(refused)).toContain('0.26.8')
+    expect(models.requests).toHaveLength(0)
+    await bridge.close()
+    expect(stub.leases.every(lease => lease.closed)).toBe(true)
+  })
+
+  it('says so when a Qwen Code turn on a route answered without the gateway', async () => {
+    const { fixture, events, route } = await routed('qwen', QWEN, { providerId: 'svc', model: 'fake-model', wire: 'responses' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo elsewhere', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    expect(systemText(detail)).toContain('这一轮没有经过 Latch')
+    expect(detail.summary.modelRoute).toMatchObject({ bypassed: true })
+    expect(events).toContainEqual({ type: 'model-route-bypassed', sessionId })
+  })
+
+  it('leaves Qwen Code no route of the person’s own for a side call: other protocols, grades and subagents', async () => {
+    const elsewhere = await startFakeModels({ replies: [{ text: 'from their own service' }] })
+    cleanups.push(() => elsewhere.close())
+    const home = await mkdtemp(join(tmpdir(), 'latch-qwen-own-'))
+    cleanups.push(() => rm(home, { recursive: true, force: true }))
+    const own = (id: string) => ({ id, baseUrl: elsewhere.origin, envKey: 'OWN_SERVICE_KEY' })
+    // What a person may have in their own Qwen Code settings, as the fake merges them under the system settings.
+    await writeFile(
+      join(home, 'settings.json'),
+      JSON.stringify({
+        security: { auth: { selectedType: 'anthropic' } },
+        model: { name: 'own-claude', baseUrl: elsewhere.origin },
+        modelProviders: {
+          openai: [
+            { ...own('fake-model'), baseUrl: `${elsewhere.origin}/v1` },
+            { ...own('own-gpt'), baseUrl: `${elsewhere.origin}/v1` },
+          ],
+          anthropic: [own('own-claude')],
+          gemini: [own('own-gemini')],
+          'vertex-ai': [own('own-vertex')],
+          'openai-responses': [{ ...own('own-legacy'), baseUrl: `${elsewhere.origin}/v1` }],
+        },
+        fastModel: 'own-claude',
+        modelFallbacks: 'own-gpt',
+        agents: { modelGrades: { smart: 'anthropic:own-claude' }, builtin: { exploreModel: 'anthropic:own-claude' } },
+        permissions: { deny: ['Bash(rm -rf *)'] },
+      }),
+    )
+    const { fixture, models, stub, route } = await routed(
+      'qwen',
+      { ...QWEN, FAKE_QWEN_USER_SETTINGS: join(home, 'settings.json'), OWN_SERVICE_KEY: 'own-service-key' },
+      { providerId: 'svc', model: 'fake-model', wire: 'responses' },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model main', requestId: rid(), modelRoute: route })
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('model: from the service')
+    for (const [selector, answer] of [
+      // The grade is theirs, and no grade is allowed.
+      ['grade:smart', 'no such grade'],
+      // Their lists under every built-in key were replaced: by the service's models, or by nothing.
+      ['anthropic:own-claude', 'no such model route'],
+      ['gemini:own-gemini', 'no such model route'],
+      ['vertex-ai:own-vertex', 'no such model route'],
+      ['openai-responses:own-legacy', 'no such model route'],
+      ['openai:own-gpt', 'no such model route'],
+      // And a subagent on the service's own model is still no subagent: the tool is denied, beside their own rule.
+      ['openai:fake-model', 'the Agent tool is denied'],
+    ] as const) {
+      await bridge.prompt(sessionId, `model side:${selector}`, rid())
+      expect(assistants(await settled(bridge, sessionId)).at(-1)?.text, selector).toBe(`side: ${answer}`)
+    }
+    expect(elsewhere.requests).toEqual([])
+    expect(models.requests.map(request => request.key)).toEqual([stub.leases[0]!.token])
+    const [agentEnv] = envOf(await fixture.log())
+    const settings = JSON.parse(await readFile(agentEnv!.QWEN_CODE_SYSTEM_SETTINGS_PATH!, 'utf8')) as Record<string, any>
+    expect(settings.modelProviders).toMatchObject({ anthropic: [], gemini: [], 'vertex-ai': [], 'openai-responses': [] })
+    expect(settings.agents).toEqual({ builtin: { exploreModel: 'inherit' }, allowedGrades: [] })
+    expect(settings.permissions).toEqual({ deny: ['Agent'] })
+  })
+
+  it('routes goose by its own variables over Chat, Responses and Anthropic, the token under the name its provider reads', async () => {
+    for (const wire of ['chat-completions', 'responses', 'anthropic-messages'] as const) {
+      const provider = wire === 'anthropic-messages' ? 'anthropic' : 'openai'
+      const tokenName = wire === 'anthropic-messages' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'
+      const { fixture, models, stub, route } = await routed('goose', GOOSE, { providerId: 'svc', model: 'fake-model', wire })
+      let bridge = await fixture.open()
+      const own = await bridge.launchPreview!({ cwd: fixture.workspace })
+      const preview = await bridge.launchPreview!({ cwd: fixture.workspace, modelRoute: route })
+      expect(stub.leases).toHaveLength(0)
+      expect(preview.launchHash).not.toBe(own.launchHash)
+      expect(preview.envNames).toEqual(expect.arrayContaining([tokenName, 'GOOSE_PROVIDER', 'GOOSE_MODEL', 'NO_PROXY']))
+      expect(preview.envNames).not.toContain(wire === 'anthropic-messages' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY')
+
+      const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+      let detail = await settled(bridge, sessionId)
+      expect(detail.summary.status).toBe('idle')
+      expect(assistants(detail).at(-1)?.text).toBe('model: from the service')
+      expect(systemText(detail)).not.toContain('没有经过 Latch')
+      const model = detail.config?.find(option => option.category === 'model')
+      expect(model?.currentValue).toBe('fake-model')
+      expect(model?.options.map(option => option.value)).toEqual(['fake-model', 'fake-model-large'])
+      // goose's own `provider` option would move the session to a service the person set up in goose.
+      expect(detail.config?.some(option => option.id === 'provider')).toBe(false)
+      await expect(bridge.setConfig!(sessionId, 'provider', 'ollama')).rejects.toMatchObject({ code: 'config-not-found' })
+      await bridge.setConfig!(sessionId, model!.id, 'fake-model-large')
+      await bridge.close()
+      bridge = await fixture.open()
+      await bridge.prompt(sessionId, 'model restored', rid())
+      detail = await settled(bridge, sessionId)
+      expect(assistants(detail).at(-1)?.text).toBe('model: from the service')
+      expect(models.requests.map(request => ({ model: request.model, wire: request.wire, key: request.key }))).toEqual([
+        { model: 'fake-model', wire, key: stub.leases[0]!.token },
+        { model: 'fake-model-large', wire, key: stub.leases[1]!.token },
+      ])
+
+      const log = await fixture.log()
+      // No provider on the session itself: goose would then start it on that provider's default model, not GOOSE_MODEL.
+      expect(received(log, 'session/new')[0]?.params).not.toHaveProperty('_meta')
+      // Nothing but ACP's own methods: goose's configuration methods write its config file.
+      expect(log.filter(entry => entry.event === 'received' && String(entry.method).startsWith('_goose/'))).toHaveLength(0)
+      const [agentEnv] = envOf(log)
+      const [lease] = stub.leases
+      expect(agentEnv).toMatchObject({
+        GOOSE_PROVIDER: provider,
+        GOOSE_MODEL: 'fake-model',
+        GOOSE_SUBAGENT_PROVIDER: provider,
+        GOOSE_SUBAGENT_MODEL: 'fake-model',
+        GOOSE_MODE: 'approve',
+        GOOSE_TOOLSHIM: 'false',
+        ...(provider === 'anthropic'
+          ? { ANTHROPIC_HOST: models.origin }
+          : { OPENAI_HOST: models.origin, OPENAI_BASE_PATH: wire === 'responses' ? 'v1/responses' : '/v1/chat/completions' }),
+      })
+      expect(Object.entries(agentEnv!).filter(([, value]) => value.includes(lease!.token))).toEqual([[tokenName, lease!.token]])
+      expect(agentEnv).not.toHaveProperty('GOOGLE_HOST')
+      for (const held of stub.leases) {
+        expect(JSON.stringify(log.filter(entry => entry.event === 'start'))).not.toContain(held.token)
+        expect(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')).not.toContain(held.token)
+        expect(JSON.stringify(detail)).not.toContain(held.token)
+      }
+      await bridge.close()
+      expect(stub.leases.every(held => held.closed)).toBe(true)
+    }
+  })
+
+  it('says so when a goose turn on a route answered without the gateway, and refuses a goose older than the checked version', async () => {
+    const { fixture, events, route } = await routed('goose', GOOSE, { providerId: 'svc', model: 'fake-model', wire: 'responses' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo elsewhere', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    expect(systemText(detail)).toContain('这一轮没有经过 Latch')
+    expect(events).toContainEqual({ type: 'model-route-bypassed', sessionId })
+    await bridge.close()
+
+    const older = await routed(
+      'goose',
+      { ...GOOSE, FAKE_ACP_VERSION: '1.56.9' },
+      { providerId: 'svc', model: 'fake-model', wire: 'responses' },
+    )
+    const second = await older.fixture.open()
+    const attempted = await second.createTask({ prompt: 'model must not run', requestId: rid(), modelRoute: older.route })
+    const refused = await settled(second, attempted.sessionId)
+    expect(refused.summary.status).toBe('failed')
+    expect(systemText(refused)).toContain('1.57.0')
+    expect(older.models.requests).toHaveLength(0)
+  })
+
+  it('routes Grok Build through custom models in a home of the session\u2019s own, the token in LMG_TOKEN alone', async () => {
+    for (const wire of ['chat-completions', 'responses', 'anthropic-messages'] as const) {
+      const { fixture, models, stub, route } = await routed(
+        'grok',
+        { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume', FAKE_ACP_GATEWAY: 'grok' },
+        { providerId: 'svc', model: 'fake-model', wire },
+      )
+      let bridge = await fixture.open()
+      const preview = await bridge.launchPreview!({ cwd: fixture.workspace, modelRoute: route })
+      expect(stub.leases).toHaveLength(0)
+      expect(preview.envNames).toEqual(expect.arrayContaining(['LMG_TOKEN', 'GROK_HOME', 'NO_PROXY']))
+      const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+      let detail = await settled(bridge, sessionId)
+      expect(detail.summary.status).toBe('idle')
+      expect(assistants(detail).at(-1)?.text).toBe('model: from the service')
+      const model = detail.config?.find(option => option.category === 'model')
+      expect(model?.currentValue).toBe('fake-model')
+      expect(model?.options.map(option => option.value)).toEqual(['fake-model', 'fake-model-large'])
+      await bridge.setConfig!(sessionId, model!.id, 'fake-model-large')
+      await bridge.close()
+      bridge = await fixture.open()
+      await bridge.prompt(sessionId, 'model restored', rid())
+      detail = await settled(bridge, sessionId)
+      expect(models.requests.map(request => ({ model: request.model, wire: request.wire, key: request.key }))).toEqual([
+        { model: 'fake-model', wire, key: stub.leases[0]!.token },
+        { model: 'fake-model-large', wire, key: stub.leases[1]!.token },
+      ])
+      const log = await fixture.log()
+      const [agentEnv] = envOf(log)
+      const [lease] = stub.leases
+      expect(Object.entries(agentEnv!).filter(([, value]) => value.includes(lease!.token))).toEqual([['LMG_TOKEN', lease!.token]])
+      // Its home is the session's own directory, and the configuration there names the key's variable only.
+      expect(agentEnv!.GROK_HOME!.startsWith(fixture.tmpRoot)).toBe(true)
+      const path = join(agentEnv!.GROK_HOME!, 'config.toml')
+      expect((await stat(path)).mode & 0o777).toBe(0o600)
+      const text = await readFile(path, 'utf8')
+      expect(text).not.toContain('lmg1.')
+      expect(text).toContain('env_key = "LMG_TOKEN"')
+      for (const held of stub.leases) {
+        expect(JSON.stringify(log.filter(entry => entry.event === 'start'))).not.toContain(held.token)
+        expect(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')).not.toContain(held.token)
+        expect(JSON.stringify(detail)).not.toContain(held.token)
+      }
+      await bridge.close()
+      expect(stub.leases.every(held => held.closed)).toBe(true)
+    }
+  })
+
   it("points Gemini CLI's helper calls and subagents at the session's model on a gateway route, changing nothing else", async () => {
     const { fixture, models, stub, route } = await routed('gemini', GEMINI, {
       providerId: 'gemini-svc',
@@ -7003,14 +7308,11 @@ describe('sessions on a model service through the gateway', () => {
   })
 
   it('refuses a route for a harness Latch cannot point at the gateway, or over a protocol it does not speak', async () => {
+    // Antigravity has a profile and no gateway delivery: it takes no model provider of another's.
     const { fixture, route } = await routed(
-      'goose',
-      { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'chat,approve,auto', FAKE_ACP_INITIAL_MODE: 'approve' },
-      {
-        providerId: 'svc',
-        model: 'fake-model',
-        wire: 'chat-completions',
-      },
+      'antigravity',
+      { FAKE_ACP_CONFIG: 'options' },
+      { providerId: 'svc', model: 'fake-model', wire: 'chat-completions' },
     )
     const bridge = await fixture.open()
     const refusal = { status: 400, code: 'model-route-unsupported' }

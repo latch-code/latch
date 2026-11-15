@@ -36,7 +36,7 @@ export async function openBridge(
   driver: HarnessDriver,
   paths: { dataDir: string; workspace: string; tmpRoot: string },
   cleanups: Cleanups,
-  host: Pick<HarnessHostOptions, 'toolGateway'> = {},
+  host: Pick<HarnessHostOptions, 'toolGateway' | 'projects' | 'workspaces'> = {},
 ): Promise<Bridge> {
   const bridge = driver.create({
     ...host,
@@ -106,10 +106,16 @@ export async function replayTranscript(path: string, cleanups: Cleanups, host: P
     enabled: true,
   }
   const driver = await activate(createAcpAgentPlugin(record, FAST), cleanups)
+  // Only a scenario that brings a session in has a project: the others start in the bare workspace, as before.
+  const project = transcript.header.steps.some(step => step.step === 'adopt')
+    ? { id: 'replay', folders: [{ id: 'main', path: paths.workspace }] }
+    : undefined
+  const projects = project ? { projects: () => [structuredClone(project)], workspaces: () => [paths.workspace] } : {}
   const played = await playScenario({
-    open: () => openBridge(driver, paths, cleanups, host),
+    open: () => openBridge(driver, paths, cleanups, { ...host, ...projects }),
     steps: transcript.header.steps,
     cwd: paths.workspace,
+    ...(project ? { project } : {}),
     stopped: () => {
       const failure = readReplayStatus(status)?.failure
       return failure && `${failure.detail} at entry ${failure.cursor}: ${JSON.stringify(failure.actual)}`
@@ -118,5 +124,13 @@ export async function replayTranscript(path: string, cleanups: Cleanups, host: P
   const detail = await played.bridge.detail(played.sessionId)
   const pending = played.bridge.approvals().filter(approval => approval.sessionId === played.sessionId)
   await played.bridge.close()
-  return { transcript, detail, pending, status: readReplayStatus(status), bin, marks: await readdir(marks) }
+  return {
+    transcript,
+    detail,
+    pending,
+    status: readReplayStatus(status),
+    bin,
+    marks: await readdir(marks),
+    ...(played.listed ? { listed: played.listed } : {}),
+  }
 }

@@ -205,6 +205,11 @@ export interface ExternalSessionList {
   sessions: ExternalSession[]
   /** The bound stopped the listing before the harness had no more. */
   truncated: boolean
+  /**
+   * Sessions the driver will not load because loading would rewrite what the session itself stores (folder grants of
+   * its own), by directory only, so the Host can count those of a project; at most as many as `sessions` may hold.
+   */
+  withheld?: Array<{ cwd: string }>
 }
 
 /** Where an external session is loaded: its own directory, inside the project the Host checked it against. */
@@ -229,6 +234,8 @@ export interface ExternalSessionLoad {
   /** User turns in the whole replay. */
   turns: number
   model?: string
+  /** The harness neither locks a session nor says one is in use, so this load does not show it is open nowhere else. */
+  useUnknown?: true
 }
 
 /**

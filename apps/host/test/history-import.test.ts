@@ -173,6 +173,82 @@ describe('接入已有会话 on the Host', () => {
     expect(await f.audit()).toEqual(['history.list'])
   })
 
+  it('counts the OpenCode sessions left out for their own folder grants, in the project only, and says a preview cannot tell use elsewhere', async () => {
+    const f = await fixture()
+    const other = join(f.root, 'workspace', 'docs')
+    const history = join(await mkdtemp(join(f.root, 'opencode-')), 'history')
+    await mkdir(history)
+    const file = await writeFakeHistory(history, [
+      { sessionId: 'oc-main', cwd: f.main, title: 'Plain session', updates: fakeConversation() },
+      { sessionId: 'oc-granted', cwd: f.main, title: 'Granted secret title', additionalDirectories: [other], updates: [] },
+      { sessionId: 'oc-granted-sub', cwd: join(f.main, 'web'), title: 'Granted below', additionalDirectories: [other], updates: [] },
+      // Neither in the primary folder: not counted, as a listed session there would not be shown.
+      { sessionId: 'oc-granted-other', cwd: other, title: 'Granted in docs', additionalDirectories: [f.main], updates: [] },
+      {
+        sessionId: 'oc-granted-out',
+        cwd: join(f.root, 'elsewhere'),
+        title: 'Granted outside',
+        additionalDirectories: [f.main],
+        updates: [],
+      },
+    ])
+    const saved = await f.owner.confirmed('agents', {
+      method: 'POST',
+      body: {
+        id: 'opencode',
+        name: 'OpenCode',
+        presetId: 'opencode',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: {
+          FAKE_ACP_CONFIG: 'options',
+          FAKE_ACP_SHAPE: 'opencode',
+          FAKE_ACP_MODES: 'plan,build,auto-edit,yolo',
+          FAKE_ACP_INITIAL_MODE: 'build',
+          FAKE_ACP_CAPS: 'list,load,resume,close,delete,dirs',
+          FAKE_ACP_VERSION: '2.2.6',
+          FAKE_ACP_STATE: join(history, 'state.json'),
+          FAKE_ACP_HISTORY_FILE: file,
+        },
+      },
+    })
+    expect(saved.status).toBe(201)
+    const listed = await f.owner.json<HistoryList>('history/list', {
+      method: 'POST',
+      body: { projectId: f.projectId, harnessId: 'opencode' },
+    })
+    expect(listed.rows.map(row => row.title)).toEqual(['Plain session'])
+    expect(listed.withheld).toBe(2)
+    expect(JSON.stringify(listed)).not.toContain('Granted')
+    const preview = await f.owner.json<HistoryPreview>('history/previews', {
+      method: 'POST',
+      body: { handle: handleOf(listed.rows, 'Plain session') },
+    })
+    expect(preview.useUnknown).toBe(true)
+    // Brought in and continued: a driver that takes no other folders still checks the session against the project.
+    const created = await importOf(f.owner, { requestId: randomUUID(), previewId: preview.previewId })
+    expect(created.status).toBe(201)
+    const { taskId } = (await created.json()) as HistoryImportResult
+    const prompt = await f.owner.request(`tasks/${taskId}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'echo onward', requestId: randomUUID() },
+    })
+    expect(prompt.status).toBeLessThan(300)
+    await expect.poll(async () => (await f.owner.json<TaskDetail>(`tasks/${taskId}`)).messages.at(-1)?.text, SLOW).toBe('echo: echo onward')
+    expect((await f.owner.json<TaskDetail>(`tasks/${taskId}`)).summary).toMatchObject({
+      harnessId: 'opencode',
+      imported: { mode: 'native' },
+    })
+    // Codex holds a lock and lists nothing as withheld: neither field appears.
+    const codex = await list(f)
+    expect(codex).not.toHaveProperty('withheld')
+    const own = await f.owner.json<HistoryPreview>('history/previews', {
+      method: 'POST',
+      body: { handle: handleOf(codex.rows, 'Web build') },
+    })
+    expect(own).not.toHaveProperty('useUnknown')
+  })
+
   it('previews within its limits, redacted and without tool output, and refuses a session open elsewhere', async () => {
     const f = await fixture()
     const rows = (await list(f)).rows

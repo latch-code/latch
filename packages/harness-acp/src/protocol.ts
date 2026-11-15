@@ -114,6 +114,8 @@ export const sessionList = z.object({
             cwd: z.string().min(1).max(4096),
             title: z.string().nullish().catch(undefined),
             updatedAt: z.string().max(64).nullish().catch(undefined),
+            /** Folders the session was granted over ACP besides its own; anything but an absent or empty list counts. */
+            additionalDirectories: z.unknown().optional(),
           })
           .safeParse(row)
         return parsed.success ? [parsed.data] : []

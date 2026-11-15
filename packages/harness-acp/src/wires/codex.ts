@@ -588,7 +588,9 @@ export class CodexWire implements AgentWire {
     this.servers = servers.flatMap(server => (server.success ? [server.data] : []))
     this.cwd = parsed.data.cwd
     this.folders = parsed.data.additionalDirectories ?? []
-    await this.assertLogin(timeoutMs, signal)
+    // A session on a route runs on Latch's provider with the gateway's token: Codex's own account is not what answers,
+    // so its absence refuses nothing.
+    if (!this.route) await this.assertLogin(timeoutMs, signal)
     if (this.route) {
       this.models = { models: this.route.models.slice(0, 500).map(id => ({ id, displayName: id })) }
       this.model ??= this.route.model

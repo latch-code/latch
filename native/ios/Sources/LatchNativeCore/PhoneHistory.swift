@@ -258,7 +258,11 @@ public enum PhoneHistory {
         return path.split(separator: "/").last.map(String.init) ?? project["name"].string ?? ""
     }
     public static func othersWords(_ count: Int) -> String? { count > 0 ? "另有 \(count) 个在项目的其他文件夹里 · 尚未支持" : nil }
-    public static func scopeDetail(_ source: String) -> String { "只列出在这个项目主文件夹（或它下面）开始的会话，不加载内容。\(source) 只列出它当前模型服务下的会话。" }
+    /** Codex's own listing is of its current model provider; no other Harness that lists has such a limit. */
+    public static func scopeDetail(_ source: PhoneHistorySource) -> String {
+        let scope = "只列出在这个项目主文件夹（或它下面）开始的会话，不加载内容。"
+        return source.mark == "codex" ? "\(scope)\(source.label) 只列出它当前模型服务下的会话。" : scope
+    }
 
     // MARK: the preview
 

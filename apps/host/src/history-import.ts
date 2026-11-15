@@ -30,6 +30,8 @@ const MAX_RECEIPTS = 10_000
 /** A row's handle and a preview's load live this long. */
 export const HISTORY_HANDLE_MS = 10 * 60_000
 export const HISTORY_ROWS = 50
+/** Directories of sessions a driver withholds that one listing counts; the driver sends at most as many. */
+const HISTORY_WITHHELD = 500
 export const PREVIEW_MESSAGES = 40
 export const PREVIEW_MESSAGE_BYTES = 4 * 1024
 export const PREVIEW_BYTES = 256 * 1024
@@ -376,6 +378,12 @@ export class HistoryImports {
       } else if (others.some(folder => within(folder, real))) otherFolders++
       // Outside the project: not returned, not counted.
     }
+    // What the driver will not load, counted only where a listed session would have shown: in the primary folder.
+    let withheld = 0
+    for (const { cwd } of (listed.withheld ?? []).slice(0, HISTORY_WITHHELD)) {
+      const real = typeof cwd === 'string' && isAbsolute(cwd) ? await realpath(cwd).catch(() => undefined) : undefined
+      if (real && within(main, real)) withheld++
+    }
     found.sort((a, b) => b.at - a.at)
     // A device's handles are those of its latest listing.
     for (const [handle, source] of this.sources) if (source.deviceId === caller.device.id) this.sources.delete(handle)
@@ -394,7 +402,7 @@ export class HistoryImports {
       })
       return { handle, ...row }
     })
-    return { rows, otherFolders, scanned: listed.sessions.length, truncated: listed.truncated }
+    return { rows, otherFolders, ...(withheld ? { withheld } : {}), scanned: listed.sessions.length, truncated: listed.truncated }
   }
 
   private expire(): void {
@@ -454,6 +462,7 @@ export class HistoryImports {
       turns: load.turns,
       messages: shown.messages,
       truncated: shown.cut || load.droppedBefore > 0,
+      ...(load.useUnknown === true ? { useUnknown: true as const } : {}),
     }
   }
 

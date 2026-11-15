@@ -42,6 +42,13 @@ describe('what a driver can say about itself', () => {
   it('passes on that a harness uses its own models only, unless it also names a protocol Latch forwards', () => {
     expect(facts('acp', { models: { owner: 'harness', catalogue: 'session-check', wires: [], ownOnly: true } }).models.ownOnly).toBe(true)
     expect(
+      facts('acp', { models: { owner: 'harness', catalogue: 'session-check', wires: ['responses'], credentialInherited: true } }).models
+        .credentialInherited,
+    ).toBe(true)
+    expect(
+      facts('acp', { models: { owner: 'harness', catalogue: 'session-check', wires: [], credentialInherited: true } }).models,
+    ).not.toHaveProperty('credentialInherited')
+    expect(
       facts('acp', { models: { owner: 'harness', catalogue: 'session-check', wires: ['responses'], ownOnly: true } }).models,
     ).not.toHaveProperty('ownOnly')
     expect(

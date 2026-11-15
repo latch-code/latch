@@ -189,6 +189,11 @@ type ProfileGateway = {
   /** It uses only the service's models it knows itself, as `HarnessCapabilities.models.knownOnly`. */
   readonly knownOnly?: true
   /**
+   * The harness has no documented way to keep the token's variable from the commands it runs, as
+   * `HarnessCapabilities.models.credentialInherited`. Display only: nothing that runs changes.
+   */
+  readonly credentialInherited?: true
+  /**
    * The oldest version of the preset's own command that works through the gateway, read the way `minimumVersion` is; a
    * session on a route refuses to start with an older one.
    */
@@ -206,6 +211,16 @@ type ProfileGateway = {
        * harness reads. Never `LATCH_*`, which every agent environment drops.
        */
       readonly tokenEnv: string
+      /**
+       * For a harness whose provider fixes the variable its key is read from, so the name follows the route's protocol
+       * (goose reads `ANTHROPIC_API_KEY` for Anthropic's); a protocol not listed uses `tokenEnv`.
+       */
+      readonly tokenEnvByWire?: Readonly<Partial<Record<ModelWire, string>>>
+      /**
+       * Options of the harness's own a session on a route never offers and never sets: one that would move the session
+       * to another service the person configured in the harness (goose's `provider`). Exact option IDs.
+       */
+      readonly hiddenConfig?: readonly string[]
       /** The other variables `deliver` sets, for the launch fingerprint and preview; values never enter either. */
       readonly envNames: readonly string[]
       /** Versions of what `deliver` puts in the arguments and the files, in the launch fingerprint; bump on a change. */
@@ -220,6 +235,23 @@ type ProfileGateway = {
       deliver(place: GatewayPlace, route: ModelRoute): GatewayLaunch
     }
 )
+
+/** What bringing in this harness's sessions depends on, beyond the agent advertising `session/list` and `session/load`. */
+export interface HistoryImportRule {
+  /** A RegExp source over `initialize.agentInfo.version`: the versions whose listing and replay were read in its source. */
+  readonly version: string
+  /**
+   * Its `session/load` stores the `additionalDirectories` it is given as the session's own grants, so loading a session
+   * that has some without the same list would rewrite it (OpenCode 2.x). Such a session is not listed, and its row is
+   * read again on the loading process, where one that has grants, or is no longer listed, is not loaded.
+   */
+  readonly grants?: 'refuse'
+  /**
+   * It keeps no writer lock and reports no session as in use (OpenCode's server takes several clients), so a load that
+   * succeeds does not show the session is open nowhere else; a preview says so.
+   */
+  readonly useUnknown?: true
+}
 
 export interface HarnessProfile {
   /** Equals `AgentPreset.id`. */
@@ -258,9 +290,10 @@ export interface HarnessProfile {
   readonly projectConfigManaged?: ProjectConfigManaged
   /**
    * The Host may bring in this harness's own earlier sessions (`session/list`, `session/load`), once its adapter's
-   * listing and replay were checked against its source (docs/HARNESSES.md#接入已有会话).
+   * listing and replay were checked against its source (docs/HARNESSES.md#接入已有会话). A rule adds what that check
+   * found the import to depend on.
    */
-  readonly historyImport?: true
+  readonly historyImport?: true | HistoryImportRule
   /**
    * A command that says whether the harness is logged in, without a prompt or a session. Only a clear answer is an answer:
    * `read` returns `unknown` for anything else. The output never leaves `read`, since it may hold an account or part of a key.
@@ -331,6 +364,12 @@ export interface HarnessProfile {
   readChildEnd?(update: SessionUpdate): { sessionId: string; outcome: 'done' | 'failed' } | undefined
   readonly extensions?: HarnessExtensions
   readonly gateway?: ProfileGateway
+  /**
+   * `_meta` sent with every `session/set_config_option` for the model, where the harness reads there that the choice is
+   * the session's alone. With it set, a session on a route never falls back to the legacy `session/set_model`: Qwen
+   * Code's writes the person's own settings unless told otherwise.
+   */
+  readonly modelSetMeta?: Readonly<Record<string, unknown>>
   /**
    * Latch never points this harness at the gateway: it reaches its vendor's models through its own login only. Shown
    * to clients as `HarnessCapabilities.models.ownOnly`; it changes nothing that runs, so the version stays.

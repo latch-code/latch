@@ -21,6 +21,9 @@ export const antigravityProfile: HarnessProfile = {
     readback: 'mode',
     notes: ['Antigravity 的允许规则与 toolPermission 设置仍然生效；规划模式不保证只读'],
   },
+  // It takes no model provider of another's: `--help` has only `--model` and `models`, and `cloud_code_endpoint` is
+  // Google's own address. Display only.
+  ownModelsOnly: true,
   folders: { via: 'acp', configPaths: CUSTOMIZATIONS },
   projectConfigPaths: CUSTOMIZATIONS,
   minimumVersion: {

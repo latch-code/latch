@@ -71,6 +71,10 @@ describe('the list', () => {
     expect(listView({ kind: 'loading' })).toEqual({ kind: 'loading' })
     expect(listView({ kind: 'ready', list: { ...list, rows: [] } })).toEqual({ kind: 'empty', otherFolders: 2 })
     expect(listView({ kind: 'ready', list })).toEqual({ kind: 'rows', rows: list.rows, otherFolders: 2, truncated: false })
+    // Sessions left out for holding folder grants of their own are counted, with or without rows; none is no line.
+    expect(listView({ kind: 'ready', list: { ...list, withheld: 3 } })).toMatchObject({ kind: 'rows', withheld: 3 })
+    expect(listView({ kind: 'ready', list: { ...list, rows: [], withheld: 1 } })).toEqual({ kind: 'empty', otherFolders: 2, withheld: 1 })
+    expect(listView({ kind: 'ready', list: { ...list, withheld: 0 } })).not.toHaveProperty('withheld')
     const refused = (code: string) => listFailure(new ApiError(409, code, '原文'))
     expect(listView(refused('history-not-supported'))).toEqual({ kind: 'not-supported' })
     expect(listView(refused('agent-auth-required'))).toEqual({ kind: 'login' })

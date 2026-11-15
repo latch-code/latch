@@ -105,7 +105,7 @@ profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本�
 
 Antigravity 的 `plan` 只追加规划指令，不能称为「只看不改」。它保留原生名称与说明，未归入权限档位；仅由人显式选择，不参与跨 Harness 的只读档位继承。默认草稿与分叉差异说明采用该 Harness 的实际默认名称。`default` 名称保留为「默认」：本机 `toolPermission`、允许与拒绝规则仍优先，所以默认模式也可能直接改文件。Latch 输入前设定并读回 mode，但不能据此断言每次工具调用都询问；一旦 CLI 请求审批，只提供单次选择。项目 `.agents`、兼容目录 `.agent` / `_agents` / `_agent` 中的 hooks、MCP 与插件，以及 `.gemini/config.json` 的个人定制目录入口计入启动指纹；清单引用这些目录之外的代码不在该指纹覆盖范围内。额外目录通过 ACP 能力协商后传入；创建空会话可能加载扩展，所以模型列表只在用户请求时读取。
 
-Grok Build 的 stdio 模式是独立 Agent 进程，不连接终端使用的共享 leader。Latch 不运行 `grok leader kill`，只停止自己启动的进程。项目 `.grok` 计入启动指纹；继承 `GROK_HOME` 的变量名和路径，不读取其中的登录或历史文件。当前只接 CLI 自己的模型目录，外部模型网关路由尚未实现；Grok 的自定义模型配置能力不等于 Latch 已支持该路由。Antigravity 同样不把 CCPA 地址选项当作 Gemini API 网关地址。
+Grok Build 的 stdio 模式是独立 Agent 进程，不连接终端使用的共享 leader。Latch 不运行 `grok leader kill`，只停止自己启动的进程。项目 `.grok` 计入启动指纹；继承 `GROK_HOME` 的变量名和路径，不读取其中的登录或历史文件。经 Latch 使用模型服务见「经 Latch 使用模型服务」。Antigravity 同样不把 CCPA 地址选项当作 Gemini API 网关地址。
 
 - DeepSeek Harness：Latch 保持 `DSH_TELEMETRY_DISABLED=1`。每次启动在会话私有临时目录写入 0600 的 `--patch` 文件和插件，经公开 `permissionPresets.set/current` 设置与报告当前档位；不读写 dsh 自己的会话文件。报告同时绑定当前进程与 ACP session ID，未知组合拒绝发送。草稿选择计入启动指纹；会话空闲、没有后台子 Agent 时换档，结束旧进程、带选择启动新进程并恢复同一会话，真实读到目标值才完成。核对省略 setter，只报告服务当前值。`workspace-write` 直接允许工作目录及许可临时目录写入，扩大范围才询问。会话仍为 L3，模式不是 Latch 的 OS 隔离。
 - Gemini CLI：每次启动在会话自己的临时目录写 0600 系统设置文件，经 `GEMINI_CLI_SYSTEM_SETTINGS_PATH` 传入；保留关闭永久审批的设置（这些审批键尚未在正式版本上实测）。已知精确模型可选思考：Gemini 3/3.1 的已核对文本模型按其支持的 level，2.5 按 budget，Pro 不提供关闭。选择只写该模型的 `modelConfigs.customAliases`，不借用其他模型的限制、不改人的文件。空闲换档重启恢复；默认不添加思考覆盖。ACP 未独立报告有效值，所以选项带 `source: launch`，界面写「启动设置 · 未独立读回」，核对返回 `unread`。系统设置高于用户与项目同名设置，但 CLI 的 model-config overrides（包括更精确条件与运行时覆盖）在 alias 之后生效，可能覆盖此选择；不能凭文件写入断言 Agent 已采用。原生 ACP 已有思考选项时优先用它。
@@ -155,7 +155,7 @@ Grok Build 的 stdio 模式是独立 Agent 进程，不连接终端使用的共�
 | pi、goose | 不传（它们没有这个概念） | `primary-unbounded` | 它们不限制工具能访问的路径 |
 | 未匹配预设的定义 | 不传 | 无（客户端按 `primary` 显示） | — |
 
-- 只有 Codex、Gemini CLI 与 Qwen Code 的 Driver 声明 `projectFolders: 'all'`，Host 只把项目标识与文件夹交给它们，其他 ACP Driver 只收到主文件夹。Driver 用 Host 的 `projects()` 再核对一次：项目在列表中、`folders[0]` 是主文件夹，每个文件夹的标识与真实路径都属于这个项目，否则 400 `workspace-unavailable`。交给 Agent 的是各文件夹的真实路径，按项目中的顺序，不含主文件夹，也不重复。
+- 只有 Codex、Gemini CLI 与 Qwen Code 的 Driver 声明 `projectFolders: 'all'`，Host 只把项目标识与文件夹交给它们，其他 ACP Driver 只收到主文件夹。声明 `historyImport` 的 Driver（现在另有 OpenCode）也拿到 `projects()`，只用来核对接入的会话目录仍在项目主文件夹之内，不因此收到其他文件夹。Driver 用 Host 的 `projects()` 再核对一次：项目在列表中、`folders[0]` 是主文件夹，每个文件夹的标识与真实路径都属于这个项目，否则 400 `workspace-unavailable`。交给 Agent 的是各文件夹的真实路径，按项目中的顺序，不含主文件夹，也不重复。
 - 只收到主文件夹的 Driver，其会话摘要由 Host 标记 `folderAccess: 'primary'`。`workspaces()` 也列出项目内仍可用的旧主文件夹，调整顺序后的已有会话继续使用原工作目录。
 - 其他文件夹计入启动指纹与项目配置（见「项目配置」），审计记下文件夹数量（`folderCount`）。文件夹范围由 Agent 自己执行，不是隔离。
 - 会话把项目与文件夹记在摘要中（`workspaceId`、`folders`、`folderAccess: 'all'`），把交给 Agent 的真实路径与方式记在 `acp.folders` 与 `acp.folderVia`，之后不再改变：项目新加的文件夹只用于新会话，改变主文件夹也不影响已有会话。每次输入、修改设置、启动进程、恢复或加载会话，以及为删除会话临时启动进程之前，Latch 确认这些文件夹仍属于该项目且仍在原来的真实路径；文件夹被移出项目、被替换、找不到，或项目已不在列表中时返回 409 `workspace-changed`，删除时只删除 Latch 的记录。之后启动的进程不再声明支持时，本轮不发送，返回 409 `agent-folders-unsupported`，进程被结束。
@@ -208,7 +208,7 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 
 ## 经 Latch 使用模型服务
 
-模型菜单同时保留 Harness 自己的模型与可经 Latch 使用的已保存服务。Host 根据实际协议能力和自己的服务记录重新核对每次开始，客户端不能决定转发地址或密钥。当前四种入口优先同协议透传，另支持实验性的 Responses/Anthropic→Chat，以及 Responses↔Anthropic 转换；其余组合明确不可选；模型、能力、令牌、用量和安全机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。会话开始时还定下所选服务各模型的「出错时改用」候选，计入路由与启动指纹；回复开始前的故障切换、健康与排队见[调度](MODEL-GATEWAY.md#调度)。
+模型菜单同时保留 Harness 自己的模型与可经 Latch 使用的已保存服务。两组的前提不同：Harness 自己的模型要它自己的登录；服务的模型由 Latch 转发、用设置里的密钥，**不需要这个 Harness 登录**。新会话选了服务的模型时不显示「还没登录」那一行（`composerChoice.ts` 的 `loginHarness`），Codex 直连在这样的会话里也不查自己的账户。Host 根据实际协议能力和自己的服务记录重新核对每次开始，客户端不能决定转发地址或密钥。当前四种入口优先同协议透传，另支持实验性的 Responses/Anthropic→Chat，以及 Responses↔Anthropic 转换；其余组合明确不可选；模型、能力、令牌、用量和安全机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。会话开始时还定下所选服务各模型的「出错时改用」候选，计入路由与启动指纹；回复开始前的故障切换、健康与排队见[调度](MODEL-GATEWAY.md#调度)。
 
 | Harness | 当前支持 | 交给 Agent 的方式 |
 | --- | --- | --- |
@@ -219,6 +219,18 @@ Agent 详情页提供「测试启动」，在原位显示握手结果与诊断�
 | DeepSeek Harness | 四种同协议服务，至少 0.2.2-rc.1 | 私有 Cordis patch 与原生 llm provider；未知 Gemini 别名不提供离散思考档位 |
 | Claude Agent | Anthropic 同协议服务；Chat、Responses 需实验性转换，实际 Claude Code 至少 2.1.318 | 官方环境变量与会话 modelPicker；逐次核对适配器自带 CLI 版本，精确模型 ID 与子进程凭据清理 |
 | pi | 四种同协议服务，至少 1.5.0 | 官方 provider 扩展；精确目录上限或显式运行预算；凭据仅在进程内存 |
+| Qwen Code | Chat、Responses、Anthropic 同协议服务，实验性，至少 0.26.8 | `QWEN_CODE_SYSTEM_SETTINGS_PATH` 指向 0600 会话私有系统设置（`modelProviders` 的 `envKey` 只写变量名 `LMG_TOKEN`，其他内置协议的列表置空）；模型经 `session/set_config_option` 只对会话生效；经 Latch 的会话没有子 Agent |
+| goose | Chat、Responses、Anthropic 同协议服务，实验性，至少 1.57.0 | 只有环境变量：`GOOSE_PROVIDER`、`GOOSE_MODEL`、`GOOSE_SUBAGENT_*`、`GOOSE_TOOLSHIM=false`、`OPENAI_HOST` 与显式 `OPENAI_BASE_PATH`，或 `ANTHROPIC_HOST`；凭据在 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`；它的 `provider` 选项不提供 |
+| Grok Build | Chat、Responses、Anthropic 同协议服务，实验性，至少 1.0.77 | `GROK_HOME` 指向会话私有的家目录，其中 0600 的 `config.toml` 为服务的每个模型写一个自定义模型（`env_key = "LMG_TOKEN"`）；这个人自己的 Grok 登录、钩子与插件不在这个家里 |
+| Antigravity、Cursor | 不能 | Antigravity 的 `--help` 只有 `--model` 与 `models`，没有模型服务地址（`cloud_code_endpoint` 是 Google 自己的地址）；Cursor 的 `--endpoint` 与 `--api-key` 是 Cursor 自己的接口。模型菜单不给它们列服务 |
+
+Qwen Code、goose 与 Grok Build 没有清理工具子进程环境的官方开关（Qwen Code 的 `packages/core/src/utils/sanitize-child-env.ts` 只去掉它自己的内部令牌）：它们运行的命令（以及钩子、stdio MCP 服务器）继承 Agent 进程的环境，用 `printenv` 就能读到网关凭据。这个凭据不是模型服务的密钥：它只能在这台电脑的回环端口上使用这个会话选定的服务与候选，进程退出或服务设置变化后失效；会话本来就是完全访问（L3）。goose 的凭据放在它规定的 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY` 里，所以 Agent 运行的、会读这些变量的工具可能把它发给真实厂商：它在那里没有用，但离开了这台电脑。三者的 profile 声明 `credentialInherited`（`HarnessCapabilities.models.credentialInherited`），模型菜单「经 Latch」的 ⓘ 末尾多一句「<名称> 运行的命令读得到这个会话的转发凭据，不是密钥。」。Codex、Claude Agent、OpenCode、DeepSeek Harness 与 pi 各有清理办法，见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#harness-交付)。
+
+Qwen Code 的私有系统设置替代了系统设置路径，这个进程不再读取真正的系统设置文件里的管理策略。为了不让一轮里的一部分请求绕开网关，它把每个内置协议键（`openai`、`anthropic`、`gemini`、`vertex-ai`、旧的 `openai-responses`）的 `modelProviders` 列表都写出来：所选协议的只有这个服务的模型，其余为空；清空 `fastModel`、`visionModel`、`compactionModel`、`advisorModel`、`imageModel`、`voiceModel` 与 `modelFallbacks`，内置 Explore 用会话模型，`agents.allowedGrades` 为空（不给任何模型档位），并以 `permissions.deny: ["Agent"]` 关掉子 Agent。关掉子 Agent 是因为关不掉另外两条路：这个人自己起名的服务（`providerProtocol` 映射的 ID）和 Qwen Code 内置的 OAuth 模型删不掉，而子 Agent 自己的定义文件可以点名任何模型。依据与出处见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#qwen-code)。Latch 从不调用 `unstable_setSessionModel`（`session/set_model`）与 `authenticate`：它们会改写这个人的 Qwen 设置；模型选择带 `_meta["qwen.session.modelPersistDefault"]: false`。仍不经过网关、也不算这个会话的模型请求的：这个人自己配置的钩子（`prompt` 钩子可以点名模型）、网页搜索的模型（`tools.webSearch.model`）、`batch.model`、实验性的 Live Voice 与 omni，它们各有自己的地址或条目，Latch 没有改动。接线依据 0.26.8 与 0.27.3 的官方源码与文档；0.26.8 在没有登录的临时 HOME 下经三种协议各跑通一轮（2026-11-15，每个 CLI 在空的临时 HOME 下、不带任何登录，经临时 Host 与本地假服务各跑一轮：`apps/host/test/gateway-no-login.live.test.ts`）。假 Agent 与回放夹具是照源码读出来写的，不是录制。
+
+goose 只用它文档里的环境变量，先于它的配置文件与钥匙串读取，所以不需要它自己的登录；1.57.0 在没有登录的临时 HOME 下经三种协议各跑通一轮（2026-11-15，每个 CLI 在空的临时 HOME 下、不带任何登录，经临时 Host 与本地假服务各跑一轮：`apps/host/test/gateway-no-login.live.test.ts`）。它标「实验性」有一个去不掉的原因：`delegate` 工具启动子 Agent 时，服务按「配方的 `settings.goose_provider`、环境变量 `GOOSE_SUBAGENT_PROVIDER`、调用参数 `provider`」的顺序取，带 `model` 的 agent 来源还会把模型自己传的 `provider` 写进配方设置（`crates/goose/src/agents/platform_extensions/summon.rs`）；这样的子 Agent 用这个人在 goose 里另外配置的服务（没有配置过就没有密钥、直接失败），按轮的核对发现不了。Latch 不给会话传 `_meta.provider`：goose 那样会改用该服务的默认模型而不是 `GOOSE_MODEL`（`crates/goose/src/model_config.rs`，真实运行里见到）。
+
+Grok Build 的自定义模型只能写在用户配置里（[docs.x.ai/build/settings](https://docs.x.ai/build/settings)：`[model."<id>"]` 的 `base_url`、`env_key`、`api_backend` 为 `chat_completions`、`responses` 或 `messages`），没有另指配置文件的参数，所以经 Latch 的会话把 `GROK_HOME` 指向会话私有目录，里面只有 Latch 写的 `config.toml`（`[models]` 的 `default` 与 `web_search` 都是会话模型）。这个家里没有这个人的 Grok 登录、钩子、插件与 MCP；Grok 自己的会话记录也写在这里，随 Latch 会话删除。1.0.77 在没有登录的临时 HOME 下经三种协议各跑通一轮（2026-11-15，每个 CLI 在空的临时 HOME 下、不带任何登录，经临时 Host 与本地假服务各跑一轮：`apps/host/test/gateway-no-login.live.test.ts`）。它给会话起标题时用内置的 `grok-4.6` 向同一个地址发请求，网关以「不在这个会话的模型服务里」拒绝，Grok 改用截断的用户文字（真实运行里见到），不影响这一轮。接线依据是文档与这次运行，没有读它的源码，所以标「实验性」。
 
 Codex 直连使用服务的模型列表，可以选择原生目录之外的模型；codex-acp 保留其已知模型限制。经网关的会话不能换服务，同服务内的模型可选。服务停用、删除、密钥或地址不再可用时明确失败，不回退到 Harness 自己的登录或演示模型。整轮没有经过网关时会如实提示和审计；这不证明每个辅助请求都经过它。订阅仍由各 Harness 自己使用，不借给网关。
 
@@ -445,7 +457,8 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 
 这个人在 Latch 之外用 CLI 做过的会话，可以经它自己的 ACP 适配器列出、预览，并接入为一个 Latch 会话。这与 Latch 自己开始的会话在进程退出后的继续（上一节）不同；接管终端里正开着的会话不做，遇到时拒绝。
 
-- **范围。** 只对 profile 声明 `historyImport` 的预设开放（`HarnessDriver.historyImport`）：现在只有 Codex（直连时经 `thread/list` 与 `thread/read`，见「Codex 的 app-server」；经 codex-acp 时它列出 Codex 的会话，只有元数据，`session/load` 重放内容）。运行中的 Agent 没有同时声明 `sessionCapabilities.list` 与 `loadSession` 时返回 409 `history-not-supported`，不发 `session/list`。Latch 从不读取任何 CLI 的文件夹（如 `~/.codex`），一切经适配器。
+- **范围。** 只对 profile 声明 `historyImport` 的预设开放（`HarnessDriver.historyImport`）：Codex（直连时经 `thread/list` 与 `thread/read`，见「Codex 的 app-server」；经 codex-acp 时它列出 Codex 的会话，只有元数据，`session/load` 重放内容）与 OpenCode 2.x（见下一条）。运行中的 Agent 没有同时声明 `sessionCapabilities.list` 与 `loadSession` 时返回 409 `history-not-supported`，不发 `session/list`。Latch 从不读取任何 CLI 的文件夹（如 `~/.codex`、OpenCode 的数据目录），一切经适配器。
+- **OpenCode 2.x。** 依据是 2.2.6 的 ACP 源码（`acp/service.ts`、`acp/replay.ts`、`acp/directories.ts`）：`initialize` 声明 `loadSession` 与 `sessionCapabilities.list`，`session/list` 每页 100 条、按 `nextCursor` 翻页，`session/load` 要求原来的目录并按时间重放用户文字、回答、思考与工具调用。profile 的规则（`HistoryImportRule`）另要求 `agentInfo.version` 是 2.x：1.x 没有 `session/list`（它声明了也不算核对过），3.x 及以后已被版本规则拒绝；不满足时同样 409 `history-not-supported`，不发 `session/list` 与 `session/load`。OpenCode 的 `session/load` 与 `session/resume` 会把收到的 `additionalDirectories` 存成会话自己的目录授权，Latch 不给 OpenCode 其他文件夹，所以带这种授权的会话（列表行带 `additionalDirectories`）不列出，Driver 只把它们的目录交给 Host（`ExternalSessionList.withheld`），Host 数出在项目主文件夹之内的个数（`HistoryList.withheld`，不含标题与 ID），列表下方一行灰字「另有 N 个带额外目录的会话未列出」；加载前在同一进程上按会话目录再读一次这一行（`session/list` 带 `cwd`），仍带授权或已不在列表里时 409 `history-session-changed`，不发 `session/load`。这道检查有两个前提，都要等真实核对：2.x 的列表行确实带 `additionalDirectories`（2.2.6 的 `acp/service.ts` 只在会话有授权时写这个字段；别的版本不写的话，这样的会话会被当成没有授权而照常加载、授权被去掉），以及再读一行与 `session/load` 之间没有别的客户端给它加授权（这个窗口很短但关不上，ACP 没有带条件的加载）。预览结束时的 `session/close` 只让 OpenCode 丢弃从未发过消息的新会话，不动加载的会话。OpenCode 没有写锁，也不报告会话是否正在别处使用：终端里正开着的会话同样能加载，Latch 不察觉（只有它自己用锁或占用拒绝时才是 `history-session-busy`）；预览带 `useUnknown`，它的 ⓘ 末尾写「OpenCode 不报告会话是否正在别处使用，Latch 看不出来。」。接入之后在别处给这个会话加的目录授权，会在 Latch 下一次恢复它时被去掉。尚未用真实 OpenCode 核对。
 - **权限。** 每一步都要 `run` 与数据范围 `all`，不弹确认：有 `run` 的设备本来就能让 Agent 在这台电脑上读这些文件。接入的会话一律私有（`sessions-meta.json` 的 `imported` 计入私有），只对数据范围 `all` 的设备可见，分叉出的会话同样私有。`catalog.features.historyImport` 只对这样的设备出现。
 - **审计。** `history.list`、`history.preview`、`history.import` 在每一步之前写入，写不进就不做；只含 Harness 与项目 ID、外部会话 ID 的哈希、方式、请求 ID 的哈希与新会话 ID，不含标题、路径或内容。
 - **列出。** `POST /history/list` `{ projectId, harnessId }`：在数据目录下 0700 的私有空文件夹里起一个进程，只发 `initialize` 与 `session/list`（不带 `cwd`），按 `nextCursor` 翻页，最多 500 条或 20 秒，然后停掉进程、删掉文件夹。Host 按真实路径过滤：在项目主文件夹或它下面开始的会话返回（标题经 `redactSecrets`、最多 200 字符，更新时间，相对主文件夹的子目录），最多 50 行、按更新时间倒序；在项目其他文件夹里的只给数量 `otherFolders`；项目之外的不返回、不计数。任何 Latch 会话用过的 Agent 会话（`acpSessionId` 与 `earlierSessionIds`）不列出；已接入的带 `importedTaskId`。每行给一个不透明句柄，只对这台设备、10 分钟有效。列表不加载任何内容。
@@ -455,7 +468,12 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 - **按文字重建。** 选了另一个 Harness，或原样接入的会话之后得到 `harness-session-lost`（`{ requestId, fromTaskId, harnessId? }`）时，用分叉的种子：只取用户与 Agent 的文字，不含工具输出、思考与压缩，经 `redactSecrets`，保留最后 20 万字符，标题写明「按文字重建，不是原样恢复」。新会话照常走启动与审计，但不开始一轮：它空着等这个人的第一条消息（`CreateTaskInput.seed`，Driver 声明 `seededStart`），发出这条消息才把这段文字连同它一起发给模型服务，文字是这条消息的开头（`TaskSummary.imported.mode` 为 `text`，`prefixLength` 是它的长度）。第一条消息清空上下文时不带这段文字，`prefixLength` 随之去掉。现在只能重建到 ACP Harness：内置 Harness（Standard）还不能这样等第一条消息，返回 409 `history-not-supported`。同一来源仍只能接入一次。
 - **界面。** 新会话页输入框下方的「接入已有会话」只在所选的已保存项目里有可列出会话的就绪 Harness（`HarnessInfo.history.list`）且设备有 `run` 时出现；数据范围不是 `all` 的设备（或 Host 没给 `catalog.features.historyImport`）看到上锁的同一行，ⓘ 说明要在 Mac 上开启「可以看项目文件」。点开是对话框（手机上是整页，预览推入在列表之上，浏览器返回逐级退回）：顶部写项目与 Harness，列表按更新时间倒序，每行标题、子目录（主文件夹本身写它的名字）与相对时间，已接入的行带勾、点开即打开那个会话；另写「另有 N 个在项目的其他文件夹里 · 尚未支持」。列表有读取中、空、失败（原因与重试）、`history-not-supported` 与 `agent-auth-required`（登录命令）几种状态。预览按时间排列消息，工具只写标题、状态与「输出已隐藏」，顶部写「工具输出和思考不显示」；`history-session-busy` 写「这个会话正在别处使用」，只有「再看一次」，不提供接管。底部「继续用」默认来源 Harness（原样接入）；选别的就绪 Harness（`HarnessInfo.history.rebuild`，现在是 ACP Harness）立刻变成琥珀色「按文字重建，不是原样恢复」。主按钮「接入」，进行中写「正在接入」，没有答复时写「结果未确认」并用同一 `requestId` 重试；409 `history-already-imported` 直接打开 `taskId` 那个会话。接入的会话页头带「已接入」（文字重建时「已接入 · 按文字重建」，悬停说明来源与方式）。文字重建的会话在第一条消息发出前，输入框下方写明第一条消息会把重建的对话文字一起发给它用的模型服务；之后第一条消息里这段文字折叠为「按 <来源> 会话的文字重建」（`Message.importContext`，Host 按 `prefixLength` 标注；开始新上下文的第一条消息不带）。原样接入的会话发消息得到 `harness-session-lost` 时，输入框上方的停止行写「Harness 找不到原来的会话了」，除「在新会话中继续」外还有「按文字重建」：同一个「继续用」选择（只列能接受重建的就绪 Harness，自己的排第一）与同一句琥珀色「按文字重建，不是原样恢复」，请求带 `fromTaskId`，没有答复时用同一 `requestId` 重试；新会话同样等第一条消息。原来的会话之后只能查看（`TaskSummary.imported.fromTaskId` 指回它的那个会话存在时），停止行换成「已按文字重建为新会话」与打开它的按钮。
 - **iPhone/iPad。** 同样的条件、文字与请求（判断在 `PhoneHistory`）：新会话面板首条消息下方一行「接入已有会话」或上锁的同一行；点开是全屏的导航栈，列表在下、预览推入，iPad 相同；打开时取定项目与 Harness，之后条件变化也不会出现空白页。列表与预览经 `NativeWorkspace.historyRead` 在正文窗口内读取、不存盘，窗口关闭时整页撤下。离开预览即 `DELETE /history/previews/:id`；它要正文窗口，没有窗口时 previewId 只在内存里排队，下一个窗口打开时发出；被拒为 `history-already-imported` 或晚到、被丢弃的预览同样关闭；还有未确认接入引用的预览不关。接入与按文字重建是持久的待确认写入（`requestId` 与请求体存在加密资料库），没有答复时写「结果未确认」（重试被拒但没有定论时附上 Host 的话），只用同一请求重试、不自动重放；Host 先查回执（或加入进行中的同一请求）再看预览，所以预览的接入重试得到 `history-handle-expired` 说明没有接入，写「这次接入没有完成」并放下；`task-deleted` 说明接入过、那个会话后来被删除，写「已接入，但这个会话后来被删除了」并放下。「核对并放下」读 `GET /history/imports/:requestId`：完成则打开那个会话（在全屏页上时等它关闭后打开），没有回执则放下，已受理或仍在进行则保留。答复晚到（换了连接或窗口已关）的预览与因待确认接入而保留、之后没有接入的预览同样关闭。手机同时只留一个待确认写入，所以结果未确认期间「继续用」不能改选；列表的待确认条写「接入结果未确认」。原样接入（`imported.mode` 为 `native`）的会话发消息得到 `harness-session-lost` 时，输入框换成停止行「Harness 找不到原来的会话了」与「按文字重建」；其他会话照常报错。手机的停止行还没有「在新会话中继续」。
-- **尚未实现。** 接入后又在终端里继续了同一会话时 Latch 不察觉；其他 CLI（OpenCode、Qwen Code、goose）待核对。
+- **尚未实现。** 接入后又在终端里继续了同一会话时 Latch 不察觉。其余 Harness 没有开放，原因各不相同：
+  - pi：它的 RPC（1.5.0 的 `rpc-types.ts`）没有列出会话的命令，`switch_session` 只接受 pi 自己存储里的会话文件路径；发现会话只能读它的存储或用它 SDK 里扫描存储的 `SessionManager.list`，这违反「外部会话只经适配器」，所以不做，等 pi 提供列出会话的 RPC。
+  - OpenCode 1.x：ACP 没有 `session/list`，不做。
+  - Qwen Code（0.27.3）、goose（1.59.0）：源码声明了 `session/list` 与 `loadSession`，但加载对原会话的影响（恢复旧模式、写回设置等）还没有读完，也没有用真实程序核对，暂不开放。
+  - Claude Agent、Grok Build、Antigravity：适配器或官方文档有列出与加载，没有核对；Claude 的会话记录按所有者的规定不碰。Gemini CLI 没有 `session/list`，Cursor 不开放。
+  - iPhone/iPad 的列表与预览还不显示「未列出」的数量与「看不出是否在别处使用」这两处。
 
 ## 错误
 
@@ -482,6 +500,7 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 | `harness-busy`（409） | 这个 Harness 有会话正在运行，不能退出登录 |
 | `terminal-open-failed`（502） | 没有打开终端；自己在终端里运行这条命令 |
 | `harness-session-lost`（409） | Agent 无法恢复该会话 |
+| `history-session-changed`（409） | 接入已有会话时，Harness 说这个会话带着它自己存的目录授权（加载会改写它），或已不再列出它；没有加载 |
 | `agent-not-found`、`agent-start-failed`、`agent-paused`、`agent-busy`、`agent-exited`（503） | 命令缺失、启动失败、连续崩溃后暂停、同时运行的进程过多、进程已退出或正在停止 |
 | `agent-handshake-timeout`（504） | Agent 在时限内没有回答 `initialize`（30 秒）、建立会话（`session/new`、`session/resume`、`session/load`、分叉，60 秒）或握手之后的启动设置（如经 Latch 使用模型服务时的 `providers/list`，120 秒）；Latch 停止它、等进程真实退出后这一轮才失败，并写明哪一步、建议核对版本 |
 | `agent-timeout`（504） | Agent 长时间没有响应其他设置请求（120 秒） |
@@ -507,12 +526,16 @@ Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问�
 | 回答 pi 扩展的选择题与输入框 | 未实现；它们回答「已取消」并写进会话 |
 | 只有主文件夹的 Codex 会话把 `.agents/skills/` 计入启动指纹 | 尚未实现；原生技能目录读取已接入，但没有扩展这个指纹范围 |
 | iOS 的原生技能选择菜单 | 尚未实现；Web 命令菜单已按真实目录提供技能，iOS 仍可手动输入原生调用文字 |
-| Qwen Code、goose 经 Latch 使用模型服务 | 未实现；尚未接好各自选择服务的配置，模型菜单收起的那一行点开后写「尚未实现」 |
+| Qwen Code、goose、Grok Build 去掉「实验性」 | 尚未做：三者都在没有登录的临时 HOME 下对本地假服务跑通了一轮，但没有对真实服务、带工具与多轮跑过；Qwen Code 的 `agents.allowedGrades: []` 与 `permissions.deny: ["Agent"]`、goose 的 `provider` 选项隐藏只按源码与假 Agent 核对 |
+| Qwen Code、goose、Grok Build 清理工具子进程里的网关凭据 | 未实现；三者没有这样的官方开关，见「经 Latch 使用模型服务」 |
+| Qwen Code 经 Latch 时的思考档位与子 Agent | 未实现；思考只提供它自己经 ACP 报告的选项。子 Agent 在经 Latch 的会话里被关掉，直到 Qwen Code 能把子 Agent 的模型限制在指定的服务上 |
+| goose 固定 `delegate` 子 Agent 的服务 | 未实现；goose 没有文档化的设置能固定或关掉它（见「经 Latch 使用模型服务」），所以它的路线标「实验性」 |
+| Antigravity、Cursor 经 Latch 使用模型服务 | 做不了：两者都不接受别人的模型服务地址（见「经 Latch 使用模型服务」的表），模型菜单只列它们自己的模型 |
 | 其他协议翻译方向 | 未实现；当前只开放 Responses/Anthropic→Chat 与 Responses↔Anthropic，其余组合列出但不能选 |
 
 ## 测试
 
-`packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数），覆盖流式、思考、Gemini CLI 的重试、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Gemini CLI 与 Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。`test/connect.test.ts` 与 `apps/host/test/harness-connect.test.ts` 覆盖版本门槛（太旧、升级后重新检测、读不出版本、测试 Host 不读）、不回答 `initialize`（`FAKE_ACP_INIT_SILENT=1`）与不回答 `session/new`（`FAKE_ACP_NEW_SILENT=1`）的 Agent、pi 1.5 的回答顺序；`e2e/harness-connect.e2e.ts` 在 1440 与 390、浅色与深色下检查设置与新会话里的说法。默认测试不启动真实 Agent。显式授权的本机验收独立运行、使用临时 Host 与项目；测试确认后端不等于系统确认。
+`packages/harness-acp/test/acp.test.ts`（`pnpm test --project @latch/harness-acp`）使用 `packages/testkit/fixtures/fake-acp-agent.mjs`（`@latch/testkit` 的 `FAKE_ACP_AGENT`，确定性的假 Agent，按环境变量与输入关键词切换场景，可模拟模式、粘滞模式、恢复后的模式与不报告模式的恢复、修改模式时自行切换的模式、缺少类别或缺失的模式选项、版本号、`additionalDirectories` 能力（`FAKE_ACP_CAPS_FILE` 让同一定义之后的进程改变声明）和环境转储，并记录启动参数；`FAKE_ACP_GATEWAY=opencode|dsh|qwen|goose|grok` 让它按对应程序的方式读网关配置并用声明的协议请求一次（Qwen Code 的系统设置文件与 `envKey`，`FAKE_QWEN_USER_SETTINGS` 代表这个人自己的设置、按 Qwen Code 的规则合并在系统设置之下；goose 的环境变量与路径规则；Grok Build 家目录里的 `config.toml`；这些是照源码与文档读出来写的，不是真实程序的录制），没有登录的假 Agent 被指向一个服务后照常回答，覆盖流式、思考、Gemini CLI 的重试、工具与 diff（含 diff 是否为新文件的记录与持久化）、审批与选项过滤、自动拒绝、取消（含不遵守协议的 Agent）、崩溃、恢复、启动指纹、模式读回与漂移（含运行中修改模式）、环境变量白名单、改变 OpenCode 配置位置的定义变量、项目配置（项目内与上级目录、经过符号链接的项目路径、OpenCode 自己写入的内容、开始过程中与之后的变化、空闲后重启与删除前的检查）、每会话进程与进程上限、项目移除后的删除、项目的多个文件夹（Codex 的能力门槛与恢复时重发、Gemini CLI 与 Qwen Code 的参数与上限、不接收文件夹的预设、文件夹被移出、替换或删除后的停止、每个文件夹中的项目配置）、旧式模型选项、异常输出与幂等。预设的权限配置通过 `presetId` 套用到假 Agent 上测试。`test/connect.test.ts` 与 `apps/host/test/harness-connect.test.ts` 覆盖版本门槛（太旧、升级后重新检测、读不出版本、测试 Host 不读）、不回答 `initialize`（`FAKE_ACP_INIT_SILENT=1`）与不回答 `session/new`（`FAKE_ACP_NEW_SILENT=1`）的 Agent、pi 1.5 的回答顺序；`e2e/harness-connect.e2e.ts` 在 1440 与 390、浅色与深色下检查设置与新会话里的说法。默认测试不启动真实 Agent。显式授权的本机验收独立运行、使用临时 Host 与项目；测试确认后端不等于系统确认。
 
 ### 会话命令
 

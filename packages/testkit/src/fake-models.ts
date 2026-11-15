@@ -159,6 +159,8 @@ function chat(reply: FakeReply, model: string, stream: boolean, served: number):
   const chunk = (delta: unknown, finishReason: string | null = null) => ({
     id,
     object: 'chat.completion.chunk',
+    // Every real service sends it, and a strict client (Grok Build) refuses a chunk without it.
+    created: 1_794_700_000,
     model,
     choices: [{ index: 0, delta, finish_reason: finishReason }],
   })
@@ -289,6 +291,8 @@ function responses(
   const response = (status: string, items: unknown[]) => ({
     id: 'resp_fake',
     object: 'response',
+    // As `created` in a Chat chunk: every real service sends it, and Grok Build refuses a response without it.
+    created_at: 1_794_700_000,
     model,
     status,
     output: items,

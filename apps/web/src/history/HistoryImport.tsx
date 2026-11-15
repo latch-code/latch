@@ -264,7 +264,9 @@ function ScopeLine({
         </span>
       )}
       <Hint lead={<Icon icon={ListFilter} size={12} />} label="主文件夹里的会话" moreLabel="列出哪些会话">
-        只列出在这个项目主文件夹（或它下面）开始的会话，不加载内容。{source.label} 只列出它当前模型服务下的会话。
+        只列出在这个项目主文件夹（或它下面）开始的会话，不加载内容。
+        {/* Codex's own listing is of its current model provider; no other Harness that lists has such a limit. */}
+        {source.mark === 'codex' && `${source.label} 只列出它当前模型服务下的会话。`}
       </Hint>
     </div>
   )
@@ -348,11 +350,17 @@ function ListBody({
       另有 <span className="history-count">{view.otherFolders}</span> 个在项目的其他文件夹里 · 尚未支持
     </p>
   )
+  const withheld = view.withheld !== undefined && (
+    <p className="history-others" data-withheld="">
+      另有 <span className="history-count">{view.withheld}</span> 个带额外目录的会话未列出
+    </p>
+  )
   if (view.kind === 'empty')
     return (
       <div className="history-list">
         <EmptyState className="history-state" title={`这个项目里没有 ${source.label} 会话`} />
         {others}
+        {withheld}
       </div>
     )
   const primary = basename(project.folders?.[0]?.path ?? project.path)
@@ -388,6 +396,7 @@ function ListBody({
       </ul>
       {view.truncated && <p className="history-others">只读了最近的会话；更早的没有列出</p>}
       {others}
+      {withheld}
     </div>
   )
 }
@@ -545,6 +554,7 @@ function PreviewLevel({
           <Hint lead={<Icon icon={EyeOff} size={12} />} label="工具输出和思考不显示" moreLabel="预览里有什么">
             只显示最后 {preview.messages.length} 条对话和工具名称；像密钥的文字已替换。{source.label}{' '}
             会重新打开这个会话，在它自己的列表里可能排到前面。
+            {preview.useUnknown && `${source.label} 不报告会话是否正在别处使用，Latch 看不出来。`}
           </Hint>
         </div>
         {preview.truncated && <p className="history-others">更早的消息没有显示</p>}

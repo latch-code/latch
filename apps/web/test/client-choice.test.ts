@@ -32,6 +32,7 @@ import {
   pickedOwnDefault,
   pinnedChoice,
   projectDefault,
+  loginHarness,
   servicePick,
   withOwnDefault,
   withServicePick,
@@ -732,6 +733,23 @@ describe('a model service for a Harness with its own models', () => {
     expect(pairRoute(codex.capabilities, { kind: 'demo' })).toEqual({ kind: 'unavailable', reason: 'not-a-service' })
     expect(pairRoute(testHarness('goose').capabilities, { kind: 'gemini' })).toEqual({ kind: 'unavailable', reason: 'not-forwarded' })
     expect(pairRoute(services.harnesses[0]!.capabilities, { kind: 'anthropic' })).toEqual({ kind: 'direct' })
+  })
+
+  it('asks for the Harness\u2019s own login only while the draft is on its own models', () => {
+    // Nothing picked, or its own model picked: its login is what answers, so the draft may say it is missing.
+    expect(loginHarness(services, codex, undefined)).toBe(codex)
+    expect(loginHarness(services, codex, { model: 'gpt-5.5-codex' })).toBe(codex)
+    // A model of a service: the request goes through Latch with the service's key, and no login row is shown.
+    const picked = withServicePick({ model: 'gpt-5.5-codex' }, { providerId: 'openai', model: 'gpt-5.5-mini' }, 'model')
+    expect(loginHarness(services, codex, picked)).toBeUndefined()
+    // A pick Latch cannot forward is no pick: the Harness is back on its own models and its own login.
+    expect(loginHarness(services, codex, { '~service': 'demo\u0000demo' })).toBe(codex)
+    expect(loginHarness(services, codex, { '~service': 'openai\u0000not-a-model' })).toBe(codex)
+    const unrouted = testHarness('antigravity')
+    expect(loginHarness(services, unrouted, picked)).toBe(unrouted)
+    // A Harness that is not ready has other things to say first.
+    expect(loginHarness(services, { ...codex, status: 'unavailable' as const }, undefined)).toBeUndefined()
+    expect(loginHarness(services, undefined, picked)).toBeUndefined()
   })
 
   it("keeps a service pick as that Harness's own, and only while Latch can forward the pair", () => {

@@ -11,6 +11,8 @@ export interface FakeHistorySession {
   title?: string
   updatedAt?: string
   busy?: true
+  /** Folders the session was granted over ACP, as OpenCode 2.x lists them with the session. */
+  additionalDirectories?: string[]
   updates: Array<Record<string, unknown>>
 }
 

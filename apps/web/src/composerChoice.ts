@@ -209,6 +209,18 @@ export function servicePick(
   return serviceModels(provider).includes(model) ? { providerId, model } : undefined
 }
 
+/**
+ * The Harness whose own login a draft depends on: none once a model of a service is picked, since those requests go
+ * through Latch with the service's key and the Harness's login is not used.
+ */
+export function loginHarness<T extends Pick<HarnessInfo, 'capabilities' | 'status'>>(
+  catalog: HostCatalog | undefined,
+  harness: T | undefined,
+  picks: Record<string, string> | undefined,
+): T | undefined {
+  return harness?.status === 'ready' && !servicePick(catalog, harness, picks) ? harness : undefined
+}
+
 /** The picks with `model` as the service pick, or without one; the Harness's own model pick goes with a service pick. */
 export function withServicePick(
   picks: Record<string, string> | undefined,

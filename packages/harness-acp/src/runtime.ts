@@ -151,7 +151,7 @@ import {
   type ProfileSelection,
 } from './permission.ts'
 import type { AcpPermissionProfile, ExtensionRequest, ProjectedChild, RetryReport, ToolDenial } from './profiles/index.ts'
-import type { GatewayModelValues } from './profiles/types.ts'
+import type { GatewayModelValues, HarnessProfile, HistoryImportRule } from './profiles/types.ts'
 import { fingerprintProjectConfig, type ProjectConfig } from './project-config.ts'
 import {
   AUTH_STATUS_METHOD,
@@ -211,6 +211,10 @@ import {
   captured,
   captureUpdate,
   historyNotSupported,
+  historyVersionUnchecked,
+  rowGranted,
+  sessionGranted,
+  sessionUnlisted,
   isBusy,
   LIST_MAX,
   LIST_MS,
@@ -554,6 +558,11 @@ function routedOptions(
         : option.options.filter(item => keys.has(modelIdKey(item.value)) || keys.has(modelIdKey(item.name)))
     return { ...option, options: kept }
   })
+}
+
+/** The variable a `launch` route's token goes in for a session speaking `wire`. */
+function tokenEnvOf(gateway: Extract<NonNullable<HarnessProfile['gateway']>, { via: 'launch' }>, wire: ModelRoute['wire']): string {
+  return gateway.tokenEnvByWire?.[wire] ?? gateway.tokenEnv
 }
 
 /** The Host's route as a driver keeps it: only routing fields, each bounded. */
@@ -1126,7 +1135,7 @@ export class AgentRuntime implements Bridge {
       materializedEnv,
       definitionEnv: this.agent.env,
       sessionTmpDir: this.tmpRoot(),
-      ...(input.modelRoute ? { gatewayEnv: this.gatewayNames() } : {}),
+      ...(input.modelRoute ? { gatewayEnv: this.gatewayNames(input.modelRoute.wire) } : {}),
     })
     return {
       launchHash: launch.hash,
@@ -1479,6 +1488,53 @@ export class AgentRuntime implements Bridge {
     if (!profile?.historyImport || profile.wire === 'pi') throw historyNotSupported(this.agent.name)
   }
 
+  /** The profile's own conditions on bringing sessions in, when it has any. */
+  private historyRule(): HistoryImportRule | undefined {
+    const rule = this.selection.profile?.historyImport
+    return typeof rule === 'object' ? rule : undefined
+  }
+
+  /** A process that may list and load: it advertises both, in a version the profile's rule covers. */
+  private assertHistoryProcess(live: Live): void {
+    if (!live.capabilities.list || !live.capabilities.load) throw historyNotSupported(this.agent.name)
+    const rule = this.historyRule()
+    if (rule && !(live.agentVersion && new RegExp(rule.version, 'u').test(live.agentVersion)))
+      throw historyVersionUnchecked(this.agent.name, live.agentVersion && clip(this.redact(live.agentVersion), 64))
+  }
+
+  /**
+   * For a harness whose load stores the folders it is given as the session's own grants: the session's row read again,
+   * by its directory, on the process about to load it. Refused when it holds grants or is not listed any more, so the
+   * load that follows changes nothing the session stores.
+   */
+  private async assertUngranted(live: Live, place: ExternalSessionPlace): Promise<void> {
+    if (this.historyRule()?.grants !== 'refuse') return
+    const deadline = Date.now() + LIST_MS
+    let cursor: string | undefined
+    for (let seen = 0; seen < LIST_MAX;) {
+      const left = deadline - Date.now()
+      if (left <= 0) break
+      const page = sessionList.safeParse(
+        await live.wire.request(
+          'session/list',
+          { cwd: place.cwd, ...(cursor ? { cursor } : {}) },
+          Math.min(left, this.limits.requestTimeoutMs),
+          this.lifetime.signal,
+        ),
+      )
+      if (!page.success) throw new AppError(502, 'agent-protocol', `${this.agent.name} 的会话列表无效`)
+      const row = page.data.sessions.find(item => item.sessionId === place.agentSessionId)
+      if (row) {
+        if (rowGranted(row.additionalDirectories)) throw sessionGranted(this.harnessName())
+        return
+      }
+      seen += page.data.sessions.length
+      cursor = page.data.nextCursor ?? undefined
+      if (!cursor) break
+    }
+    throw sessionUnlisted(this.harnessName())
+  }
+
   /** The agent's sessions with what it reports of them, from a process in a private empty folder that only lists. */
   async listExternalSessions(): Promise<ExternalSessionList> {
     await this.ready()
@@ -1492,9 +1548,11 @@ export class AgentRuntime implements Bridge {
       const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
       this.enter(this.holds, key)
       try {
-        if (!live.capabilities.list || !live.capabilities.load) throw historyNotSupported(this.agent.name)
+        this.assertHistoryProcess(live)
+        const skipGranted = this.historyRule()?.grants === 'refuse'
         const deadline = Date.now() + LIST_MS
         const sessions: ExternalSessionList['sessions'] = []
+        const withheld: NonNullable<ExternalSessionList['withheld']> = []
         let cursor: string | undefined
         let truncated = false
         for (;;) {
@@ -1523,6 +1581,11 @@ export class AgentRuntime implements Bridge {
           if (!page.success) throw new AppError(502, 'agent-protocol', `${this.agent.name} 的会话列表无效`)
           for (const row of page.data.sessions) {
             if (sessions.length >= LIST_MAX) break
+            // Not offered: loading it would rewrite the grants it stores.
+            if (skipGranted && rowGranted(row.additionalDirectories)) {
+              if (withheld.length < LIST_MAX) withheld.push({ cwd: row.cwd })
+              continue
+            }
             sessions.push({
               agentSessionId: row.sessionId,
               cwd: row.cwd,
@@ -1537,7 +1600,7 @@ export class AgentRuntime implements Bridge {
             break
           }
         }
-        return { sessions, truncated }
+        return { sessions, truncated, ...(withheld.length ? { withheld } : {}) }
       } catch (error) {
         throw this.publicError(error, live)
       } finally {
@@ -1589,8 +1652,13 @@ export class AgentRuntime implements Bridge {
         definitionHash: launch.definitionHash,
         ...(scope.passed ? { folders: scope.passed } : {}),
       })
-      if (!live.capabilities.list || !live.capabilities.load) throw historyNotSupported(this.agent.name)
+      this.assertHistoryProcess(live)
       if (scope.passed?.via === 'acp' && !live.capabilities.additionalDirectories) throw this.foldersUnsupported(true)
+      try {
+        await this.assertUngranted(live, place)
+      } catch (error) {
+        throw this.publicError(error, live)
+      }
       const capture = newCapture(place.agentSessionId)
       live.capture = capture
       let result: unknown
@@ -1620,6 +1688,7 @@ export class AgentRuntime implements Bridge {
         loadId,
         ...captured(capture, this.now(), this.redact),
         ...(model ? { model: clip(this.redact(model), 200) } : {}),
+        ...(this.historyRule()?.useUnknown ? { useUnknown: true as const } : {}),
       }
       this.external.set(loadId, { key, place: structuredClone(place), scope, launch, load })
       return structuredClone(load)
@@ -1869,7 +1938,12 @@ export class AgentRuntime implements Bridge {
     if (option.currentValue === model) return folded!.options
     const answer = await live.wire.request(
       'session/set_config_option',
-      { sessionId, configId: option.id, value: model },
+      {
+        sessionId,
+        configId: option.id,
+        value: model,
+        ...(this.selection.profile?.modelSetMeta ? { _meta: { ...this.selection.profile.modelSetMeta } } : {}),
+      },
       this.readTimeout(),
       this.lifetime.signal,
     )
@@ -2699,12 +2773,10 @@ export class AgentRuntime implements Bridge {
       options.authorize?.()
       const binding = await this.attach(sessionId)
       const legacy = task.acp.configSource === 'legacy'
-      const method = !legacy ? 'session/set_config_option' : option.category === 'model' ? 'session/set_model' : 'session/set_mode'
-      const params = !legacy
-        ? { sessionId: binding.acpSessionId, configId, value }
-        : option.category === 'model'
-          ? { sessionId: binding.acpSessionId, modelId: value }
-          : { sessionId: binding.acpSessionId, modeId: value }
+      const { method, params } =
+        legacy && option.category !== 'model'
+          ? { method: 'session/set_mode', params: { sessionId: binding.acpSessionId, modeId: value } }
+          : this.configWrite(task, binding.acpSessionId, option, value)
       const apply = async (change?: ModeChange): Promise<void> => {
         let result: unknown
         options.authorize?.()
@@ -3334,7 +3406,11 @@ export class AgentRuntime implements Bridge {
       await mkdir(directory, { recursive: true, mode: 0o700 })
       for (const [name, text] of files) await writeFileAtomic(join(directory, name), text)
     }
-    return { env: { ...env, [gateway.tokenEnv]: lease.token }, args, ...(launch.sessionMeta ? { sessionMeta: launch.sessionMeta } : {}) }
+    return {
+      env: { ...env, [tokenEnvOf(gateway, route.wire)]: lease.token },
+      args,
+      ...(launch.sessionMeta ? { sessionMeta: launch.sessionMeta } : {}),
+    }
   }
 
   /**
@@ -3449,10 +3525,12 @@ export class AgentRuntime implements Bridge {
       )
         task.acp.routeThinking = reported.currentValue
     }
+    const hidden = task.acp.route && gateway?.via === 'launch' ? gateway.hiddenConfig : undefined
     const modes = this.withProcessMode(
       this.lives.get(task.summary.id),
       task.acp.acpSessionId,
       options.flatMap(option => {
+        if (hidden?.includes(option.id)) return []
         if (option.category !== 'thought_level') return [option]
         if (!allowed) return []
         const choices = option.options.filter(item => this.gatewayThinkingAllowed(task, modelValue ?? null, item.value))
@@ -3512,9 +3590,9 @@ export class AgentRuntime implements Bridge {
   }
 
   /** The variables a `launch` route sets, the token's among them, without their values, for what a launch shows. */
-  private gatewayNames(): Record<string, string> {
+  private gatewayNames(wire: ModelRoute['wire']): Record<string, string> {
     const gateway = this.selection.profile?.gateway
-    return gateway?.via === 'launch' ? Object.fromEntries([gateway.tokenEnv, ...gateway.envNames].map(name => [name, ''])) : {}
+    return gateway?.via === 'launch' ? Object.fromEntries([tokenEnvOf(gateway, wire), ...gateway.envNames].map(name => [name, ''])) : {}
   }
 
   /** What a launch on `route` records of it, or a refusal when this harness cannot be pointed at the gateway that way. */
@@ -3532,7 +3610,12 @@ export class AgentRuntime implements Bridge {
       ...(route.fallbacks ? { fallbacks: route.fallbacks } : {}),
     }
     if (gateway.via === 'providers') return { ...base, via: 'providers', names: [gateway.providerId, gateway.apiType] }
-    return { ...base, via: 'launch', names: [gateway.tokenEnv, ...gateway.envNames].sort(), templates: { ...gateway.templates } }
+    return {
+      ...base,
+      via: 'launch',
+      names: [tokenEnvOf(gateway, route.wire), ...gateway.envNames].sort(),
+      templates: { ...gateway.templates },
+    }
   }
 
   private assertConfirmed(confirmed: Confirmed): asserts confirmed is Confirmed & { launchHash: string } {
@@ -5056,6 +5139,32 @@ export class AgentRuntime implements Bridge {
     return shown === undefined ? `在${control}里换一个后重试。` : `再发送会用「${clip(shown, 64)}」，也可以先在${control}里换一个。`
   }
 
+  /**
+   * One option's write as the session's configuration style takes it. A model choice carries the profile's
+   * `modelSetMeta`, and on a route such a profile is never asked through the legacy `session/set_model`, which may store
+   * the choice in the person's own settings.
+   */
+  private configWrite(
+    task: AcpTask,
+    acpSessionId: string,
+    option: SessionConfigOption,
+    value: string,
+  ): { method: string; params: Record<string, unknown> } {
+    const meta = option.category === 'model' ? this.selection.profile?.modelSetMeta : undefined
+    if (task.acp.configSource !== 'legacy')
+      return {
+        method: 'session/set_config_option',
+        params: { sessionId: acpSessionId, configId: option.id, value, ...(meta ? { _meta: { ...meta } } : {}) },
+      }
+    if (meta && task.acp.route)
+      throw new AppError(
+        501,
+        'not-supported',
+        `${this.agent.name} 的这个版本换模型会改写它自己的设置，经 Latch 使用模型服务时不能在会话里换模型。`,
+      )
+    return { method: 'session/set_model', params: { sessionId: acpSessionId, modelId: value } }
+  }
+
   /** One choice of a start, written the way the session's configuration style takes it, and its answer recorded. */
   private async writeStart(
     taskId: string,
@@ -5067,12 +5176,8 @@ export class AgentRuntime implements Bridge {
     const legacy = this.task(taskId).acp.configSource === 'legacy'
     // A legacy agent has a method for its model and its mode only.
     if (legacy && option.category !== 'model') return
-    const result = await binding.live.wire.request(
-      legacy ? 'session/set_model' : 'session/set_config_option',
-      legacy ? { sessionId: binding.acpSessionId, modelId: value } : { sessionId: binding.acpSessionId, configId: option.id, value },
-      this.limits.requestTimeoutMs,
-      signal,
-    )
+    const write = this.configWrite(this.task(taskId), binding.acpSessionId, option, value)
+    const result = await binding.live.wire.request(write.method, write.params, this.limits.requestTimeoutMs, signal)
     const task = this.state.tasks[taskId]
     if (!task) return
     const parsed = configUpdate.safeParse(result)

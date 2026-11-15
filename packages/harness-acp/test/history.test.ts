@@ -64,7 +64,11 @@ async function activate(plugin: HarnessPlugin): Promise<HarnessDriver> {
  * The fake agent as Codex (its profile, selected by preset), with a project `proj` of two folders and history sessions in
  * its primary folder, a subfolder, its other folder, outside it, one held elsewhere, and one too long to keep whole.
  */
-async function fixture(env: Record<string, string> = {}, overrides: Partial<AgentRecord> = { presetId: 'codex' }) {
+async function fixture(
+  env: Record<string, string> = {},
+  overrides: Partial<AgentRecord> = { presetId: 'codex' },
+  extra: (folders: { main: string; other: string }) => FakeHistorySession[] = () => [],
+) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-history-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const main = join(root, 'app')
@@ -98,6 +102,7 @@ async function fixture(env: Record<string, string> = {}, overrides: Partial<Agen
       ],
     },
   ]
+  sessions.push(...extra({ main, other }))
   const history = await writeFakeHistory(root, sessions)
   const record: AgentRecord = {
     id: 'codex',
@@ -160,6 +165,17 @@ async function fixture(env: Record<string, string> = {}, overrides: Partial<Agen
 
 const received = (log: LogEntry[], method: string) => log.filter(entry => entry.event === 'recv' && entry.method === method)
 
+/** The fake agent as OpenCode 2.x: its profile, its modes, and the session capabilities its 2.2.6 ACP service declares. */
+const OPENCODE = {
+  FAKE_ACP_CONFIG: 'options',
+  FAKE_ACP_SHAPE: 'opencode',
+  FAKE_ACP_MODES: 'plan,build,auto-edit,yolo',
+  FAKE_ACP_INITIAL_MODE: 'yolo',
+  FAKE_ACP_CAPS: 'list,load,resume,close,delete,dirs',
+  FAKE_ACP_VERSION: '2.2.6',
+}
+const AS_OPENCODE: Partial<AgentRecord> = { presetId: 'opencode', id: 'opencode', name: 'OpenCode' }
+
 async function settled(bridge: Bridge, id: string): Promise<DriverTaskDetail> {
   await vi.waitFor(async () => expect(['running', 'waiting-approval']).not.toContain((await bridge.detail(id)).summary.status), {
     timeout: 8_000,
@@ -194,6 +210,7 @@ describe('bringing in an earlier session of the agent', () => {
     const bridge = await test.open()
     const listed = await bridge.listExternalSessions!()
     expect(listed.truncated).toBe(false)
+    expect(listed).not.toHaveProperty('withheld')
     expect(listed.sessions.map(row => row.agentSessionId)).toEqual([
       'ext-main',
       'ext-sub',
@@ -465,5 +482,124 @@ describe('bringing in an earlier session of the agent', () => {
       ],
       nextCursor: null,
     })
+  })
+})
+
+describe('bringing in an earlier OpenCode session', () => {
+  const granted = ({ main, other }: { main: string; other: string }): FakeHistorySession[] => [
+    { sessionId: 'ext-granted', cwd: main, title: 'Granted elsewhere', additionalDirectories: [other], updates: fakeConversation() },
+  ]
+
+  it('declares itself for OpenCode, and not for pi, Qwen Code or goose, whose listing has no checked official interface', async () => {
+    expect((await fixture(OPENCODE, AS_OPENCODE)).driver.historyImport).toBe(true)
+    for (const presetId of ['pi', 'qwen', 'goose', 'gemini', 'claude-agent']) {
+      const other = await fixture({}, { presetId, id: presetId, name: presetId })
+      expect(other.driver.historyImport, presetId).toBeUndefined()
+    }
+    const qwen = await fixture({}, { presetId: 'qwen', id: 'qwen', name: 'Qwen Code' })
+    await expect((await qwen.open()).listExternalSessions!()).rejects.toMatchObject({ code: 'history-not-supported' })
+    expect(await qwen.log()).toEqual([])
+  })
+
+  it('refuses a version without session/list (1.x) before asking for a list, and a version line that was not checked', async () => {
+    const old = await fixture({ ...OPENCODE, FAKE_ACP_CAPS: 'load,resume', FAKE_ACP_VERSION: '1.1.25' }, AS_OPENCODE)
+    const bridge = await old.open()
+    await expect(bridge.listExternalSessions!()).rejects.toMatchObject({ status: 409, code: 'history-not-supported' })
+    await expect(bridge.loadExternalSession!(old.place('ext-main'))).rejects.toMatchObject({ code: 'history-not-supported' })
+    const log = await old.log()
+    expect(received(log, 'session/list')).toEqual([])
+    expect(received(log, 'session/load')).toEqual([])
+
+    // A version line the listing was not read in is not taken as checked on its capabilities alone.
+    const unread = await fixture({ ...OPENCODE, FAKE_ACP_VERSION: '1.19.5' }, AS_OPENCODE)
+    const other = await unread.open()
+    await expect(other.listExternalSessions!()).rejects.toMatchObject({ status: 409, code: 'history-not-supported' })
+    await expect(other.loadExternalSession!(unread.place('ext-main'))).rejects.toMatchObject({ code: 'history-not-supported' })
+    expect(received(await unread.log(), 'session/list')).toEqual([])
+    expect(received(await unread.log(), 'session/load')).toEqual([])
+  })
+
+  it('lists through the adapter alone and leaves out a session whose stored grants a load would rewrite', async () => {
+    const test = await fixture(OPENCODE, AS_OPENCODE, granted)
+    const bridge = await test.open()
+    const listed = await bridge.listExternalSessions!()
+    const ids = listed.sessions.map(row => row.agentSessionId)
+    expect(ids).toContain('ext-main')
+    expect(ids).not.toContain('ext-granted')
+    expect(listed.sessions.every(row => !('additionalDirectories' in row))).toBe(true)
+    // Told to the Host by directory alone, so it can count the ones in a project; never a title or an ID.
+    expect(listed.withheld).toEqual([{ cwd: test.main }])
+    const log = await test.log()
+    expect(new Set(log.filter(entry => entry.event === 'recv' && entry.method).map(entry => entry.method))).toEqual(
+      new Set(['initialize', 'session/list']),
+    )
+    // Listed from a private empty folder, never from the project or OpenCode's own directories.
+    expect(log.find(entry => entry.event === 'start')!.cwd!.startsWith(join(test.tmpRoot, 'history-'))).toBe(true)
+  })
+
+  it('reads the row again before loading, and never loads a session that holds grants or is no longer listed', async () => {
+    const test = await fixture(OPENCODE, AS_OPENCODE, granted)
+    const bridge = await test.open()
+    await expect(bridge.loadExternalSession!(test.place('ext-granted'))).rejects.toMatchObject({
+      status: 409,
+      code: 'history-session-changed',
+    })
+    await expect(bridge.loadExternalSession!(test.place('ext-gone'))).rejects.toMatchObject({ code: 'history-session-changed' })
+    const log = await test.log()
+    expect(received(log, 'session/load')).toEqual([])
+    expect(received(log, 'session/prompt')).toEqual([])
+    // Asked by the session's own directory, on the process that would have loaded it.
+    expect(received(log, 'session/list').every(entry => entry.params?.cwd === test.main)).toBe(true)
+  })
+
+  it('previews without a prompt or folders of its own, adopts, resumes natively under Latch’s mode and never deletes the original', async () => {
+    const test = await fixture(OPENCODE, AS_OPENCODE)
+    const bridge = await test.open()
+    const load = await bridge.loadExternalSession!(test.place('ext-main'))
+    expect(load.turns).toBe(2)
+    // OpenCode keeps no lock: a load that worked does not show the session is open nowhere else, and says so.
+    expect(load.useUnknown).toBe(true)
+    expect(load.messages.map(message => message.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'user', 'assistant'])
+    const all = JSON.stringify(load.messages)
+    expect(all).not.toContain(FAKE_HISTORY_SECRETS.openai)
+    expect(all).not.toContain(FAKE_HISTORY_SECRETS.gateway)
+    expect(all).not.toContain('hidden reasoning')
+    let log = await test.log()
+    // OpenCode gets no other folders from Latch, so the load stores none on the session.
+    expect(received(log, 'session/load').map(entry => entry.params)).toEqual([{ sessionId: 'ext-main', cwd: test.main, mcpServers: [] }])
+    expect(received(log, 'session/prompt')).toEqual([])
+
+    const sessionId = newId()
+    const input = { ...test.place('ext-main'), sessionId, loadId: load.loadId, title: 'Fix the login bug' }
+    expect(await bridge.adoptExternalSession!(input)).toMatchObject({ sessionId, messageCount: 6, droppedBefore: 0 })
+    await expect(bridge.adoptExternalSession!({ ...input, sessionId: newId(), loadId: undefined })).rejects.toMatchObject({
+      code: 'history-already-imported',
+    })
+    expect(bridge.agentSessionIds!()).not.toContain('ext-main')
+
+    const loads = received(await test.log(), 'session/load').length
+    await bridge.prompt(sessionId, 'echo continue', `request-${randomUUID()}`)
+    const after = await settled(bridge, sessionId)
+    expect(after.summary.status).toBe('idle')
+    expect(after.messages.at(-1)!.text).toBe('echo: echo continue')
+    log = await test.log()
+    expect(received(log, 'session/resume').map(entry => entry.params?.sessionId)).toEqual(['ext-main'])
+    expect(received(log, 'session/load')).toHaveLength(loads)
+    // Every load and resume went without folders, so none stored grants on the original.
+    for (const entry of [...received(log, 'session/load'), ...received(log, 'session/resume')])
+      expect(entry.params).not.toHaveProperty('additionalDirectories')
+    // The original ran in the widest mode; Latch set its own default and read it back before the prompt.
+    expect(received(log, 'session/set_config_option').map(entry => entry.params?.value)).toContain('build')
+    expect(after.permission?.expectedMode).toBe('build')
+
+    await bridge.remove!(sessionId)
+    expect(received(await test.log(), 'session/delete')).toEqual([])
+  })
+
+  it('takes a refusal that names a lock or a session in use as held elsewhere, and does not retry', async () => {
+    const test = await fixture(OPENCODE, AS_OPENCODE)
+    const bridge = await test.open()
+    await expect(bridge.loadExternalSession!(test.place('ext-busy'))).rejects.toMatchObject({ status: 409, code: 'history-session-busy' })
+    expect(received(await test.log(), 'session/load')).toHaveLength(1)
   })
 })

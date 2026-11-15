@@ -109,8 +109,8 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 - **出站策略**：Host 发出的模型请求一律经过出站策略，默认拒绝本机回环、私网、链路本地、云元数据与其他特殊用途地址，拒绝跨源重定向。Host 自己解析域名并连接检查过的地址，DNS 重绑定无法绕过。
 - **本机模型服务**（Ollama、LM Studio 等）因此默认无法访问：确认地址时一并把它的 `host:port` 加入出站白名单（可以在获取模型前先确认，也可以在保存时确认）。元数据地址始终拒绝。使用 fake-IP 模式透明代理（系统 DNS 返回 `198.18.0.0/15`）时，同样需要把模型服务的 `host:port` 加入白名单，或在代理中为它关闭 fake-IP。
 - **临时服务**：`LATCH_BASE_URL`、`LATCH_MODEL`、`LATCH_API_KEY` 为本次运行提供一个服务（替换 `openai-compatible` 的连接，不写入数据目录；见 [.env.example](.env.example)）。`LATCH_BASE_URL` 的 `host:port` 自动加入本进程的出站白名单；地址不能包含用户名、密码、查询参数或片段。
-- **给 Harness 用**：Codex 可以用 Responses 协议的服务（实验性），Gemini CLI 可以用 Gemini 协议的服务：在新会话的模型菜单里选「<服务> · 经 Latch」下的模型。Latch 在这台 Mac 上转发它的请求，用设置里的密钥；Harness 拿到的只是一个随进程失效的凭据，不是密钥。协议不同的服务和其他 Harness 列出但不能选，写明原因（协议转换与其他 Harness 尚未实现）。细节见 [docs/HARNESSES.md](docs/HARNESSES.md#经-latch-使用模型服务)。
-- **出错时改用**：「设置 → 模型」里一个模型的「⋯」可以按顺序列出最多 4 个已保存的其他模型。请求在回复开始前失败（密钥无效、额度用完、429、5xx、连不上）时改发给下一个，回复已经开始就不再改用；每次改用都写审计，那一轮标「备选」并写出回答的服务。经 Latch 的会话在开始时定下候选，改动只影响新开的会话；Latch 内置每一轮按当时的设置。服务页还可以设「同时请求」上限；等位置的会话写「排队：<服务>」。项目设置里的「默认模型」排在会话与 Agent 的选择之后。细节见 [docs/MODEL-GATEWAY.md](docs/MODEL-GATEWAY.md#调度)。
+- **给 Harness 用**：Codex、Gemini CLI、OpenCode、DeepSeek Harness、Claude Agent、pi，以及实验性的 Qwen Code、goose 与 Grok Build 可以用设置里保存的服务，不需要这个 Harness 自己的登录：在新会话的模型菜单里选「<服务> · 经 Latch」下的模型。Latch 在这台 Mac 上转发它的请求，用设置里的密钥；Harness 拿到的只是一个随进程失效的凭据，不是密钥。每个 Harness 说哪些协议、哪些要经实验性的协议转换见下面的链接；用不了的服务列出但不能选，写明原因（Antigravity 与 Cursor 只用自己的模型）。细节见 [docs/HARNESSES.md](docs/HARNESSES.md#经-latch-使用模型服务)。
+- **出错时改用**：「设置 → 模型」里一个模型的「⋯」可以按顺序列出最多 4 个已保存的其他模型。请求在回复开始前失败（密钥无效、额度用完、429、5xx、连不上）时改发给下一个，回复已经开始就不再改用；每次改用都写审计，那一轮标「备选」并写出回答的服务。只影响保存后新开的会话。服务页还可以设「同时请求」上限；等位置的会话写「排队：<服务>」。项目设置里的「默认模型」排在会话与 Agent 的选择之后。细节见 [docs/MODEL-GATEWAY.md](docs/MODEL-GATEWAY.md#调度)。
 - 真实服务失败时报错，不会回退到演示模型。出站策略只约束 Host 自己的模型请求（包括经 Latch 转发的），不约束插件与 ACP Agent 自己的网络访问。
 
 ## Harness

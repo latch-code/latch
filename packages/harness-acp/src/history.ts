@@ -202,6 +202,29 @@ export function historyNotSupported(name: string): AppError {
   return new AppError(409, 'history-not-supported', `${name} 不能列出已有会话。`)
 }
 
+/** The harness lists and loads sessions, but not in a version whose listing and replay were checked. */
+export function historyVersionUnchecked(name: string, version: string | undefined): AppError {
+  return new AppError(
+    409,
+    'history-not-supported',
+    `${name} 的这个版本（${version ?? '未报告'}）列出和加载会话的方式没有核对过，不能接入它的已有会话。`,
+  )
+}
+
+/** Loading it would rewrite what the session itself stores, so it is left alone. */
+export function sessionGranted(name: string): AppError {
+  return new AppError(409, 'history-session-changed', `这个会话在 ${name} 里带着额外的目录授权，加载会改写它，Latch 没有加载。`)
+}
+
+export function sessionUnlisted(name: string): AppError {
+  return new AppError(409, 'history-session-changed', `${name} 不再列出这个会话，Latch 没有加载。`)
+}
+
+/** Whether a `session/list` row says the session holds grants of its own: an unreadable value counts as one. */
+export function rowGranted(value: unknown): boolean {
+  return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null
+}
+
 export function isBusy(message: string): boolean {
   return BUSY.test(message)
 }

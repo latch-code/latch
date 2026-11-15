@@ -61,7 +61,7 @@ const tools = (detail: DriverTaskDetail) => detail.messages.filter(message => me
 const system = (detail: DriverTaskDetail) => detail.messages.filter(message => message.role === 'system')
 
 /** What a person must see after each scenario, whichever harness played it. */
-const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcript) => void> = {
+const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcript, listed?: string[]) => void> = {
   simple(detail, transcript) {
     expect(detail.summary.status).toBe('idle')
     // One reply, its thinking with it, in the words the agent sent.
@@ -285,6 +285,25 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
     expect(row!.subagent!.steps.find(step => step.toolName === 'shell')).toMatchObject({ state: 'failed' })
     expect(tools(detail).every(message => message.state !== 'running' && message.state !== 'queued')).toBe(true)
   },
+  // An earlier session of the harness's own, listed, loaded and adopted through its adapter, then continued.
+  history_adopt(detail, _transcript, listed) {
+    // The session that stores folder grants of its own is not offered: a load without them would rewrite it.
+    expect(listed).toEqual(['ses_ext'])
+    expect(detail.summary.status).toBe('idle')
+    const adopted = detail.messages.filter(message => message.imported)
+    expect(adopted.map(message => message.role)).toEqual(['user', 'assistant', 'tool', 'assistant'])
+    // Thinking is not kept (masking of keys in a replay is `history.test.ts`'s, with keys made at run time).
+    expect(adopted.every(message => message.reasoning === undefined)).toBe(true)
+    expect(JSON.stringify(adopted)).not.toContain('The session check looks wrong.')
+    expect(adopted[2]).toMatchObject({ role: 'tool', state: 'completed', tool: { title: 'printenv' } })
+    expect(adopted[3]!.text).toBe('The bug is in the session check.')
+    // The turn after it is Latch's own, on the same session.
+    const own = detail.messages.filter(message => !message.imported && message.role !== 'system')
+    expect(own.map(message => [message.role, message.text])).toEqual([
+      ['user', 'Add a test for it'],
+      ['assistant', 'Added a test for the session check.'],
+    ])
+  },
 }
 
 describe('replaying each harness', () => {
@@ -311,7 +330,7 @@ describe('replaying each harness', () => {
 
   for (const fixture of fixtures) {
     it([fixture.harness, fixture.line, fixture.scenario].filter(Boolean).join('/'), async () => {
-      const { transcript, detail, pending, status, bin, marks } = await replayTranscript(fixture.path, cleanups)
+      const { transcript, detail, pending, status, bin, marks, listed } = await replayTranscript(fixture.path, cleanups)
       expect(status?.failure).toBeUndefined()
       expect(status).toMatchObject({ cursor: status?.total })
       expect(pending).toEqual([])
@@ -332,7 +351,7 @@ describe('replaying each harness', () => {
         if (value !== null) expect(value.startsWith(`${bin}/`)).toBe(true)
       }
       if (fixture.harness === 'codex') expect(status!.starts[0]!.env.CODEX_PATH).toBe(join(bin, 'codex'))
-      SCENARIOS[fixture.scenario]!(detail, transcript)
+      SCENARIOS[fixture.scenario]!(detail, transcript, listed)
     })
   }
 })

@@ -4620,7 +4620,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             dataDir: driver.id === STANDARD ? join(dataDir, 'sessions') : join(dataDir, 'harnesses', driver.id),
             workspaceRoot,
             workspaces: usablePrimaries,
-            ...(driver.projectFolders === 'all' ? { projects: usableProjects } : {}),
+            // A driver that brings sessions in checks their directory against the project too.
+            ...(driver.projectFolders === 'all' || driver.historyImport ? { projects: usableProjects } : {}),
             registry,
             providerId: defaultProviderId,
             defaultModel: savedDefaultModel,

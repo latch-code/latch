@@ -502,13 +502,15 @@ export function translationBrief(catalog: HostCatalog, harness: HarnessInfo | un
 }
 
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
-export const ROUTE_NOTE = (name: string, computer?: string): Brief & { detail: string } => ({
+export const ROUTE_NOTE = (name: string, computer?: string, inherited?: boolean): Brief & { detail: string } => ({
   label: '经 Latch 转发',
-  detail: onComputer(
+  detail: `${onComputer(
     `「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。${name} 有一整轮没有经过 Latch 时，会话里会告诉你。`,
     computer,
-  ),
+  )}${inherited ? credentialInherited(name) : ''}`,
 })
+/** For a Harness with no switch that keeps its environment from the commands it runs: what those commands can read. */
+const credentialInherited = (name: string) => `${name} 运行的命令读得到这个会话的转发凭据，不是密钥。`
 const ROUTE_LOCKED = '开始后不能换服务'
 
 /**
@@ -546,6 +548,7 @@ function routeNote(
   name: string,
   route: NonNullable<TaskSummary['modelRoute']>,
   computer?: string,
+  inherited?: boolean,
 ): { failure: string } | { brief: Brief; tone?: 'warn'; fallback?: string } {
   const service = routeService(catalog, route, computer)
   if (service.unusable) return { failure: service.unusable.note }
@@ -557,7 +560,7 @@ function routeNote(
     : {
         brief: {
           label: `经 Latch 用「${service.name}」`,
-          detail: onComputer('请求由 Latch 在这台 Mac 上转发，用设置里的密钥。', computer),
+          detail: `${onComputer('请求由 Latch 在这台 Mac 上转发，用设置里的密钥。', computer)}${inherited ? credentialInherited(name) : ''}`,
         },
         ...fallback,
       }
@@ -1052,9 +1055,9 @@ function HarnessModelPicker({
   const unusable = unusableServices(catalog, harness, computer, session)
   const translationNote = translationBrief(catalog, harness, picked?.providerId ?? session?.route?.providerId)
   const routeLine = session?.route
-    ? routeNote(catalog, name, session.route, computer)
+    ? routeNote(catalog, name, session.route, computer, harness?.capabilities.models.credentialInherited)
     : groups.some(group => group.id.startsWith('~service-'))
-      ? { brief: ROUTE_NOTE(name, computer) }
+      ? { brief: ROUTE_NOTE(name, computer, harness?.capabilities.models.credentialInherited) }
       : undefined
   return (
     <ValuePicker

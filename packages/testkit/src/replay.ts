@@ -5,6 +5,7 @@
  * A transcript is hand-written from the agent's public protocol and source, or recorded from the real agent against a
  * fake model service; its header says which.
  */
+import { randomUUID } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,6 +49,11 @@ export type ScenarioStep =
   | { step: 'set'; category: string; value: string }
   /** Closes the driver and opens it again on the same data, as a Host restart does. */
   | { step: 'reopen' }
+  /**
+   * Lists the harness's own earlier sessions, loads this one where it was listed and adopts it as the scenario's
+   * session, as 接入已有会话 does; the steps after it continue that session.
+   */
+  | { step: 'adopt'; agentSessionId: string }
 
 export interface ReplayHeader {
   type: 'transcript_start'
@@ -241,7 +247,23 @@ export interface ScenarioBridge {
   cancel(sessionId: string): Promise<boolean | void>
   setConfig?(sessionId: string, configId: string, value: string): Promise<void>
   steer?(sessionId: string, prompt: string, requestId: string): Promise<unknown>
+  listExternalSessions?(): Promise<{ sessions: Array<{ agentSessionId: string; cwd: string; title?: string }> }>
+  loadExternalSession?(place: ScenarioPlace): Promise<{ loadId: string }>
+  adoptExternalSession?(input: ScenarioPlace & { sessionId: string; loadId?: string; title: string }): Promise<{ sessionId: string }>
   close(): Promise<void>
+}
+
+/** The project an `adopt` step loads a session in: every folder, the primary one first. */
+export interface ScenarioProject {
+  id: string
+  folders: ReadonlyArray<{ id: string; path: string }>
+}
+
+interface ScenarioPlace {
+  agentSessionId: string
+  cwd: string
+  workspaceId: string
+  folders: ScenarioProject['folders']
 }
 
 async function waitFor<T>(
@@ -271,15 +293,18 @@ export async function playScenario(input: {
   open: () => Promise<ScenarioBridge>
   steps: ScenarioStep[]
   cwd?: string
+  /** For an `adopt` step. */
+  project?: ScenarioProject
   timeoutMs?: number
   /** Says why waiting is pointless, such as the replay agent's mismatch, so a step fails at once. */
   stopped?: () => string | undefined
-}): Promise<{ bridge: ScenarioBridge; sessionId: string }> {
+}): Promise<{ bridge: ScenarioBridge; sessionId: string; listed?: string[] }> {
   const timeout = input.timeoutMs ?? 10_000
   const stopped = input.stopped
   let bridge = await input.open()
   let sessionId: string | undefined
   let requests = 0
+  let listed: string[] | undefined
   const id = () => `replay-${++requests}`
   const session = () => {
     if (!sessionId) throw new Error('a step before the first prompt needs a session')
@@ -326,7 +351,26 @@ export async function playScenario(input: {
         await bridge.close()
         bridge = await input.open()
         break
+      case 'adopt': {
+        const project = input.project
+        if (!bridge.listExternalSessions || !bridge.loadExternalSession || !bridge.adoptExternalSession || !project)
+          throw new Error('the driver brings in no earlier sessions, or the scenario has no project')
+        const rows = (await bridge.listExternalSessions()).sessions
+        listed = rows.map(row => row.agentSessionId)
+        const row = rows.find(item => item.agentSessionId === step.agentSessionId)
+        if (!row) throw new Error(`the harness does not list ${step.agentSessionId}`)
+        const place = { agentSessionId: row.agentSessionId, cwd: row.cwd, workspaceId: project.id, folders: project.folders }
+        const load = await bridge.loadExternalSession(place)
+        const adopted = await bridge.adoptExternalSession({
+          ...place,
+          sessionId: `task-${randomUUID()}`,
+          loadId: load.loadId,
+          title: row.title ?? 'Adopted',
+        })
+        sessionId = adopted.sessionId
+        break
+      }
     }
   }
-  return { bridge, sessionId: session() }
+  return { bridge, sessionId: session(), ...(listed ? { listed } : {}) }
 }

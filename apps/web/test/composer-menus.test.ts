@@ -82,6 +82,41 @@ describe('the services a Harness cannot use, folded into one row', () => {
     ])
   })
 
+  it.each([
+    ['qwen', 'Qwen Code'],
+    ['goose', 'goose'],
+    ['grok', 'Grok Build'],
+  ])('lists %s\u2019s own models and every service it can reach through Latch, side by side', (id, label) => {
+    const info = testHarness(id, { label })
+    info.capabilities.models = {
+      ...info.capabilities.models,
+      wires: ['chat-completions', 'responses', 'anthropic-messages'],
+      experimental: true,
+      credentialInherited: true,
+    }
+    const catalog = catalogOf(info, { providers: [openai, deepseek, anthropic] })
+    const groups = ownModelGroups(catalog, info, [{ value: 'own', label: 'its own model' }])
+    // Its own group first, under its own name: that one needs its login. The services need none of it.
+    expect(groups.map(group => group.label)).toEqual([
+      label,
+      'OpenAI · 实验性 · 经 Latch',
+      'DeepSeek · 实验性 · 经 Latch',
+      'Anthropic · 实验性 · 经 Latch',
+    ])
+    expect(groups[0]!.options.map(option => option.label)).toEqual(['its own model'])
+    expect(groups.slice(1).every(group => group.options.every(option => option.disabledReason === undefined))).toBe(true)
+    expect(unusableServices(catalog, info)).toEqual([])
+  })
+
+  it('offers no service to a Harness that takes no model provider of another\u2019s, and says nothing false about it', () => {
+    const cursor = testHarness('cursor', { label: 'Cursor' })
+    cursor.capabilities.models = { ...cursor.capabilities.models, ownOnly: true }
+    expect(ownModelGroups(catalogOf(cursor), cursor, []).map(group => group.id)).toEqual(['~own'])
+    expect(unusableServices(catalogOf(cursor), cursor)).toEqual([])
+    const antigravity = testHarness('antigravity', { label: 'Antigravity' })
+    expect(ownModelGroups(catalogOf(antigravity), antigravity, []).map(group => group.id)).toEqual(['~own'])
+  })
+
   it('offers Claude Chat and Responses translation beside native Anthropic while keeping Gemini unavailable', () => {
     const info = testHarness('claude-agent', { label: 'Claude Agent' })
     info.capabilities.models = { ...info.capabilities.models, wires: ['anthropic-messages'] }
@@ -275,6 +310,11 @@ describe("Latch's own sentences on another computer's page", () => {
       label: '经 Latch 转发',
       detail: '「经 Latch」表示请求由 Latch 在 studio-mini 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。',
     })
+    // A Harness that cannot keep its environment from the commands it runs says what they can read, in the same ⓘ.
+    expect(ROUTE_NOTE('Qwen Code', undefined, true).detail).toBe(
+      '「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。Qwen Code 有一整轮没有经过 Latch 时，会话里会告诉你。Qwen Code 运行的命令读得到这个会话的转发凭据，不是密钥。',
+    )
+    expect(ROUTE_NOTE('Codex', undefined, false).detail).not.toContain('读得到')
   })
 })
 

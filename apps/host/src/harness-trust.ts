@@ -51,6 +51,10 @@ export function harnessFacts(declared: HarnessDeclaration | undefined, name: str
       wires: Array.isArray(models?.wires) ? [...new Set(models.wires.filter(wire => WIRES.has(wire)))] : [],
       ...(models?.experimental === true ? { experimental: true as const } : {}),
       ...(models?.knownOnly === true ? { knownOnly: true as const } : {}),
+      // Only of a harness Latch forwards for; a warning a driver may always add.
+      ...(models?.credentialInherited === true && Array.isArray(models.wires) && models.wires.length > 0
+        ? { credentialInherited: true as const }
+        : {}),
       ...(models?.ownOnly === true && !(Array.isArray(models.wires) && models.wires.length > 0) ? { ownOnly: true as const } : {}),
       ...(models?.thinkingPerModel === true ? { thinkingPerModel: true as const } : {}),
       ...(models?.thinkingInModel === true ? { thinkingInModel: true as const } : {}),

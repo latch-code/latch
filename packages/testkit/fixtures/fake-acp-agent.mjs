@@ -102,8 +102,137 @@ const selfMode = env.FAKE_ACP_SELF_MODE
 const modeReport = env.FAKE_ACP_MODE_REPORT ?? 'full'
 /** agentInfo.version; 'none' omits it. */
 const version = env.FAKE_ACP_VERSION ?? '1.2.3'
-/** Opt-in launch-route contracts from the real OpenCode and dsh profiles. No public-network fallback. */
-const launchGateway = (() => {
+/**
+ * Settings merged the way Qwen Code 0.27.3 merges its scopes (`utils/deepMerge.ts` with the strategies of
+ * `settingsSchema.ts`): objects key by key, a list replaced by the later one, the permission rule lists joined.
+ */
+function qwenMerged(earlier, later, path = '') {
+  const merged = { ...earlier }
+  for (const [key, value] of Object.entries(later)) {
+    const at = `${path}${key}`
+    const before = merged[key]
+    if (Array.isArray(before) && Array.isArray(value) && /^permissions\.(allow|ask|deny)$/u.test(at))
+      merged[key] = [...new Set([...before, ...value])]
+    else if (value && before && typeof value === 'object' && typeof before === 'object' && !Array.isArray(value) && !Array.isArray(before))
+      merged[key] = qwenMerged(before, value, `${at}.`)
+    else merged[key] = value
+  }
+  return merged
+}
+/**
+ * Opt-in launch-route contracts from the real OpenCode, dsh, Qwen Code, goose and Grok Build profiles, written from
+ * reading their sources and documentation, not recorded from the programs. No public-network fallback. `key`: the token
+ * where the program reads it from the variable its configuration names. `start`: the model a new session has.
+ * `provider`: goose's own `provider` option, which the fake then reports.
+ */
+const launchGateway = await (async () => {
+  // As Qwen Code: the system settings file its variable names, merged last over the person's settings
+  // (FAKE_QWEN_USER_SETTINGS, a file standing for their own), the selected auth type's `modelProviders` list, each
+  // entry's key read from the variable `envKey` names, and the model as `<id>(<auth type>)`. Its Anthropic and Gemini
+  // SDKs add the API version to the address themselves.
+  if (env.FAKE_ACP_GATEWAY === 'qwen') {
+    if (!env.QWEN_CODE_SYSTEM_SETTINGS_PATH) return undefined
+    const user = env.FAKE_QWEN_USER_SETTINGS ? JSON.parse(readFileSync(env.FAKE_QWEN_USER_SETTINGS, 'utf8')) : {}
+    const settings = qwenMerged(user, JSON.parse(readFileSync(env.QWEN_CODE_SYSTEM_SETTINGS_PATH, 'utf8')))
+    const auth = settings.security?.auth?.selectedType
+    const entries = settings.modelProviders?.[auth] ?? []
+    const entry = entries.find(item => item.id === settings.model?.name)
+    if (!entry) return undefined
+    const route = (type, item) => {
+      const wire =
+        type === 'anthropic'
+          ? 'anthropic-messages'
+          : type === 'gemini'
+            ? 'gemini'
+            : item.wireApi === 'responses'
+              ? 'responses'
+              : 'chat-completions'
+      return {
+        wire,
+        baseURL: `${item.baseUrl}${wire === 'anthropic-messages' ? '/v1' : wire === 'gemini' ? '/v1beta' : ''}`,
+        key: env[item.envKey],
+        model: item.id,
+      }
+    }
+    // A Responses entry is listed under its effective protocol.
+    const suffix = `(${entry.wireApi === 'responses' ? 'openai-responses' : auth})`
+    const allowed = settings.agents?.allowedGrades
+    return {
+      ...route(auth, entry),
+      values: entries.map(item => `${item.id}${suffix}`),
+      start: `${entry.id}${suffix}`,
+      id: value => value.slice(0, -suffix.length),
+      // What a subagent's own model selector comes to: a grade the settings allow, then `<auth type>:<id>` among the
+      // merged entries, and nothing at all once the Agent tool is denied.
+      side(selector) {
+        const grade = selector.startsWith('grade:') ? selector.slice(6) : undefined
+        const graded = settings.agents?.modelGrades?.[grade]
+        if (grade !== undefined && (!graded || (Array.isArray(allowed) && !allowed.includes(grade)))) return 'no such grade'
+        const [type, ...rest] = (graded ?? selector).split(':')
+        const found = (settings.modelProviders?.[type] ?? []).find(item => item.id === rest.join(':'))
+        if (!found) return 'no such model route'
+        if ((settings.permissions?.deny ?? []).includes('Agent')) return 'the Agent tool is denied'
+        return route(type, found)
+      },
+    }
+  }
+  // As goose: its variables alone. The built-in provider fixes the key's variable; `OPENAI_BASE_PATH` picks the API
+  // by goose's own rule (exactly `v1/chat/completions` is the default and follows the model's name, any other path
+  // naming an API fixes it); the models are the ones the address lists.
+  if (env.FAKE_ACP_GATEWAY === 'goose') {
+    const provider = env.GOOSE_PROVIDER
+    if (provider !== 'openai' && provider !== 'anthropic') return undefined
+    const host = (provider === 'anthropic' ? env.ANTHROPIC_HOST : env.OPENAI_HOST)?.replace(/\/+$/u, '')
+    const key = provider === 'anthropic' ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY
+    if (!host || !key || !env.GOOSE_MODEL) return undefined
+    const path = (env.OPENAI_BASE_PATH ?? 'v1/chat/completions').replace(/\/+$/u, '')
+    const responses =
+      path === 'v1/chat/completions'
+        ? /^(gpt-5|o\d)/u.test(env.GOOSE_MODEL)
+        : /(^|\/)responses$/u.test(path) || !path.includes('chat/completions')
+    const wire = provider === 'anthropic' ? 'anthropic-messages' : responses ? 'responses' : 'chat-completions'
+    const listed = await fetch(`${host}/v1/models`, {
+      headers: provider === 'anthropic' ? { 'x-api-key': key } : { authorization: `Bearer ${key}` },
+    })
+      .then(response => (response.ok ? response.json() : { data: [] }))
+      .catch(() => ({ data: [] }))
+    const ids = (listed.data ?? []).map(item => item.id)
+    return {
+      wire,
+      baseURL: provider === 'anthropic' ? `${host}/v1` : new URL(path, `${host}/`).href.replace(/\/(chat\/completions|responses)$/u, ''),
+      key,
+      values: ids.includes(env.GOOSE_MODEL) ? ids : [env.GOOSE_MODEL, ...ids],
+      start: env.GOOSE_MODEL,
+      provider,
+      id: value => value,
+    }
+  }
+  // As Grok Build: the user configuration in its home, `[models] default` and one `[model."<id>"]` table each, the key
+  // read from the variable `env_key` names. Only the keys Latch writes are read.
+  if (env.FAKE_ACP_GATEWAY === 'grok') {
+    if (!env.GROK_HOME || !existsSync(join(env.GROK_HOME, 'config.toml'))) return undefined
+    const tables = {}
+    let table
+    for (const line of readFileSync(join(env.GROK_HOME, 'config.toml'), 'utf8').split('\n')) {
+      const head = /^\[(models|model\.(".*"))\]$/u.exec(line)
+      if (head) table = tables[head[2] ? JSON.parse(head[2]) : '~models'] = {}
+      const pair = /^(\w+) = (".*")$/u.exec(line)
+      if (pair && table) table[pair[1]] = JSON.parse(pair[2])
+    }
+    const start = tables['~models']?.default
+    const entry = tables[start]
+    if (!entry) return undefined
+    const wire =
+      entry.api_backend === 'messages' ? 'anthropic-messages' : entry.api_backend === 'responses' ? 'responses' : 'chat-completions'
+    return {
+      wire,
+      baseURL: entry.base_url,
+      key: env[entry.env_key],
+      values: Object.keys(tables).filter(name => name !== '~models'),
+      start,
+      id: value => value,
+    }
+  }
   if (env.FAKE_ACP_GATEWAY === 'opencode') {
     const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? '{}')
     const route = config.providers?.latch
@@ -147,6 +276,8 @@ const launchGateway = (() => {
   }
   return undefined
 })()
+/** goose's providers besides the one a session is on: one the person set up in goose itself. */
+const GOOSE_OWN_PROVIDER = 'ollama'
 /**
  * Comma list of the models offered with FAKE_ACP_CONFIG=options; default small,large. FAKE_ACP_MODELS_FILE, read for
  * every session, lets a later session of the same agent offer others.
@@ -168,6 +299,11 @@ const known = () =>
 let provider
 let served
 const models = () => (served ? known().filter(model => served.has(model)) : known())
+/**
+ * Without a login of its own the agent still answers once it was pointed at a model service with a key, as the real
+ * programs do: only its own models need its login.
+ */
+const needsLogin = () => notLoggedIn() && !provider && !launchGateway
 /** With '1', the large model also offers a max effort, as agents whose thinking levels follow the model do. */
 const effortByModel = env.FAKE_ACP_EFFORT_BY_MODEL === '1'
 /** The thinking option's ID; codex-acp names it reasoning_effort. */
@@ -484,6 +620,17 @@ function configOptions(session, shape = 'full') {
   }
   return [
     ...(env.FAKE_ACP_MODES && shape !== 'unlisted' ? [mode] : []),
+    ...(launchGateway?.provider
+      ? [
+          {
+            id: 'provider',
+            name: 'Provider',
+            type: 'select',
+            currentValue: session.provider ?? launchGateway.provider,
+            options: [launchGateway.provider, GOOSE_OWN_PROVIDER].map(value => ({ value, name: value })),
+          },
+        ]
+      : []),
     {
       id: 'model',
       name: 'Model',
@@ -653,11 +800,17 @@ async function handle(method, params) {
       }
     case 'session/new': {
       if (env.FAKE_ACP_NEW_SILENT === '1') await new Promise(() => {})
-      if (env.FAKE_ACP_AUTH === 'new' || notLoggedIn()) throw rpcError(-32000, 'Authentication required')
+      if (env.FAKE_ACP_AUTH === 'new' || needsLogin()) throw rpcError(-32000, 'Authentication required')
       if (slowSetup && Object.keys(readDisk()).length > 0) await delay(slowSetup)
       const sessionId = `sess-${randomUUID()}`
       await mountMcp(sessionId, params.mcpServers ?? [], params.cwd)
       sessions[sessionId] = { cwd: params.cwd, history: [], model: startModel(), mode: initialMode, effort: firstEffort() }
+      // As goose: `_meta.provider` names the session's provider, and one it does not have is refused.
+      if (launchGateway?.provider) {
+        const asked = params._meta?.provider ?? launchGateway.provider
+        if (asked !== launchGateway.provider && asked !== GOOSE_OWN_PROVIDER) throw rpcError(-32602, `Unknown provider ${asked}`)
+        sessions[sessionId].provider = asked
+      }
       touched.add(sessionId)
       processCreated(sessionId, sessions[sessionId])
       save()
@@ -673,14 +826,16 @@ async function handle(method, params) {
         updatedAt: '2026-11-01T00:00:00.000Z',
       }))
       const rows = [
-        ...historySessions().map(({ sessionId, cwd, title, updatedAt }) => ({
+        ...historySessions().map(({ sessionId, cwd, title, updatedAt, additionalDirectories }) => ({
           sessionId,
           cwd,
           ...(title ? { title } : {}),
           ...(updatedAt ? { updatedAt } : {}),
+          ...(additionalDirectories?.length ? { additionalDirectories } : {}),
         })),
         ...own.filter(row => !historySession(row.sessionId)),
-      ]
+        // As OpenCode: `cwd` keeps the sessions of exactly that directory.
+      ].filter(row => params.cwd == null || row.cwd === params.cwd)
       const start = Number(params.cursor ?? 0)
       const next = start + listPage
       return { sessions: rows.slice(start, next), ...(next < rows.length ? { nextCursor: String(next) } : {}) }
@@ -860,7 +1015,7 @@ async function prompt({ sessionId, prompt: blocks }) {
     })()
     log('prompt-store', { sessionId, durable })
   }
-  if (env.FAKE_ACP_AUTH === 'prompt' || notLoggedIn()) throw rpcError(-32000, 'Authentication required')
+  if (env.FAKE_ACP_AUTH === 'prompt' || needsLogin()) throw rpcError(-32000, 'Authentication required')
   const input = blocks.map(block => block.text ?? '').join('')
   const [keyword, argument] = input.trim().split(/\s+/)
   log('prompt-mode', { sessionId, mode: session.mode })
@@ -941,6 +1096,7 @@ function replying({ text, until, error }) {
  */
 function startModel() {
   if (env.FAKE_ACP_START_MODEL) return env.FAKE_ACP_START_MODEL
+  if (launchGateway?.start) return launchGateway.start
   const settings = env.GEMINI_CLI_SYSTEM_SETTINGS_PATH ? JSON.parse(readFileSync(env.GEMINI_CLI_SYSTEM_SETTINGS_PATH, 'utf8')) : {}
   return settings.model?.name ?? models()[0] ?? 'small'
 }
@@ -1033,8 +1189,29 @@ const scenarios = {
   // `model [as:name|helper:alias]`: asks the model service it was pointed at, with that model, the alias's or its own,
   // and says what came back.
   model: async ({ session, input, argument, say }) => {
+    // `model side:<selector>`: a subagent on a model of its own, as its file or a grade names it.
+    if (launchGateway?.side && argument?.startsWith('side:')) {
+      const side = launchGateway.side(argument.slice(5))
+      if (typeof side === 'string') {
+        say(`side: ${side}`)
+        return END
+      }
+      const answer = await callFakeModel({ ...side, input })
+      say(`side: ${answer.status === 200 ? answer.text : `error ${answer.status}`}`)
+      return END
+    }
+    // A goose session moved to the person's own provider no longer asks the service it was started on.
+    if (launchGateway && (session.provider ?? launchGateway.provider) !== launchGateway.provider) {
+      say('answered without a model service')
+      return END
+    }
     if (launchGateway) {
-      const answer = await callFakeModel({ ...launchGateway, key: env.LMG_TOKEN, model: launchGateway.id(session.model), input })
+      const answer = await callFakeModel({
+        ...launchGateway,
+        key: launchGateway.key ?? env.LMG_TOKEN,
+        model: launchGateway.id(session.model),
+        input,
+      })
       say(answer.status === 200 ? `model: ${answer.text}` : `model error ${answer.status}: ${answer.text}`)
       return END
     }

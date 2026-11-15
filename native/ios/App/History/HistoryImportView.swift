@@ -97,7 +97,7 @@ struct HistoryImportView: View {
             } else { harnessLabel(source).foregroundStyle(PhoneTheme.ink2) }
             Spacer(minLength: 4)
             Text("主文件夹里的会话").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
-            HintButton(label: "列出哪些会话", text: PhoneHistory.scopeDetail(source.label))
+            HintButton(label: "列出哪些会话", text: PhoneHistory.scopeDetail(source))
         }
     }
     private func harnessLabel(_ item: PhoneHistorySource) -> some View {
