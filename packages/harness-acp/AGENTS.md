@@ -17,6 +17,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 持久化新增字段须可选并入 `src/store.ts` schema；技能路径不保存、不外发。
 - 提议保留本轮上下文已经收到的首轮材料与本机 MCP 来源（CUSTOM-AGENTS、MCP）。
 - 审批活动的 `since` 复用 RunClock 的原等待起点（`test/acp.test.ts#uses one approval wait timestamp even when every clock read advances`）。
+- 不支持的请求共用事件时间，不回退已知输出（HARNESSES）。
 - 测试只用假 Agent 与回放 Agent（`test/replay.test.ts`），不向真实 Agent 发提示。
 
 测试：`pnpm test --project @latch/harness-acp` 与 `e2e/permissions-ui.e2e.ts`。先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。

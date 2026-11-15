@@ -3030,12 +3030,12 @@ describe('what a turn is really doing', () => {
     await bridge.cancel(sessionId)
   })
 
-  it('dates an unrecognised request no earlier than the last sign of life, however slowly its note is written', async () => {
+  it('uses one event timestamp for an unrecognised request even when every clock read advances', async () => {
     let clock = 1_000_000
     const bridge = await (await setup({}, {}, {}, { clock: () => ++clock })).open()
     const { sessionId } = await bridge.createTask({ prompt: 'unknownhang', requestId: rid() })
     const { live } = (await until(bridge, sessionId, item => (item.summary.live?.unrecognized?.count ?? 0) === 2)).summary
-    expect(Date.parse(live!.unrecognized!.at)).toBeGreaterThanOrEqual(Date.parse(live!.lastEventAt))
+    expect(live!.unrecognized!.at).toBe(live!.lastEventAt)
     await bridge.cancel(sessionId)
   })
 })

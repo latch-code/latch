@@ -462,7 +462,7 @@ Latch 在 `initialize` 声明 `clientCapabilities.subagents: {}`（ACP 子 Agent
 
 ## 不支持的请求
 
-Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问。其他请求（包括未声明的文件系统与终端）和读不懂的询问都立刻答复错误（`-32601`、`-32602`），Agent 不会一直等一个不会来的回答，同时不被吞掉：会话记录里写一条系统消息「<Harness> 发来请求 <方法>：Latch 不支持这个请求」与脱敏后的内容（带附件的一轮不写内容，内容最多 2000 字符），同一轮同一方法只写一次，最多 8 种；运行中的 `TaskSummary.live.unrecognized` 给出次数与时间。`unrecognized.at` 不早于 `lastEventAt` 表示 Agent 之后再无动静，会话进「等你处理」；一有动静，Host 就让列表重读。会话尚未建立时只写入 Host 日志。
+Latch 处理 Agent 发来的 `session/request_permission` 与上一节的提问。其他请求（包括未声明的文件系统与终端）和读不懂的询问都立刻答复错误（`-32601`、`-32602`），Agent 不会一直等一个不会来的回答，同时不被吞掉：会话记录里写一条系统消息「<Harness> 发来请求 <方法>：Latch 不支持这个请求」与脱敏后的内容（带附件的一轮不写内容，内容最多 2000 字符），同一轮同一方法只写一次，最多 8 种；运行中的 `TaskSummary.live.unrecognized` 给出次数与时间。不支持的请求同时更新 `unrecognized.at` 与 `lastEventAt`，两者使用同一时间且不早于已知输出。`lastEventAt` 尚未晚于该请求时，会话进「等你处理」；一有动静，Host 就让列表重读。会话尚未建立时只写入 Host 日志。
 
 ## 持久化与恢复
 

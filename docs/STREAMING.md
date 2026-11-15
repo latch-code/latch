@@ -276,7 +276,7 @@ Provider 不能在 finish 后继续发送内容，缺少 finish 也视为失败�
 | `lastEventAt` | 最后的动静：Harness 为这个会话发来的任何东西（输出、工具更新、用量报告、请求），或一项活动的开始（比如审批刚被答复）。Agent 的 stderr 不算：它不属于任何一次运行 |
 | `lastOutputAt` | 可见输出最后一次变化 |
 | `silenceThresholdMs`、`silent` | Host 的判断，见下 |
-| `unrecognized` | Harness 发来过 Latch 不认识的请求：`count` 与最新的 `at`，`at` 不早于 `lastEventAt` 表示之后再无动静；Harness 继续时列表重读一次，不随每个词重读；会话详情里另有 `method` 与记录它的系统消息 `messageId` |
+| `unrecognized` | Harness 发来过 Latch 不认识的请求：`count` 与最新的 `at`。ACP 为该请求同时更新 `at` 和 `lastEventAt`，共用同一时间；`lastEventAt` 尚未晚于 `at` 表示之后再无动静；Harness 继续时列表重读一次，不随每个词重读；会话详情里另有 `method` 与记录它的系统消息 `messageId` |
 
 Driver 报告除 `silenceThresholdMs`、`silent` 以外的各项，`silenceThresholdMs` 与 `silent` 只由 Host 计算，Driver 的说法会被丢弃。Standard 的 `lastEventAt` 随 Provider 的每个事件前进，工具的 `kind: 'execute'` 算命令，名称是工具的标题；ACP 的 `lastEventAt` 随该会话的每个 `session/update` 与请求前进，`kind: 'execute'` 算命令，名称优先取调用的 `rawInput.command`。ACP 同时运行几个调用时，一个结束后活动仍是还在运行的那个，不会说成在等模型。
 

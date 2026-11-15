@@ -5715,18 +5715,20 @@ export class AgentRuntime implements Bridge {
     const candidate = this.runs.get(taskId)
     const run = candidate && (!candidate.live || candidate.live === live) ? candidate : undefined
     const seen = ((run ?? live).unrecognizedMethods ??= new Set())
-    // One reading for both: `at` equal to `lastEventAt` is how a client knows nothing has happened since.
-    const nowMs = this.clock()
+    const newMethod = !seen.has(shown) && seen.size < UNRECOGNIZED_METHODS
+    if (newMethod && run?.segment) this.settleSegment(run, task, 'completed')
+    // The request is the latest event. Give the client one time for both fields, without going behind known output.
+    const eventMs = this.clock()
+    const nowMs = run ? Math.max(eventMs, run.lastEventAt, run.lastOutputAt ?? eventMs) : eventMs
     const at = isoTime(nowMs)
     let messageId: string | undefined
-    if (!seen.has(shown) && seen.size < UNRECOGNIZED_METHODS) {
+    if (newMethod) {
       seen.add(shown)
       messageId = randomUUID()
       const content =
         run?.sensitiveOutput || run?.attachments?.length || task.messages.some(item => item.attachments?.length) || params === undefined
           ? ''
           : `\n\n${clip(this.redact(pretty(params)), UNRECOGNIZED_PARAMS_LIMIT)}`
-      if (run?.segment) this.settleSegment(run, task, 'completed')
       task.messages.push({
         id: messageId,
         role: 'system',
@@ -5739,8 +5741,7 @@ export class AgentRuntime implements Bridge {
       const lastMessage = messageId ?? run.unrecognized?.messageId
       run.unrecognized = {
         count: (run.unrecognized?.count ?? 0) + 1,
-        // Not before `lastEventAt`: a request counts as what the run is stuck on until a later sign of life.
-        at: this.now(),
+        at,
         method: shown,
         ...(lastMessage ? { messageId: lastMessage } : {}),
       }
