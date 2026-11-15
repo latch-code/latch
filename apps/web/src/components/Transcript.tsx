@@ -48,7 +48,7 @@ import { messageTime } from '../format.ts'
 import { usePreferences } from '../preferences.ts'
 import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
-import { AuthorLine, MessageRow, SpeakerLine, ThinkingRow, type LiveReasoning, type Speaker } from './MessageRow.tsx'
+import { AuthorLine, MessageRow, SpeakerLine, ThinkingRow, TurnEditLocked, type LiveReasoning, type Speaker } from './MessageRow.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { SubagentRow, SubagentStop } from './SubagentRow.tsx'
 import { QuestionResultCard } from '../composer/QuestionDrawer.tsx'
@@ -758,6 +758,7 @@ export function Transcript(props: TranscriptProps) {
     )
   })
   const editFrom = useStableCallback((message: Message) => {
+    if (active) return
     const index = detail.messages.findIndex(item => item.id === message.id)
     const before = detail.messages[index - 1]
     if (before) onFork?.(before.id, splitChangeNote(message.text.slice(ownTextStart(message))).text)
@@ -858,6 +859,7 @@ export function Transcript(props: TranscriptProps) {
     // A helper has begun on it, not a Harness.
     const delivery = speaker && said === 'Harness 已开始' ? `${speaker.name} 已开始` : said
     const record = records.get(turn.key)
+    const hasChangeRecord = changes?.enabled === true && record !== undefined
     return (
       <Fragment key={turn.key}>
         <TurnView
@@ -898,12 +900,12 @@ export function Transcript(props: TranscriptProps) {
           reportedContext={latest ? detail.usageReport?.contextUsed : undefined}
           onForkFrom={!trailingLive && onFork ? forkFrom : undefined}
           onCopyUpTo={!trailingLive ? copyUpTo : undefined}
-          {...(!active && onFork && index > 0 ? { onEdit: editFrom } : {})}
+          {...(onFork && index > 0 ? { onEdit: editFrom } : {})}
           {...(onFork ? { onContinue: continueRun } : {})}
           {...(steps ? { onFailureStep: steps } : {})}
           {...(record ? { changes: record } : {})}
-          sessionActive={active}
-          changesRevision={cardsRevision}
+          sessionActive={active && hasChangeRecord}
+          changesRevision={hasChangeRecord ? cardsRevision : ''}
           changesEnabled={changes?.enabled === true}
           onChangesError={changesError}
           {...(onHandoff && !trailingLive ? { onHandoff: handoff } : {})}
@@ -977,7 +979,7 @@ export function Transcript(props: TranscriptProps) {
               </p>
             )}
             {inserts?.get('')}
-            {rows}
+            <TurnEditLocked.Provider value={active}>{rows}</TurnEditLocked.Provider>
           </FileReferences>
         </TurnSummaryOptions.Provider>
       </SubagentStop.Provider>
