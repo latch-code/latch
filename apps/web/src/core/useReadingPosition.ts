@@ -295,12 +295,17 @@ export function useReadingPosition({
         const content = contentRef.current
         if (!container || !content) return null
         const top = container.getBoundingClientRect().top + container.clientTop
-        for (const message of content.querySelectorAll<HTMLElement>('[data-message-id]')) {
-          const rect = message.getBoundingClientRect()
-          // A row of a turn not drawn measures in full and overflows its placeholder: it is only where the turn is.
-          const end = Math.min(rect.bottom, message.closest('[data-turn]')?.getBoundingClientRect().bottom ?? rect.bottom)
-          if (rect.height > 0 && end > top && rect.top < top + container.clientHeight) {
-            return { messageId: message.dataset.messageId!, offset: rect.top - top }
+        const bottom = top + container.clientHeight
+        // A turn's box can be measured while its content is skipped. Reading a far message forces that content to lay out.
+        for (const turn of content.querySelectorAll('[data-turn]')) {
+          const bounds = turn.getBoundingClientRect()
+          if (bounds.bottom <= top || bounds.top >= bottom) continue
+          for (const message of turn.querySelectorAll<HTMLElement>('[data-message-id]')) {
+            const rect = message.getBoundingClientRect()
+            // Measuring a row can lay out its turn. The row only counts where the turn actually reaches the view.
+            if (rect.height > 0 && rect.bottom > top && rect.top < bottom && turn.getBoundingClientRect().bottom > top) {
+              return { messageId: message.dataset.messageId!, offset: rect.top - top }
+            }
           }
         }
         return null
