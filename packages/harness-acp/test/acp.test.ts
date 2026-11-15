@@ -6954,6 +6954,80 @@ describe('sessions on a model service through the gateway', () => {
     }
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'refuses a resumed gateway whose private directory points at the original CLI configuration',
+    async () => {
+      const { fixture, models, stub, route } = await routed(
+        'grok',
+        { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume', FAKE_ACP_GATEWAY: 'grok' },
+        { providerId: 'svc', model: 'fake-model', wire: 'responses' },
+      )
+      const originalHome = join(fixture.root, 'original-home')
+      const originalConfig = '[models]\ndefault = "cli-model"\n'
+      await seedCliFiles(originalHome, { '.grok/config.toml': originalConfig, '.grok/hooks.toml': '# fixture hooks\n' })
+      const before = await cliTree(originalHome)
+      let bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+      expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+      await bridge.close()
+
+      const privateGateway = join(fixture.tmpRoot, sha256Hex(sessionId).slice(0, 16), 'gateway')
+      expect(envOf(await fixture.log())[0]?.GROK_HOME).toBe(privateGateway)
+      await rm(privateGateway, { recursive: true })
+      await symlink(join(originalHome, '.grok'), privateGateway)
+      bridge = await fixture.open()
+      await expect(bridge.prompt(sessionId, 'model must not run', rid())).rejects.toMatchObject({
+        code: 'agent-start-failed',
+        message: expect.stringContaining('网关配置目录的属主或权限不安全'),
+      })
+      expect(await readFile(join(originalHome, '.grok', 'config.toml'), 'utf8')).toBe(originalConfig)
+      expect(await cliTree(originalHome)).toEqual(before)
+      expect((await bridge.detail(sessionId)).summary.status).toBe('idle')
+      expect(models.requests).toHaveLength(1)
+      expect(stub.leases.every(lease => lease.closed)).toBe(true)
+      expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(1)
+
+      await rm(privateGateway)
+      await bridge.prompt(sessionId, 'model recovered', rid())
+      expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+      expect(models.requests).toHaveLength(2)
+      await bridge.close()
+      expect(await cliTree(originalHome)).toEqual(before)
+    },
+  )
+
+  it.skipIf(process.platform === 'win32')('never writes or removes a session through a redirected temporary root', async () => {
+    const { fixture, models, route } = await routed(
+      'grok',
+      { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume', FAKE_ACP_GATEWAY: 'grok' },
+      { providerId: 'svc', model: 'fake-model', wire: 'responses' },
+    )
+    let bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    await bridge.close()
+
+    const originalHome = join(fixture.root, 'original-home')
+    const name = sha256Hex(sessionId).slice(0, 16)
+    const originalConfig = '[models]\ndefault = "cli-model"\n'
+    await seedCliFiles(originalHome, { [`${name}/gateway/config.toml`]: originalConfig, '.zshrc': '# fixture shell configuration\n' })
+    const original = await cliTree(originalHome)
+    await rename(fixture.tmpRoot, join(fixture.root, 'previous-tmp-root'))
+    await symlink(originalHome, fixture.tmpRoot)
+    bridge = await fixture.open()
+    await expect(bridge.prompt(sessionId, 'model must not run', rid())).rejects.toMatchObject({
+      code: 'agent-start-failed',
+      message: expect.stringContaining('会话临时根目录的属主或权限不安全'),
+    })
+    expect(await readFile(join(originalHome, name, 'gateway', 'config.toml'), 'utf8')).toBe(originalConfig)
+    expect((await bridge.detail(sessionId)).summary.status).toBe('idle')
+    expect(models.requests).toHaveLength(1)
+
+    await bridge.remove!(sessionId)
+    await bridge.close()
+    expect(await cliTree(originalHome)).toEqual(original)
+  })
+
   it('does not ask Grok Build for its billing on a model service, where it runs in a home with no login', async () => {
     const billing = JSON.stringify({ config: { creditUsagePercent: 82 }, subscriptionTier: 'SuperGrok' })
     const { fixture, route } = await routed(

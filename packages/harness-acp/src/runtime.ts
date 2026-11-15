@@ -1477,8 +1477,7 @@ export class AgentRuntime implements Bridge {
       const deadline = Date.now() + MCP_READ_MS
       this.notify()
       const key = `mcp-read-${randomUUID()}`
-      await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
-      const cwd = await realpath(await mkdtemp(join(this.tmpRoot(), 'mcp-')))
+      const cwd = await this.makeTemporaryDirectory('mcp-')
       let answer: unknown
       try {
         const launch = this.currentLaunch(await this.projectConfig(cwd))
@@ -1503,7 +1502,7 @@ export class AgentRuntime implements Bridge {
         throw error
       } finally {
         await this.discardProcess(key)
-        await rm(cwd, { recursive: true, force: true }).catch(() => {})
+        await this.removeTemporaryDirectory(cwd).catch(() => {})
       }
       if (this.definitionNow(true) !== definitionHash) return
       if (!ownMcpStatus.safeParse(answer).success) throw new AppError(502, 'agent-protocol', `${this.agent.name} 的 MCP 状态无效`)
@@ -1528,8 +1527,7 @@ export class AgentRuntime implements Bridge {
     const running = () => [...this.runs.keys(), ...this.attaching.keys()].some(key => this.state.tasks[key] !== undefined)
     if (running()) throw new AppError(409, 'harness-busy', `${name} 有会话正在运行，等它结束后再退出登录。`)
     const key = `logout-${randomUUID()}`
-    await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
-    const cwd = await realpath(await mkdtemp(join(this.tmpRoot(), 'logout-')))
+    const cwd = await this.makeTemporaryDirectory('logout-')
     try {
       const launch = this.currentLaunch(await this.projectConfig(cwd))
       const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
@@ -1545,7 +1543,7 @@ export class AgentRuntime implements Bridge {
       }
     } finally {
       await this.discardProcess(key)
-      await rm(cwd, { recursive: true, force: true }).catch(() => {})
+      await this.removeTemporaryDirectory(cwd).catch(() => {})
     }
     this.auth.forgetReports()
     this.quotaFacts.clear()
@@ -1617,8 +1615,7 @@ export class AgentRuntime implements Bridge {
     this.assertOpen()
     this.assertHistoryImport()
     const key = `history-list-${randomUUID()}`
-    await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
-    const cwd = await realpath(await mkdtemp(join(this.tmpRoot(), 'history-')))
+    const cwd = await this.makeTemporaryDirectory('history-')
     try {
       const launch = this.currentLaunch(await this.projectConfig(cwd))
       const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
@@ -1684,7 +1681,7 @@ export class AgentRuntime implements Bridge {
       }
     } finally {
       await this.discardProcess(key)
-      await rm(cwd, { recursive: true, force: true }).catch(() => {})
+      await this.removeTemporaryDirectory(cwd).catch(() => {})
     }
   }
 
@@ -1938,8 +1935,7 @@ export class AgentRuntime implements Bridge {
   /** One read in a private empty folder that is removed afterwards, with the process started for it. */
   private async readOnce(definitionHash: string, model?: string): Promise<void> {
     const key = `catalogue-${randomUUID()}`
-    await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
-    const cwd = await realpath(await mkdtemp(join(this.tmpRoot(), 'catalogue-')))
+    const cwd = await this.makeTemporaryDirectory('catalogue-')
     try {
       const configured = this.selection.profile?.catalogueRead
       if (configured && 'codexModels' in configured) {
@@ -1993,7 +1989,7 @@ export class AgentRuntime implements Bridge {
       })
     } finally {
       await this.discardProcess(key)
-      await rm(cwd, { recursive: true, force: true }).catch(() => {})
+      await this.removeTemporaryDirectory(cwd).catch(() => {})
     }
   }
 
@@ -3504,7 +3500,9 @@ export class AgentRuntime implements Bridge {
     )
       throw new AppError(500, 'model-route-refused', `${this.agent.name} 的转发设置会把凭据写进参数或文件，Latch 没有启动它。`)
     if (files.length) {
-      await mkdir(directory, { recursive: true, mode: 0o700 })
+      await this.assertPrivateDirectory(this.tmpRoot(), '会话临时根目录')
+      await this.assertPrivateDirectory(sessionTmpDir, '会话临时目录')
+      await this.makePrivateDirectory(directory, '网关配置目录')
       for (const [name, text] of files) await writeFileAtomic(join(directory, name), text)
     }
     return {
@@ -4476,17 +4474,42 @@ export class AgentRuntime implements Bridge {
 
   /** The session's own TMPDIR: created 0700, and refused when it is a link or someone else's. */
   private async prepareTmpDir(key: string): Promise<string> {
-    await mkdir(this.tmpRoot(), { recursive: true, mode: 0o700 })
+    await this.prepareTmpRoot()
     const directory = this.tmpDirFor(key)
-    await mkdir(directory, { mode: 0o700 }).catch(error => {
+    await this.makePrivateDirectory(directory, '会话临时目录')
+    return directory
+  }
+
+  private async prepareTmpRoot(): Promise<string> {
+    const root = this.tmpRoot()
+    await this.makePrivateDirectory(root, '会话临时根目录', true)
+    return root
+  }
+
+  private async makeTemporaryDirectory(prefix: string): Promise<string> {
+    const root = await this.prepareTmpRoot()
+    return realpath(await mkdtemp(join(root, prefix)))
+  }
+
+  private async makePrivateDirectory(directory: string, label: string, recursive = false): Promise<void> {
+    await mkdir(directory, { mode: 0o700, recursive }).catch(error => {
       if (codeOf(error) !== 'EEXIST') throw error
     })
+    await this.assertPrivateDirectory(directory, label)
+  }
+
+  private async assertPrivateDirectory(directory: string, label: string): Promise<void> {
     const info = await lstat(directory)
     const uid = process.getuid?.()
     const insecure =
       !info.isDirectory() || (process.platform !== 'win32' && ((info.mode & 0o077) !== 0 || (uid !== undefined && info.uid !== uid)))
-    if (insecure) throw new AppError(503, 'agent-start-failed', `${this.agent.name} 启动失败：会话临时目录的属主或权限不安全`)
-    return directory
+    if (insecure) throw new AppError(503, 'agent-start-failed', `${this.agent.name} 启动失败：${label}的属主或权限不安全`)
+  }
+
+  private async removeTemporaryDirectory(directory: string): Promise<void> {
+    // rm does not follow a link at its last component. A redirected parent would still lead it outside this root.
+    await this.assertPrivateDirectory(this.tmpRoot(), '会话临时根目录')
+    await rm(directory, { recursive: true, force: true })
   }
 
   private async stopAll(): Promise<void> {
@@ -5476,7 +5499,7 @@ export class AgentRuntime implements Bridge {
       } finally {
         const live = this.lives.get(key)
         if (live) await live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
-        await rm(this.tmpDirFor(key), { recursive: true, force: true }).catch(() => {})
+        await this.removeTemporaryDirectory(this.tmpDirFor(key)).catch(() => {})
       }
     })().finally(() => {
       if (this.forgetting.get(key) === work) this.forgetting.delete(key)
@@ -5489,7 +5512,7 @@ export class AgentRuntime implements Bridge {
     await this.spawning.get(key)?.catch(() => undefined)
     const live = this.lives.get(key)
     if (live) await live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
-    await rm(this.tmpDirFor(key), { recursive: true, force: true }).catch(() => {})
+    await this.removeTemporaryDirectory(this.tmpDirFor(key)).catch(() => {})
   }
 
   private async within(promise: Promise<unknown>, ms: number): Promise<void> {
