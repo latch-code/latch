@@ -38,7 +38,6 @@ it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire }>([
   { kind: 'openai-responses', wire: 'responses' },
   { kind: 'openai-compatible', wire: 'chat-completions' },
   { kind: 'anthropic', wire: 'anthropic-messages' },
-  { kind: 'gemini', wire: 'gemini' },
 ])(
   'runs a real OpenCode $wire tool through the gateway without exposing the token to its shell',
   async ({ kind, wire }) => {
@@ -98,7 +97,7 @@ it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire }>([
         body: {
           name: 'Temporary service',
           kind,
-          baseURL: `${upstream.origin}/${wire === 'gemini' ? 'v1beta' : 'v1'}`,
+          baseURL: `${upstream.origin}/v1`,
           apiKey: 'sk-test-opencode-gateway-0123456789',
           models: ['service-only-model', 'service-only-next'],
           defaultModel: 'service-only-model',

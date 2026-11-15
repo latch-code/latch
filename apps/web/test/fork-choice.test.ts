@@ -44,7 +44,7 @@ const catalog: HostCatalog = {
     testHarness('standard', { kind: 'builtin', label: 'Latch 内置' }),
     agent('codex', codexModes),
     // No 由模型判断: the strictest row under it is the rules' one.
-    agent('gemini', { plan: 'plan', default: 'ask', edit: 'rule', yolo: 'never' }),
+    agent('qwen', { plan: 'plan', default: 'ask', edit: 'rule', yolo: 'never' }),
     // Modes Latch has no tiers for.
     agent('cursor', undefined, ['agent', 'ask']),
   ],
@@ -106,13 +106,13 @@ describe('a fork keeps what its source ran with', () => {
   })
 
   it('maps the row by tier onto another Harness, never wider than the source, and says what changed', () => {
-    const wide = { harnessId: 'gemini', config: { mode: 'yolo' } }
+    const wide = { harnessId: 'qwen', config: { mode: 'yolo' } }
     // The same tier: the row is the source's, and the remembered wider one is not used.
-    const asked = forkedChoice(catalog, wide, { harnessId: 'gemini' }, forkSource(codexSession('ask'), codex))
+    const asked = forkedChoice(catalog, wide, { harnessId: 'qwen' }, forkSource(codexSession('ask'), codex))
     expect(asked.choice.config).toMatchObject({ mode: 'default', model: 'large', effort: 'high' })
     expect(asked.missed).toEqual([])
     // No 由模型判断 there: the widest stricter row.
-    const judged = forkedChoice(catalog, wide, { harnessId: 'gemini' }, forkSource(codexSession('review'), codex))
+    const judged = forkedChoice(catalog, wide, { harnessId: 'qwen' }, forkSource(codexSession('review'), codex))
     expect(judged.choice.config?.mode).toBe('edit')
     expect(judged.missed).toEqual(['权限「由模型判断」→ 更严的「按规则放行」'])
     // Modes Latch has no tiers for: none is taken, so the session starts in its own default.
@@ -127,13 +127,13 @@ describe('a fork keeps what its source ran with', () => {
   })
 
   it('takes the strictest row there is, and says so, when the Harness has nothing as strict as the source', () => {
-    const planned = detail({ harnessId: 'gemini' }, [option('mode', 'mode', 'plan', ['plan', 'default'])])
-    const gemini = catalog.harnesses[2]!
+    const planned = detail({ harnessId: 'qwen' }, [option('mode', 'mode', 'plan', ['plan', 'default'])])
+    const qwen = catalog.harnesses[2]!
     const forked = forkedChoice(
       catalog,
       { harnessId: 'codex', config: { mode: 'full' } },
       { harnessId: 'codex' },
-      forkSource(planned, gemini),
+      forkSource(planned, qwen),
     )
     expect(forked.choice.config).toEqual({ mode: 'ask' })
     expect(forked.missed).toEqual(['权限「只看不改」→ CODEX 最严的「先问你」'])
@@ -167,12 +167,12 @@ describe('a fork keeps what its source ran with', () => {
 
   it('lets the person pick anything in the draft, and then says nothing about the row they replaced', () => {
     const source = forkSource(codexSession('review'), codex)
-    const mapped = forkedChoice(catalog, null, { harnessId: 'gemini' }, source)
-    const picked = forkedChoice(catalog, null, { harnessId: 'gemini', config: { ...mapped.choice.config, mode: 'yolo' } }, source)
+    const mapped = forkedChoice(catalog, null, { harnessId: 'qwen' }, source)
+    const picked = forkedChoice(catalog, null, { harnessId: 'qwen', config: { ...mapped.choice.config, mode: 'yolo' } }, source)
     expect(picked.choice.config?.mode).toBe('yolo')
     expect(picked.missed).toEqual([])
     // A pick of another model keeps the row the fork mapped, and what the draft said about it.
-    const model = forkedChoice(catalog, null, { harnessId: 'gemini', config: { ...mapped.choice.config, model: 'small' } }, source)
+    const model = forkedChoice(catalog, null, { harnessId: 'qwen', config: { ...mapped.choice.config, model: 'small' } }, source)
     expect(model.choice.config).toMatchObject({ model: 'small', mode: 'edit' })
     expect(model.missed).toEqual(mapped.missed)
   })
@@ -285,7 +285,7 @@ describe('a fork keeps what its source ran with', () => {
     const gone = { ...catalog, harnesses: catalog.harnesses.filter(harness => harness.id !== 'codex') }
     const forked = forkedChoice(gone, null, { harnessId: 'codex' }, forkSource(codexSession('review'), codex))
     expect(forked.choice.harnessId).toBe(resolveChoice(gone, null).harnessId)
-    expect(forked.choice.harnessId).toBe('gemini')
+    expect(forked.choice.harnessId).toBe('qwen')
     expect(forked.choice.config?.mode).toBe('edit')
   })
 })

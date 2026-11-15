@@ -5,6 +5,7 @@ import { z } from 'zod'
 import {
   GATEWAY_LOSSES,
   MAX_MODEL_FALLBACKS,
+  MODEL_WIRES,
   isFileChange,
   type FileChange,
   isFileMention,
@@ -317,6 +318,11 @@ const startChoice = z.object({
   category: z.string().optional(),
   label: z.string().optional(),
 })
+/**
+ * A route's protocol as it may be on disk: `gemini` is one Latch no longer forwards. A session saved with it still
+ * reads back, so the file opens and nothing in it is lost; continuing it is refused where a route is opened.
+ */
+const storedWire = z.enum([...MODEL_WIRES, 'gemini'])
 const stateSchema = z.object({
   version: z.literal(1),
   tasks: z.record(
@@ -423,8 +429,8 @@ const stateSchema = z.object({
           .object({
             providerId: z.string().min(1).max(128),
             model: z.string().min(1).max(200),
-            wire: z.enum(['chat-completions', 'responses', 'anthropic-messages', 'gemini']),
-            upstream: z.enum(['chat-completions', 'responses', 'anthropic-messages', 'gemini']).optional(),
+            wire: storedWire,
+            upstream: storedWire.optional(),
             origin: z.string().min(1).max(300),
             fallbacks: z
               .record(
@@ -434,7 +440,7 @@ const stateSchema = z.object({
                     z.object({
                       providerId: z.string().min(1).max(128),
                       model: z.string().min(1).max(200),
-                      upstream: z.enum(['chat-completions', 'responses', 'anthropic-messages', 'gemini']),
+                      upstream: storedWire,
                       origin: z.string().min(1).max(300),
                     }),
                   )

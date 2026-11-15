@@ -61,9 +61,9 @@ describe('Harness presets in settings', () => {
     ({ ...AGENT_PRESETS.find(item => item.id === id)!, ...(found === undefined ? {} : { detected: { found } }) }) as AgentPresetSettings
 
   it('stands a found preset with what is installed, never under 可以安装', () => {
-    const { found, installable } = presetGroups([preset('codex', true), preset('pi', false), preset('gemini')], [])
+    const { found, installable } = presetGroups([preset('codex', true), preset('pi', false), preset('goose')], [])
     expect(found.map(item => item.id)).toEqual(['codex'])
-    expect(installable.map(item => item.id)).toEqual(['pi', 'gemini'])
+    expect(installable.map(item => item.id)).toEqual(['pi', 'goose'])
   })
 
   it('leaves out a preset that already has a definition, found or not', () => {

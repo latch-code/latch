@@ -1,9 +1,16 @@
 import { basename, isAbsolute } from 'node:path'
-import { AGENT_PRESETS, isHarnessMark, type AgentPreset, type HarnessCapabilities, type HarnessInfo } from '@latch/protocol'
+import {
+  AGENT_PRESETS,
+  isHarnessMark,
+  isRetiredAgentPreset,
+  type AgentPreset,
+  type HarnessCapabilities,
+  type HarnessInfo,
+} from '@latch/protocol'
 import type { HarnessDriver, HarnessPlugin } from '@latch/sdk'
 import { catalogueReadOf } from './catalogue.ts'
 import { AgentRuntime, CLIENT_VERSION } from './runtime.ts'
-import { commandMoved, resolveCommand } from './command.ts'
+import { commandMoved, RETIRED_HARNESS_NOTE, resolveCommand } from './command.ts'
 import { harnessLogin, presetRecord } from './login.ts'
 import { commandName, selectProfile, validateAgentDefinition } from './permission.ts'
 import type { HarnessProfile } from './profiles/index.ts'
@@ -226,6 +233,7 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
   if (!validation.ok) throw validation.error
   const limits = resolveOptions(options)
   const record: AgentRecord = structuredClone(agent)
+  const retired = isRetiredAgentPreset(record.presetId)
   const wire = selectProfile(record).profile?.wire
   const protocol = wire === 'pi' ? 'pi 的 RPC 模式' : wire === 'codex' ? 'Codex 的 app-server' : 'ACP'
   const description = `通过 ${protocol} 运行 ${commandLine(record)}；模型、登录与工具权限由该 Harness 自身管理。`
@@ -258,8 +266,9 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
           ? { historyImport: true as const }
           : {}),
         seededStart: true,
-        login: () => harnessLogin(record),
+        login: () => (retired ? undefined : harnessLogin(record)),
         status() {
+          if (retired) return { status: 'unavailable', statusMessage: `${record.name} ${RETIRED_HARNESS_NOTE}` }
           const route = routeOf(record)
           const found = located() !== undefined
           const missing = missingParts(record.command, found, route.drives)

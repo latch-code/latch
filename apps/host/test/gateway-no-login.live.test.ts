@@ -13,7 +13,7 @@ import { assertNoGatewayCredentials } from './helpers/gateway-evidence.ts'
  * fake service. Opt-in per Harness by `LATCH_NO_LOGIN_<ID>` naming its binary (`LATCH_NO_LOGIN_CODEX=/path/to/codex`).
  * Every home the program may read is an empty temporary directory, so no login exists and none of the person's is read.
  */
-const KINDS: Record<Exclude<ModelWire, 'gemini'>, ProviderKind> = {
+const KINDS: Record<ModelWire, ProviderKind> = {
   responses: 'openai-responses',
   'chat-completions': 'openai-compatible',
   'anthropic-messages': 'anthropic',

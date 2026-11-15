@@ -49,7 +49,7 @@ describe('sidebar rows', () => {
       model: 'claude-sonnet-5-5',
     },
     { ...base, id: 'asking', title: '有问题的会话', harnessId: 'opencode', status: 'running', pendingQuestions: 2 },
-    { ...base, id: 'failed', title: '失败的会话', harnessId: 'gemini', status: 'failed', model: 'gemini-3-pro' },
+    { ...base, id: 'failed', title: '失败的会话', harnessId: 'qwen', status: 'failed', model: 'qwen3-coder' },
     { ...base, id: 'read', title: '已读的会话', status: 'idle', model: 'deepseek-chat', branch: 'main' },
     { ...base, id: 'unread', title: '有新内容的会话', status: 'idle', model: 'deepseek-chat', updatedAt: now() },
     { ...base, id: 'returning', title: '等待交回的会话', status: 'idle' },

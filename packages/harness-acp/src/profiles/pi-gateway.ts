@@ -8,9 +8,6 @@ const MISSING = 'LATCH_PI_GATEWAY_BUDGET_REQUIRED'
 const DATA = 'pi-gateway.json'
 const EXTENSION = 'pi-gateway.ts'
 export const PI_GATEWAY_PROVIDER = 'latch-gateway'
-const GEMINI_THINKING = ['off', 'minimal', 'low', 'medium', 'high'] as const
-export const piGatewayThinking = (_model: string, wire: string, level?: string): boolean =>
-  wire !== 'gemini' || level === undefined || level === 'default' || GEMINI_THINKING.some(value => value === level)
 
 export function piGatewayBudget(env: Readonly<Record<string, string>>): GatewayPlace['budget'] {
   const context = env[CONTEXT]
@@ -42,17 +39,15 @@ const APIS = {
   'chat-completions': 'openai-completions',
   responses: 'openai-responses',
   'anthropic-messages': 'anthropic-messages',
-  gemini: 'google-generative-ai',
 } as const
 
 /** Uses pi's public catalog and registration API. The token stays in the Agent's memory and leaves its child environment. */
 const SOURCE = `import { readFileSync } from 'node:fs';
 import { getBuiltinProviders, getBuiltinModels } from '@earendil-works/pi-ai/providers/all';
 import { clampThinkingLevel } from '@earendil-works/pi-ai/models';
-import { openAICompletionsApi, openAIResponsesApi, anthropicMessagesApi, googleGenerativeAIApi } from '@earendil-works/pi-ai/compat';
+import { openAICompletionsApi, openAIResponsesApi, anthropicMessagesApi } from '@earendil-works/pi-ai/compat';
 
 export default function (pi) {
-  const googleLevels = ${JSON.stringify(GEMINI_THINKING)};
   const data = JSON.parse(readFileSync(new URL('./${DATA}', import.meta.url), 'utf8'));
   const slot = Symbol.for(import.meta.url + ':gateway-token');
   const token = process.env.LMG_TOKEN ?? globalThis[slot];
@@ -73,7 +68,7 @@ export default function (pi) {
       if (item.id === data.selected) throw new Error('${MISSING}');
       continue;
     }
-    const thinking = (item.capabilities?.thinking ?? []).filter(level => data.api !== 'google-generative-ai' || googleLevels.includes(level));
+    const thinking = item.capabilities?.thinking ?? [];
     models.push({
       id: item.id, name: item.id, api: data.api,
       input: item.capabilities?.vision ? ['text', 'image'] : ['text'],
@@ -83,7 +78,7 @@ export default function (pi) {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     });
   }
-  const streams = { 'openai-completions': openAICompletionsApi, 'openai-responses': openAIResponsesApi, 'anthropic-messages': anthropicMessagesApi, 'google-generative-ai': googleGenerativeAIApi };
+  const streams = { 'openai-completions': openAICompletionsApi, 'openai-responses': openAIResponsesApi, 'anthropic-messages': anthropicMessagesApi };
   const cap = (value, ceiling) => {
     if (value === undefined) return ceiling;
     if (!Number.isSafeInteger(value) || value < 1) throw new Error('Latch gateway output budget is invalid');
@@ -96,20 +91,10 @@ export default function (pi) {
     const contextWindow = cap(model.contextWindow, declared.contextWindow);
     const maxTokens = cap(options.maxTokens, Math.min(contextWindow, cap(model.maxTokens, declared.maxTokens)));
     const safeModel = { ...model, ...declared, provider: '${PI_GATEWAY_PROVIDER}', baseUrl: data.baseURL, contextWindow, maxTokens };
-    if (data.api === 'google-generative-ai' && options.reasoning && !googleLevels.includes(options.reasoning)) throw new Error('Latch gateway Gemini thinking level is unavailable');
     const level = clampThinkingLevel(safeModel, options.reasoning ?? 'off');
     return streams[data.api]().streamSimple(safeModel, context, { ...options, apiKey: token, maxTokens, onPayload: async (payload, sentModel) => {
       const next = (await options.onPayload?.(payload, sentModel)) ?? payload;
       if (!next || next.model !== model.id) throw new Error('Latch gateway model payload is unavailable');
-      if (data.api === 'google-generative-ai') {
-        if (!next.config) throw new Error('Latch gateway thinking payload is unavailable');
-        const config = { ...next.config, maxOutputTokens: cap(next.config.maxOutputTokens, maxTokens) };
-        if (level !== 'off') {
-          const { thinkingBudget: _budget, ...thinking } = config.thinkingConfig ?? {};
-          config.thinkingConfig = { ...thinking, includeThoughts: true, thinkingLevel: level.toUpperCase() };
-        }
-        return { ...next, config };
-      }
       const nextPayload = { ...next };
       const fields = data.api === 'openai-completions' ? ['max_tokens', 'max_completion_tokens'] : data.api === 'openai-responses' ? ['max_output_tokens'] : ['max_tokens'];
       const supplied = fields.filter(field => nextPayload[field] !== undefined);
@@ -130,7 +115,7 @@ export function deliverPiGateway(place: GatewayPlace, route: ModelRoute): Gatewa
     args: ['-e', place.file(EXTENSION), '--provider', PI_GATEWAY_PROVIDER, '--model', route.model],
     files: {
       [EXTENSION]: SOURCE,
-      [DATA]: `${JSON.stringify({ api: APIS[route.wire], baseURL: `${place.baseURL}${route.wire === 'gemini' ? '/v1beta' : ''}`, selected: route.model, models: place.models, ...(place.budget ? { budget: place.budget } : {}) })}\n`,
+      [DATA]: `${JSON.stringify({ api: APIS[route.wire], baseURL: place.baseURL, selected: route.model, models: place.models, ...(place.budget ? { budget: place.budget } : {}) })}\n`,
     },
   }
 }

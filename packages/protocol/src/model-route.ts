@@ -8,7 +8,6 @@ export const PROVIDER_WIRES: Readonly<Record<ProviderKind, ModelWire>> = {
   'openai-compatible': 'chat-completions',
   'openai-responses': 'responses',
   anthropic: 'anthropic-messages',
-  gemini: 'gemini',
 }
 
 /** The protocol names a developer knows them by. */
@@ -16,7 +15,6 @@ export const WIRE_NAMES: Readonly<Record<ModelWire, string>> = {
   'chat-completions': 'Chat Completions',
   responses: 'Responses',
   'anthropic-messages': 'Anthropic Messages',
-  gemini: 'Gemini',
 }
 
 /** A model ID as agents that narrow their list to a service's compare them: lower case, without a vendor prefix or a date suffix. */

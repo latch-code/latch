@@ -482,7 +482,6 @@ describe('ACP driver registration and readiness', () => {
       'DSH_PERMISSION_MODE',
       'OPENCODE_CONFIG_CONTENT',
       'CODEX_HOME',
-      'GEMINI_CLI_SYSTEM_SETTINGS_PATH',
       'NODE_TLS_REJECT_UNAUTHORIZED',
       'NODE_EXTRA_CA_CERTS',
       // Each of these makes OpenCode load permission rules from somewhere else.
@@ -533,10 +532,9 @@ describe('ACP driver registration and readiness', () => {
     expect(selectProfile({ ...base, presetId: 'codex', command: '/opt/homebrew/bin/codex-acp', args: [] }, () => undefined).verified).toBe(
       false,
     )
-    expect(selectProfile({ ...base, presetId: 'gemini', command: 'gemini', args: ['--acp'] })).toMatchObject({
-      verified: false,
-      profile: { presetId: 'gemini' },
-    })
+    // A definition of a preset Latch no longer has gets no profile, not even another preset's by its command's name.
+    expect(selectProfile({ ...base, presetId: 'gemini', command: 'gemini', args: ['--acp'] })).toEqual({ verified: false })
+    expect(selectProfile({ ...base, presetId: 'gemini', command: 'qwen', args: ['--acp'] })).toEqual({ verified: false })
     expect(selectProfile({ ...base, command: '/usr/local/bin/goose', args: ['acp'] })).toMatchObject({
       verified: false,
       profile: { presetId: 'goose' },
@@ -1329,7 +1327,6 @@ describe('ACP project configuration', () => {
 
 describe('ACP project folders', () => {
   const CODEX = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'read-only,workspace-write', FAKE_ACP_INITIAL_MODE: 'read-only' }
-  const GEMINI = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'plan,default,autoEdit,yolo', FAKE_ACP_INITIAL_MODE: 'default' }
   const QWEN = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: QWEN_MODES, FAKE_ACP_INITIAL_MODE: 'default' }
   const CHANGED = {
     status: 409,
@@ -1396,7 +1393,7 @@ describe('ACP project folders', () => {
       return { projectFolders: driver.projectFolders, folderAccess: driver.folderAccess }
     }
     expect(await declared('codex')).toEqual({ projectFolders: 'all', folderAccess: { access: 'all' } })
-    for (const presetId of ['gemini', 'qwen'])
+    for (const presetId of ['qwen'])
       expect(await declared(presetId)).toEqual({ projectFolders: 'all', folderAccess: { access: 'all', max: 5 } })
     expect(await declared('opencode')).toEqual({ projectFolders: undefined, folderAccess: { access: 'primary-asks' } })
     expect(await declared('dsh')).toEqual({ projectFolders: undefined, folderAccess: { access: 'primary' } })
@@ -1592,11 +1589,8 @@ describe('ACP project folders', () => {
     expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(1)
   })
 
-  it('passes Gemini CLI and Qwen Code one --include-directories per other folder after the definition arguments', async () => {
-    for (const [presetId, env, name] of [
-      ['gemini', GEMINI, 'Gemini CLI'],
-      ['qwen', QWEN, 'Qwen Code'],
-    ] as const) {
+  it('passes Qwen Code one --include-directories per other folder after the definition arguments', async () => {
+    for (const [presetId, env, name] of [['qwen', QWEN, 'Qwen Code']] as const) {
       const fixture = await preset(presetId, env)
       const scope = await project(fixture)
       const bridge = await fixture.open(scope.workspaces, scope.projects)
@@ -1626,7 +1620,7 @@ describe('ACP project folders', () => {
     }
 
     // At most four other folders, refused before anything starts.
-    const fixture = await preset('gemini', GEMINI)
+    const fixture = await preset('qwen', QWEN)
     const scope = await project(fixture, ['a', 'b', 'c', 'd', 'e', 'f'])
     const bridge = await fixture.open(scope.workspaces, scope.projects)
     const limit = { status: 409, code: 'harness-folder-limit', message: 'Fake 最多使用 5 个文件夹，这个项目有 6 个，会话没有开始' }
@@ -2386,26 +2380,7 @@ describe('ACP permission mode', () => {
     expect((await settled(other, sessionId)).permission?.notes).toEqual([...profileFor('opencode')!.permission.notes, note])
   })
 
-  it('describes preset launches and writes Gemini system settings for the Host only', async () => {
-    const fixture = await preset('gemini')
-    const bridge = await fixture.open()
-    const preview = await bridge.launchPreview!({ cwd: fixture.workspace })
-    expect(preview).toMatchObject({ presetId: 'gemini', verified: false, readback: 'mode', approvals: 'prompts' })
-    expect(preview.envNames).toContain('GEMINI_CLI_SYSTEM_SETTINGS_PATH')
-    const file = join(fixture.dataDir, 'gemini-system-settings.json')
-    expect((await stat(file)).mode & 0o777).toBe(0o600)
-    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ security: { disableAlwaysAllow: true, enablePermanentToolApproval: false } })
-    expect(preview.launchHash).toBe(
-      launchHash({
-        resolvedCommand: process.execPath,
-        args: [FAKE_ACP_AGENT],
-        definitionEnv: fixture.record.env,
-        presetId: 'gemini',
-        profileVersion: 4,
-        ...launchExtras('gemini'),
-      }),
-    )
-
+  it('describes a preset launch', async () => {
     const piFixture = await preset('pi')
     const pi = await piFixture.open()
     expect(await pi.launchPreview!({ cwd: piFixture.workspace })).toMatchObject({
@@ -2442,99 +2417,6 @@ describe('ACP turn mapping', () => {
     expect([...live]).toEqual([replies[0].id])
     expect(detail.liveText).toBe('')
     expect(detail.activity).toBeUndefined()
-  })
-
-  it("drops what Gemini CLI's reply said before it broke off, keeps its ID, and shows the retry as a line", async () => {
-    const fixture = await preset('gemini', {
-      FAKE_ACP_CONFIG: 'options',
-      FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
-      FAKE_ACP_INITIAL_MODE: 'default',
-    })
-    const bridge = await fixture.open()
-    const live: Array<{ id: string; text: string }> = []
-    let sessionId = ''
-    const unsubscribe = bridge.subscribe(id => {
-      if (!sessionId || id !== sessionId) return
-      void bridge.detail(sessionId).then(
-        detail => {
-          if (detail.liveMessageId) live.push({ id: detail.liveMessageId, text: detail.liveText })
-        },
-        () => {},
-      )
-    })
-    cleanups.push(unsubscribe)
-    ;({ sessionId } = await bridge.createTask({ prompt: 'retry 300', requestId: rid() }))
-    const broken = await until(bridge, sessionId, detail => detail.messages.some(message => message.text.includes('中断')))
-    expect(broken.liveText).toBe('')
-    const detail = await settled(bridge, sessionId)
-    expect(detail.messages.map(({ role, text }) => `${role}:${text}`)).toEqual([
-      'user:retry 300',
-      'system:Fake 重试：回复中途中断（SERVER_ERROR），从头重新生成\n第 1 次重试，最多 4 次',
-      'assistant:The answer is four.',
-    ])
-    const [reply] = assistants(detail)
-    expect(reply).toMatchObject({ state: 'completed', reasoning: '**Planning**\n\nA short answer.' })
-    expect(live.some(item => item.text === 'The answer is fo')).toBe(true)
-    expect(new Set(live.map(item => item.id))).toEqual(new Set([reply!.id]))
-
-    // Another harness's `_meta` means nothing to Latch: its chunks read as it sent them.
-    const other = await (await setup()).open()
-    const plain = await other.createTask({ prompt: 'retry', requestId: rid() })
-    const [as] = assistants(await settled(other, plain.sessionId))
-    expect(as).toMatchObject({ text: 'The answer is foThe answer is four.' })
-    expect(as!.reasoning).toContain('[Retry 1/4] SERVER_ERROR.')
-  })
-
-  it('reads what the service said out of the error body a Gemini CLI retry names', () => {
-    const read = profileFor('gemini')!.readRetry!
-    const reason = (error: string) => {
-      const report = read({
-        sessionUpdate: 'agent_thought_chunk',
-        content: { type: 'text', text: `[Retry 2/10] ${error}. Retrying in 5s...` },
-      })
-      return report?.kind === 'attempt' ? report.reason : undefined
-    }
-    const body = (message: string) => JSON.stringify({ error: { code: 429, message, status: 'RESOURCE_EXHAUSTED' } })
-    expect(reason(body('Quota exceeded.'))).toBe('429 Quota exceeded.')
-    expect(reason(`got status: 429 Too Many Requests. ${body('Slow down.')}`)).toBe('429 Slow down.')
-    // A message that is itself a service's body.
-    expect(reason(body(JSON.stringify({ error: { code: 503, message: 'Overloaded.' } })))).toBe('Overloaded.')
-    // Anything else stays as it came.
-    for (const error of ['SERVER_ERROR', 'Invalid {value}', '[{"error":{"code":500,"message":"x"}}]', '{"error":{"code":500}}'])
-      expect(reason(error)).toBe(error)
-  })
-
-  it('keeps a Gemini CLI retry after the text it cut off, while it waits and when stopped before it asks again', async () => {
-    const fixture = await preset('gemini', {
-      FAKE_ACP_CONFIG: 'options',
-      FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
-      FAKE_ACP_INITIAL_MODE: 'default',
-    })
-    const bridge = await fixture.open()
-    const { sessionId } = await bridge.createTask({ prompt: 'retry 10000', requestId: rid() })
-    // The retry line came right after this text; Gemini CLI now waits before it asks again.
-    await until(bridge, sessionId, detail => detail.liveText === 'The answer is fo')
-    await new Promise(resolve => setTimeout(resolve, 200))
-    const waiting = await bridge.detail(sessionId)
-    expect(waiting.liveText).toBe('The answer is fo')
-    expect(waiting.messages.map(({ role }) => role)).toEqual(['user'])
-    await bridge.cancel(sessionId)
-    const detail = await settled(bridge, sessionId)
-    expect(detail.summary.status).toBe('cancelled')
-    expect(detail.messages.map(({ role, text, state }) => `${role}:${text}${state ? `:${state}` : ''}`)).toEqual([
-      'user:retry 10000',
-      'assistant:The answer is fo:cancelled',
-      'system:Fake 重试：SERVER_ERROR\n第 1 次重试，最多 4 次',
-    ])
-
-    // Text after the wait that was not marked as generated again: the reply before it stands, then the retry.
-    const resumed = await bridge.createTask({ prompt: 'retry 0 on', requestId: rid() })
-    expect((await settled(bridge, resumed.sessionId)).messages.map(({ role, text }) => `${role}:${text}`)).toEqual([
-      'user:retry 0 on',
-      'assistant:The answer is fo',
-      'system:Fake 重试：SERVER_ERROR\n第 1 次重试，最多 4 次',
-      'assistant:ur.',
-    ])
   })
 
   it("drops a command classification an ordinary ACP agent sends: only Latch's Codex wire may say what a command does", async () => {
@@ -4929,46 +4811,6 @@ describe('what a Harness offers before a session, and choosing it before the fir
     expect(next.config?.find(item => item.category === 'mode')?.currentValue).toBe('read-only')
   })
 
-  it('keeps later launch thinking instead of the draft after its model choice times out', async () => {
-    const answerDir = await mkdtemp(join(tmpdir(), 'latch-start-thinking-answer-'))
-    cleanups.push(() => rm(answerDir, { recursive: true, force: true }))
-    const answerFile = join(answerDir, 'answer')
-    await writeFile(answerFile, 'silent-drop')
-    const names = ['gemini-3.1-pro-preview', 'gemini-3-flash-preview']
-    const fixture = await preset(
-      'gemini',
-      {
-        FAKE_ACP_CONFIG: 'options',
-        FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
-        FAKE_ACP_INITIAL_MODE: 'default',
-        FAKE_ACP_MODELS: names.join(','),
-        FAKE_ACP_NO_THINKING: '1',
-        FAKE_ACP_CAPS: 'resume',
-        FAKE_ACP_CONFIG_ANSWER_FILE: answerFile,
-      },
-      { requestTimeoutMs: 150, configTimeoutMs: 150, idleMs: 60_000 },
-    )
-    const bridge = await fixture.open()
-    const { sessionId } = await bridge.createTask({
-      prompt: 'echo first',
-      requestId: rid(),
-      config: [
-        { configId: 'model', value: names[1]! },
-        { configId: '~gemini-thinking', value: 'low' },
-      ],
-    })
-    expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
-    await writeFile(answerFile, '')
-    await bridge.setConfig!(sessionId, 'model', names[0]!)
-    await bridge.setConfig!(sessionId, '~gemini-thinking', 'high')
-    await bridge.close()
-    const resumed = await fixture.open()
-    await resumed.prompt(sessionId, 'echo retry', rid())
-    const next = await settled(resumed, sessionId)
-    expect(next.summary.status).toBe('idle')
-    expect(next.config?.find(item => item.id === '~gemini-thinking')?.currentValue).toBe('high')
-  })
-
   it('refuses the turn when the chosen model is gone, and the next send runs on the model the session shows', async () => {
     const fixture = await preset('codex', CODEX)
     const bridge = await fixture.open()
@@ -6236,7 +6078,14 @@ describe('Claude Agent and Cursor presets', () => {
 })
 
 describe('sessions on a model service through the gateway', () => {
-  const GEMINI = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'plan,default,autoEdit,yolo', FAKE_ACP_INITIAL_MODE: 'default' }
+  /** OpenCode's preset on the fake agent: a Harness pointed at the gateway by what its launch is given. */
+  const LAUNCHED = {
+    FAKE_ACP_CONFIG: 'options',
+    FAKE_ACP_MODES: 'plan,build,auto-edit,yolo',
+    FAKE_ACP_INITIAL_MODE: 'build',
+    FAKE_ACP_VERSION: '2.2.6',
+    FAKE_ACP_GATEWAY: 'opencode',
+  }
   const CODEX = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'read-only,workspace-write', FAKE_ACP_INITIAL_MODE: 'read-only' }
 
   async function dshCommand(): Promise<Partial<AgentRecord>> {
@@ -6466,69 +6315,7 @@ describe('sessions on a model service through the gateway', () => {
     expect(stub.leases.every(lease => lease.closed)).toBe(true)
   })
 
-  it('never offers or silently restores a dsh Gemini alias thinking level that its serializer cannot apply', async () => {
-    const models = await startFakeModels({ replies: [{ text: 'from the service' }] })
-    cleanups.push(() => models.close())
-    const stub = gateway(models, ['gemini-3.8-flash', 'private-alias'])
-    const fixture = await setup(
-      {
-        FAKE_ACP_GATEWAY: 'dsh',
-        FAKE_ACP_PROCESS_MODE: '1',
-        FAKE_ACP_CONFIG: 'options',
-        FAKE_ACP_CAPS: 'resume',
-        FAKE_ACP_MODES: 'read-only,workspace-write,danger-full-access',
-        FAKE_ACP_INITIAL_MODE: 'read-only',
-        FAKE_ACP_VERSION: '0.2.2-rc.1',
-      },
-      {},
-      { presetId: 'dsh', ...(await dshCommand()) },
-      { modelGateway: stub.access },
-    )
-    let bridge = await fixture.open()
-    const route: ModelRoute = { providerId: 'svc', model: 'gemini-3.8-flash', wire: 'gemini', origin: models.origin }
-    const known = await bridge.createTask({ prompt: 'model known', requestId: rid(), modelRoute: route })
-    const knownDetail = await settled(bridge, known.sessionId)
-    expect(knownDetail.config?.find(item => item.category === 'thought_level')?.currentValue).toBe('low')
-    await expect(bridge.setConfig!(known.sessionId, 'model', JSON.stringify(['google', 'private-alias']))).rejects.toMatchObject({
-      code: 'gateway-thinking-unsupported',
-    })
-    expect((await bridge.detail(known.sessionId)).config?.find(item => item.category === 'model')?.currentValue).toBe(
-      JSON.stringify(['google', 'gemini-3.8-flash']),
-    )
-    await bridge.prompt(known.sessionId, 'route-alias private-alias', rid())
-    expect((await settled(bridge, known.sessionId)).summary.status).toBe('cancelled')
-    await bridge.prompt(known.sessionId, 'model must not degrade after a notification', rid())
-    expect((await settled(bridge, known.sessionId)).summary.status).toBe('failed')
-    expect(models.requests).toHaveLength(1)
-    await bridge.setConfig!(known.sessionId, 'model', JSON.stringify(['google', 'gemini-3.8-flash']))
-    expect((await bridge.detail(known.sessionId)).config?.find(item => item.category === 'model')?.currentValue).toBe(
-      JSON.stringify(['google', 'gemini-3.8-flash']),
-    )
-    const unknown = await bridge.createTask({ prompt: 'model alias', requestId: rid(), modelRoute: { ...route, model: 'private-alias' } })
-    const detail = await settled(bridge, unknown.sessionId)
-    expect(detail.summary.status).toBe('idle')
-    expect(detail.config?.some(item => item.category === 'thought_level')).toBe(false)
-    await expect(bridge.setConfig!(unknown.sessionId, 'effort', 'low')).rejects.toMatchObject({ code: 'config-not-found' })
-    const drafted = await bridge.createTask({
-      prompt: 'model must not run',
-      requestId: rid(),
-      modelRoute: { ...route, model: 'private-alias' },
-      config: [{ configId: 'effort', value: 'low' }],
-    })
-    expect((await settled(bridge, drafted.sessionId)).summary.status).toBe('failed')
-    expect(models.requests).toHaveLength(2)
-    await bridge.close()
-    const path = join(fixture.dataDir, 'acp.json')
-    const saved = JSON.parse(await readFile(path, 'utf8')) as { tasks: Record<string, { config: SessionConfigOption[] }> }
-    saved.tasks[unknown.sessionId]!.config.push(knownDetail.config!.find(item => item.category === 'thought_level')!)
-    await writeFile(path, JSON.stringify(saved))
-    bridge = await fixture.open()
-    await bridge.prompt(unknown.sessionId, 'model must not degrade', rid())
-    expect((await settled(bridge, unknown.sessionId)).summary.status).toBe('failed')
-    expect(models.requests).toHaveLength(2)
-  })
-
-  it.each(['responses', 'chat-completions', 'anthropic-messages', 'gemini'] as const)(
+  it.each(['responses', 'chat-completions', 'anthropic-messages'] as const)(
     'keeps pi gateway model identity and hides operating budgets from reported usage over %s',
     async wire => {
       const models = await startFakeModels({ replies: [{ text: 'pi service answer' }] })
@@ -6572,49 +6359,6 @@ describe('sessions on a model service through the gateway', () => {
         { model: 'fake-model-large', wire },
       ])
       await bridge.close()
-      if (wire === 'gemini') {
-        const path = join(fixture.dataDir, 'acp.json')
-        const saved = JSON.parse(await readFile(path, 'utf8')) as { tasks: Record<string, { acp: { routeThinking?: string } }> }
-        saved.tasks[sessionId]!.acp.routeThinking = 'xhigh'
-        await writeFile(path, JSON.stringify(saved))
-        bridge = await fixture.open()
-        await bridge.prompt(sessionId, 'model must not silently lower xhigh', rid())
-        expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
-        expect(models.requests).toHaveLength(2)
-        await bridge.setConfig!(sessionId, 'thought_level', 'off')
-        await bridge.prompt(sessionId, 'model after an explicit valid selection', rid())
-        expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
-        expect(models.requests).toHaveLength(3)
-        await bridge.close()
-        const unknownWrite = JSON.parse(await readFile(path, 'utf8')) as typeof saved
-        unknownWrite.tasks[sessionId]!.acp.routeThinking = 'xhigh'
-        await writeFile(path, JSON.stringify(unknownWrite))
-        bridge = await fixture.open()
-        expect(await bridge.readConfig!(sessionId, 'thought_level', 'off')).toMatchObject({
-          kind: 'read',
-          currentValue: 'off',
-          asked: true,
-        })
-        await bridge.prompt(sessionId, 'model after a verified late choice', rid())
-        expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
-        expect(models.requests).toHaveLength(4)
-        await bridge.close()
-        // The deterministic fake's own record changes independently of the Host, as an unsolicited native report can.
-        for (const file of (await readdir(sessions)).filter(name => name.endsWith('.jsonl'))) {
-          const path = join(sessions, file)
-          const entries = (await readFile(path, 'utf8'))
-            .split('\n')
-            .filter(Boolean)
-            .map(line => JSON.parse(line) as Record<string, unknown>)
-          for (const entry of entries) if (entry.type === 'thinking_level_change') entry.thinkingLevel = 'xhigh'
-          await writeFile(path, `${entries.map(entry => JSON.stringify(entry)).join('\n')}\n`)
-        }
-        bridge = await fixture.open()
-        await bridge.prompt(sessionId, 'model must not trust a newly unsupported native report', rid())
-        expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
-        expect(models.requests).toHaveLength(4)
-        await bridge.close()
-      }
       expect(stub.leases.every(lease => lease.closed)).toBe(true)
     },
   )
@@ -6622,7 +6366,7 @@ describe('sessions on a model service through the gateway', () => {
   it.each(['opencode', 'dsh'])(
     'keeps %s on its declared service model through changes and process restoration over every supported wire',
     async presetId => {
-      for (const wire of ['responses', 'chat-completions', 'anthropic-messages', 'gemini'] as const) {
+      for (const wire of ['responses', 'chat-completions', 'anthropic-messages'] as const) {
         const env: Record<string, string> =
           presetId === 'dsh'
             ? {
@@ -6642,8 +6386,7 @@ describe('sessions on a model service through the gateway', () => {
           },
           { providerId: 'svc', model: 'fake-model', wire },
         )
-        const value = (id: string) =>
-          presetId === 'opencode' ? `latch/${id}` : JSON.stringify([wire === 'gemini' ? 'google' : 'latch-gateway', id])
+        const value = (id: string) => (presetId === 'opencode' ? `latch/${id}` : JSON.stringify(['latch-gateway', id]))
         let bridge = await fixture.open()
         const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
         let detail = await settled(bridge, sessionId)
@@ -6673,9 +6416,9 @@ describe('sessions on a model service through the gateway', () => {
 
   it('revokes a newly prepared gateway credential exactly once when all process slots are busy', async () => {
     const { fixture, stub, route } = await routed(
-      'gemini',
-      GEMINI,
-      { providerId: 'svc', model: 'fake-model', wire: 'gemini' },
+      'opencode',
+      LAUNCHED,
+      { providerId: 'svc', model: 'fake-model', wire: 'chat-completions' },
       { maxProcesses: 1 },
     )
     const bridge = await fixture.open()
@@ -6691,95 +6434,6 @@ describe('sessions on a model service through the gateway', () => {
       { closed: false, closes: 0 },
       { closed: true, closes: 1 },
     ])
-  })
-
-  it('applies Gemini thinking in a private launch file before its first request and after an idle restart, without inventing a read-back', async () => {
-    const models = await startFakeModels({ replies: [{ text: 'done' }] })
-    cleanups.push(() => models.close())
-    const stub = gateway(models)
-    const names = ['gemini-3.1-pro-preview', 'gemini-2.5-flash']
-    const access: ModelGateway = { open: input => ({ ...stub.access.open(input), models: names }) }
-    const fixture = await setup(
-      { ...GEMINI, FAKE_ACP_CAPS: 'resume', FAKE_ACP_NO_THINKING: '1', FAKE_GEMINI_SETTINGS: '1', FAKE_ACP_MODELS: names.join(',') },
-      { idleMs: 60_000 },
-      { presetId: 'gemini' },
-      { modelGateway: access },
-    )
-    let bridge = await fixture.open()
-    const { sessionId } = await bridge.createTask({
-      prompt: 'model first',
-      requestId: rid(),
-      modelRoute: { providerId: 'fake', origin: models.origin, wire: 'gemini', model: names[0]! },
-      config: [{ configId: '~gemini-thinking', value: 'low' }],
-    })
-    const first = await settled(bridge, sessionId)
-    expect(first.config?.find(option => option.id === '~gemini-thinking')).toMatchObject({ source: 'launch', currentValue: 'low' })
-    expect(models.requests[0]?.body).toMatchObject({ generationConfig: { thinkingConfig: { thinkingLevel: 'LOW' } } })
-    await bridge.setConfig!(sessionId, '~gemini-thinking', 'high')
-    await bridge.prompt(sessionId, 'model second', rid())
-    await settled(bridge, sessionId)
-    expect(models.requests.at(-1)?.body).toMatchObject({ generationConfig: { thinkingConfig: { thinkingLevel: 'HIGH' } } })
-    expect(await bridge.readConfig!(sessionId, '~gemini-thinking', 'high')).toMatchObject({ kind: 'unread' })
-    await bridge.close()
-    bridge = await fixture.open()
-    await bridge.prompt(sessionId, 'model restored', rid())
-    await settled(bridge, sessionId)
-    expect(models.requests.at(-1)?.body).toMatchObject({ generationConfig: { thinkingConfig: { thinkingLevel: 'HIGH' } } })
-    expect(
-      received(await fixture.log(), 'session/set_config_option').filter(entry => entry.params?.configId === '~gemini-thinking'),
-    ).toHaveLength(0)
-    await bridge.setConfig!(sessionId, 'model', names[1]!)
-    expect((await bridge.detail(sessionId)).config?.find(option => option.id === '~gemini-thinking')?.currentValue).toBe('default')
-    await bridge.prompt(sessionId, 'model another family', rid())
-    await settled(bridge, sessionId)
-    expect(models.requests.at(-1)?.body).not.toHaveProperty('generationConfig.thinkingConfig')
-    await expect(bridge.setConfig!(sessionId, '~gemini-thinking', 'high')).rejects.toMatchObject({ code: 'config-value-invalid' })
-  })
-
-  it('points Gemini CLI at the gateway with a token in its environment, and its system settings at the route', async () => {
-    const { fixture, models, stub, route } = await routed('gemini', GEMINI, {
-      providerId: 'gemini-svc',
-      model: 'fake-model-large',
-      wire: 'gemini',
-    })
-    const bridge = await fixture.open()
-    const own = await bridge.launchPreview!({ cwd: fixture.workspace })
-    const preview = await bridge.launchPreview!({ cwd: fixture.workspace, modelRoute: route })
-    expect(preview.launchHash).not.toBe(own.launchHash)
-    expect(preview.definitionHash).toBe(own.definitionHash)
-    expect(preview.envNames).toEqual(expect.arrayContaining(['GOOGLE_GEMINI_BASE_URL', 'GEMINI_API_KEY', 'NO_PROXY']))
-    // A start recorded without the route does not launch one.
-    await expect(
-      bridge.createTask({ prompt: 'model hi', requestId: rid(), modelRoute: route, expectedLaunchHash: own.launchHash }),
-    ).rejects.toMatchObject({ status: 409 })
-
-    const { sessionId } = await bridge.createTask({ prompt: 'model hi', requestId: rid(), modelRoute: route })
-    const detail = await settled(bridge, sessionId)
-    expect(
-      assistants(detail)
-        .map(message => message.text)
-        .join(''),
-    ).toBe('model: from the service')
-    expect(detail.summary.modelRoute).toEqual({ providerId: 'gemini-svc', model: 'fake-model-large' })
-    expect(systemText(detail)).not.toContain('没有经过 Latch')
-    const [lease] = stub.leases
-    expect(models.requests).toMatchObject([{ wire: 'gemini', model: 'fake-model-large', key: lease!.token, stream: true }])
-
-    const log = await fixture.log()
-    const [agentEnv] = envOf(log)
-    expect(agentEnv).toMatchObject({ GOOGLE_GEMINI_BASE_URL: models.origin, GEMINI_API_KEY: lease!.token })
-    expect(agentEnv!.NO_PROXY!.split(',')).toEqual(expect.arrayContaining(['127.0.0.1', 'localhost']))
-    // The settings that select the gateway are the session's own; the shared file keeps the person's login.
-    const settings = JSON.parse(await readFile(agentEnv!.GEMINI_CLI_SYSTEM_SETTINGS_PATH!, 'utf8')) as Record<string, unknown>
-    expect(settings).toMatchObject({ security: { auth: { selectedType: 'gateway' } }, model: { name: 'fake-model-large' } })
-    expect(agentEnv!.GEMINI_CLI_SYSTEM_SETTINGS_PATH!.startsWith(fixture.tmpRoot)).toBe(true)
-    // The token is in no argument, no stored record and nothing the session shows.
-    expect(JSON.stringify(log.filter(entry => entry.event === 'start'))).not.toContain(lease!.token)
-    expect(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')).not.toContain(lease!.token)
-    expect(JSON.stringify(detail)).not.toContain(lease!.token)
-
-    await bridge.close()
-    expect(lease!.closed).toBe(true)
   })
 
   const QWEN = {
@@ -7087,52 +6741,12 @@ describe('sessions on a model service through the gateway', () => {
     }
   })
 
-  it("points Gemini CLI's helper calls and subagents at the session's model on a gateway route, changing nothing else", async () => {
-    const { fixture, models, stub, route } = await routed('gemini', GEMINI, {
-      providerId: 'gemini-svc',
-      model: 'fake-model',
-      wire: 'gemini',
-    })
-    const bridge = await fixture.open()
-    const { sessionId } = await bridge.createTask({ prompt: 'model helper:web-fetch', requestId: rid(), modelRoute: route })
-    const detail = await settled(bridge, sessionId)
-    expect(assistants(detail).at(-1)!.text).toBe('model: from the service')
-    expect(models.requests).toMatchObject([{ wire: 'gemini', model: 'fake-model', key: stub.leases[0]!.token }])
-
-    const [agentEnv] = envOf(await fixture.log())
-    const path = agentEnv!.GEMINI_CLI_SYSTEM_SETTINGS_PATH!
-    expect((await stat(path)).mode & 0o777).toBe(0o600)
-    const settings = JSON.parse(await readFile(path, 'utf8')) as {
-      modelConfigs: { customOverrides: unknown[] }
-      agents: { overrides: Record<string, unknown> }
-    }
-    const aliases = [
-      ...['web-fetch', 'web-search', 'loop-detection', 'next-speaker-checker', 'edit-corrector', 'summarizer-default'],
-      // What its experimental context management counts tokens and distills with.
-      ...['context-calibrator', 'gemini-3-flash-base'],
-    ]
-    const compression = ['3-pro', '3-flash', '3.1-flash-lite', '2.5-pro', '2.5-flash', '2.5-flash-lite', 'default']
-    for (const alias of [...aliases, ...compression.map(name => `chat-compression-${name}`)])
-      expect(settings.modelConfigs.customOverrides).toContainEqual({ match: { model: alias }, modelConfig: { model: 'fake-model' } })
-    // Only the model changes: each alias keeps its own generation settings.
-    for (const override of settings.modelConfigs.customOverrides)
-      expect(override).toEqual({ match: expect.anything(), modelConfig: { model: 'fake-model' } })
-    // Its own subagents that pick a fixed model: only the model, too.
-    expect(settings).toMatchObject({
-      agents: {
-        overrides: {
-          codebase_investigator: { modelConfig: { model: 'fake-model' } },
-          cli_help: { modelConfig: { model: 'fake-model' } },
-          browser_agent: { modelConfig: { model: 'fake-model' } },
-        },
-      },
-    })
-    for (const override of Object.values(settings.agents.overrides)) expect(override).toEqual({ modelConfig: { model: 'fake-model' } })
-    expect(Object.keys(settings)).toEqual(['security', 'model', 'modelConfigs', 'agents'])
-  })
-
   it('records on each turn what went through the gateway, with the chosen model as the service names it, and keeps it', async () => {
-    const { fixture, stub, route } = await routed('gemini', GEMINI, { providerId: 'gemini-svc', model: 'fake-model', wire: 'gemini' })
+    const { fixture, stub, route } = await routed('opencode', LAUNCHED, {
+      providerId: 'svc',
+      model: 'fake-model',
+      wire: 'chat-completions',
+    })
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'model one', requestId: rid(), modelRoute: route })
     const first = await settled(bridge, sessionId)
@@ -7167,32 +6781,17 @@ describe('sessions on a model service through the gateway', () => {
     await reopened.close()
   })
 
-  it("keeps a turn's chosen model within what the store reads back when the agent reports a long model of its own", async () => {
-    const own = 'x'.repeat(250)
-    const { fixture, route } = await routed(
-      'gemini',
-      { ...GEMINI, FAKE_ACP_START_MODEL: own },
-      { providerId: 'gemini-svc', model: 'fake-model', wire: 'gemini' },
-    )
-    const bridge = await fixture.open()
-    const { sessionId } = await bridge.createTask({ prompt: 'model as:fake-model', requestId: rid(), modelRoute: route })
-    const detail = await settled(bridge, sessionId)
-    const routedTurn = detail.messages.find(message => message.role === 'user')!.turn?.routed
-    expect(routedTurn).toEqual({ requests: 1, chosen: own.slice(0, 200), models: [{ model: 'fake-model', requests: 1 }] })
-    await bridge.close()
-    const reopened = await fixture.open()
-    const stored = await reopened.detail(sessionId)
-    expect(stored.messages.find(message => message.role === 'user')!.turn?.routed).toEqual(routedTurn)
-    await reopened.close()
-  })
-
   it('says a turn that replied without the gateway did not go through Latch, records it, and takes the next turn', async () => {
-    const { fixture, events, route } = await routed('gemini', GEMINI, { providerId: 'gemini-svc', model: 'fake-model', wire: 'gemini' })
+    const { fixture, events, route } = await routed('opencode', LAUNCHED, {
+      providerId: 'svc',
+      model: 'fake-model',
+      wire: 'chat-completions',
+    })
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'echo hi', requestId: rid(), modelRoute: route })
     const detail = await settled(bridge, sessionId)
     expect(systemText(detail)).toBe('这一轮没有经过 Latch：Fake 可能用了它自己的登录或配置，这一轮的内容可能发给了别的服务。')
-    expect(detail.summary.modelRoute).toEqual({ providerId: 'gemini-svc', model: 'fake-model', bypassed: true })
+    expect(detail.summary.modelRoute).toEqual({ providerId: 'svc', model: 'fake-model', bypassed: true })
     expect(events).toEqual([{ type: 'model-route-bypassed', sessionId }])
     await bridge.prompt(sessionId, 'model again', rid())
     const next = await until(bridge, sessionId, item => assistants(item).length === 2 && item.summary.status === 'idle')
@@ -7200,36 +6799,11 @@ describe('sessions on a model service through the gateway', () => {
     expect(events).toHaveLength(1)
   })
 
-  it("offers on a Gemini CLI route the service's models, not Gemini CLI's own list, and sends a switch to the service", async () => {
-    // As Gemini CLI does: a fixed list of its own models, and the current one from its settings, listed or not.
-    const { fixture, models, route } = await routed(
-      'gemini',
-      { ...GEMINI, FAKE_ACP_CONFIG: 'legacy' },
-      { providerId: 'gemini-svc', model: 'fake-model', wire: 'gemini' },
-    )
-    const bridge = await fixture.open()
-    // An ID typed for its own login is not the service's either.
-    await bridge.setCustomModels!(['typed-model'])
-    const { sessionId } = await bridge.createTask({ prompt: 'model one', requestId: rid(), modelRoute: route })
-    const detail = await settled(bridge, sessionId)
-    const option = detail.config?.find(item => item.category === 'model')
-    expect(option).toMatchObject({ currentValue: 'fake-model', options: [{ value: 'fake-model' }, { value: 'fake-model-large' }] })
-    // Its own models are not offered: the gateway would refuse them.
-    for (const value of ['large', 'typed-model'])
-      await expect(bridge.setConfig!(sessionId, option!.id, value)).rejects.toMatchObject({ status: 400 })
-    await bridge.setConfig!(sessionId, option!.id, 'fake-model-large')
-    await bridge.prompt(sessionId, 'model two', rid())
-    const next = await until(bridge, sessionId, item => assistants(item).length === 2 && item.summary.status === 'idle')
-    expect(assistants(next).at(-1)!.text).toBe('model: from the service')
-    expect(models.requests.map(request => request.model)).toEqual(['fake-model', 'fake-model-large'])
-    expect(systemText(next)).not.toContain('没有经过 Latch')
-  })
-
   it('replaces a process whose token stopped working before its next turn', async () => {
     const { fixture, stub, route } = await routed(
-      'gemini',
-      { ...GEMINI, FAKE_ACP_CAPS: 'load' },
-      { providerId: 'gemini-svc', model: 'fake-model', wire: 'gemini' },
+      'opencode',
+      { ...LAUNCHED, FAKE_ACP_CAPS: 'load' },
+      { providerId: 'svc', model: 'fake-model', wire: 'chat-completions' },
     )
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'model one', requestId: rid(), modelRoute: route })
@@ -7245,7 +6819,7 @@ describe('sessions on a model service through the gateway', () => {
     expect(refreshed).toBe(true)
     expect(stub.leases).toHaveLength(2)
     expect(stub.leases[0]!.closed).toBe(true)
-    const tokens = envOf(await fixture.log()).map(env => env.GEMINI_API_KEY)
+    const tokens = envOf(await fixture.log()).map(env => env.LMG_TOKEN)
     expect(new Set(tokens).size).toBe(2)
   })
 
@@ -7336,10 +6910,17 @@ describe('sessions on a model service through the gateway', () => {
     await expect(
       bridge.createTask({ prompt: 'echo', requestId: rid(), modelRoute: route, expectedLaunchHash: 'a'.repeat(64) }),
     ).rejects.toMatchObject(refusal)
-    const gemini = await routed('gemini', GEMINI, { providerId: 'svc', model: 'fake-model', wire: 'responses' })
+    const codex = await routed('codex', CODEX, { providerId: 'svc', model: 'fake-model', wire: 'chat-completions' })
     await expect(
-      (await gemini.fixture.open()).launchPreview!({ cwd: gemini.fixture.workspace, modelRoute: gemini.route }),
+      (await codex.fixture.open()).launchPreview!({ cwd: codex.fixture.workspace, modelRoute: codex.route }),
     ).rejects.toMatchObject(refusal)
+    // A protocol Latch does not forward at all is no harness's: refused the same way, before anything starts.
+    const launched = await routed('opencode', LAUNCHED, { providerId: 'svc', model: 'fake-model', wire: 'chat-completions' })
+    const unknown = { ...launched.route, wire: 'gemini' } as unknown as ModelRoute
+    const opened = await launched.fixture.open()
+    await expect(opened.createTask({ prompt: 'echo', requestId: rid(), modelRoute: unknown })).rejects.toMatchObject(refusal)
+    expect(launched.stub.leases).toEqual([])
+    expect(await launched.fixture.log()).toEqual([])
     expect(await fixture.log()).toEqual([])
   })
 })

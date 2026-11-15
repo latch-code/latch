@@ -98,8 +98,9 @@ describe('Qwen Code on a model service', () => {
     expect(models!.id('vendor/side(model)(openai-responses)', 'responses')).toBe('vendor/side(model)')
     expect(models!.id('vendor/side(model)(openai)', 'responses')).toBeUndefined()
     expect(models!.value('claude', 'anthropic-messages')).toBe('claude(anthropic)')
-    // The Gemini protocol is not one Latch points Qwen Code at.
-    expect(models!.id('flash(gemini)', 'gemini')).toBeUndefined()
+    // Its own `gemini` list is not one Latch points Qwen Code at: an entry of it is no model of any route.
+    for (const wire of ['chat-completions', 'responses', 'anthropic-messages'] as const)
+      expect(models!.id('flash(gemini)', wire)).toBeUndefined()
     // Another protocol's entry of the same ID, a route ID, a bare ID and an empty ID are not this service's models.
     for (const value of ['main-model(anthropic)', 'qwen-route:v1:abcdef', 'main-model', '(openai)', 'main-model(qwen-oauth)'])
       expect(models!.id(value, 'chat-completions')).toBeUndefined()

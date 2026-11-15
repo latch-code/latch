@@ -186,23 +186,6 @@ export const AGENT_PRESETS: AgentPreset[] = [
     },
   },
   {
-    id: 'gemini',
-    name: 'Gemini CLI',
-    command: 'gemini',
-    args: ['--acp', '--approval-mode', 'default'],
-    license: 'Apache-2.0',
-    homepage: 'https://github.com/google-gemini/gemini-cli',
-    description: '登录与模型由 Gemini CLI 管理。',
-    install: 'npm i -g @google/gemini-cli',
-    login: { command: 'gemini', args: [], note: '进入 Gemini CLI 后按提示登录，或输入 /auth。' },
-    helperCard: {
-      face: { bracket: 'curly', eyes: 'dot' },
-      line: 'Google 的开源命令行 Agent。',
-      abilities: ['files', 'commands'],
-      source: 'Gemini CLI README；MCP、记事与定时尚未在真实 Agent 上核对',
-    },
-  },
-  {
     id: 'qwen',
     name: 'Qwen Code',
     command: 'qwen',
@@ -322,7 +305,6 @@ export const GLOBAL_RESERVED_ENV: readonly string[] = [
   'OPENCODE_TEST_HOME',
   'CODEX_HOME',
   'CLAUDE_CONFIG_DIR',
-  'GEMINI_CLI_SYSTEM_SETTINGS_PATH',
   // The gateway token's variable: only the Host sets it, for a session on a route.
   'LMG_TOKEN',
 ]
@@ -340,6 +322,16 @@ const RESERVED_PREFIXES = RESERVED_ENV_PREFIXES.map(prefix => prefix.toUpperCase
 export function isReservedAgentEnvName(name: string): boolean {
   const upper = name.toUpperCase()
   return RESERVED_NAMES.has(upper) || RESERVED_PREFIXES.some(prefix => upper.startsWith(prefix))
+}
+
+/**
+ * Presets Latch no longer has, by the `presetId` a saved definition may still carry, with the name they had. Such a
+ * definition stays in settings and its sessions stay readable; Latch never starts its command again.
+ */
+export const RETIRED_AGENT_PRESETS: Readonly<Record<string, string>> = { gemini: 'Gemini CLI' }
+
+export function isRetiredAgentPreset(presetId: string | undefined): boolean {
+  return presetId !== undefined && Object.hasOwn(RETIRED_AGENT_PRESETS, presetId)
 }
 
 /** Icons no preset owns: `latch` for the built-in harness only, `plugin` for a third-party one that names no other. */

@@ -206,25 +206,6 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
     expect(tools(detail)).toHaveLength(1)
     expect(tools(detail)[0]).toMatchObject({ state: 'failed', tool: { output: expect.stringContaining('结果未知') } })
   },
-  // A reply that broke off and was generated again reads once, as generated again; each retry is one line, not thinking.
-  retry(detail) {
-    expect(detail.summary.status).toBe('idle')
-    expect(detail.messages.map((message: Message) => `${message.role}:${message.text}`)).toEqual([
-      'user:Explain the build',
-      'system:Gemini CLI 重试：回复中途中断（SERVER_ERROR），从头重新生成\n第 1 次重试，最多 4 次',
-      'assistant:The build runs in two steps: compile, then bundle.',
-      'user:List the files',
-      // The service's error, with the key it echoed masked.
-      'system:Gemini CLI 重试：429 Quota exceeded for key [redacted].\n第 1 次重试，最多 10 次',
-      'system:Gemini CLI 重试：回复中途中断（ECONNRESET），从头重新生成\n第 1 次重试，最多 4 次',
-      'tool:Listed 2 item(s).',
-      'assistant:Two files: a.ts and b.ts.',
-    ])
-    expect(assistants(detail)[0]!.reasoning).toBe(
-      '**Reading the build**\n\nLooking at package.json.**Reading the build**\n\nLooking at package.json again.',
-    )
-    expect(assistants(detail)[1]!.reasoning).toBeUndefined()
-  },
   subagent_ask(detail) {
     expect(detail.summary.status).toBe('idle')
     // The subagent is one row where it began; its call, and the answer the person gave it, are among its steps.

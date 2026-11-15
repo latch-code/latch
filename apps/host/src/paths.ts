@@ -535,7 +535,7 @@ const MAX_PATH_BYTES = 4096
  * and paragraph separators, bidi controls and zero-width characters.
  */
 const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/u
-/** R9: separators and wildcards some agents split folder lists on or expand (Gemini CLI and Qwen Code split on commas). */
+/** R9: separators and wildcards some agents split folder lists on or expand (Qwen Code splits on commas). */
 const AGENT_SPECIAL = /[,*?]/u
 
 export function isPrintableText(text: string): boolean {

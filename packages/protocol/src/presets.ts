@@ -25,13 +25,6 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   { id: 'anthropic', name: 'Anthropic', kind: 'anthropic', baseURL: 'https://api.anthropic.com', requiresKey: true },
   { id: 'deepseek', name: 'DeepSeek', kind: 'openai-compatible', baseURL: 'https://api.deepseek.com/v1', requiresKey: true },
   { id: 'openrouter', name: 'OpenRouter', kind: 'openai-compatible', baseURL: 'https://openrouter.ai/api/v1', requiresKey: true },
-  {
-    id: 'gemini',
-    name: 'Google Gemini',
-    kind: 'gemini',
-    baseURL: 'https://generativelanguage.googleapis.com/v1beta',
-    requiresKey: true,
-  },
   { id: 'moonshot', name: 'Moonshot Kimi', kind: 'openai-compatible', baseURL: 'https://api.moonshot.cn/v1', requiresKey: true },
   { id: 'zhipu', name: '智谱 GLM', kind: 'openai-compatible', baseURL: 'https://open.bigmodel.cn/api/paas/v4', requiresKey: true },
   {
@@ -49,7 +42,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     id: 'custom',
     name: '自定义服务',
     kind: 'openai-compatible',
-    otherKinds: ['openai-responses', 'anthropic', 'gemini'],
+    otherKinds: ['openai-responses', 'anthropic'],
     baseURL: '',
     requiresKey: false,
   },

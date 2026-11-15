@@ -33,8 +33,6 @@ From the project's own repository, site or signed application:
 - DeepSeek Harness: deepseek-harness.svg, github.com/deepseek-ai/deepseek-harness (MIT) at commit
   22ddee3792402c3e70ec5f86a63c3e3e895a2f60, apps/web/public/favicon.svg. DeepSeek Harness is a registered trademark
   of DeepSeek.
-- Gemini CLI: gemini-cli.png, github.com/google-gemini/gemini-cli (Apache-2.0) at commit
-  cd1b45c2db0a5ea7b7fc3b67c1ba5879601d6005, packages/vscode-ide-companion/assets/icon.png.
 - Qwen Code: qwen-code.svg, github.com/QwenLM/qwen-code (Apache-2.0) at commit
   e4eb0183ff56becfc6913ccb67cad8587e8ba6b0, packages/desktop/bootstrap/qwen-code-logo.svg.
 - goose: goose.svg, github.com/aaif-goose/goose (Apache-2.0) at commit 0276d567aa00d426161c51e9c0f52baabe5958ea,
@@ -49,7 +47,6 @@ packages/static-svg/icons/:
 - Anthropic: anthropic.svg (anthropic.svg)
 - DeepSeek: deepseek.svg (deepseek-color.svg)
 - OpenRouter: openrouter.svg (openrouter.svg)
-- Google Gemini: gemini.svg (gemini-color.svg)
 - Moonshot AI: moonshot.svg (moonshot.svg)
 - Zhipu AI: zhipu.svg (zhipu-color.svg)
 - Alibaba Cloud Bailian: bailian.svg (bailian-color.svg)

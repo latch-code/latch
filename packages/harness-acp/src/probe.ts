@@ -1,9 +1,9 @@
 import { realpath } from 'node:fs/promises'
-import { AGENT_PROBE_MAX_MS, type AgentProbeResult, type AgentRecord } from '@latch/protocol'
+import { AGENT_PROBE_MAX_MS, isRetiredAgentPreset, type AgentProbeResult, type AgentRecord } from '@latch/protocol'
 import { AppError, type LaunchPreview } from '@latch/sdk'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { authFacts, reportedLogin, terminalLogins, type ReportedLogin } from './auth.ts'
-import { redactor, resolveCommand } from './command.ts'
+import { harnessRetired, redactor, resolveCommand } from './command.ts'
 import { openWire, wireArgs } from './wires/index.ts'
 import { ConnectionClosed } from './wires/process.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
@@ -25,6 +25,8 @@ const isObject = (value: unknown) => value !== null && typeof value === 'object'
 
 /** Same command, environment and configuration fingerprint as execution, without opening an ACP session. */
 export async function agentProbePreview(agent: AgentRecord, options: ProbeOptions): Promise<LaunchPreview> {
+  // Both the preview and the probe itself pass here first: a definition of a retired preset is never started.
+  if (isRetiredAgentPreset(agent.presetId)) throw harnessRetired(agent.name)
   const verdict = validateAgentDefinition(agent)
   if (!verdict.ok) throw verdict.error
   const found = resolveCommand(agent.command)

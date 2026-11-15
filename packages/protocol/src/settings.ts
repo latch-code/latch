@@ -21,10 +21,19 @@ export interface ModelCapabilities {
 
 /**
  * The protocol a model service speaks: OpenAI's Chat Completions (`openai-compatible`, a name kept for saved data),
- * OpenAI's Responses, Anthropic's Messages or Gemini's generateContent.
+ * OpenAI's Responses or Anthropic's Messages.
  */
-export const PROVIDER_KINDS = ['openai-compatible', 'openai-responses', 'anthropic', 'gemini'] as const
+export const PROVIDER_KINDS = ['openai-compatible', 'openai-responses', 'anthropic'] as const
 export type ProviderKind = (typeof PROVIDER_KINDS)[number]
+/**
+ * Protocols a data directory may still name though Latch no longer speaks them. A service saved with one stays on disk
+ * and can be removed; nothing is ever sent to it, and no device can save one.
+ */
+export const RETIRED_PROVIDER_KINDS = ['gemini'] as const
+export type RetiredProviderKind = (typeof RETIRED_PROVIDER_KINDS)[number]
+/** A model service's protocol as it may be on disk. */
+export type StoredProviderKind = ProviderKind | RetiredProviderKind
+export const isProviderKind = (kind: unknown): kind is ProviderKind => (PROVIDER_KINDS as readonly unknown[]).includes(kind)
 /**
  * How a model request to a service ended, as the Host sorts it before it decides what happens next; never the service's
  * words. `request`: the request itself was refused (400, 404, 413, 422…). `auth`: 401, or a 403 that says the key is at
@@ -260,13 +269,14 @@ export interface SessionDefaults {
 }
 
 /**
- * An enabled model service the Host does not offer, and why: its address is not confirmed on the Host computer yet, or
- * it is at a preset provider's address, which always needs a key, and has none.
+ * An enabled model service the Host does not offer, and why: its address is not confirmed on the Host computer yet, it
+ * is at a preset provider's address, which always needs a key, and has none, or it speaks a protocol Latch no longer
+ * does (`unsupported`: it can only be removed).
  */
 export interface UnusableProvider {
   id: string
   name: string
-  reason: 'origin-unconfirmed' | 'key-missing'
+  reason: 'origin-unconfirmed' | 'key-missing' | 'unsupported'
 }
 
 export type ProviderDestination = 'preset' | 'confirmed' | 'unconfirmed'
@@ -276,7 +286,8 @@ export interface ProviderSettings {
   modelCapabilities?: Record<string, ModelCapabilities>
   id: string
   name: string
-  kind: ProviderKind
+  /** A retired protocol only for a service saved before it was: shown, removable, never editable or used. */
+  kind: StoredProviderKind
   presetId?: string
   baseURL: string
   hasKey: boolean

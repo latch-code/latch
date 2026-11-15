@@ -151,6 +151,12 @@ export function commandUnconfirmed(name: string): AppError {
   )
 }
 
+/** A definition of a preset Latch no longer has: its sessions stay to be read and removed, and its command is never started. */
+export const RETIRED_HARNESS_NOTE = '不再支持，已有会话只能查看'
+export function harnessRetired(name: string): AppError {
+  return new AppError(409, 'harness-retired', `${name} ${RETIRED_HARNESS_NOTE}。`)
+}
+
 /** A confirmed Harness whose command now resolves to another program: it waits for the Mac to confirm it again. */
 export function commandMoved(name: string): AppError {
   return new AppError(409, 'harness-command-moved', `${name} 的命令现在指向另一个程序，在这台 Mac 的「设置 → Harness」里重新确认后才能启动`)

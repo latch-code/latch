@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { KeyRound, ListRestart, Network } from 'lucide-react'
 import {
   PROVIDER_KINDS,
+  isProviderKind,
   type AppSnapshot,
   type ModelCapabilities,
   type ModelFallback,
@@ -103,8 +104,11 @@ const kindLabels: Record<ProviderKind, string> = {
   'openai-compatible': 'Chat Completions',
   'openai-responses': 'Responses',
   anthropic: 'Anthropic Messages',
-  gemini: 'Gemini',
 }
+
+/** A saved service Latch can still use: one saved with a protocol it no longer speaks is listed only to be removed. */
+type SupportedProvider = ProviderSettings & { kind: ProviderKind }
+const isSupported = (provider: ProviderSettings): provider is SupportedProvider => isProviderKind(provider.kind)
 
 /** The protocols a service's address speaks, its preset's first; a service with no preset may speak any. */
 export function protocolChoices(preset: ProviderPreset | undefined, current?: ProviderKind): ProviderKind[] {
@@ -1093,7 +1097,7 @@ function ProviderPage({
   supportsAttachments?: boolean
   /** The Host computer's name, for the lines that send another device there. */
   computer: string
-  provider: ProviderSettings
+  provider: SupportedProvider
   data: ProvidersResponse
   abilities: ProviderAbilities
   isDefault: boolean
@@ -1452,7 +1456,7 @@ function ProviderPage({
         open={fallbacksFor !== null}
         provider={provider}
         model={fallbacksFor ?? provider.defaultModel}
-        providers={data.providers}
+        providers={data.providers.filter(isSupported)}
         onSubmit={list => {
           const { [fallbacksFor ?? '']: _replaced, ...others } = provider.fallbacks ?? {}
           return update({ fallbacks: list.length && fallbacksFor ? { ...others, [fallbacksFor]: list } : others })
@@ -1721,7 +1725,8 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
   const computer = computerName(snapshot.hostName)
   const external = snapshot.catalog?.providers.filter(provider => provider.kind === 'demo' || provider.kind === 'plugin') ?? []
   const defaultProvider = snapshot.catalog?.defaults.model?.providerId
-  const selected = selection?.kind === 'provider' ? data?.providers.find(provider => provider.id === selection.id) : undefined
+  const selected =
+    selection?.kind === 'provider' ? data?.providers.filter(isSupported).find(provider => provider.id === selection.id) : undefined
   const saved = (provider: ProviderSettings, check = false) => {
     recheck(provider.id)
     onChanged()
@@ -1776,92 +1781,113 @@ export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: A
         {data.providers.length === 0 ? (
           <SettingsRow title="还没有模型服务" />
         ) : (
-          data.providers.map(provider => (
-            <ObjectRow
-              key={provider.id}
-              className="provider-row"
-              label={`编辑 ${provider.name}`}
-              leading={<ProviderTile provider={provider} size={24} />}
-              dim={!provider.enabled}
-              title={
-                <span className="settings-row-name">
-                  {provider.name}
-                  {local(provider) && <span className="settings-row-note">本地</span>}
-                  {defaultProvider === provider.id && <span className="settings-row-note">默认</span>}
-                </span>
-              }
-              description={`${kindLabels[provider.kind]} · ${provider.models.length} 个模型`}
-              onOpen={() => {
-                setSelection({ kind: 'provider', id: provider.id })
-              }}
-              trailing={
-                <>
-                  <HealthLine health={provider.health} />
-                  <ServiceStatus
-                    provider={provider}
-                    presets={data.presets}
-                    health={health[provider.id]}
-                    abilities={abilities}
-                    computer={computer}
-                    onUpdateKey={() => {
-                      setKeyFor(provider)
-                    }}
-                  />
-                  <Menu
-                    label={`${provider.name} 的操作`}
-                    align="end"
-                    sections={[
-                      {
-                        id: 'service',
-                        items: [
-                          {
-                            id: 'edit',
-                            label: '编辑…',
-                            icon: EditGlyph,
-                            onSelect: () => {
-                              setSelection({ kind: 'provider', id: provider.id })
+          data.providers.map(provider =>
+            isSupported(provider) ? (
+              <ObjectRow
+                key={provider.id}
+                className="provider-row"
+                label={`编辑 ${provider.name}`}
+                leading={<ProviderTile provider={provider} size={24} />}
+                dim={!provider.enabled}
+                title={
+                  <span className="settings-row-name">
+                    {provider.name}
+                    {local(provider) && <span className="settings-row-note">本地</span>}
+                    {defaultProvider === provider.id && <span className="settings-row-note">默认</span>}
+                  </span>
+                }
+                description={`${kindLabels[provider.kind]} · ${provider.models.length} 个模型`}
+                onOpen={() => {
+                  setSelection({ kind: 'provider', id: provider.id })
+                }}
+                trailing={
+                  <>
+                    <HealthLine health={provider.health} />
+                    <ServiceStatus
+                      provider={provider}
+                      presets={data.presets}
+                      health={health[provider.id]}
+                      abilities={abilities}
+                      computer={computer}
+                      onUpdateKey={() => {
+                        setKeyFor(provider)
+                      }}
+                    />
+                    <Menu
+                      label={`${provider.name} 的操作`}
+                      align="end"
+                      sections={[
+                        {
+                          id: 'service',
+                          items: [
+                            {
+                              id: 'edit',
+                              label: '编辑…',
+                              icon: EditGlyph,
+                              onSelect: () => {
+                                setSelection({ kind: 'provider', id: provider.id })
+                              },
                             },
-                          },
-                          {
-                            id: 'key',
-                            label: '更新密钥…',
-                            icon: KeyRound,
-                            ...(abilities.keys ? {} : { disabledReason: PROVIDER_COPY.keyElsewhere(computer) }),
-                            onSelect: () => {
-                              setKeyFor(provider)
+                            {
+                              id: 'key',
+                              label: '更新密钥…',
+                              icon: KeyRound,
+                              ...(abilities.keys ? {} : { disabledReason: PROVIDER_COPY.keyElsewhere(computer) }),
+                              onSelect: () => {
+                                setKeyFor(provider)
+                              },
                             },
-                          },
-                          {
-                            id: 'models',
-                            label: '刷新模型列表',
-                            icon: ListRestart,
-                            onSelect: () => {
-                              setSelection({ kind: 'provider', id: provider.id, fetch: true })
+                            {
+                              id: 'models',
+                              label: '刷新模型列表',
+                              icon: ListRestart,
+                              onSelect: () => {
+                                setSelection({ kind: 'provider', id: provider.id, fetch: true })
+                              },
                             },
-                          },
-                        ],
-                      },
-                      {
-                        id: 'danger',
-                        items: [
-                          {
-                            id: 'remove',
-                            label: '移除…',
-                            icon: TrashGlyph,
-                            danger: true,
-                            onSelect: () => {
-                              setRemoving(provider)
+                          ],
+                        },
+                        {
+                          id: 'danger',
+                          items: [
+                            {
+                              id: 'remove',
+                              label: '移除…',
+                              icon: TrashGlyph,
+                              danger: true,
+                              onSelect: () => {
+                                setRemoving(provider)
+                              },
                             },
-                          },
-                        ],
-                      },
-                    ]}
-                    trigger={moreButton(`${provider.name} 的操作`)}
-                  />
-                </>
-              }
-            />
-          ))
+                          ],
+                        },
+                      ]}
+                      trigger={moreButton(`${provider.name} 的操作`)}
+                    />
+                  </>
+                }
+              />
+            ) : (
+              <ObjectRow
+                key={provider.id}
+                className="provider-row"
+                label={provider.name}
+                leading={<ProviderTile provider={{ id: provider.id, kind: 'plugin' }} size={24} />}
+                dim
+                title={<span className="settings-row-name">{provider.name}</span>}
+                description="不再支持"
+                trailing={
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setRemoving(provider)
+                    }}>
+                    移除…
+                  </Button>
+                }
+              />
+            ),
+          )
         )}
       </SettingsGroup>
       {external.length > 0 && (

@@ -1,4 +1,4 @@
-import { BUILTIN_HARNESS_LABEL, escapeSecurityText, isHarnessMark, type HarnessCapabilities, type ModelWire } from '@latch/protocol'
+import { BUILTIN_HARNESS_LABEL, MODEL_WIRES, escapeSecurityText, isHarnessMark, type HarnessCapabilities } from '@latch/protocol'
 import type { HarnessDeclaration } from '@latch/sdk'
 
 /** Who a driver is, from which plugin registered it; a driver cannot say this about itself. */
@@ -11,7 +11,7 @@ export interface HarnessTrust {
   enforcement: HarnessCapabilities['permission']['enforcement']
 }
 
-const WIRES = new Set<unknown>(['chat-completions', 'responses', 'anthropic-messages', 'gemini'] satisfies ModelWire[])
+const WIRES = new Set<unknown>(MODEL_WIRES)
 const CATALOGUES = new Set<unknown>(['live', 'session-check', 'none'])
 const LABEL_MAX = 80
 /** Width, case, spacing and invisible characters are what a look-alike name would differ by. */

@@ -22,12 +22,11 @@ async function models(replies: FakeReply[] = [{ text: 'ok' }]): Promise<FakeMode
 }
 
 type Kind = GatewayService['kind']
-const BASE: Record<Kind, string> = { 'openai-responses': '/v1', 'openai-compatible': '/v1', anthropic: '', gemini: '' }
+const BASE: Record<Kind, string> = { 'openai-responses': '/v1', 'openai-compatible': '/v1', anthropic: '' }
 const WIRE = {
   'openai-responses': 'responses',
   'openai-compatible': 'chat-completions',
   anthropic: 'anthropic-messages',
-  gemini: 'gemini',
 } as const
 
 /**
@@ -156,7 +155,6 @@ describe('the gateway schedules a session across its candidates', () => {
   it.each([
     { kind: 'anthropic' as const, path: '/v1/messages', expected: 'event: error' },
     { kind: 'openai-compatible' as const, path: '/v1/chat/completions', expected: '"code":"gateway-upstream"' },
-    { kind: 'gemini' as const, path: '/v1beta/models/fake-model:streamGenerateContent?alt=sse', expected: '"status":"UNAVAILABLE"' },
   ])('ends a broken $kind stream passed through with that protocol’s own error', async ({ kind, path, expected }) => {
     const fake = await models([{ text: 'partial text here', cut: true }])
     const server = new ModelGatewayServer({
@@ -173,11 +171,7 @@ describe('the gateway schedules a session across its candidates', () => {
     const response = await fetch(`http://127.0.0.1:${server.listeningPort}${path}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${lease.token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(
-        kind === 'gemini'
-          ? { contents: [{ role: 'user', parts: [{ text: 'hello' }] }] }
-          : { model: 'fake-model', stream: true, max_tokens: 64, messages: [{ role: 'user', content: 'hello' }] },
-      ),
+      body: JSON.stringify({ model: 'fake-model', stream: true, max_tokens: 64, messages: [{ role: 'user', content: 'hello' }] }),
     })
     expect(response.status).toBe(200)
     expect(await response.text()).toContain(expected)
@@ -341,40 +335,6 @@ describe('the gateway schedules a session across its candidates', () => {
     expect(b.requests).toHaveLength(0)
     expect(switches).toEqual([])
     expect(scheduler.health('a')).toBeUndefined()
-  })
-
-  it('does the same for Gemini generateContent, and limits streamGenerateContent', async () => {
-    const fake = await models([
-      { text: 'whole', delayMs: 300 },
-      { text: 'late', delayMs: 600_000 },
-    ])
-    const time = manualClock()
-    const server = new ModelGatewayServer({
-      service: () => ({ kind: 'gemini', baseURL: fake.origin, apiKey: KEY_A, models: ['fake-model'], fingerprint: 'one' }),
-      fetchFor: () => fetch as typeof fetch,
-      log: () => {},
-      scheduler: new ModelScheduler({ clock: time.clock as SchedulerClock }),
-    })
-    await server.start()
-    cleanups.push(() => server.close())
-    const lease = server.open({
-      sessionId: 'session',
-      route: { providerId: 'a', model: 'fake-model', wire: 'gemini', origin: fake.origin },
-    })
-    const call = (method: string) =>
-      fetch(`http://127.0.0.1:${server.listeningPort}/v1beta/models/fake-model:${method}`, {
-        method: 'POST',
-        headers: { 'x-goog-api-key': lease.token, 'content-type': 'application/json' },
-        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'hello' }] }] }),
-      })
-    const whole = call('generateContent')
-    await vi.waitFor(() => expect(fake.requests).toHaveLength(1))
-    expect(time.pending()).toEqual([])
-    expect((await whole).status).toBe(200)
-    const streamed = call('streamGenerateContent?alt=sse')
-    await vi.waitFor(() => expect(time.pending()).toEqual([60_000]))
-    await time.advance(60_000)
-    expect((await streamed).status).toBe(504)
   })
 
   it('ends the first-byte limit at the response headers: a model that then thinks silently for minutes is not cut or sent again', async () => {

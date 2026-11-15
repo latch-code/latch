@@ -56,8 +56,7 @@ describe("when a draft reads a Harness's lists by itself", () => {
     expect(rule('codex')).toEqual({ when: 'select', modes: false })
     expect(catalogueReadOf(FALLBACK_PROFILES.get('codex'))).toEqual({ when: 'select', modes: false })
     // An empty ACP session: no prompt, so no turn and no model call.
-    for (const presetId of ['dsh', 'cursor', 'gemini', 'goose', 'qwen', 'opencode'])
-      expect(rule(presetId)).toEqual({ when: 'select', modes: true })
+    for (const presetId of ['dsh', 'cursor', 'goose', 'qwen', 'opencode']) expect(rule(presetId)).toEqual({ when: 'select', modes: true })
     // Starting these runs the person's own session hooks and extensions, so only a person asks.
     expect(rule('pi')).toEqual({ when: 'request', modes: true })
     expect(rule('claude-agent')).toEqual({ when: 'request', modes: true })
@@ -72,7 +71,6 @@ describe("when a draft reads a Harness's lists by itself", () => {
       'codex',
       'cursor',
       'dsh',
-      'gemini',
       'goose',
       'grok',
       'opencode',

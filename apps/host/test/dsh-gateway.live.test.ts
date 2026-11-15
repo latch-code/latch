@@ -34,19 +34,16 @@ function toolOutputs(input: unknown): string[] {
   ].map(value => JSON.stringify(value))
 }
 
-it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire; knownGemini?: boolean }>([
+it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire }>([
   { kind: 'openai-responses', wire: 'responses' },
   { kind: 'openai-compatible', wire: 'chat-completions' },
   { kind: 'anthropic', wire: 'anthropic-messages' },
-  { kind: 'gemini', wire: 'gemini' },
-  { kind: 'gemini', wire: 'gemini', knownGemini: true },
 ])(
-  'runs a real dsh $wire tool through the gateway without exposing the token to its shell (known Gemini: $knownGemini)',
-  async ({ kind, wire, knownGemini }) => {
-    const modelA = knownGemini ? 'gemini-3.8-flash' : 'service-only-model'
-    const modelB = knownGemini ? 'gemini-4-argon' : 'service-only-next'
-    const hasThinking = wire !== 'gemini' || knownGemini
-    const providerName = wire === 'gemini' ? 'google' : 'latch-gateway'
+  'runs a real dsh $wire tool through the gateway without exposing the token to its shell',
+  async ({ kind, wire }) => {
+    const modelA = 'service-only-model'
+    const modelB = 'service-only-next'
+    const providerName = 'latch-gateway'
     const root = await mkdtemp(join(tmpdir(), 'latch-dsh-gateway-live-'))
     for (const [name, directory] of Object.entries({
       HOME: 'home',
@@ -96,7 +93,7 @@ it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire; knownGemini?: boo
         body: {
           name: 'Temporary service',
           kind,
-          baseURL: `${upstream.origin}/${wire === 'gemini' ? 'v1beta' : 'v1'}`,
+          baseURL: `${upstream.origin}/v1`,
           apiKey: 'sk-test-dsh-gateway-0123456789',
           models: [modelA, modelB],
           defaultModel: modelA,
@@ -181,23 +178,11 @@ it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire; knownGemini?: boo
       })
       const changed = await owner.json<TaskDetail>(`tasks/${sessionId}`)
       const thought = changed.config?.find(option => option.category === 'thought_level')
-      if (hasThinking) {
-        expect(thought?.options.some(option => option.value === 'low')).toBe(true)
-        await owner.json(`tasks/${sessionId}/config`, {
-          method: 'POST',
-          body: { configId: thought!.id, value: 'low', requestId: randomUUID() },
-        })
-      } else {
-        expect(thought).toBeUndefined()
-        expect(
-          (
-            await owner.request(`tasks/${sessionId}/config`, {
-              method: 'POST',
-              body: { configId: 'reasoning_effort', value: 'low', requestId: randomUUID() },
-            })
-          ).ok,
-        ).toBe(false)
-      }
+      expect(thought?.options.some(option => option.value === 'low')).toBe(true)
+      await owner.json(`tasks/${sessionId}/config`, {
+        method: 'POST',
+        body: { configId: thought!.id, value: 'low', requestId: randomUUID() },
+      })
       await host.close()
       host = await startTestHost(hostOptions)
       owner = await host.enroll({ listener: 'unix' })
@@ -222,20 +207,12 @@ it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire; knownGemini?: boo
           reasoning_effort: body.reasoning_effort,
           thinking: body.thinking,
           output_config: body.output_config,
-          generationConfig: body.generationConfig,
         },
       }
-      expect(evidence.thought).toBe(hasThinking ? 'low' : undefined)
-      if (wire === 'gemini' && hasThinking) {
-        expect(body).toMatchObject({ generationConfig: { thinkingConfig: { thinkingLevel: 'LOW', includeThoughts: true } } })
-        expect((body.generationConfig as { thinkingConfig: object }).thinkingConfig).not.toHaveProperty('thinkingBudget')
-      }
+      expect(evidence.thought).toBe('low')
       if (process.env.LATCH_GATEWAY_EVIDENCE_DIR) {
         await mkdir(process.env.LATCH_GATEWAY_EVIDENCE_DIR, { recursive: true })
-        await writeFile(
-          join(process.env.LATCH_GATEWAY_EVIDENCE_DIR, `${wire}${knownGemini ? '-known' : ''}.json`),
-          JSON.stringify(evidence, null, 2),
-        )
+        await writeFile(join(process.env.LATCH_GATEWAY_EVIDENCE_DIR, `${wire}.json`), JSON.stringify(evidence, null, 2))
       }
 
       phase = 'slow'

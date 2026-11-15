@@ -5,7 +5,7 @@ const bytes = (text: string) => new TextEncoder().encode(text)
 const SSE = 'text/event-stream; charset=utf-8'
 
 /** Feeds the reply in pieces of `size` bytes, so lines and characters are split across chunks. */
-function read(wire: 'responses' | 'gemini', contentType: string, text: string, size = 7) {
+function read(wire: 'responses', contentType: string, text: string, size = 7) {
   const reader = replyReader(wire, contentType)
   const all = bytes(text)
   for (let start = 0; start < all.length; start += size) reader.feed(all.subarray(start, start + size))
@@ -86,31 +86,9 @@ describe('what the gateway reads of a reply', () => {
     expect(read('responses', 'application/json', body)).toEqual({ model: 'gpt-x', usage: { inputTokens: 7, outputTokens: 3 }, ended: true })
   })
 
-  it('reads the last Gemini chunk, with CRLF lines, and a stream sent as one JSON array', () => {
-    const chunk = (text: string, usage?: unknown) =>
-      JSON.stringify({
-        candidates: [{ content: { parts: [{ text }] }, ...(usage ? { finishReason: 'STOP' } : {}) }],
-        modelVersion: 'gemini-x-001',
-        ...(usage ? { usageMetadata: usage } : {}),
-      })
-    const usage = { promptTokenCount: 50, cachedContentTokenCount: 10, candidatesTokenCount: 8, thoughtsTokenCount: 4 }
-    const expected = {
-      model: 'gemini-x-001',
-      usage: { inputTokens: 50, outputTokens: 12, cacheReadTokens: 10, reasoningTokens: 4 },
-      ended: true,
-    }
-    expect(read('gemini', SSE, `data: ${chunk('a')}\r\n\r\ndata: ${chunk('b', usage)}\r\n\r\n`, 5)).toEqual(expected)
-    expect(read('gemini', 'application/json', `[${chunk('a')},\n${chunk('b', usage)}]`)).toEqual(expected)
-    expect(read('gemini', SSE, `data: ${chunk('a')}\n\n`)).toEqual({ model: 'gemini-x-001' })
-    // The chunk that says why it finished may carry neither the model nor usage.
-    const finished = JSON.stringify({ candidates: [{ content: { parts: [] }, finishReason: 'STOP' }] })
-    expect(read('gemini', SSE, `data: ${chunk('a')}\n\ndata: ${finished}\n\n`)).toEqual({ model: 'gemini-x-001', ended: true })
-    expect(read('gemini', SSE, `data: ${JSON.stringify({ error: { code: 500 } })}\n\n`)).toEqual({ failed: true, ended: true })
-  })
-
   it('reads nothing from a reply that is not what the protocol sends, and never throws', () => {
     expect(read('responses', SSE, 'data: {not json\n\n: comment\n\nevent: response.completed\ndata: []\n\n')).toEqual({})
-    expect(read('gemini', 'application/json', '<html>busy</html>')).toEqual({})
+    expect(read('responses', 'application/json', '<html>busy</html>')).toEqual({})
     expect(read('responses', SSE, '')).toEqual({})
   })
 })

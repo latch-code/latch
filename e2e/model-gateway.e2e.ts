@@ -113,7 +113,6 @@ describe('a Harness with its own models on a saved service', () => {
     }
     openai = await add('OpenAI', 'openai-responses', `${models.origin}/v1`)
     await add('DeepSeek', 'openai-compatible', `${models.origin}/v1`)
-    await add('Gemini', 'gemini', `${models.origin}/v1`)
     // A relay with a model Codex does not know: Codex would not use it.
     await add('Relay', 'openai-responses', `${models.origin}/v1`, ['fake-model', 'deepseek-v3'])
     browser = await chromium.launch(browserLaunchOptions())
@@ -185,16 +184,11 @@ describe('a Harness with its own models on a saved service', () => {
     const page = await open(1440, 'light')
     await chip(page, '模型').click()
     await shownText(page, 'OpenAI · 实验性 · 经 Latch', { exact: true }).waitFor()
-    // Chat is available through the implemented conversion; Gemini remains folded with its actual incompatibility.
+    // Chat is available through the implemented conversion, so no saved service is left that Codex cannot use.
     await shownText(page, 'DeepSeek · 实验性 · 经 Latch', { exact: true }).waitFor()
     const chatGroup = page.getByRole('group', { name: 'DeepSeek · 实验性 · 经 Latch', exact: true })
     expect(await chatGroup.getByRole('menuitemradio', { name: 'fake-model-large', exact: true }).getAttribute('aria-disabled')).toBeNull()
-    const unusable = menuText(page, '1 个服务用不了')
-    await unusable.waitFor()
-    expect(await shownText(page, 'Gemini', { exact: true }).count()).toBe(0)
-    await unusable.click()
-    await menuText(page, 'Codex 只说 Responses，这个服务是 Gemini').waitFor()
-    await menuText(page, 'Gemini').waitFor()
+    expect(await shownText(page, /个服务用不了/u).count()).toBe(0)
     expect(await shownText(page, /尚未实现/u).count()).toBe(0)
     await shownText(page, 'Relay · 实验性 · 经 Latch', { exact: true }).waitFor()
     await expect.poll(() => row(page, 'deepseek-v3').getAttribute('aria-disabled')).toBe('true')
@@ -253,8 +247,6 @@ describe('a Harness with its own models on a saved service', () => {
       await service.getByText('开始后不能换服务', { exact: true }).waitFor()
     }
     expect(await menuText(page, 'Codex 自己的模型').count()).toBe(0)
-    // The service it cannot use stays folded in the session too.
-    await menuText(page, '1 个服务用不了').waitFor()
     // A route that works is said in the menu alone: a session's input has no line under it.
     expect(await page.locator('form.composer .composer-status, form.composer .composer-notice[data-tint="warn"]').count()).toBe(0)
     await shot(page, 'session-menu-1440-light')
@@ -297,121 +289,6 @@ describe('a Harness with its own models on a saved service', () => {
 })
 
 /**
- * Gemini CLI on a saved Gemini service. Gemini CLI lists a fixed set of its own models whatever service it points at;
- * the gateway forwards only the service's, so those are what the session offers.
- */
-describe('Gemini CLI on a saved Gemini service', () => {
-  let directory: string
-  let host: TestHost
-  let owner: TestDevice
-  let browser: Browser
-  let models: FakeModels
-  let gemini: ProviderSettings
-
-  beforeAll(async () => {
-    directory = await mkdtemp(join(tmpdir(), 'latch-e2e-gateway-gemini-'))
-    models = await startFakeModels({ replies: [{ text: '经过 Latch 的回复' }] })
-    const bin = join(directory, 'bin')
-    await mkdir(bin)
-    // As Gemini CLI answers: its own models in the old `models` form, the current one from its settings.
-    await writeFile(
-      join(bin, 'gemini'),
-      [
-        '#!/bin/sh',
-        `export FAKE_ACP_STATE='${join(directory, 'state.json')}' FAKE_ACP_LOG='${join(directory, 'agent.log')}'`,
-        'export FAKE_ACP_MODES=plan,default,autoEdit,yolo FAKE_ACP_INITIAL_MODE=default FAKE_ACP_CONFIG=legacy',
-        `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
-      ].join('\n'),
-    )
-    await chmod(join(bin, 'gemini'), 0o755)
-    host = await startTestHost({
-      demo: false,
-      sessionFolders: true,
-      detectPreset: preset => (preset.id === 'gemini' ? { found: true, path: join(bin, 'gemini') } : { found: false }),
-      commandDirectories: () => [bin],
-    })
-    owner = await host.enroll({ listener: 'unix' })
-    // Saved on this Mac with its confirmation: a page elsewhere is offered no preset, only saved definitions.
-    expect((await owner.confirmed('agents', { body: savedPreset('gemini') })).status).toBe(201)
-    const created = await owner.confirmed('providers', {
-      method: 'POST',
-      body: {
-        name: 'MyGemini',
-        kind: 'gemini',
-        baseURL: models.origin,
-        apiKey: KEY,
-        models: ['fake-model', 'fake-model-large'],
-        defaultModel: 'fake-model',
-        confirmOrigin: true,
-      },
-    })
-    expect(created.status).toBe(201)
-    gemini = ((await created.json()) as { provider: ProviderSettings }).provider
-    browser = await chromium.launch(browserLaunchOptions())
-    await mkdir(OUTPUT, { recursive: true })
-  })
-  afterAll(async () => {
-    await browser?.close()
-    await host?.close()
-    await models?.close()
-    await rm(directory, { recursive: true, force: true })
-  })
-
-  it("offers in the session the service's models, not Gemini CLI's own, and a switch goes to the service", async () => {
-    const context = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
-      colorScheme: 'light',
-      locale: 'zh-CN',
-      reducedMotion: 'reduce',
-    })
-    const page = await context.newPage()
-    page.setDefaultTimeout(15_000)
-    await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
-    await connected(page)
-    await chip(page, '模型').click()
-    await menuText(page, 'MyGemini · 经 Latch').waitFor()
-    await row(page, 'fake-model').click()
-    // The first time, this Harness's options are read by a process of its own; the chip says so until they are.
-    await expect.poll(() => chip(page, '模型').innerText(), { timeout: 15_000 }).toBe('fake-model')
-    await input(page).fill('model 你好')
-    await sendDraft(page)
-    await page.locator('.transcript').getByText('model: 经过 Latch 的回复', { exact: true }).first().waitFor({ timeout: 20_000 })
-    // An ID typed for Gemini CLI's own login is no model of this service either.
-    const [started] = (await owner.json<AppSnapshot>('snapshot')).tasks
-    const typed = await owner.request(`agents/${started!.harnessId}/models`, { method: 'PUT', body: { models: ['vendor/typed'] } })
-    expect(typed.status).toBe(200)
-    await page.reload()
-    await connected(page)
-
-    await chip(page, '模型').click()
-    await menuText(page, 'MyGemini · 经 Latch').waitFor()
-    await row(page, 'fake-model-large').waitFor()
-    expect(await shownText(page, 'Fake Small', { exact: true }).count()).toBe(0)
-    expect(await shownText(page, 'vendor/typed', { exact: true }).count()).toBe(0)
-    await shot(page, 'gemini-session-menu-1440-light')
-    await row(page, 'fake-model-large').click()
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('fake-model-large')
-    const composer = page.getByRole('textbox', { name: '继续对话', exact: true })
-    await composer.fill('model 第二轮')
-    await composer.press('Meta+Enter')
-    await page.locator('.transcript').getByText('model: 经过 Latch 的回复', { exact: true }).nth(1).waitFor({ timeout: 20_000 })
-    // A helper call Gemini CLI makes by alias goes to the model the session started on, not one the service lacks.
-    await composer.fill('model helper:web-fetch')
-    await composer.press('Meta+Enter')
-    await page.locator('.transcript').getByText('model: 经过 Latch 的回复', { exact: true }).nth(2).waitFor({ timeout: 20_000 })
-    expect(models.requests.map(request => [request.wire, request.model, request.key])).toEqual([
-      ['gemini', 'fake-model', KEY],
-      ['gemini', 'fake-model-large', KEY],
-      ['gemini', 'fake-model', KEY],
-    ])
-    const tasks = (await owner.json<AppSnapshot>('snapshot')).tasks
-    const detail = await owner.json<TaskDetail>(`tasks/${tasks[0]!.id}`)
-    expect(detail.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model', name: 'MyGemini' })
-    await context.close()
-  })
-})
-
-/**
  * What a turn sent through Latch, as the gateway counted it: the service's own tokens on the turn, the requests by model,
  * and the chosen model beside the one the service said answered when they differ. Across a reload, on a phone, in the dark.
  */
@@ -438,31 +315,34 @@ describe('a turn through Latch shows what the service said it used', () => {
     })
     const bin = join(directory, 'bin')
     await mkdir(bin)
+    // OpenCode's preset on the fake agent: pointed at the gateway by what its launch is given.
     await writeFile(
-      join(bin, 'gemini'),
+      join(bin, 'opencode'),
       [
         '#!/bin/sh',
+        `if [ "$1" = '--version' ]; then echo '2.2.6'; exit 0; fi`,
         `export FAKE_ACP_STATE='${join(directory, 'state.json')}' FAKE_ACP_LOG='${join(directory, 'agent.log')}'`,
-        'export FAKE_ACP_MODES=plan,default,autoEdit,yolo FAKE_ACP_INITIAL_MODE=default FAKE_ACP_CONFIG=legacy',
+        'export FAKE_ACP_MODES=plan,build,auto-edit,yolo FAKE_ACP_INITIAL_MODE=build FAKE_ACP_CONFIG=options',
+        'export FAKE_ACP_GATEWAY=opencode FAKE_ACP_VERSION=2.2.6 FAKE_ACP_CAPS=resume',
         `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
       ].join('\n'),
     )
-    await chmod(join(bin, 'gemini'), 0o755)
+    await chmod(join(bin, 'opencode'), 0o755)
     host = await startTestHost({
       demo: false,
       sessionFolders: true,
-      detectPreset: preset => (preset.id === 'gemini' ? { found: true, path: join(bin, 'gemini') } : { found: false }),
+      detectPreset: preset => (preset.id === 'opencode' ? { found: true, path: join(bin, 'opencode') } : { found: false }),
       commandDirectories: () => [bin],
     })
     owner = await host.enroll({ listener: 'unix' })
     // Saved on this Mac with its confirmation: a page elsewhere is offered no preset, only saved definitions.
-    expect((await owner.confirmed('agents', { body: savedPreset('gemini') })).status).toBe(201)
+    expect((await owner.confirmed('agents', { body: savedPreset('opencode') })).status).toBe(201)
     const created = await owner.confirmed('providers', {
       method: 'POST',
       body: {
-        name: 'MyGemini',
-        kind: 'gemini',
-        baseURL: models.origin,
+        name: 'MyService',
+        kind: 'openai-responses',
+        baseURL: `${models.origin}/v1`,
         apiKey: KEY,
         models: ['fake-model', 'fake-model-large'],
         defaultModel: 'fake-model',
@@ -572,7 +452,7 @@ describe('a turn through Latch shows what the service said it used', () => {
             used: 'fake-model',
             requests: 1,
             measured: 1,
-            usage: { inputTokens: 10, outputTokens: 5, reasoningTokens: 0 },
+            usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, reasoningTokens: 0 },
           },
         ],
       },
@@ -585,7 +465,7 @@ describe('a turn through Latch shows what the service said it used', () => {
             used: 'fake-model-preview',
             requests: 1,
             measured: 1,
-            usage: { inputTokens: 10, outputTokens: 5, reasoningTokens: 0 },
+            usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, reasoningTokens: 0 },
           },
         ],
       },
@@ -599,7 +479,7 @@ describe('a turn through Latch shows what the service said it used', () => {
             used: 'fake-model',
             requests: 1,
             measured: 1,
-            usage: { inputTokens: 10, outputTokens: 5, reasoningTokens: 0 },
+            usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, reasoningTokens: 0 },
           },
         ],
       },

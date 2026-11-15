@@ -42,10 +42,10 @@ const responses = (fake: FakeModels, change: Partial<GatewayService> = {}): Gate
   ...change,
 })
 
-const route = (fake: FakeModels, wire: 'responses' | 'gemini' = 'responses') => ({
+const route = (fake: FakeModels) => ({
   providerId: 'svc',
   model: 'fake-model',
-  wire,
+  wire: 'responses' as const,
   origin: fake.origin,
 })
 
@@ -187,7 +187,7 @@ describe('model gateway', () => {
     expect(fake.requests).toHaveLength(1)
   })
 
-  it.each(['responses', 'chat-completions', 'anthropic-messages'] as const)('keeps non-Gemini model IDs exact over %s', async wire => {
+  it.each(['responses', 'chat-completions', 'anthropic-messages'] as const)('keeps model IDs exact over %s', async wire => {
     const fake = await models()
     const service = responses(fake, {
       kind: wire === 'responses' ? 'openai-responses' : wire === 'chat-completions' ? 'openai-compatible' : 'anthropic',
@@ -218,20 +218,18 @@ describe('model gateway', () => {
     expect(fake.requests[0]?.model).toBe('models/fake-model')
   })
 
-  it('carries only declared capabilities under the same normalized model IDs, without sharing service state', async () => {
+  it('carries only the capabilities declared for the models it lists, without sharing service state', async () => {
     const fake = await models()
     const service = responses(fake, {
-      kind: 'gemini',
-      baseURL: fake.origin,
-      models: ['models/fake-model', 'without-capabilities'],
-      modelCapabilities: { 'models/fake-model': { vision: true }, unlisted: { vision: false } },
+      models: ['fake-model', 'without-capabilities'],
+      modelCapabilities: { 'fake-model': { vision: true }, unlisted: { vision: false } },
     })
     const { server } = await gateway({ svc: service })
-    const lease = server.open({ sessionId: 'task-1', route: route(fake, 'gemini') })
+    const lease = server.open({ sessionId: 'task-1', route: route(fake) })
     expect(lease.models).toEqual(['fake-model', 'without-capabilities'])
     expect(lease.modelCapabilities).toEqual({ 'fake-model': { vision: true } })
     lease.modelCapabilities!['fake-model']!.vision = false
-    expect(service.modelCapabilities!['models/fake-model']!.vision).toBe(true)
+    expect(service.modelCapabilities!['fake-model']!.vision).toBe(true)
   })
 
   it("forwards a harness's request with the service's key, never its own credential, and streams the reply back", async () => {
@@ -267,26 +265,36 @@ describe('model gateway', () => {
     expect(lease.models).toEqual(['fake-model'])
   })
 
-  it('forwards Gemini requests with the key in its header and only the stream parameter', async () => {
-    const fake = await models({ replies: [{ text: 'gemini says' }] })
-    const { server } = await gateway({ svc: { ...responses(fake), kind: 'gemini', baseURL: fake.origin } })
-    const lease = server.open({ sessionId: 'task-1', route: route(fake, 'gemini') })
-    expect(lease.baseURL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u)
-    const response = await fetch(`${lease.baseURL}/v1beta/models/fake-model:streamGenerateContent?alt=sse&key=${lease.token}`, {
-      method: 'POST',
-      headers: { 'x-goog-api-key': lease.token, 'content-type': 'application/json' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] }),
-    })
-    expect(response.status).toBe(200)
-    expect(await response.text()).toContain('"says"')
-    expect(fake.requests).toMatchObject([{ wire: 'gemini', model: 'fake-model', stream: true, key: KEY }])
-    const other = await fetch(`${lease.baseURL}/v1beta/models/other-model:generateContent`, {
-      method: 'POST',
-      headers: { 'x-goog-api-key': lease.token, 'content-type': 'application/json' },
-      body: '{}',
-    })
-    expect(other.status).toBe(403)
-    expect(fake.requests).toHaveLength(1)
+  it('forwards nothing for a protocol it does not speak: no route opens on it, and its paths and key header reach no service', async () => {
+    const fake = await models({ replies: [{ text: 'never sent' }] })
+    const { server } = await gateway({ svc: responses(fake) })
+    // A route as a session saved it while that protocol was forwarded, whatever the service speaks by now.
+    for (const stale of [{ wire: 'gemini' }, { upstream: 'gemini' }, { wire: 'gemini', upstream: 'responses' }])
+      expect(() => server.open({ sessionId: 'old', route: { ...route(fake), ...stale } as never })).toThrow(
+        expect.objectContaining({ status: 409, code: 'model-route-unsupported' }),
+      )
+    const lease = server.open({ sessionId: 'task-1', route: route(fake) })
+    const origin = new URL(lease.baseURL).origin
+    for (const path of [
+      '/v1beta/models/fake-model:streamGenerateContent?alt=sse',
+      '/v1beta/models/fake-model:generateContent',
+      '/v1beta/models',
+    ]) {
+      for (const headers of [{ 'x-goog-api-key': lease.token }, { authorization: `Bearer ${lease.token}` }] as Array<
+        Record<string, string>
+      >) {
+        const listing = path.endsWith('/models')
+        const init: RequestInit = { method: listing ? 'GET' : 'POST', headers: { ...headers, 'content-type': 'application/json' } }
+        if (!listing) init.body = JSON.stringify({ model: 'fake-model', contents: [], input: 'hi' })
+        const response = await fetch(`${origin}${path}`, init)
+        // That protocol's key header is not read as a credential at all; with a credential, its paths are no route.
+        expect(response.status).toBe('authorization' in headers ? 404 : 401)
+        const text = await response.text()
+        expect(text).not.toContain(KEY)
+        expect(text).not.toContain(lease.token)
+      }
+    }
+    expect(fake.requests).toEqual([])
   })
 
   it('refuses another host, a page, an unknown token, another model, another path and a body that is not JSON', async () => {
@@ -523,9 +531,9 @@ describe('model gateway', () => {
     expect(() => server.open({ sessionId: 'task-1', route: { ...route(fake), origin: 'https://elsewhere.example:443' } })).toThrow(
       expect.objectContaining({ code: 'model-route-changed' }),
     )
-    expect(() => server.open({ sessionId: 'task-1', route: { ...route(fake), wire: 'gemini' } })).toThrow(
-      expect.objectContaining({ code: 'model-route-changed' }),
-    )
+    expect(() =>
+      server.open({ sessionId: 'task-1', route: { ...route(fake), wire: 'anthropic-messages', upstream: 'anthropic-messages' } }),
+    ).toThrow(expect.objectContaining({ code: 'model-route-changed' }))
     expect(() => server.open({ sessionId: 'task-1', route: { ...route(fake), model: 'removed' } })).toThrow(
       expect.objectContaining({ code: 'model-unavailable' }),
     )
@@ -694,36 +702,6 @@ describe('model gateway', () => {
     expect(lease.requests()).toBe(4)
   })
 
-  it('counts Gemini replies, streamed and not, with thoughts as output, and a failed reply as failed', async () => {
-    const fake = await models({
-      replies: [{ text: 'gemini says', reasoning: 'hmm' }, { text: 'once' }, { error: { status: 429, message: 'slow down' } }],
-    })
-    const { server } = await gateway({ svc: { ...responses(fake), kind: 'gemini', baseURL: fake.origin } })
-    const lease = server.open({ sessionId: 'task-1', route: route(fake, 'gemini') })
-    const call = (method: string) =>
-      fetch(`${lease.baseURL}/v1beta/models/fake-model:${method}`, {
-        method: 'POST',
-        headers: { 'x-goog-api-key': lease.token, 'content-type': 'application/json' },
-        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] }),
-      })
-    expect((await (await call('streamGenerateContent?alt=sse')).text()).length).toBeGreaterThan(0)
-    expect(await (await call('generateContent')).json()).toMatchObject({ modelVersion: 'fake-model' })
-    expect((await call('generateContent')).status).toBe(429)
-    expect(lease.takeTurn()).toEqual({
-      requests: 3,
-      models: [
-        {
-          model: 'fake-model',
-          used: 'fake-model',
-          requests: 3,
-          failed: 1,
-          measured: 2,
-          usage: { inputTokens: 20, outputTokens: 12, reasoningTokens: 2 },
-        },
-      ],
-    })
-  })
-
   it('stops the request to the service when the harness gives up on it', async () => {
     let aborted!: () => void
     const gone = new Promise<void>(resolve => (aborted = resolve))
@@ -863,34 +841,35 @@ describe('sessions of a harness with its own models on a saved service', () => {
       expect(created.status).toBe(201)
       return ((await created.json()) as { provider: ProviderSettings }).provider
     }
-    const gemini = await service('gemini', 'Gemini', fake.origin)
     const chat = await service('openai-compatible', 'Chat', `${fake.origin}/v1`)
-    // The fake agent under Gemini CLI's preset: the profile applies by its ID, and no real program is ever looked up.
+    // The fake agent under OpenCode's preset: the profile applies by its ID, and no real program is ever looked up.
     const agent = await desktop.confirmed('agents', {
       method: 'POST',
       body: {
-        id: 'gemini',
-        name: 'Gemini CLI',
-        presetId: 'gemini',
+        id: 'opencode',
+        name: 'OpenCode',
+        presetId: 'opencode',
         command: process.execPath,
         args: [FAKE_ACP_AGENT],
         env: {
           FAKE_ACP_STATE: join(t.root, 'acp-state.json'),
           FAKE_ACP_LOG: join(t.root, 'acp.log'),
           FAKE_ACP_CONFIG: 'options',
-          FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
-          FAKE_ACP_INITIAL_MODE: 'default',
+          FAKE_ACP_MODES: 'plan,build,auto-edit,yolo',
+          FAKE_ACP_INITIAL_MODE: 'build',
+          FAKE_ACP_GATEWAY: 'opencode',
+          FAKE_ACP_VERSION: '2.2.6',
         },
       },
     })
     expect(agent.status).toBe(201)
-    return { t, fake, desktop, phone, gemini, chat }
+    return { t, fake, desktop, phone, chat }
   }
 
   const start = async (device: TestDevice, prompt: string, model: { providerId: string; model: string }) => {
     const response = await device.request('tasks', {
       method: 'POST',
-      body: { prompt, requestId: randomUUID(), mode: 'agent', harnessId: 'gemini', model },
+      body: { prompt, requestId: randomUUID(), mode: 'agent', harnessId: 'opencode', model },
     })
     return { status: response.status, body: (await response.json()) as { sessionId?: string; error?: string; message?: string } }
   }
@@ -902,12 +881,12 @@ describe('sessions of a harness with its own models on a saved service', () => {
       .map(line => JSON.parse(line) as { action: string; target?: string; detail: Record<string, unknown> })
 
   it('starts a session on a service the harness speaks, sends its turns through the gateway, and records the route', async () => {
-    const { t, fake, phone, gemini } = await host()
-    const harness = (await phone.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'gemini')!
-    expect(harness.capabilities.models).toMatchObject({ owner: 'harness', wires: ['gemini'] })
+    const { t, fake, phone, chat } = await host()
+    const harness = (await phone.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'opencode')!
+    expect(harness.capabilities.models).toMatchObject({ owner: 'harness', wires: ['chat-completions', 'responses', 'anthropic-messages'] })
     // A connected phone starts it like the Mac does: no confirmation for the route.
     const prompts = t.presence.requests.length
-    const started = await start(phone, 'model hello', { providerId: gemini.id, model: 'fake-model' })
+    const started = await start(phone, 'model hello', { providerId: chat.id, model: 'fake-model' })
     expect(started.status).toBe(201)
     const sessionId = started.body.sessionId!
     await vi.waitFor(async () => expect((await phone.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle'), {
@@ -916,17 +895,17 @@ describe('sessions of a harness with its own models on a saved service', () => {
     const detail = await phone.json<TaskDetail>(`tasks/${sessionId}`)
     expect(detail.messages.filter(message => message.role === 'assistant').map(message => message.text)).toEqual(['model: via the gateway'])
     // The service's name is the Host's, from 设置 › 模型.
-    expect(detail.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model', name: 'Gemini' })
+    expect(detail.summary.modelRoute).toEqual({ providerId: chat.id, model: 'fake-model', name: 'Chat' })
     expect(t.presence.requests).toHaveLength(prompts)
     // The service got its own key; the agent never had it.
-    expect(fake.requests).toMatchObject([{ wire: 'gemini', model: 'fake-model', key: KEY }])
+    expect(fake.requests).toMatchObject([{ wire: 'chat-completions', model: 'fake-model', key: KEY }])
     const log = await readFile(join(t.root, 'acp.log'), 'utf8')
     expect(log).not.toContain(KEY)
-    const recorded = { providerId: gemini.id, model: 'fake-model', wire: 'gemini', origin: fake.origin }
+    const recorded = { providerId: chat.id, model: 'fake-model', wire: 'chat-completions', origin: fake.origin }
     const records = await audit(t.dataDir)
     for (const action of ['task.l3.start-requested', 'task.l3.started'])
       expect(records.findLast(record => record.action === action)).toMatchObject({
-        detail: { providerId: gemini.id, routeHash: sha256Hex(canonicalJson(recorded)) },
+        detail: { providerId: chat.id, routeHash: sha256Hex(canonicalJson(recorded)) },
       })
     const text = await readFile(join(t.dataDir, 'audit', 'audit.jsonl'), 'utf8')
     expect(text).not.toContain(KEY)
@@ -935,7 +914,7 @@ describe('sessions of a harness with its own models on a saved service', () => {
     // A request the gateway refuses still reached Latch: what it carried went nowhere else, so nothing is said.
     await phone.request(`tasks/${sessionId}/prompt`, {
       method: 'POST',
-      body: { prompt: 'model as:gemini-2.5-flash', requestId: randomUUID() },
+      body: { prompt: 'model as:another-model', requestId: randomUUID() },
     })
     await vi.waitFor(
       async () => {
@@ -948,25 +927,8 @@ describe('sessions of a harness with its own models on a saved service', () => {
     const refused = await phone.json<TaskDetail>(`tasks/${sessionId}`)
     expect(refused.messages.findLast(message => message.role === 'assistant')?.text).toContain('model error 403')
     expect(refused.messages.filter(message => message.role === 'system').map(message => message.text)).toEqual([])
-    expect(refused.summary.modelRoute).toEqual({ providerId: gemini.id, model: 'fake-model', name: 'Gemini' })
+    expect(refused.summary.modelRoute).toEqual({ providerId: chat.id, model: 'fake-model', name: 'Chat' })
     expect((await audit(t.dataDir)).filter(record => record.action === 'task.model.bypassed')).toEqual([])
-
-    // Gemini CLI's own helper calls ask for a fixed model by alias; the session's settings point them at its model.
-    await phone.request(`tasks/${sessionId}/prompt`, {
-      method: 'POST',
-      body: { prompt: 'model helper:web-fetch', requestId: randomUUID() },
-    })
-    await vi.waitFor(
-      async () => {
-        const turn = await phone.json<TaskDetail>(`tasks/${sessionId}`)
-        expect(turn.messages.filter(message => message.role === 'assistant')).toHaveLength(3)
-        expect(turn.summary.status).toBe('idle')
-      },
-      { timeout: 10_000 },
-    )
-    const helped = await phone.json<TaskDetail>(`tasks/${sessionId}`)
-    expect(helped.messages.findLast(message => message.role === 'assistant')?.text).toBe('model: via the gateway')
-    expect(fake.requests.at(-1)).toMatchObject({ wire: 'gemini', model: 'fake-model', key: KEY })
 
     // A turn that answers without the service is said and recorded; the session goes on.
     await phone.request(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'echo plain', requestId: randomUUID() } })
@@ -978,29 +940,21 @@ describe('sessions of a harness with its own models on a saved service', () => {
     ])
 
     // Turned off, the session still names its service and says it is off; deleted, the name goes with it.
-    expect((await phone.request(`providers/${gemini.id}`, { method: 'PUT', body: { enabled: false } })).status).toBe(200)
-    expect((await phone.json<TaskDetail>(`tasks/${sessionId}`)).summary.modelRoute).toMatchObject({ name: 'Gemini', off: true })
+    expect((await phone.request(`providers/${chat.id}`, { method: 'PUT', body: { enabled: false } })).status).toBe(200)
+    expect((await phone.json<TaskDetail>(`tasks/${sessionId}`)).summary.modelRoute).toMatchObject({ name: 'Chat', off: true })
     expect((await phone.json<AppSnapshot>('snapshot')).tasks.find(task => task.id === sessionId)?.modelRoute).toMatchObject({
-      name: 'Gemini',
+      name: 'Chat',
       off: true,
     })
-    expect((await phone.request(`providers/${gemini.id}`, { method: 'DELETE' })).status).toBe(200)
+    expect((await phone.request(`providers/${chat.id}`, { method: 'DELETE' })).status).toBe(200)
     const gone = (await phone.json<TaskDetail>(`tasks/${sessionId}`)).summary.modelRoute
     expect(gone).not.toHaveProperty('name')
     expect(gone).not.toHaveProperty('off')
   })
 
-  it('refuses a pair that needs translation, a model the service does not list, and a service it cannot use, before anything starts', async () => {
-    const { t, phone, gemini, chat } = await host()
-    const translated = await start(phone, 'model hi', { providerId: chat.id, model: 'fake-model' })
-    expect(translated).toMatchObject({
-      status: 400,
-      body: {
-        error: 'model-route-unavailable',
-        message: 'Gemini CLI 只说 Gemini 协议，Chat 用 Chat Completions，Latch 转换协议尚未实现。',
-      },
-    })
-    expect(await start(phone, 'model hi', { providerId: gemini.id, model: 'other-model' })).toMatchObject({ status: 400 })
+  it('refuses a model the service does not list and a service it cannot use, before anything starts', async () => {
+    const { t, phone, chat } = await host()
+    expect(await start(phone, 'model hi', { providerId: chat.id, model: 'other-model' })).toMatchObject({ status: 400 })
     expect(await start(phone, 'model hi', { providerId: 'missing', model: 'fake-model' })).toMatchObject({ status: 400 })
     expect((await phone.json<AppSnapshot>('snapshot')).tasks).toEqual([])
     expect(await readFile(join(t.root, 'acp.log'), 'utf8').catch(() => '')).toBe('')

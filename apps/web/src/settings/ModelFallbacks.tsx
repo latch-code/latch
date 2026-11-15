@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowDown, ArrowUp } from 'lucide-react'
-import { MAX_MODEL_FALLBACKS, type ModelFallback, type ProviderSettings } from '@latch/protocol'
+import { MAX_MODEL_FALLBACKS, type ModelFallback, type ProviderKind, type ProviderSettings } from '@latch/protocol'
 import { Button, Dialog, Hint, IconButton, InlineNotice, ValuePicker, TrashGlyph, type PickerGroup } from '@latch/ui'
 import { ProviderTile } from '../components/BrandTile.tsx'
 import { SettingsRow } from './common.tsx'
@@ -27,10 +27,11 @@ export function ModelFallbacksDialog({
   onClose,
 }: {
   open: boolean
-  provider: ProviderSettings
+  provider: ProviderSettings & { kind: ProviderKind }
   model: string
   /** Every saved service, this one among them: its other models may be chosen too. */
-  providers: readonly ProviderSettings[]
+  /** The services a model may fall back to: only ones Latch can use. */
+  providers: readonly (ProviderSettings & { kind: ProviderKind })[]
   /** Saves the whole list; returns the error, '' when it was saved. */
   onSubmit: (fallbacks: ModelFallback[]) => Promise<string>
   onClose: () => void

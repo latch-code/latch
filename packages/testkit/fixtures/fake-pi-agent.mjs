@@ -299,7 +299,6 @@ async function play(message) {
       'openai-responses': 'responses',
       'openai-completions': 'chat-completions',
       'anthropic-messages': 'anthropic-messages',
-      'google-generative-ai': 'gemini',
     }[gateway.api]
     const answer = await callFakeModel({
       wire,

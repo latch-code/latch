@@ -1,7 +1,7 @@
 /** Permission rules for ACP agents: profile selection, definition checks, launch fingerprint, modes and options. */
 import { realpathSync } from 'node:fs'
 import { basename, isAbsolute } from 'node:path'
-import { AGENT_PRESETS, isReservedAgentEnvName, type AgentPreset } from '@latch/protocol'
+import { AGENT_PRESETS, isReservedAgentEnvName, isRetiredAgentPreset, type AgentPreset } from '@latch/protocol'
 import { AppError, type ConfigChangeClass } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { resolveCommand } from './command.ts'
@@ -63,7 +63,12 @@ function matchesName(patterns: readonly string[], name: string): boolean {
 export function selectProfile(record: AgentRecord, locate: CommandLocator = resolveCommand): ProfileSelection {
   const name = commandName(record.command)
   const byId = record.presetId !== undefined ? AGENT_PRESETS.find(preset => preset.id === record.presetId) : undefined
-  const preset = byId ?? AGENT_PRESETS.find(item => item.command === name || item.fallback?.command === name)
+  // A definition of a retired preset is not matched to another preset by its command's name: it runs as nothing.
+  const preset =
+    byId
+    ?? (isRetiredAgentPreset(record.presetId)
+      ? undefined
+      : AGENT_PRESETS.find(item => item.command === name || item.fallback?.command === name))
   // Only the preset's own program speaks its own protocol: any other command of a preset with an adapter (the adapter,
   // or a wrapper of the person's) runs with the adapter's profile, and is verified against the adapter's command.
   const viaFallback = preset?.fallback !== undefined && name !== preset.command

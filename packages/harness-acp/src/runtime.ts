@@ -3,6 +3,8 @@ import {
   fileMentionContext,
   LADDER_MODE,
   MAX_MODEL_FALLBACKS,
+  MODEL_WIRES,
+  isRetiredAgentPreset,
   modelIdKey,
   promptTitle,
   readSessionSkills,
@@ -111,7 +113,7 @@ import {
 } from './catalogue.ts'
 import { authFacts, reportedLogin, terminalLogins, type AuthFacts } from './auth.ts'
 import { codexOptions, readCodexModels } from './codex-models.ts'
-import { commandMoved, commandUnconfirmed, redactor, resolveCommand } from './command.ts'
+import { commandMoved, commandUnconfirmed, harnessRetired, redactor, resolveCommand } from './command.ts'
 import { openWire, wireArgs } from './wires/index.ts'
 import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './wires/process.ts'
 import { ForkRefused, type AgentWire } from './wires/types.ts'
@@ -521,7 +523,7 @@ function checkedStartConfig(config: unknown): Array<{ configId: string; value: s
   })
 }
 
-const WIRES = new Set<unknown>(['chat-completions', 'responses', 'anthropic-messages', 'gemini'])
+const WIRES = new Set<unknown>(MODEL_WIRES)
 /** How many of a service's models may each name what they fall back to in one session's route. */
 const MAX_ROUTE_FALLBACK_MODELS = 64
 
@@ -2832,7 +2834,7 @@ export class AgentRuntime implements Bridge {
   async readConfig(sessionId: string, configId: string, value: string): Promise<ConfigReading> {
     await this.ready()
     const task = this.task(sessionId)
-    // The private file records what Latch configured. It cannot prove the effective value of Gemini's own overrides.
+    // The private file records what Latch configured. It cannot prove the effective value of the agent's own overrides.
     if (task.config?.find(option => option.id === configId)?.source === 'launch') return { kind: 'unread' }
     // Opened again, the session would report the agent's defaults: neither the value asked for nor the one before it.
     if (
@@ -3325,6 +3327,8 @@ export class AgentRuntime implements Bridge {
    * `project`; without project configuration both hashes are the definition's.
    */
   private currentLaunch(project?: ProjectConfig, passed?: LaunchFolders, route?: ModelRoute, mode?: string): Launch {
+    // Before the command is even looked up: a definition of a preset Latch no longer has starts nothing.
+    if (isRetiredAgentPreset(this.agent.presetId)) throw harnessRetired(this.agent.name)
     const command = resolveCommand(this.agent.command)
     if (!command)
       throw new AppError(

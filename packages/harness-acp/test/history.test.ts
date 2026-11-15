@@ -492,7 +492,7 @@ describe('bringing in an earlier OpenCode session', () => {
 
   it('declares itself for OpenCode, and not for pi, Qwen Code or goose, whose listing has no checked official interface', async () => {
     expect((await fixture(OPENCODE, AS_OPENCODE)).driver.historyImport).toBe(true)
-    for (const presetId of ['pi', 'qwen', 'goose', 'gemini', 'claude-agent']) {
+    for (const presetId of ['pi', 'qwen', 'goose', 'claude-agent']) {
       const other = await fixture({}, { presetId, id: presetId, name: presetId })
       expect(other.driver.historyImport, presetId).toBeUndefined()
     }

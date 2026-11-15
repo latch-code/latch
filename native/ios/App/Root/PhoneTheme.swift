@@ -65,7 +65,7 @@ struct EngineTile: View {
     private static let marks: [String: (light: String, dark: String, mono: Bool)] = [
         "codex": ("brand-codex", "brand-codex", false), "pi": ("brand-pi", "brand-pi", false),
         "opencode": ("brand-opencode-light", "brand-opencode-dark", false), "dsh": ("brand-deepseek-harness", "brand-deepseek-harness", true),
-        "gemini": ("brand-gemini", "brand-gemini", false), "qwen": ("brand-qwen-code", "brand-qwen-code", false), "goose": ("brand-goose", "brand-goose", true),
+        "qwen": ("brand-qwen-code", "brand-qwen-code", false), "goose": ("brand-goose", "brand-goose", true),
         "claude-agent": ("brand-claude", "brand-claude", false),
         "cursor": ("brand-cursor-light", "brand-cursor-dark", false),
         "grok": ("brand-grok-dark", "brand-grok-light", false),

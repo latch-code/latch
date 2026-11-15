@@ -1,10 +1,8 @@
-import { PROVIDER_PRESETS, type ProviderKind, type ProviderSettings, type ProviderSummary } from '@latch/protocol'
+import { PROVIDER_PRESETS, isProviderKind, type ProviderKind, type ProviderSettings, type ProviderSummary } from '@latch/protocol'
 import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { createAnthropicPlugin } from './plugins/providers/anthropic/index.ts'
 import { anthropicWire } from './plugins/providers/anthropic-wire.ts'
 import { chatWire } from './plugins/providers/chat-wire.ts'
-import { createGeminiPlugin } from './plugins/providers/gemini/index.ts'
-import { geminiWire } from './plugins/providers/gemini-wire.ts'
 import { ProviderError, readErrorBody, redactor, send, type FetchLike, type ModelPage, type ModelWire } from './plugins/providers/http.ts'
 import { createOpenAIPlugin } from './plugins/providers/openai-compatible/index.ts'
 import { createResponsesPlugin } from './plugins/providers/openai-responses/index.ts'
@@ -17,13 +15,11 @@ const factories: Record<ProviderKind, typeof createOpenAIPlugin> = {
   'openai-compatible': createOpenAIPlugin,
   'openai-responses': createResponsesPlugin,
   anthropic: createAnthropicPlugin,
-  gemini: createGeminiPlugin,
 }
 const wires: Record<ProviderKind, ModelWire> = {
   'openai-compatible': chatWire,
   'openai-responses': responsesWire,
   anthropic: anthropicWire,
-  gemini: geminiWire,
 }
 
 /**
@@ -104,6 +100,10 @@ export function providerPlugin(
   record: ProviderRecord,
   deps: { fetch: FetchLike; acquire?: (signal: AbortSignal, bytes: number) => Promise<() => void> },
 ): HarnessPlugin {
+  // Saved with a protocol Latch no longer speaks: the service keeps its place in the list, so it can be removed, and
+  // contributes no provider, so nothing is ever sent to it.
+  if (!isProviderKind(record.kind))
+    return { id: record.id, name: record.name, version: '1.0.0', description: '这个模型服务用的协议不再支持。', activate() {} }
   return factories[record.kind]({
     id: record.id,
     name: record.name,

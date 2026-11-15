@@ -39,8 +39,6 @@ export interface AcpPermissionProfile {
   readback: 'mode' | 'none'
   /** `pattern` is a RegExp source tested against `initialize.agentInfo.version`. */
   versionRule?: { pattern: string; message: string }
-  /** Gemini only: written to a Host file whose path is passed in the environment. */
-  systemSettings?: Record<string, unknown>
   /**
    * Definition variables that change where the harness reads configuration Latch cannot override: exact names, or
    * prefixes ending in '*', compared case-insensitively. A definition that sets one is not verified.
@@ -390,7 +388,7 @@ export interface HarnessProfile {
   /** A documented process setting, presented as configured rather than independently reported by the Agent. */
   launchThinking?(model: string | undefined, selected?: { model: string; value: string }): SessionConfigOption | undefined
   /**
-   * Host-only files the agent needs before spawn (e.g. Gemini system settings). Returns env entries to add. A process of
+   * Host-only files the agent needs before spawn (e.g. a settings file of its own). Returns env entries to add. A process of
    * a session on a gateway route also gets the route and the session's private temporary directory, rewritten before every
    * spawn and removed with the session.
    */

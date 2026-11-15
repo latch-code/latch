@@ -55,7 +55,8 @@ export function settleLogin(
 export const BUILTIN_HARNESS_LABEL = 'Latch 内置'
 
 /** The wire protocols a model service can speak. */
-export type ModelWire = 'chat-completions' | 'responses' | 'anthropic-messages' | 'gemini'
+export const MODEL_WIRES = ['chat-completions', 'responses', 'anthropic-messages'] as const
+export type ModelWire = (typeof MODEL_WIRES)[number]
 
 /**
  * What a harness really does, read by clients instead of asking what kind of driver it is. A driver declares these; the

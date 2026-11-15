@@ -127,14 +127,14 @@ describe('service protocols', () => {
   })
 
   it('offers every protocol to a custom service and none to choose for a single-protocol preset', () => {
-    expect(protocolChoices(preset('custom'))).toEqual(['openai-compatible', 'openai-responses', 'anthropic', 'gemini'])
-    expect(protocolChoices(undefined)).toEqual(['openai-compatible', 'openai-responses', 'anthropic', 'gemini'])
+    expect(protocolChoices(preset('custom'))).toEqual(['openai-compatible', 'openai-responses', 'anthropic'])
+    expect(protocolChoices(undefined)).toEqual(['openai-compatible', 'openai-responses', 'anthropic'])
     expect(protocolChoices(preset('deepseek'))).toEqual(['openai-compatible'])
-    expect(protocolChoices(preset('gemini'))).toEqual(['gemini'])
+    expect(protocolChoices(preset('anthropic'))).toEqual(['anthropic'])
   })
 
   it('keeps a saved protocol its preset no longer lists, first, so the page never shows another', () => {
-    expect(protocolChoices(preset('deepseek'), 'gemini')).toEqual(['gemini', 'openai-compatible'])
+    expect(protocolChoices(preset('deepseek'), 'anthropic')).toEqual(['anthropic', 'openai-compatible'])
     expect(protocolChoices(preset('openai'), 'openai-compatible')).toEqual(['openai-responses', 'openai-compatible'])
   })
 })

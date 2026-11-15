@@ -4,7 +4,6 @@ import { codexAcpProfile } from './codex-acp.ts'
 import { codexProfile } from './codex.ts'
 import { cursorProfile } from './cursor.ts'
 import { dshProfile } from './dsh.ts'
-import { geminiProfile } from './gemini.ts'
 import { gooseProfile } from './goose.ts'
 import { grokProfile } from './grok.ts'
 import { opencodeProfile } from './opencode.ts'
@@ -30,7 +29,6 @@ export const HARNESS_PROFILES: ReadonlyMap<string, HarnessProfile> = new Map(
     claudeAgentProfile,
     qwenProfile,
     gooseProfile,
-    geminiProfile,
     dshProfile,
     opencodeProfile,
     piProfile,

@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { pairedModels, prefixedModels } from '../src/profiles/gateway-model.ts'
-import { dshGatewayThinking } from '../src/profiles/dsh-gateway.ts'
 
 describe('native gateway model values', () => {
-  it('offers dsh Gemini levels only for exact verified catalog IDs, never an alias or a token-budget model', () => {
-    expect(dshGatewayThinking('gemini-3.8-flash', 'gemini')).toBe(true)
-    for (const model of ['private-alias', 'other/gemini-3.8-flash', 'gemini-3.8-flash-custom', 'gemini-2.5-flash'])
-      expect(dshGatewayThinking(model, 'gemini')).toBe(false)
-    expect(dshGatewayThinking('private-alias', 'responses')).toBe(true)
-  })
   it.each(['model', 'vendor/model', 'a,b', '含空格 model', 'quoted"model'])(
     'preserves the complete model ID %s in both native forms',
     id => {

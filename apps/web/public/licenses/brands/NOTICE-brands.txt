@@ -18,10 +18,6 @@ the respective owners; the software licenses below do not grant trademark rights
 
 Apache License 2.0 (full text in LICENSE-Apache-2.0.txt)
 
-- Gemini CLI (gemini-cli.png)
-  https://github.com/google-gemini/gemini-cli/blob/cd1b45c2db0a5ea7b7fc3b67c1ba5879601d6005/LICENSE
-  Copyright: the LICENSE has no copyright line; its appendix keeps the template "Copyright [yyyy] [name of copyright owner]".
-  NOTICE: none at that commit.
 - goose (goose.svg)
   https://github.com/aaif-goose/goose/blob/0276d567aa00d426161c51e9c0f52baabe5958ea/LICENSE
   Copyright 2024 Block, Inc.

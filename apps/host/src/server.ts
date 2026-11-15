@@ -56,6 +56,7 @@ import {
   WIRE_NAMES,
   escapeSecurityText,
   PROVIDER_KINDS,
+  isProviderKind,
   PROVIDER_PRESETS,
   isLocalListener,
   isNativeListener,
@@ -3469,6 +3470,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     /** 「出错时改用」 as a save may keep it: only for the service's own models, each naming a saved service's model, never itself. */
+    /** A saved service another one may fall back to: one saved with a protocol Latch no longer speaks counts as gone. */
+    function fallbackTarget(id: string): ProviderRecord | undefined {
+      const record = effectiveProvider(id)
+      return record && isProviderKind(record.kind) ? record : undefined
+    }
+
     function checkedFallbacks(
       id: string,
       models: readonly string[],
@@ -3480,7 +3487,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const seen = new Set<string>()
         for (const item of list) {
           const key = `${item.providerId}\n${item.model}`
-          const other = item.providerId === id ? { models } : effectiveProvider(item.providerId)
+          const other = item.providerId === id ? { models } : fallbackTarget(item.providerId)
           if (seen.has(key) || (item.providerId === id && item.model === model) || !other?.models.includes(item.model))
             throw new AppError(400, 'invalid-fallback', '「出错时改用」里有一个模型不在已保存的模型服务里，或重复了。')
           seen.add(key)
@@ -3496,7 +3503,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       for (const [model, list] of Object.entries(saved)) {
         if (!models.includes(model)) continue
         const live = list.filter(item =>
-          (item.providerId === id ? models : (effectiveProvider(item.providerId)?.models ?? [])).includes(item.model),
+          (item.providerId === id ? models : (fallbackTarget(item.providerId)?.models ?? [])).includes(item.model),
         )
         if (live.length) kept[model] = live
       }
@@ -3549,10 +3556,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     /**
-     * Why a configured service is not offered: its address is not confirmed (no request is ever sent there), or it is at
-     * a preset provider's address, where every request needs a key, without a usable one. Undefined when it is offered.
+     * Why a configured service is not offered: it was saved with a protocol Latch no longer speaks, its address is not
+     * confirmed (no request is ever sent there), or it is at a preset provider's address, where every request needs a
+     * key, without a usable one. Undefined when it is offered.
      */
     function unusableReason(record: ProviderRecord): UnusableProvider['reason'] | undefined {
+      if (!isProviderKind(record.kind)) return 'unsupported'
       const destination = recordDestination(record)
       if (destination === 'unconfirmed') return 'origin-unconfirmed'
       if (destination === 'preset' && !usableKey(record)) return 'key-missing'
@@ -3598,6 +3607,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const record = effectiveProvider(id)
       const plugin = pluginInfo(id)
       if (!record?.enabled || plugin?.managed !== 'provider' || !plugin.enabled || unusableReason(record) !== undefined) return undefined
+      if (!isProviderKind(record.kind)) return undefined
       const apiKey = usableKey(record)
       const models = record.models.length ? [...record.models] : [record.defaultModel]
       return {
@@ -3618,8 +3628,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const name = harness.capabilities.display.label
       const service = gatewayService(model.providerId)
       const record = effectiveProvider(model.providerId)
-      if (!service || !record) throw new AppError(409, 'model-route-unavailable', '这个模型服务现在不能用，会话没有开始。')
-      const route = pairRoute(harness.capabilities, { kind: record.kind })
+      const kind = record?.kind
+      if (!service || !record || !isProviderKind(kind))
+        throw new AppError(409, 'model-route-unavailable', '这个模型服务现在不能用，会话没有开始。')
+      const route = pairRoute(harness.capabilities, { kind })
       if (route.kind !== 'passthrough' && route.kind !== 'translate')
         throw new AppError(
           400,
@@ -3640,7 +3652,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!service.models.includes(name)) continue
         const kept = list.flatMap(item => {
           const other = effectiveProvider(item.providerId)
-          if (!other || (item.providerId === record.id && item.model === name)) return []
+          if (!other || !isProviderKind(other.kind) || (item.providerId === record.id && item.model === name)) return []
           const upstream = PROVIDER_WIRES[other.kind]
           if (upstream !== route.wire && !canTranslate(route.wire, upstream)) return []
           try {
@@ -3659,6 +3671,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         ...(route.kind === 'translate' ? { upstream: route.upstream } : {}),
         ...(Object.keys(fallbacks).length ? { fallbacks } : {}),
       }
+    }
+
+    /** A service saved with a protocol Latch no longer speaks: it is never sent anything, and can only be removed. */
+    function providerUnsupported(record: Pick<ProviderRecord, 'name'>): AppError {
+      return new AppError(
+        409,
+        'provider-unsupported',
+        `「${escapeSecurityText(record.name)}」用的协议不再支持，不能再使用或修改，只能移除。`,
+      )
     }
 
     /** Enabled services left out of the catalog, with the reason a page names (at most 20). */
@@ -3696,7 +3717,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     function providerKindOf(id: string): ProviderSummary['kind'] {
       const record = effectiveProvider(id)
-      if (record && pluginInfo(id)?.managed === 'provider') return record.kind
+      if (record && isProviderKind(record.kind) && pluginInfo(id)?.managed === 'provider') return record.kind
       return id === 'demo' && options.demo ? 'demo' : 'plugin'
     }
 
@@ -5818,6 +5839,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const record = effectiveProvider(ref.providerId)
       const reason = record?.enabled ? unusableReason(record) : undefined
       if (reason === 'origin-unconfirmed') throw originUnconfirmed()
+      if (reason === 'unsupported') throw providerUnsupported(record!)
       if (reason === 'key-missing') {
         const name = escapeSecurityText(record!.name)
         throw new AppError(
@@ -5863,7 +5885,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (!saved || !harness || !modelAvailable(saved)) return undefined
       if (harness.capabilities.models.owner !== 'latch') {
         const record = effectiveProvider(saved.providerId)
-        const route = record ? pairRoute(harness.capabilities, { kind: record.kind }) : undefined
+        const route = record && isProviderKind(record.kind) ? pairRoute(harness.capabilities, { kind: record.kind }) : undefined
         if (route?.kind !== 'passthrough' && route?.kind !== 'translate') return undefined
         // A thinking level is the built-in harness's to send; another harness sets its own.
         return { providerId: saved.providerId, model: saved.model }
@@ -8147,15 +8169,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           requireScope(caller, 'admin')
           const record = effectiveProvider(id)
           if (!record) throw new AppError(404, 'provider-not-found', '找不到该模型服务')
+          const { kind } = record
+          if (!isProviderKind(kind)) throw providerUnsupported(record)
           // A saved provider's own key goes along, so only to a confirmed or preset address.
           json(
             res,
-            await remoteModels(
-              res,
-              { kind: record.kind, baseURL: record.baseURL, apiKey: usableKey(record) },
-              false,
-              providerFetchFor(record.baseURL),
-            ),
+            await remoteModels(res, { kind, baseURL: record.baseURL, apiKey: usableKey(record) }, false, providerFetchFor(record.baseURL)),
           )
           return true
         }
@@ -8168,6 +8187,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           // A saved provider that failed to load has no plugin yet; saving it again is how it gets fixed.
           if (!current || (pluginInfo(id) && pluginInfo(id)?.managed !== 'provider'))
             throw new AppError(404, 'provider-not-found', '找不到该模型服务')
+          if (!isProviderKind(current.kind)) throw providerUnsupported(current)
           const baseURL = input.baseURL ?? current.baseURL
           const newKey = typeof input.apiKey === 'string' && input.apiKey ? input.apiKey : undefined
           if (newKey) requireKeyEntry(caller)

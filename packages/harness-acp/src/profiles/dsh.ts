@@ -2,20 +2,14 @@ import { bareVersion } from '../version-line.ts'
 import type { HarnessProfile } from './types.ts'
 import { DSH_MODES, prepareDshMode, readDshMode } from './dsh-mode.ts'
 import { pairedModels } from './gateway-model.ts'
-import { dshGatewayThinking } from './dsh-gateway.ts'
 
 const GATEWAY_PROVIDER = 'latch-gateway'
-const providerFor = (wire?: string) => (wire === 'gemini' ? 'google' : GATEWAY_PROVIDER)
-const GATEWAY_MODELS = {
-  value: (id: string, wire?: string) => pairedModels(providerFor(wire)).value(id),
-  id: (value: string, wire?: string) => pairedModels(providerFor(wire)).id(value),
-}
+const GATEWAY_MODELS = pairedModels(GATEWAY_PROVIDER)
 const GATEWAY_PATCH = 'dsh-gateway.patch.json'
 const API = {
   'chat-completions': 'openai-completions',
   responses: 'openai-responses',
   'anthropic-messages': 'anthropic-messages',
-  gemini: 'google-generative-ai',
 } as const
 
 const MINIMUM_VERSION = {
@@ -35,17 +29,16 @@ export const dshProfile: HarnessProfile = {
   catalogueRead: { when: 'select' },
   gateway: {
     via: 'launch',
-    wires: ['chat-completions', 'responses', 'anthropic-messages', 'gemini'],
+    wires: ['chat-completions', 'responses', 'anthropic-messages'],
     tokenEnv: 'LMG_TOKEN',
     envNames: [],
     templates: { args: 1, files: 1 },
     models: GATEWAY_MODELS,
-    thinkingAllowed: dshGatewayThinking,
     minimumVersion: MINIMUM_VERSION,
     // ACP reports the application's hard-coded 0.0.1, not the dsh release version.
     commandVersionOnly: true,
     deliver(place, route) {
-      const provider = providerFor(route.wire)
+      const provider = GATEWAY_PROVIDER
       const selection = { provider, model: route.model }
       const patch = [
         {
@@ -55,18 +48,16 @@ export const dshProfile: HarnessProfile = {
               [provider]: {
                 displayName: 'Latch',
                 apiKeyEnv: 'LMG_TOKEN',
-                // 0.2.2-rc.1 has only three custom APIs; its catalog's Google provider owns the Gemini implementation.
-                ...(route.wire === 'gemini' ? {} : { api: API[route.wire] }),
-                baseURL: `${place.baseURL}${route.wire === 'gemini' ? '/v1beta' : ''}`,
+                api: API[route.wire],
+                baseURL: place.baseURL,
                 retryPolicy: { mode: 'normal', maxRetries: 0 },
                 models: place.models.map(({ id, capabilities }) => ({
                   id,
                   name: id,
                   input: capabilities?.vision ? ['text', 'image'] : ['text'],
-                  reasoningEfforts:
-                    capabilities?.thinking?.length && dshGatewayThinking(id, route.wire)
-                      ? Object.fromEntries(capabilities.thinking.map(level => [level, level === 'off' ? null : level]))
-                      : false,
+                  reasoningEfforts: capabilities?.thinking?.length
+                    ? Object.fromEntries(capabilities.thinking.map(level => [level, level === 'off' ? null : level]))
+                    : false,
                 })),
               },
             },

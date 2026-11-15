@@ -60,11 +60,7 @@ async function main(): Promise<void> {
   const command = resolveCommand(preset.command)
   if (!command) throw new Error(`没有找到 ${preset.command}；先安装它`)
   const profile = profileFor(preset.id)
-  const keep = [
-    ...Object.keys(profile?.permission.defaultEnv ?? {}),
-    ...Object.keys(profile?.permission.programEnv ?? {}),
-    ...(profile?.materialize ? ['GEMINI_CLI_SYSTEM_SETTINGS_PATH'] : []),
-  ]
+  const keep = [...Object.keys(profile?.permission.defaultEnv ?? {}), ...Object.keys(profile?.permission.programEnv ?? {})]
   const homeFiles = Object.fromEntries(
     Object.entries(pairs(values['home-file'], '--home-file')).map(([path, file]) => [path, readFileSync(file, 'utf8')]),
   )

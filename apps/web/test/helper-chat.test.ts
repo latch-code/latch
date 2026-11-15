@@ -28,9 +28,9 @@ const outdated = {
   statusMessage: 'OpenCode 需要 1.2 或更高版本',
 }
 const missing = {
-  ...testHarness('gemini', { label: 'Gemini CLI', status: 'unavailable' }),
+  ...testHarness('qwen', { label: 'Qwen Code', status: 'unavailable' }),
   agentContext: 'first-turn' as const,
-  statusMessage: '找不到命令 gemini。安装：npm i -g @google/gemini-cli',
+  statusMessage: '找不到命令 qwen。安装：npm i -g @qwen-code/qwen-code',
 }
 const catalog = (harnesses = [codex, pi, mine, builtin, outdated, missing]): HostCatalog => ({
   harnesses: [...harnesses, { ...testHarness('claude', { label: 'Claude' }), agentContext: 'first-turn', offer: { presetId: 'claude' } }],
@@ -191,7 +191,7 @@ describe('creating a helper: 「你想让谁成为你的帮手？」', () => {
     expect(ready.map(item => item.harness.id)).toEqual(['standard', 'codex', 'pi', 'fake-agent'])
     expect(waiting.map(item => [item.harness.id, item.words])).toEqual([
       ['opencode', '需要升级'],
-      ['gemini', '未安装'],
+      ['qwen', '未安装'],
     ])
     // An offer is not saved yet, so it is not a candidate.
     expect(ready.some(item => item.harness.id === 'claude')).toBe(false)

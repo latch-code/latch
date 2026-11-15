@@ -10,12 +10,13 @@ import {
   PROJECT_GLYPHS,
   PROVIDER_KINDS,
   PROVIDER_PRESETS,
+  RETIRED_PROVIDER_KINDS,
   type AgentRecord,
   type ModelCapabilities,
   type ModelFallback,
   type ModelRef,
   type ProjectGlyph,
-  type ProviderKind,
+  type StoredProviderKind,
   type TaskMode,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
@@ -25,7 +26,8 @@ import { excludeFromBackup } from './backup.ts'
 export interface ProviderRecord {
   id: string
   name: string
-  kind: ProviderKind
+  /** A retired kind only for a service saved before it was retired: kept, never used, removable. */
+  kind: StoredProviderKind
   presetId?: string
   baseURL: string
   apiKey: string
@@ -221,7 +223,8 @@ const providerSchema = z
   .object({
     id: id('服务标识'),
     name,
-    kind: z.enum(PROVIDER_KINDS),
+    // Retired kinds read back and write back, so a file saved by an earlier Latch still opens and nothing in it is lost.
+    kind: z.enum([...PROVIDER_KINDS, ...RETIRED_PROVIDER_KINDS]),
     presetId: id('预设标识').optional(),
     baseURL,
     apiKey: z.string().max(8192, 'API Key 过长').refine(noControl, 'API Key 不能包含换行或控制字符'),

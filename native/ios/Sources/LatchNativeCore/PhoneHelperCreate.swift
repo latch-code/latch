@@ -32,7 +32,7 @@ public struct PhoneHelperModel: Sendable, Identifiable {
 public enum PhoneHelperCreate {
     private static let base = "/link/api/custom-agents"
     private static let abilities = ["files", "commands", "mcp", "ask", "memory", "schedule"]
-    private static let wires = ["openai-compatible": "chat-completions", "openai-responses": "responses", "anthropic": "anthropic-messages", "gemini": "gemini"]
+    private static let wires = ["openai-compatible": "chat-completions", "openai-responses": "responses", "anthropic": "anthropic-messages"]
     private static let translations = ["responses:chat-completions", "anthropic-messages:chat-completions", "anthropic-messages:responses", "responses:anthropic-messages"]
     private static func same(_ left: String?, _ right: String?) -> Bool {
         guard let left, let right else { return false }; return left.utf8.elementsEqual(right.utf8)

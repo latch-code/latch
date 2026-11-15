@@ -306,15 +306,15 @@ describe('composer choice', () => {
 
   it("keeps the Harness's own default once it is chosen, before the project's default model, and remembers it", () => {
     const remote = { legacy: false, local: false }
-    const gemini = testHarness('gemini', { kind: 'agent', label: 'Gemini CLI' })
+    const routed = testHarness('opencode', { kind: 'agent', label: 'OpenCode' })
     const routable: HostCatalog = {
       ...catalog(),
       harnesses: [
         {
-          ...gemini,
+          ...routed,
           capabilities: {
-            ...gemini.capabilities,
-            models: { ...gemini.capabilities.models, owner: 'harness', wires: ['chat-completions'] },
+            ...routed.capabilities,
+            models: { ...routed.capabilities.models, owner: 'harness', wires: ['chat-completions'] },
           },
         },
       ],
@@ -326,20 +326,20 @@ describe('composer choice', () => {
     const harness = routable.harnesses[0]!
     const started = (memory: Partial<ComposerChoice> | null) => resolveChoice(routable, draftStart(routable, memory, null, remote))
     // Nothing picked for this Harness: the project's model, as a service pick the menu shows and the start sends.
-    const untouched = started({ harnessId: 'gemini', workspaceId: 'docs' })
+    const untouched = started({ harnessId: 'opencode', workspaceId: 'docs' })
     expect(servicePick(routable, harness, untouched.config)).toEqual({ providerId: 'local', model: 'qwen3' })
     expect(pickedOwnDefault(untouched.config)).toBe(false)
     // 「默认」 chosen in the menu: a pick like any other, kept through a repair of the picks and into the next draft.
     const chosen = withOwnDefault(untouched.config)
     expect(servicePick(routable, harness, chosen)).toBeUndefined()
-    const next = started({ harnessId: 'gemini', workspaceId: 'docs', config: chosen })
+    const next = started({ harnessId: 'opencode', workspaceId: 'docs', config: chosen })
     expect(pickedOwnDefault(next.config)).toBe(true)
     expect(servicePick(routable, harness, next.config)).toBeUndefined()
     expect(pickedOwnDefault(started(next).config)).toBe(true)
     // Picking a service model afterwards replaces it; so does going back to nothing picked in another project.
     const again = withServicePick(next.config, { providerId: 'deepseek', model: 'deepseek-chat' })
     expect(pickedOwnDefault(again)).toBe(false)
-    expect(servicePick(routable, harness, started({ harnessId: 'gemini', workspaceId: 'docs', config: again! }).config)).toEqual({
+    expect(servicePick(routable, harness, started({ harnessId: 'opencode', workspaceId: 'docs', config: again! }).config)).toEqual({
       providerId: 'deepseek',
       model: 'deepseek-chat',
     })
@@ -425,7 +425,6 @@ describe('composer choice', () => {
       'claude-agent',
       'opencode',
       'dsh',
-      'gemini',
       'qwen',
       'goose',
       'cursor',
@@ -453,6 +452,36 @@ describe('composer choice', () => {
       harnessId: 'codex',
       workspaceId: 'default',
     })
+  })
+
+  it('drops a remembered Harness or model service Latch no longer has, while it is still saved and once it is removed', () => {
+    const remote = { legacy: false, local: false }
+    const retired = testHarness('gemini', {
+      kind: 'agent',
+      label: 'Gemini CLI',
+      status: 'unavailable',
+      statusMessage: 'Gemini CLI 不再支持，已有会话只能查看',
+    })
+    const routedCodex = testHarness('codex', { kind: 'agent', label: 'Codex' })
+    routedCodex.capabilities.models = { ...routedCodex.capabilities.models, owner: 'harness', wires: ['responses'] }
+    const held = { unusableProviders: [{ id: 'gemini', name: 'Google Gemini', reason: 'unsupported' as const }] }
+    for (const host of [catalog(held), catalog({ ...held, harnesses: [...catalog().harnesses, retired] }), catalog()]) {
+      // The Harness itself: the draft starts on one that can run, as for any Harness that is gone.
+      const onHarness = resolveChoice(host, draftStart(host, { harnessId: 'gemini', workspaceId: 'docs' }, null, remote))
+      expect(onHarness).toMatchObject({ harnessId: 'codex', workspaceId: 'docs' })
+      // The built-in Harness with that service picked: the Host's default model, never the service.
+      const onService = resolveChoice(host, { harnessId: 'standard', model: { providerId: 'gemini', model: 'gemini-3-flash' } })
+      expect(onService.model).toEqual({ providerId: 'deepseek', model: 'deepseek-chat' })
+      // A Harness with its own models, with that service picked for it: no pick at all.
+      const routable = { ...host, harnesses: host.harnesses.map(item => (item.id === 'codex' ? routedCodex : item)) }
+      const picked = withServicePick(undefined, { providerId: 'gemini', model: 'gemini-3-flash' })!
+      const onRoute = resolveChoice(
+        routable,
+        draftStart(routable, { harnessId: 'codex', workspaceId: 'default', config: picked }, null, remote),
+      )
+      expect(onRoute.harnessId).toBe('codex')
+      expect(servicePick(routable, routedCodex, onRoute.config)).toBeUndefined()
+    }
   })
 
   it('falls back to the first configured model when the default is missing', () => {
@@ -670,7 +699,6 @@ describe('harness entries', () => {
       'claude-agent',
       'pi',
       'dsh',
-      'gemini',
       'qwen',
       'goose',
       'cursor',
@@ -731,7 +759,7 @@ describe('a model service for a Harness with its own models', () => {
       losses: GATEWAY_LOSSES.filter(loss => loss !== 'tool-image-location'),
     })
     expect(pairRoute(codex.capabilities, { kind: 'demo' })).toEqual({ kind: 'unavailable', reason: 'not-a-service' })
-    expect(pairRoute(testHarness('goose').capabilities, { kind: 'gemini' })).toEqual({ kind: 'unavailable', reason: 'not-forwarded' })
+    expect(pairRoute(testHarness('goose').capabilities, { kind: 'anthropic' })).toEqual({ kind: 'unavailable', reason: 'not-forwarded' })
     expect(pairRoute(services.harnesses[0]!.capabilities, { kind: 'anthropic' })).toEqual({ kind: 'direct' })
   })
 

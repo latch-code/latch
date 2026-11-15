@@ -2,7 +2,7 @@ import SwiftUI
 
 /** Every engine mark at 14, 16, 20 and 24 pt, for the brands crop sheet. Only the LatchScreens target compiles this. */
 struct BrandsSheet: View {
-    private let marks = ["latch", "codex", "claude-agent", "gemini", "qwen", "goose", "cursor", "pi", "dsh", "opencode", "grok", "antigravity"]
+    private let marks = ["latch", "codex", "claude-agent", "qwen", "goose", "cursor", "pi", "dsh", "opencode", "grok", "antigravity"]
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(marks, id: \.self) { mark in

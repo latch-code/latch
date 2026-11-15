@@ -298,19 +298,22 @@ describe('settings pages', () => {
     await sheet.getByLabel('地址', { exact: true }).waitFor()
     expect(await protocol.count()).toBe(0)
 
-    // A custom service offers all four, and is saved on the one picked.
+    // A custom service offers every protocol, and is saved on the one picked.
     await sheet.getByRole('button', { name: '自定义地址…', exact: true }).click()
-    expect(await protocol.locator('option').allTextContents()).toEqual(['Chat Completions', 'Responses', 'Anthropic Messages', 'Gemini'])
-    await protocol.selectOption({ label: 'Gemini' })
-    await sheet.getByLabel('名称', { exact: true }).fill('原生 Gemini 服务')
-    await sheet.getByLabel('地址', { exact: true }).fill('https://models.example.test/v1beta')
+    expect(await protocol.locator('option').allTextContents()).toEqual(['Chat Completions', 'Responses', 'Anthropic Messages'])
+    await protocol.selectOption({ label: 'Anthropic Messages' })
+    await sheet.getByLabel('名称', { exact: true }).fill('原生 Messages 服务')
+    await sheet.getByLabel('地址', { exact: true }).fill('https://models.example.test/anthropic')
     const manual = sheet.getByLabel('手动添加模型 ID', { exact: true })
-    await manual.fill('gemini-fixture')
+    await manual.fill('messages-fixture')
     await manual.press('Enter')
     await sheet.getByRole('button', { name: '保存', exact: true }).click()
     await sheet.waitFor({ state: 'hidden' })
-    await settings.locator('.provider-row', { hasText: '原生 Gemini 服务' }).getByText('Gemini · 1 个模型', { exact: true }).waitFor()
-    expect((await savedProviders()).find(item => item.name === '原生 Gemini 服务')?.kind).toBe('gemini')
+    await settings
+      .locator('.provider-row', { hasText: '原生 Messages 服务' })
+      .getByText('Anthropic Messages · 1 个模型', { exact: true })
+      .waitFor()
+    expect((await savedProviders()).find(item => item.name === '原生 Messages 服务')?.kind).toBe('anthropic')
 
     // On a saved service the row warns before the switch that the thinking levels go, and they do.
     const row = settings.locator('.provider-row', { hasText: '换协议的服务' })

@@ -11,8 +11,7 @@ import { noHorizontalOverflow } from './helpers/layout.ts'
 
 const output = 'test-results/harness-launch-options'
 const cases = [
-  { id: 'gemini', width: 820, theme: 'dark' },
-  { id: 'gemini', width: 390, theme: 'light' },
+  { id: 'cursor', width: 820, theme: 'dark' },
   { id: 'cursor', width: 1440, theme: 'light' },
   { id: 'cursor', width: 390, theme: 'dark' },
 ] as const
@@ -36,14 +35,9 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
     FAKE_ACP_STATE: join(root, 'state.json'),
     FAKE_ACP_CONFIG: 'options',
     FAKE_ACP_CAPS: 'resume',
-    ...(id === 'gemini'
-      ? {
-          FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
-          FAKE_ACP_INITIAL_MODE: 'default',
-          FAKE_ACP_MODELS: 'gemini-3.1-pro-preview',
-          FAKE_ACP_NO_THINKING: '1',
-        }
-      : { FAKE_ACP_MODES: 'ask,plan,agent', FAKE_ACP_INITIAL_MODE: 'agent', FAKE_CURSOR_STARTUP: '1' }),
+    FAKE_ACP_MODES: 'ask,plan,agent',
+    FAKE_ACP_INITIAL_MODE: 'agent',
+    FAKE_CURSOR_STARTUP: '1',
   }
   const command = join(bin, preset.command)
   await writeFile(
@@ -86,8 +80,8 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
       .waitFor()
     await page.keyboard.press('Escape')
     await expect.poll(() => chip('模型').getAttribute('aria-expanded')).toBe('false')
-    const control = id === 'gemini' ? '思考' : '权限'
-    const choice = id === 'gemini' ? '低' : 'Agent --force'
+    const control = '权限'
+    const choice = 'Agent --force'
     await chip(control).click()
     await row(page, choice).click()
     const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
@@ -109,19 +103,19 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
     const sessionId = (await owner.json<AppSnapshot>('snapshot')).tasks[0]!.id
     const detail = () => owner.json<TaskDetail>(`tasks/${sessionId}`)
     await expect.poll(async () => (await detail()).summary.status, { timeout: 15_000 }).toBe('idle')
-    const configId = id === 'gemini' ? '~gemini-thinking' : 'mode'
+    const configId = 'mode'
     expect((await detail()).config?.find(option => option.id === configId)).toMatchObject({
-      currentValue: id === 'gemini' ? 'low' : 'agent-force',
+      currentValue: 'agent-force',
       source: 'launch',
     })
     await chip(control).click()
     await page.getByText('启动设置 · 未独立读回', { exact: true }).filter({ visible: true }).waitFor()
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${output}/${id}-${width}-${theme}.png`, animations: 'disabled' })
-    await row(page, id === 'gemini' ? '高' : 'Agent').click()
+    await row(page, 'Agent').click()
     await expect
       .poll(async () => (await detail()).config?.find(option => option.id === configId)?.currentValue, { timeout: 15_000 })
-      .toBe(id === 'gemini' ? 'high' : 'agent')
+      .toBe('agent')
     const records = (await readFile(log, 'utf8'))
       .split('\n')
       .filter(Boolean)

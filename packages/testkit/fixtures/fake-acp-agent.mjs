@@ -2,7 +2,7 @@
 // FAKE_ACP_STORE, the client's own snapshot, to check what was durable when a prompt arrived), except the `shell-edit`
 // turn, which writes two files in the session's working directory, and the edits a test queues in FAKE_ACP_EDIT_QUEUE
 // (FAKE_ACP_REPLY_QUEUE queues whole replies the same way). Its only network use is the `model` turn, which calls
-// the model service a client pointed it at, as Codex (`providers/set`) and Gemini CLI (its gateway variables) would.
+// the model service a client pointed it at, as Codex (`providers/set`) would.
 // Process-wide behaviour comes from environment variables; each turn's behaviour from the prompt's first word.
 // Several processes may share FAKE_ACP_STATE (one per session), so every save merges into what is on disk.
 import { spawn } from 'node:child_process'
@@ -128,8 +128,8 @@ function qwenMerged(earlier, later, path = '') {
 const launchGateway = await (async () => {
   // As Qwen Code: the system settings file its variable names, merged last over the person's settings
   // (FAKE_QWEN_USER_SETTINGS, a file standing for their own), the selected auth type's `modelProviders` list, each
-  // entry's key read from the variable `envKey` names, and the model as `<id>(<auth type>)`. Its Anthropic and Gemini
-  // SDKs add the API version to the address themselves.
+  // entry's key read from the variable `envKey` names, and the model as `<id>(<auth type>)`. Its Anthropic SDK
+  // adds the API version to the address itself.
   if (env.FAKE_ACP_GATEWAY === 'qwen') {
     if (!env.QWEN_CODE_SYSTEM_SETTINGS_PATH) return undefined
     const user = env.FAKE_QWEN_USER_SETTINGS ? JSON.parse(readFileSync(env.FAKE_QWEN_USER_SETTINGS, 'utf8')) : {}
@@ -139,17 +139,10 @@ const launchGateway = await (async () => {
     const entry = entries.find(item => item.id === settings.model?.name)
     if (!entry) return undefined
     const route = (type, item) => {
-      const wire =
-        type === 'anthropic'
-          ? 'anthropic-messages'
-          : type === 'gemini'
-            ? 'gemini'
-            : item.wireApi === 'responses'
-              ? 'responses'
-              : 'chat-completions'
+      const wire = type === 'anthropic' ? 'anthropic-messages' : item.wireApi === 'responses' ? 'responses' : 'chat-completions'
       return {
         wire,
-        baseURL: `${item.baseUrl}${wire === 'anthropic-messages' ? '/v1' : wire === 'gemini' ? '/v1beta' : ''}`,
+        baseURL: `${item.baseUrl}${wire === 'anthropic-messages' ? '/v1' : ''}`,
         key: env[item.envKey],
         model: item.id,
       }
@@ -241,9 +234,7 @@ const launchGateway = await (async () => {
       ? 'responses'
       : route.package.endsWith('/anthropic-compatible')
         ? 'anthropic-messages'
-        : route.package.endsWith('/google')
-          ? 'gemini'
-          : 'chat-completions'
+        : 'chat-completions'
     return {
       wire,
       baseURL: route.settings.baseURL,
@@ -259,13 +250,7 @@ const launchGateway = await (async () => {
       if (!providers) continue
       const [provider, route] = Object.entries(providers)[0]
       const wire =
-        provider === 'google'
-          ? 'gemini'
-          : route.api === 'openai-responses'
-            ? 'responses'
-            : route.api === 'anthropic-messages'
-              ? 'anthropic-messages'
-              : 'chat-completions'
+        route.api === 'openai-responses' ? 'responses' : route.api === 'anthropic-messages' ? 'anthropic-messages' : 'chat-completions'
       return {
         wire,
         baseURL: `${route.baseURL}${wire === 'anthropic-messages' ? '/v1' : ''}`,
@@ -1090,29 +1075,17 @@ function replying({ text, until, error }) {
   }
 }
 
-/**
- * A new session's model: FAKE_ACP_START_MODEL, as an agent that keeps its own choice, else as Gemini CLI does, the one
- * its system settings name, listed or not; else the first listed.
- */
+/** A new session's model: FAKE_ACP_START_MODEL, as an agent that keeps its own choice, else the first listed. */
 function startModel() {
   if (env.FAKE_ACP_START_MODEL) return env.FAKE_ACP_START_MODEL
   if (launchGateway?.start) return launchGateway.start
-  const settings = env.GEMINI_CLI_SYSTEM_SETTINGS_PATH ? JSON.parse(readFileSync(env.GEMINI_CLI_SYSTEM_SETTINGS_PATH, 'utf8')) : {}
-  return settings.model?.name ?? models()[0] ?? 'small'
-}
-
-/** A helper call's model, as Gemini CLI resolves the alias: the last system-settings override naming it, else a fixed one. */
-function helperModel(alias) {
-  const settings = env.GEMINI_CLI_SYSTEM_SETTINGS_PATH ? JSON.parse(readFileSync(env.GEMINI_CLI_SYSTEM_SETTINGS_PATH, 'utf8')) : {}
-  const overrides = (settings.modelConfigs?.customOverrides ?? []).filter(item => item.match?.model === alias && item.modelConfig?.model)
-  return overrides.at(-1)?.modelConfig.model ?? 'gemini-3-flash-preview'
+  return models()[0] ?? 'small'
 }
 
 const responsesText = event => (event.type === 'response.output_text.delta' ? event.delta : '')
-const geminiText = event => (event.candidates?.[0]?.content?.parts ?? []).map(part => (part.thought ? '' : (part.text ?? ''))).join('')
 
-/** A stream's last event: Responses says it completed, Gemini says why it finished. */
-const LAST_EVENT = /"type":"response\.completed"|"finishReason"/gu
+/** A stream's last event: Responses says it completed. */
+const LAST_EVENT = /"type":"response\.completed"/gu
 
 /** A reply as Codex reads it: a stream up to its last event, whether or not the service has closed it yet. */
 async function replyText(response) {
@@ -1133,9 +1106,8 @@ async function replyText(response) {
 }
 
 /**
- * One request to the model service the client pointed this agent at, as Codex and Gemini CLI send it: Responses for a
- * `providers/set` route, Gemini for GOOGLE_GEMINI_BASE_URL with the session's model. Undefined when none
- * was given, which is a reply that bypasses the client.
+ * One request to the model service the client pointed this agent at, as Codex sends it: Responses for a
+ * `providers/set` route. Undefined when none was given, which is a reply that bypasses the client.
  */
 async function callModel(session, input, model) {
   if (provider) {
@@ -1150,21 +1122,6 @@ async function callModel(session, input, model) {
       text: await replyText(response),
       pick: responsesText,
     }
-  }
-  if (env.GOOGLE_GEMINI_BASE_URL) {
-    const name = model ?? session.model
-    const settings =
-      env.FAKE_GEMINI_SETTINGS === '1' && env.GEMINI_CLI_SYSTEM_SETTINGS_PATH
-        ? JSON.parse(readFileSync(env.GEMINI_CLI_SYSTEM_SETTINGS_PATH, 'utf8'))
-        : undefined
-    const generationConfig = settings?.modelConfigs?.customAliases?.[name]?.modelConfig?.generateContentConfig
-    const url = `${env.GOOGLE_GEMINI_BASE_URL.replace(/\/+$/u, '')}/v1beta/models/${encodeURIComponent(name)}:streamGenerateContent?alt=sse`
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'x-goog-api-key': env.GEMINI_API_KEY ?? '', 'content-type': 'application/json' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: input }] }], ...(generationConfig ? { generationConfig } : {}) }),
-    })
-    return { status: response.status, text: await replyText(response), pick: geminiText }
   }
   return undefined
 }
@@ -1186,9 +1143,9 @@ const scenarios = {
     say(`recall: ${session.history.filter(entry => entry.role === 'user').length - 1} earlier`)
     return END
   },
-  // `model [as:name|helper:alias]`: asks the model service it was pointed at, with that model, the alias's or its own,
-  // and says what came back.
+  // `model [as:name]`: asks the model service it was pointed at, with that model or its own, and says what came back.
   model: async ({ session, input, argument, say }) => {
+    const chosen = argument?.startsWith('as:') ? argument.slice(3) : undefined
     // `model side:<selector>`: a subagent on a model of its own, as its file or a grade names it.
     if (launchGateway?.side && argument?.startsWith('side:')) {
       const side = launchGateway.side(argument.slice(5))
@@ -1209,17 +1166,12 @@ const scenarios = {
       const answer = await callFakeModel({
         ...launchGateway,
         key: launchGateway.key ?? env.LMG_TOKEN,
-        model: launchGateway.id(session.model),
+        model: chosen ?? launchGateway.id(session.model),
         input,
       })
       say(answer.status === 200 ? `model: ${answer.text}` : `model error ${answer.status}: ${answer.text}`)
       return END
     }
-    const chosen = argument?.startsWith('as:')
-      ? argument.slice(3)
-      : argument?.startsWith('helper:')
-        ? helperModel(argument.slice(7))
-        : undefined
     const answer = await callModel(session, input, chosen)
     if (!answer) {
       say('answered without a model service')
@@ -1439,7 +1391,7 @@ const scenarios = {
     say('answer')
     return END
   },
-  // `retry [ms]`: as Gemini CLI retries a reply that broke off: part of it, the retry as thinking at once, a wait before
+  // `retry [ms]`: as an agent retries a reply that broke off: part of it, the retry as thinking at once, a wait before
   // it asks again, the mark that it is generating again as thinking, then the reply again with the first text marked.
   // The pause is the wait and, after the mark, the new request; a stop ends either. `retry [ms] on` goes on with more text
   // after the wait, with no mark.

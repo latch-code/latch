@@ -440,7 +440,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       },
       { id: 'responses', name: 'Responses', kind: 'openai-responses', models: ['gpt-fixture'], defaultModel: 'gpt-fixture' },
       { id: 'anthropic', name: 'Anthropic', kind: 'anthropic', models: ['m2'], defaultModel: 'm2' },
-      { id: 'gemini', name: 'Gemini', kind: 'gemini', models: ['g1'], defaultModel: 'g1' },
+      { id: 'other', name: 'Other', kind: 'plugin', models: ['g1'], defaultModel: 'g1' },
       { id: 'demo', name: 'Demo', kind: 'demo', models: ['demo'], defaultModel: 'demo' },
     ]
     const catalog: HostCatalog = {
@@ -475,7 +475,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { harnessId: 'standard', name: 'before\u202eafter' },
       { harnessId: 'standard', defaultProjectId: 'missing' },
       { harnessId: 'standard', avatar: { kind: 'face', bracket: 'round', eyes: 'dot', hue: 'neutral' } },
-      { harnessId: 'codex', model: { providerId: 'gemini', model: 'g1' } },
+      { harnessId: 'codex', model: { providerId: 'other', model: 'g1' } },
       { harnessId: 'codex', model: { providerId: 'chat', model: 'm1', effort: 'high' } },
       { harnessId: 'codex', model: { providerId: 'chat', model: 'm1', effort: 'invented' } },
       { harnessId: 'codex', engineOptions: { '~mode': 'invented' } },

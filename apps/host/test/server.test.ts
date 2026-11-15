@@ -2177,18 +2177,18 @@ describe('full-access (L3) sessions', () => {
       FAKE_ACP_INITIAL_MODE: 'read-only',
       FAKE_ACP_CAPS: 'dirs',
     })
-    await define('gemini-fake', 'gemini', {
+    await define('qwen-fake', 'qwen', {
       FAKE_ACP_CONFIG: 'options',
-      FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
+      FAKE_ACP_MODES: 'plan,default,auto-edit,auto,yolo',
       FAKE_ACP_INITIAL_MODE: 'default',
     })
     await define('dsh-fake', 'dsh', { FAKE_ACP_PROCESS_MODE: '1' })
     const { harnesses } = (await desktop.json<AppSnapshot>('snapshot')).catalog!
     expect(
-      Object.fromEntries(['codex-fake', 'gemini-fake', 'dsh-fake'].map(id => [id, harnesses.find(item => item.id === id)?.projectFolders])),
+      Object.fromEntries(['codex-fake', 'qwen-fake', 'dsh-fake'].map(id => [id, harnesses.find(item => item.id === id)?.projectFolders])),
     ).toEqual({
       'codex-fake': { access: 'all' },
-      'gemini-fake': { access: 'all', max: 5 },
+      'qwen-fake': { access: 'all', max: 5 },
       'dsh-fake': { access: 'primary' },
     })
 
@@ -2225,7 +2225,7 @@ describe('full-access (L3) sessions', () => {
     const big = (await addProject(desktop, many, 'big')).workspace
     const refused = await desktop.request('tasks', {
       method: 'POST',
-      body: { prompt: 'echo', requestId: randomUUID(), mode: 'agent', harnessId: 'gemini-fake', workspaceId: big.id },
+      body: { prompt: 'echo', requestId: randomUUID(), mode: 'agent', harnessId: 'qwen-fake', workspaceId: big.id },
     })
     expect(refused.status).toBe(409)
     expect(await body(refused)).toMatchObject({ error: 'harness-folder-limit' })
@@ -2624,18 +2624,24 @@ describe('providers', () => {
     const listed = await desktop.json<{ models: string[] }>(`providers/${provider.id}/models`, { method: 'POST' })
     expect(listed.models).toEqual(['fake-model', 'fake-model-large'])
     // Levels sent with the new protocol are that protocol's, and stay.
-    const gemini = await desktop.json<{ provider: ProviderSettings }>(`providers/${provider.id}`, {
+    const back = await desktop.json<{ provider: ProviderSettings }>(`providers/${provider.id}`, {
       method: 'PUT',
-      body: { kind: 'gemini', modelCapabilities: { 'fake-model': { thinking: ['low', 'high'] } } },
+      body: { kind: 'openai-compatible', modelCapabilities: { 'fake-model': { thinking: ['low', 'high'] } } },
     })
-    expect(gemini.provider.modelCapabilities).toEqual({ 'fake-model': { thinking: ['low', 'high'] } })
+    expect(back.provider.modelCapabilities).toEqual({ 'fake-model': { thinking: ['low', 'high'] } })
     expect((await run('high')).messages.at(-1)).toMatchObject({ role: 'assistant', text: 'ok' })
-    expect(models.requests.map(request => request.wire)).toEqual(['chat-completions', 'responses', 'gemini'])
-    expect(models.requests[2]?.body).toMatchObject({
-      generationConfig: { thinkingConfig: { thinkingLevel: 'HIGH', includeThoughts: true } },
-    })
+    expect(models.requests.map(request => request.wire)).toEqual(['chat-completions', 'responses', 'chat-completions'])
+    expect(models.requests[2]?.body).toMatchObject({ reasoning_effort: 'high' })
     expect(models.requests[0]?.body).toMatchObject({ reasoning_effort: 'high' })
     expect((await desktop.request(`providers/${provider.id}`, { method: 'PUT', body: { kind: 'grpc' } })).status).toBe(400)
+    // A protocol Latch no longer speaks is as unknown as any other: a device can neither switch a service to it nor save one.
+    expect((await desktop.request(`providers/${provider.id}`, { method: 'PUT', body: { kind: 'gemini' } })).status).toBe(400)
+    const retired = await desktop.request('providers', {
+      method: 'POST',
+      body: { name: 'G', kind: 'gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta', models: ['g'], defaultModel: 'g' },
+    })
+    expect(retired.status).toBe(400)
+    expect((await desktop.json<{ providers: ProviderSettings[] }>('providers')).providers.map(item => item.kind)).not.toContain('gemini')
   })
 
   it.each([

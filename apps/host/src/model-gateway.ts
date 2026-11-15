@@ -9,6 +9,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import {
   MAX_MODEL_FALLBACKS,
+  MODEL_WIRES,
   PROVIDER_WIRES,
   canTranslate,
   type GatewayLoss,
@@ -26,7 +27,6 @@ import { originOf } from './config.ts'
 import { replyReader, type ReplyFacts, type ReplyReader } from './model-reply.ts'
 import { anthropicEndpoint, anthropicHeaders } from './plugins/providers/anthropic-wire.ts'
 import { chatEndpoint, chatHeaders } from './plugins/providers/chat-wire.ts'
-import { geminiEndpoint, geminiHeaders } from './plugins/providers/gemini-wire.ts'
 import type { FetchLike } from './plugins/providers/http.ts'
 import { ReasoningSeals } from './model-gateway/reasoning.ts'
 import { decodeResponses, ResponsesOutput } from './model-gateway/in/responses.ts'
@@ -158,16 +158,13 @@ const FORWARDED_HEADERS: Readonly<Record<ModelWire, readonly string[]>> = {
   'chat-completions': ['accept', 'openai-beta'],
   responses: ['accept', 'openai-beta'],
   'anthropic-messages': ['accept'],
-  gemini: ['accept'],
 }
 const ANTHROPIC_HEADERS = ['anthropic-version', 'anthropic-beta']
 /** What a reply keeps of the service's headers. */
 const RETURNED_HEADERS = ['content-type', 'retry-after', 'x-request-id', 'request-id']
-const GEMINI_METHODS = new Set(['generateContent', 'streamGenerateContent', 'countTokens'])
 
+const isModelWire = (wire: unknown): wire is ModelWire => (MODEL_WIRES as readonly unknown[]).includes(wire)
 const hashOf = (token: string) => createHash('sha256').update(token).digest('hex')
-const bareModel = (model: string) => model.replace(/^models\//u, '')
-const serviceModel = (wire: ModelWire, model: string) => (wire === 'gemini' ? bareModel(model) : model)
 const newTally = (): Tally => ({ requests: 0, models: new Map(), open: new Set(), dropped: new Set(), moved: new Map() })
 
 /** Adds a reply's tokens; a part stays only while every reply added reported it, so it never claims tokens it does not cover. */
@@ -224,11 +221,8 @@ function finish(request: OpenRequest | undefined, facts?: ReplyFacts): void {
 function tokenOf(req: IncomingMessage): string | undefined {
   const authorization = req.headers.authorization
   if (typeof authorization === 'string' && /^Bearer\s+/iu.test(authorization)) return authorization.replace(/^Bearer\s+/iu, '').trim()
-  for (const name of ['x-goog-api-key', 'x-api-key']) {
-    const value = req.headers[name]
-    if (typeof value === 'string' && value) return value.trim()
-  }
-  return undefined
+  const value = req.headers['x-api-key']
+  return typeof value === 'string' && value ? value.trim() : undefined
 }
 
 /**
@@ -306,7 +300,7 @@ const anthropicPath = (path: string) => path === '/v1/messages' || path.startsWi
 
 /**
  * An error in the shape the harness's protocol reads: Anthropic's `{type: 'error', error: {type, message}}`, else
- * `error.message`, which the OpenAI and Gemini protocols both read.
+ * `error.message`, which the OpenAI protocols read.
  */
 function refusal(status: number, code: string, message: string, shape: 'anthropic' | 'openai' = 'openai'): Reply {
   return {
@@ -345,7 +339,6 @@ function streamError(entry: ModelWire, message: string): string {
       { type: 'response.failed', response: { object: 'response', status: 'failed', error: { code: 'gateway-upstream', message } } },
       'response.failed',
     )}`
-  if (entry === 'gemini') return `\n\n${frame({ error: { code: 502, message, status: 'UNAVAILABLE' } })}`
   return `\n\n${frame({ error: { message, type: 'server_error', code: 'gateway-upstream' } })}data: [DONE]\n\n`
 }
 
@@ -377,8 +370,8 @@ function runsOnService(fields: Record<string, unknown>): boolean {
     if (typeof item !== 'object' || item === null) return false
     const tool = item as Record<string, unknown>
     if (typeof tool.type === 'string') return !CLIENT_TOOL_TYPES.has(tool.type) && !ANTHROPIC_CLIENT_TOOLS.test(tool.type)
-    // Gemini: anything but the functions the harness declared is run by the service.
-    return Object.keys(tool).some(key => key !== 'functionDeclarations' && key !== 'function_declarations' && key !== 'function')
+    // A tool without a type that is not a plain function declaration is taken as the service's: never sent twice.
+    return Object.keys(tool).some(key => key !== 'function')
   })
 }
 
@@ -436,10 +429,7 @@ type Target =
   | { list: true }
   | {
       list?: false
-      model?: string
       count?: true
-      /** Gemini says in its path whether the answer streams; the other protocols say it in the body. */
-      stream?: boolean
       upstream: (baseURL: string, wire: ModelWire, model: string) => string
     }
 
@@ -452,8 +442,8 @@ function endpointOf(wire: ModelWire, base: string): string {
 
 function targetOf(entry: ModelWire, upstream: ModelWire, method: string, url: URL): Target | undefined {
   const path = url.pathname
-  if (entry !== 'gemini' && method === 'GET' && path === '/v1/models') return { list: true }
-  if (method !== 'POST' && entry !== 'gemini') return undefined
+  if (method === 'GET' && path === '/v1/models') return { list: true }
+  if (method !== 'POST') return undefined
   if (entry === 'responses') return path === '/v1/responses' ? { upstream: (base, wire) => endpointOf(wire, base) } : undefined
   if (entry === 'chat-completions')
     return path === '/v1/chat/completions' ? { upstream: base => chatEndpoint(base, '/chat/completions') } : undefined
@@ -464,40 +454,26 @@ function targetOf(entry: ModelWire, upstream: ModelWire, method: string, url: UR
       return { count: true, upstream: base => anthropicEndpoint(base, '/messages/count_tokens') }
     return undefined
   }
-  if (entry === 'gemini') {
-    if (method === 'GET' && /^\/v1(?:beta|alpha)?\/models$/u.test(path)) return { list: true }
-    const match = /^\/v1(?:beta|alpha)?\/models\/([^/:]+):([A-Za-z]+)$/u.exec(path)
-    if (method !== 'POST' || !match || !GEMINI_METHODS.has(match[2]!)) return undefined
-    let model: string
-    try {
-      model = bareModel(decodeURIComponent(match[1]!))
-    } catch {
-      return undefined
-    }
-    const alt = url.searchParams.get('alt')
-    return {
-      model,
-      stream: match[2] === 'streamGenerateContent',
-      upstream: (base, _wire, name) => {
-        const target = geminiEndpoint(base, `/models/${encodeURIComponent(name)}:${match[2]}`)
-        if (alt === 'sse') target.searchParams.set('alt', 'sse')
-        return target.toString()
-      },
-    }
-  }
   return undefined
 }
 
 /** The service's own headers: its key, and the version header Anthropic requires. */
 function authHeaders(wire: ModelWire, apiKey: string): Record<string, string> {
-  return wire === 'gemini' ? geminiHeaders(apiKey) : wire === 'anthropic-messages' ? anthropicHeaders(apiKey) : chatHeaders(apiKey)
+  switch (wire) {
+    case 'anthropic-messages':
+      return anthropicHeaders(apiKey)
+    case 'chat-completions':
+    case 'responses':
+      return chatHeaders(apiKey)
+    default:
+      // A key goes out only in the headers of a protocol named here: never by another protocol's rules.
+      throw new AppError(400, 'model-route-unsupported', '这个协议 Latch 不转发')
+  }
 }
 
 /** The session's models in the shape the harness's protocol lists models. */
 function listing(entry: ModelWire, models: Iterable<string>): unknown {
   const ids = [...models]
-  if (entry === 'gemini')
-    return { models: ids.map(id => ({ name: `models/${id}`, displayName: id, supportedGenerationMethods: [...GEMINI_METHODS] })) }
   if (entry === 'anthropic-messages')
     return {
       data: ids.map(id => ({ type: 'model', id, display_name: id })),
@@ -510,8 +486,8 @@ function listing(entry: ModelWire, models: Iterable<string>): unknown {
 
 /**
  * The base URL a harness of `entry` is given: what that protocol's clients append their fixed paths to. OpenAI's
- * clients append `/responses` or `/chat/completions` to a base that ends in `/v1`; Anthropic's and Gemini's add the
- * version themselves.
+ * clients append `/responses` or `/chat/completions` to a base that ends in `/v1`; Anthropic's add the version
+ * themselves.
  */
 function baseFor(entry: ModelWire, port: number): string {
   return entry === 'responses' || entry === 'chat-completions' ? `http://127.0.0.1:${port}/v1` : `http://127.0.0.1:${port}`
@@ -579,6 +555,9 @@ export class ModelGatewayServer implements ModelGateway {
   open(input: { sessionId: string; route: ModelRoute }): ModelGatewayLease {
     const { sessionId, route } = input
     if (this.port === undefined) throw new AppError(503, 'model-gateway-unavailable', 'Latch 现在不能转发模型请求')
+    // A route saved for a protocol Latch no longer forwards is refused by name: it never reaches another protocol's paths.
+    if (!isModelWire(route.wire) || (route.upstream !== undefined && !isModelWire(route.upstream)))
+      throw new AppError(409, 'model-route-unsupported', '这个会话开始时用的协议 Latch 不再转发。请新开一个会话。')
     const service = this.deps.service(route.providerId)
     if (!service)
       throw new AppError(409, 'model-route-unavailable', '这个会话开始时用的模型服务现在不能用：它被删除或停用了，或地址还没确认。')
@@ -587,22 +566,22 @@ export class ModelGatewayServer implements ModelGateway {
       throw new AppError(409, 'model-route-changed', '这个会话开始时用的模型服务换了协议或地址，不能再经 Latch 用它。请新开一个会话。')
     if (route.wire !== upstream && !canTranslate(route.wire, upstream))
       throw new AppError(400, 'model-route-unsupported', '这两个协议之间的转换尚未实现')
-    const models = new Set(service.models.map(model => serviceModel(upstream, model)))
-    if (!models.has(serviceModel(upstream, route.model)))
+    const models = new Set(service.models.map(model => model))
+    if (!models.has(route.model))
       throw new AppError(409, 'model-unavailable', `模型服务里已经没有「${route.model}」，这个会话不能再经 Latch 用它。`)
     // What a model falls back to, as the session fixed it: a candidate that is gone, off or changed by now is left out
     // of this token, never a reason to refuse the session.
     const fallbacks = new Map<string, Candidate[]>()
     for (const [name, listed] of Object.entries(route.fallbacks ?? {})) {
-      const key = serviceModel(upstream, name)
+      const key = name
       if (!models.has(key)) continue
       const usable = listed.slice(0, MAX_MODEL_FALLBACKS).flatMap((item): Candidate[] => {
         const other = this.deps.service(item.providerId)
         if (!other || PROVIDER_WIRES[other.kind] !== item.upstream || originOf(other.baseURL) !== item.origin) return []
         if (item.upstream !== route.wire && !canTranslate(route.wire, item.upstream)) return []
-        const model = serviceModel(item.upstream, item.model)
+        const model = item.model
         if (item.providerId === route.providerId && model === key) return []
-        if (!other.models.some(id => serviceModel(item.upstream, id) === model)) return []
+        if (!other.models.some(id => id === model)) return []
         return [{ providerId: item.providerId, upstream: item.upstream, model, fingerprint: other.fingerprint }]
       })
       if (usable.length) fallbacks.set(key, usable)
@@ -666,7 +645,7 @@ export class ModelGatewayServer implements ModelGateway {
             modelCapabilities: Object.fromEntries(
               service.models.flatMap(model => {
                 const capabilities = service.modelCapabilities?.[model]
-                return capabilities ? [[serviceModel(upstream, model), structuredClone(capabilities)]] : []
+                return capabilities ? [[model, structuredClone(capabilities)]] : []
               }),
             ),
           }
@@ -703,11 +682,11 @@ export class ModelGatewayServer implements ModelGateway {
     binding: Binding,
     candidate: Candidate,
     service: GatewayService,
-    asked: { model: string; body: Buffer; fields: Record<string, unknown>; inPath: boolean },
+    asked: { model: string; body: Buffer; fields: Record<string, unknown> },
   ): Prepared {
     const first = candidate.providerId === binding.providerId && candidate.model === asked.model
     if (binding.entry === candidate.upstream) {
-      if (first || asked.inPath) return { body: asked.body }
+      if (first) return { body: asked.body }
       const exact = exactJson(asked.body.toString('utf8')) as Record<string, unknown>
       exact.model = candidate.model
       return { body: Buffer.from(JSON.stringify(exact)) }
@@ -776,19 +755,15 @@ export class ModelGatewayServer implements ModelGateway {
     } catch (error) {
       return refuse(res, 413, 'body-too-large', error instanceof Error ? error.message : '请求内容过大', shape)
     }
-    let model = target.model
-    let fields: Record<string, unknown> = {}
-    if (model === undefined) {
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(body.toString('utf8'))
-      } catch {
-        return refuse(res, 400, 'invalid-json', '请求不是有效的 JSON', shape)
-      }
-      fields = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
-      model = typeof fields.model === 'string' ? serviceModel(binding.upstream, fields.model) : undefined
-      body = withUsage(binding.entry, fields) ?? body
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(body.toString('utf8'))
+    } catch {
+      return refuse(res, 400, 'invalid-json', '请求不是有效的 JSON', shape)
     }
+    const fields = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+    const model = typeof fields.model === 'string' ? fields.model : undefined
+    body = withUsage(binding.entry, fields) ?? body
     // A token count is forwarded to the session's service like any request, and has no reply of the model to count.
     const entry = model && !target.count ? counted(tally, model) : undefined
     if (!model || !binding.models.has(model)) {
@@ -820,7 +795,7 @@ export class ModelGatewayServer implements ModelGateway {
         }
       }
     }
-    const asked = { model, body, fields, inPath: target.model !== undefined }
+    const asked = { model, body, fields }
     const own: Candidate = { providerId: binding.providerId, upstream: binding.upstream, model, fingerprint: binding.fingerprint }
     let prepared: Prepared
     try {
@@ -876,7 +851,7 @@ export class ModelGatewayServer implements ModelGateway {
         ...(start > 0 ? { start } : {}),
         signal,
         // An answer that comes whole may rightly take longer than any first-byte limit.
-        firstByte: target.stream ?? fields.stream === true,
+        firstByte: fields.stream === true,
         retryServer: !stateful && !runsOnService(fields),
         attempt: async (index, attemptSignal, timer) => {
           const { candidate } = candidates[index]!

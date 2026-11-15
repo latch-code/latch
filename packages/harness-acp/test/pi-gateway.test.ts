@@ -49,7 +49,7 @@ describe('pi gateway operating budgets', () => {
   })
 })
 
-it.each(['gemini', 'chat-completions', 'responses', 'anthropic-messages'] as const)(
+it.each(['chat-completions', 'responses', 'anthropic-messages'] as const)(
   'runs the delivered pi extension for %s with scoped streaming, bounded output and an in-memory credential across reloads',
   async wire => {
     const root = await mkdtemp(join(tmpdir(), 'latch-pi-gateway-extension-'))
@@ -70,7 +70,7 @@ it.each(['gemini', 'chat-completions', 'responses', 'anthropic-messages'] as con
       await writeFile(join(module, 'models.mjs'), 'export const clampThinkingLevel = (_model, level) => level;')
       await writeFile(
         join(module, 'stream.mjs'),
-        'const api = () => ({ streamSimple: (model, context, options) => ({ model, context, options }) }); export { api as openAICompletionsApi, api as openAIResponsesApi, api as anthropicMessagesApi, api as googleGenerativeAIApi };',
+        'const api = () => ({ streamSimple: (model, context, options) => ({ model, context, options }) }); export { api as openAICompletionsApi, api as openAIResponsesApi, api as anthropicMessagesApi };',
       )
       const launch = deliverPiGateway(
         {
@@ -99,7 +99,6 @@ it.each(['gemini', 'chat-completions', 'responses', 'anthropic-messages'] as con
       )
       extension.default(pi)
       expect(registerProvider).toHaveBeenCalledTimes(2)
-      if (wire === 'gemini') expect(registerProvider.mock.calls[0]![1].models[0].thinkingLevelMap.xhigh).toBeNull()
       type Delegate = {
         model: { contextWindow: number; maxTokens: number }
         options: { maxTokens: number; onPayload: (payload: unknown, model?: unknown) => Promise<unknown> }
@@ -113,31 +112,13 @@ it.each(['gemini', 'chat-completions', 'responses', 'anthropic-messages'] as con
       expect(delegated.model).toMatchObject({ contextWindow: 32768, maxTokens: 4096 })
       expect(delegated.options.maxTokens).toBe(4096)
       const field = wire === 'responses' ? 'max_output_tokens' : wire === 'chat-completions' ? 'max_completion_tokens' : 'max_tokens'
-      const payload =
-        wire === 'gemini'
-          ? { model: 'service-only', config: { temperature: 0.3, maxOutputTokens: 90000, thinkingConfig: { thinkingBudget: -1 } } }
-          : { model: 'service-only', [field]: 90000 }
-      if (wire === 'gemini') {
-        expect(await delegated.options.onPayload(payload)).toEqual({
-          model: 'service-only',
-          config: { temperature: 0.3, maxOutputTokens: 4096, thinkingConfig: { includeThoughts: true, thinkingLevel: 'LOW' } },
-        })
-        expect(payload.config!.thinkingConfig).toEqual({ thinkingBudget: -1 })
-        const summary = provider.streamSimple(model, {}, { reasoning: 'high' })
-        expect(await summary.options.onPayload(payload)).toMatchObject({ config: { thinkingConfig: { thinkingLevel: 'HIGH' } } })
-      } else expect(await delegated.options.onPayload(payload)).toEqual({ model: 'service-only', [field]: 4096 })
-      const deleted = provider.streamSimple(
-        model,
-        {},
-        { reasoning: 'low', onPayload: () => (wire === 'gemini' ? { model: 'service-only', config: {} } : { model: 'service-only' }) },
-      )
-      expect(await deleted.options.onPayload(payload)).toMatchObject(
-        wire === 'gemini' ? { config: { maxOutputTokens: 4096 } } : { [field]: 4096 },
-      )
+      const payload = { model: 'service-only', [field]: 90000 }
+      expect(await delegated.options.onPayload(payload)).toEqual({ model: 'service-only', [field]: 4096 })
+      const deleted = provider.streamSimple(model, {}, { reasoning: 'low', onPayload: () => ({ model: 'service-only' }) })
+      expect(await deleted.options.onPayload(payload)).toMatchObject({ [field]: 4096 })
       const tampered = provider.streamSimple(model, {}, { reasoning: 'low', onPayload: () => ({ model: 'other' }) })
       await expect(tampered.options.onPayload(payload)).rejects.toThrow('model payload is unavailable')
       expect(() => provider.streamSimple({ ...model, provider: 'other' }, {}, { reasoning: 'low' })).toThrow('model is unavailable')
-      if (wire === 'gemini') expect(() => provider.streamSimple(model, {}, { reasoning: 'xhigh' })).toThrow('thinking level is unavailable')
       const smaller = provider.streamSimple({ ...model, contextWindow: 8192, maxTokens: 1024 }, {}, { reasoning: 'low', maxTokens: 512 })
       expect(smaller.model).toMatchObject({ contextWindow: 8192, maxTokens: 512 })
     } finally {

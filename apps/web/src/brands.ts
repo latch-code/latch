@@ -11,8 +11,6 @@ import cursorDark from './assets/brands/cursor-dark.svg?no-inline'
 import cursorLight from './assets/brands/cursor-light.svg?no-inline'
 import deepseekHarness from './assets/brands/deepseek-harness.svg?no-inline'
 import deepseek from './assets/brands/deepseek.svg?no-inline'
-import geminiCli from './assets/brands/gemini-cli.png?no-inline'
-import gemini from './assets/brands/gemini.svg?no-inline'
 import grokDark from './assets/brands/grok-dark.svg?no-inline'
 import grokLight from './assets/brands/grok-light.svg?no-inline'
 import goose from './assets/brands/goose.svg?no-inline'
@@ -45,7 +43,6 @@ export const HARNESS_MARKS: Record<string, TileMark> = {
   pi: { src: pi, margin: true },
   opencode: { src: opencodeLight, dark: opencodeDark },
   dsh: { src: deepseekHarness, mono: true },
-  gemini: { src: geminiCli, tile: true },
   qwen: { src: qwenCode },
   goose: { src: goose, mono: true },
   grok: { src: grokDark, dark: grokLight, margin: true },
@@ -61,7 +58,6 @@ export const PROVIDER_MARKS: Record<string, TileMark> = {
   anthropic: { src: anthropic, mono: true },
   deepseek: { src: deepseek },
   openrouter: { src: openrouter, mono: true },
-  gemini: { src: gemini },
   moonshot: { src: moonshot, mono: true },
   zhipu: { src: zhipu },
   dashscope: { src: bailian },

@@ -19,7 +19,7 @@ describe('redactSecrets', () => {
     [`native book LATCHBOOK1.${'B'.repeat(128)} end`, 'native book [redacted] end'],
     ['invite lpi1-ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'invite [redacted]'],
     ['offline lpo1-ABCDEFGHIJKLMNOPQRSTUVWX23', 'offline [redacted]'],
-    [`GEMINI_API_KEY=lmg1.${'g-'.repeat(21)}x end`, 'GEMINI_API_KEY=[redacted] end'],
+    [`LMG_TOKEN=lmg1.${'g-'.repeat(21)}x end`, 'LMG_TOKEN=[redacted] end'],
     [`LATCH_TOOL_TOKEN=lbt1.${'b_'.repeat(21)}x end`, 'LATCH_TOOL_TOKEN=[redacted] end'],
     ['cookie: harness_link=abc-DEF_123; Path=/link', 'cookie: [redacted]; Path=/link'],
     [`set-cookie: latch_abcdefgh=${credential}; HttpOnly`, 'set-cookie: [redacted]; HttpOnly'],

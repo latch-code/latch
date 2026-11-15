@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import type { ModelMessage } from '@latch/sdk'
 import { anthropicWire } from '../src/plugins/providers/anthropic-wire.ts'
 import { chatWire } from '../src/plugins/providers/chat-wire.ts'
-import { geminiWire } from '../src/plugins/providers/gemini-wire.ts'
 import { responsesWire } from '../src/plugins/providers/responses-wire.ts'
 
 const image = { type: 'image' as const, mimeType: 'image/png' as const, data: 'iVBORw0K' }
@@ -55,7 +54,5 @@ describe('a tool’s images on each protocol', () => {
       'user',
     ])
     expect(responses.at(-1)!.content[1]).toMatchObject({ type: 'input_image', image_url: 'data:image/png;base64,iVBORw0K' })
-    const gemini = body(geminiWire).contents as Array<{ role: string; parts: Array<Record<string, any>> }>
-    expect(gemini.at(-1)!.parts.map(part => Object.keys(part)[0])).toEqual(['functionResponse', 'functionResponse', 'text', 'inlineData'])
   })
 })

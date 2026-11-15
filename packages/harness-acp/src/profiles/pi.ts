@@ -1,7 +1,7 @@
 import { bareVersion } from '../version-line.ts'
 import type { HarnessProfile } from './types.ts'
 import { prefixedModels } from './gateway-model.ts'
-import { deliverPiGateway, PI_GATEWAY_PROVIDER, piGatewayBudget, piGatewayStartupFailure, piGatewayThinking } from './pi-gateway.ts'
+import { deliverPiGateway, PI_GATEWAY_PROVIDER, piGatewayBudget, piGatewayStartupFailure } from './pi-gateway.ts'
 
 export const piProfile: HarnessProfile = {
   presetId: 'pi',
@@ -9,12 +9,11 @@ export const piProfile: HarnessProfile = {
   wire: 'pi',
   gateway: {
     via: 'launch',
-    wires: ['chat-completions', 'responses', 'anthropic-messages', 'gemini'],
+    wires: ['chat-completions', 'responses', 'anthropic-messages'],
     tokenEnv: 'LMG_TOKEN',
     envNames: [],
     templates: { args: 1, files: 1 },
     models: { ...prefixedModels(PI_GATEWAY_PROVIDER), reportedOnly: true },
-    thinkingAllowed: piGatewayThinking,
     runtimeBudget: piGatewayBudget,
     startupFailure: piGatewayStartupFailure,
     minimumVersion: {

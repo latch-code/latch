@@ -119,6 +119,7 @@ export function heldBackService(
   if (!first) return undefined
   const name = `「${escapeSecurityText(first.name)}」`
   const where = `在 ${computerName(hostName)} 的 设置 › 模型 里`
+  if (first.reason === 'unsupported') return { message: `${name}用的协议不再支持。`, hint: `${where}换一个模型服务` }
   return first.reason === 'key-missing'
     ? { message: `${name}还没有填写密钥。`, hint: `${where}填写密钥` }
     : { message: `${name}的地址还没有确认。`, hint: `${where}确认地址` }

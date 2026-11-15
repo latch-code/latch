@@ -58,7 +58,6 @@ const GATEWAY_PACKAGES = {
   'chat-completions': '@opencode/ai/providers/openai-compatible',
   responses: '@opencode/ai/providers/openai-compatible/responses',
   'anthropic-messages': '@opencode/ai/providers/anthropic-compatible',
-  gemini: '@opencode/ai/providers/google',
 } as const
 
 /** 2.2.6's spawner overlays its environment: an empty entry also clears a token inherited from the Agent process. */
@@ -156,7 +155,7 @@ export const opencodeProfile: HarnessProfile = {
   historyImport: { version: '^2\\.', grants: 'refuse', useUnknown: true },
   gateway: {
     via: 'launch',
-    wires: ['chat-completions', 'responses', 'anthropic-messages', 'gemini'],
+    wires: ['chat-completions', 'responses', 'anthropic-messages'],
     tokenEnv: 'LMG_TOKEN',
     envNames: ['OPENCODE_CONFIG_CONTENT'],
     templates: { files: 1 },
@@ -164,7 +163,7 @@ export const opencodeProfile: HarnessProfile = {
     minimumVersion: { args: ['--version'], read: bareVersion, minimum: '2.2.6', upgrade: 'npm i -g @opencode/cli@latest' },
     deliver(place, route) {
       const model = GATEWAY_MODELS.value(route.model)
-      const baseURL = `${place.baseURL}${route.wire === 'gemini' ? '/v1beta' : route.wire === 'anthropic-messages' ? '/v1' : ''}`
+      const baseURL = `${place.baseURL}${route.wire === 'anthropic-messages' ? '/v1' : ''}`
       const config = {
         ...(JSON.parse(CONFIG) as Record<string, unknown>),
         model,

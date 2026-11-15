@@ -668,18 +668,18 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
     const bin = join(directory, 'bin')
     await mkdir(bin)
     await writeFile(
-      join(bin, 'gemini'),
+      join(bin, 'qwen'),
       [
         '#!/bin/sh',
         `export FAKE_ACP_STATE='${join(directory, 'state.json')}' FAKE_ACP_LOG='${log}'`,
-        'export FAKE_ACP_MODES=plan,default,autoEdit,yolo FAKE_ACP_INITIAL_MODE=default FAKE_ACP_CONFIG=options',
+        'export FAKE_ACP_MODES=plan,default,auto-edit,auto,yolo FAKE_ACP_INITIAL_MODE=default FAKE_ACP_CONFIG=options',
         `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
       ].join('\n'),
     )
-    await chmod(join(bin, 'gemini'), 0o755)
+    await chmod(join(bin, 'qwen'), 0o755)
     host = await startTestHost({
       demo: false,
-      detectPreset: preset => (preset.id === 'gemini' ? { found: true, path: join(bin, 'gemini') } : { found: false }),
+      detectPreset: preset => (preset.id === 'qwen' ? { found: true, path: join(bin, 'qwen') } : { found: false }),
       // Only this directory: no agent installed on the computer running the test is ever found.
       commandDirectories: () => [bin],
     })
@@ -687,17 +687,17 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
     const saved = await owner.confirmed('agents', {
       method: 'POST',
       body: {
-        id: 'gemini',
-        name: 'Gemini CLI',
-        presetId: 'gemini',
-        command: 'gemini',
-        args: ['--acp', '--approval-mode', 'default'],
+        id: 'qwen',
+        name: 'Qwen Code',
+        presetId: 'qwen',
+        command: 'qwen',
+        args: ['--acp'],
         env: {},
       },
     })
     expect(saved.status).toBe(201)
-    const gemini = (await owner.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(harness => harness.id === 'gemini')
-    expect(gemini?.catalogueRead).toEqual({ when: 'select', modes: true })
+    const qwen = (await owner.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(harness => harness.id === 'qwen')
+    expect(qwen?.catalogueRead).toEqual({ when: 'select', modes: true })
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })
@@ -730,7 +730,7 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
           .getByRole('button', { name: /^Harness：/u })
           .first()
           .getAttribute('aria-label'),
-      ).toBe('Harness：Gemini CLI')
+      ).toBe('Harness：Qwen Code')
       const chip = page.getByRole('button', { name: /^权限：/u }).first()
       await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：先问你')
       expect(await sent()).toEqual([])
@@ -741,20 +741,20 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
       })
       await chip.click()
       const rule = page
-        .getByRole('menuitemradio', { name: /按规则放行/u })
-        .or(page.getByRole('radio', { name: /按规则放行/u }))
+        .getByRole('menuitemradio', { name: /由模型判断/u })
+        .or(page.getByRole('radio', { name: /由模型判断/u }))
         .first()
       await rule.waitFor({ timeout: 20_000 })
       expect(await sent()).toHaveLength(0)
       await shot('permission-reading-1280-dark')
       await rule.click()
-      await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：按规则放行')
+      await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：由模型判断')
       releaseRead()
       await expect.poll(sent).toHaveLength(1)
       expect(await page.getByText('发第一条消息后可以换', { exact: false }).count()).toBe(0)
       await shot('permission-read-1280-dark')
       expect(await sent()).toHaveLength(1)
-      await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：按规则放行')
+      await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：由模型判断')
       await noHorizontalOverflow(page)
     } finally {
       releaseRead()

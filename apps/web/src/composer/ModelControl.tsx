@@ -13,6 +13,7 @@ import {
   type ProviderSummary,
   type SessionConfigOption,
   type TaskSummary,
+  type UnusableProvider,
 } from '@latch/protocol'
 import {
   Badge,
@@ -396,7 +397,8 @@ export interface UnusableService {
 }
 
 /** The words for a saved service the built-in Harness cannot use yet. The app on that Mac keeps its own sentence. */
-function heldReason(reason: 'key-missing' | 'origin-unconfirmed', computer: string | undefined): string {
+function heldReason(reason: UnusableProvider['reason'], computer: string | undefined): string {
+  if (reason === 'unsupported') return '不再支持'
   if (reason === 'key-missing') return MODEL_MENU_COPY.missingKey
   return computer === undefined ? `地址还没确认 · 在${HERE} 上确认` : MODEL_MENU_COPY.unconfirmed(computer)
 }
@@ -536,9 +538,11 @@ export function routeService(
       ? ['没有密钥', '在设置 › 模型里添加密钥']
       : held?.reason === 'origin-unconfirmed'
         ? ['地址还没确认', onComputer('在这台 Mac 上确认它的地址', computer)]
-        : route.off
-          ? ['已停用', '在设置 › 模型里重新打开它']
-          : ['现在不能用', '在设置 › 模型里看看它']
+        : held?.reason === 'unsupported'
+          ? ['不再支持', '换一个模型服务']
+          : route.off
+            ? ['已停用', '在设置 › 模型里重新打开它']
+            : ['现在不能用', '在设置 › 模型里看看它']
   return { name, unusable: { words, note: `这个会话开始时用的「${name}」${words}，下一轮会失败。${fix}，或新开一个会话。` } }
 }
 

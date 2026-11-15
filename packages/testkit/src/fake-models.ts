@@ -1,6 +1,6 @@
 /**
  * Local model services that answer like OpenAI's Chat Completions (`/v1/chat/completions`) and Responses
- * (`/v1/responses`), Anthropic's Messages (`/v1/messages`, and `/v1/messages/count_tokens`) and Gemini's generateContent
+ * (`/v1/responses`), Anthropic's Messages (`/v1/messages`, and `/v1/messages/count_tokens`)
  * (`/v1beta/models/<model>:streamGenerateContent`, `:generateContent`, also under `/v1`), streamed or not, from a script of replies. No
  * model and no network: they listen on 127.0.0.1, accept any key, and keep every request they get, which is how a test
  * proves an agent reached them and not a real service.
@@ -40,7 +40,7 @@ export interface FakeReply {
 }
 
 export interface FakeModelRequest {
-  wire: 'chat-completions' | 'responses' | 'anthropic-messages' | 'gemini'
+  wire: 'chat-completions' | 'responses' | 'anthropic-messages'
   path: string
   model?: string
   stream: boolean
@@ -52,7 +52,7 @@ export interface FakeModelRequest {
 }
 
 export interface FakeModels {
-  /** `http://127.0.0.1:<port>`; the services live below `/v1`, and Gemini's below `/v1beta`. */
+  /** `http://127.0.0.1:<port>`; the services live below `/v1`. */
   origin: string
   /** Every request, in order, without its headers. */
   requests: FakeModelRequest[]
@@ -323,37 +323,6 @@ function responses(
   return { events }
 }
 
-function gemini(reply: FakeReply, model: string, stream: boolean, served: number): { events?: Array<{ data: unknown }>; body?: unknown } {
-  const usageMetadata = { promptTokenCount: 10, candidatesTokenCount: 5, thoughtsTokenCount: reply.reasoning ? 2 : 0, totalTokenCount: 17 }
-  const call = reply.tool && {
-    functionCall: { id: `call_fake_${served}`, name: String(reply.tool.name), args: reply.tool.input },
-    thoughtSignature: 'fake-signature',
-  }
-  const chunk = (parts: unknown[], last = false) => ({
-    candidates: [{ index: 0, content: { role: 'model', parts }, ...(last ? { finishReason: 'STOP' } : {}) }],
-    ...(last ? { usageMetadata } : {}),
-    modelVersion: model,
-  })
-  if (!stream)
-    return {
-      body: chunk(
-        [
-          ...(reply.reasoning ? [{ text: reply.reasoning, thought: true }] : []),
-          ...(reply.text ? [{ text: reply.text }] : []),
-          ...(call ? [call] : []),
-        ],
-        true,
-      ),
-    }
-  return {
-    events: [
-      ...pieces(reply.reasoning ?? '').map(piece => ({ data: chunk([{ text: piece, thought: true }]) })),
-      ...pieces(reply.text ?? '').map(piece => ({ data: chunk([{ text: piece }]) })),
-      { data: chunk(call ? [call] : [{ text: '' }], true) },
-    ],
-  }
-}
-
 /** Anthropic's error types by status. */
 const ANTHROPIC_TYPES: Record<number, string> = {
   401: 'authentication_error',
@@ -365,16 +334,12 @@ const ANTHROPIC_TYPES: Record<number, string> = {
   529: 'overloaded_error',
 }
 
-/** The error a protocol answers with: OpenAI's and Anthropic's `error.message`, Gemini's `error.status` as well. */
+/** The error a protocol answers with: OpenAI's and Anthropic's `error.message`. */
 function failure(wire: FakeModelRequest['wire'], error: NonNullable<FakeReply['error']>): unknown {
-  if (wire === 'gemini') return { error: { code: error.status, message: error.message, status: 'INVALID_ARGUMENT' } }
   if (wire === 'anthropic-messages')
     return { type: 'error', error: { type: ANTHROPIC_TYPES[error.status] ?? 'invalid_request_error', message: error.message } }
   return { error: { message: error.message, type: 'invalid_request_error', code: null } }
 }
-
-// Gemini answers under `v1` as well as `v1beta`.
-const GEMINI_CALL = /^\/v1(?:beta)?\/models\/([^/:]+):(streamGenerateContent|generateContent)$/u
 
 /**
  * Starts every service on one port. Each request takes the next reply of `replies`; once they run out, the last one
@@ -416,10 +381,8 @@ export async function startFakeModels(
         })
         return json(response, 200, { input_tokens: 10 })
       }
-      const geminiCall = GEMINI_CALL.exec(path)
-      const wire: FakeModelRequest['wire'] | undefined = geminiCall
-        ? 'gemini'
-        : path === '/v1/chat/completions'
+      const wire: FakeModelRequest['wire'] | undefined =
+        path === '/v1/chat/completions'
           ? 'chat-completions'
           : path === '/v1/responses'
             ? 'responses'
@@ -434,10 +397,10 @@ export async function startFakeModels(
       } catch {
         return json(response, 400, { error: { message: 'the body is not JSON' } })
       }
-      const model = geminiCall ? decodeURIComponent(geminiCall[1]!) : typeof body.model === 'string' ? body.model : 'fake-model'
-      const stream = geminiCall ? geminiCall[2] === 'streamGenerateContent' : body.stream === true
+      const model = typeof body.model === 'string' ? body.model : 'fake-model'
+      const stream = body.stream === true
       const bearer = request.headers.authorization?.replace(/^Bearer\s+/iu, '')
-      const key = bearer ?? [request.headers['x-goog-api-key'], request.headers['x-api-key']].find(value => typeof value === 'string')
+      const key = bearer ?? (typeof request.headers['x-api-key'] === 'string' ? request.headers['x-api-key'] : undefined)
       requests.push({
         wire,
         path,
@@ -468,9 +431,7 @@ export async function startFakeModels(
                 requests.length,
                 Array.isArray(body.include) && body.include.includes('reasoning.encrypted_content'),
               )
-            : wire === 'gemini'
-              ? gemini(reply, reply.answeredBy ?? model, stream, requests.length)
-              : anthropic(reply, model, stream, requests.length)
+            : anthropic(reply, model, stream, requests.length)
       if (made.events) await sse(response, made.events, reply.lingerMs, reply.cut === true, reply.dropped ? -1 : reply.silentMs)
       else json(response, 200, made.body)
     })().catch(() => {

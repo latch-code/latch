@@ -156,7 +156,7 @@ describe('the environment an agent inherits', () => {
   })
 
   it("inherits a profile's home, and only that profile's", () => {
-    const shellEnv = { CODEX_HOME: '/me/.codex', GEMINI_CLI_HOME: '/me/.gemini' }
+    const shellEnv = { CODEX_HOME: '/me/.codex', QWEN_HOME: '/me/.qwen' }
     const codex = agentEnvironment({
       ...base,
       profile: FALLBACK_PROFILES.get('codex')!.permission,
@@ -164,7 +164,7 @@ describe('the environment an agent inherits', () => {
       shellEnv,
     })
     expect(codex.CODEX_HOME).toBe('/me/.codex')
-    expect(codex).not.toHaveProperty('GEMINI_CLI_HOME')
+    expect(codex).not.toHaveProperty('QWEN_HOME')
     const plain = agentEnvironment({ ...base, hostEnv: { PATH: '/usr/bin', CODEX_HOME: '/me/.codex' }, shellEnv })
     expect(plain).not.toHaveProperty('CODEX_HOME')
   })

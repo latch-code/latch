@@ -1076,7 +1076,6 @@ describe('Host provider helpers', () => {
     expect(new Set(PROVIDER_PRESETS.map(preset => preset.id)).size).toBe(PROVIDER_PRESETS.length)
     expect(byId.anthropic).toMatchObject({ kind: 'anthropic', baseURL: 'https://api.anthropic.com', requiresKey: true })
     expect(byId.openai).toMatchObject({ kind: 'openai-responses', otherKinds: ['openai-compatible'], baseURL: 'https://api.openai.com/v1' })
-    expect(byId.gemini).toMatchObject({ kind: 'gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta' })
     expect(byId.ollama).toMatchObject({ kind: 'openai-compatible', baseURL: 'http://127.0.0.1:11434/v1', requiresKey: false })
     expect(byId.custom).toMatchObject({ baseURL: '', requiresKey: false })
     for (const preset of PROVIDER_PRESETS)

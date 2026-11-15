@@ -42,7 +42,7 @@ import UIKit
         case "harness-menu":
             creating = true
             let names = [("standard", "Latch 内置"), ("codex", "Codex"), ("claude-agent", "Claude Agent"),
-                ("gemini", "Gemini CLI"), ("qwen", "Qwen Code"), ("goose", "goose"), ("cursor", "Cursor"),
+                ("qwen", "Qwen Code"), ("goose", "goose"), ("cursor", "Cursor"),
                 ("pi", "pi"), ("dsh", "DeepSeek Harness"), ("opencode", "OpenCode"), ("grok", "Grok Build"), ("antigravity", "Antigravity")]
             model.snapshot = patched(model.snapshot) { object in
                 var catalog = object["catalog"]!.object
@@ -261,7 +261,7 @@ import UIKit
     private static let harnesses = """
     [{"id":"standard","status":"ready","modes":["agent","chat"],"agentContext":"private","capabilities":{"display":{"label":"Latch","mark":"latch"},"models":{"owner":"latch"},"permission":{"enforcement":"latch"}}},
      {"id":"codex","status":"ready","modes":["agent"],"agentContext":"first-turn","capabilities":{"display":{"label":"Codex","mark":"codex"},"models":{"owner":"harness"},"permission":{"enforcement":"harness"}}},
-     {"id":"gemini","status":"missing","modes":["agent"],"agentContext":"first-turn","capabilities":{"display":{"label":"Gemini CLI","mark":"gemini"},"models":{"owner":"harness"},"permission":{"enforcement":"harness"}}}]
+     {"id":"qwen","status":"missing","modes":["agent"],"agentContext":"first-turn","capabilities":{"display":{"label":"Qwen Code","mark":"qwen"},"models":{"owner":"harness"},"permission":{"enforcement":"harness"}}}]
     """
     private static var snapshotText: String { """
     {"instanceId":"screens","revision":42,"hostName":"\(marker)","approvals":[],"hostTime":"{{0}}",
@@ -274,7 +274,7 @@ import UIKit
      "customAgents":[
       {"id":"\(review)","name":"代码审阅","avatar":{"kind":"face","bracket":"curly","eyes":"dot","hue":"pine"},"description":"只报真实的问题，按严重程度排","harnessId":"codex","mode":"agent","defaultProjectId":"latch","available":true,"canAutomate":false,"skillCount":1,"memoryCount":2,"sessionCount":3,"revision":3},
       {"id":"\(daily)","name":"每日简报","avatar":{"kind":"face","bracket":"round","eyes":"arc","hue":"slate"},"description":"每天早上汇总依赖更新与 CI","harnessId":"standard","mode":"chat","model":{"providerId":"deepseek","model":"deepseek-chat"},"available":true,"canAutomate":true,"skillCount":0,"memoryCount":0,"sessionCount":1,"revision":1},
-      {"id":"\(docs)","name":"文档整理","avatar":{"kind":"face","bracket":"square","eyes":"oval","hue":"cocoa"},"description":"把散落的说明整理进 docs","harnessId":"gemini","mode":"agent","defaultProjectId":"site","available":false,"unavailableReason":"Gemini CLI 现在不能开始：没有安装。","canAutomate":false,"skillCount":0,"memoryCount":0,"sessionCount":0,"revision":1}],
+      {"id":"\(docs)","name":"文档整理","avatar":{"kind":"face","bracket":"square","eyes":"oval","hue":"cocoa"},"description":"把散落的说明整理进 docs","harnessId":"qwen","mode":"agent","defaultProjectId":"site","available":false,"unavailableReason":"Qwen Code 现在不能开始：没有安装。","canAutomate":false,"skillCount":0,"memoryCount":0,"sessionCount":0,"revision":1}],
      "automations":[
       {"id":"\(checks)","name":"每日依赖检查","customAgentId":"\(daily)","schedule":{"kind":"weekdays","time":"09:00"},"enabled":true,"state":"ready","revision":2,"notify":true,"nextRunAt":"{{64800}}","lastRun":{"at":"{{-21600}}","state":"completed","trigger":"schedule","sessionId":"ses_daily"}},
       {"id":"auto_0b2d4e50-6a8f-4c1e-9f50-4e5f60718293","name":"周五周报","customAgentId":"\(daily)","schedule":{"kind":"weekly","day":5,"time":"17:30"},"enabled":false,"state":"paused","revision":4,"notify":false,"pause":{"reason":"unknown-outcome","message":"上一次运行的结果未知，确认后再开启。"},"lastRun":{"at":"{{-259200}}","state":"unknown","trigger":"schedule"}}],

@@ -217,10 +217,10 @@ describe('「出错时改用」 and a service limit in the Host', () => {
     const a = await models([failed(401)])
     const b = await models([{ text: 'via the fallback' }])
     const { t, desktop, phone, service } = await host()
-    const first = await service('gemini', 'First', a.origin, KEY_A)
-    const second = await service('gemini', 'Second', b.origin, KEY_B)
-    const third = await service('openai-compatible', 'Chat', `${b.origin}/v1`, KEY_B)
-    // The Chat service cannot be given to a harness that speaks only Gemini: it is left out of this session's candidates.
+    const first = await service('openai-compatible', 'First', `${a.origin}/v1`, KEY_A)
+    const second = await service('openai-compatible', 'Second', `${b.origin}/v1`, KEY_B)
+    const third = await service('anthropic', 'Messages', b.origin, KEY_B)
+    // Nothing converts Chat Completions to Anthropic's protocol: that service is left out of this session's candidates.
     await put(phone, first.id, {
       fallbacks: {
         'fake-model': [
@@ -232,17 +232,19 @@ describe('「出错时改用」 and a service limit in the Host', () => {
     const agent = await desktop.confirmed('agents', {
       method: 'POST',
       body: {
-        id: 'gemini',
-        name: 'Gemini CLI',
-        presetId: 'gemini',
+        id: 'opencode',
+        name: 'OpenCode',
+        presetId: 'opencode',
         command: process.execPath,
         args: [FAKE_ACP_AGENT],
         env: {
           FAKE_ACP_STATE: join(t.root, 'acp-state.json'),
           FAKE_ACP_LOG: join(t.root, 'acp.log'),
           FAKE_ACP_CONFIG: 'options',
-          FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
-          FAKE_ACP_INITIAL_MODE: 'default',
+          FAKE_ACP_MODES: 'plan,build,auto-edit,yolo',
+          FAKE_ACP_INITIAL_MODE: 'build',
+          FAKE_ACP_GATEWAY: 'opencode',
+          FAKE_ACP_VERSION: '2.2.6',
         },
       },
     })
@@ -254,7 +256,7 @@ describe('「出错时改用」 and a service limit in the Host', () => {
         prompt: 'model hello',
         requestId: randomUUID(),
         mode: 'agent',
-        harnessId: 'gemini',
+        harnessId: 'opencode',
         model: { providerId: first.id, model: 'fake-model' },
       },
     })
@@ -276,14 +278,14 @@ describe('「出错时改用」 and a service limit in the Host', () => {
       requests: 1,
       models: [{ model: 'fake-model', requests: 1, provider: second.id, fallback: 1 }],
     })
-    expect(a.requests).toMatchObject([{ wire: 'gemini', key: KEY_A }])
-    expect(b.requests).toMatchObject([{ wire: 'gemini', key: KEY_B }])
+    expect(a.requests).toMatchObject([{ wire: 'chat-completions', key: KEY_A }])
+    expect(b.requests).toMatchObject([{ wire: 'chat-completions', key: KEY_B }])
     const route = {
       providerId: first.id,
       model: 'fake-model',
-      wire: 'gemini',
+      wire: 'chat-completions',
       origin: a.origin,
-      fallbacks: { 'fake-model': [{ providerId: second.id, model: 'fake-model', upstream: 'gemini', origin: b.origin }] },
+      fallbacks: { 'fake-model': [{ providerId: second.id, model: 'fake-model', upstream: 'chat-completions', origin: b.origin }] },
     }
     const records = await audit(t)
     for (const action of ['task.l3.start-requested', 'task.l3.started'])
@@ -338,7 +340,7 @@ describe('「出错时改用」 and a service limit in the Host', () => {
   it("leaves a routed Harness on its own default when the start says the person chose it, whatever the project's default is", async () => {
     const a = await models([{ text: 'via the project default' }])
     const { t, desktop, phone, service } = await host()
-    const first = await service('gemini', 'First', a.origin, KEY_A)
+    const first = await service('openai-compatible', 'First', `${a.origin}/v1`, KEY_A)
     const folder = await realpath(await mkdtemp(join(tmpdir(), 'latch-project-')))
     cleanups.push(() => rm(folder, { recursive: true, force: true }))
     const project = ((await (await desktop.addFolders({ paths: [folder], name: 'Project' })).json()) as { workspace: WorkspaceInfo })
@@ -354,17 +356,19 @@ describe('「出错时改用」 and a service limit in the Host', () => {
     const agent = await desktop.confirmed('agents', {
       method: 'POST',
       body: {
-        id: 'gemini',
-        name: 'Gemini CLI',
-        presetId: 'gemini',
+        id: 'opencode',
+        name: 'OpenCode',
+        presetId: 'opencode',
         command: process.execPath,
         args: [FAKE_ACP_AGENT],
         env: {
           FAKE_ACP_STATE: join(t.root, 'acp-state.json'),
           FAKE_ACP_LOG: join(t.root, 'acp.log'),
           FAKE_ACP_CONFIG: 'options',
-          FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
-          FAKE_ACP_INITIAL_MODE: 'default',
+          FAKE_ACP_MODES: 'plan,build,auto-edit,yolo',
+          FAKE_ACP_INITIAL_MODE: 'build',
+          FAKE_ACP_GATEWAY: 'opencode',
+          FAKE_ACP_VERSION: '2.2.6',
         },
       },
     })
@@ -372,7 +376,7 @@ describe('「出错时改用」 and a service limit in the Host', () => {
     const start = async (body: Record<string, unknown>) => {
       const response = await phone.request('tasks', {
         method: 'POST',
-        body: { prompt: 'echo plain', requestId: randomUUID(), mode: 'agent', harnessId: 'gemini', workspaceId: project.id, ...body },
+        body: { prompt: 'echo plain', requestId: randomUUID(), mode: 'agent', harnessId: 'opencode', workspaceId: project.id, ...body },
       })
       expect(response.status).toBe(201)
       const { sessionId } = (await response.json()) as { sessionId: string }
@@ -394,8 +398,11 @@ describe('「出错时改用」 and a service limit in the Host', () => {
     const b = await models([{ text: 'second' }])
     const { t, desktop, phone, service } = await host()
     const many = Array.from({ length: 70 }, (_unused, index) => `model-${String(index).padStart(2, '0')}`)
-    const first = await service('gemini', 'First', a.origin, KEY_A, { models: [...many, 'zz-chosen'], defaultModel: many[0] })
-    const second = await service('gemini', 'Second', b.origin, KEY_B)
+    const first = await service('openai-compatible', 'First', `${a.origin}/v1`, KEY_A, {
+      models: [...many, 'zz-chosen'],
+      defaultModel: many[0],
+    })
+    const second = await service('openai-compatible', 'Second', `${b.origin}/v1`, KEY_B)
     const target = [{ providerId: second.id, model: 'fake-model' }]
     // Seventy other models with a fallback each, saved before the one the session picks.
     const saved = await put(phone, first.id, { fallbacks: Object.fromEntries([...many, 'zz-chosen'].map(name => [name, target])) })
@@ -403,17 +410,19 @@ describe('「出错时改用」 and a service limit in the Host', () => {
     const agent = await desktop.confirmed('agents', {
       method: 'POST',
       body: {
-        id: 'gemini',
-        name: 'Gemini CLI',
-        presetId: 'gemini',
+        id: 'opencode',
+        name: 'OpenCode',
+        presetId: 'opencode',
         command: process.execPath,
         args: [FAKE_ACP_AGENT],
         env: {
           FAKE_ACP_STATE: join(t.root, 'acp-state.json'),
           FAKE_ACP_LOG: join(t.root, 'acp.log'),
           FAKE_ACP_CONFIG: 'options',
-          FAKE_ACP_MODES: 'plan,default,autoEdit,yolo',
-          FAKE_ACP_INITIAL_MODE: 'default',
+          FAKE_ACP_MODES: 'plan,build,auto-edit,yolo',
+          FAKE_ACP_INITIAL_MODE: 'build',
+          FAKE_ACP_GATEWAY: 'opencode',
+          FAKE_ACP_VERSION: '2.2.6',
         },
       },
     })
@@ -424,7 +433,7 @@ describe('「出错时改用」 and a service limit in the Host', () => {
         prompt: 'echo plain',
         requestId: randomUUID(),
         mode: 'agent',
-        harnessId: 'gemini',
+        harnessId: 'opencode',
         model: { providerId: first.id, model: 'zz-chosen' },
       },
     })

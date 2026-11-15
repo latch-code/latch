@@ -4,7 +4,6 @@
 import type { ModelWire, TokenUsage } from '@latch/protocol'
 import { AnthropicUsage } from './plugins/providers/anthropic-wire.ts'
 import { chatUsage } from './plugins/providers/chat-wire.ts'
-import { geminiUsage } from './plugins/providers/gemini-wire.ts'
 import { responsesUsage } from './plugins/providers/responses-wire.ts'
 
 export interface ReplyFacts {
@@ -16,7 +15,7 @@ export interface ReplyFacts {
   /**
    * The reply said it is over, whether or not the stream has closed yet: a Responses `response.completed`,
    * `response.incomplete`, `response.failed` or `error` event, a Chat Completions `[DONE]`, an Anthropic `message_stop`,
-   * any protocol's error, a Gemini candidate's `finishReason`, or a reply that was not streamed.
+   * any protocol's error, or a reply that was not streamed.
    */
   ended?: true
 }
@@ -70,24 +69,6 @@ function responsesFacts(facts: ReplyFacts, value: unknown, event?: string): void
   const usage = responsesUsage(response.usage)
   if (usage) facts.usage = usage
   if (response.status === 'failed') facts.failed = true
-}
-
-/** Facts from one Gemini chunk; the last chunk's usage covers the whole reply. */
-function geminiFacts(facts: ReplyFacts, value: unknown): void {
-  for (const item of Array.isArray(value) ? value : [value]) {
-    const chunk = record(item)
-    if (!chunk) continue
-    if (chunk.error !== undefined) {
-      facts.failed = true
-      facts.ended = true
-    }
-    const candidates = Array.isArray(chunk.candidates) ? chunk.candidates : []
-    if (candidates.some(candidate => text(record(candidate)?.finishReason))) facts.ended = true
-    const model = text(chunk.modelVersion)
-    if (model) facts.model = model
-    const usage = geminiUsage(chunk.usageMetadata)
-    if (usage) facts.usage = usage
-  }
 }
 
 /** Facts from one Chat Completions chunk, or a whole reply: usage comes in the last chunk when the request asked for it. */
@@ -222,10 +203,6 @@ class StreamReader implements ReplyReader {
         chatFacts(this.read, parse(data))
     } else if (this.wire === 'anthropic-messages') {
       if (event !== undefined || data.includes('"error"')) anthropicFacts(this.read, this.anthropic, parse(data), event)
-    } else if (this.wire === 'gemini') {
-      // Every chunk may name the model and carry usage so far, the last says why it finished; any other is text only.
-      if (['"usageMetadata"', '"modelVersion"', '"finishReason"', '"error"'].some(key => data.includes(key)))
-        geminiFacts(this.read, parse(data))
     } else if (event !== undefined || data.includes('"response"') || data.includes('"error"')) {
       responsesFacts(this.read, parse(data), event)
     }
@@ -256,8 +233,7 @@ class DocumentReader implements ReplyReader {
     if (this.bytes > MAX_HELD_BYTES) return facts
     const value = parse(Buffer.concat(this.chunks).toString('utf8'))
     this.chunks = []
-    if (this.wire === 'gemini') geminiFacts(facts, value)
-    else if (this.wire === 'chat-completions') {
+    if (this.wire === 'chat-completions') {
       chatFacts(facts, value)
       facts.ended = true
     } else if (this.wire === 'anthropic-messages') {

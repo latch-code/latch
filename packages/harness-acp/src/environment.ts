@@ -68,7 +68,7 @@ function withLoopback(value: string): string {
 export function agentEnvironment(input: {
   resolvedCommand: string
   profile?: AcpPermissionProfile
-  /** E.g. GEMINI_CLI_SYSTEM_SETTINGS_PATH. */
+  /** What the profile's `materialize` returned: paths of Host-only files. */
   materializedEnv?: Record<string, string>
   definitionEnv: Record<string, string>
   sessionTmpDir: string

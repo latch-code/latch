@@ -135,8 +135,7 @@ const OPENAI_SETS = [
 
 /**
  * The level sets offered when declaring what a model accepts, by protocol: `reasoning_effort` for Chat Completions,
- * `reasoning.effort` for Responses, `output_config.effort` for the Messages API and `thinkingLevel` for Gemini 3 and
- * later. Which one a model takes is the service's to say, so nothing is preselected.
+ * `reasoning.effort` for Responses and `output_config.effort` for the Messages API. Which one a model takes is the service's to say, so nothing is preselected.
  */
 export const THINKING_SETS: Readonly<Record<ProviderKind, ReadonlyArray<readonly string[]>>> = {
   'openai-compatible': OPENAI_SETS,
@@ -145,10 +144,6 @@ export const THINKING_SETS: Readonly<Record<ProviderKind, ReadonlyArray<readonly
     ['low', 'medium', 'high'],
     ['low', 'medium', 'high', 'max'],
     ['low', 'medium', 'high', 'xhigh', 'max'],
-  ],
-  gemini: [
-    ['low', 'high'],
-    ['minimal', 'low', 'medium', 'high'],
   ],
 }
 

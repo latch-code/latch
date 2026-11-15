@@ -37,21 +37,19 @@ function toolOutputs(input: unknown): string[] {
 it.skipIf(!binary).each<{
   kind: ProviderKind
   wire: ModelWire
-  scenario: 'lifecycle' | 'missing-budget' | 'catalog' | 'bad-payload' | 'unsupported-level'
+  scenario: 'lifecycle' | 'missing-budget' | 'catalog' | 'bad-payload'
 }>([
   { kind: 'openai-responses', wire: 'responses', scenario: 'lifecycle' },
   { kind: 'openai-compatible', wire: 'chat-completions', scenario: 'lifecycle' },
   { kind: 'anthropic', wire: 'anthropic-messages', scenario: 'lifecycle' },
-  { kind: 'gemini', wire: 'gemini', scenario: 'lifecycle' },
   { kind: 'openai-responses', wire: 'responses', scenario: 'missing-budget' },
   { kind: 'openai-responses', wire: 'responses', scenario: 'catalog' },
-  { kind: 'gemini', wire: 'gemini', scenario: 'bad-payload' },
-  { kind: 'gemini', wire: 'gemini', scenario: 'unsupported-level' },
+  { kind: 'openai-responses', wire: 'responses', scenario: 'bad-payload' },
 ])(
   'runs a real pi $wire tool through the gateway without exposing the token to its shell ($scenario)',
   async ({ kind, wire, scenario }) => {
     const configured = scenario !== 'missing-budget' && scenario !== 'catalog'
-    const levels = scenario === 'unsupported-level' ? ['low', 'xhigh'] : ['low', 'high']
+    const levels = ['low', 'high']
     const initialModel = scenario === 'catalog' ? 'gpt-4-turbo' : 'service-only-model'
     const root = await mkdtemp(join(tmpdir(), 'latch-pi-gateway-live-'))
     for (const [name, directory] of Object.entries({
@@ -66,8 +64,6 @@ it.skipIf(!binary).each<{
       await mkdir(path, { recursive: true })
       vi.stubEnv(name, path)
     }
-    if (wire === 'gemini')
-      await writeFile(join(root, 'pi-agent', 'settings.json'), JSON.stringify({ compaction: { keepRecentTokens: 1, reserveTokens: 512 } }))
     const alterPayload = join(root, 'alter-payload.mjs')
     if (scenario === 'bad-payload')
       await writeFile(
@@ -112,7 +108,7 @@ it.skipIf(!binary).each<{
         body: {
           name: 'Temporary service',
           kind,
-          baseURL: `${upstream.origin}/${wire === 'gemini' ? 'v1beta' : 'v1'}`,
+          baseURL: `${upstream.origin}/v1`,
           apiKey: 'sk-test-pi-gateway-0123456789',
           models: [initialModel, 'service-only-next'],
           defaultModel: initialModel,
@@ -173,7 +169,6 @@ it.skipIf(!binary).each<{
         body: {
           harnessId: 'pi',
           prompt: 'Run the supplied harmless diagnostic, then answer.',
-          ...(scenario === 'unsupported-level' ? { config: [{ configId: 'thought_level', value: 'xhigh' }] } : {}),
           ...(attachment ? { attachmentIds: [attachment.attachment.id] } : {}),
           requestId: randomUUID(),
           model: { providerId: provider.id, model: initialModel },
@@ -189,13 +184,10 @@ it.skipIf(!binary).each<{
         },
         { timeout: 60_000, interval: 100 },
       )
-      if (scenario === 'bad-payload' || scenario === 'unsupported-level') {
+      if (scenario === 'bad-payload') {
         expect(detail!.summary.status).toBe('failed')
         expect(upstream.requests).toHaveLength(0)
-        if (scenario === 'bad-payload')
-          expect(detail!.messages.map(message => message.text).join('\n')).toContain('model payload is unavailable')
-        else
-          expect(detail!.config?.find(option => option.category === 'thought_level')?.options.map(option => option.value)).toEqual(['low'])
+        expect(detail!.messages.map(message => message.text).join('\n')).toContain('model payload is unavailable')
         return
       }
       if (scenario === 'missing-budget') {
@@ -260,34 +252,15 @@ it.skipIf(!binary).each<{
           reasoning_effort: body.reasoning_effort,
           thinking: body.thinking,
           output_config: body.output_config,
-          generationConfig: body.generationConfig,
           max_tokens: body.max_tokens,
           max_output_tokens: body.max_output_tokens,
           max_completion_tokens: body.max_completion_tokens,
         },
       }
       expect(evidence.thought).toBe('low')
-      if (wire === 'gemini') {
-        expect(body).toMatchObject({
-          generationConfig: { thinkingConfig: { thinkingLevel: 'LOW', includeThoughts: true }, maxOutputTokens: 4096 },
-        })
-        expect((body.generationConfig as { thinkingConfig: object }).thinkingConfig).not.toHaveProperty('thinkingBudget')
-      }
       if (process.env.LATCH_GATEWAY_EVIDENCE_DIR) {
         await mkdir(process.env.LATCH_GATEWAY_EVIDENCE_DIR, { recursive: true })
         await writeFile(join(process.env.LATCH_GATEWAY_EVIDENCE_DIR, `${wire}.json`), JSON.stringify(evidence, null, 2))
-      }
-
-      if (wire === 'gemini') {
-        const beforeCompact = upstream.requests.length
-        await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: '/compact', requestId: randomUUID() } })
-        await vi.waitFor(async () => expect((await current()).summary.status).toBe('idle'), { timeout: 30_000 })
-        expect(upstream.requests.length).toBeGreaterThan(beforeCompact)
-        const compactRequest = upstream.requests[beforeCompact]!
-        expect(compactRequest.body).toMatchObject({ generationConfig: { thinkingConfig: { thinkingLevel: 'LOW' } } })
-        expect(
-          (compactRequest.body as { generationConfig: { thinkingConfig: object } }).generationConfig.thinkingConfig,
-        ).not.toHaveProperty('thinkingBudget')
       }
 
       phase = 'slow'

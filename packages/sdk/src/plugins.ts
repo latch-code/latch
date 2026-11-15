@@ -11,7 +11,7 @@ export interface ToolCall {
   name: string
   arguments: Record<string, unknown>
   /**
-   * Opaque text the provider keeps with the call, such as Gemini's thought signature or the signed reasoning of the
+   * Opaque text the provider keeps with the call, such as a thought signature or the signed reasoning of the
    * response that made it, and `by`, who made it: protocol, service and model. The session's history keeps it, at most
    * 1 MiB, out of what clients see; a provider sends it back only where `by` names itself. `scope: 'turn'` says the
    * provider sends it back only within the turn that made it, so the history drops it once the next user message comes.

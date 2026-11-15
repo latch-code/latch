@@ -47,7 +47,7 @@ describe('goose on a model service', () => {
     expect(new URL(launch.env!.OPENAI_BASE_PATH!, `${launch.env!.OPENAI_HOST}/`).href).toBe('http://127.0.0.1:4010/v1/chat/completions')
   })
 
-  it('fixes Responses by its path, and is offered no Gemini route', () => {
+  it('fixes Responses by its path, and is offered exactly the three protocols', () => {
     expect(gateway.deliver(place('responses'), route('responses')).env).toEqual({
       ...common('openai'),
       OPENAI_HOST: 'http://127.0.0.1:4010',
