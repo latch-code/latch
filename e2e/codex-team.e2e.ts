@@ -102,6 +102,37 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     expect(await dialog.getByRole('listitem').count()).toBe(2)
     expect(await memberApproval.count()).toBe(0)
     if (output) await page.screenshot({ path: join(output, 'team-result-390-dark.png'), animations: 'disabled' })
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+
+    await owner.json(`${path}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'team 后台停止夹具', requestId: randomUUID() },
+    })
+    await expect
+      .poll(async () => {
+        const detail = await read()
+        return detail.messages
+          .filter(message => message.role === 'assistant' && message.state === 'completed')
+          .map(message => message.text)
+          .join('')
+          .includes('Lead finished before Cedar')
+          ? detail.summary.status
+          : undefined
+      })
+      .toBe('running')
+    const runId = (await read()).summary.runId
+    const requestId = randomUUID()
+    const stop = () =>
+      owner.json<{ receipt: { outcome: string; status: string; replay?: true } }>(`${path}/cancel`, {
+        method: 'POST',
+        body: { runId, requestId },
+      })
+    const first = await stop()
+    expect(first.receipt).toMatchObject({ outcome: 'stopped', status: 'cancelled' })
+    expect((await stop()).receipt).toEqual({ ...first.receipt, replay: true })
+    expect(
+      (await read()).messages.filter(message => message.subagent?.team).filter(message => message.subagent?.status === 'cancelled'),
+    ).toHaveLength(1)
   } finally {
     await browser?.close()
     await host?.close()

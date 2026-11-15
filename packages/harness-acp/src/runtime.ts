@@ -4360,14 +4360,19 @@ export class AgentRuntime implements Bridge {
           if (settleTool(state, at)) this.upsert(task, stopped ? { ...toolMessage(state), interrupted: true } : toolMessage(state))
         }
       }
+      const stillWorking = new Set<string>()
       for (const child of run.live?.children.values() ?? []) {
         if (child.taskId !== run.taskId) continue
         const row = this.childRow(task, child)
         if (!row) continue
+        if (row.subagent?.team && run.live?.wire.hasActiveCodexMember?.(child.acpSessionId)) {
+          stillWorking.add(row.id)
+          continue
+        }
         for (const state of child.tools.values())
           if (!kept.some(permission => permission.tool === state) && settleTool(state, at)) upsertStep(row, toolMessage(state))
       }
-      for (const item of task.messages) settleSubagent(item, at)
+      for (const item of task.messages) if (!stillWorking.has(item.id)) settleSubagent(item, at)
       // The limit on rows counts only subagents that may still report, so a long session keeps showing new ones.
       for (const child of run.live?.children.values() ?? []) {
         if (child.taskId !== run.taskId) continue
@@ -4814,7 +4819,21 @@ export class AgentRuntime implements Bridge {
   }
 
   private onExit(live: Live, info: ExitInfo): void {
-    if (this.lives.get(live.key) === live) this.lives.delete(live.key)
+    const current = this.lives.get(live.key) === live
+    if (current) {
+      this.lives.delete(live.key)
+      const task = this.state.tasks[live.key]
+      if (live.wire.hasActiveCodexMember && task) {
+        const at = this.now()
+        let changed = false
+        for (const message of task.messages) if (message.subagent?.team) changed = settleSubagent(message, at, true) || changed
+        if (changed) {
+          this.touch(task)
+          this.mark()
+          this.notify(live.key)
+        }
+      }
+    }
     live.tools?.close()
     this.auth.forget(live)
     this.quotaFacts.gone(live)
@@ -5467,6 +5486,7 @@ export class AgentRuntime implements Bridge {
       || this.checking.has(key)
       || this.processModeChanges.has(key)
       || this.launchThinkingChanges.has(key)
+      || this.lives.get(key)?.wire.hasActiveCodexMember?.()
     )
       return true
     // A request that came after its turn waits on the person, and stopping the process would answer it.
@@ -6058,8 +6078,13 @@ export class AgentRuntime implements Bridge {
         const parsed = subagentUpdate.safeParse(update)
         if (!parsed.success) return
         this.announceChild(live, task, run, undefined, parsed.data)
+        if (parsed.data.team && !run) this.scheduleIdle(taskId)
         break
       }
+      case 'latch/codex-team-root-completed':
+        if (this.selection.profile?.wire !== 'codex' || !run?.segment) return
+        this.settleSegment(run, task, 'completed')
+        break
       case 'latch/codex-team-availability':
         if (this.selection.profile?.wire !== 'codex') return
         break

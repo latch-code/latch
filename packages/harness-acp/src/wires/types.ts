@@ -51,6 +51,7 @@ export interface AgentWire {
   /** It answers `FORK_METHOD`. */
   readonly forks?: true
   readonly codexTeam?: 'available' | 'disabled' | undefined
+  hasActiveCodexMember?(threadId?: string): boolean
   reconcileCodexTeam?(savedMember?: (rootThreadId: string, childThreadId: string, childTurnId?: string) => boolean): void
 }
 

@@ -48,7 +48,7 @@ export function CodexTeam({
   draft: string
   canPrepare: boolean
   onPrepare: (value: string) => void
-  onApproval: (index: number) => void
+  onApproval: (approvalId: string) => void
   run?: RunState | undefined
 }) {
   const groups = useMemo(() => delegations(detail.messages), [detail.messages])
@@ -118,8 +118,8 @@ export function CodexTeam({
               )}
               <ul className="codex-team-members" aria-label="实际成员">
                 {group.members.map(({ rowId, subagent }) => {
-                  const approval = approvals.findIndex(item => item.subagentId === rowId)
-                  const status = SUBAGENT_STATUS[approval >= 0 ? 'waiting' : (subagent.status ?? 'unknown')]
+                  const approval = approvals.find(item => item.subagentId === rowId)
+                  const status = SUBAGENT_STATUS[approval ? 'waiting' : (subagent.status ?? 'unknown')]
                   return (
                     <li key={rowId} className="codex-team-member">
                       <div className="codex-team-member-heading">
@@ -140,20 +140,20 @@ export function CodexTeam({
                       )}
                       {subagent.team?.result && (
                         <details className="codex-team-result">
-                          <summary>{subagent.status === 'running' ? '上次结果' : '成员结果'}</summary>
+                          <summary>{subagent.status === 'running' ? '成员回报' : '成员结果'}</summary>
                           <div>
                             <VisibleText text={subagent.team.result} />
                           </div>
                         </details>
                       )}
-                      {approval >= 0 && (
+                      {approval && (
                         <Button
                           size="sm"
                           variant="outline"
                           className="codex-team-review"
                           onClick={() => {
                             setOpen(false)
-                            onApproval(approval)
+                            onApproval(approval.id)
                           }}>
                           查看此成员的审批
                         </Button>

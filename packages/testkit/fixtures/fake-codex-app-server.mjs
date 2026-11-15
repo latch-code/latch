@@ -205,6 +205,8 @@ function announceMember(id, name, parentThreadId = thread.id, report = true) {
   return member
 }
 
+const backgroundMembers = new Map()
+
 function memberTurn(member) {
   return env.FAKE_CODEX_TEAM === 'v2' && member.agentNickname === 'Cedar' ? '00000002-0000-7000-8000-000000000001' : `turn-${member.id}`
 }
@@ -469,6 +471,45 @@ async function play(text) {
         else finishMember(member, undefined, 'failed', answer.error)
       }
       return reply(lead)
+    }
+    const background = Number(env.FAKE_CODEX_TEAM_BACKGROUND_MS ?? (text.includes('后台停止夹具') ? 5000 : 0))
+    if (background) {
+      const call =
+        env.FAKE_CODEX_TEAM_BACKGROUND_COMMAND || text.includes('后台停止夹具')
+          ? { type: 'commandExecution', id: 'background-member-command', command: 'ls', cwd: thread.cwd, status: 'inProgress' }
+          : undefined
+      if (call) {
+        // Tool item IDs are scoped to their native threads. Maple's same-named tool completing leaves Cedar's live.
+        notify('item/started', { threadId: a.id, turnId: memberTurn(a), item: call })
+        notify('item/started', { threadId: b.id, turnId: memberTurn(b), item: call })
+        notify('item/completed', { threadId: b.id, turnId: memberTurn(b), item: { ...call, status: 'completed' } })
+      }
+      finishMember(b, 'Maple finished before the lead', 'completed')
+      const commandEnded = () => {
+        if (call)
+          notify('item/completed', { threadId: a.id, turnId: memberTurn(a), item: { ...call, status: 'completed', aggregatedOutput: '' } })
+      }
+      const timer = setTimeout(() => {
+        backgroundMembers.delete(a.id)
+        finishMember(a, 'Cedar finished after the lead', 'completed')
+        commandEnded()
+      }, background)
+      backgroundMembers.set(a.id, {
+        id: memberTurn(a),
+        stop: () => {
+          clearTimeout(timer)
+          backgroundMembers.delete(a.id)
+          setTimeout(() => {
+            finishMember(a, undefined, 'interrupted')
+            log('background-member-interrupted')
+            setTimeout(() => {
+              commandEnded()
+              log('background-command-ended')
+            }, 350)
+          }, 50)
+        },
+      })
+      return reply('Lead finished before Cedar')
     }
     const foreign = announceMember(`child-${randomUUID()}`, '外部成员', 'another-root')
     notify('item/completed', {
@@ -1095,7 +1136,12 @@ async function handle(method, params) {
       return { turnId: turn.id }
     }
     case 'turn/interrupt': {
-      if (!turn || params.turnId !== turn.id) return {}
+      const background = backgroundMembers.get(params.threadId)
+      if (background?.id === params.turnId) {
+        background.stop()
+        return {}
+      }
+      if (!turn || params.turnId !== turn.id || params.threadId !== thread.id) return {}
       const running = turn
       running.cancelled = true
       // Codex answers once the turn has aborted.

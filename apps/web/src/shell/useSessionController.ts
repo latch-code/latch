@@ -1200,11 +1200,25 @@ export function useSessionController({
             : !catalog && snapshot.execution?.ready === false
               ? '当前模型接口不可用，请检查模型插件状态。'
               : undefined
-  const [approvalIndex, setApprovalIndex] = useState(0)
+  const [approvalTarget, setApprovalTarget] = useState<{ sessionId: string; approvalId: string }>()
   useEffect(() => {
-    setApprovalIndex(0)
+    setApprovalTarget(undefined)
   }, [selectedId])
-  const shownApproval = approvals[Math.min(approvalIndex, approvals.length - 1)]
+  const approvalIndex =
+    approvalTarget?.sessionId === selectedId
+      ? Math.max(
+          0,
+          approvals.findIndex(item => item.id === approvalTarget?.approvalId),
+        )
+      : 0
+  const selectApproval = (approvalId: string) => {
+    if (selectedId && approvals.some(approval => approval.id === approvalId)) setApprovalTarget({ sessionId: selectedId, approvalId })
+  }
+  const setApprovalIndex = (index: number) => {
+    const approval = approvals[index]
+    if (approval) selectApproval(approval.id)
+  }
+  const shownApproval = approvals[approvalIndex]
   const earlierDraft = useEarlierDraft(
     useMemo(
       () => (inputTarget === 'new' ? [] : [...approvals.map(item => item.id), ...(current?.questions ?? []).map(item => item.id)]),
@@ -1409,6 +1423,7 @@ export function useSessionController({
     setApprovalStatuses,
     approvalIndex,
     setApprovalIndex,
+    selectApproval,
     approvalFlights,
     cancelling,
     setCancelling,

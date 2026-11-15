@@ -135,7 +135,7 @@ struct CodexTeamView: View {
             if agent["status"].string == "failed", let failure = agent["team"]["failure"].string { note(PhoneConversation.visible(failure)) }
             if let assignment = agent["description"].string { note(PhoneConversation.visible(assignment)) }
             if let result = agent["team"]["result"].string {
-                DisclosureGroup(agent["status"].string == "running" ? "上次结果" : "成员结果") {
+                DisclosureGroup(agent["status"].string == "running" ? "成员回报" : "成员结果") {
                     ConversationText(text: result, monospaced: false, size: 14).padding(.top, 8)
                 }.font(PhoneTheme.caption)
             }

@@ -255,6 +255,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
     approvals,
     approvalIndex,
     setApprovalIndex,
+    selectApproval,
     gateFor,
     approvalBusy,
     statuses,
@@ -675,7 +676,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
               setSubmissionDraft(value)
               requestAnimationFrame(() => composerRef.current?.focus())
             }}
-            onApproval={setApprovalIndex}
+            onApproval={selectApproval}
             run={run}
           />
         ) : undefined

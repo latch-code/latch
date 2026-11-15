@@ -1284,7 +1284,7 @@ describe('Codex over its app-server', () => {
     expect(member(done)?.status).toBe('cancelled')
     const log = await t.log()
     expect(log.filter(entry => entry.event === 'team-command-ended')).toHaveLength(1)
-    expect(sent(log, 'turn/interrupt')).toHaveLength(1)
+    expect(sent(log, 'turn/interrupt')).toHaveLength(2)
   })
 
   it('clears a native Team member’s previous result when its newly reported work fails', async () => {
@@ -1304,10 +1304,10 @@ describe('Codex over its app-server', () => {
     const id = await start(bridge, t.main, 'team 真实委派')
     const waiting = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
     await bridge.decide(waiting.approvals[0]!.id, 'reject')
-    const before = await settled(bridge, id)
-    const rows = before.messages.filter(message => message.subagent?.team)
+    await vi.waitFor(async () => expect((await t.log()).some(entry => entry.event === 'completed')).toBe(true))
+    const rows = (await bridge.detail(id)).messages.filter(message => message.subagent?.team)
     expect(rows).toHaveLength(2)
-    expect(rows.every(message => message.subagent?.status === 'unknown' && message.subagent.team?.result === undefined)).toBe(true)
+    expect(rows.every(message => message.subagent?.status === 'running' && message.subagent.team?.result === undefined)).toBe(true)
     await bridge.close()
 
     // The same member did another turn outside the one this Host witnessed. Its newest output cannot stand in for the tracked turn.
@@ -1350,6 +1350,62 @@ describe('Codex over its app-server', () => {
     bridge = await t.open()
     expect((await bridge.detail(id)).codexTeam).toBeUndefined()
   })
+
+  it.each(['completed', 'cancelled'] as const)(
+    'holds the same native Team run when the root finishes and a member is later %s',
+    async result => {
+      const t = await computer(
+        {
+          FAKE_CODEX_TEAM_BACKGROUND_MS: result === 'cancelled' ? '5000' : '1800',
+          ...(result === 'cancelled' ? { FAKE_CODEX_TEAM_BACKGROUND_COMMAND: '1' } : {}),
+        },
+        [],
+        { maxProcesses: 1, idleMs: 100 },
+      )
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'team 真实委派')
+      const member = (detail: DriverTaskDetail) => detail.messages.find(message => message.subagent?.title === 'Cedar')?.subagent
+      const rootDone = await until(
+        bridge,
+        id,
+        detail =>
+          detail.messages
+            .filter(message => message.role === 'assistant' && message.state === 'completed')
+            .map(message => message.text)
+            .join('') === 'Lead finished before Cedar',
+      )
+      expect(rootDone.summary).toMatchObject({ status: 'running', runId: expect.any(String) })
+      expect(member(rootDone)?.status).toBe('running')
+      const competitor = await start(bridge, t.main, 'echo competing root')
+      const refused = await settled(bridge, competitor)
+      expect(refused.summary.status).toBe('failed')
+      expect(said(refused, 'system')).toContain('同时运行的 Codex 会话过多')
+      expect(member(await bridge.detail(id))?.status).toBe('running')
+      if (result === 'cancelled') {
+        const cancellation = bridge.cancel(id, { runId: rootDone.summary.runId! })
+        await vi.waitFor(async () => expect((await t.log()).some(entry => entry.event === 'background-member-interrupted')).toBe(true))
+        expect((await bridge.detail(id)).summary.status).toBe('running')
+        expect(member(await bridge.detail(id))?.status).toBe('running')
+        expect(await cancellation).toBe(true)
+        const after = await settled(bridge, id)
+        expect(after.summary.status).toBe('cancelled')
+        expect(member(after)?.status).toBe('cancelled')
+        const log = await t.log()
+        const interrupts = sent(log, 'turn/interrupt')
+        expect(interrupts).toHaveLength(1)
+        expect(interrupts[0]?.params).toMatchObject({
+          threadId: expect.stringMatching(/^child-/u),
+          turnId: expect.stringMatching(/^turn-child-/u),
+        })
+        expect(log.some(entry => entry.event === 'background-command-ended')).toBe(true)
+      } else {
+        const after = await settled(bridge, id)
+        expect(member(after)?.team?.result).toBe('Cedar finished after the lead')
+      }
+      const next = await start(bridge, t.main, 'echo after members finish')
+      expect((await settled(bridge, next)).summary.status).toBe('idle')
+    },
+  )
 
   it('reads native Team capability without changing a user-disabled feature', async () => {
     const t = await computer({ FAKE_CODEX_TEAM: 'off' })

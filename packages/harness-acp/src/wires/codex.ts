@@ -346,6 +346,10 @@ interface Pending {
  * The prompt being run: answered once Codex reports the turn completed, and, when it was stopped, once every command it
  * started has ended too (`ending` holds the answer meanwhile).
  */
+function commandKey(threadId: string | undefined, itemId: string): string {
+  return JSON.stringify([threadId ?? null, itemId])
+}
+
 interface Turn {
   id?: string
   compact?: boolean
@@ -357,14 +361,18 @@ interface Turn {
   interrupted?: true
   error?: string
   usage?: { inputTokens: number; outputTokens: number }
-  /** Commands started in this turn that Codex has not reported ended, by item ID. */
+  /** Commands Codex has not reported ended, keyed by native thread and item. */
   commands: Set<string>
   /** The subagents' threads that reported calls in this turn: their commands are listed with the session's. */
   threads: Set<string>
-  /** Member turn interruption is settled after known commands have ended. */
+  /** The parent's final event, held until owned member turns and their commands have settled. */
+  rootResult?: { status: unknown; error: unknown }
+  checkingMembers?: number
+  delegated?: true
+  endingCommands?: true
+  memberStops?: Map<string, string>
+  /** Those member turns said interrupted. Their public state waits for commands to end. */
   memberInterruptions?: Map<string, string>
-  /** The turn's answer, held while its commands run. */
-  ending?: () => void
 }
 
 interface McpCall {
@@ -399,6 +407,7 @@ export class CodexWire implements AgentWire {
   private team?: CodexTeam
   private teamEnabled?: boolean
   private teamResumed = false
+  private teamTurnGeneration = 0
   private readonly teamItems: Array<{ turnId: string; item: CodexTeamItem }> = []
   private readonly checkingChildren = new Map<string, Promise<boolean>>()
   private readonly childEvents = new Map<string, Array<{ method: string; params: Record<string, unknown> }>>()
@@ -518,9 +527,17 @@ export class CodexWire implements AgentWire {
   }
 
   private interrupt(turn: Turn): void {
-    if (!this.threadId || !turn.id || turn.interrupted) return
-    turn.interrupted = true
-    void this.send('turn/interrupt', { threadId: this.threadId, turnId: turn.id }).catch(() => {})
+    if (this.threadId && turn.id && !turn.interrupted && !turn.rootResult) {
+      turn.interrupted = true
+      void this.send('turn/interrupt', { threadId: this.threadId, turnId: turn.id }).catch(() => {})
+    }
+    for (const { threadId, turnId } of this.team?.activeMembers() ?? []) {
+      if (turn.memberStops?.get(threadId) === turnId || turn.memberInterruptions?.get(threadId) === turnId) continue
+      turn.memberStops ??= new Map()
+      turn.memberStops.set(threadId, turnId)
+      void this.send('turn/interrupt', { threadId, turnId }).catch(() => {})
+    }
+    this.finishWhenSettled(turn)
   }
 
   private send(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
@@ -680,6 +697,10 @@ export class CodexWire implements AgentWire {
     if (this.teamEnabled !== undefined) return this.teamEnabled ? 'available' : 'disabled'
   }
 
+  hasActiveCodexMember(threadId?: string): boolean {
+    return !this.stopping && this.team?.hasActiveMember(threadId) === true
+  }
+
   reconcileCodexTeam(savedMember?: (rootThreadId: string, childThreadId: string, childTurnId?: string) => boolean): void {
     const team = this.team
     if (!team || this.stopping) return
@@ -788,13 +809,24 @@ export class CodexWire implements AgentWire {
 
   private applyTeamItem(team: CodexTeam, turnId: string, item: CodexTeamItem): void {
     team.observeItem(team.rootId, turnId, item)
+    const turn = this.turn
+    if (!turn) return
+    if (team.hasActiveMember()) turn.delegated = true
     // A parent item names a candidate. The native thread must independently report its parent before we show it.
     const missing = team.spawnTargets(item).filter(id => !team.owns(id))
-    if (!missing.length) return
-    const turn = this.turn
+    if (!missing.length) {
+      if (turn.cancelled) this.interrupt(turn)
+      return
+    }
+    const generation = this.teamTurnGeneration
+    turn.checkingMembers = (turn.checkingMembers ?? 0) + 1
     void Promise.all(missing.map(id => this.codexChild(id))).then(() => {
-      if (this.team === team && (this.turn === turn || this.turn === undefined) && !this.stopping)
-        team.observeItem(team.rootId, turnId, item)
+      if (this.team !== team || this.teamTurnGeneration !== generation || this.turn !== turn || this.stopping) return
+      team.observeItem(team.rootId, turnId, item)
+      if (team.hasActiveMember()) turn.delegated = true
+      turn.checkingMembers = (turn.checkingMembers ?? 1) - 1
+      if (turn.cancelled) this.interrupt(turn)
+      else this.finishWhenSettled(turn)
     })
   }
 
@@ -1154,6 +1186,7 @@ export class CodexWire implements AgentWire {
       turn = { resolve, reject, cancelled: false, commands: new Set(), threads: new Set(), ...(compact ? { compact: true } : {}) }
     })
     this.teamItems.length = 0
+    this.teamTurnGeneration++
     this.turn = turn
     done.catch(() => {})
     let answer: unknown
@@ -1230,7 +1263,7 @@ export class CodexWire implements AgentWire {
     if (command === 'review') throw new RpcError(RPC.invalidParams, REVIEW_UNAVAILABLE)
     if (command === 'compact') throw new RpcError(RPC.invalidParams, '/compact 只能在本轮结束后运行。')
     const turn = this.turn
-    if (!turn?.id || turn.cancelled) return { outcome: 'promptRequired' }
+    if (!turn?.id || turn.cancelled || turn.rootResult) return { outcome: 'promptRequired' }
     const input = this.input(parsed.data.prompt, context)
     try {
       await this.send('turn/steer', { threadId: this.threadId, expectedTurnId: turn.id, input }, timeoutMs, signal)
@@ -1245,7 +1278,8 @@ export class CodexWire implements AgentWire {
   /** The turn is over for Codex: its answer, kept back while a command a stop left running has not ended. */
   private settle(status: unknown, error: unknown): void {
     const turn = this.turn
-    if (!turn || turn.ending) return
+    if (!turn || turn.rootResult) return
+    turn.rootResult = { status, error }
     for (const id of turn.compactions ?? [])
       this.update({
         sessionUpdate: 'compaction_update',
@@ -1260,15 +1294,32 @@ export class CodexWire implements AgentWire {
               : 'failed',
         ...(isRecord(error) && typeof error.message === 'string' ? { error: error.message } : {}),
       })
+    if (this.team?.hasActiveMember()) turn.delegated = true
+    if (status === 'completed' && (turn.delegated || turn.checkingMembers))
+      this.update({ sessionUpdate: 'latch/codex-team-root-completed' })
+    if (turn.cancelled) this.interrupt(turn)
+    else this.finishWhenSettled(turn)
+  }
+
+  private finishWhenSettled(turn: Turn): void {
+    const root = turn.rootResult
+    if (this.turn !== turn || !root || turn.checkingMembers) return
+    const active = this.team?.activeMembers() ?? []
+    if (active.length) turn.delegated = true
+    if (active.some(({ threadId, turnId }) => turn.memberInterruptions?.get(threadId) !== turnId)) return
+    const stopping = turn.cancelled || root.status === 'interrupted'
+    if (turn.commands.size && (stopping || turn.delegated)) {
+      if (stopping && !turn.endingCommands) {
+        turn.endingCommands = true
+        void this.endCommands(turn)
+      }
+      return
+    }
     const usage = turn.usage ? { usage: turn.usage } : {}
-    const answer =
-      status === 'interrupted' || (turn.cancelled && status !== 'failed')
-        ? () => turn.resolve({ stopReason: 'cancelled', ...usage })
-        : () => this.answer(turn, status, error)
-    // A stopped turn, however Codex ends it, and one Codex interrupted itself are over once their commands have ended.
-    if (!(turn.cancelled || status === 'interrupted') || !turn.commands.size) return this.finish(turn, answer)
-    turn.ending = answer
-    void this.endCommands(turn)
+    this.finish(turn, () => {
+      if (root.status === 'interrupted' || (turn.cancelled && root.status !== 'failed')) turn.resolve({ stopReason: 'cancelled', ...usage })
+      else this.answer(turn, root.status, root.error)
+    })
   }
 
   private finish(turn: Turn, answer: () => void): void {
@@ -1292,8 +1343,7 @@ export class CodexWire implements AgentWire {
   private commandEnded(id: string): void {
     const turn = this.turn
     if (!turn?.commands.delete(id)) return
-    const ending = turn.ending
-    if (ending && !turn.commands.size) this.finish(turn, ending)
+    this.finishWhenSettled(turn)
   }
 
   /**
@@ -1314,8 +1364,9 @@ export class CodexWire implements AgentWire {
           await this.send('thread/backgroundTerminals/list', { threadId: thread, limit: 100 }, stopLimits.commandMs),
         )
         for (const entry of listed.success ? listed.data.data : []) {
-          if (!turn.commands.has(entry.itemId)) continue
-          if (entry.osPid) pids.set(entry.itemId, entry.osPid)
+          const key = commandKey(thread, entry.itemId)
+          if (!turn.commands.has(key)) continue
+          if (entry.osPid) pids.set(key, entry.osPid)
           await this.send(
             'thread/backgroundTerminals/terminate',
             { threadId: thread, processId: entry.processId },
@@ -1331,7 +1382,7 @@ export class CodexWire implements AgentWire {
     if (this.turn !== turn || this.process.stopping) return
     if (below) {
       let all = true
-      const ended: number[] = []
+      const ended = new Map<string, number>()
       for (const id of turn.commands) {
         const pid = pids.get(id)
         const group = pid === undefined ? undefined : below.get(pid)
@@ -1341,13 +1392,16 @@ export class CodexWire implements AgentWire {
         }
         killProcess(pid, group)
         // Only a command that leads its own group can be seen to be gone with everything it started.
-        if (group === pid) ended.push(pid)
+        if (group === pid) ended.set(id, pid)
         else all = false
       }
       if (await this.ended(turn, stopLimits.commandMs)) return
       // Each command Latch ended is gone with its group, though Codex never said how it went: its result is unknown.
-      const ending = turn.ending
-      if (all && ending && ended.every(pid => !groupAlive(pid))) return this.finish(turn, ending)
+      if (all && [...ended.values()].every(pid => !groupAlive(pid))) {
+        for (const id of ended.keys()) turn.commands.delete(id)
+        this.finishWhenSettled(turn)
+        if (this.turn !== turn) return
+      }
     }
     if (turn.cancelled || (await this.ended(turn, stopLimits.unaskedMs)) || turn.cancelled) return
     // An interrupted notification alone cannot end a command. Without a runtime cancel timer, stop the process here
@@ -1405,6 +1459,7 @@ export class CodexWire implements AgentWire {
     const id = typeof item.id === 'string' ? clip(item.id, 512) : undefined
     if (!id) return
     const done = phase === 'completed'
+    const call = commandKey(child ?? sessionId, id)
     const emit = (update: Record<string, unknown> & { sessionUpdate: string }) => this.emit(sessionId, this.marked(update, child))
     switch (item.type) {
       case 'contextCompaction': {
@@ -1439,23 +1494,23 @@ export class CodexWire implements AgentWire {
       case 'commandExecution': {
         const command = typeof item.command === 'string' ? item.command : 'command'
         const actions = commandActions(item.commandActions)
-        if (!done && item.status === 'inProgress' && !this.notRun.has(id)) this.turn?.commands.add(id)
+        if (!done && item.status === 'inProgress' && !this.notRun.has(call)) this.turn?.commands.add(call)
         if (child) this.turn?.threads.add(child)
-        if (!done || !this.output.has(id))
+        if (!done || !this.output.has(call))
           emit({
             sessionUpdate: 'tool_call',
             toolCallId: id,
             title: clip(command, 500),
             kind: 'execute',
-            status: this.allowed.has(id) ? 'in_progress' : 'pending',
+            status: this.allowed.has(call) ? 'in_progress' : 'pending',
             rawInput: { command, ...(typeof item.cwd === 'string' ? { cwd: item.cwd } : {}) },
             ...(actions ? { actions } : {}),
           })
         if (!done) {
-          this.output.set(id, '')
+          this.output.set(call, '')
           return
         }
-        const output = typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : (this.output.get(id) ?? '')
+        const output = typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : (this.output.get(call) ?? '')
         const status = itemStatus(item.status, item.exitCode) ?? 'completed'
         if (item.status === 'completed' || (item.status === 'failed' && (output || typeof item.exitCode === 'number')))
           emit({ sessionUpdate: 'tool_call_update', toolCallId: id, status: 'in_progress' })
@@ -1466,9 +1521,9 @@ export class CodexWire implements AgentWire {
           content: output ? [{ type: 'content', content: { type: 'text', text: clip(output, TOOL_TEXT_LIMIT) } }] : [],
           // The finished item's parse is the last word: an empty list clears what its start reported.
           actions: actions ?? [],
-          ...this.refusal(id, item.status),
+          ...this.refusal(call, item.status),
         })
-        this.commandEnded(id)
+        this.commandEnded(call)
         return
       }
       case 'fileChange': {
@@ -1492,7 +1547,7 @@ export class CodexWire implements AgentWire {
           status: itemStatus(item.status) ?? 'completed',
           ...(content.length ? { content } : {}),
           ...(content.length ? { outputWithoutFiles: '' } : {}),
-          ...this.refusal(id, item.status),
+          ...this.refusal(call, item.status),
         })
       }
       case 'mcpToolCall':
@@ -1574,7 +1629,8 @@ export class CodexWire implements AgentWire {
     }
     const status = typeof review.status === 'string' ? review.status : 'aborted'
     const rationale = typeof review.rationale === 'string' ? review.rationale : undefined
-    if (status === 'denied' && typeof params.targetItemId === 'string') this.denied.set(params.targetItemId, rationale ?? '')
+    if (status === 'denied' && typeof params.targetItemId === 'string')
+      this.denied.set(commandKey(child ?? this.threadId, params.targetItemId), rationale ?? '')
     update({
       sessionUpdate: 'tool_call_update',
       toolCallId: id,
@@ -1652,7 +1708,11 @@ export class CodexWire implements AgentWire {
     const child = thread !== undefined && thread !== this.threadId ? thread : undefined
     if (child) {
       if (!this.threadId) return
-      if (method === 'turn/started' && isRecord(params.turn) && typeof params.turn.id === 'string') this.team?.start(child, params.turn.id)
+      if (method === 'turn/started' && isRecord(params.turn) && typeof params.turn.id === 'string') {
+        this.team?.start(child, params.turn.id)
+        if (this.turn && this.team?.hasActiveMember(child)) this.turn.delegated = true
+        if (this.turn?.cancelled) this.interrupt(this.turn)
+      }
       if (method === 'turn/completed') {
         const parsed = codexTeamTurn.safeParse(params.turn)
         if (parsed.success) {
@@ -1666,7 +1726,8 @@ export class CodexWire implements AgentWire {
               this.turn.memberInterruptions ??= new Map()
               this.turn.memberInterruptions.set(child, id)
             }
-          }
+          } else this.team?.finish(child, id, 'unknown')
+          if (this.turn) this.finishWhenSettled(this.turn)
         }
       }
       if (
@@ -1720,8 +1781,9 @@ export class CodexWire implements AgentWire {
       }
       case 'item/commandExecution/outputDelta': {
         if (typeof params.delta !== 'string' || typeof params.itemId !== 'string') return
-        const so = clip((this.output.get(params.itemId) ?? '') + params.delta, TOOL_TEXT_LIMIT)
-        this.output.set(params.itemId, so)
+        const call = commandKey(this.threadId, clip(params.itemId, 512))
+        const so = clip((this.output.get(call) ?? '') + params.delta, TOOL_TEXT_LIMIT)
+        this.output.set(call, so)
         // Output is the first sign it runs.
         this.update({
           sessionUpdate: 'tool_call_update',
@@ -1877,18 +1939,19 @@ export class CodexWire implements AgentWire {
       .catch(() => undefined)
     const outcome = isRecord(answer) && isRecord(answer.outcome) ? answer.outcome : {}
     const chosen = outcome.outcome === 'selected' ? outcome.optionId : undefined
-    if (chosen === 'accept' || chosen === 'decline') this.answered.add(itemId)
+    const call = commandKey(thread ?? this.threadId, itemId)
+    if (chosen === 'accept' || chosen === 'decline') this.answered.add(call)
     if (chosen === 'accept' && command && params.kind !== 'writeStdin') {
-      this.allowed.add(itemId)
-      this.notRun.delete(itemId)
+      this.allowed.add(call)
+      this.notRun.delete(call)
       // An accepted quiet command can run without item/started or any output. It belongs to the turn's stop either way.
-      this.turn?.commands.add(itemId)
+      this.turn?.commands.add(call)
       if (child) this.turn?.threads.add(child)
       this.update(this.marked({ sessionUpdate: 'tool_call_update', toolCallId: itemId, status: 'in_progress' }, child))
     } else if (command && params.kind !== 'writeStdin') {
       // Declined or unanswered, it never runs, whether or not Codex reports it ended.
-      this.notRun.add(itemId)
-      this.commandEnded(itemId)
+      this.notRun.add(call)
+      this.commandEnded(call)
     }
     return { decision: chosen === 'accept' ? 'accept' : chosen === 'decline' ? 'decline' : 'cancel' }
   }

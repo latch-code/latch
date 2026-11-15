@@ -19,17 +19,7 @@ const memberState = z.enum(['pendingInit', 'running', 'interrupted', 'completed'
 const collaboration = z.object({
   type: z.literal('collabAgentToolCall'),
   id: nativeId,
-  tool: z.enum([
-    'spawnAgent',
-    'sendInput',
-    'wait',
-    'resumeAgent',
-    'closeAgent',
-    'sendMessage',
-    'followupTask',
-    'interruptAgent',
-    'listAgents',
-  ]),
+  tool: z.literal('spawnAgent'),
   status: z.enum(['inProgress', 'completed', 'failed', 'interrupted']),
   senderThreadId: nativeId,
   receiverThreadIds: z.array(nativeId).max(64),
@@ -38,17 +28,7 @@ const collaboration = z.object({
     .max(64 * 1024)
     .nullish()
     .catch(undefined),
-  agentsStates: z.record(
-    nativeId,
-    z.object({
-      status: memberState,
-      message: z
-        .string()
-        .max(64 * 1024)
-        .nullish()
-        .catch(undefined),
-    }),
-  ),
+  agentsStates: z.record(nativeId, z.object({ status: memberState })),
 })
 
 const activity = z.object({
@@ -93,7 +73,7 @@ export const codexTeamFeatures = z.object({
 export type CodexTeamItem = z.infer<typeof codexTeamItem>
 export type CodexTeamThread = z.infer<typeof codexTeamThread>
 
-type TeamWorkState = { state: 'running' | 'idle'; stopReason?: 'end_turn' | 'cancelled'; error?: 'failed' }
+type TeamWorkState = { state: 'running' | 'idle' | 'unknown'; stopReason?: 'end_turn' | 'cancelled'; error?: 'failed' }
 
 export interface CodexMemberUpdate {
   title?: string
@@ -112,6 +92,7 @@ interface Member {
   title?: string
   childTurnId?: string
   terminal?: TeamWorkState
+  active?: true
   restored?: true
   result?: string
   failure?: string
@@ -129,6 +110,17 @@ export class CodexTeam {
 
   owns(id: string): boolean {
     return this.members.has(id)
+  }
+
+  hasActiveMember(id?: string): boolean {
+    const active = (member?: Member) => member?.active === true && (member.parentTurnId !== undefined || member.restored === true)
+    return id === undefined ? [...this.members.values()].some(active) : active(this.members.get(id))
+  }
+
+  activeMembers(): Array<{ threadId: string; turnId: string }> {
+    return [...this.members].flatMap(([threadId, member]) =>
+      this.hasActiveMember(threadId) && member.childTurnId ? [{ threadId, turnId: member.childTurnId }] : [],
+    )
   }
 
   spawnTargets(item: CodexTeamItem): string[] {
@@ -156,22 +148,13 @@ export class CodexTeam {
 
   observeItem(threadId: string, turnId: string, item: CodexTeamItem): void {
     if (threadId !== this.rootId) return
-    if (item.type === 'subAgentActivity') {
-      if (item.kind !== 'started') return
-      this.spawn(item.agentThreadId, turnId, item.agentPath)
-      return
-    }
-    if (item.senderThreadId !== this.rootId || item.status !== 'completed') return
-    for (const id of item.receiverThreadIds) {
-      if (item.tool === 'spawnAgent' && item.agentsStates[id]?.status !== 'notFound') {
-        this.spawn(id, turnId, undefined, item.prompt ?? undefined)
-      } else if (item.tool === 'wait') {
-        const member = this.members.get(id)
-        const reported = item.agentsStates[id]
-        if (member?.parentTurnId !== turnId || !member.childTurnId || !reported || member.result) continue
-        if (reported.status === 'completed' && reported.message) this.reportResult(id, member, reported.message)
-      }
-    }
+    for (const id of this.spawnTargets(item))
+      this.spawn(
+        id,
+        turnId,
+        item.type === 'subAgentActivity' ? item.agentPath : undefined,
+        item.type === 'collabAgentToolCall' ? (item.prompt ?? undefined) : undefined,
+      )
   }
 
   start(id: string, turnId: string): void {
@@ -187,6 +170,7 @@ export class CodexTeam {
       else return
     }
     member.childTurnId = turnId
+    member.active = true
     delete member.terminal
     delete member.result
     delete member.failure
@@ -205,6 +189,7 @@ export class CodexTeam {
     if (!state) return
     member.childTurnId = turnId
     member.terminal = state
+    delete member.active
     if (status === 'failed' && failure) member.failure = failure
     if (member.parentTurnId || member.restored)
       this.publish(id, {
@@ -234,7 +219,7 @@ export class CodexTeam {
         ...(member.title ? { title: member.title } : {}),
         ...(member.result ? { result: member.result } : {}),
         ...(member.failure ? { failure: member.failure } : {}),
-        state: member.terminal ?? { state: 'running' },
+        ...(member.terminal ? { state: member.terminal } : member.active ? { state: { state: 'running' } } : {}),
       })
     return true
   }
@@ -269,7 +254,7 @@ export class CodexTeam {
     return member
   }
 
-  private spawn(id: string, turnId: string, title?: string, description?: string): void {
+  private spawn(id: string, turnId: string, title: string | undefined, description: string | undefined): void {
     const member = this.members.get(id)
     if (member?.parentId !== this.rootId || member.parentTurnId) return
     member.parentTurnId = turnId
@@ -307,4 +292,5 @@ function terminalState(status: string): TeamWorkState | undefined {
   if (status === 'completed') return { state: 'idle', stopReason: 'end_turn' }
   if (status === 'failed') return { state: 'idle', error: 'failed' }
   if (status === 'interrupted') return { state: 'idle', stopReason: 'cancelled' }
+  if (status === 'unknown') return { state: 'unknown' }
 }
