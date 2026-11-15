@@ -98,7 +98,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const workspace = await realpath(testHost.workspaceRoot)
       await mkdir(join(workspace, 'out'), { recursive: true })
       await writeFile(join(workspace, 'out', 'deck.pptx'), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0, 0, 0]))
-      await writeFile(join(workspace, 'out', 'paper.pdf'), '%PDF-1.7\n')
+      // Include the binary comment so this PDF does not pass the text-editor check.
+      await writeFile(join(workspace, 'out', 'paper.pdf'), Buffer.from('%PDF-1.7\n%\xe2\xe3\xcf\xd3\n', 'latin1'))
       await writeFile(
         join(workspace, 'letter.docx'),
         zipSync({
