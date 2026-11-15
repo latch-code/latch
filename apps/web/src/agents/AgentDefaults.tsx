@@ -100,13 +100,13 @@ export function CurrentAgentOptions({ shell, owner }: { shell: ShellState; owner
     || harnessInfo?.level !== 'L3'
     || topicOwner(current.summary) !== owner
     || !isPersonalChat(shell.snapshot, current.summary)
-    || !current.config?.length
   )
     return null
-  const config = current.config
   const id = current.summary.id
   const busy = shell.configBusy.get(id) ?? null
   const feedback = shell.configFeedback.get(id)
+  const config = current.config ?? []
+  if (!config.length && !feedback) return null
   const locked = !access.scopes.has('run')
     ? '这台设备只能查看'
     : shell.connection === 'offline'
@@ -142,18 +142,20 @@ export function CurrentAgentOptions({ shell, owner }: { shell: ShellState; owner
       <header>
         <h3>当前聊天</h3>
       </header>
-      <div className="agent-current-options">
-        <SessionModelControl {...options} reported={current.summary.model} route={current.summary.modelRoute} />
-        <SessionThinkingControl {...options} />
-        {permission?.option && (
-          <PermissionChip
-            view={permission}
-            onChoose={(option, value) => {
-              void shell.setConfig(option.id, value)
-            }}
-          />
-        )}
-      </div>
+      {config.length > 0 && (
+        <div className="agent-current-options">
+          <SessionModelControl {...options} reported={current.summary.model} route={current.summary.modelRoute} />
+          <SessionThinkingControl {...options} />
+          {permission?.option && (
+            <PermissionChip
+              view={permission}
+              onChoose={(option, value) => {
+                void shell.setConfig(option.id, value)
+              }}
+            />
+          )}
+        </div>
+      )}
       {feedback && <ConfigFeedback feedback={feedback} onRefresh={shell.refreshConfig} />}
     </section>
   )

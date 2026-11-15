@@ -385,7 +385,7 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
     const agent = (await owner.json<CustomAgentList>('custom-agents')).agents.find(item => item.name === '守家')!
     const topics = async () => (await owner.json<AppSnapshot>('snapshot')).tasks.filter(task => task.agent?.customAgentId === agent.id)
     const send = async (count: number) => {
-      const input = page.getByRole('textbox', { name: '给守家发消息', exact: true })
+      const input = page.getByRole('textbox', { name: count === 1 ? '给守家发消息' : '继续对话', exact: true }).filter({ visible: true })
       await input.fill(`echo conversation ${count}`)
       await input.press('Meta+Enter')
       await expect.poll(async () => (await topics()).length).toBe(1)
@@ -458,16 +458,21 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
       .poll(async () => (await owner.json<TaskDetail>(`tasks/${first}`)).config?.find(item => item.id === 'effort')?.currentValue)
       .toBe('high')
     await currentChat.locator('button.chip-permission').click()
+    const modeReply = page.waitForResponse(
+      response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith(`/tasks/${first}/config`),
+    )
     await pick(page, 'plan').click()
-    if (sticky)
-      await currentChat
-        .getByText(/权限|预期/u)
-        .last()
-        .waitFor()
-    else
+    if (sticky) {
+      const refused = await modeReply
+      expect(refused.status()).toBe(409)
+      expect(await refused.json()).toMatchObject({ error: 'permission-unverified' })
+      await currentChat.getByText('没能确认权限已经切换', { exact: true }).filter({ visible: true }).waitFor()
+    } else {
+      expect((await modeReply).ok()).toBe(true)
       await expect
         .poll(async () => (await owner.json<TaskDetail>(`tasks/${first}`)).config?.find(item => item.id === 'mode')?.currentValue)
         .toBe('plan')
+    }
     await page.getByRole('button', { name: '关闭资料', exact: true }).filter({ visible: true }).click()
     if (!sticky) expect(await send(3)).toBe(first)
     const detail = await owner.json<TaskDetail>(`tasks/${first}`)

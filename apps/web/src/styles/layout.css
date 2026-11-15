@@ -461,10 +461,12 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .topbar-rename {
   flex-shrink: 0;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--m-micro) var(--e-micro);
 }
-.topbar-title:is(:hover, :focus-within) .topbar-rename {
+.topbar-title-controls:is(:hover, :focus-within) .topbar-rename {
   opacity: 1;
+  pointer-events: auto;
 }
 .topbar-toggle-dot {
   display: block;
@@ -510,6 +512,17 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   flex: 1;
   min-width: 0;
 }
+.topbar-title-line {
+  display: flex;
+  min-width: 0;
+}
+.topbar-title-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  max-width: 100%;
+}
 .topbar-title h1 {
   display: flex;
   min-width: 0;
@@ -543,6 +556,11 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   color: var(--ink);
   font-weight: 500;
   transition: background-color var(--m-micro) var(--e-micro);
+}
+.topbar-title-controls .topbar-title-button {
+  height: auto;
+  min-height: 28px;
+  padding-block: var(--sp-2);
 }
 .topbar-title-button:hover,
 .topbar-title-button[aria-expanded='true'] {

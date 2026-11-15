@@ -155,6 +155,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByText('手机上显示已连接了吗？', { exact: true }).waitFor()
       await page.getByAltText('原生客户端配对二维码').waitFor({ state: 'hidden' })
       expect(await page.getByRole('button', { name: '关闭', exact: true }).count()).toBe(0)
+      const settingsOverlay = page.locator('.settings-overlay:modal')
+      await settingsOverlay.locator('.pair-sheet:modal').waitFor()
       await capture(page, 'pairing-ask')
       // Only an answer ends the question: Esc does nothing, however often it is pressed.
       for (let press = 0; press < 4; press++) {
@@ -170,6 +172,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await removedLine.waitFor()
       await page.getByRole('button', { name: '好', exact: true }).click()
       await removedLine.waitFor({ state: 'hidden' })
+      await settingsOverlay.getByRole('button', { name: '关闭设置', exact: true }).waitFor()
       expect(host.presence.requests.length).toBe(shownBefore)
       const id = (completed.body as { device: { id: string } }).device.id
       expect(host.host.security.devices.get(id)?.status).toBe('revoked')

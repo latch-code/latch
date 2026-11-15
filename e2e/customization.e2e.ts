@@ -408,6 +408,7 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
 
       const restored = await owner.confirmed(`devices/${enrolled.id}`, { method: 'PATCH', body: { scopes: enrolled.scopes } })
       expect(restored.status).toBe(200)
+      await closeSettings(settings)
       await retry.click()
       await expect.poll(async () => (await state()).doc).toEqual(DEFAULT)
       await banner.waitFor({ state: 'detached' })

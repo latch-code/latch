@@ -88,10 +88,14 @@ export function SettingsPages({ main, levels }: { main: ReactNode; levels: Setti
   return (
     <>
       <div className="settings-subpage">{main}</div>
-      {levels.map(level => (
-        <LevelEntry key={level.key} onBack={level.onBack} />
-      ))}
-      {navigation.layers && createPortal(<PhoneLevels levels={levels} section={navigation.section} />, navigation.layers)}
+      {navigation.layers && (
+        <>
+          {levels.map(level => (
+            <LevelEntry key={level.key} onBack={level.onBack} />
+          ))}
+          {createPortal(<PhoneLevels levels={levels} section={navigation.section} />, navigation.layers)}
+        </>
+      )}
     </>
   )
 }

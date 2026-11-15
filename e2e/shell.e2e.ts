@@ -1,14 +1,15 @@
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import type { DeviceScope, TaskDetail } from '@latch/protocol'
+import type { DeviceScope, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { homeInput, switchLayout } from './helpers/workbench.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { backToPhoneSessions, noHorizontalOverflow, openEntry, openSessions, settleShell } from './helpers/layout.ts'
+import { backToPhoneSessions, noHorizontalOverflow, openEntry, openSession, openSessions, settleShell } from './helpers/layout.ts'
 
 /** The frame of the shell at each width: the title row, the sidebar or the tab bar, and what moving to a page keeps. */
 describe('the shell', () => {
@@ -16,7 +17,7 @@ describe('the shell', () => {
   let browser: Browser
 
   beforeAll(async () => {
-    host = await startTestHost({ uiDir: resolve('dist/web') })
+    host = await startTestHost({ uiDir: resolve('dist/web'), hostName: '验收电脑' })
     browser = await chromium.launch(browserLaunchOptions())
   })
   afterAll(async () => {
@@ -68,17 +69,33 @@ describe('the shell', () => {
     await page.context().close()
   })
 
-  it('keeps the draft across pages, without a modal, and Esc does nothing on a page', async () => {
+  it('keeps the same Home and draft under the settings modal, and returns focus with Escape', async () => {
     const page = await open(1440, 900, '壳层切换')
     const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
     await input.fill('切换入口时保留的草稿')
+    const retained = await input.elementHandle()
+    const settings = page.getByRole('dialog', { name: '设置', exact: true })
     await openEntry(page, '设置')
-    expect(await page.locator('dialog[open]').count()).toBe(0)
-    await page.locator('.settings-page').waitFor()
-    expect(await page.locator('.settings-panel .settings-title').textContent()).toBe('通用')
+    await settings.waitFor()
+    expect(await retained?.evaluate(element => element.isConnected)).toBe(true)
+    expect(
+      await retained?.evaluate(element => {
+        element.focus()
+        return element === document.activeElement
+      }),
+    ).toBe(false)
+    expect(await settings.locator('.settings-title').textContent()).toBe('通用')
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('关闭设置')
     await page.keyboard.press('Escape')
-    await page.locator('.settings-page').waitFor()
-    await openSessions(page)
+    await settings.waitFor({ state: 'detached' })
+    const opener = page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true })
+    expect(await opener.evaluate(element => element === document.activeElement)).toBe(true)
+    expect(await input.inputValue()).toBe('切换入口时保留的草稿')
+    await openEntry(page, '设置')
+    await settings.waitFor()
+    await page.reload()
+    await connected(page)
+    await settings.waitFor({ state: 'detached' })
     expect(await input.inputValue()).toBe('切换入口时保留的草稿')
     await page.context().close()
   })
@@ -92,8 +109,9 @@ describe('the shell', () => {
     expect((await box(page, 'main.workspace')).left).toBe(0)
     await page.keyboard.press('Alt+Comma')
     await page.locator('.settings-page').waitFor()
-    await page.locator('.titlebar').getByRole('button', { name: '返回会话', exact: true }).click()
-    await page.locator('.settings-page').waitFor({ state: 'detached' })
+    await page.getByRole('tab', { name: '通用', exact: true }).waitFor()
+    await openSessions(page)
+    expect(await page.locator('.app-shell').getAttribute('data-sidebar')).toBe('collapsed')
     await page.context().close()
   })
 
@@ -106,17 +124,24 @@ describe('the shell', () => {
     await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
     await list.getByRole('button', { name: '设置', exact: true }).click()
     await page.locator('.settings-page').waitFor()
-    expect(await box(page, '.settings-nav-pane')).toMatchObject({ left: 0, width: 200 })
+    const panel = await box(page, '.settings-overlay')
+    const categories = await box(page, '.settings-nav-pane')
+    expect(panel.left).toBeGreaterThan(0)
+    expect(categories.left).toBeGreaterThanOrEqual(panel.left)
+    expect(categories.width).toBe(200)
     await openSessions(page)
+    await list.waitFor()
+    expect(await list.getByRole('button', { name: '设置', exact: true }).evaluate(element => element === document.activeElement)).toBe(true)
+    await list.getByRole('button', { name: '关闭会话列表', exact: true }).click()
     await noHorizontalOverflow(page)
     await page.context().close()
   })
 
-  it('gives a phone a tab bar of Code, 我的 Agent and 设置', async () => {
+  it('gives a phone a tab bar with Settings and quota, and a full-screen settings stack', async () => {
     const page = await open(390, 844, '壳层手机')
     expect(await page.locator('.titlebar').count()).toBe(0)
     const tabs = page.getByRole('navigation', { name: '主导航', exact: true })
-    expect(await tabs.getByRole('button').allTextContents()).toEqual(['Code', '我的 Agent', '设置'])
+    expect(await tabs.getByRole('button').allTextContents()).toEqual(['Code', '我的 Agent', '设置', '额度'])
     const bar = await box(page, '.phone-tabs')
     expect(bar.top + bar.height).toBe(844)
     await tabs.getByRole('button', { name: '设置', exact: true }).click()
@@ -125,6 +150,10 @@ describe('the shell', () => {
     await page.locator('.settings-layout[data-level="section"]').waitFor()
     await page.goBack()
     await page.locator('.settings-layout[data-level="root"]').waitFor()
+    expect(await box(page, '.settings-overlay')).toEqual({ left: 0, top: 0, width: 390, height: 844 })
+    await page.goBack()
+    await page.locator('.settings-page').waitFor({ state: 'detached' })
+    expect(await tabs.getByRole('button', { name: '设置', exact: true }).evaluate(element => element === document.activeElement)).toBe(true)
     await page.context().close()
   })
 
@@ -147,14 +176,23 @@ describe('the shell', () => {
     await allData(page)
     const sidebar = page.locator('#session-navigation')
     await sidebar.getByRole('button', { name: '定时任务', exact: true }).click()
-    await page.getByRole('region', { name: '通用 的资料', exact: true }).waitFor()
-    await page.locator('.agent-schedules').getByText('没有定时任务', { exact: true }).waitFor()
-    await page.getByRole('region', { name: '通用 的资料', exact: true }).getByRole('button', { name: '关闭资料', exact: true }).click()
-    await page.getByRole('button', { name: '设置', exact: true }).filter({ visible: true }).click()
-    const settings = page.locator('.settings-page')
+    const profile = page.getByRole('region', { name: '通用 的资料', exact: true })
+    await profile.waitFor()
+    await profile.locator('.agent-schedules').getByText('没有定时任务', { exact: true }).waitFor()
+    const closeProfile = profile.getByRole('button', { name: '关闭资料', exact: true })
+    const box = await profile.boundingBox()
+    expect(box?.width).toBeGreaterThan(200)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(1440)
+    await page.screenshot({ path: 'test-results/schedule-after-1440.png', animations: 'disabled' })
+    await closeProfile.click()
+    await openEntry(page, '设置')
+    const settings = page.locator('.settings-overlay:modal')
     await settings.getByRole('tab', { name: '通用', exact: true }).waitFor()
     expect(await settings.getByRole('tab', { name: 'Agent', exact: true }).count()).toBe(0)
     expect(await settings.getByRole('tab', { name: '定时任务', exact: true }).count()).toBe(0)
+    await openSessions(page)
+    await page.locator('.agents-page[data-chat]').waitFor()
+    expect(await page.locator('.app-shell').getAttribute('data-entry')).toBe('agents')
     await page.context().close()
   })
 
@@ -205,9 +243,8 @@ describe('the shell', () => {
         await page.keyboard.press(keys)
         await page.locator('.settings-page').waitFor()
       }
-      expect(await page.locator('dialog[open]').count()).toBe(0)
+      expect(await page.locator('dialog[open]').count()).toBe(1)
       expect(await page.locator('.app-shell').getAttribute('data-inspector')).toBe(panelBefore)
-      expect(await page.locator('.inspector-column').isVisible()).toBe(false)
       expect(await selected()).toBe(before)
       await openSessions(page)
       expect(await findBar(page).count()).toBe(0)
@@ -215,12 +252,15 @@ describe('the shell', () => {
       await page.context().close()
     })
 
-    it('still starts a new session, and the old number keys do nothing', async () => {
+    it('holds workbench shortcuts inside settings until it closes', async () => {
       const page = await openOnSettings(1440, '壳层快捷键入口')
       await page.keyboard.press('Alt+Digit4')
-      await page.locator('.settings-page[data-entry="settings"]').waitFor()
       await page.keyboard.press('Alt+KeyN')
+      await page.locator('.settings-page[data-entry="settings"]').waitFor()
+      expect(await page.locator('.workbench-home').count()).toBe(0)
+      await page.keyboard.press('Escape')
       await page.locator('.settings-page').waitFor({ state: 'detached' })
+      await page.keyboard.press('Alt+KeyN')
       // 新会话 is the home with its input focused; the session stays open under it.
       await page.locator('.workbench-home').waitFor()
       await expect.poll(() => homeInput(page).evaluate(element => element === document.activeElement)).toBe(true)
@@ -229,8 +269,12 @@ describe('the shell', () => {
       await page.context().close()
     })
 
-    it('takes a palette command for the session back to the session', async () => {
+    it('keeps the palette behind settings and restores its shortcut after closing', async () => {
       const page = await openOnSettings(1440, '壳层面板')
+      const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+      await page.keyboard.press('Control+K')
+      expect(await palette.count()).toBe(0)
+      await openSessions(page)
       const run = async (label: string) => {
         await page.keyboard.press('Control+K')
         const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
@@ -351,27 +395,48 @@ describe('the shell', () => {
       else await page.locator('.workbench-session-row').filter({ hasText: prompt }).waitFor()
       await settleShell(page)
       await destinationPage.waitFor()
-      if (destination === 'settings') expect(await page.locator('.app-shell').getAttribute('data-entry')).toBe('settings')
-      else expect(await page.locator('.app-shell').getAttribute('data-all-sessions')).not.toBeNull()
+      if (destination === 'settings') {
+        await page.locator('.settings-overlay:modal').waitFor()
+        await openSessions(page)
+        await page.locator('main.workspace .user-bubble').getByText(prompt, { exact: true }).waitFor()
+      } else expect(await page.locator('.app-shell').getAttribute('data-all-sessions')).not.toBeNull()
       await page.context().close()
     })
   })
 
   it('lets a sheet be dragged narrower, until it fits beside the conversation', async () => {
     const page = await open(1200, 850, '壳层面板拖动')
+    await allData(page)
+    await writeFile(resolve(host.workspaceRoot, '验收文档.txt'), '面板验收文件\n')
     const { sessionId } = await host.host.bridge.createTask({ prompt: '面板拖动的会话', requestId: randomUUID(), mode: 'agent' })
     await page.locator(`[data-task-id="${sessionId}"]`).first().click()
     await page.locator('.app-shell[data-inspector="open"]').waitFor()
     await settleShell(page)
     // The default summary is a column; make it wider through its real handle before testing a sheet becoming a column.
     const initialHandle = page.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
-    await initialHandle.click({ trial: true })
+    const divider = () => page.locator('.inspector-column-inner').evaluate(element => getComputedStyle(element).borderInlineStartWidth)
+    const highlight = () => initialHandle.evaluate(element => getComputedStyle(element, '::after').opacity)
+    expect(await divider()).toBe('1px')
+    await expect.poll(highlight).toBe('0')
+    await initialHandle.hover()
+    await expect.poll(highlight).toBe('1')
+    await page.mouse.move(0, 0)
+    await expect.poll(highlight).toBe('0')
     expect(await initialHandle.getAttribute('aria-valuenow')).toBe('400')
     const initialEdge = (await initialHandle.boundingBox())!
     expect(Math.round(initialEdge.x + initialEdge.width / 2)).toBe(800)
     const initialY = initialEdge.y + initialEdge.height / 2
+    await initialHandle.focus()
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => initialHandle.getAttribute('aria-valuenow')).toBe('392')
+    await expect.poll(highlight).toBe('1')
+    await page.keyboard.press('ArrowLeft')
+    await expect.poll(() => initialHandle.getAttribute('aria-valuenow')).toBe('400')
+    await settleShell(page)
     await page.mouse.move(initialEdge.x + initialEdge.width / 2, initialY)
     await page.mouse.down()
+    expect(await initialHandle.getAttribute('data-dragging')).not.toBeNull()
+    await expect.poll(highlight).toBe('1')
     await page.mouse.move(1200 - 520, initialY, { steps: 4 })
     await page.mouse.up()
     await settleShell(page)
@@ -382,6 +447,7 @@ describe('the shell', () => {
     }).toEqual({ width: '520', placement: 'sheet', sidebar: '264' })
     await page.locator('.app-shell[data-inspector="sheet"]').waitFor()
     await settleShell(page)
+    expect(await divider()).toBe('0px')
     const edge = page.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
     const handle = await edge.boundingBox()
     expect(handle).not.toBeNull()
@@ -394,7 +460,288 @@ describe('the shell', () => {
     await page.mouse.up()
     await page.locator('.app-shell[data-inspector="open"]').waitFor()
     expect((await box(page, '.inspector-column')).width).toBeGreaterThanOrEqual(399)
+    const output = 'test-results/session-title-icon'
+    await mkdir(output, { recursive: true })
+    await page.mouse.move(0, 0)
+    for (const layout of ['overview', 'triage'] as const) {
+      await switchLayout(page, layout)
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme })
+        expect(await divider()).toBe('1px')
+        await page.screenshot({ path: `${output}/pane-${layout}-${colorScheme}.png`, animations: 'disabled' })
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.getByRole('tab', { name: '文件', exact: true }).click()
+    await page.getByRole('treeitem', { name: '验收文档.txt', exact: true }).waitFor()
+    await page.locator('.app-shell[data-inspector="open"]').waitFor()
+    const computer = page.locator('.workspace .topbar-computer .topbar-crumb-text')
+    await computer.getByText('验收电脑', { exact: true }).waitFor()
+    expect(await computer.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme })
+      expect(await divider()).toBe('1px')
+      await page.screenshot({ path: `${output}/pane-files-1440-${colorScheme}.png`, animations: 'disabled' })
+    }
     await page.context().close()
+  })
+
+  it('keeps the rename pencil beside the Code title in both layouts', async () => {
+    const output = 'test-results/session-title-icon'
+    await mkdir(output, { recursive: true })
+    const owner = await host.enroll({ listener: 'unix' })
+    const project = '标题验收项目'
+    const branch = 'title-check'
+    const folder = resolve(host.root, branch)
+    await mkdir(folder)
+    const git = (...args: string[]) =>
+      execFileSync(
+        'git',
+        [
+          '-c',
+          'core.hooksPath=/dev/null',
+          '-c',
+          'commit.gpgsign=false',
+          '-c',
+          'user.name=Fixture',
+          '-c',
+          'user.email=fixture@example.invalid',
+          ...args,
+        ],
+        { cwd: folder, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }, stdio: 'ignore' },
+      )
+    git('init', '--template=', `--initial-branch=${branch}`)
+    git('commit', '--allow-empty', '-m', 'Title fixture')
+    const added = await owner.addFolders({ name: project, paths: [folder] })
+    expect(added.status).toBe(201)
+    const { workspace } = (await added.json()) as { workspace: WorkspaceInfo }
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: '核对会话标题', requestId: randomUUID(), mode: 'agent', workspaceId: workspace.id },
+    })
+    const detail = () => owner.json<TaskDetail>(`tasks/${sessionId}`)
+    await expect.poll(async () => (await detail()).summary.status).toBe('idle')
+    const short = '估算机评流程所需 TPM'
+    const long = '这是一条很长的会话标题，仍然需要保留重命名入口。'.repeat(5)
+
+    for (const [width, height] of [
+      [1440, 900],
+      [768, 1024],
+      [390, 844],
+    ] as const) {
+      const phone = width === 390
+      const context = await browser.newContext({
+        viewport: { width, height },
+        colorScheme: width === 768 ? 'light' : 'dark',
+        locale: 'zh-CN',
+        reducedMotion: 'reduce',
+        ...(phone ? { isMobile: true, hasTouch: true } : {}),
+      })
+      context.setDefaultTimeout(15_000)
+      try {
+        const page = await context.newPage()
+        await enrollBrowser(page, host, { name: `标题验收 ${width}` })
+        await connected(page)
+        if (!phone) await openSession(page, sessionId)
+        await page.evaluate(() => document.fonts.ready)
+        const header = page.locator('main.workspace .topbar')
+        const heading = (name: string) => header.getByRole('heading', { name, exact: true })
+        const pencil = header.getByRole('button', { name: '重命名会话', exact: true })
+        const dialog = page.getByRole('dialog', { name: '重命名会话', exact: true })
+        const field = dialog.getByRole('textbox', { name: '会话名称', exact: true })
+        const shoot = async (name: string) => {
+          for (const colorScheme of ['light', 'dark'] as const) {
+            await page.emulateMedia({ colorScheme })
+            await page.screenshot({ path: `${output}/${name}-${page.viewportSize()?.width}-${colorScheme}.png`, animations: 'disabled' })
+          }
+        }
+        const checkLine = async (clipped: boolean) => {
+          const rects = await header.evaluate(element => {
+            const rect = ({ x, y, width, height, right, bottom }: DOMRect) => ({ x, y, width, height, right, bottom })
+            const heading = element.querySelector('h1')!.getBoundingClientRect()
+            const rename = element.querySelector('.topbar-rename')!.getBoundingClientRect()
+            const text = element.querySelector('.topbar-title-text')!
+            const meta = ['.topbar-crumb-button', '.topbar-session-branch', '.topbar-computer'].map(selector =>
+              element.querySelector(selector)!.getBoundingClientRect(),
+            )
+            const centers = meta.map(item => item.y + item.height / 2)
+            return {
+              heading: rect(heading),
+              rename: rect(rename),
+              meta: meta.map(rect),
+              secondLine: meta.every(item => item.top >= heading.bottom) && Math.max(...centers) - Math.min(...centers) <= 1,
+              clipped: text.scrollWidth > text.clientWidth && getComputedStyle(text).textOverflow === 'ellipsis',
+            }
+          })
+          expect(rects.secondLine, JSON.stringify({ width, meta: rects.meta, heading: rects.heading })).toBe(true)
+          expect(rects.clipped).toBe(clipped)
+          expect(rects.rename.y + rects.rename.height / 2).toBeCloseTo(rects.heading.y + rects.heading.height / 2, 0)
+          expect(rects.rename.x - rects.heading.right).toBeGreaterThanOrEqual(0)
+          expect(rects.rename.x - rects.heading.right).toBeLessThanOrEqual(8)
+          expect(rects.rename.width).toBeGreaterThanOrEqual(24)
+          return rects
+        }
+
+        for (const layout of ['overview', 'triage'] as const) {
+          await owner.json(`tasks/${sessionId}`, { method: 'PATCH', body: { title: short } })
+          if (phone) {
+            await backToPhoneSessions(page)
+            await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
+            await page.locator('.workbench-home').waitFor()
+          }
+          await switchLayout(page, layout)
+          if (phone) await openSession(page, sessionId)
+          await heading(short).waitFor()
+          if (phone) {
+            expect(await pencil.count()).toBe(0)
+            await header.locator('.topbar-subline').getByText(branch, { exact: true }).waitFor()
+            await shoot(`short-${layout}`)
+            await heading(short).getByRole('button', { name: short, exact: true }).click()
+            await page.getByRole('menuitem', { name: '重命名', exact: true }).click()
+          } else {
+            await header.getByRole('button', { name: `项目：${project}`, exact: true }).waitFor()
+            await header.locator('.topbar-session-branch').getByText(branch, { exact: true }).waitFor()
+            await header.locator('.topbar-computer').getByText('验收电脑', { exact: true }).waitFor()
+            const initial = await checkLine(false)
+            const title = heading(short).getByRole('button', { name: short, exact: true })
+            const pencilOpacity = () => pencil.evaluate(element => getComputedStyle(element).opacity)
+            const titleBackground = () => title.evaluate(element => getComputedStyle(element).backgroundColor)
+            const record = async (state: string) => {
+              if (width === 1440)
+                await page.screenshot({ path: `${output}/title-${state}-${layout}-${width}-dark.png`, animations: 'disabled' })
+            }
+            await page.mouse.move(0, 0)
+            await expect.poll(pencilOpacity).toBe('0')
+            const atRest = await titleBackground()
+            await record('rest')
+            await header.locator('.topbar-computer').hover()
+            expect(await titleBackground()).toBe(atRest)
+            const metaPencil = await pencil.evaluate(async element => {
+              await Promise.all(element.getAnimations().map(animation => animation.finished))
+              return getComputedStyle(element).opacity
+            })
+            await record('metadata-hover')
+            await title.hover()
+            await expect.poll(pencilOpacity).toBe('1')
+            await expect.poll(titleBackground).not.toBe(atRest)
+            expect(await checkLine(false)).toEqual(initial)
+            const titleGeometry = await title.evaluate(button => {
+              const text = button.querySelector('.topbar-title-text')!
+              const range = document.createRange()
+              range.selectNodeContents(text)
+              const line = range.getBoundingClientRect()
+              const span = text.getBoundingClientRect()
+              const box = button.getBoundingClientRect()
+              return {
+                buttonHeight: box.height,
+                spanHeight: span.height,
+                glyphHeight: line.height,
+                spanFits: span.top >= box.top && span.bottom <= box.bottom,
+                glyphFits: line.top >= box.top && line.bottom <= box.bottom,
+                x: (line.left + line.right) / 2,
+                edges: [line.top + 1, line.bottom - 1],
+              }
+            })
+            await record('title-hover')
+            expect.soft(metaPencil, `${width} ${layout} metadata hover`).toBe('0')
+            expect.soft(titleGeometry, `${width} ${layout} title hit box ${JSON.stringify(titleGeometry)}`).toMatchObject({
+              spanFits: true,
+              glyphFits: true,
+            })
+            await shoot(`short-${layout}`)
+            const menu = header.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: '重命名', exact: true }) })
+            for (const [edge, y] of titleGeometry.edges.entries()) {
+              await page.mouse.move(titleGeometry.x, y)
+              await expect.poll(() => title.evaluate(element => element.matches(':hover'))).toBe(true)
+              const hit = await title.evaluate((element, point) => element.contains(document.elementFromPoint(point.x, point.y)), {
+                x: titleGeometry.x,
+                y,
+              })
+              expect(hit).toBe(true)
+              await page.mouse.click(titleGeometry.x, y)
+              await menu.waitFor()
+              expect(await title.getAttribute('aria-expanded')).toBe('true')
+              expect(await titleBackground()).not.toBe(atRest)
+              if (edge === 0) await record('menu-open')
+              await page.keyboard.press('Escape')
+              await menu.waitFor({ state: 'hidden' })
+              expect(await title.getAttribute('aria-expanded')).toBe('false')
+              await expect.poll(() => title.evaluate(element => element === document.activeElement)).toBe(true)
+            }
+            await page.mouse.click(1, 1)
+            await title.hover()
+            await pencil.hover()
+            expect(await title.evaluate(element => element.matches(':focus-visible'))).toBe(false)
+            await expect.poll(pencilOpacity).toBe('1')
+            await expect.poll(titleBackground).toBe(atRest)
+            await expect
+              .poll(() => pencil.evaluate(element => getComputedStyle(element, '::before').backgroundColor))
+              .not.toBe('rgba(0, 0, 0, 0)')
+            await record('pencil-hover')
+            await page.mouse.move(0, 0)
+            await title.focus()
+            await record('title-focus')
+            await page.keyboard.press('Tab')
+            expect(await pencil.evaluate(element => element === document.activeElement)).toBe(true)
+            await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+            expect(await checkLine(false)).toEqual(initial)
+            expect(await pencil.evaluate(element => element.matches(':focus-visible'))).toBe(true)
+            await record('pencil-focus')
+            await page.keyboard.press('Enter')
+            await field.waitFor()
+            expect(await field.inputValue()).toBe(short)
+            await field.fill('应当取消')
+            await dialog.getByRole('button', { name: '取消', exact: true }).click()
+            await dialog.waitFor({ state: 'hidden' })
+            await heading(short).waitFor()
+            expect((await detail()).summary.title).toBe(short)
+            await header.locator('.topbar-crumb-button').focus()
+            await expect.poll(pencilOpacity).toBe('0')
+            await record('blur')
+            await title.hover()
+            await pencil.click()
+          }
+          await field.fill(long)
+          await dialog.getByRole('button', { name: '保存', exact: true }).click()
+          await dialog.waitFor({ state: 'hidden' })
+          await heading(long).waitFor()
+          expect((await detail()).summary.title).toBe(long)
+
+          if (phone) {
+            expect(await pencil.count()).toBe(0)
+            expect(await header.locator('.topbar-title-text').evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+          } else {
+            if (width === 1440) {
+              await heading(long).hover()
+              await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+              await shoot(`long-${layout}`)
+              const panel = header.getByRole('button', { name: '侧边面板', exact: true })
+              if ((await panel.getAttribute('aria-pressed')) !== 'true') await panel.click()
+              await page.setViewportSize({ width: 1200, height })
+              await page.locator('.app-shell[data-inspector="open"]').waitFor()
+              await settleShell(page)
+            }
+            await checkLine(true)
+            await heading(long).hover()
+            await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+            await pencil.click()
+            await field.waitFor()
+            expect(await field.inputValue()).toBe(long)
+            await dialog.getByRole('button', { name: '取消', exact: true }).click()
+            await dialog.waitFor({ state: 'hidden' })
+            expect((await detail()).summary.title).toBe(long)
+          }
+          await noHorizontalOverflow(page)
+          await shoot(`long-${layout}`)
+          if (width === 1440) {
+            await page.setViewportSize({ width, height })
+            await settleShell(page)
+          }
+        }
+      } finally {
+        await context.close()
+      }
+    }
   })
 })
 

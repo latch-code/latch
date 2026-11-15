@@ -644,8 +644,7 @@ button.agent-memory-topic:hover {
 }
 
 /*
- * A new topic: the Agent in the middle while nothing is said yet, the input at the bottom where a session's stands, and
- * on wide windows the profile beside it in the right panel's place.
+ * First-message page: the header and input keep their positions when the conversation opens.
  */
 .agent-chat-panel {
   display: flex;
@@ -674,6 +673,9 @@ button.agent-memory-topic:hover {
   min-width: 0;
   min-height: 0;
 }
+.agent-chat-main > .topbar-frame {
+  flex: none;
+}
 .agent-chat-body {
   display: grid;
   place-items: center;
@@ -686,6 +688,7 @@ button.agent-memory-topic:hover {
   width: 100%;
   max-width: calc(var(--content-width) + 2 * var(--gutter));
   margin-inline: auto;
+  margin-block-start: auto;
   padding: var(--sp-16) var(--gutter);
 }
 .agent-chat-profile {
@@ -1501,10 +1504,6 @@ button.helper-card:focus-visible {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-.agent-chat-greeting {
-  max-width: 36ch;
-}
-
 /*
  * 不先问你 or 权限没确认 beside a helper's name: amber, with its ⓘ; a mode Latch has no word for, in the quiet colour. On
  * every width the words stay; a narrow frame cuts them with an ellipsis.

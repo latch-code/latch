@@ -1,6 +1,7 @@
 import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { Icon, type IconComponent, CodeGlyph, PluginsGlyph, SettingsGlyph } from '@latch/ui'
 import { waitingCount } from '../sessions.ts'
+import { ShellQuota } from './ShellQuota.tsx'
 import type { ShellEntry } from './routes.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -44,6 +45,7 @@ export function PhoneTabBar({ shell }: { shell: ShellState }) {
           </button>,
         ]
       })}
+      <ShellQuota shell={shell} appearance="tab" />
     </nav>
   )
 }

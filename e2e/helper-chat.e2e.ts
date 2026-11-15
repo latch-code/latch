@@ -714,8 +714,9 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
       .toEqual({ providerId: 'helper-fixture', model: 'fixture-two' })
     await panel.getByRole('button', { name: '关闭资料', exact: true }).click()
     // The existing chat uses the selected default for its next turn.
-    await input.fill('明天呢')
-    await input.press('Meta+Enter')
+    const continued = page.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })
+    await continued.fill('明天呢')
+    await continued.press('Meta+Enter')
     await expect
       .poll(async () => (await owner.json<TaskDetail>(`tasks/${first!.id}`)).summary.model, { timeout: 15_000 })
       .toBe('fixture-two')

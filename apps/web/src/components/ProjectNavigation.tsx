@@ -11,13 +11,12 @@ import {
   ChevronRightGlyph,
   MoreGlyph,
   EditGlyph,
-  FolderGlyph,
   PlusGlyph,
   SettingsGlyph,
 } from '@latch/ui'
 import { api, errorMessage, MessageError } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
-import { projectFolders, projectName } from '../projects.tsx'
+import { ProjectIcon, projectFolders, projectName } from '../projects.tsx'
 import { VisibleText } from './VisibleText.tsx'
 
 export interface ProjectNavigationActions {
@@ -38,7 +37,7 @@ export function ShelfHead({
   actions,
   className,
 }: {
-  /** A glyph before the name: a project's folder. */
+  /** The project mark before its name. */
   lead?: ReactNode
   label: ReactNode
   folded: boolean
@@ -193,7 +192,7 @@ export function ProjectGroupHeading({
       ) : onFold ? (
         <ShelfHead
           className="project-group-heading"
-          lead={<FolderGlyph className="shelf-lead" size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
+          lead={<ProjectIcon project={project} size={14} className="shelf-lead" />}
           folded={folded}
           onFold={onFold}
           count={folded ? count : undefined}
@@ -206,6 +205,7 @@ export function ProjectGroupHeading({
         />
       ) : (
         <div className="project-group-heading phone-shelf-heading">
+          <ProjectIcon project={project} size={14} className="shelf-lead" />
           <span className="project-group-name" title={project.unavailable}>
             <VisibleText text={projectName(project)} />
           </span>

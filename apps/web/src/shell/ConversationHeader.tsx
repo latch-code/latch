@@ -231,7 +231,9 @@ function ProjectCrumb({
       {!worktree && summary.branch && (
         <span className="topbar-session-branch">
           <Icon icon={BranchGlyph} size={14} />
-          <VisibleText text={summary.branch} />
+          <span className="topbar-crumb-text">
+            <VisibleText text={summary.branch} />
+          </span>
         </span>
       )}
     </span>
@@ -488,40 +490,46 @@ export function SessionHeader({
     <header className="topbar">
       <div className="topbar-title">
         {summary && frame}
-        {summary && !frame && (project || (summary.mode !== 'chat' && summary.cwd)) && (
-          <ProjectCrumb project={project} summary={summary} usage={usage} after={crumb?.after}>
-            {crumb?.folders}
-          </ProjectCrumb>
-        )}
-        {summary && !frame && from && (
-          <span className="topbar-crumb">
-            <SourceLink source={from} />
-            <span className="topbar-crumb-separator" aria-hidden="true">
-              /
-            </span>
-          </span>
-        )}
-        {summary && !frame && imported && (
-          <span className="topbar-crumb">
-            <ImportedMark mark={imported} />
-            <span className="topbar-crumb-separator" aria-hidden="true">
-              /
-            </span>
-          </span>
-        )}
         {summary && !frame && (
-          <h1 title={title}>
-            <TitleMenu title={title} sections={sessionMenu} />
-          </h1>
-        )}
-        {summary && !frame && onRename && (
-          <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />
-        )}
-        {summary && !frame && computer && (
-          <span className="topbar-computer">
-            <Icon icon={LaptopGlyph} size={14} />
-            {computer}
-          </span>
+          <>
+            <div className="topbar-title-line">
+              <div className="topbar-title-controls">
+                <h1 title={title}>
+                  <TitleMenu title={title} sections={sessionMenu} />
+                </h1>
+                {onRename && <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />}
+              </div>
+            </div>
+            <div className="topbar-session-meta">
+              {(project || (summary.mode !== 'chat' && summary.cwd)) && (
+                <ProjectCrumb project={project} summary={summary} usage={usage} after={crumb?.after}>
+                  {crumb?.folders}
+                </ProjectCrumb>
+              )}
+              {computer && (
+                <span className="topbar-computer">
+                  <Icon icon={LaptopGlyph} size={14} />
+                  <span className="topbar-crumb-text">{computer}</span>
+                </span>
+              )}
+            </div>
+            {from && (
+              <span className="topbar-crumb">
+                <SourceLink source={from} />
+                <span className="topbar-crumb-separator" aria-hidden="true">
+                  /
+                </span>
+              </span>
+            )}
+            {imported && (
+              <span className="topbar-crumb">
+                <ImportedMark mark={imported} />
+                <span className="topbar-crumb-separator" aria-hidden="true">
+                  /
+                </span>
+              </span>
+            )}
+          </>
         )}
         {summary && !frame && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />}
       </div>

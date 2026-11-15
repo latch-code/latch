@@ -117,6 +117,11 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('给资料助手发消息')
     const who = page.getByRole('button', { name: '资料助手 的资料', exact: true })
     await who.waitFor()
+    const header = await page.locator('.agent-chat-main > .topbar-frame').boundingBox()
+    const field = await input.boundingBox()
+    expect(header!.height).toBeLessThan(160)
+    expect(header!.y).toBeLessThan(90)
+    expect(page.viewportSize()!.height - (field!.y + field!.height)).toBeLessThan(144)
     await page.screenshot({ path: `${OUT}/chat-empty-1440.png` })
     const { agents } = await owner.json<CustomAgentList>('custom-agents')
     expect(agents).toHaveLength(1)
@@ -168,6 +173,7 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     expect(first).toMatchObject({ harnessId: 'fake-agent', cwd: project.path })
     // The topic opens in place: the same frame, the session's own composer saying whom it talks to.
     await page.locator('.topbar .agent-frame').waitFor()
+    await page.locator('.transcript-shell').getByText('比较三家汇率接口', { exact: true }).waitFor()
     await expect.poll(() => page.locator(`[data-agent-id="${agent.id}"][aria-current="page"]`).filter({ visible: true }).count()).toBe(1)
     expect(await place(page, '我的 Agent').getAttribute('aria-checked')).toBe('true')
     await page.screenshot({ path: `${OUT}/topic-1440.png` })
@@ -181,8 +187,9 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
 
     const detail = async () => owner.json<TaskDetail>(`tasks/${first!.id}`)
     await expect.poll(async () => (await detail()).summary.status).toBe('idle')
-    await input.fill('再查一下手续费')
-    await input.press('Meta+Enter')
+    const replyInput = page.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })
+    await replyInput.fill('再查一下手续费')
+    await replyInput.press('Meta+Enter')
     await expect
       .poll(async () => (await detail()).messages.filter(message => message.role === 'user').map(message => message.text))
       .toEqual(['比较三家汇率接口', '再查一下手续费'])
@@ -309,6 +316,17 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     await expect.poll(() => page.locator('[data-agent-id="general"][aria-current="page"]').filter({ visible: true }).count()).toBe(1)
     await page.locator('.topbar').getByRole('button', { name: '通用 的资料', exact: true }).waitFor()
     await page.screenshot({ path: `${OUT}/general-1440.png` })
+    // The Code schedule shortcut opens General's existing chat and its own profile without collapsing the page.
+    await place(page, 'Code').click()
+    await page.getByRole('button', { name: '定时任务', exact: true }).filter({ visible: true }).first().click()
+    const generalProfile = page.getByRole('region', { name: '通用 的资料', exact: true })
+    await generalProfile.getByText('没有定时任务', { exact: true }).waitFor()
+    await expect.poll(async () => (await generalProfile.boundingBox())?.width ?? 0).toBeGreaterThan(0)
+    await page.getByText('今天先做什么？', { exact: true }).last().waitFor()
+    expect((await owner.json<AppSnapshot>('snapshot')).agentChats?.general).toEqual({ state: 'ready', sessionId: talk!.id })
+    await noHorizontalOverflow(page)
+    await page.screenshot({ path: `${OUT}/general-from-code-schedule-1440.png` })
+    await generalProfile.getByRole('button', { name: '关闭资料', exact: true }).click()
 
     const fresh = async (name: string) =>
       owner.json<CustomAgent>('custom-agents', {
@@ -397,7 +415,7 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     const phoneWho = narrow.locator('.topbar').getByRole('button', { name: '资料助手 的资料', exact: true })
     await phoneWho.waitFor()
     await noHorizontalOverflow(narrow)
-    await narrow.screenshot({ path: `${OUT}/topic-390-dark.png` })
+    await narrow.screenshot({ path: `${OUT}/topic-390-dark.png`, animations: 'disabled' })
     await phoneWho.click()
     const sheet = narrow.getByRole('dialog', { name: '资料助手' })
     await sheet.getByRole('region', { name: '资料助手 的资料' }).waitFor()
@@ -506,7 +524,7 @@ it('keeps the Agent, the topic and what was typed through a layout change, and p
     // The space's own 总览 is where the place opens; the roster stands beside it.
     await expect.poll(() => page.locator('.agents-page').getAttribute('data-view')).toBe('home')
     await agentsNav(page)
-      .getByRole('button', { name: /晨报/u })
+      .getByRole('button', { name: /^晨报/u })
       .click()
     const input = page.getByRole('textbox', { name: '给晨报发消息', exact: true })
     await input.fill('整理一下今天的事')
@@ -565,7 +583,7 @@ it('keeps the Agent, the topic and what was typed through a layout change, and p
     narrow.setDefaultTimeout(15_000)
     await fullScopeBrowser(narrow, host, owner, '名册 390')
     await narrow.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
-    const row = narrow.getByRole('list', { name: '我的 Agent', exact: true }).getByRole('button', { name: /晨报/u })
+    const row = narrow.getByRole('list', { name: '我的 Agent', exact: true }).getByRole('button', { name: /^晨报/u })
     await row.waitFor()
     expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44)
     await noHorizontalOverflow(narrow)
@@ -780,11 +798,16 @@ it('opens the Agent row actions by keyboard and retries a lost deletion response
     await page.keyboard.press('Enter')
     const menu = page.getByRole('menu', { name: `${agent.name} 的操作` })
     await menu.getByRole('menuitem', { name: '删除 Agent' }).waitFor()
-    await page.screenshot({ path: `${OUT}/agent-menu-1440.png` })
+    await page.screenshot({ path: `${OUT}/agent-menu-1440.png`, animations: 'disabled' })
     await menu.getByRole('menuitem', { name: '删除 Agent' }).click()
     const confirm = page.getByRole('dialog', { name: `删除「${agent.name}」？` })
     await confirm.getByText('它的记忆会删除，聊天记录和文件夹会保留。').waitFor()
     await page.screenshot({ path: `${OUT}/agent-delete-1440.png` })
+    await confirm.getByRole('button', { name: '取消', exact: true }).click()
+    await confirm.waitFor({ state: 'hidden' })
+    expect(writes).toEqual([])
+    await more(agent.name).click()
+    await menu.getByRole('menuitem', { name: '删除 Agent' }).click()
     await confirm.getByRole('button', { name: '删除', exact: true }).click()
     await confirm.getByRole('button', { name: '重试同一请求', exact: true }).click()
     await confirm.waitFor({ state: 'hidden' })
@@ -796,6 +819,82 @@ it('opens the Agent row actions by keyboard and retries a lost deletion response
     )
   } finally {
     await context.close()
+    await browser.close()
+    await host.close()
+  }
+})
+
+it('keeps the second device’s first-message draft and explicitly opens the shared chat', async () => {
+  await mkdir(OUT, { recursive: true })
+  const host = await startTestHost({ plugins: [fixture] })
+  const browser = await chromium.launch(browserLaunchOptions())
+  const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+  const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark', isMobile: true, hasTouch: true })
+  let proceed = () => {}
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const agent = await owner.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        name: '接续夹具',
+        description: '在同一聊天里接续',
+        harnessId: 'standard',
+        mode: 'agent',
+        model: { providerId: 'agents-fixture', model: 'fixture' },
+      },
+    })
+    const first = await desktop.newPage()
+    const second = await phone.newPage()
+    await fullScopeBrowser(first, host, owner, '首发设备')
+    await fullScopeBrowser(second, host, owner, '草稿保留设备')
+    await place(first, '我的 Agent').click()
+    await second.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
+    const row = (page: Page) => page.locator(`[data-agent-id="${agent.id}"]`).filter({ visible: true })
+    await row(first).click()
+    await row(second).click()
+    const input = (page: Page) => page.getByRole('textbox', { name: '给接续夹具发消息', exact: true }).filter({ visible: true })
+    await input(second).fill('手机的未送出草稿')
+    const blocked = new Promise<void>(resolve => {
+      proceed = resolve
+    })
+    let seen = () => {}
+    const ready = new Promise<void>(resolve => {
+      seen = resolve
+    })
+    await second.route('**/link/api/tasks', async route => {
+      if (route.request().method() !== 'POST') return route.continue()
+      seen()
+      await blocked
+      await route.continue()
+    })
+    await second.getByRole('button', { name: '发送', exact: true }).filter({ visible: true }).click()
+    await ready
+    await input(first).fill('桌面的唯一首条消息')
+    await input(first).press('Meta+Enter')
+    const state = async () => (await owner.json<AppSnapshot>('snapshot')).agentChats?.[agent.id]
+    await expect.poll(async () => (await state())?.state).toBe('ready')
+    const confirmed = await state()
+    if (confirmed?.state !== 'ready') throw new Error('No confirmed chat')
+    proceed()
+    const continueChat = second.getByRole('button', { name: '带上草稿打开聊天', exact: true })
+    await continueChat.waitFor()
+    expect(await input(second).inputValue()).toBe('手机的未送出草稿')
+    await noHorizontalOverflow(second)
+    await second.screenshot({ path: `${OUT}/second-first-draft-390-dark.png`, animations: 'disabled' })
+    await continueChat.click()
+    await second.locator('.transcript-shell').getByText('桌面的唯一首条消息', { exact: true }).waitFor()
+    const continued = second.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })
+    await expect.poll(() => continued.inputValue()).toBe('手机的未送出草稿')
+    const detail = await owner.json<TaskDetail>(`tasks/${confirmed.sessionId}`)
+    expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual(['桌面的唯一首条消息'])
+    const tasks = (await owner.json<AppSnapshot>('snapshot')).tasks.filter(task => task.agent?.customAgentId === agent.id)
+    expect(tasks.map(task => task.id)).toEqual([confirmed.sessionId])
+    await second.screenshot({ path: `${OUT}/shared-chat-draft-390-dark.png`, animations: 'disabled' })
+  } finally {
+    proceed()
+    await desktop.close()
+    await phone.close()
     await browser.close()
     await host.close()
   }
