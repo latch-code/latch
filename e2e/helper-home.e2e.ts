@@ -8,7 +8,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
 import { stillMotion } from './helpers/visual.ts'
 
 const OUT = 'test-results/helper-home'
@@ -523,6 +523,29 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
           await card.waitFor()
           await shot(page, `manual-task-${width}-${colorScheme}`)
         }
+      await panel.getByRole('button', { name: '关闭资料', exact: true }).click()
+      await page.setViewportSize({ width: 768, height: 1024 })
+      const frame = page.locator('.agent-frame').filter({ visible: true })
+      const scheduleChip = frame.getByRole('button', { name: '1 个定时任务', exact: true })
+      await reachable(scheduleChip)
+      const room = await scheduleChip.locator('.agent-schedule-words').evaluate(element => {
+        const label = element.textContent
+        try {
+          // The Host can hold at most 128 schedules, the widest count the chip needs to show.
+          element.textContent = '128 个定时任务'
+          return element.clientWidth >= element.scrollWidth
+        } finally {
+          element.textContent = label
+        }
+      })
+      expect(room).toBe(true)
+      await noHorizontalOverflow(page, frame)
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme })
+        await shot(page, `schedule-chip-768-${colorScheme}`)
+      }
+      await scheduleChip.click()
+      await card.waitFor()
     }
   } finally {
     await context.close()

@@ -946,11 +946,16 @@
 }
 .work-decision-session.ui-button {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 100%;
+  justify-content: flex-start;
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   padding: 0;
+}
+.work-decision-session-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .work-decision-context > .work-decision-harness {
   margin-left: auto;

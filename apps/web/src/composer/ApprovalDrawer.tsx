@@ -24,7 +24,7 @@ import { useViewport } from '../breakpoints.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { previousState } from '../diff.ts'
 import { argumentView } from '../format.ts'
-import { approvalCommand, diffStat, linesBelow, toolHeading } from '../conversation.ts'
+import { approvalCommand, diffStat, linesBelow, toolHeading, toolHeadingPath } from '../conversation.ts'
 import type { ApprovalGate } from '../core/permissions.ts'
 import { APPROVAL_COPY, APPROVAL_OPTION_LABELS, CONFIRMATION_COPY, RISK_CLAUSE } from '../core/securityCopy.ts'
 import { ArgumentList } from '../components/ArgumentList.tsx'
@@ -360,7 +360,7 @@ function ApprovalPanel({
   const places = useKeyPlaces(card)
   const tool = message?.tool ?? approval.tool
   const toolName = message?.toolName ?? approval.toolName
-  // The tool's own title and its ID are what the approver weighs against each other, so the drawer always shows both.
+  // The tool's own title and ID both remain available to the approver.
   const action = toolHeading(tool, toolName)
   // A command is read whole before it is allowed: the one a shell wrapper carries, uncut, with the wrapper named under
   // it. Only where the call's own heading is that command; an agent's description of it stays as the agent wrote it.
@@ -369,7 +369,16 @@ function ApprovalPanel({
   const command = reported?.reported.startsWith(action.slice(0, 500)) ? reported : undefined
   const what = command?.command ?? action
   const diffs = tool?.diffs ?? approval.tool?.diffs ?? []
-  const file = (diffs.length === 1 ? diffs[0]?.path : tool?.locations?.[0])?.split(/[\\/]/u).at(-1)
+  const path = diffs.length === 1 ? diffs[0]?.path : tool?.locations?.[0]
+  const file = path?.split(/[\\/]/u).at(-1)
+  const headingPath = toolHeadingPath(tool)
+  const fileInHeading =
+    diffs.length === 1
+    && !!path
+    && what === action
+    && (headingPath === path
+      || (!tool?.toolTitle
+        && (tool?.title === path || (toolName === 'write_file' && (tool?.title === `写入 ${path}` || tool?.title === `写入文件 ${path}`)))))
   const heading = requester
     ? `${requester} ${tool?.kind === 'execute' ? '想运行一条命令' : tool?.kind === 'edit' && file ? `想改 ${file}` : `想执行：${action}`}`
     : what
@@ -467,6 +476,23 @@ function ApprovalPanel({
     ...(onStop ? [{ id: '~stop', label: APPROVAL_COPY.stopTurn, onSelect: onStop }] : []),
   ]
   const toolId = presentation && toolName && toolName !== action ? toolName : undefined
+  // A work-scope device receives the location without the diff.
+  const singleWriteTarget =
+    headingPath !== undefined
+    && (tool?.locations?.length ?? 0) <= 1
+    && (fileInHeading || (diffs.length === 0 && tool?.locations?.[0] === headingPath))
+  // A phone can read the known file tool in 更多 when the complete action is visible and the menu is available.
+  const toolInMenu =
+    presentation === 'workbench'
+    && phone
+    && quietReason
+    && offerMore
+    && !running
+    && toolId === 'write_file'
+    && tool?.kind === 'edit'
+    && singleWriteTarget
+    && action === `写入文件 ${headingPath}`
+    && menuItems.length > 0
   // The glyph says what kind of decision this is; any other tool's request takes the mark of waiting.
   const kindIcon = tool?.kind === 'execute' ? TerminalGlyph : tool?.kind === 'edit' || diffs.length > 0 ? EditGlyph : WaitingGlyph
   // One name at every width: a button with its chevron on a desk, a full row that opens a sheet on a phone.
@@ -477,7 +503,14 @@ function ApprovalPanel({
   )
   const moreMenu =
     menuItems.length > 0 ? (
-      <Menu label={APPROVAL_COPY.moreChoices} align="end" side="top" sections={[{ id: 'more', items: menuItems }]} trigger={moreTrigger} />
+      <Menu
+        label={APPROVAL_COPY.moreChoices}
+        align="end"
+        side="top"
+        {...(toolInMenu ? { header: { title: toolId } } : {})}
+        sections={[{ id: 'more', items: menuItems }]}
+        trigger={moreTrigger}
+      />
     ) : null
   const button = (option: ApprovalOption, variant: 'primary' | 'outline', label: string, keys: string[] | undefined): ReactNode => {
     const pressed = busy === option.id
@@ -503,7 +536,7 @@ function ApprovalPanel({
       className="composer-drawer approval-panel"
       data-secure=""
       data-presentation={presentation}
-      data-single-file={diffs.length === 1 && action.endsWith(diffs[0]!.path) ? '' : undefined}
+      data-single-file={fileInHeading ? '' : undefined}
       data-risky={risky ? '' : undefined}
       data-approval-id={approval.id}
       data-risk={approval.advisory ? 'advisory' : approval.risk}
@@ -532,7 +565,7 @@ function ApprovalPanel({
                 {stat.del > 0 && <span className="stat-del"> −{stat.del}</span>}
               </span>
             )}
-            {toolId && (
+            {toolId && !toolInMenu && (
               <code className="workbench-tool-name">
                 <VisibleText text={toolId} />
               </code>

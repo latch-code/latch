@@ -11,9 +11,11 @@ import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.t
 import { homeInput, layoutSwitch, switchLayout } from './helpers/workbench.ts'
 
 const OUT = 'test-results/workbench-scroll'
+const LONG_APPROVAL_TITLE = '发布记录开头与改动来源说明'.repeat(8) + '，保留末尾核对信息'
 const MODEL = { providerId: 'workbench-scroll', model: 'fixture' }
 let browser: Browser
 let host: TestHost
+let waitingSession: string
 
 beforeAll(async () => {
   host = await startTestHost({
@@ -58,6 +60,7 @@ beforeAll(async () => {
       method: 'POST',
       body: { requestId: randomUUID(), prompt, model: MODEL, mode: 'agent' },
     })
+    if (prompt === '为本地发布准备说明') waitingSession = sessionId
     await vi.waitFor(
       async () => {
         expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe(
@@ -187,3 +190,49 @@ it.each(
     await context.close()
   }
 })
+
+it.each(['light', 'dark'] as const)(
+  'shows the start of a long source title and moves the file tool ID into 更多 on a %s phone',
+  async colorScheme => {
+    const owner = await host.enroll({ listener: 'unix' })
+    await owner.json(`tasks/${waitingSession}`, { method: 'PATCH', body: { title: LONG_APPROVAL_TITLE } })
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      reducedMotion: 'reduce',
+      colorScheme,
+    })
+    try {
+      const page = await context.newPage()
+      await enrollBrowser(page, host, { name: '手机决定卡验收', scopes: ['admin'] })
+      await switchLayout(page, 'triage')
+      const card = page.getByRole('region', { name: '等你处理', exact: true }).locator('.approval-panel')
+      const source = card.getByRole('button', { name: LONG_APPROVAL_TITLE, exact: true })
+      await reachable(source)
+      const title = await source.locator('.work-decision-session-title').evaluate(element => {
+        const range = document.createRange()
+        range.setStart(element.firstChild!, 0)
+        range.setEnd(element.firstChild!, 1)
+        return {
+          startsInside: range.getBoundingClientRect().left >= element.getBoundingClientRect().left - 1,
+          shortened: element.scrollWidth > element.clientWidth && getComputedStyle(element).textOverflow === 'ellipsis',
+        }
+      })
+      expect(title).toEqual({ startsInside: true, shortened: true })
+      expect(await card.locator('.approval-object').textContent()).toBe('写入文件 release.md')
+      expect(await card.locator('.diff-file').count()).toBe(0)
+      expect(await card.textContent()).not.toContain('长内容中的每一行都能在队列里查看。')
+      expect(await card.locator('.workbench-tool-name').isVisible()).toBe(false)
+      await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
+      await reachable(card.getByRole('button', { name: '拒绝', exact: true }))
+      await reachable(card.getByRole('button', { name: '允许', exact: true }))
+      await page.screenshot({ path: `${OUT}/phone-decision-${colorScheme}.png`, animations: 'disabled', caret: 'hide' })
+      await card.getByRole('button', { name: '更多', exact: true }).click()
+      const menu = page.getByRole('dialog', { name: '更多', exact: true }).getByRole('menu', { name: '更多：write_file', exact: true })
+      await menu.locator('.ui-menu-header').getByText('write_file', { exact: true }).waitFor()
+      await page.screenshot({ path: `${OUT}/phone-decision-more-${colorScheme}.png`, animations: 'disabled', caret: 'hide' })
+    } finally {
+      await context.close()
+    }
+  },
+)

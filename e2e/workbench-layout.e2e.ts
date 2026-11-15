@@ -576,12 +576,27 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
               if ((layout === 'overview') !== ((await shell.getAttribute('data-inspector')) === 'open'))
                 await page.keyboard.press('Alt+Shift+b')
               await expect.poll(() => shell.getAttribute('data-inspector')).toBe(layout === 'overview' ? 'open' : null)
+              const close = page.locator('.inspector-column .session-panel-strip').getByRole('button', { name: '关闭', exact: true })
               if (layout === 'overview') {
+                const tabs = page.locator('.inspector-column .ui-panel-tab-list')
+                await reachable(close)
+                await reachable(layoutSwitch(page).getByRole('radio', { checked: true }))
+                const [tabsRight, closeRight, switchLeft] = await Promise.all([
+                  tabs.evaluate(element => element.getBoundingClientRect().right),
+                  close.evaluate(element => element.getBoundingClientRect().right),
+                  layoutSwitch(page).evaluate(element => element.getBoundingClientRect().left),
+                ])
+                expect(tabsRight).toBeLessThan(switchLeft)
+                expect(closeRight).toBeLessThan(switchLeft)
                 const changes = page.locator('.session-overview-section').first()
                 expect(await changes.textContent()).toContain('这台设备不能读取项目改动')
                 expect(await changes.locator('.ui-count').count()).toBe(0)
               }
               await capture(page, `${layout}-session`, width, theme)
+              if (layout === 'overview') {
+                await close.click()
+                await expect.poll(() => shell.getAttribute('data-inspector')).toBeNull()
+              }
               await openHome(page)
             }
           }

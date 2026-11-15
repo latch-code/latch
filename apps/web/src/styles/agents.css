@@ -1998,10 +1998,7 @@ button.helper-card:focus-visible {
   }
 }
 
-/*
- * The schedule chip gives way too: a long schedule is cut at the chip's width, shorter on a tablet, so the state word (or
- * 不可用 with 去修复) beside it is never pushed out of the header.
- */
+/* On larger screens the chip shares a single header row. */
 .agent-schedule-chip.ui-button {
   flex: 0 1 auto;
   min-width: 0;
@@ -2019,8 +2016,9 @@ button.helper-card:focus-visible {
  * own buttons.
  */
 @media (max-width: 1023.98px) {
-  .agent-schedule-chip.ui-button {
-    max-width: 112px;
+  .agent-frame:not([data-phone]) .agent-schedule-chip.ui-button {
+    flex: none;
+    max-width: none;
   }
   .agent-frame:not([data-phone], [data-layout='triage']) {
     flex-wrap: wrap;
@@ -2029,15 +2027,14 @@ button.helper-card:focus-visible {
   .agent-frame:not([data-phone], [data-layout='triage']) .agent-frame-who {
     flex: 1 1 200px;
   }
-  .agent-frame:not([data-phone], [data-layout='triage']) .agent-frame-actions {
+  .agent-frame:not([data-phone]) .agent-frame-actions {
     flex: 0 0 auto;
     flex-wrap: wrap;
     max-width: 100%;
     margin-inline-start: 0;
   }
-  /* On its own row nothing is squeezed: the chip is cut only at its cap, and 不可用 is always whole. */
-  .agent-frame:not([data-phone]) .agent-schedule-chip.ui-button {
-    flex-shrink: 0;
+  .agent-frame[data-layout='triage']:not([data-phone]) .agent-frame-actions {
+    justify-content: center;
   }
 }
 .agent-unavailable .ui-hint,

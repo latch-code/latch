@@ -514,6 +514,13 @@ export function toolHeading(tool: Message['tool'], toolName: string | undefined)
   return tool?.title || toolName || '工具调用'
 }
 
+/** The structured file path printed by toolHeading, if its object is a path. */
+export function toolHeadingPath(tool: Message['tool']): string | undefined {
+  if (!tool?.toolTitle || isReview(tool)) return undefined
+  const found = titledObject(tool)
+  return found?.path ? found.object : undefined
+}
+
 /** What a row's edits add and remove, in lines; undefined when it edits nothing. */
 export function diffStat(tool: Message['tool']): { add: number; del: number } | undefined {
   if (!tool?.diffs?.length) return undefined

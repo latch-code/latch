@@ -10,7 +10,7 @@ Vitest 驱动浏览器、Electron 与原生；剪贴板回归用独立命名板�
 | `vitest.config.ts` | 文件依次运行，用例与钩子超时 120 秒 |
 
 `desktop-native.e2e.ts` 检查 Mac 手机配置、系统确认接线、三宽浅深色和样式覆盖；只截无邀请的设置，生成的二维码不截图。
-`workbench-scroll.e2e.ts`、`workbench-keyboard.e2e.ts` 验证三宽的队列、矮窗输入、菜单、键盘和焦点；截图见 TESTING。
+`workbench-scroll.e2e.ts`、`workbench-keyboard.e2e.ts` 验证三宽队列、矮窗输入、审批菜单、键盘和焦点。截图见 TESTING。
 
 `ios-app.e2e.ts` 用临时 DerivedData、固定依赖和禁签名的 iOS Simulator SDK 构建真实 App，检查 Mach-O 产物不含夹具身份；不启动模拟器或访问钥匙串。SDK 编译不能代替运行时布局、平台许可或真机验收。
 
@@ -39,4 +39,4 @@ node 环境；Host、protocol、sdk、testkit、relay、link-client、link-wire�
 
 改动前先读 [docs/TESTING.md](../docs/TESTING.md#浏览器-e2e)「浏览器 e2e」、「视觉截图」与「Electron e2e」。
 
-`helper-home.e2e.ts`：假 ACP，家/默认项/人工任务，三宽深浅与权限失败；跨断点同表单/焦点/未知请求（CUSTOM-AGENTS）。
+`helper-home.e2e.ts`：假 ACP，家/默认项/人工任务，三宽深浅、权限失败与平板定时片；跨断点同表单/焦点/未知请求（CUSTOM-AGENTS）。

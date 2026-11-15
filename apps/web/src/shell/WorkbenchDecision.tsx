@@ -14,7 +14,7 @@ import {
 } from '@latch/ui'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
-import { VisibleText } from '../components/VisibleText.tsx'
+import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
@@ -103,8 +103,15 @@ export function WorkbenchDecision({
       {/* An approval's title already names the helper (「小满 想改 …」): the source line does not say it again. */}
       {!(person && approval) && source}
       {!(resultVerb && !approval && !asked) && (
-        <Button variant="ghost" size="xs" className="work-decision-session" onClick={() => shell.choose(task.id)}>
-          <VisibleText text={sessionTitle} />
+        <Button
+          variant="ghost"
+          size="xs"
+          className="work-decision-session"
+          title={escapeHiddenCharacters(sessionTitle)}
+          onClick={() => shell.choose(task.id)}>
+          <span className="work-decision-session-title">
+            <VisibleText text={sessionTitle} />
+          </span>
         </Button>
       )}
       {harness && !person && (

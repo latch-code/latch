@@ -144,6 +144,8 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 ## 按改动选择回归
 
+`workbench-layout.e2e.ts` 核对侧栏模式下右栏标签与布局开关各自可达。`workbench-scroll.e2e.ts` 验证手机总览来源的长标题从开头显示。工作数据范围的设备能在「更多」查看已知文件工具的原 ID，写入详情只显示路径。`helper-home.e2e.ts` 检查平板定时片可读完整数量且能打开定时页。
+
 外观定制的三个字段、写入权限、审计、基版、恢复默认与目录同步失败后的原请求回执由 `apps/host/test/customization.test.ts` 覆盖。浏览器的启动缓存、预览、安全模式和写入身份隔离见 `apps/web/test/customization.test.ts`，桌面安全模式菜单见 `apps/desktop/test/safe-mode.test.ts`。UI 令牌用例检查允许写入的令牌全部在 `data-secure` 与 `data-lock` 的锁内。`e2e/customization.e2e.ts` 在真实页面更换外观，复查设备、状态与审批区域的计算样式和操作，并验证恢复默认、旧草稿冲突和跨设置与安全模式保留原请求。见 [CUSTOMIZATION.md](CUSTOMIZATION.md)。
 
 命令建议缓存用 `command-cache.test.ts`、`acp.test.ts` 的实际命令报告和 `harness-commands.test.ts` 验证来源、0600/大小界限、重启零额外 CLI、目录与完整启动指纹异步复核、删除/私有化/撤权和 Driver 代次。`e2e/harness-command-cache.e2e.ts` 经正常 UI 验证三宽深浅、项目/Harness 切换、迟到响应、草稿仅插入、命令版本与可见集合失效、30 秒有界刷新、短高视口和缩放。浏览器时钟只推进刷新间隔，HTTP 仍走临时 Host；document 可见性夹具不是 OS 后台验收。当前会话 Slash 的 Chrome/WebKit 回归由 `slash.e2e.ts` 覆盖，包括假 ACP 报告的 `mcp:files:review` 出现在普通 Harness 组、Tab 插入可编辑草稿和原样发送。

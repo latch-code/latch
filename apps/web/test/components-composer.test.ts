@@ -3,6 +3,7 @@ import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Approval, AppSnapshot, HostCatalog, Message, TaskSummary } from '@latch/protocol'
+import { useViewport } from '../src/breakpoints.ts'
 import { workspaceSections } from '../src/components/Pickers.tsx'
 import { Composer } from '../src/composer/Composer.tsx'
 import { SessionFolders } from '../src/shell/SessionEnvironment.tsx'
@@ -14,6 +15,8 @@ import { APPROVAL_COPY, CODE_ROOT_COPY, CONFIRMATION_COPY, CONFIRMATION_RESULT_T
 import { ConfirmationContent } from '../src/components/InlineConfirm.tsx'
 import type { ConfirmationActions, ConfirmationView } from '../src/core/confirmations.ts'
 import { ProjectRow, WorkspacesSettings } from '../src/settings/WorkspacesSettings.tsx'
+
+vi.mock('../src/breakpoints.ts', { spy: true })
 
 const noop = () => {}
 afterEach(() => {
@@ -533,6 +536,90 @@ describe('approval cards', () => {
     expect(html).toMatch(/class="approval-preview"[^>]*data-open=""/u)
     expect(html).not.toContain('approval-see')
     expect(html).toContain(`data-label="${APPROVAL_COPY.hidePreview}"`)
+  })
+
+  it('moves a known phone write ID to 更多 when the workbench shows its complete action and path', () => {
+    const viewport = vi.mocked(useViewport).mockReturnValue('phone')
+    const write = {
+      kind: 'edit',
+      toolTitle: '写入文件',
+      input: JSON.stringify({ path: 'release.md', content: '验收说明' }),
+      diffs: [{ path: 'release.md', newText: '验收说明' }],
+    } satisfies NonNullable<Approval['tool']>
+    const draw = (
+      extra: Partial<Approval> = {},
+      {
+        presentation = 'workbench',
+        busy,
+        status,
+      }: { presentation?: 'workbench' | 'conversation'; busy?: string; status?: ApprovalStatus } = {},
+    ) =>
+      renderToStaticMarkup(
+        createElement(ApprovalDrawer, {
+          presentation,
+          approvals: [
+            approval({
+              reason: '该工具可能修改项目文件或产生外部副作用，需要你确认本次操作。',
+              risk: 'R1',
+              arguments: write.input,
+              tool: write,
+              ...extra,
+            }),
+          ],
+          messages: [],
+          index: 0,
+          onIndex: noop,
+          gateFor: item => approvalActions(item, null),
+          busy: new Map(busy ? [['ap1', busy]] : []),
+          statuses: new Map(status ? [['ap1', status]] : []),
+          onDecide: noop,
+        }),
+      )
+    try {
+      const known = draw()
+      expect(known).toContain('写入文件 release.md')
+      expect(known).toContain('验收说明')
+      expect(known).toContain('<div class="ui-menu-header" aria-hidden="true"><span>write_file</span>')
+      expect(known).not.toContain('class="workbench-tool-name"')
+      expect(known).toContain('data-single-file=""')
+      const legacy = draw({ tool: { kind: 'edit', title: '写入 release.md', diffs: write.diffs } })
+      expect(legacy).toContain('data-single-file=""')
+
+      const workInput = JSON.stringify({ path: 'release.md' })
+      const workTool = {
+        kind: 'edit',
+        toolTitle: '写入文件',
+        title: '写入 release.md',
+        input: workInput,
+        locations: ['release.md'],
+      } satisfies NonNullable<Approval['tool']>
+      const work = draw({ arguments: workInput, tool: workTool })
+      expect(work).toContain('写入文件 release.md')
+      expect(work).toContain('<div class="ui-menu-header" aria-hidden="true"><span>write_file</span>')
+      expect(work).not.toMatch(/workbench-tool-name|data-single-file|diff-file-header/u)
+      const severalPaths = draw({ arguments: workInput, tool: { ...workTool, locations: ['release.md', 'other.md'] } })
+      expect(severalPaths).toContain('<code class="workbench-tool-name">write_file</code>')
+      const severalDiffs = draw({ tool: { ...workTool, diffs: [...write.diffs, { path: 'other.md', newText: '另一个文件' }] } })
+      expect(severalDiffs).toContain('<code class="workbench-tool-name">write_file</code>')
+
+      const risky = draw({ risk: 'R2', reason: '这项请求需要你核对风险。' })
+      expect(risky).toContain('这项请求需要你核对风险。')
+      expect(risky).toContain('<code class="workbench-tool-name">write_file</code>')
+      expect(draw({ toolName: 'other_write' })).toContain('<code class="workbench-tool-name">other_write</code>')
+      const differentPath = draw({ tool: { ...write, locations: ['archive/release.md'] } })
+      expect(differentPath).toContain('<code class="workbench-tool-name">write_file</code>')
+      expect(differentPath).toContain('class="diff-path" title="release.md"')
+      expect(differentPath).not.toContain('data-single-file')
+      const queryOnly = draw({ tool: { ...write, toolTitle: '查找', input: JSON.stringify({ query: 'release.md' }) } })
+      expect(queryOnly).toContain('class="diff-path" title="release.md"')
+      expect(queryOnly).not.toContain('data-single-file')
+      expect(draw({}, { presentation: 'conversation' })).toContain('<code class="workbench-tool-name">write_file</code>')
+      expect(draw({}, { busy: 'allow_once' })).toContain('<code class="workbench-tool-name">write_file</code>')
+      const uncertain = draw({}, { status: { uncertain: { decision: 'allow', optionId: 'allow_once' } } })
+      expect(uncertain).toContain('<code class="workbench-tool-name">write_file</code>')
+    } finally {
+      viewport.mockReset()
+    }
   })
 
   it('takes no press until it has armed, so a click meant for what was there cannot land on it', () => {
