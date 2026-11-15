@@ -1,0 +1,152 @@
+@media (min-width: 768px) {
+  .app-shell[data-entry='sessions'] {
+    --shell-inset: var(--sp-12);
+    background: var(--sidebar);
+  }
+
+  .app-shell[data-entry='sessions']::before {
+    display: block;
+    grid-area: 1 / 2 / -1 / -1;
+    border-radius: var(--r-16);
+    outline: 1px solid var(--line);
+    box-shadow: var(--work-card-shadow);
+    pointer-events: none;
+  }
+
+  .app-shell[data-entry='sessions'][data-workbench-layout='triage']::before {
+    grid-row-start: 2;
+  }
+
+  .app-shell[data-entry='sessions'][data-workbench-layout='triage']:is([data-overview], [data-all-sessions])::before {
+    grid-column-start: 1;
+    margin-inline-start: var(--shell-inset);
+  }
+
+  .app-shell[data-entry='sessions'] > .titlebar {
+    background: transparent;
+  }
+
+  .app-shell[data-entry='sessions']:has(> .settings-overlay[open]) > .titlebar {
+    background: var(--canvas);
+  }
+
+  .app-shell[data-entry='sessions'] .titlebar-views {
+    margin-block-start: 0;
+  }
+
+  .app-shell[data-entry='sessions'] .titlebar-views .layout-switch-space {
+    inline-size: calc(76px + var(--sp-12));
+  }
+
+  /* The top navigation contributes its own gap before the reserved switch slot. */
+  .app-shell[data-entry='sessions'] > .workbench-nav {
+    padding-inline-end: var(--sp-4);
+  }
+
+  .app-shell[data-entry='sessions'] .workspace .topbar {
+    background: transparent;
+  }
+
+  .app-shell[data-entry='sessions'] .workbench-sessions {
+    background: transparent;
+  }
+
+  .app-shell[data-entry='sessions'][data-overview] > .code-home {
+    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) var(--panel-start);
+    border-radius: var(--r-16);
+  }
+
+  .app-shell[data-entry='sessions'][data-workbench-layout='triage'][data-overview] > .code-home {
+    margin-inline-start: var(--shell-inset);
+  }
+
+  .app-shell[data-entry='sessions'][data-terminal-dock] .workspace {
+    padding-block-end: 0;
+  }
+
+  .app-shell[data-entry='sessions'][data-inspector='open'] .workspace {
+    padding-inline-end: 0;
+  }
+
+  .app-shell[data-entry='sessions'] > .terminal-dock {
+    margin-inline-start: var(--panel-start);
+    margin-inline-end: var(--shell-inset);
+    margin-block-end: var(--shell-inset);
+    border-end-end-radius: var(--r-16);
+    border-end-start-radius: var(--r-16);
+  }
+
+  .app-shell[data-entry='sessions'][data-workbench-layout='triage'][data-overview] > .terminal-dock {
+    margin-inline-start: var(--shell-inset);
+  }
+
+  .app-shell[data-entry='sessions'][data-inspector='open'] > .terminal-dock {
+    margin-inline-end: 0;
+    border-end-end-radius: 0;
+  }
+
+  .app-shell[data-entry='sessions'] > .terminal-dock > .terminal-panel {
+    border-radius: inherit;
+  }
+}
+
+@media (min-width: 1024px) and (min-height: 480px) {
+  .app-shell[data-entry='sessions'][data-workbench-layout='triage'] .code-home:has(.work-overview) {
+    padding-block-end: var(--sp-16);
+  }
+
+  .app-shell[data-entry='sessions']
+    .work-overview[data-code-work]
+    > .work-overview-groups:has(> [data-group='running'][data-empty]):has(> [data-group='delivery'][data-empty]) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: minmax(0, max-content) auto auto;
+    align-content: start;
+    gap: var(--sp-20) var(--sp-32);
+  }
+
+  .app-shell[data-entry='sessions']
+    .work-overview[data-code-work]
+    > .work-overview-groups:has(> [data-group='running'][data-empty]):has(> [data-group='delivery'][data-empty])
+    > [data-group='attention'] {
+    grid-area: 1 / 1 / 2 / -1;
+  }
+
+  .app-shell[data-entry='sessions']
+    .work-overview[data-code-work]
+    > .work-overview-groups:has(> [data-group='running'][data-empty]):has(> [data-group='delivery'][data-empty])
+    > [data-group='running'] {
+    grid-area: 2 / 1;
+  }
+
+  .app-shell[data-entry='sessions']
+    .work-overview[data-code-work]
+    > .work-overview-groups:has(> [data-group='running'][data-empty]):has(> [data-group='delivery'][data-empty])
+    > [data-group='delivery'] {
+    grid-area: 2 / 2;
+  }
+
+  .app-shell[data-entry='sessions']
+    .work-overview[data-code-work]
+    > .work-overview-groups:has(> [data-group='running'][data-empty]):has(> [data-group='delivery'][data-empty])
+    > .work-overview-recent {
+    grid-area: 3 / 1 / 4 / -1;
+  }
+
+  .app-shell[data-entry='sessions']
+    .work-overview[data-code-work]
+    > .work-overview-groups:has(> [data-group='running'][data-empty]):has(> [data-group='delivery'][data-empty])
+    > :is([data-group='running'], [data-group='delivery']) {
+    padding: var(--sp-12) 0 0;
+    border: 0;
+    border-block-start: 1px solid var(--line);
+  }
+
+  .app-shell[data-entry='sessions']
+    .work-overview[data-code-work]
+    > .work-overview-groups:has(> [data-group='running'][data-empty]):has(> [data-group='delivery'][data-empty])
+    > [data-empty]
+    > .work-overview-group-heading {
+    min-height: 0;
+    margin-block-end: var(--sp-6);
+  }
+}

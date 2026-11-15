@@ -306,6 +306,7 @@ export function FirstSetup({
         <header>
           <BrandMark size={32} />
           <h1>准备这台电脑</h1>
+          <p>会话记录保存在这台电脑。</p>
         </header>
         <Group title="Harness 和模型">
           {agents.map(item => (

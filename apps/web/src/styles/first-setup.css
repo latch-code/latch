@@ -26,6 +26,13 @@
   font-weight: 600;
 }
 
+.first-setup-content > header p {
+  margin: 0;
+  max-width: 36ch;
+  color: var(--muted);
+  line-height: var(--lh-ui-para);
+}
+
 .first-setup-group {
   display: grid;
   grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
@@ -103,6 +110,53 @@
 
 .first-setup-actions > :not(button) {
   flex-basis: 100%;
+}
+
+@media (min-width: 768px) {
+  .first-setup.ui-modal-page {
+    padding: var(--sp-12);
+    background: var(--work-sunken);
+  }
+
+  .first-setup.ui-modal-page > .ui-modal-surface {
+    border-radius: var(--r-16);
+    box-shadow: var(--work-card-shadow);
+  }
+}
+
+@media (min-width: 1024px) {
+  .first-setup-content {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.5fr);
+    column-gap: var(--sp-64);
+    max-inline-size: 960px;
+  }
+
+  .first-setup-content > header {
+    grid-row: 1 / 5;
+    align-self: start;
+  }
+
+  .first-setup-group,
+  .first-setup-actions {
+    grid-column: 2;
+  }
+
+  .first-setup-group {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-12);
+  }
+
+  .first-setup-group:first-of-type {
+    padding-block-start: 0;
+    border-block-start: 0;
+  }
+
+  .first-setup-group > h2 {
+    margin: 0;
+    color: var(--ink);
+    font-weight: 600;
+  }
 }
 
 @media (max-width: 599px) {
