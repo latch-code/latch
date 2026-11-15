@@ -215,7 +215,7 @@ private struct NewTopicView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { AgentFrameItems(frame: frame, topic: .null, shown: nil) }
-        .safeAreaInset(edge: waiting.isEmpty ? .top : .bottom, spacing: 0) { dock.frame(maxWidth: 760).frame(maxWidth: .infinity) }
+        .safeAreaInset(edge: .bottom, spacing: 0) { dock.frame(maxWidth: 760).frame(maxWidth: .infinity) }
         .task(id: frame.owner + "\(agent["revision"].integer ?? 0)") {
             choice = general ? PhoneAgentChat.generalChoice(catalog) : PhoneAgents.choice(catalog, agent: agent)
         }
