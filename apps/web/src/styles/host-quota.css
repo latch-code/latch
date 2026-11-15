@@ -1,6 +1,7 @@
 .host-quota-trigger {
   flex-shrink: 0;
   -webkit-app-region: no-drag;
+  -webkit-tap-highlight-color: transparent;
 }
 .host-quota-trigger:not(.phone-tab) {
   display: inline-flex;

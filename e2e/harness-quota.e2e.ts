@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
-import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
 
@@ -309,8 +309,6 @@ describe('a Harness’s limits beside its control', () => {
             await control.focus()
             await control.press('Enter')
             await panel.getByRole('button', { name: '关闭额度' }).waitFor()
-            await page.keyboard.press('Tab')
-            expect(await panel.isVisible()).toBe(true)
           }
           const codex = panel.getByRole('region', { name: 'Codex', exact: true })
           const claude = panel.getByRole('region', { name: 'Claude Agent', exact: true })
@@ -324,8 +322,19 @@ describe('a Harness’s limits beside its control', () => {
           await page.screenshot({ path: `${OUTPUT}/host-panel--${width}-${theme}.png`, animations: 'disabled' })
           if (phone) {
             expect(await panel.evaluate(element => element.tagName)).toBe('DIALOG')
+            const underSheet = await control.evaluate(element => {
+              const box = element.getBoundingClientRect()
+              const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+              return {
+                sheetTakesTap: Boolean(hit?.closest('.ui-sheet:modal')),
+                nativeHighlight: getComputedStyle(element).getPropertyValue('-webkit-tap-highlight-color'),
+              }
+            })
+            expect(underSheet).toEqual({ sheetTakesTap: true, nativeHighlight: 'rgba(0, 0, 0, 0)' })
             await panel.getByRole('button', { name: '关闭', exact: true }).tap()
           } else {
+            await page.keyboard.press('Tab')
+            expect(await panel.isVisible()).toBe(true)
             await page.keyboard.press('Escape')
           }
           await panel.waitFor({ state: 'hidden' })
@@ -380,6 +389,18 @@ describe('a Harness’s limits beside its control', () => {
 
       await context.setOffline(false)
       await page.clock.setSystemTime(Date.now())
+      await page.reload()
+      await connected(page)
+      await control.focus()
+      await control.press('Enter')
+      await panel.getByText('已用 68%', { exact: true }).waitFor()
+
+      const id = await page.evaluate(async () => (await (await fetch('/link/api/snapshot')).json()).device.id as string)
+      await owner.json(`devices/${id}`, { method: 'PATCH', body: { scopes: ['view', 'run'] } })
+      await panel.waitFor({ state: 'hidden' })
+      await control.focus()
+      await control.press('Enter')
+      await panel.getByText('已用 68%', { exact: true }).waitFor()
       await enrollBrowser(page, nextHost, { scopes: ['view', 'run', 'admin'] })
       await panel.waitFor({ state: 'hidden' })
       await control.focus()
