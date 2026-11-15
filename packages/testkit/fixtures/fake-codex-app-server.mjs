@@ -421,6 +421,16 @@ async function play(text) {
     const b = announceMember(`child-${randomUUID()}`, 'Maple', thread.id, false)
     const c = provider ? announceMember(`child-${randomUUID()}`, 'Pine') : undefined
     const assignments = [[a, '检查窄屏'], [b, '核对回执'], ...(c ? [[c, '检查模型授权']] : [])]
+    const memberApproval = () =>
+      ask('item/commandExecution/requestApproval', {
+        threadId: b.id,
+        turnId: memberTurn(b),
+        itemId: 'team-command',
+        command: 'ls -la',
+        cwd: thread.cwd,
+      })
+    const earlyApproval = env.FAKE_CODEX_TEAM_EARLY_APPROVAL === '1' ? memberApproval() : undefined
+    if (earlyApproval) await sleep(150)
     for (const [member, prompt] of assignments) {
       const event = {
         threadId: source,
@@ -487,13 +497,7 @@ async function play(text) {
       command: 'pwd',
     })
     log('answered', { method: 'foreign-team-approval', answer: rejected })
-    const answer = await ask('item/commandExecution/requestApproval', {
-      threadId: b.id,
-      turnId: `turn-${b.id}`,
-      itemId: 'team-command',
-      command: 'ls -la',
-      cwd: thread.cwd,
-    })
+    const answer = await (earlyApproval ?? memberApproval())
     finishMember(a, '已核对手机布局', 'completed')
     if (env.FAKE_CODEX_TEAM_SETTLE_MS && answer?.decision === 'accept') {
       const call = { type: 'commandExecution', id: 'team-command', command: 'ls -la', cwd: thread.cwd, status: 'inProgress' }

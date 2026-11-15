@@ -1241,6 +1241,19 @@ describe('Codex over its app-server', () => {
     expect(sent(log, 'turn/start')).toHaveLength(3)
   })
 
+  it('links a native Team approval that arrived before its parent finished spawning the member', async () => {
+    const t = await computer({ FAKE_CODEX_TEAM_EARLY_APPROVAL: '1' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'team 真实委派')
+    const early = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+    expect(early.approvals[0]?.subagentId).toBeUndefined()
+    const later = await until(bridge, id, detail => detail.messages.filter(message => message.subagent?.team).length === 2)
+    const maple = later.messages.find(message => message.subagent?.title === 'Maple')
+    expect(later.approvals[0]).toMatchObject({ id: early.approvals[0]?.id, subagent: 'Maple', subagentId: maple?.id })
+    await bridge.decide(later.approvals[0]!.id, 'reject')
+    await settled(bridge, id)
+  })
+
   it('recognizes native Team v2 activity and rejects a delayed earlier member turn', async () => {
     const t = await computer({ FAKE_CODEX_TEAM: 'v2' })
     const bridge = await t.open()

@@ -3160,7 +3160,14 @@ export class AgentRuntime implements Bridge {
   }
 
   private openApprovals(taskId: string): Approval[] {
-    return [...this.permissions.values()].filter(item => item.taskId === taskId && !item.claimed).map(item => item.approval)
+    const task = this.state.tasks[taskId]
+    return [...this.permissions.values()]
+      .filter(item => item.taskId === taskId && !item.claimed)
+      .map(({ approval, child }) => {
+        const row = task && child ? this.childRow(task, child) : undefined
+        // A member can ask before its parent reports the spawn. Link it once the same row has both facts.
+        return row?.subagent?.team ? { ...approval, subagent: row.subagent.title, subagentId: row.id } : approval
+      })
   }
 
   /** Whether a session started with this context gets `propose_memory`: only where the Host takes proposals. */
@@ -6716,9 +6723,7 @@ export class AgentRuntime implements Bridge {
       sessionId: taskId,
       toolName: toolLabel(state),
       // A subagent's call is no row of the session's own, so nothing links to it there.
-      ...(child
-        ? { subagent: row?.subagent?.title ?? child.title, ...(row?.subagent?.team ? { subagentId: row.id } : {}) }
-        : { toolCallId: state.id.slice('tool:'.length) }),
+      ...(child ? { subagent: row?.subagent?.title ?? child.title } : { toolCallId: state.id.slice('tool:'.length) }),
       reason: clip(state.title || `${this.agent.name} 请求执行一项操作`, 1000),
       ...(state.rawInput !== undefined ? { arguments: clip(pretty(state.rawInput), TOOL_TEXT_LIMIT) } : {}),
       requestedAt: this.now(),
