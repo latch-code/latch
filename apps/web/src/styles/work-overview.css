@@ -52,6 +52,131 @@
   min-width: 0;
 }
 
+.work-overview-review {
+  container: review-queue / inline-size;
+}
+
+.work-overview-review-detail {
+  min-inline-size: 0;
+}
+
+.work-overview-review[data-multiple] .work-overview-review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+}
+
+.work-overview-review-list {
+  min-inline-size: 0;
+  border-block-start: 1px solid var(--line);
+}
+
+.work-overview-review-items {
+  max-block-size: min(48dvh, 360px);
+  overflow: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  margin: 0;
+  padding: var(--sp-2);
+  list-style: none;
+}
+
+.work-overview-review-items > li + li {
+  margin-block-start: var(--sp-2);
+}
+
+.work-overview-review-row.ui-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sp-4) var(--sp-8);
+  align-items: center;
+  min-block-size: 52px;
+  inline-size: 100%;
+  block-size: auto;
+  padding: var(--sp-8);
+  text-align: start;
+  white-space: normal;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.work-overview-review-row[aria-current='true'] {
+  background: var(--selected);
+  box-shadow: var(--selected-ring);
+}
+
+.work-overview-review-row.ui-button:active {
+  background: var(--press);
+}
+
+.work-overview-review-title {
+  grid-column: 1;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.work-overview-review-source {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1;
+  gap: var(--sp-2) var(--sp-6);
+  align-items: center;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.work-overview-review-context {
+  margin: 0;
+  padding: var(--sp-6) var(--sp-8) var(--sp-8);
+}
+
+.work-overview-review-row > .ui-icon {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  color: var(--muted);
+}
+
+.work-overview-review-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: var(--sp-4);
+  min-block-size: 28px;
+  border-block-start: 1px solid var(--line);
+  padding-block-start: var(--sp-4);
+}
+
+.work-overview-review-nav > .ui-button[aria-controls] {
+  margin-inline-end: auto;
+}
+
+@media (pointer: coarse) {
+  .work-overview-review-nav > .ui-button {
+    min-block-size: 44px;
+  }
+}
+
+@container review-queue (min-width: 640px) {
+  .work-overview-review[data-multiple] .work-overview-review-layout {
+    grid-template-columns: minmax(180px, 0.84fr) minmax(0, 1.65fr);
+    align-items: start;
+  }
+
+  .work-overview-review-list {
+    grid-area: 1 / 1;
+    border-block-start: 0;
+    border-inline-end: 1px solid var(--line);
+    padding-inline-end: var(--sp-8);
+  }
+
+  .work-overview-review-detail {
+    grid-area: 1 / 2;
+  }
+}
+
 .work-overview-recent {
   min-width: 0;
   border-block-start: 1px solid var(--line);

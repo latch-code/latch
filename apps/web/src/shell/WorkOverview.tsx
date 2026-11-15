@@ -28,7 +28,7 @@ import { runClock, runElapsed } from '../conversation.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
 import { recentCodeWork, workGroups, workStatus, type WorkGroupId } from './workOverview.ts'
-import { WorkbenchDecision } from './WorkbenchDecision.tsx'
+import { WorkbenchReviewQueue } from './WorkbenchReviewQueue.tsx'
 import {
   deliveryChecks,
   deliverySessions,
@@ -232,12 +232,7 @@ export function WorkOverview({
   const codeHome = !compact && shell !== undefined
   const recent = codeHome ? recentCodeWork(snapshot.tasks, groups) : []
   const [lane, setLane] = useState<WorkGroupId>('attention')
-  const [opened, setOpened] = useState<string>()
   const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<WorkGroupId>>(new Set())
-  const attention = groups[0].tasks
-  const attentionPreview = attention.slice(0, 5)
-  const visibleAttention = expandedGroups.has('attention') ? attention : attentionPreview
-  const activeDecision = visibleAttention.some(task => task.id === opened) ? opened : visibleAttention[0]?.id
   const connected = connection === 'connected'
   const deliveryNotice =
     snapshot.device.dataScope !== 'all'
@@ -334,6 +329,8 @@ export function WorkOverview({
                   </Button>
                 )}
               </p>
+            ) : !compact && group.id === 'attention' && shell ? (
+              <WorkbenchReviewQueue tasks={group.tasks} shell={shell} layout={layout} />
             ) : (
               <ul className="work-overview-list">
                 {(compact || expandedGroups.has(group.id) ? group.tasks : group.tasks.slice(0, group.id === 'delivery' ? 2 : 5)).map(
@@ -353,16 +350,7 @@ export function WorkOverview({
                     const branch = task.branch && escapeSecurityText(task.branch)
                     return (
                       <li key={task.id}>
-                        {!compact && group.id === 'attention' && shell ? (
-                          <WorkbenchDecision
-                            task={task}
-                            shell={shell}
-                            emphasis={task.id === activeDecision}
-                            expanded={task.id === activeDecision}
-                            onExpand={() => setOpened(task.id)}
-                            firstKeys={layout === 'triage' && task.id === attention[0]?.id}
-                          />
-                        ) : !compact && group.id === 'delivery' && evidence?.entries.get(task.id) ? (
+                        {!compact && group.id === 'delivery' && evidence?.entries.get(task.id) ? (
                           <DeliveryRow
                             task={task}
                             entry={evidence.entries.get(task.id)!}
@@ -414,13 +402,11 @@ export function WorkOverview({
                 )}
               </ul>
             )}
-            {!compact && group.tasks.length > (group.id === 'delivery' ? 2 : 5) && (
+            {!compact && !(group.id === 'attention' && shell) && group.tasks.length > (group.id === 'delivery' ? 2 : 5) && (
               <Button
                 variant="ghost"
                 className="work-overview-more"
                 onClick={() => {
-                  if (group.id === 'attention' && expandedGroups.has('attention') && !attentionPreview.some(task => task.id === opened))
-                    setOpened(undefined)
                   setExpandedGroups(previous => {
                     const next = new Set(previous)
                     if (next.has(group.id)) next.delete(group.id)

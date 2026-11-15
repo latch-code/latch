@@ -483,10 +483,10 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             const home = page.locator('.workbench-home')
             await reachable(home.locator(`[data-work-session="${waiting.summary.id}"]`))
             // A failure is titled by what the person does, the verb then the session; the bare word 失败 is not its title.
-            expect(await home.locator(`[data-work-session="${failed.summary.id}"] .work-decision-verb`).first().textContent()).toMatch(
+            expect(await home.locator(`[data-request-session="${failed.summary.id}"] .work-decision-verb`).first().textContent()).toMatch(
               /^(重试|查看)$/u,
             )
-            expect(await home.locator(`[data-work-session="${failed.summary.id}"] strong`).allTextContents()).not.toContain('失败')
+            expect(await home.locator(`[data-request-session="${failed.summary.id}"] strong`).allTextContents()).not.toContain('失败')
             if (width === 1440) {
               // The risk line stays one row: the red reason, the short fact and its ⓘ.
               const clause = home.locator('.approval-clause').first()

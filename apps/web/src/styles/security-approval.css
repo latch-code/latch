@@ -146,7 +146,7 @@
   background: var(--work-raised) !important;
 }
 @container work-decision (min-width: 500px) {
-  .code-home-queue .approval-panel[data-document-review] {
+  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] {
     grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
     grid-template-areas:
       'request material'
@@ -154,20 +154,20 @@
       'buttons material';
     align-items: start;
   }
-  .code-home-queue .approval-panel[data-document-review] .approval-what {
+  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] .approval-what {
     grid-area: request;
   }
-  .code-home-queue .approval-panel[data-document-review] .approval-meta {
+  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] .approval-meta {
     padding-inline-start: 0;
   }
-  .code-home-queue .approval-panel[data-document-review] .approval-notes {
+  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] .approval-notes {
     grid-area: notes;
     padding-inline-start: 0;
   }
-  .code-home-queue .approval-panel[data-document-review] .approval-preview {
+  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] .approval-preview {
     grid-area: material;
   }
-  .code-home-queue .approval-panel[data-document-review] .approval-buttons {
+  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] .approval-buttons {
     grid-area: buttons;
     flex-wrap: wrap;
     justify-content: start;

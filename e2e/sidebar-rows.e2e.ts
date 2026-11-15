@@ -182,10 +182,10 @@ describe('sidebar rows', () => {
       const waiting = page.locator('.workbench-home .work-overview-group[data-group="attention"]')
       expect(
         await waiting
-          .locator('[data-work-session]')
-          .evaluateAll(rows => rows.map(item => item.getAttribute('data-work-session')).toSorted()),
+          .locator('[data-request-session]')
+          .evaluateAll(rows => rows.map(item => item.getAttribute('data-request-session')).toSorted()),
       ).toEqual(['approval', 'asking', 'failed'])
-      expect(await waiting.locator('[data-work-session="asking"]').textContent()).toContain('2 个问题')
+      expect(await waiting.locator('[data-request-session="asking"]').textContent()).toContain('2 个问题')
       expect(await waiting.innerText()).not.toContain('secret-place')
       expect(await row(page, 'approval').locator('.session-item-main').ariaSnapshot()).toContain('等你处理')
       expect(await row(page, 'asking').locator('.session-item-main').ariaSnapshot()).toContain('等你处理')

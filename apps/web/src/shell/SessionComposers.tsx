@@ -439,6 +439,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
           busy={approvalBusy}
           statuses={statuses}
           onDecide={onDecide}
+          canRetry={shell.canRetryApproval}
           rejectLabel={noteComposer?.rejectLabel}
           {...(run ? { onStop: run.onCancel } : {})}
         />

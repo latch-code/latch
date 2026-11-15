@@ -1,4 +1,5 @@
 import type { TaskSummary } from '@latch/protocol'
+import { sessionReadOnly } from '../core/permissions.ts'
 import { activityWords, rowStatus, runningWords, silentWords, spaceOf, waitKind, waitsOnYou, type Space } from '../sessions.ts'
 
 export type WorkGroupId = 'attention' | 'running' | 'delivery'
@@ -18,7 +19,7 @@ function latestWorkFirst(a: TaskSummary, b: TaskSummary): number {
 export function recentCodeWork(tasks: readonly TaskSummary[], groups: readonly WorkGroup[]): TaskSummary[] {
   const listed = new Set(groups.flatMap(group => group.tasks.map(task => task.id)))
   return tasks
-    .filter(task => task.status === 'idle' && !task.archived && spaceOf(task) === 'code' && !listed.has(task.id))
+    .filter(task => task.status === 'idle' && !task.archived && !sessionReadOnly(task) && spaceOf(task) === 'code' && !listed.has(task.id))
     .toSorted(latestWorkFirst)
     .slice(0, 3)
 }

@@ -10,7 +10,11 @@ export function cardTakesKeys(card: HTMLElement | null, target?: EventTarget | n
   const active = target instanceof Element ? target : document.activeElement
   if (document.querySelector('dialog:modal') && !active?.closest('dialog:modal')?.contains(card)) return false
   // A workbench's first card can offer page keys, but another card with focus owns its own choices.
-  return !(target instanceof Element && target.closest('.work-decision, .approval-panel, .question-card') && !card.contains(target))
+  return !(
+    target instanceof Element
+    && target.closest('.work-decision, .approval-panel, .question-card, [data-work-decision-navigation]')
+    && !card.contains(target)
+  )
 }
 
 /** Counts each time the conversation comes back into view (from under a page, from a hidden tab). */

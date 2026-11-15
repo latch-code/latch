@@ -32,8 +32,10 @@ it('offers the latest idle Code sessions once, alongside their real work states'
   const tasks = [
     task('older'),
     task('ready', { updatedAt: '2026-11-13T04:00:00Z' }),
-    task('normal', { updatedAt: '2026-11-13T02:00:00Z' }),
+    task('private', { updatedAt: '2026-11-13T02:00:00Z', agentPrivate: true }),
     task('recent', { updatedAt: '2026-11-13T03:00:00Z' }),
+    task('legacy', { updatedAt: '2026-11-13T05:00:00Z', personal: { assistantId: 'legacy-agent' } }),
+    task('removed', { updatedAt: '2026-11-13T06:00:00Z', worktree: { branch: 'old-branch', removed: true } }),
     task('oldest', { updatedAt: '2026-11-12T23:00:00Z' }),
     task('running', { status: 'running' }),
     task('approval', { status: 'waiting-approval' }),
@@ -44,7 +46,7 @@ it('offers the latest idle Code sessions once, alongside their real work states'
   ]
   expect(recentCodeWork(tasks, workGroups(tasks, undefined, new Set(['ready']))).map(task => task.id)).toEqual([
     'recent',
-    'normal',
+    'private',
     'older',
   ])
 })

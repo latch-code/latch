@@ -377,7 +377,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
         await page.mouse.wheel(0, 600)
         await expect.poll(() => attention.evaluate(element => element.scrollTop)).toBeGreaterThan(start)
         if ((await more.textContent()) === '还有 3 件') await more.click()
-        const last = attention.locator('.work-overview-list > li').last().getByRole('button').first()
+        const last = attention.getByRole('list', { name: '待处理会话', exact: true }).getByRole('listitem').last().getByRole('button')
         await reachable(last)
         await reachable(home.getByRole('button', { name: 'desktop.txt', exact: true }))
         await settleShell(page)
