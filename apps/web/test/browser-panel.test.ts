@@ -69,10 +69,9 @@ describe('the 浏览器 tab is only where the desktop app can keep tabs for a se
     expect(shellBrowser()).toBeNull()
   })
 
-  it('has a launcher row with B after 终端, and ⇧⌘B only in the desktop app', () => {
-    expect(launcherRows({ changes: true, terminal: true, browser: true, delivery: true }).map(row => [row.label, row.letter])).toEqual([
+  it('has a launcher row with B, and ⇧⌘B only in the desktop app', () => {
+    expect(launcherRows({ changes: true, browser: true, delivery: true }).map(row => [row.label, row.letter])).toEqual([
       ['改动', 'D'],
-      ['终端', 'T'],
       ['浏览器', 'B'],
       ['交付', undefined],
     ])

@@ -1,4 +1,4 @@
-import { Button, Dialog, Sheet } from '@latch/ui'
+import { Button, Sheet } from '@latch/ui'
 import { SessionPanels } from '../components/SessionPanels.tsx'
 import { fileContextKey } from '../preview/fileContext.ts'
 import { errorMessage } from '../core/api.ts'
@@ -7,14 +7,17 @@ import { liveFolder } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** A new project's files stay apart from the conversation still being read under Home. */
-export function DraftFilePanel({ shell }: { shell: ShellState }) {
+export function DraftFilePanel({ shell, inline = false }: { shell: ShellState; inline?: boolean }) {
   const { draftFileContext: context, draftFileTabs: tabs, draftFilesOpen: open, setDraftFilesOpen } = shell
   if (!context || context.kind !== 'workspace') return null
   const workspace = shell.catalog?.workspaces.find(item => item.id === context.workspaceId)
   const folders = shell.access.local && shell.access.admin ? shellFolders() : null
   const canCompose =
     shell.inputId === null && shell.homeComposerState.gate.kind === 'open' && !shell.submission.pending && !shell.submission.sending
-  const onClose = () => setDraftFilesOpen(false)
+  const onClose = () => {
+    setDraftFilesOpen(false)
+    if (inline) requestAnimationFrame(() => shell.panelToggle.current?.focus({ preventScroll: true }))
+  }
   const content = open ? (
     <SessionPanels
       key={fileContextKey(context)}
@@ -26,6 +29,7 @@ export function DraftFilePanel({ shell }: { shell: ShellState }) {
       onSearchFiles={shell.searchFiles}
       showFiles
       files={tabs.tabs}
+      {...(inline ? { onClose } : {})}
       activeFile={tabs.active}
       onSurface={surface => tabs.select(surface.kind === 'file' ? surface.id : undefined)}
       onCloseFile={id => tabs.close(id)}
@@ -61,7 +65,8 @@ export function DraftFilePanel({ shell }: { shell: ShellState }) {
       deviceId={shell.snapshot.device.id}
     />
   ) : null
-  return shell.phone ? (
+  if (inline) return content
+  return (
     <Sheet
       open={open}
       onClose={onClose}
@@ -76,9 +81,5 @@ export function DraftFilePanel({ shell }: { shell: ShellState }) {
       className="draft-file-panel">
       {content}
     </Sheet>
-  ) : (
-    <Dialog open={open} onClose={onClose} title="项目文件" subtitle={workspace?.name} size="wide" className="draft-file-panel">
-      {content}
-    </Dialog>
   )
 }

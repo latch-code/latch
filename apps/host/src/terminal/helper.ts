@@ -15,8 +15,9 @@ export interface TerminalLaunch {
   argv: string[]
   /** The shell's whole environment. */
   env: Record<string, string>
-  /** Where the shell starts; the helper opens it before the shell runs. */
+  /** The selected directory and its pinned descriptor. Spawn inherits it as fd 4. */
   cwd: string
+  cwdFd: number
   cols: number
   rows: number
 }
@@ -76,11 +77,19 @@ export function helperLauncher(binary: string): LaunchTerminal {
     const start = encodeFrame(
       TO_HELPER.start,
       Buffer.from(
-        JSON.stringify({ file: launch.file, argv: launch.argv, env: launch.env, cwd: launch.cwd, cols: launch.cols, rows: launch.rows }),
+        JSON.stringify({
+          file: launch.file,
+          argv: launch.argv,
+          env: launch.env,
+          cwd: launch.cwd,
+          pinnedCwd: true,
+          cols: launch.cols,
+          rows: launch.rows,
+        }),
       ),
     )
     // Fd 3 carries resize and signal frames, so input a program does not read cannot hold them back.
-    const child = spawn(binary, [], { env: {}, stdio: ['pipe', 'pipe', 'ignore', 'pipe'] })
+    const child = spawn(binary, [], { env: {}, stdio: ['pipe', 'pipe', 'ignore', 'pipe', launch.cwdFd] })
     const { stdin, stdout } = child
     const control = child.stdio[3]
     if (!stdin || !stdout || !(control instanceof Writable)) throw new TypeError('No pipes for the terminal helper')

@@ -37,6 +37,36 @@ const pointer = (type: string, x: number, init: PointerEventInit = {}) =>
   new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, clientX: x, clientY: 100, button: 0, ...init })
 
 describe('resize handle', () => {
+  it('resizes a bottom pane with the vertical arrows', async () => {
+    const onResize = vi.fn()
+    const onReset = vi.fn()
+    const screen = await render(
+      <ResizeHandle
+        label="调整终端高度"
+        orientation="horizontal"
+        edge="start"
+        value={220}
+        min={140}
+        max={520}
+        onResize={onResize}
+        onReset={onReset}
+      />,
+    )
+    const handle = screen.getByRole('separator', { name: '调整终端高度' })
+    await expect.element(handle).toHaveAttribute('aria-orientation', 'horizontal')
+    expect(getComputedStyle(handle.element()).cursor).toBe('row-resize')
+    await userEvent.tab()
+    await userEvent.keyboard('{ArrowUp}{Shift>}{ArrowDown}{/Shift}{Home}{End}')
+    expect(onResize.mock.calls).toEqual([
+      [228, 'commit'],
+      [188, 'commit'],
+      [140, 'commit'],
+      [520, 'commit'],
+    ])
+    await userEvent.keyboard('{Enter}')
+    expect(onReset).toHaveBeenCalledOnce()
+  })
+
   it('is a named vertical separator that the arrows, Home, End and Enter drive', async () => {
     const screen = await render(<Column />)
     const handle = screen.getByRole('separator', { name: '调整侧栏宽度' })

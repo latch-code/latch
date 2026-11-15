@@ -1,11 +1,11 @@
 // The terminal routes in a real Host, with a stand-in for latch-pty; the last case runs the real one on /bin/sh.
-import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { TerminalStreamEvents, TerminalSummary, TerminalText } from '@latch/protocol'
+import type { TerminalStreamEvents, TerminalSummary, TerminalText, WorkspaceInfo } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import type { TestDevice } from '@latch/testkit'
 import { buildTerminalHelper } from '../scripts/build-terminal.ts'
@@ -115,6 +115,89 @@ const features = async (device: TestDevice) =>
   (await device.json<{ catalog: { features: { terminal?: boolean } } }>('snapshot')).catalog.features.terminal
 
 describe('terminal routes', () => {
+  it('opens the chosen project and the default workspace without a session', async () => {
+    const folder = await realpath(await mkdtemp(join(tmpdir(), 'latch-terminal-project-')))
+    cleanups.push(() => rm(folder, { force: true, recursive: true }))
+    const { t, desktop, launched } = await hostWithTerminals()
+    const created = await desktop.addFolders({ paths: [folder] })
+    expect(created.status).toBe(201)
+    const { workspace } = (await created.json()) as { workspace: WorkspaceInfo }
+    const append = vi.spyOn(t.host.security.audit, 'append')
+    const open = async (workspaceId: string) => {
+      const response = await desktop.request(`workspaces/${workspaceId}/terminals`, { body: { cols: 80, rows: 24 } })
+      expect(response.status).toBe(201)
+      const { terminal } = (await response.json()) as { terminal: TerminalSummary }
+      expect(terminal).toMatchObject({ workspaceId, status: 'running' })
+      expect(terminal).not.toHaveProperty('sessionId')
+      return terminal
+    }
+    const terminal = await open(workspace.id)
+    const defaultTerminal = await open('default')
+    const base = `workspaces/${workspace.id}/terminals`
+    const defaultWorkspace = (await desktop.json<{ catalog: { workspaces: WorkspaceInfo[] } }>('snapshot')).catalog.workspaces.find(
+      workspace => workspace.id === 'default',
+    )!
+    expect(launched.map(item => item.launch.cwd)).toEqual([folder, await realpath(defaultWorkspace.path!)])
+    expect(append).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'terminal.open', detail: { workspaceId: workspace.id, terminalId: terminal.id } }),
+    )
+    append.mockRestore()
+    expect((await desktop.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
+    expect(await desktop.json(base)).toEqual({ terminals: [terminal] })
+    expect(await desktop.json('workspaces/default/terminals')).toEqual({ terminals: [defaultTerminal] })
+    expect(await refusal(await desktop.request(`tasks/${workspace.id}/terminals/${terminal.id}/stream`))).toEqual([
+      404,
+      'terminal-not-found',
+    ])
+    expect(await refusal(await desktop.request(`workspaces/default/terminals/${terminal.id}/stream`))).toEqual([404, 'terminal-not-found'])
+    const stream = await watch(desktop, `${base}/${terminal.id}/stream`)
+    await desktop.json(`${base}/${terminal.id}/input`, { body: { data: 'bHM=' } })
+    await desktop.json(`${base}/${terminal.id}/resize`, { body: { cols: 90, rows: 30 } })
+    expect(launched[0]!.inputs.map(value => value.toString())).toEqual(['ls'])
+    expect(launched[0]!.sizes).toEqual([[90, 30]])
+    launched[0]!.emit({ type: 'output', data: Buffer.from('project output\r\n') })
+    await vi.waitFor(() => expect(stream.output()).toBe('project output\r\n'))
+    expect(await refusal(await desktop.request(`workspaces/${workspace.id}`, { method: 'DELETE' }))).toEqual([
+      409,
+      'workspace-terminal-open',
+    ])
+    expect(launched[0]!.closed).toBe(false)
+    expect(await desktop.json(`${base}/${terminal.id}/close`, { body: {} })).toEqual({ closed: true })
+    expect(launched[0]!.closed).toBe(true)
+    expect(launched[1]!.closed).toBe(false)
+    expect(await desktop.json(`workspaces/${workspace.id}`, { method: 'DELETE' })).toEqual({ deleted: true })
+    expect(await refusal(await desktop.request(base, { body: { cols: 80, rows: 24 } }))).toEqual([404, 'workspace-not-found'])
+    expect(launched).toHaveLength(2)
+  })
+
+  it.each(['default', 'project'])('checks the same %s workspace directory again after the open audit', async target => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-terminal-folder-')))
+    cleanups.push(() => rm(root, { force: true, recursive: true }))
+    const { t, desktop, launched } = await hostWithTerminals()
+    let workspaceId = 'default'
+    const folder = target === 'default' ? t.workspaceRoot : join(root, 'project')
+    if (target === 'project') {
+      await mkdir(folder)
+      const created = await desktop.addFolders({ paths: [folder] })
+      expect(created.status).toBe(201)
+      const { workspace } = (await created.json()) as { workspace: WorkspaceInfo }
+      workspaceId = workspace.id
+    }
+    const { audit } = t.host.security
+    const write = audit.append.bind(audit)
+    const append = vi.spyOn(audit, 'append').mockImplementation(async event => {
+      if (event.action === 'terminal.open') {
+        await rename(folder, `${folder}-old`)
+        await mkdir(folder)
+      }
+      return write(event)
+    })
+    const response = await desktop.request(`workspaces/${workspaceId}/terminals`, { body: { cols: 80, rows: 24 } })
+    append.mockRestore()
+    expect(await refusal(response)).toEqual([409, 'terminal-folder-unavailable'])
+    expect(launched).toEqual([])
+  })
+
   it('opens in the session folder after the audit record, types, resizes, watches, attaches and closes', async () => {
     const { t, desktop, launched } = await hostWithTerminals()
     const sessionId = await startSession(desktop)
@@ -184,14 +267,15 @@ describe('terminal routes', () => {
     expect(launched).toHaveLength(1)
   })
 
-  it('accepts only host.sock on every route, and sets the flag only where a terminal opens', async () => {
+  it.each(['session', 'workspace'])('accepts only host.sock on every %s terminal route', async target => {
     const { t, desktop, launched } = await hostWithTerminals()
     const browser = await t.enroll({ name: 'Browser', scopes: ['view', 'run', 'admin'] })
     const phone = await t.enroll({ listener: 'tls', name: 'Phone', scopes: ['view', 'run', 'admin'] })
     const viewer = await t.enroll({ listener: 'unix', name: 'Viewer', scopes: ['view'] })
-    const sessionId = await startSession(desktop)
-    const { id } = await openTerminal(desktop, sessionId)
-    const base = `tasks/${sessionId}/terminals`
+    const base = target === 'session' ? `tasks/${await startSession(desktop)}/terminals` : 'workspaces/default/terminals'
+    const {
+      terminal: { id },
+    } = await desktop.json<{ terminal: TerminalSummary }>(base, { body: { cols: 80, rows: 24 } })
     const routes: Array<[string, { body: unknown } | undefined]> = [
       [base, undefined],
       [base, { body: { cols: 80, rows: 24 } }],
@@ -217,13 +301,14 @@ describe('terminal routes', () => {
     expect((await desktop.request(`${base}/${id}/unknown`, { body: {} })).status).toBe(404)
   })
 
-  it('keeps the shell from a device on this computer whose data scope is work', async () => {
+  it.each(['session', 'workspace'])('keeps the %s shell from a device on this computer whose data scope is work', async target => {
     const { t, desktop, launched } = await hostWithTerminals()
     const work = await t.enroll({ listener: 'unix', name: 'Work window' })
     expect((await desktop.request(`devices/${work.id}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
-    const sessionId = await startSession(desktop)
-    const { id } = await openTerminal(desktop, sessionId)
-    const base = `tasks/${sessionId}/terminals`
+    const base = target === 'session' ? `tasks/${await startSession(desktop)}/terminals` : 'workspaces/default/terminals'
+    const {
+      terminal: { id },
+    } = await desktop.json<{ terminal: TerminalSummary }>(base, { body: { cols: 80, rows: 24 } })
     const routes: Array<[string, { body: unknown } | undefined]> = [
       [base, undefined],
       [base, { body: { cols: 80, rows: 24 } }],
@@ -251,22 +336,19 @@ describe('terminal routes', () => {
     expect(['terminal-unavailable', 'terminal-unsupported']).toContain(code)
   })
 
-  it('starts no shell when the audit record fails', async () => {
+  it.each(['session', 'workspace'])('starts no %s shell when the audit record fails', async target => {
     const { t, desktop, launched } = await hostWithTerminals()
-    const sessionId = await startSession(desktop)
+    const base = target === 'session' ? `tasks/${await startSession(desktop)}/terminals` : 'workspaces/default/terminals'
     vi.spyOn(t.host.security.audit, 'append').mockRejectedValue(new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行'))
-    expect(await refusal(await desktop.request(`tasks/${sessionId}/terminals`, { body: { cols: 80, rows: 24 } }))).toEqual([
-      503,
-      'audit-unavailable',
-    ])
+    expect(await refusal(await desktop.request(base, { body: { cols: 80, rows: 24 } }))).toEqual([503, 'audit-unavailable'])
     expect(launched).toHaveLength(0)
     vi.restoreAllMocks()
-    expect(await desktop.json(`tasks/${sessionId}/terminals`)).toEqual({ terminals: [] })
+    expect(await desktop.json(base)).toEqual({ terminals: [] })
   })
 
-  it('starts no shell for a device that lost its access while the open was audited', async () => {
+  it.each(['session', 'workspace'])('starts no %s shell for a device that lost access during the audit', async target => {
     const { t, desktop, launched } = await hostWithTerminals()
-    const sessionId = await startSession(desktop)
+    const base = target === 'session' ? `tasks/${await startSession(desktop)}/terminals` : 'workspaces/default/terminals'
     const { audit } = t.host.security
     const write = audit.append.bind(audit)
     const openedAfter = async (change: (device: TestDevice) => Promise<Response>) => {
@@ -275,7 +357,7 @@ describe('terminal routes', () => {
         if (event.action === 'terminal.open') expect((await change(device)).status).toBe(200)
         return write(event)
       })
-      const answer = await device.request(`tasks/${sessionId}/terminals`, { body: { cols: 80, rows: 24 } })
+      const answer = await device.request(base, { body: { cols: 80, rows: 24 } })
       append.mockRestore()
       return refusal(answer)
     }
@@ -289,7 +371,7 @@ describe('terminal routes', () => {
       'terminal-scope',
     ])
     expect(launched).toHaveLength(0)
-    expect(await desktop.json(`tasks/${sessionId}/terminals`)).toEqual({ terminals: [] })
+    expect(await desktop.json(base)).toEqual({ terminals: [] })
   })
 
   it('refuses to archive or delete from another device while a terminal runs, and leaves the session as it was', async () => {

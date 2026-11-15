@@ -1,5 +1,26 @@
 /*
- * The 终端 tab: a strip of 终端 1, 2… with the local services, 「加入对话」 and +, the screen on the canvas, and a 28 foot
+ * Terminals have their own row below the conversation, beside the sidebar and inspector.
+ */
+.terminal-dock {
+  position: relative;
+  grid-area: 3 / 2 / 4 / 3;
+  min-width: 0;
+  min-height: 0;
+  border-top: 1px solid var(--line);
+  background: var(--canvas);
+}
+.terminal-dock[hidden] {
+  display: none;
+}
+.app-shell[data-workbench-layout='triage'][data-overview] .terminal-dock {
+  grid-column-start: 1;
+}
+.terminal-resize {
+  inset: -3px 0 auto;
+}
+
+/*
+ * The terminal strip: 终端 1, 2… with the local services, 「加入对话」 and +, the screen on the canvas, and a 28 foot
  * with the shell and folder (or how it ended and 「重新打开」) and the 「你的账户，不是沙箱」 hint. Blue only for 重新打开.
  */
 .terminal-panel {
@@ -15,6 +36,15 @@
 .terminal-tabs {
   flex: none;
   padding: var(--sp-6) var(--sp-8) 0;
+}
+.terminal-location {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .terminal-service {
   display: inline-flex;

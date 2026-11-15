@@ -41,6 +41,8 @@ import { Overlays } from './Overlays.tsx'
 import { EditLeaveGuard } from '../preview/EditLeaveGuard.tsx'
 import { EditorChooser } from '../components/OpenInEditor.tsx'
 import { RightPanel } from './RightPanel.tsx'
+import { TerminalDock } from './TerminalDock.tsx'
+import { workbenchPanes } from './WorkbenchPanes.tsx'
 import { useStagingWrites } from '../panel/changes/useStaging.ts'
 import { DraftFilePanel } from './DraftFilePanel.tsx'
 import { SendingBubble, SessionComposer, SetupNotices } from './SessionComposers.tsx'
@@ -145,7 +147,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     closeInfoPage,
     changesOpen,
     deliveryOpen,
-    terminalOpen,
     browserOpen,
     selectedId,
     resync,
@@ -162,6 +163,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const allSessions = route.entry === 'sessions' && route.allSessions === true
   const covered = overview || allSessions
   const triage = shell.preferences.workbenchLayout === 'triage'
+  const panes = workbenchPanes(shell)
   const homeShell = { ...shell, ...shell.homeComposerState }
   const evidence = useWorkbenchDelivery(
     listed,
@@ -201,12 +203,16 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             data-folding={folding ? '' : undefined}
             data-sidebar={sidebarColumn ? (sidebarCollapsed ? 'collapsed' : 'open') : undefined}
             data-inspector={columnOpen ? (placement?.kind === 'sheet' ? 'sheet' : 'open') : undefined}
-            data-resizing={(sidebarDrag !== null && !sidebarSnapping) || inspectorDrag ? '' : undefined}
+            data-home-inspector={shell.homeInspectorOpen ? '' : undefined}
+            data-terminal-dock={shell.terminalOpen ? '' : undefined}
+            data-resizing={(sidebarDrag !== null && !sidebarSnapping) || inspectorDrag || shell.dockDrag ? '' : undefined}
             style={{
               '--sidebar-width': sidebarColumn && !sidebarCollapsed ? `${sidebarWidth}px` : '0px',
               '--sidebar-open-width': `${sidebarWidth}px`,
               '--inspector-width': columnOpen && placement?.kind === 'column' ? `${inspectorWidth}px` : '0px',
               '--inspector-open-width': `${inspectorWidth}px`,
+              '--dock-height': shell.terminalOpen ? `${shell.dockHeight}px` : '0px',
+              '--workbench-pane-count': Number(panes.left) + Number(panes.terminal) + Number(panes.right),
             }}>
             {!phone && (triage ? <WorkbenchNav shell={shell} /> : <TitleBar shell={shell} />)}
             {/* One switch for both layouts, at the end of the window's top row: it stays mounted through a change. */}
@@ -447,17 +453,15 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                               ? '改动'
                               : deliveryOpen && !fileTabs.active
                                 ? '交付'
-                                : terminalOpen && !fileTabs.active
-                                  ? '终端'
-                                  : browserOpen && !fileTabs.active
-                                    ? '浏览器'
-                                    : fileTabs.active?.target.view === 'changes'
-                                      ? '代码审阅'
-                                      : fileTabs.active
-                                        ? '文件预览'
-                                        : filesOpen
-                                          ? '文件'
-                                          : '面板'}
+                                : browserOpen && !fileTabs.active
+                                  ? '浏览器'
+                                  : fileTabs.active?.target.view === 'changes'
+                                    ? '代码审阅'
+                                    : fileTabs.active
+                                      ? '文件预览'
+                                      : filesOpen
+                                        ? '文件'
+                                        : '面板'}
                           </h2>
                           <span>{summary?.title || workspaceForFiles?.name || '项目文件'}</span>
                         </div>
@@ -473,10 +477,14 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 <aside
                   className="inspector-column"
                   aria-label="侧边面板"
-                  inert={!columnOpen || route.entry !== 'sessions' || covered || undefined}>
+                  inert={!columnOpen || route.entry !== 'sessions' || (covered && !shell.homeInspectorOpen) || undefined}>
                   {column.present && (
                     <div className="inspector-column-inner">
-                      <RightPanel shell={shell} stagingWrites={stagingWrites} />
+                      {shell.homeInspector ? (
+                        <DraftFilePanel shell={shell} inline />
+                      ) : (
+                        <RightPanel shell={shell} stagingWrites={stagingWrites} />
+                      )}
                     </div>
                   )}
                 </aside>
@@ -494,6 +502,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 />
               )}
             </LiveChanges>
+            <TerminalDock shell={shell} />
             {overview && (
               <section
                 className="workbench-home code-home"
@@ -632,7 +641,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             )}
             {phone && <PhoneTabBar shell={shell} />}
             {entries.includes('agents') && <ProfileLayer shell={shell} />}
-            <DraftFilePanel shell={shell} />
+            {phone && <DraftFilePanel shell={shell} />}
             <Overlays shell={shell} />
             <EditLeaveGuard />
             <EditorChooser />

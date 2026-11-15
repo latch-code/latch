@@ -386,6 +386,16 @@ ol.gallery-sheet-card > li {
   bottom: var(--sp-8);
   left: 61px;
 }
+.gallery-columns[data-dock] {
+  flex-direction: column;
+  padding: 0;
+}
+.gallery-columns[data-dock] .gallery-column-side {
+  height: 53px;
+}
+.gallery-columns[data-dock] > .ui-resize-handle {
+  inset: 50px 0 auto;
+}
 /* A disclosure: a header that stays put and a body that grows under it. */
 .gallery-disclosure {
   display: grid;

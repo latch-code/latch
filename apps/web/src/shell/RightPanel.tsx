@@ -6,7 +6,6 @@ import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
 import type { useStagingWrites } from '../panel/changes/useStaging.ts'
 import { AppDraftEntry } from '../plugin-pages/AppDraftEntry.tsx'
 import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
-import { TerminalPanel } from '../panel/terminal/TerminalPanel.tsx'
 import { BrowserPanel } from '../panel/browser/BrowserPanel.tsx'
 import { BrowserTabList } from '../panel/browser/BrowserTabList.tsx'
 import { errorMessage } from '../core/api.ts'
@@ -53,15 +52,13 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
     changesOpen,
     canDeliver,
     deliveryOpen,
-    canTerminal,
-    terminalOpen,
+    sessionTerminal,
     browserShell,
     browserProject,
     canBrowser,
     browserList,
     browserOpen,
     browserRequest,
-    openInBrowser,
     attachmentDraft,
     infoPage,
     openChangesTab,
@@ -177,20 +174,6 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
           }
         : {})}
       deliveryOpen={deliveryOpen}
-      {...(summary && canTerminal
-        ? {
-            terminal: (
-              <TerminalPanel
-                key={summary.id}
-                sessionId={summary.id}
-                shown={terminalOpen && !fileTabs.active}
-                onCompose={canCompose ? compose : undefined}
-                {...(canBrowser && browserShell ? { onOpenService: openInBrowser } : {})}
-              />
-            ),
-          }
-        : {})}
-      terminalOpen={terminalOpen}
       {...(summary && browserList
         ? {
             browser: (
@@ -207,7 +190,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                   projectId={browserProject.id}
                   deviceId={snapshot.device.id}
                   shown={browserOpen && !fileTabs.active && (!pageMode || infoPage)}
-                  terminals={canTerminal}
+                  terminals={sessionTerminal}
                   request={browserRequest}
                   onCompose={canCompose ? compose : undefined}
                   onAttach={
@@ -235,6 +218,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
         : {})}
       {...(changesTotals ? { changesTotals } : {})}
       onSurface={showSurface}
+      onTerminalShortcut={shell.canTerminal ? shell.openTerminal : undefined}
       launcherTakesFocus={launcherTakesFocus}
       onClose={closePanel}
       {...(pluginPanel !== undefined ? { plugin: pluginPanel } : {})}

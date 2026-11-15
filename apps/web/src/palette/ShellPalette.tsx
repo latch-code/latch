@@ -22,6 +22,7 @@ import {
   PanelLeftGlyph,
   PanelRightGlyph,
   SearchGlyph,
+  TerminalGlyph,
   SettingsGlyph,
   NewSessionGlyph,
   HarnessGlyph,
@@ -263,6 +264,9 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
             run: inSession(() => showSurface({ kind: 'browser' })),
           },
         ]
+      : []),
+    ...(shell.canTerminal
+      ? [{ id: 'terminal', label: '终端', icon: glyph(TerminalGlyph), root: true, ...keys('terminal'), run: shell.toggleTerminal }]
       : []),
     ...(drawerMode && route.entry !== 'sessions'
       ? []

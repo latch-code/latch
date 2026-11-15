@@ -378,7 +378,7 @@ async function openDrawer(target: Page): Promise<Locator> {
 
 /** The right panel beside the conversation on the desktop, a sheet over it on tablets, a pushed page on phones. */
 async function openDetails(target: Page, viewport: VisualViewport): Promise<void> {
-  const toggle = target.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true })
+  const toggle = target.getByRole('button', { name: '侧边面板', exact: true })
   if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
   if (viewport.name === 'phone') await target.getByRole('region', { name: '侧边面板', exact: true }).locator('.session-panels').waitFor()
   else await target.getByRole('complementary', { name: '侧边面板', exact: true }).locator('.session-panels').waitFor()
@@ -401,7 +401,7 @@ async function closeDetails(target: Page, viewport: VisualViewport): Promise<voi
     }
     return
   }
-  const toggle = target.locator('.topbar').getByRole('button', { name: '侧边面板', exact: true })
+  const toggle = target.getByRole('button', { name: '侧边面板', exact: true })
   if ((await toggle.getAttribute('aria-pressed')) === 'true') await toggle.click()
   await settleMotion(target)
 }

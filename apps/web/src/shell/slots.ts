@@ -16,8 +16,6 @@ export interface HeaderToggle {
 export interface ConversationHeaderSlots {
   /** 「提交 ⌄」, when the project is a repository with something to commit. */
   gitAction?: ReactNode
-  /** 终端 (⌘J). */
-  terminal?: HeaderToggle
   /** 改动 (⌘D). */
   changes?: HeaderToggle
 }

@@ -30,6 +30,7 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
     'NOTIFICATIONS',
     'PLUGIN-DEVELOPMENT',
     'PREVIEW-BROWSER',
+    'RELAY',
     'STREAMING',
     'TERMINAL',
     'TESTING',

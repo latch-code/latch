@@ -5,6 +5,7 @@ import { waitingCount } from '../sessions.ts'
 import { BrandMark } from '../components/ui.tsx'
 import { ShellNewAgent, SpaceButtons, shellOverview, shellSpaces } from './SpaceNav.tsx'
 import { ShellQuota } from './ShellQuota.tsx'
+import { WorkbenchPanes, workbenchPanes } from './WorkbenchPanes.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /**
@@ -50,31 +51,31 @@ export function TitleBar({ shell }: { shell: ShellState }) {
       data-waiting={approvals > 0 ? '' : undefined}
       data-spaces={shut && placed ? '' : undefined}>
       <div className="titlebar-lead">
-        {sidebarColumn ? (
-          <IconButton
-            ref={sidebarToggle}
-            label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
-            icon={PanelLeftGlyph}
-            shortcut={desktop ? '⌘B' : 'Alt B'}
-            aria-controls="session-navigation"
-            aria-expanded={!sidebarCollapsed}
-            onClick={() => {
-              setSidebarShut(!sidebarCollapsed)
-            }}
-          />
-        ) : (
-          sessions && (
-            <IconButton
-              label="打开会话列表"
-              icon={PanelLeftGlyph}
-              aria-controls="session-navigation"
-              aria-expanded={drawer.open}
-              onClick={() => {
-                drawer.show()
-              }}
-            />
-          )
-        )}
+        {sidebarColumn
+          ? !workbenchPanes(shell).left && (
+              <IconButton
+                ref={sidebarToggle}
+                label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+                icon={PanelLeftGlyph}
+                shortcut={desktop ? '⌘B' : 'Alt B'}
+                aria-controls="session-navigation"
+                aria-expanded={!sidebarCollapsed}
+                onClick={() => {
+                  setSidebarShut(!sidebarCollapsed)
+                }}
+              />
+            )
+          : sessions && (
+              <IconButton
+                label="打开会话列表"
+                icon={PanelLeftGlyph}
+                aria-controls="session-navigation"
+                aria-expanded={drawer.open}
+                onClick={() => {
+                  drawer.show()
+                }}
+              />
+            )}
         {!shut && (sidebarColumn || !sessions) && (
           <span className="titlebar-wordmark">
             <BrandMark size={20} />
@@ -119,6 +120,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
         {sidebarColumn && sidebarCollapsed && <ShellQuota shell={shell} />}
         {/* A tablet's rail already holds 总览; the layout switch itself is the shell's, drawn over this reserved end. */}
         {sidebarColumn && shut && !home.active && <IconButton label="总览" icon={OverviewGlyph} onClick={home.open} />}
+        <WorkbenchPanes shell={shell} />
         <span className="layout-switch-space" aria-hidden="true" />
       </div>
     </div>

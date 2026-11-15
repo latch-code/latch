@@ -1,4 +1,4 @@
-/** The most terminals one session keeps open. */
+/** The most terminals one session or workspace keeps open. */
 export const TERMINALS_PER_SESSION = 8
 
 /**
@@ -18,9 +18,11 @@ export interface TerminalSize {
   rows: number
 }
 
-export interface TerminalSummary {
+/** A workspace terminal exists independently of any chat, including the default workspace. */
+export type TerminalTarget = { sessionId: string; workspaceId?: never } | { workspaceId: string; sessionId?: never }
+
+export type TerminalSummary = TerminalTarget & {
   id: string
-  sessionId: string
   /** The shell's name and the folder's, for the tab: 「zsh · latch」. */
   shell: string
   folder: string
@@ -55,7 +57,7 @@ export interface HarnessLoginTerminalRequest {
 export interface HarnessLoginTerminalResponse {
   opened: true
   /** The Latch terminal the command runs in. */
-  terminal?: TerminalSummary
+  terminal?: TerminalSummary & { sessionId: string }
 }
 
 /** `GET /link/api/tasks/:id/terminals` */

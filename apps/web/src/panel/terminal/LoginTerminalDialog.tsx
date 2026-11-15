@@ -86,7 +86,7 @@ function DetachedLogin({ run }: { run: LoginRun }) {
         )}
         <div className="login-terminal-screen terminal-screens" role="group" aria-label={`${name} 登录终端`}>
           <TerminalScreen
-            sessionId={run.sessionId}
+            target={{ sessionId: run.sessionId }}
             tab={{ id: summary.id, number: 1, summary }}
             visible
             onSummary={next => {

@@ -1,5 +1,7 @@
 /* Two shells for the same work: a project frame, or a sorting desk and its queue. */
 .app-shell {
+  --dock-height: 0px;
+  --workbench-pane-count: 0;
   --canvas: var(--work-canvas);
   --raised: var(--work-raised);
   --card: var(--work-raised);
@@ -25,6 +27,26 @@
   --content-width: 820px;
   --gutter: 48px;
   grid-template-rows: 56px minmax(0, 1fr);
+}
+.app-shell[data-terminal-dock] {
+  grid-template-rows: 52px minmax(0, 1fr) var(--dock-height);
+}
+.app-shell[data-workbench-layout='triage'][data-terminal-dock] {
+  grid-template-rows: 56px minmax(0, 1fr) var(--dock-height);
+}
+.app-shell[data-terminal-dock] :is(.sidebar, .workbench-tablet-rail, .inspector-column) {
+  grid-row-end: 4;
+}
+.app-shell[data-inspector='sheet'][data-terminal-dock] :is(.inspector-column, .inspector-resize) {
+  bottom: calc(var(--shell-inset) + var(--dock-height));
+}
+.app-shell {
+  --workbench-pane-space: calc(var(--workbench-pane-count) * 32px);
+}
+@media (pointer: coarse) {
+  .app-shell {
+    --workbench-pane-space: calc(var(--workbench-pane-count) * 48px);
+  }
 }
 .app-shell[data-workbench-layout='triage'][data-inspector='open'] .titlebar {
   grid-column-end: -1;
@@ -1191,7 +1213,7 @@
     grid-row: 2 / 3;
   }
   .app-shell[data-workbench-layout='overview'] .workspace .topbar {
-    padding-right: 96px;
+    padding-right: calc(96px + var(--workbench-pane-space));
   }
   .app-shell[data-workbench-layout='overview'] .titlebar {
     pointer-events: none;
@@ -1314,7 +1336,7 @@
     visibility: hidden;
   }
   .app-shell[data-workbench-layout='overview'] .workspace .topbar {
-    padding-right: 110px;
+    padding-right: calc(110px + var(--workbench-pane-space));
   }
   .app-shell[data-workbench-layout='triage'] .workbench-home .work-overview-groups {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

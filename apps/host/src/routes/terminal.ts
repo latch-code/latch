@@ -2,14 +2,14 @@
 // first, before any body is read. Output is raw and may hold keys, so a stream lives only as long as its credential.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
-import { isLocalListener, type TerminalStreamEvents } from '@latch/protocol'
+import { isLocalListener, type TerminalStreamEvents, type TerminalTarget } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { authFailure } from '../access.ts'
 import { KIB, json, jsonBody, optionalJsonBody, safeDecode } from '../http-util.ts'
 import { INPUT_BYTES, SELECTION_BYTES, type TerminalRef, type TerminalRequester, type TerminalService } from '../terminal/service.ts'
 import type { Caller, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 
-const TERMINAL_PATH = /^\/link\/api\/tasks\/([^/]+)\/terminals(?:\/([^/]+)(?:\/([a-z]+))?)?$/u
+const TERMINAL_PATH = /^\/link\/api\/(tasks|workspaces)\/([^/]+)\/terminals(?:\/([^/]+)(?:\/([a-z]+))?)?$/u
 const STREAM_HEARTBEAT_MS = 15_000
 const OFFSET = /^(?:0|[1-9][0-9]{0,15})$/u
 /** The whole body of an input: the base64 of the most one call carries, and its JSON. */
@@ -62,7 +62,13 @@ export interface TerminalRoutes extends RouteModule {
   endDisallowedStreams(): void
 }
 
-export function createTerminalRoutes(context: RouteContext, service: TerminalService): TerminalRoutes {
+export type TerminalWorkspaceOperation = <T>(workspaceId: string, caller: DeviceCaller, operation: () => Promise<T>) => Promise<T>
+
+export function createTerminalRoutes(
+  context: RouteContext,
+  service: TerminalService,
+  inWorkspace: TerminalWorkspaceOperation,
+): TerminalRoutes {
   const { devices, lifecycle } = context
   /** Each open stream and whether it may stay open. */
   const streams = new Map<ServerResponse, () => boolean>()
@@ -138,21 +144,28 @@ export function createTerminalRoutes(context: RouteContext, service: TerminalSer
       context.requireLocal(caller)
       context.requireScope(caller, 'run')
       authorize(caller)
-      const sessionId = pathPart(match[1]!)
+      const id = pathPart(match[2]!)
+      const target: TerminalTarget = match[1] === 'tasks' ? { sessionId: id } : { workspaceId: id }
       const requester = requesterOf(caller)
-      if (match[2] === undefined) {
+      if (match[3] === undefined) {
         if (method === 'GET') {
-          json(res, { terminals: service.list(sessionId, requester) })
+          json(res, { terminals: service.list(target, requester) })
           return true
         }
         if (method !== 'POST') return false
         const size = sizeSchema.parse(await jsonBody(req))
         authorize(caller)
-        json(res, { terminal: await service.create(sessionId, requester, size, () => authorize(caller)) }, 201)
+        const open = () => {
+          authorize(caller)
+          return service.create(target, requester, size, () => authorize(caller))
+        }
+        const terminal = target.workspaceId === undefined ? await open() : await inWorkspace(target.workspaceId, caller, open)
+        authorize(caller)
+        json(res, { terminal }, 201)
         return true
       }
-      const ref: TerminalRef = { sessionId, terminalId: pathPart(match[2]) }
-      const action = match[3]
+      const ref: TerminalRef = { ...target, terminalId: pathPart(match[3]) }
+      const action = match[4]
       if (action === 'stream' && method === 'GET') {
         stream(req, res, caller, ref)
         return true

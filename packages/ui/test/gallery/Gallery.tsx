@@ -1678,12 +1678,22 @@ function Tiles() {
 }
 
 /** A sidebar on the ground beside its paper, with the resize handle on the paper's edge, at rest or in a held state. */
-function ResizeSample({ force }: { force?: string }) {
+function ResizeSample({ force, dock = false }: { force?: string; dock?: boolean }) {
   return (
     <Cell caption={force === 'hover' ? '悬停' : force === 'focus-visible' ? '键盘聚焦' : '静止'} force={force} at=".ui-resize-handle">
-      <div className="gallery-columns">
+      <div className="gallery-columns" data-dock={dock || undefined}>
         <div className="gallery-column-side" />
-        <ResizeHandle label="调整侧栏宽度" value={264} min={220} max={480} onResize={() => {}} onReset={() => {}} onToggle={() => {}} />
+        <ResizeHandle
+          label={dock ? '调整终端高度' : '调整侧栏宽度'}
+          orientation={dock ? 'horizontal' : 'vertical'}
+          edge={dock ? 'start' : 'end'}
+          value={264}
+          min={220}
+          max={480}
+          onResize={() => {}}
+          onReset={() => {}}
+          {...(dock ? {} : { onToggle: () => {} })}
+        />
         <div className="gallery-column-paper" />
       </div>
     </Cell>
@@ -1693,11 +1703,16 @@ function ResizeSample({ force }: { force?: string }) {
 /** A side column's edge: the handle at rest (invisible), under a held hover, and with keyboard focus. */
 function Resize() {
   return (
-    <Section title="调整宽度">
+    <Section title="调整面板尺寸">
       <Row label="侧栏边缘">
         <ResizeSample />
         <ResizeSample force="hover" />
         <ResizeSample force="focus-visible" />
+      </Row>
+      <Row label="终端上边缘">
+        <ResizeSample dock />
+        <ResizeSample dock force="hover" />
+        <ResizeSample dock force="focus-visible" />
       </Row>
     </Section>
   )

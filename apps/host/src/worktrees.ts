@@ -399,7 +399,7 @@ export class Worktrees {
   /** Made by this process for a start whose session does not own it yet. */
   private readonly unbound = new Set<string>()
   /** Being removed now: no start reuses one, and no second removal begins. */
-  private readonly removing = new Set<string>()
+  private readonly removing = new Map<string, string>()
   /** The start request each worktree this process made or reused answers, by path. */
   private readonly requestOf = new Map<string, string>()
 
@@ -698,6 +698,11 @@ export class Worktrees {
     return this.removing.has(path) ? 'removing' : this.unbound.has(path) ? 'starting' : undefined
   }
 
+  removingWithin(cwd: string): boolean {
+    for (const directory of this.removing.values()) if (isInsidePath(cwd, directory)) return true
+    return false
+  }
+
   /**
    * Why the branch Latch made (`own`, at `tip`) loses nothing when it goes. First a default branch that holds every commit
    * up to `tip`: exactly `main`, `master` or `init.defaultBranch`, locally or on a remote, or what a remote's `HEAD` names;
@@ -970,10 +975,16 @@ export class Worktrees {
    */
   async remove(
     path: string,
-    input: { discard?: number; digest?: string; deleteBranch?: boolean; audit: (facts: WorktreeInventory) => Promise<void> },
+    input: {
+      directory?: string
+      discard?: number
+      digest?: string
+      deleteBranch?: boolean
+      audit: (facts: WorktreeInventory) => Promise<void>
+    },
   ): Promise<{ facts: WorktreeInventory; branch: 'deleted' | 'kept' | 'none'; branchName?: string }> {
     if (this.busy(path)) throw refuse('worktree-busy', '这个工作树正在开始会话或正在移除，等它结束后再试。')
-    this.removing.add(path)
+    this.removing.set(path, input.directory ?? path)
     try {
       const { git, source, drivers, facts, own } = await this.inspect(path)
       if (facts.tooLarge !== undefined)

@@ -13,13 +13,14 @@ import { createMcpRoutes, type McpRouteDeps } from './mcp.ts'
 import { createNativeRoutes, type NativeRouteDeps, type NativeRoutes } from './native.ts'
 import { RouteRegistry, type RouteContext } from './registry.ts'
 import { createReviewNoteRoutes, type ReviewNoteRouteDeps } from './review-notes.ts'
-import { createTerminalRoutes, type TerminalRoutes } from './terminal.ts'
+import { createTerminalRoutes, type TerminalRoutes, type TerminalWorkspaceOperation } from './terminal.ts'
 import type { TerminalService } from '../terminal/service.ts'
 
 export interface RouteDeps {
   native: NativeRouteDeps
   devices: Omit<DeviceRouteDeps, 'deviceView'>
   terminals: TerminalService
+  terminalWorkspaceOperation: TerminalWorkspaceOperation
   agents: AgentRouteDeps
   agentLogin: AgentLoginDeps
   automations: AutomationRouteDeps
@@ -51,7 +52,7 @@ export function createRoutes(
 } {
   const native = createNativeRoutes(context, deps.native)
   const apps = createAppRoutes(context, deps.apps)
-  const terminal = createTerminalRoutes(context, deps.terminals)
+  const terminal = createTerminalRoutes(context, deps.terminals, deps.terminalWorkspaceOperation)
   const agentLogin = createAgentLoginRoutes(context, { ...deps.agentLogin, terminals: deps.terminals })
   const changes = createChangeRoutes(context)
   const customization = createCustomizationRoutes(context, deps.customization)

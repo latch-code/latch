@@ -1,4 +1,4 @@
-import type { LocalService, TerminalSummary, TerminalText } from '@latch/protocol'
+import type { LocalService, TerminalSummary, TerminalTarget, TerminalText } from '@latch/protocol'
 
 /** One call to `…/input` carries at most this much once decoded (docs/TERMINAL.md). */
 export const INPUT_CHUNK_BYTES = 64 * 1024
@@ -110,8 +110,15 @@ export function draftText(label: string, extract: TerminalText): string {
   return [`${label}${extract.truncated ? '（较早的输出未包含）' : ''}`, `${fence}text`, extract.text.replace(/\n+$/u, ''), fence].join('\n')
 }
 
+export function terminalPath(target: TerminalTarget | string): string {
+  if (typeof target === 'string') return `tasks/${encodeURIComponent(target)}/terminals`
+  return target.workspaceId === undefined
+    ? `tasks/${encodeURIComponent(target.sessionId)}/terminals`
+    : `workspaces/${encodeURIComponent(target.workspaceId)}/terminals`
+}
+
 /** The path of a terminal's stream; `from` continues after what this page already shows. */
-export function streamPath(sessionId: string, terminalId: string, from?: number): string {
-  const base = `tasks/${encodeURIComponent(sessionId)}/terminals/${encodeURIComponent(terminalId)}/stream`
+export function streamPath(target: TerminalTarget | string, terminalId: string, from?: number): string {
+  const base = `${terminalPath(target)}/${encodeURIComponent(terminalId)}/stream`
   return from === undefined ? base : `${base}?from=${from}`
 }

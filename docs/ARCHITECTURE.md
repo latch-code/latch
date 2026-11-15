@@ -437,6 +437,7 @@ Host 约每 40ms 合并一次变化，把选中会话的 `task-state` 推送给�
 | `POST /customization/reset` | `admin` 或匿名 `host.sock` | 按原请求编号和基版恢复默认，审计失败仍可重置。见 [CUSTOMIZATION.md](CUSTOMIZATION.md) |
 | `GET /workspaces` | `view` | 项目列表：启动目录与已保存的项目，含文件夹与各自的不可用原因 |
 | `GET /workspaces/:id/worktree` | `run` | 新工作树会从哪里开始：`{ branch?, commit }`，或 Host 不能在这个项目里新建工作树的 409 与原因；不写任何东西 |
+| `GET/POST /workspaces/:id/terminals` | `host.sock`、`run`、数据范围 `all` | 列出项目终端，或在项目主目录打开一个终端。项目 ID 为 `default` 时使用 Host 的启动工作目录。终端详情、输入和关闭沿用 [终端 API](TERMINAL.md) |
 | `POST /tasks/:id/files/resolve` | 桌面端（`host.sock`）+ `view` + 数据范围 `all` | 解析消息里提到的文件，最多 64 条；给句柄与裁决，不给真实路径（见「会话文件」） |
 | `POST /files/:handle/local` | 句柄所属的桌面端；打开另需 `run` | 先审计 `file.reveal`、`file.quicklook` 或 `file.open`，再给真实路径；页面经桌面端代理请求时 403 `shell-managed` |
 | `PUT /tasks/:id/files/:handle` | 句柄所属的设备 + `run` + 数据范围 `all`；能向会话输入（私有会话、只读会话照常拒绝）；受保护的工作区路径另需 `approve:elevated`，程序目录里的文件一律拒绝 | 人在预览里编辑并保存一个 UTF-8 文本文件：`{ requestId, baseHash, content }`，文件不再是 `baseHash` 时 409 `file-changed`（带 `currentHash`），会话或同一文件夹里有一轮在运行时 409 `file-turn-running`；先审计 `file.edit` 再写，见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md#编辑) |

@@ -2,6 +2,13 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { applyAppearance, backdropLevel, parsePreferences } from '../src/preferences.ts'
+
+it('restores only a valid dock height and an explicit open flag', () => {
+  expect(parsePreferences(null)).toMatchObject({ dockOpen: false })
+  expect(parsePreferences('{"dockOpen":true,"dockHeight":310}')).toMatchObject({ dockOpen: true, dockHeight: 310 })
+  expect(parsePreferences('{"dockOpen":"true","dockHeight":680.5}').dockOpen).toBe(false)
+  expect(parsePreferences('{"dockOpen":true,"dockHeight":139}').dockHeight).toBeUndefined()
+})
 import { BackdropTiles, DensityTiles, MotionChoice } from '../src/settings/AppearanceTiles.tsx'
 import { LayoutTiles } from '../src/settings/LayoutTiles.tsx'
 

@@ -15,7 +15,7 @@ import {
   toBase64,
 } from '../src/panel/terminal/model.ts'
 
-const summary = (id: string, createdAt: string, patch: Partial<TerminalSummary> = {}): TerminalSummary => ({
+const summary = (id: string, createdAt: string, patch: Partial<TerminalSummary & { sessionId: string }> = {}): TerminalSummary => ({
   id,
   sessionId: 's',
   shell: 'zsh',

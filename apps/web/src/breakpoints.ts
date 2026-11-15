@@ -52,7 +52,7 @@ export function useCoarsePointer(): boolean {
   return useSyncExternalStore(subscribeCoarse, currentCoarse, () => false)
 }
 
-function subscribeWidth(changed: () => void) {
+function subscribeSize(changed: () => void) {
   if (typeof window === 'undefined') return () => {}
   window.addEventListener('resize', changed)
   return () => {
@@ -63,8 +63,16 @@ function subscribeWidth(changed: () => void) {
 /** The window's width in CSS pixels, for layouts that clamp a column against it. */
 export function useWindowWidth(): number {
   return useSyncExternalStore(
-    subscribeWidth,
+    subscribeSize,
     () => (typeof window === 'undefined' ? 1440 : window.innerWidth),
     () => 1440,
+  )
+}
+
+export function useWindowHeight(): number {
+  return useSyncExternalStore(
+    subscribeSize,
+    () => (typeof window === 'undefined' ? 900 : window.innerHeight),
+    () => 900,
   )
 }

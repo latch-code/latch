@@ -715,7 +715,7 @@ describe('the shell', () => {
               await heading(long).hover()
               await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
               await shoot(`long-${layout}`)
-              const panel = header.getByRole('button', { name: '侧边面板', exact: true })
+              const panel = page.getByRole('button', { name: '侧边面板', exact: true })
               if ((await panel.getAttribute('aria-pressed')) !== 'true') await panel.click()
               await page.setViewportSize({ width: 1200, height })
               await page.locator('.app-shell[data-inspector="open"]').waitFor()

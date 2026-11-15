@@ -1,9 +1,10 @@
-// The Host's terminals: one login shell per terminal, in the session's primary folder, on a pty that latch-pty
+// The Host's terminals: one login shell per terminal, in the session's or workspace's primary folder, on a pty that latch-pty
 // (native/macos/LatchTerminal.swift) owns. The shell runs as the user, like any terminal: no approval, path rule or
 // outbound policy applies to what runs in it. Everything here, reading output included, is for this computer (host.sock)
 // alone: output is raw and may hold keys. Routes stay thin: each method takes the requester and does its own checks.
 import { randomUUID } from 'node:crypto'
-import { lstat, stat } from 'node:fs/promises'
+import { constants as fsConstants, type BigIntStats } from 'node:fs'
+import { lstat, open, realpath, type FileHandle } from 'node:fs/promises'
 import { constants, homedir } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
 import {
@@ -14,12 +15,13 @@ import {
   type LocalService,
   type TerminalSize,
   type TerminalSummary,
+  type TerminalTarget,
   type TerminalText,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { localOnly } from '../access.ts'
-import { isInsidePath, latchCodeRoot } from '../paths.ts'
+import { canonicalPath, isInsidePath, latchCodeRoot } from '../paths.ts'
 import { loginShell, shellRunning, terminalEnvironment, type ShellCommand } from './environment.ts'
 import {
   helperLauncher,
@@ -66,11 +68,8 @@ export interface TerminalRequester {
   deviceId: string
 }
 
-/** A terminal is always addressed together with its session, which the route has already authorized. */
-export interface TerminalRef {
-  sessionId: string
-  terminalId: string
-}
+/** The owning session or workspace is part of every terminal address. */
+export type TerminalRef = TerminalTarget & { terminalId: string }
 
 /**
  * A Harness's own login command in place of the plain shell. The Host resolves it from the Harness's definition; no
@@ -112,8 +111,12 @@ export interface TerminalServiceOptions {
    * session, `removed` when its folder is no longer one the session may use. No caller ever names a folder.
    */
   sessionFolder(sessionId: string): Promise<{ path: string } | 'removed' | undefined>
+  /** Resolves a saved workspace before audit, with an identity check for the synchronous launch boundary. */
+  workspaceFolder?(workspaceId: string): Promise<{ path: string; check(opened: BigIntStats): void }>
+  /** Refuses a launch in a worktree whose removal has already started. */
+  checkWorkingDirectory?(cwd: string): void
   /** Runs once an open is accepted and before the shell starts; a rejection stops it (audit before execution). */
-  beforeOpen?(event: { sessionId: string; terminalId: string; deviceId: string }): Promise<void>
+  beforeOpen?(event: TerminalTarget & { terminalId: string; deviceId: string }): Promise<void>
   hostEnv?: NodeJS.ProcessEnv
   now?: () => number
   log?: (text: string) => void
@@ -134,10 +137,11 @@ interface StreamState {
 
 interface Terminal {
   id: string
-  sessionId: string
+  target: TerminalTarget
   owner: string
   shell: string
-  folder: string
+  cwd?: string
+  folderName: string
   cols: number
   rows: number
   createdAt: number
@@ -150,6 +154,7 @@ interface Terminal {
   scrollback: Scrollback
   detector: LocalServiceDetector
   process?: TerminalProcess
+  helperGone: boolean
   streams: Set<StreamState>
   starting?: { resolve(): void; reject(error: AppError): void }
   ending?: Promise<void>
@@ -167,6 +172,10 @@ function startFailure(reason: TerminalFailure): AppError {
 
 function notFound(): AppError {
   return new AppError(404, 'terminal-not-found', '找不到这个终端')
+}
+
+function sameTarget(a: TerminalTarget, b: TerminalTarget): boolean {
+  return a.sessionId === b.sessionId && a.workspaceId === b.workspaceId
 }
 
 /** A program other than the shell runs in the terminal: closing it needs the user's confirmation first. */
@@ -201,10 +210,6 @@ function programName(name: string): string | undefined {
 
 function signalName(number: number): string {
   return Object.entries(constants.signals).find(([, value]) => value === number)?.[0] ?? `SIG${number}`
-}
-
-async function isDirectory(path: string): Promise<boolean> {
-  return (await stat(path).catch(() => undefined))?.isDirectory() ?? false
 }
 
 export class TerminalService {
@@ -257,28 +262,29 @@ export class TerminalService {
   }
 
   /**
-   * Whether any terminal, of any session, starting or running has its folder in `path`: a worktree is not removed
-   * under a shell. One still starting whose folder is not settled counts too.
+   * Whether a terminal's private directory lies inside the worktree. An open still resolving its directory and a
+   * closing helper whose processes have not settled also protect the directory.
    */
   openInside(path: string): boolean {
-    return [...this.terminals.values()].some(
-      terminal =>
-        (terminal.status === 'running' || terminal.status === 'starting')
-        && (terminal.folder === '' || isInsidePath(terminal.folder, path)),
-    )
+    return this.usingDirectory(terminal => terminal.cwd === undefined || isInsidePath(terminal.cwd, path))
   }
 
   /** Whether any of these sessions has a terminal starting or running: a worktree is not removed under a shell. */
   openIn(sessionIds: ReadonlySet<string>): boolean {
-    return [...this.terminals.values()].some(
-      terminal => sessionIds.has(terminal.sessionId) && (terminal.status === 'running' || terminal.status === 'starting'),
-    )
+    return this.usingDirectory(terminal => terminal.target.sessionId !== undefined && sessionIds.has(terminal.target.sessionId))
   }
 
-  list(sessionId: string, requester: TerminalRequester): TerminalSummary[] {
+  private usingDirectory(matches: (terminal: Terminal) => boolean): boolean {
+    for (const terminal of this.terminals.values()) if (!terminal.helperGone && matches(terminal)) return true
+    for (const terminal of this.ending) if (matches(terminal)) return true
+    return false
+  }
+
+  list(target: TerminalTarget | string, requester: TerminalRequester): TerminalSummary[] {
     this.admit(requester)
+    const owner = typeof target === 'string' ? { sessionId: target } : target
     return [...this.terminals.values()]
-      .filter(terminal => terminal.sessionId === sessionId && terminal.status !== 'starting')
+      .filter(terminal => sameTarget(terminal.target, owner) && terminal.status !== 'starting')
       .map(terminal => this.summary(terminal, requester))
   }
 
@@ -287,8 +293,16 @@ export class TerminalService {
    * `run`: a Harness's login command instead of a plain shell; under `HARNESS_LOGIN_SESSION` it starts in the home
    * folder, and nothing else opens there.
    */
-  async create(
+  create(
     sessionId: string,
+    requester: TerminalRequester,
+    size: TerminalSize,
+    authorize?: () => void,
+    run?: TerminalRun,
+  ): Promise<TerminalSummary & { sessionId: string }>
+  create(target: TerminalTarget, requester: TerminalRequester, size: TerminalSize, authorize?: () => void): Promise<TerminalSummary>
+  async create(
+    target: TerminalTarget | string,
     requester: TerminalRequester,
     size: TerminalSize,
     authorize?: () => void,
@@ -301,21 +315,27 @@ export class TerminalService {
     if (!launch) throw new AppError(503, 'terminal-unavailable', '终端组件不可用，请重新构建 Latch')
     if (this.stopping) throw new AppError(503, 'terminal-stopping', 'Latch 正在停止，不能打开终端')
     const { cols, rows } = checkedSize(size)
-    if (this.count(terminal => terminal.sessionId === sessionId) >= TERMINALS_PER_SESSION)
-      throw new AppError(429, 'terminal-limit', `每个会话最多 ${TERMINALS_PER_SESSION} 个终端`)
+    const owner = typeof target === 'string' ? { sessionId: target } : target
+    if (this.count(terminal => sameTarget(terminal.target, owner)) >= TERMINALS_PER_SESSION)
+      throw new AppError(
+        429,
+        'terminal-limit',
+        `每个${owner.workspaceId === undefined ? '会话' : '项目'}最多 ${TERMINALS_PER_SESSION} 个终端`,
+      )
     if ((this.count(() => true) + 1) * SCROLLBACK_BYTES > SCROLLBACK_TOTAL_BYTES)
       throw new AppError(429, 'terminal-total-limit', '这台电脑上打开的终端太多了，请先关闭不用的终端')
     // Counted from here on, before anything is awaited, so concurrent opens cannot pass the limits together.
     const terminal: Terminal = {
       id: `term_${randomUUID()}`,
-      sessionId,
+      target: owner,
       owner: requester.deviceId,
       shell: '',
-      folder: '',
+      folderName: '',
       cols,
       rows,
       createdAt: this.now(),
       status: 'starting',
+      helperGone: false,
       busy: false,
       services: [],
       scrollback: new Scrollback(SCROLLBACK_BYTES),
@@ -326,21 +346,44 @@ export class TerminalService {
       ...(run ? { run: { ...run, login: { harnessId: run.login.harnessId, name: programName(run.login.name) ?? 'Harness' } } } : {}),
     }
     this.terminals.set(terminal.id, terminal)
+    let directory: FileHandle | undefined
     try {
-      const resolved =
-        sessionId === HARNESS_LOGIN_SESSION ? (run ? { path: homedir() } : undefined) : await this.options.sessionFolder(sessionId)
-      if (resolved === undefined) throw new AppError(404, 'task-not-found', '找不到该会话')
-      if (resolved === 'removed' || !isAbsolute(resolved.path) || !(await isDirectory(resolved.path))) throw startFailure('cwd')
-      const folder = resolved.path
+      const resolved: { path: string; check?(opened: BigIntStats): void } | 'removed' | undefined =
+        owner.workspaceId !== undefined
+          ? await this.options.workspaceFolder?.(owner.workspaceId)
+          : owner.sessionId === HARNESS_LOGIN_SESSION
+            ? run
+              ? { path: homedir() }
+              : undefined
+            : await this.options.sessionFolder(owner.sessionId)
+      if (resolved === undefined) {
+        if (owner.workspaceId !== undefined) throw new AppError(404, 'workspace-not-found', '找不到该项目')
+        throw new AppError(404, 'task-not-found', '找不到该会话')
+      }
+      if (resolved === 'removed' || !isAbsolute(resolved.path)) throw startFailure('cwd')
+      const folder = await realpath(resolved.path).catch(() => {
+        throw startFailure('cwd')
+      })
+      terminal.cwd = await canonicalPath(folder).catch(() => {
+        throw startFailure('cwd')
+      })
+      directory = await open(folder, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW).catch(() => {
+        throw startFailure('cwd')
+      })
+      const opened = await directory.stat({ bigint: true })
+      const cwdFd = directory.fd
       const plain = this.options.shell ?? (await loginShell())
       const shell = run ? shellRunning(plain, run.command) : plain
       terminal.shell = basename(shell.file)
-      terminal.folder = basename(folder)
+      terminal.folderName = basename(folder)
       // Closed while the folder was resolved (its session ended, the Host stops): no audit record, no shell.
       if (terminal.ending) throw new AppError(409, 'terminal-closed', '终端已关闭')
-      await this.options.beforeOpen?.({ sessionId, terminalId: terminal.id, deviceId: requester.deviceId })
+      await this.options.beforeOpen?.({ ...owner, terminalId: terminal.id, deviceId: requester.deviceId })
       if (terminal.ending) throw new AppError(409, 'terminal-closed', '终端已关闭')
       authorize?.()
+      resolved.check?.(opened)
+      this.options.checkWorkingDirectory?.(terminal.cwd)
+      this.refuseWhileHeld()
       const env = terminalEnvironment({ hostEnv: this.options.hostEnv ?? process.env, shell: shell.file, folder })
       await new Promise<void>((resolve, reject) => {
         let timer: NodeJS.Timeout | undefined
@@ -350,7 +393,7 @@ export class TerminalService {
           else resolve()
         }
         terminal.starting = { resolve: () => settle(), reject: settle }
-        terminal.process = launch({ file: shell.file, argv: shell.argv, env, cwd: folder, cols, rows }, event =>
+        terminal.process = launch({ file: shell.file, argv: shell.argv, env, cwd: folder, cwdFd, cols, rows }, event =>
           this.onEvent(terminal, event),
         )
         if (terminal.starting) timer = setTimeout(() => terminal.starting?.reject(startFailure('helper')), START_DEADLINE_MS)
@@ -360,6 +403,8 @@ export class TerminalService {
       terminal.starting = undefined
       await this.end(terminal)
       throw error instanceof AppError ? error : startFailure('helper')
+    } finally {
+      await directory?.close().catch(() => {})
     }
   }
 
@@ -413,7 +458,7 @@ export class TerminalService {
    */
   checkSessionEnd(sessionId: string, requester: TerminalRequester, options: { force?: boolean } = {}): void {
     const running = [...this.terminals.values()].filter(
-      terminal => terminal.sessionId === sessionId && (terminal.status === 'running' || terminal.status === 'starting'),
+      terminal => terminal.target.sessionId === sessionId && (terminal.status === 'running' || terminal.status === 'starting'),
     )
     if (!isLocalListener(requester.listener)) {
       if (running.length > 0) throw new AppError(409, 'terminal-running', '这个会话还有终端在运行，请先在 Mac 上关闭终端')
@@ -426,7 +471,21 @@ export class TerminalService {
   /** The session is archived or deleted: its terminals end, once `checkSessionEnd` lets them. */
   async closeSession(sessionId: string, requester: TerminalRequester, options: { force?: boolean } = {}): Promise<void> {
     this.checkSessionEnd(sessionId, requester, options)
-    await Promise.all([...this.terminals.values()].filter(terminal => terminal.sessionId === sessionId).map(terminal => this.end(terminal)))
+    await Promise.all(
+      [...this.terminals.values()].filter(terminal => terminal.target.sessionId === sessionId).map(terminal => this.end(terminal)),
+    )
+  }
+
+  /** Project deletion must not orphan or implicitly stop a shell. The project queue bars another open until it ends. */
+  checkWorkspaceEnd(workspaceId: string): void {
+    if (this.usingDirectory(terminal => terminal.target.workspaceId === workspaceId))
+      throw new AppError(409, 'workspace-terminal-open', '这个项目还有打开的终端，请在这台 Mac 上关闭后再移除。')
+  }
+
+  async forgetWorkspace(workspaceId: string): Promise<void> {
+    await Promise.all(
+      [...this.terminals.values()].filter(terminal => terminal.target.workspaceId === workspaceId).map(terminal => this.end(terminal)),
+    )
   }
 
   /** The Host stops: every terminal ends, and none opens again. */
@@ -512,7 +571,7 @@ export class TerminalService {
 
   private find(ref: TerminalRef): Terminal {
     const terminal = this.terminals.get(ref.terminalId)
-    if (!terminal || terminal.sessionId !== ref.sessionId || terminal.status === 'starting') throw notFound()
+    if (!terminal || !sameTarget(terminal.target, ref) || terminal.status === 'starting') throw notFound()
     return terminal
   }
 
@@ -526,9 +585,9 @@ export class TerminalService {
   private summary(terminal: Terminal, requester: TerminalRequester): TerminalSummary {
     return {
       id: terminal.id,
-      sessionId: terminal.sessionId,
+      ...terminal.target,
       shell: terminal.shell,
-      folder: terminal.folder,
+      folder: terminal.folderName,
       cols: terminal.cols,
       rows: terminal.rows,
       status: terminal.status === 'starting' ? 'running' : terminal.status,
@@ -580,6 +639,7 @@ export class TerminalService {
         this.ended(terminal)
         return
       case 'gone':
+        terminal.helperGone = true
         clearTimeout(terminal.resumeTimer)
         terminal.resumeTimer = undefined
         return

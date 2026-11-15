@@ -21,6 +21,16 @@
   opacity: 0;
   transition: opacity var(--m-micro) var(--e-micro);
 }
+.ui-resize-handle[aria-orientation='horizontal'] {
+  width: auto;
+  height: 6px;
+  cursor: row-resize;
+}
+.ui-resize-handle[aria-orientation='horizontal']::after {
+  inset: 3px 0 auto;
+  width: auto;
+  height: 1px;
+}
 .ui-resize-handle:hover::after {
   opacity: 1;
   transition: opacity var(--m-micro) var(--e-micro) 300ms;
@@ -36,4 +46,7 @@
 }
 :root[data-resizing] * {
   cursor: inherit;
+}
+:root[data-resizing='horizontal'] {
+  cursor: row-resize;
 }
