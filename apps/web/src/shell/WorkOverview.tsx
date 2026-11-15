@@ -11,6 +11,7 @@ import {
   WaitingGlyph,
   PullRequestGlyph,
   NewSessionGlyph,
+  RunningEdge,
   RunningGlyph,
   SearchGlyph,
   StatusWord,
@@ -66,6 +67,7 @@ function WorkRunning({
   const elapsed = live ? runElapsed(live, lastNow.current) : undefined
   const project = projectOf(task, shell.catalog?.workspaces ?? [])
   const stopping = shell.stopping.has(task.id) || live?.activity === 'cancelling'
+  const running = rowStatus(task, { stopping, frozen: !connected }).kind === 'running'
   // The glyph follows what the Host reports: a command, or a running tool row that edits a file; anything else has none.
   const editing =
     live?.activity === 'tool'
@@ -104,6 +106,7 @@ function WorkRunning({
             <span>{computerName(shell.snapshot.hostName)}</span>
           </span>
         )}
+        {running && <RunningEdge />}
       </Button>
     </article>
   )
@@ -335,12 +338,10 @@ export function WorkOverview({
               <ul className="work-overview-list">
                 {(compact || expandedGroups.has(group.id) ? group.tasks : group.tasks.slice(0, group.id === 'delivery' ? 2 : 5)).map(
                   task => {
-                    const status = workStatus(task, {
-                      connected,
-                      now: hostNow(),
-                      stopping: cancelling?.has(task.id),
-                      unread: isUnread?.(task),
-                    })
+                    const stopping = cancelling?.has(task.id)
+                    const unread = isUnread?.(task)
+                    const row = rowStatus(task, { stopping, unread, frozen: !connected })
+                    const status = workStatus(task, { connected, now: hostNow(), stopping, unread })
                     const project = projectOf(task, snapshot.catalog?.workspaces ?? [])
                     const pullRequest = group.id === 'delivery' ? evidence?.entries.get(task.id)?.pr?.pr : undefined
                     const title = escapeSecurityText(
@@ -377,13 +378,7 @@ export function WorkOverview({
                                   <Icon icon={pullRequest ? PullRequestGlyph : DiffGlyph} size={12} />
                                 </span>
                               ) : compact ? (
-                                <SessionRowGlyph
-                                  status={rowStatus(task, {
-                                    stopping: cancelling?.has(task.id),
-                                    unread: isUnread?.(task),
-                                    frozen: !connected,
-                                  })}
-                                />
+                                <SessionRowGlyph status={row} />
                               ) : null}
                               <span className="work-overview-row-title">{title}</span>
                               <QueueTime task={task} connected={connected} now={now} />
@@ -393,7 +388,8 @@ export function WorkOverview({
                               <span>{projectName}</span>
                               {branch && <span className="work-overview-branch">{branch}</span>}
                             </span>
-                            <WorkState task={task} connected={connected} stopping={cancelling?.has(task.id)} unread={isUnread?.(task)} />
+                            <WorkState task={task} connected={connected} stopping={stopping} unread={unread} />
+                            {row.kind === 'running' && <RunningEdge />}
                           </Button>
                         )}
                       </li>

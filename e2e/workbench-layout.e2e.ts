@@ -487,7 +487,24 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
               /^(重试|查看)$/u,
             )
             expect(await home.locator(`[data-request-session="${failed.summary.id}"] strong`).allTextContents()).not.toContain('失败')
+            if (width === 390 && theme === 'light' && layout === 'overview') {
+              const edge = home.locator(`[data-work-session="${running.summary.id}"] .ui-running-edge`)
+              const state = () => edge.locator('i').evaluate(element => getComputedStyle(element).animationPlayState)
+              await page.setViewportSize({ width, height: 440 })
+              await expect.poll(state).toBe('paused')
+              await edge.scrollIntoViewIfNeeded()
+              await expect.poll(state).toBe('running')
+              await page.setViewportSize({ width, height: 900 })
+              await home.locator('.code-home-queue').evaluate(element => (element.scrollTop = 0))
+            }
             if (width === 1440) {
+              const runningEdge = home.locator(`[data-work-session="${running.summary.id}"] .ui-running-edge > i`)
+              await runningEdge.waitFor()
+              expect(await runningEdge.evaluate(element => getComputedStyle(element).animationName)).toBe('ui-run-edge')
+              expect(await home.locator(`[data-work-session="${waiting.summary.id}"] .ui-running-edge`).count()).toBe(0)
+              await page.emulateMedia({ reducedMotion: 'reduce' })
+              expect(await runningEdge.evaluate(element => getComputedStyle(element).display)).toBe('none')
+              await page.emulateMedia({ reducedMotion: 'no-preference' })
               // The risk line stays one row: the red reason, the short fact and its ⓘ.
               const clause = home.locator('.approval-clause').first()
               expect(await clause.textContent()).toContain('每次都要确认')
