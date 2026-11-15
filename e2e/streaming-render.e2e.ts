@@ -613,9 +613,10 @@ describe('streaming render', () => {
   it('does not rerender completed Markdown blocks while only the live tail changes', async () => {
     await open()
     const user: Message = { id: 'user-blocks', role: 'user', text: '写一段说明' }
-    const prefix = '```text\n固定代码\n```\n\n'
+    const prefix = '```ts\nconst fixed = 1\n```\n\n'
     await show(detail([user], { running: true, liveText: prefix + '尾部', liveId: 'reply-blocks', cursor: 1 }))
-    await page.getByText('固定代码', { exact: true }).waitFor()
+    // Initial viewport activation renders the code block once, independently of live updates.
+    await page.locator('[data-message-id="reply-blocks"] .syn-keyword', { hasText: 'const' }).waitFor()
     await page.evaluate(() => {
       for (const key of Object.keys(window.renders)) delete window.renders[key]
     })
