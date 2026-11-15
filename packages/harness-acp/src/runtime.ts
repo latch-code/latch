@@ -2454,7 +2454,11 @@ export class AgentRuntime implements Bridge {
           // A bind already under way (a setting changed a moment ago) would put the old session back once it finished.
           for (let binding = this.attaching.get(sessionId); binding; binding = this.attaching.get(sessionId))
             await binding.promise.catch(() => {})
-          this.clearContext(this.task(sessionId))
+          const current = this.task(sessionId)
+          this.clearContext(current)
+          const agent = options.agentContext?.agent
+          if (agent && agent.customAgentId === current.summary.agent?.customAgentId && options.agentContext?.brief)
+            current.acp.brief = options.agentContext.brief
         }
         // Reattach and confirm the mode before recording, so a refused turn leaves no side effects. A stop meanwhile is no
         // refusal: the prompt is recorded as sent and stopped before it reached the agent, as a new session's is.

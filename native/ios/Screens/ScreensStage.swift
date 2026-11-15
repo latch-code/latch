@@ -15,7 +15,6 @@ import UIKit
     static var profilePart: AgentProfileSheet.Part?
     /** The profile scrolled to 「电脑」, at full height. */
     static var profileComputer = false
-    static var newTopic = false
     static var scanning = false
     /** The list's search field, for the 内容中包含 scene. */
     static var query = ""
@@ -29,7 +28,7 @@ import UIKit
         if locked {
             value = patched(value) { object in
                 var device = object["device"]!.object; device["dataScope"] = .string("work"); object["device"] = .object(device)
-                object["customAgents"] = nil; object["automations"] = nil
+                object["customAgents"] = nil; object["agentChats"] = nil; object["automations"] = nil
             }
         }
         model.staged = true
@@ -107,10 +106,12 @@ import UIKit
             model.sessionId = "ses_review"; model.detail = conversation()
             var store = PhoneProposalStore(); let token = store.begin(review); store.finish(review, token: token, list: json(proposalsText), windowOpen: true); model.proposals = store
             profile = name != "agent-chat"; profilePart = name == "agent-memory" ? .memory : .activity
-        case "agent-new": model.tab = .agents; model.agentPath = [review]; newTopic = true
+        case "agent-new":
+            model.tab = .agents; model.agentPath = [review]; chat(model, owner: review, session: nil)
         case "agent-waiting":
             model.tab = .agents; model.agentPath = [daily]
             model.snapshot = patched(model.snapshot) { object in object["tasks"] = .array(object["tasks"]!.array + [json(waitingTask)]) }
+            chat(model, owner: daily, session: "ses_brief")
             model.sessionId = "ses_brief"
             model.detail = json(approvalText.replacingOccurrences(of: "\"id\":\"ses_wait\",\"title\":\"升级 swift-nio 到 2.104\"", with: "\"id\":\"ses_brief\",\"title\":\"汇总本周依赖更新\""))
         case "agent-schedules": model.tab = .agents; model.agentPath = [daily]; profile = true; profilePart = .activity
@@ -127,6 +128,7 @@ import UIKit
             // 每日简报's topic with its runs' cards (one more than a place shows), a failure 立即运行 can retry, and a schedule proposal.
             model.tab = .agents; model.agentPath = [daily]
             model.snapshot = patched(model.snapshot) { object in object["tasks"] = .array(object["tasks"]!.array + [json(dailyTopic)]) }
+            chat(model, owner: daily, session: "ses_daily_talk")
             model.sessionId = "ses_daily_talk"; model.detail = json(dailyConversation)
             var store = PhoneProposalStore(); let token = store.begin(daily); store.finish(daily, token: token, list: json(scheduleProposals), windowOpen: true); model.proposals = store
             profile = name != "agent-results"; profilePart = name == "agent-library" ? .library : .activity
@@ -189,7 +191,7 @@ import UIKit
             model.attachStates[PhoneModel.newSessionTray] = PhoneAttachState(revision: "staged", caps: both)
             model.attachTrays[PhoneModel.newSessionTray] = tray([("IMG_0431.jpg", .image, .ready), ("crash.txt", .text, .ready)])
         case "attach-topic":
-            model.tab = .agents; model.agentPath = [review]; newTopic = true
+            model.tab = .agents; model.agentPath = [review]; chat(model, owner: review, session: nil)
             let key = PhoneModel.topicTray(review)
             model.attachStates[key] = PhoneAttachState(revision: "staged", caps: both)
             var held = tray([("IMG_0440.jpg", .image, .ready), ("trace.log", .text, .uploading(0.4))]); held.note = PhoneAttachments.pickedNothing
@@ -255,6 +257,13 @@ import UIKit
         }
         return (try? NativeJSON.decode(Data(output.utf8))) ?? .null
     }
+    private static func chat(_ model: PhoneModel, owner: String, session: String?) {
+        model.snapshot = patched(model.snapshot) { value in
+            var chats = value["agentChats"]?.object ?? [:]
+            chats[owner] = .object(session.map { ["state": .string("ready"), "sessionId": .string($0)] } ?? ["state": .string("empty")])
+            value["agentChats"] = .object(chats)
+        }
+    }
     private static func snapshot() -> NativeJSON { json(snapshotText) }
     private static func conversation() -> NativeJSON { json(conversationText) }
 
@@ -266,11 +275,12 @@ import UIKit
     private static var snapshotText: String { """
     {"instanceId":"screens","revision":42,"hostName":"\(marker)","approvals":[],"hostTime":"{{0}}",
      "device":{"id":"dev_screens0000000000000000","status":"active","scopes":["view","run","approve:standard"],"dataScope":"all"},
-     "catalog":{"features":{"customAgents":true,"automations":true,"appPages":1,"queue":true,"fork":true,"search":true},"harnesses":\(harnesses),
+     "catalog":{"features":{"customAgents":true,"singleAgentChat":true,"automations":true,"appPages":1,"queue":true,"fork":true,"search":true},"harnesses":\(harnesses),
       "providers":[{"id":"deepseek","name":"DeepSeek","models":["deepseek-chat","deepseek-reasoner"]}],
       "workspaces":[{"id":"default","name":"默认文件夹","path":"/work"},{"id":"latch","name":"latch","path":"/work/latch"},{"id":"site","name":"官网","path":"/work/site"}],
       "defaults":{"harnessId":"standard","workspaceId":"latch","model":{"providerId":"deepseek","model":"deepseek-chat"}},
       "skills":[{"id":"review","pluginId":"review-kit","pluginName":"审阅","name":"审阅清单","description":""}],"sessionFolders":true},
+     "agentChats":{"general":{"state":"empty"},"\(review)":{"state":"ready","sessionId":"ses_review"},"\(daily)":{"state":"empty"},"\(docs)":{"state":"empty"}},
      "customAgents":[
       {"id":"\(review)","name":"代码审阅","avatar":{"kind":"face","bracket":"curly","eyes":"dot","hue":"pine"},"description":"只报真实的问题，按严重程度排","harnessId":"codex","mode":"agent","defaultProjectId":"latch","available":true,"canAutomate":false,"skillCount":1,"memoryCount":2,"sessionCount":3,"revision":3},
       {"id":"\(daily)","name":"每日简报","avatar":{"kind":"face","bracket":"round","eyes":"arc","hue":"slate"},"description":"每天早上汇总依赖更新与 CI","harnessId":"standard","mode":"chat","model":{"providerId":"deepseek","model":"deepseek-chat"},"available":true,"canAutomate":true,"skillCount":0,"memoryCount":0,"sessionCount":1,"revision":1},

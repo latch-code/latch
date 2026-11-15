@@ -21,7 +21,8 @@ extension PhoneModel {
         guard sessionOf(key) != nil else { return nil }
         let summary = summary(of: key)
         guard let harnessId = summary["harnessId"].string ?? (detail["summary"]["id"].string == key ? detail["summary"]["harnessId"].string : nil) else { return nil }
-        return PhoneAttachments.selection(harnessId: harnessId, workspaceId: summary["workspaceId"].string, model: nil)
+        return PhoneAttachments.selection(harnessId: harnessId, workspaceId: summary["workspaceId"].string,
+            model: PhoneAgentChat.model(snapshot, task: summary))
     }
     /** Places that start a session (the sheet, a new topic) have no session ID yet. */
     private func sessionOf(_ key: String) -> String? { key.hasPrefix("\u{0}") ? nil : key }

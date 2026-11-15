@@ -290,7 +290,7 @@ for (const variant of variants)
           await captureWidths(page, output, 'memory-pending')
           await memoryRow.getByRole('button', { name: '保存', exact: true }).click()
           await memoryRow.getByText('已保存', { exact: true }).waitFor()
-          await memoryRow.getByText('从下一个话题起', { exact: true }).waitFor()
+          await memoryRow.getByText('清空上下文后生效', { exact: true }).waitFor()
           expect((await memories()).memories).toHaveLength(1)
           phase = 'schedule'
           await send('请提议每天九点提醒我查看邮件。')

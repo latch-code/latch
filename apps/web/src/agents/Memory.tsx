@@ -387,7 +387,7 @@ export function MemoryTab({
           title="删除这条记忆？"
           danger
           confirmLabel="删除"
-          message="新话题不会收到这条记忆。已发给外部 Harness 的内容仍留在原话题里。"
+          message="后续上下文不会收到这条记忆。外部 Harness 已收到的内容会保留在原上下文，直到清空上下文。"
           onClose={() => {
             setDeleting(null)
           }}

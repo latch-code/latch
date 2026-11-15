@@ -81,6 +81,7 @@ function privateContext(value: AgentExecutionContext | undefined): AgentExecutio
   if (
     !value
     || (value.agent !== undefined && !/^agt_[a-f0-9-]{36}$/u.test(value.agent.customAgentId ?? ''))
+    || (value.generalChat !== undefined && (value.generalChat !== true || value.agent !== undefined))
     || typeof value.instructions !== 'string'
     || value.instructions.length > 600_000
     || !/^[a-f0-9]{64}$/u.test(value.revision)
@@ -897,6 +898,7 @@ class HarnessRuntime implements Bridge {
           summary: {
             id: sessionId,
             ...(agentContext?.agent ? { agent: structuredClone(agentContext.agent) } : {}),
+            ...(agentContext?.generalChat ? { generalChat: true as const } : {}),
             ...(agentContext && !agentContext.agent ? { agentPrivate: true as const } : {}),
             ...(agentContext?.pluginIds ? { pluginIds: [...agentContext.pluginIds] } : {}),
             title: (promptTitle(input.prompt) || attachments[0]?.name || '附件').slice(0, 80),
@@ -982,8 +984,9 @@ class HarnessRuntime implements Bridge {
         if (this.runs.has(sessionId) || task.summary.status === 'running' || task.summary.status === 'waiting-approval') {
           throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
         }
-        const selection: Selection = model
-          ? { ...model, source: 'request', persist: true }
+        const chosenModel = model ?? (agentContext?.defaultModel === undefined ? undefined : modelRef(agentContext.defaultModel))
+        const selection: Selection = chosenModel
+          ? { ...chosenModel, source: 'request', persist: true }
           : task.summary.providerId
             ? {
                 providerId: task.summary.providerId,

@@ -57,7 +57,7 @@ export function Unavailable({ reason, onRepair }: { reason?: string | undefined;
         label="不可用"
         lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}
         moreLabel="为什么不可用">
-        {reason ?? '现在不能开始新话题。'}
+        {reason ?? '现在不能开始聊天。'}
         {!onRepair && ' 在这台 Mac 的 设置 里修复。'}
       </Hint>
       {onRepair && (

@@ -47,6 +47,8 @@ export interface HostFeatures {
   /** `GET /tasks/:id/browser-tabs`: the session's tabs in this Mac's desktop app, read-only (docs/PREVIEW-BROWSER.md). */
   browserTabs?: true
   customAgents?: true
+  /** The Host owns the stable interactive conversation for each Personal Agent. */
+  singleAgentChat?: true
   automations?: true
   /** `/handoffs` exists: hand chosen material to a code session and take its result back. */
   handoffs?: true

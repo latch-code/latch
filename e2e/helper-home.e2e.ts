@@ -178,15 +178,7 @@ it.each(['native', 'chat'] as const)(
         await page.reload()
         await connected(page)
         await page.getByRole('radio', { name: '我的 Agent', exact: true }).filter({ visible: true }).click()
-        await page
-          .getByRole('navigation', { name: '我的 Agent', exact: true })
-          .getByRole('button', { name: /^通用/u })
-          .first()
-          .click()
-        if (existing.length) {
-          await page.getByRole('button', { name: '话题', exact: true }).filter({ visible: true }).click()
-          await page.getByRole('menuitemradio', { name: /新话题/u }).click()
-        }
+        await page.getByRole('navigation', { name: '我的 Agent', exact: true }).locator('[data-agent-id="general"]').first().click()
       }
       for (let index = 0; index < 2; index++) {
         await openGeneral()
@@ -392,14 +384,17 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
     await page.getByRole('textbox', { name: '给守家发消息', exact: true }).waitFor()
     const agent = (await owner.json<CustomAgentList>('custom-agents')).agents.find(item => item.name === '守家')!
     const topics = async () => (await owner.json<AppSnapshot>('snapshot')).tasks.filter(task => task.agent?.customAgentId === agent.id)
-    const send = async (count: number, status = 'idle') => {
-      const input = page.getByRole('textbox', { name: '给守家发消息', exact: true })
-      await input.fill(`echo topic ${count}`)
+    const send = async (count: number) => {
+      const input = page.getByRole('textbox', { name: count === 1 ? '给守家发消息' : '继续对话', exact: true }).filter({ visible: true })
+      await input.fill(`echo conversation ${count}`)
       await input.press('Meta+Enter')
-      await expect.poll(async () => (await topics()).length).toBe(count)
-      const task = (await topics()).toSorted((a, b) => (b.createdAt ?? b.updatedAt).localeCompare(a.createdAt ?? a.updatedAt))[0]!
-      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${task.id}`)).summary.status).toBe(status)
-      return task.id
+      await expect.poll(async () => (await topics()).length).toBe(1)
+      const [task] = await topics()
+      await expect
+        .poll(async () => (await owner.json<TaskDetail>(`tasks/${task!.id}`)).messages.filter(message => message.role === 'user').length)
+        .toBe(count)
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${task!.id}`)).summary.status).toBe('idle')
+      return task!.id
     }
     const openSettings = async () => {
       await page.getByRole('button', { name: '守家 的资料', exact: true }).filter({ visible: true }).click()
@@ -408,16 +403,13 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
       await panel.getByRole('form', { name: '守家 的设置', exact: true }).waitFor()
       return panel
     }
-    const newTopic = async () => {
-      await page.getByRole('button', { name: '关闭资料', exact: true }).filter({ visible: true }).click()
-      await page.getByRole('button', { name: '话题', exact: true }).filter({ visible: true }).click()
-      await page.getByRole('menuitemradio', { name: /新话题/u }).click()
-    }
     const first = await send(1)
     const initial = await owner.json<TaskDetail>(`tasks/${first}`)
     expect(initial.summary.cwd).toBe(join(host.workspaceRoot, 'helpers', agent.id))
     let panel = await openSettings()
-    await panel.locator('button.model-picker').click()
+    const defaults = panel.getByRole('form', { name: '守家 的设置', exact: true })
+    const currentChat = panel.getByRole('region', { name: '当前聊天', exact: true })
+    await defaults.locator('button.model-picker').click()
     await pick(page, 'Large').click()
     await panel.getByRole('button', { name: '保存', exact: true }).click()
     await expect
@@ -425,13 +417,18 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
         async () => (await owner.json<CustomAgentList>('custom-agents')).agents.find(item => item.id === agent.id)?.engineOptions?.model,
       )
       .toBe('large')
-    await newTopic()
-    const second = await send(2)
-    expect((await owner.json<TaskDetail>(`tasks/${second}`)).config?.find(item => item.category === 'model')?.currentValue).toBe('large')
+    expect((await owner.json<TaskDetail>(`tasks/${first}`)).config?.find(item => item.category === 'model')?.currentValue).toBe('small')
+    await currentChat.locator('button.model-picker').click()
+    await pick(page, 'Large').click()
+    await expect
+      .poll(async () => (await owner.json<TaskDetail>(`tasks/${first}`)).config?.find(item => item.category === 'model')?.currentValue)
+      .toBe('large')
+    await page.getByRole('button', { name: '关闭资料', exact: true }).filter({ visible: true }).click()
+    expect(await send(2)).toBe(first)
     panel = await openSettings()
-    await panel.locator('button.thinking-picker').click()
+    await defaults.locator('button.thinking-picker').click()
     await pick(page, 'High').click()
-    await panel.locator('button.chip-permission').click()
+    await defaults.locator('button.chip-permission').click()
     await pick(page, 'plan').click()
     await panel.getByRole('button', { name: '保存', exact: true }).click()
     await expect
@@ -450,14 +447,39 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
             element.scrollTop = 0
           })
           await shot(page, `settings-${width}-${colorScheme}`)
-          await panel.locator('button.chip-permission').click()
+          await defaults.locator('button.chip-permission').click()
           await pick(page, 'plan').waitFor()
           await shot(page, `permission-${width}-${colorScheme}`)
           await page.keyboard.press('Escape')
         }
-    await newTopic()
-    const third = await send(3, sticky ? 'failed' : 'idle')
-    const detail = await owner.json<TaskDetail>(`tasks/${third}`)
+    await currentChat.locator('button.thinking-picker').click()
+    await pick(page, 'High').click()
+    await expect
+      .poll(async () => (await owner.json<TaskDetail>(`tasks/${first}`)).config?.find(item => item.id === 'effort')?.currentValue)
+      .toBe('high')
+    await currentChat.locator('button.chip-permission').click()
+    const modeReply = page.waitForResponse(
+      response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith(`/tasks/${first}/config`),
+    )
+    await pick(page, 'plan').click()
+    if (sticky) {
+      const refused = await modeReply
+      expect(refused.status()).toBe(503)
+      expect(await refused.json()).toMatchObject({ error: 'config-outcome-unknown' })
+      await currentChat
+        .getByText('没有收到 Agent 的确认。核对会向它读取当前设置，不会再发送一次。', { exact: true })
+        .filter({ visible: true })
+        .waitFor()
+      await currentChat.getByRole('button', { name: '核对', exact: true }).filter({ visible: true }).waitFor()
+    } else {
+      expect((await modeReply).ok()).toBe(true)
+      await expect
+        .poll(async () => (await owner.json<TaskDetail>(`tasks/${first}`)).config?.find(item => item.id === 'mode')?.currentValue)
+        .toBe('plan')
+    }
+    await page.getByRole('button', { name: '关闭资料', exact: true }).filter({ visible: true }).click()
+    if (!sticky) expect(await send(3)).toBe(first)
+    const detail = await owner.json<TaskDetail>(`tasks/${first}`)
     expect(detail.summary.cwd).toBe(initial.summary.cwd)
     expect(detail.config?.map(item => [item.id, item.currentValue])).toEqual(
       expect.arrayContaining([
@@ -466,7 +488,6 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
         ['mode', sticky ? 'build' : 'plan'],
       ]),
     )
-    expect((await owner.json<TaskDetail>(`tasks/${first}`)).config?.find(item => item.id === 'model')?.currentValue).toBe('small')
     const events = (await readFile(log, 'utf8'))
       .trim()
       .split('\n')
@@ -474,7 +495,7 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
     expect(events.filter(event => event.event === 'prompt-mode')).toHaveLength(sticky ? 2 : 3)
     if (sticky) {
       await page.getByRole('button', { name: '权限没确认：说明', exact: true }).filter({ visible: true }).waitFor()
-      await page.getByText('权限没确认，修改默认选项后开新话题', { exact: true }).waitFor()
+      await page.getByText('权限没确认，暂不能发送', { exact: true }).waitFor()
       expect(await page.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true }).count()).toBe(0)
       for (const width of [320, 390, 768, 1440])
         for (const colorScheme of ['light', 'dark'] as const) {
@@ -496,7 +517,7 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
       await card.waitFor()
       expect(await card.getByRole('button', { name: '继续', exact: true }).isDisabled()).toBe(true)
       expect(await card.getByRole('button', { name: '立即运行', exact: true }).isEnabled()).toBe(true)
-      expect(await topics()).toHaveLength(3)
+      expect(await topics()).toHaveLength(1)
       const automatic = (await owner.json<AppSnapshot>('snapshot')).automations!.find(item => item.name === '人工整理')!
       expect(automatic.enabled).toBe(false)
       await page.locator('.agent-frame').getByRole('button', { name: '1 个定时任务', exact: true }).waitFor()

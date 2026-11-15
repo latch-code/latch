@@ -255,7 +255,7 @@ Host 只把项目标识与全部文件夹交给声明 `projectFolders: 'all'` �
 
 ### 启动目录
 
-我的 Agent 与通用的新话题另用同一分配器管理固定家：`helpers/<Agent ID>`，显式 `--workspace` 也建立。内部仍是 `workspaceId: 'default'`，Host 持有私有 `sessionFolder` 名称与真实 cwd，不加入公共项目目录。家按 owner 共用、绑定原根及目录身份，删除不删文件，也不能存成公共项目；普通 Code 的日期文件夹规则不变。见 [家与工具](CUSTOM-AGENTS.md#家与工具)。
+我的 Agent 与通用的首次聊天另用同一分配器管理固定家：`helpers/<Agent ID>`，显式 `--workspace` 也建立。内部仍是 `workspaceId: 'default'`，Host 持有私有 `sessionFolder` 名称与真实 cwd，不加入公共项目目录。家按 owner 共用、绑定原根及目录身份，删除不删文件，也不能存成公共项目；普通 Code 的日期文件夹规则不变。见 [家与工具](CUSTOM-AGENTS.md#家与工具)。
 
 `classifyDefaultWorkspace` 对启动目录给出三项判断：
 

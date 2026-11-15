@@ -6,6 +6,7 @@ import { LATCH_ACTIONS, type LatchActionName } from '../composer/latchActions.ts
 import type { SlashAction } from '../composer/slash-options.ts'
 import type { SessionSelectionIntent } from './useSessionController.ts'
 import type { ShellState } from './useShellLayout.tsx'
+import { topicOwner } from '../agents/chat.ts'
 
 /** Call with the input's shell projection: Home's draft is not the session still mounted behind it. */
 export function composerActions(
@@ -99,6 +100,7 @@ export function composerActions(
     changes: !shell.canViewChanges ? '这台设备看不到项目改动' : undefined,
   }
   return LATCH_ACTIONS.flatMap(action => {
+    if (action.name === 'new' && topicOwner(summary)) return []
     if (['clear', 'btw', 'fork'].includes(action.name) && !session) return []
     if (action.name === 'changes' && (!session || !projectFor(catalog, summary))) return []
     return [

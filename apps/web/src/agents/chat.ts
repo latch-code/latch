@@ -1,12 +1,18 @@
-import { GENERAL_AGENT_ID, type CustomAgentSummary, type ModelRef, type TaskMode, type TaskSummary } from '@latch/protocol'
+import {
+  GENERAL_AGENT_ID,
+  type AppSnapshot,
+  type CustomAgentSummary,
+  type ModelRef,
+  type TaskMode,
+  type TaskSummary,
+} from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import { rowStatus } from '../sessions.ts'
 import { personActivity, WAITS_ON_YOU } from './personWords.ts'
 import type { MyAgentTab, MyAgentTarget, ShellRoute } from '../shell/routes.ts'
 
 /**
- * Talking with an Agent: its sessions are its topics, and the current topic is the one most recently active that is not
- * archived. 通用 names no Agent, so its topics are the sessions the Host marked `generalChat`.
+ * 通用's explicit chat belongs here too. Other sessions with its private context do not acquire that ownership.
  */
 
 /** The Agent a session belongs to in 我的 Agent: one of yours, 通用 for a conversation with it, or none (Code). */
@@ -22,12 +28,20 @@ export function agentTopics(tasks: readonly TaskSummary[], id: string): { open: 
   return { open: own.filter(task => !task.archived), archived: own.filter(task => task.archived) }
 }
 
-/**
- * The topic a message to the Agent continues: the newest that is not archived and is not a schedule's run (those stay in
- * 话题 ▾); none yet means the next message starts its first one.
- */
-export function currentTopic(tasks: readonly TaskSummary[], id: string): TaskSummary | undefined {
-  return agentTopics(tasks, id).open.find(task => !task.automationId)
+export function personalChat(snapshot: Pick<AppSnapshot, 'agentChats' | 'catalog'>, owner: string) {
+  return snapshot.catalog?.features?.singleAgentChat === true ? snapshot.agentChats?.[owner] : undefined
+}
+
+export function isPersonalChat(snapshot: Pick<AppSnapshot, 'agentChats' | 'catalog'>, task: TaskSummary): boolean {
+  const owner = topicOwner(task)
+  const chat = owner ? personalChat(snapshot, owner) : undefined
+  return chat?.state === 'ready' && chat.sessionId === task.id
+}
+
+export function personalChatModel(snapshot: AppSnapshot, task: TaskSummary | undefined): ModelRef | undefined {
+  if (!task?.agent || task.harnessId !== 'standard' || !isPersonalChat(snapshot, task)) return undefined
+  const agent = snapshot.customAgents?.find(item => item.id === task.agent?.customAgentId)
+  return agent?.harnessId === task.harnessId ? agent.model : undefined
 }
 
 /** Where the profile panel opens: its top, 记忆, 即将进行, or the settings form. */
@@ -38,21 +52,21 @@ export function profileSection(tab: MyAgentTab | undefined): ProfileSection | un
   return tab === 'memory' || tab === 'schedules' || tab === 'settings' ? tab : undefined
 }
 
-/** What opening 我的 Agent at a target shows: the Agent's current topic, or a page (the list, the form, a new topic). */
+/** What opening 我的 Agent at a target shows: the Host's chat, or a page (the list, form or first-message input). */
 export type AgentOpening =
   | { kind: 'topic'; sessionId: string; owner: string; section?: ProfileSection }
   | { kind: 'page'; target?: MyAgentTarget; section?: ProfileSection }
 
 /**
- * `agents/:id` opens the conversation: its current topic, or a new topic when it has none; `agents/:id/<tab>` does the
- * same with the profile at that section; the old 委托 tab opens the conversation. `topic: 'new'` asks for a new topic.
+ * The Host's ID is authoritative across reconnects and other devices. Old links requesting a new topic open that same
+ * chat. When the Host has no confirmed slot, no task is inferred from its history.
  */
-export function openAgent(target: MyAgentTarget | undefined, tasks: readonly TaskSummary[]): AgentOpening {
+export function openAgent(target: MyAgentTarget | undefined, snapshot: Pick<AppSnapshot, 'agentChats' | 'catalog'>): AgentOpening {
   if (!target || target.id === 'new') return target ? { kind: 'page', target } : { kind: 'page' }
   const section = profileSection(target.tab)
-  const current = target.topic === 'new' ? undefined : currentTopic(tasks, target.id)
-  if (current) return { kind: 'topic', sessionId: current.id, owner: target.id, ...(section ? { section } : {}) }
-  return { kind: 'page', target: { id: target.id, topic: 'new' }, ...(section ? { section } : {}) }
+  const chat = personalChat(snapshot, target.id)
+  if (chat?.state === 'ready') return { kind: 'topic', sessionId: chat.sessionId, owner: target.id, ...(section ? { section } : {}) }
+  return { kind: 'page', target: { id: target.id }, ...(section ? { section } : {}) }
 }
 
 /** The mode of a new 通用 topic; existing topics retain their recorded mode. */

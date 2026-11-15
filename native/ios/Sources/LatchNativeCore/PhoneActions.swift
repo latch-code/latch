@@ -274,7 +274,7 @@ public struct PhoneMenuItem: Equatable, Sendable, Identifiable {
 public enum PhoneSessionMenu {
     public static func active(_ task: NativeJSON) -> Bool { ["running", "waiting-approval"].contains(task["status"].string ?? "") }
     /** `copy`: the open session's transcript is on screen, so 复制为 Markdown can copy it. */
-    public static func sections(_ task: NativeJSON, canRun: Bool, clear: (offered: Bool, clearing: Bool)? = nil, copy: Bool = false) -> [[PhoneMenuItem]] {
+    public static func sections(_ task: NativeJSON, canRun: Bool, clear: (offered: Bool, clearing: Bool)? = nil, copy: Bool = false, retained: Bool = false) -> [[PhoneMenuItem]] {
         guard canRun, task["personal"] == .null else { return [] }
         let busy = active(task)
         var result: [[PhoneMenuItem]] = [[
@@ -286,8 +286,10 @@ public enum PhoneSessionMenu {
             result.append([PhoneMenuItem(action: .clear, label: clear.clearing ? "保留上下文" : "清空上下文", symbol: "eraser",
                 disabledReason: !clear.clearing && busy ? "这一轮结束后才能清空上下文" : nil)])
         }
-        result.append([PhoneMenuItem(action: .archive, label: task["archived"].bool ? "取消归档" : "归档", symbol: task["archived"].bool ? "archivebox.fill" : "archivebox", disabledReason: nil)])
-        result.append([PhoneMenuItem(action: .delete, label: "删除", symbol: "trash", disabledReason: busy ? "运行中的会话需要先停止" : nil)])
+        if !retained {
+            result.append([PhoneMenuItem(action: .archive, label: task["archived"].bool ? "取消归档" : "归档", symbol: task["archived"].bool ? "archivebox.fill" : "archivebox", disabledReason: nil)])
+            result.append([PhoneMenuItem(action: .delete, label: "删除", symbol: "trash", disabledReason: busy ? "运行中的会话需要先停止" : nil)])
+        }
         return result
     }
     /** The question before a delete, in the web's words. */

@@ -123,14 +123,12 @@ export interface PermissionNoteValue {
  * behind ⓘ, names no Harness, and says that Latch does not isolate it either.
  */
 /** The Host expected a verifiable mode, but its current report does not establish it. Unreadable native modes alone are not a lock. */
-export function helperPermissionBlocked(detail: TaskDetail | null | undefined): boolean {
+export function helperPermissionBlocked(detail: TaskDetail | null | undefined, pendingMode?: string): boolean {
   if (!detail || (!detail.summary.agent && !detail.summary.generalChat) || detail.summary.mode === 'chat') return false
+  const mode = detail.config?.find(option => option.category === 'mode')
+  if (pendingMode && mode?.id === pendingMode) return true
   const expected = detail.permission?.expectedMode
-  return (
-    detail.permission?.readback === 'mode'
-    && expected !== undefined
-    && detail.config?.find(option => option.category === 'mode')?.currentValue !== expected
-  )
+  return detail.permission?.readback === 'mode' && expected !== undefined && mode?.currentValue !== expected
 }
 
 export function permissionNote(view: PermissionView | undefined, unconfirmed = false): PermissionNoteValue | undefined {

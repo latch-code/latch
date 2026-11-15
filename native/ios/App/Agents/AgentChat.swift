@@ -7,7 +7,6 @@ struct AgentFrame {
     let owner: String
     let entry: PhoneAgentEntry
     let openProfile: () -> Void
-    let newTopic: () -> Void
     let openTopic: (String) -> Void
 }
 
@@ -23,7 +22,6 @@ struct AgentFrameItems: ToolbarContent {
         } else {
             ToolbarItem(placement: .topBarLeading) { AgentFrameTitle(frame: frame, topic: topic) }
         }
-        ToolbarItem(placement: .topBarTrailing) { TopicsMenu(frame: frame, shown: shown) }
         if shown != nil { ToolbarItem(placement: .topBarTrailing) { TopicActions(topic: topic) } }
     }
 }
@@ -43,43 +41,14 @@ private struct AgentFrameTitle: View {
                         Text(entry.name).font(.system(size: 15, weight: .semibold)).foregroundStyle(PhoneTheme.ink).lineLimit(1)
                         if let words = model.connected ? PhoneHelperSpeech.activity(topic) ?? entry.face.words : nil { FaceWord(face: entry.face, words: words) }
                     }
-                    Text(topic == .null ? "新话题" : PhoneConversation.visible(topic["title"].string ?? "未命名会话"))
-                        .font(.system(size: 12)).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+                    if topic != .null, let title = topic["title"].string {
+                        Text(PhoneConversation.visible(title)).font(.system(size: 12)).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+                    }
                 }
             }
             .frame(width: width == .compact ? 168 : 400, alignment: .leading).contentShape(Rectangle())
         }
         .buttonStyle(.plain).accessibilityLabel(entry.name).accessibilityHint("打开资料")
-    }
-}
-
-/** 话题: 新话题 first, then this Agent's topics newest first (the open one checked), then 已归档. */
-private struct TopicsMenu: View {
-    @EnvironmentObject private var model: PhoneModel
-    let frame: AgentFrame
-    let shown: String?
-    var body: some View {
-        let topics = PhoneAgentChat.topics(model.snapshot["tasks"].array, id: frame.owner)
-        Menu {
-            Button("新话题", systemImage: "square.and.pencil", action: frame.newTopic)
-            Section { ForEach(topics.open, id: \.id) { row($0) } }
-            if !topics.archived.isEmpty { Menu("已归档") { ForEach(topics.archived, id: \.id) { row($0) } } }
-        } label: {
-            HStack(spacing: 4) {
-                Text("话题").font(.system(size: 15, weight: .medium))
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
-            }.foregroundStyle(PhoneTheme.ink)
-        }
-        .accessibilityLabel("话题")
-    }
-    private func row(_ task: NativeJSON) -> some View {
-        let id = task["id"].string ?? ""
-        let words = PhoneAgentChat.topicWords(task, frozen: !model.connected) ?? PhoneTime.parse(task["updatedAt"]).map { PhoneTime.relative($0) } ?? ""
-        return Button { frame.openTopic(id) } label: {
-            if id == shown { Label(PhoneConversation.visible(task["title"].string ?? "未命名会话"), systemImage: "checkmark") }
-            else { Text(PhoneConversation.visible(task["title"].string ?? "未命名会话")) }
-            Text(words)
-        }
     }
 }
 
@@ -95,23 +64,20 @@ private struct TopicActions: View {
     }
 }
 
-/**
- * Talking with an Agent: its current topic (the newest open one that is not a schedule's run), opened as any conversation
- * is, or a new topic whose first message starts its session. Tapping the face or name opens its profile.
- */
+/** The Host's chat is authoritative. A historical session opens only through an explicit link. */
 struct AgentChat: View {
     @EnvironmentObject private var model: PhoneModel
     let id: String
-    enum Pick: Equatable { case current, new, session(String) }
-    @State private var pick = Pick.current
+    @State private var picked: String?
+    @State private var firstPage = false
     @State private var profile = false
     @Environment(\.horizontalSizeClass) private var width
     private var tasks: [NativeJSON] { model.snapshot["tasks"].array }
     private var entry: PhoneAgentEntry? { PhoneAgents.entry(model.snapshot, id: id, windowOpen: model.verifiedUntil != nil) }
-    /** The topic shown: the one picked while the Host still lists it, else the current one; nil for a new topic. */
     private var shown: String? {
-        if case let .session(topic) = pick { return PhoneAgentChat.shown(tasks, owner: id, picked: topic, newTopic: false) }
-        return PhoneAgentChat.shown(tasks, owner: id, picked: nil, newTopic: pick == .new)
+        if let picked { return picked }
+        if firstPage || model.pending.contains(where: { PhonePending.kind($0) == .topic(owner: id) }) { return nil }
+        return PhoneAgentChat.session(model.snapshot, owner: id)
     }
     var body: some View {
         Group {
@@ -147,7 +113,7 @@ struct AgentChat: View {
         .task(id: [id, PhoneProposals.signature(model.snapshot, owner: id), model.verifiedUntil == nil ? "closed" : "open"]) { await model.loadProposals(id) }
         .onChange(of: model.verifiedUntil == nil) { _, closed in if closed { profile = false } }
         #if LATCH_SCREENS
-        .onAppear { if ScreensStage.profile { profile = true }; if ScreensStage.newTopic { pick = .new } }
+        .onAppear { if ScreensStage.profile { profile = true } }
         #endif
     }
     /**
@@ -155,21 +121,19 @@ struct AgentChat: View {
      * names no Agent and is Code's) opens in Code, as the web's `choose` does.
      */
     private func reach(_ session: String) {
-        if PhoneAgentChat.home(tasks, session: session, owner: id) == .agents { pick = .session(session); return }
+        if PhoneAgentChat.home(tasks, session: session, owner: id) == .agents { picked = session; return }
         Task { model.tab = .code; await model.openSession(session) }
     }
     private func follow() async {
         guard model.agentAccess == .ready else { return }
         if let shown {
-            // The current topic stays this page's topic, even when another one becomes current later.
-            if pick == .current { pick = .session(shown) }
             if model.sessionId != shown { await model.openSession(shown) }
         } else if model.sessionId != nil { model.closeSession() }
     }
     @ViewBuilder private func chat(_ entry: PhoneAgentEntry) -> some View {
-        let frame = AgentFrame(owner: id, entry: entry, openProfile: { profile = true }, newTopic: { pick = .new }, openTopic: { reach($0) })
+        let frame = AgentFrame(owner: id, entry: entry, openProfile: { profile = true }, openTopic: { reach($0) })
         if let shown { ConversationView(id: shown, frame: frame) }
-        else { NewTopicView(frame: frame, started: { pick = .session($0) }) }
+        else { NewTopicView(frame: frame, started: { picked = $0; firstPage = false }).onAppear { firstPage = true } }
     }
 }
 
@@ -211,20 +175,25 @@ private struct NewTopicView: View {
         value.pending = sending || model.busy || !model.pending.isEmpty
         value.firstTurn = true; value.harnessId = choice.harnessId; value.projectId = choice.workspaceId
         if PhoneStart.usesServices(harness), !PhoneStart.models(catalog).isEmpty { value.actions.insert(.model) }
-        value.actionReasons[.new] = "已经在新话题里"
+        value.actionReasons[.new] = "每个 Agent 只有一条聊天"
         return value
     }
     private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: [], context: slashContext, focused: focused) }
     private var slashRead: SlashReadKey { SlashReadKey(model: model, enabled: focused && slashContext.bodyOpen, retry: slash.retry) }
     private var slashReason: String? { if case let .unavailable(reason) = PhoneSlash.action(prompt, context: slashContext) { reason } else { nil } }
     private var mine: [NativePendingWrite] { model.pending.filter { PhonePending.kind($0) == .topic(owner: frame.owner) } }
+    private var readyChat: String? { PhoneAgentChat.session(model.snapshot, owner: frame.owner) }
     private var blocker: String? {
         if !mine.isEmpty { return nil }
         if !model.pending.isEmpty { return "上一项提交结果待确认" }
+        if !catalog["features"]["singleAgentChat"].bool { return "Mac 需要更新后才能开始聊天" }
+        let chat = PhoneAgentChat.slot(model.snapshot, owner: frame.owner)
+        if chat["state"].string != "empty" { return readyChat == nil ? "正在确认聊天" : nil }
         if general { return PhoneAgentChat.generalBlocker(catalog, choice: choice, connected: model.connected, canRun: model.canRun) }
         return PhoneAgents.blocker(catalog, agent: agent, choice: choice, connected: model.connected, canRun: model.canRun)
     }
     private var canSend: Bool {
+        guard PhoneAgentChat.slot(model.snapshot, owner: frame.owner)["state"].string == "empty" else { return false }
         if PhoneSlash.actionOf(prompt) != nil {
             if case .open = PhoneSlash.action(prompt, context: slashContext) { return !slash.composing }; return false
         }
@@ -233,17 +202,11 @@ private struct NewTopicView: View {
     /** Cards of runs that settled while the Agent had no topic: here until the next topic keeps them. */
     private var waiting: [PhoneScheduleResult] { model.agentResults[frame.owner] ?? [] }
     var body: some View {
-        Group {
-            if waiting.isEmpty { intro.padding(.horizontal, 24).frame(maxWidth: .infinity, maxHeight: .infinity) }
-            else {
-                ScrollView {
-                    VStack(spacing: 20) {
-                        intro
-                        ResultStack(results: waiting, openActivity: frame.openProfile, openRun: frame.openTopic,
-                            openFile: { file, run in files.open(model, reference: file.path, root: file.root, session: run) })
-                            .frame(maxWidth: 760)
-                    }.padding(.horizontal, 16).padding(.vertical, 32).frame(maxWidth: .infinity)
-                }
+        ScrollView {
+            if !waiting.isEmpty {
+                ResultStack(results: waiting, openActivity: frame.openProfile, openRun: frame.openTopic,
+                    openFile: { file, run in files.open(model, reference: file.path, root: file.root, session: run) })
+                    .frame(maxWidth: 760).padding(.horizontal, 16).padding(.vertical, 20).frame(maxWidth: .infinity)
             }
         }
         .sessionFilePreview(files)
@@ -277,29 +240,27 @@ private struct NewTopicView: View {
             if PhoneAttachments.dropsOnClose(key: attachKey, pending: model.pending, starting: sending, verifying: model.verifying, covered: false) { model.dropAttachments(attachKey) }
         }
     }
-    private var intro: some View {
-        VStack(spacing: 10) {
-            AgentFace(avatar: frame.entry.avatar, size: 56, face: frame.entry.face)
-            Text(frame.entry.name).font(.system(size: 20, weight: .semibold)).foregroundStyle(PhoneTheme.ink)
-            if !general, PhoneAgentChat.topics(model.snapshot["tasks"].array, id: frame.owner).open.isEmpty,
-               PhoneAgentChat.topics(model.snapshot["tasks"].array, id: frame.owner).archived.isEmpty {
-                Text("你好，我是" + frame.entry.name + "。" + frame.entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).multilineTextAlignment(.center)
-            } else if !frame.entry.duty.isEmpty { Text(frame.entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).multilineTextAlignment(.center) }
-            if !frame.entry.available { Unavailable(reason: frame.entry.unavailableReason) }
-        }
-    }
     private var dock: some View {
         VStack(spacing: 8) {
             ForEach(mine, id: \.requestId) { pending in
                 HStack(spacing: 10) {
-                    Label("新话题结果待确认", systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                    Label("第一条消息结果待确认", systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     Spacer()
                     Button("重试同一请求") { retry(pending) }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                     Button("放弃这次提交") {
                         Task { if case let .text(back, _) = await model.abandonPrompt(pending) { prompt = PhonePending.joined(prompt, back) } }
                     }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).disabled(model.busy)
-                    InfoHint(text: PromptComposer.abandonStartHint)
+                    InfoHint(text: "放弃只会结束此设备的等待。文字会保留。如果 Mac 已收到第一条消息，可以打开聊天继续。")
                 }.padding(.horizontal, 16)
+            }
+            if let readyChat, mine.isEmpty {
+                Button(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "打开聊天" : "带上草稿打开聊天") {
+                    let prior = model.takeDraft(for: readyChat) ?? ""
+                    model.holdDraft(PhonePending.joined(prior, prompt), for: readyChat)
+                    prompt = ""
+                    started(readyChat)
+                }.buttonStyle(.borderedProminent).disabled(!model.tray(attachKey).isEmpty)
+                if !model.tray(attachKey).isEmpty { Text("打开聊天前请先在此移除附件，再到聊天中添加。").font(PhoneTheme.caption) }
             }
             if let blocker { Text(blocker).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(2).padding(.horizontal, 16).frame(maxWidth: .infinity, alignment: .leading) }
             AttachmentRows(key: attachKey, selection: attachSelection)
@@ -309,7 +270,7 @@ private struct NewTopicView: View {
                     loading: slash.loading, failure: slash.failure, maximumHeight: slashSpace, retry: { slash.retry += 1 },
                     choose: { slash.complete(menu, option: $0, text: $prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) }).padding(.horizontal, 12)
             }
-            field
+            if readyChat == nil || !prompt.isEmpty || !model.tray(attachKey).isEmpty || !mine.isEmpty { field }
         }.padding(.bottom, 8).padding(.top, 4)
     }
     /** This topic's project (not for General) and model; the Harness remains the owner's. */
