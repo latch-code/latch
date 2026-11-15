@@ -214,7 +214,7 @@ SSE 逐读者先投影再 `TaskDeltaStream.encode`，原事件和 Driver 对象�
 
 - 每次模型调用在收到文字前创建 `liveMessageId`。文字只更新内存里的累计 `liveText`，思考更新 `liveReasoning`；正常完成或异常保留部分内容时，最终 assistant 消息沿用该 ID，思考保存在其 `reasoning` 中。Harness 说这条回复中途断开、从头重新生成时（profile 的 `readRetry`，见 [HARNESSES.md](HARNESSES.md#通知与压缩)），`liveText` 清空后重新累计，ID 不变。detail 不同时暴露同 ID 的 live 与已提交消息。
 - React 按 message.id 渲染，并为消息行设置 `data-message-id`。消息组件比较 ID、正文、状态和角色等字段，未变化的历史行不因每次状态替换而重渲染。
-- Transcript 按会话和不可变 `messages` 引用缓存已提交轮次、切换标记、时间索引与运行工具事实；追加帧只合成尾轮。完整消息列表变化仍比较全部字段，包含同 ID 重写与未知新字段。历史 JSX 缓存保留全部共享展示输入，审批、提问、人物、权限、文件记录和其他新增 prop 变化都会重新核对；只有已知正文帧字段与稳定回调身份不使历史重复投影。列表保持原来的平级 key，旧尾轮成为历史时不重挂载，展开、选择、复制和查找锚点保留。状态词与时钟每次仍读最新 detail，不缓存状态结果；React 的列表协调仍有线性工作，不能由此声称整个渲染为常数成本。
+- Transcript 按会话和不可变 `messages` 引用缓存已提交轮次、切换标记、时间索引与运行工具事实。完整消息列表变化仍比较全部字段，包含同 ID 重写与未知新字段。历史 JSX 缓存保留全部共享展示输入，审批、提问、人物、权限、文件记录和其他新增 prop 变化都会重新核对。连续的轮次每 24 轮建一个无 DOM 包裹的 React 组件，正文追加帧复用历史组，只更新尾轮所在组。尾轮转为历史与在完整快照里补入较早的轮次时，原轮次沿用原组的 key，保留展开、选择、复制和查找锚点。状态词与时钟仍读最新 detail，React 仍协调顶层组和当前组内的轮次。
 - 收到完整模型终止事件后，先持久化助手文字和工具批次，再串行执行工具。工具消息使用 `tool:<callId>`，按 `queued → awaiting-approval（若需要）→ running → completed/failed/cancelled` 更新同一行。拒绝不会经过 running。
 - 审批显示在输入框上方的抽屉里，不进入对话；携带 `toolCallId` 时用 `tool:<toolCallId>` 工具行的文字与差异。审批按钮来自 `Approval.options`，缺省为允许与拒绝；当前设备能看到哪些按钮由风险等级与设备权限决定（见 [DESIGN.md](./DESIGN.md)）。工具行默认收起（带输出的失败自己展开），展开后显示参数、文件差异与纯文本输出（第一次展开时才渲染）；收起时文件差异作为证据显示在行下。
 - 客户端把消息按回合分组（一条用户消息与回答它的一切，[conversation.ts](../apps/web/src/conversation.ts)），只是排列方式：每一行仍按 message.id 渲染、带 `data-message-id`。正常完成的回合把答案前的过程折叠成一行时，被折叠的行仍挂载在 `hidden="until-found"` 的容器里，文档里行的顺序与身份不变。
