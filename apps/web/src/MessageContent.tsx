@@ -11,6 +11,7 @@ import {
   useState,
   type ComponentProps,
   type ReactNode,
+  type RefObject,
 } from 'react'
 import Markdown, { type Components, type Options, type UrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -158,13 +159,17 @@ type CopyResult = { status: 'copied' | 'failed'; value: string } | null
 const COLLAPSED_LINES = 18
 const TAIL_LINES = COLLAPSED_LINES - 1
 
+/** Direct replies share the transcript's scrollport. Other Markdown surfaces find their own. */
+export const ReplyViewport = createContext<RefObject<Element | null> | undefined>(undefined)
+
 const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { code: string; language?: string; closed?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const [copyResult, setCopyResult] = useState<CopyResult>(null)
   const [copying, setCopying] = useState(false)
   const codeId = useId()
   const pre = useRef<HTMLPreElement>(null)
-  const seen = useSeen(pre)
+  const viewport = useContext(ReplyViewport)
+  const seen = useSeen(pre, viewport)
   const mounted = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const lines = useMemo(() => (code ? code.split('\n').length - (code.endsWith('\n') ? 1 : 0) : 0), [code])

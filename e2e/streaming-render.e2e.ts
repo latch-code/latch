@@ -164,6 +164,24 @@ describe('streaming render', () => {
 
   it('colours the newest block of a 600-block session, only what is near the view, and the rest as they come', async () => {
     await open()
+    const viewport = await page.evaluateHandle(() => {
+      const counts = { lookups: 0, observed: 0, wrongRoot: 0 }
+      const scrollport = document.querySelector('.transcript')
+      const computedStyle = window.getComputedStyle.bind(window)
+      const observe = IntersectionObserver.prototype.observe
+      window.getComputedStyle = (element, pseudo) => {
+        if (new Error().stack?.includes('/preview/viewportGate.ts')) counts.lookups++
+        return computedStyle(element, pseudo)
+      }
+      IntersectionObserver.prototype.observe = function (this: IntersectionObserver, element) {
+        if (element.matches('.message-code > pre')) {
+          counts.observed++
+          if (this.root !== scrollport) counts.wrongRoot++
+        }
+        return observe.call(this, element)
+      }
+      return counts
+    })
     await show(detail(history(300)))
     const last = page.locator('.message-code').last()
     await last.locator('.syn-keyword').first().waitFor()
@@ -191,6 +209,11 @@ describe('streaming render', () => {
         .toBe(true)
     }
     expect(await coloured()).toBeLessThan(600)
+    const counts = await viewport.jsonValue()
+    expect(counts.observed).toBe(600)
+    expect(counts.wrongRoot).toBe(0)
+    expect(counts.lookups).toBe(0)
+    await viewport.dispose()
   })
 
   it('keeps settled turns from rendering during a stream, and spans bounded as a block grows', async () => {

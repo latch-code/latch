@@ -16,8 +16,7 @@ function scrollParent(element: Element): Element | null {
 
 const observers = new Map<Element | null, { observer: IntersectionObserver; waiting: Map<Element, () => void> }>()
 
-function onceSeen(element: Element, seen: () => void): () => void {
-  const root = scrollParent(element)
+function onceSeen(element: Element, root: Element | null, seen: () => void): () => void {
   let entry = observers.get(root)
   if (!entry) {
     const waiting = new Map<Element, () => void>()
@@ -50,13 +49,16 @@ function onceSeen(element: Element, seen: () => void): () => void {
 }
 
 /** Whether the element has come near the view; it stays true once it has. */
-export function useSeen(ref: RefObject<Element | null>): boolean {
+export function useSeen(ref: RefObject<Element | null>, viewport?: RefObject<Element | null>): boolean {
   const [seen, setSeen] = useState(false)
   useEffect(() => {
-    if (seen || !ref.current) return
-    return onceSeen(ref.current, () => {
+    const element = ref.current
+    if (seen || !element) return
+    const knownRoot = viewport?.current
+    const root = knownRoot?.contains(element) ? knownRoot : scrollParent(element)
+    return onceSeen(element, root, () => {
       setSeen(true)
     })
-  }, [seen, ref])
+  }, [seen, ref, viewport])
   return seen
 }
