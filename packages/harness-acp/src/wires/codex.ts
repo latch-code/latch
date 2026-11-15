@@ -35,6 +35,17 @@ import {
   type SpawnSpec,
 } from './process.ts'
 import type { AgentWire, WireHandlers, WireModelRoute } from './types.ts'
+import {
+  CodexTeam,
+  codexTeamFeatures,
+  codexTeamHistory,
+  codexTeamItem,
+  codexTeamThread,
+  codexTeamThreadPage,
+  codexTeamTurn,
+  teamHistoryResult,
+  type CodexTeamItem,
+} from './codex-team.ts'
 
 /** Appended to the definition's arguments: the protocol this wire speaks. */
 export const CODEX_APP_SERVER_ARGS: readonly string[] = ['app-server']
@@ -349,6 +360,8 @@ interface Turn {
   commands: Set<string>
   /** The subagents' threads that reported calls in this turn: their commands are listed with the session's. */
   threads: Set<string>
+  /** Member turn interruption is settled after known commands have ended. */
+  memberInterruptions?: Map<string, string>
   /** The turn's answer, held while its commands run. */
   ending?: () => void
 }
@@ -382,6 +395,12 @@ export class CodexWire implements AgentWire {
   private readonly pending = new Map<number, Pending>()
   /** The thread this process runs, which is the session's ID on this wire. */
   private threadId?: string
+  private team?: CodexTeam
+  private teamEnabled?: boolean
+  private teamResumed = false
+  private readonly teamItems: Array<{ turnId: string; item: CodexTeamItem }> = []
+  private readonly checkingChildren = new Map<string, Promise<boolean>>()
+  private readonly childEvents = new Map<string, Array<{ method: string; params: Record<string, unknown> }>>()
   private cwd = ''
   private folders: string[] = []
   private servers: Array<z.infer<typeof mcpServer>> = []
@@ -622,7 +641,28 @@ export class CodexWire implements AgentWire {
     }
     const read = opened.safeParse(answer)
     if (!read.success) throw new RpcError(RPC.internal, 'Codex answered a thread request in a shape Latch does not read')
+    if (kind !== undefined && read.data.thread.id !== parsed.data.sessionId)
+      throw new RpcError(RPC.internal, 'Codex 恢复的线程与所选会话不一致。')
     this.threadId = read.data.thread.id
+    if (this.team?.rootId !== this.threadId) {
+      const rootThreadId = this.threadId
+      this.team = new CodexTeam(rootThreadId, (id, { parentTurnId, result, failure, recovered, ...update }) => {
+        if (this.threadId !== rootThreadId || this.stopping) return
+        this.update({
+          sessionUpdate: 'subagent_update',
+          sessionId: id,
+          ...update,
+          team: {
+            rootThreadId,
+            ...(parentTurnId ? { parentTurnId } : {}),
+            ...(result ? { result } : {}),
+            ...(failure ? { failure } : {}),
+            ...(recovered ? { recovered } : {}),
+          },
+        })
+      })
+      this.teamResumed = kind === 'resume'
+    }
     // On a route, only a model of the service: a resumed thread that last ran another goes on with the route's.
     const reported = read.data.model ?? undefined
     if (this.route && reported !== this.route.model) throw new RpcError(RPC.internal, 'Codex 没有采用所选模型，未发送本轮输入。')
@@ -632,6 +672,115 @@ export class CodexWire implements AgentWire {
     this.reportMcp(timeoutMs)
     this.reportQuota(timeoutMs)
     return { sessionId: this.threadId, configOptions: this.options() }
+  }
+
+  get codexTeam(): AgentWire['codexTeam'] {
+    if (this.teamEnabled !== undefined) return this.teamEnabled ? 'available' : 'disabled'
+  }
+
+  reconcileCodexTeam(savedMember?: (rootThreadId: string, childThreadId: string) => boolean): void {
+    const team = this.team
+    if (!team || this.stopping) return
+    void this.readCodexTeamFeatures(team)
+    if (savedMember && this.teamResumed) void this.readCodexTeamHistory(team, savedMember)
+    this.teamResumed = false
+  }
+
+  private async readCodexTeamFeatures(team: CodexTeam): Promise<void> {
+    let cursor: string | undefined
+    for (let page = 0; page < 4; page++) {
+      const raw = await this.send(
+        'experimentalFeature/list',
+        { threadId: team.rootId, limit: 100, ...(cursor ? { cursor } : {}) },
+        2500,
+      ).catch(() => undefined)
+      const parsed = codexTeamFeatures.safeParse(raw)
+      if (!parsed.success || this.team !== team || this.stopping) return
+      const feature = parsed.data.data.find(entry => entry.name === 'multi_agent')
+      if (feature) {
+        this.teamEnabled = feature.enabled
+        this.update({ sessionUpdate: 'latch/codex-team-availability' })
+        return
+      }
+      if (!parsed.data.nextCursor || parsed.data.nextCursor === cursor) return
+      cursor = parsed.data.nextCursor
+    }
+  }
+
+  private async readCodexTeamHistory(team: CodexTeam, savedMember: (root: string, child: string) => boolean): Promise<void> {
+    let cursor: string | undefined
+    let reads = 0
+    for (let index = 0; index < 4; index++) {
+      const raw = await this.send('thread/list', { parentThreadId: team.rootId, limit: 64, ...(cursor ? { cursor } : {}) }, 2500).catch(
+        () => undefined,
+      )
+      const list = codexTeamThreadPage.safeParse(raw)
+      if (!list.success || this.team !== team || this.stopping) return
+      for (const value of list.data.data) {
+        const thread = codexTeamThread.safeParse(value)
+        if (!thread.success || thread.data.parentThreadId !== team.rootId || !savedMember(team.rootId, thread.data.id)) continue
+        if (!team.acceptThread(thread.data)) continue
+        const page = await this.send('thread/turns/list', { threadId: thread.data.id, limit: 1, itemsView: 'full' }, 750).catch(
+          () => undefined,
+        )
+        if (this.team !== team || this.stopping) return
+        const read = codexTeamHistory.safeParse(page)
+        const turn = read.success ? read.data.data[0] : undefined
+        // Readback can synthesize an interrupted turn after a restart. Only completion or failure is recovered here.
+        const status = turn?.status === 'completed' || turn?.status === 'failed' ? turn.status : undefined
+        team.recover(thread.data, status, status && turn ? teamHistoryResult(turn.items) : undefined, turn?.error?.message)
+        if (++reads >= 24) return
+      }
+      if (!list.data.nextCursor || cursor === list.data.nextCursor) return
+      cursor = list.data.nextCursor
+    }
+  }
+
+  private codexChild(id: string): Promise<boolean> {
+    const team = this.team
+    if (!team || id.length > 512 || this.stopping) return Promise.resolve(false)
+    if (team.owns(id)) return Promise.resolve(true)
+    const current = this.checkingChildren.get(id)
+    if (current) return current
+    if (this.checkingChildren.size >= 8) return Promise.resolve(false)
+    const check = this.send('thread/read', { threadId: id, includeTurns: false }, 2000)
+      .then(raw => {
+        const parsed = codexTeamThread.safeParse(isRecord(raw) ? raw.thread : undefined)
+        return parsed.success && parsed.data.id === id && this.team === team && !this.stopping && team.acceptThread(parsed.data)
+      })
+      .catch(() => false)
+      .finally(() => {
+        this.checkingChildren.delete(id)
+      })
+    this.checkingChildren.set(id, check)
+    return check
+  }
+
+  private observeTeamItem(params: Record<string, unknown>): void {
+    const turn = this.turn
+    if (!turn || !this.team || params.threadId !== this.team.rootId || typeof params.turnId !== 'string') return
+    const item = codexTeamItem.safeParse(params.item)
+    if (!item.success) return
+    if (turn.id === params.turnId) this.applyTeamItem(this.team, params.turnId, item.data)
+    else if (!turn.id && this.teamItems.length < 32) this.teamItems.push({ turnId: params.turnId, item: item.data })
+  }
+
+  private flushTeamItems(turnId: string): void {
+    const team = this.team
+    if (!team) return
+    for (const { turnId: observed, item } of this.teamItems.splice(0)) if (observed === turnId) this.applyTeamItem(team, turnId, item)
+  }
+
+  private applyTeamItem(team: CodexTeam, turnId: string, item: CodexTeamItem): void {
+    team.observeItem(team.rootId, turnId, item)
+    // A parent item names a candidate. The native thread must independently report its parent before we show it.
+    const missing = team.spawnTargets(item).filter(id => !team.owns(id))
+    if (!missing.length) return
+    const turn = this.turn
+    void Promise.all(missing.map(id => this.codexChild(id))).then(() => {
+      if (this.team === team && (this.turn === turn || this.turn === undefined) && !this.stopping)
+        team.observeItem(team.rootId, turnId, item)
+    })
   }
 
   /** Only the official directory supplies skill paths. Invalidation clears them before any asynchronous re-read. */
@@ -989,6 +1138,7 @@ export class CodexWire implements AgentWire {
     const done = new Promise<unknown>((resolve, reject) => {
       turn = { resolve, reject, cancelled: false, commands: new Set(), threads: new Set(), ...(compact ? { compact: true } : {}) }
     })
+    this.teamItems.length = 0
     this.turn = turn
     done.catch(() => {})
     let answer: unknown
@@ -1030,6 +1180,7 @@ export class CodexWire implements AgentWire {
     // A completion may have arrived before this answer was read; it named the turn then.
     if (this.turn === turn) {
       turn.id ??= read.data.turn.id
+      this.flushTeamItems(turn.id)
       if (turn.cancelled) this.interrupt(turn)
     }
     return done
@@ -1107,7 +1258,10 @@ export class CodexWire implements AgentWire {
 
   private finish(turn: Turn, answer: () => void): void {
     if (this.turn !== turn) return
+    if (!turn.commands.size && turn.memberInterruptions)
+      for (const [child, childTurnId] of turn.memberInterruptions) this.team?.finish(child, childTurnId, 'interrupted')
     this.turn = undefined
+    this.teamItems.length = 0
     this.streamed.clear()
     this.summaryPart.clear()
     this.output.clear()
@@ -1455,12 +1609,60 @@ export class CodexWire implements AgentWire {
       void this.readSkills()
       return
     }
+    if (method === 'thread/started') {
+      const parsed = codexTeamThread.safeParse(params.thread)
+      if (parsed.success) this.team?.acceptThread(parsed.data)
+      return
+    }
+    if (method === 'item/completed') this.observeTeamItem(params)
+    const source = typeof params.threadId === 'string' ? params.threadId : undefined
+    if (source && source !== this.threadId && this.team && !this.team.owns(source)) {
+      if (method !== 'item/started' && method !== 'item/completed' && method !== 'turn/started' && method !== 'turn/completed') return
+      const queued = this.childEvents.get(source)
+      if (queued) {
+        if (queued.length < 12) queued.push({ method, params })
+      } else if (this.childEvents.size < 8) {
+        const events = [{ method, params }]
+        this.childEvents.set(source, events)
+        void this.codexChild(source).then(accepted => {
+          this.childEvents.delete(source)
+          if (accepted && !this.stopping) for (const event of events) this.onNotification(event.method, event.params)
+        })
+      }
+      return
+    }
     const mcp = this.trackMcp(method, params)
     // Codex may run its subagents' threads in this process: their calls reach the session marked as theirs.
     const thread = typeof params.threadId === 'string' ? params.threadId : undefined
     const child = thread !== undefined && thread !== this.threadId ? thread : undefined
     if (child) {
       if (!this.threadId) return
+      if (method === 'turn/started' && isRecord(params.turn) && typeof params.turn.id === 'string') this.team?.start(child, params.turn.id)
+      if (method === 'turn/completed') {
+        const parsed = codexTeamTurn.safeParse(params.turn)
+        if (parsed.success) {
+          const result = isRecord(params.turn) && Array.isArray(params.turn.items) ? teamHistoryResult(params.turn.items) : undefined
+          if (result) this.team?.output(child, parsed.data.id, result)
+          const { id, status, error } = parsed.data
+          if (status !== 'interrupted') this.team?.finish(child, id, status, error?.message)
+          else if (this.turn) {
+            if (!this.turn.commands.size) this.team?.finish(child, id, status)
+            else {
+              this.turn.memberInterruptions ??= new Map()
+              this.turn.memberInterruptions.set(child, id)
+            }
+          }
+        }
+      }
+      if (
+        method === 'item/completed'
+        && typeof params.turnId === 'string'
+        && isRecord(params.item)
+        && params.item.type === 'agentMessage'
+        && params.item.phase !== 'commentary'
+        && typeof params.item.text === 'string'
+      )
+        this.team?.output(child, params.turnId, params.item.text)
       if ((method === 'item/started' || method === 'item/completed') && isRecord(params.item))
         this.item(this.threadId, params.item, method === 'item/started' ? 'started' : 'completed', child, mcp)
       // Its review model's decisions on the subagent's calls are rows of the subagent's, recorded as any review is.
@@ -1473,6 +1675,7 @@ export class CodexWire implements AgentWire {
       case 'turn/started':
         if (turn && isRecord(params.turn) && typeof params.turn.id === 'string') {
           turn.id ??= params.turn.id
+          this.flushTeamItems(turn.id)
           if (turn.cancelled) this.interrupt(turn)
         }
         return
@@ -1634,11 +1837,16 @@ export class CodexWire implements AgentWire {
    */
   private async onRequest(method: string, params: Record<string, unknown>, id: RpcId): Promise<unknown> {
     if (method === 'mcpServer/elicitation/request' && isToolApproval(params)) return this.toolApproval(params, id)
-    if (method !== 'item/commandExecution/requestApproval' && method !== 'item/fileChange/requestApproval')
-      return this.handlers.request(method, { ...params, ...(this.threadId ? { sessionId: this.threadId } : {}) }, id)
-    const command = method === 'item/commandExecution/requestApproval'
+    const active = this.turn
     const thread = typeof params.threadId === 'string' ? params.threadId : undefined
     const child = thread !== undefined && thread !== this.threadId ? thread : undefined
+    const permission = method === 'item/commandExecution/requestApproval' || method === 'item/fileChange/requestApproval'
+    if (child && (!(await this.codexChild(child)) || this.turn !== active || !this.team?.acceptsTurn(child, params.turnId))) {
+      if (permission) return { decision: 'cancel' }
+      throw new RpcError(RPC.invalidParams, 'Codex 请求没有可确认的会话来源。')
+    }
+    if (!permission) return this.handlers.request(method, { ...params, ...(this.threadId ? { sessionId: this.threadId } : {}) }, id)
+    const command = method === 'item/commandExecution/requestApproval'
     const itemId = typeof params.itemId === 'string' ? clip(params.itemId, 512) : `ask-${String(id)}`
     const { title, rawInput } = this.asked(command, params)
     const answer = await this.handlers
@@ -1679,6 +1887,8 @@ export class CodexWire implements AgentWire {
     const meta = isRecord(params._meta) ? params._meta : {}
     const thread = typeof params.threadId === 'string' ? params.threadId : undefined
     const child = thread !== undefined && thread !== this.threadId ? thread : undefined
+    if (child && (!(await this.codexChild(child)) || this.turn !== active || !this.team?.acceptsTurn(child, params.turnId)))
+      return { action: 'cancel' }
     // App-server 0.167 omits the native call ID here. Reuse only one complete, unclaimed in-flight match;
     // neither server/tool alone nor the end of a model turn proves which parallel call the person answered.
     const matches =

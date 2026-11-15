@@ -25,6 +25,7 @@ import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
 import { useHarnessCommands } from '../hooks/useHarnessCommands.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
+import { CodexTeam } from '../composer/CodexTeam.tsx'
 import { HarnessQuotaMark } from '../composer/HarnessQuota.tsx'
 import { ComposerControl, openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { composerActions } from './composerActions.ts'
@@ -655,6 +656,28 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
               按文字重建，不是原样恢复 · 第一条消息会把重建的对话文字一起发给 <VisibleText text={seedService} />
             </span>
           </p>
+        ) : current && selectedId === current.summary.id ? (
+          <CodexTeam
+            key={current.summary.id}
+            detail={current}
+            draft={submission.draft}
+            canPrepare={
+              gate.kind === 'open'
+              && !shell.active
+              && !sessionBlock
+              && !sideBlocked
+              && !permissionBlocked
+              && !answer
+              && !submission.pending
+              && !submission.sending
+            }
+            onPrepare={value => {
+              setSubmissionDraft(value)
+              requestAnimationFrame(() => composerRef.current?.focus())
+            }}
+            onApproval={setApprovalIndex}
+            run={run}
+          />
         ) : undefined
       }
       confirmation={

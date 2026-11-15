@@ -8,7 +8,7 @@ import { VisibleText } from './VisibleText.tsx'
 import { Button, Collapse, ICON_STROKE, StatusWord, type StatusTone, ChevronRightGlyph } from '@latch/ui'
 
 /** How a subagent last said it was doing, in the words a row uses. Nothing said, nothing shown. */
-const SUBAGENT_STATUS: Record<NonNullable<Subagent['status']>, { tone: StatusTone; words: string }> = {
+export const SUBAGENT_STATUS: Record<NonNullable<Subagent['status']>, { tone: StatusTone; words: string }> = {
   running: { tone: 'running', words: '运行中' },
   waiting: { tone: 'waiting', words: APPROVAL_COPY.waiting },
   done: { tone: 'done', words: '已完成' },

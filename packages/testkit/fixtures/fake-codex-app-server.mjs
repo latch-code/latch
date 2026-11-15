@@ -120,7 +120,7 @@ const provider = providerId && {
 }
 
 /** One turn through the process's own provider: a streamed Responses call, its text deltas joined. */
-async function viaProvider(model, text, effort) {
+async function viaProvider(model, text, effort, onText = reply) {
   const token = provider.envKey ? env[provider.envKey] : undefined
   const response = await fetch(`${String(provider.baseURL).replace(/\/+$/u, '')}/responses`, {
     method: 'POST',
@@ -143,7 +143,7 @@ async function viaProvider(model, text, effort) {
       if (event.type === 'response.output_text.delta') said += event.delta
     } catch {}
   }
-  return reply(said)
+  return onText(said)
 }
 const send = message => process.stdout.write(`${JSON.stringify(message)}\n`)
 const notify = (method, params) => send({ method, params })
@@ -176,6 +176,7 @@ const shown = thread => ({
   model: thread.model,
   status: { type: 'idle' },
   turns: [],
+  ...(thread.parentThreadId ? { parentThreadId: thread.parentThreadId, agentNickname: thread.agentNickname } : {}),
 })
 
 let thread
@@ -195,6 +196,28 @@ function ask(method, params) {
 function item(started, done) {
   notify('item/started', { threadId: thread.id, turnId: turn.id, item: started, startedAtMs: Date.now() })
   return () => notify('item/completed', { threadId: thread.id, turnId: turn.id, item: done(), completedAtMs: Date.now() })
+}
+
+function announceMember(id, name, parentThreadId = thread.id, report = true) {
+  const member = { id, parentThreadId, agentNickname: name, cwd: thread.cwd, provider: thread.provider, turns: [] }
+  save(member)
+  if (report) notify('thread/started', { thread: shown(member) })
+  return member
+}
+
+function memberTurn(member) {
+  return env.FAKE_CODEX_TEAM === 'v2' && member.agentNickname === 'Cedar' ? '00000002-0000-7000-8000-000000000001' : `turn-${member.id}`
+}
+
+function finishMember(member, text, status, error) {
+  const id = memberTurn(member)
+  const item = text === undefined ? undefined : { type: 'agentMessage', id: `answer-${member.id}`, text }
+  const terminal = { id, status, items: item ? [item] : [], ...(error ? { error } : {}) }
+  member.turns.push(terminal)
+  save(member)
+  if (env.FAKE_CODEX_TEAM_RECOVERY === '1') return
+  if (item) notify('item/completed', { threadId: member.id, turnId: id, item })
+  notify('turn/completed', { threadId: member.id, turn: terminal })
 }
 
 async function reply(text) {
@@ -344,6 +367,7 @@ async function play(text) {
       delete calls[0].server
       delete calls[0].tool
     }
+    if (word === 'tool-child') announceMember('thread-mcp-child', 'MCP Agent')
     const callThread = call => (word === 'tool-child' && call === calls[1] ? 'thread-mcp-child' : thread.id)
     if (word !== 'tool-not-started')
       for (const call of calls) notify('item/started', { threadId: callThread(call), turnId: turn.id, startedAtMs: Date.now(), item: call })
@@ -391,8 +415,120 @@ async function play(text) {
     })
     return decision === 'cancel' ? 'interrupted' : reply(`network ${decision}`)
   }
+  if (word === 'team' || text.startsWith('请启动 Codex 的子 Agent')) {
+    const source = thread.id
+    const a = announceMember(`child-${randomUUID()}`, 'Cedar')
+    const b = announceMember(`child-${randomUUID()}`, 'Maple', thread.id, false)
+    const c = provider ? announceMember(`child-${randomUUID()}`, 'Pine') : undefined
+    const assignments = [[a, '检查窄屏'], [b, '核对回执'], ...(c ? [[c, '检查模型授权']] : [])]
+    for (const [member, prompt] of assignments) {
+      const event = {
+        threadId: source,
+        turnId: turn.id,
+        item:
+          env.FAKE_CODEX_TEAM === 'v2'
+            ? {
+                type: 'subAgentActivity',
+                id: `spawn-${member.id}`,
+                agentThreadId: member.id,
+                agentPath: member.agentNickname,
+                kind: 'started',
+              }
+            : {
+                type: 'collabAgentToolCall',
+                id: `spawn-${member.id}`,
+                tool: 'spawnAgent',
+                status: 'completed',
+                senderThreadId: source,
+                receiverThreadIds: [member.id],
+                prompt,
+                agentsStates: { [member.id]: { status: 'running' } },
+              },
+      }
+      notify('turn/started', { threadId: member.id, turn: { id: memberTurn(member), status: 'inProgress' } })
+      notify('item/completed', event)
+      notify('item/completed', event)
+    }
+    if (provider) {
+      const lead = await viaProvider(thread.model, text, thread.effort, result => result)
+      if (typeof lead !== 'string') return lead
+      for (const [member, assignment] of assignments) {
+        const model = member === c ? 'model-outside-this-lease' : thread.model
+        const answer = await viaProvider(model, assignment, thread.effort, result => result)
+        if (typeof answer === 'string') finishMember(member, answer, 'completed')
+        else finishMember(member, undefined, 'failed', answer.error)
+      }
+      return reply(lead)
+    }
+    const foreign = announceMember(`child-${randomUUID()}`, '外部成员', 'another-root')
+    notify('item/completed', {
+      threadId: source,
+      turnId: turn.id,
+      item: {
+        type: 'collabAgentToolCall',
+        id: 'invalid-parent-spawn',
+        tool: 'spawnAgent',
+        status: 'completed',
+        senderThreadId: source,
+        receiverThreadIds: [foreign.id],
+        prompt: '不属于这次任务',
+        agentsStates: {},
+      },
+    })
+    notify('item/completed', {
+      threadId: foreign.id,
+      turnId: 'foreign-turn',
+      item: { type: 'agentMessage', id: 'foreign-result', text: '不属于这次任务' },
+    })
+    const rejected = await ask('item/commandExecution/requestApproval', {
+      threadId: foreign.id,
+      turnId: 'foreign-turn',
+      itemId: 'foreign-command',
+      command: 'pwd',
+    })
+    log('answered', { method: 'foreign-team-approval', answer: rejected })
+    const answer = await ask('item/commandExecution/requestApproval', {
+      threadId: b.id,
+      turnId: `turn-${b.id}`,
+      itemId: 'team-command',
+      command: 'ls -la',
+      cwd: thread.cwd,
+    })
+    finishMember(a, '已核对手机布局', 'completed')
+    if (env.FAKE_CODEX_TEAM_SETTLE_MS && answer?.decision === 'accept') {
+      const call = { type: 'commandExecution', id: 'team-command', command: 'ls -la', cwd: thread.cwd, status: 'inProgress' }
+      notify('item/started', { threadId: b.id, turnId: memberTurn(b), item: call })
+      log('team-command-started')
+      await new Promise(resolve => {
+        turn.interrupt = resolve
+      })
+      finishMember(b, undefined, 'interrupted')
+      log('team-child-interrupted')
+      setTimeout(() => {
+        notify('item/completed', { threadId: b.id, turnId: memberTurn(b), item: { ...call, status: 'declined', aggregatedOutput: '' } })
+        log('team-command-ended')
+      }, Number(env.FAKE_CODEX_TEAM_SETTLE_MS))
+      return 'interrupted'
+    }
+    if (answer?.decision === 'cancel') {
+      finishMember(b, undefined, 'interrupted')
+      return 'interrupted'
+    }
+    finishMember(b, '回执检查被拒绝', env.FAKE_CODEX_TEAM_RECOVERY === '1' ? 'interrupted' : 'failed')
+    if (env.FAKE_CODEX_TEAM === 'v2') {
+      const old = '00000001-0000-7000-8000-000000000001'
+      notify('turn/started', { threadId: a.id, turn: { id: old, status: 'inProgress' } })
+      notify('item/completed', {
+        threadId: a.id,
+        turnId: old,
+        item: { type: 'agentMessage', id: 'late-child-output', text: '旧轮迟到' },
+      })
+    }
+    return reply(`team summary: ${answer?.decision}`)
+  }
   if (word === 'sub') {
     const child = `thread-sub-${randomUUID()}`
+    announceMember(child, '子 Agent')
     const id = `cmd-${randomUUID()}`
     const command = 'rm -rf build'
     notify('item/started', {
@@ -566,7 +702,7 @@ async function play(text) {
     const id = `cmd-${randomUUID()}`
     const command = 'sleep 40'
     const turnId = turn.id
-    const threadId = has('sub') ? `thread-sub-${randomUUID()}` : thread.id
+    const threadId = has('sub') ? announceMember(`thread-sub-${randomUUID()}`, '子 Agent').id : thread.id
     const shape = { type: 'commandExecution', id, command, cwd: thread.cwd }
     if (has('early')) notify('item/started', { threadId, turnId, startedAtMs: Date.now(), item: { ...shape, status: 'inProgress' } })
     const decision =
@@ -653,8 +789,8 @@ async function runTurn(input) {
     // A login gone since the thread started fails the turn as Codex reports an expired login.
     if (env.FAKE_ACP_LOGIN_FILE && !existsSync(env.FAKE_ACP_LOGIN_FILE))
       outcome = { status: 'failed', error: { message: 'unexpected status 401 Unauthorized', codexErrorInfo: 'unauthorized' } }
-    else if (provider) outcome = await viaProvider(thread.model, text, thread.effort)
-    else outcome = await play(text)
+    else if (!provider || text.trim().split(/\s+/u)[0] === 'team' || text.startsWith('请启动 Codex 的子 Agent')) outcome = await play(text)
+    else outcome = await viaProvider(thread.model, text, thread.effort)
     while (outcome === undefined && turn.steered.length) outcome = await reply(`steered: ${turn.steered.shift()}`)
   } catch (error) {
     outcome = { status: 'failed', error: { message: String(error) } }
@@ -879,10 +1015,20 @@ async function handle(method, params) {
       if (!found) throw Object.assign(new Error(`thread not loaded: ${params.threadId}`), { code: -32600 })
       return { thread: { ...shown(found), turns: params.includeTurns ? found.turns : [] } }
     }
+    case 'thread/turns/list': {
+      const found = threads()[params.threadId]
+      if (!found) throw Object.assign(new Error('thread not found'), { code: -32600 })
+      return { data: found.turns.slice(-1), nextCursor: null, backwardsCursor: null }
+    }
+    case 'experimentalFeature/list':
+      return { data: [{ name: 'multi_agent', enabled: env.FAKE_CODEX_TEAM !== 'off' }], nextCursor: null }
     // As Codex: only the process's provider's threads, unless `modelProviders` names others (`[]`: every provider's).
     case 'thread/list': {
       const wanted = Array.isArray(params.modelProviders) ? params.modelProviders : [providerId ?? 'openai']
-      const data = Object.values(threads()).filter(item => !wanted.length || wanted.includes(item.provider ?? 'openai'))
+      const data = Object.values(threads()).filter(item => {
+        if (params.parentThreadId ? item.parentThreadId !== params.parentThreadId : item.parentThreadId) return false
+        return !wanted.length || wanted.includes(item.provider ?? 'openai')
+      })
       return { data: data.map(shown), nextCursor: null, backwardsCursor: null }
     }
     case 'thread/compact/start': {

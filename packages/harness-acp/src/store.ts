@@ -57,6 +57,8 @@ export interface AcpRecord {
   definitionHash?: string
   /** Mode the owner chose through Latch; overrides the profile's expected mode. */
   expectedMode?: string
+  /** The last enabled report of the session's own Codex feature. */
+  codexTeam?: 'available' | 'disabled'
   /** Process-level permission selection included in this session's launch fingerprint. */
   launchMode?: string
   /** A Host-owned per-model generation setting written into a private process configuration. */
@@ -258,6 +260,15 @@ const subagent: z.ZodType = z.lazy(() =>
   z.object({
     title: z.string(),
     description: z.string().optional(),
+    team: z
+      .object({
+        id: z.string().max(128),
+        memberId: z.string().max(128),
+        userMessageId: z.string().max(128).optional(),
+        result: z.string().max(16_000).optional(),
+        failure: z.string().max(2_000).optional(),
+      })
+      .optional(),
     status: z.enum(['running', 'waiting', 'done', 'failed', 'cancelled', 'unknown']).optional(),
     steps: z.array(message).max(MAX_STEPS),
     truncated: z.literal(true).optional(),
@@ -432,6 +443,7 @@ const stateSchema = z.object({
           .regex(/^[0-9a-f]{64}$/)
           .optional(),
         expectedMode: z.string().optional(),
+        codexTeam: z.enum(['available', 'disabled']).optional(),
         launchMode: z.string().optional(),
         launchThinking: z.object({ model: z.string(), value: z.string() }).optional(),
         drift: z.object({ at: z.string(), observed: z.string() }).optional(),

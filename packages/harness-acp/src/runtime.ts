@@ -1057,6 +1057,8 @@ export class AgentRuntime implements Bridge {
     const run = this.runs.get(sessionId)
     const active = isActive(task.summary) || (run !== undefined && this.preparing(task, run))
     const segment = active ? run?.segment : undefined
+    const codexTeam =
+      this.selection.profile?.wire === 'codex' ? (this.lives.get(sessionId)?.wire.codexTeam ?? task.acp.codexTeam) : undefined
     const detail: DriverTaskDetail = structuredClone({
       summary: this.projected(task),
       messages: task.messages,
@@ -1080,6 +1082,7 @@ export class AgentRuntime implements Bridge {
       ...(active && run && this.steerable(run) ? { steer: true as const } : {}),
       clearContext: true,
       ...(task.acp.contextCleared ? { contextCleared: true as const } : {}),
+      ...(codexTeam ? { codexTeam } : {}),
     })
     this.markStops(sessionId, detail.messages)
     return detail
@@ -5067,6 +5070,12 @@ export class AgentRuntime implements Bridge {
     const target = this.state.tasks[taskId]
     if (!target) throw new AppError(404, 'task-not-found', '找不到该任务')
     live.sessions.set(acpSessionId, taskId)
+    if (live.wire.reconcileCodexTeam) {
+      const memberIds = new Set(target.messages.flatMap(message => (message.subagent?.team ? [message.subagent.team.memberId] : [])))
+      live.wire.reconcileCodexTeam(
+        memberIds.size ? (root, child) => memberIds.has(sha256Hex(JSON.stringify([taskId, root, child]))) : undefined,
+      )
+    }
     this.askQuota(live)
     // What the process was answered for before this session was on record goes into it now.
     for (const note of live.heldNotes?.splice(0) ?? [])
@@ -6033,6 +6042,10 @@ export class AgentRuntime implements Bridge {
         this.announceChild(live, task, run, undefined, parsed.data)
         break
       }
+      case 'latch/codex-team-availability':
+        if (this.selection.profile?.wire !== 'codex') return
+        if (live.wire.codexTeam === 'available' || live.wire.codexTeam === 'disabled') task.acp.codexTeam = live.wire.codexTeam
+        break
       case 'compaction_update':
       case 'compaction_summary_chunk': {
         const parsed = update.sessionUpdate === 'compaction_update' ? compactionUpdate.safeParse(update) : compactionChunk.safeParse(update)
@@ -6351,6 +6364,14 @@ export class AgentRuntime implements Bridge {
    * session's own messages or, for a subagent's own subagent, among that subagent's steps.
    */
   private announceChild(live: Live, task: AcpTask, run: Run | undefined, parent: Child | undefined, update: SubagentUpdate): void {
+    const evidence =
+      this.selection.profile?.wire === 'codex' && update.team && live.sessions.get(update.team.rootThreadId) === task.summary.id
+        ? update.team
+        : undefined
+    const evidenceId = evidence ? sha256Hex(JSON.stringify([task.summary.id, evidence.rootThreadId, update.sessionId])) : undefined
+    const teamRowId = evidenceId ? `subagent:${evidenceId}` : undefined
+    const existingTeamRow = evidenceId ? task.messages.find(item => item.subagent?.team?.memberId === evidenceId) : undefined
+    if (evidence?.recovered && !existingTeamRow) return
     let child = live.children.get(update.sessionId)
     if (child) {
       // A session is never re-parented, and one Latch already serves is no subagent.
@@ -6361,7 +6382,9 @@ export class AgentRuntime implements Bridge {
         this.childStopped(task, child, update.state.state === 'idle')
       const shown = this.childRow(task, child)
       if (shown) {
+        if (evidence?.recovered && shown.subagent?.status && shown.subagent.status !== 'unknown') delete update.state
         patchSubagent(shown, update, this.redact)
+        this.addTeamEvidence(shown, evidence, evidenceId, task, run)
         child.title = shown.subagent!.title
         return
       }
@@ -6380,13 +6403,21 @@ export class AgentRuntime implements Bridge {
         depth: (parent?.depth ?? 0) + 1,
         tools: new Map(),
         loose: new Map(),
+        ...(existingTeamRow ? { messageId: existingTeamRow.id } : {}),
         ...(parent ? { parent } : {}),
         ...(update.capabilities?.cancel ? { cancellable: true } : {}),
       }
       live.children.set(update.sessionId, child)
     }
+    if (existingTeamRow) {
+      if (evidence?.recovered && existingTeamRow.subagent?.status && existingTeamRow.subagent.status !== 'unknown') delete update.state
+      patchSubagent(existingTeamRow, update, this.redact)
+      this.addTeamEvidence(existingTeamRow, evidence, evidenceId, task, run)
+      return
+    }
     // It has no row yet: one is placed if there is room, else only its requests reach the person.
-    const row = subagentRow(`subagent:${randomUUID()}`, update, this.redact, this.now(), child)
+    const row = subagentRow(teamRowId ?? `subagent:${randomUUID()}`, update, this.redact, this.now(), child)
+    this.addTeamEvidence(row, evidence, evidenceId, task, run)
     child.title = row.subagent!.title
     if (row.subagent!.status) child.status = row.subagent!.status
     else delete child.status
@@ -6410,6 +6441,27 @@ export class AgentRuntime implements Bridge {
       task.messages.push(row)
     }
     if (run) run.lastOutputAt = this.clock()
+  }
+
+  private addTeamEvidence(
+    row: Message,
+    evidence: SubagentUpdate['team'],
+    memberId: string | undefined,
+    task: AcpTask,
+    run: Run | undefined,
+  ): void {
+    if (!row.subagent || !evidence || !memberId) return
+    if (!row.subagent.team && evidence.parentTurnId)
+      row.subagent.team = {
+        id: sha256Hex(JSON.stringify([task.summary.id, evidence.rootThreadId, evidence.parentTurnId])),
+        memberId,
+        ...(run?.userMessageId ? { userMessageId: run.userMessageId } : {}),
+      }
+    const team = row.subagent.team
+    if (!team) return
+    if (evidence.result && (!evidence.recovered || team.result === undefined)) team.result = clip(this.redact(evidence.result), 16_000)
+    if (evidence.failure && (!evidence.recovered || team.failure === undefined)) team.failure = clip(this.redact(evidence.failure), 2_000)
+    if (row.subagent.status === 'running') delete team.failure
   }
 
   /**
@@ -6664,7 +6716,9 @@ export class AgentRuntime implements Bridge {
       sessionId: taskId,
       toolName: toolLabel(state),
       // A subagent's call is no row of the session's own, so nothing links to it there.
-      ...(child ? { subagent: row?.subagent?.title ?? child.title } : { toolCallId: state.id.slice('tool:'.length) }),
+      ...(child
+        ? { subagent: row?.subagent?.title ?? child.title, ...(row?.subagent?.team ? { subagentId: row.id } : {}) }
+        : { toolCallId: state.id.slice('tool:'.length) }),
       reason: clip(state.title || `${this.agent.name} 请求执行一项操作`, 1000),
       ...(state.rawInput !== undefined ? { arguments: clip(pretty(state.rawInput), TOOL_TEXT_LIMIT) } : {}),
       requestedAt: this.now(),
