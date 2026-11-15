@@ -164,17 +164,17 @@ it('「电脑」 shows the computer as the Host recorded it, a missed time with 
     await section.getByText('错过 1 次').waitFor({ state: 'detached' })
     expect((await owner.json<AgentComputer>(`custom-agents/${agent.id}/computer`)).missed).toEqual([])
 
-    // 职责模板 only fill the text of a new Agent; nothing is created until 创建.
+    // The new Agent's role and instructions are written here; nothing is created until 创建.
     await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     await page.getByRole('list', { name: '候选' }).getByRole('button').first().click()
     const form = page.getByRole('form', { name: '新建 Agent' })
-    await form.getByRole('group', { name: '从模板开始' }).getByRole('button', { name: '周报', exact: true }).click()
-    await expect.poll(() => form.getByRole('textbox', { name: '名字' }).inputValue()).toBe('周报')
-    await expect.poll(() => form.getByRole('textbox', { name: '职责' }).inputValue()).toBe('把这周做过的事写成一页周报')
+    expect(await form.getByRole('group', { name: '从模板开始', exact: true }).count()).toBe(0)
+    await form.getByRole('textbox', { name: '名字', exact: true }).fill('会议纪要')
+    await form.getByRole('textbox', { name: '职责', exact: true }).fill('把会后的决定整理成一页记录')
     await form.getByRole('button', { name: '多说几句' }).click()
-    await expect.poll(() => form.getByRole('textbox', { name: '指令' }).inputValue()).toMatch(/^根据我给你的记录/u)
+    await form.getByRole('textbox', { name: '指令', exact: true }).fill('列出每项决定的负责人。')
     await still(page)
-    await page.screenshot({ path: `${OUT}/templates-1440.png` })
+    await page.screenshot({ path: `${OUT}/creation-fields-1440.png` })
     expect((await owner.json<AppSnapshot>('snapshot')).customAgents).toHaveLength(1)
     await context.close()
   } finally {

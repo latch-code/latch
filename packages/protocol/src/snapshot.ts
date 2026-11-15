@@ -1,6 +1,6 @@
 import type { SkillInfo, UiPanelInfo } from './ui.ts'
 import type { HostFeatures } from './features.ts'
-import type { AgentProposalState, CustomAgentSummary, HostComputerState } from './custom-agents.ts'
+import type { AgentProposalState, CustomAgentSummary, HostComputerState, PersonalAgentChat } from './custom-agents.ts'
 import type { AgentResultState, AutomationSummary } from './automations.ts'
 import type { HandoffSummary } from './handoffs.ts'
 import type { AppSummary } from './apps.ts'
@@ -70,6 +70,8 @@ export interface AppSnapshot {
   firstSetup?: FirstSetupStatus
   /** 我的 Agent, for devices that may read them; absent otherwise and on older Hosts. */
   customAgents?: CustomAgentSummary[]
+  /** Stable interactive chats by Agent owner, under the same scope as customAgents. */
+  agentChats?: Record<string, PersonalAgentChat>
   /** 定时任务, under the same condition. */
   automations?: AutomationSummary[]
   /** Memory proposals by owner (an Agent's ID or `general`), under the same condition: counts only, never their text. */

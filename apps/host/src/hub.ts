@@ -634,10 +634,7 @@ export class HarnessHub implements Bridge {
         .update(result.sessionId, current => ({ ...current, proposals: true as const }))
         .catch(error => this.log(`会话 ${result.sessionId} 的记忆提议标记写入失败：${message(error)}`))
     }
-    if (generalChat)
-      await this.recordGeneralChat(result.sessionId).catch(error =>
-        this.log(`会话 ${result.sessionId} 的通用对话标记写入失败：${message(error)}`),
-      )
+    if (generalChat) await this.recordGeneralChat(result.sessionId)
     if (initialTitle && !automationId && !forkOf)
       await this.meta
         .update(result.sessionId, current => ({ ...current, title: initialTitle.slice(0, 120) }))
@@ -1286,6 +1283,7 @@ export class HarnessHub implements Bridge {
     if (summary.personal) this.rememberPersonal(summary.id, summary.personal)
     if (summary.agent) this.rememberAgent(summary.id, summary.agent)
     if (summary.agentPrivate) this.briefSessions.add(summary.id)
+    if (harnessId === 'standard' && summary.generalChat) this.generalChats.add(summary.id)
     // Only the Host makes a session's own folder or worktree: a driver's claim is dropped.
     const {
       pinned: _pinned,
@@ -1338,7 +1336,7 @@ export class HarnessHub implements Bridge {
       ...(agent ? { agent } : {}),
       ...(this.agentPrivate(summary.id) && !agent ? { agentPrivate: true as const } : {}),
       ...(meta?.automationId ? { automationId: meta.automationId } : {}),
-      ...(meta?.generalChat && !agent ? { generalChat: true as const } : {}),
+      ...(this.generalChatOf(summary.id) && !agent ? { generalChat: true as const } : {}),
       ...(meta?.origin ? { origin: { app: meta.origin.app, requestId: meta.origin.requestId } } : {}),
       ...(meta?.sessionFolder && SESSION_FOLDER_NAME.test(meta.sessionFolder) ? { sessionFolder: true as const } : {}),
       ...(meta?.worktree

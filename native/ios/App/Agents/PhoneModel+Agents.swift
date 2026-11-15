@@ -180,6 +180,7 @@ extension PhoneModel {
             try await ensureVerified()
             guard current == generation else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
+            guard PhoneAgentChat.slot(snapshot, owner: owner)["state"].string == "empty" else { return false }
             return await finishTopic(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: fields))
         } catch { report(error); return false }
     }

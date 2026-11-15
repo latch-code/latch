@@ -56,7 +56,11 @@ function retainedCreation(store: AgentCreation): Extract<WriteState, { kind: 'un
  * Writes to the Agent routes. Each carries a requestId; one whose result is unknown is kept, and retrying sends the
  * identical request, which the Host answers from its receipt. Nothing is shown as saved until the Host says so.
  */
-export function useAgentWrites(onSettled: () => void, creation?: { origin: string; deviceId: string; allowed: boolean }) {
+export function useAgentWrites(
+  onSettled: () => void,
+  creation?: { origin: string; deviceId: string; allowed: boolean },
+  scope?: { deviceId: string; allowed: boolean },
+) {
   const retained = useMemo(
     () => (creation ? new AgentCreation(creation.origin, creation.deviceId, creation.allowed) : undefined),
     [creation?.origin, creation?.deviceId, creation?.allowed],
@@ -64,12 +68,23 @@ export function useAgentWrites(onSettled: () => void, creation?: { origin: strin
   const currentStore = useRef(retained)
   const stateStore = useRef(retained)
   currentStore.current = retained
+  const owner = useMemo(() => ({ deviceId: scope?.deviceId }), [scope?.deviceId])
+  const currentOwner = useRef(owner)
+  const stateOwner = useRef(owner)
+  const allowed = useRef(scope?.allowed ?? true)
+  currentOwner.current = owner
+  allowed.current = scope?.allowed ?? true
   const [state, setState] = useState<WriteState | null>(() => (retained ? retainedCreation(retained) : null))
-  const visibleState = retained && (stateStore.current !== retained || !retained.current()) ? retainedCreation(retained) : state
+  const visibleState =
+    !allowed.current || stateOwner.current !== owner
+      ? null
+      : retained && (stateStore.current !== retained || !retained.current())
+        ? retainedCreation(retained)
+        : state
   const busy = useRef<symbol | undefined>(undefined)
-  const busyStore = useRef(retained)
-  if (busyStore.current !== retained) {
-    busyStore.current = retained
+  const busyStore = useRef({ retained, owner })
+  if (busyStore.current.retained !== retained || busyStore.current.owner !== owner) {
+    busyStore.current = { retained, owner }
     busy.current = undefined
   }
   const mounted = useRef(true)
@@ -91,16 +106,17 @@ export function useAgentWrites(onSettled: () => void, creation?: { origin: strin
     return retained.subscribe(read)
   }, [retained])
   const send = useCallback(
-    async <T>(write: AgentWrite): Promise<T | undefined> => {
-      if (busy.current) return undefined
+    async <T>(write: AgentWrite, retrying = false): Promise<T | undefined> => {
+      if (busy.current || !allowed.current) return undefined
       const attempt = Symbol()
       busy.current = attempt
       const store = write.key === 'agent:new' ? retained : undefined
-      const current = () => !store || (currentStore.current === store && store.current())
+      const current = () => currentOwner.current === owner && (!store || (currentStore.current === store && store.current()))
       let dispatched = false
       let replaying = false
       try {
         if (!current() || (store && !mounted.current)) return undefined
+        stateOwner.current = owner
         setState({ write, phase: 'saving' })
         const execute = async () => {
           if (!current() || (store && !mounted.current)) return undefined
@@ -157,12 +173,12 @@ export function useAgentWrites(onSettled: () => void, creation?: { origin: strin
           )
         } else if (pending && (pending.requestId !== write.body.requestId || error instanceof ClientError)) {
           setState(retainedCreation(store!))
-        } else if (store && replaying) {
+        } else if ((store && replaying) || (owner.deviceId && retrying)) {
           setState({
             write,
             kind: 'unknown',
             ...(pending?.token ? { creationToken: pending.token } : {}),
-            message: error instanceof ApiError ? error.message : '仍未取得原创建请求的回执。',
+            message: error instanceof ApiError ? error.message : '仍未取得原请求的回执。',
           })
         } else {
           if (store && outcome.kind !== 'unknown') {
@@ -181,7 +197,7 @@ export function useAgentWrites(onSettled: () => void, creation?: { origin: strin
         if (busy.current === attempt) busy.current = undefined
       }
     },
-    [onSettled, retained],
+    [onSettled, owner, retained],
   )
   const run = useCallback(
     <T>(key: string, path: string, method: AgentWrite['method'], body: Record<string, unknown>) =>
@@ -191,7 +207,7 @@ export function useAgentWrites(onSettled: () => void, creation?: { origin: strin
   const retry = useCallback(
     <T>() =>
       visibleState && 'kind' in visibleState && visibleState.kind === 'unknown' && !visibleState.unreplayable
-        ? send<T>(visibleState.write)
+        ? send<T>(visibleState.write, true)
         : Promise.resolve(undefined),
     [send, visibleState],
   )
@@ -220,6 +236,19 @@ export function useAgentWrites(onSettled: () => void, creation?: { origin: strin
         }
       : {}),
   }
+}
+
+/** A row's removal remains pending on this page even when its roster is no longer mounted. */
+export function useAgentRemoval(snapshot: AppSnapshot, allowed: boolean, refresh: () => Promise<void>) {
+  const onSettled = useCallback(() => void refresh(), [refresh])
+  const writes = useAgentWrites(onSettled, undefined, { deviceId: snapshot.device.id, allowed })
+  const { customAgents } = snapshot
+  const { state, clear } = writes
+  useEffect(() => {
+    if (state && 'kind' in state && state.kind === 'unknown' && customAgents?.every(agent => `agent:${agent.id}` !== state.write.key))
+      clear()
+  }, [state, customAgents, clear])
+  return writes
 }
 
 export type AgentWrites = ReturnType<typeof useAgentWrites>
@@ -282,6 +311,7 @@ export function useDelegation(
           message: outcome.message,
           ...(outcome.kind === 'refused' && outcome.code ? { code: outcome.code } : {}),
         })
+        if (outcome.kind === 'refused' && (outcome.code === 'agent-chat-exists' || outcome.code === 'agent-chat-starting')) void refresh()
       }
       return undefined
     } finally {
@@ -302,7 +332,7 @@ export function useDelegation(
     reason,
     /**
      * 放弃这次提交: this device stops waiting for the start's answer and gets its text back. A start the Host did get
-     * shows up as a topic; sending the text again starts another one with a new requestId.
+     * appears as the Agent's chat. Its draft remains separate until the person opens that chat.
      */
     abandon: (): { customAgentId: string | undefined; text: string } | null => {
       if (busy.current || pending === null) return null

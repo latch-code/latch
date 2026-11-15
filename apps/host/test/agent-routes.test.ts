@@ -17,6 +17,7 @@ import type {
   WorkspaceInfo,
 } from '@latch/protocol'
 import type { HarnessPlugin, ModelMessage } from '@latch/sdk'
+import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { queryHostInfo } from '../src/host-state.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -65,6 +66,179 @@ async function fixture(options: Parameters<typeof startTestHost>[0] = {}) {
 }
 const settled = (owner: Awaited<ReturnType<TestHost['enroll']>>, id: string) =>
   expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status).toBe('idle')
+
+test('accepts only one first Personal Agent chat across devices and preserves its original response', async () => {
+  const { host, owner } = await fixture()
+  const other = await host.enroll({ listener: 'unix' })
+  for (const id of ['general', (await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition() })).id]) {
+    const inputs = ['first on this device', 'first on another device'].map(prompt => ({
+      customAgentId: id,
+      prompt,
+      requestId: randomUUID(),
+      model,
+    }))
+    const devices = [owner, other]
+    const attempted = await Promise.all(devices.map((device, i) => device.request('tasks', { method: 'POST', body: inputs[i]! })))
+    expect(attempted.map(response => response.status).sort()).toEqual([201, 409])
+    const winner = attempted.findIndex(response => response.status === 201)
+    const loser = 1 - winner
+    const { sessionId } = (await attempted[winner]!.json()) as { sessionId: string }
+    expect(await attempted[loser]!.json()).toMatchObject({ error: expect.stringMatching(/^agent-chat-(exists|starting)$/u) })
+    await settled(owner, sessionId)
+    const snapshot = await owner.json<AppSnapshot>('snapshot')
+    expect(snapshot.catalog?.features?.singleAgentChat).toBe(true)
+    expect(snapshot.agentChats?.[id]).toEqual({ state: 'ready', sessionId })
+    expect(await devices[winner]!.json('tasks', { method: 'POST', body: inputs[winner] })).toMatchObject({ sessionId })
+    expect((await devices[winner]!.request('tasks', { method: 'POST', body: { ...inputs[winner], prompt: 'changed' } })).status).toBe(409)
+    expect((await devices[loser]!.request('tasks', { method: 'POST', body: inputs[loser] })).status).toBe(409)
+    expect((await owner.request(`tasks/${sessionId}`, { method: 'PATCH', body: { archived: true } })).status).toBe(409)
+    expect((await owner.request(`tasks/${sessionId}`, { method: 'DELETE' })).status).toBe(409)
+    const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+    expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual([inputs[winner]!.prompt])
+    await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'continue here', requestId: randomUUID() } })
+    await settled(owner, sessionId)
+  }
+  const work = await host.enroll({ listener: 'loopback-tcp' })
+  await owner.json(`devices/${work.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
+  expect((await work.json<AppSnapshot>('snapshot')).agentChats).toBeUndefined()
+})
+
+test('keeps old Personal Agent sessions readable and adopts a stable slot without replaying their messages', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-personal-chat-migrate-'))
+  let host: TestHost | undefined
+  try {
+    const options = { dataDir: join(root, 'data'), workspaceRoot: join(root, 'workspace'), plugins: [plugin([])] }
+    host = await startTestHost(options)
+    const owner = await host.enroll({ listener: 'unix' })
+    const agent = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition() })
+    const context = { agent: { customAgentId: agent.id }, instructions: '', revision: '1'.repeat(64) }
+    const older = { prompt: 'Older but readable', requestId: randomUUID() }
+    const a = await host.host.bridge.createTask({ ...older, mode: 'chat', model, agentContext: context })
+    await settled(owner, a.sessionId)
+    const b = await host.host.bridge.createTask({
+      prompt: 'Newer current chat',
+      requestId: randomUUID(),
+      mode: 'chat',
+      model,
+      agentContext: context,
+    })
+    await settled(owner, b.sessionId)
+    // Only the two legacy tasks predate a slot. Remove the empty record written by the new Agent's creation.
+    const credential = owner.credential
+    const journal = join(options.dataDir, 'agents', 'custom.json')
+    await host.close()
+    const before = JSON.parse(await readFile(journal, 'utf8')) as { chats?: unknown }
+    delete before.chats
+    await writeFile(journal, JSON.stringify(before))
+    const queued = { prompt: 'Paused before migration', requestId: randomUUID() }
+    const queueId = `queue-${randomUUID()}`
+    await writeFile(
+      join(options.dataDir, 'queues.json'),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            id: queueId,
+            sessionId: a.sessionId,
+            deviceId: owner.id,
+            listener: 'unix',
+            dataScope: 'all',
+            requestId: queued.requestId,
+            sendRequestId: randomUUID(),
+            hash: sha256Hex(canonicalJson({ text: queued.prompt })),
+            text: queued.prompt,
+            queuedAt: new Date().toISOString(),
+            state: 'parked',
+            waitRunId: '',
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    )
+    host = await startTestHost(options)
+    const request = (path: string, method: 'GET' | 'POST' = 'GET', body?: object) =>
+      host!.raw('unix', `api/${path}`, {
+        method,
+        headers: { authorization: `Latch-Device ${credential}` },
+        ...(body ? { body } : {}),
+      })
+    const snapshot = (await (await request('snapshot')).json()) as AppSnapshot
+    expect(snapshot.agentChats?.[agent.id]).toEqual({ state: 'ready', sessionId: b.sessionId })
+    expect(snapshot.tasks.map(task => task.id)).toEqual(expect.arrayContaining([a.sessionId, b.sessionId]))
+    const newMessage = await request(`tasks/${a.sessionId}/prompt`, 'POST', {
+      prompt: 'Do not start another path',
+      requestId: randomUUID(),
+    })
+    expect(newMessage.status).toBe(409)
+    expect(await newMessage.json()).toMatchObject({ error: 'agent-chat-history-read-only' })
+    expect((await request(`tasks/${a.sessionId}/prompt`, 'POST', older)).status).toBe(200)
+    const plainQueue = await request(`tasks/${a.sessionId}/prompt`, 'POST', queued)
+    expect(plainQueue.status).toBe(409)
+    expect(await plainQueue.json()).toMatchObject({ error: 'agent-chat-history-read-only' })
+    const replay = await request(`tasks/${a.sessionId}/prompt`, 'POST', { ...queued, queue: true })
+    expect(replay.status).toBe(202)
+    expect(await replay.json()).toEqual({ queued: { id: queueId } })
+    const detail = (await (await request(`tasks/${a.sessionId}`)).json()) as TaskDetail
+    expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual([older.prompt])
+  } finally {
+    await host?.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('recovers an accepted General chat after restarting before the Host binding was saved', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-personal-chat-recover-'))
+  let host: TestHost | undefined
+  try {
+    const options = { dataDir: join(root, 'data'), workspaceRoot: join(root, 'workspace'), plugins: [plugin([])] }
+    host = await startTestHost(options)
+    const owner = await host.enroll({ listener: 'unix' })
+    const input = { customAgentId: 'general', prompt: 'Accepted before restart', requestId: randomUUID(), model }
+    const started = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: input })
+    await settled(owner, started.sessionId)
+    await host.close()
+
+    const journal = join(options.dataDir, 'agents', 'custom.json')
+    const before = JSON.parse(await readFile(journal, 'utf8')) as { chats: { general: { state: string; sessionId?: string } } }
+    before.chats.general.state = 'starting'
+    delete before.chats.general.sessionId
+    await writeFile(journal, JSON.stringify(before))
+    const metaFile = join(options.dataDir, 'sessions-meta.json')
+    const meta = JSON.parse(await readFile(metaFile, 'utf8')) as { sessions: Array<{ id: string; generalChat?: boolean }> }
+    delete meta.sessions.find(session => session.id === started.sessionId)?.generalChat
+    await writeFile(metaFile, JSON.stringify(meta))
+
+    host = await startTestHost(options)
+    const request = (path: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE' = 'GET', body?: object) =>
+      host!.raw('unix', `api/${path}`, {
+        method,
+        headers: { authorization: `Latch-Device ${owner.credential}` },
+        ...(body ? { body } : {}),
+      })
+    const held = (await (await request('snapshot')).json()) as AppSnapshot
+    expect(held.agentChats?.general).toEqual({ state: 'starting' })
+    for (const [method, body] of [
+      ['PATCH', { archived: true }],
+      ['DELETE', undefined],
+    ] as const) {
+      const removal = await request(`tasks/${started.sessionId}`, method, body)
+      expect(removal.status).toBe(409)
+      expect(await removal.json()).toMatchObject({ error: 'agent-chat-starting' })
+    }
+    const denied = await request('tasks', 'POST', { ...input, requestId: randomUUID() })
+    expect(denied.status).toBe(409)
+    const recovered = await request('tasks', 'POST', input)
+    expect(recovered.status).toBe(201)
+    expect(await recovered.json()).toEqual(started)
+    const snapshot = (await (await request('snapshot')).json()) as AppSnapshot
+    expect(snapshot.agentChats?.general).toEqual({ state: 'ready', sessionId: started.sessionId })
+    const detail = (await (await request(`tasks/${started.sessionId}`)).json()) as TaskDetail
+    expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual([input.prompt])
+  } finally {
+    await host?.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test('keeps the Agent home private and stable across topics and a Host restart, without changing ordinary Code', async () => {
   const root = await mkdtemp(join(tmpdir(), 'latch-helper-home-'))
@@ -116,9 +290,10 @@ test('keeps the Agent home private and stable across topics and a Host restart, 
     const device = await next.enroll({ listener: 'unix' })
     await device.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'Continue', requestId: randomUUID() } })
     await settled(device, sessionId)
-    const topic = await device.json<{ sessionId: string }>('tasks', { method: 'POST', body: { ...input, requestId: randomUUID() } })
-    await settled(device, topic.sessionId)
-    expect((await device.json<TaskDetail>(`tasks/${topic.sessionId}`)).summary.cwd).toBe(expected)
+    const refused = await device.request('tasks', { method: 'POST', body: { ...input, requestId: randomUUID() } })
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ error: 'agent-chat-exists', sessionId })
+    expect((await device.json<TaskDetail>(`tasks/${sessionId}`)).summary.cwd).toBe(expected)
     const code = await device.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: { prompt: 'Code', model, mode: 'agent', requestId: randomUUID() },
@@ -444,6 +619,50 @@ test('choices in the request apply to that session only, and a retry cannot move
   })
   expect(await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: request })).toEqual(first)
   expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(1)
+})
+
+test('uses the saved Standard model on the next chat turn unless that turn explicitly chooses one', async () => {
+  const second = { providerId: 'second-service', model: 'second-model' }
+  const alternate: HarnessPlugin = {
+    id: second.providerId,
+    name: 'second service',
+    version: '1',
+    description: '',
+    activate(ctx) {
+      ctx.registerProvider({
+        id: second.providerId,
+        name: 'second service',
+        model: second.model,
+        async *stream() {
+          yield { type: 'text', text: 'Answer from second' }
+          yield { type: 'finish', reason: 'stop' }
+        },
+      })
+    },
+  }
+  const { owner } = await fixture({ plugins: [plugin([]), alternate] })
+  const agent = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition() })
+  const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+    method: 'POST',
+    body: { customAgentId: agent.id, prompt: 'first', requestId: randomUUID() },
+  })
+  await settled(owner, sessionId)
+  await owner.json(`custom-agents/${agent.id}`, {
+    method: 'PATCH',
+    body: { requestId: randomUUID(), baseRevision: agent.revision, model: second },
+  })
+  const prompt = async (word: string, picked?: typeof model) => {
+    await owner.json(`tasks/${sessionId}/prompt`, {
+      method: 'POST',
+      body: { prompt: word, requestId: randomUUID(), ...(picked ? { model: picked } : {}) },
+    })
+    await settled(owner, sessionId)
+    return owner.json<TaskDetail>(`tasks/${sessionId}`)
+  }
+  expect((await prompt('second')).summary).toMatchObject(second)
+  expect((await prompt('explicit once', model)).summary).toMatchObject(model)
+  expect((await prompt('profile again')).summary).toMatchObject(second)
+  expect((await owner.json<AppSnapshot>('snapshot')).agentChats?.[agent.id]).toEqual({ state: 'ready', sessionId })
 })
 
 test('adding an engine changes nothing a live 通用 automation receives', async () => {
@@ -1025,13 +1244,35 @@ test('an external engine gets the labelled first-turn block, and the confirmatio
   expect(detail.messages[0]?.text).toBe('echo hello')
   expect(detail.messages[0]?.agentBrief?.segments).toContainEqual({ source: 'user', text: 'AGENT INSTRUCTIONS' })
   expect(detail.messages[0]?.agentBrief?.segments.at(-1)?.text).toContain('审阅清单')
-  // A later turn sends only what was typed, and needs nothing from the saved agent.
+  await owner.json(`custom-agents/${agent.id}`, {
+    method: 'PATCH',
+    body: { requestId: randomUUID(), baseRevision: agent.revision, instructions: 'UPDATED ACP INSTRUCTIONS' },
+  })
+  await owner.json(`tasks/${sessionId}/prompt`, {
+    method: 'POST',
+    body: { prompt: 'echo in old context', requestId: randomUUID() },
+  })
+  await settled(owner, sessionId)
+  await owner.json(`tasks/${sessionId}/prompt`, {
+    method: 'POST',
+    body: { prompt: 'echo in fresh context', requestId: randomUUID(), freshContext: true },
+  })
+  await settled(owner, sessionId)
+  const users = (await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.filter(message => message.role === 'user')
+  expect(users.map(message => message.text)).toEqual(['echo hello', 'echo in old context', 'echo in fresh context'])
+  expect(users[1]?.agentBrief).toBeUndefined()
+  expect(users[2]).toMatchObject({ freshContext: true })
+  expect(users[2]?.agentBrief?.segments).toContainEqual({ source: 'user', text: 'UPDATED ACP INSTRUCTIONS' })
+
+  // Deleting the Agent keeps its ACP history readable, with no fourth ordinary turn.
   await owner.json(`custom-agents/${agent.id}`, { method: 'DELETE', body: { requestId: randomUUID() } })
   const next = await owner.confirmed(`tasks/${sessionId}/prompt`, {
     method: 'POST',
     body: { prompt: 'echo again', requestId: randomUUID() },
   })
-  expect(next.status).toBe(200)
+  expect(next.status).toBe(409)
+  expect(await next.json()).toMatchObject({ error: 'agent-deleted' })
+  expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.filter(message => message.role === 'user')).toEqual(users)
 })
 
 test('通用 on an external engine is as private as an agent', async () => {
@@ -1186,13 +1427,16 @@ test.each([{ sessionFolders: false }, { sessionFolders: true }])(
       cwd: join(host.workspaceRoot, 'helpers', loose.id),
     })
     expect(await delegate(placed, notes.id)).toMatchObject({ workspaceId: notes.id, cwd: notes.path })
-    // 起始文件夹 picked for this session over the Agent's default project.
-    expect(await delegate(placed, 'default')).toMatchObject({ workspaceId: 'default', cwd: join(host.workspaceRoot, 'helpers', placed.id) })
-    // A project picked for this session that is gone is that pick's problem, not the Agent's.
+    const override = await owner.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: definition({ name: '另一个项目 Agent', mode: 'agent', defaultProjectId: notes.id }),
+    })
+    // An unavailable start leaves the slot empty, so this Agent can still start in its own folder.
+
     const gone = await owner.request('tasks', {
       method: 'POST',
       body: {
-        customAgentId: loose.id,
+        customAgentId: override.id,
         prompt: 'Go',
         requestId: randomUUID(),
         mode: 'agent',
@@ -1203,6 +1447,10 @@ test.each([{ sessionFolders: false }, { sessionFolders: true }])(
     })
     expect(gone.status).toBe(400)
     expect(await gone.json()).toMatchObject({ error: 'workspace-unavailable' })
+    expect(await delegate(override, 'default')).toMatchObject({
+      workspaceId: 'default',
+      cwd: join(host.workspaceRoot, 'helpers', override.id),
+    })
     // Once the Agent's own project is removed, that project is refused in those words, and the start folder still works.
     const old = join(host.root, 'old')
     await mkdir(old)

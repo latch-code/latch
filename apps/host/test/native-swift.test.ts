@@ -4641,7 +4641,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       },
     ]
     const catalog = {
-      features: { customAgents: true, automations: true },
+      features: { customAgents: true, singleAgentChat: true, automations: true },
       harnesses,
       providers: [{ id: 'svc', name: 'Svc', models: ['m1', 'm2'] }],
       workspaces: [
@@ -4656,6 +4656,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       device: { status: 'active', scopes: ['view', 'run'], dataScope: 'all' },
       catalog,
       approvals: [],
+      agentChats: { general: { state: 'ready', sessionId: 'g' }, [review]: { state: 'ready', sessionId: 'b' } },
       customAgents: [
         {
           id: review,
@@ -4934,10 +4935,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     ])
     // A stale client pick cannot move an Agent to another Harness, or reuse its model there.
     expect((result.changedHarness as unknown[]).slice(0, 2)).toEqual((result.fields as unknown[]).slice(0, 2))
-    // Topics newest first; the current one is the newest open topic that is not a schedule's run; 通用's are `generalChat`.
+    // History is sorted separately; the Host's slot deliberately points to the older surviving session.
     expect(result.topics).toEqual([
       { open: ['g'], archived: [], current: 'g' },
-      { open: ['r', 'a', 'b'], archived: ['c'], current: 'a' },
+      { open: ['r', 'a', 'b'], archived: ['c'], current: 'b' },
       { open: [], archived: [], current: null },
       { open: [], archived: [], current: null },
     ])
@@ -4974,7 +4975,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       placed: { m1: [ids[0]], m3: [ids[1], ids[2], 'refused:req-3'] },
       refused: [['refused:req-3', '内容像是密钥或凭据，没有记下。', 'refused']],
       origins: ['你说的', '它推断的'],
-      effects: ['已生效', '从下一个话题起'],
+      effects: ['已生效', '清空上下文后生效'],
       signature: [`2:${at(3)}`, '-:'],
     })
     expect(result.memoryChanges).toEqual({ deleted: [mem(3)], edited: [false, true], sources: [['它推断的', 'external', 'a'], null] })
@@ -5042,10 +5043,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ]),
     ).toEqual([
       ['提交结果待确认', 'start', 'x'],
-      ['新话题结果待确认', `topic(owner: "${review}")`, 'x'],
+      ['第一条消息结果待确认', `topic(owner: "${review}")`, 'x'],
       ['提交结果待确认', 'session(id: "ses_1")', 'x'],
       ['切换结果待确认', 'session(id: "ses_1")', null],
-      ['新话题结果待确认', 'topic(owner: "general")', 'x'],
+      ['第一条消息结果待确认', 'topic(owner: "general")', 'x'],
     ])
     // 放弃这次提交 settles a message its session already lists by requestId as delivered; nothing else counts.
     expect(result.delivered).toEqual([true, false, false, false, false])
@@ -5059,6 +5060,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const result = await invoke({
       operation: 'phoneAgentPages',
       owner,
+      snapshot: {
+        catalog: { features: { singleAgentChat: true } },
+        agentChats: { [owner]: { state: 'ready', sessionId: 'old' }, general: { state: 'starting' } },
+      },
       tasks: [
         { id: 'new', updatedAt: at(9), agent: { customAgentId: owner } },
         { id: 'old', updatedAt: at(1), agent: { customAgentId: owner } },
@@ -5078,8 +5083,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         ],
       },
     })
-    // A session of no Agent or another one never shows under this frame, and 通用 shows only its own.
-    expect(result.shown).toEqual(['new', 'old', 'new', 'new', 'new', '', ''])
+    expect(result.shown).toEqual(['old', '', 'starting', '', ''])
+    expect(result.history).toEqual([
+      ['agents', ''],
+      ['agents', 'current'],
+      ['code', ''],
+      ['code', ''],
+    ])
     // An unknown start empties the input, so 放弃这次提交 gives the text back once.
     expect(result.prompts).toEqual(['', '你好', '你好', '你好', ''])
     expect(result.abandonable).toEqual(['你好', '', ''])

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { TaskSummary } from '@latch/protocol'
+import type { AppSnapshot, HostCatalog, TaskSummary } from '@latch/protocol'
 import {
   agentTopics,
-  currentTopic,
   generalMode,
   generalSubmission,
   newTopicShowing,
   openAgent,
+  isPersonalChat,
   ownerName,
   profileSection,
   topicOwner,
@@ -51,21 +51,13 @@ describe('topics', () => {
     expect(delegationRows(tasks).rows.map(item => item.id)).toEqual(['o1', 'a2', 'g1', 'a1'])
   })
 
-  it('lists an Agent’s topics newest first, archived apart, and continues the newest that is not archived', () => {
+  it('groups retained history by owner and keeps archived records apart', () => {
     expect(agentTopics(tasks, 'agt_a')).toEqual({ open: [tasks[1], tasks[0]], archived: [tasks[2]] })
-    expect(currentTopic(tasks, 'agt_a')?.id).toBe('a2')
     expect(agentSessions(tasks, 'agt_a').map(item => item.id)).toEqual(['a2', 'a1'])
-    expect(currentTopic(tasks, 'general')?.id).toBe('g1')
     expect(agentTopics(tasks, 'general').archived.map(item => item.id)).toEqual(['g2'])
-    // A schedule's run is a topic in 话题 ▾, but never the one a message continues.
+    // A schedule run remains reachable through its owner’s history.
     const withRun = [...tasks, mine('r1', 40, { automationId: 'aut_1' })]
     expect(agentTopics(withRun, 'agt_a').open.map(item => item.id)).toEqual(['r1', 'a2', 'a1'])
-    expect(currentTopic(withRun, 'agt_a')?.id).toBe('a2')
-    expect(currentTopic([mine('r1', 40, { automationId: 'aut_1' })], 'agt_a')).toBeUndefined()
-    expect(openAgent({ id: 'agt_a' }, withRun)).toEqual({ kind: 'topic', sessionId: 'a2', owner: 'agt_a' })
-    // Only archived topics, or none: the next message starts the first one.
-    expect(currentTopic([mine('a3', 9, { archived: true })], 'agt_a')).toBeUndefined()
-    expect(currentTopic([], 'agt_a')).toBeUndefined()
   })
 
   it('says what a topic is doing as its helper does', () => {
@@ -91,27 +83,43 @@ describe('topics', () => {
 })
 
 describe('links into 我的 Agent', () => {
-  const tasks = [mine('a1', 1), mine('a2', 5), general('g1', 3)]
+  const snapshot: Pick<AppSnapshot, 'catalog' | 'agentChats'> = {
+    catalog: { features: { singleAgentChat: true } } as HostCatalog,
+    agentChats: {
+      agt_a: { state: 'ready', sessionId: 'a1' },
+      general: { state: 'ready', sessionId: 'g1' },
+      agt_none: { state: 'empty' },
+      agt_wait: { state: 'starting' },
+    },
+  }
 
-  it('opens the conversation on its current topic, or a new topic when it has none or one is asked for', () => {
-    expect(openAgent({ id: 'agt_a' }, tasks)).toEqual({ kind: 'topic', sessionId: 'a2', owner: 'agt_a' })
-    expect(openAgent({ id: 'general' }, tasks)).toEqual({ kind: 'topic', sessionId: 'g1', owner: 'general' })
-    expect(openAgent({ id: 'agt_none' }, tasks)).toEqual({ kind: 'page', target: { id: 'agt_none', topic: 'new' } })
-    expect(openAgent({ id: 'agt_a', topic: 'new' }, tasks)).toEqual({ kind: 'page', target: { id: 'agt_a', topic: 'new' } })
-    // The list and the form for a new Agent stay pages.
-    expect(openAgent(undefined, tasks)).toEqual({ kind: 'page' })
-    expect(openAgent({ id: 'new' }, tasks)).toEqual({ kind: 'page', target: { id: 'new' } })
+  it('opens the authoritative chat even when history moved and ignores a legacy new-topic link', () => {
+    expect(openAgent({ id: 'agt_a' }, snapshot)).toEqual({ kind: 'topic', sessionId: 'a1', owner: 'agt_a' })
+    expect(openAgent({ id: 'general' }, snapshot)).toEqual({ kind: 'topic', sessionId: 'g1', owner: 'general' })
+    expect(openAgent({ id: 'agt_none' }, snapshot)).toEqual({ kind: 'page', target: { id: 'agt_none' } })
+    expect(openAgent({ id: 'agt_wait' }, snapshot)).toEqual({ kind: 'page', target: { id: 'agt_wait' } })
+    expect(openAgent({ id: 'agt_a', topic: 'new' }, snapshot)).toEqual({ kind: 'topic', sessionId: 'a1', owner: 'agt_a' })
+    expect(openAgent({ id: 'agt_a' }, { agentChats: snapshot.agentChats })).toEqual({ kind: 'page', target: { id: 'agt_a' } })
+    expect(isPersonalChat(snapshot, mine('a1', 1))).toBe(true)
+    expect(isPersonalChat(snapshot, mine('r1', 40, { automationId: 'aut_1' }))).toBe(false)
+    expect(openAgent(undefined, snapshot)).toEqual({ kind: 'page' })
+    expect(openAgent({ id: 'new' }, snapshot)).toEqual({ kind: 'page', target: { id: 'new' } })
   })
 
   it('opens the profile at the section an old tab names; the old 委托 tab is the conversation', () => {
-    expect(openAgent({ id: 'agt_a', tab: 'memory' }, tasks)).toEqual({ kind: 'topic', sessionId: 'a2', owner: 'agt_a', section: 'memory' })
-    expect(openAgent({ id: 'agt_none', tab: 'schedules' }, tasks)).toEqual({
+    expect(openAgent({ id: 'agt_a', tab: 'memory' }, snapshot)).toEqual({
+      kind: 'topic',
+      sessionId: 'a1',
+      owner: 'agt_a',
+      section: 'memory',
+    })
+    expect(openAgent({ id: 'agt_none', tab: 'schedules' }, snapshot)).toEqual({
       kind: 'page',
-      target: { id: 'agt_none', topic: 'new' },
+      target: { id: 'agt_none' },
       section: 'schedules',
     })
-    expect(openAgent({ id: 'agt_a', tab: 'settings' }, tasks)).toMatchObject({ section: 'settings' })
-    expect(openAgent({ id: 'agt_a', tab: 'delegate' }, tasks)).toEqual({ kind: 'topic', sessionId: 'a2', owner: 'agt_a' })
+    expect(openAgent({ id: 'agt_a', tab: 'settings' }, snapshot)).toMatchObject({ section: 'settings' })
+    expect(openAgent({ id: 'agt_a', tab: 'delegate' }, snapshot)).toEqual({ kind: 'topic', sessionId: 'a1', owner: 'agt_a' })
     expect(profileSection('delegate')).toBeUndefined()
     expect(profileSection(undefined)).toBeUndefined()
   })

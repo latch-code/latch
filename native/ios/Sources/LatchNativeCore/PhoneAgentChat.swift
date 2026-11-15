@@ -1,11 +1,30 @@
 import Foundation
 
-/**
- * Talking with an Agent, as the web does it (`apps/web/src/agents/chat.ts`): its sessions are its topics, and the current
- * topic is the newest that is not archived and not a schedule's run. 通用 names no Agent, so its topics are the sessions
- * the Host marked `generalChat`.
- */
+/** The Host chooses the chat. Earlier sessions stay visible as history. */
 public enum PhoneAgentChat {
+    public static func slot(_ snapshot: NativeJSON, owner: String) -> NativeJSON {
+        guard snapshot["catalog"]["features"]["singleAgentChat"].bool else { return .null }
+        return snapshot["agentChats"][owner]
+    }
+
+    public static func session(_ snapshot: NativeJSON, owner: String) -> String? {
+        let chat = slot(snapshot, owner: owner)
+        return chat["state"].string == "ready" ? chat["sessionId"].string : nil
+    }
+
+    public static func isCurrent(_ snapshot: NativeJSON, task: NativeJSON) -> Bool {
+        guard let owner = owner(task), let id = task["id"].string else { return false }
+        return session(snapshot, owner: owner) == id
+    }
+
+    public static func model(_ snapshot: NativeJSON, task: NativeJSON) -> PhoneModelChoice? {
+        guard task["harnessId"].string == "standard", isCurrent(snapshot, task: task), let owner = owner(task),
+              let agent = snapshot["customAgents"].array.first(where: { $0["id"].string == owner && $0["harnessId"].string == "standard" }),
+              let provider = agent["model"]["providerId"].string, let model = agent["model"]["model"].string else { return nil }
+        return PhoneStart.models(snapshot["catalog"]).first { $0.providerId == provider && $0.model == model }
+            ?? PhoneModelChoice(providerId: provider, providerName: provider, model: model)
+    }
+
     /** The Agent a session belongs to in 我的 Agent: one of yours, 通用 for a conversation with it, or none. */
     public static func owner(_ task: NativeJSON) -> String? {
         if let id = task["agent"]["customAgentId"].string { return id }
@@ -18,10 +37,6 @@ public enum PhoneAgentChat {
     public static func topics(_ tasks: [NativeJSON], id: String) -> (open: [NativeJSON], archived: [NativeJSON]) {
         let own = tasks.filter { owner($0) == id }.sorted(by: newer)
         return (own.filter { !$0["archived"].bool }, own.filter { $0["archived"].bool })
-    }
-    /** The topic a message continues; nil means the next message starts the first one. */
-    public static func current(_ tasks: [NativeJSON], id: String) -> NativeJSON? {
-        topics(tasks, id: id).open.first { $0["automationId"] == .null }
     }
     public static func placeholder(_ name: String) -> String { "给 " + name + " 发消息…" }
     /** Where a session opened from an Agent's page goes: its conversation when it is this owner's, else Code. */
@@ -135,7 +150,7 @@ public enum PhoneProposals {
     public static func pending(_ proposals: [PhoneProposal]) -> [PhoneProposal] { proposals.filter { $0.state == .pending && $0.schedule == nil } }
     public static func originWords(_ origin: String) -> String { origin == "user" ? "你说的" : "它推断的" }
     /** When a saved memory reaches the Agent: the built-in Harness reads memories each turn; an external one with a topic's first turn. */
-    public static func effectWords(_ harness: NativeJSON) -> String { harness["agentContext"].string == "private" ? "已生效" : "从下一个话题起" }
+    public static func effectWords(_ harness: NativeJSON) -> String { harness["agentContext"].string == "private" ? "已生效" : "清空上下文后生效" }
     /** The user message a proposal came from: by its ID, or the person's message by its request. */
     public static func turn(_ proposal: PhoneProposal, messages: [NativeJSON]) -> String? {
         let users = messages.filter { $0["role"].string == "user" }
@@ -226,15 +241,6 @@ public enum PhoneScheduleWrite {
 }
 
 extension PhoneAgentChat {
-    /**
-     * The topic a conversation page shows: the one picked while the Host still lists it as this owner's, else the current
-     * one; nil for a new topic. A session of no Agent, or of another one, never shows under this frame.
-     */
-    public static func shown(_ tasks: [NativeJSON], owner: String, picked: String?, newTopic: Bool) -> String? {
-        if newTopic { return nil }
-        if let picked, tasks.contains(where: { $0["id"].string == picked && self.owner($0) == owner }) { return picked }
-        return current(tasks, id: owner)?["id"].string
-    }
     /**
      * The new topic's input after a start: emptied once the Host holds the request (answered, or unknown and kept), so
      * 放弃这次提交 gives the text back once rather than doubling it; kept when nothing was sent.

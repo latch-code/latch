@@ -11,7 +11,7 @@ export function originWords(origin: MemoryOrigin): string {
  * only with a topic's first turn. Nothing else is claimed.
  */
 export function effectWords(harness: Pick<HarnessInfo, 'agentContext'> | undefined): string {
-  return harness?.agentContext === 'private' ? '已生效' : '从下一个话题起'
+  return harness?.agentContext === 'private' ? '已生效' : '清空上下文后生效'
 }
 
 /**

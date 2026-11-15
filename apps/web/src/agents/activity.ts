@@ -87,7 +87,7 @@ const MEMORY_WORDS = { added: '记忆 +1', updated: '记忆已修改', deleted: 
 export function activityWords(item: AgentActivityItem): { lead: string; subject?: string; state?: { word: string; tone: StatusTone } } {
   switch (item.kind) {
     case 'topic':
-      return { lead: '新话题', subject: item.title || '未命名会话' }
+      return { lead: '开始聊天', subject: item.title || '未命名会话' }
     case 'run':
       return {
         lead: '定时',

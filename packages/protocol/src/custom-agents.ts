@@ -2,6 +2,9 @@ import type { ModelRef, PluginInfo, TaskMode, TaskSummary } from './types.ts'
 import type { AttachmentRef } from './attachments.ts'
 import type { AutomationRunState, AutomationSchedule, ScheduleResultOutcome } from './automations.ts'
 
+/** The Host's one interactive conversation for an Agent. Absent from the projection until it can verify old history. */
+export type PersonalAgentChat = { state: 'empty' | 'starting' } | { state: 'ready'; sessionId: string }
+
 /** The bracket face: a pair of brackets around two eyes on a soft plate. */
 export const AGENT_BRACKETS = ['round', 'curly', 'square', 'angle'] as const
 export type AgentBracket = (typeof AGENT_BRACKETS)[number]
@@ -474,6 +477,10 @@ export interface AgentSkillBody {
 export interface AgentExecutionContext {
   /** The session belongs to this agent. Absent on a 通用 session, which has no agent but is just as private. */
   agent?: SessionAgentRef
+  /** The explicit 通用 chat in Standard; persistent alongside the accepted first message. */
+  generalChat?: true
+  /** Profile model for a canonical Standard chat's next turn, overridden by an explicit request model. */
+  defaultModel?: ModelRef
   /** Host-frozen capability revisions for delegated or scheduled execution. */
   expectedRevisions?: Record<string, string>
   /** System context for drivers with `agentContext: 'private'`. */

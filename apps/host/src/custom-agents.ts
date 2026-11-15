@@ -30,6 +30,8 @@ import {
   type MemoryProposal,
   type MemoryProposalResult,
   type MemorySource,
+  type PersonalAgentChat,
+  type TaskSummary,
   MEMORY_UNDO_DAYS,
   outsideMemory,
 } from '@latch/protocol'
@@ -332,6 +334,15 @@ const selection = z.strictObject({
 const startSchema = selection.extend({ customAgentId: memoryOwner })
 export type AgentSessionSelection = z.infer<typeof selection>
 
+const firstChatStartSchema = z.strictObject({ deviceId: z.string().min(1).max(256), requestId, hash })
+export type FirstChatStart = z.infer<typeof firstChatStartSchema>
+const chatSessionId = z.string().min(1).max(256)
+const chatSlotSchema = z.discriminatedUnion('state', [
+  z.strictObject({ state: z.literal('empty') }),
+  z.strictObject({ state: z.literal('starting'), first: firstChatStartSchema }),
+  z.strictObject({ state: z.literal('ready'), sessionId: chatSessionId, first: firstChatStartSchema.optional() }),
+])
+
 const stateSchema = z
   .strictObject({
     version: z.literal(2),
@@ -342,6 +353,7 @@ const stateSchema = z
     changes: z.record(memoryOwner, z.array(changeSchema).max(MAX_CHANGES)).default({}),
     recalls: z.record(memoryOwner, z.array(recallSchema).max(MAX_RECALLS)).default({}),
     starts: z.record(hash, startSchema),
+    chats: z.record(memoryOwner, chatSlotSchema).default({}),
     receipts: z.record(hash, z.strictObject({ hash, target: z.string().max(128), audited: z.boolean() })),
   })
   .superRefine((state, ctx) => {
@@ -419,6 +431,7 @@ export class CustomAgents {
         changes: {},
         recalls: {},
         starts: {},
+        chats: {},
         receipts: {},
       },
       // Every snapshot and new session reads this, so a failed write must not wait for someone to retry that request.
@@ -564,6 +577,7 @@ export class CustomAgents {
         createdAt: at,
         updatedAt: at,
       })
+      state.chats[id] = { state: 'empty' }
       if (file.memories.length)
         state.memories[id] = file.memories.map(memory => ({
           id: `mem_${randomUUID()}`,
@@ -686,6 +700,7 @@ export class CustomAgents {
         at = this.at(),
         id = `agt_${randomUUID()}`
       state.agents.push({ ...definition, id, avatar: chosen ?? avatarFor(state.agents), revision: 1, createdAt: at, updatedAt: at })
+      state.chats[id] = { state: 'empty' }
       return { target: id, customAgentId: id }
     }).then(result => ({ ...result, value: this.get(result.value) }))
   }
@@ -773,7 +788,9 @@ export class CustomAgents {
       { requestId: requestId.parse(rid) },
       actor,
       state => {
+        if (state.chats[id]?.state === 'starting') throw new AppError(409, 'agent-chat-starting', '这个 Agent 的聊天还在确认是否开始。')
         state.agents = state.agents.filter(agent => agent.id !== id)
+        delete state.chats[id]
         delete state.memories[id]
         delete state.proposals[id]
         delete state.changes[id]
@@ -1193,6 +1210,106 @@ export class CustomAgents {
     if (held?.customAgentId !== id) return undefined
     const { customAgentId: _, ...selection } = held
     return selection
+  }
+
+  /** Only the public part of a private chat slot. Its first request is never sent to a client. */
+  chats(): Record<string, PersonalAgentChat> {
+    return Object.fromEntries(
+      Object.entries(this.journal.read().chats).map(([owner, slot]) => [
+        owner,
+        slot.state === 'ready' ? { state: 'ready', sessionId: slot.sessionId } : { state: slot.state },
+      ]),
+    )
+  }
+
+  needsChatMigration(): boolean {
+    const { agents, chats } = this.journal.read()
+    return !chats[GENERAL_AGENT_ID] || agents.some(agent => !chats[agent.id])
+  }
+
+  knowsChatStart(owner: string, deviceId: string, id: string): boolean {
+    const slot = this.journal.read().chats[owner]
+    if (!slot || slot.state === 'empty') return false
+    return slot.first?.deviceId === deviceId && slot.first.requestId === id
+  }
+
+  /** The caller supplies a complete, authoritative Host inventory. Only a slot without a decision may be migrated. */
+  async migrateChats(tasks: readonly TaskSummary[], authorize: () => void): Promise<void> {
+    const latest = new Map<string, TaskSummary>()
+    for (const task of tasks) {
+      const owner = task.agent?.customAgentId ?? (task.generalChat ? GENERAL_AGENT_ID : undefined)
+      if (!owner || task.archived || task.automationId || task.forkOf) continue
+      const chosen = latest.get(owner)
+      if (!chosen || task.updatedAt > chosen.updatedAt || (task.updatedAt === chosen.updatedAt && task.id < chosen.id))
+        latest.set(owner, task)
+    }
+    await this.journal.change(
+      digest(['chat-migration']),
+      digest([...latest.entries()].map(([owner, task]) => [owner, task.id]).sort()),
+      state => {
+        let changed = false
+        for (const owner of [GENERAL_AGENT_ID, ...state.agents.map(agent => agent.id)]) {
+          if (state.chats[owner]) continue
+          const task = latest.get(owner)
+          state.chats[owner] = task ? { state: 'ready', sessionId: task.id } : { state: 'empty' }
+          changed = true
+        }
+        return { value: undefined, changed }
+      },
+      authorize,
+    )
+  }
+
+  async reserveChat(
+    owner: string,
+    first: FirstChatStart,
+    authorize: () => void,
+  ): Promise<{ state: 'starting'; fresh: boolean } | { state: 'ready'; sessionId: string }> {
+    return this.journal.change<{ state: 'starting'; fresh: boolean } | { state: 'ready'; sessionId: string }>(
+      digest(['chat-start', owner, first.deviceId, first.requestId]),
+      first.hash,
+      state => {
+        this.assertOwner(state, owner)
+        const slot = state.chats[owner]
+        if (!slot) throw new AppError(503, 'agent-chat-history-unknown', '旧会话尚未核对完成，请稍后再试。')
+        if (slot.state === 'empty') {
+          state.chats[owner] = { state: 'starting', first }
+          return { value: { state: 'starting', fresh: true } }
+        }
+        const original = slot.first?.deviceId === first.deviceId && slot.first.requestId === first.requestId
+        if (original && slot.first?.hash !== first.hash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入。')
+        if (slot.state === 'ready') {
+          if (original) return { value: { state: 'ready', sessionId: slot.sessionId }, changed: false }
+          throw new AppError(409, 'agent-chat-exists', '这个 Agent 已有聊天，请在其中继续。', { sessionId: slot.sessionId })
+        }
+        if (!original) throw new AppError(409, 'agent-chat-starting', '这个 Agent 正在确认第一条消息。')
+        return { value: { state: 'starting', fresh: false }, changed: false }
+      },
+      authorize,
+    )
+  }
+
+  /** Record what the driver durably accepted. A caller that has since lost access still receives no session ID. */
+  async settleChat(owner: string, first: FirstChatStart, sessionId?: string): Promise<void> {
+    await this.journal.change(
+      digest(['chat-settle', owner, first.deviceId, first.requestId]),
+      digest([first.hash, sessionId ?? null]),
+      state => {
+        const slot = state.chats[owner]
+        if (
+          slot?.state === 'starting'
+          && slot.first.deviceId === first.deviceId
+          && slot.first.requestId === first.requestId
+          && slot.first.hash === first.hash
+        ) {
+          state.chats[owner] = sessionId ? { state: 'ready', sessionId, first } : { state: 'empty' }
+          return { value: undefined }
+        }
+        if (sessionId && (slot?.state !== 'ready' || slot.sessionId !== sessionId))
+          throw new AppError(503, 'agent-chat-start-unconfirmed', '这个 Agent 的聊天结果尚未确认。')
+        return { value: undefined, changed: false }
+      },
+    )
   }
 
   /** A retry keeps its first engine and project even if the Agent was edited meanwhile. */
