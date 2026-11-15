@@ -4,7 +4,7 @@ const CUSTOMIZATIONS = ['.agents', '.agent', '_agents', '_agent', '.gemini/confi
 
 export const antigravityProfile: HarnessProfile = {
   presetId: 'antigravity',
-  version: 2,
+  version: 3,
   // Opening a session can load the person's hooks and plugins.
   catalogueRead: { when: 'request' },
   permission: {
@@ -26,6 +26,8 @@ export const antigravityProfile: HarnessProfile = {
   ownModelsOnly: true,
   folders: { via: 'acp', configPaths: CUSTOMIZATIONS },
   projectConfigPaths: CUSTOMIZATIONS,
+  // 1.5.8 answers session/resume with its default model and thinking level (recorded 2026-11-15).
+  resumeResetsOptions: true,
   minimumVersion: {
     args: ['--version'],
     read: output => /^\s*(\d+\.\d+\.\d+)\s*$/u.exec(output)?.[1],

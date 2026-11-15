@@ -2834,6 +2834,12 @@ export class AgentRuntime implements Bridge {
     const task = this.task(sessionId)
     // The private file records what Latch configured. It cannot prove the effective value of Gemini's own overrides.
     if (task.config?.find(option => option.id === configId)?.source === 'launch') return { kind: 'unread' }
+    // Opened again, the session would report the agent's defaults: neither the value asked for nor the one before it.
+    if (
+      this.selection.profile?.resumeResetsOptions
+      && task.config?.some(option => option.id === configId && !this.isModeOption(task, option))
+    )
+      return { kind: 'unread' }
     if (
       this.selection.profile?.processMode?.unread
       && task.config?.some(option => option.id === configId && this.isModeOption(task, option))
@@ -4927,7 +4933,9 @@ export class AgentRuntime implements Bridge {
     const folded = parsed.success ? foldConfig(parsed.data) : undefined
     if (folded || live.processModes?.has(acpSessionId)) {
       this.configReported(taskId)
+      const earlier = current && this.selection.profile?.resumeResetsOptions ? target.config : undefined
       target.config = this.offered(target, folded?.options ?? [], live.gateway)
+      if (earlier) this.carryChoices(target, earlier)
       target.acp.configSource = folded?.source ?? 'options'
       this.applyModel(target)
       // What a session on a route offers is what the gateway's service has, not the harness's own list.
@@ -4952,6 +4960,34 @@ export class AgentRuntime implements Bridge {
         throw new AppError(503, 'agent-exited', `${this.agent.name} 进程已退出，请重试`)
     }
     return { live, acpSessionId }
+  }
+
+  /**
+   * For an agent that opens a session again with its defaults (`resumeResetsOptions`): what the session showed before
+   * and no longer does becomes a choice to set before the next prompt, model first, each read back. One the agent no
+   * longer offers refuses that prompt and says what the session runs on now. The mode is `verifyMode`'s.
+   */
+  private carryChoices(task: AcpTask, earlier: NonNullable<AcpTask['config']>): void {
+    const chosen = task.acp.startConfig ?? []
+    const now = (id: string) => task.config?.find(item => item.id === id)
+    const reset = earlier.filter(
+      option =>
+        !this.isModeOption(task, option)
+        && option.source !== 'launch'
+        && !chosen.some(choice => choice.configId === option.id)
+        && now(option.id)?.currentValue !== option.currentValue,
+    )
+    const model = reset.some(option => option.category === 'model')
+    const carried = reset
+      // An option absent now may be one the earlier model had; without that model to set again there is nothing to ask for.
+      .filter(option => now(option.id) !== undefined || model)
+      .map(option => ({
+        configId: option.id,
+        value: option.currentValue,
+        ...(option.category ? { category: option.category } : {}),
+        label: option.options.find(item => item.value === option.currentValue)?.name ?? option.currentValue,
+      }))
+    if (carried.length) task.acp.startConfig = [...chosen, ...carried]
   }
 
   /**

@@ -56,7 +56,7 @@ Agent 自己提供官方的机器协议时，Latch 直接说这个协议，ACP �
 | goose | `goose acp` | Apache-2.0 | 见项目文档 |
 | Claude Agent | `claude-agent-acp` | Apache-2.0 适配器；Claude Code 专有（Anthropic 条款） | `npm i -g @agentclientprotocol/claude-agent-acp`；用这个人在 Claude Code 中已有的登录（或它设置里的 API key、Bedrock、Vertex）。名称只用「Claude Agent」，图标使用官方 Claude 品牌资源；来源与商标使用条件见界面的开源许可 |
 | Cursor | `cursor-agent acp` | 专有（Cursor 服务条款） | Cursor 官方安装脚本；用这个人自己的 Cursor 账号。安装脚本同时建 `agent` 与 `cursor-agent` 两个链接，预设用后者，因为 `agent` 这个名字可能属于别的程序；图标使用官方 Cursor 品牌资源 |
-| Antigravity | `agy acp --disable-telemetry` | Google Antigravity 条款 | 1.5.8 或更高版本；使用本机 CLI 的登录，模型与思考选项由 ACP 报告 |
+| Antigravity | `agy acp --disable-telemetry --process-per-session` | Google Antigravity 条款 | 1.5.8 或更高版本；使用本机 CLI 的登录，模型与思考选项由 ACP 报告，思考档位随所选模型变化 |
 | Grok Build | `grok --no-auto-update --permission-mode default agent stdio` | 发布版条款；开源源码 Apache-2.0 | 1.0.77 或更高版本；使用本机 CLI 的登录，模型与推理档位由 ACP 报告，权限档位尚不能经 ACP 读回 |
 
 Claude Agent 与 Cursor 不是开源软件，Latch 只启动这个人自己装好、未经修改的命令。Latch 不提供 Claude 的登录（不写登录命令、不调用 `authenticate`、不声明 terminal auth，所以适配器也不列出登录方法），不读取、保存或转交任何一家的凭据，不调用私有接口；它的登录状态命令只读结论与到期日期（见「登录」）。对外发布并宣传「可用 Claude 订阅」之前，需要先取得 Anthropic 的书面确认；在自己的电脑上个人使用不受影响。
@@ -104,6 +104,8 @@ profile 可以声明 `minimumVersion`：它自己的命令支持的最低版本�
 | Grok Build | — | — | — | — | 仅保留单次选择 | 不报告权限模式；不生成虚构的四档选择 |
 
 Antigravity 的 `plan` 只追加规划指令，不能称为「只看不改」。它保留原生名称与说明，未归入权限档位；仅由人显式选择，不参与跨 Harness 的只读档位继承。默认草稿与分叉差异说明采用该 Harness 的实际默认名称。`default` 名称保留为「默认」：本机 `toolPermission`、允许与拒绝规则仍优先，所以默认模式也可能直接改文件。Latch 输入前设定并读回 mode，但不能据此断言每次工具调用都询问；一旦 CLI 请求审批，只提供单次选择。项目 `.agents`、兼容目录 `.agent` / `_agents` / `_agent` 中的 hooks、MCP 与插件，以及 `.gemini/config.json` 的个人定制目录入口计入启动指纹；清单引用这些目录之外的代码不在该指纹覆盖范围内。额外目录通过 ACP 能力协商后传入；创建空会话可能加载扩展，所以模型列表只在用户请求时读取。
+
+Antigravity 1.5.8 宣告 `session/resume`、`session/load`、`session/list`、`session/close` 与 `additionalDirectories`（2026-11-15 实测）。Latch 用 `session/resume` 恢复会话；「接入已有会话」对它尚未实现，所以不调用 `session/list`。恢复后 CLI 报告的模型与思考档位回到它的默认值，不是会话原先所选：Latch 在下一条消息发出前按会话原先显示的值重新设置并逐项读回（先模型、后思考），CLI 不再提供原先的模型或没有采用时这条消息不发出，并写明现在用的是哪个。因此这两项的「核对」不重新打开会话，结果保持未知；权限模式照常核对。服务端拒绝一轮时（例如所在地区不受支持），CLI 只发来一段正文「⚠ Agent execution terminated due to error.」并以 `end_turn` 结束，不经 ACP 报告原因，Latch 照原样显示这段正文，这一轮记为完成。
 
 Grok Build 的 stdio 模式是独立 Agent 进程，不连接终端使用的共享 leader。Latch 不运行 `grok leader kill`，只停止自己启动的进程。项目 `.grok` 计入启动指纹；继承 `GROK_HOME` 的变量名和路径，不读取其中的登录或历史文件。经 Latch 使用模型服务见「经 Latch 使用模型服务」。Antigravity 同样不把 CCPA 地址选项当作 Gemini API 网关地址。
 

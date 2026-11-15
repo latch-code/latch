@@ -380,6 +380,12 @@ export interface HarnessProfile {
    * them has none. Shown to clients as `HarnessCapabilities.models.thinkingPerModel`; nothing that runs changes.
    */
   readonly thinkingPerModel?: true
+  /**
+   * A session it opens again (`session/resume`, `session/load`) reports its default model and thinking, not what the
+   * session was set to. The driver sets what the session last showed again before the next prompt, as it sets a draft's
+   * choices, and a reading of such an option after a restart says nothing about an unanswered change.
+   */
+  readonly resumeResetsOptions?: true
   readonly thinkingInModel?: true
   /** A documented process setting, presented as configured rather than independently reported by the Agent. */
   launchThinking?(model: string | undefined, selected?: { model: string; value: string }): SessionConfigOption | undefined

@@ -1778,6 +1778,22 @@ describe('ACP permission mode', () => {
     expect(fixture.events).toContainEqual({ type: 'permission-unverified', sessionId })
   })
 
+  it('does not open an Antigravity session again to read its model, which would come back as the default', async () => {
+    const fixture = await preset('antigravity', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'default,accept-edits,auto,plan',
+      FAKE_ACP_INITIAL_MODE: 'default',
+      FAKE_ACP_CAPS: 'resume',
+    })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo model reading', requestId: rid() })
+    await settled(bridge, sessionId)
+    const starts = (await fixture.log()).filter(entry => entry.event === 'start').length
+    expect(await bridge.readConfig!(sessionId, 'model', 'large')).toEqual({ kind: 'unread' })
+    expect((await fixture.log()).filter(entry => entry.event === 'start').length).toBe(starts)
+    expect(received(await fixture.log(), 'session/resume')).toEqual([])
+  })
+
   it('uses Grok model options without inventing permission readback or sending a mode setter', async () => {
     const fixture = await preset('grok', { FAKE_ACP_CONFIG: 'options' })
     const bridge = await fixture.open()
