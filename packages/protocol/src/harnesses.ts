@@ -171,7 +171,13 @@ export interface CatalogueRead {
   modes: boolean
   running?: true
   /** The last read of the current definition. Absent: none, so a `select` harness reads on its next selection. */
-  last?: { at: string; ok: boolean; message?: string }
+  last?: {
+    at: string
+    ok: boolean
+    message?: string
+    /** It failed because the harness refused for want of a login, by the harness's own error code, not by its words. */
+    loginRequired?: true
+  }
 }
 
 export interface HarnessInfo {

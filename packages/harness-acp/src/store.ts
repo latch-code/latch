@@ -165,6 +165,8 @@ export interface AcpCatalogueRead {
   at: string
   ok: boolean
   message?: string
+  /** The failure's `AppError` code. */
+  code?: string
 }
 
 export interface AcpState {
@@ -310,7 +312,13 @@ const catalogue = z.object({
   reportedAt: z.string(),
   source: z.enum(['session', 'check']),
 })
-const catalogueRead = z.object({ definitionHash: hash, at: z.string(), ok: z.boolean(), message: z.string().optional() })
+const catalogueRead = z.object({
+  definitionHash: hash,
+  at: z.string(),
+  ok: z.boolean(),
+  message: z.string().optional(),
+  code: z.string().max(100).optional(),
+})
 const promptCapabilities = z.object({ definitionHash: hash, images: z.boolean(), embeddedContext: z.boolean(), at: z.string() })
 const startChoice = z.object({
   configId: z.string(),

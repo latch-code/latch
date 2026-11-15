@@ -1238,7 +1238,16 @@ export class AgentRuntime implements Bridge {
     return {
       ...catalogueReadOf(this.selection.profile),
       ...(this.readingNow ? { running: true as const } : {}),
-      ...(current ? { last: { at: current.at, ok: current.ok, ...(current.message ? { message: current.message } : {}) } } : {}),
+      ...(current
+        ? {
+            last: {
+              at: current.at,
+              ok: current.ok,
+              ...(current.message ? { message: current.message } : {}),
+              ...(current.code === 'agent-auth-required' ? { loginRequired: true as const } : {}),
+            },
+          }
+        : {}),
     }
   }
 
@@ -1277,14 +1286,15 @@ export class AgentRuntime implements Bridge {
       await options.before?.()
       this.readingNow = true
       this.notify()
-      let failure: string | undefined
+      let failure: { message: string; code: string } | undefined
       try {
         await this.readOnce(definitionHash)
       } catch (error) {
-        failure = clip(this.publicError(error, undefined).message, 300)
+        const shown = this.publicError(error, undefined)
+        failure = { message: clip(shown.message, 300), code: shown.code }
       }
       if (this.definitionNow(true) === definitionHash) {
-        this.state.catalogueRead = { definitionHash, at: this.now(), ok: !failure, ...(failure ? { message: failure } : {}) }
+        this.state.catalogueRead = { definitionHash, at: this.now(), ok: !failure, ...failure }
         this.mark()
         await this.flush()
       }
@@ -4142,6 +4152,10 @@ export class AgentRuntime implements Bridge {
     }
     switch (stopReason) {
       case 'end_turn':
+        if (this.terminatedReply(run)) {
+          notes.push(`${this.agent.name} 中止了这一轮，没有给出原因`)
+          return 'failed'
+        }
         return 'idle'
       case 'cancelled':
         return 'cancelled'
@@ -4161,6 +4175,24 @@ export class AgentRuntime implements Bridge {
         notes.push(`${this.agent.name} 以未知原因 ${clip(this.redact(stopReason), 64)} 结束本轮。`)
         return 'failed'
     }
+  }
+
+  /**
+   * The turn's whole reply is one of the texts the profile's CLI sends for a turn it terminated. Only the turn's single
+   * piece of reply text counts, compared whole: a reply that goes on, or follows another, is a reply. A piece already
+   * settled keeps its ID and is marked failed like the one still open.
+   */
+  private terminatedReply(run: Run): boolean {
+    const texts = this.selection.profile?.terminatedReplies
+    const task = this.state.tasks[run.taskId]
+    if (!texts?.length || !task || run.userMessageId === undefined) return false
+    const from = task.messages.findIndex(message => message.id === run.userMessageId)
+    if (from < 0) return false
+    const settled = task.messages.slice(from + 1).filter(message => message.role === 'assistant' && message.text)
+    const replies = [...settled.map(message => message.text), ...(run.segment?.text ? [run.segment.text] : [])]
+    if (replies.length !== 1 || !texts.includes(replies[0]!.trim())) return false
+    for (const message of settled) message.state = 'failed'
+    return true
   }
 
   private failure(run: Run, error: unknown, notes: string[]): TaskStatus {

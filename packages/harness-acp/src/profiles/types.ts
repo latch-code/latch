@@ -411,6 +411,11 @@ export interface HarnessProfile {
    * choices, and a reading of such an option after a restart says nothing about an unanswered change.
    */
   readonly resumeResetsOptions?: true
+  /**
+   * The replies its CLI sends, ending the turn as `end_turn`, for a turn it terminated without saying why over ACP. A
+   * turn whose whole reply is one of them ends as failed; a reply that only contains the text stays a reply.
+   */
+  readonly terminatedReplies?: readonly string[]
   readonly thinkingInModel?: true
   /** A documented process setting, presented as configured rather than independently reported by the Agent. */
   launchThinking?(model: string | undefined, selected?: { model: string; value: string }): SessionConfigOption | undefined

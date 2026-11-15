@@ -5,7 +5,7 @@ const CUSTOMIZATIONS = ['.agents', '.agent', '_agents', '_agent', '.gemini/confi
 
 export const antigravityProfile: HarnessProfile = {
   presetId: 'antigravity',
-  version: 3,
+  version: 4,
   // Its own `/usage`, run beside a session: it starts no turn (checked on 1.5.8) and nothing waits for it.
   quota: { command: antigravityQuotaCommand },
   // Opening a session can load the person's hooks and plugins.
@@ -31,6 +31,8 @@ export const antigravityProfile: HarnessProfile = {
   projectConfigPaths: CUSTOMIZATIONS,
   // 1.5.8 answers session/resume with its default model and thinking level (recorded 2026-11-15).
   resumeResetsOptions: true,
+  // All a turn its backend refused says (agy 1.5.8, observed 2026-11-15): no error and no reason reach ACP.
+  terminatedReplies: ['⚠ Agent execution terminated due to error.'],
   minimumVersion: {
     args: ['--version'],
     read: output => /^\s*(\d+\.\d+\.\d+)\s*$/u.exec(output)?.[1],

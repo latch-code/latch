@@ -1758,6 +1758,56 @@ describe('ACP permission mode', () => {
     expect((await settled(bridge, sessionId)).config?.find(option => option.id === 'mode')?.currentValue).toBe('plan')
   })
 
+  describe('a turn Antigravity terminated without a reason', () => {
+    const TERMINATED = '⚠ Agent execution terminated due to error.'
+    const MODES = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'default,accept-edits,auto', FAKE_ACP_INITIAL_MODE: 'default' }
+    /** The fake agent says each queued text as its whole reply and ends the turn with `end_turn`. */
+    const replying = async (presetId: string | undefined, replies: string[]) => {
+      const queue = join(await mkdtemp(join(tmpdir(), 'latch-acp-replies-')), 'queue.json')
+      cleanups.push(() => rm(dirname(queue), { recursive: true, force: true }))
+      await writeFile(queue, JSON.stringify(replies))
+      const env = { ...MODES, FAKE_ACP_REPLY_QUEUE: queue }
+      return (await (presetId ? preset(presetId, env) : setup(env))).open()
+    }
+    const replies = (detail: DriverTaskDetail) => detail.messages.filter(message => message.role === 'assistant')
+
+    it('ends the turn as failed under the same message ID, with Latch’s own words, and the next turn runs', async () => {
+      const bridge = await replying('antigravity', [TERMINATED, 'fine'])
+      const { sessionId } = await bridge.createTask({ prompt: 'hello', requestId: rid() })
+      // The reply streams under one ID before the turn ends, and keeps it once the turn is failed.
+      const live = await until(bridge, sessionId, detail => replies(detail).length > 0 || detail.summary.status !== 'running')
+      const detail = await settled(bridge, sessionId)
+      expect(detail.summary).toMatchObject({ status: 'failed', runOutcome: 'failed' })
+      expect(detail.summary.runEnd).toBeUndefined()
+      expect(replies(detail)).toMatchObject([{ text: TERMINATED, state: 'failed' }])
+      if (replies(live)[0]) expect(replies(detail)[0]!.id).toBe(replies(live)[0]!.id)
+      expect(detail.messages.at(-1)).toMatchObject({ role: 'system', state: 'failed', text: 'Fake 中止了这一轮，没有给出原因' })
+      await bridge.prompt(sessionId, 'again', rid())
+      const next = await settled(bridge, sessionId)
+      expect(next.summary.status).toBe('idle')
+      expect(replies(next).at(-1)).toMatchObject({ text: 'fine', state: 'completed' })
+    })
+
+    it('leaves a reply that only contains the text a reply', async () => {
+      const bridge = await replying('antigravity', [`It printed “${TERMINATED}” and stopped.`, `${TERMINATED} Then it went on.`])
+      const { sessionId } = await bridge.createTask({ prompt: 'hello', requestId: rid() })
+      expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+      await bridge.prompt(sessionId, 'again', rid())
+      const detail = await settled(bridge, sessionId)
+      expect(detail.summary.status).toBe('idle')
+      expect(replies(detail).map(message => message.state)).toEqual(['completed', 'completed'])
+      expect(detail.messages.some(message => message.role === 'system' && message.state === 'failed')).toBe(false)
+    })
+
+    it.each([undefined, 'qwen'])('leaves the same reply from another Harness a reply (%s)', async presetId => {
+      const bridge = await replying(presetId, [TERMINATED])
+      const { sessionId } = await bridge.createTask({ prompt: 'hello', requestId: rid() })
+      const detail = await settled(bridge, sessionId)
+      expect(detail.summary.status).toBe('idle')
+      expect(replies(detail)).toMatchObject([{ text: TERMINATED, state: 'completed' }])
+    })
+  })
+
   it('refuses Antigravity input when its reported permission cannot be brought back to default', async () => {
     const fixture = await preset('antigravity', {
       FAKE_ACP_CONFIG: 'options',
@@ -4987,18 +5037,30 @@ describe('reading what a Harness offers without a turn, and model IDs a person t
     const bridge = await fixture.open()
     expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: true })
     expect(bridge.catalogue!()).toBeUndefined()
-    expect(bridge.catalogueRead!()).toMatchObject({ last: { ok: false, message: 'Fake 还没登录。按它自己的方式登录后重试。' } })
+    // The agent's own error code says it is a login that is missing; a client does not read the words for it.
+    expect(bridge.catalogueRead!()).toMatchObject({
+      last: { ok: false, loginRequired: true, message: 'Fake 还没登录。按它自己的方式登录后重试。' },
+    })
     expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: false })
     expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(1)
     await bridge.close()
     // Kept across a restart, and forgotten once the definition changes.
     const reopened = await fixture.open()
-    expect(reopened.catalogueRead!()).toMatchObject({ last: { ok: false } })
+    expect(reopened.catalogueRead!()).toMatchObject({ last: { ok: false, loginRequired: true } })
     await reopened.close()
     expect((await fixture.redefine({ env: { ...fixture.record.env, EXTRA: '1' } })).catalogueRead!()).toEqual({
       when: 'select',
       modes: true,
     })
+  })
+
+  it('does not call a read that failed for another reason a missing login', async () => {
+    const fixture = await setup({ ...OPTIONS, FAKE_ACP_INIT_ERROR: '1' })
+    const bridge = await fixture.open()
+    expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: true })
+    const last = bridge.catalogueRead!()!.last!
+    expect(last).toMatchObject({ ok: false, message: expect.stringContaining('provider rejected API key') })
+    expect(last.loginRequired).toBeUndefined()
   })
 
   it('queues a different model behind the initial catalogue and shares only reads of the same model', async () => {
