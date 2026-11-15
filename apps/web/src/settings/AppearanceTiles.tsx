@@ -1,8 +1,6 @@
 import { Backdrop, RunningEdge, SegmentedControl, Spinner, TileChoice, type BackdropLevel } from '@latch/ui'
 import type { DensityPreference, MotionPreference } from '../preferences.ts'
 
-/* The density tiles are mounted when product rows use the density preference. */
-
 /**
  * 背景效果 as a small window: the real layer (粒子场) at this strength behind two opaque cards, drawn at two and a half
  * times the tile's size and scaled down, so the tile shows the density a window gets. 关 is the same window without it.
