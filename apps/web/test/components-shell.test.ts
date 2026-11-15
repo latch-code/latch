@@ -55,7 +55,7 @@ describe('top bar', () => {
     vi.useFakeTimers({ now: Date.parse('2026-11-11T10:01:12Z'), toFake: ['Date'] })
     const pill = (extra: Partial<TaskSummary>, { cancelling = false, connection = 'connected' as 'connected' | 'offline' } = {}) => {
       const html = renderToStaticMarkup(createElement(SessionHeader, { ...topBar, summary: session(extra), cancelling, connection }))
-      const word = /<span class="ui-status-word" data-tone="(\w+)">(.*?)<\/span>(?=<\/div>)/u.exec(html)
+      const word = /<span class="ui-status-word" data-tone="(\w+)"(?: data-lock="")?>(.*?)<\/span>(?=<\/div>)/u.exec(html)
       return word && [word[1], word[2]!.replace(/<svg.*?<\/svg>|<span[^>]*><\/span>|<!-- -->/gu, '').replace(/<[^>]+>/gu, '')]
     }
     const live = {
@@ -121,7 +121,7 @@ describe('top bar', () => {
     // The title opens the session's menu (a sheet on a phone); 同步最新状态 is the connection notice's 重试, not an item.
     expect(html).toMatch(/<h1[^>]*><button[^>]*aria-haspopup="(?:menu|dialog)"[^>]*class="topbar-title-button">/)
     expect(html).toMatch(
-      /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed"><svg[^>]*latch-glyph-alert[^>]*>.*?<\/svg>失败<\/span>/u,
+      /<div class="topbar-subline"><span class="topbar-source-text">Codex · latch-app<\/span><span class="ui-status-word" data-tone="failed" data-lock=""><svg[^>]*latch-glyph-alert[^>]*>.*?<\/svg>失败<\/span>/u,
     )
     expect(html).toMatch(/<button[^>]*aria-label="侧边面板"[^>]*>.*<\/header>$/)
     expect(html).not.toContain('新建会话')

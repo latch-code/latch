@@ -284,6 +284,7 @@ import { createToolsPlugin } from './plugins/tools/safe-tools/index.ts'
 import { standardHarnessDriver } from './plugins/standard/index.ts'
 import { createWorkspacePlugin } from './plugins/tools/workspace-files/index.ts'
 import { PromptTemplateStore } from './prompt-templates.ts'
+import { CustomizationStore } from './customization.ts'
 import { createSessionRoutes } from './session-routes.ts'
 import { createFileRoutes } from './files/index.ts'
 import { FileDirectoryReader } from './files/directory.ts'
@@ -335,6 +336,8 @@ const ANONYMOUS_UNIX = new Set([
   'GET /link/api/native/info',
   'GET /link/api/traffic',
   'POST /link/api/diagnostics',
+  'GET /link/api/customization',
+  'POST /link/api/customization/reset',
 ])
 
 const httpURL = z
@@ -2106,6 +2109,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     const templateStore = await PromptTemplateStore.open(dataDir)
+    const customization = await CustomizationStore.open(dataDir, { now, log })
     const modelUsageRoutes = createModelUsageRoutes<Caller>({
       ledger: usageLedger,
       store: modelSpend,
@@ -2429,8 +2433,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       agentLogin: agentLoginRoutes,
       apps: appRoutes,
       changes: changeRoutes,
+      customization: customizationRoutes,
       routes,
     } = createRoutes(routeContext, {
+      customization: { store: () => customization, auditFailed },
       native: {
         options,
         identity,
@@ -9139,6 +9145,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (noteCounts.length) snapshot.reviewNotes = noteCounts
         const appSummaries = await appRoutes.summaries()
         if (appSummaries.length) snapshot.apps = appSummaries
+        snapshot.customization = customizationRoutes.state()
         recheck(caller, 'view')
         if (snapshot.device.dataScope !== currentDevice(caller).dataScope)
           throw new AppError(403, 'device-scope-changed', '设备的数据范围已变化，请重新读取。')

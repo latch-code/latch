@@ -25,8 +25,9 @@
  */
 
 /* Cascade layers, lowest first. Every stylesheet of the page goes into one of them, so a later layer wins whatever the
- * specificity of the earlier one's selectors; security surfaces sit on top. */
-@layer tokens, base, ui, app, security;
+ * specificity of the earlier one's selectors; security surfaces sit on top. custom holds one generated sheet: the
+ * Host's customisation, as values of CUSTOM_TOKENS (custom.ts) on the root and nothing else. */
+@layer tokens, custom, base, ui, app, security;
 
 @layer tokens {
   :root {
@@ -693,8 +694,12 @@
    * outside the layers, so a later declaration of a token (on the root, an ancestor or the element itself) cannot
    * change what these surfaces show. The values repeat the theme's (packages/ui/test/tokens.test.ts checks that they
    * match); layout, motion and the contextual --surface stay free.
+   *
+   * data-lock takes the same lock and nothing else: a mark or a page that must look the same under every
+   * customisation (不先问你, 来自外部内容, 结果未知, the device pages) without becoming a security surface, which would
+   * also pin its look in the security layer, cut a hole in the background layer and make plugin pages inert.
    */
-  :where([data-secure], [data-secure] *) {
+  :where([data-secure], [data-secure] *, [data-lock], [data-lock] *) {
     /* Shared workbench surfaces in both layouts. */
     --work-canvas: #eceef1 !important;
     --work-raised: #fbfcfd !important;
@@ -890,7 +895,7 @@
   }
 
   @media (max-width: 767.98px) {
-    :where([data-secure], [data-secure] *) {
+    :where([data-secure], [data-secure] *, [data-lock], [data-lock] *) {
       --fs-caption: 13px !important;
       --lh-caption: 18px !important;
       --lh-caption-para: 20px !important;
@@ -913,7 +918,7 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme='light']) :where([data-secure], [data-secure] *) {
+    :root:not([data-theme='light']) :where([data-secure], [data-secure] *, [data-lock], [data-lock] *) {
       /* Shared workbench surfaces in both layouts. */
       --work-canvas: #0e1013 !important;
       --work-raised: #15181c !important;
@@ -1017,7 +1022,7 @@
     }
   }
 
-  :root[data-theme='dark'] :where([data-secure], [data-secure] *) {
+  :root[data-theme='dark'] :where([data-secure], [data-secure] *, [data-lock], [data-lock] *) {
     /* Shared workbench surfaces in both layouts. */
     --work-canvas: #0e1013 !important;
     --work-raised: #15181c !important;

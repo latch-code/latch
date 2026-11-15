@@ -48,7 +48,8 @@ export function PermissionList({ view, onChoose }: { view: PermissionView; onCho
   const shown = more ? rows : rows.filter(row => !row.more)
   const keys = controlKeyCaps('permission')
   return (
-    <div className="permission-list">
+    // What a session may do without asking keeps the product's own tokens under every customisation (tokens.css).
+    <div className="permission-list" data-lock="">
       {!view.asksNothing && (
         <p className="permission-list-title">
           <span>{MODE_COPY.menuTitle}</span>

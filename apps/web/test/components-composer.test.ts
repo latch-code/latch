@@ -606,7 +606,7 @@ describe('approval cards', () => {
       }),
     )
     expect(html).not.toContain('>新文件<')
-    expect(html).toContain(`<span class="ui-status-word" data-tone="warn" title="${PREVIOUS_UNKNOWN_TEXT}">原内容未知</span>`)
+    expect(html).toContain(`<span class="ui-status-word" data-tone="warn" data-lock="" title="${PREVIOUS_UNKNOWN_TEXT}">原内容未知</span>`)
     expect(html).toContain(`<p class="approval-warning" role="note">${PREVIOUS_UNKNOWN_TEXT}</p>`)
     expect(html).toContain('@@ +1,1 @@')
     expect(html).not.toContain('−0')
@@ -621,7 +621,9 @@ describe('approval cards', () => {
     expect(created).toContain('@@ -0,0 +1,1 @@')
     expect(created).not.toContain('data-tone="warn"')
     const hidden = render({ previous: 'unavailable' })
-    expect(hidden).toContain(`<span class="ui-status-word" data-tone="warn" title="${PREVIOUS_UNAVAILABLE_TEXT}">原内容未显示</span>`)
+    expect(hidden).toContain(
+      `<span class="ui-status-word" data-tone="warn" data-lock="" title="${PREVIOUS_UNAVAILABLE_TEXT}">原内容未显示</span>`,
+    )
     expect(hidden).toContain(`<p class="diff-note">${PREVIOUS_UNAVAILABLE_TEXT}</p>`)
     expect(hidden).toContain('@@ +1,1 @@')
     for (const html of [hidden, render({})]) expect(html).not.toContain('>新文件<')

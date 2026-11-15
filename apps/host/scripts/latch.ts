@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, readFile, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { connect } from 'node:net'
@@ -8,11 +9,21 @@ import { pathToFileURL } from 'node:url'
 import { createInterface } from 'node:readline/promises'
 import { promisify } from 'node:util'
 import QRCode from 'qrcode'
-import { escapeSecurityText, LISTENER_LABELS, SCOPE_LABELS, type Device, type DeviceScope, type InvitationView } from '@latch/protocol'
+import {
+  escapeSecurityText,
+  LISTENER_LABELS,
+  SCOPE_LABELS,
+  type CustomizationReceipt,
+  type CustomizationView,
+  type Device,
+  type DeviceScope,
+  type InvitationView,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
 import { AuditLog, verifyAuditFile, type AuditActor } from '../src/audit.ts'
 import { createOfflineTicket } from '../src/auth.ts'
+import { CustomizationStore } from '../src/customization.ts'
 import { addressOf, HostConfig, keyScopeOf, keyScopeText, originOf, type ProviderRecord, type WorkspaceRecord } from '../src/config.ts'
 import { createEgressInspector } from '../src/egress.ts'
 import { isPresetKeyOrigin, addressesConfirmedBefore } from '../src/providers.ts'
@@ -67,7 +78,15 @@ export interface CliIO {
   cwd: string
 }
 
-class CliError extends Error {}
+class CliError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly status?: number,
+  ) {
+    super(message)
+  }
+}
 
 /**
  * Why a pairing link or an offline code may not be shown here. A Latch terminal keeps its output in memory, and
@@ -129,6 +148,7 @@ const USAGE = `用法：pnpm latch <命令> [--data-dir <目录>]
   presence status                          查看本机确认是否可用
   presence repin                           重新记录本机确认组件的签名（Host 已停止）
   presence test                            显示一次示例本机确认（人工检查）
+  customization reset                      把外观恢复默认，历史保留（Host 运行中或已停止都可以）
   audit verify                             校验审计记录
   traffic [--json]                         Host 本次启动以来发出的字节数与帧大小分布（Host 运行中）
   diagnostics --out <文件>                 导出诊断文件：版本、Harness 与插件状态、近期事件（不含日志原文），
@@ -363,7 +383,17 @@ async function api(state: HostState, method: string, path: string, body?: unknow
     typeof response.body === 'object' && response.body !== null && 'message' in response.body
       ? String(response.body.message)
       : `HTTP ${response.status}`
-  throw new CliError(message)
+  const failure = response.body
+  const code = failure && typeof failure === 'object' && 'error' in failure && typeof failure.error === 'string' ? failure.error : undefined
+  throw new CliError(message, code, response.status)
+}
+
+function retryCustomizationReset<T>(send: () => Promise<T>): Promise<T> {
+  return send().catch(error => {
+    if ((error instanceof AppError || error instanceof CliError) && error.status !== 408 && error.code !== 'customization-write-unknown')
+      throw error
+    return send()
+  })
 }
 
 function codeOf(error: unknown): string | undefined {
@@ -913,6 +943,59 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       return (await addProjectFolders(key === 'project add-folder', rest, flags, dataDir, io, out)) ? 0 : 1
     if (key === 'project remove' || key === 'project remove-folder')
       return (await removeProjectFolder(key === 'project remove-folder', rest, flags, dataDir, io, out)) ? 0 : 1
+    if (key === 'customization reset') {
+      // The way out when a page cannot be used: a new revision holding the default, on this data directory only.
+      const state = await readHostState(dataDir)
+      if (state && (await verifyHostState(state))) {
+        const { revision: baseRevision } = (await api(state, 'GET', 'customization')) as CustomizationView
+        const input = { requestId: randomUUID(), baseRevision }
+        const receipt = await retryCustomizationReset(async () => {
+          const reply = (await api(state, 'POST', 'customization/reset', input)) as CustomizationReceipt | undefined
+          if (reply?.requestId !== input.requestId) throw new Error('没有收到恢复默认的回执')
+          return reply
+        })
+        const current = receipt.applied === receipt.revision ? '' : `，当前外观已更新为版本 ${receipt.revision}`
+        out(`外观已恢复默认（版本 ${receipt.applied}）${current}，已连接的设备会自动更新`)
+        return 0
+      }
+      const lock = await lockStopped(dataDir)
+      try {
+        const audit = await AuditLog.open(join(dataDir, 'audit'))
+        try {
+          const store = await CustomizationStore.open(dataDir, { log: out })
+          let recorded = true
+          const input = {
+            actor: 'cli',
+            by: 'cli',
+            requestId: randomUUID(),
+            baseRevision: store.state().revision,
+            change: { kind: 'reset' },
+          } as const
+          const receipt = await retryCustomizationReset(() =>
+            store.write(input, async pending => {
+              const { revision, previous, hash, source, fields } = pending
+              // A reset is never held back by its record.
+              await audit
+                .append({
+                  action: 'customization.applied',
+                  actor: CLI_ACTOR,
+                  target: String(revision),
+                  detail: { revision, previous, hash, source, fields },
+                })
+                .catch(() => {
+                  recorded = false
+                })
+            }),
+          )
+          out(`外观已恢复默认（版本 ${receipt.revision}）${recorded ? '' : '；审计记录没有写入'}`)
+        } finally {
+          await audit.close()
+        }
+      } finally {
+        await lock.release()
+      }
+      return 0
+    }
     if (key === 'presence status') {
       const state = await readHostState(dataDir)
       const info = state && (await verifyHostState(state))

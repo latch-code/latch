@@ -185,6 +185,7 @@ function UnknownLine({
     unknown.kind === 'commit' ? '新的提交只提交那时暂存的文件，第一次已经提交的不会再提交一次。' : '新的推送照常推送当前分支，从不强制。'
   return (
     <Line
+      locked
       tone="muted"
       icon={CircleHelp}
       detail={`没有收到答复，这台电脑可能已经${what}。重试沿用同一请求，电脑会先核对结果，不会${what}两次。放弃这次结果只在这个页面上放下它，之后可以发起新的请求；电脑上的记录仍是结果未知。${fresh}`}

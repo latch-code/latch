@@ -472,7 +472,7 @@ function ReviewChanges({
             </>
           ) : action.kind === 'unknown' ? (
             <>
-              <span className="phone-review-foot-text">
+              <span className="phone-review-foot-text" data-lock="">
                 <CircleHelp size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                 发送结果未知
               </span>

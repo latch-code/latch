@@ -4,6 +4,7 @@ import { createAppRoutes, type AppRouteDeps, type AppRoutes } from './apps.ts'
 import { createAutomationRoutes, type AutomationRouteDeps } from './automations.ts'
 import { createBrowserRoutes, type BrowserRouteDeps } from './browser.ts'
 import { createChangeRoutes, type ChangeRoutes } from './changes.ts'
+import { createCustomizationRoutes, type CustomizationRouteDeps, type CustomizationRoutes } from './customization.ts'
 import { createDeviceRoutes, type DeviceRouteDeps } from './devices.ts'
 import { createHandoffRoutes, type HandoffRouteDeps } from './handoffs.ts'
 import { createGitRoutes, type GitRouteOptions } from './git.ts'
@@ -29,6 +30,7 @@ export interface RouteDeps {
   apps: AppRouteDeps
   browser: BrowserRouteDeps
   mcp: McpRouteDeps
+  customization: CustomizationRouteDeps
 }
 
 /**
@@ -44,6 +46,7 @@ export function createRoutes(
   agentLogin: AgentLoginRoutes
   apps: AppRoutes
   changes: ChangeRoutes
+  customization: CustomizationRoutes
   routes: RouteRegistry
 } {
   const native = createNativeRoutes(context, deps.native)
@@ -51,12 +54,14 @@ export function createRoutes(
   const terminal = createTerminalRoutes(context, deps.terminals)
   const agentLogin = createAgentLoginRoutes(context, { ...deps.agentLogin, terminals: deps.terminals })
   const changes = createChangeRoutes(context)
+  const customization = createCustomizationRoutes(context, deps.customization)
   return {
     native,
     terminal,
     agentLogin,
     apps,
     changes,
+    customization,
     routes: new RouteRegistry([
       native,
       createDeviceRoutes(context, { ...deps.devices, deviceView: device => native.deviceView(device) }),
@@ -71,6 +76,7 @@ export function createRoutes(
       createAutomationRoutes(context, deps.automations),
       createHandoffRoutes(context, deps.handoffs),
       createHistoryRoutes(context, deps.history),
+      customization,
       apps,
     ]),
   }

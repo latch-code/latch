@@ -40,6 +40,8 @@ export function InlineNotice({
       className={cx('ui-notice', className)}
       data-tone={tone}
       data-secure={secure ? '' : undefined}
+      // A warning or an error keeps the product's own tokens under every customisation (tokens.css).
+      data-lock={!secure && tone !== 'neutral' ? '' : undefined}
       data-tint={tone === 'warn' ? 'warn' : tone === 'error' ? 'err' : undefined}
       role={tone === 'error' ? 'alert' : 'status'}>
       <div className="ui-notice-body">
@@ -66,9 +68,12 @@ export function Hint({
   children,
   moreLabel = '说明',
   defaultOpen = false,
+  locked = false,
   className,
 }: {
   label: ReactNode
+  /** A warning that must look the same under every customisation (不先问你): the product's own tokens (tokens.css). */
+  locked?: boolean
   /** A mark or glyph before the label; the info glyph by default. */
   lead?: ReactNode
   /** The detail. Without it the hint is the label alone. */
@@ -81,7 +86,7 @@ export function Hint({
   const id = useId()
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className={cx('ui-hint', className)} data-open={open ? '' : undefined}>
+    <div className={cx('ui-hint', className)} data-open={open ? '' : undefined} data-lock={locked ? '' : undefined}>
       <span className="ui-hint-lead" aria-hidden="true">
         {lead ?? <Icon icon={InfoGlyph} size={12} />}
       </span>

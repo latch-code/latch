@@ -16,6 +16,7 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
     'CHANGES',
     'CLIENT-LOADING',
     'CUSTOM-AGENTS',
+    'CUSTOMIZATION',
     'DESIGN',
     'DOCUMENT-PERFORMANCE',
     'DOCUMENT-PREVIEWS',

@@ -10,6 +10,7 @@ import type { CurrentDevice, PermissionLevel, PresenceAvailability } from './dev
 import type { HarnessInfo } from './harnesses.ts'
 import type { ProviderSummary, SessionDefaults, UnusableProvider, WorkspaceInfo } from './settings.ts'
 import type { TaskStreamStamp } from './task-delta.ts'
+import type { CustomizationState } from './customization.ts'
 
 export interface HostView {
   hostId: string
@@ -82,6 +83,8 @@ export interface AppSnapshot {
   apps?: AppSummary[]
   /** Line feedback counts of sessions among `tasks` that have any; the notes themselves need data scope `all`. */
   reviewNotes?: ReviewNoteCounts[]
+  /** The Host's customisation in force (docs/CUSTOMIZATION.md); absent on older Hosts. */
+  customization?: CustomizationState
   version?: string
   /**
    * The build of the page that was beside the Host when it started (`build.json` in its page directory), which a newer

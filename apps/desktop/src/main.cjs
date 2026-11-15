@@ -669,9 +669,17 @@ async function startUpdates({ proxy, supervisor }) {
     const window = BrowserWindow.getFocusedWindow() ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
     window?.webContents.send('latch:space', space)
   }
+  // 用默认外观打开: the focused window's page is loaded again with `#safe` (menu.cjs).
+  const openSafeMode = () => {
+    const window = BrowserWindow.getFocusedWindow() ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
+    const contents = window?.webContents
+    if (contents) menus.openSafeMode(contents, { home: homeOf(contents) })
+  }
   if (process.platform === 'darwin')
     Menu.setApplicationMenu(
-      Menu.buildFromTemplate(menus.menuTemplate({ packaged: app.isPackaged, onCheckForUpdates: showUpdates, onSpace: showSpace })),
+      Menu.buildFromTemplate(
+        menus.menuTemplate({ packaged: app.isPackaged, onCheckForUpdates: showUpdates, onSpace: showSpace, onSafeMode: openSafeMode }),
+      ),
     )
 
   // The same gate for a quit the user starts: an install at quit waits for nothing that runs; a waiting install is given

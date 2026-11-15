@@ -7,7 +7,7 @@ import { createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { AgentSettings, WorkspaceInfo } from '@latch/protocol'
+import { DEFAULT_CUSTOMIZATION, type AgentSettings, type AppSnapshot, type CustomizationReceipt, type WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, makeTestTls, testDeviceKey } from '@latch/testkit'
 import { createOfflineTicket } from '@latch/host/auth'
@@ -279,6 +279,69 @@ async function enrollShell(page: Page, testHost: TestHost) {
 }
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')('native desktop shell', () => {
+  it('opens default appearance from the native View menu without leaving the Host', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-electron-appearance-'))
+    const testHost = await startTestHost({ demo: true, hostName: '桌面外观验收', uiDir: resolve('dist/web') })
+    const { host } = testHost
+    let application: ElectronApplication | undefined
+    try {
+      await writeHostState(testHost.dataDir, {
+        version: 2,
+        pid: process.pid,
+        hostId: host.hostId,
+        instanceId: host.instanceId,
+        socketPath: host.socketPath,
+        loopbackOrigin: host.loopbackOrigin,
+        tlsOrigin: null,
+        startedAt: host.startedAt,
+        dataDir: testHost.dataDir,
+      })
+      application = await _electron.launch({
+        args: [
+          resolve('apps/desktop/src/main.cjs'),
+          `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
+          `--latch-user-data=${join(root, 'electron')}`,
+          '--use-mock-keychain',
+        ],
+        cwd: process.cwd(),
+        env: shellEnvironment(),
+        timeout: 30_000,
+      })
+      const page = await application.firstWindow()
+      page.setDefaultTimeout(20_000)
+      await enrollShell(page, testHost)
+      const owner = await testHost.enroll({ listener: 'unix' })
+      const state = async () => (await owner.json<AppSnapshot>('snapshot')).customization!
+      const radius = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--r-8').trim())
+      const before = await state()
+      const applied = await owner.json<CustomizationReceipt>('customization', {
+        method: 'POST',
+        body: { requestId: randomUUID(), baseRevision: before.revision, doc: { schema: 1, appearance: { radius: 'round' } } },
+      })
+      await expect.poll(radius).toBe('12px')
+      const beforeMenu = page.url()
+      expect(beforeMenu).toBe('latch://app/link/')
+      await application.evaluate(({ Menu }) => {
+        Menu.getApplicationMenu()!.getMenuItemById('safe-mode')!.click()
+      })
+      const banner = page.locator('.safe-banner[data-lock]')
+      await banner.waitFor()
+      expect(page.url()).toBe(beforeMenu)
+      expect(await radius()).toBe('8px')
+      expect((await state()).revision).toBe(applied.revision)
+      await mkdir('test-results/desktop-customization', { recursive: true })
+      await page.screenshot({ path: 'test-results/desktop-customization/default-appearance.png', animations: 'disabled' })
+      await banner.getByRole('button', { name: '恢复默认', exact: true }).click()
+      await expect.poll(state).toEqual({ revision: applied.revision + 1, doc: DEFAULT_CUSTOMIZATION })
+      await banner.waitFor({ state: 'detached' })
+      expect(page.url()).toBe(beforeMenu)
+    } finally {
+      await application?.close()
+      await testHost.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('enrolls over host.sock, keeps credentials in main, confines the renderer and leaves the Host running', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-'))
     const marks = { ran: 0 }

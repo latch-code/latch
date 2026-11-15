@@ -149,6 +149,9 @@
   color: var(--ink-2);
 }
 .run-bar-status {
+  /* Locked (data-lock), so it does not inherit the bar's size: it says the same size itself (base.css). */
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
   flex-shrink: 0;
   font-weight: 500;
   white-space: nowrap;

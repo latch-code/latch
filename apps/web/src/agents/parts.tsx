@@ -97,6 +97,8 @@ export function PermissionNote({ words, detail, tone }: { words: string; detail:
           size="xs"
           icon={tone === 'warn' ? WarningGlyph : ShieldGlyph}
           className={`agent-permission-note agent-boundary-trigger is-${tone}`}
+          // 不先问你 and 权限没确认 look the same under every customisation (tokens.css).
+          data-lock={tone === 'warn' ? '' : undefined}
           aria-label={`${words}：说明`}>
           <span>{words}</span>
         </Button>
@@ -124,6 +126,7 @@ export function BeforeActing({ harness, mode }: { harness: HarnessInfo; mode: Ta
   return (
     <Hint
       className={amber ? 'agent-permission-note is-warn' : undefined}
+      locked={amber}
       label={permission?.label ?? MODE_COPY.askFirst}
       lead={
         amber ? (

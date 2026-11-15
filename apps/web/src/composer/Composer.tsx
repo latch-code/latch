@@ -453,13 +453,13 @@ export function Composer({
   const input =
     readOnly !== undefined ? (
       readOnlyReason ? (
-        <div className="composer-readonly" role="note">
+        <div className="composer-readonly" role="note" data-lock="">
           <Hint lead={<LockGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label={readOnly}>
             {readOnlyReason}
           </Hint>
         </div>
       ) : (
-        <p className="composer-readonly" role="note">
+        <p className="composer-readonly" role="note" data-lock="">
           <LockGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           <span>{readOnly}</span>
         </p>
@@ -727,7 +727,7 @@ function ConfigUnknownBar({ state }: { state?: ConfigUnknownState | undefined })
             <span className="run-bar-dot" aria-hidden="true">
               ·
             </span>
-            <span role="status" className="run-bar-status">
+            <span role="status" className="run-bar-status" data-lock="">
               {state.checking ? '核对中…' : '结果未知'}
             </span>
             <span className="run-bar-dot" aria-hidden="true">

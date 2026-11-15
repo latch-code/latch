@@ -346,6 +346,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载；每�
 | `auth/offline-enrollments.json` | 未使用的离线连接码哈希 |
 | `audit/audit.jsonl` | 哈希链审计记录 |
 | `policy.json` | 本机安全策略 |
+| `customization.json` | 外观的最近 20 个修订与写入回执，0600。现用文档无效时保留原文件，按默认外观启动，见 [CUSTOMIZATION.md](CUSTOMIZATION.md) |
 | `providers.json` | 模型服务、密钥及其绑定的源与路径，每个模型的「出错时改用」（`fallbacks`）与服务的「同时请求」上限（`maxConcurrent`）（0600，不进入时间机器备份）；项目的「默认模型」在 `settings.json` 的 `workspaces[].defaultModel`；改动「出错时改用」写审计 `provider.fallbacks.changed`，两者都不计入服务的执行修订；服务的健康状态只在内存（[调度](MODEL-GATEWAY.md#调度)） |
 | `gateway/usage-YYYY-MM.jsonl` | 用量账本：每个模型请求一行元数据（会话、Agent、Harness、服务、模型、结果分类、次数、时长、服务报告的 tokens、已知的花费），按 Host 电脑的时间分月，保留 90 天（目录 0700、文件 0600、只追加、strict）。不含正文、请求头与任何密钥，不是审计，照常进入备份；见 [MODEL-GATEWAY.md](./MODEL-GATEWAY.md#用量账本) |
 | `gateway/totals-YYYY-MM.json` | 按服务与按 Agent 汇总账本已写入的前缀，供预算使用（0600、strict、追加成功后原子替换）。与账本大小对不上时重建 |
@@ -427,6 +428,9 @@ Host 约每 40ms 合并一次变化，把选中会话的 `task-state` 推送给�
 | `POST /login`、`POST /pair` | — | 410 `login-removed` |
 | `POST /credentials/challenge`、`POST /credentials/renew` | 设备（含待续期） | 凭据续期 |
 | `GET /snapshot`、`GET /events?sessionId=`、`GET /tasks/:id` | `view` | 状态、事件流、详情 |
+| `GET /customization` | `view` 或匿名 `host.sock` | 外观文档、修订与历史。快照带 `customization: { revision, doc }` |
+| `POST /customization`、`POST /customization/restore` | `admin` | 按 `requestId` 与 `baseRevision` 应用或回退，先审计，无本机确认 |
+| `POST /customization/reset` | `admin` 或匿名 `host.sock` | 按原请求编号和基版恢复默认，审计失败仍可重置。见 [CUSTOMIZATION.md](CUSTOMIZATION.md) |
 | `GET /workspaces` | `view` | 项目列表：启动目录与已保存的项目，含文件夹与各自的不可用原因 |
 | `GET /workspaces/:id/worktree` | `run` | 新工作树会从哪里开始：`{ branch?, commit }`，或 Host 不能在这个项目里新建工作树的 409 与原因；不写任何东西 |
 | `POST /tasks/:id/files/resolve` | 桌面端（`host.sock`）+ `view` + 数据范围 `all` | 解析消息里提到的文件，最多 64 条；给句柄与裁决，不给真实路径（见「会话文件」） |

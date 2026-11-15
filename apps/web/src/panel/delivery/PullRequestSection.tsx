@@ -258,6 +258,7 @@ export function PullRequestSection(props: PullRequestSectionProps) {
       )}
       {unknown && (
         <Line
+          locked
           tone="muted"
           icon={CircleHelp}
           detail="没有收到答复，PR 可能已经建好。重试沿用同一请求，电脑会先按分支查找，不会建两个。放弃这次结果只在这个页面上放下它，电脑上的记录仍是结果未知；之后再创建 PR 时，电脑同样先按分支查找，找到就绑定它。"

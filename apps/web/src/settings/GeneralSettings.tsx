@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useContext, useState } from 'react'
 import type { AppSnapshot } from '@latch/protocol'
 import { CodeGlyph, InlineNotice, Menu, SegmentedControl, SelectButton, SwitchRow } from '@latch/ui'
 import { useViewport } from '../breakpoints.ts'
+import { CustomizationActionsContext } from '../core/customization.ts'
 import { deviceAccess } from '../core/permissions.ts'
 import { computerLabel } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
@@ -19,6 +20,7 @@ import { NotificationSettings } from './NotificationSettings.tsx'
 import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
 import { LayoutTiles } from './LayoutTiles.tsx'
+import { CustomizationSettings } from './CustomizationSettings.tsx'
 import { MotionChoice } from './AppearanceTiles.tsx'
 
 const THEMES: Array<{ value: ThemePreference; label: string }> = [
@@ -159,6 +161,7 @@ function ThisMac({ hostName, local }: { hostName: string; local: boolean }) {
 export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppSnapshot; admin: boolean; onChanged: () => void }) {
   const preferences = usePreferences()
   const phone = useViewport() === 'phone'
+  const writer = useContext(CustomizationActionsContext)
   // Touch screens always send with the button, and phones never open a document by themselves: nothing to choose there.
   const usage = !phone
   return (
@@ -186,6 +189,9 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
           }}
         />
       </SettingsGroup>
+      {snapshot.catalog?.features?.customization && (admin || writer.pending) && (
+        <CustomizationSettings admin={admin} writer={writer} onChanged={onChanged} />
+      )}
       <SettingsGroup title="使用">
         {usage && (
           <SettingsRow

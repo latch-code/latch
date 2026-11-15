@@ -17,6 +17,12 @@ import { cx } from './internal.ts'
  */
 export type StatusTone = 'neutral' | 'waiting' | 'running' | 'failed' | 'done' | 'warn'
 
+/**
+ * The tones that speak of safety or of something the person must look at (等你处理, 不先问你, 来自外部内容, 结果未知, 失败)
+ * keep the product's own tokens under every customisation (`data-lock`, tokens.css).
+ */
+const LOCKED_TONES: ReadonlySet<StatusTone> = new Set(['waiting', 'warn', 'failed'])
+
 function Glyph({ tone }: { tone: StatusTone }) {
   if (tone === 'waiting') return <Icon icon={ShieldGlyph} size={12} className="ui-status-word-glyph" />
   if (tone === 'running') return <Spinner size={12} className="ui-status-word-glyph" />
@@ -36,7 +42,7 @@ export function StatusWord({
   ...props
 }: Omit<ComponentProps<'span'>, 'children'> & { tone?: StatusTone; children: ReactNode }) {
   return (
-    <span className={cx('ui-status-word', className)} data-tone={tone} {...props}>
+    <span className={cx('ui-status-word', className)} data-tone={tone} data-lock={LOCKED_TONES.has(tone) ? '' : undefined} {...props}>
       <Glyph tone={tone} />
       {children}
     </span>

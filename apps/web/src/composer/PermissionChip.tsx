@@ -35,7 +35,12 @@ export function PermissionChip({
         onOpenChange?.(open)
       }}
       trigger={props => (
-        <button {...props} type="button" className={`chip chip-permission${view.amber ? ' is-amber' : ''}`} aria-label={`权限：${label}`}>
+        <button
+          {...props}
+          type="button"
+          className={`chip chip-permission${view.amber ? ' is-amber' : ''}`}
+          data-lock={view.amber ? '' : undefined}
+          aria-label={`权限：${label}`}>
           <Glyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
           <span className="chip-text">{label}</span>
           <ChevronDownGlyph className="chip-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />

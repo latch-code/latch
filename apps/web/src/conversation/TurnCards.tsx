@@ -258,6 +258,7 @@ export function TurnCards({
               <button
                 type="button"
                 className="undo-record-action"
+                data-lock={unknown ? '' : undefined}
                 disabled={phase === 'running'}
                 onClick={() => {
                   act('redo')
@@ -266,7 +267,7 @@ export function TurnCards({
               </button>
             </>
           )}
-          {unknown && !canRedo && <span> · 恢复结果未知</span>}
+          {unknown && !canRedo && <span data-lock=""> · 恢复结果未知</span>}
           {why && <span> · {why}</span>}
           {noted && <span> · 下一条消息会告诉 {engine}</span>}
         </p>
@@ -315,12 +316,17 @@ export function TurnCards({
   const undoControl = (
     <>
       {why && <span className="changed-files-why">{why}</span>}
-      {unknown && !canUndo && <span className="changed-files-why">撤销结果未知</span>}
+      {unknown && !canUndo && (
+        <span className="changed-files-why" data-lock="">
+          撤销结果未知
+        </span>
+      )}
       {canUndo && (
         <Button
           size="xs"
           variant="ghost"
           icon={UndoGlyph}
+          data-lock={unknown ? '' : undefined}
           loading={phase === 'running'}
           onClick={() => {
             if (exceptions.length > 0 && phase === 'idle') setPhase('confirm')

@@ -76,6 +76,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
     agentSessionHash: hex,
     taskId: 'task-1',
   },
+  'customization.applied': { revision: 2, previous: 1, hash: hex, source: 'apply', fields: ['accentHue', 'radius'] },
   'plugin.package.changed': { operation: 'apply', before: hex, after: hex },
   'plugin.package.build': { revision: hex, result: 'ok', bundleHashes: [hex], bytes: 1200, diagnostics: 0, typeChecked: true },
   'plugin.package.app-trust': { operation: 'apply', trust: 'confirmed', revision: hex, capabilitiesHash: hex },

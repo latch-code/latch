@@ -244,7 +244,7 @@ export function WorkbenchDecision({
               )}
             </div>
           ) : (
-            <p>
+            <p data-lock={task.runEnd?.unknownResultCount ? '' : undefined}>
               <VisibleText
                 text={
                   detail?.messages.findLast(message => message.role === 'system')?.text

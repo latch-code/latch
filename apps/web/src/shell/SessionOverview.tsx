@@ -130,7 +130,9 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
                 <code>
                   <VisibleText text={toolHeading(message.tool, message.toolName)} />
                 </code>
-                <StatusWord tone={message.state === 'failed' ? 'failed' : message.state === 'running' && connected ? 'running' : 'neutral'}>
+                <StatusWord
+                  tone={message.state === 'failed' ? 'failed' : message.state === 'running' && connected ? 'running' : 'neutral'}
+                  data-lock={message.interrupted ? '' : undefined}>
                   {message.interrupted ? '结果未知' : message.state ? commandWords[message.state] : '未报告结果'}
                 </StatusWord>
               </li>

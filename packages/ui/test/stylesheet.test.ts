@@ -46,6 +46,6 @@ describe('design system stylesheet', () => {
     const order = Array.from(document.styleSheets)
       .flatMap(sheet => Array.from(sheet.cssRules))
       .find(rule => rule instanceof CSSLayerStatementRule)
-    expect(order instanceof CSSLayerStatementRule ? order.nameList : []).toEqual(['tokens', 'base', 'ui', 'app', 'security'])
+    expect(order instanceof CSSLayerStatementRule ? order.nameList : []).toEqual(['tokens', 'custom', 'base', 'ui', 'app', 'security'])
   })
 })

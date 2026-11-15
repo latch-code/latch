@@ -28,7 +28,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `src/` | `latch/plugin-sdk`、`latch/harness-sdk`，再导出 `@latch/sdk` |
 | `scripts/` | 仓库工具：检查、文档与技能、安全扫描、依赖边界、供应链、工作流 |
 | `native/` | macOS 本机确认与目录组件；`ios/` 含独立 Swift 核心、iPhone/iPad App 与互操作夹具 |
-| `docs/`、`examples/` | 机制文档（见「改动前先读」）；插件示例 |
+| `docs/`、`examples/` | 机制文档；插件示例 |
 | `tsconfig.*.json`、`.oxlintrc.json`、`.oxfmtrc.json`、`knip.json`、`lefthook.yml` | 类型检查的各运行环境、lint、格式、依赖检查、Git 钩子 |
 
 依赖只向下：`apps/host` → `harness-acp` → `core` → `sdk` → `protocol`；`apps/web` 运行时只用 `protocol`、`ui` 与 `app-sdk`，`apps/desktop` 只用 `protocol`；`testkit` 与 `e2e` 只能写在 devDependencies。矩阵在 `scripts/boundaries.ts` 的 `PROJECTS`，由 `check:boundaries`、`knip` 与 `lint` 执行；违规在边界上修，不加例外。
@@ -53,7 +53,7 @@ pnpm stop -- --data-dir <同一数据目录>
 LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 /link/ 地址
 ```
 
-其余命令见 [docs/TESTING.md](docs/TESTING.md#命令)。
+命令见 [docs/TESTING.md](docs/TESTING.md#命令)。
 
 每个克隆运行一次 `pnpm exec lefthook install` 与 `git config blame.ignoreRevsFile .git-blame-ignore-revs`；Git 已设置 `core.hooksPath` 时不加 `--force` 或 `--reset-hooks-path`，见 [docs/TESTING.md](docs/TESTING.md#git-钩子)。
 
@@ -79,6 +79,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 - **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2 不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、新模型或出站地址、插件代码与页面能力变宽、新增或放宽本机程序（MCP、Harness 命令）；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。
 - **Host 不运行仓库里的程序，交付除外。** Host 的 Git 都经受限运行器（钩子含配置钩子、filter、传输都关闭）；只有人按下的提交、推送与有 filter 的暂存以你的账户运行 Git：先审计并复查权限，远端只取仓库配置，不强制推送（[文档](docs/GIT-DELIVERY.md)）。
 - **插件页面只凭已批准的能力行事。** 只在不透明隔离框中运行、不拿凭据，草稿只经 Host 固定工具在沙箱中构建；Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
+- **自定义是数据。** 只写允许的令牌，安全界面不可改（[文档](docs/CUSTOMIZATION.md)）。
 - **外部会话只经适配器。** Latch 不读写 CLI 自己的存储，只经该 Harness 的 ACP 适配器接入；接入的会话一律私有，删除或清空从不删原会话（[文档](docs/HARNESSES.md)）。
 - **其他电脑互不相通。** 桌面端经各自来源与分区，凭据按来源选取，绑定证书与身份（[文档](docs/ARCHITECTURE.md#桌面端与其他电脑)）。
 - **Host 与 `pnpm latch` 不响应 SIGUSR1。** 启动 Host 的脚本、桌面端与 `pnpm latch` 都带 `--disable-sigusr1`，否则同用户进程可以用 `process._debugProcess` 让持有秘密的进程打开调试端口；新增启动 Host 或处理秘密的入口时同样加上。
@@ -111,14 +112,14 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 
 ## 产品规则
 
-- 蓝白为主：蓝色只给执行与勾选，琥珀只表示警告与等你处理，红色只表示真实风险或失败，都配文字；令牌只在 `packages/ui/src/tokens.css`；应用图标不改动图形（[DESIGN](docs/DESIGN.md)）。
+- 蓝白为主，主色只给执行与勾选，琥珀只表示警告与等你处理，红色只表示真实风险或失败，都配文字；令牌只在 `packages/ui/src/tokens.css`；应用图标不改动图形（[DESIGN](docs/DESIGN.md)）。
 - 模型密钥只在这台 Mac 上填写，不返回任何设备；其他事设备凭 scope 都能做。Latch 不替人预选宽松档位。
 - Harness 预设只收录开源 Agent 或厂商官方命令，记录许可证或条款，不下载不修改，不碰凭据；只给命令自己的登录命令，Claude Agent 不给。
 - 只展示真实能力：不在界面或文档中声称未实现的功能、集成或隔离；未实现的写明「尚未实现」与原因。
 
 ## 完成标准
 
-1. 先 `pnpm build` 再 `pnpm check`，都通过（确认组件自检需先构建）；构建后 `dist/` 中没有测试代码（见「安全」）。
+1. 先 `pnpm build` 再 `pnpm check`，都通过（确认组件自检需先构建）；构建后 `dist/` 中没有测试代码。
 2. 其余检查由 `pnpm check -- --plan` 按改动列出（e2e、Electron、`check:supply`、[安全定向用例](docs/TESTING.md#按改动选择回归)），技能 `latch-verify` 按它运行并汇报。
 3. UI 改动在手机、平板、桌面宽度检查真实渲染，覆盖正常、进行中、失败或等待状态与深色模式（`e2e/design.e2e.ts`、`e2e/visual.e2e.ts` 的截图）。测试夹具、测试确认后端与演示模型不等于真实模型、Touch ID 或真机验收；系统确认表单只能由用户本人用 `pnpm latch presence test` 人工检查。
 4. 行为变化时运行 `pnpm docs:affected`，更新对应的 `docs/` 机制文档与 `AGENTS.md`。
@@ -131,5 +132,4 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 - 运行环境：每个项目在 `package.json` 中声明 `latch.env`，只用该环境有的全局变量与模块；`apps/desktop/src/*.cjs` 是 CommonJS，其余是 ES 模块。新增目录时加入对应的 `tsconfig.*.json` 与 `.oxlintrc.json` 覆盖规则；新增 workspace 项目时另写 `latch.env` 并登记到 `PROJECTS`，规则与上层不同时写 `AGENTS.md` 与内容为 `@AGENTS.md` 的 `CLAUDE.md`。
 - workspace 项目只经包名导入（不用相对路径进入 `apps/`、`packages/`、`e2e/`），依赖写成 `workspace:*`；只有 `packages/core/src/registry.ts` 导入 `cordis`。用例放在所测项目的 `test/`，由 `vitest.config.ts` 的 project 运行。
 - 工程技能只写在 `.agents/skills/<名称>/SKILL.md`，改动后运行 `pnpm agents:sync`；技能只调用脚本，规则以脚本为准。包示例放 `examples/<包>/SKILL.md`。
-- Git 只跟踪产品代码与机制文档：分析报告、设计稿、工作记录与安全分析不进入 Git，不引用其他产品作设计参考。提交信息只写改动与原因。
-- 提交信息使用 Conventional Commits（`feat`、`fix`、`docs` 等），scope 为项目名。
+- Git 只跟踪产品代码与机制文档：分析报告、设计稿、工作记录与安全分析不进入 Git，不引用其他产品作设计参考。提交信息只写改动与原因，用 Conventional Commits，scope 为项目名。

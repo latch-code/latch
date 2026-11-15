@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { commands } from 'vitest/browser'
+import { CUSTOM_TOKENS } from '../src/custom.ts'
 
 // The test runs in the browser; the test server reads the file for it, from the repository root.
 const tokens = (await commands.readFile('packages/ui/src/tokens.css')).replace(/\/\*[\s\S]*?\*\//gu, '')
@@ -119,7 +120,7 @@ const TOKENS: Record<string, [string, string]> = {
 
 describe('design tokens', () => {
   it('declares the cascade layers first, lowest to highest, with security on top', () => {
-    expect(tokens.trimStart().startsWith('@layer tokens, base, ui, app, security;')).toBe(true)
+    expect(tokens.trimStart().startsWith('@layer tokens, custom, base, ui, app, security;')).toBe(true)
   })
 
   it('holds the colour tokens in both themes', () => {
@@ -464,7 +465,7 @@ describe('design tokens', () => {
             ]),
           ),
       )
-    const scope = ':where([data-secure], [data-secure] *)'
+    const scope = ':where([data-secure], [data-secure] *, [data-lock], [data-lock] *)'
     const [lockLight, lockPhone] = blocks(scope)
     const [lockSystem] = blocks(`:root:not([data-theme='light']) ${scope}`)
     const [lockChosen] = blocks(`:root[data-theme='dark'] ${scope}`)
@@ -482,6 +483,28 @@ describe('design tokens', () => {
     // Every lock is important, so it holds against later layers and against styles outside the layers.
     const scoped = tokens.slice(tokens.indexOf(scope))
     expect(scoped.match(/--[\w-]+\s*:[^;]+;/gu)?.every(item => item.includes('!important'))).toBe(true)
+  })
+
+  it('lets a customisation set only tokens the lock pins: in the light theme, both dark blocks and at the phone sizes', () => {
+    const scope = ':where([data-secure], [data-secure] *, [data-lock], [data-lock] *)'
+    const lockLight = block(scope)
+    const lockPhone = block(scope, tokens.indexOf('@media (max-width: 767.98px)', tokens.indexOf(scope)))
+    const lockSystem = block(`:root:not([data-theme='light']) ${scope}`)
+    const lockChosen = block(`:root[data-theme='dark'] ${scope}`)
+    expect(new Set(CUSTOM_TOKENS).size).toBe(CUSTOM_TOKENS.length)
+    // Every one is a token the theme defines, and the lock pins it wherever the theme gives it a value.
+    const light = block(':root')
+    expect(CUSTOM_TOKENS.filter(name => !light.has(name))).toEqual([])
+    expect(CUSTOM_TOKENS.filter(name => !lockLight.has(name))).toEqual([])
+    const dark = block(":root[data-theme='dark']")
+    expect(CUSTOM_TOKENS.filter(name => dark.has(name) && !(lockSystem.has(name) && lockChosen.has(name)))).toEqual([])
+    const phone = block(':root', tokens.indexOf('@media (max-width: 767.98px)'))
+    expect(CUSTOM_TOKENS.filter(name => phone.has(name) && !lockPhone.has(name))).toEqual([])
+    expect(CUSTOM_TOKENS.some(name => phone.has(name)) && CUSTOM_TOKENS.some(name => dark.has(name))).toBe(true)
+    // The state colours, and anything that could hide or empty a part of the page, are not customisable.
+    expect(CUSTOM_TOKENS.filter(name => /amber|red|green|diff|scrim|opacity|ink$|^--(?:sp|touch|m|e)-/u.test(name))).toEqual([
+      '--accent-ink',
+    ])
   })
 
   it('keeps the locked tokens when a later style declares them, outside the layers and on the element', () => {

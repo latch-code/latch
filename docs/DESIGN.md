@@ -52,9 +52,9 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，用户从桌�
 
 **表面。** 都是平涂：令牌里没有渐变、底纹与带色相的底（tokens.test.ts）。表面分六级，由深到浅：凹陷 `--sunken`、地面 `--sidebar`、画布 `--canvas`、浮起 `--raised`、卡面 `--card`、弹层面 `--pop`；几乎不用线，层次靠阴影。地面 `--sidebar`（沿用旧名）由 base.css 画在根元素与 body 上（浅色 `#EBEBEF`，深色 `#09090B`）；工作台内的地面和画布 `--canvas` 都用 `--work-canvas`；浮起 `--raised` 是输入框、菜单与弹层、对话框与 Toast；卡面 `--card` 是浮在面板上的卡（审批）；弹层面 `--pop` 是控件的面与卡上再浮起的一层；凹陷 `--sunken` 是井：代码块、命令输出、表头与搜索框，比它所在的表面更深。浅色里地面以上各层都是白色，靠阴影分开；深色里地面最暗，凹陷、画布、浮起、卡面、弹层面依次提亮（tokens.test.ts 核对这个顺序）。列表里被选中的行（侧栏的会话行、设置导航）是 `--selected` 加 `--selected-ring`：浅色是侧栏灰上的一张白色卡片（一圈淡环与 1px 的落影），深色是一层柔和的白；从不用蓝。所有墨在侧栏、画布、浮起、凹陷、卡面、弹层面、用户气泡与选中行上，以及叠在侧栏与画布上的悬停与按下上都达到 WCAG 对比度：正文 `--ink`、次级 `--ink-2` 与红字 4.5:1，提示墨色 `--muted` 与主色 3:1；提示墨色与琥珀字在它们常驻的画布、浮起、卡面与侧栏上是 4.5:1，提示墨色在悬停的行上也是，琥珀字在琥珀控件的悬停底上也是；琥珀图形 `--amber-icon` 在这些表面上至少 3:1。`tokens.test.ts` 逐项计算并核对这些下限；调整任何表面、选中或墨色的值都要通过它。
 
-**层叠层。** tokens.css 第一行声明层的顺序：`tokens, base, ui, app, security`。`@latch/ui` 的 [ui.css](../packages/ui/src/ui.css) 把元素默认样式（[base.css](../packages/ui/src/base.css)：盒模型、文档字体与颜色、焦点环、按键、减少动效）导入 base，把每个原语的样式表（`packages/ui/src/styles/`）导入 ui；页面的 index.css 先导入 tokens.css 再导入 ui.css，然后把自己的每个样式表导入一个层：还没有做成原语的共用部件（`ui.css`：品牌图标、状态点、字母磁贴、进度条、表单字段与值选择 chip）也在 ui，页面自己的布局与界面在 app，登记、设备、权限与本机确认的样式（`auth.css`、`security.css`）在最上面的 security。后面的层总是胜过前面的层，与选择器的权重无关，所以页面可以在 app 层按位置调整原语，安全相关的界面不会被普通样式改写；新增的安全界面放进 security 层。
+**层叠层。** tokens.css 第一行按 `tokens, custom, base, ui, app, security` 声明层。`custom` 只收根节点上由外观文档编译出的允许令牌。`@latch/ui` 的 [ui.css](../packages/ui/src/ui.css) 把元素默认样式（[base.css](../packages/ui/src/base.css)：盒模型、文档字体与颜色、焦点环、按键、减少动效）导入 base，把每个原语的样式表（`packages/ui/src/styles/`）导入 ui；页面的 index.css 先导入 tokens.css 再导入 ui.css，然后把自己的每个样式表导入一个层：还没有做成原语的共用部件（`ui.css`：品牌图标、状态点、字母磁贴、进度条、表单字段与值选择 chip）也在 ui，页面自己的布局与界面在 app，登记、设备、权限与本机确认的样式（`auth.css`、`security.css`）在最上面的 security。后面的层总是胜过前面的层，与选择器的权重无关，所以页面可以在 app 层按位置调整原语，安全相关的界面不会被普通样式改写；新增的安全界面放进 security 层。
 
-**安全界面的锁定。** 审批、登记、配对与确认带 `data-secure`，样式放 security 层。
+**安全界面的锁定。** 审批、登记、配对与确认带 `data-secure`，样式放 security 层。`data-lock` 给安全状态与其文字使用同样的主题令牌锁，把继承的字号和行高恢复为产品值。锁定的状态继续使用原布局。设置的自定义外观只提供主色、圆角和字号。见 [CUSTOMIZATION.md](CUSTOMIZATION.md)。
 
 看不到项目文件的设备仍显示文件操作的动作、路径和原审批按钮，差异正文与编辑内容由 Host 在 HTTP/SSE 出口省略，不靠 CSS 隐藏。工具的结果说明、失败或结果未知、决定时间保持；缺少文件内容不是“没执行”或“成功”的证据。会话 Markdown 导出使用相同投影，完整数据范围的原差异仍可查看。
 

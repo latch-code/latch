@@ -358,7 +358,11 @@ export const ToolCard = memo(
       </>
     )
     const stateSlot = (
-      <StatusWords state={shown} className={`tool-card-state state-${shown}`}>
+      <StatusWords
+        state={shown}
+        className={`tool-card-state state-${shown}`}
+        // A result that is unknown looks the same under every customisation (tokens.css).
+        data-lock={shown === 'unknown' || shown === 'interrupted' ? '' : undefined}>
         {/* An allowance is on record in the row's tooltip; the slot says only a call its approval kept from running. */}
         {state === 'awaiting-approval' ? null : decision && unrun ? (
           <DecisionWords decision={decision} />

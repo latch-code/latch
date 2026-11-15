@@ -209,7 +209,7 @@ describe('workspace settings', () => {
         onRemove: noop,
       }),
     )
-    expect(html).toContain('<span class="ui-status-word" data-tone="warn">不可用</span>')
+    expect(html).toContain('<span class="ui-status-word" data-tone="warn" data-lock="">不可用</span>')
     expect(html).toContain(`<span class="workspace-unavailable">${reason}</span>`)
     // Removing is in the project's ⋯ menu.
     expect(html).toContain('aria-label="hooks 的操作"')

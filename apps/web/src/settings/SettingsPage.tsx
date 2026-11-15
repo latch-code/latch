@@ -59,7 +59,7 @@ const WorkspacesSettings = deferredComponent(
 
 /** What each section holds, so 搜索设置 finds a setting by the words on its row. */
 const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
-  general: '外观 主题 深色 浅色 布局 侧栏 顶栏 按项目 按状态 发送消息 回车 新文档 自动打开 通知 唤醒 名称',
+  general: '外观 主题 深色 浅色 自定义 主色 圆角 字号 恢复默认 布局 侧栏 顶栏 按项目 按状态 发送消息 回车 新文档 自动打开 通知 唤醒 名称',
   providers: '服务 密钥 key 添加服务 添加模型服务 用量 tokens 显示的模型 已确认的地址 地址 出站',
   usage: '用量 tokens 请求 失败 花费 预算',
   engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
@@ -361,7 +361,8 @@ export function SettingsPage({
               )}
               <div className="settings-scroll">
                 {panel !== null && (
-                  <div key={panel} className="settings-content settings-enter">
+                  // 设备 (its list, a device's permissions, pairing) keeps the product's own tokens under every customisation.
+                  <div key={panel} className="settings-content settings-enter" data-lock={panel === 'devices' ? '' : undefined}>
                     {/* The section's name heads it; a page opened inside it names itself under its way back. */}
                     {!phone && depth === 0 && current && <h1 className="settings-title">{current.label}</h1>}
                     {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
@@ -407,7 +408,7 @@ export function SettingsPage({
               </div>
             </section>
           )}
-          {phone && <div ref={setLayers} className="settings-levels" />}
+          {phone && <div ref={setLayers} className="settings-levels" data-lock={panel === 'devices' ? '' : undefined} />}
         </div>
       </SettingsNavigationProvider>
     </section>

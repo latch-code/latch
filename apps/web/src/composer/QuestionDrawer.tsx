@@ -294,6 +294,8 @@ export function QuestionDrawer({
     <section
       ref={card}
       className="composer-drawer question-card"
+      // A question waits for the person: it keeps the product's own tokens under every customisation (tokens.css).
+      data-lock=""
       data-presentation={presentation}
       data-compact={compact ? '' : undefined}
       data-arming={armed ? undefined : ''}

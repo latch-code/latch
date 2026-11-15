@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { APPEARANCE_FIELDS } from '@latch/protocol'
 import { AUDIT_FILE_TYPES } from '../files/kinds.ts'
 import { count, hex64, opaqueId, prefixed } from './fields.ts'
 
@@ -40,6 +41,17 @@ const fileAction = z.strictObject({ ...fileContext, pathHash: hex64, type: z.enu
 
 /** The Host itself: startup, settings, policy and local confirmation, model services, projects, files and plugins. */
 export const HOST_ACTIONS = {
+  /**
+   * The Host's customisation changed: the new revision, the one before it, the document's hash and which fields of 外观
+   * it sets. Written before the change is saved; a reset goes ahead without it.
+   */
+  'customization.applied': z.strictObject({
+    revision: z.number().int().min(1),
+    previous: z.number().int().min(0),
+    hash: hex64,
+    source: z.enum(['apply', 'restore', 'reset']),
+    fields: z.array(z.enum(APPEARANCE_FIELDS)).max(APPEARANCE_FIELDS.length),
+  }),
   'plugin.package.changed': z.strictObject({
     operation: z.enum(['create', 'save', 'import', 'dev', 'trust', 'apply', 'rollback', 'enable', 'disable', 'delete']),
     before: hex64,
