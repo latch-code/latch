@@ -23,12 +23,6 @@
   color: var(--muted);
   font-size: 13px;
 }
-.codex-team-history select {
-  max-width: 100%;
-  color: var(--ink);
-  background: var(--raised);
-  font: inherit;
-}
 .codex-team-request,
 .codex-team-empty,
 .codex-team-note,
@@ -54,6 +48,7 @@
 .codex-team-member {
   display: grid;
   justify-items: start;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
   padding: 12px 0;
@@ -82,11 +77,10 @@
   cursor: pointer;
   font-size: 13px;
 }
-.codex-team-result div {
+.codex-team-result-body {
   padding: 8px 12px;
   border-radius: 8px;
   background: var(--sunken);
-  white-space: pre-wrap;
   font-size: 13px;
   line-height: 1.6;
 }
@@ -94,6 +88,7 @@
 @media (max-width: 680px) {
   .codex-team-entry,
   .codex-team-review,
+  .codex-team-history .ui-select-button,
   .codex-team-result summary {
     min-block-size: 44px;
   }

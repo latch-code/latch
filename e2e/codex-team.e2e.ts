@@ -23,7 +23,7 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     await mkdir(bin)
     await writeFile(
       command,
-      `#!/bin/sh\nexport FAKE_CODEX_STATE='${join(root, 'threads.json')}' FAKE_ACP_LOG='${trace}' FAKE_CODEX_TEAM_STOP_GATE='${stopGate}'\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`,
+      `#!/bin/sh\nexport FAKE_CODEX_STATE='${join(root, 'threads.json')}' FAKE_ACP_LOG='${trace}' FAKE_CODEX_TEAM_STOP_GATE='${stopGate}' FAKE_CODEX_TEAM_MARKDOWN='1'\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`,
     )
     await chmod(command, 0o755)
     host = await startTestHost({
@@ -99,8 +99,10 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     const maple = dialog.getByRole('listitem').filter({ hasText: 'Maple' })
     await cedar.getByText('已完成', { exact: true }).waitFor()
     await maple.getByText('失败', { exact: true }).waitFor()
+    expect(await cedar.locator('.message-content').count()).toBe(0)
     await cedar.getByText('成员结果', { exact: true }).click()
-    await cedar.getByText('已核对手机布局', { exact: true }).waitFor()
+    await cedar.locator('.message-content strong').getByText('已核对手机布局', { exact: true }).waitFor()
+    await cedar.locator('.message-content pre').getByText('pnpm test', { exact: true }).waitFor()
     expect(await dialog.getByRole('listitem').count()).toBe(2)
     expect(await memberApproval.count()).toBe(0)
     if (output) await page.screenshot({ path: join(output, 'team-result-390-dark.png'), animations: 'disabled' })
@@ -177,6 +179,37 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     expect(
       (await read()).messages.filter(message => message.subagent?.team).filter(message => message.subagent?.status === 'cancelled'),
     ).toHaveLength(1)
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+
+    await owner.json(`${path}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'team 孙成员停止夹具', requestId: randomUUID() },
+    })
+    await expect
+      .poll(async () => {
+        const detail = await read()
+        return detail.messages
+          .filter(message => message.role === 'assistant' && message.state === 'completed')
+          .map(message => message.text)
+          .join('')
+          .includes('Lead and direct members have finished')
+          ? detail.summary.status
+          : undefined
+      })
+      .toBe('running')
+    await teamEntry.click()
+    await cedar.getByText('已完成', { exact: true }).waitFor()
+    await maple.getByText('已完成', { exact: true }).waitFor()
+    const history = dialog.getByRole('button', { name: '委派记录', exact: true })
+    await history.tap()
+    const work = page.getByRole('menu', { name: '委派记录', exact: true })
+    await work.getByRole('menuitemradio', { name: '第 4 次委派', exact: true }).tap()
+    await reachable(stop)
+    const nestedCancel = page.waitForResponse(
+      response => response.url().endsWith(`/${path}/cancel`) && response.request().method() === 'POST',
+    )
+    await stop.tap()
+    expect((await (await nestedCancel).json()).receipt).toMatchObject({ outcome: 'stopped', status: 'cancelled' })
   } finally {
     await browser?.close()
     await host?.close()

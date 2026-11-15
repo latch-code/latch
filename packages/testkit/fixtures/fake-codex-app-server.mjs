@@ -487,7 +487,8 @@ async function play(text) {
       for (const [member] of assignments) finishMember(member, 'Member decisions settled', 'completed')
       return reply('All member decisions settled')
     }
-    const background = Number(env.FAKE_CODEX_TEAM_BACKGROUND_MS ?? (text.includes('后台停止夹具') ? 5000 : 0))
+    const nestedOnly = text.includes('孙成员停止夹具')
+    const background = Number(env.FAKE_CODEX_TEAM_BACKGROUND_MS ?? (text.includes('后台停止夹具') || nestedOnly ? 5000 : 0))
     if (background) {
       const call =
         env.FAKE_CODEX_TEAM_BACKGROUND_COMMAND || text.includes('后台停止夹具')
@@ -500,7 +501,7 @@ async function play(text) {
         notify('item/completed', { threadId: b.id, turnId: memberTurn(b), item: { ...call, status: 'completed' } })
       }
       finishMember(b, 'Maple finished before the lead', 'completed')
-      if (env.FAKE_CODEX_TEAM_NESTED === '1') {
+      if (nestedOnly || env.FAKE_CODEX_TEAM_NESTED === '1') {
         const descendant = announceMember(`child-${randomUUID()}`, 'Cedar delegate', a.id)
         notify('turn/started', { threadId: descendant.id, turn: { id: memberTurn(descendant), status: 'inProgress' } })
         const end = setTimeout(() => {
@@ -518,6 +519,10 @@ async function play(text) {
             }, 800)
           },
         })
+      }
+      if (nestedOnly) {
+        finishMember(a, 'Cedar finished its own work', 'completed')
+        return reply('Lead and direct members have finished')
       }
       const commandEnded = () => {
         if (call)
@@ -578,7 +583,8 @@ async function play(text) {
     })
     log('answered', { method: 'foreign-team-approval', answer: rejected })
     const answer = await (earlyApproval ?? memberApproval())
-    finishMember(a, '已核对手机布局', 'completed')
+    const cedarResult = env.FAKE_CODEX_TEAM_MARKDOWN === '1' ? '**已核对手机布局**\n\n```sh\npnpm test\n```' : '已核对手机布局'
+    finishMember(a, cedarResult, 'completed')
     if (env.FAKE_CODEX_TEAM_SECOND_TURN === '1') {
       const id = 'cedar-second-turn'
       notify('turn/started', { threadId: a.id, turn: { id, status: 'inProgress' } })

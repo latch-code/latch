@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { Button, Dialog, StatusWord } from '@latch/ui'
+import { Button, Dialog, Menu, SelectButton, StatusWord } from '@latch/ui'
 import type { Message, Subagent, TaskDetail } from '@latch/protocol'
 import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
+import { MessageContent } from '../MessageContent.tsx'
 import { SUBAGENT_STATUS } from '../components/SubagentRow.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { RunState } from './Composer.tsx'
@@ -36,6 +37,20 @@ function delegations(messages: Message[]): Delegation[] {
   return [...groups.values()].reverse()
 }
 
+function MemberResult({ text, running }: { text: string; running: boolean }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <details className="codex-team-result" onToggle={event => setExpanded(event.currentTarget.open)}>
+      <summary>{running ? '成员回报' : '成员结果'}</summary>
+      {expanded && (
+        <div className="codex-team-result-body">
+          <MessageContent text={text} />
+        </div>
+      )}
+    </details>
+  )
+}
+
 export function CodexTeam({
   detail,
   draft,
@@ -61,7 +76,7 @@ export function CodexTeam({
   const approvals = detail.approvals
   const waiting = approvals.some(approval => approval.subagentId !== undefined)
   const conflict = draft.trimStart().startsWith('/')
-  const teamRun = group?.members.some(({ subagent }) => subagent.status === 'running' || subagent.status === 'waiting') ? run : undefined
+  const teamRun = group && detail.activity ? run : undefined
   if (!detail.codexTeam && !group) return null
   return (
     <div className="codex-team-control">
@@ -100,16 +115,30 @@ export function CodexTeam({
           {group ? (
             <>
               {groups.length > 1 && (
-                <label className="codex-team-history">
+                <div className="codex-team-history">
                   <span>委派记录</span>
-                  <select value={group.id} onChange={event => setSelected(event.currentTarget.value)}>
-                    {groups.map((entry, index) => (
-                      <option key={entry.id} value={entry.id}>
-                        第 {groups.length - index} 次委派
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  <Menu
+                    label="委派记录"
+                    align="end"
+                    selection
+                    sections={[
+                      {
+                        id: 'delegations',
+                        items: groups.map((entry, index) => ({
+                          id: entry.id,
+                          label: `第 ${groups.length - index} 次委派`,
+                          checked: group.id === entry.id,
+                          onSelect: () => setSelected(entry.id),
+                        })),
+                      },
+                    ]}
+                    trigger={menu => (
+                      <SelectButton {...menu} aria-label="委派记录">
+                        第 {groups.length - groups.indexOf(group)} 次委派
+                      </SelectButton>
+                    )}
+                  />
+                </div>
               )}
               {currentRequest && (
                 <p className="codex-team-request">
@@ -138,14 +167,7 @@ export function CodexTeam({
                           <VisibleText text={subagent.description} />
                         </p>
                       )}
-                      {subagent.team?.result && (
-                        <details className="codex-team-result">
-                          <summary>{subagent.status === 'running' ? '成员回报' : '成员结果'}</summary>
-                          <div>
-                            <VisibleText text={subagent.team.result} />
-                          </div>
-                        </details>
-                      )}
+                      {subagent.team?.result && <MemberResult text={subagent.team.result} running={subagent.status === 'running'} />}
                       {approval && (
                         <Button
                           size="sm"

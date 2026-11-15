@@ -66,9 +66,8 @@ struct CodexTeamView: View {
                                 }
                                 if availability == "disabled" { note("当前 Codex 会话的原生协作已关闭。") }
                                 if model.detail["summary"]["modelRoute"] != .null { note("成员走当前会话的模型服务，调用量合计在此会话。") }
-                                if let chosen, model.connected, model.hasScope("view"),
-                                   ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? ""),
-                                   chosen.members.contains(where: { ["running", "waiting"].contains($0["subagent"]["status"].string ?? "") }) {
+                                if chosen != nil, model.connected, model.hasScope("view"), model.detail["activity"] != .null,
+                                   ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") {
                                     Button(model.stoppingCurrent ? "正在停止本轮…" : "停止本轮", role: .destructive) {
                                         Task { await model.stop() }
                                     }.buttonStyle(.bordered).disabled(model.stoppingCurrent)
