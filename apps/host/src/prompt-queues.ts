@@ -194,6 +194,7 @@ export class PromptQueues {
     actor: QueueActor,
     sessionId: string,
     input: { prompt: string; requestId: string; model?: ModelRef },
+    existingOnly = false,
   ): Promise<{ accepted: true } | { queued: { id: string } }> {
     return this.lock(async () => {
       this.assertOpen()
@@ -205,6 +206,7 @@ export class PromptQueues {
         if (prior.hash !== hash) throw new AppError(409, 'request-conflict', '同一次排队请求不能提交不同内容')
         return VISIBLE.has(prior.state) ? { queued: { id: prior.id } } : { accepted: true }
       }
+      if (existingOnly) throw new AppError(409, 'queue-settled', '没有可重试的排队回执。')
       const prepared = await this.options.prepare?.(actor, sessionId, input.model),
         model = prepared?.model ?? input.model,
         binding = prepared?.binding

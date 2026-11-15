@@ -17,6 +17,7 @@ import type {
   WorkspaceInfo,
 } from '@latch/protocol'
 import type { HarnessPlugin, ModelMessage } from '@latch/sdk'
+import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { queryHostInfo } from '../src/host-state.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -129,6 +130,31 @@ test('keeps old Personal Agent sessions readable and adopts a stable slot withou
     const before = JSON.parse(await readFile(journal, 'utf8')) as { chats?: unknown }
     delete before.chats
     await writeFile(journal, JSON.stringify(before))
+    const queued = { prompt: 'Paused before migration', requestId: randomUUID() }
+    const queueId = `queue-${randomUUID()}`
+    await writeFile(
+      join(options.dataDir, 'queues.json'),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            id: queueId,
+            sessionId: a.sessionId,
+            deviceId: owner.id,
+            listener: 'unix',
+            dataScope: 'all',
+            requestId: queued.requestId,
+            sendRequestId: randomUUID(),
+            hash: sha256Hex(canonicalJson({ text: queued.prompt })),
+            text: queued.prompt,
+            queuedAt: new Date().toISOString(),
+            state: 'parked',
+            waitRunId: '',
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    )
     host = await startTestHost(options)
     const request = (path: string, method: 'GET' | 'POST' = 'GET', body?: object) =>
       host!.raw('unix', `api/${path}`, {
@@ -146,6 +172,12 @@ test('keeps old Personal Agent sessions readable and adopts a stable slot withou
     expect(newMessage.status).toBe(409)
     expect(await newMessage.json()).toMatchObject({ error: 'agent-chat-history-read-only' })
     expect((await request(`tasks/${a.sessionId}/prompt`, 'POST', older)).status).toBe(200)
+    const plainQueue = await request(`tasks/${a.sessionId}/prompt`, 'POST', queued)
+    expect(plainQueue.status).toBe(409)
+    expect(await plainQueue.json()).toMatchObject({ error: 'agent-chat-history-read-only' })
+    const replay = await request(`tasks/${a.sessionId}/prompt`, 'POST', { ...queued, queue: true })
+    expect(replay.status).toBe(202)
+    expect(await replay.json()).toEqual({ queued: { id: queueId } })
     const detail = (await (await request(`tasks/${a.sessionId}`)).json()) as TaskDetail
     expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual([older.prompt])
   } finally {

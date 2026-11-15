@@ -7800,7 +7800,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           })
         return 'accepted'
       }
-      if (!promptQueues.knows(id, caller.device.id, input.requestId) && (await historicalChat(caller, id))) {
+      if ((input.queue || input.steer) && promptQueues.knows(id, caller.device.id, input.requestId))
+        return { queued: await promptQueues.submit(queueActor(caller), id, input, true) }
+      if (await historicalChat(caller, id)) {
         // A receipt from before migration may still be retried, including after a Host restart. Nothing new runs here.
         const detail = await hub!.detail(id)
         agentAccess(caller, true)
