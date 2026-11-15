@@ -126,6 +126,7 @@ const toolDetailSchema = z.object({
     .optional(),
 })
 const messageSchema = z.object({
+  origin: z.literal('mcp-prompt').optional(),
   fileRefs: z.array(z.custom<FileMention>(isFileMention)).max(32).optional(),
   outputs: z.array(z.custom<FileChange>(isFileChange)).max(1000).optional(),
   outputsPending: z.literal(true).optional(),

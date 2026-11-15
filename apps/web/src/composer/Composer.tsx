@@ -235,7 +235,7 @@ export function Composer({
   const commandDefinition = actions?.find(action => action.name === commandName) ?? commands?.find(command => command.name === commandName)
   const commandChip = commandHead && commandDefinition ? commandHead[1]! : undefined
   const argumentHint = commandChip && !commandHead?.[3]?.trim() ? commandDefinition?.inputHint : undefined
-  const mentions = useFileMentions(draft, onDraft, textareaRef, fileMentions)
+  const mentions = useFileMentions(draft, onDraft, textareaRef, fileMentions, commandAnchor)
   // The input grows with its content a line at a time, up to eight lines, its height moving over 120ms (composer.css).
   // Measuring needs the height let go for a moment; it is put back without a transition, so the move then starts from
   // the height the input had and not from the measurement.
@@ -348,7 +348,8 @@ export function Composer({
   })
   const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (slash.keydown(event)) return
-    if (mentions.keydown(event)) return
+    // Hidden while a submission is held: its keys are the input's again.
+    if (!locked && readOnly === undefined && mentions.keydown(event)) return
     if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (
       event.key === 'Backspace'
@@ -423,9 +424,11 @@ export function Composer({
     <textarea
       ref={textareaRef}
       aria-label={label}
-      aria-autocomplete={slash.open ? 'list' : undefined}
-      aria-controls={slash.open ? slash.id : undefined}
-      aria-activedescendant={slash.open && slash.options[slash.active] ? slash.id + '-' + slash.active : undefined}
+      aria-autocomplete={slash.open || mentions.open ? 'list' : undefined}
+      aria-controls={slash.open ? slash.id : mentions.open ? mentions.listId : undefined}
+      aria-activedescendant={
+        slash.open && slash.options[slash.active] ? slash.id + '-' + slash.active : !slash.open ? mentions.activeId : undefined
+      }
       placeholder={placeholder}
       value={draft}
       rows={1}
@@ -631,7 +634,7 @@ export function Composer({
         <ConfigUnknownBar state={configUnknown} />
         {actionBlock && <InlineNotice>{actionBlock}</InlineNotice>}
         {queueTray}
-        {!locked && mentions.menu}
+        {!locked && readOnly === undefined && mentions.menu}
         {attachments && (
           <AttachmentDrafts controller={attachments} locked={locked} onRestore={text => onDraft(draft ? `${draft}\n${text}` : text)} />
         )}

@@ -315,6 +315,8 @@ function UserMessage({
           </p>
         </Tooltip>
       )}
+      {/* The agent fetched an MCP prompt during this turn: text Latch never saw is in its context. Always said. */}
+      {message.origin === 'mcp-prompt' && <p className="message-change-note">来自 MCP 提示</p>}
       <MessageAttachments attachments={message.attachments} />
       {message.text && (
         <div className="user-bubble" data-clamped={tall && !whole ? '' : undefined}>
@@ -560,5 +562,6 @@ export const MessageRow = memo(
     && a.message.model === b.message.model
     && a.message.attachments === b.message.attachments
     && a.message.fileRefs === b.message.fileRefs
+    && a.message.origin === b.message.origin
     && a.message.steered === b.message.steered,
 )

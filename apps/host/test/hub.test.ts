@@ -323,6 +323,13 @@ describe('run silence', () => {
 })
 
 describe('harness hub routing', () => {
+  it('rejects marking MCP prompt provenance when the session’s driver cannot persist it', async () => {
+    const { bridge } = external([summary('without-marker')])
+    const { hub: value } = await hub(undefined, 'ext')
+    await value.attach(driver('ext'), mount(bridge))
+    await expect(value.markOutsideContent('without-marker')).rejects.toMatchObject({ code: 'mcp-prompt-unmarked' })
+  })
+
   it('projects only bounded public native skill metadata, never private path or source fields', async () => {
     const { bridge } = external([summary('skills', 'idle')])
     const detail = await bridge.detail('skills')

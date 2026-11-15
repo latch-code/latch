@@ -1096,6 +1096,13 @@ export class AgentRuntime implements Bridge {
     delete task.acp.seed
     if (task.acp.contextCleared) return
     task.acp.contextCleared = true
+    const live = this.lives.get(task.summary.id)
+    if (live?.mcp) {
+      for (const lease of live.mcp) lease.close()
+      delete live.mcp
+    }
+    // Reset before attaching: the new session can read a prompt through its bridge during session/new.
+    delete task.acp.outsideRead
     const prior = task.acp.acpSessionId
     if (prior !== undefined) {
       const chosen = task.acp.startConfig ?? []
@@ -1115,7 +1122,6 @@ export class AgentRuntime implements Bridge {
       delete task.plan
       const brief = task.messages.find(message => message.role === 'user' && message.agentBrief)?.agentBrief
       if (brief && !task.acp.brief) task.acp.brief = brief
-      const live = this.lives.get(task.summary.id)
       if (live?.sessions.get(prior) === task.summary.id) {
         live.sessions.delete(prior)
         if (live.capabilities.close && !live.wire.stopping)
@@ -2495,6 +2501,19 @@ export class AgentRuntime implements Bridge {
     })().finally(() => this.inflight.delete(key))
     this.inflight.set(key, { payloadHash, promise })
     return promise
+  }
+
+  async markOutsideContent(sessionId: string): Promise<void> {
+    await this.ready()
+    const task = this.task(sessionId)
+    task.acp.outsideRead = true
+    const turn = isActive(task.summary) ? this.runs.get(sessionId)?.userMessageId : undefined
+    const message = turn ? task.messages.find(item => item.id === turn && item.role === 'user') : undefined
+    if (message) message.origin = 'mcp-prompt'
+    this.touch(task)
+    this.mark()
+    this.notify(sessionId)
+    await this.flush()
   }
 
   async cancel(sessionId: string, options: CancelOptions = {}): Promise<boolean> {
@@ -6829,7 +6848,7 @@ function canonical(path: string): string {
  * starts over, so the mark holds for every later turn. An agent reports its calls in its own words, so this errs toward
  * external.
  */
-export function proposalTurn(task: { messages: Message[]; acp: { cwd: string; folders?: string[] } }): {
+export function proposalTurn(task: { messages: Message[]; acp: { cwd: string; folders?: string[]; outsideRead?: true } }): {
   messageId?: string
   external: boolean
 } {
@@ -6839,6 +6858,8 @@ export function proposalTurn(task: { messages: Message[]; acp: { cwd: string; fo
   const inside = (path: string) =>
     isAbsolute(path) && roots.some(root => (canonical(path) + sep).startsWith(root.endsWith(sep) ? root : root + sep))
   const external = task.messages.slice(Math.max(fresh, 0)).some(message => {
+    // The local MCP bridge was allowed to fetch a prompt during this turn (`markOutsideContent`).
+    if (message.origin === 'mcp-prompt') return true
     if (message.subagent) return true
     if (message.role !== 'tool') return false
     const tool = message.tool
@@ -6846,7 +6867,8 @@ export function proposalTurn(task: { messages: Message[]; acp: { cwd: string; fo
     if (!tool?.kind || !LOCAL_KINDS.has(tool.kind)) return true
     return !tool.locations?.length || !tool.locations.every(inside)
   })
-  return { ...(start >= 0 ? { messageId: task.messages[start]!.id } : {}), external }
+  // Or the Host said so: a prompt fetched through a bridge, which no tool row shows.
+  return { ...(start >= 0 ? { messageId: task.messages[start]!.id } : {}), external: external || task.acp.outsideRead === true }
 }
 
 /** The same refusal, marked as one that certainly did not apply (`Bridge.setConfig`). */

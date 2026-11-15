@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // A fake MCP server over stdio, for tests of Latch's `latch-mcp` bridge and 测试. It speaks the 2025 handshake only
-// (`server/discover` is unknown), lists `echo`, `slow`, `env_names` and `where`, and writes what it saw as JSON lines to
-// FAKE_MCP_LOG: the names of its environment's variables, never their values.
+// (`server/discover` is unknown), lists `echo`, `slow`, `env_names` and `where`, offers prompts (`prompts/list`,
+// `prompts/get`), and writes what it saw as JSON lines to FAKE_MCP_LOG: the names of its environment's variables, never
+// their values.
 //
 // FAKE_MCP_MODE: `crash` exits at once; `silent` never answers `initialize`; `noisy` writes a line longer than any limit;
 // `ask` sends a sampling request of its own after `initialize`; `changed` sends `notifications/tools/list_changed`.
@@ -24,6 +25,34 @@ const TOOLS = [
   { name: 'where', description: 'Says its working folder.', inputSchema: { type: 'object', properties: {} } },
 ]
 const timers = new Map()
+// Prompts: `review` takes arguments, `picture` answers with an image only, `long` with 30,000 characters, one has
+// direction and zero-width characters in its name, and one a control character (a client drops that one).
+const FAKE_MCP_PROMPTS = [
+  { name: 'hello', description: 'Says hello.' },
+  {
+    name: 'review',
+    description: 'Reviews a topic.',
+    arguments: [
+      { name: 'topic', description: 'What to review.', required: true },
+      { name: 'tone', description: 'How to say it.' },
+    ],
+  },
+  { name: 'picture', description: 'Only an image.' },
+  { name: 'long', description: 'Thirty thousand characters.' },
+  { name: 'tidy\u202Eevil\u200Bup', description: 'Hidden \u202Echaracters\u200B in its name.' },
+  { name: 'bell\u0007', description: 'A control character in its name.' },
+]
+
+/** The `prompts/get` result for `name`, or undefined for an unknown prompt. */
+function fakeMcpPrompt(name, args = {}) {
+  const text = value => ({ messages: [{ role: 'user', content: { type: 'text', text: value } }] })
+  if (name === 'hello') return text('Hello from the fake MCP server.')
+  if (name === 'review') return text(`Review ${args.topic ?? ''} in a ${args.tone ?? 'plain'} tone.`)
+  if (name === 'picture') return { messages: [{ role: 'user', content: { type: 'image', data: 'AAAA', mimeType: 'image/png' } }] }
+  if (name === 'long') return text('long '.repeat(6000))
+  if (name === 'tidy\u202Eevil\u200Bup') return text('Tidy up.')
+  return undefined
+}
 
 function handle(message) {
   const { id, method, params } = message
@@ -34,6 +63,7 @@ function handle(message) {
   log('recv', {
     method,
     ...(method === 'tools/call' ? { tool: params?.name } : {}),
+    ...(method === 'prompts/get' ? { prompt: params?.name, argumentNames: Object.keys(params?.arguments ?? {}).sort() } : {}),
     ...(method === 'initialize' ? { capabilities: params?.capabilities ?? null } : {}),
   })
   if (id === undefined) {
@@ -58,8 +88,16 @@ function handle(message) {
     if (mode === 'changed') setTimeout(() => send({ method: 'notifications/tools/list_changed' }), 50)
     return
   }
-  if (method === 'ping') return send({ id, result: {} })
+  if (method === 'ping') {
+    if (mode === 'early-prompt') send({ id: 2, result: fakeMcpPrompt('hello') })
+    return send({ id, result: {} })
+  }
   if (method === 'tools/list') return send({ id, result: { tools: TOOLS } })
+  if (method === 'prompts/list') return send({ id, result: { prompts: FAKE_MCP_PROMPTS } })
+  if (method === 'prompts/get') {
+    const result = fakeMcpPrompt(params?.name, params?.arguments ?? {})
+    return send(result ? { id, result } : { id, error: { code: -32602, message: `Unknown prompt ${params?.name}` } })
+  }
   if (method === 'tools/call') {
     const args = params?.arguments ?? {}
     const text = value => send({ id, result: { content: [{ type: 'text', text: String(value) }] } })

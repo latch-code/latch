@@ -27,7 +27,17 @@ async function waitFor<T>(read: () => Promise<T> | T, done: (value: T) => boolea
  * A stand-in for the Host's tool gateway: answers `mcp/launch` with the fake server and `env`, records every request,
  * and lets a test hold or refuse `mcp/call`.
  */
-async function fakeGateway(input: { env?: Record<string, string>; disabledTools?: string[]; call?: (request: any) => unknown } = {}) {
+async function fakeGateway(
+  input: {
+    env?: Record<string, string>
+    disabledTools?: string[]
+    call?: (request: any) => unknown
+    /** Answers `mcp/prompt`; the default records it. */
+    prompt?: (request: any, answer: (reply: unknown) => void) => unknown
+    /** The launch says the server is a remote address. */
+    remote?: true
+  } = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), 'lmcp-'))
   cleanups.push(() => rm(directory, { recursive: true, force: true }))
   const log = join(directory, 'server.log')
@@ -44,7 +54,11 @@ async function fakeGateway(input: { env?: Record<string, string>; disabledTools?
         buffer = buffer.slice(end + 1)
         requests.push(request)
         const answer = (reply: unknown) => socket.write(`${JSON.stringify({ id: request.id, ...(reply as object) })}\n`)
-        if (request.method === 'mcp/launch')
+        if (request.method === 'mcp/launch' && input.remote) answer({ result: { remote: true, disabledTools: [] } })
+        else if (request.method === 'mcp/prompt' && input.prompt) {
+          const reply = input.prompt(request, answer)
+          if (reply) answer(reply)
+        } else if (request.method === 'mcp/launch')
           answer({
             result: {
               command: process.execPath,
@@ -88,6 +102,7 @@ function start(socketPath: string, tokenFile: string) {
   cleanups.push(() => child.kill())
   const replies = new Map<number, (message: any) => void>()
   const notes: any[] = []
+  const completed: number[] = []
   let buffer = ''
   child.stdout.setEncoding('utf8').on('data', chunk => {
     buffer += chunk
@@ -95,7 +110,10 @@ function start(socketPath: string, tokenFile: string) {
       const message = JSON.parse(buffer.slice(0, end))
       buffer = buffer.slice(end + 1)
       if (message.id === undefined) notes.push(message)
-      else replies.get(message.id)?.(message)
+      else {
+        completed.push(message.id)
+        replies.get(message.id)?.(message)
+      }
     }
   })
   let next = 1
@@ -105,7 +123,7 @@ function start(socketPath: string, tokenFile: string) {
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) })}\n`)
     return reply
   }
-  const tell = (method: string) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method })}\n`)
+  const tell = (method: string, params?: unknown) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`)
   const initialize = async () => {
     const reply = await ask('initialize', {
       protocolVersion: '2025-06-18',
@@ -115,7 +133,7 @@ function start(socketPath: string, tokenFile: string) {
     tell('notifications/initialized')
     return reply
   }
-  return { entry, child, ask, tell, initialize, notes }
+  return { entry, child, ask, tell, initialize, notes, completed }
 }
 
 describe('the latch-mcp bridge', () => {
@@ -137,8 +155,8 @@ describe('the latch-mcp bridge', () => {
     expect((await stat(gateway.tokenFile)).isFile()).toBe(true)
     const init = await bridge.initialize()
     expect(init.result).toMatchObject({ serverInfo: { name: 'fake-mcp' }, capabilities: { tools: { listChanged: true } } })
-    // Only tools: resources and prompts the server has are not offered to the agent.
-    expect(Object.keys(init.result.capabilities)).toEqual(['tools'])
+    // Tools and prompts: resources the server has are not offered to the agent.
+    expect(Object.keys(init.result.capabilities)).toEqual(['tools', 'prompts'])
     await expect(stat(gateway.tokenFile)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(gateway.requests[0]).toMatchObject({ method: 'mcp/launch', token: TOKEN })
     const listed = await bridge.ask('tools/list')
@@ -239,5 +257,103 @@ describe('the latch-mcp bridge', () => {
     await other.initialize()
     await waitFor(asking.lines, lines => lines.some(line => line.event === 'reply'))
     expect(other.notes).toEqual([])
+  })
+
+  it('passes a local command’s prompts through, records each prompts/get first and sends none when the record fails', async () => {
+    let refuse = false
+    const gateway = await fakeGateway({
+      prompt: () =>
+        refuse ? { error: { code: -32000, message: 'Latch could not record this prompt, so it was not fetched.' } } : { result: {} },
+    })
+    const bridge = start(gateway.socketPath, gateway.tokenFile)
+    // Prompts are offered as a plain capability; resources are not.
+    expect((await bridge.initialize()).result.capabilities).toEqual({ tools: { listChanged: true }, prompts: {} })
+    const listed = await bridge.ask('prompts/list')
+    expect(listed.result.prompts.map((prompt: { name: string }) => prompt.name)).toContain('review')
+    const got = await bridge.ask('prompts/get', { name: 'review', arguments: { topic: 'the plan' } })
+    expect(got.result.messages[0].content.text).toBe('Review the plan in a plain tone.')
+    const record = gateway.requests.find(request => request.method === 'mcp/prompt')
+    // The gateway hears the prompt's name alone: no argument and no text.
+    expect(record.params).toEqual({ prompt: 'review' })
+    expect(JSON.stringify(gateway.requests)).not.toContain('the plan')
+    const lines = await gateway.lines()
+    expect(lines.filter(line => line.method === 'prompts/get')).toEqual([
+      expect.objectContaining({ prompt: 'review', argumentNames: ['topic'] }),
+    ])
+    refuse = true
+    const refused = await bridge.ask('prompts/get', { name: 'hello' })
+    expect(refused.error).toEqual({ code: -32000, message: 'Latch could not record this prompt, so it was not fetched.' })
+    expect((await gateway.lines()).filter(line => line.method === 'prompts/get')).toHaveLength(1)
+  })
+
+  it('ignores a child’s prompt response while audit and provenance are pending', async () => {
+    let approve: ((reply: unknown) => void) | undefined
+    const gateway = await fakeGateway({
+      env: { FAKE_MCP_MODE: 'early-prompt' },
+      prompt: (_, answer) => {
+        approve = answer
+      },
+    })
+    const bridge = start(gateway.socketPath, gateway.tokenFile)
+    await bridge.initialize()
+    let finished = 0
+    const requested = bridge.ask('prompts/get', { name: 'hello' }).then(reply => {
+      finished++
+      return reply
+    })
+    await waitFor(() => approve, Boolean)
+    // The fake server responds to ID 2 before it answers the ping. Its stdout is ordered.
+    expect((await bridge.ask('ping')).result).toEqual({})
+    expect(finished).toBe(0)
+    const error = { code: -32000, message: 'The prompt could not be marked.' }
+    approve!({ error })
+    expect((await requested).error).toEqual(error)
+    expect((await gateway.lines()).filter(line => line.method === 'prompts/get')).toEqual([])
+  })
+
+  it('cancels a held prompt without sending the request or its cancellation to the child', async () => {
+    let approve: ((reply: unknown) => void) | undefined
+    const gateway = await fakeGateway({
+      prompt: (_, answer) => {
+        approve = answer
+      },
+    })
+    const bridge = start(gateway.socketPath, gateway.tokenFile)
+    await bridge.initialize()
+    const pending = bridge.ask('prompts/get', { name: 'hello' })
+    await waitFor(() => approve, Boolean)
+    bridge.tell('notifications/cancelled', { requestId: 2 })
+    expect((await bridge.ask('ping')).result).toEqual({})
+    approve!({ result: {} })
+    expect((await pending).error.message).toBe('The prompt was not fetched.')
+    expect((await gateway.lines()).filter(line => ['prompts/get', 'notifications/cancelled'].includes(line.method))).toEqual([])
+  })
+
+  it('settles a held prompt once if the gateway closes its bridge', async () => {
+    const gateway = await fakeGateway({ prompt: () => undefined })
+    const bridge = start(gateway.socketPath, gateway.tokenFile)
+    await bridge.initialize()
+    const pending = bridge.ask('prompts/get', { name: 'hello' })
+    await waitFor(
+      () => gateway.requests,
+      requests => requests.some(request => request.method === 'mcp/prompt'),
+    )
+    gateway.end()
+    const reply = await pending
+    expect(reply.error).toEqual({ code: -32000, message: 'This MCP server is not running.' })
+    // A later request is handled after the disconnect and its waiting promise continuations.
+    expect((await bridge.ask('ping')).result).toEqual({})
+    expect(bridge.completed.filter(id => id === reply.id)).toHaveLength(1)
+  })
+
+  it('offers an agent no prompts of a remote server', async () => {
+    const gateway = await fakeGateway({ remote: true })
+    const bridge = start(gateway.socketPath, gateway.tokenFile)
+    expect((await bridge.initialize()).result.capabilities).toEqual({ tools: {} })
+    expect((await bridge.ask('prompts/list')).error).toMatchObject({ code: -32601 })
+    expect((await bridge.ask('prompts/get', { name: 'hello' })).error).toMatchObject({ code: -32601 })
+    expect(gateway.requests.filter(request => request.method === 'mcp/prompt' || request.params?.method?.startsWith('prompts/'))).toEqual(
+      [],
+    )
   })
 })

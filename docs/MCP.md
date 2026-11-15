@@ -21,6 +21,7 @@ sources:
   - apps/host/test/mcp.test.ts
   - apps/host/test/mcp-remote.test.ts
   - apps/host/test/mcp-oauth.test.ts
+  - apps/host/test/mcp-prompts.test.ts
   - apps/host/test/mcp-import.test.ts
   - packages/harness-acp/test/mcp-bridge.test.ts
   - e2e/mcp.e2e.ts
@@ -110,11 +111,21 @@ MCP 有两半：Latch 定义的服务器，和各 Harness 自己配置的服务�
 - **远程模式**：远程地址的启动清单只说 `remote: true`（审计照样先写 `mcp.server.started`）。桥不启动任何程序、不连外网：`initialize`、`tools/list`、`tools/call` 经网关的 `mcp/remote` 交给 Host，Agent 的取消经 `mcp/cancel` 中止 Host 那边的请求，`ping` 由桥自己回答。桥与 Agent 之间的会话按 Agent 要的协议版本回答，与 Host 和服务器之间的会话互不相干。`tools/call` 由 Host 先核对（与本机命令的调用一样）、先写 `mcp.tool.called`，写不进就不发，结束补 `mcp.tool.settled`；参数与结果经过网关，但请求头从不离开 Host。服务器连不上时桥照样回答 `initialize`、工具列表为空，会话里写一行「MCP 服务器「名称」没有启动：原因」。
 - 环境只来自 Host 的清单：`PATH`（命令所在目录在前，再加这个人的程序目录）、`HOME`、`USER`、`LOGNAME`、`LANG`、`LC_ALL`、`TMPDIR`、`SHELL`、`TERM`、Host 的代理与 CA 变量，再加这个服务器自己的变量。Agent 进程的环境（包括 `lmg1.` 网关凭据与 `lbt1.` 令牌）带不进去。
 - 工作目录：默认是 Host 运行目录里为这个桥新建的空文件夹（所以 `npx` 不会先用项目 `node_modules` 里的同名包），桥结束时删除；打开「在项目文件夹里启动」时是会话的主文件夹。
-- 只转发 `initialize`、`ping`、`tools/list`、`tools/call`、取消与 `notifications/tools/list_changed`。服务器的能力只报告 `tools`；服务器自己的请求（sampling、elicitation、roots）一律回答 method not found；resources 与 prompts 尚未实现。
+- 本机命令的桥转发 `initialize`、`ping`、`tools/list`、`tools/call`、取消与 `notifications/tools/list_changed`，也转发下一节的提示请求。服务器自己的请求（sampling、elicitation、roots）一律回答 method not found，resources 尚未实现。
 - 关掉的工具不在 `tools/list` 里，调用直接回答错误，不经过服务器。
 - 每次 `tools/call` 先经网关写 `mcp.tool.called`（服务器 ID、会话 ID、调用 ID、工具名与服务器 ID 的哈希），写不进就不转发；结束时补 `mcp.tool.settled`（`ok`、`error`、`cancelled`、`failed` 与耗时）。参数与结果从不经过网关。
 - **坏掉的服务器不挡会话。** 命令起不来、进程退出或 30 秒内没有完成 `initialize` 时，桥自己回答 `initialize`（只有 tools 能力）、`tools/list` 为空，并经网关报告原因：DeepSeek Harness（任何一个服务器失败就拒绝建会话）也照常开始。会话里写一行「MCP 服务器「名称」没有启动：原因」，设置里的状态变成「失败」。
 - 桥的标准输入关闭、令牌失效（网关断开连接）或收到 SIGTERM 时，结束服务器的整个进程组。
+
+### 提示
+
+本机命令声明 `prompts` 时，桥向 Harness 报告这个能力。桥转发 `prompts/list` 与 `prompts/get`，不会转发提示列表变化通知。远程桥拒绝这两种请求，Host 的远程客户端只提供工具。
+
+取提示前，Host 复查服务器的定义和会话范围，先写 `mcp.prompt.got` 审计，再让当前 Driver 持久化会话的外部来源标记。审计只有服务器 ID、会话 ID 和提示名的哈希。所需的审计或来源标记写不成、驱动不支持持久化标记或会话找不到时，桥拒绝请求。启动清单确认后，桥才可请求转发。通过审计和来源检查后，桥把原有参数发给本机命令，从这一刻起才接受对应请求的回包。参数和服务器回给 Harness 的正文只在桥这一侧流转。
+
+会话仍有正在运行的用户消息时，Web 与 iOS 在这条消息上显示「来自 MCP 提示」。审计和标记记录获准转发，之后仍可能取消、失败或退出。到会话清空上下文前，该会话产生的记忆和定时提议都标作外部内容。清空时，旧桥结束并清理旧来源。新桥绑定期间经其转发的提示计入新上下文。
+
+Harness 决定是否列出和执行提示命令。页面显示 Harness 自己报告的命令，带冒号的名称照原样出现；桥返回的提示目录不直接进入斜杠菜单。见 [HARNESSES.md](HARNESSES.md#会话命令)。
 
 ## 各 Harness
 

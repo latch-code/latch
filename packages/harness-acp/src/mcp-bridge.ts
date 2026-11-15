@@ -10,8 +10,12 @@ import type { McpServerLease } from '@latch/sdk'
  * command in a process group of its own, with exactly the environment the Host gave: the agent's variables never reach
  * it. It then passes messages through line by line, changing nothing but:
  *
- * - only `initialize`, `ping`, `tools/list`, `tools/call`, cancels and `notifications/tools/list_changed` pass; the
- *   server's own requests (sampling, elicitation, roots) are declined, and the client's capabilities are not offered;
+ * - only `initialize`, `ping`, `tools/list`, `tools/call`, `prompts/list`, `prompts/get`, cancels and
+ *   `notifications/tools/list_changed` pass; the server's own requests (sampling, elicitation, roots) are declined, and
+ *   the client's capabilities are not offered;
+ * - a local command's prompts pass so a harness that reads MCP prompts lists them as its own commands; every
+ *   `prompts/get` is recorded through the gateway before it is sent, and not sent when that fails. A remote server's
+ *   prompts are not offered (尚未实现): the Host is not a client for them;
  * - tools switched off in Latch are left out of `tools/list` and refused;
  * - every `tools/call` is recorded through the gateway before it is sent, and not sent when that fails; its outcome after;
  * - a server that does not start, or does not answer `initialize` within 30 s, is reported, and the agent gets a server
@@ -143,6 +147,8 @@ function fail(reason) {
 function answerBroken(entry) {
   if (entry.method === 'initialize') return write({ id: entry.id, result: ownInitialize(entry.params) })
   if (entry.method === 'tools/list') return write({ id: entry.id, result: { tools: [] } })
+  if (entry.method === 'prompts/list') return write({ id: entry.id, result: { prompts: [] } })
+  if (entry.method === 'prompts/get') return write({ id: entry.id, error: { code: -32000, message: 'This MCP server is not running.' } })
   if (entry.method === 'tools/call') {
     if (entry.callId) tell('mcp/called', { callId: entry.callId, result: 'failed', ms: Date.now() - entry.at })
     return write({ id: entry.id, result: { content: [{ type: 'text', text: 'This MCP server is not running.' }], isError: true } })
@@ -155,7 +161,9 @@ const ownInitialize = params => ({
   serverInfo: { name: 'latch-mcp', version: '1' },
 })
 function toChild(message) {
-  if (child && child.stdin && !child.stdin.destroyed) child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n')
+  if (!child || !child.stdin || child.stdin.destroyed) return false
+  child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n')
+  return true
 }
 function fromChild(message) {
   if (!message || typeof message !== 'object') return
@@ -167,12 +175,14 @@ function fromChild(message) {
   }
   const key = JSON.stringify(message.id)
   const entry = pending.get(key)
-  if (!entry) return
+  if (!entry || entry.forwarded === false) return
   pending.delete(key)
   if (entry.method === 'initialize') {
     clearTimeout(entry.timer)
     if (!message.result || typeof message.result !== 'object') return fail('protocol')
-    const capabilities = message.result.capabilities && message.result.capabilities.tools ? { tools: message.result.capabilities.tools } : { tools: {} }
+    const offered = message.result.capabilities || {}
+    // Tools as the server offers them; prompts only as a plain capability (their change notice is not forwarded).
+    const capabilities = { tools: offered.tools || {}, ...(offered.prompts ? { prompts: {} } : {}) }
     return write({ id: entry.id, result: { ...message.result, capabilities } })
   }
   if (entry.method === 'tools/list') {
@@ -286,7 +296,8 @@ async function handle(request) {
         if (entry.askId !== undefined) tell('mcp/cancel', { id: entry.askId })
       } else if (entry) {
         entry.cancelled = true
-        toChild({ method, params: { requestId: params.requestId, ...(params.reason ? { reason: String(params.reason).slice(0, 200) } : {}) } })
+        if (entry.forwarded !== false)
+          toChild({ method, params: { requestId: params.requestId, ...(params.reason ? { reason: String(params.reason).slice(0, 200) } : {}) } })
       }
     }
     return
@@ -301,12 +312,34 @@ async function handle(request) {
     pending.set(JSON.stringify(id), { id, method })
     return toChild({ id, method })
   }
-  if (method !== 'tools/list' && method !== 'tools/call') return write({ id, error: { code: -32601, message: 'Method not found' } })
+  const prompts = method === 'prompts/list' || method === 'prompts/get'
+  // A remote server's prompts are not relayed (尚未实现): the agent is not offered them here.
+  if ((method !== 'tools/list' && method !== 'tools/call' && !prompts) || (prompts && remote))
+    return write({ id, error: { code: -32601, message: 'Method not found' } })
   if (remote && !broken && !revoked) return relay(id, method, params)
   if (!child || broken || revoked) return answerBroken({ id, method, at: Date.now() })
-  if (method === 'tools/list') {
+  if (method === 'tools/list' || method === 'prompts/list') {
     pending.set(JSON.stringify(id), { id, method })
     return toChild({ id, method, params: params && typeof params === 'object' ? params : {} })
+  }
+  if (method === 'prompts/get') {
+    const prompt = params && params.name
+    if (typeof prompt !== 'string' || !prompt) return write({ id, error: { code: -32602, message: 'Invalid prompt.' } })
+    const key = JSON.stringify(id)
+    const entry = { id, method, forwarded: false }
+    pending.set(key, entry)
+    // Track cancellation during authorization, while ignoring replies until the request reaches the child's pipe.
+    const recorded = await ask('mcp/prompt', { prompt })
+    if (pending.get(key) !== entry) return
+    if (recorded.error || !recorded.result || entry.cancelled) {
+      pending.delete(key)
+      const text = recorded.error && recorded.error.message ? String(recorded.error.message) : 'The prompt was not fetched.'
+      return write({ id, error: { code: -32000, message: text } })
+    }
+    entry.forwarded = toChild({ id, method, params })
+    if (entry.forwarded) return
+    pending.delete(key)
+    return answerBroken(entry)
   }
   const name = params && params.name
   if (typeof name !== 'string' || disabled.has(name))

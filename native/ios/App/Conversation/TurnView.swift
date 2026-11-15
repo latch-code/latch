@@ -37,6 +37,9 @@ struct TurnView: View, Equatable {
         VStack(alignment: .leading, spacing: 12) {
             if let words = PhoneConversation.divider(turn) { TimelineDivider(words: words, symbol: "eraser") }
             if let switched { TimelineDivider(words: switched, symbol: nil) }
+            if let words = PhoneConversation.origin(turn) {
+                Text(words).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .trailing)
+            }
             if let user = turn.user { UserBubble(message: user, delivery: delivery, open: open) }
             if !turn.replies.isEmpty || running {
                 AuthorLine(mark: mark, engine: engine, model: PhoneConversation.turnModel(turn), helper: helper)

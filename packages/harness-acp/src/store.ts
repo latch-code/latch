@@ -95,6 +95,8 @@ export interface AcpRecord {
   routeThinking?: string
   /** A prompt asked for a new context and no user message has been recorded on the agent's new session yet. */
   contextCleared?: true
+  /** Outside content reached this context by a way no tool row shows (`Bridge.markOutsideContent`); gone when it starts over. */
+  outsideRead?: true
   /** The agent's sessions from before each new context, which removing the task deletes too. */
   earlierSessionIds?: string[]
   /**
@@ -253,6 +255,7 @@ const subagent: z.ZodType = z.lazy(() =>
 )
 const message = z.object({
   agentBrief: agentBrief.optional(),
+  origin: z.literal('mcp-prompt').optional(),
   fileRefs: z.array(z.custom<FileMention>(isFileMention)).max(32).optional(),
   outputs: z.array(z.custom<FileChange>(isFileChange)).max(1000).optional(),
   outputsPending: z.literal(true).optional(),
@@ -461,6 +464,7 @@ const stateSchema = z.object({
         routeModelSet: z.literal(true).optional(),
         routeThinking: z.string().max(200).optional(),
         contextCleared: z.literal(true).optional(),
+        outsideRead: z.literal(true).optional(),
         earlierSessionIds: z.array(z.string()).optional(),
         fork: z
           .object({

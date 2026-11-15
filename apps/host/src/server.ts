@@ -196,6 +196,7 @@ import {
   expandArgs,
   isConfirmed as mcpConfirmed,
   serverEnvironment,
+  promptHash,
   toolHash,
   usedIn as mcpUsedIn,
   type McpHttpRecord,
@@ -4604,6 +4605,27 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             })
             .then(() => refresh())
             .catch(error => log(`MCP 服务器的状态没有保存：${errorText(error)}`))
+        },
+        async promptStarted(binding, prompt) {
+          const record = current(binding)
+          if (!record || record.transport !== 'stdio' || !mcpUsedIn(record.scope, binding)) throw gone()
+          try {
+            await audit.append({
+              action: 'mcp.prompt.got',
+              actor: { listener: 'host' },
+              target: binding.sessionId,
+              detail: { serverId: record.id, sessionId: binding.sessionId, promptHash: promptHash(record.id, prompt) },
+            })
+          } catch {
+            throw new AppError(503, 'audit-failed', 'Latch could not record this prompt, so it was not fetched.')
+          }
+          // Persist provenance before forwarding. The bridge response or cancellation can arrive independently.
+          try {
+            await hub!.markOutsideContent(binding.sessionId)
+            refresh(binding.sessionId)
+          } catch {
+            throw new AppError(503, 'mcp-prompt-unmarked', 'Latch could not mark this session, so the prompt was not fetched.')
+          }
         },
         async callStarted(binding, tool) {
           const record = current(binding)

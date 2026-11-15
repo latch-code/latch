@@ -138,7 +138,7 @@ e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）�
 
 ## 按改动选择回归
 
-命令建议缓存用 `command-cache.test.ts`、`acp.test.ts` 的实际命令报告和 `harness-commands.test.ts` 验证来源、0600/大小界限、重启零额外 CLI、目录与完整启动指纹异步复核、删除/私有化/撤权和 Driver 代次。`e2e/harness-command-cache.e2e.ts` 经正常 UI 验证三宽深浅、项目/Harness 切换、迟到响应、草稿仅插入、命令版本与可见集合失效、30 秒有界刷新、短高视口和缩放。浏览器时钟只推进刷新间隔，HTTP 仍走临时 Host；document 可见性夹具不是 OS 后台验收。当前会话 Slash 的 Chrome/WebKit 回归仍由 `slash.e2e.ts` 覆盖。
+命令建议缓存用 `command-cache.test.ts`、`acp.test.ts` 的实际命令报告和 `harness-commands.test.ts` 验证来源、0600/大小界限、重启零额外 CLI、目录与完整启动指纹异步复核、删除/私有化/撤权和 Driver 代次。`e2e/harness-command-cache.e2e.ts` 经正常 UI 验证三宽深浅、项目/Harness 切换、迟到响应、草稿仅插入、命令版本与可见集合失效、30 秒有界刷新、短高视口和缩放。浏览器时钟只推进刷新间隔，HTTP 仍走临时 Host；document 可见性夹具不是 OS 后台验收。当前会话 Slash 的 Chrome/WebKit 回归由 `slash.e2e.ts` 覆盖，包括假 ACP 报告的 `mcp:files:review` 出现在普通 Harness 组、Tab 插入可编辑草稿和原样发送。
 
 模型请求队列用 `model-request-queue.test.ts` 验证全 Host 上限、FIFO、等待时间、取消和容量回收；`providers.test.ts` 验证内置 Provider 与实际 HTTP 网关共用名额、响应未结束时不提前释放；`model-gateway.test.ts` 验证排队后凭据或服务变化拒绝旧请求，以及协议错误形状。`model-request-queue-review.test.ts` 从合法自定义 Driver 的启动入口租用真实服务，经临时 HTTP 上游验证冷启动初始化顺序。
 
@@ -265,6 +265,10 @@ GUI 模式另开本轮 `127.0.0.1:0` 公开阶段页，不含邀请码、Host �
 改共享协议（`packages/protocol/src/types.ts`、`packages/sdk/src/bridge.ts`、`plugins.ts`、`harness.ts`）时，先跑定向用例，再跑完整的 `pnpm test` 与 `pnpm test:e2e`。
 
 文件内容回归在 `apps/host/test/file-content.test.ts` 与 `files.test.ts`：真实临时文件与端口 0，覆盖引用持久化、设备/会话绑定、秘密复核、Range/ETag、审计失败、撤销、目录变动、搜索与限额。桌面代理覆盖安全读取白名单与不透明来源拒绝；这些用例不代表 Quick Look 的外部资源验收。
+
+本机 MCP 提示由 `mcp-bridge.test.ts` 和 Host 的 `mcp-prompts.test.ts` 覆盖，包括本机命令收到原参数、来源标签、只有名称哈希的审计、标记或审计失败时零额外转发、撤权与远程两种提示请求的拒绝。夹具还挡住本机进程在许可前的抢答，检查网关关闭只结算一次、启动未获准时不接受取提示请求，以及清空后保留新会话绑定时实际读取的提示来源。`hub.test.ts` 与 `acp.test.ts` 验证驱动缺少标记能力或会话时拒绝。夹具验证桥与命令透传，不能代替真实 Harness 的命令报告和执行、或 iOS 来源标签的界面验收。
+
+`file-mentions.test.ts` 通过实际输入事件覆盖裸 `@` 的方向键选择、删除与 Escape 后重开，以及查询时的补全键。`e2e/attachments.e2e.ts` 从真实网页检查同样的重开与真实文件选择。
 
 ## 测试辅助
 

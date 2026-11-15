@@ -264,6 +264,12 @@ export interface Bridge {
    */
   cancel(sessionId: string, options?: CancelOptions): Promise<boolean | void>
   /**
+   * Persists provenance before forwarding a local prompt through a `latch-mcp` bridge. Rejects if the session
+   * is missing or the write fails. Proposals are external until the context starts over. The running turn, if
+   * any, gets `Message.origin`. The marker records permission to fetch and may outlive a failed fetch.
+   */
+  markOutsideContent?(sessionId: string): Promise<void>
+  /**
    * Optional, with `Subagent.stoppable`. Stops one subagent's current work, named by its row's message ID, and answers its
    * open requests as cancelled; the session's turn goes on. Resolves once the stop is sent, not once it took effect: the
    * row says `stopping` until the subagent reports how it ended. `false`: that row cannot be stopped now.

@@ -4601,6 +4601,19 @@ describe('agent context', () => {
     const earlier = [user('u1'), tool('t1', 'fetch', 'Fetch https://x'), user('u2')]
     expect(proposalTurn({ acp, messages: earlier })).toEqual({ messageId: 'u2', external: true })
     expect(proposalTurn({ acp, messages: [...earlier, user('u3', true)] })).toEqual({ messageId: 'u3', external: false })
+    // A turn during which the agent fetched an MCP prompt read outside content, until the context starts over.
+    const prompted = { ...user('p1'), origin: 'mcp-prompt' } as Message
+    expect(proposalTurn({ acp, messages: [prompted] })).toEqual({ messageId: 'p1', external: true })
+    expect(proposalTurn({ acp, messages: [prompted, user('p2')] })).toEqual({ messageId: 'p2', external: true })
+    expect(proposalTurn({ acp, messages: [prompted, user('p3', true)] })).toEqual({ messageId: 'p3', external: false })
+    // The Host's word that a prompt was fetched through a bridge, which no tool row shows.
+    expect(proposalTurn({ acp: { ...acp, outsideRead: true }, messages: [user('b1')] })).toEqual({ messageId: 'b1', external: true })
+  })
+
+  it('rejects marking MCP prompt provenance for a missing session', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    await expect(bridge.markOutsideContent!('missing')).rejects.toMatchObject({ code: 'task-not-found' })
   })
 
   it('marks a proposal external when the turn before read a page', async () => {
@@ -4616,6 +4629,24 @@ describe('agent context', () => {
     await bridge.prompt(sessionId, 'propose 页面上说的', rid(), {})
     await settled(bridge, sessionId)
     await vi.waitFor(() => expect(proposals).toEqual([expect.objectContaining({ content: '页面上说的', external: true })]))
+  })
+
+  it('marks proposals external once the Host says a prompt entered the context, until the context starts over', async () => {
+    const proposals: MemoryProposalInput[] = []
+    const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { proposeMemory: async input => void proposals.push(input) })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo hi',
+      requestId: rid(),
+      agentContext: context({ proposals: true, brief: undefined }),
+    })
+    await settled(bridge, sessionId)
+    await bridge.markOutsideContent!(sessionId)
+    // No turn was running: no message is marked, the session is.
+    expect((await bridge.detail(sessionId)).messages.some(message => message.origin)).toBe(false)
+    await bridge.prompt(sessionId, 'propose 提示里说的', rid(), {})
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(proposals).toEqual([expect.objectContaining({ content: '提示里说的', external: true })]))
   })
 
   it("empties the proposals file before the session's servers start again once every line was taken, and keeps counting", async () => {

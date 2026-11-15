@@ -44,6 +44,11 @@ export const MCP_ACTIONS = {
     ms: count,
   }),
   /**
+   * A local bridge requested permission to forward `prompts/get`. Written before persisting the session marker.
+   * The detail contains the prompt's hash, with no name, arguments or text.
+   */
+  'mcp.prompt.got': z.strictObject({ serverId, sessionId: opaqueId, promptHash: hex64 }),
+  /**
    * A remote server's login (OAuth), started on this Mac: begun (before anything is listened for or opened), finished
    * (before the tokens are kept), refused or given up (by class), a renewal the authorization server refused, and the
    * tokens' end. Never a token, a code, a state, a client ID or an address.

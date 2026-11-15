@@ -1026,6 +1026,12 @@ export class HarnessHub implements Bridge {
     return member.bridge.cancelSubagent(sessionId, subagentId)
   }
 
+  async markOutsideContent(sessionId: string): Promise<void> {
+    const { bridge } = await this.route(sessionId)
+    if (!bridge.markOutsideContent) throw new AppError(503, 'mcp-prompt-unmarked', '该 Harness 无法保存 MCP 提示的来源')
+    await bridge.markOutsideContent(sessionId)
+  }
+
   /** 「继续等」: asks later about this run's silence; nothing else about the run changes. */
   async keepWaiting(sessionId: string, input: { runId: string; thresholdMs: number }): Promise<KeepWaitingResult> {
     const member = await this.route(sessionId)

@@ -127,6 +127,11 @@ export interface McpGatewayHandlers {
   report(binding: McpBinding, report: { ok: true; tools: string[] } | { ok: false; reason: McpStartFailure }): void
   /** Before a call is sent to the server: its audit record. Rejects, with words for the agent, when it must not go. */
   callStarted(binding: McpBinding, tool: string): Promise<string>
+  /**
+   * Before a local command's bridge forwards `prompts/get`: its audit record (`mcp.prompt.got`). Rejects, with words for
+   * the agent, when it must not go. The bridge forwards it itself; the gateway never sees arguments or the text.
+   */
+  promptStarted?(binding: McpBinding, prompt: string): Promise<void>
   /** After it: the outcome and how long it took. */
   callEnded(binding: McpBinding, callId: string, result: 'ok' | 'error' | 'cancelled' | 'failed', ms: number): void
   /**
@@ -169,6 +174,7 @@ interface Binding {
     launched: boolean
     /** Set only once the launch answered that the server is remote: before it (or after a refused launch) no relay. */
     remoteReady?: boolean
+    localReady?: boolean
   }
   /** A bridge's connections that used this token: ended with it, so the bridge stops its server. */
   sockets: Set<Socket>
@@ -393,6 +399,7 @@ export class ToolGatewayServer implements ToolGateway {
         launch => {
           if (binding.closed) return refuse(id, -32001, REFUSED)
           if ('remote' in launch && launch.remote === true) mcp.remoteReady = true
+          else mcp.localReady = true
           reply({ id, result: launch })
         },
         error => refuse(id, -32000, error instanceof AppError ? error.message : 'The server cannot start now.'),
@@ -416,6 +423,17 @@ export class ToolGatewayServer implements ToolGateway {
       void handlers.callStarted(mcp, args.tool).then(
         callId => (binding.closed ? refuse(id, -32001, REFUSED) : reply({ id, result: { callId } })),
         error => refuse(id, -32000, error instanceof AppError ? error.message : 'The call cannot be made now.'),
+      )
+      return
+    }
+    if (method === 'mcp/prompt') {
+      if (!handlers.promptStarted) return refuse(id, -32601, 'Method not found')
+      if (typeof args.prompt !== 'string' || !args.prompt || args.prompt.length > 256) return refuse(id, -32602, 'Invalid prompt.')
+      // Only a local command this bridge started: a remote server's prompts are not relayed.
+      if (!mcp.localReady) return refuse(id, -32000, 'This server was not started.')
+      void handlers.promptStarted(mcp, args.prompt).then(
+        () => (binding.closed ? refuse(id, -32001, REFUSED) : reply({ id, result: {} })),
+        error => refuse(id, -32000, error instanceof AppError ? error.message : 'The prompt cannot be fetched now.'),
       )
       return
     }

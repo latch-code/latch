@@ -322,3 +322,37 @@ it('offers propose_schedule beside propose_memory, without asking, hands the Hos
     },
   ])
 })
+
+it('marks the context external when the Host says outside content entered it, and the running turn says where from', async () => {
+  const proposed: MemoryProposalInput[] = []
+  const slow: ToolDefinition = {
+    name: 'wait',
+    description: 'wait',
+    parameters: { type: 'object' },
+    requiresApproval: true,
+    execute: async () => ({ text: 'done' }),
+  }
+  const { bridge, classifyToolCall } = await runtime(
+    scripted(
+      [
+        { name: 'wait', arguments: {} },
+        { name: PROPOSE_MEMORY_TOOL, arguments: { content: '答复里说的' } },
+      ],
+      [],
+    ),
+    [slow],
+    async input => {
+      proposed.push(input)
+    },
+  )
+  // Nothing the Host classifies marks this run: only what it is told below does.
+  classifyToolCall.mockResolvedValue('R1')
+  const agentContext = { ...context, proposals: true as const }
+  const { sessionId } = await bridge.createTask({ prompt: 'by hand', requestId: 'm', agentContext })
+  await vi.waitFor(() => expect(bridge.approvals()).toHaveLength(1))
+  await bridge.markOutsideContent!(sessionId)
+  await bridge.decide(bridge.approvals()[0]!.id, 'allow')
+  const detail = await settled(bridge, sessionId)
+  expect(detail.messages.find(message => message.role === 'user')).toMatchObject({ text: 'by hand', origin: 'mcp-prompt' })
+  expect(proposed.map(item => item.external)).toEqual([true])
+})

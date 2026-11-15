@@ -440,6 +440,11 @@ export interface Message {
   text: string
   /** User input request identity, kept across retries and restarts. */
   requestId?: string
+  /**
+   * User: the local `latch-mcp` bridge was allowed to fetch an MCP prompt during this turn. The message says
+   * 来自 MCP 提示, and the context's proposals are marked external until it starts over.
+   */
+  origin?: 'mcp-prompt'
   /** When this input entered the Host queue, before it was actually sent. */
   queuedAt?: string
   /**

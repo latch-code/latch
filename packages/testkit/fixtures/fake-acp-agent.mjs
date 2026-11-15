@@ -794,6 +794,13 @@ async function handle(method, params) {
       if (slowSetup && Object.keys(readDisk()).length > 0) await delay(slowSetup)
       const sessionId = `sess-${randomUUID()}`
       await mountMcp(sessionId, params.mcpServers ?? [], params.cwd)
+      if (Number(env.FAKE_ACP_MCP_PROMPT_ON_NEW) === Object.keys(sessions).length + 1) {
+        const server = mcpServers.get(sessionId)?.find(item => item.name === 'files')
+        const reply = await server?.ask('prompts/get', { name: 'hello' })
+        const text = reply?.result?.messages?.[0]?.content?.text
+        if (typeof text !== 'string') throw rpcError(-32602, 'Expected a local prompt during session/new')
+        log('mcp-start-prompt', { sessionId, text })
+      }
       sessions[sessionId] = { cwd: params.cwd, history: [], model: startModel(), mode: initialMode, effort: firstEffort() }
       // As goose: `_meta.provider` names the session's provider, and one it does not have is refused.
       if (launchGateway?.provider) {
@@ -1367,6 +1374,31 @@ const scenarios = {
     }
     const reply = await server.ask('tools/list')
     say(`${name} tools: ${(reply.result?.tools ?? []).map(item => item.name).join(',')}`)
+    return END
+  },
+  // `mcp-prompt <server> <prompt> [json arguments]` fetches one prompt of that server (`prompts/get`), as a harness that
+  // expands MCP prompts does, and says its text; `mcp-prompts <server>` says the names it lists.
+  'mcp-prompt': async ({ sessionId, input, say }) => {
+    const [, name = '', prompt = '', ...rest] = input.trim().split(/\s+/u)
+    const server = mcpServers.get(sessionId)?.find(item => item.name === name)
+    if (!server) {
+      say(`no MCP server ${name}`)
+      return END
+    }
+    const reply = await server.ask('prompts/get', { name: prompt, arguments: rest.length ? JSON.parse(rest.join(' ')) : {} }, 30_000)
+    const text = reply.result?.messages?.[0]?.content?.text
+    say(`${name}:${prompt}: ${text === undefined ? `error: ${reply.error?.message ?? JSON.stringify(reply)}` : `ok: ${text}`}`)
+    return END
+  },
+  'mcp-prompts': async ({ sessionId, input, say }) => {
+    const [, name = ''] = input.trim().split(/\s+/u)
+    const server = mcpServers.get(sessionId)?.find(item => item.name === name)
+    if (!server) {
+      say(`no MCP server ${name}`)
+      return END
+    }
+    const reply = await server.ask('prompts/list')
+    say(`${name} prompts: ${reply.error ? `error: ${reply.error.message}` : (reply.result?.prompts ?? []).length}`)
     return END
   },
   // Calls `list_skills` on the first MCP server the session holds and says what came back.

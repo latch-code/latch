@@ -552,6 +552,8 @@ public enum PhoneConversation {
     }
     /** The line drawn above a turn whose prompt began a new context. */
     public static func divider(_ turn: PhoneTurn) -> String? { turn.user?["freshContext"].bool == true ? "清空了上下文" : nil }
+    /** Preserves the MCP prompt source label stored on historical messages. */
+    public static func origin(_ turn: PhoneTurn) -> String? { turn.user?["origin"].string == "mcp-prompt" ? "来自 MCP 提示" : nil }
     /** Why the next message starts a new context whether or not it asks: the Host already let go of the old one. */
     public static func clearedNote(_ detail: NativeJSON, engine: String) -> (title: String, line: String)? {
         detail["contextCleared"].bool ? ("下一条消息开始新的上下文", "上下文已经清空，" + engine + " 看不到之前的消息，记录仍留在这里。") : nil

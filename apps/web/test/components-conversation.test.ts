@@ -154,6 +154,15 @@ const Drawer = ({
     ...(requester ? { requester } : {}),
   })
 
+describe('a turn whose agent fetched an MCP prompt', () => {
+  it('says 来自 MCP 提示 above the message, always, and not on an ordinary one', () => {
+    const row = (message: Partial<Message>) =>
+      renderToStaticMarkup(createElement(MessageRow, { message: { id: 'm', role: 'user', text: 'Review the plan.', ...message } }))
+    expect(row({ origin: 'mcp-prompt' })).toContain('来自 MCP 提示')
+    expect(row({})).not.toContain('来自 MCP 提示')
+  })
+})
+
 describe('with the connection down', () => {
   it('names the helper on a failed reply without replacing the Host reason or message identity', () => {
     const message: Message = { id: 'failed-note', role: 'system', state: 'failed', text: '本地验收模型暂时不可用' }

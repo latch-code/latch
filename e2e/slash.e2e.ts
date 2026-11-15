@@ -15,8 +15,9 @@ describe('slash suggestions in the real composer', () => {
       const browser = await (engine === 'webkit' ? webkit.launch() : chromium.launch(browserLaunchOptions()))
       try {
         const owner = await host.enroll({ listener: 'unix' })
+        const mcpCommand = '/mcp:files:review'
         const commands = Array.from({ length: 200 }, (_, index) => ({
-          name: `command-${String(index).padStart(3, '0')}`,
+          name: index === 198 ? mcpCommand.slice(1) : `command-${String(index).padStart(3, '0')}`,
           description: `检查步骤 ${index}`,
           ...(index === 197 ? { input: { hint: '文件或目录' } } : {}),
         }))
@@ -73,7 +74,11 @@ describe('slash suggestions in the real composer', () => {
               const list = page.getByRole('listbox', { name: '命令与提示模板', exact: true })
               await list.waitFor()
               expect(await list.getByRole('option', { selected: true }).count()).toBe(0)
-              expect(await list.getByRole('group', { name: '菜单 Agent', exact: true }).getByRole('option').count()).toBe(201)
+              const harness = list.getByRole('group', { name: '菜单 Agent', exact: true })
+              const reportedPrompt = { name: /mcp:files:review/u }
+              expect(await harness.getByRole('option').count()).toBe(201)
+              expect(await harness.getByRole('option', reportedPrompt).count()).toBe(1)
+              expect(await list.getByRole('option', reportedPrompt).count()).toBe(1)
               const card = await input.locator('xpath=ancestor::form').boundingBox()
               const popup = await page.locator('.ui-suggest:popover-open').boundingBox()
               expect(popup!.y + popup!.height).toBeLessThanOrEqual(card!.y - 5)
@@ -124,20 +129,29 @@ describe('slash suggestions in the real composer', () => {
                   element instanceof HTMLTextAreaElement ? element.value.slice(element.selectionStart, element.selectionEnd) : null,
                 ),
               ).toBe('$ARGUMENTS')
-              await input.fill('/command-198')
+              await input.fill(mcpCommand)
+              await list.getByRole('option', reportedPrompt).waitFor()
+              await input.press('Tab')
+              expect(await input.inputValue()).toBe(`${mcpCommand} `)
+              expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages).toHaveLength(before)
+              await input.fill('')
+              await input.fill(mcpCommand)
+              await list.getByRole('option', reportedPrompt).waitFor()
               const sentBefore = (await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.filter(
-                message => message.role === 'user' && message.text === '/command-198',
+                message => message.role === 'user' && message.text === mcpCommand,
               ).length
               await input.press('Enter')
               await expect
                 .poll(
                   async () =>
                     (await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.filter(
-                      message => message.role === 'user' && message.text === '/command-198',
+                      message => message.role === 'user' && message.text === mcpCommand,
                     ).length,
                 )
                 .toBe(sentBefore + 1)
               await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+              const sent = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+              expect(sent.messages.findLast(message => message.role === 'assistant')?.text).toBe(`echo: ${mcpCommand}`)
               await input.fill('/command')
               await list.waitFor()
               expect(await input.evaluate(element => element === document.activeElement)).toBe(true)
@@ -151,6 +165,19 @@ describe('slash suggestions in the real composer', () => {
               await list.waitFor()
               await input.press('Escape')
               await list.waitFor({ state: 'hidden' })
+              if (width === 390) {
+                const options = page.getByRole('group', { name: '会话选项', exact: true })
+                const permission = options.getByRole('button', { name: /^权限：/u })
+                await permission.scrollIntoViewIfNeeded()
+                const rail = (await options.boundingBox())!
+                const chip = (await permission.boundingBox())!
+                expect(chip.x).toBeGreaterThanOrEqual(rail.x - 1)
+                expect(chip.x + chip.width).toBeLessThanOrEqual(rail.x + rail.width + 1)
+                await permission.click()
+                const sheet = page.getByRole('dialog', { name: '权限', exact: true })
+                await sheet.getByRole('radio').first().waitFor()
+                await page.screenshot({ path: `test-results/slash/permission-${engine}-${width}-${theme}.png`, animations: 'disabled' })
+              }
               if (width === 1440) {
                 let starts = 0
                 page.on('request', request => {

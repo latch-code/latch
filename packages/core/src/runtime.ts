@@ -1140,6 +1140,16 @@ class HarnessRuntime implements Bridge {
       .catch(() => {}) // drive records execution errors; storage failure remains fail-closed.
   }
 
+  async markOutsideContent(sessionId: string): Promise<void> {
+    await this.ready()
+    const turn = this.runs.get(sessionId)?.userMessageId
+    await this.change(sessionId, task => {
+      task.outsideRead = true
+      const message = turn ? task.messages.find(item => item.id === turn && item.role === 'user') : undefined
+      if (message) message.origin = 'mcp-prompt'
+    })
+  }
+
   async cancel(sessionId: string, options: CancelOptions = {}): Promise<boolean> {
     await this.ready()
     this.task(this.state, sessionId)

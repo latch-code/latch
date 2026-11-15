@@ -1087,6 +1087,11 @@ export async function testServer(
   }
 }
 
+/** A prompt in an audit record: the SHA-256 of its server's ID and its name, never the name. */
+export function promptHash(serverIdValue: string, prompt: string): string {
+  return createHash('sha256').update(`${serverIdValue}\0prompt\0${prompt}`).digest('hex')
+}
+
 /** The hash an audit record names a tool by: its server and its name, never the name itself. */
 export function toolHash(serverIdValue: string, tool: string): string {
   return createHash('sha256').update(`${serverIdValue}\0${tool}`).digest('hex')
