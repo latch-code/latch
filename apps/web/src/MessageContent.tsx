@@ -122,11 +122,13 @@ function reasoningOnly() {
   }
 }
 
-const remarkPlugins = [remarkGfm, remarkMath, restrictInlineMath, limitDepth]
+const markdownGuards = [restrictInlineMath, limitDepth]
+const remarkPlugins = [remarkGfm, remarkMath, ...markdownGuards]
 // No GFM and no math: a table, an address or a formula in a thought stays the text it is.
 const reasoningPlugins = [limitDepth, reasoningOnly]
 const REASONING_ELEMENTS = ['p', 'strong', 'em', 'code', 'ul', 'ol', 'li', 'br']
 const replyPlugins = [...remarkPlugins, literalHtml]
+const replyPluginsWithoutMath = [remarkGfm, ...markdownGuards, literalHtml]
 const MarkdownFileContext = createContext<MarkdownFiles>({})
 const relativeBase = 'https://markdown.invalid/'
 const relativeOrigin = new URL(relativeBase).origin
@@ -510,16 +512,19 @@ export const MessageContent = memo(function MessageContent({
   const renderer = useMemo(
     () =>
       createStreamingMarkdown(
-        source =>
-          renderMarkdown({
+        source => {
+          // Math constructs start on a dollar sign, including TeX delimiters already converted during normalization.
+          const plugins = path !== undefined ? remarkPlugins : source.includes('$') ? replyPlugins : replyPluginsWithoutMath
+          return renderMarkdown({
             children: source,
             // A file's preview renders the document and has its source a press away; a reply has no other copy of its words.
-            remarkPlugins: path === undefined ? replyPlugins : remarkPlugins,
+            remarkPlugins: plugins,
             remarkRehypeOptions,
             components: messageComponents,
             urlTransform: safeUrl,
             skipHtml: true,
-          }),
+          })
+        },
         (source, child, index) => (
           <SourceText.Provider key={index} value={source}>
             {isValidElement(child) ? cloneElement(child, { key: 'content' }) : child}

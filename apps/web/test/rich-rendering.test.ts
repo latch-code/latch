@@ -1,12 +1,84 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MessageContent } from '../src/MessageContent.tsx'
+import Markdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import { MessageContent, PLAIN_TEXT_NOTE } from '../src/MessageContent.tsx'
 import { SyntaxLine } from '../src/preview/HighlightedCode.tsx'
 import { TextPreview } from '../src/preview/TextPreview.tsx'
 import { canHighlight, isSyntaxLines, languageForPath } from '../src/preview/highlight-protocol.ts'
 import { normalizeMathDelimiters } from '../src/preview/math.ts'
 import { isSafeDiagramSvg, validDiagramSource } from '../src/preview/diagram-svg.ts'
+
+vi.mock('react-markdown', { spy: true })
+
+const markdown = vi.mocked(Markdown)
+
+describe('math syntax in replies', () => {
+  it('renders a dollar-free reply exactly as with math registered', async () => {
+    const text = [
+      '普通文字 &dollar;，和 [无效跳转](javascript:alert%281%29)。',
+      '| 检查 | 结果 |\n| --- | --- |\n| 内容 | 正常 |',
+      '```ts\nconst value = 1 // 看得见的控制符：\u202E\n```',
+      '<script>不执行</script>',
+    ].join('\n\n')
+    markdown.mockClear()
+    const actual = renderToStaticMarkup(createElement(MessageContent, { text }))
+    expect(markdown.mock.calls).toHaveLength(1)
+    const [options] = markdown.mock.calls[0]!
+    const [gfm, ...guards] = options.remarkPlugins!
+    expect(guards).not.toContain(remarkMath)
+    const { default: parse } = await vi.importActual<typeof import('react-markdown')>('react-markdown')
+    expect(renderToStaticMarkup(parse(options))).toBe(
+      renderToStaticMarkup(parse({ ...options, remarkPlugins: [gfm!, remarkMath, ...guards] })),
+    )
+    expect(actual).toContain('<table>')
+    expect(actual).toContain('const value = 1')
+    expect(actual).toContain('&lt;script&gt;')
+    expect(actual).toContain('\\u{202E}')
+    expect(actual).not.toContain('href="javascript:')
+  })
+
+  it.each([
+    ['价格 $5。', '价格 $5。'],
+    ['先保留 \\$x\\$。', '$x$'],
+    ['内联 \\(x^2\\)。', 'class="message-math"'],
+    ['\\[x+y\\]', 'class="message-math is-display"'],
+  ])('keeps the same parser for %s', (text, visible) => {
+    markdown.mockClear()
+    expect(renderToStaticMarkup(createElement(MessageContent, { text }))).toContain(visible)
+    expect(markdown.mock.calls[0]?.[0].remarkPlugins).toContain(remarkMath)
+  })
+
+  it('uses the full math path in its own live block and when the reply settles', () => {
+    const prefix = '`fixed`\n\n| 检查 | 结果 |\n| --- | --- |\n| 内容 | 正常 |\n\n'
+    const render = (text: string, streaming: boolean) => renderToStaticMarkup(createElement(MessageContent, { text, streaming }))
+    markdown.mockClear()
+    expect(render(prefix + '开始推导', true)).not.toContain('class="message-math"')
+    expect(markdown.mock.calls.every(([options]) => !options.remarkPlugins?.includes(remarkMath))).toBe(true)
+    const text = prefix + '开始推导 \\(x+y\\)。'
+    markdown.mockClear()
+    const live = render(text, true)
+    expect(markdown.mock.calls.map(([options]) => options.remarkPlugins?.includes(remarkMath))).toEqual([false, false, true])
+    expect(live).toContain('class="message-math"')
+    markdown.mockClear()
+    const settled = render(text, false)
+    expect(markdown.mock.calls.map(([options]) => options.remarkPlugins?.includes(remarkMath))).toEqual([true])
+    expect(live.replace(' aria-busy="true"', '')).toBe(settled)
+  })
+
+  it('still shows the original reply as inert text if parsing fails', () => {
+    markdown.mockImplementationOnce(() => {
+      throw new Error('Fixture parser failure')
+    })
+    const actual = renderToStaticMarkup(createElement(MessageContent, { text: '<script>原文</script>\u202E' }))
+    expect(actual).toContain(PLAIN_TEXT_NOTE)
+    expect(actual).toContain('&lt;script&gt;原文&lt;/script&gt;')
+    expect(actual).toContain('\\u{202E}')
+    expect(actual).not.toContain('<script>')
+  })
+})
+
 describe('the file preview', () => {
   it('splits CRLF text into lines without marking the line endings', () => {
     const html = renderToStaticMarkup(createElement(TextPreview, { text: 'one\r\ntwo\r\n', path: 'a.txt' }))
