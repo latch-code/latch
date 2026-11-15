@@ -270,9 +270,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await open('letter.docx')
       expect(await items()).toEqual(['用默认应用打开', '在访达中显示', '复制路径'])
       await close()
-      // A web page and a likely secret: shown in Finder only, with one line saying why.
+      // An HTML file can open as text in an editor. The default app is refused because a browser could use the network.
       await open('page.html')
-      expect(await items()).toEqual(['在访达中显示', '复制路径'])
+      expect(await items()).toEqual(['在编辑器中打开…', '在访达中显示', '复制路径'])
       await menu.getByText('Latch 不直接打开', { exact: true }).waitFor()
       await menu.getByRole('button', { name: '说明', exact: true }).click()
       await menu.getByText('网页和 SVG 用浏览器打开时可以联网；可以在访达中显示后自己打开。', { exact: true }).waitFor()
