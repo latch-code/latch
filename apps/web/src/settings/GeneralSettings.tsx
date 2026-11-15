@@ -8,6 +8,7 @@ import { computerLabel } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { keepAwakeLine, loginItemNote, useShellLifecycle } from '../core/shellLifecycle.ts'
 import {
+  backdropLevel,
   setPreference,
   switchWorkbenchLayout,
   usePreferences,
@@ -21,7 +22,7 @@ import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
 import { LayoutTiles } from './LayoutTiles.tsx'
 import { CustomizationSettings } from './CustomizationSettings.tsx'
-import { MotionChoice } from './AppearanceTiles.tsx'
+import { BackdropTiles, MotionChoice } from './AppearanceTiles.tsx'
 
 const THEMES: Array<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: '跟随系统' },
@@ -188,6 +189,16 @@ export function GeneralSettings({
           <span>仅此设备</span>
         </div>
         <LayoutTiles value={preferences.workbenchLayout} onValueChange={switchWorkbenchLayout} />
+        <div className="layout-choice-head">
+          <span>背景效果</span>
+          <span>仅此设备</span>
+        </div>
+        <BackdropTiles
+          value={backdropLevel(preferences, phone)}
+          onValueChange={value => {
+            setPreference('backdrop', value)
+          }}
+        />
         <div className="layout-choice-head">
           <span>动效</span>
           <span>仅此设备</span>

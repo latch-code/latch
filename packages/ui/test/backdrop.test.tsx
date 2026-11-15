@@ -89,10 +89,14 @@ const WHOLE = { left: 0, top: 0, width: 400, height: 300 }
 const CARD = { left: 120, top: 100, width: 160, height: 100 }
 const CORNER = { left: 0, top: 0, width: 100, height: 80 }
 
-/** A security surface placed over the stage by hand, as one that arrives after the layer started. */
-function surface(host: Element, box: { left: number; top: number; width: number; height: number }): HTMLElement {
+/** A protected surface placed over the stage by hand after the layer started. */
+function surface(
+  host: Element,
+  box: { left: number; top: number; width: number; height: number },
+  mark: 'data-secure' | 'data-backdrop-clear' = 'data-secure',
+): HTMLElement {
   const element = document.createElement('div')
-  element.dataset.secure = ''
+  element.setAttribute(mark, '')
   element.style.cssText = `position: absolute; left: ${box.left}px; top: ${box.top}px; width: ${box.width}px; height: ${box.height}px`
   host.append(element)
   return element
@@ -217,6 +221,41 @@ describe('the background layer', () => {
       expect(drawn(canvas, CARD)).toBe(0)
       await screen.unmount()
     }
+  })
+
+  const fieldHoles = [
+    { placement: 'across a narrow surface', hole: { left: 56, top: 95, width: 7, height: 32 } },
+    { placement: 'across the corner of a surface', hole: { left: 56, top: 111, width: 11, height: 20 } },
+  ]
+  it.for(fieldHoles)('cuts a field link $placement out of the stopped frame', async ({ hole }) => {
+    document.documentElement.dataset.capture = 'still'
+    const stats = reader()
+    const screen = await render(<Stage stats={stats} />)
+    const canvas = screen.container.querySelector('canvas')!
+    // Each box overlaps the middle of a link in the seeded frame, away from the dots at its ends.
+    await expect.poll(() => drawn(canvas, hole)).toBeGreaterThan(0)
+    const frames = stats.read!().frames
+    surface(screen.getByTestId('host').element(), hole)
+    await expect.poll(() => stats.read!().frames).toBeGreaterThan(frames)
+    expect(drawn(canvas, hole)).toBe(0)
+    expect(drawn(canvas, WHOLE)).toBeGreaterThan(0)
+    expect(stats.read!().armed).toBe(false)
+  })
+
+  it('leaves a marked text surface and the input clear in a focused field', async () => {
+    document.documentElement.dataset.capture = 'still'
+    const stats = reader()
+    const screen = await render(<Stage stats={stats} focus />)
+    const canvas = screen.container.querySelector('canvas')!
+    const text = { left: 116, top: 210, width: 70, height: 64 }
+    await expect.poll(() => drawn(canvas, text)).toBeGreaterThan(0)
+    const frames = stats.read!().frames
+    surface(screen.getByTestId('host').element(), text, 'data-backdrop-clear')
+    await expect.poll(() => stats.read!().frames).toBeGreaterThan(frames)
+    expect(drawn(canvas, text)).toBe(0)
+    expect(drawn(canvas, CARD)).toBe(0)
+    expect(drawn(canvas, WHOLE)).toBeGreaterThan(0)
+    expect(stats.read!().armed).toBe(false)
   })
 
   it('keeps a security surface clear of the soft light and of a focused field too', async () => {

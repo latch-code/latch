@@ -336,6 +336,8 @@ Standard 的工具与模型在进程内运行，没有可结束的进程：停�
 
 当前使用完整消息列表，视野外的历史轮次用 `content-visibility` 推迟绘制。捕获阅读锚点时先读轮次的外框，只在与视口相交的轮次中按文档顺序测量消息，避免展开尚未绘制的远处正文。消息列表没有历史分页或虚拟列表，也没有“已发送”阅读状态或预留回复空间。手机视口变化通过 ResizeObserver 参与布局，但浏览器尺寸验收不能等同于 iPhone/Android 真机软键盘和全部惯性滚动行为已经验证。
 
+前台会话只为正在流式传输的正文、展开的思考或旁支回答加可见性标记。`IntersectionObserver` 根据实际正文所处视野暂停背景和活动边。总览、设置、手机页面或离线状态遮住会话时撤下相应标记。背景按固定阅读窗留出内容区域，普通流式跟随滚动沿用这个范围，滚动仍由阅读位置控制器管理。
+
 ## 工作过程的行
 
 源码：[ToolCard.tsx](../apps/web/src/components/ToolCard.tsx)、[shellUnwrap.ts](../apps/web/src/core/shellUnwrap.ts)、[conversation.ts](../apps/web/src/conversation.ts)。这一节只是画法：Host 给的消息、ID、状态与工具输入不变。

@@ -10,8 +10,10 @@ export type { BackdropKind, BackdropStats } from './backdrop-engine.ts'
 export type BackdropLevel = 'off' | 'light' | 'standard'
 
 /** The regions nothing is drawn in: security surfaces always, and regions whose words sit straight on the canvas. */
-const HOLES = '[data-secure], [data-backdrop-clear]'
-const HOLE_ATTRIBUTES = ['data-secure', 'data-backdrop-clear']
+const HARD_HOLES = '[data-secure]'
+const SOFT_HOLES = '[data-backdrop-clear]'
+const HOLES = `${HARD_HOLES}, ${SOFT_HOLES}`
+const HOLE_ATTRIBUTES = ['data-secure', 'data-backdrop-clear', 'data-backdrop-hidden', 'data-backdrop-scroll']
 
 interface BatteryLike extends EventTarget {
   charging: boolean
@@ -142,7 +144,10 @@ export function Backdrop({
     engine.current = created
     created.setRunning(inputs.current.running)
     stats.current?.(() => created.stats())
+    const host = element.parentElement
     const regions = new Set<Element>()
+    let affectsHoles = new WeakMap<Element, boolean>()
+    let floatingSecurity = false
     let frame = 0
 
     const sizes = new ResizeObserver(entries => {
@@ -172,24 +177,47 @@ export function Backdrop({
       created.setInk(inkOf(element), getComputedStyle(element).colorScheme !== 'dark')
       const holes: Hole[] = []
       const found = new Set<Element>()
-      for (const region of document.querySelectorAll(HOLES)) {
-        if (region.contains(element)) continue
+      const soft = host?.querySelectorAll(`${SOFT_HOLES}:not(${HARD_HOLES})`) ?? []
+      floatingSecurity = false
+      for (const region of [...document.querySelectorAll(HARD_HOLES), ...soft]) {
+        if (region.contains(element) || region.closest('[data-backdrop-hidden]')) continue
+        const hard = region.matches(HARD_HOLES)
         found.add(region)
         const at = region.getBoundingClientRect()
-        if (at.width === 0 || at.height === 0 || at.right < box.left || at.left > box.right || at.bottom < box.top || at.top > box.bottom)
-          continue
-        holes.push({ ...place(at), hard: region.matches('[data-secure]') })
+        if (at.width === 0 || at.height === 0) continue
+        if (hard && (!host?.contains(region) || region.closest('dialog[open], [popover]'))) floatingSecurity = true
+        if (at.right < box.left || at.left > box.right || at.bottom < box.top || at.top > box.bottom) continue
+        holes.push({ ...place(at), hard })
       }
       // A region that grows or shrinks is measured again.
       for (const region of found) if (!regions.has(region)) sizes.observe(region)
       for (const region of regions) if (!found.has(region)) sizes.unobserve(region)
       regions.clear()
       for (const region of found) regions.add(region)
+      affectsHoles = new WeakMap()
       created.setHoles(holes)
       if (inputs.current.focus) created.setFocus(place(inputs.current.focusTarget?.current?.getBoundingClientRect() ?? box))
     }
     function schedule(): void {
       if (frame === 0) frame = requestAnimationFrame(measure)
+    }
+    function scrollMovesHole(scroller: Element): boolean {
+      // Only an explicitly protected reading viewport can scroll content while its hole stays in place.
+      if (!scroller.closest('[data-backdrop-scroll]') || scroller.contains(element) || floatingSecurity) return true
+      const focus = inputs.current.focus && inputs.current.focusTarget?.current
+      if (focus && scroller.contains(focus)) return true
+      for (const region of regions) if (region !== scroller && scroller.contains(region)) return true
+      return false
+    }
+    function onScroll(event: Event): void {
+      const target = event.target
+      if (!(target instanceof Element)) {
+        schedule()
+        return
+      }
+      const movesHole = affectsHoles.get(target) ?? scrollMovesHole(target)
+      affectsHoles.set(target, movesHole)
+      if (movesHole) schedule()
     }
     remeasure.current = schedule
     sizes.observe(element)
@@ -204,8 +232,7 @@ export function Backdrop({
       }
     })
     marks.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: HOLE_ATTRIBUTES })
-    // Any scroller on the page moves what is in it: scroll does not bubble, so it is caught on the way down.
-    window.addEventListener('scroll', schedule, { capture: true, passive: true })
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true })
     window.addEventListener('resize', schedule)
 
     // The display's pixel ratio changes when the window moves to another screen or the page is zoomed.
@@ -266,7 +293,7 @@ export function Backdrop({
       theme.disconnect()
       scheme.removeEventListener('change', schedule)
       density?.removeEventListener('change', densityChanged)
-      window.removeEventListener('scroll', schedule, { capture: true })
+      window.removeEventListener('scroll', onScroll, { capture: true })
       window.removeEventListener('resize', schedule)
       window.removeEventListener('blur', blurred)
       window.removeEventListener('focus', focused)

@@ -18,7 +18,7 @@
 - 图标：常用的在 `src/glyphs/`，线宽 `ICON_STROKE`，选中项 `solid`（`test/icon.test.tsx`）。
 - 状态（`src/status.tsx`）：状态是状态词加至多一个 12px 图形，只有运行中的转圈会动；变化只为 `LiveChanges` 纪元不变时看见的变化交叉淡化；循环在视野外暂停，减少动效时停在静帧（`test/status.test.tsx`）。
 - 动效（`src/motion.tsx`）：时长 `--m-*` 与曲线 `--e-*`，离开用 70%，`MOTION`、`EASING` 与令牌一致；高度只经网格行展开，其余只动不透明度与位移；收起的身体是 `hidden="until-found"`；减少动效只剩不超过 120ms 的淡入淡出（`test/motion.test.tsx`）。
-- v9 动效与背景层见 DESIGN；播放只问 `motionAllowed`。
+- 动效用 `motionAllowed`；背景避让安全面、固定阅读窗，在可见流式时暂停（DESIGN）。
 - `TileChoice` 的 `compact` 用 20px 图标，键盘与不可选语义不变。
 - 圆角只取台阶上的值，不用 `corner-shape`（`apps/web/test/styles.test.ts`）。
 - 键位（`Kbd`、按钮的 `keys`）是一段淡色字「⌘N」，不画框。

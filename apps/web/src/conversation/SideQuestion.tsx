@@ -1,6 +1,6 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { HarnessInfo, HostCatalog, Message, TaskDetail, TaskSummary } from '@latch/protocol'
-import { Button, IconButton, InlineNotice, StatusWord, CloseGlyph, CopyGlyph } from '@latch/ui'
+import { Button, IconButton, InlineNotice, StatusWord, CloseGlyph, CopyGlyph, useStreamingLayer } from '@latch/ui'
 import { api, errorMessage, isUncertain, newRequestId } from '../core/api.ts'
 import { MessageContent } from '../MessageContent.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -222,18 +222,21 @@ const quote = (text: string) =>
  */
 export function SideQuestionPanel({
   sourceId,
+  question,
+  observeStream,
   tasks,
   phone,
   onInsert,
   onOpen,
 }: {
   sourceId: string
+  question: SideQuestion | undefined
+  observeStream: boolean
   tasks: readonly TaskSummary[]
   phone: boolean
   onInsert(text: string): void
   onOpen(sessionId: string): void
 }) {
-  const question = useSideQuestion(sourceId)
   const summary = question?.forkId ? tasks.find(task => task.id === question.forkId) : undefined
   const [detail, setDetail] = useState<TaskDetail>()
   const [readError, setReadError] = useState('')
@@ -269,15 +272,17 @@ export function SideQuestionPanel({
   useBackLayer(phone && question !== undefined, () => {
     void closeSideQuestion(sourceId, answering)
   })
-  if (!question) return null
   const answer = answerOf(detail)
+  const stream = useRef<HTMLDivElement>(null)
+  useStreamingLayer(stream, observeStream && question?.phase === 'open' && answer.streaming && !!answer.text)
+  if (!question) return null
   const settled = !!detail && !answer.streaming && (status === undefined || ENDED.has(status))
   const failed = status === 'failed' || status === 'interrupted' || detail?.summary.status === 'failed'
   const close = () => {
     void closeSideQuestion(sourceId, answering)
   }
   return (
-    <aside className="side-question" data-phone={phone ? '' : undefined} aria-label="旁支提问">
+    <aside className="side-question" data-phone={phone ? '' : undefined} aria-label="旁支提问" data-backdrop-clear="">
       <header className="side-question-head">
         <span className="side-question-title">
           /btw
@@ -294,7 +299,7 @@ export function SideQuestionPanel({
       <p className="side-question-question">
         <VisibleText text={question.question} />
       </p>
-      <div className="side-question-answer" aria-live="polite">
+      <div ref={stream} className="side-question-answer" aria-live="polite">
         {question.phase === 'failed' || question.phase === 'unknown' ? (
           <InlineNotice tone={question.phase === 'unknown' ? 'warn' : 'error'}>{question.error ?? '没有开始'}</InlineNotice>
         ) : answer.text ? (

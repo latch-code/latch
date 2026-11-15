@@ -24,7 +24,7 @@ export interface Box {
   bottom: number
 }
 
-/** A region nothing is drawn in. `hard` regions (security surfaces) are also kept clear while the input is focused. */
+/** A region to keep clear. The grid can drop soft regions while focused, but always keeps security surfaces clear. */
 export interface Hole extends Box {
   hard: boolean
 }
@@ -91,6 +91,7 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
   const context = canvas.getContext('2d', { alpha: true })
   let width = 0
   let height = 0
+  let pixelRatio = 1
   let ink: string | null = null
   let power = strength === 'standard' ? 1 : 0.62
   let lightTheme = false
@@ -128,8 +129,7 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
   function clear(x: number, y: number): number {
     let amount = 1
     for (const hole of holes) {
-      // Focused, the lanes have stood down: only the input itself and security surfaces stay clear.
-      if (gather > 0.5 && !hole.hard) continue
+      if (kind === 'grid' && gather > 0.5 && !hole.hard) continue
       const dx = Math.max(hole.left - x, 0, x - hole.right)
       const dy = Math.max(hole.top - y, 0, y - hole.bottom)
       if (dx === 0 && dy === 0) return 0
@@ -176,6 +176,15 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
     }
     particles = next
     visible = new Float32Array(count * 4)
+  }
+
+  /** Called in bitmap coordinates so a fractional box clears every physical pixel it touches. */
+  function eraseFieldBox(target: CanvasRenderingContext2D, box: Box): void {
+    const left = Math.floor(box.left * pixelRatio)
+    const top = Math.floor(box.top * pixelRatio)
+    const right = Math.ceil(box.right * pixelRatio)
+    const bottom = Math.ceil(box.bottom * pixelRatio)
+    target.clearRect(left, top, right - left, bottom - top)
   }
 
   function drawField(target: CanvasRenderingContext2D, dt: number): void {
@@ -259,6 +268,13 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
         target.rect(dots[at]! - size / 2, dots[at + 1]! - size / 2, size, size)
       }
       target.fill()
+    }
+    if (holes.length > 0 || focus) {
+      // A link can cross a hole even when both of its endpoints survived the feather.
+      target.resetTransform()
+      for (const hole of holes) eraseFieldBox(target, hole)
+      if (focus) eraseFieldBox(target, focus)
+      target.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
     }
   }
 
@@ -426,6 +442,7 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
       const [fromWidth, fromHeight] = [width, height]
       width = nextWidth
       height = nextHeight
+      pixelRatio = dpr
       canvas.width = Math.round(nextWidth * dpr)
       canvas.height = Math.round(nextHeight * dpr)
       context.setTransform(dpr, 0, 0, dpr, 0, 0)

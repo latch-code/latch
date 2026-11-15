@@ -73,6 +73,7 @@ interface RowContext {
   questions: readonly Question[]
   /** The reply streaming in this turn, under the ID it keeps once committed. */
   streamingId?: string
+  observeStream?: boolean
   liveReasoning?: LiveReasoning
   coarse: boolean
   /** The connection is down: rows stop spinning and ticking. */
@@ -179,6 +180,7 @@ function WorkRow({ item, context, onRetry }: { item: WorkItem; context: RowConte
       text={item.message.reasoning ?? ''}
       live={streaming && !item.message.text}
       streaming={streaming}
+      observeStream={context.observeStream === true}
       reasoningMs={item.message.reasoningMs}
       liveTimes={streaming ? context.liveReasoning : undefined}
       frozen={context.frozen}
@@ -512,6 +514,7 @@ const TurnView = memo(function TurnView({
                   key={block.message.id}
                   message={block.message}
                   streaming={streaming}
+                  observeStream={rowContext.observeStream === true}
                   frozen={rowContext.frozen}
                   coarse={rowContext.coarse}
                 />
@@ -691,6 +694,8 @@ interface TranscriptProps {
   fallbackElapsed?: number
   /** When the connection was last known to be up, while it is down. */
   frozenAt?: number
+  /** The reply is exposed on the front conversation surface, even when the session is retained under another page. */
+  observeStream?: boolean
   /** Present when this device may send now: the latest turn offers 重试. */
   retry?: RetryAccess
   /** Forks up to a message, with a draft in the composer. */
@@ -732,6 +737,7 @@ export function Transcript(props: TranscriptProps) {
     providerName,
     fallbackElapsed,
     frozenAt,
+    observeStream,
     retry,
     onFork,
     onSource,
@@ -870,6 +876,7 @@ export function Transcript(props: TranscriptProps) {
             approvals: ownApprovals,
             questions: ownQuestions,
             ...(streaming ? { streamingId: liveId } : {}),
+            ...(streaming && observeStream ? { observeStream: true } : {}),
             ...(streaming ? { liveReasoning: { startedAt: detail.liveReasoningStartedAt, ms: detail.liveReasoningMs } } : {}),
             coarse,
             frozen: frozen && trailingLive,

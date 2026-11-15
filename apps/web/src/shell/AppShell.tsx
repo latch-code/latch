@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
 import { conversationShown } from '../composer/useArmed.ts'
 import { overlayDismissed } from '../escapeGrace.ts'
@@ -17,6 +17,7 @@ import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
 import { ConversationHeader } from './ConversationHeader.tsx'
 import {
+  Backdrop,
   Button,
   IconButton,
   LiveChanges,
@@ -62,6 +63,7 @@ import { ShellQuota } from './ShellQuota.tsx'
 import { LayoutSwitch } from './LayoutSwitch.tsx'
 import { WorkbenchSessions } from './WorkbenchSessions.tsx'
 import { useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
+import { backdropLevel } from '../preferences.ts'
 import type { AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 
@@ -70,7 +72,13 @@ type Harness = ReturnType<typeof useHarness>
 /** The signed-in shell. Mounted once per device identity, so per-device state starts fresh. */
 export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const focus = useHomeFocus()
-  const shell = useShellLayout({ harness, snapshot, homeFocus: focus.active, onHomeShortcut: focus.enter, onOpenHomeFiles: focus.reset })
+  const shell = useShellLayout({
+    harness,
+    snapshot,
+    homeFocus: focus.active,
+    onHomeShortcut: focus.enter,
+    onOpenHomeFiles: focus.reset,
+  })
   const homeQueue = useRef<WorkOverviewHandle>(null)
   const focusWasVisible = useRef(false)
   const [preparing, setPreparing] = useState(false)
@@ -240,7 +248,22 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     window.addEventListener('keydown', keydown)
     return () => window.removeEventListener('keydown', keydown)
   }, [homeFocused, closeHomeFocus])
-  const focusGroups = homeFocused ? workGroups(listed.tasks, stopping) : undefined
+  const visibleConversation =
+    route.entry === 'sessions'
+    && selectedId !== null
+    && !covered
+    && !settings
+    && !showPreparation
+    && !(pageMode && infoPage)
+    && !phoneReview.present
+  const level = backdropLevel(shell.preferences, phone)
+  const backdropEnabled = level !== 'off' && shell.space === 'code' && !settings && !showPreparation
+  const homeBackdrop = backdropEnabled && overview
+  const homeGroups = useMemo(
+    () => (homeFocused || homeBackdrop ? workGroups(listed.tasks, stopping) : undefined),
+    [homeFocused, homeBackdrop, listed.tasks, stopping],
+  )
+  const focusGroups = homeFocused ? homeGroups : undefined
   return (
     <FileOpenContext.Provider value={catalog?.features?.filePreview ? openFile : undefined}>
       <LayerHistory value={phone ? openLayer : null}>
@@ -468,6 +491,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     else if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
                   }}
                   className={`workspace ${selectedId === null ? 'is-new' : 'has-task'}`}
+                  data-backdrop-hidden={visibleConversation ? undefined : ''}
                   data-info-page={pageMode && infoPage ? '' : undefined}
                   data-pushed={phone && pushed ? '' : undefined}
                   data-leaving={phone && popping ? '' : undefined}>
@@ -480,7 +504,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
                     <ConversationHeader shell={shell} />
                     {/* The conversation's paper: on phones it rises under the header on the ground. */}
-                    <ConversationView shell={shell} />
+                    <ConversationView shell={shell} visible={visibleConversation} backdrop={backdropEnabled ? level : 'off'} />
                   </div>
                   {page.present && (summary || filesVisible) && (
                     <section
@@ -560,7 +584,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
             <TerminalDock shell={shell} />
             {overview && (
               <section
-                className="workbench-home code-home"
+                className={homeBackdrop ? 'workbench-home code-home ui-backdrop-host' : 'workbench-home code-home'}
                 aria-label="总览"
                 onDragEnter={event => {
                   if (
@@ -584,6 +608,16 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   if (catalog?.features?.attachments === true && homeShell.gate.kind === 'open') dropAttachments(event, attachmentDraft)
                   else if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
                 }}>
+                {homeBackdrop && (
+                  <Backdrop
+                    className="workbench-backdrop"
+                    level={level}
+                    running={connection === 'connected' ? (homeGroups?.[1]?.tasks.length ?? 0) : 0}
+                    focus={homeFocused}
+                    focusTarget={focus.composer}
+                    fixed={homeFocused}
+                  />
+                )}
                 {/* Files dropped anywhere on the home go to its input, as they go to the open session's elsewhere. */}
                 {attachmentDraft.dragging && (
                   <div className="attachment-drop-mask" role="status">
@@ -646,7 +680,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         </p>
                       )}
                       <ConnectionBanners shell={shell} />
-                      <div className="workbench-home-composer">
+                      <div className="workbench-home-composer" data-backdrop-clear="">
                         <SendingBubble shell={homeShell} />
                         <SessionComposer
                           shell={shell}
@@ -674,7 +708,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     )}
                   </div>
                 </div>
-                <div className="code-home-queue" inert={homeFocused || undefined}>
+                <div className="code-home-queue" inert={homeFocused || undefined} data-backdrop-hidden={homeFocused ? '' : undefined}>
                   <div className="code-home-notices">
                     <SetupNotices shell={homeShell} />
                     {!showPreparation && listsFoundHarnesses(catalog, snapshot.tasks.length, shell.access) && (

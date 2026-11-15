@@ -16,7 +16,7 @@ import { Transcript } from '../components/Transcript.tsx'
 import { isLive, liveMessageId, renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
-import { Button, Hint, ICON_STROKE, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph } from '@latch/ui'
+import { Backdrop, Button, Hint, ICON_STROKE, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph, type BackdropLevel } from '@latch/ui'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { DEVICE_FAILURE_STEPS, OWNER_FAILURE_STEPS, SendingBubble, SessionComposer, takeFailureStep } from './SessionComposers.tsx'
@@ -26,13 +26,13 @@ import { TargetHandoffDock } from '../handoffs/TargetHandoff.tsx'
 import { ReturnedResult } from '../handoffs/ReturnedResult.tsx'
 import { placeByTime, quotedSummary } from '../handoffs/model.ts'
 import { useTopicProposals } from '../agents/TopicProposals.tsx'
-import { SideQuestionPanel } from '../conversation/SideQuestion.tsx'
+import { SideQuestionPanel, useSideQuestion } from '../conversation/SideQuestion.tsx'
 import { useTopicResults } from '../agents/TopicResults.tsx'
 import { speakerOf } from '../agents/model.ts'
 import { loginSurface } from '../panel/terminal/loginRuns.ts'
 
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
-export function ConversationView({ shell }: { shell: ShellState }) {
+export function ConversationView({ shell, visible, backdrop }: { shell: ShellState; visible: boolean; backdrop: BackdropLevel }) {
   const {
     current,
     summary,
@@ -80,6 +80,9 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     owner,
     openSettings,
   } = shell
+  const sideQuestion = useSideQuestion(selectedId)
+  const showTranscript = visible && !(phone && sideQuestion)
+  const showBackdrop = showTranscript && backdrop !== 'off'
   const projection = useTranscriptProjection(current)
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
   // A topic of 我的 Agent is a conversation with the helper: it answers, under its own face and name.
@@ -208,7 +211,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
     shell.showHome()
   }
   return (
-    <div className="workspace-body">
+    <div className={showBackdrop ? 'workspace-body ui-backdrop-host' : 'workspace-body'}>
+      {showBackdrop && <Backdrop className="workbench-backdrop" level={backdrop} running={active && frozenAt === undefined ? 1 : 0} />}
       <ConnectionBanners shell={shell} />
       <Banner show={Boolean(sessionBlock) && !workspaceChanged.has(selectedId ?? '')} scope={selectedId ?? ''}>
         {sessionBlock && <InlineNotice tone="neutral">{sessionBlock}</InlineNotice>}
@@ -217,6 +221,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
       {selectedId === null ? null : (
         <div className="conversation">
           <div className="transcript-shell">
+            {showBackdrop && <span className="transcript-backdrop-clear" data-backdrop-clear="" aria-hidden="true" />}
             {findOpen && current && (
               <FindBar
                 sessionId={current.summary.id}
@@ -238,7 +243,13 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                 onReveal={reading.reveal}
               />
             )}
-            <div className="transcript" ref={reading.containerRef} {...reading.handlers} tabIndex={0} aria-label="会话记录">
+            <div
+              className="transcript"
+              ref={reading.containerRef}
+              {...reading.handlers}
+              data-backdrop-scroll={showBackdrop ? '' : undefined}
+              tabIndex={0}
+              aria-label="会话记录">
               <div className="transcript-content" ref={reading.contentRef}>
                 {current === null ? (
                   <>
@@ -261,6 +272,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
                     )}
                     <Transcript
                       detail={current}
+                      observeStream={showTranscript && frozenAt === undefined}
                       projection={projection}
                       onSource={choose}
                       failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
@@ -357,7 +369,7 @@ export function ConversationView({ shell }: { shell: ShellState }) {
               blocks={current ? renderedMessages(current).length : 0}
             />
           </div>
-          <div className="composer-dock">
+          <div className="composer-dock" data-backdrop-clear={showBackdrop ? '' : undefined}>
             {rebuiltInto && (
               <p className="composer-stop history-rebuilt" role="status">
                 <HistoryGlyph size={14} aria-hidden="true" />
@@ -420,6 +432,8 @@ export function ConversationView({ shell }: { shell: ShellState }) {
               <SideQuestionPanel
                 key={selectedId}
                 sourceId={selectedId}
+                question={sideQuestion}
+                observeStream={visible && frozenAt === undefined}
                 tasks={shell.snapshot.tasks ?? []}
                 phone={phone}
                 onInsert={text => {

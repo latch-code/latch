@@ -1,10 +1,7 @@
 import { Backdrop, RunningEdge, SegmentedControl, Spinner, TileChoice, type BackdropLevel } from '@latch/ui'
 import type { DensityPreference, MotionPreference } from '../preferences.ts'
 
-/*
- * 背景效果 and 密度 are not on the settings page yet: the shell does not mount the background layer or read the density
- * roles, so their tiles would change nothing. They join 设置 › 通用 in the batch that wires them.
- */
+/* The density tiles are mounted when product rows use the density preference. */
 
 /**
  * 背景效果 as a small window: the real layer (粒子场) at this strength behind two opaque cards, drawn at two and a half
@@ -14,7 +11,7 @@ function BackdropPreview({ level }: { level: BackdropLevel }) {
   return (
     <span className="appearance-preview" aria-hidden="true">
       <span className="appearance-preview-stage ui-backdrop-host">
-        <Backdrop kind="field" level={level} running={1} />
+        <Backdrop kind="field" level={level} />
         <span className="appearance-preview-card" />
         <span className="appearance-preview-card" />
       </span>

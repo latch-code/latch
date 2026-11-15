@@ -9,7 +9,7 @@ import { latchEnv } from '@latch/host/env'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { backToPhoneSessions, openSession, settleShell } from './helpers/layout.ts'
+import { backToPhoneSessions, closeSettings, openSection, openSession, openSettings, settleShell } from './helpers/layout.ts'
 import { homeInput } from './helpers/workbench.ts'
 
 /** Shows the new draft, which is the home's input: already in sight, or where 新建会话 leads. */
@@ -35,6 +35,11 @@ class ControlledReply {
   append(text: string): void {
     if (this.finished) throw new Error('Cannot append to a finished fixture reply')
     this.push({ type: 'text', text })
+  }
+
+  reasoning(text: string): void {
+    if (this.finished) throw new Error('Cannot append to a finished fixture reply')
+    this.push({ type: 'reasoning', text })
   }
 
   usage(inputTokens: number, outputTokens: number): void {
@@ -126,6 +131,7 @@ describe('streamed messages in the real workspace', () => {
     testHost = await startTestHost({
       uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
       demo: false,
+      hostName: '验收电脑',
       plugins: [plugin],
       providerId: 'controlled-fixture',
     })
@@ -188,6 +194,180 @@ describe('streamed messages in the real workspace', () => {
     await row.waitFor()
     return { row, messageId }
   }
+
+  it('pauses the Code backdrop for a visible live reply and releases the pause when that reply is covered', async () => {
+    const { context, page } = await open(1440, 900)
+    try {
+      const { id, reply: history } = await start(page, '准备阅读旧的会话记录')
+      history.append(Array.from({ length: 60 }, (_, index) => `旧记录第 ${index + 1} 段。`).join('\n\n'))
+      history.finish()
+      await expect.poll(async () => (await host.bridge.detail(id)).summary.status).toBe('idle')
+      await page.getByText('旧记录第 60 段。', { exact: true }).waitFor()
+      const prompt = '检查可见回复的背景暂停'
+      const reply = new ControlledReply()
+      replies.set(prompt, reply)
+      await page.getByRole('textbox', { name: '继续对话' }).fill(prompt)
+      await page.getByRole('button', { name: '发送', exact: true }).click()
+      const canvas = page.locator('canvas.workbench-backdrop')
+      await canvas.waitFor()
+      expect(await canvas.count()).toBe(1)
+      await page.bringToFront()
+      await canvas.evaluate(element => {
+        const layer = element as HTMLCanvasElement
+        const draw = layer.getContext('2d')!
+        const clear = draw.clearRect.bind(draw)
+        let frames = 0
+        let measurements = 0
+        const measure = layer.getBoundingClientRect.bind(layer)
+        layer.getBoundingClientRect = () => {
+          layer.dataset.measurements = String(++measurements)
+          return measure()
+        }
+        draw.clearRect = (x, y, w, h) => {
+          if (x === 0 && y === 0 && Math.abs(w - layer.clientWidth) < 1 && Math.abs(h - layer.clientHeight) < 1)
+            layer.dataset.frames = String(++frames)
+          clear(x, y, w, h)
+        }
+      })
+      const frames = async () => Number(await canvas.getAttribute('data-frames'))
+      const visibleStream = () => page.locator('html').getAttribute('data-streaming-view')
+      const repeatedFrames = async () => {
+        const previous = await frames()
+        await page.evaluate(() => new Promise<void>(done => setTimeout(done, 200)))
+        return (await frames()) - previous
+      }
+      await expect.poll(frames).toBeGreaterThan(1)
+      await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+      await expect.poll(repeatedFrames).toBe(0)
+      const blurred = await frames()
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await expect.poll(frames).toBeGreaterThan(blurred)
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await expect.poll(repeatedFrames).toBe(0)
+      const reduced = await frames()
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      await expect.poll(frames).toBeGreaterThan(reduced)
+      reply.append('这段正文还在生成。')
+      await expect.poll(async () => (await host.bridge.detail(id)).liveText).toContain('这段正文还在生成。')
+      await (await liveRow(page, id)).row.getByText('这段正文还在生成。').waitFor()
+      await expect.poll(visibleStream).toBe('')
+      await expect.poll(repeatedFrames).toBe(0)
+      await page.screenshot({ path: 'test-results/streaming/backdrop-live-1440-light.png', animations: 'disabled' })
+
+      const beforeGrowth = await geometry(page)
+      const measurements = await canvas.getAttribute('data-measurements')
+      reply.append('\n\n' + Array.from({ length: 12 }, (_, index) => `新增正文第 ${index + 1} 段。`).join('\n\n'))
+      await page.getByText('新增正文第 12 段。', { exact: true }).waitFor()
+      await expect.poll(async () => (await geometry(page)).top).toBeGreaterThan(beforeGrowth.top)
+      await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
+      expect(await canvas.getAttribute('data-measurements')).toBe(measurements)
+
+      const beforeScroll = await frames()
+      await page.locator('.transcript').hover()
+      await page.mouse.wheel(0, -1800)
+      const latest = page.getByRole('button', { name: '回到最新', exact: true })
+      await latest.waitFor()
+      await expect.poll(visibleStream).toBeNull()
+      await expect.poll(frames).toBeGreaterThan(beforeScroll)
+      await latest.click()
+      await expect.poll(visibleStream).toBe('')
+
+      await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
+      await page.locator('.code-home > canvas.workbench-backdrop').waitFor()
+      expect(await canvas.count()).toBe(1)
+      await expect.poll(visibleStream).toBeNull()
+
+      await openSession(page, id)
+      await expect.poll(visibleStream).toBe('')
+      reply.finish()
+      await expect.poll(visibleStream).toBeNull()
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('releases the visible stream marker when a phone leaves the live conversation', async () => {
+    const { context, page } = await open(390, 844)
+    try {
+      const { id, reply } = await start(page, '检查手机离开流式会话')
+      reply.append('仍在准备手机的回答。')
+      await page.getByText('仍在准备手机的回答。', { exact: true }).waitFor()
+      const visibleStream = () => page.locator('html').getAttribute('data-streaming-view')
+      await expect.poll(visibleStream).toBe('')
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await page.screenshot({ path: 'test-results/streaming/backdrop-live-390-dark.png', animations: 'disabled' })
+      await backToPhoneSessions(page)
+      await expect.poll(visibleStream).toBeNull()
+      expect((await host.bridge.detail(id)).summary.status).toBe('running')
+      await openSession(page, id)
+      await expect.poll(visibleStream).toBe('')
+      reply.finish()
+      await expect.poll(visibleStream).toBeNull()
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('observes an expanded thinking block when the same live reply reasons again after prose', async () => {
+    const { context, page } = await open(1440, 900)
+    try {
+      const { id, reply } = await start(page, '检查正文之后继续思考')
+      reply.reasoning('先读第一份材料。')
+      await page.getByText('先读第一份材料。', { exact: true }).waitFor()
+      reply.append('第一段正文。')
+      await page.getByText('第一段正文。', { exact: true }).waitFor()
+      const thinking = page.locator('.thinking').last()
+      await thinking.locator('.thinking-toggle').click()
+      const body = thinking.locator('.thinking-scroll')
+      await expect.poll(() => body.getAttribute('data-streaming')).toBeNull()
+      reply.reasoning('\n\n再核对第二份材料。')
+      await expect.poll(async () => (await host.bridge.detail(id)).liveReasoning).toContain('再核对第二份材料。')
+      await expect.poll(() => body.getAttribute('data-streaming')).toBe('')
+      await expect.poll(() => thinking.locator('.thinking-toggle').getAttribute('aria-expanded')).toBe('true')
+      reply.append('\n\n第二段正文。')
+      await page.getByText('第二段正文。', { exact: true }).waitFor()
+      await expect.poll(() => body.getAttribute('data-streaming')).toBeNull()
+      reply.finish()
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('applies the device backdrop choice after leaving settings and reloading', async () => {
+    const { context, page } = await open(1440, 900)
+    try {
+      const canvas = page.locator('canvas.workbench-backdrop')
+      await canvas.waitFor()
+      expect(await canvas.getAttribute('data-kind')).toBe('field')
+      const settings = await openSettings(page)
+      await openSection(settings, '通用')
+      const backdrop = settings.getByRole('radiogroup', { name: '背景效果' })
+      expect(await backdrop.getByRole('radio', { name: '标准', exact: true }).getAttribute('aria-checked')).toBe('true')
+      await backdrop.getByRole('radio', { name: '关', exact: true }).click()
+      await closeSettings(settings)
+      await canvas.waitFor({ state: 'detached' })
+      await page.reload()
+      await connected(page)
+      expect(await canvas.count()).toBe(0)
+
+      await openSettings(page)
+      await openSection(settings, '通用')
+      expect(await backdrop.getByRole('radio', { name: '关', exact: true }).getAttribute('aria-checked')).toBe('true')
+      await backdrop.getByRole('radio', { name: '轻', exact: true }).click()
+      await closeSettings(settings)
+      await canvas.waitFor()
+      expect(await canvas.count()).toBe(1)
+      await page.setViewportSize({ width: 768, height: 844 })
+      await homeInput(page).click()
+      await page.locator('.home-focus-frame[data-active]').waitFor()
+      expect(await canvas.getAttribute('data-fixed')).toBe('')
+      expect(await page.locator('.app-shell').evaluate(shell => getComputedStyle(shell, '::before').visibility)).toBe('hidden')
+      await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+      await page.screenshot({ path: 'test-results/streaming/backdrop-focus-768-dark.png', animations: 'disabled' })
+    } finally {
+      await context.close()
+    }
+  })
 
   it('preserves the live row through commit, bounds HTTP work, and respects a reader scrolling upward', async () => {
     const { context, page, counts } = await open(1280, 820)

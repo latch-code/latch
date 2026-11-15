@@ -1,3 +1,25 @@
+.app-shell[data-home-focus]:has(> .code-home.ui-backdrop-host) {
+  background: var(--canvas);
+}
+
+.app-shell[data-home-focus]:has(> .code-home.ui-backdrop-host)::before {
+  visibility: hidden;
+}
+
+.app-shell[data-home-focus] > .code-home.ui-backdrop-host .home-focus-frame {
+  background: transparent;
+}
+
+/* Keep the reading column clear without measuring a transcript whose text is changing. */
+.transcript-backdrop-clear {
+  position: absolute;
+  inset-block: 0;
+  inset-inline: 0;
+  width: min(100%, var(--content-width) + 2 * var(--gutter));
+  margin-inline: auto;
+  pointer-events: none;
+}
+
 @media (min-width: 768px) {
   .app-shell[data-entry='sessions'] {
     --shell-inset: var(--sp-12);

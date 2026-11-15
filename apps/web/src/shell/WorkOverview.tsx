@@ -298,6 +298,7 @@ export function WorkOverview({
     <section
       ref={ref ? overview : undefined}
       className="work-overview"
+      data-backdrop-clear=""
       data-work-decision-navigation={ref ? '' : undefined}
       tabIndex={ref ? -1 : undefined}
       data-layout={layout}

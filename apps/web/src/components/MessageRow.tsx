@@ -22,6 +22,7 @@ import {
   Shimmer,
   Swap,
   Tooltip,
+  useStreamingLayer,
   CopyButton,
   ChevronRightGlyph,
   EnterGlyph,
@@ -67,6 +68,7 @@ export function ThinkingRow({
   text,
   live,
   streaming,
+  observeStream = false,
   reasoningMs,
   liveTimes,
   frozen = false,
@@ -77,6 +79,7 @@ export function ThinkingRow({
   live: boolean
   /** The block is the live reply. */
   streaming: boolean
+  observeStream?: boolean
   reasoningMs?: number
   liveTimes?: LiveReasoning
   /** The connection is down: nothing is known to move, so it neither shimmers nor counts. */
@@ -86,12 +89,16 @@ export function ThinkingRow({
 }) {
   const [choice, setChoice] = useState<boolean | null>(null)
   const open = choice ?? live
-  const sections = useMemo(() => reasoningSections(text, live), [text, live])
+  const started = parseTime(liveTimes?.startedAt)
+  // A reply can begin another visible reasoning span after its first prose.
+  const reasoningStreaming = live || (streaming && started !== undefined && liveTimes?.ms === undefined)
+  const stream = useRef<HTMLDivElement>(null)
+  useStreamingLayer(stream, observeStream && reasoningStreaming && open && !frozen && !!text)
+  const sections = useMemo(() => reasoningSections(text, reasoningStreaming), [text, reasoningStreaming])
   const title = live ? sections.at(-1)?.title : undefined
   // Parsed once it has been open here, and kept from then on so folding it does not redraw it.
   const [rich, setRich] = useState(false)
   if (open && !rich) setRich(true)
-  const started = parseTime(liveTimes?.startedAt)
   // Re-renders every second while the live reasoning counts up.
   useTicker(live && !frozen && started !== undefined ? 'second' : false)
   const settledMs = streaming ? parseDuration(liveTimes?.ms) : parseDuration(reasoningMs)
@@ -147,7 +154,7 @@ export function ThinkingRow({
           setChoice(true)
         }}>
         <div className="thinking-body">
-          <div className="thinking-scroll">
+          <div ref={stream} className="thinking-scroll">
             <div className="thinking-sections">
               {sections.map((section, index) => (
                 <Fragment key={index}>
@@ -158,7 +165,7 @@ export function ThinkingRow({
                   )}
                   {section.body
                     && (rich ? (
-                      <ReasoningContent text={section.body} streaming={live && index === sections.length - 1} />
+                      <ReasoningContent text={section.body} streaming={reasoningStreaming && index === sections.length - 1} />
                     ) : (
                       <p className="reasoning-text">
                         <VisibleText text={section.body} />
@@ -457,8 +464,20 @@ function SystemNote({
  * An answer block's prose. While it is the live reply its newest text shows at an even pace (`usePacedText`); the
  * message keeps its whole text, and once it settles the whole text is what is drawn.
  */
-function AssistantMessage({ message, streaming, frozen }: { message: Message; streaming: boolean; frozen: boolean }) {
+function AssistantMessage({
+  message,
+  streaming,
+  frozen,
+  observeStream,
+}: {
+  message: Message
+  streaming: boolean
+  frozen: boolean
+  observeStream: boolean
+}) {
   const text = usePacedText(message.text, streaming && !frozen)
+  const stream = useRef<HTMLDivElement>(null)
+  useStreamingLayer(stream, observeStream && streaming && !frozen && !!message.text)
   return (
     <article
       className={`message message-assistant ${streaming && !frozen ? 'is-live' : ''}`}
@@ -466,7 +485,7 @@ function AssistantMessage({ message, streaming, frozen }: { message: Message; st
       aria-label={streaming ? '正在生成的回复' : undefined}>
       <MessageAttachments attachments={message.attachments} />
       {message.text && (
-        <div className="message-text">
+        <div ref={stream} className="message-text">
           <MessageContent text={text} streaming={streaming} />
         </div>
       )}
@@ -482,6 +501,7 @@ export const MessageRow = memo(
   function MessageRow({
     message,
     streaming = false,
+    observeStream = false,
     frozen = false,
     coarse = false,
     arrived = false,
@@ -495,6 +515,7 @@ export const MessageRow = memo(
   }: {
     message: Message
     streaming?: boolean
+    observeStream?: boolean
     /** The connection is down: the caret stops saying more is coming. */
     frozen?: boolean
     /** Touch: a tap shows a message's time and actions. */
@@ -530,10 +551,11 @@ export const MessageRow = memo(
         />
       )
     if (message.role === 'system') return <SystemNote message={message} onRetry={onRetry} voice={voice} {...(action ? { action } : {})} />
-    return <AssistantMessage message={message} streaming={streaming} frozen={frozen} />
+    return <AssistantMessage message={message} streaming={streaming} frozen={frozen} observeStream={observeStream} />
   },
   (a, b) =>
     a.streaming === b.streaming
+    && a.observeStream === b.observeStream
     && a.frozen === b.frozen
     && a.coarse === b.coarse
     && a.arrived === b.arrived
