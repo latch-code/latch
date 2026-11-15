@@ -69,17 +69,33 @@ describe('the shell', () => {
     await page.context().close()
   })
 
-  it('keeps the draft across pages, without a modal, and Esc does nothing on a page', async () => {
+  it('keeps the same Home and draft under the settings modal, and returns focus with Escape', async () => {
     const page = await open(1440, 900, '壳层切换')
     const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
     await input.fill('切换入口时保留的草稿')
+    const retained = await input.elementHandle()
+    const settings = page.getByRole('dialog', { name: '设置', exact: true })
     await openEntry(page, '设置')
-    expect(await page.locator('dialog[open]').count()).toBe(0)
-    await page.locator('.settings-page').waitFor()
-    expect(await page.locator('.settings-panel .settings-title').textContent()).toBe('通用')
+    await settings.waitFor()
+    expect(await retained?.evaluate(element => element.isConnected)).toBe(true)
+    expect(
+      await retained?.evaluate(element => {
+        element.focus()
+        return element === document.activeElement
+      }),
+    ).toBe(false)
+    expect(await settings.locator('.settings-title').textContent()).toBe('通用')
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('关闭设置')
     await page.keyboard.press('Escape')
-    await page.locator('.settings-page').waitFor()
-    await openSessions(page)
+    await settings.waitFor({ state: 'detached' })
+    const opener = page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true })
+    expect(await opener.evaluate(element => element === document.activeElement)).toBe(true)
+    expect(await input.inputValue()).toBe('切换入口时保留的草稿')
+    await openEntry(page, '设置')
+    await settings.waitFor()
+    await page.reload()
+    await connected(page)
+    await settings.waitFor({ state: 'detached' })
     expect(await input.inputValue()).toBe('切换入口时保留的草稿')
     await page.context().close()
   })
@@ -93,8 +109,9 @@ describe('the shell', () => {
     expect((await box(page, 'main.workspace')).left).toBe(0)
     await page.keyboard.press('Alt+Comma')
     await page.locator('.settings-page').waitFor()
-    await page.locator('.titlebar').getByRole('button', { name: '返回会话', exact: true }).click()
-    await page.locator('.settings-page').waitFor({ state: 'detached' })
+    await page.getByRole('tab', { name: '通用', exact: true }).waitFor()
+    await openSessions(page)
+    expect(await page.locator('.app-shell').getAttribute('data-sidebar')).toBe('collapsed')
     await page.context().close()
   })
 
@@ -107,17 +124,24 @@ describe('the shell', () => {
     await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
     await list.getByRole('button', { name: '设置', exact: true }).click()
     await page.locator('.settings-page').waitFor()
-    expect(await box(page, '.settings-nav-pane')).toMatchObject({ left: 0, width: 200 })
+    const panel = await box(page, '.settings-overlay')
+    const categories = await box(page, '.settings-nav-pane')
+    expect(panel.left).toBeGreaterThan(0)
+    expect(categories.left).toBeGreaterThanOrEqual(panel.left)
+    expect(categories.width).toBe(200)
     await openSessions(page)
+    await list.waitFor()
+    expect(await list.getByRole('button', { name: '设置', exact: true }).evaluate(element => element === document.activeElement)).toBe(true)
+    await list.getByRole('button', { name: '关闭会话列表', exact: true }).click()
     await noHorizontalOverflow(page)
     await page.context().close()
   })
 
-  it('gives a phone a tab bar of Code, 我的 Agent and 设置', async () => {
+  it('gives a phone a tab bar with Settings and quota, and a full-screen settings stack', async () => {
     const page = await open(390, 844, '壳层手机')
     expect(await page.locator('.titlebar').count()).toBe(0)
     const tabs = page.getByRole('navigation', { name: '主导航', exact: true })
-    expect(await tabs.getByRole('button').allTextContents()).toEqual(['Code', '我的 Agent', '设置'])
+    expect(await tabs.getByRole('button').allTextContents()).toEqual(['Code', '我的 Agent', '设置', '额度'])
     const bar = await box(page, '.phone-tabs')
     expect(bar.top + bar.height).toBe(844)
     await tabs.getByRole('button', { name: '设置', exact: true }).click()
@@ -126,6 +150,10 @@ describe('the shell', () => {
     await page.locator('.settings-layout[data-level="section"]').waitFor()
     await page.goBack()
     await page.locator('.settings-layout[data-level="root"]').waitFor()
+    expect(await box(page, '.settings-overlay')).toEqual({ left: 0, top: 0, width: 390, height: 844 })
+    await page.goBack()
+    await page.locator('.settings-page').waitFor({ state: 'detached' })
+    expect(await tabs.getByRole('button', { name: '设置', exact: true }).evaluate(element => element === document.activeElement)).toBe(true)
     await page.context().close()
   })
 
@@ -148,14 +176,23 @@ describe('the shell', () => {
     await allData(page)
     const sidebar = page.locator('#session-navigation')
     await sidebar.getByRole('button', { name: '定时任务', exact: true }).click()
-    await page.getByRole('region', { name: '通用 的资料', exact: true }).waitFor()
-    await page.locator('.agent-schedules').getByText('没有定时任务', { exact: true }).waitFor()
-    await page.getByRole('region', { name: '通用 的资料', exact: true }).getByRole('button', { name: '关闭资料', exact: true }).click()
-    await page.getByRole('button', { name: '设置', exact: true }).filter({ visible: true }).click()
-    const settings = page.locator('.settings-page')
+    const profile = page.getByRole('region', { name: '通用 的资料', exact: true })
+    await profile.waitFor()
+    await profile.locator('.agent-schedules').getByText('没有定时任务', { exact: true }).waitFor()
+    const closeProfile = profile.getByRole('button', { name: '关闭资料', exact: true })
+    const box = await profile.boundingBox()
+    expect(box?.width).toBeGreaterThan(200)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(1440)
+    await page.screenshot({ path: 'test-results/schedule-after-1440.png', animations: 'disabled' })
+    await closeProfile.click()
+    await openEntry(page, '设置')
+    const settings = page.locator('.settings-overlay:modal')
     await settings.getByRole('tab', { name: '通用', exact: true }).waitFor()
     expect(await settings.getByRole('tab', { name: 'Agent', exact: true }).count()).toBe(0)
     expect(await settings.getByRole('tab', { name: '定时任务', exact: true }).count()).toBe(0)
+    await openSessions(page)
+    await page.locator('.agents-page[data-chat]').waitFor()
+    expect(await page.locator('.app-shell').getAttribute('data-entry')).toBe('agents')
     await page.context().close()
   })
 
@@ -206,9 +243,8 @@ describe('the shell', () => {
         await page.keyboard.press(keys)
         await page.locator('.settings-page').waitFor()
       }
-      expect(await page.locator('dialog[open]').count()).toBe(0)
+      expect(await page.locator('dialog[open]').count()).toBe(1)
       expect(await page.locator('.app-shell').getAttribute('data-inspector')).toBe(panelBefore)
-      expect(await page.locator('.inspector-column').isVisible()).toBe(false)
       expect(await selected()).toBe(before)
       await openSessions(page)
       expect(await findBar(page).count()).toBe(0)
@@ -216,12 +252,15 @@ describe('the shell', () => {
       await page.context().close()
     })
 
-    it('still starts a new session, and the old number keys do nothing', async () => {
+    it('holds workbench shortcuts inside settings until it closes', async () => {
       const page = await openOnSettings(1440, '壳层快捷键入口')
       await page.keyboard.press('Alt+Digit4')
-      await page.locator('.settings-page[data-entry="settings"]').waitFor()
       await page.keyboard.press('Alt+KeyN')
+      await page.locator('.settings-page[data-entry="settings"]').waitFor()
+      expect(await page.locator('.workbench-home').count()).toBe(0)
+      await page.keyboard.press('Escape')
       await page.locator('.settings-page').waitFor({ state: 'detached' })
+      await page.keyboard.press('Alt+KeyN')
       // 新会话 is the home with its input focused; the session stays open under it.
       await page.locator('.workbench-home').waitFor()
       await expect.poll(() => homeInput(page).evaluate(element => element === document.activeElement)).toBe(true)
@@ -230,8 +269,12 @@ describe('the shell', () => {
       await page.context().close()
     })
 
-    it('takes a palette command for the session back to the session', async () => {
+    it('keeps the palette behind settings and restores its shortcut after closing', async () => {
       const page = await openOnSettings(1440, '壳层面板')
+      const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+      await page.keyboard.press('Control+K')
+      expect(await palette.count()).toBe(0)
+      await openSessions(page)
       const run = async (label: string) => {
         await page.keyboard.press('Control+K')
         const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
@@ -352,8 +395,11 @@ describe('the shell', () => {
       else await page.locator('.workbench-session-row').filter({ hasText: prompt }).waitFor()
       await settleShell(page)
       await destinationPage.waitFor()
-      if (destination === 'settings') expect(await page.locator('.app-shell').getAttribute('data-entry')).toBe('settings')
-      else expect(await page.locator('.app-shell').getAttribute('data-all-sessions')).not.toBeNull()
+      if (destination === 'settings') {
+        await page.locator('.settings-overlay:modal').waitFor()
+        await openSessions(page)
+        await page.locator('main.workspace .user-bubble').getByText(prompt, { exact: true }).waitFor()
+      } else expect(await page.locator('.app-shell').getAttribute('data-all-sessions')).not.toBeNull()
       await page.context().close()
     })
   })
@@ -475,7 +521,7 @@ describe('the shell', () => {
     })
     const detail = () => owner.json<TaskDetail>(`tasks/${sessionId}`)
     await expect.poll(async () => (await detail()).summary.status).toBe('idle')
-    const short = '测试一下'
+    const short = '估算机评流程所需 TPM'
     const long = '这是一条很长的会话标题，仍然需要保留重命名入口。'.repeat(5)
 
     for (const [width, height] of [
@@ -558,16 +604,89 @@ describe('the shell', () => {
             await header.locator('.topbar-computer').getByText('验收电脑', { exact: true }).waitFor()
             const initial = await checkLine(false)
             const title = heading(short).getByRole('button', { name: short, exact: true })
+            const pencilOpacity = () => pencil.evaluate(element => getComputedStyle(element).opacity)
+            const titleBackground = () => title.evaluate(element => getComputedStyle(element).backgroundColor)
+            const record = async (state: string) => {
+              if (width === 1440)
+                await page.screenshot({ path: `${output}/title-${state}-${layout}-${width}-dark.png`, animations: 'disabled' })
+            }
+            await page.mouse.move(0, 0)
+            await expect.poll(pencilOpacity).toBe('0')
+            const atRest = await titleBackground()
+            await record('rest')
+            await header.locator('.topbar-computer').hover()
+            expect(await titleBackground()).toBe(atRest)
+            const metaPencil = await pencil.evaluate(async element => {
+              await Promise.all(element.getAnimations().map(animation => animation.finished))
+              return getComputedStyle(element).opacity
+            })
+            await record('metadata-hover')
             await title.hover()
-            await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+            await expect.poll(pencilOpacity).toBe('1')
+            await expect.poll(titleBackground).not.toBe(atRest)
             expect(await checkLine(false)).toEqual(initial)
+            const titleGeometry = await title.evaluate(button => {
+              const text = button.querySelector('.topbar-title-text')!
+              const range = document.createRange()
+              range.selectNodeContents(text)
+              const line = range.getBoundingClientRect()
+              const span = text.getBoundingClientRect()
+              const box = button.getBoundingClientRect()
+              return {
+                buttonHeight: box.height,
+                spanHeight: span.height,
+                glyphHeight: line.height,
+                spanFits: span.top >= box.top && span.bottom <= box.bottom,
+                glyphFits: line.top >= box.top && line.bottom <= box.bottom,
+                x: (line.left + line.right) / 2,
+                edges: [line.top + 1, line.bottom - 1],
+              }
+            })
+            await record('title-hover')
+            expect.soft(metaPencil, `${width} ${layout} metadata hover`).toBe('0')
+            expect.soft(titleGeometry, `${width} ${layout} title hit box ${JSON.stringify(titleGeometry)}`).toMatchObject({
+              spanFits: true,
+              glyphFits: true,
+            })
             await shoot(`short-${layout}`)
+            const menu = header.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: '重命名', exact: true }) })
+            for (const [edge, y] of titleGeometry.edges.entries()) {
+              await page.mouse.move(titleGeometry.x, y)
+              await expect.poll(() => title.evaluate(element => element.matches(':hover'))).toBe(true)
+              const hit = await title.evaluate((element, point) => element.contains(document.elementFromPoint(point.x, point.y)), {
+                x: titleGeometry.x,
+                y,
+              })
+              expect(hit).toBe(true)
+              await page.mouse.click(titleGeometry.x, y)
+              await menu.waitFor()
+              expect(await title.getAttribute('aria-expanded')).toBe('true')
+              expect(await titleBackground()).not.toBe(atRest)
+              if (edge === 0) await record('menu-open')
+              await page.keyboard.press('Escape')
+              await menu.waitFor({ state: 'hidden' })
+              expect(await title.getAttribute('aria-expanded')).toBe('false')
+              await expect.poll(() => title.evaluate(element => element === document.activeElement)).toBe(true)
+            }
+            await page.mouse.click(1, 1)
+            await title.hover()
+            await pencil.hover()
+            expect(await title.evaluate(element => element.matches(':focus-visible'))).toBe(false)
+            await expect.poll(pencilOpacity).toBe('1')
+            await expect.poll(titleBackground).toBe(atRest)
+            await expect
+              .poll(() => pencil.evaluate(element => getComputedStyle(element, '::before').backgroundColor))
+              .not.toBe('rgba(0, 0, 0, 0)')
+            await record('pencil-hover')
             await page.mouse.move(0, 0)
             await title.focus()
+            await record('title-focus')
             await page.keyboard.press('Tab')
             expect(await pencil.evaluate(element => element === document.activeElement)).toBe(true)
             await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
             expect(await checkLine(false)).toEqual(initial)
+            expect(await pencil.evaluate(element => element.matches(':focus-visible'))).toBe(true)
+            await record('pencil-focus')
             await page.keyboard.press('Enter')
             await field.waitFor()
             expect(await field.inputValue()).toBe(short)
@@ -576,6 +695,10 @@ describe('the shell', () => {
             await dialog.waitFor({ state: 'hidden' })
             await heading(short).waitFor()
             expect((await detail()).summary.title).toBe(short)
+            await header.locator('.topbar-crumb-button').focus()
+            await expect.poll(pencilOpacity).toBe('0')
+            await record('blur')
+            await title.hover()
             await pencil.click()
           }
           await field.fill(long)
@@ -601,6 +724,12 @@ describe('the shell', () => {
             await checkLine(true)
             await heading(long).hover()
             await expect.poll(() => pencil.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+            await pencil.click()
+            await field.waitFor()
+            expect(await field.inputValue()).toBe(long)
+            await dialog.getByRole('button', { name: '取消', exact: true }).click()
+            await dialog.waitFor({ state: 'hidden' })
+            expect((await detail()).summary.title).toBe(long)
           }
           await noHorizontalOverflow(page)
           await shoot(`long-${layout}`)

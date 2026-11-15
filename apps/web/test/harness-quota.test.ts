@@ -198,6 +198,11 @@ describe('what is drawn', () => {
     expect(panel).toContain('aria-valuetext="已用 68%"')
   })
 
+  it('labels every figure as already used in a host-wide panel', () => {
+    const panel = renderToStaticMarkup(createElement(QuotaPanel, { view: quotaView(ok, NOW)!, showUsed: true }))
+    expect(text(panel)).toBe('5 小时 已用 12% 2 小时 5 分钟后重置 每周 已用 68% 5 天 23 小时后重置 Plus · n•••@f•••.com')
+  })
+
   it('leaves the balance out for an account with no prepaid balance', () => {
     expect(quotaView({ ...ok, plan: 'supergrok', balanceCents: 0 }, NOW)?.facts).toEqual(['SuperGrok', 'n•••@f•••.com'])
     expect(quotaView({ ...ok, balanceCents: 1 }, NOW)?.facts.at(-1)).toBe('余额 $0.01')

@@ -43,7 +43,7 @@ describe('older Host without a catalog', () => {
       'about',
     ])
     const html = renderToStaticMarkup(
-      createElement(SettingsPage, { snapshot: legacy, section: 'general', onSection: noop, onChanged: noop }),
+      createElement(SettingsPage, { snapshot: legacy, section: 'general', onClose: noop, onSection: noop, onChanged: noop }),
     )
     expect(html).not.toContain('settings-tab-engines')
   })

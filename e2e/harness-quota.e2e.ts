@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
-import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
 
@@ -144,6 +144,8 @@ describe('a Harness’s limits beside its control', () => {
     })
     sessions.codex = await begin('codex', 'echo hi')
     sessions.other = await begin('other', 'echo hi')
+    const warning = { status: 'allowed_warning', rateLimitType: 'five_hour', resetsAt: seconds(Date.now() + 2.5 * HOUR), utilization: 0.93 }
+    sessions.claude = await begin('claude', `limit ${JSON.stringify(warning)}`)
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })
@@ -257,8 +259,6 @@ describe('a Harness’s limits beside its control', () => {
   })
 
   it('shows a warning Claude gave as the alert mark with its reset time, without a ring or a figure', async () => {
-    const warning = { status: 'allowed_warning', rateLimitType: 'five_hour', resetsAt: seconds(Date.now() + 2.5 * HOUR), utilization: 0.93 }
-    sessions.claude = await begin('claude', `limit ${JSON.stringify(warning)}`)
     expect(await quota('claude')).toMatchObject({ windows: [{ kind: 'five-hour', state: 'near' }], state: 'near' })
     const page = await open(1440, 'light', sessions.claude)
     try {
@@ -276,5 +276,140 @@ describe('a Harness’s limits beside its control', () => {
       await page.context().close()
     }
     await capture('warning', sessions.claude, '2 小时后重置')
+  })
+
+  it('workbench quota gathers current Host reports near settings, with a focus-neutral preview, a keyboard panel and a touch sheet', async () => {
+    for (const width of [1440, 768, 390]) {
+      for (const theme of ['light', 'dark'] as const) {
+        const phone = width === 390
+        const context = await browser.newContext({
+          viewport: { width, height: 900 },
+          colorScheme: theme,
+          hasTouch: phone,
+          reducedMotion: 'reduce',
+        })
+        const page = await context.newPage()
+        page.setDefaultTimeout(15_000)
+        try {
+          await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+          const control = page.locator('button.host-quota-trigger:visible')
+          const panel = page.getByRole('dialog', { name: 'Harness 额度', exact: true })
+          if (phone) await control.tap()
+          else {
+            const editor = page.locator('.workbench-home form.composer textarea')
+            await editor.focus()
+            await control.hover()
+            await panel.waitFor()
+            expect(await editor.evaluate(element => element === document.activeElement)).toBe(true)
+            await panel.hover()
+            await expect.poll(() => panel.isVisible()).toBe(true)
+            await page.keyboard.press('Escape')
+            await panel.waitFor({ state: 'hidden' })
+            expect(await editor.evaluate(element => element === document.activeElement)).toBe(true)
+            await control.focus()
+            await control.press('Enter')
+            await panel.getByRole('button', { name: '关闭额度' }).waitFor()
+          }
+          const codex = panel.getByRole('region', { name: 'Codex', exact: true })
+          const claude = panel.getByRole('region', { name: 'Claude Agent', exact: true })
+          await codex.getByText('已用 68%', { exact: true }).waitFor()
+          await codex.getByText('Plus · p•••@e•••.com', { exact: true }).waitFor()
+          await claude.getByText('将用尽', { exact: true }).waitFor()
+          expect(await panel.getByRole('region', { name: 'Other', exact: true }).count()).toBe(0)
+          expect(await claude.getByRole('meter').count()).toBe(0)
+          expect(await panel.getByRole('meter').count()).toBe(2)
+          await noHorizontalOverflow(page)
+          await page.screenshot({ path: `${OUTPUT}/host-panel--${width}-${theme}.png`, animations: 'disabled' })
+          if (phone) {
+            expect(await panel.evaluate(element => element.tagName)).toBe('DIALOG')
+            const underSheet = await control.evaluate(element => {
+              const box = element.getBoundingClientRect()
+              const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+              return {
+                sheetTakesTap: Boolean(hit?.closest('.ui-sheet:modal')),
+                nativeHighlight: getComputedStyle(element).getPropertyValue('-webkit-tap-highlight-color'),
+              }
+            })
+            expect(underSheet).toEqual({ sheetTakesTap: true, nativeHighlight: 'rgba(0, 0, 0, 0)' })
+            await panel.getByRole('button', { name: '关闭', exact: true }).tap()
+          } else {
+            await page.keyboard.press('Tab')
+            expect(await panel.isVisible()).toBe(true)
+            await page.keyboard.press('Escape')
+          }
+          await panel.waitFor({ state: 'hidden' })
+          if (phone) {
+            expect(await control.evaluate(element => element === document.activeElement)).toBe(true)
+          } else {
+            // If Tab left the non-modal panel, closing preserves the focus already elsewhere.
+            await control.focus()
+            await control.press('Enter')
+            const close = panel.getByRole('button', { name: '关闭额度' })
+            await expect.poll(() => close.evaluate(element => element === document.activeElement)).toBe(true)
+            await page.keyboard.press('Escape')
+            await panel.waitFor({ state: 'hidden' })
+            expect(await control.evaluate(element => element === document.activeElement)).toBe(true)
+            await control.press('Enter')
+            await panel.waitFor()
+            await page.keyboard.press('Control+K')
+            const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+            await palette.waitFor()
+            await panel.waitFor({ state: 'hidden' })
+            await page.keyboard.press('Escape')
+            await palette.waitFor({ state: 'hidden' })
+          }
+        } finally {
+          await context.close()
+        }
+      }
+    }
+  })
+
+  it('workbench quota stays scrollable offline, expires, and uses only the newly opened Host', async () => {
+    const nextHost = await startTestHost({ demo: false })
+    const context = await browser.newContext({ viewport: { width: 800, height: 400 }, reducedMotion: 'reduce' })
+    const page = await context.newPage()
+    try {
+      await page.clock.install()
+      await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+      const control = page.locator('button.host-quota-trigger:visible')
+      const panel = page.getByRole('dialog', { name: 'Harness 额度', exact: true })
+      await control.hover()
+      await panel.waitFor()
+      await panel.hover()
+      await page.mouse.wheel(0, 130)
+      await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+      await panel.getByRole('region', { name: 'Claude Agent', exact: true }).waitFor()
+      await context.setOffline(true)
+      await panel.getByText('连接中断，显示上次收到的额度。', { exact: true }).waitFor()
+      await panel.getByText('已用 68%', { exact: true }).waitFor()
+      await page.clock.fastForward(150 * HOUR)
+      await panel.getByText('尚未收到有效额度。', { exact: true }).waitFor()
+      expect(await panel.getByRole('region').count()).toBe(0)
+
+      await context.setOffline(false)
+      await page.clock.setSystemTime(Date.now())
+      await page.reload()
+      await connected(page)
+      await control.focus()
+      await control.press('Enter')
+      await panel.getByText('已用 68%', { exact: true }).waitFor()
+
+      const id = await page.evaluate(async () => (await (await fetch('/link/api/snapshot')).json()).device.id as string)
+      await owner.json(`devices/${id}`, { method: 'PATCH', body: { scopes: ['view', 'run'] } })
+      await panel.waitFor({ state: 'hidden' })
+      await control.focus()
+      await control.press('Enter')
+      await panel.getByText('已用 68%', { exact: true }).waitFor()
+      await enrollBrowser(page, nextHost, { scopes: ['view', 'run', 'admin'] })
+      await panel.waitFor({ state: 'hidden' })
+      await control.focus()
+      await control.press('Enter')
+      await panel.getByText('尚未收到有效额度。', { exact: true }).waitFor()
+      expect(await panel.getByText(/p•••@e•••/u).count()).toBe(0)
+    } finally {
+      await context.close()
+      await nextHost.close()
+    }
   })
 })
