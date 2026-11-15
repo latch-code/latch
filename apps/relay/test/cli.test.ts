@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
-import { mkdtemp, readFile, rm, stat, writeFile, chmod } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,4 +57,32 @@ it('refuses an existing public state directory before creating a registration se
   await chmod(directory, 0o755)
   await expect(run(process.execPath, [...args, 'init', '--data-dir', directory])).rejects.toMatchObject({ code: 1 })
   await expect(stat(join(directory, 'registration-token'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+it.each(['install', 'upgrade'])('takes a directory lock without truncating a target behind a planted symlink during %s', async command => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-relay-maintenance-'))
+  directories.push(root)
+  const data = join(root, 'data'),
+    bin = join(root, 'bin'),
+    victim = join(root, 'operator-file'),
+    compose = join(root, 'compose.yaml')
+  await mkdir(data)
+  await mkdir(bin)
+  await writeFile(victim, 'keep the complete operator file')
+  await symlink(victim, join(data, '.maintenance.lock'))
+  await writeFile(compose, 'services: {}\n')
+  await writeFile(join(bin, 'flock'), '#!/bin/bash\ntest -d /dev/fd/9\n', { mode: 0o700 })
+  await writeFile(join(bin, 'docker'), '#!/bin/bash\nexit 7\n', { mode: 0o700 })
+  const image = `relay.example/latch@sha256:${'a'.repeat(64)}`
+  const script = fileURLToPath(new URL(`../deploy/${command}.sh`, import.meta.url))
+  const inputs = command === 'install' ? ['--used-bytes', '0'] : [image, 'https://relay.example/healthz']
+  await expect(
+    run('/bin/bash', [script, compose, ...inputs], {
+      env: {
+        PATH: `${bin}:/usr/bin:/bin`,
+        LATCH_RELAY_IMAGE: image,
+        LATCH_RELAY_DATA_DIR: data,
+      },
+    }),
+  ).rejects.toMatchObject({ code: 7 })
+  expect(await readFile(victim, 'utf8')).toBe('keep the complete operator file')
 })

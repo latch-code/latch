@@ -83,8 +83,11 @@ export class RelayControl {
     })
     void this.receive()
   }
-  static async connect(options: RelayEndpoint & { registrationToken?: Uint8Array; signal?: AbortSignal }): Promise<RelayControl> {
+  static async connect(
+    options: RelayEndpoint & { registrationToken?: Uint8Array; signal?: AbortSignal; guardWrites?: () => boolean },
+  ): Promise<RelayControl> {
     const peer = await dial(options, '/v1/h', options.signal)
+    if (options.guardWrites) peer.guardWrites(options.guardWrites)
     try {
       await peer.send({ type: 'hello' })
       const hello = await peer.receive(5000)

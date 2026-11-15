@@ -15,7 +15,7 @@ type RelayAddition = { base: string; input: RelayProfileInput; request: Omit<Pen
 /**
  * The phone-access lifecycle. The LAN listener binds a physical private address by itself and is open while the pairing
  * sheet has a QR out or a phone can use it; nothing turns it on but that. A listener fixed by the Host's start options
- * stays as it was started. The renderer never receives transport secrets.
+ * stays as it was started. The Host never returns relay registration keys or route seeds.
  */
 export class NativeSettings {
   private changes = Promise.resolve()
@@ -145,6 +145,11 @@ export class NativeSettings {
   private relayConflict(): AppError {
     return new AppError(409, 'request-conflict', '同一个请求标识不能用于不同的中继配置。')
   }
+  async settleRelayWrite(): Promise<void> {
+    if (!(await this.options.profiles.settleWrite())) return
+    this.options.controller.reconcile()
+    this.options.changed?.()
+  }
   async addRelay(plan: RelayAddition, actor: AuditActor, stepup: StepupMethod, authorize: () => void): Promise<void> {
     if (this.adding) throw new AppError(409, 'native-relay-pending', '正在验证这次中继，请稍后继续。')
     const { profiles, controller, audit } = this.options
@@ -168,11 +173,12 @@ export class NativeSettings {
         if (error instanceof AppError) throw error
         throw new AppError(503, 'native-relay-unconfirmed', '无法确认中继可用。请核对地址、证书和注册令牌，再继续原请求或放弃。')
       })
+      controller.rememberVerifiedRegistration(pending.profile, proof)
       await profiles.installRelay(pending, plan.base, () => {
         current()
         if (!proof.permitted()) throw new AppError(403, 'native-relay-egress', '当前的出站规则不允许连接这个中继。')
       })
-      controller.useVerifiedRegistration(pending.profile, proof)
+      controller.reconcile()
       this.options.changed?.()
     } finally {
       this.adding = false
@@ -191,23 +197,15 @@ export class NativeSettings {
     return { audited }
   }
   removeRelay(relayId: string, actor: AuditActor): Promise<{ audited: boolean }> {
-    return this.lower(actor, input => input.filter(item => item.relayId !== relayId))
+    return this.lower(actor, { relayId })
   }
   removeDirectory(actor: AuditActor): Promise<{ audited: boolean }> {
-    return this.lower(actor, input => input, null)
+    return this.lower(actor, { directory: true })
   }
-  private lower(
-    actor: AuditActor,
-    edit: (custom: Array<{ relayId: string; url: string; spkiHash: string }>) => Array<{ relayId: string; url: string; spkiHash: string }>,
-    directory?: null,
-  ): Promise<{ audited: boolean }> {
+  private lower(actor: AuditActor, target: { relayId: string } | { directory: true }): Promise<{ audited: boolean }> {
     return this.serial(async () => {
-      const state = this.options.profiles.snapshot(),
-        before = this.options.profiles.configHash(),
-        custom = state.profiles.filter(item => !item.builtIn).map(({ relayId, url, spkiHash }) => ({ relayId, url, spkiHash })),
-        kept = edit(custom)
-      await this.options.profiles.configure(state.direct ?? null, kept, undefined, undefined, directory)
-      if (directory === null) await this.options.directory?.configure()
+      const result = await this.options.profiles.removeObserver(target)
+      if ('directory' in target) await this.options.directory?.configure()
       this.options.changed?.()
       this.options.controller.reconcile()
       let audited = true
@@ -216,7 +214,7 @@ export class NativeSettings {
         .append({
           action: 'native.config.changed',
           actor,
-          detail: { before, after: this.options.profiles.configHash(), lowering: true, direct: false, relayCount: kept.length },
+          detail: { ...result, lowering: true, direct: false },
         })
         .catch(() => {
           audited = false

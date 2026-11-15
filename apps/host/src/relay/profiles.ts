@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto'
-import { constants } from 'node:fs'
+import { constants, renameSync } from 'node:fs'
 import { lstat, mkdir, open } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { isIP } from 'node:net'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
-import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
+import { canonicalJson, sha256Hex, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
 import type { OfficialRelay } from './official.ts'
 import {
   directoryConfigSchema,
@@ -91,6 +91,7 @@ const schema = z.strictObject({
 export type RelayProfile = z.infer<typeof profile>
 export type PendingRelay = z.infer<typeof pendingRelaySchema>
 type State = z.infer<typeof schema>
+const writeUnknown = () => new AppError(503, 'native-relay-write-unknown', '中继配置的保存结果尚未确认，请继续原请求。')
 export function secretBytes(value: string): Buffer {
   return Buffer.from(value.slice(value.indexOf('.') + 1), 'base64url')
 }
@@ -99,6 +100,7 @@ export function secretBytes(value: string): Buffer {
 export class RelayProfiles {
   private readonly path: string
   private state: State
+  private pendingWrite?: State
   private tail = Promise.resolve()
   private constructor(path: string, state: State) {
     this.path = path
@@ -135,12 +137,15 @@ export class RelayProfiles {
     return structuredClone(this.state)
   }
   configHash(): string {
+    return this.hashConfiguration(this.state)
+  }
+  private hashConfiguration(state: State): string {
     return sha256Hex(
       canonicalJson({
-        direct: this.state.direct ?? null,
-        directory: this.state.directory ?? null,
-        profiles: this.state.profiles,
-        revision: this.state.configRevision ?? 0,
+        direct: state.direct ?? null,
+        directory: state.directory ?? null,
+        profiles: state.profiles,
+        revision: state.configRevision ?? 0,
       }),
     )
   }
@@ -187,7 +192,7 @@ export class RelayProfiles {
           rotations: 0,
         },
       })
-    })
+    }, authorize)
   }
   installRelay(pending: PendingRelay, base: string, authorize: () => void): Promise<void> {
     return this.change(draft => {
@@ -199,7 +204,7 @@ export class RelayProfiles {
       draft.profiles.push(draft.pendingRelay.profile)
       delete draft.pendingRelay
       this.advanceConfiguration(draft, { requestId: pending.requestId, requestHash: pending.requestHash })
-    })
+    }, authorize)
   }
   cancelRelay(requestId: string, authorize: () => void): Promise<boolean> {
     return this.change(draft => {
@@ -208,6 +213,19 @@ export class RelayProfiles {
       this.keepReceipt(draft, { requestId, requestHash: draft.pendingRelay.requestHash, cancelled: true })
       delete draft.pendingRelay
       return true
+    }, authorize)
+  }
+  removeObserver(target: { relayId: string } | { directory: true }): Promise<{ before: string; after: string; relayCount: number }> {
+    return this.change(draft => {
+      const before = this.hashConfiguration(draft)
+      if ('relayId' in target) draft.profiles = draft.profiles.filter(profile => profile.builtIn || profile.relayId !== target.relayId)
+      else draft.directory = null
+      this.advanceConfiguration(draft)
+      return {
+        before,
+        after: this.hashConfiguration(draft),
+        relayCount: draft.profiles.filter(profile => !profile.builtIn).length,
+      }
     })
   }
   private checkBase(expectedHash?: string): void {
@@ -224,20 +242,56 @@ export class RelayProfiles {
     draft.generation++
     if (receipt) this.keepReceipt(draft, receipt)
   }
-  private change<Result>(edit: (draft: State) => Result): Promise<Result> {
-    const operation = this.tail.then(async () => {
-      const draft = this.snapshot(),
-        result = edit(draft)
-      schema.parse(draft)
-      await writeFileAtomic(this.path, `${JSON.stringify(draft)}\n`)
-      this.state = draft
-      return result
-    })
+  settleWrite(): Promise<boolean> {
+    return this.pendingWrite ? this.serial(() => this.confirmDurability()) : Promise.resolve(false)
+  }
+  private async confirmDurability(): Promise<boolean> {
+    const pending = this.pendingWrite
+    if (!pending) return false
+    try {
+      await syncDirectory(dirname(this.path))
+    } catch {
+      throw writeUnknown()
+    }
+    this.state = pending
+    this.pendingWrite = undefined
+    return true
+  }
+  private serial<Result>(run: () => Promise<Result>): Promise<Result> {
+    const operation = this.tail.then(run)
     this.tail = operation.then(
       () => {},
       () => {},
     )
     return operation
+  }
+  private change<Result>(edit: (draft: State) => Result, authorize?: () => void): Promise<Result> {
+    return this.serial(async () => {
+      await this.confirmDurability()
+      const draft = this.snapshot(),
+        result = edit(draft)
+      schema.parse(draft)
+      let renamed = false
+      try {
+        await writeFileAtomic(this.path, `${JSON.stringify(draft)}\n`, {
+          fs: {
+            open: (path, flags, mode) => open(path, flags, mode),
+            async rename(from, to) {
+              // A revocation cannot interleave with the last permission check and the irreversible replacement.
+              authorize?.()
+              renameSync(from, to)
+              renamed = true
+            },
+          },
+        })
+      } catch (error) {
+        if (!renamed) throw error
+        this.pendingWrite = draft
+        throw writeUnknown()
+      }
+      this.state = draft
+      return result
+    })
   }
   /** The caller must obtain local OS consent and record its intent before replacing observers or their fixed values. */
   replace(input: RelayProfileInput[]): Promise<void> {

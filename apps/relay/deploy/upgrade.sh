@@ -11,12 +11,13 @@ relay_alternate=$3
 relay_force=${4:-}
 relay_previous=${LATCH_RELAY_IMAGE:?Set the currently deployed immutable image}
 relay_data=${LATCH_RELAY_DATA_DIR:?Set the private state directory}
-[[ $relay_compose == /* && $relay_data == /* && -f $relay_compose && -d $relay_data ]]
+[[ $relay_compose == /* && $relay_data == /* && -f $relay_compose && -d $relay_data && ! -L $relay_data ]]
 [[ $relay_next =~ ^[a-zA-Z0-9._:/-]+@sha256:[a-f0-9]{64}$ && $relay_previous =~ ^[a-zA-Z0-9._:/-]+@sha256:[a-f0-9]{64}$ ]]
 [[ -z $relay_force || $relay_force == --force ]]
 python3 -c 'import sys,urllib.parse;u=urllib.parse.urlsplit(sys.argv[1]);assert u.scheme=="https" and u.hostname and not u.username and not u.password and not u.query and not u.fragment' "$relay_alternate"
 for relay_tool in docker curl flock python3; do command -v "$relay_tool" >/dev/null; done
-exec 9>"$relay_data/.maintenance.lock"
+# Use the same read-only directory lock as the installer.
+exec 9<"$relay_data"
 flock -n 9
 relay_compose_command() { docker compose -f "$relay_compose" "$@"; }
 relay_status() { relay_compose_command exec -T relay /opt/latch/node --disable-sigusr1 /opt/latch/latch-relay.mjs status --data-dir /var/lib/latch-relay; }

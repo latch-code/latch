@@ -51,7 +51,7 @@ pnpm relay status --data-dir /srv/latch-relay
 pnpm relay health --data-dir /srv/latch-relay
 ```
 
-容器方式复用 [Dockerfile](../apps/relay/deploy/Dockerfile)、[Compose](../apps/relay/deploy/compose.yaml) 与锁定的构建材料。映射的状态目录归容器的 UID/GID 65532；在容器内使用 `/var/lib/latch-relay` 配置路径及 `/opt/latch/latch-relay-tls` 网关路径。按 Compose 文件里的要求提供镜像摘要、状态目录、实测内存/进程/临时目录上限和健康检查配置。同样先通过容器的 `init` 写入私有配置，再准备证书和公网限额。运行 [install.sh](../apps/relay/deploy/install.sh) 可以一次检查并启动，第一次设置账本后等待健康检查。已校准的账本保持原样。换镜像时使用已有的排空和回退流程。
+容器方式复用 [Dockerfile](../apps/relay/deploy/Dockerfile)、[Compose](../apps/relay/deploy/compose.yaml) 与锁定的构建材料。映射的状态目录归容器的 UID/GID 65532；在容器内使用 `/var/lib/latch-relay` 配置路径及 `/opt/latch/latch-relay-tls` 网关路径。按 Compose 文件里的要求提供镜像摘要、状态目录、实测内存/进程/临时目录上限和健康检查配置。同样先通过容器的 `init` 写入私有配置，再准备证书和公网限额。运行 [install.sh](../apps/relay/deploy/install.sh) 可以一次检查并启动，第一次设置账本后等待健康检查。已校准的账本保持原样。安装与升级共用私有状态目录的只读目录锁，换镜像使用已有的排空和回退流程。
 
 ```sh
 apps/relay/deploy/install.sh /absolute/path/to/compose.yaml --used-bytes USED_BYTES
@@ -67,8 +67,8 @@ pnpm relay profile --data-dir /srv/latch-relay \
   --output /srv/latch-relay/latch-connection.json
 ```
 
-在桌面端「设置 → 设备 → 关于连接」选「导入配置」，核对地址后选「验证并添加」，在这台 Mac 的系统窗口确认。Host 先审计，在现有出站规则下锁定解析地址，核对 TLS 证书、服务器名、公钥指纹与节点标识，再实际登记一个将随配置保存的真实路由。只有确认登记成功且配置与回执已写入才在签名地址簿中发布。连接局域网/内网中继时，需由本机管理员先在出站规则放行相应 `host:port`；导入只确认该中继，不改变全局出站规则。
+在桌面端「设置 → 设备 → 关于连接」选「导入配置」，核对地址后选「验证并添加」，在这台 Mac 的系统窗口确认。Host 先审计，在现有出站规则下锁定解析地址，核对 TLS 证书、服务器名、公钥指纹与节点标识，再实际登记一个将随配置保存的真实路由。只有确认登记成功且配置与回执已写入才在签名地址簿中发布。验证连接在发送准入帧时复查权限与出站规则，文件原子替换前再查一次。连接局域网/内网中继时，需由本机管理员先在出站规则放行相应 `host:port`；导入只确认该中继，不改变全局出站规则。
 
-网络或写入失败后，页面可继续同一待确认请求。私有配置中保存的原路由种子在重试时复用；放弃将阻止未完成请求发布。保存后的条目显示真实控制链路状态，可由本机管理员移除。已有设备身份保持有效，之后不会再分发已移除节点的新地址。
+网络或写入失败后，页面可继续同一待确认请求。私有配置中保存的原路由种子在重试时复用。文件已替换、目录同步结果未知时，先确认该次保存，再允许后续提交。放弃将阻止未完成请求发布。保存后的条目显示真实控制链路状态，可由本机管理员移除。已有设备身份保持有效，之后不会再分发已移除节点的新地址。
 
 中继看到连接 IP、时间、填充后的大小和流向。会话正文、Host 身份证明和设备授权仍由两端建立和验证。公开 `/healthz` 只反映节点是否接受连接，完整验证须使用手机或原生客户端走实际配对、跨网连接、重连和撤销。官方中继尚未部署。

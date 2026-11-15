@@ -2,11 +2,13 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
+import * as files from '@latch/core/node-kit'
 import { RelayProfiles } from '../src/relay/profiles.ts'
 
 const folders: string[] = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const directory of folders.splice(0)) await rm(directory, { recursive: true, force: true })
 })
 async function fixture() {
@@ -110,6 +112,65 @@ it('abandoning a reserved relay keeps its receipt and blocks a late install', as
   expect(saved.snapshot().pendingRelay).toBeUndefined()
   expect(saved.snapshot().profiles).toEqual([])
   expect(saved.relayReceipt(request.requestId)?.cancelled).toBe(true)
+})
+it.each(['admin', 'egress'])('checks %s again after flushing the temporary profile and before replacing it', async guard => {
+  const { directory, profiles } = await fixture()
+  const node = input()
+  const request = { requestId: randomUUID(), requestHash: 'd'.repeat(64), deviceId: 'fixture' }
+  const base = profiles.configHash()
+  const pending = await profiles.reserveRelay(node, request, base, () => {})
+  let authorized = true
+  const write = files.writeFileAtomic
+  vi.spyOn(files, 'writeFileAtomic').mockImplementationOnce((path, contents, options) => {
+    const commit = options?.fs
+    if (!commit) {
+      authorized = false
+      return write(path, contents, options)
+    }
+    return write(path, contents, {
+      ...options,
+      fs: {
+        ...commit,
+        rename(from, to) {
+          authorized = false
+          return commit.rename(from, to)
+        },
+      },
+    })
+  })
+  await expect(
+    profiles.installRelay(pending, base, () => {
+      if (!authorized) throw new Error(`Lost ${guard} permission`)
+    }),
+  ).rejects.toThrow(`Lost ${guard} permission`)
+  const saved = await RelayProfiles.open(directory)
+  expect(saved.snapshot().profiles).toEqual([])
+  expect(saved.snapshot().pendingRelay?.requestId).toBe(request.requestId)
+  expect(saved.relayReceipt(request.requestId)).toBeUndefined()
+})
+it('keeps an unconfirmed replacement from being overwritten and settles its original receipt', async () => {
+  const { directory, profiles } = await fixture()
+  const node = input()
+  const request = { requestId: randomUUID(), requestHash: 'f'.repeat(64), deviceId: 'fixture' }
+  const base = profiles.configHash()
+  const pending = await profiles.reserveRelay(node, request, base, () => {})
+  const write = files.writeFileAtomic
+  const atomic = vi.spyOn(files, 'writeFileAtomic').mockImplementationOnce(async (...args) => {
+    await write(...args)
+    throw new Error('Directory sync outcome unavailable')
+  })
+  await expect(profiles.installRelay(pending, base, () => {})).rejects.toMatchObject({ code: 'native-relay-write-unknown' })
+  expect(profiles.snapshot().profiles).toEqual([])
+  expect(profiles.relayReceipt(request.requestId)).toBeUndefined()
+  vi.spyOn(files, 'syncDirectory').mockRejectedValueOnce(new Error('Directory still unavailable'))
+  await expect(profiles.nextGeneration()).rejects.toMatchObject({ code: 'native-relay-write-unknown' })
+  expect(atomic).toHaveBeenCalledTimes(1)
+  expect(await profiles.settleWrite()).toBe(true)
+  expect(profiles.relayReceipt(request.requestId)?.requestHash).toBe(request.requestHash)
+  expect(profiles.snapshot().profiles[0]?.relayId).toBe(node.relayId)
+  expect((await RelayProfiles.open(directory)).relayReceipt(request.requestId)?.requestHash).toBe(request.requestHash)
+  expect(await profiles.settleWrite()).toBe(false)
+  expect(atomic).toHaveBeenCalledTimes(1)
 })
 it('refuses symlink or overly readable configuration while preserving invalid bytes', async () => {
   const { directory } = await fixture(),

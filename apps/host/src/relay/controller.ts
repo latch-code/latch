@@ -61,9 +61,12 @@ export class HostRelayController {
     if (this.checking?.state.leases.some(lease => !lease.permitted())) this.checking.state.abort.abort()
     // The built-in relays run while a phone can use them, and only a phone paired on the LAN can get here.
     const reachable = this.options.devices.nativeReachable()
-    const profiles = this.options.profiles.snapshot().profiles.filter(profile => !profile.builtIn || reachable)
+    const snapshot = this.options.profiles.snapshot()
+    const profiles = snapshot.profiles.filter(profile => !profile.builtIn || reachable)
     for (const [id, retained] of this.resumeTokens) {
-      const profile = profiles.find(item => item.relayId === id)
+      const profile =
+        profiles.find(item => item.relayId === id)
+        ?? (snapshot.pendingRelay?.profile.relayId === id ? snapshot.pendingRelay.profile : undefined)
       if (!profile || retained.fingerprint !== sha256Hex(canonicalJson(profile))) this.resumeTokens.delete(id)
     }
     for (const [id, state] of this.nodes) {
@@ -169,6 +172,14 @@ export class HostRelayController {
       },
       ...(this.options.ca ? { ca: this.options.ca } : {}),
       registrationToken: profile.registrationKey ? secretBytes(profile.registrationKey) : undefined,
+      guardWrites: () => {
+        try {
+          check()
+          return true
+        } catch {
+          return false
+        }
+      },
       signal,
     })
     const abort = () => control.close()
@@ -176,22 +187,25 @@ export class HostRelayController {
     try {
       const day = Math.floor(Date.now() / 1000 / UTC_DAY)
       const routeKeyBytes = await routeKey(nodeCrypto, secretBytes(profile.seeds[profile.activeSlot]), relayId, day)
+      const currentRoute = hex(await routeId(nodeCrypto, await nodeCrypto.publicKey(routeKeyBytes)))
+      const retained = this.resumeTokens.get(profile.relayId)
+      const previous = retained?.fingerprint === sha256Hex(canonicalJson(profile)) ? retained.tokens.get(currentRoute) : undefined
       check()
-      const { routeId, token } = await control.register({ routeKey: routeKeyBytes, day, alternate: false })
+      const { routeId: registeredRoute, token } = await control.register({ routeKey: routeKeyBytes, day, previous, alternate: false })
       check()
-      return { routeId, token, permitted }
+      return { routeId: registeredRoute, token, permitted }
     } finally {
       signal.removeEventListener('abort', abort)
       control.close()
       await control.closed
     }
   }
-  useVerifiedRegistration(profile: RelayProfile, verification: Verification): void {
+  rememberVerifiedRegistration(profile: RelayProfile, verification: Verification): void {
     const fingerprint = sha256Hex(canonicalJson(profile))
-    const tokens = this.nodes.get(profile.relayId)?.tokens ?? new Map<string, Uint8Array>()
+    const retained = this.resumeTokens.get(profile.relayId)
+    const tokens = retained?.fingerprint === fingerprint ? retained.tokens : new Map<string, Uint8Array>()
     tokens.set(hex(verification.routeId), verification.token)
     this.resumeTokens.set(profile.relayId, { fingerprint, tokens })
-    this.reconcile()
   }
   cancelVerification(): void {
     this.checking?.state.abort.abort()

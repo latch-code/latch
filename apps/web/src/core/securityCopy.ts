@@ -955,6 +955,7 @@ const FIXED: Record<string, string> = {
   'native-relay-cancelled': '这次中继添加已放弃。',
   'native-relay-egress': '当前的出站规则不允许连接这个中继。',
   'native-relay-unconfirmed': '还无法确认中继可用。请核对地址、证书和注册令牌，然后继续验证。',
+  'native-relay-write-unknown': '中继配置的保存结果尚未确认，请继续原请求。',
   'native-managed': '这个地址由启动参数管理，需要停止 Latch 服务后修改参数。',
   'native-address-unavailable': '原来的局域网地址已不可用，请重新选择当前地址。',
   'native-listener-unavailable': '无法启用所选地址或端口，请核对网络后重试。',

@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { encodeMessage, registrationWorkInput, routeId, workDigestMeetsBits, type RelayMessage } from '@latch/link-wire'
 import { RelayControl } from '../src/relay-control.ts'
 import { nodeCrypto } from '../src/crypto.ts'
+import * as registrationWork from '../src/registration-work.ts'
 const mocked = vi.hoisted(() => ({ peer: undefined as unknown }))
 vi.mock('../src/websocket.ts', async original => ({ ...(await original<object>()), connectRelay: async () => mocked.peer }))
 let control: RelayControl | undefined
@@ -10,9 +11,11 @@ afterEach(async () => {
   control?.close()
   await control?.closed
   control = undefined
+  vi.restoreAllMocks()
 })
 async function fixture(
   mode: 'valid' | 'repeat' | 'wrong-route' | 'premature' | 'cancel' | 'over-budget' | 'stalled-write' | 'failed-write',
+  guardWrites?: () => boolean,
 ) {
   const relayId = new Uint8Array(16).fill(1),
     key = new Uint8Array(32).fill(2),
@@ -23,6 +26,7 @@ async function fixture(
     sent: RelayMessage[] = []
   let waiter: { resolve(value: RelayMessage): void; reject(error: Error): void } | undefined, original: Uint8Array | undefined
   let releaseWrite: (() => void) | undefined, rejectWrite: ((error: Error) => void) | undefined
+  let permitted = () => true
   const push = (value: RelayMessage) => {
     if (waiter) {
       const pending = waiter
@@ -32,6 +36,7 @@ async function fixture(
   }
   mocked.peer = {
     async send(message: RelayMessage) {
+      if (!permitted()) throw new Error('Write authority expired')
       sent.push(message)
       if (message.type === 'hello') push({ type: 'challenge', relayId, nonce: helloNonce, timeMs: Date.now(), requiresToken: false })
       if (message.type === 'register') {
@@ -64,6 +69,9 @@ async function fixture(
           })
       }
     },
+    guardWrites(next: () => boolean) {
+      permitted = next
+    },
     receive() {
       const value = queue.shift()
       return value
@@ -77,7 +85,7 @@ async function fixture(
       waiter = undefined
     },
   }
-  control = await RelayControl.connect({ relayId, url: new URL('https://relay.invalid/'), spki: new Uint8Array(32) })
+  control = await RelayControl.connect({ relayId, url: new URL('https://relay.invalid/'), spki: new Uint8Array(32), guardWrites })
   return {
     control,
     key,
@@ -88,6 +96,43 @@ async function fixture(
     rejectWrite: () => rejectWrite?.(new Error('fixture write failed')),
   }
 }
+it('closes without sending REGISTER if authority expires while signing', async () => {
+  let permitted = true
+  const f = await fixture('valid', () => permitted)
+  const { promise: signing, resolve: started } = Promise.withResolvers<void>()
+  const { promise: blocked, resolve: release } = Promise.withResolvers<void>()
+  const sign = nodeCrypto.sign
+  vi.spyOn(nodeCrypto, 'sign').mockImplementationOnce(async (...args) => {
+    started()
+    await blocked
+    return sign(...args)
+  })
+  const rejected = expect(f.control.register({ routeKey: f.key, day: 20000, alternate: false })).rejects.toThrow()
+  await signing
+  permitted = false
+  release()
+  await rejected
+  expect(f.sent.map(message => message.type)).toEqual(['hello'])
+  expect(f.control.isClosed()).toBe(true)
+})
+it('closes without sending the challenge proof if authority expires during work', async () => {
+  let permitted = true
+  const f = await fixture('valid', () => permitted)
+  const { promise: solving, resolve: started } = Promise.withResolvers<void>()
+  const { promise: blocked, resolve: release } = Promise.withResolvers<void>()
+  vi.spyOn(registrationWork, 'solveRegistrationWork').mockImplementationOnce(async () => {
+    started()
+    await blocked
+    return new Uint8Array(8)
+  })
+  const rejected = expect(f.control.register({ routeKey: f.key, day: 20000, alternate: false })).rejects.toThrow()
+  await solving
+  permitted = false
+  release()
+  await rejected
+  expect(f.sent.map(message => message.type)).toEqual(['hello', 'register'])
+  expect(f.control.isClosed()).toBe(true)
+})
 it('solves one bound challenge asynchronously and continues the existing registration', async () => {
   const f = await fixture('valid'),
     result = await f.control.register({ routeKey: f.key, day: 20000, alternate: false })

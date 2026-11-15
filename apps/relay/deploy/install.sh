@@ -10,10 +10,11 @@ relay_compose=$1
 relay_used=$3
 relay_image=${LATCH_RELAY_IMAGE:?Set an immutable repository@sha256 image}
 relay_data=${LATCH_RELAY_DATA_DIR:?Set the private absolute state directory}
-[[ $relay_compose == /* && -f $relay_compose && $relay_data == /* && -d $relay_data ]]
+[[ $relay_compose == /* && -f $relay_compose && $relay_data == /* && -d $relay_data && ! -L $relay_data ]]
 [[ $relay_image =~ ^[a-zA-Z0-9._:/-]+@sha256:[a-f0-9]{64}$ ]]
 for relay_tool in docker flock python3; do command -v "$relay_tool" >/dev/null; done
-exec 9>"$relay_data/.maintenance.lock"
+# Lock the mounted directory inode without opening or truncating a path controlled by the container.
+exec 9<"$relay_data"
 flock -n 9
 relay_compose_command() { docker compose -f "$relay_compose" "$@"; }
 relay_admin() {

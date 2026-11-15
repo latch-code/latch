@@ -417,6 +417,8 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       requireLocal(caller)
       if (caller.device) requireScope(caller, 'admin')
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+      await nativeSettings.settleRelayWrite()
+      if (caller.device) recheck(caller, 'admin')
       json(res, nativeSettings.info(caller.device?.id))
       return true
     }
@@ -459,6 +461,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         if (closing()) throw new AppError(503, 'host-closing', '电脑正在停止，请稍后查询原请求。')
         recheck(caller, 'admin')
       }
+      await settings.settleRelayWrite()
       current()
       const plan = settings.planRelay(requestId, caller.device.id, profile)
       if (plan) {
@@ -481,6 +484,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         await settings.addRelay(plan, actorOf(caller), stepup, current)
         refresh()
       }
+      current()
       json(res, settings.info(caller.device.id), plan ? 201 : 200)
       return true
     }
@@ -490,8 +494,10 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       requireScope(caller, 'admin')
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
       const id = z.uuid().parse(addRequest[1])
+      await nativeSettings.settleRelayWrite()
       const result = await nativeSettings.cancelRelay(id, actorOf(caller), () => recheck(caller, 'admin'))
       if (!result.audited) res.setHeader('x-latch-audit', 'failed')
+      recheck(caller, 'admin')
       json(res, nativeSettings.info(caller.device.id))
       return true
     }

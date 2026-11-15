@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import type { Duplex } from 'node:stream'
+import * as files from '@latch/core/node-kit'
 import { afterEach, expect, it, vi } from 'vitest'
 import { NativeSettings } from '../src/native-settings.ts'
 import { selectAutoDirect } from '../src/native-network.ts'
@@ -82,6 +83,8 @@ async function setup(options: { managedDirect?: { host: string; port: number } }
     ...options,
   })
   return {
+    directory,
+    profiles,
     native,
     settings,
     prepare,
@@ -96,6 +99,38 @@ async function setup(options: { managedDirect?: { host: string; port: number } }
     },
   }
 }
+it.each(['relay', 'directory'] as const)('keeps an installed relay when a concurrent %s removal joins the write queue', async target => {
+  const { settings, profiles, directory } = await setup()
+  const old = { relayId: 'a'.repeat(32), url: 'https://old.example/', spkiHash: 'b'.repeat(64) }
+  const added = { relayId: 'c'.repeat(32), url: 'https://new.example/', spkiHash: 'd'.repeat(64) }
+  await profiles.replace([old])
+  const request = { requestId: randomUUID(), requestHash: 'e'.repeat(64), deviceId: 'fixture' }
+  const base = profiles.configHash()
+  const pending = await profiles.reserveRelay(added, request, base, () => {})
+  const { promise: writing, resolve: start } = Promise.withResolvers<void>()
+  const { promise: paused, resolve: continueWriting } = Promise.withResolvers<void>()
+  const save = files.writeFileAtomic
+  const atomic = vi.spyOn(files, 'writeFileAtomic').mockImplementationOnce(async (...args) => {
+    start()
+    await paused
+    return save(...args)
+  })
+  const install = profiles.installRelay(pending, base, () => {})
+  await writing
+  const actor = { listener: 'unix' } as const
+  const removal = target === 'relay' ? settings.removeRelay(old.relayId, actor) : settings.removeDirectory(actor)
+  await Promise.resolve()
+  continueWriting()
+  await Promise.all([install, removal])
+  atomic.mockRestore()
+  const saved = await RelayProfiles.open(directory)
+  expect(saved.snapshot().profiles.map(profile => profile.relayId)).toEqual(
+    target === 'relay' ? [added.relayId] : [old.relayId, added.relayId],
+  )
+  const installed = saved.snapshot().profiles.find(profile => profile.relayId === added.relayId)
+  expect(installed?.seeds.every((seed, slot) => seed === pending.profile.seeds[slot])).toBe(true)
+  expect(saved.relayReceipt(request.requestId)?.requestHash).toBe(request.requestHash)
+})
 it('opens the listener for the sheet, keeps it while a phone exists, and closes it after the last one', async () => {
   const s = await setup()
   expect(s.settings.wanted()).toBe(false)
