@@ -76,6 +76,7 @@ import {
   type ChangeEvent,
   type CurrentDevice,
   type DeviceScope,
+  type FirstSetupStatus,
   type FolderVia,
   type HarnessInfo,
   type HostCatalog,
@@ -122,7 +123,7 @@ import {
   type SessionFolder,
 } from '@latch/sdk'
 import { PluginRegistry } from '@latch/core'
-import { canonicalJson, sha256Hex, redactKnownSecrets } from '@latch/core/node-kit'
+import { canonicalJson, sha256Hex, redactKnownSecrets, syncDirectory } from '@latch/core/node-kit'
 import {
   assertCommandVersion,
   createAcpAgentPlugin,
@@ -234,6 +235,7 @@ import { MIME, UI_CSP, KIB, codeOf, errorText, isWithin, json, jsonBody, optiona
 import {
   FOLDER_ID,
   HostConfig,
+  MAX_SETUP_CHOICES,
   PROVIDER_ID,
   BACKUP_EXCLUDED_CONFIG_FILES,
   availableId,
@@ -244,7 +246,9 @@ import {
   modelEffort,
   originOf,
   type HostSettings,
+  type ProviderAddition,
   type ProviderRecord,
+  type SetupChoiceReceipt,
   type WorkspaceRecord,
 } from './config.ts'
 import type { HarnessKind } from './harness-trust.ts'
@@ -499,6 +503,7 @@ const modelFallbacksRecord = z
   .refine(value => Object.keys(value).length <= 1000)
 const providerCreateSchema = z.object({
   id: z.string().regex(PROVIDER_ID).optional(),
+  requestId: requestIdSchema.optional(),
   name: z.string().trim().min(1).max(80),
   kind: providerKind,
   presetId: z.string().regex(PROVIDER_ID).optional(),
@@ -612,14 +617,17 @@ const projectPatchSchema = z
     '没有要修改的内容',
   )
 const preferencesSchema = z.object({
+  setupRequestId: requestIdSchema.optional(),
   defaults: z.object({
     harnessId: z.string().regex(HARNESS_ID).optional(),
     mode: z.enum(['chat', 'agent']).optional(),
     workspaceId: z.string().min(1).max(64).optional(),
     model: modelRefSchema.nullable().optional(),
+    gateway: modelRefSchema.omit({ effort: true }).nullable().optional(),
     pinned: z.boolean().optional(),
   }),
 })
+const firstSetupSchema = z.strictObject({ status: z.enum(['deferred', 'completed']), requestId: requestIdSchema })
 const levelSchema = z.enum(['L0', 'L1', 'L2'])
 const egressEntry = z
   .string()
@@ -1453,6 +1461,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         detail: { expected: expectedSettings, actual: settingsHash },
       })
       logNoted('settings-changed-outside', {}, 'settings.json 在 Latch 之外被修改过，已记入审计；其中的项目已重新检查。')
+    }
+    const configured = config.settings()
+    if (
+      !lastSettings
+      && !options.demo
+      && !options.provider
+      && !options.providerId
+      && !options.harnessId
+      && !options.plugins?.length
+      && !configured.firstSetup
+      && !Object.keys(configured.defaults).length
+      && !configured.agents.length
+      && !configured.workspaces.length
+      && !configured.plugins.disabled.length
+      && !config.providers().length
+    ) {
+      await config
+        .updateSettings(draft => {
+          draft.firstSetup = { status: 'pending' }
+        })
+        .catch(() => {
+          throw new AppError(503, 'first-setup-unconfirmed', '首次准备状态尚未确认，请重新启动 Latch。')
+        })
     }
     /**
      * The last computed state of each saved project. A project is usable only while every folder passes R1–R7 and the
@@ -3577,6 +3608,72 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return { ...providerSettings(record), destination: recordDestination(record), ...(health ? { health } : {}) }
     }
 
+    function addedProvider(caller: DeviceCaller, requestId: string, inputHash?: string): ProviderRecord | undefined {
+      const addition = config.providerAddition(caller.device.id, requestId)
+      if (!addition) return undefined
+      if (inputHash !== undefined && inputHash !== addition.inputHash)
+        throw new AppError(409, 'request-id-conflict', '这次添加请求已用于不同的模型服务配置。')
+      const record = config.provider(addition.providerId)
+      if (!record || sha256Hex(canonicalJson(record)) !== addition.recordHash)
+        throw new AppError(409, 'provider-changed', '这次添加已保存，但模型服务后来有改动或已移除。')
+      return record
+    }
+
+    function providerAdditionVisible(addition: ProviderAddition): boolean {
+      const stored = config.providerAddition(addition.deviceId, addition.requestId)
+      if (
+        stored?.providerId !== addition.providerId
+        || stored.inputHash !== addition.inputHash
+        || stored.recordHash !== addition.recordHash
+      )
+        return false
+      const record = config.provider(addition.providerId)
+      return record !== undefined && sha256Hex(canonicalJson(record)) === addition.recordHash
+    }
+
+    function addedProviderReady(record: ProviderRecord): boolean {
+      return pluginInfo(record.id)?.managed === 'provider' && modelAvailable({ providerId: record.id, model: record.defaultModel })
+    }
+
+    const providerAdditionUnconfirmed = () => new AppError(503, 'provider-addition-unconfirmed', '模型服务添加结果未确认，请核对这次请求。')
+
+    /** Resume the published configuration without replaying its confirmation or changing the outbound policy. */
+    async function settleProviderAddition(caller: DeviceCaller, record: ProviderRecord): Promise<ProviderRecord> {
+      recheck(caller, 'admin')
+      requireDesktop(caller)
+      if (addedProviderReady(record)) return record
+      if (!record.enabled) throw providerAdditionUnconfirmed()
+      if (record.apiKey) recheck(caller, 'secrets')
+
+      await syncDirectory(dataDir).catch(() => {
+        throw providerAdditionUnconfirmed()
+      })
+      recheck(caller, 'admin')
+      if (record.apiKey) recheck(caller, 'secrets')
+      const plan = await planDestination(record.baseURL, { key: Boolean(record.apiKey), confirm: true })
+      const authorize = () => {
+        recheck(caller, 'admin')
+        if (record.apiKey) recheck(caller, 'secrets')
+        if (
+          plan.addAddress
+          || plan.egress !== undefined
+          || recordDestination(record) === 'unconfirmed'
+          || (plan.reason !== undefined && !policy.get().hostEgressAllow.includes(plan.hostPort) && !egressExtra.includes(plan.hostPort))
+        )
+          throw providerAdditionUnconfirmed()
+      }
+      authorize()
+      const registered = pluginInfo(record.id)
+      if (registered && registered.managed !== 'provider') throw new AppError(409, 'provider-changed', '模型服务的标识已被其他插件使用。')
+      if (!registered) registerProvider(record, buildProviderPlugin(record))
+      authorize()
+      if (!pluginInfo(record.id)?.enabled) await registry.enable(record.id)
+      authorize()
+      if (!addedProviderReady(record)) throw providerAdditionUnconfirmed()
+      refresh()
+      return record
+    }
+
     /** A service as the catalog lists it for every device: what its models fall back to and how its requests fare, no more. */
     function providerSummary(provider: ModelProvider): ProviderSummary {
       const record = pluginInfo(provider.id)?.managed === 'provider' ? effectiveProvider(provider.id) : undefined
@@ -3856,8 +3953,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return [edit(live), edit(config.provider(id) ?? { ...withoutKey, apiKey: '' })]
     }
 
+    function registerProvider(record: ProviderRecord, plugin: HarnessPlugin): void {
+      registry.register(plugin, { managed: 'provider', revision: providerExecutionRevision(record) })
+    }
+
     /** Persists `saved` and swaps the live plugin to `live` in one step; a failed write keeps the previous generation. */
-    async function saveProvider(caller: Caller, live: ProviderRecord, saved = live): Promise<void> {
+    async function saveProvider(caller: Caller, live: ProviderRecord, saved = live, addition?: ProviderAddition): Promise<void> {
       const plugin = buildProviderPlugin(live)
       if (saved !== live) buildProviderPlugin(saved)
       const before = pluginInfo(live.id)
@@ -3880,9 +3981,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               })
             else {
               await commit()
-              registry.register(plugin, { managed: 'provider', revision: providerExecutionRevision(live) })
+              registerProvider(live, plugin)
             }
           },
+          addition,
         )
       } catch (error) {
         if (disabling)
@@ -4113,6 +4215,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       res: ServerResponse,
       input: { id: string; plan?: DestinationPlan; stepup: StepupMethod; scope?: KeyScope },
       save: () => Promise<void>,
+      accepted?: () => boolean,
     ): Promise<void> {
       const seq = input.scope
         ? await audited({
@@ -4133,8 +4236,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       try {
         await save()
       } catch (error) {
-        await undo(res)
-        auditFailed(seq, caller)
+        if (!accepted?.()) {
+          await undo(res)
+          auditFailed(seq, caller)
+        }
         throw error
       }
     }
@@ -5007,7 +5112,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * Every settings write the Host makes is recorded with its before and after hashes, so the next start can tell it
      * from an edit made outside Latch. The record is a baseline, not the action's own audit, so a failed append only logs.
      */
-    function writeSettings(caller: Caller, mutate: (draft: HostSettings) => void, scope: DeviceScope = 'admin'): Promise<void> {
+    function writeSettings(
+      caller: Caller,
+      mutate: (draft: HostSettings) => void,
+      scope: DeviceScope = 'admin',
+      authorize?: () => void,
+    ): Promise<void> {
       return config.updateSettings(mutate, async (next, commit) => {
         recheck(caller, scope)
         const before = sha256Hex(canonicalJson(config.settings()))
@@ -5020,6 +5130,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           logNoted('audit-write-failed', { error: error }, `审计记录写入失败（settings.changed）：${errorText(error)}`)
         }
         try {
+          authorize?.()
           await commit()
         } catch (error) {
           auditFailed(seq, caller)
@@ -6026,7 +6137,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function savedDefaultModel(): ModelRef | undefined {
       if (options.providerId) return undefined
       const saved = config.settings().defaults.model
-      return saved && modelAvailable(saved) ? { ...saved } : undefined
+      if (!saved || !modelAvailable(saved)) return undefined
+      const { providerId, model, effort } = saved
+      return { providerId, model, ...(effort && declaredThinking(saved).includes(effort) ? { effort } : {}) }
     }
 
     /** Provider for sessions without a model choice: `--provider`, the saved default, demo, then the first usable provider. */
@@ -6079,45 +6192,136 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return saved && hub?.info(saved)?.status === 'ready' ? saved : STANDARD
     }
 
+    function savedGateway(harnessId: string): ModelRef | null | undefined {
+      const saved = config.settings().defaults
+      return saved.harnessId === harnessId && saved.gateway?.harnessId === harnessId ? saved.gateway.model : undefined
+    }
+
+    function visibleGateway(harness: HarnessInfo): Pick<SessionDefaults, 'gateway' | 'gatewayUnavailable'> {
+      const gateway = savedGateway(harness.id)
+      if (gateway === null) return { gateway }
+      if (!gateway) return {}
+      try {
+        modelRouteFor(harness, gateway)
+        return { gateway }
+      } catch (error) {
+        if (!(error instanceof AppError)) throw error
+        return { gatewayUnavailable: true }
+      }
+    }
+
     function sessionDefaults(): SessionDefaults {
       const saved = config.settings().defaults
       const model = defaultModelRef()
+      const modelUnavailable = !options.providerId && saved.model !== undefined && !savedDefaultModel()
       // What was pinned must still be what starts: when its engine or model cannot, the fallback is not what anyone chose,
       // and the device's own memory takes over. It holds again if they come back.
+      const harnessId = defaultHarnessId()
       const engine = hub?.info(saved.harnessId ?? STANDARD)
+      const gateway = engine?.id === harnessId && engine.capabilities.models.owner !== 'latch' ? visibleGateway(engine) : {}
       const pinned =
         saved.pinned === true
         && engine?.status === 'ready'
         && (engine.capabilities.models.owner !== 'latch' || saved.model === undefined || savedDefaultModel() !== undefined)
       return {
-        harnessId: defaultHarnessId(),
+        harnessId,
         mode: saved.mode ?? 'agent',
         workspaceId:
           saved.workspaceId && saved.workspaceId !== 'default' && lastSeenUsable(savedProject(saved.workspaceId))
             ? saved.workspaceId
             : 'default',
         ...(model ? { model } : {}),
+        ...(modelUnavailable ? { modelUnavailable: true as const } : {}),
+        ...gateway,
         ...(pinned ? { pinned: true as const } : {}),
       }
     }
 
-    async function savePreferences(caller: Caller, input: z.infer<typeof preferencesSchema>['defaults']): Promise<void> {
+    async function savePreferences(
+      caller: Caller,
+      input: z.infer<typeof preferencesSchema>['defaults'],
+      receipt?: SetupChoiceReceipt,
+    ): Promise<void> {
       if (input.harnessId !== undefined && !hub!.has(input.harnessId))
         throw new AppError(400, 'harness-unavailable', `Harness ${input.harnessId} 未启用`)
       if (input.workspaceId !== undefined && input.workspaceId !== 'default') {
         const record = savedProject(input.workspaceId)
         if (!record || (await projectState(record)).failure) throw new AppError(400, 'workspace-unavailable', '找不到该项目，或它暂不可用')
       }
-      if (input.model) assertModel(input.model)
-      await writeSettings(caller, draft => {
-        if (input.harnessId !== undefined) draft.defaults.harnessId = input.harnessId
-        if (input.mode !== undefined) draft.defaults.mode = input.mode
-        if (input.workspaceId !== undefined) draft.defaults.workspaceId = input.workspaceId
-        if (input.pinned === true) draft.defaults.pinned = true
-        else if (input.pinned === false) delete draft.defaults.pinned
-        if (input.model === null) delete draft.defaults.model
-        else if (input.model) draft.defaults.model = { providerId: input.model.providerId, model: input.model.model }
-      })
+      if (input.model) {
+        assertModel(input.model)
+        if (input.model.effort && !declaredThinking(input.model).includes(input.model.effort))
+          throw new AppError(400, 'model-effort-unavailable', '这个模型没有声明所选的思考深度。')
+      }
+      const { harnessId, gateway } = input
+      if (gateway !== undefined) {
+        requireScope(caller, 'admin')
+        requireDesktop(caller)
+        if (!harnessId) throw new AppError(400, 'harness-required', '保存模型来源时请同时选择它所属的 Harness。')
+        const harness = hub!.info(harnessId)
+        if (!harness || harness.status !== 'ready' || harness.capabilities.models.owner === 'latch')
+          throw new AppError(400, 'model-route-unavailable', '这个 Harness 不能保存外部模型来源。')
+        if (gateway !== null) modelRouteFor(harness, gateway)
+      }
+      const authorize = receipt ? () => requireSetupAccess(caller) : undefined
+      await writeSettings(
+        caller,
+        draft => {
+          if (receipt && (draft.setupChoices?.length ?? 0) >= MAX_SETUP_CHOICES)
+            throw new AppError(409, 'setup-choice-capacity', '准备页的选择记录已满。可核对原请求，或在设置中更改默认选择。')
+          if (input.harnessId !== undefined) draft.defaults.harnessId = input.harnessId
+          if (input.mode !== undefined) draft.defaults.mode = input.mode
+          if (input.workspaceId !== undefined) draft.defaults.workspaceId = input.workspaceId
+          if (input.pinned === true) draft.defaults.pinned = true
+          else if (input.pinned === false) delete draft.defaults.pinned
+          if (input.model === null) delete draft.defaults.model
+          else if (input.model) draft.defaults.model = input.model
+          if (harnessId && gateway !== undefined) draft.defaults.gateway = { harnessId, model: gateway }
+          if (receipt) (draft.setupChoices ??= []).push(receipt)
+        },
+        'admin',
+        authorize,
+      )
+    }
+
+    function setupStatus(caller: Caller): FirstSetupStatus | undefined {
+      if (options.demo || !isLocalListener(caller.connection.listener) || !caller.device) return undefined
+      const device = devices.get(caller.device.id)
+      if (!device || !isLocalListener(device.listener) || !device.scopes.includes('admin') || !device.scopes.includes('run'))
+        return undefined
+      return config.setupStatus() ?? 'existing'
+    }
+
+    function requireSetupAccess(caller: Caller): void {
+      recheck(caller, 'admin')
+      if (!setupStatus(caller)) throw new AppError(403, 'first-setup-unavailable', '请在这台电脑上准备 Latch。')
+    }
+
+    function setupChoice(caller: DeviceCaller, requestId: string): SetupChoiceReceipt | undefined {
+      requireSetupAccess(caller)
+      return config.setupChoice(caller.device.id, requestId)
+    }
+
+    /** A completion records the combination that the Host can offer now, without making a model request or logging in. */
+    function requireSetupReady(): void {
+      const saved = config.settings().defaults
+      const harnessId = defaultHarnessId()
+      const harness = hub!.info(harnessId)
+      if (!harness || harness.status !== 'ready' || (saved.harnessId && saved.harnessId !== harnessId))
+        throw new AppError(409, 'first-setup-harness-required', '请选择一个可用的 Harness。')
+      if (harness.capabilities.models.owner === 'latch') {
+        const model = !options.providerId && saved.model ? savedDefaultModel() : defaultModelRef()
+        if (!model) throw new AppError(409, 'first-setup-model-required', '请先选择可用的模型服务。')
+        return
+      }
+      const gateway = savedGateway(harnessId)
+      if (gateway) {
+        modelRouteFor(harness, gateway)
+        return
+      }
+      const login = agentLoginRoutes.reported(harnessId)
+      if (login?.status !== 'authenticated' || (login.expiresAt !== undefined && !(Date.parse(login.expiresAt) > now())))
+        throw new AppError(409, 'first-setup-login-unconfirmed', '还没有确认这个 Harness 的登录，或请选择可用的模型服务。')
     }
 
     /**
@@ -7409,10 +7613,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(startWorkspace ? { workspaceId: startWorkspace } : {}),
         }
       }
-      // Session choice, then the Agent's, then the project's 默认模型, then the harness's own default. Start choices sent
-      // with the request are the session's own, so the project's default stays out of their way.
-      if (!input.model && !input.ownModel && !input.config?.length && !input.forkOf) {
-        const preferred = projectDefaultModel(input.workspaceId, input.harnessId ?? defaultHarnessId())
+      const harnessId = input.harnessId ?? defaultHarnessId()
+      // The session or Agent's explicit choice comes first, then the project, then this Harness's default.
+      if (!input.model && !input.ownModel && !input.forkOf) {
+        const harness = hub!.info(harnessId)
+        const ownPick = input.config?.some(pick =>
+          harness?.catalogue?.options.some(option => option.id === pick.configId && option.category === 'model'),
+        )
+        const gateway =
+          !customAgentId && seed === undefined && !withoutPrivateContext && !privateFrom && !ownPick ? savedGateway(harnessId) : undefined
+        const project = !input.config?.length ? projectDefaultModel(input.workspaceId, harnessId) : undefined
+        const preferred = project ?? gateway
         if (preferred) input = { ...input, model: preferred }
       }
       // The queue of the project the session starts in; a fork's source session does not choose it.
@@ -7429,7 +7640,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             })()
           : undefined
         const prompt = fork ? fork.text + (input.prompt || '请接着这个会话继续。') : input.prompt
-        const harnessId = input.harnessId ?? defaultHarnessId()
         const baseContext: AgentExecutionContext | undefined =
           (customAgentId
             ? agentPlans.agentContext(customAgentId, harnessId)
@@ -8475,10 +8685,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const input = providerCreateSchema.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
         assertBaseURL(input.baseURL)
         recheck(caller, 'admin')
-        const id = input.id ?? newProviderId(input.presetId ?? input.name)
-        if (idTaken(id)) throw new AppError(409, 'provider-exists', `标识 ${id} 已被占用`)
         const apiKey = input.apiKey ?? ''
         if (apiKey) requireKeyEntry(caller)
+        const requestId = input.requestId
+        if (requestId) requireDesktop(caller)
+        const inputHash = requestId ? sha256Hex(canonicalJson(input)) : undefined
+        const replay = requestId && addedProvider(caller, requestId, inputHash)
+        if (replay && requestId) {
+          const record = await serial(caller, 'admin', () => {
+            const current = addedProvider(caller, requestId, inputHash)
+            if (!current) throw providerAdditionUnconfirmed()
+            return settleProviderAddition(caller, current)
+          })
+          recheck(caller, 'admin')
+          json(res, { provider: providerView(record) })
+          return true
+        }
+        if (requestId) config.requireProviderAdditionRoom()
+        const id = input.id ?? newProviderId(input.presetId ?? input.name)
+        if (idTaken(id)) throw new AppError(409, 'provider-exists', `标识 ${id} 已被占用`)
         const plan = await planDestination(input.baseURL, { key: Boolean(apiKey), confirm: input.confirmOrigin === true })
         const stepup = confirmsDestination(plan)
           ? await confirmDestination(req, caller, plan, {
@@ -8489,6 +8714,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           : 'none'
         const scope = apiKey ? keyScopeOf(input.baseURL) : undefined
         const record = await serial(caller, 'admin', async () => {
+          const replayed = requestId && addedProvider(caller, requestId, inputHash)
+          if (replayed) return settleProviderAddition(caller, replayed)
+          if (requestId) config.requireProviderAdditionRoom()
           if (idTaken(id)) throw new AppError(409, 'provider-exists', `标识 ${id} 已被占用`)
           const next: ProviderRecord = {
             id,
@@ -8503,11 +8731,42 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(input.modelCapabilities ? { modelCapabilities: input.modelCapabilities } : {}),
             defaultModel: input.defaultModel,
           }
-          await saveAt(caller, res, { id, plan, stepup, ...(scope ? { scope } : {}) }, () => saveProvider(caller, next))
+          const addition =
+            requestId && inputHash
+              ? { deviceId: caller.device.id, requestId, providerId: id, inputHash, recordHash: sha256Hex(canonicalJson(next)) }
+              : undefined
+          await saveAt(
+            caller,
+            res,
+            { id, plan, stepup, ...(scope ? { scope } : {}) },
+            () => saveProvider(caller, next, next, addition),
+            addition ? () => providerAdditionVisible(addition) : undefined,
+          )
+          if (addition && !addedProviderReady(next)) throw providerAdditionUnconfirmed()
           return next
         })
+        if (requestId) recheck(caller, 'admin')
         refresh()
         json(res, { provider: providerView(record) }, 201)
+        return true
+      }
+      const providerAddition = /^\/link\/api\/providers\/additions\/([A-Za-z0-9_-]{8,128})$/u.exec(path)
+      if (providerAddition && (method === 'GET' || method === 'POST')) {
+        requireScope(caller, 'admin')
+        requireDesktop(caller)
+        const requestId = providerAddition[1]!
+        const record =
+          method === 'GET'
+            ? addedProvider(caller, requestId)
+            : await (async () => {
+                z.strictObject({}).parse(await jsonBody(req))
+                return serial(caller, 'admin', async () => {
+                  const current = addedProvider(caller, requestId)
+                  return current && (await settleProviderAddition(caller, current))
+                })
+              })()
+        recheck(caller, 'admin')
+        json(res, record && addedProviderReady(record) ? { state: 'saved', provider: providerView(record) } : { state: 'unknown' })
         return true
       }
       const providerMatch = path.match(/^\/link\/api\/providers\/([^/]+)(?:\/(models))?$/)
@@ -9278,9 +9537,62 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (path === '/link/api/preferences' && method === 'PUT') {
         requireScope(caller, 'admin')
         const input = preferencesSchema.parse(await jsonBody(req))
-        await serial(caller, 'admin', () => savePreferences(caller, input.defaults))
+        const requestId = input.setupRequestId
+        await serial(caller, 'admin', async () => {
+          if (!requestId) return savePreferences(caller, input.defaults)
+          const inputHash = sha256Hex(canonicalJson(input.defaults))
+          const receipt = setupChoice(caller, requestId)
+          if (!receipt) return savePreferences(caller, input.defaults, { deviceId: caller.device.id, requestId, inputHash })
+          if (receipt.inputHash !== inputHash) throw new AppError(409, 'request-id-conflict', '这次选择请求已用于不同的值。')
+          await config.settleSettings()
+        })
+        if (requestId) setupChoice(caller, requestId)
         refresh()
-        json(res, { defaults: sessionDefaults() })
+        json(res, { defaults: sessionDefaults(), ...(requestId ? { instanceId, revision } : {}) })
+        return true
+      }
+      const setupChoiceMatch = /^\/link\/api\/first-setup\/choices\/([A-Za-z0-9_-]{8,128})$/u.exec(path)
+      if (setupChoiceMatch && method === 'GET') {
+        requireScope(caller, 'admin')
+        requireSetupAccess(caller)
+        const receipt = config.setupChoice(caller.device.id, setupChoiceMatch[1]!, true)
+        json(res, receipt ? { state: 'saved', defaults: sessionDefaults(), instanceId, revision } : { state: 'unknown' })
+        return true
+      }
+      if (path === '/link/api/first-setup' && method === 'PUT') {
+        requireScope(caller, 'admin')
+        requireDesktop(caller)
+        const input = firstSetupSchema.parse(await jsonBody(req))
+        const status = await serial(caller, 'admin', async () => {
+          requireSetupAccess(caller)
+          const saved = config.settings().firstSetup
+          if (saved && saved.status !== 'pending' && saved.requestId === input.requestId) {
+            if (saved.status !== input.status) throw new AppError(409, 'request-id-conflict', '这次准备请求已用于不同的操作。')
+            await config.settleSettings()
+            return saved.status
+          }
+          if (saved?.status === 'completed' || (saved?.status === 'deferred' && input.status === 'deferred')) {
+            await config.settleSettings()
+            return saved.status
+          }
+          if (input.status === 'completed') requireSetupReady()
+          await writeSettings(
+            caller,
+            draft => {
+              draft.firstSetup = input
+            },
+            'admin',
+            () => {
+              requireSetupAccess(caller)
+              if (input.status === 'completed') requireSetupReady()
+            },
+          )
+          return input.status
+        })
+        recheck(caller, 'run')
+        if (!setupStatus(caller)) throw new AppError(403, 'first-setup-unavailable', '请在这台电脑上准备 Latch。')
+        refresh()
+        json(res, { status })
         return true
       }
       return false
@@ -9398,6 +9710,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         snapshot.tasks = snapshot.tasks.filter(task => privateVisible(caller, task))
         snapshot.approvals = snapshot.approvals.filter(approval => snapshot.tasks.some(task => task.id === approval.sessionId))
         snapshot.approvals = snapshot.approvals.map(fullData(caller) ? allApproval : workApproval)
+        const preparation = setupStatus(caller)
+        if (preparation) snapshot.firstSetup = preparation
         traffic.response('snapshot', json(res, snapshot))
         return
       }

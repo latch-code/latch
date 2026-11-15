@@ -10,8 +10,11 @@ public struct PhoneModelChoice: Equatable, Hashable, Sendable, Identifiable {
     public let providerId: String
     public let providerName: String
     public let model: String
+    public let effort: String?
     public var id: String { providerId + "\u{0}" + model }
-    public init(providerId: String, providerName: String, model: String) { self.providerId = providerId; self.providerName = providerName; self.model = model }
+    public init(providerId: String, providerName: String, model: String, effort: String? = nil) {
+        self.providerId = providerId; self.providerName = providerName; self.model = model; self.effort = effort
+    }
 }
 
 public struct PhoneStartChoice: Equatable, Sendable {
@@ -24,6 +27,15 @@ public struct PhoneStartChoice: Equatable, Sendable {
 
 /** What a new session can run on. The Host enforces every rule again; this only keeps a choice from looking possible when it is not. */
 public enum PhoneStart {
+    enum ServiceRoute: Equatable { case passthrough, translate }
+    private static let wires = ["openai-compatible": "chat-completions", "openai-responses": "responses", "anthropic": "anthropic-messages"]
+    private static let translations = ["responses:chat-completions", "anthropic-messages:chat-completions", "anthropic-messages:responses", "responses:anthropic-messages"]
+    static func serviceRoute(_ harness: NativeJSON, provider: NativeJSON) -> ServiceRoute? {
+        guard let kind = provider["kind"].string, let wire = wires[kind] else { return nil }
+        let accepted = harness["capabilities"]["models"]["wires"].array.compactMap(\.string)
+        if accepted.contains(wire) { return .passthrough }
+        return accepted.contains { translations.contains($0 + ":" + wire) } ? .translate : nil
+    }
     public static func engineName(_ harness: NativeJSON) -> String {
         harness["capabilities"]["display"]["label"].string ?? harness["id"].string ?? "Harness"
     }
@@ -63,13 +75,38 @@ public enum PhoneStart {
         let projects = projects(catalog)
         let chat = defaults["mode"].string == "chat"
         let workspaceId = chat ? nil : projects.first { $0.id == defaults["workspaceId"].string }?.id ?? projects.first?.id
-        return PhoneStartChoice(harnessId: harnessId, workspaceId: workspaceId, model: defaultModel(catalog, harnessId: harnessId))
+        return PhoneStartChoice(harnessId: harnessId, workspaceId: workspaceId, model: newSessionModel(catalog, harnessId: harnessId, workspaceId: workspaceId))
     }
-    /** The Host's default model for a Harness that uses Latch's services; a Harness that chooses its own gets none. */
+    /** The default for starts that only use Latch's built-in model picker. */
     public static func defaultModel(_ catalog: NativeJSON, harnessId: String?) -> PhoneModelChoice? {
         guard usesServices(harness(catalog, harnessId)) else { return nil }
         let models = models(catalog), defaults = catalog["defaults"]
-        return models.first { $0.providerId == defaults["model"]["providerId"].string && $0.model == defaults["model"]["model"].string } ?? models.first
+        let ref = defaults["model"]
+        guard let model = models.first(where: { $0.providerId == ref["providerId"].string && $0.model == ref["model"].string }) else {
+            return models.first
+        }
+        let provider = catalog["providers"].array.first { $0["id"].string == model.providerId }
+        let declared = provider?["modelCapabilities"][model.model]["thinking"].array ?? []
+        let effort = ref["effort"].string.flatMap { declared.contains(.string($0)) ? $0 : nil }
+        return PhoneModelChoice(providerId: model.providerId, providerName: model.providerName, model: model.model, effort: effort)
+    }
+    /** A new conversation offers the project's usable model, then the gateway verified for this Harness. */
+    public static func newSessionModel(_ catalog: NativeJSON, harnessId: String?, workspaceId: String?) -> PhoneModelChoice? {
+        let engine = harness(catalog, harnessId)
+        if usesServices(engine) { return defaultModel(catalog, harnessId: harnessId) }
+        let choices = models(catalog)
+        if let workspaceId, workspaceId != "default",
+           let workspace = catalog["workspaces"].array.first(where: { $0["id"].string == workspaceId && $0["unavailable"] == .null }),
+           let providerId = workspace["defaultModel"]["providerId"].string,
+           let provider = catalog["providers"].array.first(where: { $0["id"].string == providerId }),
+           serviceRoute(engine, provider: provider) != nil,
+           let projectModel = choices.first(where: { $0.providerId == providerId && $0.model == workspace["defaultModel"]["model"].string }) {
+            return projectModel
+        }
+        let defaults = catalog["defaults"]
+        guard let harnessId, harnessId == defaults["harnessId"].string else { return nil }
+        let ref = defaults["gateway"]
+        return choices.first { $0.providerId == ref["providerId"].string && $0.model == ref["model"].string }
     }
     public static func harness(_ catalog: NativeJSON, _ id: String?) -> NativeJSON {
         catalog["harnesses"].array.first { $0["id"].string == id } ?? .null
@@ -88,15 +125,24 @@ public enum PhoneStart {
             if let reason = project["unavailable"].string { return reason }
         } else if !acceptsChat(catalog, harnessId: harnessId) { return "先选一个项目。" }
         if usesServices(harness) && choice.model == nil { return "还没有模型服务。在 Mac 上的 Latch 里添加。" }
+        if !usesServices(harness), choice.model == nil, catalog["defaults"]["harnessId"].string == harnessId,
+           catalog["defaults"]["gatewayUnavailable"].bool == true { return "原来选择的模型服务暂不可用。请在 Mac 上重新选择。" }
         return nil
     }
-    /**
-     * A start's fields. A model goes only to a Harness that uses Latch's services; `forwarded` is a service the person sees
-     * in the sheet for another Harness (a fork's), the only way a Harness with its own models is sent one.
-     */
+    /** Send what the person sees in the ordinary new session sheet, even if the Host's default has changed. */
+    public static func newSessionFields(_ catalog: NativeJSON, choice: PhoneStartChoice, prompt: String) -> [String: NativeJSON] {
+        var result = fields(choice, prompt: prompt)
+        if let harnessId = choice.harnessId, !usesServices(harness(catalog, harnessId)), choice.model == nil {
+            result["ownModel"] = .bool(true)
+        }
+        return result
+    }
+    /** A fork can forward a service named by its own plan. */
     public static func fields(_ catalog: NativeJSON, choice: PhoneStartChoice, prompt: String, forwarded: PhoneModelChoice? = nil) -> [String: NativeJSON] {
         var choice = choice
-        choice.model = usesServices(harness(catalog, choice.harnessId)) ? choice.model : forwarded
+        if !usesServices(harness(catalog, choice.harnessId)) {
+            choice.model = forwarded
+        }
         return fields(choice, prompt: prompt)
     }
     static func fields(_ choice: PhoneStartChoice, prompt: String) -> [String: NativeJSON] {
@@ -104,7 +150,11 @@ public enum PhoneStart {
         if let harnessId = choice.harnessId { result["harnessId"] = .string(harnessId) }
         if let workspaceId = choice.workspaceId { result["workspaceId"] = .string(workspaceId); result["mode"] = .string("agent") }
         else { result["mode"] = .string("chat") }
-        if let model = choice.model { result["model"] = .object(["providerId": .string(model.providerId), "model": .string(model.model)]) }
+        if let model = choice.model {
+            var value: [String: NativeJSON] = ["providerId": .string(model.providerId), "model": .string(model.model)]
+            if let effort = model.effort { value["effort"] = .string(effort) }
+            result["model"] = .object(value)
+        }
         return result
     }
 }

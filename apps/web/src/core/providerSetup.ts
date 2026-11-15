@@ -347,11 +347,13 @@ export interface NewProvider {
   defaultModel: string
   /** Desktop with local confirmation: confirm the address in the same request when it needs it. */
   confirmOrigin?: boolean
+  addition?: { id: string; requestId: string }
 }
 
 /** Saves a new service; a confirmation, when the Host asks for one, resends the identical body. */
 export async function createProvider(input: NewProvider, options: ConfirmOptions = {}): Promise<ProviderSettings> {
   const body = {
+    ...input.addition,
     name: input.name.trim(),
     kind: input.kind,
     ...(input.presetId ? { presetId: input.presetId } : {}),

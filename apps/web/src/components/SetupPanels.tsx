@@ -17,6 +17,7 @@ import { hostOf } from '../format.ts'
 import { providerAbilities } from '../core/providerAbilities.ts'
 import { deferredComponent } from './DeferredContent.tsx'
 import { destinationOf, SERVICE_FORM, servicesToPick, type ProvidersResponse } from '../core/providerSetup.ts'
+import { providerAddition } from '../core/providerAddition.ts'
 import { hostView } from '../core/permissions.ts'
 import { InlineConfirm } from './InlineConfirm.tsx'
 import { missingText } from '../core/agentDetection.ts'
@@ -303,13 +304,19 @@ export function ProviderSetupPanel({
   onSaved,
   onCancel,
   onSettings,
+  onBusy,
+  additionOwner,
 }: {
   access: Access
   onSaved: (model: ModelRef) => void
   onCancel?: () => void
   onSettings?: () => void
+  onBusy?: (busy: boolean) => void
+  additionOwner?: string
 }) {
-  const [preset, setPreset] = useState<ProviderPreset | null>(null)
+  const [preset, setPreset] = useState<ProviderPreset | null>(
+    () => PROVIDER_PRESETS.find(item => item.id === providerAddition(additionOwner)?.presetId) ?? null,
+  )
   const [data, setData] = useState<ProvidersResponse | null>(null)
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [error, setError] = useState('')
@@ -406,6 +413,8 @@ export function ProviderSetupPanel({
             )
           }
           onSaved={provider => onSaved({ providerId: provider.id, model: provider.defaultModel })}
+          {...(onBusy && { onBusy })}
+          {...(additionOwner && { additionOwner })}
           onCancel={() => setPreset(null)}
         />
       ) : error ? (

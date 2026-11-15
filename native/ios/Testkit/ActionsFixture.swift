@@ -42,6 +42,22 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
     stops.observe(value["stopsDetail"])
     stopTrace.append(stops.requested.sorted())
     let startCatalog = value["startCatalog"]
+    var setupCatalog = startCatalog.object
+    setupCatalog["defaults"] = value["setupDefaults"]
+    let prepared = NativeJSON.object(setupCatalog)
+    let preparedStart = PhoneStart.defaults(prepared)
+    let ordinary = PhoneStart.defaults(startCatalog)
+    var changed = setupCatalog
+    changed["defaults"] = .object(value["setupDefaults"].object.merging([
+        "gateway": .object(["providerId": .string("p"), "model": .string("m2")]),
+    ]) { _, picked in picked })
+    var projectCatalog = setupCatalog
+    projectCatalog["workspaces"] = .array([.object([
+        "id": .string("latch"), "name": .string("latch"),
+        "defaultModel": .object(["providerId": .string("p"), "model": .string("m2")]),
+    ])])
+    let handoff = try PhoneHandoffs.create(sourceSessionId: "ses_source", materials: [], requirements: "x", returnScope: "summary",
+        newSession: (nil, "codex", PhoneStart.defaultModel(prepared, harnessId: "codex")), sessionId: nil)
     let search = PhoneSearch.results(value["search"])
     func controls(_ detail: NativeJSON) -> [[String: Any]] {
         PhoneSessionConfig.controls(detail, harness: value["harness"]).map { control -> [String: Any] in
@@ -115,6 +131,13 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
                     "forced": json(PhoneStart.fields(startCatalog, choice: forced, prompt: "x")["model"] ?? .null)]
         },
         "startDefault": PhoneStart.defaults(startCatalog).model?.model ?? "",
+        "preparedStart": json(PhoneStart.newSessionFields(prepared, choice: preparedStart, prompt: "x")["model"] ?? .null),
+        "preparedBuiltIn": PhoneStart.defaultModel(prepared, harnessId: "standard")?.model ?? "",
+        "preparedThenOwn": json(PhoneStart.newSessionFields(startCatalog, choice: preparedStart, prompt: "x")["model"] ?? .null),
+        "preparedThenChanged": json(PhoneStart.newSessionFields(.object(changed), choice: preparedStart, prompt: "x")["model"] ?? .null),
+        "ownThenPrepared": json(.object(PhoneStart.newSessionFields(prepared, choice: ordinary, prompt: "x"))),
+        "projectBeforePrepared": PhoneStart.defaults(.object(projectCatalog)).model?.model ?? "",
+        "preparedHandoff": json(try NativeJSON.decode(handoff.body)["target"]),
         "stops": stopTrace,
         "search": ["hits": search.hits.map { [$0.sessionId, $0.title, $0.before, $0.match, $0.after, $0.archived ? "archived" : ""] }, "truncated": search.truncated],
         "queries": ["  relay ", "", "   ", String(repeating: "q", count: 201)].map { PhoneSearch.query($0) ?? "" },

@@ -342,7 +342,7 @@ export function defaultModel(catalog: HostCatalog): ModelRef | undefined {
 }
 
 /** The engine and model a pick in a draft can change. */
-export type DraftPick = Partial<Pick<ComposerChoice, 'harnessId' | 'model'>>
+export type DraftPick = Partial<Pick<ComposerChoice, 'harnessId' | 'model' | 'config'>>
 
 /**
  * Where every new session starts on the Host computer, when it set one. Other devices cannot see or take back a pin,
@@ -364,9 +364,30 @@ export function draftStart(
   access?: PinAccess,
 ): Partial<ComposerChoice> | null {
   const pin = pinnedChoice(catalog, access)
-  const base = pin ? { ...memory, ...pin } : memory
+  const harnessId = pick?.harnessId ?? pin?.harnessId
+  const base =
+    harnessId && harnessId !== memory?.harnessId
+      ? { ...memory, ...pin, ...harnessPicks(memory ?? {}, harnessId), harnessId }
+      : pin
+        ? { ...memory, ...pin }
+        : memory
   const project = projectStart(catalog, base, pick)
-  return pin || project || pick ? { ...base, ...project, ...pick } : memory
+  const choice = pin || project || pick ? { ...base, ...project, ...pick } : memory
+  const gateway = catalog?.defaults.gateway
+  if (!catalog || gateway === undefined || project?.config || pick?.config) return choice
+  const resolved = resolveChoice(catalog, choice)
+  const harness = findHarness(catalog, resolved.harnessId)
+  if (!harness || harness.id !== catalog.defaults.harnessId || harness.capabilities.models.owner === 'latch') return choice
+  const modelOption = draftConfig(harness, resolved.config)?.config.find(option => option.category === 'model')
+  if (
+    !pin
+    && (servicePick(catalog, harness, resolved.config)
+      || pickedOwnDefault(resolved.config)
+      || (modelOption && resolved.config?.[modelOption.id] !== undefined))
+  )
+    return choice
+  const config = gateway ? withServicePick(resolved.config, gateway, modelOption?.id) : withOwnDefault(resolved.config, modelOption?.id)
+  return { ...resolved, config }
 }
 
 /**
@@ -573,6 +594,16 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice): Start
       ? { kind: 'model-required', message: `还没有可用的模型服务。${held.message}`, hint: held.hint, action: '打开模型服务' }
       : { kind: 'model-required', message: '还没有模型服务。' }
   }
+  if (
+    catalog.defaults.gatewayUnavailable
+    && catalog.defaults.harnessId === harness.id
+    && !servicePick(catalog, harness, choice.config)
+    && !pickedOwnDefault(choice.config)
+    && !startConfig(harness, choice.config).some(pick =>
+      harness.catalogue?.options.some(option => option.id === pick.configId && option.category === 'model'),
+    )
+  )
+    return { kind: 'model-required', message: '原来选择的模型服务暂不可用。', action: '打开模型服务' }
   return null
 }
 

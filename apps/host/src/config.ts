@@ -49,6 +49,20 @@ export interface ProviderRecord {
   maxConcurrent?: number
 }
 
+export interface ProviderAddition {
+  deviceId: string
+  requestId: string
+  providerId: string
+  inputHash: string
+  recordHash: string
+}
+
+export interface SetupChoiceReceipt {
+  deviceId: string
+  requestId: string
+  inputHash: string
+}
+
 export interface WorkspaceFolderRecord {
   id: string
   /** Realpath without macOS alias prefixes. */
@@ -74,7 +88,16 @@ export interface WorkspaceRecord {
 
 export interface HostSettings {
   version: 1
-  defaults: { harnessId?: string; mode?: TaskMode; workspaceId?: string; model?: ModelRef; pinned?: boolean }
+  defaults: {
+    harnessId?: string
+    mode?: TaskMode
+    workspaceId?: string
+    model?: ModelRef
+    gateway?: { harnessId: string; model: ModelRef | null }
+    pinned?: boolean
+  }
+  firstSetup?: { status: 'pending' } | { status: 'completed' | 'deferred'; requestId: string }
+  setupChoices?: SetupChoiceReceipt[]
   plugins: { disabled: string[] }
   /** Owner-added projects. The startup workspace is the implicit `default` and is not stored. */
   workspaces: WorkspaceRecord[]
@@ -138,6 +161,7 @@ const id = (label: string) => z.string().regex(PROVIDER_ID, `${label}只能包�
 const modelId = z.string().trim().min(1, '模型 ID 不能为空').max(200, '模型 ID 过长').refine(noControl, '模型 ID 不能包含控制字符')
 const name = z.string().trim().min(1, '名称不能为空').max(80, '名称过长')
 export const modelEffort = z.string().regex(MODEL_EFFORT, '思考深度只能是小写字母、数字、- 与 _')
+const savedModelRef = z.object({ providerId: z.string().min(1).max(128), model: modelId, effort: modelEffort.optional() })
 /** What the owner declared about one model; thinking levels are distinct and kept in their order. */
 export const modelCapabilitiesSchema = z.strictObject({
   vision: z.boolean().optional(),
@@ -262,7 +286,25 @@ const providersSchema = storedProvidersSchema.superRefine((providers, context) =
       context.addIssue({ code: 'custom', path: [index, 'keyPath'], message: 'API Key 必须绑定保存时的服务路径' })
   })
 })
-const providersFileSchema = z.object({ version: z.literal(1), providers: storedProvidersSchema })
+const MAX_PROVIDER_ADDITIONS = 512
+export const MAX_SETUP_CHOICES = 128
+const additionHash = z.string().regex(/^[a-f0-9]{64}$/u)
+const providersFileSchema = z.object({
+  version: z.literal(1),
+  providers: storedProvidersSchema,
+  additions: z
+    .array(
+      z.strictObject({
+        deviceId: z.string().min(1).max(128),
+        requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+        providerId: id('服务标识'),
+        inputHash: additionHash,
+        recordHash: additionHash,
+      }),
+    )
+    .max(MAX_PROVIDER_ADDITIONS)
+    .default([]),
+})
 const legacyProviderSchema = z.object({ baseURL: z.string(), apiKey: z.string(), model: z.string() })
 
 const folderPath = z
@@ -373,10 +415,27 @@ const settingsSchema = z
           .string()
           .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u, '项目标识无效')
           .optional(),
-        model: z.object({ providerId: z.string().min(1).max(128), model: modelId }).optional(),
+        model: savedModelRef.optional(),
+        gateway: z.object({ harnessId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/u), model: savedModelRef.nullable() }).optional(),
         pinned: z.boolean().optional(),
       })
       .default({}),
+    firstSetup: z
+      .discriminatedUnion('status', [
+        z.strictObject({ status: z.literal('pending') }),
+        z.strictObject({ status: z.enum(['completed', 'deferred']), requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) }),
+      ])
+      .optional(),
+    setupChoices: z
+      .array(
+        z.strictObject({
+          deviceId: z.string().min(1).max(128),
+          requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+          inputHash: additionHash,
+        }),
+      )
+      .max(MAX_SETUP_CHOICES)
+      .optional(),
     plugins: z.object({ disabled: z.array(z.string().min(1).max(128)).max(256) }).default({ disabled: [] }),
     workspaces: z.array(workspaceSchema).max(100, '项目数量过多').default([]),
     agents: z.array(agentSchema).max(64, 'Agent 数量过多').default([]),
@@ -441,7 +500,9 @@ type BeforePublish<T> = (next: T, commit: () => Promise<void>) => Promise<void>
  */
 export class HostConfig {
   private providerList: ProviderRecord[] = []
+  private providerAdditions: ProviderAddition[] = []
   private hostSettings: HostSettings = emptySettings()
+  private syncedSettings = this.hostSettings
   private readonly queues = { providers: Promise.resolve(), settings: Promise.resolve() }
 
   private constructor(private readonly dataDir: string) {}
@@ -455,9 +516,10 @@ export class HostConfig {
     await mkdir(config.dataDir, { recursive: true, mode: 0o700 })
     const stored = await readConfig(join(config.dataDir, PROVIDERS_FILE), providersFileSchema, true)
     const settings = await readConfig(join(config.dataDir, SETTINGS_FILE), settingsSchema, true)
-    if (settings) config.hostSettings = settings
+    if (settings) config.syncedSettings = config.hostSettings = settings
     if (stored) {
       config.providerList = stored.providers
+      config.providerAdditions = stored.additions
       if (stored.providers.some(record => record.apiKey && (!record.keyOrigin || record.keyPath === undefined))) {
         await config.updateProviders(draft => {
           for (const record of draft) {
@@ -490,24 +552,66 @@ export class HostConfig {
     return record && structuredClone(record)
   }
 
+  providerAddition(deviceId: string, requestId: string): ProviderAddition | undefined {
+    const receipt = this.providerAdditions.find(item => item.deviceId === deviceId && item.requestId === requestId)
+    return receipt && { ...receipt }
+  }
+
+  requireProviderAdditionRoom(): void {
+    if (this.providerAdditions.length >= MAX_PROVIDER_ADDITIONS)
+      throw new AppError(409, 'provider-addition-capacity', '准备页的模型服务记录已满。可核对原请求，或在设置的模型服务中新增。')
+  }
+
   settings(): HostSettings {
     return structuredClone(this.hostSettings)
+  }
+
+  setupStatus(): NonNullable<HostSettings['firstSetup']>['status'] | undefined {
+    return this.syncedSettings.firstSetup?.status
+  }
+
+  setupChoice(deviceId: string, requestId: string, synced = false): SetupChoiceReceipt | undefined {
+    const settings = synced ? this.syncedSettings : this.hostSettings
+    const receipt = settings.setupChoices?.find(item => item.deviceId === deviceId && item.requestId === requestId)
+    return receipt && { ...receipt }
+  }
+
+  /** Retry synchronizing the current rename, never write the settings snapshot from a receipt. */
+  settleSettings(): Promise<void> {
+    return this.serialize('settings', async () => {
+      if (this.hostSettings === this.syncedSettings) return
+      await syncDirectory(this.dataDir)
+      this.syncedSettings = this.hostSettings
+    })
   }
 
   /**
    * Serialized: mutate a draft, validate it, call `beforePublish` (may throw to abort), atomically write, then publish in memory.
    * `beforePublish` may call `commit` itself to place the durable write inside its own transaction, e.g. a registry replace.
    */
-  updateProviders(mutate: (draft: ProviderRecord[]) => void, beforePublish?: BeforePublish<ProviderRecord[]>): Promise<void> {
+  updateProviders(
+    mutate: (draft: ProviderRecord[]) => void,
+    beforePublish?: BeforePublish<ProviderRecord[]>,
+    addition?: ProviderAddition,
+  ): Promise<void> {
     return this.serialize('providers', async () => {
       const draft = structuredClone(this.providerList)
       mutate(draft)
       const checked = providersSchema.safeParse(draft)
       if (!checked.success) throw new AppError(400, 'invalid-provider', `模型服务配置无效：${issueText(checked.error, false)}`)
       const next = checked.data
-      await this.persist(PROVIDERS_FILE, { version: 1, providers: next }, next, beforePublish, () => {
-        this.providerList = next
-      })
+      if (addition) this.requireProviderAdditionRoom()
+      const additions = addition ? [...this.providerAdditions, addition] : this.providerAdditions
+      await this.persist(
+        PROVIDERS_FILE,
+        { version: 1, providers: next, ...(additions.length ? { additions } : {}) },
+        next,
+        beforePublish,
+        () => {
+          this.providerList = next
+          this.providerAdditions = additions
+        },
+      )
     })
   }
 
@@ -518,8 +622,9 @@ export class HostConfig {
       const checked = settingsSchema.safeParse(draft)
       if (!checked.success) throw new AppError(400, 'invalid-settings', `设置无效：${issueText(checked.error, false)}`)
       const next = checked.data
-      await this.persist(SETTINGS_FILE, next, next, beforePublish, () => {
+      await this.persist(SETTINGS_FILE, next, next, beforePublish, synced => {
         this.hostSettings = next
+        if (synced) this.syncedSettings = next
       })
     })
   }
@@ -539,7 +644,7 @@ export class HostConfig {
     content: unknown,
     next: T,
     beforePublish: BeforePublish<T> | undefined,
-    publish: () => void,
+    publish: (synced: boolean) => void,
   ): Promise<void> {
     const target = join(this.dataDir, fileName)
     const temporary = join(this.dataDir, `.${fileName}-${randomUUID()}.tmp`)
@@ -556,18 +661,20 @@ export class HostConfig {
     // A rename replaces the file, and with it the old file's backup exclusion, so the new one carries its own.
     if (BACKUP_EXCLUDED_CONFIG_FILES.includes(fileName)) await excludeFromBackup([temporary])
     let renamed = false
+    let synced = false
     let committing: Promise<void> | undefined
     const commit = () =>
       (committing ??= (async () => {
         await rename(temporary, target)
         renamed = true
         await syncDirectory(this.dataDir)
+        synced = true
       })())
     try {
       await beforePublish?.(structuredClone(next), commit)
       await commit()
     } finally {
-      if (renamed) publish()
+      if (renamed) publish(synced)
       else await unlink(temporary).catch(() => {})
     }
   }

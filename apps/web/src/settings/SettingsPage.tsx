@@ -163,6 +163,7 @@ export function SettingsPage({
   onChanged,
   onOpenSession,
   onOpenApp,
+  onFirstSetup,
 }: {
   snapshot: AppSnapshot
   access?: DeviceAccess
@@ -178,6 +179,7 @@ export function SettingsPage({
   onOpenSession?: (id: string) => void
   /** Opens an applied plugin page (设置 › 插件's 新应用). */
   onOpenApp?: (target: { pluginId: string; appId: string }) => void
+  onFirstSetup?: () => void
 }) {
   const phone = useViewport() === 'phone'
   const access = given ?? deviceAccess(snapshot, currentShell())
@@ -355,7 +357,9 @@ export function SettingsPage({
                   <div key={panel} className="settings-content settings-enter" data-lock={panel === 'devices' ? '' : undefined}>
                     {/* The section's name heads it; a page opened inside it names itself under its way back. */}
                     {!phone && depth === 0 && current && <h1 className="settings-title">{current.label}</h1>}
-                    {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
+                    {panel === 'general' && (
+                      <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} onFirstSetup={onFirstSetup} />
+                    )}
                     {panel === 'providers' && <ProvidersSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
                     {panel === 'usage' && <ModelUsagePage snapshot={snapshot} access={access} />}
                     {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}
