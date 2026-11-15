@@ -95,7 +95,7 @@ const TOKENS: Record<string, [string, string]> = {
   '--ink-2': ['#34343b', '#c9c9d0'],
   '--muted': ['#56565f', '#a3a3ad'],
   '--faint': ['#66666f', '#8b8b95'],
-  '--bubble': ['#f1f1f4', '#1e1e22'],
+  '--bubble': ['#e9edf3', '#242831'],
   '--key': ['#fbfbfc', '#2e2e34'],
   '--tag': ['rgba(18, 18, 28, 0.065)', 'rgba(255, 255, 255, 0.08)'],
   '--track': ['rgba(18, 18, 28, 0.11)', 'rgba(255, 255, 255, 0.11)'],

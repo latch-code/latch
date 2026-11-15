@@ -1,6 +1,24 @@
-import { rejectionNote, type Approval, type ApprovalOptionKind } from '@latch/protocol'
+import { rejectionNote, type Approval, type ApprovalOption, type ApprovalOptionKind } from '@latch/protocol'
 import { ApiError, isUncertain, newRequestId } from './api.ts'
+import type { ApprovalGate } from './permissions.ts'
 import { DECISION_COPY, safeDeviceName } from './securityCopy.ts'
+
+/** The exact choice sent before the Host's answer was lost. */
+export interface UncertainChoice {
+  decision: 'allow' | 'reject'
+  optionId: string | undefined
+  note?: string
+}
+
+const choiceKey = (decision: 'allow' | 'reject', optionId: string | undefined, note?: string) =>
+  JSON.stringify([decision, optionId ?? '', note ?? ''])
+
+export function retryApprovalOption(gate: Pick<ApprovalGate, 'explicit' | 'options'>, choice: UncertainChoice): ApprovalOption | undefined {
+  if (gate.explicit !== (choice.optionId !== undefined)) return undefined
+  return gate.options.find(
+    option => (!gate.explicit || option.id === choice.optionId) && option.kind.startsWith('allow') === (choice.decision === 'allow'),
+  )
+}
 
 /**
  * One user decision on one approval keeps one `requestId` until the Host has
@@ -13,12 +31,18 @@ export class DecisionRequests {
 
   /** The id for this choice (a rejection's note is part of it): reused while the same choice is being retried. */
   idFor(approvalId: string, decision: 'allow' | 'reject', optionId: string | undefined, note?: string): string {
-    const choice = JSON.stringify([decision, optionId ?? '', note ?? ''])
+    const choice = choiceKey(decision, optionId, note)
     const previous = this.pending.get(approvalId)
     if (previous?.choice === choice) return previous.requestId
     const requestId = this.makeId()
     this.pending.set(approvalId, { choice, requestId })
     return requestId
+  }
+
+  /** An explicit retry can only reuse the original choice. */
+  retryId(approvalId: string, decision: 'allow' | 'reject', optionId: string | undefined, note?: string): string | undefined {
+    const previous = this.pending.get(approvalId)
+    return previous?.choice === choiceKey(decision, optionId, note) ? previous.requestId : undefined
   }
 
   /** Keep the id only when the outcome is unknown (network error, timeout, 408, ≥ 500). */

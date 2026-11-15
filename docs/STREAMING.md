@@ -449,6 +449,10 @@ Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消�
 
 Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Message.subagent`（名字、说明、状态、步骤）；它的状态只来自它自己的报告，所在的一轮结束时仍未报告停止的记为 `unknown`。它请求的审批在会话的 `approvals` 里，`Approval.subagent` 是它的名字，没有 `toolCallId`。一轮结束后才到或仍在等的这类审批让会话处于 `waiting-approval`，详情里没有 `activity`；答复后会话回到这一轮结束时的状态。能单独停止的子 Agent 带 `Subagent.stoppable`；停止它之后带 `stopping`，直到它报告结果或这一轮结束，页面在此之前不写「已停止」。机制见 [HARNESSES.md](./HARNESSES.md#子-agent)。
 
+### Codex Agent 团队
+
+Codex 的原生委派在同一会话的详情中沿用 `Message.subagent`。有父轮与直接父关系证据的行带 `Subagent.team`（会话范围内的委派与成员标识、可选的用户消息标识与返回内容）；待处理的 `Approval.subagentId` 指向发起审批的 Latch 消息。右侧栏或手机阅读窗口关闭时沿用该会话的正文权限。客户端只提交原有会话和审批使用的标识。Team 变化随完整任务状态传输，SSE 文本追加不承载其事实。Host 丢失进程时保存的成员留在原行；只有验证过的官方读回能补上缺失状态，正文重连不自动派发工作。
+
 ## Agent 提问与回答
 
 `catalog.features.questions` 表示 Host 支持内置问答接口。ACP Agent 的提问（标准的 `elicitation/create` 表单模式，以及任何 Agent 发来的 `cursor/ask_question`）经 `HarnessHostOptions.askUser` 进入同一张提问卡，见 [HARNESSES.md](./HARNESSES.md#agent-的提问)。题包只在所选会话 detail/事件里出现，工具行按 toolCallId 显示向导。草稿与当前题号仅在本设备存储；切换会话或重载页面后恢复。提交前保存完整 requestId/answers；未知结果保持相同内容重试，卡片卸载不取消已经接纳的写请求。工具结果落盘后替换为可展开的已回答记录，随后模型继续。

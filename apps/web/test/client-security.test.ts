@@ -6,7 +6,7 @@ import { sha256Hex } from '@latch/core/node-kit'
 import { SECURITY_VECTORS_FILE, testHarness } from '@latch/testkit'
 import { hashDisplay as hostHashDisplay } from '@latch/host/crypto'
 import { ApiError, ApiTimeoutError } from '../src/core/api.ts'
-import { choiceKind, DecisionRequests, rejectionNoteFor, settledOutcome } from '../src/core/approvalDecision.ts'
+import { choiceKind, DecisionRequests, rejectionNoteFor, retryApprovalOption, settledOutcome } from '../src/core/approvalDecision.ts'
 import { cancelAnswer, CancelRequests } from '../src/core/cancelRequest.ts'
 import {
   activeFullAccess,
@@ -999,6 +999,27 @@ describe('local confirmation', () => {
 })
 
 describe('approval decisions (idempotent retries)', () => {
+  it('looks up only the original decision, option and note when retrying', () => {
+    let next = 0
+    const requests = new DecisionRequests(() => `req-${++next}`)
+    const first = requests.idFor('ap', 'reject', 'reject_once', '先给我看计划')
+    expect(requests.retryId('ap', 'reject', 'reject_once', '先给我看计划')).toBe(first)
+    expect(requests.retryId('ap', 'reject', 'reject_once', '换一条')).toBeUndefined()
+    expect(requests.retryId('ap', 'reject', undefined, '先给我看计划')).toBeUndefined()
+    expect(requests.retryId('ap', 'allow', 'allow_once')).toBeUndefined()
+    expect(next).toBe(1)
+    requests.settle('ap')
+    expect(requests.retryId('ap', 'reject', 'reject_once', '先给我看计划')).toBeUndefined()
+  })
+
+  it('cannot replace a missing approval option with a different scope', () => {
+    const once = { id: 'once', kind: 'allow_once', label: '允许一次' } as const
+    const original = { decision: 'allow', optionId: 'always' } as const
+    expect(retryApprovalOption({ explicit: true, options: [once] }, original)).toBeUndefined()
+    expect(retryApprovalOption({ explicit: false, options: [once] }, original)).toBeUndefined()
+    expect(retryApprovalOption({ explicit: false, options: [once] }, { ...original, optionId: undefined })).toBe(once)
+  })
+
   it('reuses one requestId while the same choice is retried after an unknown outcome', () => {
     let next = 0
     const requests = new DecisionRequests(() => `req-${++next}`)

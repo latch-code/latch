@@ -1207,6 +1207,219 @@ describe('Codex over its app-server', () => {
     expect(said(await settled(bridge, id), 'assistant')).toContain('network decline')
   })
 
+  it('projects native Team members and their results once, with only their own approvals', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo one')
+    await until(bridge, id, detail => detail.codexTeam === 'available' && detail.summary.status === 'idle')
+    await bridge.prompt(id, 'team 真实委派', rid())
+    const waiting = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+    const members = waiting.messages.filter(message => message.subagent?.team)
+    expect(members.map(member => member.subagent?.title)).toEqual(['Cedar', 'Maple'])
+    expect(members.map(member => member.subagent?.description)).toEqual(['检查窄屏', '核对回执'])
+    expect(new Set(members.map(member => member.subagent?.team?.id)).size).toBe(1)
+    expect(new Set(members.map(member => member.subagent?.team?.memberId)).size).toBe(2)
+    expect(members[0]?.subagent?.team?.userMessageId).toBe(waiting.messages.findLast(message => message.role === 'user')?.id)
+    expect(waiting.approvals).toHaveLength(1)
+    expect(waiting.approvals[0]).toMatchObject({ subagent: 'Maple', subagentId: members[1]?.id })
+    const other = await start(bridge, t.main, 'echo unrelated root')
+    expect(await bridge.cancelSubagent!(other, members[1]!.id)).toBe(false)
+    expect(await bridge.cancelSubagent!(id, 'arbitrary-upstream-thread')).toBe(false)
+    expect((await bridge.detail(other)).messages.some(message => message.subagent?.team)).toBe(false)
+    await bridge.decide(waiting.approvals[0]!.id, 'reject')
+    const done = await settled(bridge, id)
+    expect(done.messages.filter(message => message.subagent?.team).map(message => message.subagent)).toEqual([
+      expect.objectContaining({ status: 'done', team: expect.objectContaining({ result: '已核对手机布局' }) }),
+      expect.objectContaining({ status: 'failed', team: expect.objectContaining({ result: '回执检查被拒绝' }) }),
+    ])
+    expect(JSON.stringify(done.messages)).not.toMatch(/child-[a-f0-9]|不属于这次任务|外部成员/u)
+    await settled(bridge, other)
+    const log = await t.log()
+    expect(log.find(entry => entry.event === 'answered' && entry.method === 'foreign-team-approval')?.answer).toEqual({
+      decision: 'cancel',
+    })
+    expect(sent(log, 'turn/start')).toHaveLength(3)
+  })
+
+  it('links a native Team approval that arrived before its parent finished spawning the member', async () => {
+    const t = await computer({ FAKE_CODEX_TEAM_EARLY_APPROVAL: '1' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'team 真实委派')
+    const early = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+    expect(early.approvals[0]?.subagentId).toBeUndefined()
+    const later = await until(bridge, id, detail => detail.messages.filter(message => message.subagent?.team).length === 2)
+    const maple = later.messages.find(message => message.subagent?.title === 'Maple')
+    expect(later.approvals[0]).toMatchObject({ id: early.approvals[0]?.id, subagent: 'Maple', subagentId: maple?.id })
+    await bridge.decide(later.approvals[0]!.id, 'reject')
+    await settled(bridge, id)
+  })
+
+  it('recognizes native Team v2 activity and rejects a delayed earlier member turn', async () => {
+    const t = await computer({ FAKE_CODEX_TEAM: 'v2' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'team 真实委派')
+    const waiting = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+    expect(waiting.approvals[0]?.subagent).toBe('Maple')
+    await bridge.decide(waiting.approvals[0]!.id, 'reject')
+    const done = await settled(bridge, id)
+    const cedar = done.messages.find(message => message.subagent?.title === 'Cedar')
+    expect(cedar?.subagent).toMatchObject({ status: 'done', team: { result: '已核对手机布局' } })
+    expect(JSON.stringify(done.messages)).not.toContain('旧轮迟到')
+  })
+
+  it('holds native Team interruption while a member command has not settled', async () => {
+    const t = await computer({ FAKE_CODEX_TEAM_SETTLE_MS: '500' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'team 真实委派')
+    const waiting = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+    await bridge.decide(waiting.approvals[0]!.id, 'allow')
+    await vi.waitFor(async () => expect((await t.log()).some(entry => entry.event === 'team-command-started')).toBe(true))
+    const cancellation = bridge.cancel(id)
+    await vi.waitFor(async () => expect((await t.log()).some(entry => entry.event === 'team-child-interrupted')).toBe(true))
+    const member = (detail: DriverTaskDetail) => detail.messages.find(message => message.subagent?.title === 'Maple')?.subagent
+    expect(member(await bridge.detail(id))?.status).not.toBe('cancelled')
+    await cancellation
+    const done = await settled(bridge, id)
+    expect(done.summary.status).toBe('cancelled')
+    expect(member(done)?.status).toBe('cancelled')
+    const log = await t.log()
+    expect(log.filter(entry => entry.event === 'team-command-ended')).toHaveLength(1)
+    expect(sent(log, 'turn/interrupt')).toHaveLength(2)
+  })
+
+  it('clears a native Team member’s previous result when its newly reported work fails', async () => {
+    const t = await computer({ FAKE_CODEX_TEAM_SECOND_TURN: '1' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'team 真实委派')
+    const waiting = await until(bridge, id, value => value.summary.status === 'waiting-approval')
+    await bridge.decide(waiting.approvals[0]!.id, 'reject')
+    const cedar = (await settled(bridge, id)).messages.find(message => message.subagent?.title === 'Cedar')
+    expect(cedar?.subagent).toMatchObject({ status: 'failed', team: { failure: '下一轮失败' } })
+    expect(cedar?.subagent?.team?.result).toBeUndefined()
+  })
+
+  it('recovers only known native Team results and never treats a restart as a stop receipt', async () => {
+    const t = await computer({ FAKE_CODEX_TEAM_RECOVERY: '1' })
+    let bridge = await t.open()
+    const id = await start(bridge, t.main, 'team 真实委派')
+    const waiting = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+    await bridge.decide(waiting.approvals[0]!.id, 'reject')
+    await vi.waitFor(async () => expect((await t.log()).some(entry => entry.event === 'completed')).toBe(true))
+    const rows = (await bridge.detail(id)).messages.filter(message => message.subagent?.team)
+    expect(rows).toHaveLength(2)
+    expect(rows.every(message => message.subagent?.status === 'running' && message.subagent.team?.result === undefined)).toBe(true)
+    await bridge.close()
+
+    // The same member did another turn outside the one this Host witnessed. Its newest output cannot stand in for the tracked turn.
+    const statePath = join(t.root, 'threads.json')
+    const threads = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, { agentNickname?: string; turns: unknown[] }>
+    Object.values(threads)
+      .find(thread => thread.agentNickname === 'Cedar')!
+      .turns.push({
+        id: 'unrelated-later-turn',
+        status: 'completed',
+        items: [{ type: 'agentMessage', id: 'unrelated-result', text: '这轮属于别的工作' }],
+      })
+    await writeFile(statePath, JSON.stringify(threads))
+    bridge = await t.open()
+    expect((await bridge.detail(id)).messages.filter(message => message.subagent?.team).map(message => message.id)).toEqual(
+      rows.map(row => row.id),
+    )
+    await bridge.prompt(id, 'echo after reconnect', rid())
+    const restored = await until(
+      bridge,
+      id,
+      detail => detail.summary.status === 'idle' && detail.messages.some(message => message.subagent?.status === 'done'),
+    )
+    const members = restored.messages.filter(message => message.subagent?.team)
+    expect(members.map(member => member.id)).toEqual(rows.map(row => row.id))
+    expect(members[0]?.subagent).toMatchObject({ status: 'done', team: { result: '已核对手机布局' } })
+    expect(members[1]?.subagent?.status).toBe('unknown')
+    expect(members[1]?.subagent?.team?.result).toBeUndefined()
+    const log = await t.log()
+    expect(sent(log, 'thread/turns/list')).toHaveLength(2)
+    expect(sent(log, 'turn/start')).toHaveLength(2)
+  })
+
+  it('does not show native Team availability after reconnect until this process reports it', async () => {
+    const t = await computer()
+    let bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo one')
+    await until(bridge, id, detail => detail.codexTeam === 'available')
+    await bridge.close()
+    bridge = await t.open()
+    expect((await bridge.detail(id)).codexTeam).toBeUndefined()
+  })
+
+  it.each(['completed', 'cancelled'] as const)(
+    'holds the same native Team run when the root finishes and a member is later %s',
+    async result => {
+      const t = await computer(
+        {
+          FAKE_CODEX_TEAM_BACKGROUND_MS: result === 'cancelled' ? '5000' : '1800',
+          ...(result === 'cancelled' ? { FAKE_CODEX_TEAM_BACKGROUND_COMMAND: '1', FAKE_CODEX_TEAM_NESTED: '1' } : {}),
+        },
+        [],
+        { maxProcesses: 1, idleMs: 100 },
+      )
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'team 真实委派')
+      const member = (detail: DriverTaskDetail) => detail.messages.find(message => message.subagent?.title === 'Cedar')?.subagent
+      const rootDone = await until(
+        bridge,
+        id,
+        detail =>
+          detail.messages
+            .filter(message => message.role === 'assistant' && message.state === 'completed')
+            .map(message => message.text)
+            .join('') === 'Lead finished before Cedar',
+      )
+      expect(rootDone.summary).toMatchObject({ status: 'running', runId: expect.any(String) })
+      expect(member(rootDone)?.status).toBe('running')
+      const competitor = await start(bridge, t.main, 'echo competing root')
+      const refused = await settled(bridge, competitor)
+      expect(refused.summary.status).toBe('failed')
+      expect(said(refused, 'system')).toContain('同时运行的 Codex 会话过多')
+      expect(member(await bridge.detail(id))?.status).toBe('running')
+      if (result === 'cancelled') {
+        const cancellation = bridge.cancel(id, { runId: rootDone.summary.runId! })
+        await vi.waitFor(async () => expect((await t.log()).some(entry => entry.event === 'background-member-interrupted')).toBe(true))
+        expect((await bridge.detail(id)).summary.status).toBe('running')
+        expect(member(await bridge.detail(id))?.status).toBe('running')
+        await vi.waitFor(async () => expect((await t.log()).some(entry => entry.event === 'background-command-ended')).toBe(true))
+        expect((await bridge.detail(id)).summary.status).toBe('running')
+        expect(await cancellation).toBe(true)
+        const after = await settled(bridge, id)
+        expect(after.summary.status).toBe('cancelled')
+        expect(member(after)?.status).toBe('cancelled')
+        const log = await t.log()
+        const interrupts = sent(log, 'turn/interrupt')
+        expect(interrupts).toHaveLength(2)
+        for (const interrupt of interrupts)
+          expect(interrupt.params).toMatchObject({
+            threadId: expect.stringMatching(/^child-/u),
+            turnId: expect.stringMatching(/^turn-child-/u),
+          })
+        expect(log.some(entry => entry.event === 'nested-member-interrupted')).toBe(true)
+      } else {
+        const after = await settled(bridge, id)
+        expect(member(after)?.team?.result).toBe('Cedar finished after the lead')
+      }
+      const next = await start(bridge, t.main, 'echo after members finish')
+      expect((await settled(bridge, next)).summary.status).toBe('idle')
+    },
+  )
+
+  it('reads native Team capability without changing a user-disabled feature', async () => {
+    const t = await computer({ FAKE_CODEX_TEAM: 'off' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo one')
+    await until(bridge, id, detail => detail.codexTeam === 'disabled')
+    const log = await t.log()
+    expect(sent(log, 'experimentalFeature/list')).toHaveLength(1)
+    expect(log.some(entry => entry.method === 'experimentalFeature/enable' || entry.method === 'config/batchWrite')).toBe(false)
+  })
+
   it('shows a subagent’s calls as its own and asks about them as its', async () => {
     const t = await computer()
     const bridge = await t.open()

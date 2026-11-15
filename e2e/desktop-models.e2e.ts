@@ -67,6 +67,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
             const content = setup.locator('.ui-modal-surface')
             expect(await content.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
+            const insets = await content.evaluate(el => {
+              const bounds = el.getBoundingClientRect()
+              return [bounds.top, innerWidth - bounds.right, innerHeight - bounds.bottom, bounds.left]
+            })
+            expect(insets.every(inset => (width >= 768 ? inset > 0 : inset === 0))).toBe(true)
             await page.screenshot({ path: `test-results/first-setup/empty-${width}-${colorScheme}.png`, animations: 'disabled' })
           }
         }
@@ -93,6 +98,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await openSection(settings, '通用')
         await settings.getByRole('button', { name: '打开准备页' }).click()
         await setup.getByText('已就绪', { exact: true }).waitFor()
+        await page.screenshot({ path: 'test-results/first-setup/ready-390-dark.png', animations: 'disabled' })
         await start.click()
         await setup.waitFor({ state: 'detached' })
         expect((await owner.json<AppSnapshot>('snapshot')).firstSetup).toBe('completed')

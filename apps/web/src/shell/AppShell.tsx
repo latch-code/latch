@@ -539,10 +539,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   <header className="workbench-phone-heading">
                     {triage && shellSpaces(shell) ? <SpaceSwitch {...shellSpaces(shell)!} /> : <h1>Code</h1>}
                     {!triage && <IconButton label="搜索" icon={SearchGlyph} onClick={openSearch} />}
-                    {triage && <ShellQuota shell={shell} />}
-                    {triage && entries.includes('settings') && (
-                      <IconButton label="设置" icon={SettingsGlyph} onClick={() => goEntry('settings')} />
-                    )}
                     <LayoutSwitch value={shell.preferences.workbenchLayout} />
                   </header>
                 )}
@@ -555,6 +551,14 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       <Button variant="ghost" onClick={openSearch}>
                         搜索
                       </Button>
+                    )}
+                    {triage && (
+                      <div className="workbench-phone-utilities">
+                        <ShellQuota shell={shell} />
+                        {entries.includes('settings') && (
+                          <IconButton label="设置" icon={SettingsGlyph} onClick={() => goEntry('settings')} />
+                        )}
+                      </div>
                     )}
                   </nav>
                 )}

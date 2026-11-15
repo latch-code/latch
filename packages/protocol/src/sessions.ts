@@ -525,6 +525,14 @@ export interface Message {
 export interface Subagent {
   title: string
   description?: string
+  /** Evidence from an actual Codex delegation. Both IDs belong to the enclosing Latch conversation. */
+  team?: {
+    id: string
+    memberId: string
+    userMessageId?: string
+    result?: string
+    failure?: string
+  }
   /**
    * What it last said of itself. `unknown`: it said it cannot tell, or the turn that started it ended without its saying
    * it stopped. Absent: it has not said.
@@ -584,6 +592,8 @@ export interface Approval {
   advisory?: true
   /** Asked by a subagent of the session (`Message.subagent`), by its name. */
   subagent?: string
+  /** The member row of this Latch session, when linked to Codex team evidence. */
+  subagentId?: string
 }
 
 export interface PlanEntry {
@@ -614,6 +624,8 @@ export interface DriverTaskDetail extends Omit<TaskDetail, 'summary'> {
 }
 
 export interface TaskDetail {
+  /** Actual availability on this conversation's local Codex process, when known. */
+  codexTeam?: 'available' | 'disabled'
   /** Authorized detail projection only, never an unverified list/status snapshot. */
   fileChanges?: { runId: string; files: FileChange[]; state: 'watching' | 'settling'; truncated?: true; unavailable?: true }
   summary: TaskSummary

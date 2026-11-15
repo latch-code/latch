@@ -10,6 +10,9 @@
   height: var(--panel-strip-height, 40px);
   padding: 0 var(--sp-12);
 }
+.inspector-column .session-panel-strip {
+  border-bottom: 1px solid var(--line);
+}
 /* A phone's page has its own way back, and is already the whole window. */
 @media (max-width: 767.98px) {
   .session-panel-strip .ui-tabs-actions {

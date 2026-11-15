@@ -25,6 +25,7 @@ import { escapeIsLeftover } from '../escapeGrace.ts'
 import { previousState } from '../diff.ts'
 import { argumentView } from '../format.ts'
 import { approvalCommand, diffStat, linesBelow, toolHeading, toolHeadingPath } from '../conversation.ts'
+import { retryApprovalOption, type UncertainChoice } from '../core/approvalDecision.ts'
 import type { ApprovalGate } from '../core/permissions.ts'
 import { APPROVAL_COPY, APPROVAL_OPTION_LABELS, CONFIRMATION_COPY, RISK_CLAUSE } from '../core/securityCopy.ts'
 import { ArgumentList } from '../components/ArgumentList.tsx'
@@ -37,14 +38,6 @@ import { cardTakesKeys, useArmed } from './useArmed.ts'
  * rejection carried, so it goes as it was and never waits for a note again.
  */
 type DecideHandler = (approval: Approval, decision: 'allow' | 'reject', optionId: string | undefined, retry?: { note?: string }) => void
-
-/** A choice whose outcome is unknown (a timeout or a dropped connection): retrying sends it again with its requestId. */
-interface UncertainChoice {
-  decision: 'allow' | 'reject'
-  optionId: string | undefined
-  /** The note the rejection carried (「告诉 Agent 改做什么」). */
-  note?: string
-}
 
 /** What this device's last choice on an approval is doing, when the card has to say more than its buttons do. */
 export interface ApprovalStatus {
@@ -260,6 +253,7 @@ export interface ApprovalDrawerProps {
   busy: ReadonlyMap<string, string>
   statuses: ReadonlyMap<string, ApprovalStatus>
   onDecide: DecideHandler
+  canRetry?: ((choice: UncertainChoice) => boolean) | undefined
   /** The word on 拒绝: it changes when typing would send what to do instead. */
   rejectLabel?: string | undefined
   onStop?: (() => void) | undefined
@@ -285,6 +279,7 @@ export function ApprovalDrawer({
   busy,
   statuses,
   onDecide,
+  canRetry,
   rejectLabel,
   onStop,
   presentation,
@@ -308,6 +303,7 @@ export function ApprovalDrawer({
       busy={busy.get(approval.id)}
       status={statuses.get(approval.id)}
       onDecide={onDecide}
+      canRetry={canRetry}
       rejectLabel={rejectLabel}
       onStop={onStop}
       presentation={presentation}
@@ -329,6 +325,7 @@ function ApprovalPanel({
   busy,
   status,
   onDecide,
+  canRetry,
   rejectLabel,
   onStop,
   presentation,
@@ -351,6 +348,7 @@ function ApprovalPanel({
   busy: string | undefined
   status: ApprovalStatus | undefined
   onDecide: DecideHandler
+  canRetry?: ((choice: UncertainChoice) => boolean) | undefined
   rejectLabel?: string | undefined
   onStop?: (() => void) | undefined
 }) {
@@ -392,7 +390,7 @@ function ApprovalPanel({
   // Against a previous file nobody could read, a count of removed lines would be made up.
   const stat = diffs.some(diff => ['unavailable', 'unknown'].includes(previousState(diff))) ? undefined : diffStat(tool)
   const running = busy !== undefined
-  const uncertain = running ? undefined : status?.uncertain
+  const uncertain = status?.uncertain
   const failure = running ? undefined : status?.failure
   const previewId = useId()
   const args = argumentView(approval.tool?.input ?? approval.arguments)
@@ -442,7 +440,7 @@ function ApprovalPanel({
   // Content that may read as something else, or a choice in doubt, keeps the broadest choices out of reach.
   const offerMore = !hidden && uncertain === undefined
   // ⌘⏎ allows only while the card is ready, and Esc refuses only then.
-  const escapes = armed && !running && reject !== undefined && (presentation !== 'workbench' || places.inCard)
+  const escapes = armed && !running && !uncertain && reject !== undefined && (presentation !== 'workbench' || places.inCard)
   useEscapeRefuses(escapes, card, () => {
     if (reject) choose(reject)
   })
@@ -459,8 +457,23 @@ function ApprovalPanel({
   const previousNotes = (['unavailable', 'unknown'] as const)
     .filter(state => diffs.some(diff => previousState(diff) === state))
     .map(state => PREVIOUS_NOTES[state]!)
-  const uncertainOption =
-    uncertain && (gate.options.find(option => option.id === uncertain.optionId) ?? (uncertain.decision === 'allow' ? allow : reject))
+  // Read the already projected diff as a document for an ordinary one-file edit. Requests with additional safety
+  // information retain the ordinary card and its complete preview.
+  const documentReview =
+    presentation === 'workbench'
+    && requester === undefined
+    && approval.risk === 'R1'
+    && gate.kind === 'R1'
+    && !approval.advisory
+    && !hidden
+    && !uncertain
+    && !gate.note
+    && !gate.hint
+    && tool?.kind === 'edit'
+    && diffs.length === 1
+    && previousNotes.length === 0
+  const uncertainOption = uncertain && retryApprovalOption(gate, uncertain)
+  const retry = uncertain && uncertainOption && canRetry?.(uncertain) !== false && (!hidden || uncertainOption.kind.endsWith('_once'))
   const menuItems: MenuItem[] = [
     ...(offerMore
       ? more.map(option => ({
@@ -523,7 +536,7 @@ function ApprovalPanel({
         showKeys={false}
         tooltip={label === option.label ? undefined : option.label}
         loading={pressed}
-        disabled={!armed || (running && !pressed)}
+        disabled={!armed || !!uncertain || (running && !pressed)}
         onClick={() => {
           choose(option)
         }}>
@@ -536,6 +549,7 @@ function ApprovalPanel({
       className="composer-drawer approval-panel"
       data-secure=""
       data-presentation={presentation}
+      data-document-review={documentReview && open ? '' : undefined}
       data-single-file={fileInHeading ? '' : undefined}
       data-risky={risky ? '' : undefined}
       data-approval-id={approval.id}
@@ -690,6 +704,16 @@ function ApprovalPanel({
       {hasPreview && (
         <div className="approval-preview" id={previewId} data-open={open ? '' : undefined}>
           <div className="approval-preview-inner" inert={!open}>
+            {documentReview && (
+              <div className="approval-document-header">
+                {fileInHeading && path && (
+                  <code>
+                    <VisibleText text={path} />
+                  </code>
+                )}
+                <span>拟议改动</span>
+              </div>
+            )}
             {!quietReason && approval.reason && approval.reason !== action && approval.reason !== riskSentence && (
               <p className="approval-reason">
                 <VisibleText text={approval.reason} />
@@ -705,19 +729,22 @@ function ApprovalPanel({
           {failure.text}
         </InlineNotice>
       )}
-      {uncertain && uncertainOption && (
+      {uncertain && (
         <InlineNotice
           tone="error"
           className="approval-uncertain"
-          title={APPROVAL_COPY.uncertainTitle(optionLabel(uncertainOption, gate))}
+          title={uncertainOption ? APPROVAL_COPY.uncertainTitle(optionLabel(uncertainOption, gate)) : APPROVAL_COPY.uncertainApproval}
           action={
-            <Button
-              size="xs"
-              onClick={() => {
-                onDecide(approval, uncertain.decision, uncertain.optionId, uncertain.note === undefined ? {} : { note: uncertain.note })
-              }}>
-              {APPROVAL_COPY.retry}
-            </Button>
+            retry && (
+              <Button
+                size="xs"
+                disabled={!armed || running}
+                onClick={() => {
+                  onDecide(approval, uncertain.decision, uncertain.optionId, uncertain.note === undefined ? {} : { note: uncertain.note })
+                }}>
+                {APPROVAL_COPY.retry}
+              </Button>
+            )
           }
         />
       )}
