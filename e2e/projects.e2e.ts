@@ -121,6 +121,8 @@ describe('saved projects', () => {
         if (width === 900) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
         const group = page.getByRole('region', { name: `项目 ${width}`, exact: true })
         await group.waitFor()
+        await desktop.json(`workspaces/${project.id}`, { method: 'PATCH', body: { glyph: 'pen-tool' } })
+        await group.locator('.project-group-heading svg.lucide-pen-tool').waitFor()
         await group.getByRole('button', { name: `项目 ${width} 的项目操作`, exact: true }).click()
         await page.getByRole('menuitem', { name: '重命名', exact: true }).click()
         await group.getByLabel('项目名称', { exact: true }).fill(`服务 ${width}`)

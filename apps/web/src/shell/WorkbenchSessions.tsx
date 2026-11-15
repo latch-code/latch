@@ -75,7 +75,6 @@ export function WorkbenchSessions({ shell, snapshot }: { shell: ShellState; snap
       {groups.map(group => (
         <section key={group.id} className="workbench-session-group" aria-label={group.label}>
           <header className="workbench-session-group-head">
-            <Icon icon={FolderGlyph} size={16} />
             {group.project ? (
               <ProjectGroupHeading
                 project={group.project}
@@ -86,7 +85,10 @@ export function WorkbenchSessions({ shell, snapshot }: { shell: ShellState; snap
                 }}
               />
             ) : (
-              <h2>{escapeSecurityText(group.label)}</h2>
+              <>
+                <Icon icon={FolderGlyph} size={16} />
+                <h2>{escapeSecurityText(group.label)}</h2>
+              </>
             )}
             <span className="workbench-session-count">{group.tasks.length}</span>
           </header>
