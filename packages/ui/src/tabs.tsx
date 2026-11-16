@@ -154,7 +154,8 @@ const TAB_GAP = 2
  * the tab's width). Delete, a middle click and the tab's context menu (right click, press and hold, the context-menu
  * key) close it; Delete moves focus to its neighbour. One tab stop; ←/→ move and select through every tab,
  * Home and End go to the ends. Tabs that do not fit go into one menu at the row's end (`fitTabs`); the selected tab
- * always stands in the row. `actions` ends the row.
+ * always stands in the row. `add` follows the tabs (and the +N menu) at once, for what opens a new tab; `actions` ends
+ * the row.
  */
 export function PanelTabs<T extends string>({
   label,
@@ -162,6 +163,7 @@ export function PanelTabs<T extends string>({
   tabs,
   onValueChange,
   onClose,
+  add,
   actions,
   className,
 }: {
@@ -170,11 +172,14 @@ export function PanelTabs<T extends string>({
   tabs: ReadonlyArray<PanelTab<T>>
   onValueChange: (value: T) => void
   onClose?: (value: T) => void
+  /** Right after the tabs: the control that opens another one. */
+  add?: ReactNode
   actions?: ReactNode
   className?: string
 }) {
   const row = useRef<HTMLDivElement>(null)
   const end = useRef<HTMLDivElement>(null)
+  const adder = useRef<HTMLDivElement>(null)
   const faces = useRef<Array<HTMLButtonElement | null>>([])
   const boxes = useRef<Array<HTMLSpanElement | null>>([])
   const base = useId()
@@ -186,7 +191,7 @@ export function PanelTabs<T extends string>({
     if (!element) return
     const style = getComputedStyle(element)
     const gap = parseFloat(style.columnGap) || 0
-    const ending = end.current ? end.current.offsetWidth + gap : 0
+    const ending = (end.current ? end.current.offsetWidth + gap : 0) + (adder.current ? adder.current.offsetWidth + gap : 0)
     const available = element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - ending
     const widths = boxes.current.slice(0, tabs.length).map(box => box?.offsetWidth ?? 0)
     const next = fitTabs({ widths, selected, available, gap: TAB_GAP, more: MORE_WIDTH })
@@ -323,6 +328,11 @@ export function PanelTabs<T extends string>({
             </button>
           )}
         />
+      )}
+      {add && (
+        <div ref={adder} className="ui-panel-tabs-add">
+          {add}
+        </div>
       )}
       {actions && (
         <div ref={end} className="ui-tabs-actions">

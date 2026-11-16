@@ -10,6 +10,7 @@ import {
   MenuFooterLink,
   MenuFooterNote,
   MenuPanel,
+  PanelTabs,
   Popover,
   Tile,
   ValuePicker,
@@ -715,6 +716,63 @@ describe('action menu', () => {
     await userEvent.keyboard('{Enter}')
     expect(renamed).toHaveBeenCalledOnce()
     expect(focused()).toBe(trigger.element())
+  })
+})
+
+describe('menu accelerators', () => {
+  it('shows each item its letter at the end and chooses it with that key while open, never a disabled one', async () => {
+    const browser = vi.fn()
+    const blocked = vi.fn()
+    const screen = await render(
+      <Menu
+        label="打开面板"
+        sections={[
+          {
+            id: 'open',
+            items: [
+              { id: 'browser', label: '浏览器', icon: PlusGlyph, accelerator: 'B', onSelect: browser },
+              { id: 'files', label: '文件', icon: PlusGlyph, accelerator: 'F', disabledReason: '读不到', onSelect: blocked },
+            ],
+          },
+        ]}
+        trigger={props => <IconButton {...props} label="打开" icon={PlusGlyph} />}
+      />,
+    )
+    const trigger = screen.getByRole('button', { name: '打开' })
+    trigger.element().focus()
+    await userEvent.keyboard('{ArrowDown}')
+    const item = screen.getByRole('menuitem', { name: '浏览器' })
+    expect(item.element().getAttribute('aria-keyshortcuts')).toBe('B')
+    expect(item.element().querySelector('.ui-kbd')?.textContent).toBe('B')
+    await userEvent.keyboard('f')
+    expect(blocked).not.toHaveBeenCalled()
+    await expect.element(screen.getByRole('menu')).toBeVisible()
+    await userEvent.keyboard('b')
+    expect(browser).toHaveBeenCalledOnce()
+    expect(focused()).toBe(trigger.element())
+  })
+})
+
+describe('panel tabs add slot', () => {
+  it('stands right after the tabs, before the actions at the row end', async () => {
+    const screen = await render(
+      <div style={{ width: '480px' }}>
+        <PanelTabs
+          label="面板"
+          value="a"
+          onValueChange={() => {}}
+          tabs={[{ value: 'a', label: '改动' }]}
+          add={<IconButton label="打开面板" icon={PlusGlyph} size="xs" />}
+          actions={<IconButton label="铺满" icon={MoreGlyph} size="xs" />}
+        />
+      </div>,
+    )
+    const tab = screen.getByRole('tab', { name: '改动' }).element().getBoundingClientRect()
+    const add = screen.getByRole('button', { name: '打开面板' }).element().getBoundingClientRect()
+    const end = screen.getByRole('button', { name: '铺满' }).element().getBoundingClientRect()
+    expect(add.left).toBeGreaterThanOrEqual(tab.right)
+    expect(add.left - tab.right).toBeLessThan(24)
+    expect(end.left - add.right).toBeGreaterThan(200)
   })
 })
 

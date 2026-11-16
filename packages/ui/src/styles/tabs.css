@@ -102,6 +102,11 @@
   visibility: hidden;
   pointer-events: none;
 }
+.ui-panel-tabs-add {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
 .ui-panel-tabs-more {
   position: relative;
   display: inline-flex;

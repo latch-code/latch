@@ -16,6 +16,7 @@ import {
   FoldHeader,
   IconButton,
   LiveChanges,
+  MenuPanel,
   PanelTabs,
   SegmentedControl,
   SelectButton,
@@ -156,6 +157,32 @@ function Panels() {
         <Cell caption="放不下：其余的收进 +N，当前标签留在行里">
           <div style={{ width: 240 }}>
             <PanelTabs label="面板 4" value={TABS.at(-1)!.value} tabs={TABS} onValueChange={() => {}} />
+          </div>
+        </Cell>
+        <Cell caption="末尾的 +：打开菜单，字母键直接选">
+          <div style={{ display: 'grid', gap: 'var(--sp-8)', width: 320 }}>
+            <PanelTabs
+              label="面板 5"
+              value="files"
+              tabs={TABS.slice(0, 2)}
+              onValueChange={() => {}}
+              add={<IconButton label="打开面板" icon={PlusGlyph} size="xs" />}
+            />
+            <div className="ui-popover" style={{ width: 200 }}>
+              <MenuPanel
+                label="打开面板"
+                sections={[
+                  {
+                    id: 'open',
+                    items: [
+                      { id: 'browser', label: '浏览器', icon: GlobeGlyph, accelerator: 'B', onSelect: () => {} },
+                      { id: 'files', label: '文件', icon: FileGlyph, accelerator: 'F', onSelect: () => {} },
+                      { id: 'changes', label: '改动', icon: CommitGlyph, accelerator: 'D', onSelect: () => {} },
+                    ],
+                  },
+                ]}
+              />
+            </div>
           </div>
         </Cell>
         <Cell caption="可关闭但没有图标：× 有自己的一格" force="hover" at=".ui-panel-tab[data-closable]">

@@ -17,6 +17,7 @@ import { motionAllowed } from './changes.ts'
 import { ChoiceList } from './choice.tsx'
 import { Sheet } from './dialog.tsx'
 import { Icon, Spinner, type IconComponent } from './icon.tsx'
+import { Kbd } from './pill.tsx'
 import {
   cx,
   firstMeaningful,
@@ -249,6 +250,11 @@ export interface MenuItem {
   tag?: ReactNode
   /** The one trailing element: meta text, a small badge or a kbd. */
   meta?: ReactNode
+  /**
+   * One letter (A–Z) that chooses the item while the menu is open, shown at the row's end where `meta` is absent. Without
+   * a modifier and outside composition only; it takes precedence over typeahead.
+   */
+  accelerator?: string
   /** A tile or avatar between the leading slot and the label: the value's own picture (a harness, a model service). */
   media?: ReactNode
   /** Selection menus: the chosen item, with an ink check and its label at 500. */
@@ -313,7 +319,8 @@ function itemsOf(container: HTMLElement): HTMLButtonElement[] {
  * hover is instant. The leading slot is there only when something can fill it (a selection's check, an item's glyph);
  * a menu of plain actions starts its text at the menu's padding. ↑/↓ move through every item (a disabled one too,
  * which reads out its reason), Home and End go to the ends, typing jumps to the next label that starts with the typed
- * letters, Enter or Space chooses. Danger items come last, after a separator.
+ * letters (an item's `accelerator` letter chooses it at once), Enter or Space chooses. Danger items come last, after a
+ * separator.
  */
 export function MenuPanel({ label, header, sections, selection = false, footer, onChoose, onDismiss, panelRef, className }: PanelProps) {
   const id = useId()
@@ -334,6 +341,21 @@ export function MenuPanel({ label, header, sections, selection = false, footer, 
         event.stopPropagation()
       }
       onDismiss?.(event.key === 'Escape' ? 'escape' : 'tab')
+      return
+    }
+    const letter = event.key.length === 1 && /^[a-z]$/iu.test(event.key) ? event.key.toUpperCase() : undefined
+    const keyed =
+      letter
+      && !event.metaKey
+      && !event.ctrlKey
+      && !event.altKey
+      && !event.nativeEvent.isComposing
+      && !(event.target instanceof HTMLInputElement)
+        ? visible.flatMap(section => section.items).find(item => item.accelerator?.toUpperCase() === letter)
+        : undefined
+    if (keyed) {
+      event.preventDefault()
+      if (keyed.disabledReason === undefined) onChoose?.(keyed)
       return
     }
     const next =
@@ -423,6 +445,7 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
       data-danger={item.danger ? '' : undefined}
       aria-checked={selection ? item.checked === true : undefined}
       aria-disabled={disabled || undefined}
+      aria-keyshortcuts={item.accelerator?.toUpperCase()}
       aria-labelledby={`${id}-label`}
       aria-describedby={described || undefined}
       onClick={() => {
@@ -447,7 +470,13 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
           </span>
         )}
       </span>
-      {item.meta !== undefined && <span className="ui-menu-item-meta">{item.meta}</span>}
+      {item.meta !== undefined ? (
+        <span className="ui-menu-item-meta">{item.meta}</span>
+      ) : item.accelerator ? (
+        <span className="ui-menu-item-meta" aria-hidden="true">
+          <Kbd>{item.accelerator.toUpperCase()}</Kbd>
+        </span>
+      ) : null}
     </button>
   )
 }
