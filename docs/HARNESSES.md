@@ -703,7 +703,7 @@ Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，�
 - **成员。** 从已知父轮的 `collabAgentToolCall` 或 `subAgentActivity` 与 Codex 报告的直接父关系确认。
 - **结算。** 根线程完成可以先显示答复，这一轮仍等已证实活跃的成员及其命令真正结算。
 - **停止。** 向仍活跃的根、已证身份的成员及其已证实的后代发 `turn/interrupt`，等实际终态与命令结束。成员没有单独的停止按钮。
-- **未知。** 进程退出后没有结算证据的记为「状态未知」。Host 重启后先显示已保存的事实；下次恢复同一会话时核对直接父关系与 Host 观察到过的子轮，只有匹配该子轮的结果才补入。读回的 `interrupted` 不作为停止回执。
+- **未知。** 进程退出后没有结算证据的记为「未回报结果」。Host 重启后先显示已保存的事实；下次恢复同一会话时核对直接父关系与 Host 观察到过的子轮，只有匹配该子轮的结果才补入。读回的 `interrupted` 不作为停止回执。
 - **模型服务。** 主会话用 Latch 的模型服务时，成员继承同一 provider 与进程内的网关凭据，请求计入主会话与同一用量预算；角色或工具选了服务名单外的模型时网关拒绝，成员显示失败。
 
 ## 子 Agent
@@ -733,14 +733,14 @@ Latch 在 `initialize` 声明 `clientCapabilities.subagents: {}`（ACP 子 Agent
 **一轮结束时。**
 
 - 停止会话时，子 Agent 挂起的请求与会话自己的一起答复为 `cancelled`。
-- 仍说自己在运行或等批准的子 Agent 记为「状态未知」；它未完成的调用与会话自己的一样结算，之后再报告完成或失败时以报告为准。
+- 仍说自己在运行或等批准的子 Agent 记为「未回报结果」；它未完成的调用与会话自己的一样结算，之后再报告完成或失败时以报告为准。
 - 一轮自己结束（不是停止或失败）时仍在等批准的子 Agent 请求不取消，之后才到的也照常给人：会话显示「等你处理」直到答复，期间空闲进程不结束。答复后会话回到这一轮结束时的状态。
 
 **OpenCode 2.x** 不发 `subagent_update`。
 
 - Latch 不声明它的私有能力 `opencode/child-session-updates`，于是子会话的更新与权限请求都发在启动它的会话上，带 `_meta["opencode/child-session"]`。profile 的 `readProjectedChild` 把它当作那个子 Agent 在自己会话上的报告；`parentID` 是另一个子 Agent 时放进它的步骤。
 - 子会话结束时没有报告，按会话自己的 `subagent` 调用读（`readChildEnd`）：调用完成且 `rawOutput.metadata.status` 为 `completed` 记完成，为 `running` 表示它在后台继续；调用失败记失败，在停止这一轮时失败的记已取消。
-- 一轮结束后 OpenCode 不再发子 Agent 的更新，所以后台子 Agent 之后是「状态未知」。
+- 一轮结束后 OpenCode 不再发子 Agent 的更新，所以后台子 Agent 之后是「未回报结果」。
 - 后来的一轮里用 `sessionID` 继续一个已有的子 Agent 时，OpenCode 不转发它的更新与权限请求：它要批准时这一轮一直显示运行中，只能停止。按 2.x 的源码确认，尚未在真实运行中核对。
 
 ## Agent 自己的请求

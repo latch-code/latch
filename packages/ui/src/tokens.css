@@ -4,8 +4,9 @@
  * Colour is restrained: neutral ink on near-white or near-black. Blue (accent) is only for the primary action, focus,
  * links and checked controls; amber only for 等你处理 and warnings; red only for a real failure or a real risk; green
  * only for added lines, a passed check, a live connection's dot and a short-lived success tick. Amber and red always
- * come with words. Running work, counts, selected rows and every resting icon are neutral. The background layer
- * (Backdrop) is the one decoration: its points take --fx-ink, a blue-grey that is none of the four.
+ * come with words. Running work, counts, selected rows and every resting icon are neutral (a work row's kind glyph takes
+ * the content palette below). The background layer (Backdrop) is the one decoration: its points take --fx-ink, a
+ * blue-grey that is none of the four.
  *
  * Surfaces are stepped, with almost no lines: sunken < sidebar < canvas < raised < card < pop. The sidebar grey is the
  * ground of the window; the canvas holds the work (conversation, panels); raised layers (the composer, menus,
@@ -210,6 +211,29 @@
     --syn-function: #0f6e78;
     --syn-constant: #ad4f19;
     --syn-punctuation: var(--ink-2);
+    /* Content: colours that appear only inside what an agent wrote or did (prose, code, a work row's kind mark and its
+     * output), never on app chrome. syn-flag: a command's flags and an object's keys. code-ink and code-tint: an inline
+     * code chip. path-ink and path-tint: a file chip, which opens the file. kind-*: the glyph of a work row by what it did
+     * (read, search, edit, run, web, sub-agent). ansi-*: the colours a command's output asked for; red and green are the
+     * state colours, because a test runner's red and green mean failed and passed. */
+    --syn-flag: #9c3f6a;
+    --content-code-ink: #8d3a62;
+    --content-code-tint: rgba(141, 58, 98, 0.08);
+    --content-path-ink: #1d52c4;
+    --content-path-tint: rgba(36, 97, 224, 0.07);
+    --kind-read: #4d6b86;
+    --kind-search: #6f52b0;
+    --kind-edit: #a2466f;
+    --kind-run: #0f6e78;
+    --kind-web: #3e7563;
+    --kind-agent: #7d5f4b;
+    --ansi-red: var(--red);
+    --ansi-green: var(--green);
+    --ansi-yellow: #7a5c00;
+    --ansi-blue: #2557b8;
+    --ansi-magenta: #9b3d97;
+    --ansi-cyan: #0f6e78;
+    --ansi-grey: var(--faint);
     /* 我的 Agent's avatars: one muted hue per face, for its lines; the plate mixes 13% of it into the surface.
      * neutral is 通用's grey. No red, orange, yellow, bright green or bright blue: those already mean something. */
     --agent-neutral: #6b6b74;
@@ -593,6 +617,21 @@
       --syn-number: #f2a072;
       --syn-function: #79d0d6;
       --syn-constant: #f2a072;
+      --syn-flag: #e899bd;
+      --content-code-ink: #f0a3c6;
+      --content-code-tint: rgba(240, 163, 198, 0.1);
+      --content-path-ink: #80aafb;
+      --content-path-tint: rgba(107, 155, 250, 0.12);
+      --kind-read: #9db4cc;
+      --kind-search: #b9a2f0;
+      --kind-edit: #ef9ac0;
+      --kind-run: #79d0d6;
+      --kind-web: #8ccfb4;
+      --kind-agent: #d0b49e;
+      --ansi-yellow: #e6c45c;
+      --ansi-blue: #7fa6f5;
+      --ansi-magenta: #e09ade;
+      --ansi-cyan: #79d0d6;
       --agent-neutral: #9a9aa4;
       --agent-ink: #b4b8c2;
       --agent-slate: #8599b0;
@@ -696,6 +735,21 @@
     --syn-number: #f2a072;
     --syn-function: #79d0d6;
     --syn-constant: #f2a072;
+    --syn-flag: #e899bd;
+    --content-code-ink: #f0a3c6;
+    --content-code-tint: rgba(240, 163, 198, 0.1);
+    --content-path-ink: #80aafb;
+    --content-path-tint: rgba(107, 155, 250, 0.12);
+    --kind-read: #9db4cc;
+    --kind-search: #b9a2f0;
+    --kind-edit: #ef9ac0;
+    --kind-run: #79d0d6;
+    --kind-web: #8ccfb4;
+    --kind-agent: #d0b49e;
+    --ansi-yellow: #e6c45c;
+    --ansi-blue: #7fa6f5;
+    --ansi-magenta: #e09ade;
+    --ansi-cyan: #79d0d6;
     --agent-neutral: #9a9aa4;
     --agent-ink: #b4b8c2;
     --agent-slate: #8599b0;
@@ -849,6 +903,24 @@
     --syn-function: #0f6e78 !important;
     --syn-constant: #ad4f19 !important;
     --syn-punctuation: var(--ink-2) !important;
+    --syn-flag: #9c3f6a !important;
+    --content-code-ink: #8d3a62 !important;
+    --content-code-tint: rgba(141, 58, 98, 0.08) !important;
+    --content-path-ink: #1d52c4 !important;
+    --content-path-tint: rgba(36, 97, 224, 0.07) !important;
+    --kind-read: #4d6b86 !important;
+    --kind-search: #6f52b0 !important;
+    --kind-edit: #a2466f !important;
+    --kind-run: #0f6e78 !important;
+    --kind-web: #3e7563 !important;
+    --kind-agent: #7d5f4b !important;
+    --ansi-red: var(--red) !important;
+    --ansi-green: var(--green) !important;
+    --ansi-yellow: #7a5c00 !important;
+    --ansi-blue: #2557b8 !important;
+    --ansi-magenta: #9b3d97 !important;
+    --ansi-cyan: #0f6e78 !important;
+    --ansi-grey: var(--faint) !important;
     --agent-neutral: #6b6b74 !important;
     --agent-ink: #3d4049 !important;
     --agent-slate: #5f7389 !important;
@@ -1028,6 +1100,21 @@
       --syn-number: #f2a072 !important;
       --syn-function: #79d0d6 !important;
       --syn-constant: #f2a072 !important;
+      --syn-flag: #e899bd !important;
+      --content-code-ink: #f0a3c6 !important;
+      --content-code-tint: rgba(240, 163, 198, 0.1) !important;
+      --content-path-ink: #80aafb !important;
+      --content-path-tint: rgba(107, 155, 250, 0.12) !important;
+      --kind-read: #9db4cc !important;
+      --kind-search: #b9a2f0 !important;
+      --kind-edit: #ef9ac0 !important;
+      --kind-run: #79d0d6 !important;
+      --kind-web: #8ccfb4 !important;
+      --kind-agent: #d0b49e !important;
+      --ansi-yellow: #e6c45c !important;
+      --ansi-blue: #7fa6f5 !important;
+      --ansi-magenta: #e09ade !important;
+      --ansi-cyan: #79d0d6 !important;
       --agent-neutral: #9a9aa4 !important;
       --agent-ink: #b4b8c2 !important;
       --agent-slate: #8599b0 !important;
@@ -1131,6 +1218,21 @@
     --syn-number: #f2a072 !important;
     --syn-function: #79d0d6 !important;
     --syn-constant: #f2a072 !important;
+    --syn-flag: #e899bd !important;
+    --content-code-ink: #f0a3c6 !important;
+    --content-code-tint: rgba(240, 163, 198, 0.1) !important;
+    --content-path-ink: #80aafb !important;
+    --content-path-tint: rgba(107, 155, 250, 0.12) !important;
+    --kind-read: #9db4cc !important;
+    --kind-search: #b9a2f0 !important;
+    --kind-edit: #ef9ac0 !important;
+    --kind-run: #79d0d6 !important;
+    --kind-web: #8ccfb4 !important;
+    --kind-agent: #d0b49e !important;
+    --ansi-yellow: #e6c45c !important;
+    --ansi-blue: #7fa6f5 !important;
+    --ansi-magenta: #e09ade !important;
+    --ansi-cyan: #79d0d6 !important;
     --agent-neutral: #9a9aa4 !important;
     --agent-ink: #b4b8c2 !important;
     --agent-slate: #8599b0 !important;

@@ -42,6 +42,7 @@ async function turn(sessionId) {
   say('\\n\\n保存时把省略的密钥字段当成了空字符串。')
   tool({ toolCallId: 'edit_1', title: 'Edit store.ts', kind: 'edit', status: 'in_progress', locations: [{ path: cwd + '/src/settings/store.ts' }] })
   tool({ toolCallId: 'edit_1', status: 'completed', content: [{ type: 'diff', path: cwd + '/src/settings/store.ts', oldText: 'a\\nb\\nc\\n', newText: 'a\\nB\\nC\\nD\\n' }] }, 'tool_call_update')
+  tool({ toolCallId: 'run_m', title: 'Write notes', kind: 'execute', status: 'completed', rawInput: { command: "/bin/zsh -lc 'cat <<EOF > notes.txt\\nfirst\\nEOF'", cwd }, content: [text('written')] })
   tool({ toolCallId: 'run_1', title: ${JSON.stringify(FAILING)}, kind: 'execute', status: 'in_progress', rawInput: { command: ${JSON.stringify(FAILING)} } })
   tool({ toolCallId: 'run_1', status: 'failed', content: [text(' ✓ keeps the key when the field is omitted\\n × clears the key when the field is an empty string\\n   AssertionError: expected kept to equal empty\\n\\n Test Files  1 failed (1)\\n      Tests  1 failed | 11 passed (12)')] }, 'tool_call_update')
   await wait(20)
@@ -168,9 +169,9 @@ describe('tool rows and command blocks', () => {
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     const name = touch ? '工具行 手机' : '工具行 电脑'
-    await enrollBrowser(page, host, { name })
+    await enrollBrowser(page, host, { name, dataScope: 'work' })
     await connected(page)
-    // The phone stays on the default work scope; the owner lets the computer read project files, as its switch does.
+    // Both ask for the work scope only; the owner lets the computer read project files, as its switch does.
     if (!touch) {
       const device = (await owner.json<{ devices: Device[] }>('devices')).devices.find(item => item.name === name)
       expect(device?.dataScope).toBe('work')
@@ -207,9 +208,9 @@ describe('tool rows and command blocks', () => {
           const running = block(page, RUNNING).filter({ hasNotText: '--reporter' })
           const failed = block(page, FAILING)
           await running.locator('.command-tail').getByText('case 2 of', { exact: false }).waitFor()
-          // The command once, with the prompt glyph; the caret only on the one still running; no exit code anywhere.
+          // The command once, after the run glyph; the caret only on the one still running; no exit code anywhere.
           expect(await running.locator('.process-object').innerText()).toBe(RUNNING)
-          expect(await running.locator('.command-prompt').innerText()).toBe('$')
+          expect(await running.locator('.kind-glyph[data-tint="run"]').count()).toBe(1)
           expect(await running.locator('.command-caret').count()).toBe(1)
           expect(await failed.locator('.command-caret').count()).toBe(0)
           expect(await page.locator('.transcript').innerText()).not.toMatch(/退出码|exit code/iu)
@@ -275,8 +276,12 @@ describe('tool rows and command blocks', () => {
     }
     await allow('done')
     await poll(async () => (await detail(commands)).summary.status === 'idle', 'the turn to settle')
-    for (const theme of ['light', 'dark'] as const) {
-      const settled = await open(1440, 900, theme, '命令块的会话')
+    for (const [width, height, theme] of [
+      [1440, 900, 'light'],
+      [1440, 900, 'dark'],
+      [390, 844, 'light'],
+    ] as const) {
+      const settled = await open(width, height, theme, '命令块的会话')
       // A settled turn folds its work into 「已工作 …」; its rows are under it.
       await settled.locator('.work-fold[aria-expanded="false"]').click()
       const done = block(settled, RUNNING).filter({ hasNotText: '--reporter' })
@@ -287,7 +292,33 @@ describe('tool rows and command blocks', () => {
       expect(await done.locator('.command-caret').count()).toBe(0)
       await done.locator('.tool-card-header').click()
       await done.locator('.tool-output').getByText('12 passed (12)', { exact: false }).waitFor()
-      await settled.screenshot({ path: `${OUTPUT}/settled--1440--${theme}.png`, animations: 'disabled' })
+      // One left edge for the answer; the rows one small step in on their rail; what a row opens to starts under its
+      // words, or where the row starts on a phone; the command is shown without a field-name column.
+      const left = (locator: ReturnType<Page['locator']>) => locator.evaluate(element => element.getBoundingClientRect().left)
+      const answer = await left(settled.locator('.message-text').first())
+      const row = await left(done.locator('.kind-glyph'))
+      const words = await left(done.locator('.process-label'))
+      const evidence = await left(done.locator('.command-evidence'))
+      expect(row - answer).toBeCloseTo(12, 0)
+      expect(words - row).toBeCloseTo(24, 0)
+      expect(evidence - answer).toBeCloseTo(width < 768 ? 12 : 36, 0)
+      expect(await done.locator('.argument-list').count()).toBe(0)
+      // The command is said once: the opened body repeats it only when the row had to cut it short.
+      const cutShort = await done
+        .locator('.tool-card-header .process-object')
+        .evaluate(element => element.scrollWidth > element.clientWidth + 1)
+      if (cutShort) expect(await done.locator('.command-line').innerText()).toBe(`$ ${RUNNING}`)
+      else expect(await done.locator('.command-line').count()).toBe(0)
+      // A command on several lines opens to the same evidence, whole, never to a list of its arguments.
+      const several = settled.locator('.tool-card').filter({ hasText: 'Write notes' })
+      await several.locator('.tool-card-header').click()
+      expect(await several.locator('.command-line').innerText()).toBe('$ cat <<EOF > notes.txt\nfirst\nEOF')
+      expect(await several.locator('.argument-list').count()).toBe(0)
+      // An opened read and an opened edit, for the captures.
+      await settled.locator('.tool-card[data-kind="read"]').first().locator('.tool-card-header').click()
+      await settled.locator('.tool-card[data-kind="edit"]').first().locator('.tool-card-header').click()
+      await noHorizontalOverflow(settled)
+      await settled.screenshot({ path: `${OUTPUT}/settled--${width}--${theme}.png`, animations: 'disabled' })
     }
   })
 

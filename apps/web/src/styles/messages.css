@@ -273,7 +273,7 @@
 .message-text {
   font-size: var(--fs-prose);
   line-height: var(--lh-prose);
-  color: var(--ink-2);
+  color: var(--ink);
 }
 
 /* A soft 2px caret after the live text; ::after never enters the message's textContent. */
@@ -393,18 +393,19 @@
 }
 
 /*
- * The work rows hang on a thin rail under the sentence that caused them: 26 high (28 on phones), the verb in the muted
- * ink in one column, the object after it (a file's path in mono with its folder quieter than its name, commands and
- * queries in mono), the lines it changed right after, and at the row's end its state and, under the pointer, its
- * duration. A row lights under the pointer; its chevron shows there, on focus, while open and on touch. A command that
- * runs or went wrong is a block across the column, off the rail (tool-card.css).
+ * The work rows hang on a thin rail at the answer's left edge, one small step (12) in: 26 high (28 on phones), the kind's
+ * glyph in a 16px slot, the verb in the muted ink, the object after it (a file's path in mono with its folder quieter
+ * than its name, commands coloured as shell, queries in mono), the lines it changed right after, and at the row's end
+ * its state and, under the pointer, its duration. Whatever a row opens to starts under its words (24 past the row).
+ * A row lights under the pointer; its chevron shows there, on focus, while open and on touch. A command that runs or
+ * went wrong is a block across the column, off the rail (tool-card.css).
  */
 .work-rows {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
   margin-top: var(--sp-12);
-  padding-left: var(--sp-20);
+  padding-left: var(--sp-12);
 }
 .work-fold + .work-group > .ui-collapse-inner > .work-rows {
   margin-top: var(--sp-8);
@@ -420,7 +421,7 @@
   bottom: -1px;
   left: calc(var(--sp-12) * -1);
   width: 1px;
-  background: var(--line-strong);
+  background: var(--line);
   pointer-events: none;
 }
 .process-row,
@@ -486,10 +487,35 @@
   overflow: hidden;
   white-space: nowrap;
 }
-/* The verbs line up in one column; a row whose tool names no verb keeps the column empty. */
+/* The kind's glyph: a 16px slot that every row has, so what a row opens to lines up with its words. */
+.kind-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  margin-right: var(--sp-8);
+  color: var(--muted);
+}
+.kind-glyph[data-tint='read'] {
+  color: var(--kind-read);
+}
+.kind-glyph[data-tint='search'] {
+  color: var(--kind-search);
+}
+.kind-glyph[data-tint='edit'] {
+  color: var(--kind-edit);
+}
+.kind-glyph[data-tint='run'] {
+  color: var(--kind-run);
+}
+.kind-glyph[data-tint='web'] {
+  color: var(--kind-web);
+}
+.kind-glyph[data-tint='agent'] {
+  color: var(--kind-agent);
+}
 .process-verb {
   flex-shrink: 0;
-  min-width: 40px;
   color: var(--muted);
 }
 .process-object {
@@ -618,7 +644,7 @@
   color: var(--ink-2);
 }
 .thinking-body {
-  padding: var(--sp-4) 0 var(--sp-4) var(--sp-12);
+  padding: var(--sp-4) 0 var(--sp-4) var(--sp-24);
 }
 .thinking-scroll {
   max-height: 320px;
@@ -691,9 +717,8 @@
 }
 
 /*
- * A subagent: a row on the rail, 「子 Agent」 in the verb column, its icon, its name, what it last said of itself and the
- * chevron, with 停止 in a column of its own at the end. Opened, what it said and did stands on a rail of its own, set in
- * under its name.
+ * A subagent: a row on the rail, its glyph, 「子 Agent」, its name, what it last said of itself and the chevron, with 停止
+ * in a column of its own at the end. Opened, what it said and did stands on a rail of its own under the glyph.
  */
 .subagent-head {
   display: flex;
@@ -705,7 +730,7 @@
 .subagent-head > .subagent-toggle {
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: max-content 16px minmax(0, max-content) max-content minmax(0, 1fr);
+  grid-template-columns: 16px max-content minmax(0, max-content) max-content minmax(0, 1fr);
   align-items: center;
   column-gap: var(--sp-8);
   width: auto;
@@ -713,13 +738,11 @@
   min-height: 30px;
   margin-right: 0;
 }
+.subagent-toggle > .kind-glyph {
+  margin-right: 0;
+}
 .subagent-toggle > .process-verb {
   white-space: nowrap;
-}
-.subagent-icon {
-  display: grid;
-  place-items: center;
-  color: var(--muted);
 }
 .subagent-name {
   color: var(--ink);
@@ -743,15 +766,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  /* Under the name: past the verb column, the gap, the icon and the gap again. */
-  margin: 0 0 var(--sp-6) calc(var(--sp-64) + var(--sp-20));
-  padding: var(--sp-2) 0 var(--sp-2) var(--sp-12);
+  /* A rail of its own under the glyph's centre; its rows' glyphs line up with the subagent's words. */
+  margin: 0 0 var(--sp-6) var(--sp-8);
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-16);
   box-shadow: inset 1px 0 0 var(--line);
-}
-@media (max-width: 767.98px) {
-  .subagent-steps {
-    margin-left: var(--sp-24);
-  }
 }
 .subagent-note {
   color: var(--muted);
@@ -767,8 +785,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  margin: 0 0 var(--sp-4) calc(40px + var(--sp-8));
-  padding: var(--sp-2) 0 var(--sp-2) var(--sp-12);
+  margin: 0 0 var(--sp-4) var(--sp-8);
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-16);
   box-shadow: inset 1px 0 0 var(--line);
 }
 .plan-row-body {

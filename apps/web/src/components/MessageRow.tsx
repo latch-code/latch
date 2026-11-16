@@ -4,6 +4,7 @@ import { createContext, Fragment, memo, useContext, useLayoutEffect, useMemo, us
 import { GitFork, RotateCcw } from 'lucide-react'
 import { splitChangeNote, type HarnessInfo, type Message } from '@latch/protocol'
 import { MessageContent, ReasoningContent } from '../MessageContent.tsx'
+import { KindGlyph } from '../conversation/KindGlyph.tsx'
 import { ownTextStart, reasoningSections } from '../conversation.ts'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
 import { absoluteTime, formatDuration, messageTime } from '../format.ts'
@@ -116,6 +117,7 @@ export function ThinkingRow({
         onClick={() => {
           setChoice(!open)
         }}>
+        <KindGlyph kind="think" />
         {/* When the answer starts the label cross-fades from the live one to the time it took. */}
         <Swap value={live ? 'live' : 'settled'} effect="fade" className="thinking-label">
           {live ? (

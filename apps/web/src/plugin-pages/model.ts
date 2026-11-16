@@ -105,13 +105,6 @@ export function bridgeCode(error: unknown): AppErrorCode {
   return 'unknown'
 }
 
-/** The page's theme: the shell's own choice, else the system's. */
-export function shellTheme(): 'light' | 'dark' {
-  const chosen = document.documentElement.dataset.theme
-  if (chosen === 'light' || chosen === 'dark') return chosen
-  return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
 /**
  * Whether a key the frame reports is taken: never while the shell covers the frame or a migration runs, only while the
  * frame has the focus, and a Cmd/Ctrl key only within the transient activation a real key press in the frame gives.

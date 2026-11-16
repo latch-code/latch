@@ -1,3 +1,4 @@
+import { stripAnsi } from '../conversation/ansi.ts'
 import type { Message } from '@latch/protocol'
 import { shownToolOutput } from '../conversation.ts'
 import { textMatches } from '../textSearch.ts'
@@ -14,7 +15,7 @@ export function lazyOutputMatches(messages: readonly Message[], query: string, l
   for (const message of messages) {
     if (found.length >= limit) break
     if (message.role !== 'tool' || message.state === 'awaiting-approval' || message.state === 'queued') continue
-    const matches = textMatches(escapeHiddenCharacters(shownToolOutput(message)), query, limit - found.length)
+    const matches = textMatches(escapeHiddenCharacters(stripAnsi(shownToolOutput(message))), query, limit - found.length)
     for (let index = 0; index < matches.length; index++) found.push({ messageId: message.id, outputIndex: index })
   }
   return found

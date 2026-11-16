@@ -17,7 +17,7 @@ import { harnessName } from '../composerChoice.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { AppFrame, hostInfo } from '../plugin-pages/AppFrame.tsx'
 import { useSecureCover } from '../plugin-pages/secureCover.ts'
-import { useShellTheme } from '../plugin-pages/AppsPage.tsx'
+import { useShellTheme } from '../hooks/useShellTheme.ts'
 
 export type AppPhase = 'draft' | 'building' | 'build-failed' | 'preview' | 'confirm' | 'applied'
 const PHASES = [

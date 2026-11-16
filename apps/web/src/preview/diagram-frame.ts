@@ -1,5 +1,6 @@
 import mermaid from 'mermaid'
 import { isSafeDiagramSvg, validDiagramSource } from './diagram-svg.ts'
+import { mermaidThemeVariables } from './diagramTheme.ts'
 const nonce = new URLSearchParams(location.hash.slice(1)).get('nonce')
 let port: MessagePort | undefined
 const send = (data: unknown) => port?.postMessage(data)
@@ -28,11 +29,14 @@ const initialize = (event: MessageEvent) => {
     send({ type: 'error', code: 'invalid-file' })
     return
   }
+  const options = input.options as Record<string, unknown> | undefined
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
     htmlLabels: false,
-    theme: 'neutral',
+    // The page's surfaces and inks, in its theme: a diagram reads as part of the reply in light and dark alike.
+    theme: 'base',
+    themeVariables: mermaidThemeVariables(options?.theme === 'dark' ? 'dark' : 'light'),
     look: 'classic',
     fontFamily: 'system-ui,sans-serif',
     maxTextSize: 50_000,

@@ -482,11 +482,13 @@ describe('how a turn of work is drawn', () => {
           throw error
         }
       }
-    // Opening a settled row shows the reported command whole and its output; the reader stays where they were.
+    // Opening a settled row shows its evidence: the wrapper by name with the reported line behind it, and its output;
+    // the reader stays where they were.
     const page = await open(1440, 900, 'light', id)
     const listed = command(page, 'rg --files')
     await listed.locator('.tool-card-header').click()
-    await listed.locator('.argument-list').getByText('/bin/zsh -lc', { exact: false }).waitFor()
+    await listed.locator('.command-evidence').waitFor()
+    expect(await listed.locator('.command-shell').getAttribute('title')).toContain('/bin/zsh -lc')
     await listed.locator('.tool-output').getByText('AGENTS.md', { exact: false }).waitFor()
     await shot(page, 'command-opened', 1440, 'light')
     await listed.locator('.tool-card-header').click()

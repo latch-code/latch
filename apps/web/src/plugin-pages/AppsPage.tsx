@@ -55,7 +55,8 @@ import { settingsSections } from '../settings/SettingsPage.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { AppTarget } from '../shell/routes.ts'
 import { AppFrame, hostInfo, reportDiagnostic, type FrameOutcome } from './AppFrame.tsx'
-import { appRef, fallbackVersion, findApp, listedApps, openStep, shellTheme, type PageVersion } from './model.ts'
+import { appRef, fallbackVersion, findApp, listedApps, openStep, type PageVersion } from './model.ts'
+import { useShellTheme } from '../hooks/useShellTheme.ts'
 import { useSecureCover } from './secureCover.ts'
 import { harnessName } from '../composerChoice.ts'
 
@@ -242,25 +243,6 @@ interface PendingChange {
   kind: 'disable' | 'rollback'
   requestId: string
   revision?: string
-}
-
-/** The shell's theme as it changes (the system's, or the one chosen in 设置). */
-export function useShellTheme(): 'light' | 'dark' {
-  const [theme, setTheme] = useState(shellTheme)
-  useEffect(() => {
-    const update = () => {
-      setTheme(shellTheme())
-    }
-    const media = matchMedia('(prefers-color-scheme: dark)')
-    media.addEventListener('change', update)
-    const observer = new MutationObserver(update)
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
-    return () => {
-      media.removeEventListener('change', update)
-      observer.disconnect()
-    }
-  }, [])
-  return theme
 }
 
 /** One page: its header (title, 「插件 · 名称 版本」, ⋯) over the frame, or the state that stands in for it. */

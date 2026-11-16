@@ -13,6 +13,7 @@ import {
   deliveryWords,
   foldWords,
   quietGroupWords,
+  rowKind,
   isBlocked,
   isLive,
   liveMessageId,
@@ -51,6 +52,7 @@ import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
 import { AuthorLine, MessageRow, SpeakerLine, ThinkingRow, TurnEditLocked, type LiveReasoning, type Speaker } from './MessageRow.tsx'
 import { ToolCard } from './ToolCard.tsx'
+import { KindGlyph } from '../conversation/KindGlyph.tsx'
 import { SubagentRow, SubagentStop } from './SubagentRow.tsx'
 import { QuestionResultCard } from '../composer/QuestionDrawer.tsx'
 import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
@@ -110,6 +112,7 @@ function ReadsRow({ messages, context }: { messages: Message[]; context: RowCont
         onClick={() => {
           setOpen(!open)
         }}>
+        <KindGlyph kind={messages.every(message => rowKind(message) === 'read') ? 'read' : 'search'} />
         <span className="process-label">
           <span className="process-object">{words}</span>
         </span>
@@ -149,6 +152,7 @@ function StepsRow({ items, count, context }: { items: WorkItem[]; count: number;
         onClick={() => {
           setOpen(!open)
         }}>
+        <KindGlyph kind="steps" />
         <span className="process-label">
           {/* Only tool steps are counted; a fold that holds nothing but thoughts says no number. */}
           <span className="process-object">{count > 0 ? `工作过程 · ${count} 步` : '工作过程'}</span>

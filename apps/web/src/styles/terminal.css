@@ -234,11 +234,6 @@
   align-items: center;
   gap: var(--sp-2);
 }
-.tool-command-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--sp-2);
-}
 .fill-terminal-screen {
   display: flex;
   flex-direction: column;

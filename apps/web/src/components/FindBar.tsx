@@ -87,8 +87,9 @@ export function FindBar({
       const element = node.parentElement,
         row = element?.closest<HTMLElement>('[data-message-id]')
       if (!row || element?.closest('button, input, textarea, [aria-hidden="true"], .tool-output')) continue
-      // Code is searched as one text: colouring it splits its text into tokens, which must not change what matches.
-      const code = element?.closest('.message-code code')
+      // Code and a command line are searched as one text: colouring splits their text into tokens, which must not change
+      // what matches.
+      const code = element?.closest('.message-code code, .command-line')
       if (code) {
         if (!codes.has(code)) {
           codes.add(code)

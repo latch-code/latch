@@ -585,3 +585,37 @@ it('keeps syntax ink readable on the canvas and on sunken code, and comments qui
     }
   }
 })
+
+it('keeps the content palette readable where it sits: on the canvas, on sunken code and output, and on its own tint', () => {
+  for (const [name, theme] of Object.entries(themes())) {
+    const get = (token: string): Rgba => {
+      const value = theme.get(token) ?? ''
+      return colour(value.startsWith('var(') ? theme.get(value.slice(4, -1)) : value)
+    }
+    const inks = [
+      '--syn-flag',
+      '--kind-read',
+      '--kind-search',
+      '--kind-edit',
+      '--kind-run',
+      '--kind-web',
+      '--kind-agent',
+      '--ansi-red',
+      '--ansi-green',
+      '--ansi-yellow',
+      '--ansi-blue',
+      '--ansi-magenta',
+      '--ansi-cyan',
+    ]
+    for (const ink of inks)
+      for (const background of ['--canvas', '--sunken'])
+        expect(contrast(get(ink), get(background)), `${name} ${ink} on ${background}`).toBeGreaterThanOrEqual(4.5)
+    // A chip's words on its tint, over every surface a chip sits on (a reply, a row's details, a card, a menu).
+    for (const [ink, tint] of [
+      ['--content-code-ink', '--content-code-tint'],
+      ['--content-path-ink', '--content-path-tint'],
+    ])
+      for (const surface of ['--canvas', '--sunken', '--raised', '--card', '--pop'])
+        expect(contrast(get(ink), over(get(tint), get(surface))), `${name} ${ink} on its tint over ${surface}`).toBeGreaterThanOrEqual(4.5)
+  }
+})

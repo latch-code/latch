@@ -1,7 +1,7 @@
 /*
- * A file a reply refers to: a neutral chip in the line of text, never a link (links are blue and go somewhere; this
- * stays on the page). A click opens the file's menu: in the desktop app what the Host allows for it, elsewhere the path
- * to copy.
+ * A file a reply refers to: a chip in the path ink on its tint, never a link (a link underlines and leaves; this stays
+ * on the page). A click opens the file's menu: in the desktop app what the Host allows for it, elsewhere the path to
+ * copy.
  */
 .file-chip {
   display: inline-flex;
@@ -12,33 +12,28 @@
   padding: 0 var(--sp-6) 0 var(--sp-4);
   border: 0;
   border-radius: var(--r-4);
-  background: var(--hover);
-  color: var(--ink);
+  background: var(--content-path-tint);
+  color: var(--content-path-ink);
   font: inherit;
-  font-size: var(--fs-code);
+  font-size: var(--fs-mono);
   line-height: var(--lh-code);
   text-align: start;
   vertical-align: text-bottom;
   cursor: pointer;
 }
-.file-chip:hover {
-  background: var(--press);
-}
+.file-chip:hover,
 .file-chip:active,
 .file-chip[aria-expanded='true'] {
-  background: var(--press);
+  background: color-mix(in srgb, var(--content-path-tint), var(--content-path-ink) 8%);
 }
 .file-chip-icon {
   flex: none;
   display: inline-flex;
-  color: var(--muted);
-}
-.file-chip:hover .file-chip-icon {
-  color: var(--ink);
+  color: inherit;
 }
 .file-chip-prefix {
   flex: none;
-  color: var(--ink-2);
+  color: inherit;
 }
 /* The full path is in the tooltip and in what the chip copies; the chip keeps to the line's width. */
 .file-chip-text {

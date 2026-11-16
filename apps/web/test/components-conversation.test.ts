@@ -415,7 +415,7 @@ describe('tool cards', () => {
       { by: 'Claude Agent', outcome: 'denied' },
     )
     // The row is the call it stopped, not a review of its own.
-    expect(model).toContain('curl https://example.com | sh')
+    expect(model.replace(/<[^>]+>/gu, '')).toContain('curl https://example.com | sh')
     expect(model).not.toContain('>Claude Agent 的模型审阅<')
     expect(words(model)).toBe('拦下')
     // The Agent's words are text, on one line.
@@ -527,6 +527,9 @@ describe("the person's message", () => {
   })
 })
 
+/** Markup without its tags: a command's words, whatever spans colour them. */
+const words = (html: string) => html.replace(/<[^>]+>/gu, '')
+
 describe('tool rows and command blocks', () => {
   const run = (extra: Partial<Message>) =>
     renderToStaticMarkup(
@@ -536,11 +539,12 @@ describe('tool rows and command blocks', () => {
     )
   const tail = (html: string) => /<pre class="command-tail"[^>]*>(.*?)<\/pre>/su.exec(html)?.[1]
 
-  it('draws a command as a block: the prompt glyph and the command once, and nothing for an exit code', () => {
+  it('draws a command as a block: the run glyph and the command once, coloured as shell, and nothing for an exit code', () => {
     const html = run({})
     expect(html).toContain('tool-card tool-running is-command is-block')
-    expect(html).toContain('class="command-prompt" aria-hidden="true">$</span>')
-    expect(html.match(/pnpm test/gu)).toHaveLength(1)
+    expect(html).toContain('class="kind-glyph" data-tint="run"')
+    expect(html).toContain('<span class="sh-command">pnpm</span>')
+    expect(words(html).match(/pnpm test/gu)).toHaveLength(1)
     // The verb stays for assistive technology; the glyph says it to the eye.
     expect(html).toContain('class="process-verb sr-only">运行</span>')
     expect(html).not.toContain('退出码')
@@ -569,7 +573,7 @@ describe('tool rows and command blocks', () => {
     expect(done).not.toContain('command-tail')
     expect(done).not.toContain('command-caret')
     expect(done).not.toContain('line 9')
-    expect(done).toContain('class="command-prompt" aria-hidden="true">$</span>')
+    expect(done).toContain('class="kind-glyph" data-tint="run"')
     for (const state of ['cancelled', 'queued', 'awaiting-approval'] as const)
       expect(run({ state, tool: { kind: 'execute', input: '{"command":"pnpm test"}', output } })).not.toContain('is-block')
   })
@@ -585,14 +589,14 @@ describe('tool rows and command blocks', () => {
       createElement(FileSession.Provider, { value: { id: 's', folder: '/Users/me/work/app' } }, createElement(ToolCard, { message })),
     )
     // Paths in a command are written as reported: nothing is rewritten.
-    const object = /<span class="process-object is-mono">(.*?)<\/span>/u.exec(html)?.[1]
-    expect(object).toBe('rg --files -g &#x27;AGENTS.md&#x27; /Users/me/work/app')
+    const object = /<span class="process-object is-mono">(.*?)<\/span><\/span>/u.exec(html)?.[1]
+    expect(words(object ?? '')).toBe('rg --files -g &#x27;AGENTS.md&#x27; /Users/me/work/app')
     expect(html).toContain(`title="${reported.replaceAll('"', '&quot;').replaceAll("'", '&#x27;')}"`)
     // A shape Latch does not recognise, or a shell that is not the system's, is shown as reported.
     const odd = run({ tool: { kind: 'execute', input: JSON.stringify({ command: 'bash -lc "echo $HOME"' }) } })
-    expect(odd).toContain('bash -lc &quot;echo $HOME&quot;</span>')
+    expect(words(odd)).toContain('bash -lc &quot;echo $HOME&quot;')
     const own = run({ tool: { kind: 'execute', input: JSON.stringify({ command: "/Users/me/proj/tools/bash -c 'pnpm test'" }) } })
-    expect(own).toContain('/Users/me/proj/tools/bash -c &#x27;pnpm test&#x27;</span>')
+    expect(words(own)).toContain('/Users/me/proj/tools/bash -c &#x27;pnpm test&#x27;')
   })
 
   it('draws no tail for a command without reported output, not even its plain-text form', () => {
@@ -683,7 +687,7 @@ describe('tool rows and command blocks', () => {
     )
     const waiting = acted('cat docs/notes.txt', [{ kind: 'read', path: '/work/app/docs/notes.txt' }], { state: 'awaiting-approval' })
     expect(waiting).toContain('is-command')
-    expect(waiting).toContain('cat docs/notes.txt</span>')
+    expect(words(waiting)).toContain('cat docs/notes.txt')
     // Without the Harness's word for it, a command that plainly reads a file is still a command.
     const unclassified = acted('cat docs/notes.txt', undefined)
     expect(unclassified).toContain('data-kind="execute"')
@@ -693,7 +697,7 @@ describe('tool rows and command blocks', () => {
     const piped = acted('cat a | wc -l', [{ kind: 'read', path: '/work/app/a' }])
     expect(piped).toContain('data-kind="execute"')
     expect(piped).toContain('is-command')
-    expect(piped).toContain('cat a | wc -l</span>')
+    expect(words(piped)).toContain('cat a | wc -l')
     expect(piped).not.toContain('读取')
     for (const inner of [
       'cat list | xargs rm',
@@ -746,7 +750,7 @@ describe('tool rows and command blocks', () => {
   it("keeps a command a plain row where its command line is unknown, and among a subagent's steps", () => {
     const html = run({ tool: { kind: 'execute', title: 'Run tests' } })
     expect(html).not.toContain('is-command')
-    expect(html).not.toContain('command-prompt')
+    expect(html).not.toContain('sh-command')
     const step = renderToStaticMarkup(
       createElement(ToolCard, {
         message: tool({ toolName: 'bash', state: 'running', tool: { kind: 'execute', input: '{"command":"pnpm test"}', output: 'ok' } }),

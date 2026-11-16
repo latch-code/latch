@@ -7,7 +7,7 @@
 不变量：
 
 - 样式的颜色、阴影、间距、圆角与动效只用令牌；原语可声明几何变量。字号、行高用角色令牌，字重为 400、500、600（`apps/web/test/styles.test.ts`）。工作台两布局和预览共用 `--work-*` 底色。
-- 每种颜色只表达一件事：蓝色只给主按钮、被勾选的控件、焦点、链接与执行状态；琥珀只表示等你处理与警告；红色只表示真实风险或失败；绿色只给新增行、通过的检查、在线点与短暂的成功对勾。选中行与计数是墨色，琥珀与红色都配文字。
+- 每种颜色只表达一件事：蓝色只给主按钮、被勾选的控件、焦点、链接与执行状态；琥珀只表示等你处理与警告；红色只表示真实风险或失败；绿色只给新增行、通过的检查、在线点与短暂的成功对勾。选中行与计数是墨色，琥珀与红色都配文字。内容色板只用在内容里（DESIGN「令牌的类别」）。
 - 深色在系统偏好（页面没有选浅色时）与 `data-theme="dark"` 下各写一份，两份相同，并重写每个含颜色的令牌（`test/tokens.test.ts#gives every colour token a dark value, identical under the system preference and under data-theme`）。换主题经 `switchTheme`，不播放过渡。
 - 层叠层固定为 `tokens, custom, base, ui, app, security`；原语在 ui 层（`test/stylesheet.test.ts`）。安全界面带 `data-secure`，`data-lock` 只取令牌锁；tokens.css 末尾以 `!important` 锁住令牌，新令牌一并加入。自定义只写 `CUSTOM_TOKENS`，须在锁内（`test/tokens.test.ts`，[文档](../../docs/CUSTOMIZATION.md)）。
 - `src/plugins.ts` 定义 `PluginPanelProps`，共享 React 与控件；`StatusPill` 是插件 API，不改名。

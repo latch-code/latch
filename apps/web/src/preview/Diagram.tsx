@@ -4,6 +4,7 @@ import { Button, InlineNotice } from '@latch/ui'
 import { HighlightedCode } from './HighlightedCode.tsx'
 import { isFrameEvent, type FrameInput } from './types.ts'
 import { isSafeDiagramSvg, validDiagramSource } from './diagram-svg.ts'
+import { useShellTheme } from '../hooks/useShellTheme.ts'
 export function Diagram({ source, renderFrame }: { source: string; renderFrame: (input: FrameInput) => ReactNode }) {
   const [show, setShow] = useState(false),
     [svg, setSvg] = useState(''),
@@ -11,6 +12,9 @@ export function Diagram({ source, renderFrame }: { source: string; renderFrame: 
     [url, setUrl] = useState(''),
     [enlarged, setEnlarged] = useState(false)
   const bytes = useMemo(() => new TextEncoder().encode(source).buffer, [source])
+  // A change of theme draws the diagram again in the new one.
+  const theme = useShellTheme()
+  const options = useMemo(() => ({ theme }), [theme])
   const manual =
     typeof window !== 'undefined'
     && (window.matchMedia('(pointer: coarse)').matches
@@ -20,6 +24,9 @@ export function Diagram({ source, renderFrame }: { source: string; renderFrame: 
     setFailed(false)
     setShow(!manual)
   }, [source, manual])
+  useEffect(() => {
+    setSvg('')
+  }, [theme])
   useEffect(() => {
     if (!show || svg || !validDiagramSource(source)) return
     const timer = setTimeout(() => setFailed(true), 5000)
@@ -61,7 +68,7 @@ export function Diagram({ source, renderFrame }: { source: string; renderFrame: 
       </div>
       {show && !failed && !svg && (
         <div className="document-parser-frame">
-          {renderFrame({ kind: 'mermaid', data: bytes.slice(0), versionKey: source, onMessage: message })}
+          {renderFrame({ kind: 'mermaid', data: bytes.slice(0), versionKey: `${source}\n${theme}`, options, onMessage: message })}
         </div>
       )}
       {failed && show && <InlineNotice>图表暂时无法显示，可查看源码。</InlineNotice>}

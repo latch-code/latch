@@ -539,10 +539,28 @@ describe("a turn's blocks and its fold", () => {
     expect(failureReason({ state: 'failed', text: 'TOOL_ERROR: 2 个测试没有通过\nFAIL a.ts' })).toBe('2 个测试没有通过')
     // The runtime's code is for the model: the output as shown starts with what the tool said.
     expect(shownToolOutput({ state: 'failed', text: 'TOOL_ERROR: 2 个测试没有通过\nFAIL a.ts' })).toBe('2 个测试没有通过\nFAIL a.ts')
+    // History the Host summarises for a device that may not read it joins each fact, code first, after a blank line
+    // (apps/host/src/task-content.ts).
+    expect(
+      shownToolOutput({
+        state: 'failed',
+        text: 'TOOL_OUTCOME_UNKNOWN: 结果未知，请先核对它做了什么。Latch 不会自动重做。\n\nTOOL_ERROR: 工具报告失败，详细输出未向此设备显示。',
+      }),
+    ).toBe('结果未知，请先核对它做了什么。Latch 不会自动重做。\n\n工具报告失败，详细输出未向此设备显示。')
     expect(failureReason({ state: 'failed', text: '' })).toBe('没有成功')
     // A call that reported nothing carries its arguments as its text; a line of JSON says nothing about why.
     expect(failureReason({ state: 'failed', text: '{\n  "command": "ls"\n}', tool: { input: '{\n  "command": "ls"\n}' } })).toBe('没有成功')
     expect(failureReason({ state: 'failed', text: 'x'.repeat(200) })).toHaveLength(121)
+    // A runner's output passes cases before it names the error; the row says the error, without its colours.
+    expect(
+      failureReason({
+        state: 'failed',
+        text: ' \u001b[32m✓\u001b[39m renders\n \u001b[31m×\u001b[39m connects\n   \u001b[31mError: connect ECONNREFUSED\u001b[39m',
+      }),
+    ).toBe('Error: connect ECONNREFUSED')
+    expect(failureReason({ state: 'failed', text: ' ✓ keeps the key\n × clears the key\n   AssertionError: expected kept' })).toBe(
+      'AssertionError: expected kept',
+    )
   })
 })
 

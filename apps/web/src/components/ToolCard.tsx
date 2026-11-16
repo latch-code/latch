@@ -1,10 +1,11 @@
-import { Fragment, memo, useContext, useId, useMemo, useRef, useState } from 'react'
-import { Camera, CircleDashed, RotateCcw, TimerOff } from 'lucide-react'
+import { Fragment, memo, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Camera, CircleDashed, FolderOpen, RotateCcw, TimerOff } from 'lucide-react'
 import type { Approval, FileDiff, Message, ToolDecision, ToolDetail } from '@latch/protocol'
 import { previousState } from '../diff.ts'
 import {
   blockedLine,
   blockedReason,
+  approvalCommand,
   commandLine,
   decisionLine,
   diffStat,
@@ -20,6 +21,7 @@ import {
   toolHeading,
   toolLabel,
   unrunOutcome,
+  type CommandLine,
   type ShownToolState,
 } from '../conversation.ts'
 import { useChangesLink } from '../conversation/changesLink.ts'
@@ -42,16 +44,24 @@ import {
   StatusGlyph,
   StatusWords,
   CopyButton,
+  useCopy,
   ChevronRightGlyph,
   BlockedGlyph,
   AlertGlyph,
   DiffGlyph,
   CloseGlyph,
+  CheckGlyph,
+  ChevronDownGlyph,
+  ChevronUpGlyph,
 } from '@latch/ui'
 import { SyntaxLine, useHighlightedTokens } from '../preview/HighlightedCode.tsx'
 import { useSeen } from '../preview/viewportGate.ts'
 import { colouredRowCount, outputGrammar, readOutputLanguage, sourceView } from './toolOutputCode.ts'
 import { VisibleText } from './VisibleText.tsx'
+import { stripAnsi } from '../conversation/ansi.ts'
+import { AnsiText, ShellLine } from '../conversation/CommandText.tsx'
+import { commandFolder, reportedFolder } from '../conversation/commandView.ts'
+import { KindGlyph, type RowKind } from '../conversation/KindGlyph.tsx'
 
 type ToolState = NonNullable<Message['state']>
 /**
@@ -141,7 +151,7 @@ export function rowPath(
 
 /** A command's last lines, as its folded block shows them, each cut to what one line can show; trailing blank lines say nothing. */
 export function commandTail(output: string, lines = COMMAND_TAIL_LINES): string {
-  const all = output.replace(/\s+$/u, '').split(/\r?\n/u)
+  const all = stripAnsi(output).replace(/\s+$/u, '').split(/\n/u)
   return all
     .slice(-lines)
     .map(line => (line.length > TAIL_LINE_CHARS ? line.slice(0, TAIL_LINE_CHARS) : line))
@@ -157,20 +167,48 @@ function ToolTime({ message, frozen }: { message: Message; frozen: boolean }) {
   return <span className="process-time">{text}</span>
 }
 
+/** The lines an output shows before 展开全部: about a dozen, so a long one never pushes the answer away. */
+const OUTPUT_LINES = 12
+
 /**
  * Live output keeps its newest lines in view while it streams without writing a scroll position: the box is laid out
  * from its end (column-reverse), so it stays at the bottom until the reader scrolls up inside it, and stays where the
- * reader left it after that.
+ * reader left it after that. Settled, a long output shows its first dozen lines and opens whole; all of it stays in
+ * the page, to be found and selected. A command's terminal colours are kept, and its copy is the text without them.
  */
-function ToolOutput({ text, running, language }: { text: string; running: boolean; language?: string }) {
+function ToolOutput({ text, running, language, flush = false }: { text: string; running: boolean; language?: string; flush?: boolean }) {
   const box = useRef<HTMLDivElement>(null)
   const seen = useSeen(box)
+  const id = useId()
+  const [expanded, setExpanded] = useState(false)
+  const plain = useMemo(() => stripAnsi(text), [text])
+  const lines = useMemo(() => plain.replace(/\n+$/u, '').split('\n').length, [plain])
+  const long = !running && lines > OUTPUT_LINES
   return (
-    <div ref={box} className={`tool-output-scroll ${running ? 'is-live' : ''}`}>
-      <pre className="tool-pre tool-output">
-        {language ? <SourceOutput text={text} language={language} enabled={seen} /> : <VisibleText text={text} />}
-      </pre>
-      {!running && <CopyButton text={text} label="复制输出" size="xs" className="tool-output-copy" />}
+    <div className={`tool-output-box${flush ? ' is-flush' : ''}`}>
+      <div ref={box} id={id} className={`tool-output-scroll${running ? ' is-live' : ''}${long && !expanded ? ' is-capped' : ''}`}>
+        <pre className="tool-pre tool-output">
+          {language ? <SourceOutput text={text} language={language} enabled={seen} /> : <AnsiText text={text} />}
+        </pre>
+        {!running && <CopyButton text={plain} label="复制输出" size="xs" className="tool-output-copy" />}
+      </div>
+      {long && (
+        <button
+          type="button"
+          className="tool-output-more"
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={() => {
+            setExpanded(!expanded)
+          }}>
+          {expanded ? '收起' : `展开全部 ${lines} 行`}
+          {expanded ? (
+            <ChevronUpGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          ) : (
+            <ChevronDownGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          )}
+        </button>
+      )}
     </div>
   )
 }
@@ -207,18 +245,103 @@ function SourceOutput({ text, language, enabled }: { text: string; language: str
   }, [tokens, view])
 }
 
+/** The wrapper a command came in, by its program's name; pressing it copies the line exactly as the agent reported it. */
+function ShellTag({ shell, reported }: { shell: string; reported: string }) {
+  const { state, copy } = useCopy()
+  return (
+    <button
+      type="button"
+      className="command-shell"
+      title={reported}
+      aria-label={`复制原始命令：${reported}`}
+      onClick={() => {
+        void copy(reported)
+      }}>
+      {state === 'copied' ? '已复制原始命令' : state === 'failed' ? '复制不可用' : shell.split('/').at(-1)}
+    </button>
+  )
+}
+
+const sessionRoots = (session: Pick<FileSessionInfo, 'folder' | 'folders'> | undefined): string[] =>
+  [session?.folder, ...(session?.folders ?? []).map(folder => folder.path)].filter((root): root is string => !!root)
+
 /**
- * One tool call as a work row on the turn's rail: the verb in its column, the object (a file's path in mono with its
+ * What a command did, on one surface the way a terminal shows it: the folder when it is not the project's, the command the
+ * agent meant (a shell wrapper's quoting undone) coloured as shell, its output in its own colours, and at its foot how it
+ * ended (how long it took stays on the row), with copy and 填入终端. A wrapper it came in is named there; the reported line copies whole.
+ * The `$` line is drawn only when the row above could not show the command whole: cut short, or on several lines.
+ */
+function CommandEvidence({
+  line,
+  showLine,
+  folder,
+  state,
+  settled,
+  running,
+  output,
+}: {
+  line: CommandLine
+  showLine: boolean
+  folder: string | undefined
+  state: ShownToolState
+  settled: boolean
+  running: boolean
+  output: string | undefined
+}) {
+  const ended =
+    state === 'completed' ? (
+      <span className="command-ended is-ok">
+        <CheckGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        完成
+      </span>
+    ) : state === 'failed' ? (
+      <span className="command-ended is-failed">
+        <CloseGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+        失败
+      </span>
+    ) : null
+  return (
+    <div className="command-evidence">
+      {folder && (
+        <p className="command-folder" title={folder}>
+          <FolderOpen size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          <VisibleText text={folder} />
+        </p>
+      )}
+      {showLine && (
+        <pre className="command-line" title={line.shell ? line.reported : undefined}>
+          <span className="command-dollar" aria-hidden="true">
+            ${' '}
+          </span>
+          <ShellLine command={line.command} wraps />
+        </pre>
+      )}
+      {output !== undefined
+        && (output ? <ToolOutput text={output} running={running} flush /> : !running && <p className="command-empty">没有输出</p>)}
+      {settled && (
+        <div className="command-foot">
+          {ended}
+          {line.shell && <ShellTag shell={line.shell} reported={line.reported} />}
+          <span className="process-fill" />
+          <CopyButton text={line.command} label="复制命令" size="xs" />
+          <TerminalFillButton command={line.command} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * One tool call as a work row on the turn's rail: its kind's glyph, the verb, the object (a file's path in mono with its
  * folder quieter than its name), the lines it changed, and at the row's end its state (a spinner while it runs, a red ✕
- * when it failed) and its duration under the pointer. A command whose command line is known shows a prompt glyph and the
- * command a shell wrapper carried (the reported line in its tooltip and its details). Settled, it is a row like any
- * other and its output opens with it. While it runs, and once it failed or its result is unknown, it is a block: the last
- * lines of the output the tool reported under it, none wrapped, with a block caret only while it still runs and a red
- * rail on its left when it failed. A failed row says why on one line,
- * with 重试 when this device may resend the turn. Opening a row shows what it did indented under its words: a file edit's
- * short preview (never while the right panel is open: there the row stays one line and selects its file in 改动),
- * otherwise its arguments and whole output. A pending approval is decided in the drawer above the composer; here the
- * row only says what it is.
+ * when it failed) and its duration under the pointer. A command whose command line is known shows the command a shell
+ * wrapper carried, coloured as shell (the reported line in its tooltip). Settled, it is a row like any other and its
+ * output opens with it. While it runs, and once it failed or its result is unknown, it is a block: the last lines of the
+ * output the tool reported under it, none wrapped, with a block caret only while it still runs and a red rail on its
+ * left when it failed. A failed row says why on one line, with 重试 when this device may resend the turn. Opening a row
+ * shows what it did under its words: a file edit's short preview (never while the right panel is open: there the row
+ * stays one line and selects its file in 改动), a command's evidence, otherwise its arguments and whole output. A
+ * pending approval is decided in the drawer above the composer; here the row only says what it is.
  */
 export const ToolCard = memo(
   function ToolCard({
@@ -284,6 +407,25 @@ export const ToolCard = memo(
     const command = kind === 'execute' && label.mono && label.verb !== undefined && !review && !inline
     const line = kind === 'execute' && label.mono && label.verb !== undefined ? commandLine(tool) : undefined
     const object = label.object
+    // What an opened command shows: its line, or a command on several lines whole, as its approval card would.
+    const evidence = review ? undefined : (line ?? (kind === 'execute' ? approvalCommand(tool) : undefined))
+    // Whether the row shows the command whole: it is the row's object, on one line, and not cut at the row's end.
+    const objectRef = useRef<HTMLSpanElement>(null)
+    const [cut, setCut] = useState(false)
+    const headed = evidence !== undefined && object === evidence.command && !evidence.command.includes('\n')
+    useLayoutEffect(() => {
+      const element = objectRef.current
+      if (!open || !headed || !element) return undefined
+      const measure = () => {
+        setCut(element.scrollWidth > element.clientWidth + 1)
+      }
+      measure()
+      const observer = new ResizeObserver(measure)
+      observer.observe(element)
+      return () => {
+        observer.disconnect()
+      }
+    }, [open, headed, object])
     const well = command && (state === 'running' || shown === 'failed' || shown === 'interrupted' || shown === 'unknown')
     // A judgement's words, once its call settled: the review's verdict, or that the call ran without an ask.
     const judgedWords =
@@ -326,13 +468,10 @@ export const ToolCard = memo(
         : undefined
     const path = label.mono ? undefined : rowPath(tool, label.object, session)
     // A state change the page saw happen: the spinner and the result icon cross-fade and the new words fade in.
+    const glyphKind: RowKind = review ? 'other' : newFile ? 'new' : applied ? 'edit' : kind
     const heading = (
       <>
-        {command && (
-          <span className="command-prompt" aria-hidden="true">
-            $
-          </span>
-        )}
+        <KindGlyph kind={glyphKind} />
         <StatusWords state={label.verb ? 'row' : 'title'} className="process-label">
           <span className={command ? 'process-verb sr-only' : 'process-verb'}>{label.verb}</span>
           {path ? (
@@ -347,8 +486,8 @@ export const ToolCard = memo(
               </span>
             </span>
           ) : (
-            <span className={label.mono ? 'process-object is-mono' : 'process-object'}>
-              <VisibleText text={object} />
+            <span ref={objectRef} className={label.mono ? 'process-object is-mono' : 'process-object'}>
+              {line && object === line.command ? <ShellLine command={object} /> : <VisibleText text={object} />}
             </span>
           )}
         </StatusWords>
@@ -460,12 +599,16 @@ export const ToolCard = memo(
                   setChoice(true)
                 }}>
                 <div className="tool-card-body">
-                  {/* The command itself, to run again by hand: copied, or typed in at a terminal's prompt. */}
-                  {line && !review && state !== 'awaiting-approval' && state !== 'queued' && (
-                    <div className="tool-command-actions">
-                      <CopyButton text={line.command} label="复制命令" size="xs" />
-                      <TerminalFillButton command={line.command} />
-                    </div>
+                  {evidence && (
+                    <CommandEvidence
+                      line={evidence}
+                      showLine={!headed || cut}
+                      folder={commandFolder(reportedFolder(tool?.input), sessionRoots(session))}
+                      state={shown}
+                      settled={state !== 'awaiting-approval' && state !== 'queued'}
+                      running={running}
+                      output={showOutput ? output : undefined}
+                    />
                   )}
                   {applied && link && (
                     <DiffView
@@ -504,11 +647,17 @@ export const ToolCard = memo(
                   )}
                   {/* A review's input is the agent's whole event, its status still the one it began with: its own words say it. */}
                   {/* A command shown without its wrapper keeps the reported line here, whole. */}
+                  {/* What else a call was given; a command's line and folder are shown above. */}
                   {!review && !applied && (
-                    <ArgumentList text={tool?.input} covered={line && object !== line.reported ? [] : [label.object]} quiet />
+                    <ArgumentList
+                      text={tool?.input}
+                      covered={evidence ? [evidence.reported, reportedFolder(tool?.input) ?? ''] : [label.object]}
+                      quiet
+                    />
                   )}
                   {showOutput
                     && !applied
+                    && !evidence
                     && (output ? (
                       <ToolOutput text={output} running={running} language={language} />
                     ) : (

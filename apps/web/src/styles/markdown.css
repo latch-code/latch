@@ -15,8 +15,13 @@
 .message-content p {
   margin: 0 0 var(--sp-12);
 }
+/*
+ * A reply reads in three steps of heading: 20, 18 and the prose size, all 600 in full ink, with more room above than
+ * below so each belongs to what follows. A bold lead phrase is 600 too: it is what a skimming reader lands on.
+ */
 .message-content :is(h1, h2, h3, h4, h5, h6) {
   margin: var(--sp-24) 0 var(--sp-8);
+  color: var(--ink);
   font-weight: 600;
 }
 .message-content h1 {
@@ -24,16 +29,17 @@
   line-height: var(--lh-title);
 }
 .message-content h2 {
-  font-size: var(--fs-heading);
-  line-height: var(--lh-heading);
+  font-size: var(--fs-work-section);
+  line-height: var(--lh-work-section);
 }
 .message-content :is(h3, h4, h5, h6) {
+  margin-top: var(--sp-20);
   font-size: inherit;
   line-height: inherit;
 }
-/* Emphasis inside prose is 500; 600 belongs to titles. */
 .message-content strong {
-  font-weight: 500;
+  color: var(--ink);
+  font-weight: 600;
 }
 .message-content :is(ul, ol) {
   margin: var(--sp-8) 0 var(--sp-12);
@@ -51,6 +57,7 @@
 }
 .message-content li::marker {
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .message-content .task-list-item {
   list-style: none;
@@ -62,13 +69,11 @@
 .message-content .task-list-item > input:checked:focus-visible {
   outline-offset: 2px;
 }
-/* A quote is a tray inside the reading column. */
+/* A quote stands off the prose by a bar at its left, in the secondary ink. */
 .message-content blockquote {
   margin: var(--sp-12) 0;
-  padding: var(--sp-8) var(--sp-12);
-  border: 1px solid var(--line);
-  border-radius: var(--r-8);
-  background: var(--sunken);
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-12);
+  border-left: 3px solid var(--line-strong);
   color: var(--ink-2);
 }
 .message-content blockquote > :last-child {
@@ -79,14 +84,14 @@
   border: 0;
   border-top: 1px solid var(--line);
 }
+/* A link is blue words, underlined under the pointer; a file is a chip, never a link (file-chip.css). */
 .message-content a {
-  color: var(--ink);
-  text-decoration: underline;
-  text-decoration-color: var(--line-strong);
+  color: var(--accent-ink);
+  text-decoration: none;
   text-underline-offset: 2px;
 }
 .message-content a:hover {
-  text-decoration-color: currentcolor;
+  text-decoration: underline;
 }
 /* Images are never loaded; a web image is an ordinary link the reader opens. */
 .message-content .message-image {
@@ -108,11 +113,13 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Inline code is a chip in the content palette: mono in the code ink on its tint. */
 .message-content :not(pre) > code {
   padding: 1px var(--sp-4);
   border-radius: var(--r-4);
-  background: var(--hover);
-  font-size: var(--fs-code);
+  background: var(--content-code-tint);
+  color: var(--content-code-ink);
+  font-size: var(--fs-mono);
   white-space: break-spaces;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
@@ -124,9 +131,9 @@
   max-width: 100%;
   margin: var(--sp-12) 0;
   overflow: hidden;
-  border: 1px solid var(--line);
   border-radius: var(--r-8);
   background: var(--sunken);
+  box-shadow: var(--sh-well);
 }
 .message-code-toolbar {
   display: flex;
@@ -142,7 +149,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
   line-height: var(--lh-caption);
 }
 .message-code-copy,
@@ -181,7 +189,7 @@
 .message-content .message-code pre {
   max-width: 100%;
   margin: 0;
-  padding: var(--sp-12) var(--sp-16);
+  padding: var(--sp-2) var(--sp-12) var(--sp-12);
   overflow: auto;
   overscroll-behavior-inline: contain;
   /* An edge darkens while there is more code past it: a scrollbar is often hidden until scrolling starts. */
@@ -206,7 +214,7 @@
 }
 /* Matches the 18-line threshold so an arriving line never shrinks the block. */
 .message-code.is-collapsed pre {
-  max-height: calc(18 * 20px + 24px);
+  max-height: calc(18 * var(--lh-code) + var(--sp-2) + var(--sp-12));
 }
 /*
  * While a long block arrives it shows its newest lines, so what changes is what is visible. The note and 17 lines stand
@@ -214,7 +222,7 @@
  */
 .message-content .message-code-tail-note {
   margin: 0;
-  padding: var(--sp-8) var(--sp-16) var(--sp-4);
+  padding: var(--sp-8) var(--sp-12) var(--sp-4);
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-code);
@@ -248,14 +256,13 @@
   white-space: nowrap;
 }
 
+/* A table: hairline rows, a header in full ink at 600 over a stronger rule, no column lines; it scrolls on its own. */
 .message-table-scroll {
   min-width: 0;
   max-width: 100%;
-  margin: var(--sp-12) 0;
+  margin: var(--sp-12) 0 var(--sp-16);
   overflow-x: auto;
   overscroll-behavior-inline: contain;
-  border: 1px solid var(--line);
-  border-radius: var(--r-8);
   scrollbar-width: thin;
 }
 .message-content table {
@@ -266,24 +273,22 @@
   line-height: var(--lh-ui-para);
 }
 .message-content :is(th, td) {
-  min-width: 7em;
+  min-width: 6em;
   max-width: 25em;
-  padding: var(--sp-8) var(--sp-12);
+  padding: var(--sp-8) var(--sp-16) var(--sp-8) 0;
   border-bottom: 1px solid var(--line);
-  border-right: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
 }
 .message-content th {
-  background: var(--sunken);
-  font-weight: 500;
+  padding-top: var(--sp-4);
+  border-bottom-color: var(--line-strong);
+  color: var(--ink);
+  font-weight: 600;
 }
 .message-content :is(th, td):last-child {
-  border-right: 0;
-}
-.message-content tbody tr:last-child td {
-  border-bottom: 0;
+  padding-right: 0;
 }
 .message-content .footnotes {
   margin-top: var(--sp-24);
@@ -313,4 +318,16 @@
   .message-code-expand {
     min-height: 44px;
   }
+}
+
+/* A diagram's source, shown until it is drawn or when it cannot be: set in like a code block's lines. */
+.message-content .message-diagram > pre {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-12) var(--sp-12);
+  overflow: auto;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+  white-space: pre;
 }

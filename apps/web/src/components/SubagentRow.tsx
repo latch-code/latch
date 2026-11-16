@@ -1,8 +1,8 @@
 import { createContext, memo, useContext, useEffect, useState } from 'react'
-import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import type { Message, Subagent } from '@latch/protocol'
 import { APPROVAL_COPY } from '../core/securityCopy.ts'
 import { MessageContent } from '../MessageContent.tsx'
+import { KindGlyph } from '../conversation/KindGlyph.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { Button, Collapse, ICON_STROKE, StatusWord, type StatusTone, ChevronRightGlyph } from '@latch/ui'
@@ -14,14 +14,17 @@ export const SUBAGENT_STATUS: Record<NonNullable<Subagent['status']>, { tone: St
   done: { tone: 'done', words: '已完成' },
   failed: { tone: 'failed', words: '失败' },
   cancelled: { tone: 'neutral', words: '已停止' },
-  unknown: { tone: 'neutral', words: '状态未知' },
+  unknown: { tone: 'neutral', words: '未回报结果' },
 }
 
 /** Stops one subagent by its row's ID; absent where this device cannot stop the session. Rejects with what went wrong. */
 export const SubagentStop = createContext<((subagentId: string) => Promise<void>) | undefined>(undefined)
 
+/** The name the Host gives a subagent that reported none: the row's own word already says it. */
+const UNNAMED = '子 Agent'
+
 /**
- * A subagent the harness started for this turn: a row on the turn's rail, 「子 Agent」 in the verb column, its name and
+ * A subagent the harness started for this turn: a row on the turn's rail, its glyph and 「子 Agent」, its name and
  * what it last said of itself, opening to what it said and did on a rail of its own, read only. Its requests for approval are in the approval drawer, under its name. One that can be
  * stopped alone offers 停止; it reads 正在停止… until it says it stopped.
  */
@@ -47,13 +50,9 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
           onClick={() => {
             setOpen(!open)
           }}>
+          <KindGlyph kind="agent" />
           <span className="process-verb">子 Agent</span>
-          <span className="subagent-icon" aria-hidden="true">
-            <AgentsGlyph size={16} />
-          </span>
-          <span className="process-object subagent-name">
-            <VisibleText text={agent.title} />
-          </span>
+          <span className="process-object subagent-name">{agent.title !== UNNAMED && <VisibleText text={agent.title} />}</span>
           {status ? (
             <StatusWord tone={frozen && status.tone === 'running' ? 'neutral' : status.tone} className="subagent-status">
               {status.words}

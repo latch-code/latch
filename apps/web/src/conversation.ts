@@ -13,6 +13,7 @@ import {
 } from '@latch/protocol'
 import { parseDuration, parseTime } from './core/hostClock.ts'
 import { unwrapShell, type UnwrappedCommand } from './core/shellUnwrap.ts'
+import { stripAnsi } from './conversation/ansi.ts'
 import { APPROVAL_COPY, DECISION_COPY, JUDGED_COPY } from './core/securityCopy.ts'
 import { absoluteTime, argumentView, basename, clockTime, dayClockTime, formatDuration, messageTime, sameDay, sumUsage } from './format.ts'
 import { diffLines, previousState } from './diff.ts'
@@ -547,8 +548,11 @@ export function shownToolOutput(message: Pick<Message, 'state' | 'tool' | 'text'
   return withoutToolCode(legacyRejected(message) ? output.slice(LEGACY_REJECTED.length).trimStart() : output)
 }
 
-/** The runtime's code in front of a tool's report (`TOOL_ERROR: …`) is for the model; a person reads what follows it. */
-export const withoutToolCode = (text: string) => text.replace(/^TOOL_[A-Z_]+:[^\S\n]*/u, '')
+/**
+ * The runtime's codes in front of a tool's report and of each fact it adds after a blank line (`TOOL_ERROR: …`,
+ * `TOOL_OUTCOME_UNKNOWN: …`) are for the model; a person reads what follows them.
+ */
+export const withoutToolCode = (text: string) => text.replace(/(^|\n\n)TOOL_[A-Z_]+:[^\S\n]*/gu, '$1')
 
 /**
  * How an approval kept a call from running, as far as the reports go: the call settled failed or cancelled without
@@ -892,14 +896,21 @@ function countCalls(messages: readonly Message[], matches: (tool: NonNullable<Me
   )
 }
 
-/** One line for a failed row: the first line of what it reported, without the runtime's code, and cut. */
+/** A line that names an error, which a test runner's output puts after the cases that passed. */
+const ERROR_LINE = /(?:error|exception)\b|\b(?:fatal|panic)\b|错误/iu
+
+/**
+ * One line for a failed row: the first line of what it reported that names an error, else its first line, without the
+ * runtime's code or terminal colours, and cut.
+ */
 export function failureReason(message: Pick<Message, 'state' | 'tool' | 'text'>): string {
   // A call that reported nothing has its arguments or title as its text, which are no reason.
   const silent = message.tool?.output === undefined && (message.text === message.tool?.input || message.text === message.tool?.title)
-  const line = (silent ? '' : shownToolOutput(message))
+  const lines = stripAnsi(silent ? '' : shownToolOutput(message))
     .split('\n')
     .map(part => part.trim())
-    .find(Boolean)
+    .filter(Boolean)
+  const line = lines.find(part => ERROR_LINE.test(part)) ?? lines[0]
   const reason = line ? withoutToolCode(line) : ''
   if (!reason) return '没有成功'
   return reason.length > 120 ? `${reason.slice(0, 120)}…` : reason
