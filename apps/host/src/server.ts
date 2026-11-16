@@ -88,6 +88,7 @@ import {
   type PluginInfo,
   type PresenceAction,
   type ProviderDestination,
+  type ProviderKind,
   type ProviderSettings,
   type PresenceSubject,
   type ProviderSummary,
@@ -519,6 +520,7 @@ const providerUpdateSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   kind: providerKind.optional(),
   baseURL: httpURL.optional(),
+  expectedTarget: z.strictObject({ baseURL: z.string().min(1).max(2048), kind: providerKind }).optional(),
   apiKey: apiKeyText.nullable().optional(),
   models: modelList.optional(),
   modelCapabilities: modelCapabilitiesRecord.optional(),
@@ -849,6 +851,18 @@ function assertBaseURL(value: string): void {
   const url = new URL(value)
   if (url.username || url.password) throw new AppError(400, 'invalid-url', '请将凭据填入 API Key，不要放在地址中')
   if (url.search || url.hash) throw new AppError(400, 'invalid-url', '服务地址不能包含查询参数或片段')
+}
+
+function sameProviderTarget(before: Pick<ProviderRecord, 'kind' | 'baseURL'>, expected: { baseURL: string; kind: ProviderKind }): boolean {
+  if (before.kind !== expected.kind) return false
+  if (before.baseURL === expected.baseURL) return true
+  try {
+    assertBaseURL(before.baseURL)
+    assertBaseURL(expected.baseURL)
+    return addressOf(before.baseURL) === addressOf(expected.baseURL)
+  } catch {
+    return false
+  }
 }
 
 /** The `LATCH_BASE_URL` overlay is never persisted or validated by the config schema, so its rules apply at startup. */
@@ -6390,6 +6404,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           singleAgentChat: true,
           usage: true,
           modelUsage: true,
+          providerUpdateTarget: true,
           fileSearch: true,
           ...(directoryReader.available ? { fileTree: true as const } : {}),
           filePreview: true,
@@ -8795,20 +8810,34 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (!current || (pluginInfo(id) && pluginInfo(id)?.managed !== 'provider'))
             throw new AppError(404, 'provider-not-found', '找不到该模型服务')
           if (!isProviderKind(current.kind)) throw providerUnsupported(current)
-          const baseURL = input.baseURL ?? current.baseURL
           const newKey = typeof input.apiKey === 'string' && input.apiKey ? input.apiKey : undefined
           if (newKey) requireKeyEntry(caller)
           const confirming = input.confirmOrigin === true
+          const changesTarget = input.baseURL !== undefined || input.kind !== undefined || !!newKey || confirming
+          if (changesTarget && !input.expectedTarget)
+            throw new AppError(409, 'provider-target-required', '请更新并重新打开 Latch 后再修改模型服务的地址、协议或密钥。')
+          const checkTarget = (record: ProviderRecord) => {
+            if (input.expectedTarget && !sameProviderTarget(record, input.expectedTarget))
+              throw new AppError(409, 'provider-target-changed', '模型服务的地址或协议已变更。请核对当前设置后重试。')
+          }
+          checkTarget(current)
+          const plannedURL = input.baseURL ?? current.baseURL
+          if (newKey || confirming) assertBaseURL(plannedURL)
           const plan =
             input.baseURL !== undefined || newKey || confirming
-              ? await planDestination(baseURL, { key: Boolean(newKey), confirm: confirming })
+              ? await planDestination(plannedURL, { key: Boolean(newKey), confirm: confirming })
               : undefined
           const stepup = confirmsDestination(plan)
-            ? await confirmDestination(req, caller, plan, { baseURL, provider: current, ...(newKey ? { apiKey: newKey } : {}) })
+            ? await confirmDestination(req, caller, plan, { baseURL: plannedURL, provider: current, ...(newKey ? { apiKey: newKey } : {}) })
             : 'none'
           const record = await serial(caller, 'admin', async () => {
             const before = effectiveProvider(id)
-            if (!before) throw new AppError(404, 'provider-not-found', '找不到该模型服务')
+            if (!before || (pluginInfo(id) && pluginInfo(id)?.managed !== 'provider'))
+              throw new AppError(404, 'provider-not-found', '找不到该模型服务')
+            if (!isProviderKind(before.kind)) throw providerUnsupported(before)
+            checkTarget(before)
+            if (newKey) recheck(caller, 'secrets')
+            const baseURL = input.baseURL ?? before.baseURL
             const scope = keyScopeOf(baseURL)
             const bound = keyScopeOf(before.baseURL)
             const hadKey = Boolean(before.apiKey)

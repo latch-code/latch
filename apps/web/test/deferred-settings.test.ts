@@ -14,6 +14,9 @@ describe('optional settings loading', () => {
     const stream = await renderToReadableStream(createElement(Content, { value: 'Actual body props retained' }))
     await stream.allReady
     expect(await new Response(stream).text()).toContain('Actual body props retained')
+    const reopened = await renderToReadableStream(createElement(Content, { value: 'Reopened with new props' }))
+    await reopened.allReady
+    expect(await new Response(reopened).text()).toContain('Reopened with new props')
     expect(load).toHaveBeenCalledTimes(1)
   })
 

@@ -11,6 +11,7 @@ import { Button, Dialog, Hint, InlineNotice, Meter, SegmentedControl, StatusWord
 import { api, errorMessage } from '../core/api.ts'
 import { SettingsRow } from './common.tsx'
 import { useSpendWrite, type SpendChange } from './modelSpendWrites.tsx'
+import { readDenied, type ModelSettingsReads } from './modelSettingsReads.ts'
 import {
   CURRENCY_NAMES,
   budgetFields,
@@ -30,25 +31,32 @@ const CURRENCY_OPTIONS = COST_CURRENCIES.map(value => ({ value, label: CURRENCY_
  * Prices and budgets as the Host has them now, with this month's use. Read again whenever `revision` changes (the
  * snapshot's, so another device's change shows) and after this page's own writes.
  */
-export function useModelSpend(enabled: boolean, revision: unknown) {
-  const [spend, setSpend] = useState<ModelSpend>()
+export function useModelSpend(enabled: boolean, revision: unknown, reads?: ModelSettingsReads) {
+  const [spend, setSpend] = useState(reads?.spend)
   const [error, setError] = useState('')
   const reading = useRef<AbortController | undefined>(undefined)
-  const reload = useCallback(async () => {
-    if (!enabled) return
+  const reload = useCallback(async (): Promise<ModelSpend | undefined> => {
+    if (!enabled) return undefined
     reading.current?.abort()
     const controller = new AbortController()
     reading.current = controller
     try {
       const result = await api<ModelSpend>('model-spend', { signal: controller.signal })
-      if (controller.signal.aborted) return
+      if (controller.signal.aborted) return undefined
+      reads?.keepSpend(result)
       setSpend(result)
       setError('')
       return result
     } catch (cause) {
-      if (!controller.signal.aborted) setError(errorMessage(cause))
+      if (controller.signal.aborted) return undefined
+      if (readDenied(cause)) {
+        reads?.keepSpend(undefined)
+        setSpend(undefined)
+      }
+      setError(errorMessage(cause))
+      return undefined
     }
-  }, [enabled])
+  }, [enabled, reads])
   useEffect(() => {
     void reload()
     return () => reading.current?.abort()

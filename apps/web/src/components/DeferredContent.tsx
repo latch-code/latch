@@ -7,8 +7,9 @@ export function deferredComponent<P extends object>(
   load: () => Promise<{ default: FunctionComponent<P> }>,
   label: string,
 ): FunctionComponent<P> {
+  let InitialContent = lazy(load)
   return function DeferredContent(props: P) {
-    const [Content, replace] = useState(() => lazy(load))
+    const [Content, replace] = useState(() => InitialContent)
     return (
       <ErrorBoundary
         resetKey={Content}
@@ -16,7 +17,12 @@ export function deferredComponent<P extends object>(
           <InlineNotice
             tone="error"
             action={
-              <Button size="xs" onClick={() => replace(() => lazy(load))}>
+              <Button
+                size="xs"
+                onClick={() => {
+                  InitialContent = lazy(load)
+                  replace(() => InitialContent)
+                }}>
                 重试加载
               </Button>
             }>

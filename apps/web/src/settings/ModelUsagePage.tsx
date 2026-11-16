@@ -16,6 +16,7 @@ import { exactTokens, formatTokens } from '../format.ts'
 import { NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
 import { BudgetProgressLine, useModelSpend } from './ModelSpend.tsx'
 import { NOT_REPORTED, costsText, pricedNote, rowCost, rowTokens } from './modelSpend.ts'
+import { readDenied, type ModelSettingsReads } from './modelSettingsReads.ts'
 
 const PERIODS: ReadonlyArray<{ value: UsagePeriod; label: string }> = [
   { value: 'month', label: '本月' },
@@ -97,21 +98,27 @@ function budgetName(budget: BudgetProgress, snapshot: AppSnapshot): string {
  * 设置 › 用量: what the model requests this Mac sent used, from the usage ledger, by service, model, Agent or session.
  * Every device that may view reads it; nothing here is changed. A number no service reported reads 未报告, never 0.
  */
-export function ModelUsagePage({ snapshot, access }: { snapshot: AppSnapshot; access: DeviceAccess }) {
-  const [period, setPeriod] = useState<UsagePeriod>('month')
-  const [group, setGroup] = useState<UsageGroup>('service')
+export function ModelUsagePage({ snapshot, access, reads }: { snapshot: AppSnapshot; access: DeviceAccess; reads: ModelSettingsReads }) {
+  const [period, setPeriod] = useState(reads.period)
+  const [group, setGroup] = useState(reads.group)
   if (!access.scopes.has('view')) return null
   // A new device or scope must never render a previous view's rows while its requests are being replaced.
-  const audience = JSON.stringify([snapshot.instanceId, snapshot.device.id, snapshot.device.dataScope])
   return (
     <ModelUsageView
-      key={audience}
+      key={reads.audience}
       snapshot={snapshot}
       access={access}
+      reads={reads}
       period={period}
       group={group}
-      setPeriod={setPeriod}
-      setGroup={setGroup}
+      setPeriod={next => {
+        reads.keepUsageChoice(next, group)
+        setPeriod(next)
+      }}
+      setGroup={next => {
+        reads.keepUsageChoice(period, next)
+        setGroup(next)
+      }}
     />
   )
 }
@@ -119,6 +126,7 @@ export function ModelUsagePage({ snapshot, access }: { snapshot: AppSnapshot; ac
 function ModelUsageView({
   snapshot,
   access,
+  reads,
   period,
   group,
   setPeriod,
@@ -126,38 +134,42 @@ function ModelUsageView({
 }: {
   snapshot: AppSnapshot
   access: DeviceAccess
+  reads: ModelSettingsReads
   period: UsagePeriod
   group: UsageGroup
   setPeriod: (period: UsagePeriod) => void
   setGroup: (group: UsageGroup) => void
 }) {
-  const [value, setValue] = useState<ModelUsageSummary>()
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const query = `${period}:${group}` as const
+  const [settled, settle] = useState<{ query: typeof query; turn: number; error: string }>()
   const [turn, setTurn] = useState(0)
-  const { spend } = useModelSpend(true, snapshot.revision)
+  const spending = useModelSpend(true, snapshot.revision, reads)
+  const spend = spending.spend
   useEffect(() => {
     const controller = new AbortController()
-    setLoading(true)
-    setError('')
     void api<ModelUsageSummary>('model-usage', { method: 'POST', body: { period, group }, signal: controller.signal }).then(
       result => {
         if (controller.signal.aborted) return
-        setValue(result)
-        setLoading(false)
+        if (result.period !== period || result.group !== group) {
+          settle({ query, turn, error: '收到的用量数据与所选期间或分组不符。' })
+          return
+        }
+        reads.usage.set(query, result)
+        settle({ query, turn, error: '' })
       },
       cause => {
         if (controller.signal.aborted) return
-        setError(errorMessage(cause))
-        setLoading(false)
+        if (readDenied(cause)) reads.usage.clear()
+        settle({ query, turn, error: errorMessage(cause) })
       },
     )
     return () => {
       controller.abort()
     }
-  }, [period, group, turn])
-  // What is on screen belongs to the choice that asked for it; a new choice shows its own once it arrives.
-  const shown = value && value.period === period && value.group === group ? value : undefined
+  }, [period, group, query, reads, turn])
+  const shown = reads.usage.get(query)
+  const current = settled?.query === query && settled.turn === turn ? settled : undefined
+  const error = current?.error
   const totals = shown ? usageTotals(shown.rows) : undefined
   const totalCost = costsText(totals?.cost)
   const totalNote = pricedNote(totals?.cost)
@@ -195,7 +207,7 @@ function ModelUsageView({
             }}
           />
         </div>
-        {loading && !shown && <Loading label="正在读取用量…" />}
+        {!current && !shown && <Loading label="正在读取用量…" />}
         {error && (
           <InlineNotice
             tone="error"
@@ -209,6 +221,7 @@ function ModelUsageView({
               </Button>
             }>
             {error}
+            {shown && ' 当前显示上次读取结果。'}
           </InlineNotice>
         )}
         {shown && shown.rows.length === 0 && <p className="settings-empty">这个期间还没有请求。</p>}
@@ -263,17 +276,31 @@ function ModelUsageView({
         {shown && shown.skipped > 0 && <InlineNotice>有 {shown.skipped} 行记录读不出，没有计入。</InlineNotice>}
         {shown?.truncated && <InlineNotice>这个期间的请求太多，只算了读到的部分。</InlineNotice>}
       </SettingsGroup>
-      {budgets.length > 0 && (
+      {(budgets.length > 0 || spending.error) && (
         <SettingsGroup
           title="本月预算"
           note={
-            <NoteLine
-              brief={{
-                label: '按这台 Mac 的时间算月',
-                detail: `${spend!.month}，${spend!.timeZone}。${access.admin ? '在 设置 › 模型 的服务页和 Agent 的设置里改。' : '改预算要能管理这台 Mac。'}`,
-              }}
-            />
+            spend && (
+              <NoteLine
+                brief={{
+                  label: '按这台 Mac 的时间算月',
+                  detail: `${spend.month}，${spend.timeZone}。${access.admin ? '在 设置 › 模型 的服务页和 Agent 的设置里改。' : '改预算要能管理这台 Mac。'}`,
+                }}
+              />
+            )
           }>
+          {spending.error && (
+            <InlineNotice
+              tone="error"
+              action={
+                <Button size="sm" onClick={() => void spending.reload()}>
+                  重试
+                </Button>
+              }>
+              {spending.error}
+              {budgets.length > 0 && ' 当前显示上次读取结果。'}
+            </InlineNotice>
+          )}
           {budgets.map(budget => (
             <SettingsRow
               key={`${budget.scope}:${budget.id}`}

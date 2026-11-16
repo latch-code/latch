@@ -9,6 +9,9 @@ import { currentShell, shellComputers } from '../core/shell.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
+import { ModelUsagePage } from './ModelUsagePage.tsx'
+import { ProvidersSection } from './ProvidersSection.tsx'
+import { ModelSettingsReads, settingsReadAudience } from './modelSettingsReads.ts'
 import {
   CloseGlyph,
   Icon,
@@ -42,11 +45,6 @@ const PhoneDevicesPage = deferredComponent(
 const ComputersSettings = deferredComponent(async () => ({ default: (await import('./ComputersSettings.tsx')).ComputersSettings }), '电脑')
 const GeneralSettings = deferredComponent(async () => ({ default: (await import('./GeneralSettings.tsx')).GeneralSettings }), '通用设置')
 const PluginsSettings = deferredComponent(async () => ({ default: (await import('./PluginsSettings.tsx')).PluginsSettings }), '插件设置')
-const ProvidersSettings = deferredComponent(
-  async () => ({ default: (await import('./ProvidersSettings.tsx')).ProvidersSettings }),
-  '模型服务设置',
-)
-const ModelUsagePage = deferredComponent(async () => ({ default: (await import('./ModelUsagePage.tsx')).ModelUsagePage }), '用量')
 const McpSettings = deferredComponent(async () => ({ default: (await import('./McpSettings.tsx')).McpSettings }), 'MCP')
 const ShortcutsSettings = deferredComponent(
   async () => ({ default: (await import('./ShortcutsSettings.tsx')).ShortcutsSettings }),
@@ -183,6 +181,9 @@ export function SettingsPage({
 }) {
   const phone = useViewport() === 'phone'
   const access = given ?? deviceAccess(snapshot, currentShell())
+  const audience = settingsReadAudience(snapshot, access)
+  const [reads, setReads] = useState(() => new ModelSettingsReads(audience))
+  if (reads.audience !== audience) setReads(new ModelSettingsReads(audience))
   const allowed = settingsSections(snapshot, access)
   const ids = settingsSectionsAt(phone).filter(id => allowed.includes(id))
   const available = ids.flatMap(id => sections.filter(section => section.id === id))
@@ -198,13 +199,14 @@ export function SettingsPage({
   const shownAllowed = shown === null || ids.includes(shown)
   useLayoutEffect(() => {
     if (!shownAllowed) setShown(null)
+    if (!chosenAllowed) onSection()
     if (!chosenAllowed || !shownAllowed) {
       if (document.activeElement === document.body)
         (tabs.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]') ?? tabs.current?.querySelector('button'))?.focus({
           preventScroll: true,
         })
     }
-  }, [chosenAllowed, shownAllowed])
+  }, [chosenAllowed, shownAllowed, onSection])
   const tabs = useRef<HTMLDivElement>(null)
   const current = available.find(section => section.id === panel)
   const pushed = phone && active !== null
@@ -354,14 +356,19 @@ export function SettingsPage({
               <div className="settings-scroll">
                 {panel !== null && (
                   // 设备 (its list, a device's permissions, pairing) keeps the product's own tokens under every customisation.
-                  <div key={panel} className="settings-content settings-enter" data-lock={panel === 'devices' ? '' : undefined}>
+                  <div
+                    key={panel}
+                    className={panel === 'providers' || panel === 'usage' ? 'settings-content' : 'settings-content settings-enter'}
+                    data-lock={panel === 'devices' ? '' : undefined}>
                     {/* The section's name heads it; a page opened inside it names itself under its way back. */}
                     {!phone && depth === 0 && current && <h1 className="settings-title">{current.label}</h1>}
                     {panel === 'general' && (
                       <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} onFirstSetup={onFirstSetup} />
                     )}
-                    {panel === 'providers' && <ProvidersSettings snapshot={snapshot} access={access} onChanged={onChanged} />}
-                    {panel === 'usage' && <ModelUsagePage snapshot={snapshot} access={access} />}
+                    {panel === 'providers' && (
+                      <ProvidersSection key={reads.audience} snapshot={snapshot} access={access} reads={reads} onChanged={onChanged} />
+                    )}
+                    {panel === 'usage' && <ModelUsagePage snapshot={snapshot} access={access} reads={reads} />}
                     {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}
                     {panel === 'mcp' && <McpSettings snapshot={snapshot} />}
                     {panel === 'shortcuts' && (

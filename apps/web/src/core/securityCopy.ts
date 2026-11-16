@@ -906,6 +906,8 @@ const FIXED: Record<string, string> = {
   'policy-changed': '设置刚被修改过，这次更改没有应用。请查看最新的设置后重试。',
   'presence-unavailable': '这台 Mac 暂时不能确认',
   'origin-unconfirmed': '这个模型服务的地址还没有确认，Latch 不会向它发送请求。请在 Mac 上的 Latch 里确认：设置 › 模型。',
+  'provider-target-required': '请更新并重新打开 Latch 后再修改模型服务的地址、协议或密钥。',
+  'provider-target-changed': '模型服务的地址或协议已变更。请核对当前设置后重试。',
   'presence-busy': CONFIRMATION_COPY.busy,
   'presence-blocked': CONFIRMATION_COPY.blocked,
   'confirmation-not-found': '找不到该确认',
