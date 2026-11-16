@@ -646,6 +646,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `/tasks/:id/git…`、`/workbench/delivery` | `routes/git.ts` | 读 `view`，写 `run`；内容与私有会话另需 `all` | [GIT-DELIVERY.md](GIT-DELIVERY.md) |
 | `/tasks/:id/terminals…`、`/workspaces/:id/terminals…` | `routes/terminal.ts` | 见文档 | [TERMINAL.md](TERMINAL.md) |
 | `/browser-provider/…`、`/tasks/:id/browser-tabs` | `routes/browser.ts` | 见文档 | [PREVIEW-BROWSER.md](PREVIEW-BROWSER.md) |
+| `/simulators…` | `routes/simulators.ts` | 见文档 | [DEVICE-PREVIEW.md](DEVICE-PREVIEW.md) |
 | `/handoffs…` | `routes/handoffs.ts` | 读 `view`，写 `run`；都要能读相关会话 | [HANDOFFS.md](HANDOFFS.md) |
 | `/history/…` | `routes/history.ts` | `run` + 数据范围 `all` | [HARNESSES.md](HARNESSES.md#接入已有会话) |
 | `/custom-agents…` | `routes/agents.ts` | 见文档 | [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md) |

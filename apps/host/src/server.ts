@@ -205,9 +205,35 @@ import {
 import { foldersHash, newProject, planFolders, reorderFolders, type FolderRefusal, type ProjectPrimary } from './projects.ts'
 import { PolicyStore, isLowering, policyDiff, type Policy } from './policy.ts'
 import { PresenceService, createPresenceBackend, paramsHash, policySubject, type PresenceBackend } from './presence.ts'
-import { BROWSER_PLUGIN, classifyStandardCall, targetFolder, type BrowserCallFacts, type CallFolder } from './risk.ts'
-import { BrowserBroker, isBrowserTool, type BrokerOutcome, type BrowserTool } from './browser-broker.ts'
+import {
+  BROWSER_PLUGIN,
+  DEVICE_PLUGIN,
+  classifyDeviceCall,
+  classifyStandardCall,
+  targetFolder,
+  type BrowserCallFacts,
+  type CallFolder,
+} from './risk.ts'
+import { BrowserBroker, isBrowserTool, isLoopbackName, type BrokerOutcome, type BrowserTool } from './browser-broker.ts'
 import { BROWSER_TOOL_DEFINITIONS, browserFailure, browserResultText, createBrowserToolsPlugin } from './plugins/tools/browser/index.ts'
+import {
+  DEVICE_TOOL_DEFINITIONS,
+  createDeviceToolsPlugin,
+  deviceFailure,
+  isDeviceTool,
+  type DeviceOutcome,
+  type DeviceTool,
+} from './plugins/tools/device/index.ts'
+import { Simulators, isSimulatorUdid, simulatorUrl, type SimulatorOptions } from './simulators.ts'
+import { addressFacts } from './routes/simulators.ts'
+import {
+  XCODE_GUIDE_SKILL,
+  XCODE_INSTRUCTIONS,
+  XCODE_SESSION_END,
+  XCODE_SESSION_START,
+  xcodeToolRisk,
+  type XcodeBridgeOptions,
+} from './mcp-xcode.ts'
 import {
   MAX_SOCKET_PATH,
   ToolGatewayServer,
@@ -814,6 +840,13 @@ export interface ServerOptions {
    * that do not name a fake, the preset is not offered and no real driver on this computer is ever run.
    */
   computerDriver?: ComputerDriverOptions
+  /**
+   * How this Mac's iOS simulators are reached. The start script passes the real `xcrun simctl` runner on macOS; left
+   * out, as in tests that name no fake, the 设备 panel and the `device_*` tools are absent and simctl never runs.
+   */
+  simulators?: SimulatorOptions
+  /** Where 「Xcode」 looks for Xcode's MCP bridge. The start script passes it on macOS; left out, no such preset. */
+  xcodeBridge?: XcodeBridgeOptions
 }
 
 export interface StartedHost {
@@ -1869,6 +1902,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
     })
     startupCleanup.push(() => browserBroker.end('stopping'))
+    // This Mac's iOS simulators, through simctl alone; the first list, in the background, says whether Xcode is here.
+    const simulators = new Simulators(options.simulators ?? {})
+    /**
+     * Whether the device that last sent a session input sees all data: a simulator's picture enters the session, where
+     * every device that may read it sees it, so the device tools run only for a turn such a device asked for. A turn
+     * nobody sent (an automation's) has no entry and gets none.
+     */
+    const turnScopes = new Map<string, boolean>()
+    const noteTurnScope = (sessionId: string, caller: DeviceCaller) => {
+      turnScopes.delete(sessionId)
+      turnScopes.set(sessionId, devices.get(caller.device.id)?.dataScope === 'all')
+      // Bounded: the oldest sessions go first.
+      if (turnScopes.size > 2000) turnScopes.delete(turnScopes.keys().next().value!)
+    }
+    startupCleanup.push(() => simulators.stop())
+    if (simulators.supported) void simulators.list().catch(() => undefined)
+    if (simulators.supported) {
+      registry.register(createDeviceToolsPlugin({ call: (tool, args, context) => deviceCall(tool, args, context) }), {
+        managed: 'core',
+        revision: executionBuildRevision(DEVICE_PLUGIN),
+      })
+      await registry.enable(DEVICE_PLUGIN)
+    }
     /** The class each session's browser call got right before it ran: main gets the class the call was approved at. */
     const browserRisks = new Map<string, { key: string; risk: RiskLevel }>()
     registry.register(createBrowserToolsPlugin({ call: (tool, args, context) => browserCall(tool, args, context) }), {
@@ -1886,9 +1942,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             // Only while this Mac's desktop app is the browser provider: a session opened without it gets the server
             // when it next resumes. Sessions without a project are left out by the driver, and refused on every call.
             admits: () => browserBroker.available(),
+            // The simulator tools join while the last list found Xcode on this Mac.
             tools: () =>
-              BROWSER_TOOL_DEFINITIONS.map(({ name, description, parameters }) => ({ name, description, inputSchema: parameters })),
-            call: input => gatewayBrowserCall(input),
+              [...BROWSER_TOOL_DEFINITIONS, ...(simulators.ready ? DEVICE_TOOL_DEFINITIONS : [])].map(
+                ({ name, description, parameters }) => ({
+                  name,
+                  description,
+                  inputSchema: parameters,
+                }),
+              ),
+            call: input => (isDeviceTool(input.tool) ? gatewayDeviceCall(input) : gatewayBrowserCall(input)),
             mcp: mcpGateway(),
             log,
           })
@@ -2933,7 +2996,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           return used.some(url => hostPortOf(url) === target) ? undefined : target
         },
         ...(options.computerDriver ? { computer: options.computerDriver } : {}),
+        ...(options.xcodeBridge ? { xcode: options.xcodeBridge } : {}),
       },
+      simulators,
       browser: {
         broker: browserBroker,
         async readSession(caller, id) {
@@ -4703,6 +4768,157 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
+    /**
+     * One simulator tool call of the built-in harness: a session of a project, while this Mac's desktop app is open (the
+     * panel's own condition), with the class it was approved at.
+     */
+    async function deviceCall(
+      tool: DeviceTool,
+      args: Record<string, unknown>,
+      context: { sessionId: string; callId: string; approvalId?: string; signal: AbortSignal },
+    ): Promise<DeviceOutcome> {
+      const summary = (await hub!.detail(context.sessionId)).summary
+      if (summary.personal || summary.mode === 'chat' || summary.archived) return { ok: false, error: 'no-project' }
+      try {
+        await assertSessionWorkspace(context.sessionId)
+      } catch {
+        return { ok: false, error: 'no-project' }
+      }
+      return runDeviceCall({
+        sessionId: context.sessionId,
+        tool,
+        args,
+        signal: context.signal,
+        ...(opaqueId.safeParse(context.callId).success ? { toolCallId: context.callId } : {}),
+        ...(context.approvalId ? { approvalId: context.approvalId } : {}),
+      })
+    }
+
+    /**
+     * One simulator call of an external harness through the tool gateway: the same session and turn rules as its browser
+     * calls (`gatewayRefusal`). Every simulator tool is R0 or R1, which a full-access session runs without Latch asking.
+     */
+    async function gatewayDeviceCall({ sessionId, tool, args, signal, context }: GatewayCall): Promise<GatewayResult> {
+      const failed = (outcome: Extract<DeviceOutcome, { ok: false }>): GatewayResult => ({
+        content: [{ type: 'text', text: deviceFailure(outcome) }],
+        isError: true,
+      })
+      if (!isDeviceTool(tool)) return failed({ ok: false, error: 'invalid-input' })
+      const summary = await hub!
+        .detail(sessionId)
+        .then(detail => detail.summary)
+        .catch(() => undefined)
+      const refusal = gatewayRefusal(summary, summary && hub!.trustOf(summary.harnessId), context.turn)
+      if (refusal || !summary) return failed({ ok: false, error: refusal ?? 'no-project' })
+      try {
+        await assertSessionWorkspace(sessionId)
+      } catch {
+        return failed({ ok: false, error: 'no-project' })
+      }
+      const outcome = await runDeviceCall({
+        sessionId,
+        tool,
+        args,
+        signal,
+        via: 'mcp',
+        ...(context.toolCallId && opaqueId.safeParse(context.toolCallId).success ? { toolCallId: context.toolCallId } : {}),
+        ...(context.approvalId && opaqueId.safeParse(context.approvalId).success ? { approvalId: context.approvalId } : {}),
+      })
+      if (!outcome.ok) return failed(outcome)
+      return {
+        content: [
+          { type: 'text', text: outcome.text },
+          ...(outcome.image ? [{ type: 'image' as const, data: outcome.image.toString('base64'), mimeType: 'image/png' as const }] : []),
+        ],
+      }
+    }
+
+    /** Checks a simulator call's arguments, records it, then runs simctl through the Host's module. */
+    async function runDeviceCall(input: {
+      sessionId: string
+      tool: DeviceTool
+      args: Record<string, unknown>
+      signal: AbortSignal
+      toolCallId?: string
+      approvalId?: string
+      via?: 'mcp'
+    }): Promise<DeviceOutcome> {
+      const { tool, args } = input
+      if (!simulators.supported) return { ok: false, error: 'simulator-unavailable' }
+      if (turnScopes.get(input.sessionId) !== true) return { ok: false, error: 'device-scope' }
+      // The panel's own condition: this Mac's desktop app is open.
+      if (!browserBroker.available()) return { ok: false, error: 'device-unavailable' }
+      const udid = args.udid
+      if (tool !== 'device_list' && !isSimulatorUdid(udid)) return { ok: false, error: 'invalid-input' }
+      let address: { url: string; scheme: string; originHash?: string } | undefined
+      if (tool === 'device_open_url') {
+        try {
+          const url = simulatorUrl(args.url)
+          address = { url, ...addressFacts(url) }
+        } catch {
+          return { ok: false, error: 'invalid-url' }
+        }
+        // An agent opens only this Mac's own addresses, as its browser tools do: anything else could carry what it read
+        // out of the device, and a deep link reaches an app nobody chose. The person opens those from the panel.
+        if (address.scheme !== 'http' && address.scheme !== 'https') return { ok: false, error: 'deep-link' }
+        if (!isLoopbackName(new URL(address.url).hostname)) return { ok: false, error: 'not-local' }
+      }
+      const appearance = args.appearance
+      if (tool === 'device_set_appearance' && appearance !== 'light' && appearance !== 'dark') return { ok: false, error: 'invalid-input' }
+      try {
+        await audit.append({
+          action: 'simulator.call',
+          actor: { listener: 'host' },
+          target: input.sessionId,
+          detail: {
+            sessionId: input.sessionId,
+            callId: randomUUID(),
+            tool,
+            ...(typeof udid === 'string' && tool !== 'device_list' ? { udid } : {}),
+            risk: classifyDeviceCall(tool).risk,
+            ...(appearance === 'light' || appearance === 'dark' ? { appearance } : {}),
+            ...(address ? { scheme: address.scheme, ...(address.originHash ? { originHash: address.originHash } : {}) } : {}),
+            ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
+            ...(input.approvalId ? { approvalId: input.approvalId } : {}),
+            ...(input.via ? { via: input.via } : {}),
+          },
+        })
+      } catch {
+        return { ok: false, error: 'audit-failed' }
+      }
+      if (input.signal.aborted) return { ok: false, error: 'cancelled' }
+      try {
+        if (tool === 'device_list') {
+          const { xcode, devices: found } = await simulators.list()
+          if (!xcode) return { ok: false, error: 'simulator-unavailable' }
+          const shown = simulators.shown()
+          const lines = found.map(device =>
+            [
+              device.udid,
+              escapeSecurityText(device.name),
+              device.os,
+              device.state === 'booted' ? 'booted' : device.state,
+              ...(device.udid === shown ? ['shown in the Latch 设备 panel'] : []),
+            ].join(' · '),
+          )
+          return { ok: true, text: lines.length ? lines.join('\n') : 'No simulators on this Mac.' }
+        }
+        if (tool === 'device_screenshot') {
+          const image = await simulators.picture(udid, 'png')
+          return { ok: true, text: `Screenshot of ${String(udid)}.`, image }
+        }
+        if (tool === 'device_open_url') {
+          await simulators.openUrl(udid, address!.url)
+          return { ok: true, text: `Opened in ${String(udid)}.` }
+        }
+        await simulators.setAppearance(udid, appearance)
+        return { ok: true, text: `Appearance of ${String(udid)} is ${String(appearance)}.` }
+      } catch (error) {
+        if (error instanceof AppError) return { ok: false, error: error.code, detail: error.message }
+        return { ok: false, error: 'simulator-failed', detail: errorText(error) }
+      }
+    }
+
     async function classifyToolCall(input: ToolRiskInput): Promise<RiskLevel> {
       const { risk } = await classifyCall(input)
       // Right before the call: the class it is approved at goes with it to main.
@@ -4798,7 +5014,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * which is how 我的 Agent's schedules run), known while the run's session is still being created.
      */
     const mcpGiven = (record: McpServerRecord, sessionId: string) =>
-      !(record.transport === 'stdio' && record.preset === 'computer' && hub!.unattended(sessionId))
+      !(record.transport === 'stdio' && (record.preset === 'computer' || record.preset === 'xcode') && hub!.unattended(sessionId))
 
     async function mcpSetHashOf(sessionId: string, harnessId: string): Promise<string | undefined> {
       if (hub!.info(harnessId)?.skills !== 'server') return undefined
@@ -4884,15 +5100,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
-    /** `mcp.tool.called` before a call goes, or a refusal: no record, no call. */
-    async function recordCall(record: McpServerRecord, sessionId: string, tool: string): Promise<string> {
+    /** `mcp.tool.called` before a call goes, or a refusal: no record, no call. 「Xcode」's also name their class and device. */
+    async function recordCall(record: McpServerRecord, sessionId: string, tool: string, device?: string): Promise<string> {
       const callId = randomUUID()
+      const xcode = record.transport === 'stdio' && record.preset === 'xcode'
       try {
         await audit.append({
           action: 'mcp.tool.called',
           actor: { listener: 'host' },
           target: sessionId,
-          detail: { serverId: record.id, sessionId, callId, toolHash: toolHash(record.id, tool) },
+          detail: {
+            serverId: record.id,
+            sessionId,
+            callId,
+            toolHash: toolHash(record.id, tool),
+            ...(xcode ? { risk: xcodeToolRisk(tool), ...(device ? { udid: device } : {}) } : {}),
+          },
         })
       } catch {
         throw new AppError(503, 'audit-failed', 'Latch could not record this call, so it was not made.')
@@ -5078,7 +5301,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             specHash: record.specHash,
             ...(record.transport === 'stdio' && record.preset === 'computer'
               ? { skill: { ...COMPUTER_GUIDE_SKILL, content: computerGuide(record.disabledTools) } }
-              : {}),
+              : record.transport === 'stdio' && record.preset === 'xcode'
+                ? { skill: { ...XCODE_GUIDE_SKILL, content: XCODE_INSTRUCTIONS } }
+                : {}),
           }))
         },
         async launch(binding) {
@@ -5115,7 +5340,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(record.knownTools ? { knownTools: [...record.knownTools] } : {}),
             ...(record.preset === 'computer'
               ? { instructions: computerGuide(record.disabledTools), offHints: { ...COMPUTER_OFF_HINTS } }
-              : {}),
+              : record.preset === 'xcode'
+                ? { instructions: XCODE_INSTRUCTIONS }
+                : {}),
           }
         },
         report(binding, report) {
@@ -5150,14 +5377,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             throw new AppError(503, 'mcp-prompt-unmarked', 'Latch could not mark this session, so the prompt was not fetched.')
           }
         },
-        async callStarted(binding, tool) {
+        async callStarted(binding, tool, device) {
           const record = current(binding)
           if (!record || !mcpUsedIn(record.scope, binding) || !mcpGiven(record, binding.sessionId)) throw gone()
           if (!isMcpToolOn(record, tool)) {
             const hint = record.transport === 'stdio' && record.preset === 'computer' ? COMPUTER_OFF_HINTS[tool] : undefined
             throw new AppError(403, 'mcp-tool-off', `This tool is switched off in Latch.${hint ? ` ${hint}` : ''}`)
           }
-          return recordCall(record, binding.sessionId, tool)
+          const callId = await recordCall(record, binding.sessionId, tool, device)
+          if (record.transport === 'stdio' && record.preset === 'xcode')
+            simulators.agentCall(
+              binding.sessionId,
+              XCODE_SESSION_START.has(tool) ? 'start' : tool === XCODE_SESSION_END ? 'end' : 'call',
+              device,
+            )
+          return callId
         },
         callEnded(binding, callId, result, ms) {
           void audit
@@ -5170,6 +5404,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             .catch(() => {})
         },
         closed(binding) {
+          const closing = mcpStore.get(binding.serverId)
+          if (closing?.transport === 'stdio' && closing.preset === 'xcode') simulators.agentEnded(binding.sessionId)
           mcpRemote.close(binding.id)
           const folder = folders.get(binding.id)
           folders.delete(binding.id)
@@ -7856,9 +8092,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // A retry of a start this Host has in flight or accepted gets its original answer, window or not; only new starts
       // are refused (a handoff's start is keyed by its own start request ID). A start that failed is forgotten.
       const startKey = `${caller.device.id}:${start.requestId}`
-      if (startRequests.has(startKey)) return startSessionChecked(caller, start, res, dispatched)
+      const started = (result: { sessionId: string }) => {
+        noteTurnScope(result.sessionId, caller)
+        return result
+      }
+      if (startRequests.has(startKey)) return startSessionChecked(caller, start, res, dispatched).then(started)
       refuseWhileUpdating('session')
-      return tracked(startRequests, startKey, () => startSessionChecked(caller, start, res, dispatched))
+      return tracked(startRequests, startKey, () => startSessionChecked(caller, start, res, dispatched)).then(started)
     }
 
     async function startSessionChecked(
@@ -8331,14 +8571,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // The install window: a retry of a turn this Host has on record gets its original answer; a new plain message, and a
       // queued or steered one on a session that is not running (it would start a turn at once), are refused.
       const turnKey = `${id}:${caller.device.id}:${input.requestId}`
+      const sent = <T>(result: T) => {
+        noteTurnScope(id, caller)
+        return result
+      }
       if (turnRequests.has(turnKey) || promptQueues.knows(id, caller.device.id, input.requestId))
-        return sendPromptChecked(caller, id, input, withoutPrivateContext)
+        return sendPromptChecked(caller, id, input, withoutPrivateContext).then(sent)
       if (updateWindow.isOpen()) {
         if (!(input.queue || input.steer)) refuseWhileUpdating('turn')
         const status = (await hub!.summary(id)).status
         if (status !== 'running' && status !== 'waiting-approval') refuseWhileUpdating('turn')
       }
-      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input, withoutPrivateContext))
+      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input, withoutPrivateContext)).then(sent)
     }
 
     async function sendPromptChecked(

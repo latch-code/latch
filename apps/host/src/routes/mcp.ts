@@ -13,6 +13,7 @@ import { z } from 'zod'
 import {
   isMcpServerName,
   type McpComputerCheck,
+  type McpXcodeCheck,
   type McpFailure,
   type McpImportCandidate,
   type McpImportFile,
@@ -32,6 +33,15 @@ import {
   type ComputerDriverOptions,
 } from '../mcp-computer.ts'
 import { parseProjectMcp, readProjectMcpText } from '../mcp-import.ts'
+import {
+  XCODE_ARGS,
+  XCODE_COMMAND,
+  XCODE_KNOWN_TOOLS,
+  XCODE_NAME,
+  XCODE_TOOLS_OFF,
+  checkXcodeBridge,
+  type XcodeBridgeOptions,
+} from '../mcp-xcode.ts'
 import type { McpOAuth } from '../mcp-oauth.ts'
 import { middleSlot } from '../presence-reason.ts'
 import {
@@ -103,6 +113,13 @@ const createComputerSchema = z.strictObject({
   preset: z.literal('computer'),
   scope: scopeSchema,
 })
+/** 「Xcode」: the same, for Xcode's own bridge. */
+const createXcodeSchema = z.strictObject({
+  requestId,
+  baseRevision: revision,
+  preset: z.literal('xcode'),
+  scope: scopeSchema,
+})
 const toolName = z.string().regex(/^[A-Za-z0-9_.:/-]{1,128}$/u)
 const patchSchema = z.strictObject({
   requestId,
@@ -139,6 +156,7 @@ const SERVER_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)$/u
 const TEST_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)\/test$/u
 const IMPORT_PATH = '/link/api/mcp/import'
 const COMPUTER_PATH = '/link/api/mcp/computer'
+const XCODE_PATH = '/link/api/mcp/xcode'
 
 export interface McpRouteDeps {
   store: McpStore
@@ -186,6 +204,8 @@ export interface McpRouteDeps {
   unusedAllowance: (address: string) => string | undefined
   /** Where Cua Driver is looked for (「操控这台 Mac」); absent, as off macOS and in tests that do not name one, no preset. */
   computer?: ComputerDriverOptions
+  /** Where Xcode's bridge is looked for (「Xcode」); absent, as off macOS and in tests that do not name one, no preset. */
+  xcode?: XcodeBridgeOptions
 }
 
 const changed = () => new AppError(409, 'mcp-changed', 'MCP 服务器已被修改，请刷新后重试')
@@ -856,6 +876,81 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
     answer(res, id, 201)
   }
 
+  /** 「Xcode」 as it stands: Xcode's bridge and the server made from it, if any. */
+  async function xcodeCheck(options: XcodeBridgeOptions): Promise<McpXcodeCheck> {
+    const check = await checkXcodeBridge(options)
+    const added = store.records().find(record => record.transport === 'stdio' && record.preset === 'xcode')
+    return added ? { ...check, added: added.id } : check
+  }
+
+  /**
+   * Adds 「Xcode」: `xcrun mcpbridge` with no variables, the tools that edit files or run code off, and new tools off.
+   * Then the same confirmation and record as any local command. The person still allows external agents in Xcode's
+   * own settings; Latch never changes them.
+   */
+  async function addXcode(
+    req: Parameters<RouteContext['confirm']>[0],
+    res: Parameters<typeof json>[0],
+    caller: DeviceCaller,
+    input: z.infer<typeof createXcodeSchema>,
+  ): Promise<void> {
+    if (!deps.xcode) throw new AppError(404, 'mcp-xcode-unavailable', '这台电脑上没有 Xcode')
+    context.recheck(caller, 'admin')
+    const done = store.receipt(caller.device.id, input.requestId, input)
+    if (done) return answer(res, done.serverId, 201)
+    if (input.baseRevision !== store.revision()) throw changed()
+    const check = await xcodeCheck(deps.xcode)
+    if (check.added) throw new AppError(409, 'mcp-xcode-added', '已经添加过「Xcode」')
+    if (check.state === 'absent') throw new AppError(409, 'mcp-xcode-absent', '没有找到 Xcode 的 MCP 桥：请先安装 Xcode')
+    if (check.state !== 'ok')
+      throw new AppError(409, 'mcp-xcode-old', `Xcode 版本太旧：需要 ${check.minimum} 或更高（当前 ${check.version ?? '未知'}）`)
+    if (sameName(XCODE_NAME)) throw new AppError(409, 'mcp-name-taken', `已有名为 ${XCODE_NAME} 的 MCP 服务器`)
+    const spec: McpSpec = {
+      command: deps.xcode.command ?? XCODE_COMMAND,
+      args: [...XCODE_ARGS],
+      env: {},
+      secretNames: [],
+      projectCwd: true,
+    }
+    const stepup = await confirmSpec(req, caller, XCODE_NAME, spec, input.scope, {}, [
+      '它经 Xcode 构建、安装并操作模拟器或设备上的 App，以你的身份运行，不是沙箱。',
+    ])
+    const id = await context.serial(caller, 'admin', async () => {
+      if (input.baseRevision !== store.revision()) throw changed()
+      if (sameName(XCODE_NAME)) throw new AppError(409, 'mcp-name-taken', `已有名为 ${XCODE_NAME} 的 MCP 服务器`)
+      const serverId = newServerId()
+      const hash = specHash(spec)
+      await context.audited({
+        action: 'mcp.server.added',
+        actor: context.actorOf(caller),
+        target: serverId,
+        stepup,
+        detail: { serverId, specHash: hash, envCount: 0, scope: input.scope.all ? 'all' : 'chosen', projectCwd: true, preset: 'xcode' },
+      })
+      return store.change({ deviceId: caller.device.id, requestId: input.requestId, payload: input }, ({ servers, stamp }) => {
+        servers.servers.push({
+          id: serverId,
+          name: XCODE_NAME,
+          transport: 'stdio',
+          ...spec,
+          preset: 'xcode',
+          scope: input.scope,
+          enabled: true,
+          disabledTools: [...XCODE_TOOLS_OFF],
+          knownTools: [...XCODE_KNOWN_TOOLS],
+          revision: 1,
+          specHash: hash,
+          confirmed: { hash, secretNames: [] },
+          createdAt: stamp,
+          updatedAt: stamp,
+        })
+        return serverId
+      })
+    })
+    context.refresh()
+    answer(res, id, 201)
+  }
+
   type Ending = Awaited<ReturnType<McpOAuth['forget']>>
 
   /**
@@ -1094,6 +1189,15 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         return true
       }
       // 「操控这台 Mac」: only where adding is, the desktop app on this Mac, and only where the start script names a place.
+      // 「Xcode」: only where adding is, and only where the start script lets the Host look for Xcode.
+      if (path === XCODE_PATH && method === 'GET') {
+        context.requireScope(caller, 'admin')
+        context.requireLocal(caller)
+        if (!deps.xcode) throw new AppError(404, 'mcp-xcode-unavailable', '这台电脑上没有 Xcode')
+        context.recheck(caller, 'admin')
+        json(res, await xcodeCheck(deps.xcode))
+        return true
+      }
       if (path === COMPUTER_PATH && method === 'GET') {
         context.requireScope(caller, 'admin')
         context.requireLocal(caller)
@@ -1106,6 +1210,10 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         context.requireScope(caller, 'admin')
         context.requireLocal(caller)
         const body = await jsonBody(req, CONFIG_BODY_LIMIT)
+        if (body && typeof body === 'object' && (body as { preset?: unknown }).preset === 'xcode') {
+          await addXcode(req, res, caller, createXcodeSchema.parse(body))
+          return true
+        }
         if (body && typeof body === 'object' && Object.hasOwn(body, 'preset')) {
           await addComputer(req, res, caller, createComputerSchema.parse(body))
           return true

@@ -1,0 +1,1493 @@
+{
+  "xcode": "27.2 (bridge 25464)",
+  "recorded": "2026-11-17",
+  "tools": [
+    {
+      "name": "AddEntitlement",
+      "inputSchema": {
+        "properties": {
+          "entitlementDictionaryItems": {
+            "description": "A JSON-encoded string representing a dictionary. Required when entitlementValueType is 'dictionary'. Example: '{\"key\":\"value\"}'.",
+            "type": "string"
+          },
+          "entitlementKey": {
+            "description": "The entitlement key you want to add.",
+            "type": "string"
+          },
+          "entitlementValue": {
+            "description": "The entitlement value as a string. Required when entitlementValueType is 'bool', 'string', or 'int'. For bool, pass 'true' or 'false'. For int, pass the number as a string. Not used for stringArray or dictionary types.",
+            "type": "string"
+          },
+          "entitlementValueItems": {
+            "description": "Array of string values. Required when entitlementValueType is 'stringArray'.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "entitlementValueType": {
+            "description": "The type of the entitlement value. Most entitlements are 'bool' (pass entitlementValue 'true'). Some are 'string' (pass the value in entitlementValue). A few are 'stringArray' (pass values in entitlementValueItems instead). Use 'dictionary' for entitlements whose value is a plist dictionary (pass JSON in entitlementDictionaryItems).",
+            "enum": ["bool", "string", "int", "stringArray", "dictionary"],
+            "type": "string"
+          },
+          "projectPath": {
+            "description": "The project-organization path of the .xcodeproj that owns the target (e.g., 'MyApp/MyApp.xcodeproj'). Only needed when the same target name exists in multiple projects in the workspace; omit otherwise.",
+            "type": "string"
+          },
+          "targetName": {
+            "description": "The name of the Xcode target to add the entitlement to. Use another tool (e.g. GetTargetBuildSettings) to discover target names if they are not already known.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["targetName", "entitlementKey", "entitlementValueType"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "AddInfoPlist",
+      "inputSchema": {
+        "properties": {
+          "infoPlistDictionaryItems": {
+            "description": "A JSON-encoded string representing either a dictionary or an array of dictionaries. Required when infoPlistValueType is 'dictionary' or `dictionaryArray`. Example dictionary: '{\"NSAllowsArbitraryLoads\": true}'. When infoPlistValueType is 'dictionaryArray', this is instead a JSON-encoded array of dictionaries, e.g. '[{\"NSAllowsArbitraryLoads\": true}]'.",
+            "type": "string"
+          },
+          "infoPlistKey": {
+            "description": "The Info.plist key to add or change",
+            "type": "string"
+          },
+          "infoPlistValue": {
+            "description": "The value as a string. Required when infoPlistValueType is 'bool', 'string', or 'int'. For bool, pass 'true' or 'false'. For int, pass the number as a string. Not used for stringArray, dictionary, or dictionaryArray types.",
+            "type": "string"
+          },
+          "infoPlistValueItems": {
+            "description": "Array of string values. Required when infoPlistValueType is 'stringArray'.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "infoPlistValueType": {
+            "description": "The type of the Info.plist value. Common types are 'string' (for privacy descriptions, display names) and 'bool' (for boolean flags). Use 'stringArray' for lists, 'dictionary' for a single complex structure like App Transport Security settings, and 'dictionaryArray' for a list of such structures.",
+            "enum": ["bool", "string", "int", "stringArray", "dictionary", "dictionaryArray"],
+            "type": "string"
+          },
+          "projectPath": {
+            "description": "The project-organization path of the .xcodeproj that owns the target (e.g., 'MyApp/MyApp.xcodeproj'). Only needed when the same target name exists in multiple projects in the workspace; omit otherwise.",
+            "type": "string"
+          },
+          "targetName": {
+            "description": "The name of the Xcode target whose Info.plist key should be added or updated. Use another tool (e.g. GetTargetBuildSettings) to discover target names if they are not already known.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["targetName", "infoPlistKey", "infoPlistValueType"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "BuildProject",
+      "inputSchema": {
+        "properties": {
+          "buildForTesting": {
+            "description": "Whether to also build test targets that would not usually be included in a regular build",
+            "type": "boolean"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "DeviceInteractionEndSession",
+      "inputSchema": {
+        "properties": {
+          "interactionSessionKey": {
+            "description": "Device Interaction session to close. Taken from DeviceInteractionStartSession or DeviceInteractionStartWorkspaceSession",
+            "type": "string"
+          }
+        },
+        "required": ["interactionSessionKey"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "DeviceInteractionInstallAndRun",
+      "inputSchema": {
+        "properties": {
+          "commandLineArguments": {
+            "description": "Arguments that the application should be run with. Can include '$(inherited)' placeholder string for scheme-provided arguments",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "environmentVariables": {
+            "description": "Environment variables that the application should be run with. Can contain '$(inherited)' as a key to include scheme-provided environment variables",
+            "type": "object"
+          },
+          "interactionSessionKey": {
+            "description": "Device Interaction session identifier that initiates this call. Taken from DeviceInteractionStartWorkspaceSession",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["interactionSessionKey"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "DeviceInteractionStartSession",
+      "inputSchema": {
+        "properties": {
+          "deviceIdentifier": {
+            "description": "The UUID/ECID/name/OS version/type of the device to perform interaction. Accepts any values and tries to match the best candidate.",
+            "type": "string"
+          },
+          "sessionIdentifier": {
+            "description": "Unique human-friendly identifier for this session (e.g. \"Verify Login Flow\"). Used in logs and UI - use Title Case.",
+            "type": "string"
+          }
+        },
+        "required": ["deviceIdentifier", "sessionIdentifier"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "DeviceInteractionStartWorkspaceSession",
+      "inputSchema": {
+        "properties": {
+          "deviceIdentifier": {
+            "description": "The UUID/ECID/name/OS version/type of the device to perform interaction. Accepts any values and tries to match the best candidate.",
+            "type": "string"
+          },
+          "sessionIdentifier": {
+            "description": "Unique human-friendly identifier for this session (e.g. \"Verify Login Flow\"). Used in logs and UI - use Title Case.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["sessionIdentifier"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "DeviceInteractionSynthesize",
+      "inputSchema": {
+        "properties": {
+          "activationBundleId": {
+            "description": "Bundle identifier of the app to activate before any interactions",
+            "type": "string"
+          },
+          "interactSessionKey": {
+            "description": "Device Interaction session key to work with. Taken from DeviceInteractionStartSession or DeviceInteractionStartWorkspaceSession",
+            "type": "string"
+          },
+          "interactionCommand": {
+            "description": "The interaction command to execute (e.g., 't 100 200' for tap)",
+            "type": "string"
+          }
+        },
+        "required": ["interactSessionKey"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "DocumentationSearch",
+      "inputSchema": {
+        "properties": {
+          "frameworks": {
+            "description": "Framework(s) to search in. Searches all frameworks if not specified.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "query": {
+            "description": "The search query",
+            "type": "string"
+          }
+        },
+        "required": ["query"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "GetBuildLog",
+      "inputSchema": {
+        "properties": {
+          "glob": {
+            "description": "Glob to filter the returned build log entries. Will match against the 'path' field of any emitted issues, as well as against the location of any build task.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "Regex to filter the returned build log entries. Will match against the 'message' field of any emitted issues, as well as the task description, command line, and console output of any build tasks.",
+            "type": "string"
+          },
+          "severity": {
+            "description": "Limit the output of build log entries to those that emitted issues of the specified severity or higher. Valid values in order of decreasing severity are 'error', 'warning', 'remark'. Defaults to 'error'.",
+            "enum": ["remark", "warning", "error"],
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "GetConsoleOutput",
+      "inputSchema": {
+        "properties": {
+          "contextLines": {
+            "description": "Number of context lines to include around pattern matches (like grep -C). Use this with 'pattern' to see surrounding context. Default: 0",
+            "type": "integer"
+          },
+          "includeMetadata": {
+            "description": "Include detailed OSLog metadata (subsystem, category, pid, tid, sender info). Only applies to OSLog items. Default: false",
+            "type": "boolean"
+          },
+          "launchSessionReference": {
+            "description": "Optional launch session reference. Omit to use the current/most recent launch session.",
+            "type": "string"
+          },
+          "oslogSeverity": {
+            "description": "Filter OSLog by severity levels. Array of: 'error', 'fault', 'info', 'debug', 'default'. Only filters OSLog items, not stdout/stderr. Omit to include all severities.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "outputType": {
+            "description": "Type of output to retrieve: 'stdio' (stdout/stderr only), 'oslog' (OSLog only), or 'all' (both). Default: 'all'",
+            "enum": ["stdio", "oslog", "all"],
+            "type": "string"
+          },
+          "pattern": {
+            "description": "Optional regex pattern to filter console output. Uses full regex syntax (e.g., 'error.*failed', 'Exception.*\\n.*at line'). Filters both stdout/stderr text and OSLog message content.",
+            "type": "string"
+          },
+          "tailLimit": {
+            "description": "Maximum number of lines to return from the END of output (tail behavior). Returns the last N lines. Default: 500.",
+            "type": "integer"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "GetCrashIssueLogs",
+      "inputSchema": {
+        "properties": {
+          "app_version": {
+            "description": "The app version to filter crash logs by (e.g., 4.6). If not provided, returns logs across all versions.",
+            "type": "string"
+          },
+          "bundle_id": {
+            "description": "The bundle identifier of the app (e.g., com.apple.Playgrounds). If not provided, automatically resolved from the active scheme's target.",
+            "type": "string"
+          },
+          "is_beta": {
+            "description": "Whether to fetch TestFlight (true) or App Store (false) data. If not provided, fetches data from both release channels.",
+            "type": "boolean"
+          },
+          "platform": {
+            "description": "The platform to query (e.g., 'iOS', 'macOS', 'watchOS', 'tvOS', 'visionOS'). If not provided, automatically resolved from the active run destination.",
+            "type": "string"
+          },
+          "signature_name": {
+            "description": "The human-readable crash signature name from GetTopCrashIssues",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["signature_name"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "GetFieldPerformanceIssueLogs",
+      "inputSchema": {
+        "properties": {
+          "app_version": {
+            "description": "The app version (e.g., 13.14.0)",
+            "type": "string"
+          },
+          "bundle_id": {
+            "description": "The bundle identifier of the app (e.g., com.toyopagroup.picaboo). If not provided, automatically resolved from the active scheme's target.",
+            "type": "string"
+          },
+          "diagnostic_type": {
+            "description": "The type of performance diagnostic to retrieve. Supported values: 'launches', 'hangs', 'diskwrites', 'energy'",
+            "type": "string"
+          },
+          "is_beta": {
+            "description": "Whether to fetch TestFlight (true) or App Store (false) data. If not provided, auto-detected from the app version.",
+            "type": "boolean"
+          },
+          "platform": {
+            "description": "The platform to query (e.g., 'iOS', 'macOS', 'watchOS', 'tvOS', 'visionOS'). Supported values depend on the diagnostic type. If not provided, automatically resolved from the active run destination.",
+            "type": "string"
+          },
+          "signature_name": {
+            "description": "The human-readable signature name from GetTopFieldPerformanceIssues",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["app_version", "signature_name", "diagnostic_type"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "GetFileCompilerFlags",
+      "inputSchema": {
+        "properties": {
+          "filePath": {
+            "description": "The path to the source file within the Xcode project organization (e.g., 'ProjectName/Sources/MyFile.swift'). An absolute or workspace-relative filesystem path is also accepted as a fallback.",
+            "type": "string"
+          },
+          "projectPath": {
+            "description": "The project-organization path of the .xcodeproj that owns the target (e.g., 'MyApp/MyApp.xcodeproj'). Only needed when the same target name exists in multiple projects in the workspace; omit otherwise.",
+            "type": "string"
+          },
+          "targetName": {
+            "description": "The name of the Xcode target whose build phase contains the source file.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["targetName", "filePath"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "GetTargetBuildSettings",
+      "inputSchema": {
+        "properties": {
+          "projectPath": {
+            "description": "The project-organization path of the .xcodeproj that owns the target (e.g., 'MyApp/MyApp.xcodeproj'). Only needed when the same target name exists in multiple projects in the workspace; omit otherwise.",
+            "type": "string"
+          },
+          "targetName": {
+            "description": "The name of a given Xcode project target.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["targetName"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "GetTestList",
+      "inputSchema": {
+        "properties": {
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "GetTopCrashIssues",
+      "inputSchema": {
+        "properties": {
+          "app_version": {
+            "description": "The app version to filter by (e.g., 4.6). If not provided, returns crashes across all versions for the last 14 days.",
+            "type": "string"
+          },
+          "bundle_id": {
+            "description": "The bundle identifier of the app (e.g., com.apple.Playgrounds). If not provided, automatically resolved from the active scheme's target.",
+            "type": "string"
+          },
+          "count": {
+            "description": "Number of top crash signatures to return. Use 1 when the user asks for their 'top crash' (singular). Defaults to 5 when not specified or when the user asks for 'top crashes' (plural).",
+            "type": "integer"
+          },
+          "is_beta": {
+            "description": "Whether to fetch TestFlight (true) or App Store (false) data. If not provided, returns data from both release channels.",
+            "type": "boolean"
+          },
+          "platform": {
+            "description": "The platform to query (e.g., 'iOS', 'macOS', 'watchOS', 'tvOS', 'visionOS'). If not provided, automatically resolved from the active run destination.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "GetTopFieldPerformanceIssues",
+      "inputSchema": {
+        "properties": {
+          "app_version": {
+            "description": "The app version (e.g., 4.6). If not provided, returns a list of available versions to choose from.",
+            "type": "string"
+          },
+          "bundle_id": {
+            "description": "The bundle identifier of the app (e.g., com.apple.Playgrounds). If not provided, automatically resolved from the active scheme's target.",
+            "type": "string"
+          },
+          "diagnostic_type": {
+            "description": "The type of performance diagnostic to retrieve. Supported values: 'launches', 'hangs', 'diskwrites', 'energy'",
+            "type": "string"
+          },
+          "is_beta": {
+            "description": "Whether to fetch TestFlight (true) or App Store (false) data. If not provided, auto-detected from the app version when possible. For diagnostic types that support both (e.g., energy), you will be asked to choose if it cannot be determined.",
+            "type": "boolean"
+          },
+          "platform": {
+            "description": "The platform to query (e.g., 'iOS', 'macOS', 'watchOS', 'tvOS', 'visionOS'). Supported values depend on the diagnostic type. If not provided, automatically resolved from the active run destination.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["diagnostic_type"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "InvokeDebuggerCommand",
+      "inputSchema": {
+        "properties": {
+          "command": {
+            "description": "The lldb command to execute in Xcode's active debug session (e.g., 'bt', 'p self', 'v myVar', 'breakpoint set -n viewDidLoad', 'continue', 'thread step-over'). Prefer 'p' or 'v' over 'po'/'expression' — they avoid unnecessary expression evaluation.",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Maximum seconds to wait for the command to complete. Default: 30. Increase for commands that resume execution (e.g., 'continue').",
+            "type": "integer"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["command"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "LocalizationPlanner",
+      "inputSchema": {
+        "properties": {
+          "targetLocaleIdentifier": {
+            "description": "The locale identifier for which you want to translate",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["targetLocaleIdentifier"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "RenderPreview",
+      "inputSchema": {
+        "properties": {
+          "displayMode": {
+            "description": "How to render the preview before capturing a snapshot. Pass one of the values returned in the `displayModes` field of `supportedOverrides` by a previous invocation of this tool for the same active scheme and run destination. \"static\" captures a static snapshot (the default). \"interactive\" renders the preview interactively and then captures a snapshot, optionally after `snapshotDelay` seconds.",
+            "type": "string"
+          },
+          "preferredRenderDestination": {
+            "description": "The render destination (device or simulator) to render the preview on, described by any combination of its `identifier`, `platformName`, `deviceModelName`, and `systemVersion`. Use values that were returned in one of the `renderDestinations` entries of `supportedOverrides` by a previous invocation of this tool for the same active scheme. Any field left unset is not constrained, and the first available destination matching all specified fields is used. If omitted, the destination is chosen automatically (typically derived from the workspace’s currently-selected run destination). If no available destination matches the specified fields, the preview is rendered on the automatically-chosen destination instead and a message is added to the `errors` field.",
+            "properties": {
+              "deviceModelName": {
+                "description": "Display name of the device model of the render destination (e.g. “iPhone 15 Pro”, “iPad Pro (11-inch) (2nd generation)”, “My Mac”).",
+                "type": "string"
+              },
+              "identifier": {
+                "description": "Opaque, stable identifier for this render destination. When specified, only a destination with this exact identifier matches.",
+                "type": "string"
+              },
+              "platformName": {
+                "description": "Display name of the platform of the render destination (e.g. “iOS Simulator”, “macOS”).",
+                "type": "string"
+              },
+              "systemVersion": {
+                "description": "Operating System version of the render destination, in major.minor[.patch] form (e.g. “17.2”).",
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "previewCanvasControlOverrides": {
+            "description": "Optional overrides for the canvas controls, only applicable to preview types that support each kind of canvas control. Use the `canvasControls` field of `supportedOverrides` in the output of a previous invocation of this tool to get the available canvas control overrides and their supported values.",
+            "properties": {
+              "groupItemIndex": {
+                "description": "A zero-based group item index to render for previews that vary across a set of input arguments via the `arguments:` parameter in their `#Preview` macro. This parameter is only meaningful for previews that return a list of items in the `groupItemIndexes` field of `canvasControls` (within `supportedOverrides`) of the same invocation of this tool for the same active scheme and run destination. If no index is provided and if the preview has a group item control, then a preview of the first group item is rendered. This parameter is ignored for previews that don't have an `arguments:` parameter.",
+                "type": "integer"
+              },
+              "timelineIndex": {
+                "description": "A zero-based timestop index to render for previews that vary across a timeline, such as a Widget or a Live Activity. This index represents a sequence number rather than a specific clock time. This parameter is only meaningful for previews that return a list of indexes in the `timelineIndexes` field of `canvasControls` (within `supportedOverrides`) of the same invocation of this tool for the same active scheme and run destination. If no index is provided, the first preview in the timeline is rendered. This parameter is ignored for previews that don't have a timeline. ",
+                "type": "integer"
+              },
+              "toggleState": {
+                "description": "The boolean state of a toggle control for previews that have one, such as a Live Activity. This parameter is only meaningful for previews that return a toggle state in the `toggleState` field of `canvasControls` (within `supportedOverrides`) of the same invocation of this tool for the same active scheme and run destination. If no state is provided, the first state in the toggle state list is rendered. This parameter is ignored for previews that don't have a toggle control.",
+                "type": "boolean"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "previewDefinitionIndexInFile": {
+            "description": "The zero based index of the #Preview macro or PreviewProvider struct definition in the source file counting from the top. Defaults to 0, i.e. the first one.",
+            "type": "integer"
+          },
+          "previewLocalizationOverride": {
+            "description": "A locale identifier to preview in (e.g. \"fr\", \"ja\"). Use a value that was returned in the `localizations` field of `supportedOverrides` by a previous invocation of this tool. Do not call this tool in parallel with other invocations when this parameter is provided.",
+            "type": "string"
+          },
+          "previewVariantOverrides": {
+            "description": "A dictionary mapping variant group names to variant names for any preview variants that should be overridden. Use keys and values that were returned in the `previewVariants` field of `supportedOverrides` by a previous invocation of this tool for the same active scheme and run destination.",
+            "type": "object"
+          },
+          "snapshotDelay": {
+            "description": "The time in seconds to let an interactive preview run before capturing its snapshot. Only applies when `displayMode` is \"interactive\"; ignored for static previews. Must be at least 0 and less than `timeout`, since the delay elapses within the overall timeout budget; otherwise the invocation fails.",
+            "type": "integer"
+          },
+          "sourceFilePath": {
+            "description": "The path to the file within the Xcode project organization (e.g., 'ProjectName/Sources/MyFile.swift')",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "The time in seconds to wait for the rendering of the preview to complete. Defaults to 120 seconds.",
+            "type": "integer"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["sourceFilePath"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "RunAllTests",
+      "inputSchema": {
+        "properties": {
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "RunCodeSnippet",
+      "inputSchema": {
+        "properties": {
+          "codeSnippet": {
+            "description": "The code snippet that should be run within the context of the specified Swift file.",
+            "type": "string"
+          },
+          "purpose": {
+            "description": "A short human-readable description of the purpose of running this code snippet. Do NOT use the word 'test' in this string, because that is misleading and could make the user think that this functionality is related to testing.",
+            "type": "string"
+          },
+          "sourceFilePath": {
+            "description": "The path to a Swift source file within the Xcode project organization (e.g., 'ProjectName/Sources/MyFile.swift') whose context the code snippet will have access to (including `fileprivate` declarations).",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "The time in seconds to wait for the running of the snippet to complete. Defaults to 600 seconds.",
+            "type": "integer"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["codeSnippet", "sourceFilePath", "purpose"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "RunProject",
+      "inputSchema": {
+        "properties": {
+          "attachDebugger": {
+            "description": "Whether to attach the debugger to the launched process. Defaults to false.",
+            "type": "boolean"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "RunSomeTests",
+      "inputSchema": {
+        "properties": {
+          "tests": {
+            "description": "Array of test specifiers to run. Each specifier contains 'targetName' and 'testIdentifier' fields. Use GetTestList action to discover available tests and their identifiers, then extract the 'targetName' and 'identifier' fields from the TestActionInfo results to construct TestActionSpecifier objects.",
+            "items": {
+              "properties": {
+                "targetName": {
+                  "description": "The test target name",
+                  "type": "string"
+                },
+                "testIdentifier": {
+                  "description": "Test identifier in XCTestIdentifier format",
+                  "type": "string"
+                }
+              },
+              "required": ["targetName", "testIdentifier"],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["tests"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "StopProject",
+      "inputSchema": {
+        "properties": {
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "StringCatalogContext",
+      "inputSchema": {
+        "properties": {
+          "filePath": {
+            "description": "The path to the String Catalog",
+            "type": "string"
+          },
+          "stringKey": {
+            "description": "String key for which to get context for",
+            "type": "string"
+          },
+          "targetLocaleIdentifier": {
+            "description": "The locale identifier for which you want to translate",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["filePath", "stringKey", "targetLocaleIdentifier"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "StringCatalogEdit",
+      "inputSchema": {
+        "properties": {
+          "filePath": {
+            "description": "The path to the String Catalog",
+            "type": "string"
+          },
+          "stringKey": {
+            "description": "String key to translate",
+            "type": "string"
+          },
+          "stringSetTranslation": {
+            "description": "Array of translated values for string sets. Prefer typographically correct quotes for the target language (e.g., „...“ for German, «...» for French). All curly quotes must be escaped (e.g., \\u201E...\\u201C for German „...“)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "targetLocaleIdentifier": {
+            "description": "Identifier of the locale for which to insert the given translation",
+            "type": "string"
+          },
+          "templateTranslation": {
+            "description": "Translation with template + substitutions for varying a string by plural or for translating a string that is already varied by plural. Prefer typographically correct quotes for the target language (e.g., „...“ for German, «...» for French). All curly quotes must be escaped (e.g., \\u201E...\\u201C for German „...“)",
+            "properties": {
+              "substitutions": {
+                "description": "Array of substitution definitions",
+                "items": {
+                  "properties": {
+                    "argNum": {
+                      "description": "Argument number corresponding to the format specifier position in the original string",
+                      "type": "integer"
+                    },
+                    "formatSpecifier": {
+                      "description": "Format specifier type without %.",
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "Name of the substitution placeholder",
+                      "type": "string"
+                    },
+                    "variants": {
+                      "description": "Dictionary mapping variation paths to translated values. Prefer typographically correct quotes for the target language (e.g., „...“ for German, «...» for French). All curly quotes must be escaped (e.g., \\u201E...\\u201C for German „...“)",
+                      "type": "object"
+                    }
+                  },
+                  "required": ["name", "argNum", "formatSpecifier", "variants"],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "template": {
+                "description": "Template string containing substitution references. Prefer typographically correct quotes for the target language (e.g., „...“ for German, «...» for French). All curly quotes must be escaped (e.g., \\u201E...\\u201C for German „...“)",
+                "type": "string"
+              }
+            },
+            "required": ["template", "substitutions"],
+            "type": "object"
+          },
+          "translation": {
+            "description": "Simple string translation for non-varied strings. Prefer typographically correct quotes for the target language (e.g., „...“ for German, «...» for French). All curly quotes must be escaped (e.g., \\u201E...\\u201C for German „...“). Refer to the `xcode-integration:translation` skill for details",
+            "type": "string"
+          },
+          "variationTranslation": {
+            "description": "Variation structure for strings with top-level plural, device, or width variations. Prefer typographically correct quotes for the target language (e.g., „...“ for German, «...» for French). All curly quotes must be escaped (e.g., \\u201E...\\u201C for German „...“)",
+            "properties": {
+              "substitutions": {
+                "description": "Optional array of substitution definitions for templates that reference substitutions. Prefer typographically correct quotes for the target language (e.g., „...“ for German, «...» for French). All curly quotes must be escaped (e.g., \\u201E...\\u201C for German „...“)",
+                "items": {
+                  "properties": {
+                    "argNum": {
+                      "description": "Argument number corresponding to the format specifier position in the original string",
+                      "type": "integer"
+                    },
+                    "formatSpecifier": {
+                      "description": "Format specifier type without %.",
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "Name of the substitution placeholder",
+                      "type": "string"
+                    },
+                    "variants": {
+                      "description": "Dictionary mapping variation paths to translated values. Prefer typographically correct quotes for the target language (e.g., „...“ for German, «...» for French). All curly quotes must be escaped (e.g., \\u201E...\\u201C for German „...“)",
+                      "type": "object"
+                    }
+                  },
+                  "required": ["name", "argNum", "formatSpecifier", "variants"],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "topLevelVariation": {
+                "description": "Dictionary mapping variation paths to template strings or translations. Prefer typographically correct quotes for the target language (e.g., „...“ for German, «...» for French). All curly quotes must be escaped (e.g., \\u201E...\\u201C for German „...“)",
+                "type": "object"
+              }
+            },
+            "required": ["topLevelVariation"],
+            "type": "object"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["filePath", "stringKey", "targetLocaleIdentifier"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "StringCatalogRead",
+      "inputSchema": {
+        "properties": {
+          "filePath": {
+            "description": "The path to the String Catalog",
+            "type": "string"
+          },
+          "keyLimit": {
+            "description": "Maximum number of keys to return",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Number of keys to skip before returning results",
+            "type": "integer"
+          },
+          "requestedState": {
+            "description": "The translation state to retrieve keys for",
+            "type": "string"
+          },
+          "targetLocaleIdentifier": {
+            "description": "Locale identifier to check translations for",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["filePath", "targetLocaleIdentifier"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "UpdateFileCompilerFlags",
+      "inputSchema": {
+        "properties": {
+          "appendValue": {
+            "description": "Append the value to any existing compiler flags (separated by a single space) instead of replacing them. Has no effect when 'compilerFlags' is omitted.",
+            "type": "boolean"
+          },
+          "compilerFlags": {
+            "description": "The additional compiler flags to set on the file, as a single space-separated string (e.g. \"-DFOO=1 -Wno-unused-variable\"). To delete all per-file compiler flags for the file, omit this property.",
+            "type": "string"
+          },
+          "filePath": {
+            "description": "The path to the source file within the Xcode project organization (e.g., 'ProjectName/Sources/MyFile.swift'). An absolute or workspace-relative filesystem path is also accepted as a fallback.",
+            "type": "string"
+          },
+          "projectPath": {
+            "description": "The project-organization path of the .xcodeproj that owns the target (e.g., 'MyApp/MyApp.xcodeproj'). Only needed when the same target name exists in multiple projects in the workspace; omit otherwise.",
+            "type": "string"
+          },
+          "targetName": {
+            "description": "The name of the Xcode target whose build phase contains the source file.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["targetName", "filePath"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "UpdateTargetBuildSetting",
+      "inputSchema": {
+        "properties": {
+          "appendValue": {
+            "description": "Append the value instead of replacing the current value.",
+            "type": "boolean"
+          },
+          "buildSettingName": {
+            "description": "The build setting name to update or add.",
+            "type": "string"
+          },
+          "buildSettingValue": {
+            "description": "The value to be added to build settings.\nDo not convert \"NO\" values to \"false\".\nTo delete the build setting instead, just skip this property.",
+            "type": "string"
+          },
+          "projectPath": {
+            "description": "The project-organization path of the .xcodeproj that owns the target (e.g., 'MyApp/MyApp.xcodeproj'). Only needed when the same target name exists in multiple projects in the workspace; omit otherwise.",
+            "type": "string"
+          },
+          "targetName": {
+            "description": "The name of a given Xcode project target.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["targetName", "buildSettingName"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeCloseWorkspace",
+      "inputSchema": {
+        "properties": {
+          "workspaceIdentifier": {
+            "description": "The identifier of the workspace to close (as returned by XcodeOpenWorkspace or XcodeListWorkspaces)",
+            "type": "string"
+          }
+        },
+        "required": ["workspaceIdentifier"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeGlob",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "description": "Which project directory to search in (optional, defaults to root)",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "File matching pattern using wildcards (* ** ? [abc] {swift,m}). Examples: '*.swift', '**/*.json', 'src/**/*.{swift,m}'. Defaults to '**/*' if not provided.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeGrep",
+      "inputSchema": {
+        "properties": {
+          "glob": {
+            "description": "Only search files matching this pattern",
+            "type": "string"
+          },
+          "headLimit": {
+            "description": "Stop after N results",
+            "type": "integer"
+          },
+          "ignoreCase": {
+            "description": "Ignore case when matching",
+            "type": "boolean"
+          },
+          "linesAfter": {
+            "description": "Show N lines after each match for context",
+            "type": "integer"
+          },
+          "linesBefore": {
+            "description": "Show N lines before each match for context",
+            "type": "integer"
+          },
+          "linesContext": {
+            "description": "Show N lines both before and after each match",
+            "type": "integer"
+          },
+          "multiline": {
+            "description": "Allow patterns to span multiple lines",
+            "type": "boolean"
+          },
+          "outputMode": {
+            "description": "What to return: content, files_with_matches, or count (default: files_with_matches)",
+            "enum": ["content", "filesWithMatches", "count"],
+            "type": "string"
+          },
+          "path": {
+            "description": "Where to search - file or directory in project (defaults to root)",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "Text to search for using regex. REQUIRED: Must include a 'pattern' argument - this tool will fail without it.",
+            "type": "string"
+          },
+          "showLineNumbers": {
+            "description": "Show line numbers with results (content mode only)",
+            "type": "boolean"
+          },
+          "type": {
+            "description": "Shortcut for common file types (swift, js, py, etc.)",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["pattern"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeLS",
+      "inputSchema": {
+        "properties": {
+          "ignore": {
+            "description": "Skip files/folders matching these patterns",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "path": {
+            "description": "The project path to browse (e.g., 'ProjectName/Sources/')",
+            "type": "string"
+          },
+          "recursive": {
+            "description": "Recursively list all files (truncated to 100 lines). Default: true",
+            "type": "boolean"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["path"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeListRunDestinations",
+      "inputSchema": {
+        "properties": {
+          "includeIncompatible": {
+            "description": "When true, destinations in the 'Incompatible' group are included in the inline `destinations` array. When false or omitted (the default), they are skipped to save context but are still counted in the `groups` summary and listed in fullRunDestinationListPath.",
+            "type": "boolean"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeListSchemes",
+      "inputSchema": {
+        "properties": {
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeListTargets",
+      "inputSchema": {
+        "properties": {
+          "productTypeFilter": {
+            "description": "Optional list of product-type identifiers. When supplied, only targets whose productTypeIdentifier matches one of the entries are returned. Each entry is matched case-insensitively against either the full identifier (e.g. 'com.apple.product-type.application') or its suffix after 'com.apple.product-type.' (e.g. 'application', 'framework', 'framework.static', 'library.static', 'bundle.unit-test', 'bundle.ui-testing', 'app-extension', 'extensionkit-extension'). Aggregate targets — which have no productTypeIdentifier — are excluded by any non-empty filter; pass an empty array or omit the parameter to keep them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "projectPath": {
+            "description": "Optional project-organization or filesystem path to a specific .xcodeproj container in the workspace (e.g. 'MyApp/MyApp.xcodeproj' or 'MyApp/MyApp'). When supplied, the listing is restricted to targets owned by that project. Both forms — with and without the .xcodeproj suffix — are accepted.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeListTemplates",
+      "inputSchema": {
+        "properties": {
+          "categoryFilter": {
+            "description": "Optional list of substrings, case-insensitive, matched against the template's templateCategory (e.g. 'Application', 'Framework & Library', 'Application Extension').",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "description": "Optional template kind to list. Supports 'target' (default) and 'project'.",
+            "type": "string"
+          },
+          "nameFilter": {
+            "description": "Optional substring, case-insensitive, matched against the template's human-readable templateName (e.g. 'Framework', 'Widget').",
+            "type": "string"
+          },
+          "platformFilter": {
+            "description": "Optional list of platform identifiers or names (case-insensitive). Matches identifier or name on the template's templatePlatforms (e.g. 'ios', 'macos', 'tvos', 'watchos', 'visionos'). Templates flagged multi-platform or platform-generic are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "templateIdentifier": {
+            "description": "Optional exact identifier match (e.g. 'com.apple.dt.unit.iosFramework'). When supplied, the listing returns only the matching template — useful for retrieving the option schema for a known template.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeListTestPlans",
+      "inputSchema": {
+        "properties": {
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeListWorkspaces",
+      "inputSchema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeMV",
+      "inputSchema": {
+        "properties": {
+          "destinationPath": {
+            "description": "Project navigator relative path for the destination (for move) or new name (for rename)",
+            "type": "string"
+          },
+          "operation": {
+            "description": "The type of move operation to perform",
+            "enum": ["move", "copy"],
+            "type": "string"
+          },
+          "overwriteExisting": {
+            "description": "Whether to overwrite existing files at the destination",
+            "type": "boolean"
+          },
+          "sourcePath": {
+            "description": "Project navigator relative path of the source item to move/rename",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["sourcePath", "destinationPath"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeMakeDir",
+      "inputSchema": {
+        "properties": {
+          "directoryKind": {
+            "description": "The kind of directory to create: 'folder' (default) creates a file system synchronized (buildable) folder, matching the project navigator's New Folder command and the recommended layout for modern projects; 'group' creates a classic Xcode group backed by a directory on disk. Falls back to whatever the parent supports.",
+            "type": "string"
+          },
+          "directoryPath": {
+            "description": "Project navigator relative path for the directory to create",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["directoryPath"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeNewProject",
+      "inputSchema": {
+        "properties": {
+          "destinationPath": {
+            "description": "Filesystem path to the directory where the project will be created (e.g. '/Users/<username>/projects'). The project is created in a subdirectory named after productName.",
+            "type": "string"
+          },
+          "options": {
+            "description": "Optional dictionary of template-specific options. Keys are option identifiers from XcodeListTemplates (e.g. 'languageChoice', 'coreData', 'sceneLifecycle'). All values are strings. Checkbox options accept 'true'/'false', 'YES'/'NO', or '1'/'0' (case-insensitive). Popup options must be one of OptionInfo.possibleValues. Reserved: do NOT include 'productName' or 'organizationIdentifier' here.",
+            "type": "object"
+          },
+          "organizationIdentifier": {
+            "description": "Optional bundle identifier prefix (e.g. 'com.example'). Sets the organization identifier used to derive the PRODUCT_BUNDLE_IDENTIFIER.",
+            "type": "string"
+          },
+          "productName": {
+            "description": "The new project's product name (e.g. 'MyApp'). This becomes the project filename and default target name.",
+            "type": "string"
+          },
+          "teamIdentifier": {
+            "description": "Optional Apple Development Team ID for code signing (e.g. 'A1B2C3D4E5'). Sets DEVELOPMENT_TEAM on the created targets.",
+            "type": "string"
+          },
+          "templateIdentifier": {
+            "description": "Template identifier to instantiate (e.g. 'com.apple.dt.unit.storyboardApplication'). Discover values with XcodeListTemplates (kind='project').",
+            "type": "string"
+          }
+        },
+        "required": ["templateIdentifier", "productName", "destinationPath"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeNewTarget",
+      "inputSchema": {
+        "properties": {
+          "embedInAppNamed": {
+            "description": "Optional name of an existing application target to embed the new target into (relevant for app extensions, widgets, intents, etc.). MUST live in the same project as the new target — cross-project embedding is rejected. In a multi-project workspace, if `projectPath` is omitted and exactly one application target in the workspace has this name, that target's project is used as the destination automatically.",
+            "type": "string"
+          },
+          "options": {
+            "description": "Optional dictionary of template-specific options. Keys are IDETemplateOption identifiers from XcodeListTemplates (e.g. 'languageChoice', 'testingSystem', 'coreData'). All values are strings. Checkbox options accept 'true'/'false', 'YES'/'NO', or '1'/'0' (case-insensitive) — normalized for you. Popup options must be one of OptionInfo.possibleValues. Unknown keys are rejected with a list of valid keys. Reserved: do NOT include `productName`, `organizationIdentifier`, or `bundleIdentifierPrefix` here — they're set via the dedicated top-level parameters and a duplicate in `options` is rejected.",
+            "type": "object"
+          },
+          "organizationIdentifier": {
+            "description": "Optional bundle-identifier prefix to set on the new target (sets the 'organizationIdentifier' template option). Defaults to the workspace's organization identifier when omitted.",
+            "type": "string"
+          },
+          "productName": {
+            "description": "The new target's product name (PRODUCT_NAME), e.g. 'MyFeature'. Must be non-empty. Most templates also use this as the target name verbatim, but some derive a different name (e.g. the Widget Extension template appends 'Extension', producing target 'MyFeatureExtension'). Check the `targetName` returned in the output for the actual final name — that's the value to pass to GetTargetBuildSettings, etc.",
+            "type": "string"
+          },
+          "projectPath": {
+            "description": "Optional project-organization or filesystem path to the .xcodeproj that should own the new target (e.g. 'MyApp/MyApp.xcodeproj'). Required only when the workspace contains more than one project and `embedInAppNamed` doesn't disambiguate. Both forms — with and without the .xcodeproj suffix — are accepted.",
+            "type": "string"
+          },
+          "templateIdentifier": {
+            "description": "Template identifier to instantiate (e.g. 'com.apple.dt.unit.iosFramework'). Discover values with XcodeListTemplates.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["templateIdentifier", "productName"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeOpenWorkspace",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "description": "Absolute path to the .xcworkspace or .xcodeproj to open",
+            "type": "string"
+          }
+        },
+        "required": ["path"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeRM",
+      "inputSchema": {
+        "properties": {
+          "deleteFiles": {
+            "description": "Also move the underlying files to Trash (defaults to true)",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "The project path to remove (e.g., 'ProjectName/Sources/MyFile.swift')",
+            "type": "string"
+          },
+          "recursive": {
+            "description": "Remove directories and their contents recursively",
+            "type": "boolean"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["path"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeRead",
+      "inputSchema": {
+        "properties": {
+          "filePath": {
+            "description": "The path to the file within the Xcode project organization (e.g., 'ProjectName/Sources/MyFile.swift')",
+            "type": "string"
+          },
+          "limit": {
+            "description": "The number of lines to read (only provide if the file is too large to read at once)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "The line number to start reading from (only provide if the file is too large to read at once)",
+            "type": "integer"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["filePath"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeRefreshCodeIssuesInFile",
+      "inputSchema": {
+        "properties": {
+          "filePath": {
+            "description": "The path to the file within the Xcode project organization (e.g., 'ProjectName/Sources/MyFile.swift')",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["filePath"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeSwitchRunDestination",
+      "inputSchema": {
+        "properties": {
+          "displayTitle": {
+            "description": "The destination's `displayTitle` — the disambiguated label shown in the Xcode picker. Round-trips through any of these prior tool outputs without needing a fresh XcodeListRunDestinations call: this tool's own `activeDestinationDisplayTitle`, XcodeSwitchScheme's `activeDestinationDisplayTitle`, or any `displayTitle` / `activeDestinationDisplayTitle` from XcodeListRunDestinations.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["displayTitle"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeSwitchScheme",
+      "inputSchema": {
+        "properties": {
+          "schemeName": {
+            "description": "The name of the scheme to make active. To resolve ambiguity when multiple schemes share the same name, use the disambiguated name returned by XcodeListSchemes (for example, \"MyScheme (MyProject)\").",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["schemeName"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeSwitchTestPlan",
+      "inputSchema": {
+        "properties": {
+          "testPlanName": {
+            "description": "Which test plan to make active. Normally the plan's name as returned by XcodeListTestPlans (e.g. \"UnitTests\"). If two plans share a name, XcodeListTestPlans reports a `path` for each; pass that full path, or any unambiguous trailing portion of it (e.g. the last path component), to select a specific plan.",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["testPlanName"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeUpdate",
+      "inputSchema": {
+        "properties": {
+          "filePath": {
+            "description": "REQUIRED: The path to the file to modify within the Xcode project organization (e.g., 'ProjectName/Sources/MyFile.swift')",
+            "type": "string"
+          },
+          "newString": {
+            "description": "REQUIRED: The text to replace it with, must be different from oldString",
+            "type": "string"
+          },
+          "oldString": {
+            "description": "REQUIRED: The text to replace",
+            "type": "string"
+          },
+          "replaceAll": {
+            "description": "Replace all occurrences of oldString (default false)",
+            "type": "boolean"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["filePath", "oldString", "newString"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "XcodeWrite",
+      "inputSchema": {
+        "properties": {
+          "content": {
+            "description": "REQUIRED: The content to write to the file",
+            "type": "string"
+          },
+          "filePath": {
+            "description": "REQUIRED: The path to the file within the Xcode project organization (e.g., 'ProjectName/Sources/MyFile.swift')",
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "description": "Identifies the target workspace directly (used in headless mode): its workspace identifier (e.g. workspace1) or its absolute path.",
+            "type": "string"
+          }
+        },
+        "required": ["filePath", "content"],
+        "type": "object"
+      }
+    }
+  ]
+}

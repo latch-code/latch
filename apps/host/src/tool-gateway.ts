@@ -138,7 +138,7 @@ export interface McpGatewayHandlers {
   /** What the bridge saw when it started the server. */
   report(binding: McpBinding, report: { ok: true; tools: string[] } | { ok: false; reason: McpStartFailure }): void
   /** Before a call is sent to the server: its audit record. Rejects, with words for the agent, when it must not go. */
-  callStarted(binding: McpBinding, tool: string): Promise<string>
+  callStarted(binding: McpBinding, tool: string, device?: string): Promise<string>
   /**
    * Before a local command's bridge forwards `prompts/get`: its audit record (`mcp.prompt.got`). Rejects, with words for
    * the agent, when it must not go. The bridge forwards it itself; the gateway never sees arguments or the text.
@@ -433,7 +433,12 @@ export class ToolGatewayServer implements ToolGateway {
     if (method === 'mcp/call') {
       if (typeof args.tool !== 'string' || !args.tool || args.tool.length > 128) return refuse(id, -32602, 'Invalid tool.')
       if (binding.calls.size >= MAX_INFLIGHT * 4) return refuse(id, -32000, 'Too many calls at once.')
-      void handlers.callStarted(mcp, args.tool).then(
+      // A simulator's UDID the call names, as the bridge read it; anything else is dropped.
+      const device =
+        typeof args.device === 'string' && /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u.test(args.device)
+          ? args.device
+          : undefined
+      void handlers.callStarted(mcp, args.tool, device).then(
         callId => (binding.closed ? refuse(id, -32001, REFUSED) : reply({ id, result: { callId } })),
         error => refuse(id, -32000, error instanceof AppError ? error.message : 'The call cannot be made now.'),
       )

@@ -66,8 +66,8 @@ export interface McpStdioServerView extends McpServerCommon {
   projectCwd: boolean
   /** `npx`, `uvx` and the like with a package that names no version: each start may fetch a new one. */
   unpinned?: boolean
-  /** Added as 「操控这台 Mac」 (Cua Driver): never given to an unattended run. */
-  preset?: 'computer'
+  /** Added as 「操控这台 Mac」 (Cua Driver) or 「Xcode」 (`xcrun mcpbridge`): never given to an unattended run. */
+  preset?: 'computer' | 'xcode'
   /**
    * The tools Latch has listed for this server's switches: any other tool it names (after an upgrade) is new and off
    * until switched on. Absent: every tool not in `disabledTools` is on.
@@ -104,6 +104,19 @@ export interface McpComputerCheck {
   command: string
   /** Installs or upgrades it, as the person runs it in their terminal; Latch never runs it. */
   install: string
+  added?: string
+}
+
+/**
+ * 「Xcode」 on this Mac's desktop app: whether Xcode's MCP bridge (`xcrun mcpbridge`) is here. `absent`: no Xcode or no
+ * bridge. `old`: an Xcode older than `minimum`, whose bridge has no device tools. `added`: the server already made.
+ */
+export interface McpXcodeCheck {
+  state: 'absent' | 'old' | 'ok'
+  version?: string
+  minimum: string
+  /** What the server runs. */
+  command: string
   added?: string
 }
 

@@ -21,7 +21,7 @@ export const MCP_ACTIONS = {
     /** 从项目导入: the project whose `.mcp.json` prefilled it, by ID. */
     importedFrom: opaqueId.optional(),
     /** 「操控这台 Mac」: the Host wrote the definition for Cua Driver. */
-    preset: z.literal('computer').optional(),
+    preset: z.enum(['computer', 'xcode']).optional(),
   }),
   'mcp.server.changed': z.strictObject({
     serverId,
@@ -37,7 +37,18 @@ export const MCP_ACTIONS = {
   'mcp.server.test': z.strictObject({ serverId, specHash: hex64 }),
   /** A session's `latch-mcp` bridge took the launch: the person's program starts in that agent's process. */
   'mcp.server.started': z.strictObject({ serverId, sessionId: opaqueId, specHash: hex64 }),
-  'mcp.tool.called': z.strictObject({ serverId, sessionId: opaqueId, callId, toolHash: hex64 }),
+  'mcp.tool.called': z.strictObject({
+    serverId,
+    sessionId: opaqueId,
+    callId,
+    toolHash: hex64,
+    /** 「Xcode」: Latch's class of the tool, and the simulator a device tool names (its UDID), never a picture. */
+    risk: z.enum(['R0', 'R1', 'R2']).optional(),
+    udid: z
+      .string()
+      .regex(/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u)
+      .optional(),
+  }),
   'mcp.tool.settled': z.strictObject({
     serverId,
     sessionId: opaqueId,

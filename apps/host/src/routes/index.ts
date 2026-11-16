@@ -13,6 +13,8 @@ import { createMcpRoutes, type McpRouteDeps } from './mcp.ts'
 import { createNativeRoutes, type NativeRouteDeps, type NativeRoutes } from './native.ts'
 import { RouteRegistry, type RouteContext } from './registry.ts'
 import { createReviewNoteRoutes, type ReviewNoteRouteDeps } from './review-notes.ts'
+import { createSimulatorRoutes } from './simulators.ts'
+import type { Simulators } from '../simulators.ts'
 import { createTerminalRoutes, type TerminalRoutes, type TerminalWorkspaceOperation } from './terminal.ts'
 import type { TerminalService } from '../terminal/service.ts'
 
@@ -30,6 +32,7 @@ export interface RouteDeps {
   git?: GitRouteOptions
   apps: AppRouteDeps
   browser: BrowserRouteDeps
+  simulators: Simulators
   mcp: McpRouteDeps
   customization: CustomizationRouteDeps
 }
@@ -71,6 +74,7 @@ export function createRoutes(
       createGitRoutes(context, deps.git),
       terminal,
       createBrowserRoutes(context, deps.browser),
+      createSimulatorRoutes(context, deps.simulators),
       createMcpRoutes(context, deps.mcp),
       createAgentRoutes(context, deps.agents),
       agentLogin,

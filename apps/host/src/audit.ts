@@ -17,6 +17,7 @@ import { NATIVE_ACTIONS } from './audit-actions/native.ts'
 import { PERSONAL_ACTIONS } from './audit-actions/personal.ts'
 import { PUSH_ACTIONS } from './audit-actions/push.ts'
 import { SESSION_ACTIONS } from './audit-actions/sessions.ts'
+import { SIMULATOR_ACTIONS } from './audit-actions/simulators.ts'
 import { TERMINAL_ACTIONS } from './audit-actions/terminal.ts'
 
 /** `preset`: no confirmation, because the Host matched the change to its own preset table (a preset's command as it names it). */
@@ -42,6 +43,7 @@ export const AUDIT_DETAIL = {
   ...GIT_ACTIONS,
   ...TERMINAL_ACTIONS,
   ...BROWSER_ACTIONS,
+  ...SIMULATOR_ACTIONS,
   ...NATIVE_APPROVAL_ACTIONS,
   ...PUSH_ACTIONS,
   ...MCP_ACTIONS,

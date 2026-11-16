@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { AUDIT_DETAIL, AuditLog, type AuditAction } from '../src/audit.ts'
 import { AGENT_ACTIONS } from '../src/audit-actions/agents.ts'
 import { BROWSER_ACTIONS } from '../src/audit-actions/browser.ts'
+import { SIMULATOR_ACTIONS } from '../src/audit-actions/simulators.ts'
 import { CHANGE_ACTIONS } from '../src/audit-actions/changes.ts'
 import { DEVICE_ACTIONS } from '../src/audit-actions/devices.ts'
 import { GIT_ACTIONS } from '../src/audit-actions/git.ts'
@@ -45,13 +46,31 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
     approvalId: 'approval-1',
   },
   'browser.provider.registered': {},
+  'simulator.action': { action: 'open-url', udid: '3767D0E9-F4D5-49E4-8023-F85C6FB82B13', scheme: 'https', originHash: hex },
+  'simulator.call': {
+    sessionId,
+    callId: '00000000-0000-4000-8000-000000000000',
+    tool: 'device_set_appearance',
+    udid: '3767D0E9-F4D5-49E4-8023-F85C6FB82B13',
+    risk: 'R1',
+    appearance: 'dark',
+    toolCallId: 'call_1',
+    via: 'mcp',
+  },
   'mcp.server.added': { serverId: `mcp_${'F'.repeat(22)}`, specHash: hex, envCount: 1, scope: 'all', projectCwd: false },
   'mcp.server.changed': { serverId: `mcp_${'F'.repeat(22)}`, kinds: ['spec', 'secret'], specHash: hex, enabled: true },
   'mcp.server.removed': { serverId: `mcp_${'F'.repeat(22)}` },
   'mcp.server.test': { serverId: `mcp_${'F'.repeat(22)}`, specHash: hex },
   'mcp.server.started': { serverId: `mcp_${'F'.repeat(22)}`, sessionId, specHash: hex },
   'mcp.prompt.got': { serverId: `mcp_${'F'.repeat(22)}`, sessionId, promptHash: hex },
-  'mcp.tool.called': { serverId: `mcp_${'F'.repeat(22)}`, sessionId, callId: '00000000-0000-4000-8000-000000000000', toolHash: hex },
+  'mcp.tool.called': {
+    serverId: `mcp_${'F'.repeat(22)}`,
+    sessionId,
+    callId: '00000000-0000-4000-8000-000000000000',
+    toolHash: hex,
+    risk: 'R1',
+    udid: '3767D0E9-F4D5-49E4-8023-F85C6FB82B13',
+  },
   'mcp.oauth.started': { serverId: `mcp_${'F'.repeat(22)}` },
   'mcp.oauth.authorized': { serverId: `mcp_${'F'.repeat(22)}`, registered: true, renewable: true },
   'mcp.oauth.failed': { serverId: `mcp_${'F'.repeat(22)}`, reason: 'state' },
@@ -271,6 +290,7 @@ describe('audit actions', () => {
       GIT_ACTIONS,
       TERMINAL_ACTIONS,
       BROWSER_ACTIONS,
+      SIMULATOR_ACTIONS,
       NATIVE_APPROVAL_ACTIONS,
       PUSH_ACTIONS,
       MCP_ACTIONS,

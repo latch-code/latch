@@ -2,6 +2,7 @@ import { posix, win32 } from 'node:path'
 import type { ApprovalRiskReason, RiskLevel } from '@latch/protocol'
 import { BROWSER_READS, isBrowserTool, type OriginClass } from './browser-broker.ts'
 import { isProtectedWorkspacePath } from './paths.ts'
+import { DEVICE_READS, isDeviceTool } from './plugins/tools/device/index.ts'
 
 /** One folder of the session, as the Host resolved it for this call. */
 export interface CallFolder {
@@ -38,6 +39,8 @@ export const MCP_TOOL_PREFIX = 'mcp__'
 
 /** The plugin of the built-in browser tools. */
 export const BROWSER_PLUGIN = 'browser'
+/** The plugin of the built-in simulator tools. */
+export const DEVICE_PLUGIN = 'device'
 
 export type RiskReason = ApprovalRiskReason
 
@@ -95,6 +98,7 @@ export function classifyStandardCall(input: StandardCallInput): { risk: RiskLeve
   const builtin = input.pluginId !== undefined
   if (input.pluginId === BROWSER_PLUGIN && isBrowserTool(input.toolName))
     return classifyBrowserCall(input.toolName, input.args, input.browser ?? {})
+  if (input.pluginId === DEVICE_PLUGIN && isDeviceTool(input.toolName)) return classifyDeviceCall(input.toolName)
   if (builtin && FOLDER_TOOLS.includes(key)) {
     const folder = targetFolder(input.args, input.folders)
     if (folder === undefined) return { risk: 'R2', reason: 'outside-workspace' }
@@ -126,4 +130,14 @@ export function classifyBrowserCall(tool: string, _args: unknown, facts: Browser
   if (BROWSER_READS.has(tool)) return { risk: 'R0' }
   if (tool === 'browser_type' && facts.sensitive !== false) return { risk: 'R2', reason: 'sensitive-field' }
   return { risk: 'R1' }
+}
+
+/**
+ * The built-in simulator tools: listing and a picture are R0; opening an address and changing the appearance are R1.
+ * The Host refuses an address that is not this Mac's own, and any deep link, whatever was approved, so an allowance for
+ * the session never reaches another address. There is no tool that boots, shuts down, erases, installs or taps.
+ */
+export function classifyDeviceCall(tool: string): { risk: RiskLevel; reason?: RiskReason } {
+  if (!isDeviceTool(tool)) return { risk: 'R2', reason: 'unlisted-tool' }
+  return { risk: DEVICE_READS.has(tool) ? 'R0' : 'R1' }
 }

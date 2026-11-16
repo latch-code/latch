@@ -211,7 +211,7 @@ const stdioRecord = z.strictObject({
   secretNames: z.array(envName).max(32),
   projectCwd: z.boolean(),
   /** Added as 「操控这台 Mac」: never given to an unattended run. */
-  preset: z.literal('computer').optional(),
+  preset: z.enum(['computer', 'xcode']).optional(),
   /** The tools its switches have listed; any other is new and off (`isMcpToolOn`). Absent: new tools are on. */
   knownTools: z.array(toolName).max(256).optional(),
 })

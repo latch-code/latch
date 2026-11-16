@@ -1,5 +1,5 @@
 ---
-description: Latch 的 MCP 服务器：本机命令与远程地址的定义与秘密、本机确认与出站许可、测试、「用在」、latch-mcp 桥与工具网关、Host 作为远程 MCP 客户端、远程服务器的登录（OAuth）、交给各 Harness、「操控这台 Mac」（Cua Driver）、审计与限制。
+description: Latch 的 MCP 服务器：本机命令与远程地址的定义与秘密、本机确认与出站许可、测试、「用在」、latch-mcp 桥与工具网关、Host 作为远程 MCP 客户端、远程服务器的登录（OAuth）、交给各 Harness、「操控这台 Mac」（Cua Driver）、「Xcode」（xcrun mcpbridge，见 DEVICE-PREVIEW.md）、审计与限制。
 sources:
   - apps/host/src/mcp.ts
   - apps/host/src/mcp-remote.ts
@@ -54,7 +54,7 @@ Latch 的服务器有两种：
 
 **`servers.json`：定义。**
 
-- 本机命令：ID（`mcp_` 加 22 位）、名称、命令（保存时找到的绝对路径）、参数、普通变量（名字与值，属于确认过的定义，设备可读）、秘密变量的名字、「在项目文件夹里启动」、「用在」、开关、关掉的工具、修订号；[操控这台 Mac](#操控这台-mac) 另有 `preset` 与 `knownTools`。
+- 本机命令：ID（`mcp_` 加 22 位）、名称、命令（保存时找到的绝对路径）、参数、普通变量（名字与值，属于确认过的定义，设备可读）、秘密变量的名字、「在项目文件夹里启动」、「用在」、开关、关掉的工具、修订号；[操控这台 Mac](#操控这台-mac) 与 [Xcode](DEVICE-PREVIEW.md#xcode预设设置--mcp) 另有 `preset` 与 `knownTools`。
 - 远程地址（`transport: 'http'`）：没有命令、参数与变量，只有地址 `url`（源与路径）与请求头的名字 `headerNames`；登录后另有 `oauth`（`issuer`、`scopes`、`resource`）。
 - `specHash`：本机命令是命令、参数、普通变量、秘密变量名与工作目录方式的 SHA-256；远程地址是地址、请求头名字与 `oauth` 的 SHA-256。
 - `confirmed`：本机确认通过时的 `specHash` 与它点名的秘密变量名或请求头名字，只在确认通过时写。测试与每次启动之前都核对定义与它一致（`isConfirmed`）。
@@ -101,6 +101,7 @@ Latch 的服务器有两种：
 | `POST /mcp/servers/:id/oauth/logout` | `host.sock` 的 `admin` | `{ requestId }`；回答 `{ oauth, server }` |
 | `GET /mcp/import?project=<项目 ID>` | `host.sock` 的 `admin` | 见[从项目导入](#从项目导入) |
 | `GET /mcp/computer` | `host.sock` 的 `admin` | 见[操控这台 Mac](#操控这台-mac)；Host 没有指定位置时 404 |
+| `GET /mcp/xcode` | `host.sock` 的 `admin` | 见 [DEVICE-PREVIEW.md](DEVICE-PREVIEW.md#xcode预设设置--mcp)；Host 不找 Xcode 时 404 |
 | `POST /agents/:id/mcp` | `run` | 「读取」这个 Harness 自己的 MCP |
 
 - 同一设备的同一 `requestId` 带同样的请求体：按回执回答，不再确认、不再执行；带不同的请求体：409 `request-conflict`。修订号不对：409 `mcp-changed`。
@@ -349,6 +350,7 @@ detail 只有服务器 ID 与类别。令牌、code、state、verifier、Client 
 - 每次 `tools/call` 先经网关写 `mcp.tool.called`（服务器 ID、会话 ID、调用 ID、工具名与服务器 ID 的哈希），结束时补 `mcp.tool.settled`（`ok`、`error`、`cancelled`、`failed` 与耗时）。参数与结果从不经过网关。
 - 关掉的工具不在 `tools/list` 里，调用直接回答「This tool is switched off in Latch.」，不经过服务器；启动清单给了 `offHints` 时后面接一句该怎么做（见[给 Agent 的指引](#给-agent-的指引)）。
 - 启动清单带 `instructions` 时，桥在 `initialize` 的结果里用它替换服务器自己的 `instructions`；不带时原样转出。
+- 参数与结果从不经过网关的唯一例外：参数名含 device、udid 或 destination 的值里若有一个 UUID，桥把它（大写）随 `mcp/call` 交给 Host，「Xcode」预设用它记设备并显示「Agent 正在使用」（[DEVICE-PREVIEW.md](DEVICE-PREVIEW.md#xcode预设设置--mcp)）。
 
 **远程地址**
 

@@ -219,6 +219,21 @@ describe('the latch-mcp bridge', () => {
     )
   })
 
+  it('tells the agent Latch’s words for a preset first, and names only a simulator’s UDID a call carries', async () => {
+    const gateway = await fakeGateway({ instructions: 'Latch: use the UDID the panel shows.' })
+    const bridge = start(gateway.socketPath, gateway.tokenFile)
+    const init = await bridge.initialize()
+    expect(init.result.instructions).toBe('Latch: use the UDID the panel shows.')
+    await bridge.ask('tools/call', {
+      name: 'echo',
+      arguments: { deviceIdentifier: 'id=c63fa884-1a6c-40c7-947b-54cd0819caa9', text: 'secret words' },
+    })
+    await bridge.ask('tools/call', { name: 'echo', arguments: { text: '3767D0E9-F4D5-49E4-8023-F85C6FB82B13' } })
+    const calls = gateway.requests.filter(request => request.method === 'mcp/call').map(request => request.params)
+    expect(calls).toEqual([{ tool: 'echo', device: 'C63FA884-1A6C-40C7-947B-54CD0819CAA9' }, { tool: 'echo' }])
+    expect(JSON.stringify(calls)).not.toContain('secret')
+  })
+
   it('records each call before sending it, sends nothing when the record fails, and reports the outcome', async () => {
     let held = false
     let refuse = false

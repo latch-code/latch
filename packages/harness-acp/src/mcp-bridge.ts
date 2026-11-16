@@ -364,7 +364,20 @@ async function handle(request) {
   const entry = { id, method, at: Date.now() }
   pending.set(JSON.stringify(id), entry)
   // Recorded before it is sent; a record that cannot be written stops the call.
-  const recorded = await ask('mcp/call', { tool: name })
+  // A simulator the call names (a UUID under a key about a device), for the Host's record and its 设备 panel; nothing else
+  // of the arguments leaves the agent's process.
+  let device
+  const callArgs = params && typeof params.arguments === 'object' && params.arguments ? params.arguments : {}
+  for (const [key, value] of Object.entries(callArgs)) {
+    if (/device|udid|destination/i.test(key) && typeof value === 'string') {
+      const found = /[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/i.exec(value)
+      if (found) {
+        device = found[0].toUpperCase()
+        break
+      }
+    }
+  }
+  const recorded = await ask('mcp/call', device ? { tool: name, device } : { tool: name })
   if (recorded.error || !recorded.result || typeof recorded.result.callId !== 'string') {
     pending.delete(JSON.stringify(id))
     const text = recorded.error && recorded.error.message ? String(recorded.error.message) : 'The call was not recorded, so it was not made.'

@@ -48,6 +48,8 @@ export interface HostFeatures {
   previewBrowser?: true
   /** `GET /tasks/:id/browser-tabs`: the session's tabs in this Mac's desktop app, read-only (docs/PREVIEW-BROWSER.md). */
   browserTabs?: true
+  /** `/simulators`: this Mac's iOS simulators in the 设备 panel; only on host.sock, for `run` with all data (docs/DEVICE-PREVIEW.md). */
+  simulators?: true
   customAgents?: true
   /** The Host owns the stable interactive conversation for each Personal Agent. */
   singleAgentChat?: true
