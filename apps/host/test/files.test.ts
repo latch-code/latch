@@ -408,7 +408,7 @@ describe('file routes', () => {
 
   it('offers only referenced files to browsers while native actions remain on host.sock', async () => {
     const { t, desktop, sessionId } = await desktopSession()
-    const browser = await t.enroll({ name: '浏览器', scopes: ['view', 'run', 'approve:standard', 'admin'] })
+    const browser = await t.enroll({ name: '浏览器', scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'work' })
     const refused = await resolve(browser, sessionId, ['report.md'])
     expect(refused.status).toBe(200)
     expect(await refused.json()).toMatchObject({ files: [{ status: 'not-referenced', code: 'file-not-referenced' }] })

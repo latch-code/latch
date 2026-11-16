@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type {
-  AppSnapshot,
-  GitDeliveryState,
-  GitHunkBase,
-  GitHunkDiff,
-  GitStageLinesResult,
-  GitStagingView,
-  TaskSummary,
+import {
+  readsProjectFiles,
+  type AppSnapshot,
+  type GitDeliveryState,
+  type GitHunkBase,
+  type GitHunkDiff,
+  type GitStageLinesResult,
+  type GitStagingView,
+  type TaskSummary,
 } from '@latch/protocol'
 import { api, ApiError, errorMessage, isUncertain, newRequestId } from '../../core/api.ts'
 import { lineRefusal, retryEnds, selectionOf, STALE_CODES, type LinePick } from './staging.ts'
@@ -56,7 +57,7 @@ export function useStagingWrites(summary: TaskSummary | undefined, { host, devic
 
   const sessionId = summary?.id
   const root = summary?.folders?.[0]?.path ?? summary?.cwd
-  const key = device.dataScope === 'all' && sessionId && root ? JSON.stringify([owner, sessionId, root]) : undefined
+  const key = readsProjectFiles(device.dataScope) && sessionId && root ? JSON.stringify([owner, sessionId, root]) : undefined
   const state = key ? sessions.get(key) : undefined
   const { busy, unknown, note } = state ?? {}
   const base = `tasks/${encodeURIComponent(sessionId ?? '')}/git`

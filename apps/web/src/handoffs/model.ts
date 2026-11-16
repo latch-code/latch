@@ -11,6 +11,8 @@ import {
   type HandoffSummary,
   type Message,
   type TaskSummary,
+  type DataScope,
+  readsProjectFiles,
 } from '@latch/protocol'
 import { ApiError, isUncertain, MessageError } from '../core/api.ts'
 
@@ -284,9 +286,10 @@ export type EvidenceChoice =
   | { key: string; kind: 'file'; file: FileMention; label: string }
   | { key: string; kind: 'message'; messageId: string; label: string }
 
-export function evidenceChoices(messages: readonly Message[], dataScope: 'work' | 'all' | undefined): EvidenceChoice[] {
-  const files: EvidenceChoice[] =
-    dataScope === 'all' ? sessionFiles(messages).map(file => ({ key: chipKey.file(file), kind: 'file', file, label: file.path })) : []
+export function evidenceChoices(messages: readonly Message[], dataScope: DataScope | undefined): EvidenceChoice[] {
+  const files: EvidenceChoice[] = readsProjectFiles(dataScope)
+    ? sessionFiles(messages).map(file => ({ key: chipKey.file(file), kind: 'file', file, label: file.path }))
+    : []
   const replies: EvidenceChoice[] = messages
     .filter(message => (message.role === 'assistant' || message.role === 'user') && message.text.trim())
     .slice(-8)

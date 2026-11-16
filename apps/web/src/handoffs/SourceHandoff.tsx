@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageSquareQuote, TextQuote } from 'lucide-react'
-import type { Handoff, HandoffCreate, HandoffList, HostCatalog, Message } from '@latch/protocol'
+import { readsProjectFiles, type Handoff, type HandoffCreate, type HandoffList, type HostCatalog, type Message } from '@latch/protocol'
 import {
   Button,
   Hint,
@@ -87,7 +87,7 @@ export function SourceHandoffDock({
   const sourceId = current?.summary.id
   const offline = connection === 'offline' || connection === 'reconnecting'
   const canRun = access.scopes.has('run')
-  const files = snapshot.device.dataScope === 'all'
+  const files = readsProjectFiles(snapshot.device.dataScope)
   const [open, setOpen] = useState(false)
   const [chips, setChips] = useState<MaterialChip[]>([])
   const [target, setTarget] = useState<Target>('new-session')

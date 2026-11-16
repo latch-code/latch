@@ -159,17 +159,7 @@ function ThisMac({ hostName, local }: { hostName: string; local: boolean }) {
   )
 }
 
-export function GeneralSettings({
-  snapshot,
-  admin,
-  onChanged,
-  onFirstSetup,
-}: {
-  snapshot: AppSnapshot
-  admin: boolean
-  onChanged: () => void
-  onFirstSetup?: (() => void) | undefined
-}) {
+export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppSnapshot; admin: boolean; onChanged: () => void }) {
   const preferences = usePreferences()
   const phone = useViewport() === 'phone'
   const writer = useContext(CustomizationActionsContext)
@@ -271,18 +261,6 @@ export function GeneralSettings({
       </SettingsGroup>
       <NotificationSettings />
       <ThisMac hostName={snapshot.hostName} local={deviceAccess(snapshot, currentShell()).local} />
-      {onFirstSetup && (
-        <SettingsGroup title="准备这台电脑">
-          <SettingsRow
-            title="本机配置"
-            trailing={
-              <Button size="sm" onClick={onFirstSetup}>
-                打开准备页
-              </Button>
-            }
-          />
-        </SettingsGroup>
-      )}
       {admin && snapshot.catalog?.features?.promptTemplates && <PromptTemplatesSettings snapshot={snapshot} onChanged={onChanged} />}
     </>
   )

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AppSnapshot, TaskSummary, TurnChanges } from '@latch/protocol'
+import { readsProjectFiles, type AppSnapshot, type TaskSummary, type TurnChanges } from '@latch/protocol'
 import { api } from '../core/api.ts'
 import { reviewShortcut, shortcutCandidates } from './model.ts'
 
@@ -17,7 +17,7 @@ export function useReviewShortcuts(
   isUnread: (task: TaskSummary) => boolean,
   enabled: boolean,
 ): ReadonlyMap<string, string> {
-  const reads = enabled && snapshot.catalog?.features?.changes === true && snapshot.device.dataScope === 'all'
+  const reads = enabled && snapshot.catalog?.features?.changes === true && readsProjectFiles(snapshot.device.dataScope)
   const candidates = useMemo(
     () =>
       enabled && snapshot.catalog?.features?.changes === true

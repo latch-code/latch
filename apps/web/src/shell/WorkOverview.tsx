@@ -1,5 +1,5 @@
 import { useImperativeHandle, useRef, useState, type Ref, type RefObject } from 'react'
-import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
+import { escapeSecurityText, type AppSnapshot, type TaskSummary, readsProjectFiles } from '@latch/protocol'
 import {
   Button,
   ChecksBar,
@@ -286,12 +286,11 @@ function WorkQueue({
   )
   const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<WorkGroupId>>(new Set())
   const connected = connection === 'connected'
-  const deliveryNotice =
-    snapshot.device.dataScope !== 'all'
-      ? '这台设备不能读取项目改动'
-      : snapshot.catalog?.features?.gitDelivery !== true
-        ? '这台电脑未提供交付状态'
-        : (evidence?.error ?? (!evidence?.ready ? (evidence?.loading ? '正在读取交付状态…' : '尚未读取交付状态') : undefined))
+  const deliveryNotice = !readsProjectFiles(snapshot.device.dataScope)
+    ? '这台设备不能读取项目改动'
+    : snapshot.catalog?.features?.gitDelivery !== true
+      ? '这台电脑未提供交付状态'
+      : (evidence?.error ?? (!evidence?.ready ? (evidence?.loading ? '正在读取交付状态…' : '尚未读取交付状态') : undefined))
   const deliveryPartial = [...(evidence?.entries.values() ?? [])].some(entry => entry.error || entry.prError)
   const deliveryNotApplicable = [...(evidence?.entries.values() ?? [])].some(entry => entry.notApplicable === 'not-repository')
   const hasRepository = [...(evidence?.entries.values() ?? [])].some(entry => entry.state)

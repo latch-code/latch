@@ -162,7 +162,7 @@ function shownTool(tool: ToolDetail, name: string | undefined): ToolDetail {
 }
 
 function projectedItems<T>(items: T[], project: (item: T) => T): T[] {
-  const shown = items.map(project)
+  const shown = items.map(item => project(item))
   return shown.every((item, index) => item === items[index]) ? items : shown
 }
 
@@ -172,7 +172,7 @@ function projectedChild(message: Message, project: (message: Message) => Message
   return steps === message.subagent.steps ? message.subagent : { ...message.subagent, steps }
 }
 
-function shownMessage(message: Message): Message {
+function shownMessage(message: Message, child: (message: Message) => Message = shownMessage): Message {
   const tool = message.tool && shownTool(message.tool, message.toolName)
   const editing = isFileEdit(message.tool, message.toolName)
   let text = message.text
@@ -181,7 +181,7 @@ function shownMessage(message: Message): Message {
     else if (message.text === message.tool?.input) text = tool?.input ?? ''
     else if (message.text !== message.tool?.title && editing) text = oldFileOutput(message.text, message.toolName)
   }
-  const subagent = projectedChild(message, shownMessage)
+  const subagent = projectedChild(message, child)
   if (text === message.text && tool === message.tool && subagent === message.subagent) return message
   return { ...message, text, ...(tool ? { tool } : {}), ...(subagent ? { subagent } : {}) }
 }
@@ -193,9 +193,9 @@ function allTool(tool: ToolDetail): ToolDetail {
   return visible
 }
 
-function allMessage(message: Message): Message {
+function allMessage(message: Message, child: (message: Message) => Message = allMessage): Message {
   const tool = message.tool && allTool(message.tool),
-    subagent = projectedChild(message, allMessage)
+    subagent = projectedChild(message, child)
   if (tool === message.tool && subagent === message.subagent) return message
   return { ...message, ...(tool ? { tool } : {}), ...(subagent ? { subagent } : {}) }
 }
@@ -228,4 +228,70 @@ export function workApproval(approval: Approval): Approval {
 /** The source remains the Host/driver's unmodified history; scope does not change an approval's real arguments. */
 export function workTaskContent(detail: TaskDetail): TaskDetail {
   return projectedDetail(detail, shownMessage, workApproval)
+}
+
+/** The keys whose string values name a file, read from a tool's or an approval's arguments. */
+const FILE_KEYS = new Set([
+  'path',
+  'filePath',
+  'file_path',
+  'filename',
+  'fileName',
+  'oldPath',
+  'newPath',
+  'directory',
+  'cwd',
+  'notebook_path',
+  'target_file',
+  'absolute_path',
+])
+
+function namedPaths(text: string | undefined): string[] {
+  if (!text) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return []
+  }
+  const found: string[] = []
+  const visit = (value: unknown, key: string, depth: number) => {
+    if (depth > 32 || found.length > 256) return
+    if (typeof value === 'string') {
+      if (FILE_KEYS.has(key)) found.push(value)
+    } else if (Array.isArray(value)) for (const item of value) visit(item, key, depth + 1)
+    else if (value && typeof value === 'object') for (const [name, item] of Object.entries(value)) visit(item, name, depth + 1)
+  }
+  visit(parsed, '', 0)
+  return found
+}
+
+/**
+ * Whether a tool carries file bytes from somewhere `inside` does not cover: file content (an edit, or output Latch knows
+ * holds a file) where any path it names lies outside, or where it names none.
+ */
+function bytesOutside(tool: ToolDetail | undefined, name: string | undefined, inside: (path: string) => boolean, args?: string) {
+  const editing = isFileEdit(tool, name)
+  if (!editing && tool?.outputWithoutFiles === undefined) return false
+  const paths = [
+    ...(tool?.locations ?? []),
+    ...(tool?.diffs?.map(diff => diff.path) ?? []),
+    ...namedPaths(tool?.input),
+    ...namedPaths(args),
+  ]
+  return paths.length === 0 || paths.some(path => !inside(path))
+}
+
+/**
+ * For a device of data scope `files`: a tool's file bytes only when every path it names is inside the session's folders
+ * (`inside` resolves symlinks); otherwise what `work` gets, the row without content.
+ */
+export function filesTaskContent(detail: TaskDetail, inside: (path: string) => boolean): TaskDetail {
+  const message = (value: Message): Message =>
+    bytesOutside(value.tool, value.toolName, inside) ? shownMessage(value, message) : allMessage(value, message)
+  return projectedDetail(detail, message, approval => filesApproval(approval, inside))
+}
+
+export function filesApproval(approval: Approval, inside: (path: string) => boolean): Approval {
+  return bytesOutside(approval.tool, approval.toolName, inside, approval.arguments) ? workApproval(approval) : allApproval(approval)
 }

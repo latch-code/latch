@@ -17,6 +17,8 @@ import {
   type HandoffTarget,
   type TaskDetail,
   type TaskSummary,
+  type DataScope,
+  readsProjectFiles,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, type AtomicWriteFs } from '@latch/core/node-kit'
@@ -351,7 +353,7 @@ export interface HandoffOptions {
   /** Re-checks the caller's credential and, given one, its scope. */
   recheck(caller: DeviceCaller, scope?: 'view' | 'run'): void
   /** The caller's data scope as the Host records it now. */
-  dataScope(caller: DeviceCaller): 'work' | 'all' | undefined
+  dataScope(caller: DeviceCaller): DataScope | undefined
   /** Whether a session holds private context: reading it takes data scope `all`. */
   isPrivate(sessionId: string): boolean
   /** The detail of a session the caller may read; throws as `GET /tasks/:id` does. */
@@ -505,7 +507,8 @@ export class Handoffs {
     const source = await this.options.readSession(caller, input.sourceSessionId)
     const privateSource = this.options.isPrivate(input.sourceSessionId)
     const files = input.materials.filter(item => item.kind === 'file')
-    if (files.length && this.options.dataScope(caller) !== 'all') throw new AppError(403, 'file-scope', '此设备不能浏览项目文件。')
+    if (files.length && !readsProjectFiles(this.options.dataScope(caller)))
+      throw new AppError(403, 'file-scope', '此设备不能浏览项目文件。')
     if (input.target.kind === 'new-session') {
       await this.options.checkNewTarget(input.target)
       if (files.length && input.target.worktree)
@@ -620,7 +623,7 @@ export class Handoffs {
     if (current.status !== 'started' || current.contentRemoved) throw stateError(current)
     if (current.returnScope === 'none') throw new AppError(409, 'handoff-no-return', '这次交接约定不交回结果。')
     const evidence = current.returnScope === 'summary' ? [] : input.evidence
-    if (evidence.some(item => item.kind === 'file') && this.options.dataScope(caller) !== 'all')
+    if (evidence.some(item => item.kind === 'file') && !readsProjectFiles(this.options.dataScope(caller)))
       throw new AppError(403, 'file-scope', '此设备不能浏览项目文件。')
     const changed: number[] = []
     let roots: FileRoot[] | undefined
@@ -1038,7 +1041,7 @@ export class Handoffs {
     const source = this.canRead(caller, item.sourceSessionId, item.sourcePrivate, live),
       targetReadable =
         item.targetSessionId !== undefined && this.canRead(caller, item.targetSessionId, item.targetPrivate || item.sourcePrivate, live),
-      files = this.options.dataScope(caller) === 'all'
+      files = readsProjectFiles(this.options.dataScope(caller))
     // A handoff whose sessions are gone is still the caller's own record: IDs and state, nothing else.
     const own = item.deviceId === caller.device.id
     if (!source && !targetReadable && !own) return undefined

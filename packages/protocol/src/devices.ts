@@ -2,7 +2,26 @@
 export const LISTENER_CLASSES = ['unix', 'loopback-tcp', 'lan-tls', 'tailnet-tls', 'native-direct', 'native-relay'] as const
 export type ListenerClass = (typeof LISTENER_CLASSES)[number]
 export type DeviceScope = 'view' | 'run' | 'approve:standard' | 'approve:elevated' | 'admin' | 'secrets'
-export type DataScope = 'work' | 'all'
+/**
+ * What a device may read beyond the conversation: `work` only files a session mentioned, without diff bodies; `files`
+ * also the files and changes of the sessions' project folders; `all` also private sessions and agents, the terminal and
+ * other CLIs' sessions.
+ */
+export type DataScope = 'work' | 'files' | 'all'
+export const DATA_SCOPES = ['work', 'files', 'all'] as const satisfies readonly DataScope[]
+
+/** The scope as the Mac's confirmation of a new device or a wider one names it. */
+export const DATA_SCOPE_LABELS: Readonly<Record<DataScope, string>> = { work: '工作', files: '会话与项目的文件', all: '全部' }
+
+/** Whether a device with this scope reads the files and changes of the sessions' project folders. */
+export function readsProjectFiles(scope: DataScope | undefined): boolean {
+  return scope === 'files' || scope === 'all'
+}
+
+/** Whether `next` lets a device read more than `current` does. */
+export function widensDataScope(current: DataScope, next: DataScope): boolean {
+  return DATA_SCOPES.indexOf(next) > DATA_SCOPES.indexOf(current)
+}
 export type PermissionLevel = 'L0' | 'L1' | 'L2' | 'L3'
 export type RiskLevel = 'R0' | 'R1' | 'R2'
 export type DeviceStatus = 'active' | 'review' | 'revoked' | 'legacy-pending'

@@ -276,9 +276,6 @@ export interface SessionDefaults {
   pinned?: true
 }
 
-/** The Host's preparation progress, visible only to this computer's administrator. */
-export type FirstSetupStatus = 'pending' | 'existing' | 'deferred' | 'completed'
-
 /**
  * An enabled model service the Host does not offer, and why: its address is not confirmed on the Host computer yet, it
  * is at a preset provider's address, which always needs a key, and has none, or it speaks a protocol Latch no longer

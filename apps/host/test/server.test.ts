@@ -3774,7 +3774,7 @@ describe('workspaces, policy and audit', () => {
     const t = await testHost({ tls: true })
     const admin = await t.enroll({ scopes: [...ADMIN] })
     const desktop = await t.enroll({ listener: 'unix' })
-    const browser = await t.enroll({ scopes: [...ADMIN] })
+    const browser = await t.enroll({ scopes: [...ADMIN], dataScope: 'work' })
     const request = { scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'all' }
     const first = await desktop.request(`devices/${browser.id}`, { method: 'PATCH', body: request })
     const { confirmation } = await body<{ confirmation: ConfirmationTicket }>(first)
@@ -3790,7 +3790,7 @@ describe('workspaces, policy and audit', () => {
     expect(t.host.security.devices.get(browser.id)).toMatchObject({ scopes: ['view'], dataScope: 'work' })
 
     // A reduction still queued when the confirmed request reads the device is not undone either.
-    const other = await t.enroll({ scopes: [...ADMIN] })
+    const other = await t.enroll({ scopes: [...ADMIN], dataScope: 'work' })
     const widen = { scopes: [...ADMIN], dataScope: 'all' }
     const asked = await body<{ confirmation: ConfirmationTicket }>(
       await desktop.request(`devices/${other.id}`, { method: 'PATCH', body: widen }),

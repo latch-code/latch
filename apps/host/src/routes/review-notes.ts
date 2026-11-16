@@ -1,5 +1,12 @@
 import { setTimeout as sleep } from 'node:timers/promises'
-import { isFileMention, reviewNotesMessage, type HostFeatures, type ReviewNoteList, type ReviewNoteSendResult } from '@latch/protocol'
+import {
+  isFileMention,
+  reviewNotesMessage,
+  type HostFeatures,
+  type ReviewNoteList,
+  type ReviewNoteSendResult,
+  readsProjectFiles,
+} from '@latch/protocol'
 import { AppError, type ProjectFolder } from '@latch/sdk'
 import { z } from 'zod'
 import { json, jsonBody, KIB, safeDecode } from '../http-util.ts'
@@ -61,7 +68,7 @@ export function createReviewNoteRoutes(context: RouteContext, deps: ReviewNoteRo
 
   function assertFilesVisible(caller: DeviceCaller, scope: 'view' | 'run'): void {
     recheck(caller, scope)
-    if (devices.get(caller.device.id)?.dataScope !== 'all')
+    if (!readsProjectFiles(devices.get(caller.device.id)?.dataScope))
       throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
   }
 

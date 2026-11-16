@@ -269,6 +269,11 @@ export interface HarnessInfo {
    * and the first session saves the definition. Only a device that may save one receives these.
    */
   offer?: { presetId: string }
+  /**
+   * The program its definition is bound to: `path` only for a device that may save definitions; `id`, a digest of it,
+   * for every device, so what was said once about this program is said again when it is bound to another.
+   */
+  bound?: { id: string; path?: string }
 }
 
 export type ProjectFolderAccess = 'all' | 'primary' | 'primary-asks' | 'primary-unbounded'

@@ -85,9 +85,9 @@ it('opens every tool edit of a file in the same column and keeps history availab
       page.setDefaultTimeout(15_000)
       try {
         const name = `History ${width} ${theme}`
-        await enrollBrowser(page, host, { name, scopes: ['admin'] })
+        await enrollBrowser(page, host, { name, scopes: ['admin'], dataScope: 'work' })
         await openSession(page, sessionId)
-        // On the default work scope the Host sends the edits' paths without their bodies: the turn's file opens as the
+        // On the work scope the Host sends the edits' paths without their bodies: the turn's file opens as the
         // file this session wrote, and there is no recorded edit to show.
         const limited = await page.evaluate(async id => JSON.stringify(await (await fetch(`/link/api/tasks/${id}`)).json()), sessionId)
         expect(limited).toContain('report.txt')

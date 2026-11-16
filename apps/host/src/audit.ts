@@ -19,7 +19,8 @@ import { PUSH_ACTIONS } from './audit-actions/push.ts'
 import { SESSION_ACTIONS } from './audit-actions/sessions.ts'
 import { TERMINAL_ACTIONS } from './audit-actions/terminal.ts'
 
-export type StepupMethod = 'none' | 'lpc-local' | 'shell-local' | 'offline'
+/** `preset`: no confirmation, because the Host matched the change to its own preset table (a preset's command as it names it). */
+export type StepupMethod = 'none' | 'preset' | 'lpc-local' | 'shell-local' | 'offline'
 export interface AuditActor {
   deviceId?: string
   listener: ListenerClass | 'host' | 'cli'
@@ -63,7 +64,7 @@ const recordSchema = z.strictObject({
   actor: actorSchema,
   action: z.enum(actions),
   target: targetSchema,
-  stepup: z.enum(['none', 'lpc-local', 'shell-local', 'offline']),
+  stepup: z.enum(['none', 'preset', 'lpc-local', 'shell-local', 'offline']),
   detail: z.record(z.string(), z.unknown()),
   prev: hex64,
   hash: hex64,

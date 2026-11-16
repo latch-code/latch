@@ -369,6 +369,38 @@ export function isInsidePath(child: string, parent: string): boolean {
 }
 
 /**
+ * Whether `path` (relative paths against the first root) lies in one of `roots` as the file system resolves it: each
+ * component in turn, a symlink to its target before the next, so `link/..` and links out of a folder count as outside.
+ * A `~` path is outside: nothing here expands it.
+ */
+export function insideRootsSync(path: string, roots: readonly string[]): boolean {
+  if (!roots.length || path.includes('\0') || path.startsWith('~')) return false
+  const real = (target: string): string | undefined => {
+    try {
+      return withoutAliasesSync(realpathSync.native(target))
+    } catch {
+      return undefined
+    }
+  }
+  const start = isAbsolute(path) ? real(sep) : real(resolve(roots[0]!))
+  if (start === undefined) return false
+  let current = start
+  for (const part of path.split(/[\\/]+/u)) {
+    if (part === '' || part === '.') continue
+    if (part === '..') {
+      current = dirname(current)
+      continue
+    }
+    const next = join(current, part)
+    current = real(next) ?? next
+  }
+  return roots.some(root => {
+    const base = real(resolve(root))
+    return base !== undefined && isInsidePath(current, base)
+  })
+}
+
+/**
  * The comparison form of an existing path: its realpath without macOS alias prefixes (`/System/Volumes/Data`,
  * `/.nofollow`, `/.resolve/<n>`), case-folded where volumes usually ignore case. Two spellings of one directory give
  * the same string. Throws when the path does not exist.

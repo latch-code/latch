@@ -56,15 +56,7 @@ import {
   infoFailureStep,
   requestedScopes,
 } from '../src/core/enrollment.ts'
-import {
-  approvalActions,
-  composerGate,
-  deviceAccess,
-  LEGACY_HOST_TEXT,
-  LEVEL_LABELS,
-  modeRows,
-  sessionReadOnly,
-} from '../src/core/permissions.ts'
+import { approvalActions, composerGate, deviceAccess, LEGACY_HOST_TEXT, modeRows, sessionReadOnly } from '../src/core/permissions.ts'
 import {
   BLOCKED_COPY,
   computerName,
@@ -338,10 +330,6 @@ describe('the 权限 rows', () => {
       { value: 'full', name: '完全访问' },
     ],
   })
-  it('reads 外部 Harness as a plain fact about the session', () => {
-    expect(LEVEL_LABELS.L3).toBe('外部 Harness')
-  })
-
   it('offers every row at once on any device', () => {
     const rows = modeRows(option('auto'))
     expect(rows.map(row => [row.value, row.current, row.disabledReason])).toEqual([

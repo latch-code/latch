@@ -26,7 +26,7 @@
 - work剥文件差异；输出投影不改执行参数、回执和终态（STREAMING）。
 - `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`），供 Vite 与 Vitest 配置直接加载。
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。
-- 文件树/搜索限 `all`；macOS 仅经 `latch-files` 描述符。索引不存权限，预览绑定 Harness/根身份/版本，晚回复查设备与正文窗口（ARCHITECTURE）。
+- 文件树/搜索限 `files`、`all`；macOS 仅经 `latch-files` 描述符。索引不存权限，预览绑定 Harness/根身份/版本，晚回复查设备与正文窗口（ARCHITECTURE）。
 - 插件草稿与应用分离，批准执行摘要后才导入，旧租约真实释放后回收（PLUGIN-DEVELOPMENT、`test/plugin-package-api.test.ts`）。
 - 准备与配置回执见 ARCHITECTURE。外观写入要求基版与回执，替换前复查权限，目录同步未确认保持原请求（CUSTOMIZATION）。交付授权与受限 Git 见 GIT-DELIVERY。
 - 插件连接仅随原生入口启用；远程 review/正文窗口与真实关闭见 [STREAMING](../../docs/STREAMING.md#原生客户端的流)。

@@ -124,7 +124,7 @@ Provider.stream             Standard Runtime             Host                   
 
 ### 文件差异的设备投影
 
-Host 按发送时设备的数据范围生成详情与审批的展示投影：`all` 保留原内容，`work` 收不到文件正文。总规则见 [ARCHITECTURE.md](./ARCHITECTURE.md)；这里是协议与旧历史的规则。
+Host 按发送时设备的数据范围生成详情与审批的展示投影：`all` 保留原内容，`files` 只保留路径都在会话文件夹内的文件正文，`work` 收不到文件正文。总规则见 [ARCHITECTURE.md](./ARCHITECTURE.md)；这里是协议与旧历史的规则。
 
 - **`work` 省略什么。** `ToolDetail.diffs` 的正文省略，路径并入 `locations`；文件编辑的参数只留路径与有限的控制元数据，其他字符串与不明结构省略。`Message.text` 里的工具载荷副本同样投影，子 Agent 的步骤递归应用。
 - **保留什么。** 消息、工具、审批与运行的身份，`requestId`、时间、`decision`、`judged`、`blocked`，以及失败、取消、结果未知的事实。

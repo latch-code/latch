@@ -457,7 +457,7 @@ describe('the attach button and @ on every Harness', () => {
       const page = await context.newPage()
       page.setDefaultTimeout(15_000)
       try {
-        await enrollBrowser(page, host, { name: `附件按钮 ${width} ${theme}`, scopes: ['admin'] })
+        await enrollBrowser(page, host, { name: `附件按钮 ${width} ${theme}`, scopes: ['admin'], dataScope: 'work' })
         // Choosing it would read its lists, which starts it and answers too; held back here to see it unstarted.
         await page.route('**/link/api/agents/*/catalogue', route => route.fulfill({ json: { ran: false, harness: late } }))
         await newDraft(page)
@@ -519,7 +519,7 @@ describe('the attach button and @ on every Harness', () => {
           await permission.getByRole('radio', { checked: true }).first().click()
           await permission.waitFor({ state: 'hidden' })
         }
-        // A browser sees work data only: @ says so instead of staying silent.
+        // A browser on the work scope: @ says so instead of staying silent.
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
         expect(await input.getAttribute('placeholder')).toBe('想让 Agent 做什么？')
         await input.fill('看看 @app')

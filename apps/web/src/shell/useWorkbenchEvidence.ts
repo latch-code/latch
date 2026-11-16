@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AppSnapshot, TaskDetail, TaskSummary, WorkbenchDelivery, WorkbenchDeliveryEntry } from '@latch/protocol'
+import {
+  readsProjectFiles,
+  type AppSnapshot,
+  type TaskDetail,
+  type TaskSummary,
+  type WorkbenchDelivery,
+  type WorkbenchDeliveryEntry,
+} from '@latch/protocol'
 import { api, ApiError, errorMessage } from '../core/api.ts'
 import { spaceOf } from '../sessions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
@@ -49,7 +56,7 @@ export function useWorkbenchDelivery(
     active
     && connection === 'connected'
     && snapshot.catalog?.features?.gitDelivery === true
-    && snapshot.device.dataScope === 'all'
+    && readsProjectFiles(snapshot.device.dataScope)
     && snapshot.device.scopes.includes('view')
   useEffect(() => {
     if (!enabled) {
@@ -118,7 +125,7 @@ export function useWorkbenchDelivery(
   const authorized =
     readState?.scope === scope
     && snapshot.catalog?.features?.gitDelivery === true
-    && snapshot.device.dataScope === 'all'
+    && readsProjectFiles(snapshot.device.dataScope)
     && snapshot.device.scopes.includes('view')
   const allowed = new Set(candidates.map(task => task.id))
   const entries = authorized ? new Map([...readState.entries].filter(([id]) => allowed.has(id))) : EMPTY_ENTRIES

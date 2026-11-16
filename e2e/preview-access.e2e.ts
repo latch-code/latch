@@ -108,7 +108,7 @@ describe('preview authority reduction', () => {
         const page = await context.newPage(),
           deviceName = '预览范围 ' + kind
         await page.route(/\/link\/api\/files\/[^/]+\/meta(?:\?|$)/u, route => route.abort())
-        await enrollBrowser(page, host, { name: deviceName, scopes: ['view', 'run'] })
+        await enrollBrowser(page, host, { name: deviceName, scopes: ['view', 'run'], dataScope: 'work' })
         const device = (await owner.json<{ devices: Device[] }>('devices')).devices.find(device => device.name === deviceName)!
         expect(device.dataScope).toBe('work')
         await showList(page, width)

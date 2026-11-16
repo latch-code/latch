@@ -1,7 +1,7 @@
 import { useEffect, useState, type RefObject } from 'react'
 import { PlugZap } from 'lucide-react'
 import { AGENT_PRESETS, type AgentPresetSettings, type ModelRef } from '@latch/protocol'
-import { Button, Collapse, CopyButton, ICON_STROKE, Icon, ChevronRightGlyph, RefreshGlyph, WarningGlyph } from '@latch/ui'
+import { Button, Collapse, CopyButton, Hint, ICON_STROKE, RefreshGlyph, WarningGlyph } from '@latch/ui'
 import { api } from '../core/api.ts'
 import { foundWithoutAdapter, presetsFound } from '../core/agentDetection.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
@@ -235,14 +235,13 @@ function HowToInstall({ preset, checking, onRecheck }: { preset: AgentPresetSett
 }
 
 /**
- * The first open on this Mac with something found (J9): what was found first, each with the file the Host found, then
- * the half-way Codex, then the rest folded under one line. 「已找到」 says only that an executable with that name is here:
- * the Host ran nothing, so it is not drawn as ready or in green. Latch installs nothing; 「怎么装」 gives the command.
+ * The first open on this Mac with something found (J9): only what was found, each with the file the Host found, and one
+ * that is half there with a short word, its detail on hover. 「已找到」 says only that an executable with that name is here:
+ * the Host ran nothing, so it is not drawn as ready. What is not installed is listed in 设置 › Harness.
  */
 export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<void> }) {
   const [presets, setPresets] = useState<AgentPresetSettings[] | null>(null)
   const [checking, setChecking] = useState(false)
-  const [more, setMore] = useState(false)
   const [how, setHow] = useState<string | null>(null)
   // Reading them makes the Host look again, which is what arriving here or pressing 重新检测 wants.
   const look = async () => {
@@ -259,7 +258,7 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
     })
   }
   if (!presets) return null
-  const { found, halfway, more: rest } = presetsFound(presets)
+  const { found, halfway } = presetsFound(presets)
   // A Harness that is no preset can be what runs here; the card has nothing of its own to say then.
   if (!found.length) return null
   const howButton = (preset: AgentPresetSettings) => {
@@ -283,6 +282,17 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
       <HowToInstall preset={preset} checking={checking} onRecheck={recheck} />
     </Collapse>
   )
+  const halfRow = (preset: AgentPresetSettings, word: string, detail: string) => (
+    <li key={preset.id} className="harness-found-row" data-halfway="">
+      <MarkTile mark={preset.id} size={16} />
+      <span className="harness-found-name">{preset.name}</span>
+      <Hint className="harness-found-note" label={word}>
+        {detail}
+      </Hint>
+      {howButton(preset)}
+      {howRow(preset)}
+    </li>
+  )
   return (
     <section className="harness-found" aria-label="找到的 Harness">
       <div className="harness-found-head">
@@ -296,13 +306,7 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
       <ul className="harness-found-list">
         {found.map(({ preset, path }) =>
           preset.detected?.outdated ? (
-            <li key={preset.id} className="harness-found-row" data-halfway="">
-              <MarkTile mark={preset.id} size={16} />
-              <span className="harness-found-name">{preset.name}</span>
-              <span className="harness-found-note">{preset.detected.outdated.need}</span>
-              {howButton(preset)}
-              {howRow(preset)}
-            </li>
+            halfRow(preset, '需要升级', preset.detected.outdated.need)
           ) : (
             <li key={preset.id} className="harness-found-row">
               <MarkTile mark={preset.id} size={16} />
@@ -316,44 +320,8 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
             </li>
           ),
         )}
-        {halfway.map(({ preset, program }) => (
-          <li key={preset.id} className="harness-found-row" data-halfway="">
-            <MarkTile mark={preset.id} size={16} />
-            <span className="harness-found-name">{preset.name}</span>
-            <span className="harness-found-note">找到 {program}，还缺适配器</span>
-            {howButton(preset)}
-            {howRow(preset)}
-          </li>
-        ))}
+        {halfway.map(({ preset, program }) => halfRow(preset, '缺适配器', `找到 ${program}，还缺适配器`))}
       </ul>
-      {rest.length > 0 && (
-        <>
-          <button
-            type="button"
-            className="harness-found-fold"
-            aria-expanded={more}
-            onClick={() => {
-              setMore(!more)
-              setHow(null)
-            }}>
-            <Icon icon={ChevronRightGlyph} size={14} />
-            还可以装 <span className="harness-found-count">{rest.length}</span> 个
-          </button>
-          <Collapse open={more} lazy>
-            <ul className="harness-found-list">
-              {rest.map(preset => (
-                <li key={preset.id} className="harness-found-row" data-more="">
-                  <MarkTile mark={preset.id} size={16} />
-                  <span className="harness-found-name">{preset.name}</span>
-                  <span className="harness-found-note">{preset.installNote}</span>
-                  {howButton(preset)}
-                  {howRow(preset)}
-                </li>
-              ))}
-            </ul>
-          </Collapse>
-        </>
-      )}
     </section>
   )
 }

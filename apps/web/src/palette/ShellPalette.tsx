@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from 'react'
+import { readsProjectFiles } from '@latch/protocol'
 import {
   ChartNoAxesColumn,
   ClipboardCopy,
@@ -110,7 +111,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
 
   const allowed = settingsSections(snapshot, access)
   const canSearchFiles =
-    catalog?.features?.fileSearch === true && catalog.features.filePreview === true && snapshot.device.dataScope === 'all'
+    catalog?.features?.fileSearch === true && catalog.features.filePreview === true && readsProjectFiles(snapshot.device.dataScope)
   const canDefineAgents = allowed.includes('engines')
 
   const folders = route.overview ? catalog?.workspaces.find(item => item.id === shell.choice.workspaceId)?.folders : summary?.folders

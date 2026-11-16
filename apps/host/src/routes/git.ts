@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { WorkbenchDeliveryReader, workbenchReadFailure, type WorkbenchDeliveryTarget } from '../workbench-delivery.ts'
-import type { GitDeliveryKind } from '@latch/protocol'
+import { readsProjectFiles, type GitDeliveryKind } from '@latch/protocol'
 import { AppError, type ProjectFolder } from '@latch/sdk'
 import { sha256Hex } from '@latch/core/node-kit'
 import { GitDelivery, MESSAGE_LIMIT, type DeliveryCaller, type GitDeliveryOptions } from '../git-delivery.ts'
@@ -115,8 +115,10 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
   /** The device may still do this, on this session: scope, and full data scope for files and for a private session. */
   function permitted(caller: DeviceCaller, sessionId: string, kind: Access): void {
     recheck(caller, READS.has(kind) ? 'view' : 'run')
-    const all = devices.get(caller.device.id)?.dataScope === 'all'
-    if (FILE_LEVEL.has(kind) && !all) throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
+    const scope = devices.get(caller.device.id)?.dataScope
+    const all = scope === 'all'
+    if (FILE_LEVEL.has(kind) && !readsProjectFiles(scope))
+      throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
     if (hub.agentPrivate(sessionId) && !all)
       throw new AppError(403, 'agent-scope-required', 'Agent 含有私有记忆，请先在电脑上允许这台设备使用。')
   }
@@ -279,10 +281,10 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
       limits.classC.take(caller.device.id)
       const folder = await folderOf(sessionId)
       // Reviews, comments and the last commit's subject are the repository's words: for devices that may read its files.
-      const all = devices.get(caller.device.id)?.dataScope === 'all'
+      const all = readsProjectFiles(devices.get(caller.device.id)?.dataScope)
       const state = await delivery.prState({ sessionId, folder, discussion: all, title: all })
       permitted(caller, sessionId, 'pr-state')
-      const still = devices.get(caller.device.id)?.dataScope === 'all'
+      const still = readsProjectFiles(devices.get(caller.device.id)?.dataScope)
       if (all && !still) {
         delete state.discussion
         delete state.discussionCapped

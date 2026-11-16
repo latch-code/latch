@@ -131,7 +131,7 @@ describe('changes routes', () => {
     const { t, sessionId, path, turnId } = await fixture()
     const widen = (device: TestDevice) =>
       t.host.security.devices.setScopes(device.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
-    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'], dataScope: 'work' })
     // Diffs show files no message mentioned, so they are for devices that may browse the folders.
     const narrow = await viewer.request(`${path}?scope=turn`)
     expect(narrow.status).toBe(403)

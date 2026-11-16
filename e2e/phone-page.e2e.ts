@@ -276,8 +276,8 @@ describe('设置 › 设备', () => {
       await page.locator('[data-device-id="dev_browser"] .settings-row-main').click()
       await page.getByRole('switch', { name: '可以管理这台 Mac', exact: true }).waitFor()
       await page.getByRole('switch', { name: '可以看项目文件', exact: true }).waitFor()
-      // What the files switch opens is never put behind ⓘ in full: private sessions stay in its visible line.
-      await page.getByText('也能看含私有内容的会话', { exact: true }).waitFor()
+      // What the files switch opens is named in its visible line.
+      await page.getByText('文件、改动与 @ 文件', { exact: true }).waitFor()
       await capture('browser-device')
       // What managing opens is one press away; opening it leaves the switch as it was.
       const manageHint = page.locator('[data-secure] .ui-hint', { hasText: '能改设置，密钥除外' })
@@ -375,7 +375,7 @@ describe('设置 › 设备', () => {
       ]
       const phoneDetails = sheet.locator('details.connection-details')
       await phoneDetails.locator('summary').click()
-      await phoneDetails.getByText('全部会话', { exact: true }).waitFor()
+      await phoneDetails.getByText('全部，含私有内容', { exact: true }).waitFor()
       expect(await phoneDetails.locator('.connection-code').count()).toBe(0)
       await capture('sheet-confirming-details')
       state.waiting = []
@@ -404,22 +404,11 @@ describe('设置 › 设备', () => {
       )
       await capture('sheet-offnet')
 
-      // After Touch ID only an answer ends it: no close, and Esc does nothing.
+      // After Touch ID the sheet says the phone is connected; one press closes it.
       await setPairing({ state: 'done', device: 'iPhone 16 Pro', deviceId: 'dev_phone', offNetwork: false }, () =>
-        sheet.getByText('手机上显示已连接了吗？', { exact: true }).waitFor(),
+        sheet.locator('.pair-title', { hasText: '已连接「' }).waitFor(),
       )
-      expect(await sheet.getByRole('button', { name: '关闭', exact: true }).count()).toBe(0)
-      // The browser force-closes a modal on a repeated Escape unless told not to, so one press proves nothing.
-      for (let press = 0; press < 4; press++) {
-        await page.keyboard.press('Escape')
-        await page.waitForTimeout(100)
-        expect(await sheet.isVisible()).toBe(true)
-      }
-      await sheet.getByRole('button', { name: '是的，完成', exact: true }).waitFor()
       await capture('sheet-done')
-      await sheet.getByRole('button', { name: '没有，移除', exact: true }).click()
-      await sheet.locator('.pair-title', { hasText: '已移除「' }).waitFor()
-      await capture('sheet-removed')
       await sheet.getByRole('button', { name: '好', exact: true }).click()
       await sheet.waitFor({ state: 'hidden' })
 
@@ -485,7 +474,7 @@ describe('设置 › 设备', () => {
       await page.getByText('查看会话、开始和继续会话、批准普通操作', { exact: true }).waitFor()
       expect(await files.getAttribute('aria-checked')).toBe('false')
       await files.click()
-      await expect.poll(() => state.patches?.at(-1)).toEqual({ id: 'dev_browser', dataScope: 'all' })
+      await expect.poll(() => state.patches?.at(-1)).toEqual({ id: 'dev_browser', dataScope: 'files' })
       await expect.poll(() => files.getAttribute('aria-checked')).toBe('true')
       // Inside a secure group the thumb still slides: on means it sits in the track's right half.
       await expect

@@ -96,20 +96,6 @@ function DetailsLeftOut({ ticket }: { ticket: ConfirmationTicket }) {
   )
 }
 
-/** A start says one line; what the sheet leaves out is a click away, since a full list pushes the input off the page. */
-function StartWaiting({ ticket }: { ticket: ConfirmationTicket }) {
-  return (
-    <>
-      <p className="confirm-touch-id">{COPY.waitingTouchId}</p>
-      <details className="confirm-fold">
-        <summary>{COPY.details}</summary>
-        <ConfirmationWarnings ticket={ticket} />
-        <DetailsList lines={detailsLeftOut(ticket)} />
-      </details>
-    </>
-  )
-}
-
 function CooldownWait({ until }: { until: number }) {
   const { seconds } = useCountdown(new Date(until).toISOString(), 300)
   return <>{seconds > 0 ? COPY.cooldownWait(waitText(seconds)) : COPY.cooldownOver}</>
@@ -316,7 +302,6 @@ export function ConfirmationContent({
     )
   }
   if (view.phase !== 'waiting') return null
-  if (view.ticket.form?.startsWith('start.') && detailsLeftOut(view.ticket).length > 0) return <StartWaiting ticket={view.ticket} />
   return (
     <>
       <ConfirmationWarnings ticket={view.ticket} />

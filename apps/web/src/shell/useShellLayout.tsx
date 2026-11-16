@@ -1,5 +1,5 @@
 import { requestLeave } from '../preview/editDrafts.ts'
-import type { AppSnapshot, TerminalTarget } from '@latch/protocol'
+import { readsProjectFiles, type AppSnapshot, type TerminalTarget } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import { mentionMarker } from '../fileMentions.ts'
 import type { ChangeTotals, FileMention } from '@latch/protocol'
@@ -393,7 +393,7 @@ export function useShellLayout({
   const previewAllowed =
     catalog?.features?.filePreview
     && access.scopes.has('view')
-    && (fileContext?.kind !== 'workspace' || snapshot.device.dataScope === 'all')
+    && (fileContext?.kind !== 'workspace' || readsProjectFiles(snapshot.device.dataScope))
   const fileTabs = previewAllowed ? savedFileTabs : { ...savedFileTabs, tabs: [], active: undefined }
   const [fileExpanded, setFileExpanded] = useState(false)
   const [filesOpen, setFilesOpen] = useState(false)
@@ -403,11 +403,14 @@ export function useShellLayout({
   /** Set when the launcher was asked for; a launcher that merely mounted (a session switch, a reload) leaves focus alone. */
   const launcherAsked = useRef(false)
   const canBrowseFiles =
-    catalog?.features?.fileTree === true && snapshot.device.dataScope === 'all' && access.scopes.has('view') && fileContext !== null
+    catalog?.features?.fileTree === true
+    && readsProjectFiles(snapshot.device.dataScope)
+    && access.scopes.has('view')
+    && fileContext !== null
   const canBrowseDraftFiles =
     catalog?.features?.fileTree === true
     && catalog.features.filePreview === true
-    && snapshot.device.dataScope === 'all'
+    && readsProjectFiles(snapshot.device.dataScope)
     && access.scopes.has('view')
     && draftFileContext !== null
   const filesVisible = !!fileTabs.active || (filesOpen && canBrowseFiles)
@@ -1356,7 +1359,7 @@ export function useShellLayout({
       return
     }
     if (action === 'file-search') {
-      if (catalog?.features?.fileSearch && snapshot.device.dataScope === 'all' && fileContext) {
+      if (catalog?.features?.fileSearch && readsProjectFiles(snapshot.device.dataScope) && fileContext) {
         event.preventDefault()
         setCommandMode('files')
         setCommandOpen(true)
@@ -1504,7 +1507,7 @@ export function useShellLayout({
       ? usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId)
       : summary !== undefined && usesDemoModel(snapshot, summary.harnessId, summary.providerId)
   const frozenAt = useFrozenAt(connection)
-  const changesTabReads = canViewChanges && snapshot.device.dataScope === 'all'
+  const changesTabReads = canViewChanges && readsProjectFiles(snapshot.device.dataScope)
   const openChanges = useStableCallback((target: ChangesTarget) => {
     if (changesTabReads) {
       openChangesTab({

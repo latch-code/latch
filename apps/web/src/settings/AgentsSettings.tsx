@@ -826,8 +826,10 @@ export function AgentRow({
         </span>
       }
       description={
-        // A preset's description would hide that this runs something other than the preset.
-        agent.verified && preset ? (
+        // A preset says which program it is bound to; anything else says what it runs.
+        agent.verified && preset && harness?.bound?.path ? (
+          <MiddleEllipsis text={harness.bound.path} className="settings-mono" />
+        ) : agent.verified && preset ? (
           ((viaAdapter ? preset.fallback?.description : undefined) ?? preset.description)
         ) : (
           <code className="agent-command">{[agent.command, ...agent.args].join(' ')}</code>

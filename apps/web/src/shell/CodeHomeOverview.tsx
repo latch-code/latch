@@ -1,5 +1,5 @@
 import { useImperativeHandle, useRef, type Ref, type RefObject } from 'react'
-import { GENERAL_AGENT_ID, type AppSnapshot, type TaskDetail, type TaskSummary } from '@latch/protocol'
+import { GENERAL_AGENT_ID, type AppSnapshot, type TaskDetail, type TaskSummary, readsProjectFiles } from '@latch/protocol'
 import {
   Button,
   ChevronRightGlyph,
@@ -158,7 +158,7 @@ export function CodeHomeOverview({
   const continueGeneral = recent.length < 3 && general?.state === 'ready' && snapshot.tasks.some(task => task.id === general.sessionId)
   // Keep history reads bounded to two currently authorized summaries, and read each only once its row is on screen.
   const outputCandidates =
-    snapshot.device.dataScope === 'all' && shell.access.scopes.has('view') && snapshot.catalog?.features?.filePreview
+    readsProjectFiles(snapshot.device.dataScope) && shell.access.scopes.has('view') && snapshot.catalog?.features?.filePreview
       ? tasks
           .filter(task => task.status === 'idle' && task.runOutcome === 'completed' && !sessionReadOnly(task))
           .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))

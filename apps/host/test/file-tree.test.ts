@@ -120,7 +120,7 @@ describe.skipIf(process.platform !== 'darwin')('authorized lazy directory listin
       'rootId=default&showHidden=1',
     ])
       expect((await owner.request(`${route}?${suffix}`)).status).toBeGreaterThanOrEqual(400)
-    const work = await host.enroll({ listener: 'loopback-tcp' })
+    const work = await host.enroll({ listener: 'loopback-tcp', dataScope: 'work' })
     expect((await work.request(`${route}?rootId=default`)).status).toBe(403)
     expect((await work.request(`tasks/${task.sessionId}/files/search`, { body: { q: 'z' } })).status).toBe(403)
   })

@@ -8,7 +8,7 @@ import type { ReviewNoteCounts } from './review-notes.ts'
 import type { Approval, TaskDetail, TaskSummary } from './sessions.ts'
 import type { CurrentDevice, PermissionLevel, PresenceAvailability } from './devices.ts'
 import type { HarnessInfo } from './harnesses.ts'
-import type { FirstSetupStatus, ProviderSummary, SessionDefaults, UnusableProvider, WorkspaceInfo } from './settings.ts'
+import type { ProviderSummary, SessionDefaults, UnusableProvider, WorkspaceInfo } from './settings.ts'
 import type { TaskStreamStamp } from './task-delta.ts'
 import type { CustomizationState } from './customization.ts'
 
@@ -67,7 +67,6 @@ export interface AppSnapshot {
   /** Host-known prerequisites; external drivers own their backend configuration. */
   execution?: { ready: boolean; providerId?: string; modelConfigurationRequired?: boolean }
   catalog?: HostCatalog
-  firstSetup?: FirstSetupStatus
   /** 我的 Agent, for devices that may read them; absent otherwise and on older Hosts. */
   customAgents?: CustomAgentSummary[]
   /** Stable interactive chats by Agent owner, under the same scope as customAgents. */

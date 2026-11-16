@@ -17,7 +17,7 @@ import { openSection, openSettings } from './helpers/layout.ts'
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'actual Agent model and reasoning controls',
   () => {
-    it('defers a fresh setup and can complete it with a real saved model', async () => {
+    it('opens a fresh Host straight into the workbench, and the input works once a model service is saved', async () => {
       const root = await mkdtemp(join(tmpdir(), 'latch-electron-setup-'))
       const host = await startTestHost({ demo: false, hostName: '验收电脑' })
       const models = await startFakeModels()
@@ -51,11 +51,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const page = await application.firstWindow()
         page.setDefaultTimeout(15_000)
         await page.getByRole('button', { name: '继续', exact: true }).click()
-        const setup = page.getByRole('dialog', { name: '准备这台电脑' })
-        const start = setup.getByRole('button', { name: '开始使用 Latch' })
-        await setup.waitFor({ state: 'visible' })
-        expect(await start.isEnabled()).toBe(false)
-        await mkdir('test-results/first-setup', { recursive: true })
+        await page.locator('.app-shell[data-connection="connected"]').waitFor()
+        // Nothing to prepare first: what is missing is said where a session starts.
+        const install = page.getByRole('region', { name: '安装 Harness', exact: true })
+        await install.waitFor()
+        expect(await page.getByRole('dialog').count()).toBe(0)
+        await mkdir('test-results/first-open', { recursive: true })
         for (const width of [1440, 768, 390]) {
           await application.evaluate(({ BrowserWindow }, size) => {
             const window = BrowserWindow.getAllWindows()[0]!
@@ -65,22 +66,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await page.waitForFunction(value => innerWidth === value, width)
           for (const colorScheme of ['light', 'dark'] as const) {
             await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
-            const content = setup.locator('.ui-modal-surface')
-            expect(await content.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
-            const insets = await content.evaluate(el => {
-              const bounds = el.getBoundingClientRect()
-              return [bounds.top, innerWidth - bounds.right, innerHeight - bounds.bottom, bounds.left]
-            })
-            expect(insets.every(inset => (width >= 768 ? inset > 0 : inset === 0))).toBe(true)
-            await page.screenshot({ path: `test-results/first-setup/empty-${width}-${colorScheme}.png`, animations: 'disabled' })
+            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+            await page.screenshot({ path: `test-results/first-open/none-ready-${width}-${colorScheme}.png`, animations: 'disabled' })
           }
         }
-        await setup.getByRole('button', { name: '稍后配置' }).click()
-        await setup.waitFor({ state: 'detached' })
-        expect((await owner.json<AppSnapshot>('snapshot')).firstSetup).toBe('deferred')
-        await page.reload()
-        await page.locator('.app-shell[data-connection="connected"]').waitFor()
-        expect(await setup.count()).toBe(0)
 
         const saved = await owner.confirmed('providers', {
           method: 'POST',
@@ -94,14 +83,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           },
         })
         expect(saved.status).toBe(201)
-        const settings = await openSettings(page)
-        await openSection(settings, '通用')
-        await settings.getByRole('button', { name: '打开准备页' }).click()
-        await setup.getByText('已就绪', { exact: true }).waitFor()
-        await page.screenshot({ path: 'test-results/first-setup/ready-390-dark.png', animations: 'disabled' })
-        await start.click()
-        await setup.waitFor({ state: 'detached' })
-        expect((await owner.json<AppSnapshot>('snapshot')).firstSetup).toBe('completed')
+        await install.waitFor({ state: 'detached' })
+        const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+        await input.fill('你好')
+        await input.press('Meta+Enter')
+        await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length).toBe(1)
+        await page.screenshot({ path: 'test-results/first-open/model-ready-390-dark.png', animations: 'disabled' })
       } finally {
         await application?.close()
         await host.close()
@@ -291,7 +278,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await openSection(settings, '模型')
         const row = settings.locator('.address-row', { hasText: '127.0.0.1' })
         await row.getByRole('button', { name: '移除', exact: true }).click()
-        await page.getByRole('dialog').getByRole('button', { name: '移除', exact: true }).click()
+        await page
+          .getByRole('dialog', { name: /^移除 /u })
+          .getByRole('button', { name: '移除', exact: true })
+          .click()
         await row.waitFor({ state: 'detached' })
         const { policy } = await owner.json<{ policy: { confirmedAddresses: string[]; hostEgressAllow: string[] } }>('policy')
         expect(policy.confirmedAddresses).toEqual([])

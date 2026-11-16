@@ -148,7 +148,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
   - 加入出站地址（`policy.change`）与确认新的模型服务地址（`provider.confirm-origin`）；
   - 应用含执行内容的自定义插件（`plugin.package.apply`）；
   - 新增或放宽 MCP 服务器（`mcp.server.apply`，见 [MCP.md](./MCP.md)）；
-  - 新增或修改 Harness 的命令、参数与变量（`harness.command.apply`，见 [HARNESSES.md](./HARNESSES.md)）。
+  - 与预设不同的 Harness 命令、参数与变量，或预设命令解析到另一个程序（`harness.command.apply`，见 [HARNESSES.md](./HARNESSES.md)）。预设的原样命令与预设模型服务的 HTTPS 地址不确认，审计照写（stepup `preset` 或 `none`），L3 运行或等待时同样拒绝。
 - **确认只在这台电脑上发起。** 只有经 `host.sock` 认证的已登记设备能发起；设备登记是唯一例外，而 `host.sock` 以外的登记还要先有一次性邀请。从未有过设备时，桌面端在 `host.sock` 上的第一次连接不需要确认。有完全访问会话在运行或等待时确认被拒绝。
 - **不弹确认的操作只留审计。** 开始 Agent、放宽模式、批准操作、改 Harness 的名称与开关：Agent 是没有沙箱的可信代码，审批是人选择的看管程度。
 - **先审计再执行。** 授予或执行权限的操作先写入审计记录，写入失败则拒绝执行；降低权限的操作从不因审计失败而受阻。
@@ -157,7 +157,9 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 ### 文件差异的数据范围
 
-`dataScope: 'work'` 的设备读取详情、历史、审批快照与事件流时，Host 省略文件差异正文及文件编辑参数中的内容，只保留动作、路径与结果元数据；`all` 保留完整内容。投影不改变 Driver 的历史、真正的审批参数与模型输入。快照读取期间数据范围变化时返回 `device-scope-changed`，要求重新读取。协议见 [STREAMING.md](STREAMING.md#文件差异的设备投影)。
+数据范围有三档：`work` 只能打开会话提到过的文件；`files` 是会话与项目的文件：浏览、读写已保存项目与会话文件夹里的文件和改动，私有会话留下的工作树除外；`all` 还包括私有会话与 Agent、终端和接入其他 CLI 的会话。新登记的浏览器默认 `files`（可以在登记时要更少），这台 Mac 与手机是 `all`（iPhone App 把 `all` 以外都当作不能读文件）；已登记的设备保留原范围，扩大要在 Mac 上经 `device.grant`，缩小随时生效。
+
+`dataScope: 'work'` 的设备读取详情、历史、审批快照与事件流时，Host 省略文件差异正文及文件编辑参数中的内容，只保留动作、路径与结果元数据。`files` 的设备只在工具指名的路径都在会话文件夹内（解析符号链接后）时收到正文，否则同 `work`；`all` 保留完整内容。投影不改变 Driver 的历史、真正的审批参数与模型输入。快照读取期间数据范围变化时返回 `device-scope-changed`，要求重新读取。协议见 [STREAMING.md](STREAMING.md#文件差异的设备投影)。
 
 这不是对会话文字的信息流隔离：消息正文、命令输出与 MCP 结果不凭文本猜测删除，可信本机 Agent 仍能在这些渠道转述内容。
 
@@ -187,13 +189,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 ### Host 的生命周期
 
-**首次准备。** 状态是 Host 的 `settings.json` 中的无密钥字段，属于这台 Host，不属于某个页面。
-
-- 新建且没有既有配置的 Host 在第一次启动时写为 `pending`，持久写入失败时报错，不当作已写入；已有配置的安装直接进入工作台。
-- `firstSetup` 只出现在经 `host.sock` 登记、有 `admin` 与 `run` 的设备的快照里。
-- `PUT /first-setup` 经就绪核对记为 `completed`，或把暂缓记为 `deferred`；完成状态不会被另一页的暂缓覆盖。
-- 准备页的选择（`PUT /preferences` 的 `setupRequestId`）与新增模型服务（`POST /providers` 的 `requestId`）各有设备绑定的回执，上限 128 与 512 条；满时拒绝新请求号，保留已接受的供核对。结果未知时查询 `GET /first-setup/choices/:requestId` 或 `GET /providers/additions/:requestId`，用原请求重试，不重放旧选择，也不重新授予地址权限。
-- 写入只落到 Latch 的 Host 配置，不改命令行工具自己的设置或登录文件；模型密钥只留在表单的短期内存中。
+**第一次打开。** 没有准备步骤。没有保存过 Harness 时，默认是有模型的 Latch 内置，否则按预设顺序第一个就绪、能运行命令、自带模型的 Harness（含这台 Mac 上找到、尚未保存的预设）。新增模型服务（`POST /providers` 的 `requestId`）有设备绑定的回执，上限 512 条；结果未知时查询 `GET /providers/additions/:requestId`，用原请求重试，不重新授予地址权限。
 
 **分工。** Host 自己宣布运行状态并重新加载证书。让它常驻、重启和保持唤醒的是桌面端主进程（`apps/desktop/src/lifecycle.cjs`），因为登录项、电源断言与系统睡眠通知只在 Electron 中可用。
 
@@ -331,7 +327,7 @@ Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠
 
 ### 会话文件
 
-回复里提到的文件在客户端是路径标记，从不让页面导航。判断都在 Host（`apps/host/src/files/`）：读取内容需要 `view`，`work` 设备只能打开本会话提到过的文件，枚举与搜索文件夹要数据范围 `all`；预览与编辑见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。在访达中显示、快速查看、用默认应用或编辑器打开这些本机动作只在 `host.sock` 上进行，先审计再给出真实路径。
+回复里提到的文件在客户端是路径标记，从不让页面导航。判断都在 Host（`apps/host/src/files/`）：读取内容需要 `view`，`work` 设备只能打开本会话提到过的文件，枚举与搜索文件夹要数据范围 `files` 或 `all`；预览与编辑见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。在访达中显示、快速查看、用默认应用或编辑器打开这些本机动作只在 `host.sock` 上进行，先审计再给出真实路径。
 
 **在编辑器中打开。** 只在这台 Mac 的主窗口出现。
 
@@ -589,7 +585,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /credentials/challenge`、`POST /credentials/renew` | 设备（含待续期） | 凭据续期 |
 | `PATCH`/`DELETE /devices/current` | `view` | 重命名、撤销本设备 |
 | `GET /devices`、`DELETE /devices/:id` | `admin` 或匿名 | 设备列表、撤销；撤销当前设备用 `/devices/current` |
-| `PATCH /devices/:id` | `admin`；授予权限或把数据范围扩为 `all` 需本机与本机确认 | 调整权限与数据范围 |
+| `PATCH /devices/:id` | `admin`；授予权限或扩大数据范围需本机与本机确认 | 调整权限与数据范围 |
 | `PATCH /devices/:id/name`、`GET /enrollments` | 本机 `admin` | 重命名任一设备；仍在等待的登记 |
 | `POST /pairings` | 本机 `admin` 或匿名 | 配对邀请 `{ scopes?, target? }`；未配置 HTTPS 入口时 409 `tls-not-configured`。桌面端只由主进程调用 |
 | `GET /native/info`、`/native/pairings…`、`/native/relays…`、`/native/relay-requests/:id`、`DELETE /native/directory` | 本机 `admin`（`GET /native/info` 或匿名）；添加中继需本机确认 | 手机配对二维码与自建中继（[RELAY.md](RELAY.md)）。签发二维码要先打开局域网入口：没有网络时 409 `native-no-lan`，完全访问的会话运行或等待时 409 `presence-blocked` |
@@ -618,9 +614,9 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 
 | 路径 | 模块 | 谁可调用 | 文档 |
 | --- | --- | --- | --- |
-| `/tasks/:id/files/…`、`/workspaces/:id/files/…`、`/files/:handle…` | `files/index.ts` | 读 `view`；枚举与搜索另需数据范围 `all`；编辑 `run` + `all`；`POST /files/:handle/local` 只在本机 | 「会话文件」、[DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md) |
+| `/tasks/:id/files/…`、`/workspaces/:id/files/…`、`/files/:handle…` | `files/index.ts` | 读 `view`；枚举与搜索另需数据范围 `files`；编辑 `run` + `files`；`POST /files/:handle/local` 只在本机 | 「会话文件」、[DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md) |
 | `/attachments…` | `attachment-routes.ts` | 读 `view`，上传与绑定 `run` | [ATTACHMENTS.md](ATTACHMENTS.md) |
-| `/tasks/:id/changes…`、`/tasks/:id/turns/:turnId/(undo\|redo)`、`/tasks/:id/review-notes…` | `routes/changes.ts`、`routes/review-notes.ts` | 行级反馈：读 `view`，写 `run`，数据范围 `all`；改动与撤销见文档 | [CHANGES.md](CHANGES.md) |
+| `/tasks/:id/changes…`、`/tasks/:id/turns/:turnId/(undo\|redo)`、`/tasks/:id/review-notes…` | `routes/changes.ts`、`routes/review-notes.ts` | 行级反馈：读 `view`，写 `run`，数据范围 `files`；改动与撤销见文档 | [CHANGES.md](CHANGES.md) |
 | `/tasks/:id/git…`、`/workbench/delivery` | `routes/git.ts` | 读 `view`，写 `run`；内容与私有会话另需 `all` | [GIT-DELIVERY.md](GIT-DELIVERY.md) |
 | `/tasks/:id/terminals…`、`/workspaces/:id/terminals…` | `routes/terminal.ts` | 见文档 | [TERMINAL.md](TERMINAL.md) |
 | `/browser-provider/…`、`/tasks/:id/browser-tabs` | `routes/browser.ts` | 见文档 | [PREVIEW-BROWSER.md](PREVIEW-BROWSER.md) |
@@ -653,7 +649,6 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /folder-grants`、`POST /workspaces`、`POST /workspaces/:id/folders` | 本机 `admin`；后两者另需签名 | 见「谁能添加」 |
 | `PATCH /workspaces/:id`、`DELETE /workspaces/:id`、`DELETE /workspaces/:id/folders/:folderId` | `admin` | 重命名、图标、文件夹顺序；移除项目或文件夹（文件不删除） |
 | `GET /plugins`、`POST /plugins/:id`、`PUT /preferences` | `admin` | 插件列表与启停、新会话默认值；`pinned` 及其之后的 Harness 与模型只能经 `host.sock` 修改 |
-| `PUT /first-setup`、`GET /first-setup/choices/:requestId` | `admin`；完成只在本机 | 见「Host 的生命周期」 |
 | `GET`/`PATCH /policy` | 设备；修改 `admin`，加入出站地址需本机与本机确认 | 安全策略及其哈希；放宽只有 `hostEgressAllow` 一项 |
 | `GET /traffic` | `admin` 或匿名 | 流量计数 |
 | `POST /diagnostics` | 本机 `admin` 或匿名 | 见「会话文件」的诊断导出 |

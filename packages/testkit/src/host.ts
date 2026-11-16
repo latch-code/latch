@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Agent, fetch as undiciFetch } from 'undici'
-import type { ConfirmationTicket, Device, DeviceScope, EnrollmentView, InvitationView } from '@latch/protocol'
+import type { ConfirmationTicket, DataScope, Device, DeviceScope, EnrollmentView, InvitationView } from '@latch/protocol'
 import { enrollSigningText, foldersBodyHash, foldersSigningText, renewSigningText, testDeviceKey, type TestDeviceKey } from './crypto.ts'
 import { createTestPresence, type TestPresence } from './presence.ts'
 import { makeTestTls } from './tls.ts'
@@ -132,6 +132,8 @@ export interface HostFixture<H extends FixtureHost = FixtureHost> {
     listener?: TestListener
     name?: string
     scopes?: DeviceScope[]
+    /** Asked for at enrollment; the Host's default otherwise. */
+    dataScope?: DataScope
     invitation?: string
     offlineCode?: string
   }): Promise<TestDevice>
@@ -362,7 +364,14 @@ export async function startHostFixture<H extends FixtureHost>(
   }
 
   async function enroll(
-    input: { listener?: TestListener; name?: string; scopes?: DeviceScope[]; invitation?: string; offlineCode?: string } = {},
+    input: {
+      listener?: TestListener
+      name?: string
+      scopes?: DeviceScope[]
+      dataScope?: DataScope
+      invitation?: string
+      offlineCode?: string
+    } = {},
   ): Promise<TestDevice> {
     const listener = input.listener ?? 'loopback-tcp'
     const key = testDeviceKey()
@@ -381,6 +390,7 @@ export async function startHostFixture<H extends FixtureHost>(
         publicKey: key.spki,
         name: input.name ?? 'Test device',
         ...(input.scopes ? { scopes: input.scopes } : {}),
+        ...(input.dataScope ? { dataScope: input.dataScope } : {}),
         ...(invitation ? { invitation } : {}),
         ...(input.offlineCode ? { offlineCode: input.offlineCode } : {}),
       },

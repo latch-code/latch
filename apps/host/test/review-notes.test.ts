@@ -230,7 +230,7 @@ describe('review note routes', { timeout: 30_000 }, () => {
     const { t, owner, sessionId, path, add } = await fixture()
     expect((await owner.json<AppSnapshot>('snapshot')).catalog?.features?.reviewNotes).toBe(true)
     expect((await add(owner, '这里不对')).status).toBe(201)
-    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'], dataScope: 'work' })
     expect(await errorOf(await viewer.request(path))).toEqual({ status: 403, error: 'file-scope' })
     const counts = (await viewer.json<AppSnapshot>('snapshot')).reviewNotes
     expect(counts).toEqual([{ sessionId, pending: 1, sent: 0, claimed: 0, reviewed: 0, revision: 1 }])
@@ -240,7 +240,7 @@ describe('review note routes', { timeout: 30_000 }, () => {
     // Reading is not writing.
     expect((await add(viewer, '不行')).status).toBe(403)
     // A device with run but not the files' data scope writes nothing either.
-    const runner = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'] })
+    const runner = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'work' })
     expect(await errorOf(await add(runner, '不行'))).toEqual({ status: 403, error: 'file-scope' })
     expect(await errorOf(await owner.request('tasks/nope/review-notes'))).toEqual({ status: 404, error: 'task-not-found' })
   })

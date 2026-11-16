@@ -69,11 +69,15 @@ export function connectWays(
 /** A change to what a device may do or see: its scopes, its data scope, or both. */
 export type ScopeChange = { scopes?: Device['scopes']; dataScope?: Device['dataScope'] }
 
-/** The two switches' requests: 管理 adds or drops `admin`, 项目文件 moves the data scope between `work` and `all`. */
+/**
+ * The switches' requests: 管理 adds or drops `admin`; 项目文件 moves the data scope between `work` and `files`, 私有内容
+ * between `files` and `all`.
+ */
 export const manageChange = (device: Pick<Device, 'scopes'>, on: boolean): ScopeChange => ({
   scopes: on ? [...device.scopes, 'admin'] : device.scopes.filter(item => item !== 'admin'),
 })
-export const filesChange = (on: boolean): ScopeChange => ({ dataScope: on ? 'all' : 'work' })
+export const filesChange = (on: boolean): ScopeChange => ({ dataScope: on ? 'files' : 'work' })
+export const privateChange = (on: boolean): ScopeChange => ({ dataScope: on ? 'all' : 'files' })
 
 /**
  * Which of a device's switches this page draws, and whether an off one is locked. Only a browser gets 项目文件: a phone

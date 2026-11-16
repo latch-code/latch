@@ -1,4 +1,4 @@
-import type { TaskSummary } from '@latch/protocol'
+import { readsProjectFiles, type TaskSummary } from '@latch/protocol'
 import { Button, Count, DiffGlyph, Icon, InlineNotice, StatusWord, TerminalGlyph, BranchGlyph, PullRequestGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { toolLabel, turnsOf } from '../conversation.ts'
@@ -18,7 +18,7 @@ const commandWords = {
 /** The latest turn's observed changes and commands, followed by the separately observed repository state. */
 export function SessionOverview({ shell, summary }: { shell: ShellState; summary: TaskSummary }) {
   const connected = shell.connection === 'connected'
-  const canReadChanges = shell.canViewChanges && shell.snapshot.device.dataScope === 'all'
+  const canReadChanges = shell.canViewChanges && readsProjectFiles(shell.snapshot.device.dataScope)
   const detail = shell.current?.summary.id === summary.id ? shell.current : null
   const turn = detail ? turnsOf(detail.messages).at(-1) : undefined
   const messages = turn?.replies ?? []
@@ -59,7 +59,7 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
   const showChecks = commands.length > 0
   // A folder without Git has nothing to deliver, and what this device may not read is already said once above.
   const showDelivery =
-    shell.snapshot.device.dataScope === 'all'
+    readsProjectFiles(shell.snapshot.device.dataScope)
     && (!shell.canDeliver || !!evidence.error || !!entry?.error || entry?.notApplicable !== 'not-repository')
   if (!showChanges && !showChecks && !showDelivery)
     return (

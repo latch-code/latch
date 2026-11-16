@@ -11,7 +11,7 @@ import {
   type SessionPermission,
   type TaskSummary,
 } from '@latch/protocol'
-import { APPROVAL_COPY, highRiskLabel, MODE_COPY, type Brief } from './securityCopy.ts'
+import { APPROVAL_COPY, highRiskLabel, type Brief } from './securityCopy.ts'
 import type { LatchShell } from './shell.ts'
 
 /**
@@ -57,8 +57,6 @@ export function deviceAccess(snapshot: AppSnapshot, shell: LatchShell | null): D
   return { legacy: false, local: isLocalDevice(device, shell), scopes, admin: scopes.has('admin'), device }
 }
 
-/** The session's level as words, in neutral ink: 完全访问 is a fact about the agent, not a warning. */
-export const LEVEL_LABELS = { L1: MODE_COPY.askFirst, L3: MODE_COPY.fullAccess } as const
 export const DEV_MODE_TEXT = '开发模式：这台 Mac 上的程序可以修改 Latch 的代码'
 export const LEGACY_HOST_TEXT = '这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。'
 

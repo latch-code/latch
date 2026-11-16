@@ -3,6 +3,8 @@ import type { TLSSocket } from 'node:tls'
 import { certificateProofText, type HostIdentity } from '../identity.ts'
 import { z } from 'zod'
 import {
+  DATA_SCOPE_LABELS,
+  DATA_SCOPES,
   isLocalListener,
   isNativeListener,
   LISTENER_LABELS,
@@ -14,6 +16,7 @@ import {
   type EnrollmentView,
   type ListenerClass,
   type PresenceSubject,
+  widensDataScope,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { sha256Hex } from '@latch/core/node-kit'
@@ -54,7 +57,7 @@ const enrollmentSchema = z.object({
   /** Empty only when re-confirming a legacy browser, which keeps its old name. */
   name: z.string().trim().max(80).default(''),
   scopes: z.array(scopeSchema).max(6).optional(),
-  dataScope: z.enum(['work', 'all']).optional(),
+  dataScope: z.enum(DATA_SCOPES).optional(),
   invitation: z.string().min(1).max(64).optional(),
   gatewayHash: z
     .string()
@@ -71,7 +74,7 @@ const certificateProofSchema = z.strictObject({ nonce: z.string().regex(/^[A-Za-
 export const signatureSchema = z.object({ signature: z.string().min(1).max(256) })
 const renewSchema = z.object({ nonce: z.string().min(1).max(128), signature: z.string().min(1).max(256) })
 const deviceScopesSchema = z
-  .object({ scopes: z.array(scopeSchema).max(6).optional(), dataScope: z.enum(['work', 'all']).optional() })
+  .object({ scopes: z.array(scopeSchema).max(6).optional(), dataScope: z.enum(DATA_SCOPES).optional() })
   .refine(value => value.scopes !== undefined || value.dataScope !== undefined, '没有要修改的内容')
 export const invitationSchema = z.object({
   scopes: z.array(scopeSchema).max(6).optional(),
@@ -343,7 +346,7 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
       { label: '设备指纹', value: target.fingerprint },
       { label: '新增权限', value: label(added) },
       { label: '移除权限', value: label(removed) },
-      { label: '数据范围', value: dataScope === 'all' ? '全部' : '工作' },
+      { label: '数据范围', value: DATA_SCOPE_LABELS[dataScope] },
     ]
   }
 
@@ -352,7 +355,7 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
     const change = [
       ...(target.status === 'review' ? ['恢复正常使用'] : []),
       ...added.map(scope => SCOPE_LABELS[scope]),
-      ...(dataScope === 'all' && target.dataScope !== 'all' ? ['查看全部数据'] : []),
+      ...(widensDataScope(target.dataScope, dataScope) ? [dataScope === 'all' ? '查看全部数据' : '查看项目文件'] : []),
     ]
     return { form: 'device.grant', slots: { device: target.name, change: change.join('、') || '恢复正常使用' } }
   }
@@ -440,7 +443,7 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
       const removed = target.scopes.filter(scope => !scopes.includes(scope))
       const raising =
         added.length > 0
-        || (dataScope === 'all' && target.dataScope !== 'all')
+        || widensDataScope(target.dataScope, dataScope)
         || (target.status === 'review' && scopes.some(scope => scope !== 'view'))
       const base = grantBase(target)
       let stepup: StepupMethod = 'none'
@@ -469,7 +472,8 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
           try {
             return await devices.changeScopes(
               id,
-              { scopes: kept, dataScope: dataScope === 'work' ? 'work' : current.dataScope },
+              // Narrowed to the smaller of the two, so a concurrent change is never widened.
+              { scopes: kept, dataScope: widensDataScope(dataScope, current.dataScope) ? dataScope : current.dataScope },
               actorOf(caller),
               'none',
               grantBase(current),

@@ -1,6 +1,6 @@
 import { isPersonalChat, personalChatModel, topicOwner } from '../agents/chat.ts'
 import { sessionAgent } from '../agents/model.ts'
-import type { AppSnapshot } from '@latch/protocol'
+import { readsProjectFiles, type AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import { hasFileMention } from '../fileMentions.ts'
 import type { FileMention } from '@latch/protocol'
@@ -387,7 +387,7 @@ export function useSessionController({
     && (inputId === null ? choice.mode === 'agent' : summary?.mode !== 'chat')
     && mentionHarness?.capabilities.tools.fileMentions === true
   // A restricted device gets the reason when it asks for files with @.
-  const mentionsHidden = mentionable && snapshot.device.dataScope !== 'all'
+  const mentionsHidden = mentionable && !readsProjectFiles(snapshot.device.dataScope)
   const mentionChoice = {
     enabled: mentionable && !mentionsHidden,
     ...(mentionsHidden ? { hidden: true as const } : {}),

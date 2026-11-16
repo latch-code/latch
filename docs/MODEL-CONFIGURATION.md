@@ -1,5 +1,5 @@
 ---
-description: 模型与思考两个控件怎样取值、写入与结算，经 Latch 的服务怎样进入模型菜单，Latch 内置的思考深度与推理带回，默认模型与首次准备保存的模型来源，出错时改用、健康、单价、预算与用量的界面，模型服务的编辑。
+description: 模型与思考两个控件怎样取值、写入与结算，经 Latch 的服务怎样进入模型菜单，Latch 内置的思考深度与推理带回，默认模型与保存的模型来源，出错时改用、健康、单价、预算与用量的界面，模型服务的编辑。
 sources:
   - apps/web/src/composer/ModelControl.tsx
   - packages/protocol/src/model-route.ts
@@ -152,7 +152,7 @@ Latch 内置直接调模型服务，思考深度来自 设置 › 模型 里对�
 1. 会话里的选择。带了模型的请求；在自己带模型的 Harness 的菜单里选它自己的「默认」（请求带 `ownModel: true`，页面记住这个选择）；分叉沿用来源会话。带任何开始选项（`config`）的请求不套用项目默认；其中有模型类选项时也不套用第 4 项。
 2. Agent 的模型。Agent 为自己的 Harness 保存的选项（`engineOptions`）算 Agent 的选择：交互开始时作为 `config` 发出，定时运行的计划也不套用项目默认。
 3. 项目的「默认模型」。
-4. 首次准备为这个 Harness 保存的模型来源（见下）；我的 Agent 的会话与不带私有上下文的会话不用它。
+4. 在这台 Mac 上为这个 Harness 固定的模型来源（见下）；我的 Agent 的会话与不带私有上下文的会话不用它。
 5. Harness 自己的默认。
 
 **项目的默认模型**
@@ -162,11 +162,12 @@ Latch 内置直接调模型服务，思考深度来自 设置 › 模型 里对�
 - 思考档位只对内置 Harness 带上，且要仍在声明里。
 - 这台设备在 Latch 内置上选过的模型照旧被记住并排在项目默认之前；只有还没选过模型的设备跟随项目默认。
 
-**首次准备的 Harness 与模型来源**
+**固定的 Harness 与模型来源**
 
-- 准备页为自带模型的 Harness 选网关模型时，`PUT /preferences` 的 `defaults.gateway` 与 `harnessId` 一起保存进 `settings.json`。要 `admin` 且只在这台 Mac 的桌面端；Harness 必须就绪且不是 Latch 内置，路线当场核对（`modelRouteFor`）。
+- 没有保存过 Harness 时，默认是有模型的 Latch 内置，否则是第一个就绪、能运行命令、自带模型的 Harness，用它自己的默认模型；输入框里的选择替代它。
+- 在模型菜单里把自带模型的 Harness 的网关模型设为默认时，`PUT /preferences` 的 `defaults.gateway` 与 `harnessId` 一起保存进 `settings.json`。要 `admin` 且只在这台 Mac 的桌面端；Harness 必须就绪且不是 Latch 内置，路线当场核对（`modelRouteFor`）。
 - 每次投影默认值时用当前启用的服务、模型清单与可用协议重新校验：失效时给 `gatewayUnavailable`，要求重选，不悄悄换成别的。
-- 它只在保存的默认 Harness 就是这个 Harness 时生效；准备状态与回执见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+- 它只在保存的默认 Harness 就是这个 Harness 时生效。
 
 ## 出错时改用与健康
 

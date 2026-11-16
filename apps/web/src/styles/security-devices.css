@@ -370,11 +370,6 @@
   font-size: var(--fs-ui) !important;
   line-height: var(--lh-ui-para) !important;
 }
-.pair-actions {
-  display: flex !important;
-  gap: var(--sp-8);
-  margin-block-start: var(--sp-24);
-}
 .pair-center-action {
   margin-block-start: var(--sp-24);
 }

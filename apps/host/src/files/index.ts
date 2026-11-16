@@ -17,6 +17,7 @@ import {
   type FileContext,
   type FileDirectoryListing,
   type FileEditResult,
+  readsProjectFiles,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { sha256Hex } from '@latch/core/node-kit'
@@ -166,7 +167,7 @@ function admit(caller: FileCaller, scope: DeviceScope): asserts caller is FileCa
   if (!isLocalListener(caller.connection.listener)) throw localOnly()
   if (!caller.device) throw authFailure('unauthorized')
   if (!caller.device.scopes.includes(scope)) throw scopeRequired(scope)
-  if (caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
+  if (!readsProjectFiles(caller.device.dataScope)) throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
 }
 
 function admitRead(caller: FileCaller): asserts caller is FileCaller & { device: Device } {
@@ -217,7 +218,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
 
   async function enumerate(caller: FileCaller, operation: () => Promise<void>): Promise<void> {
     admitRead(caller)
-    if (caller.device.dataScope !== 'all')
+    if (!readsProjectFiles(caller.device.dataScope))
       throw new AppError(403, 'file-scope', '这台设备没有枚举项目文件夹的权限，只能打开本会话提到过的文件')
     const id = caller.device.id,
       active = enumeratingDevices.get(id) ?? 0
@@ -245,7 +246,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
   function check(caller: FileCaller, context: FileContext, revision: string): void {
     options.recheck(caller, 'view')
     if (revision !== revisionOf(context)) throw new AppError(409, 'file-roots-changed', '项目或 Agent 的文件夹配置已变化，请重新打开')
-    if (context.kind === 'workspace' && caller.device?.dataScope !== 'all')
+    if (context.kind === 'workspace' && !readsProjectFiles(caller.device?.dataScope))
       throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，不能浏览项目文件夹')
   }
   async function contextRoots(caller: FileCaller, context: FileContext, checkAccess: () => void): Promise<FileRoot[]> {
@@ -469,7 +470,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
         ? undefined
         : !caller.device.scopes.includes('run')
           ? 'file-edit-scope'
-          : caller.device.dataScope !== 'all'
+          : !readsProjectFiles(caller.device.dataScope)
             ? 'file-edit-data-scope'
             : undefined
       const offered = editableFile && scopeRefusal === undefined
@@ -687,7 +688,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
   async function edit(req: IncomingMessage, res: ServerResponse, caller: FileCaller, sessionId: string, handle: string): Promise<void> {
     admitRead(caller)
     if (!caller.device.scopes.includes('run')) throw scopeRequired('run')
-    if (caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
+    if (!readsProjectFiles(caller.device.dataScope)) throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
     const input = editSchema.parse(await jsonBody(req, EDIT_BODY_LIMIT))
     options.limiter.take(caller.device.id)
     const key = JSON.stringify([caller.device.id, sessionId, input.requestId])
@@ -813,7 +814,8 @@ export function createFileRoutes(options: FileRoutesOptions) {
     supplied?: z.infer<typeof searchSchema>,
   ): Promise<void> {
     admitRead(caller)
-    if (caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，不能搜索文件夹')
+    if (!readsProjectFiles(caller.device.dataScope))
+      throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，不能搜索文件夹')
     const input = supplied ?? searchSchema.parse(await jsonBody(req))
     options.limiter.take(caller.device.id)
     const access = await contextLease(caller, context)
@@ -844,7 +846,8 @@ export function createFileRoutes(options: FileRoutesOptions) {
 
   async function list(req: IncomingMessage, res: ServerResponse, caller: FileCaller, kind: FileContext['kind'], id: string): Promise<void> {
     admitRead(caller)
-    if (caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，没有枚举文件夹的权限')
+    if (!readsProjectFiles(caller.device.dataScope))
+      throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，没有枚举文件夹的权限')
     const params = new URL(req.url ?? '/', 'http://latch.invalid').searchParams
     const allowed = kind === 'workspace' ? ['rootId', 'dir', 'showHidden', 'harnessId'] : ['rootId', 'dir', 'showHidden']
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1))
@@ -942,7 +945,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
       const workspaceRoute = /^\/link\/api\/workspaces\/([^/]+)\/files\/(resolve|search)$/u.exec(path)
       if (workspaceRoute && method === 'POST') {
         admitRead(caller)
-        if (caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '此设备不能浏览项目文件夹')
+        if (!readsProjectFiles(caller.device.dataScope)) throw new AppError(403, 'file-scope', '此设备不能浏览项目文件夹')
         const workspaceId = safeDecode(workspaceRoute[1]!)
         if (!workspaceId || workspaceId.length > 256) throw new AppError(400, 'file-context-invalid', '文件上下文无效')
         const body = await jsonBody(req, 320 * KIB)

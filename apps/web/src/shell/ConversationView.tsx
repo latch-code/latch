@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
-import type { HarnessInfo } from '@latch/protocol'
+import { readsProjectFiles, type HarnessInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
+import { readStorage } from '../core/storageKeys.ts'
 import { sessionReadOnly } from '../core/permissions.ts'
 import { projectFor } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
@@ -263,7 +264,12 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
                     <ChangesLinkContext.Provider value={changesLink}>
                       {/* A helper's frame already keeps this boundary reachable, including its permission warning. */}
                       {current.summary.firstStart && harnessInfo && !helperBoundary && (
-                        <FirstStartNote harness={harnessInfo} {...(speaker ? { who: speaker.name } : {})} />
+                        <FirstStartNote
+                          key={harnessInfo.bound?.id ?? harnessInfo.id}
+                          hostId={snapshot.host.hostId}
+                          harness={harnessInfo}
+                          {...(speaker ? { who: speaker.name } : {})}
+                        />
                       )}
                       {current.summary.worktree?.unfiltered !== undefined && (
                         <div className="session-start-note" role="note">
@@ -319,7 +325,7 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
                         active={active}
                         changes={{
                           // The Host shows a session's files only to a device whose data scope covers them.
-                          enabled: catalog?.features?.changes === true && snapshot.device.dataScope === 'all',
+                          enabled: catalog?.features?.changes === true && readsProjectFiles(snapshot.device.dataScope),
                           undo: sessionReadOnly(current.summary) || !access.scopes.has('run') ? 'read-only' : 'open',
                           // As the 改动 tab reads it: nothing can be written until the connection is back.
                           offline: connection === 'reconnecting' || connection === 'offline',
@@ -457,10 +463,23 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
 }
 
 /**
- * The timeline's first row in an external Harness's session, once per launch in a project: the Harness's mark and that
- * Latch does not isolate it, always in view; what it can do behind ⓘ.
+ * The timeline's first row in an external Harness's first session on this device: the Harness's mark and that Latch does
+ * not isolate it, what it can do behind ⓘ. Said once per program a Harness is bound to, per device; afterwards the
+ * permission menu's ⓘ says it.
  */
-function FirstStartNote({ harness, who }: { harness: HarnessInfo; who?: string }) {
+function FirstStartNote({ hostId, harness, who }: { hostId: string; harness: HarnessInfo; who?: string }) {
+  // Keyed by the program it is bound to: bound to another, it is said again.
+  const key = `latch.boundary-seen.${hostId}.${harness.bound?.id ?? harness.id}`
+  const [shown] = useState(() => readStorage('localStorage', key) === null)
+  useEffect(() => {
+    if (!shown) return
+    try {
+      localStorage.setItem(key, '1')
+    } catch {
+      // Storage that refuses it shows the row again next time.
+    }
+  }, [key, shown])
+  if (!shown) return null
   const name = who ?? harness.capabilities.display.label
   const note = harness.permission?.approvals === 'none' ? MODE_COPY.firstStartUnasked(name) : MODE_COPY.firstStart(name)
   return (

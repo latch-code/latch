@@ -78,10 +78,15 @@ export function extraDirectories(): string[] {
   ]
 }
 
+/** The directories of PATH: the login shell's and the process's, absolute only. */
+export function personPathDirectories(): string[] {
+  const paths = [loginShellValues().PATH, process.env.PATH].flatMap(path => (path ?? '').split(delimiter))
+  return [...new Set(paths.filter(directory => directory && isAbsolute(directory)))]
+}
+
 /** Where a person's programs are: PATH, the login shell's PATH, then the usual install directories. */
 export function personCommandDirectories(): string[] {
-  const paths = [loginShellValues().PATH, process.env.PATH].flatMap(path => (path ?? '').split(delimiter))
-  return [...new Set([...paths.filter(directory => directory && isAbsolute(directory)), ...extraDirectories()])]
+  return [...new Set([...personPathDirectories(), ...extraDirectories()])]
 }
 
 let searched: (() => readonly string[]) | undefined

@@ -183,7 +183,7 @@ describe('device credentials', () => {
         status: 'active',
         listener: 'loopback-tcp',
         scopes: ['view', 'run', 'approve:standard', 'approve:elevated'],
-        dataScope: 'work',
+        dataScope: 'files',
       },
       renewDue: false,
     })
@@ -957,8 +957,8 @@ describe('enrollment', () => {
       { publicKey: testDeviceKey().spki, name: '浏览器', scopes: ['view', 'run', 'approve:standard', 'admin'], invitation: managing },
       loopback,
     )
-    expect(view).toMatchObject({ scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'work' })
-    expect(context.enrollments.waiting()[0]).toMatchObject({ scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'work' })
+    expect(view).toMatchObject({ scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'files' })
+    expect(context.enrollments.waiting()[0]).toMatchObject({ scopes: ['view', 'run', 'approve:standard', 'admin'], dataScope: 'files' })
     expect(() => context.enrollments.invitationOffer(managing, loopback)).toThrowError(
       expect.objectContaining({ code: 'invitation-invalid' }),
     )
@@ -991,7 +991,7 @@ describe('enrollment', () => {
       // A loopback peer may arrive through a forwarded port: the sheet names the device, never where it is.
       reason: '允许「我的浏览器」连接这台 Mac',
       scopes,
-      dataScope: 'work',
+      dataScope: 'files',
     })
     const { preview } = await context.presence.waitForRequest()
     expect(preview.title).toBe('允许新设备连接')
@@ -1004,7 +1004,7 @@ describe('enrollment', () => {
       { label: '来源地址', value: '127.0.0.1 · 回环端口（也可能是转发进来的连接）' },
       { label: '连接方式', value: `回环端口 · ${loopback.origin}` },
       { label: '请求的权限', value: '查看、发起和继续会话、批准普通操作、管理此 Host' },
-      { label: '数据范围', value: '工作' },
+      { label: '数据范围', value: '会话与项目的文件' },
       { label: '邀请来源', value: '命令行' },
     ])
     expect(JSON.stringify(preview)).not.toContain('本机')
@@ -1021,7 +1021,7 @@ describe('enrollment', () => {
       hashDisplay: view.hashDisplay,
       reason: view.reason,
       scopes,
-      dataScope: 'work',
+      dataScope: 'files',
     })
     await expect(context.enrollments.complete(view.id, 'x', loopback)).rejects.toMatchObject({ status: 409, code: 'enrollment-pending' })
     expect(() => context.enrollments.status(view.id, otherLoopback)).toThrow(
@@ -1046,7 +1046,7 @@ describe('enrollment', () => {
       listener: 'loopback-tcp',
       fingerprint,
       scopes: ['view', 'run', 'approve:standard', 'admin'],
-      dataScope: 'work',
+      dataScope: 'files',
       pairedBy: { method: 'invitation' },
     })
     await expect(context.enrollments.complete(view.id, sign(key), loopback)).rejects.toMatchObject({
@@ -1773,7 +1773,7 @@ describe('privilege-reducing changes and the audit log', () => {
       status: 503,
       code: 'audit-unavailable',
     })
-    expect(context.devices.get(browser.id)).toMatchObject({ scopes: ['view', 'run'], dataScope: 'work' })
+    expect(context.devices.get(browser.id)).toMatchObject({ scopes: ['view', 'run'], dataScope: 'files' })
 
     audit.state.failing = false
     await expect(context.devices.changeScopes(browser.id, { scopes: ['view'] }, actor, 'none')).resolves.toMatchObject({
@@ -1894,7 +1894,7 @@ describe('scope changes against a confirmed base', () => {
     const browser = await enroll(context, loopback, { scopes: ['view', 'run', 'approve:standard', 'admin'] })
     const base = {
       scopes: ['view', 'run', 'approve:standard', 'admin'] as DeviceScope[],
-      dataScope: 'work' as const,
+      dataScope: 'files' as const,
       status: 'active' as const,
     }
     const changed = expect.objectContaining({ status: 409, code: 'device-changed', message: '设备权限已被修改，请刷新后重试' })
@@ -1923,11 +1923,11 @@ describe('scope changes against a confirmed base', () => {
     ])
     expect(first).toMatchObject({ status: 'fulfilled', value: { audited: true, device: { scopes: ['view', 'run'] } } })
     expect(second).toMatchObject({ status: 'rejected', reason: changed })
-    expect(context.devices.get(browser.id)).toMatchObject({ scopes: ['view', 'run'], dataScope: 'work' })
+    expect(context.devices.get(browser.id)).toMatchObject({ scopes: ['view', 'run'], dataScope: 'files' })
     await expect(
       context.devices.setScopes(browser.id, { scopes: ['view'] }, actor, 'none', {
         scopes: ['run', 'view'],
-        dataScope: 'work',
+        dataScope: 'files',
         status: 'active',
       }),
     ).resolves.toMatchObject({ scopes: ['view'] })

@@ -1036,18 +1036,23 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await page.locator('.presence-dock').count()).toBe(0)
       testHost.presence.denyNext()
       await page.locator('.inline-confirm[data-confirmation-phase="waiting"]').waitFor({ state: 'detached' })
-      // 可以看项目文件 takes the same one confirmation, whose fixed sentence says 查看全部数据; turning it off asks nothing.
+      // A browser connected here reads project files from the start; 也能看私有内容 takes the same one confirmation,
+      // whose fixed sentence says 查看全部数据, and turning either off asks nothing.
       const files = computer.getByRole('switch', { name: '可以看项目文件', exact: true })
-      expect(host.security.devices.get(phone.device.id)?.dataScope).toBe('work')
-      await files.click()
+      const all = computer.getByRole('switch', { name: '也能看私有内容', exact: true })
+      expect(host.security.devices.get(phone.device.id)?.dataScope).toBe('files')
+      await expect.poll(() => files.getAttribute('aria-checked')).toBe('true')
+      await all.click()
       const widen = await testHost.presence.waitForRequest(15_000)
       expect(widen.preview.action).toBe('device.grant')
       expect(widen.preview.reason).toContain('查看全部数据')
       await captureThemes(page, 'native-desktop-device-files-waiting')
       testHost.presence.approveNext()
       await waitFor(() => host.security.devices.get(phone.device.id)?.dataScope === 'all')
-      await expect.poll(() => files.getAttribute('aria-checked')).toBe('true')
+      await expect.poll(() => all.getAttribute('aria-checked')).toBe('true')
       const beforeLower = testHost.presence.requests.length
+      await all.click()
+      await waitFor(() => host.security.devices.get(phone.device.id)?.dataScope === 'files')
       await files.click()
       await waitFor(() => host.security.devices.get(phone.device.id)?.dataScope === 'work')
       expect(testHost.presence.requests.length).toBe(beforeLower)

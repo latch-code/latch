@@ -7,6 +7,7 @@ import {
   deviceLabel,
   deviceSwitches,
   filesChange,
+  privateChange,
   grantedText,
   listedDevices,
   manageChange,
@@ -110,8 +111,10 @@ describe('a device page', () => {
   it('asks for exactly the change the switch names', () => {
     expect(manageChange(browser, true)).toEqual({ scopes: ['view', 'run', 'approve:standard', 'admin'] })
     expect(manageChange({ scopes: ['view', 'admin', 'run'] }, false)).toEqual({ scopes: ['view', 'run'] })
-    expect(filesChange(true)).toEqual({ dataScope: 'all' })
+    expect(filesChange(true)).toEqual({ dataScope: 'files' })
     expect(filesChange(false)).toEqual({ dataScope: 'work' })
+    expect(privateChange(true)).toEqual({ dataScope: 'all' })
+    expect(privateChange(false)).toEqual({ dataScope: 'files' })
   })
 
   it('says what the device may do, leaving 管理 to its switch', () => {

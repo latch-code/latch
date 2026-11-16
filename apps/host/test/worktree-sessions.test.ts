@@ -625,6 +625,16 @@ describe.skipIf(!git)('sessions in a new worktree', () => {
     expect(seen).toMatchObject({ state: 'leftover', reusable: false })
     expect(seen.branch).toBeUndefined()
     expect(await (await f.start(work, { worktree: { from: 'reuse', name } })).json()).toMatchObject({ error: 'worktree-reuse-held' })
+    // A device that reads project files but not private content gets neither its file names nor its removal.
+    const files = await f.t.enroll({ scopes: ['view', 'run'] })
+    expect(files.device.dataScope).toBe('files')
+    const facts = await files.request(`workspaces/${f.workspaceId}/worktrees/${name}`)
+    expect([facts.status, ((await facts.json()) as { error?: string }).error]).toEqual([403, 'agent-scope-required'])
+    const removal = await files.request(`workspaces/${f.workspaceId}/worktrees/${name}/remove`, {
+      method: 'POST',
+      body: { requestId: randomUUID() },
+    })
+    expect([removal.status, ((await removal.json()) as { error?: string }).error]).toEqual([403, 'agent-scope-required'])
     expect((await f.start(f.owner, { worktree: { from: 'reuse', name } })).status).toBe(201)
   })
 

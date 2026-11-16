@@ -126,13 +126,13 @@ sources:
 
 文本、代码与 Markdown 文件可以在预览里编辑并保存，只在 Host 给出 `actions.edit` 时出现。
 
-**条件：** 会话里的文件；设备有 `run` 且数据范围是 `all`；不像密钥；不超过 1 MiB（`FILE_EDIT_LIMIT`）；页面读到的是完整的 UTF-8 文本且有 WebCrypto。
+**条件：** 会话里的文件；设备有 `run` 且数据范围是 `files` 或 `all`；不像密钥；不超过 1 MiB（`FILE_EDIT_LIMIT`）；页面读到的是完整的 UTF-8 文本且有 WebCrypto。
 
 **拒绝**（Host 在 `refused.edit` 里给原因，直接请求时同样拒绝）：
 
 | 原因 | 情况 |
 | --- | --- |
-| `file-edit-scope`、`file-edit-data-scope` | 设备没有 `run`，或数据范围不是 `all` |
+| `file-edit-scope`、`file-edit-data-scope` | 设备没有 `run`，或数据范围是 `work` |
 | `file-edit-elevated` | Latch 写入时按 R2 处理的路径（`isProtectedWorkspacePath`：Git 钩子、依赖清单、CI 工作流、Agent 设置、环境文件等）只给有 `approve:elevated` 的设备 |
 | `file-code-root` | Latch 程序目录（与它重叠的文件夹）里的文件从不编辑 |
 | `file-mixed-eol` | 混用 CRLF、LF 或 CR 的文件不编辑，不悄悄统一换行。Host 按文件开头判断，页面读到整个文件后再按同一规则判断一次 |

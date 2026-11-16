@@ -112,7 +112,7 @@ describe('接入已有会话 from the home', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  /** A browser device; `all` widens its data scope, as the Mac's 「可以看项目文件」 does. */
+  /** A browser device; `all` widens its data scope, as the Mac's 「也能看私有内容」 does. */
   const open = async (width: number, theme: 'light' | 'dark', scope: 'all' | 'work' = 'all'): Promise<Page> => {
     const context = await browser.newContext({
       viewport: { width, height: width < 768 ? 844 : 900 },
@@ -356,7 +356,7 @@ describe('接入已有会话 from the home', () => {
     await locked.getByText('接入已有会话', { exact: true }).waitFor()
     expect(await page.getByRole('button', { name: '接入已有会话', exact: true }).count()).toBe(0)
     await locked.getByRole('button', { name: '为什么不能接入', exact: true }).click()
-    await locked.getByText(/开启「可以看项目文件」后可用/u).waitFor()
+    await locked.getByText(/开启「也能看私有内容」后可用/u).waitFor()
     // Nor does it see the sessions brought in, which are private.
     const listed = (await page.evaluate(() => [...document.querySelectorAll('[data-task-id]')].map(item => item.textContent))).join('\n')
     expect(listed).not.toContain('Login bug')

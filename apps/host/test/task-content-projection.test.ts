@@ -44,7 +44,7 @@ async function fixture(options: TestHostOptions = {}) {
   cleanups.push(() => host.close())
   await writeFile(join(host.workspaceRoot, 'notes.txt'), before)
   const owner = await host.enroll({ listener: 'unix', scopes: ['view', 'run', 'approve:standard', 'admin'] })
-  const work = await host.enroll({ scopes: ['view', 'run', 'approve:standard'] })
+  const work = await host.enroll({ scopes: ['view', 'run', 'approve:standard'], dataScope: 'work' })
   expect((await owner.json<AppSnapshot>('snapshot')).device.dataScope).toBe('all')
   expect((await work.json<AppSnapshot>('snapshot')).device.dataScope).toBe('work')
   const { sessionId } = await owner.confirmedJson<{ sessionId: string }>('tasks', {
@@ -212,7 +212,7 @@ describe('work-scope file content projection', () => {
     const next = await startTestHost({ dataDir, workspaceRoot, demo: false, providerId: writer.id, plugins: [writer] })
     cleanups.push(() => next.close())
     const desktop = await next.enroll({ listener: 'unix' }),
-      limited = await next.enroll()
+      limited = await next.enroll({ dataScope: 'work' })
     const restored = await desktop.json<TaskDetail>(`tasks/${sessionId}`)
     expect(restored.messages.find(message => message.role === 'tool')!.tool).not.toHaveProperty('outputWithoutFiles')
     expect((await next.host.bridge.detail(sessionId)).messages.find(message => message.role === 'tool')!.tool).toMatchObject({

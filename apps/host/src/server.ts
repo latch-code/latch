@@ -34,7 +34,7 @@ import { AttachmentUploads } from './attachment-uploads.ts'
 import type { AttachmentSelection, AttachmentCapabilities, AttachmentRef } from '@latch/protocol'
 import type { LatchWorktree, WorktreeBase, WorktreeInventory, WorktreeRemoval } from '@latch/protocol'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 export { loadPluginPackage } from './plugin-packages.ts'
 import { existsSync, realpathSync, statSync, type BigIntStats } from 'node:fs'
 import { lstat, mkdir, mkdtemp, chmod, open as openFile, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
@@ -59,6 +59,8 @@ import {
   isProviderKind,
   PROVIDER_PRESETS,
   isLocalListener,
+  readsProjectFiles,
+  type DataScope,
   isNativeListener,
   rejectionNote,
   RISK_REASON_TEXT,
@@ -76,7 +78,6 @@ import {
   type ChangeEvent,
   type CurrentDevice,
   type DeviceScope,
-  type FirstSetupStatus,
   type FolderVia,
   type HarnessInfo,
   type HostCatalog,
@@ -170,6 +171,7 @@ import {
   DENY_READ_HOME_PATHS,
   PROJECT_FOLDER_LIMIT,
   canonicalPath,
+  insideRootsSync,
   checkFolderCandidate,
   checkPrivateFile,
   checkProjectFolders,
@@ -237,7 +239,6 @@ import { MIME, UI_CSP, KIB, codeOf, errorText, isWithin, json, jsonBody, optiona
 import {
   FOLDER_ID,
   HostConfig,
-  MAX_SETUP_CHOICES,
   PROVIDER_ID,
   BACKUP_EXCLUDED_CONFIG_FILES,
   availableId,
@@ -247,10 +248,10 @@ import {
   modelCapabilitiesSchema,
   modelEffort,
   originOf,
+  MAX_PRESET_BINDINGS,
   type HostSettings,
   type ProviderAddition,
   type ProviderRecord,
-  type SetupChoiceReceipt,
   type WorkspaceRecord,
 } from './config.ts'
 import type { HarnessKind } from './harness-trust.ts'
@@ -268,7 +269,7 @@ import { HostLifecycle, hostStateInputSchema } from './lifecycle.ts'
 import { HostComputer, KEEP_AWAKE_HOLD_MS, desktopReportSchema } from './computer.ts'
 import { TrafficMeter, type FrameKind, type StreamMeter } from './traffic.ts'
 import { TaskDeltaCache, TaskDeltaStream } from './task-delta.ts'
-import { allApproval, allTaskContent, workApproval, workTaskContent } from './task-content.ts'
+import { allApproval, allTaskContent, filesApproval, filesTaskContent, workApproval, workTaskContent } from './task-content.ts'
 import { TASK_DELTA_HEADER, TASK_DELTA_PROTOCOL } from '@latch/protocol'
 import { DiagnosticLog, diagnosticsBundle, type DiagnosticCategory } from './diagnostics.ts'
 import {
@@ -620,7 +621,6 @@ const projectPatchSchema = z
     '没有要修改的内容',
   )
 const preferencesSchema = z.object({
-  setupRequestId: requestIdSchema.optional(),
   defaults: z.object({
     harnessId: z.string().regex(HARNESS_ID).optional(),
     mode: z.enum(['chat', 'agent']).optional(),
@@ -630,7 +630,6 @@ const preferencesSchema = z.object({
     pinned: z.boolean().optional(),
   }),
 })
-const firstSetupSchema = z.strictObject({ status: z.enum(['deferred', 'completed']), requestId: requestIdSchema })
 const levelSchema = z.enum(['L0', 'L1', 'L2'])
 const egressEntry = z
   .string()
@@ -725,6 +724,12 @@ export interface ServerOptions {
    * agent on this computer can be described, offered or started. Tests name their own directories.
    */
   commandDirectories?: () => readonly string[]
+  /**
+   * The PATH directories (login shell and process) among them: a preset's command found only elsewhere (the extra install
+   * directories) is confirmed like a custom one. The start script passes `personPathDirectories`; left out, as in tests,
+   * `commandDirectories` counts as PATH.
+   */
+  pathDirectories?: () => readonly string[]
   /** Tests: receives a harness's login script instead of a terminal opening. Production never sets it. */
   loginTerminal?: (script: string) => Promise<void>
   /** Tests: how long a remote MCP server's login waits for the browser (at most 10 minutes). Production never sets it. */
@@ -1098,6 +1103,30 @@ function programOf(agent: Pick<AgentRecord, 'presetId' | 'command'>): string | u
   const preset = AGENT_PRESETS.find(item => item.id === agent.presetId)
   if (!preset) return undefined
   return preset.fallback && commandName(agent.command) !== preset.command ? preset.fallback.drives : preset.agentCommand
+}
+
+/**
+ * Whether a definition runs exactly what one of the Host's own presets names: its command or its adapter, with exactly
+ * those arguments and no variables. Decided from the Host's table, never from what a client says; `presetId` only picks
+ * the entry to compare with.
+ */
+function runsPresetCommand(agent: Pick<AgentRecord, 'presetId' | 'command' | 'args' | 'env'>): boolean {
+  const preset = AGENT_PRESETS.find(item => item.id === agent.presetId)
+  if (!preset || Object.keys(agent.env).length > 0) return false
+  const same = (route: { command: string; args: readonly string[] }) =>
+    route.command === agent.command && canonicalJson(route.args) === canonicalJson(agent.args)
+  return same(preset) || (preset.fallback !== undefined && same(preset.fallback))
+}
+
+/** The first Harness, in the presets' order, that can start now, runs commands and brings its own models. */
+function firstReadyHarness(harnesses: readonly HarnessInfo[]): HarnessInfo | undefined {
+  const rank = (harness: HarnessInfo) => {
+    const index = AGENT_PRESETS.findIndex(preset => preset.id === harness.capabilities.display.mark)
+    return index < 0 ? AGENT_PRESETS.length : index
+  }
+  return harnesses
+    .filter(harness => harness.status === 'ready' && harness.capabilities.tools.shell && harness.capabilities.models.owner !== 'latch')
+    .toSorted((a, b) => rank(a) - rank(b))[0]
 }
 
 /** What this computer has of a preset's commands: its own, or its adapter when a draft would use that. */
@@ -1482,29 +1511,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
       logNoted('settings-changed-outside', {}, 'settings.json 在 Latch 之外被修改过，已记入审计；其中的项目已重新检查。')
     }
-    const configured = config.settings()
-    if (
-      !lastSettings
-      && !options.demo
-      && !options.provider
-      && !options.providerId
-      && !options.harnessId
-      && !options.plugins?.length
-      && !configured.firstSetup
-      && !Object.keys(configured.defaults).length
-      && !configured.agents.length
-      && !configured.workspaces.length
-      && !configured.plugins.disabled.length
-      && !config.providers().length
-    ) {
-      await config
-        .updateSettings(draft => {
-          draft.firstSetup = { status: 'pending' }
-        })
-        .catch(() => {
-          throw new AppError(503, 'first-setup-unconfirmed', '首次准备状态尚未确认，请重新启动 Latch。')
-        })
-    }
+    // A Host-only key for `HarnessInfo.bound.id`: every device gets that digest, and a guessable path must not be read back.
+    if (!config.settings().boundKey)
+      await config.updateSettings(draft => {
+        draft.boundKey = randomBytes(32).toString('hex')
+      })
+    const boundKey = config.settings().boundKey!
     /**
      * The last computed state of each saved project. A project is usable only while every folder passes R1–R7 and the
      * folders still do not overlap; one that fails is kept in settings and listed with its reason.
@@ -2302,6 +2314,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     // Frames are shared only within one content projection; restricted events have a separate identity.
     const frames = new WeakMap<ChangeEvent | TaskStateEvent, string>()
     const workEvents = new WeakMap<TaskStateEvent, TaskStateEvent>()
+    const filesEvents = new WeakMap<TaskStateEvent, TaskStateEvent>()
     // List hints about a private session: only a device that may read it hears them.
     const privateHints = new WeakSet<ChangeEvent | TaskStateEvent>()
     let pendingGlobal = false
@@ -3374,6 +3387,27 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     ): Promise<{ stepup: StepupMethod; found: string | undefined }> {
       requireLocal(caller)
       const resolved = resolveCommand(next.command)
+      // A preset's own command, found on PATH, is the program the person installed: it is bound to that path without a
+      // confirmation, still only from this Mac and still not while a full-access session runs or waits. A path other than
+      // the one this preset was last bound to (also before its definition was removed), or one found only in the extra
+      // install directories, asks, as any custom command does.
+      // Every path this preset's command was bound to: this definition's, the one kept after a removal, and those of other
+      // definitions of the same preset (also ones saved before removals were kept).
+      const settings = config.settings()
+      const bound = [
+        next.confirmedCommand,
+        ...(settings.presetBindings ?? [])
+          .filter(item => item.presetId === next.presetId && item.command === next.command)
+          .map(item => item.path),
+        ...settings.agents
+          .filter(agent => agent.presetId === next.presetId && agent.command === next.command)
+          .map(agent => agent.confirmedCommand),
+      ].filter((path): path is string => path !== undefined)
+      if (resolved && runsPresetCommand(next) && onPath(resolved) && bound.every(path => path === resolved)) {
+        requireDevice(caller)
+        await presence.assertNotHeldBack('harness.command.apply', devices.get(caller.device.id)?.scopes.includes('view') === true)
+        return { stepup: 'preset', found: resolved }
+      }
       const found = resolved ?? next.command
       const names = Object.keys(next.env).sort()
       const stepup = await confirm(
@@ -3399,6 +3433,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       )
       // Exactly the path the sheet showed is what the definition is bound to; nothing is looked up again.
       return { stepup, found: resolved }
+    }
+
+    /** Whether `found` sits directly in a PATH directory, not only in the extra install directories. */
+    function onPath(found: string): boolean {
+      const directories = (options.pathDirectories ?? options.commandDirectories)?.() ?? []
+      return directories.some(directory => isAbsolute(directory) && resolve(directory) === dirname(found))
     }
 
     /** Whether a definition's version may be read: its command confirmed on this Mac and still resolving to that program. */
@@ -4137,6 +4177,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!policy.get().hostEgressAllow.includes(need.target) && !egressExtra.includes(need.target)) plan.egress = need.target
       }
       return plan
+    }
+
+    /**
+     * A key typed for a preset's HTTPS origin takes no confirmation; while a full-access session runs or waits it is
+     * refused all the same, as the confirmation it replaces would be.
+     */
+    async function holdPresetKey(caller: Caller, baseURL: string, key: boolean): Promise<void> {
+      if (!key || destinationOf(baseURL) !== 'preset') return
+      await presence.assertNotHeldBack(
+        'provider.confirm-origin',
+        !!caller.device && devices.get(caller.device.id)?.scopes.includes('view') === true,
+      )
     }
 
     const confirmsDestination = (plan: DestinationPlan | undefined): plan is DestinationPlan =>
@@ -5049,6 +5101,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const index = draft.agents.findIndex(agent => agent.id === next.id)
           if (index < 0) draft.agents.push(structuredClone(next))
           else draft.agents[index] = structuredClone(next)
+          keepBinding(draft, next)
         })
       } catch (error) {
         if (previous && !created) await mountPlugin(previous)
@@ -5064,6 +5117,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       await mountPlugin(plugin.id)
     }
 
+    /** The path a preset's command was last bound to outlives its definition: re-adding it elsewhere asks. */
+    function keepBinding(draft: HostSettings, record: AgentRecord): void {
+      if (!record.presetId || !record.confirmedCommand || !runsPresetCommand(record)) return
+      const others = (draft.presetBindings ?? []).filter(item => !(item.presetId === record.presetId && item.command === record.command))
+      draft.presetBindings = [...others, { presetId: record.presetId, command: record.command, path: record.confirmedCommand }].slice(
+        -MAX_PRESET_BINDINGS,
+      )
+    }
+
     async function deleteAgent(caller: Caller, id: string, res: ServerResponse): Promise<void> {
       if (!config.settings().agents.some(agent => agent.id === id)) throw new AppError(404, 'agent-not-found', '找不到该 Agent')
       const pluginId = agentPluginId(id)
@@ -5071,6 +5133,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       await audited({ action: 'agent.deleted', actor: actorOf(caller), target: id, detail: { agentId: id } }, res)
       try {
         await writeSettings(caller, draft => {
+          const removed = draft.agents.find(agent => agent.id === id)
+          if (removed) keepBinding(draft, removed)
           draft.agents = draft.agents.filter(agent => agent.id !== id)
         })
       } catch (error) {
@@ -5494,6 +5558,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     const fullData = (caller: Caller) => !!caller.device && devices.get(caller.device.id)?.dataScope === 'all'
+    /** The files and changes of the sessions' project folders: a device of scope `files` or `all`. */
+    const projectFiles = (caller: Caller) => !!caller.device && readsProjectFiles(devices.get(caller.device.id)?.dataScope)
+    /** Whether a path a session's tool names lies in that session's folders, symlinks resolved. */
+    const insideSession = (summary: SessionScope) => {
+      const roots = scopeFolders(summary, workspaceRoot).map(folder => folder.path)
+      const seen = new Map<string, boolean>()
+      return (path: string) => {
+        let known = seen.get(path)
+        if (known === undefined) seen.set(path, (known = insideRootsSync(path, roots)))
+        return known
+      }
+    }
+    /** A session's detail as this caller's data scope shows it. */
+    const shownDetail = (caller: Caller, detail: TaskDetail): TaskDetail => {
+      const scope = caller.device ? devices.get(caller.device.id)?.dataScope : undefined
+      if (scope === 'all') return allTaskContent(detail)
+      return scope === 'files' ? filesTaskContent(detail, insideSession(detail.summary)) : workTaskContent(detail)
+    }
 
     /** Why this caller may not reuse the worktree a session holds, or undefined when it may. */
     async function worktreeHolder(caller: Caller, sessionId: string | undefined, markedPrivate = false): Promise<string | undefined> {
@@ -5554,7 +5636,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /** What removing a worktree would lose (file names among it), and what keeps it from being removed now. */
     async function worktreeFacts(caller: Caller, path: string): Promise<WorktreeInventory> {
-      if (!fullData(caller)) throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
+      if (!projectFiles(caller)) throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
       const facts = await worktrees.inventory(path)
       const pending = worktrees.busy(path)
       const common = await worktrees.common(path)
@@ -5599,8 +5681,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       body: z.infer<typeof removeWorktreeSchema>,
     ): Promise<WorktreeRemoval> {
       requireScope(caller, 'run')
-      if (devices.get(caller.device.id)?.dataScope !== 'all')
-        throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
+      if (!projectFiles(caller)) throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
       const key = `${caller.device.id}:${body.requestId}`
       const known = removals.get(key)
       if (known) return known
@@ -5610,8 +5691,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const target = { workspaceId: record.id, ...(sessionId ? { sessionId } : {}), worktreeHash: sha256Hex(path), requestHash }
       const removal = (): Promise<WorktreeRemoval> =>
         projectOperation(record.id, caller, 'run', async () => {
-          if (devices.get(caller.device.id)?.dataScope !== 'all')
-            throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
+          if (!projectFiles(caller)) throw new AppError(403, 'file-scope', '这台设备的数据范围不包括项目文件夹中的文件。')
           if (sessionId) {
             checkPrivateSession(caller, sessionId)
             // Git removed it before and only the session's record was left: finish that.
@@ -6215,10 +6295,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return effectiveProvider(ref.providerId)?.modelCapabilities?.[ref.model]?.thinking ?? []
     }
 
-    function defaultHarnessId(): string {
+    function defaultHarnessId(offers: readonly HarnessInfo[] = []): string {
       if (options.harnessId) return options.harnessId
       const saved = config.settings().defaults.harnessId
-      return saved && hub?.info(saved)?.status === 'ready' ? saved : STANDARD
+      if (saved) return hub?.info(saved)?.status === 'ready' ? saved : STANDARD
+      // Nothing chosen yet: Latch 内置 while it has a model, otherwise the first ready Harness that runs commands, on its
+      // own models. A choice in the composer replaces it.
+      if (defaultModelRef()) return STANDARD
+      return firstReadyHarness([...(hub?.drivers() ?? []), ...offers])?.id ?? STANDARD
     }
 
     function savedGateway(harnessId: string): ModelRef | null | undefined {
@@ -6239,13 +6323,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
-    function sessionDefaults(): SessionDefaults {
+    function sessionDefaults(offers: readonly HarnessInfo[] = []): SessionDefaults {
       const saved = config.settings().defaults
       const model = defaultModelRef()
       const modelUnavailable = !options.providerId && saved.model !== undefined && !savedDefaultModel()
       // What was pinned must still be what starts: when its engine or model cannot, the fallback is not what anyone chose,
       // and the device's own memory takes over. It holds again if they come back.
-      const harnessId = defaultHarnessId()
+      const harnessId = defaultHarnessId(offers)
       const engine = hub?.info(saved.harnessId ?? STANDARD)
       const gateway = engine?.id === harnessId && engine.capabilities.models.owner !== 'latch' ? visibleGateway(engine) : {}
       const pinned =
@@ -6266,11 +6350,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
-    async function savePreferences(
-      caller: Caller,
-      input: z.infer<typeof preferencesSchema>['defaults'],
-      receipt?: SetupChoiceReceipt,
-    ): Promise<void> {
+    async function savePreferences(caller: Caller, input: z.infer<typeof preferencesSchema>['defaults']): Promise<void> {
       if (input.harnessId !== undefined && !hub!.has(input.harnessId))
         throw new AppError(400, 'harness-unavailable', `Harness ${input.harnessId} 未启用`)
       if (input.workspaceId !== undefined && input.workspaceId !== 'default') {
@@ -6292,12 +6372,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           throw new AppError(400, 'model-route-unavailable', '这个 Harness 不能保存外部模型来源。')
         if (gateway !== null) modelRouteFor(harness, gateway)
       }
-      const authorize = receipt ? () => requireSetupAccess(caller) : undefined
       await writeSettings(
         caller,
         draft => {
-          if (receipt && (draft.setupChoices?.length ?? 0) >= MAX_SETUP_CHOICES)
-            throw new AppError(409, 'setup-choice-capacity', '准备页的选择记录已满。可核对原请求，或在设置中更改默认选择。')
           if (input.harnessId !== undefined) draft.defaults.harnessId = input.harnessId
           if (input.mode !== undefined) draft.defaults.mode = input.mode
           if (input.workspaceId !== undefined) draft.defaults.workspaceId = input.workspaceId
@@ -6306,51 +6383,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (input.model === null) delete draft.defaults.model
           else if (input.model) draft.defaults.model = input.model
           if (harnessId && gateway !== undefined) draft.defaults.gateway = { harnessId, model: gateway }
-          if (receipt) (draft.setupChoices ??= []).push(receipt)
         },
         'admin',
-        authorize,
       )
-    }
-
-    function setupStatus(caller: Caller): FirstSetupStatus | undefined {
-      if (options.demo || !isLocalListener(caller.connection.listener) || !caller.device) return undefined
-      const device = devices.get(caller.device.id)
-      if (!device || !isLocalListener(device.listener) || !device.scopes.includes('admin') || !device.scopes.includes('run'))
-        return undefined
-      return config.setupStatus() ?? 'existing'
-    }
-
-    function requireSetupAccess(caller: Caller): void {
-      recheck(caller, 'admin')
-      if (!setupStatus(caller)) throw new AppError(403, 'first-setup-unavailable', '请在这台电脑上准备 Latch。')
-    }
-
-    function setupChoice(caller: DeviceCaller, requestId: string): SetupChoiceReceipt | undefined {
-      requireSetupAccess(caller)
-      return config.setupChoice(caller.device.id, requestId)
-    }
-
-    /** A completion records the combination that the Host can offer now, without making a model request or logging in. */
-    function requireSetupReady(): void {
-      const saved = config.settings().defaults
-      const harnessId = defaultHarnessId()
-      const harness = hub!.info(harnessId)
-      if (!harness || harness.status !== 'ready' || (saved.harnessId && saved.harnessId !== harnessId))
-        throw new AppError(409, 'first-setup-harness-required', '请选择一个可用的 Harness。')
-      if (harness.capabilities.models.owner === 'latch') {
-        const model = !options.providerId && saved.model ? savedDefaultModel() : defaultModelRef()
-        if (!model) throw new AppError(409, 'first-setup-model-required', '请先选择可用的模型服务。')
-        return
-      }
-      const gateway = savedGateway(harnessId)
-      if (gateway) {
-        modelRouteFor(harness, gateway)
-        return
-      }
-      const login = agentLoginRoutes.reported(harnessId)
-      if (login?.status !== 'authenticated' || (login.expiresAt !== undefined && !(Date.parse(login.expiresAt) > now())))
-        throw new AppError(409, 'first-setup-login-unconfirmed', '还没有确认这个 Harness 的登录，或请选择可用的模型服务。')
     }
 
     /**
@@ -6402,6 +6437,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function catalog(caller: Caller): Promise<HostCatalog> {
       // Only a device that may save a definition is offered one; everyone else keeps what is defined.
       const mayDefine = caller.device?.scopes.includes('admin') === true && isLocalListener(caller.connection.listener)
+      const offers = mayDefine ? presetsToOffer() : []
       return {
         promptTemplatesVersion: templateStore.revision(),
         features: {
@@ -6430,14 +6466,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           worktreeLifecycle: true,
           ...routes.features(caller),
         },
-        harnesses: [...hub!.drivers(), ...(mayDefine ? presetsToOffer() : [])].map(harness => {
+        harnesses: [...hub!.drivers(), ...offers].map(harness => {
           const reported = harness.attachmentsReported ?? reportedAttachments(harness)
           const card =
             harness.capabilities.permission.enforcement === 'latch'
               ? BUILTIN_HELPER_CARD
               : AGENT_PRESETS.find(preset => preset.id === harness.capabilities.display.mark)?.helperCard
           const { helperCard: _ignored, ...info } = harness
-          return { ...info, ...(reported ? { attachmentsReported: reported } : {}), ...(card ? { helperCard: card } : {}) }
+          const path = config.settings().agents.find(agent => agent.id === harness.id)?.confirmedCommand
+          return {
+            ...info,
+            ...(reported ? { attachmentsReported: reported } : {}),
+            ...(card ? { helperCard: card } : {}),
+            ...(path
+              ? { bound: { id: createHmac('sha256', boundKey).update(path).digest('hex').slice(0, 16), ...(mayDefine ? { path } : {}) } }
+              : {}),
+          }
         }),
         providers: usableProviders().map(providerSummary),
         unusableProviders: unusableProviders(),
@@ -6445,7 +6489,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         skills: registry.skills(),
         // Disabled workspaces are listed with their reason for settings; session pickers skip any entry marked unavailable.
         workspaces: await projectInfos(),
-        defaults: sessionDefaults(),
+        defaults: sessionDefaults(offers),
         projectFolders: { max: PROJECT_FOLDER_LIMIT },
         ...(makeOwnFolders ? { sessionFolders: true as const } : {}),
       }
@@ -6839,7 +6883,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         forgetStream(res)
         return
       }
-      const narrow = devices.get(stream.deviceId)?.dataScope !== 'all'
+      const scope = devices.get(stream.deviceId)?.dataScope
+      // Private sessions only to `all`; file contents (the work projection) to `files` as well.
+      const narrow = scope !== 'all'
+      const workOnly = scope !== 'all'
       if (event.type === 'task-state' && privateSession(event.detail.summary) && narrow) {
         stream.delta?.clear()
         return
@@ -6871,8 +6918,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       const canonical = event
       const nativeCursor = stream.nativeOpening ? nativeReplay.cursorOf(canonical) : undefined
-      if (narrow && event.type === 'task-state') {
-        const projected = workEvents.get(event)
+      if (workOnly && event.type === 'task-state') {
+        // A `files` reader gets its own view when it was made for this event, and the work view otherwise.
+        const projected = (scope === 'files' ? filesEvents.get(event) : undefined) ?? workEvents.get(event)
         if (!projected) {
           stream.delta?.clear()
           return
@@ -7033,6 +7081,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               event,
               restricted === source ? event : { ...event, detail: JSON.parse(JSON.stringify(restricted)) as TaskDetail },
             )
+            if ([...streams.values()].some(stream => devices.get(stream.deviceId)?.dataScope === 'files')) {
+              const files = filesTaskContent(source, insideSession(source.summary))
+              filesEvents.set(event, files === source ? event : { ...event, detail: JSON.parse(JSON.stringify(files)) as TaskDetail })
+            }
           }
           const invalidated = summaryChanged
             ? nativeReplay.publish({ type: 'tasks-invalidated', instanceId, revision: globalRevision, sessionId })
@@ -7739,7 +7791,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // without a choice the start directory stays the driver's default.
         if (input.fileRefs?.length && (!harness.capabilities.tools.fileMentions || mode === 'chat' || ownFolder))
           throw new AppError(415, 'file-references-unavailable', '当前会话尚不能引用项目文件，请先选择项目与 Agent 模式。')
-        if (input.fileRefs?.length && caller.device.dataScope !== 'all') throw new AppError(403, 'file-scope', '此设备不能浏览项目文件。')
+        if (input.fileRefs?.length && !readsProjectFiles(caller.device.dataScope))
+          throw new AppError(403, 'file-scope', '此设备不能浏览项目文件。')
         const mentionRoots = chosen
           ? harness.projectFolders?.access === 'all'
             ? chosen.folders
@@ -7788,8 +7841,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               })
           return created
         }
-        if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
-          throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+        if (fileRefs.length && !projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
         let startRefs = fileRefs
         if (input.worktree && chosen) {
           made = await worktrees.create({
@@ -7854,8 +7906,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             if (customAgents.definitionHash(customAgentId) !== agentContext?.revision)
               throw new AppError(409, 'agent-changed', '这个 Agent 的设置或记忆已改变，请重新开始。')
           } else if (generalChat || agentContext) agentAccess(caller, true)
-          if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
-            throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+          if (fileRefs.length && !projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
           if (fork) {
             recheck(caller, 'view')
             privateAccess(caller, fork.source)
@@ -8139,7 +8190,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const mentionTask = input.fileRefs?.length ? await hub!.detail(id) : undefined
       if (
         input.fileRefs?.length
-        && (caller.device.dataScope !== 'all'
+        && (!readsProjectFiles(caller.device.dataScope)
           || !hub!.info(harnessId)?.capabilities.tools.fileMentions
           || mentionTask?.summary.mode === 'chat')
       )
@@ -8151,13 +8202,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         home,
       )
       recheck(caller, 'run')
-      if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
-        throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+      if (fileRefs.length && !projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
       if (attachments.length) await attachmentStore.claim(caller.device.id, input.attachmentIds!, input.requestId, id)
       try {
         recheck(caller, 'run')
-        if (fileRefs.length && devices.get(caller.device.id)?.dataScope !== 'all')
-          throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
+        if (fileRefs.length && !projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
         if (agentTurn) agentAccess(caller, true)
         await hub!.prompt(id, input.prompt, input.requestId, {
           ...(agentTurn ? { agentContext: agentTurn } : {}),
@@ -8202,13 +8251,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return new AppError(409, 'queue-context-changed', 'Agent 的设置已改变，请移除此项后重新加入队列。')
     }
     /** 通用's instructions and memories go only to a device that could read them, or its model's reply would carry them there. */
-    function generalContextFor(dataScope: 'work' | 'all' | undefined, harnessId: string): AgentExecutionContext | undefined {
+    function generalContextFor(dataScope: DataScope | undefined, harnessId: string): AgentExecutionContext | undefined {
       return dataScope === 'all' ? agentPlans.generalContext(harnessId) : undefined
     }
     /** A queued turn of an agent's session runs on the definition it was queued under; 通用 applies as it stands when sent. */
     async function queuedAgentTurn(
       sessionId: string,
-      dataScope: 'work' | 'all',
+      dataScope: DataScope,
     ): Promise<{ binding?: string; model?: ModelRef; agentContext?: AgentExecutionContext } | undefined> {
       const harnessId = await hub!.harnessOf(sessionId)
       const context = turnContext(sessionId, harnessId, dataScope)
@@ -8226,7 +8275,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function turnContext(
       sessionId: string,
       harnessId: string,
-      dataScope: 'work' | 'all' | undefined,
+      dataScope: DataScope | undefined,
       freshContext = false,
     ): AgentExecutionContext | undefined {
       const contextKind = hub!.info(harnessId)?.agentContext
@@ -8396,7 +8445,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const detail = await decoratedDetail(id)
         recheck(caller, 'view')
         privateAccess(caller, detail.summary)
-        const shown = fullData(caller) ? allTaskContent(detail) : workTaskContent(detail)
+        const shown = shownDetail(caller, detail)
         traffic.response('detail', json(res, { ...shown, sync: { instanceId, revision: detailRevision } }), id)
         return true
       }
@@ -8623,6 +8672,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const current = effectiveProvider(LEGACY_PROVIDER_ID)
         if (input.apiKey) requireKeyEntry(caller)
         const plan = await planDestination(input.baseURL, { key: Boolean(input.apiKey), confirm: false })
+        await holdPresetKey(caller, input.baseURL, Boolean(input.apiKey))
         const stepup = confirmsDestination(plan)
           ? await confirmDestination(req, caller, plan, {
               baseURL: input.baseURL,
@@ -8735,6 +8785,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const id = input.id ?? newProviderId(input.presetId ?? input.name)
         if (idTaken(id)) throw new AppError(409, 'provider-exists', `标识 ${id} 已被占用`)
         const plan = await planDestination(input.baseURL, { key: Boolean(apiKey), confirm: input.confirmOrigin === true })
+        await holdPresetKey(caller, input.baseURL, Boolean(apiKey))
         const stepup = confirmsDestination(plan)
           ? await confirmDestination(req, caller, plan, {
               baseURL: input.baseURL,
@@ -8842,6 +8893,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             input.baseURL !== undefined || newKey || confirming
               ? await planDestination(plannedURL, { key: Boolean(newKey), confirm: confirming })
               : undefined
+          await holdPresetKey(caller, plannedURL, Boolean(newKey))
           const stepup = confirmsDestination(plan)
             ? await confirmDestination(req, caller, plan, { baseURL: plannedURL, provider: current, ...(newKey ? { apiKey: newKey } : {}) })
             : 'none'
@@ -9581,62 +9633,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (path === '/link/api/preferences' && method === 'PUT') {
         requireScope(caller, 'admin')
         const input = preferencesSchema.parse(await jsonBody(req))
-        const requestId = input.setupRequestId
-        await serial(caller, 'admin', async () => {
-          if (!requestId) return savePreferences(caller, input.defaults)
-          const inputHash = sha256Hex(canonicalJson(input.defaults))
-          const receipt = setupChoice(caller, requestId)
-          if (!receipt) return savePreferences(caller, input.defaults, { deviceId: caller.device.id, requestId, inputHash })
-          if (receipt.inputHash !== inputHash) throw new AppError(409, 'request-id-conflict', '这次选择请求已用于不同的值。')
-          await config.settleSettings()
-        })
-        if (requestId) setupChoice(caller, requestId)
+        await serial(caller, 'admin', () => savePreferences(caller, input.defaults))
         refresh()
-        json(res, { defaults: sessionDefaults(), ...(requestId ? { instanceId, revision } : {}) })
-        return true
-      }
-      const setupChoiceMatch = /^\/link\/api\/first-setup\/choices\/([A-Za-z0-9_-]{8,128})$/u.exec(path)
-      if (setupChoiceMatch && method === 'GET') {
-        requireScope(caller, 'admin')
-        requireSetupAccess(caller)
-        const receipt = config.setupChoice(caller.device.id, setupChoiceMatch[1]!, true)
-        json(res, receipt ? { state: 'saved', defaults: sessionDefaults(), instanceId, revision } : { state: 'unknown' })
-        return true
-      }
-      if (path === '/link/api/first-setup' && method === 'PUT') {
-        requireScope(caller, 'admin')
-        requireDesktop(caller)
-        const input = firstSetupSchema.parse(await jsonBody(req))
-        const status = await serial(caller, 'admin', async () => {
-          requireSetupAccess(caller)
-          const saved = config.settings().firstSetup
-          if (saved && saved.status !== 'pending' && saved.requestId === input.requestId) {
-            if (saved.status !== input.status) throw new AppError(409, 'request-id-conflict', '这次准备请求已用于不同的操作。')
-            await config.settleSettings()
-            return saved.status
-          }
-          if (saved?.status === 'completed' || (saved?.status === 'deferred' && input.status === 'deferred')) {
-            await config.settleSettings()
-            return saved.status
-          }
-          if (input.status === 'completed') requireSetupReady()
-          await writeSettings(
-            caller,
-            draft => {
-              draft.firstSetup = input
-            },
-            'admin',
-            () => {
-              requireSetupAccess(caller)
-              if (input.status === 'completed') requireSetupReady()
-            },
-          )
-          return input.status
-        })
-        recheck(caller, 'run')
-        if (!setupStatus(caller)) throw new AppError(403, 'first-setup-unavailable', '请在这台电脑上准备 Latch。')
-        refresh()
-        json(res, { status })
+        json(res, { defaults: sessionDefaults() })
         return true
       }
       return false
@@ -9698,7 +9697,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (path === '/link/api/snapshot' && method === 'GET') {
         requireScope(caller, 'view')
         const snapshotRevision = revision
-        const defaultId = defaultHarnessId()
+        const mayDefine = caller.device.scopes.includes('admin') && isLocalListener(caller.connection.listener)
+        const defaultId = defaultHarnessId(mayDefine ? presetsToOffer() : [])
         const providerId = defaultProviderId()
         // Only Standard requires a provider from this app's registry; other drivers own their backend.
         const execution: NonNullable<AppSnapshot['execution']> =
@@ -9729,7 +9729,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ),
           demo: options.demo,
           hostName: options.hostName ?? hostname(),
-          harness: { id: defaultId, name: hub!.info(defaultId)?.capabilities.display.label ?? defaultId },
+          harness: {
+            id: defaultId,
+            name: (hub!.info(defaultId) ?? presetsToOffer().find(offer => offer.id === defaultId))?.capabilities.display.label ?? defaultId,
+          },
           execution,
           catalog: await catalog(caller),
           ...agentSummaries(caller, tasks),
@@ -9753,9 +9756,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (privateAgentView(caller) && !customAgents.hasPending()) snapshot.agentChats = customAgents.chats()
         snapshot.tasks = snapshot.tasks.filter(task => privateVisible(caller, task))
         snapshot.approvals = snapshot.approvals.filter(approval => snapshot.tasks.some(task => task.id === approval.sessionId))
-        snapshot.approvals = snapshot.approvals.map(fullData(caller) ? allApproval : workApproval)
-        const preparation = setupStatus(caller)
-        if (preparation) snapshot.firstSetup = preparation
+        const scope = devices.get(caller.device.id)?.dataScope
+        snapshot.approvals = snapshot.approvals.map(approval => {
+          if (scope === 'all') return allApproval(approval)
+          const task = snapshot.tasks.find(item => item.id === approval.sessionId)
+          return scope === 'files' && task ? filesApproval(approval, insideSession(task)) : workApproval(approval)
+        })
         traffic.response('snapshot', json(res, snapshot))
         return
       }
@@ -10084,7 +10090,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!entry) throw new AppError(404, 'worktree-not-found', '找不到这个工作树，或它不是 Latch 新建的。')
         // A worktree a session owns is removed from that session's menu, where its record is.
         if (entry.state !== 'leftover') throw new AppError(409, 'worktree-owned', '这个工作树属于一个会话，请在那个会话的菜单里移除它。')
-        const path = (await worktrees.list(record.folders[0].path)).find(item => item.name === name)!.path
+        const leftover = (await worktrees.list(record.folders[0].path)).find(item => item.name === name)!
+        const path = leftover.path
+        // A private session's leftover: its file names and its removal stay with devices that may see private content.
+        if (leftover.private && !fullData(caller))
+          throw new AppError(403, 'agent-scope-required', 'Agent 含有私有记忆，请先在电脑上允许这台设备使用。')
         if (method === 'GET' && !leftoversMatch[3]) {
           json(res, await worktreeFacts(caller, path))
           return

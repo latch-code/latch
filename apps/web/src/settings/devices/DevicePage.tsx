@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
-import { isAcceptableDeviceName, type Device } from '@latch/protocol'
+import { isAcceptableDeviceName, readsProjectFiles, type Device } from '@latch/protocol'
 import { Button, Hint, Icon, InlineNotice, SwitchRow, EyeGlyph, LockGlyph } from '@latch/ui'
 import { InlineConfirm } from '../../components/InlineConfirm.tsx'
 import { VisibleText } from '../../components/VisibleText.tsx'
@@ -11,7 +11,7 @@ import type { DeviceAccess } from '../../core/permissions.ts'
 import { CONNECTION_DETAILS_COPY, DEVICE_NAME_INVALID_TEXT, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
 import { SettingsGroup, SettingsRow } from '../common.tsx'
 import { deviceIcon } from './deviceIcon.ts'
-import { deviceSwitches, filesChange, grantedText, manageChange, seenText, type ScopeChange } from './deviceRows.ts'
+import { deviceSwitches, filesChange, grantedText, manageChange, privateChange, seenText, type ScopeChange } from './deviceRows.ts'
 import { ReservedAttachments } from './ReservedAttachments.tsx'
 
 export function SeenLine({ device, self }: { device: Device; self: boolean }) {
@@ -112,7 +112,7 @@ function useScopeChange(device: Device, onChanged: () => void) {
 
 /**
  * One device's page inside 设置 › 设备: its name, when it was last seen, what it may do, what needs doing about it, the
- * two switches for a browser (可以管理, 可以看项目文件), and 移除. On a wide window it names the device above the rows; a
+ * switches for a browser (可以管理, 可以看项目文件, 也能看私有内容), and 移除. On a wide window it names the device above the rows; a
  * phone's bar does that. Elsewhere than this Mac the switches name the computer (`computer`).
  */
 export function DevicePage({
@@ -143,7 +143,8 @@ export function DevicePage({
   const restore = device.status === 'review' && access.admin && !self
   const switches = deviceSwitches(device, self, access)
   const locked = switches.raise ? undefined : COPY.raiseOnMac(computer)
-  const files = device.dataScope === 'all'
+  const files = readsProjectFiles(device.dataScope)
+  const all = device.dataScope === 'all'
   const granted = grantedText(device, switches.manage)
   const statusText =
     device.status === 'review'
@@ -239,6 +240,23 @@ export function DevicePage({
               disabled={scope.pending}
               onCheckedChange={next => {
                 void scope.change(filesChange(next))
+              }}
+            />
+          )}
+          {switches.files && files && (
+            <SwitchRow
+              className="settings-row"
+              title={COPY.private}
+              description={
+                <Hint lead={<Icon icon={LockGlyph} size={12} />} label={COPY.privateNote.label}>
+                  {COPY.privateNote.detail}
+                </Hint>
+              }
+              checked={all}
+              locked={all ? undefined : locked}
+              disabled={scope.pending}
+              onCheckedChange={next => {
+                void scope.change(privateChange(next))
               }}
             />
           )}

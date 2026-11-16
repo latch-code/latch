@@ -956,12 +956,8 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   line-height: var(--lh-caption);
 }
 /* A row to install: the name, its note, then 怎么装 at the end; the command opens under it, across the row. */
-.harness-found-row:is([data-halfway], [data-more]) {
+.harness-found-row[data-halfway] {
   grid-template-columns: 16px 132px minmax(0, 1fr) auto;
-}
-.harness-found-row[data-more] .harness-found-name {
-  font-weight: 400;
-  color: var(--ink-2);
 }
 .harness-found-note {
   min-width: 0;
@@ -1004,37 +1000,6 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   margin-left: auto;
   font-family: var(--font);
 }
-.harness-found-fold {
-  border: 0;
-  background: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  min-height: 32px;
-  margin-top: var(--sp-2);
-  padding: 0 var(--sp-10);
-  border-radius: var(--r-8);
-  color: var(--muted);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  text-align: left;
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-.harness-found-fold:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-.harness-found-fold:active {
-  background: var(--press);
-}
-.harness-found-fold > svg {
-  color: var(--faint);
-  transition: rotate var(--m-panel) var(--e-panel);
-}
-.harness-found-fold[aria-expanded='true'] > svg {
-  rotate: 90deg;
-}
-
 /* Under the input in a project: its latest sessions, quiet rows that open each one. */
 .new-session-recent {
   display: grid;
@@ -1109,7 +1074,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
     padding-bottom: var(--sp-32);
   }
   .harness-found-row,
-  .harness-found-row:is([data-halfway], [data-more]) {
+  .harness-found-row[data-halfway] {
     grid-template-columns: 16px minmax(0, 1fr) auto;
     row-gap: var(--sp-2);
     padding-block: var(--sp-6);
@@ -1119,7 +1084,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
     grid-column: 2 / -1;
     text-align: left;
   }
-  .harness-found-row:is([data-halfway], [data-more]) .ui-button {
+  .harness-found-row[data-halfway] .ui-button {
     grid-column: 3;
     grid-row: 1;
   }

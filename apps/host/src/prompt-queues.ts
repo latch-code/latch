@@ -4,8 +4,10 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { modelEffort } from './config.ts'
 import {
+  DATA_SCOPES,
   LISTENER_CLASSES,
   refusedBeforeAccepting,
+  type DataScope,
   type ListenerClass,
   type ModelRef,
   type PromptQueueItem,
@@ -23,7 +25,7 @@ const id = z.string().min(1).max(256)
 const actorSchema = z.strictObject({
   deviceId: id,
   listener: z.enum(LISTENER_CLASSES),
-  dataScope: z.enum(['work', 'all']),
+  dataScope: z.enum(DATA_SCOPES),
   nativeWindowHash: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)
@@ -34,7 +36,7 @@ const recordSchema = z.strictObject({
   sessionId: id,
   deviceId: id,
   listener: z.enum(LISTENER_CLASSES),
-  dataScope: z.enum(['work', 'all']),
+  dataScope: z.enum(DATA_SCOPES),
   nativeWindowHash: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)
@@ -69,7 +71,7 @@ function valid(item: Record): void {
 export interface QueueActor {
   deviceId: string
   listener: ListenerClass
-  dataScope: 'work' | 'all'
+  dataScope: DataScope
   /** Captured only from a Host-verified native opening; never accepted from the HTTP body. */
   nativeWindowHash?: string
 }

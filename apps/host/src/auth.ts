@@ -3,6 +3,8 @@ import { chmod, mkdir, open as openFile, readFile, rename as renameFile, stat, u
 import { join } from 'node:path'
 import { z } from 'zod'
 import {
+  DATA_SCOPE_LABELS,
+  DATA_SCOPES,
   isAcceptableDeviceName,
   isLocalListener,
   isNativeListener,
@@ -20,6 +22,7 @@ import {
   type InvitationView,
   type ListenerClass,
   type NativePairingStatus,
+  widensDataScope,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { sha256Hex, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
@@ -107,7 +110,7 @@ const storedDevice = z.strictObject({
   fingerprint: z.string(),
   scopes: z.array(scopeEnum).max(6),
   scopesBeforeReview: z.array(scopeEnum).optional(),
-  dataScope: z.enum(['work', 'all']),
+  dataScope: z.enum(DATA_SCOPES),
   pairedBy: z.strictObject({
     method: z.enum(['lpc', 'offline', 'invitation', 'migration']),
     deviceId: z.string().optional(),
@@ -1073,7 +1076,7 @@ export class DeviceStore {
       const { der } = parseP256Spki(Buffer.from(input.publicKeyDer).toString('base64url'))
       const scopes = normalizeScopes(input.scopes)
       requireGrantable(scopes, input.connection.listener)
-      if (input.dataScope !== 'work' && input.dataScope !== 'all') throw new AppError(400, 'invalid-data-scope', '数据范围无效')
+      if (!DATA_SCOPES.includes(input.dataScope)) throw new AppError(400, 'invalid-data-scope', '数据范围无效')
       const method = input.pairedBy.method
       if (method === 'migration') throw new AppError(400, 'invalid-pairing', '连接方式无效')
       // Checked on the store's queue, after any revocation queued before it: an enrollment whose inviter was revoked
@@ -1296,10 +1299,10 @@ export class DeviceStore {
       const scopes = change.scopes ? normalizeScopes(change.scopes) : [...device.scopes]
       requireGrantable(scopes, device.listener)
       const dataScope = change.dataScope ?? device.dataScope
-      if (dataScope !== 'work' && dataScope !== 'all') throw new AppError(400, 'invalid-data-scope', '数据范围无效')
+      if (!DATA_SCOPES.includes(dataScope)) throw new AppError(400, 'invalid-data-scope', '数据范围无效')
       const added = scopes.filter(scope => !device.scopes.includes(scope))
       const removed = device.scopes.filter(scope => !scopes.includes(scope))
-      const widened = dataScope === 'all' && device.dataScope === 'work'
+      const widened = widensDataScope(device.dataScope, dataScope)
       if (!added.length && !removed.length && dataScope === device.dataScope) return { device: publicDevice(device), audited: true }
       const raising = added.length > 0 || widened
       if (raising && stepup === 'none') throw new AppError(403, 'stepup-required', '需要在本机确认', { stepup: { where: 'this-device' } })
@@ -1723,7 +1726,7 @@ export class EnrollmentService {
     if (request.scopes !== undefined && (!Array.isArray(request.scopes) || request.scopes.some(scope => typeof scope !== 'string'))) {
       throw new AppError(400, 'invalid-scope', '未知的设备权限')
     }
-    if (request.dataScope !== undefined && request.dataScope !== 'work' && request.dataScope !== 'all')
+    if (request.dataScope !== undefined && !DATA_SCOPES.includes(request.dataScope))
       throw new AppError(400, 'invalid-data-scope', '数据范围无效')
     const local = isLocalListener(connection.listener)
     const id = randomId('enr')
@@ -1736,7 +1739,8 @@ export class EnrollmentService {
         : local
           ? [...ALL_SCOPES]
           : [...DEFAULT_REMOTE_SCOPES]
-    let dataScope: DataScope = nativeRequest ? 'all' : (request.dataScope ?? (local ? 'all' : 'work'))
+    // A browser sees the files and changes of the sessions' projects unless it asks for less; this Mac and a phone see all.
+    let dataScope: DataScope = nativeRequest ? 'all' : (request.dataScope ?? (local ? 'all' : 'files'))
     requireGrantable(scopes, connection.listener)
     let method: Enrollment['method'] = 'lpc'
     let invitation: Invitation | undefined
@@ -1898,7 +1902,7 @@ export class EnrollmentService {
           { label: '来源地址', value: sourceText(connection) },
           { label: '连接方式', value: `${LISTENER_LABELS[connection.listener]} · ${connection.origin}` },
           { label: '请求的权限', value: scopes.map(scope => SCOPE_LABELS[scope]).join('、') },
-          { label: '数据范围', value: dataScope === 'all' ? '全部' : '工作' },
+          { label: '数据范围', value: DATA_SCOPE_LABELS[dataScope] },
           ...(invitation ? [{ label: '邀请来源', value: invitation.inviterName ?? '命令行' }] : []),
         ]
     const warnings = nativeRequest

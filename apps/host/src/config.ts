@@ -57,12 +57,6 @@ export interface ProviderAddition {
   recordHash: string
 }
 
-export interface SetupChoiceReceipt {
-  deviceId: string
-  requestId: string
-  inputHash: string
-}
-
 export interface WorkspaceFolderRecord {
   id: string
   /** Realpath without macOS alias prefixes. */
@@ -96,8 +90,10 @@ export interface HostSettings {
     gateway?: { harnessId: string; model: ModelRef | null }
     pinned?: boolean
   }
-  firstSetup?: { status: 'pending' } | { status: 'completed' | 'deferred'; requestId: string }
-  setupChoices?: SetupChoiceReceipt[]
+  /** The key of `HarnessInfo.bound.id`, made once; never sent to a device. */
+  boundKey?: string
+  /** The path each preset's command was last bound to, kept when its definition is removed. */
+  presetBindings?: Array<{ presetId: string; command: string; path: string }>
   plugins: { disabled: string[] }
   /** Owner-added projects. The startup workspace is the implicit `default` and is not stored. */
   workspaces: WorkspaceRecord[]
@@ -287,7 +283,7 @@ const providersSchema = storedProvidersSchema.superRefine((providers, context) =
   })
 })
 const MAX_PROVIDER_ADDITIONS = 512
-export const MAX_SETUP_CHOICES = 128
+export const MAX_PRESET_BINDINGS = 64
 const additionHash = z.string().regex(/^[a-f0-9]{64}$/u)
 const providersFileSchema = z.object({
   version: z.literal(1),
@@ -420,21 +416,19 @@ const settingsSchema = z
         pinned: z.boolean().optional(),
       })
       .default({}),
-    firstSetup: z
-      .discriminatedUnion('status', [
-        z.strictObject({ status: z.literal('pending') }),
-        z.strictObject({ status: z.enum(['completed', 'deferred']), requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) }),
-      ])
+    boundKey: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/u)
       .optional(),
-    setupChoices: z
+    presetBindings: z
       .array(
         z.strictObject({
-          deviceId: z.string().min(1).max(128),
-          requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
-          inputHash: additionHash,
+          presetId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/u),
+          command: z.string().min(1).max(4096),
+          path: z.string().min(1).max(4096),
         }),
       )
-      .max(MAX_SETUP_CHOICES)
+      .max(MAX_PRESET_BINDINGS)
       .optional(),
     plugins: z.object({ disabled: z.array(z.string().min(1).max(128)).max(256) }).default({ disabled: [] }),
     workspaces: z.array(workspaceSchema).max(100, '项目数量过多').default([]),
@@ -502,7 +496,6 @@ export class HostConfig {
   private providerList: ProviderRecord[] = []
   private providerAdditions: ProviderAddition[] = []
   private hostSettings: HostSettings = emptySettings()
-  private syncedSettings = this.hostSettings
   private readonly queues = { providers: Promise.resolve(), settings: Promise.resolve() }
 
   private constructor(private readonly dataDir: string) {}
@@ -516,7 +509,7 @@ export class HostConfig {
     await mkdir(config.dataDir, { recursive: true, mode: 0o700 })
     const stored = await readConfig(join(config.dataDir, PROVIDERS_FILE), providersFileSchema, true)
     const settings = await readConfig(join(config.dataDir, SETTINGS_FILE), settingsSchema, true)
-    if (settings) config.syncedSettings = config.hostSettings = settings
+    if (settings) config.hostSettings = settings
     if (stored) {
       config.providerList = stored.providers
       config.providerAdditions = stored.additions
@@ -559,30 +552,11 @@ export class HostConfig {
 
   requireProviderAdditionRoom(): void {
     if (this.providerAdditions.length >= MAX_PROVIDER_ADDITIONS)
-      throw new AppError(409, 'provider-addition-capacity', '准备页的模型服务记录已满。可核对原请求，或在设置的模型服务中新增。')
+      throw new AppError(409, 'provider-addition-capacity', '模型服务的添加记录已满。可核对原请求，或在设置的模型服务中新增。')
   }
 
   settings(): HostSettings {
     return structuredClone(this.hostSettings)
-  }
-
-  setupStatus(): NonNullable<HostSettings['firstSetup']>['status'] | undefined {
-    return this.syncedSettings.firstSetup?.status
-  }
-
-  setupChoice(deviceId: string, requestId: string, synced = false): SetupChoiceReceipt | undefined {
-    const settings = synced ? this.syncedSettings : this.hostSettings
-    const receipt = settings.setupChoices?.find(item => item.deviceId === deviceId && item.requestId === requestId)
-    return receipt && { ...receipt }
-  }
-
-  /** Retry synchronizing the current rename, never write the settings snapshot from a receipt. */
-  settleSettings(): Promise<void> {
-    return this.serialize('settings', async () => {
-      if (this.hostSettings === this.syncedSettings) return
-      await syncDirectory(this.dataDir)
-      this.syncedSettings = this.hostSettings
-    })
   }
 
   /**
@@ -622,9 +596,8 @@ export class HostConfig {
       const checked = settingsSchema.safeParse(draft)
       if (!checked.success) throw new AppError(400, 'invalid-settings', `设置无效：${issueText(checked.error, false)}`)
       const next = checked.data
-      await this.persist(SETTINGS_FILE, next, next, beforePublish, synced => {
+      await this.persist(SETTINGS_FILE, next, next, beforePublish, () => {
         this.hostSettings = next
-        if (synced) this.syncedSettings = next
       })
     })
   }

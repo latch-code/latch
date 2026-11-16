@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import type { Device, DeviceScope } from '@latch/protocol'
+import type { DataScope, Device, DeviceScope } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import type { TestHost } from './host.ts'
 
@@ -22,9 +22,13 @@ async function noAdminYet(testHost: TestHost): Promise<boolean> {
  * does: in its request. Everything else about the request stays the page's.
  */
 export async function nameNextEnrollment(page: Page, name: string): Promise<void> {
+  await shapeNextEnrollment(page, { name })
+}
+
+async function shapeNextEnrollment(page: Page, extra: { name?: string; dataScope?: DataScope }): Promise<void> {
   await page.route(
     ENROLLMENTS_API,
-    route => route.continue({ postData: JSON.stringify({ ...(route.request().postDataJSON() as object), name }) }),
+    route => route.continue({ postData: JSON.stringify({ ...(route.request().postDataJSON() as object), ...extra }) }),
     { times: 1 },
   )
 }
@@ -33,17 +37,21 @@ export async function nameNextEnrollment(page: Page, name: string): Promise<void
  * Enrolls the browser behind `page` through the real enrollment page and waits for the synchronized workspace. Loopback
  * takes a one-time invitation, so the page opens with one in its fragment, as the desktop app's 「在浏览器中打开」 does (or at
  * `url`). A browser asks for what its invitation allows, so `scopes` decides only whether the invitation includes admin;
- * without it admin is allowed while no device can manage the Host yet. With a manual test presence the local confirmation
- * is approved here.
+ * without it admin is allowed while no device can manage the Host yet. `dataScope` asks for less than the default, as a
+ * browser may. With a manual test presence the local confirmation is approved here.
  */
 export async function enrollBrowser(
   page: Page,
   testHost: TestHost,
-  options: { name?: string; scopes?: DeviceScope[]; url?: string } = {},
+  options: { name?: string; scopes?: DeviceScope[]; url?: string; dataScope?: DataScope } = {},
 ): Promise<void> {
   const wanted = options.scopes === undefined ? await noAdminYet(testHost) : options.scopes.includes('admin')
   await page.goto(options.url ?? (await testHost.invite([...(wanted ? ADMIN_CEILING : BASE_CEILING)], 'loopback-tcp')).url)
-  if (options.name !== undefined) await nameNextEnrollment(page, options.name)
+  if (options.name !== undefined || options.dataScope !== undefined)
+    await shapeNextEnrollment(page, {
+      ...(options.name !== undefined ? { name: options.name } : {}),
+      ...(options.dataScope ? { dataScope: options.dataScope } : {}),
+    })
   await page.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
   if (testHost.presence.mode === 'manual') {
     await testHost.presence.waitForRequest()

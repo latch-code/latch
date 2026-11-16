@@ -152,30 +152,19 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const completed = await phone.request('POST', `/link/api/enrollments/${enrollment.id}/complete`, { signature })
       expect(completed.status).toBe(200)
       phone.close()
-      await page.getByText('手机上显示已连接了吗？', { exact: true }).waitFor()
-      await page.getByAltText('原生客户端配对二维码').waitFor({ state: 'hidden' })
-      expect(await page.getByRole('button', { name: '关闭', exact: true }).count()).toBe(0)
+      // Connected: the sheet says so and closes with one press; nothing asks whether the phone agrees.
       const settingsOverlay = page.locator('.settings-overlay:modal')
-      await settingsOverlay.locator('.pair-sheet:modal').waitFor()
-      await capture(page, 'pairing-ask')
-      // Only an answer ends the question: Esc does nothing, however often it is pressed.
-      for (let press = 0; press < 4; press++) {
-        await page.keyboard.press('Escape')
-        await page.waitForTimeout(100)
-      }
-      await page.getByText('手机上显示已连接了吗？', { exact: true }).waitFor()
-      await page.waitForTimeout(300)
-      expect(await page.getByText('手机上显示已连接了吗？', { exact: true }).isVisible()).toBe(true)
+      const connected = settingsOverlay.locator('.pair-sheet:modal .pair-title', { hasText: '已连接「' })
+      await connected.waitFor()
+      await page.getByAltText('原生客户端配对二维码').waitFor({ state: 'hidden' })
+      await capture(page, 'pairing-done')
       const shownBefore = host.presence.requests.length
-      await page.getByRole('button', { name: '没有，移除', exact: true }).click()
-      const removedLine = page.locator('.pair-title', { hasText: '已移除「' })
-      await removedLine.waitFor()
-      await page.getByRole('button', { name: '好', exact: true }).click()
-      await removedLine.waitFor({ state: 'hidden' })
+      await settingsOverlay.locator('.pair-sheet:modal').getByRole('button', { name: '好', exact: true }).click()
+      await connected.waitFor({ state: 'hidden' })
       await settingsOverlay.getByRole('button', { name: '关闭设置', exact: true }).waitFor()
       expect(host.presence.requests.length).toBe(shownBefore)
       const id = (completed.body as { device: { id: string } }).device.id
-      expect(host.host.security.devices.get(id)?.status).toBe('revoked')
+      expect(host.host.security.devices.get(id)?.status).toBe('active')
     } finally {
       await application?.close()
       await host.close()

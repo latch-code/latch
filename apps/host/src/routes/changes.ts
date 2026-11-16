@@ -10,6 +10,7 @@ import {
   type FileDiff,
   type FileMention,
   type Message,
+  readsProjectFiles,
 } from '@latch/protocol'
 import { AppError, type ProjectFolder } from '@latch/sdk'
 import { ChangesEngine, type BeforeWrite, type ChangesSession } from '../changes/engine.ts'
@@ -187,7 +188,7 @@ export function createChangeRoutes(context: RouteContext): ChangeRoutes {
   /** Browsing a session's folders: diffs show files no message mentioned. */
   function assertFilesVisible(caller: DeviceCaller, scope: 'view' | 'run'): void {
     recheck(caller, scope)
-    if (devices.get(caller.device.id)?.dataScope !== 'all')
+    if (!readsProjectFiles(devices.get(caller.device.id)?.dataScope))
       throw new AppError(403, 'file-scope', '这台设备的数据范围不包括会话文件夹中的文件')
   }
 

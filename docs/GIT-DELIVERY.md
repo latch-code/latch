@@ -86,14 +86,14 @@ filter 驱动的名单在暂存之前读一次，名单为空就由受限的 Git
 
 | 路由 | 权限 |
 | --- | --- |
-| `GET git` | `view`，数据范围 `all` |
-| `GET git/diff`、`git/history`、`git/history/:sha`、`git/compare` | `view`，数据范围 `all` |
-| `POST git/stage`、`git/unstage`、`git/stage-lines`、`git/unstage-lines` | `run`，数据范围 `all` |
+| `GET git` | `view`，数据范围 `files` |
+| `GET git/diff`、`git/history`、`git/history/:sha`、`git/compare` | `view`，数据范围 `files` |
+| `POST git/stage`、`git/unstage`、`git/stage-lines`、`git/unstage-lines` | `run`，数据范围 `files` |
 | `POST git/commit`、`git/push` | `run`；私有会话要数据范围 `all` |
 | `GET git/pr` | `view`；私有会话要 `all`；评论与默认标题只给 `all` |
 | `POST git/pr` | `run`；私有会话要 `all` |
-| `GET git/pr/checks/:job/log` | `view`，数据范围 `all`（日志可能含代码） |
-| `POST /link/api/workbench/delivery` | `view`，数据范围 `all` |
+| `GET git/pr/checks/:job/log` | `view`，数据范围 `files`（日志可能含代码） |
+| `POST /link/api/workbench/delivery` | `view`，数据范围 `files` |
 
 - 列出或指定文件的路由只给能浏览会话文件的设备，其他设备 403 `file-scope`。私有会话（`hub.agentPrivate`）对范围不是 `all` 的设备一律 403 `agent-scope-required`。
 - 提交与推送不涉及文件名，有 `run` 的设备（包括手机）都可以：这样的设备已能让 Agent 在这个仓库里执行任意命令，交付没有新增能力。
@@ -181,7 +181,7 @@ Git 会把换行转成 LF 的文件（`text`、`eol` 属性或 `core.autocrlf`�
 
 只读，都经受限的 Git，行级差异由 Host 比较两个 blob（`changes/git-history.ts`）。没有写入，不写审计。
 
-提交、文件名与行都是会话文件夹里的内容，所以每个历史读取都只给数据范围 `all` 的设备，其他设备 403 `file-scope`：没有不带文件名的摘要，也无从用提交 ID 试探。
+提交、文件名与行都是会话文件夹里的内容，所以每个历史读取都只给数据范围 `files` 的设备，其他设备 403 `file-scope`：没有不带文件名的摘要，也无从用提交 ID 试探。
 
 | 路由 | 内容 |
 | --- | --- |
@@ -350,7 +350,7 @@ PR 只做 GitHub，只经你的 `gh`（GitHub CLI）；其他平台尚未实现�
 
 - **有绑定。** `gh pr view <n> --json …`：PR 的状态、草稿、审阅结论、头提交，以及头提交的检查（最多 200 项）。检查归为 `pass`（`SUCCESS`）、`skipped`（`NEUTRAL`、`SKIPPED`、`STALE`）、`pending`（未完成）与 `fail`（其余）；失败的 GitHub Actions 任务带 `job`，只认详情地址在这个仓库里的。
 - **没有绑定。** 回答 `draft`：仓库默认分支；`all` 的设备另有最后一个提交的主题作默认标题。
-- **评论。** 只给数据范围 `all` 的设备。审阅与评论各取最新 100 条，行级评论取最新 100 条，合起来按时间排列、最多 200 条；每条正文最多 8 KiB，去控制字符并经 `redactKnownSecrets`。有省略时 `discussionCapped`。评论读不出来时检查照常显示。
+- **评论。** 只给数据范围 `files` 的设备。审阅与评论各取最新 100 条，行级评论取最新 100 条，合起来按时间排列、最多 200 条；每条正文最多 8 KiB，去控制字符并经 `redactKnownSecrets`。有省略时 `discussionCapped`。评论读不出来时检查照常显示。
 - **检查日志。** 只给绑定 PR 当前检查里失败的那个任务：`gh run view --job <id> --log-failed`，去掉任务名、时间与分组标记，按步骤加 `[步骤]` 行，再去控制序列并脱敏，留最后 200 行、最多 32 KiB（`truncated`）。不是这样的任务，或日志已不在，都是 404 `pr-check-not-found`。
 - **固定原因。** `gh` 的原始输出不给客户端：
 

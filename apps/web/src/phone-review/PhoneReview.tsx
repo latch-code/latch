@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { CircleHelp } from 'lucide-react'
-import { noteLinesLabel, type AppSnapshot, type ChangedFile, type ReviewNote, type TaskSummary } from '@latch/protocol'
+import { noteLinesLabel, type AppSnapshot, type ChangedFile, type ReviewNote, type TaskSummary, readsProjectFiles } from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
@@ -188,7 +188,7 @@ function ReviewChanges({
   onDeliver,
 }: PhoneReviewProps & { backRef: RefObject<HTMLButtonElement | null>; under: boolean; onDeliver: () => void }) {
   const features = snapshot.catalog?.features
-  const canRead = snapshot.device.dataScope === 'all'
+  const canRead = readsProjectFiles(snapshot.device.dataScope)
   const hostName = computerName(snapshot.hostName)
   const reviewNotes = features?.reviewNotes === true && canRead
   const choice = useMemo(() => choiceOf(target.scope), [target.scope])

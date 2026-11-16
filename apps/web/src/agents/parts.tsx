@@ -74,7 +74,7 @@ export function LockedAgents() {
   return (
     <div className="agents-locked" role="status">
       <Hint label="这台设备看不到 Agent" lead={<LockGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
-        Agent 的指令、记忆和会话只对能读取全部数据的设备开放。在这台 Mac 的 设置 › 设备 里为这台设备打开「可以看项目文件」后可见。
+        Agent 的指令、记忆和会话只对能读取全部数据的设备开放。在这台 Mac 的 设置 › 设备 里为这台设备打开「也能看私有内容」后可见。
       </Hint>
     </div>
   )

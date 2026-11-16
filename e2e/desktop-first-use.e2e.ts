@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { AGENT_PRESETS, type AppSnapshot, type AgentSettings, type TaskDetail } from '@latch/protocol'
+import { type AppSnapshot, type AgentSettings, type TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { writeHostState } from '@latch/host/host-state'
@@ -265,21 +265,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await page.locator('.app-shell[data-connection="connected"]').waitFor()
         await page.getByRole('button', { name: /^Harness：Codex/ }).waitFor()
         expect(await page.locator('.setup-card').count()).toBe(0)
-        // The first open lists what was found, with the file the Host found; the rest fold under one line.
+        // The first open lists only what was found, with the file the Host found; what is not installed is in settings.
         const found = page.getByRole('region', { name: '找到的 Harness', exact: true })
         await found.getByText(/^在这台 Mac 上找到 1 个 Harness$/u).waitFor()
         const codexRow = found.locator('.harness-found-row').filter({ hasText: 'Codex' })
         await codexRow.getByText('已找到', { exact: true }).waitFor()
         // A long path is shortened in the middle; the whole of it is the row's tooltip.
         expect(await codexRow.locator('.harness-found-path').getAttribute('title')).toBe(adapter)
-        const fold = found.getByRole('button', { name: `还可以装 ${AGENT_PRESETS.length - 1} 个`, exact: true })
-        expect(await fold.getAttribute('aria-expanded')).toBe('false')
-        await fold.click()
-        await found.getByRole('button', { name: '怎么装 pi', exact: true }).click()
-        await found.getByText('npm i -g @earendil-works/pi-coding-agent', { exact: true }).waitFor()
-        await found.getByRole('button', { name: '复制 pi 的安装命令', exact: true }).waitFor()
-        // Claude Agent is named, never given a login here: the card only says how to install.
-        await found.locator('.harness-found-row').filter({ hasText: 'Claude Agent' }).waitFor()
+        expect(await found.locator('.harness-found-row').count()).toBe(1)
         await noHorizontalOverflow(page)
         await mkdir('test-results/desktop-first-use', { recursive: true })
         await page.screenshot({ path: 'test-results/desktop-first-use/found-1440.png', animations: 'disabled' })
@@ -321,25 +314,21 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await open.waitFor({ state: 'hidden' })
         await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
 
-        // Sending saves the definition, confirmed on this Mac in place (the system sheet stands in), and runs it.
+        // Sending saves the preset's definition and runs it: the person installed it, so nothing asks.
+        const asked = host.presence.requests.length
         await input.press('Meta+Enter')
-        await expect.poll(() => host.presence.requests.at(-1)?.preview.action).toBe('harness.command.apply')
-        await page.locator('.composer-confirm').getByText('确认详情').waitFor()
-        await mkdir('test-results/desktop-first-use', { recursive: true })
-        await page.screenshot({ path: 'test-results/desktop-first-use/confirm-harness-1440.png', animations: 'disabled' })
-        host.presence.approveNext()
         await expect.poll(async () => (await owner.json<{ agents: AgentSettings[] }>('agents')).agents.length).toBe(1)
         expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toMatchObject([{ id: 'codex', presetId: 'codex' }])
         await page.locator('.transcript').getByText('echo: 修一下测试', { exact: true }).waitFor()
+        expect(host.presence.requests).toHaveLength(asked)
         expect(await found.count()).toBe(0)
-        // The first start of this launch in this project says Latch does not isolate the Harness, and it stays; what it can
-        // do is behind its ⓘ.
+        // This device's first session on the Harness says Latch does not isolate it; what it can do is behind its ⓘ.
         const startNote = page.locator('.session-start-note')
         await startNote.getByText('Latch 不隔离 Codex', { exact: true }).waitFor()
         await startNote.getByRole('button', { name: '说明', exact: true }).click()
         await startNote.getByText('Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置。', { exact: true }).waitFor()
 
-        // The next start of the same launch here does not repeat it.
+        // The next session on it does not repeat it.
         await application.evaluate(({ dialog }) => {
           dialog.showMessageBox = (async () => ({ response: 1, checkboxChecked: false })) as typeof dialog.showMessageBox
         })

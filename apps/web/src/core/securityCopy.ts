@@ -195,7 +195,6 @@ export const CONFIRMATION_COPY = {
   label: '在 Mac 上确认',
   /** Either window: the helper's Touch ID sheet, or the desktop's own 取消/允许 sheet. */
   waiting: '在系统窗口中确认',
-  waitingTouchId: '等待 Touch ID',
   /** Above what a system form's sentence leaves out. */
   details: '确认详情',
   confirmed: '已确认，正在',
@@ -367,7 +366,7 @@ export const CONNECTION_DETAILS_COPY = {
   sheet: '系统窗口写的是',
   granted: '可以',
   data: '能看到',
-  dataText: { all: '全部会话', work: '会话，不含私有内容' },
+  dataText: { all: '全部，含私有内容', files: '会话与项目的文件', work: '会话' },
 } as const
 
 /** What a device may do once connected, in the words of a person deciding about it. */
@@ -407,8 +406,8 @@ export const DEVICES_COPY = {
   /** 「连接新设备」: only the ways that work in this build. */
   connectTitle: '连接新设备',
   thisBrowser: '这台 Mac 的浏览器',
-  /** A browser connected this way has `dataScope: 'work'` until 「可以看项目文件」 is turned on. */
-  thisBrowserNote: '默认看不到项目文件',
+  /** A browser connected this way has `dataScope: 'files'`. */
+  thisBrowserNote: '能看项目文件',
   /** Only while the Host reports an HTTPS entry; the link goes to the clipboard through the Latch app, never to the page. */
   otherComputer: '另一台电脑',
   otherComputerNote: '链接只复制到剪贴板',
@@ -438,11 +437,17 @@ export const DEVICES_COPY = {
     label: '能改设置，密钥除外',
     detail: '修改模型、Harness、插件、项目和设备。密钥和连接新地址仍只能在 Mac 上操作。',
   } satisfies Brief,
-  /** `dataScope: 'all'`: more than files (private sessions too), so the line does not promise less than it opens. */
+  /** `dataScope: 'files'`: the files and changes of the sessions' project folders. */
   files: '可以看项目文件',
   filesNote: {
-    label: '也能看含私有内容的会话',
+    label: '文件、改动与 @ 文件',
     detail: '能看项目里的文件和每个会话的改动，能在消息里 @ 文件；能开始会话的设备还能撤销、重做或丢弃某一轮的改动。',
+  } satisfies Brief,
+  /** `dataScope: 'all'`: also what is outside the project folders. */
+  private: '也能看私有内容',
+  privateNote: {
+    label: '我的 Agent、终端与接入的会话',
+    detail: '能看我的 Agent 和它们的记忆，能打开终端，能接入其他 CLI 的已有会话。',
   } satisfies Brief,
   /** A switch only the Latch app on that computer turns on. */
   raiseOnMac: (computer = 'Mac') => `在 ${computer} 上开启`,
@@ -491,11 +496,6 @@ export const NATIVE_LINK_COPY = {
   noNetwork: '这台 Mac 没有连接 Wi‑Fi 或有线网络。',
   connectedBefore: '已连接「',
   closingQuote: '」',
-  ask: '手机上显示已连接了吗？',
-  yes: '是的，完成',
-  no: '没有，移除',
-  removedBefore: '已移除「',
-  removeFailed: '没能移除。请在设备列表里移除它。',
   done: '好',
   retry: '重试',
 } as const
@@ -882,7 +882,7 @@ export const RECOVERY_COPY = {
 export const HISTORY_COPY = {
   entry: '接入已有会话',
   locked: (computer = 'Mac') =>
-    `接入的会话只对能看项目文件的设备可见。在 ${computer} 上的 Latch 里，为这台设备开启「可以看项目文件」后可用。`,
+    `接入的会话只对能看私有内容的设备可见。在 ${computer} 上的 Latch 里，为这台设备开启「也能看私有内容」后可用。`,
   busy: '这个会话正在别处使用',
   busyDetail: (from: string) => `先在那里退出（例如终端里的 ${from}），再回来接入。Latch 不会接管正在使用的会话。`,
 } as const

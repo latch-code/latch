@@ -362,7 +362,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
         <ConnectionDetails
           name={chosenName}
           scopes={electron ? DESKTOP_SCOPES : requestedScopes(wantsAdmin, offeredScopes ?? undefined)}
-          dataScope={electron ? 'all' : 'work'}
+          dataScope={electron ? 'all' : 'files'}
         />
       )}
     </Shell>

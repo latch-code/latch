@@ -46,9 +46,7 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
     [line, setLine] = useState(''),
     [offNetwork, setOffNetwork] = useState(false),
     [busy, setBusy] = useState<{ state: 'confirming' | 'approved'; device?: string } | null>(null),
-    [done, setDone] = useState<{ id: string; device: string; deviceId?: string } | null>(null),
-    [removed, setRemoved] = useState<string | null>(null),
-    [removeError, setRemoveError] = useState('')
+    [done, setDone] = useState<{ device: string } | null>(null)
   const issued = useRef<IssuedQr[]>([])
   const closing = useRef(false)
   // One POST at a time: every one the Host answers writes to the audit log, and the third retires the oldest live QR.
@@ -154,10 +152,10 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
         await replaceQr(COPY.contended)
         return
       }
-      // The question stays until answered, and this keeps asking so a burn can still reach it.
+      // The connected screen stays, and this keeps asking so a burn can still reach it.
       if (done !== null) return
       if (read.kind === 'done') {
-        setDone({ id: read.id, device: read.device, ...(read.deviceId ? { deviceId: read.deviceId } : {}) })
+        setDone({ device: read.device })
         setOffNetwork(false)
         onChanged()
       } else if (read.kind === 'ended') {
@@ -183,48 +181,11 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
     }
   }, [done])
 
-  /** No second dialog: removing only takes privilege away. Only a real removal says it is gone. */
-  const reject = async (target: NonNullable<typeof done>) => {
-    setRemoveError('')
-    try {
-      await api(`native/pairings/${target.id}/device`, { method: 'DELETE' })
-    } catch {
-      // The sheet may have outlived what the Host remembers of it, so the device's own ID is the way back.
-      try {
-        if (!target.deviceId) throw new Error('No device to remove')
-        await api(`devices/${target.deviceId}`, { method: 'DELETE' })
-      } catch {
-        setRemoveError(COPY.removeFailed)
-        return
-      }
-    }
-    issued.current = []
-    setRemoved(target.device)
-    onChanged()
-  }
-
-  const answering = done !== null && removed === null
   const said = line && <p className="pair-line">{line}</p>
   // A chip with no name yet: the phone has claimed the QR and no confirmation is on this Mac's screen.
   const confirmingOnMac = busy?.state === 'confirming' && busy.device !== undefined
   let body: ReactNode
-  if (removed !== null)
-    body = (
-      <Center>
-        <span className="pair-glyph" aria-hidden="true">
-          <Icon icon={deviceIcon({ listener: 'native-direct', name: removed })} size={20} />
-        </span>
-        <p className="pair-title">
-          {COPY.removedBefore}
-          <VisibleText text={removed} />
-          {COPY.closingQuote}
-        </p>
-        <Button className="pair-center-action" onClick={onClose}>
-          {COPY.done}
-        </Button>
-      </Center>
-    )
-  else if (done !== null)
+  if (done !== null)
     body = (
       <Center>
         <svg className="pair-check" viewBox="0 0 76 76" aria-hidden="true">
@@ -236,20 +197,9 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
           <VisibleText text={done.device} />
           {COPY.closingQuote}
         </p>
-        <p className="pair-note">{COPY.ask}</p>
-        <div className="pair-actions">
-          <Button
-            variant="danger"
-            onClick={() => {
-              void reject(done)
-            }}>
-            {COPY.no}
-          </Button>
-          <Button variant="primary" onClick={onClose}>
-            {COPY.yes}
-          </Button>
-        </div>
-        {removeError && <InlineNotice tone="error">{removeError}</InlineNotice>}
+        <Button className="pair-center-action" variant="primary" onClick={onClose}>
+          {COPY.done}
+        </Button>
       </Center>
     )
   else if (presenceDown)
@@ -336,8 +286,8 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
     )
 
   return (
-    <Modal label={COPY.title} secure variant={phone ? 'sheet' : 'dialog'} className="pair-sheet" dismissible={!answering} onClose={onClose}>
-      <ModalHeader title={COPY.title} {...(answering ? {} : { onClose })} />
+    <Modal label={COPY.title} secure variant={phone ? 'sheet' : 'dialog'} className="pair-sheet" onClose={onClose}>
+      <ModalHeader title={COPY.title} onClose={onClose} />
       <div className="pair-body">{body}</div>
     </Modal>
   )

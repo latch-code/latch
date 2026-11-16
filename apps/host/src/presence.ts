@@ -42,11 +42,14 @@ export const PRESENCE_ACTIONS: Readonly<Record<PresenceAction, { title: string; 
   'device.enroll-native': { title: '配对原生设备' },
   'device.grant': { title: '为设备增加权限' },
   'policy.change': { title: '放宽本机安全策略', target: target => `允许 Host 访问 ${target}` },
-  // The first use of a model-service address: the address, its key and its outbound allowance in one confirmation.
+  // The first use of a model-service address that is not a preset's HTTPS origin: the address, its key and its outbound
+  // allowance in one confirmation.
   'provider.confirm-origin': { title: '确认模型服务地址', target: target => `确认模型服务地址 ${target}` },
   // A local command an agent's MCP bridge starts, added or widened: code that runs as this user, as a plugin's does.
   'mcp.server.apply': { title: '添加 MCP 服务器' },
-  // A Harness definition added, or its command, arguments or variables changed: the program sessions start.
+  // A Harness command other than a preset's own (another command, path, argument or variable), or a preset's command
+  // found at another path than the one it is bound to: the program sessions start. A preset's command as the Host's
+  // table names it takes none (stepup `preset`).
   'harness.command.apply': { title: '确认 Harness 命令' },
 }
 

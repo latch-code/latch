@@ -104,7 +104,7 @@ describe('git delivery routes', () => {
     expect(await audited(t)).toEqual([])
     expect((await post(owner, 'workbench/delivery', { ids: Array.from({ length: 13 }, () => sessionId) })).status).toBe(400)
     expect((await post(owner, 'workbench/delivery', { ids: [sessionId], extra: true })).status).toBe(400)
-    const narrow = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    const narrow = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'], dataScope: 'work' })
     expect(await errorOf(await post(narrow, 'workbench/delivery', { ids: [sessionId] }))).toEqual({ status: 403, error: 'file-scope' })
     expect((await t.raw('loopback-tcp', 'api/workbench/delivery', { method: 'POST', body: { ids: [sessionId] } })).status).toBe(401)
   })
@@ -177,9 +177,9 @@ describe('git delivery routes', () => {
     ])
     expect((await viewer.request(`${path}/history/${sha}?path=tracked.txt`)).status).toBe(200)
     expect(await errorOf(await viewer.request(`${path}/compare`))).toEqual({ status: 409, error: 'git-no-base' })
-    // The default data scope (`work`): history names commits and files, so none of it is for this device. A commit ID
-    // it guesses is answered like one that does not exist.
-    const narrow = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'] })
+    // Data scope `work`: history names commits and files, so none of it is for this device. A commit ID it guesses is
+    // answered like one that does not exist.
+    const narrow = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'work' })
     for (const refused of [
       `${path}/history`,
       `${path}/history/${sha}`,
@@ -309,7 +309,7 @@ describe('git delivery routes', () => {
       status: 403,
       error: 'scope-required',
     })
-    const phone = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'] })
+    const phone = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'work' })
     // Files of the session's folder are for devices that may browse it; a commit or a push names none.
     expect(await errorOf(await phone.request(path))).toEqual({ status: 403, error: 'file-scope' })
     expect(await errorOf(await post(phone, `${path}/stage`, { requestId: randomUUID(), paths: ['agent-edit.txt'] }))).toEqual({
@@ -326,6 +326,12 @@ describe('git delivery routes', () => {
       error: 'agent-scope-required',
     })
     expect(await errorOf(await post(phone, `${path}/push`, { requestId: randomUUID() }))).toEqual({
+      status: 403,
+      error: 'agent-scope-required',
+    })
+    // A browser's default scope reads the files of a project, never a private session's.
+    const browser = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'] })
+    expect(await errorOf(await post(browser, `${path}/push`, { requestId: randomUUID() }))).toEqual({
       status: 403,
       error: 'agent-scope-required',
     })
@@ -395,7 +401,7 @@ describe('git delivery routes', () => {
       })
       git('push', '-q', '-u', 'origin', 'feature')
 
-      const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+      const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'], dataScope: 'work' })
       expect(await viewer.json<GitPrState>(`${path}/pr`)).toEqual({ checks: [], draft: { base: 'main' } })
       expect(await owner.json<GitPrState>(`${path}/pr`)).toEqual({ checks: [], draft: { title: 'Add the currency filter', base: 'main' } })
       expect(await errorOf(await post(viewer, `${path}/pr`, { requestId: randomUUID(), title: 'T', body: '', base: 'main' }))).toEqual({

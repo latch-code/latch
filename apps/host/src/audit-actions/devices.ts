@@ -1,10 +1,10 @@
 import { z } from 'zod'
-import { LISTENER_CLASSES } from '@latch/protocol'
+import { DATA_SCOPES, LISTENER_CLASSES } from '@latch/protocol'
 import { count, deviceId, prefixed } from './fields.ts'
 
 const listener = z.enum(LISTENER_CLASSES)
 const scopes = z.array(z.enum(['view', 'run', 'approve:standard', 'approve:elevated', 'admin', 'secrets'])).max(6)
-const dataScope = z.enum(['work', 'all'])
+const dataScope = z.enum(DATA_SCOPES)
 const deviceOnly = z.strictObject({ deviceId })
 const ticket = z.strictObject({ ticketId: prefixed('chl') })
 

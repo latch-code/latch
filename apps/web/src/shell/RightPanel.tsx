@@ -1,4 +1,5 @@
 import { fileContextKey } from '../preview/fileContext.ts'
+import { readsProjectFiles } from '@latch/protocol'
 import { ProfileSlot } from '../agents/AgentProfile.tsx'
 import { SessionPanels } from '../components/SessionPanels.tsx'
 import { harnessName } from '../composerChoice.ts'
@@ -88,7 +89,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
     if (pageMode) setInfoPage(false)
     composerRef.current?.focus()
   }
-  const readsChanges = canViewChanges && snapshot.device.dataScope === 'all'
+  const readsChanges = canViewChanges && readsProjectFiles(snapshot.device.dataScope)
   // The page pipeline is this Mac's: the desktop's admin device with all data.
   const pageDrafts =
     catalog?.features?.appPages === 1
@@ -110,7 +111,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                 local={access.local}
                 canRun={access.scopes.has('run')}
                 stagingWrites={stagingWrites}
-                canRead={snapshot.device.dataScope === 'all'}
+                canRead={readsProjectFiles(snapshot.device.dataScope)}
                 hostName={snapshot.hostName}
                 phone={phone}
                 offline={offline}
@@ -250,7 +251,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                 : undefined,
           }
         : {})}
-      fileSearch={catalog?.features?.fileSearch === true && snapshot.device.dataScope === 'all'}
+      fileSearch={catalog?.features?.fileSearch === true && readsProjectFiles(snapshot.device.dataScope)}
       onMention={mentionChoice.enabled && !active && !submission.pending ? mentionFile : undefined}
       onQuote={active ? undefined : quoteFile}
       folders={workspaceForFiles?.folders}
