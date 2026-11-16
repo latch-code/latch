@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { chromium, type Browser, type Page } from '@playwright/test'
+import { latchEnv } from '@latch/host/env'
 import type { TaskDetail } from '@latch/protocol'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
@@ -16,6 +18,7 @@ let waiting: string
 
 beforeAll(async () => {
   host = await startTestHost({
+    uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
     demo: false,
     hostName: '验收电脑',
     providerId: MODEL.providerId,
@@ -73,6 +76,114 @@ async function captureFocus(page: Page, name: string) {
     await page.screenshot({ path: `${OUT}/${name}-${theme}.png`, animations: 'disabled' })
   }
 }
+
+it.each(['light', 'dark'] as const)('moves the same input card on the way into and out of desktop focus in %s', async colorScheme => {
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    locale: 'zh-CN',
+    reducedMotion: 'no-preference',
+    colorScheme,
+  })
+  try {
+    const page = await context.newPage()
+    await enrollBrowser(page, host, { name: '专注动效验收', scopes: ['admin'] })
+    await switchLayout(page, 'overview')
+    const input = homeInput(page)
+    const card = page.locator('.workbench-home-composer')
+    const original = await input.elementHandle()
+    expect(original).not.toBeNull()
+    for (const entering of [true, false]) {
+      const sample = await card.evaluateHandle(element => {
+        const shell = element.closest('.app-shell')!
+        const before = element.getBoundingClientRect().top
+        const titlebar = shell.querySelector('.titlebar')!
+        const beforeOpacity = Number(getComputedStyle(titlebar).opacity)
+        const moving = () =>
+          element
+            .getAnimations()
+            .find(
+              animation =>
+                animation.effect instanceof KeyframeEffect
+                && animation.effect
+                  .getKeyframes()
+                  .some(frame => typeof frame.transform === 'string' && frame.transform.startsWith('translate')),
+            )
+        const fading = () =>
+          titlebar.getAnimations().find(animation => animation instanceof CSSTransition && animation.transitionProperty === 'opacity')
+        return {
+          finish: () => {
+            moving()?.finish()
+            fading()?.finish()
+          },
+          result: new Promise(resolve => {
+            const observer = new MutationObserver(() => {
+              observer.disconnect()
+              const move = moving()
+              const fade = fading()
+              if (!move || !fade) {
+                resolve(null)
+                return
+              }
+              move.pause()
+              fade.pause()
+              const duration = Number(move.effect?.getTiming().duration)
+              move.currentTime = 0
+              const start = element.getBoundingClientRect().top
+              move.currentTime = duration
+              const last = element.getBoundingClientRect().top
+              move.currentTime = duration / 6
+              fade.currentTime = Number(fade.effect?.getTiming().duration) / 6
+              resolve({
+                before,
+                start,
+                middle: element.getBoundingClientRect().top,
+                last,
+                beforeOpacity,
+                opacity: Number(getComputedStyle(titlebar).opacity),
+                overflow: getComputedStyle(element.closest('.code-home-input')!).overflow,
+              })
+            })
+            observer.observe(shell, { attributes: true, attributeFilter: ['data-home-focus'] })
+          }) as Promise<{
+            before: number
+            start: number
+            middle: number
+            last: number
+            beforeOpacity: number
+            opacity: number
+            overflow: string
+          } | null>,
+        }
+      })
+      if (entering) await input.click()
+      else await page.keyboard.press('Escape')
+      const position = await sample.evaluate(entry => entry.result)
+      expect(position).not.toBeNull()
+      expect(position!.start).toBeCloseTo(position!.before, 0)
+      expect(position!.middle).toBeGreaterThan(Math.min(position!.before, position!.last))
+      expect(position!.middle).toBeLessThan(Math.max(position!.before, position!.last))
+      expect(Math.abs(position!.last - position!.before)).toBeGreaterThan(100)
+      expect(position!.beforeOpacity).toBe(entering ? 1 : 0)
+      expect(position!.opacity).toBeGreaterThan(0)
+      expect(position!.opacity).toBeLessThan(1)
+      expect(position!.overflow).toBe('visible')
+      expect(await original!.evaluate(node => document.activeElement === node)).toBe(true)
+      await page.screenshot({ path: `${OUT}/moving-${entering ? 'in' : 'out'}-${colorScheme}.png` })
+      await sample.evaluate(entry => entry.finish())
+      await sample.dispose()
+      if (entering) {
+        await input.fill('保留草稿与选区')
+        await input.evaluate(node => (node as HTMLTextAreaElement).setSelectionRange(2, 4))
+      }
+    }
+    expect(await input.inputValue()).toBe('保留草稿与选区')
+    expect(
+      await input.evaluate(node => [(node as HTMLTextAreaElement).selectionStart, (node as HTMLTextAreaElement).selectionEnd]),
+    ).toEqual([2, 4])
+  } finally {
+    await context.close()
+  }
+})
 
 /** Check the first visible state, without racing the arming timeout from a separate browser command. */
 async function observeRevealedQueue(page: Page) {

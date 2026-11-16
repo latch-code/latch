@@ -670,14 +670,14 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                           closeHomeFocus(false)
                       })
                     }}>
-                    <div ref={focus.composer} className="home-focus-input">
+                    <div className="home-focus-input">
                       {usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId) && (
                         <p className="workbench-home-demo">
                           <StatusPill tone="warn">演示模型</StatusPill>
                         </p>
                       )}
                       <ConnectionBanners shell={shell} />
-                      <div className="workbench-home-composer" data-backdrop-clear="">
+                      <div ref={focus.composer} className="workbench-home-composer" data-backdrop-clear="">
                         <SendingBubble shell={homeShell} />
                         <SessionComposer
                           shell={shell}
