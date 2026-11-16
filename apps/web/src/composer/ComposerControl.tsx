@@ -44,6 +44,11 @@ export function ComposerControl({ name, children }: { name: ControlName; childre
   )
 }
 
+/** A slash argument's request to open the model panel on a search. */
+export function useSearchRequest(): { query: string; revision: number } | undefined {
+  return useContext(SearchRequest)
+}
+
 /** Model controls retain their own menu and sender; a slash argument only initializes its search. */
 export function ValuePicker<T extends string>(props: ValuePickerProps<T>) {
   const searchRequest = useContext(SearchRequest)

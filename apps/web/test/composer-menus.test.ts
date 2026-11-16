@@ -12,17 +12,18 @@ import {
   type TaskDetail,
 } from '@latch/protocol'
 import {
-  DraftModelControl,
   FORK_BUSY,
   onComputer,
   ownModelGroups,
   ROUTE_NOTE,
   SessionHarnessControl,
-  SessionModelControl,
   unusableServices,
   UnusableServices,
 } from '../src/composer/ModelControl.tsx'
-import { PermissionList } from '../src/composer/PermissionList.tsx'
+import { DraftModelControl, SessionModelControl } from '../src/composer/ModelPanel.tsx'
+import { PermissionList, PermissionPanel, stripRows } from '../src/composer/PermissionList.tsx'
+import { pickCaps, pickIndex } from '../src/composer/ModelPanel.tsx'
+import type { PermissionRow, PermissionView } from '../src/composer/permission.ts'
 import { controlKeyCaps } from '../src/composer/modelReasoning.ts'
 import { forkedChoice, forkSource } from '../src/forkChoice.ts'
 import { draftConfig } from '../src/composerChoice.ts'
@@ -519,5 +520,57 @@ describe('a fork onto a Harness whose options are not read yet', () => {
     const pi = testHarness('pi', { label: 'pi' })
     pi.permission = { approvals: 'none', readback: 'none' }
     expect(onto(pi)).toEqual(['来源会话的模型「gpt-5.5」要等读到 pi 的选项后才能沿用。'])
+  })
+})
+
+describe('the 权限 panel', () => {
+  const tiers = ['plan', 'ask', 'rule', 'model', 'never'] as const
+  const icons = ['eye', 'shield', 'list-checks', 'scale', 'shield-alert'] as const
+  const rows = (count: number, tiered = true): PermissionRow[] =>
+    Array.from({ length: count }, (_, index) => ({
+      value: `m${index}`,
+      name: `模式${index}`,
+      line: `模式${index}的一句`,
+      icon: icons[index % 5]!,
+      ...(tiered ? { tier: tiers[index % 5]! } : {}),
+      neverAsks: tiered && tiers[index % 5] === 'never',
+      current: index === 1,
+    }))
+  const view = (list: PermissionRow[]): PermissionView => ({ label: '先问你', line: '', icon: 'shield', amber: false, rows: list })
+
+  it('draws two to five modes Latch knows as one row of segments, with the chosen one’s name and its one line', () => {
+    expect(stripRows(view(rows(2)))?.length).toBe(2)
+    expect(stripRows(view(rows(5)))?.length).toBe(5)
+    const html = renderToStaticMarkup(createElement(PermissionPanel, { view: view(rows(5)), onChoose() {} }))
+    expect(html.match(/role="radio"/gu)).toHaveLength(5)
+    expect(html).toContain('class="ui-mode-strip-name">模式1<')
+    expect(html).toContain('class="ui-mode-strip-line">模式1的一句<')
+    // The loosest mode carries the risk mark, drawn amber only while chosen or previewed; the panel keeps its lock.
+    expect(html).toMatch(/aria-label="模式4"[^>]*data-risk=""/u)
+    expect(html).toContain('data-lock=""')
+    for (const gone of ['ui-hint', '收起', '更多']) expect(html).not.toContain(gone)
+  })
+
+  it('falls back to the list for one mode, more than five, or modes whose meaning Latch does not know', () => {
+    for (const list of [rows(1), rows(6), rows(4, false)]) {
+      expect(stripRows(view(list))).toBeUndefined()
+      const html = renderToStaticMarkup(createElement(PermissionPanel, { view: view(list), onChoose() {} }))
+      expect(html).not.toContain('ui-mode-strip')
+      expect(html).toContain('permission-list')
+    }
+    expect(stripRows({ label: '开始后可选', line: '', icon: 'shield', amber: false })).toBeUndefined()
+  })
+})
+
+describe('the keys of the model panel', () => {
+  it('are the session keys from the registry, drawn only in the desktop app', () => {
+    expect(pickCaps(0, false)).toBeUndefined()
+    expect(pickCaps(0, true)).toBe('⌘1')
+    expect(pickCaps(8, true)).toBe('⌘9')
+    expect(pickCaps(9, true)).toBeUndefined()
+    const stroke = { code: 'Digit3', key: '3', metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }
+    expect(pickIndex(stroke, true)).toBe(2)
+    expect(pickIndex({ ...stroke, altKey: true }, true)).toBeUndefined()
+    expect(pickIndex({ ...stroke, metaKey: false, altKey: true }, false)).toBe(2)
   })
 })

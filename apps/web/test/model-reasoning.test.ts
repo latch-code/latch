@@ -4,8 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { LADDER_MODE, type HarnessInfo, type HostCatalog, type ModelRef, type SessionConfigOption } from '@latch/protocol'
 import { readsOnPermission } from '../src/composer/harnessCatalogue.tsx'
-import { DraftModelControl, ownModelGroups, routeService, serviceValue, SessionModelControl } from '../src/composer/ModelControl.tsx'
-import { DraftThinkingControl, SessionThinkingControl } from '../src/composer/ThinkingControl.tsx'
+import { ownModelGroups, routeService, serviceValue } from '../src/composer/ModelControl.tsx'
+import { DraftModelControl, DraftThinkingControl, SessionModelControl, SessionThinkingControl } from '../src/composer/ModelPanel.tsx'
 import {
   draftConfig,
   harnessPicks,
@@ -80,6 +80,12 @@ const html = (value: Props) => renderToStaticMarkup(createElement(SessionModelCo
 const thinkingHtml = (value: Props) => renderToStaticMarkup(createElement(SessionThinkingControl, value))
 /** A trigger's accessible name: what a screen reader and the e2e read. */
 const named = (markup: string, label: string) => markup.match(new RegExp(`aria-label="${label}：([^"]*)"`, 'u'))?.[1]
+/** The chip itself, without the panel it opens. */
+const trigger = (markup: string) => markup.match(/<button[^>]*class="ui-value-picker[^>]*>/u)?.[0] ?? ''
+/** The panel's 思考 column, which the 模型 and 思考 chips both open. */
+const levelsColumn = (markup: string) => markup.slice(Math.max(0, markup.indexOf('class="ui-board-levels"')))
+const levelNames = (markup: string) =>
+  [...levelsColumn(markup).matchAll(/class="ui-menu-item ui-board-level"[^>]*aria-label="([^"]*)"/gu)].map(match => match[1])
 
 describe('Agent model and reasoning controls', () => {
   it('uses only semantic categories, preserves priority and does not infer capabilities from familiar model or option names', () => {
@@ -139,22 +145,23 @@ describe('Agent model and reasoning controls', () => {
     const silent = { ...props(), config: [] }
     expect(named(html(silent), '模型')).toBe('默认模型')
     expect(html(silent)).toContain('由 Fake Agent 决定')
-    expect(html(silent)).not.toContain('思考')
+    expect(levelNames(html(silent))).toEqual(['默认'])
     expect(named(thinkingHtml(silent), '思考')).toBe('默认')
   })
 
-  it('keeps model and thinking apart: each control writes only its value, and every choice stays reachable', () => {
+  it('opens one panel from both chips: each writes only its value, and every choice stays reachable', () => {
     const rendered = html(props())
     expect(named(rendered, '模型')).toBe('First model')
     expect(rendered).toContain('上下文窗口')
     expect(rendered).not.toContain('Agent description')
-    expect(rendered).not.toContain('aria-label="思考"')
+    expect(levelNames(rendered)).toEqual(['由模型决定', '均衡', '更详细'])
     const thinking = thinkingHtml(props())
+    expect(levelNames(thinking)).toEqual(levelNames(rendered))
+    expect(thinking).toContain('model-board is-thinking')
     expect(named(thinking, '思考')).toBe('均衡')
     // The Harness's own names, each a row of the menu, the current one checked.
     for (const level of ['由模型决定', '均衡', '更详细']) expect(thinking).toContain(level)
     expect(thinking).toContain('aria-checked="true"')
-    expect(thinking).not.toContain('First model')
     expect(thinking).not.toContain('role="slider"')
     expect(thinking).toContain('thinking-picker')
     expect(thinking).not.toContain('is-fixed')
@@ -183,11 +190,13 @@ describe('Agent model and reasoning controls', () => {
       expect(markup).toContain('aria-disabled="true"')
     }
     // A write in flight turns the control it belongs to, not the other one.
-    expect(thinkingHtml({ ...props(), busy: reasoning.id })).toContain('aria-busy="true"')
+    expect(trigger(thinkingHtml({ ...props(), busy: reasoning.id }))).toContain('aria-busy="true"')
     expect(thinkingHtml({ ...props(), busy: reasoning.id })).toContain('正在切换…')
-    expect(html({ ...props(), busy: reasoning.id })).not.toContain('aria-busy="true"')
-    expect(html({ ...props(), busy: model.id })).toContain('aria-busy="true"')
-    expect(thinkingHtml({ ...props(), busy: model.id })).not.toContain('aria-busy="true"')
+    expect(trigger(html({ ...props(), busy: reasoning.id }))).not.toContain('aria-busy="true"')
+    expect(trigger(html({ ...props(), busy: model.id }))).toContain('aria-busy="true"')
+    expect(trigger(thinkingHtml({ ...props(), busy: model.id }))).not.toContain('aria-busy="true"')
+    // The panel's levels wait on either write.
+    expect(levelsColumn(html({ ...props(), busy: model.id }))).toContain('aria-busy="true"')
   })
 
   it('shows a device that may only watch both controls with the reason, and no way to change them', () => {
@@ -682,7 +691,8 @@ describe('thinking on the built-in Harness', () => {
     expect(named(thinking({ providerId: 'lab', model: 'alpha', effort: 'low' }, current), '思考')).toBe('下一条：低')
     expect(thinking({ providerId: 'lab', model: 'alpha', effort: 'low' }, current)).toContain('撤销切换，继续使用 alpha · 高')
     expect(named(session({ providerId: 'lab', model: 'beta' }, current), '模型')).toBe('下一条：beta')
-    expect(session(current, current)).not.toContain('思考')
+    // The model chip opens the same panel, with the model's levels beside its list.
+    expect(levelNames(session(current, current))).toEqual(['默认', '低', '中', '高'])
   })
 
   it('opens with the one row 默认 and why when the model declares no levels, and says a level taken away', () => {
@@ -823,8 +833,8 @@ describe('thinking on a service model before the session starts', () => {
     const draft = draftOf(codex(declared), 'plain')
     const thinking = renderToStaticMarkup(createElement(DraftThinkingControl, draft))
     expect(named(thinking, '思考')).toBe('默认')
-    expect(thinking).not.toContain('Medium')
-    expect(thinking).not.toContain('model-note')
+    expect(levelNames(thinking)).toEqual(['默认'])
+    expect(levelsColumn(thinking)).not.toContain('model-note')
     for (const words of ['开始后', '发第一条消息后可以换']) expect(thinking).not.toContain(words)
   })
 

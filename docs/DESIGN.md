@@ -331,7 +331,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 | 种类 | 宽 | 圆角 | 阴影 | 进出 |
 | --- | --- | --- | --- | --- |
 | 提示框 | 至多 sm | `--tip-radius`（6） | `--sh-tip` | `--m-enter` |
-| Popover、Menu、建议、Toast | xs 240 · sm 320 · md 400 | `--layer-radius`（12） | `--sh-pop` | `--m-enter` |
+| Popover、Menu、建议、Toast | xs 240 · sm 320 · md 400；模型面板 lg 560 | `--layer-radius`（12） | `--sh-pop` | `--m-enter` |
 | Drawer | 与输入框同宽 | `--modal-radius`（16） | `--sh-lift` | `--m-panel` |
 | Dialog、Sheet | md 400 · lg 560 · xl 720 | `--modal-radius`（16） | `--sh-dialog` | `--m-sheet` |
 
@@ -402,15 +402,17 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 
 **输入框上的四个控件。** Harness、模型、思考、权限平铺在输入框上（[Composer.tsx](../apps/web/src/composer/Composer.tsx)），每个只写值，在任何宽度都看得见，放不下就换行，不收进菜单。每个控件外层带 `data-composer-control`（`harness`、`model`、`thinking`、`permission`）。
 
-「＋」在每种输入框里都是控件行的第一个，项目与分支等小片排在它后面或上一行；提示只写「添加文件」。
+「＋」在每种输入框里都是控件行的第一个，项目与分支等小片排在它后面或上一行；提示只写「添加文件」。控件行按输入框自己的宽度排（容器查询，不按窗口宽度）：一行放不下时项目与位置的小片在上一行，四个控件整枚换行、从不重叠，长名字截断，发送键在行末（`e2e/composer-row.e2e.ts`）。
 
 - **Harness**（[ModelControl.tsx](../apps/web/src/composer/ModelControl.tsx)）：开始后不能换，菜单写明并给「分叉」与「新会话」；选模型从不换 Harness。最新一轮运行或等你处理时分叉不可按并写原因。
 - **新会话默认**：「设为新会话默认」只在这台电脑上生效，其他设备看不到也收不回。它的 Harness 或模型用不了时默认不生效，也不替它换一个。
+- **模型与思考是同一个面板**（[ModelPanel.tsx](../apps/web/src/composer/ModelPanel.tsx)，`PickerBoard`）：两个控件点开同一个固定大小的面板，焦点分别落在模型列表或思考列。左栏是来源（这个 Harness 自己的模型、每个能用的模型服务、有记录时的最近使用；只有一个来源时不画），中间是搜索与该来源的模型，前九行印着与「跳到第 N 个会话」同一组键（面板开着时归面板，只在桌面端印出），右栏是高亮模型的思考档位与 Harness 报告的其他模型设置。在列表里移动只换右栏，不改尺寸；选有档位的模型后焦点进右栏，选档位即关闭。手机上来源与档位各是一行。
 - **模型**：只写模型。Harness 还没报告的模型写「默认模型」。能经 Latch 转发的服务组名注明「经 Latch」；有一轮没经过 Latch 时用琥珀色写明。用不了的服务折成一行，展开后每个写原因（[MODEL-CONFIGURATION.md](./MODEL-CONFIGURATION.md)）。
 - **服务的健康**：只在不正常时出现，状态点加状态词。会自己过去的（变慢、额度用完、请求过多）是琥珀，真实失败（出错中、密钥无效）是红。由备选服务回答的一轮带中性「备选」徽标，它不是警告。
 - **思考**（[ThinkingControl.tsx](../apps/web/src/composer/ThinkingControl.tsx)）：只列 Harness 或模型声明的档位，Latch 不替没声明的模型编档位；没有值时写「默认」，仍能点开。
 - **权限**：始终显示、始终能点开。开始前来自 `HarnessInfo.permission`，开始后列 Harness 报告的模式（[HARNESSES.md](./HARNESSES.md#权限菜单)）。
-  - 只有「不再询问」的标题、说明与图标是琥珀色；执行前不询问与读不回模式也是琥珀。
+  - 两到五个 Latch 认得的模式是一行图标分段（`ModeStrip`），由紧到宽；下面固定高度地写选中或预览中那一档的名字与它自己的一句说明，这是菜单不写说明的唯一例外。方向键与悬停只预览，Enter 或点按才选。模式更多、只有一档或 Latch 不认得时是单选列表。
+  - 只有「不再询问」的标题、说明与图标是琥珀色（分段只在选中或预览时）；执行前不询问与读不回模式也是琥珀。
   - 任何能发起会话的设备都能直接选任何一档，不弹确认；Latch 不替人选更宽的一档。
   - Latch 只核对选的是哪一项、不隔离 Harness，这句话在菜单脚部的 `Hint` 里。限制只写在菜单里，输入框下面没有长句。
 - **第一次用**：没有记录且可用 Harness 不止一个时询问，什么都不预选；不替人选完全访问的 Harness，也不用 Host 的默认代替询问。

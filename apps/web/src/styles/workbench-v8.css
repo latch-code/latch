@@ -365,7 +365,7 @@
   display: grid;
   grid-template:
     'fields fields fields' auto
-    'add location actions' auto / auto minmax(0, 1fr) minmax(0, max-content);
+    'add location actions' auto / auto minmax(0, max-content) minmax(0, 1fr);
 }
 .workbench-home-composer .composer[data-location-position='toolbar'] > .composer-add {
   grid-area: add;
@@ -377,7 +377,34 @@
 }
 .workbench-home-composer .composer[data-location-position='toolbar'] > .home-composer-location {
   grid-area: location;
+  overflow: hidden;
   padding: 0 0 var(--sp-12) var(--sp-8);
+}
+/*
+ * The place takes what its chips need, each at most a few words wide, and the controls the rest, wrapping whole chips;
+ * a place chip gives way before it overlaps the next: it truncates, its full name on hover.
+ */
+.workbench-home-composer .home-composer-location > * {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 16em;
+}
+/*
+ * The row is laid out by the composer's own width, not the window's: a side panel or the sidebar narrows the column at
+ * any window size. Below what holds ＋, the place and the four controls on one line, the place takes its own line
+ * above, and the controls wrap whole after ＋, with send at the row's end.
+ */
+.workbench-home-composer .composer-stack {
+  container: home-composer / inline-size;
+}
+@container home-composer (max-width: 879.98px) {
+  .workbench-home-composer .composer[data-location-position='toolbar'] {
+    grid-template: 'fields fields' 'location location' 'add actions' / auto minmax(0, 1fr);
+  }
+  .workbench-home-composer .composer[data-location-position='toolbar'] > .home-composer-location {
+    padding-inline-start: var(--sp-12);
+    padding-block-end: var(--sp-4);
+  }
 }
 .workbench-home-composer .composer[data-location-position='toolbar'] > .composer-home-fields {
   grid-area: fields;
@@ -1357,13 +1384,6 @@
   }
   .workbench-nav .space-switch {
     width: 244px;
-  }
-  .workbench-home-composer .composer[data-location-position='toolbar'] {
-    grid-template: 'fields fields' 'location location' 'add actions' / auto minmax(0, 1fr);
-  }
-  .workbench-home-composer .composer[data-location-position='toolbar'] > .home-composer-location {
-    padding-inline-start: var(--sp-12);
-    padding-block-end: var(--sp-4);
   }
 }
 @media (max-width: 767.98px) {

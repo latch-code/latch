@@ -34,16 +34,9 @@ import { MoreMenu } from '../composer/Footer.tsx'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { BranchSegment, ComposerStatus, FolderSegment, statusRoute } from '../composer/ComposerStatus.tsx'
 import { SessionVitalsLine } from '../composer/VitalsStrip.tsx'
-import {
-  DraftHarnessControl,
-  DraftModelControl,
-  FORK_BUSY,
-  SessionHarnessControl,
-  SessionModelControl,
-  type SessionFork,
-} from '../composer/ModelControl.tsx'
+import { DraftHarnessControl, FORK_BUSY, SessionHarnessControl, type SessionFork } from '../composer/ModelControl.tsx'
+import { DraftModelControl, DraftThinkingControl, SessionModelControl, SessionThinkingControl } from '../composer/ModelPanel.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
-import { DraftThinkingControl, SessionThinkingControl } from '../composer/ThinkingControl.tsx'
 import { composerOptions, configUnknownBar, modelWords, ownModelName } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { helperPermissionBlocked } from '../agents/personWords.ts'
@@ -831,7 +824,12 @@ export function SessionComposer({
                   onChoice={submission.updateChoice}
                   access={access}
                   disabled={newChoicesLocked}
+                  onManageModels={manageProviders}
+                  onProvidersChanged={() => {
+                    void refresh()
+                  }}
                   onRead={refresh}
+                  computer={computer}
                 />
               ) : (
                 <SessionThinkingControl
@@ -845,8 +843,11 @@ export function SessionComposer({
                   {...(configFeedback.get(selectedId) ? { feedback: configFeedback.get(selectedId)! } : {})}
                   onRefresh={refreshConfig}
                   onConfig={setConfig}
+                  onManageModels={manageProviders}
                   locked={gate.kind === 'read-only' ? gate.text : undefined}
                   route={summary?.modelRoute}
+                  reported={summary?.model}
+                  computer={computer}
                 />
               )}
             </ComposerControl>

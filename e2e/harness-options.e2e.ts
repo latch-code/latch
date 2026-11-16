@@ -172,8 +172,15 @@ describe("choosing a Harness's own options before the first message", () => {
   }
   const current = (detail: TaskDetail, id: string) => detail.config?.find(option => option.id === id)?.currentValue
   /** A row of an open picker; a searchable one lists its rows as options. */
+  // The 模型 and 思考 chips open the same panel: the row is the one in the layer that is open, not one fading out.
   const row = (page: Page, name: RegExp | string) =>
-    page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
+    page
+      .locator(':popover-open, dialog[open]')
+      .getByRole('menuitemradio', { name })
+      .or(page.locator(':popover-open, dialog[open]').getByRole('option', { name }))
+      .or(page.locator(':popover-open, dialog[open]').getByRole('radio', { name }))
+      .filter({ visible: true })
+      .first()
 
   it("reads Codex's own list when its menu first opens, then lists what a session offered, and starts on the picks", async () => {
     const page = await open(1440, 'light')
@@ -195,7 +202,6 @@ describe("choosing a Harness's own options before the first message", () => {
     await row(page, /先问你/u).waitFor()
     await row(page, /由模型判断/u).waitFor()
     await row(page, /不再询问/u).waitFor()
-    await page.getByRole('button', { name: '更多', exact: true }).click()
     await row(page, /按规则放行/u).click()
     await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
     await shot(page, 'permission-before-read-1440-light')
@@ -238,28 +244,23 @@ describe("choosing a Harness's own options before the first message", () => {
     await shot(page, 'large-thinking-1440-light')
     await page.keyboard.press('Escape')
 
-    // Four modes: the menu lists three, and the one between them waits under 更多, which folds again.
+    // Four modes, one segment each, tightest first: moving previews a mode's name and line, choosing takes Enter.
     await chip(page, '权限').click()
-    await row(page, /由模型判断/u).waitFor()
-    expect(await row(page, /按规则放行/u).count()).toBe(0)
-    const more = page.locator('.permission-list-more').filter({ visible: true })
-    await more.click()
-    await expect.poll(() => more.getAttribute('aria-expanded')).toBe('true')
-    await shot(page, 'permission-more-1440-light')
-    await more.click()
-    await expect.poll(() => row(page, /按规则放行/u).count()).toBe(0)
-    // Left open, 更多 is folded again the next time 权限 opens.
-    await more.click()
-    await row(page, /按规则放行/u).waitFor()
-    await page.keyboard.press('Escape')
-    await chip(page, '权限').click()
-    await row(page, /由模型判断/u).waitFor()
-    expect(await row(page, /按规则放行/u).count()).toBe(0)
-    expect(await more.getAttribute('aria-expanded')).toBe('false')
-    await more.click()
-    await row(page, /按规则放行/u).click()
+    await expect
+      .poll(() =>
+        page
+          .locator('.ui-mode-strip-option')
+          .filter({ visible: true })
+          .evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))),
+      )
+      .toEqual(['先问你', '按规则放行', '由模型判断', '不再询问'])
+    await expect.poll(() => page.locator('.ui-mode-strip-name').filter({ visible: true }).innerText()).toBe('先问你')
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => page.locator('.ui-mode-strip-name').filter({ visible: true }).innerText()).toBe('按规则放行')
+    expect(await chip(page, '权限').innerText()).toContain('先问你')
+    await shot(page, 'permission-strip-1440-light')
+    await page.keyboard.press('Enter')
     await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
-    await page.keyboard.press('Escape')
     await shot(page, 'picked-1440-light')
 
     await send(page, '第二轮')
@@ -305,9 +306,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await row(page, /^High/u).click()
     await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
     await chip(page, '权限').click()
-    await page.locator('.permission-list-more').filter({ visible: true }).click()
     await row(page, /按规则放行/u).click()
-    await page.keyboard.press('Escape')
     await input(page).fill('第三轮')
     await input(page).press('Meta+Enter')
     // With no project yet, sending asks where; a new empty folder is fine here.
@@ -516,19 +515,10 @@ describe("choosing a Harness's own options before the first message", () => {
       expect(await sheet.getByText('开始后可以换', { exact: false }).count()).toBe(0)
       await shot(page, `chips-390-${theme}`)
       await sheet.getByRole('button', { name: /^权限/u }).click()
+      // The same segments in the sheet, larger.
       await row(page, '由模型判断').waitFor()
-      expect(await row(page, '按规则放行').count()).toBe(0)
-      await page.getByRole('button', { name: '更多', exact: true }).click()
-      await row(page, '按规则放行').waitFor()
+      expect((await row(page, '按规则放行').boundingBox())!.height).toBeGreaterThanOrEqual(44)
       await shot(page, `sheet-permission-390-${theme}`)
-      // Closed with the rest shown, the next opening shows the main rows again.
-      const picker = page.getByRole('dialog', { name: '权限' })
-      await page.keyboard.press('Escape')
-      await picker.waitFor({ state: 'hidden' })
-      await sheet.getByRole('button', { name: /^权限/u }).click()
-      await row(page, '由模型判断').waitFor()
-      await expect.poll(() => row(page, '按规则放行').count()).toBe(0)
-      await page.getByRole('button', { name: '更多', exact: true }).click()
       await row(page, '按规则放行').click()
       await expect.poll(() => sheet.getByRole('button', { name: /^权限/u }).innerText()).toContain('按规则放行')
       await noHorizontalOverflow(page)
@@ -808,7 +798,12 @@ describe("choosing one of Codex's own models in a draft", () => {
   const received = async (method: string) => (await lines()).filter(line => line.event === 'recv' && line.method === method)
   const chip = (page: Page, name: string): Locator => page.getByRole('button', { name: new RegExp(`^${name}：`, 'u') }).first()
   const row = (page: Page, name: RegExp) =>
-    page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
+    page
+      .getByRole('menuitemradio', { name })
+      .or(page.locator(':popover-open, dialog[open]').getByRole('option', { name }))
+      .or(page.locator(':popover-open, dialog[open]').getByRole('radio', { name }))
+      .filter({ visible: true })
+      .first()
 
   it('reads its list when its menu opens, lists the real names with the default marked, and starts on the one picked', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })

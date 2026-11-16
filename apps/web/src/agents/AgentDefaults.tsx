@@ -1,7 +1,7 @@
 import type { HostCatalog } from '@latch/protocol'
 import { Button } from '@latch/ui'
-import { DraftModelControl, SessionModelControl } from '../composer/ModelControl.tsx'
-import { ConfigFeedback, DraftThinkingControl, SessionThinkingControl } from '../composer/ThinkingControl.tsx'
+import { DraftModelControl, DraftThinkingControl, SessionModelControl, SessionThinkingControl } from '../composer/ModelPanel.tsx'
+import { ConfigFeedback } from '../composer/ThinkingControl.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
@@ -58,7 +58,15 @@ export function AgentDefaults({
       </dd>
       <dt>思考</dt>
       <dd>
-        <DraftThinkingControl catalog={catalog} choice={choice} onChoice={update} access={access} disabled={disabled} onRead={onRead} />
+        <DraftThinkingControl
+          catalog={catalog}
+          choice={choice}
+          onChoice={update}
+          access={access}
+          disabled={disabled}
+          onRead={onRead}
+          onManageModels={onManage}
+        />
       </dd>
       <dt>做事前</dt>
       <dd>
@@ -146,7 +154,7 @@ export function CurrentAgentOptions({ shell, owner }: { shell: ShellState; owner
       {config.length > 0 && (
         <div className="agent-current-options">
           <SessionModelControl {...options} reported={current.summary.model} route={current.summary.modelRoute} />
-          <SessionThinkingControl {...options} route={current.summary.modelRoute} />
+          <SessionThinkingControl {...options} reported={current.summary.model} route={current.summary.modelRoute} />
           {permission?.option && (
             <PermissionChip
               view={permission}

@@ -344,7 +344,7 @@ it.each([
           await noHorizontalOverflow(page, overlay.locator('.ui-dialog-surface'))
           await shoot('keys-overlay')
           await search.fill('会话')
-          await overlay.getByText('跳到第 N 个会话', { exact: true }).waitFor()
+          await overlay.getByText('跳到第 N 个会话 · 模型面板里选第 N 个模型', { exact: true }).waitFor()
           expect(await overlay.getByText('改动', { exact: true }).count()).toBe(0)
           await search.fill('没有这个键')
           await overlay.getByText('没有匹配的快捷键', { exact: true }).waitFor()

@@ -93,7 +93,8 @@ const SHORTCUTS = [
   { id: 'quick-look', label: '快速查看预览中的文件', desktop: 'Space', browser: null },
   { id: 'previous', label: '上一个会话', desktop: '⇧⌘[', browser: 'Alt [' },
   { id: 'next', label: '下一个会话', desktop: '⇧⌘]', browser: 'Alt ]' },
-  { id: 'session', label: '跳到第 N 个会话', desktop: '⌘1 … ⌘9', browser: 'Alt 1 … Alt 9' },
+  // While the model panel is open it takes the same keys for its Nth model.
+  { id: 'session', label: '跳到第 N 个会话 · 模型面板里选第 N 个模型', desktop: '⌘1 … ⌘9', browser: 'Alt 1 … Alt 9' },
   { id: 'next-approval', label: '下一个等你处理的请求', desktop: '⌥⌘A', browser: 'Alt Shift A' },
   { id: 'decide', label: '允许、拒绝选中的请求', desktop: '⌘⏎ · esc', browser: 'Mod Enter · Esc' },
   { id: 'triage-decide', label: '顶栏布局：拒绝、允许聚焦的请求', desktop: '1 · 2', browser: '1 · 2' },
