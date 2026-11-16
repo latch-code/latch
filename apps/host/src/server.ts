@@ -694,6 +694,8 @@ export interface ServerOptions {
   egressLookup?: LookupFunction
   /** Tests; default `latchCodeRoot()`. */
   codeRoot?: string
+  /** The build this Host started from (ui-build.ts `readCodeBuild`), reported in host-info for the desktop launcher. */
+  codeBuild?: string
   /** Tests: credentials, confirmations, enrollments. */
   now?: () => number
   /** Tests: the times recorded on messages and runs and sent to clients as the Host's time. Default `Date.now`. */
@@ -7361,6 +7363,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           scheduleWake: scheduleWake(),
           protocol: HOST_PROTOCOL,
           ...(modelGateway.listeningPort === undefined ? {} : { modelGatewayPort: modelGateway.listeningPort }),
+          ...(options.codeBuild ? { build: options.codeBuild } : {}),
         }
         json(res, info)
         return true

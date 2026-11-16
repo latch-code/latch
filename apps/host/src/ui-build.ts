@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { open } from 'node:fs/promises'
+import { open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 
@@ -25,4 +26,24 @@ export async function readUiBuild(uiDir: string): Promise<string | undefined> {
   } finally {
     await handle?.close()
   }
+}
+
+/**
+ * The build of the code a Host starts from: SHA-256 over the start script's bytes and the page's build ID beside it.
+ * The Host takes it once at start (host-info's `build`); the desktop launcher takes it again from the files on disk, and a
+ * difference means a rebuild since that Host started. `pnpm build:host` changes the script, `pnpm build:web` the page.
+ * Undefined when the script cannot be read.
+ */
+export async function readCodeBuild(script: string, uiDir: string): Promise<string | undefined> {
+  let bytes: Buffer
+  try {
+    bytes = await readFile(script)
+  } catch {
+    return undefined
+  }
+  return createHash('sha256')
+    .update(bytes)
+    .update('\0')
+    .update((await readUiBuild(uiDir)) ?? '')
+    .digest('hex')
 }

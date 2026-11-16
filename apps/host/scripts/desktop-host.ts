@@ -1,13 +1,15 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { constants } from 'node:fs'
-import { chmod, mkdir, open } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { chmod, mkdir, open, readFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { writeFileAtomic } from '@latch/core/node-kit'
+import { z } from 'zod'
 import { HOST_ENV_NAMES, latchEnv } from '../src/env.ts'
-import { readHostState, verifyHostState, type HostInfo, type HostState } from '../src/host-state.ts'
+import { processAlive, readHostState, unixRequest, verifyHostState, type HostInfo, type HostState } from '../src/host-state.ts'
 import { resolveLatchPaths } from '../src/paths.ts'
+import { readCodeBuild } from '../src/ui-build.ts'
 
 /** Variables that must never reach the Host or the shell: the shell finds the Host through host.json only. */
 const DROPPED_ENV = ['LATCH_DESKTOP_URL', 'ELECTRON_RUN_AS_NODE']
@@ -103,22 +105,97 @@ async function openHostLog(path: string) {
   return handle
 }
 
+const launchRecordSchema = z
+  .object({
+    version: z.literal(1),
+    pid: z.number().int().positive(),
+    hostId: z.string(),
+    launch: z.object({ script: z.string() }).passthrough().nullable(),
+  })
+  .strict()
+
+async function readLaunchRecord(dataDir: string) {
+  try {
+    return launchRecordSchema.parse(JSON.parse(await readFile(join(dataDir, DESKTOP_LAUNCH_FILE), 'utf8')))
+  } catch {
+    return undefined
+  }
+}
+
+export const REBUILT_NOTICE = '检测到新的构建，已重启 Host。'
+/** How long a Host asked to stop for a rebuild may take to exit (it ends its sessions' processes first). */
+const STOP_TIMEOUT_MS = 30_000
+
+/**
+ * What to do with a running Host started from an older build than the one on disk: restart it (`stop`), or keep it and
+ * say why in one line. Only a Host this launcher or the desktop app started from this checkout (desktop-launch.json
+ * names its pid and hostId) with no session running or waiting for an approval is restarted, as the desktop app's own
+ * 「重启 Latch」 does; a Host whose settings came from the environment is restarted only by a launch that has its own.
+ * Any other Host (`pnpm start`, another checkout) is reused as before: its build is not this launcher's to compare.
+ */
+async function rebuildDecision(
+  host: DesktopHost,
+  options: DesktopLaunchOptions,
+  script: string,
+): Promise<{ action: 'reuse' } | { action: 'stop' } | { action: 'keep'; reason: string }> {
+  const record = await readLaunchRecord(options.dataDir)
+  if (!record || record.pid !== host.pid || record.hostId !== host.hostId || (record.launch && record.launch.script !== script))
+    return { action: 'reuse' }
+  const build = await readCodeBuild(script, join(dirname(script), 'web'))
+  if (build === undefined || host.info.build === build) return { action: 'reuse' }
+  if (record.launch === null && options.repeatable)
+    return {
+      action: 'keep',
+      reason: '检测到新的构建，但这个 Host 的设置来自环境变量，未重启；请先 pnpm stop，再带上这些环境变量运行 pnpm desktop。',
+    }
+  const activity = host.info.activity ?? { running: host.info.activeSessions, waiting: 0 }
+  if (activity.running + activity.waiting > 0)
+    return { action: 'keep', reason: '检测到新的构建，但有会话正在运行或等待审批，未重启 Host；结束后在 Latch 中点「重启 Latch」。' }
+  return { action: 'stop' }
+}
+
+/** Announces a restart, then SIGTERM to the Host just verified over host.sock, and waits for it to exit; never SIGKILL. */
+async function stopForRebuild(host: DesktopHost, timeoutMs = STOP_TIMEOUT_MS): Promise<void> {
+  await unixRequest(host.socketPath, '/link/api/host/state', { method: 'POST', body: { state: 'stopping', reason: 'restart' } }).catch(
+    () => undefined,
+  )
+  try {
+    process.kill(host.pid, 'SIGTERM')
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error
+  }
+  const deadline = Date.now() + timeoutMs
+  while (processAlive(host.pid)) {
+    if (Date.now() > deadline)
+      throw new Error(`旧的 Host（PID ${host.pid}）没有在 ${Math.round(timeoutMs / 1000)} 秒内停止，请查看 host.log 后重试。`)
+    await delay(100)
+  }
+}
+
 export async function ensureDesktopHost(
   options: DesktopLaunchOptions,
-  startup: { script?: string; nodeArgs?: string[]; timeoutMs?: number } = {},
+  startup: { script?: string; nodeArgs?: string[]; timeoutMs?: number; stopTimeoutMs?: number } = {},
 ): Promise<DesktopHost & { reused: boolean; hostStatePath: string; notice?: string }> {
   await mkdir(options.dataDir, { recursive: true, mode: 0o700 })
+  const script = startup.script ?? resolve(options.cwd, 'dist/start.js')
   const existing = await probeDesktopHost(options.dataDir)
-  if (existing)
-    return {
-      ...existing,
-      reused: true,
-      hostStatePath: options.hostStatePath,
-      notice: `复用已有节点（${options.dataDir}）。本次 --demo、--harness、--provider、--plugin、--workspace、网络参数和模型环境变量不会重新应用；要更改启动配置，请先停止该目录的节点，或使用其他 --data-dir。`,
+  let restarted = false
+  if (existing) {
+    const decision = await rebuildDecision(existing, options, script)
+    if (decision.action !== 'stop') {
+      const reuse = `复用已有节点（${options.dataDir}）。本次 --demo、--harness、--provider、--plugin、--workspace、网络参数和模型环境变量不会重新应用；要更改启动配置，请先停止该目录的节点，或使用其他 --data-dir。`
+      return {
+        ...existing,
+        reused: true,
+        hostStatePath: options.hostStatePath,
+        notice: decision.action === 'keep' ? `${decision.reason}\n${reuse}` : reuse,
+      }
     }
+    await stopForRebuild(existing, startup.stopTimeoutMs)
+    restarted = true
+  }
   const logPath = join(options.dataDir, 'host.log')
   const log = await openHostLog(logPath)
-  const script = startup.script ?? resolve(options.cwd, 'dist/start.js')
   const child = spawn(process.execPath, [...HOST_NODE_ARGS, ...(startup.nodeArgs ?? []), script, ...options.args], {
     cwd: options.cwd,
     detached: true,
@@ -144,7 +221,7 @@ export async function ensureDesktopHost(
           ? { node: process.execPath, nodeArgs: [...(startup.nodeArgs ?? [])], script, args: options.args, cwd: options.cwd }
           : null,
       }
-      const notice = await recordLaunch(options.dataDir, record)
+      const notice = [restarted ? REBUILT_NOTICE : undefined, await recordLaunch(options.dataDir, record)].filter(Boolean).join('\n')
       return { ...state, reused: false, hostStatePath: options.hostStatePath, ...(notice ? { notice } : {}) }
     }
     await delay(100)

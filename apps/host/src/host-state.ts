@@ -439,6 +439,8 @@ export interface HostInfo {
   protocol?: number
   /** The model gateway's loopback port, which the desktop app keeps its preview tabs from; absent from older Hosts. */
   modelGatewayPort?: number
+  /** The build it started from (ui-build.ts `readCodeBuild`); absent from older Hosts and Hosts not started from a build. */
+  build?: string
 }
 
 const hostInfoSchema = z.object({
@@ -457,6 +459,10 @@ const hostInfoSchema = z.object({
   scheduleWake: z.object({ next: z.string().datetime().optional(), running: z.number().int().nonnegative() }).optional(),
   protocol: z.number().int().positive().optional(),
   modelGatewayPort: z.number().int().min(1).max(65_535).optional(),
+  build: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/u)
+    .optional(),
 })
 
 const MAX_INFO_BYTES = 64 * 1024

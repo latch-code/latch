@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { homedir, networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { HarnessPlugin } from '@latch/sdk'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { loadLoginShell, personCommandDirectories, personPathDirectories, resolveCommand } from '@latch/harness-acp'
@@ -23,12 +24,15 @@ import { buildPresenceHelper } from './presence-helper.ts'
 import { loadPluginPackage } from '../src/plugin-packages.ts'
 import { createShutdown } from './shutdown.ts'
 import { cleanupPluginGenerations } from './cleanup-plugin-generations.ts'
+import { readCodeBuild } from '../src/ui-build.ts'
 
 const PLAINTEXT_REMOVED = '明文局域网接入已移除：请提供 --tls-cert、--tls-key 和 --public-origin（例如用 tailscale cert 生成的证书）。'
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1'])
 
 class StartupError extends Error {}
 
+// Taken as the process starts, from the files it loaded: a rebuild later changes what is on disk, not this.
+const codeBuild = readCodeBuild(fileURLToPath(import.meta.url), resolve(latchCodeRoot(), 'dist/web'))
 const argv = process.argv.slice(2)
 const env = process.env
 
@@ -213,6 +217,7 @@ async function main(): Promise<void> {
   const model = latchEnv(env, 'MODEL')
   // Before the Host listens, because a launch fingerprint holds the path found through it.
   await loadLoginShell()
+  const build = await codeBuild
   const server = await startServer({
     dataDir: paths.dataDir,
     workspaceRoot: paths.workspaceRoot,
@@ -227,6 +232,7 @@ async function main(): Promise<void> {
     pathDirectories: personPathDirectories,
     agentsDir: paths.agentsDir,
     uiDir: resolve(codeRoot, 'dist/web'),
+    ...(build ? { codeBuild: build } : {}),
     port,
     demo,
     plugins,

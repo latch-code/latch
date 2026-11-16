@@ -13,6 +13,7 @@ import {
   ensureDesktopHost,
   hostSettingsInEnvironment,
   probeDesktopHost,
+  REBUILT_NOTICE,
 } from '../scripts/desktop-host.ts'
 import { queryHostInfo, readHostState } from '../src/host-state.ts'
 import { defaultPolicy } from '../src/policy.ts'
@@ -54,9 +55,9 @@ function stopLater(pid: number) {
 /** A stand-in Host: serves host-info on its own 0700 socket dir, writes host.json v2 and records how it was launched. */
 const FAKE_HOST = `
 import { createServer } from 'node:http'
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 const args = process.argv.slice(2)
 const dataDir = args[args.indexOf('--data-dir') + 1]
 const runtime = join(dataDir, 'run')
@@ -65,11 +66,17 @@ const socketPath = join(runtime, 'host.sock')
 const instanceId = randomUUID()
 const startedAt = new Date().toISOString()
 writeFileSync(join(dataDir, 'launch-' + process.pid + '.json'), JSON.stringify({ argv: args, execArgv: process.execArgv, env: process.env }))
+// As readCodeBuild: this script's bytes as it started, and no page build beside it.
+const build = createHash('sha256').update(readFileSync(process.argv[1])).update('\0').update('').digest('hex')
 const info = { product: 'Latch', version: '0.1.0', hostId: '${FAKE_HOST_ID}', instanceId, pid: process.pid, startedAt,
-  loopbackOrigin: 'http://h-${FAKE_HOST_ID}.localhost:1', tlsOrigin: null, devMode: true, presence: { status: 'unavailable' }, activeSessions: 0 }
+  loopbackOrigin: 'http://h-${FAKE_HOST_ID}.localhost:1', tlsOrigin: null, devMode: true, presence: { status: 'unavailable' }, activeSessions: 0, build }
 const server = createServer((req, res) => {
   if (req.url !== '/link/api/host-info') { res.writeHead(404); res.end(); return }
-  res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(info))
+  // <data>/busy.json: the sessions running and waiting that the test sets.
+  let activity = { running: 0, waiting: 0 }
+  try { activity = JSON.parse(readFileSync(join(dataDir, 'busy.json'), 'utf8')) } catch {}
+  res.writeHead(200, { 'content-type': 'application/json' })
+  res.end(JSON.stringify({ ...info, activeSessions: activity.running + activity.waiting, activity }))
 })
 server.listen(socketPath, () => {
   const state = { version: 2, pid: process.pid, hostId: info.hostId, instanceId, socketPath, loopbackOrigin: info.loopbackOrigin, tlsOrigin: null, startedAt, dataDir }
@@ -215,6 +222,54 @@ describe('desktop Host launch', () => {
       launch: null,
     })
   })
+
+  it('restarts an idle Host it started from an older build, and keeps a busy one or one it did not start', async () => {
+    const root = await directory()
+    const script = await fakeHostScript()
+    const dataDir = join(root, 'data')
+    const options = desktopLaunchOptions(['--data-dir', dataDir], root, cleanEnvironment())
+    const first = await ensureDesktopHost(options, { script, timeoutMs: 10_000 })
+    stopLater(first.pid)
+    // The same build: reused as before.
+    const same = await ensureDesktopHost(options, { script })
+    expect(same).toMatchObject({ pid: first.pid, reused: true })
+    expect(same.notice).not.toContain('检测到新的构建')
+
+    // A rebuild while a session waits for an approval: kept, and said so.
+    const rebuild = (mark: string) => writeFile(script, `${FAKE_HOST}\n// ${mark}\n`)
+    await rebuild('second build')
+    await writeFile(join(dataDir, 'busy.json'), JSON.stringify({ running: 0, waiting: 1 }))
+    const busy = await ensureDesktopHost(options, { script })
+    expect(busy).toMatchObject({ pid: first.pid, reused: true })
+    expect(busy.notice?.split('\n')[0]).toBe('检测到新的构建，但有会话正在运行或等待审批，未重启 Host；结束后在 Latch 中点「重启 Latch」。')
+    expect(alive(first.pid)).toBe(true)
+
+    // Idle: stopped (announced, SIGTERM, waited for) and started again from the build on disk.
+    await rm(join(dataDir, 'busy.json'))
+    const restarted = await ensureDesktopHost(options, { script, timeoutMs: 10_000 })
+    stopLater(restarted.pid)
+    expect(restarted.reused).toBe(false)
+    expect(restarted.notice).toBe(REBUILT_NOTICE)
+    expect(restarted.pid).not.toBe(first.pid)
+    expect(alive(first.pid)).toBe(false)
+    expect(JSON.parse(await readFile(join(dataDir, DESKTOP_LAUNCH_FILE), 'utf8'))).toMatchObject({ pid: restarted.pid })
+    expect(await ensureDesktopHost(options, { script })).toMatchObject({ pid: restarted.pid, reused: true })
+
+    // Not the Host the record names (`pnpm start`, another checkout): reused as before, its build not compared.
+    await rebuild('third build')
+    const recordPath = join(dataDir, DESKTOP_LAUNCH_FILE)
+    const record = JSON.parse(await readFile(recordPath, 'utf8'))
+    await writeFile(recordPath, JSON.stringify({ ...record, pid: restarted.pid + 1 }))
+    const foreign = await ensureDesktopHost(options, { script })
+    expect(foreign).toMatchObject({ pid: restarted.pid, reused: true })
+    expect(foreign.notice).toBe(same.notice)
+    // Settings from the environment that this launch does not have: kept, rather than started without them.
+    await writeFile(recordPath, JSON.stringify({ ...record, launch: null }))
+    const environment = await ensureDesktopHost(options, { script })
+    expect(environment).toMatchObject({ pid: restarted.pid, reused: true })
+    expect(environment.notice).toContain('设置来自环境变量，未重启')
+    expect(alive(restarted.pid)).toBe(true)
+  }, 60_000)
 
   it('keeps the Host it started when the launch record cannot be written, and says what that means', async () => {
     const root = await directory()
