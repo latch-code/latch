@@ -12,6 +12,7 @@ import { LoginTerminalDialog } from '../panel/terminal/LoginTerminalDialog.tsx'
 import { FillTerminalDialog } from '../panel/terminal/FillTerminalDialog.tsx'
 import { RemoveWorktreeDialog, removalWords } from '../components/RemoveWorktreeDialog.tsx'
 import { knownTags, SessionTagsDialog } from '../components/SessionTagsDialog.tsx'
+import { ItemJoinDialog } from '../board/ItemPageJoin.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { spaceOf } from '../sessions.ts'
 import { canDelegate } from '../agents/model.ts'
@@ -182,6 +183,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
           }}
         />
       )}
+      <ItemJoinDialog shell={shell} />
       {tagging && (
         <SessionTagsDialog
           task={tagging}

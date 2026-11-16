@@ -418,6 +418,10 @@ export interface PendingSubmission {
   customAgentId?: string
   /** An earlier prompt sent again (重试): it never came from the input, so delivering it leaves the session's draft. */
   resent?: true
+  /** A new session of this 待办 (再开一个): `POST /work/items/:id/start`, whose requests the Host keeps apart from `POST /tasks`. */
+  itemId?: string
+  /** With `itemId`: the 待办's revision the person saw when sending (`baseRevision`); another is 409 `item-changed`. */
+  itemRevision?: number
 }
 
 /** The submission took the input's text, attachments and file references; a prompt sent again (`resent`) took none. */
@@ -459,6 +463,19 @@ export function readPending(key: string): PendingSubmission | null {
     if (item.assistantId !== undefined) return null
     for (const field of ['sessionId', 'harnessId', 'workspaceId', 'customAgentId'] as const)
       if (item[field] !== undefined && typeof item[field] !== 'string') return null
+    // A start of a 待办 sent anywhere else would open a session outside it: dropped rather than retried as `POST /tasks`.
+    if (
+      item.itemId !== undefined
+      && (typeof item.itemId !== 'string'
+        || !/^itm_[A-Za-z0-9_-]{22}$/u.test(item.itemId)
+        || typeof item.itemRevision !== 'number'
+        || !Number.isInteger(item.itemRevision)
+        || item.itemRevision < 1
+        || item.sessionId !== undefined
+        || item.forkOf !== undefined
+        || item.customAgentId !== undefined)
+    )
+      return null
     if (item.mode !== undefined && item.mode !== 'chat' && item.mode !== 'agent') return null
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
     if (item.queue !== undefined && item.queue !== true) return null
@@ -499,6 +516,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(typeof item.harnessId === 'string' ? { harnessId: item.harnessId } : {}),
       ...(typeof item.workspaceId === 'string' ? { workspaceId: item.workspaceId } : {}),
       ...(typeof item.customAgentId === 'string' && item.sessionId === undefined ? { customAgentId: item.customAgentId } : {}),
+      ...(typeof item.itemId === 'string' ? { itemId: item.itemId, itemRevision: item.itemRevision as number } : {}),
       ...(model ? { model } : {}),
       ...(item.queue === true ? { queue: true as const } : {}),
       ...(item.steer === true ? { steer: true as const } : {}),
@@ -541,6 +559,25 @@ export function submissionRequest(submission: PendingSubmission): { path: string
         ...(submission.steer ? { steer: true } : {}),
         ...(submission.freshContext ? { freshContext: true } : {}),
         ...attachments,
+      },
+    }
+  }
+  if (submission.itemId !== undefined) {
+    // The 待办's start takes `POST /tasks`'s choices, never a fork or an Agent.
+    return {
+      path: `work/items/${encodeURIComponent(submission.itemId)}/start`,
+      body: {
+        prompt,
+        requestId,
+        baseRevision: submission.itemRevision,
+        mode: submission.mode ?? 'agent',
+        ...attachments,
+        ...(submission.harnessId ? { harnessId: submission.harnessId } : {}),
+        ...(model ? { model } : {}),
+        ...(submission.workspaceId ? { workspaceId: submission.workspaceId } : {}),
+        ...(submission.config?.length ? { config: submission.config } : {}),
+        ...(submission.ownModel && !model ? { ownModel: true } : {}),
+        ...(submission.worktree ? { worktree: submission.worktree } : {}),
       },
     }
   }

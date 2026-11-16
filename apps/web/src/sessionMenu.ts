@@ -1,4 +1,4 @@
-import { ArchiveRestore, Eraser, FolderPlus, FolderX, Mail, Tag } from 'lucide-react'
+import { ArchiveRestore, Eraser, FolderPlus, FolderX, ListMinus, ListPlus, Mail, Tag } from 'lucide-react'
 import { ArchiveGlyph, CheckGlyph, DownloadGlyph, CopyGlyph, EditGlyph, PinGlyph, UnpinGlyph, TrashGlyph } from '@latch/ui'
 import type { BoardPriority, TaskSummary } from '@latch/protocol'
 import type { MenuSection } from './components/overlays.tsx'
@@ -51,6 +51,8 @@ export interface SessionActions {
   rename: () => void
   /** 标签… and 优先级 (`boardMarkSections`). */
   marks?: BoardMarkActions | undefined
+  /** A Code session on a Host with 待办: 加入待办… while it is in none, 移出待办 while it is in one. */
+  item?: { join: () => void } | { leave: () => void } | undefined
   pin: () => void
   archive?: () => void
   export: () => void
@@ -69,7 +71,7 @@ export interface SessionActions {
 /**
  * The one session menu: the title row's ⋯ (and its title), a sidebar row's ⋯ and a phone row held down all draw this.
  * The open session has eight items; any other row seven, since only the open one can clear its context; a Host that
- * groups sessions adds 标签… and 优先级 for a device that may change them. While a turn
+ * groups sessions adds 标签… and 优先级 for a device that may change them, and one with 待办 加入待办… or 移出待办. While a turn
  * runs or waits, 清空上下文 and 删除 stay in place, greyed, each with the reason under it. 同步最新状态 is not here: the
  * connection's own notice retries. A Host without a catalog predates rename, pin, archive and delete, so only export
  * remains there.
@@ -87,6 +89,18 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
       ],
     },
     ...(actions.marks ? boardMarkSections(task, actions.marks) : []),
+    ...(actions.item
+      ? [
+          {
+            id: 'item',
+            items: [
+              'join' in actions.item
+                ? { id: 'item-join', label: '加入待办…', icon: ListPlus, onSelect: actions.item.join }
+                : { id: 'item-leave', label: '移出待办', icon: ListMinus, onSelect: actions.item.leave },
+            ],
+          },
+        ]
+      : []),
     {
       id: 'share',
       items: [...(actions.copy ? [{ id: 'copy', label: '复制为 Markdown', icon: CopyGlyph, onSelect: actions.copy }] : []), exportItem],

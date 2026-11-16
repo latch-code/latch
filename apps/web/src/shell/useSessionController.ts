@@ -34,6 +34,8 @@ import {
 } from '../core/securityCopy.ts'
 import { retryOfRefused, type RefusedInput } from '../core/refusedInput.ts'
 import { sessionMenuSections, type BoardMarkActions, type SessionPatch } from '../sessionMenu.ts'
+import { askJoinItem, leaveItem } from '../board/ItemPageJoin.tsx'
+import { codeSession, itemOfSession } from '../board/items.ts'
 import {
   emptySeen,
   isUnread,
@@ -1138,6 +1140,22 @@ export function useSessionController({
       setToast({ text: errorMessage(cause), tone: 'error' })
     }
   })
+  /** 加入待办… or 移出待办, for a Code session where the Host keeps 待办 and this device may change them. */
+  const itemActions = useStableCallback((task: TaskSummary) => {
+    if (!catalog?.features?.workItems || !access.scopes.has('run') || !codeSession(task)) return undefined
+    const item = itemOfSession(snapshot, task.id)
+    return item
+      ? {
+          leave: () => {
+            void leaveItem({ refresh, setToast }, item.id, task.id)
+          },
+        }
+      : {
+          join: () => {
+            askJoinItem(task.id)
+          },
+        }
+  })
   const sessionMenu = useCallback(
     (task: TaskSummary): MenuSection[] =>
       sessionMenuSections(
@@ -1153,6 +1171,7 @@ export function useSessionController({
             setRenaming(task)
           },
           marks: boardMarks(task),
+          item: itemActions(task),
           pin: () => {
             void patchTask(task, { pinned: !task.pinned })
           },
@@ -1220,6 +1239,8 @@ export function useSessionController({
       access,
       catalog,
       snapshot.agentChats,
+      snapshot.items,
+      itemActions,
       saveSessionProject,
       clearable,
       selectedId,

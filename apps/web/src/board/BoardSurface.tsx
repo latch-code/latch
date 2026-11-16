@@ -28,6 +28,8 @@ import {
 import { switchWorkView } from '../preferences.ts'
 import { boardMarkSections } from '../sessionMenu.ts'
 import { useBoardRequests } from './requests.ts'
+import { ItemPage } from './ItemPage.tsx'
+import { useItemPage } from './itemPage.ts'
 import { WorkBoard } from './WorkBoard.tsx'
 import { WorkBoardCard } from './WorkBoardCard.tsx'
 import { AllFilters, FilterChips, FilterMenus } from './WorkBoardFilters.tsx'
@@ -85,6 +87,9 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const [newSince, setNewSince] = useState<SendingMessage | null | undefined>(undefined)
   const root = useRef<HTMLElement>(null)
   const narrow = useNarrow(root)
+  // A 待办's page stands in the board's place while it is open (package G).
+  const itemPage = useItemPage(snapshot.device.id)
+  const showItem = itemPage !== null && shell.catalog?.features?.workItems === true
   useTicker(connection === 'connected' ? 'minute' : false)
   const now = hostNow()
   const tasks = snapshot.tasks
@@ -290,8 +295,14 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       aria-label="看板"
       data-narrow={narrow ? '' : undefined}
       data-view={memory.view}>
-      {!narrow && header}
-      <div className="work-board-body">{body}</div>
+      {showItem ? (
+        <ItemPage shell={shell} itemId={itemPage} />
+      ) : (
+        <>
+          {!narrow && header}
+          <div className="work-board-body">{body}</div>
+        </>
+      )}
       <WorkBoardNew shell={shell} open={newSince !== undefined} since={newSince ?? null} onClose={closeNew} onStarted={setStarted} />
     </section>
   )

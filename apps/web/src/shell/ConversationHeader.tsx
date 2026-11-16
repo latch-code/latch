@@ -1,6 +1,6 @@
 import { useRef, type ReactNode, type RefObject } from 'react'
 import { appRef, listedApps, originTitle } from '../plugin-pages/model.ts'
-import { FolderGit2, GitCompare } from 'lucide-react'
+import { FolderGit2, GitCompare, ListTodo } from 'lucide-react'
 import { escapeSecurityText, type ChangeTotals, type HarnessInfo, type RunLive, type TaskSummary } from '@latch/protocol'
 import { harnessName } from '../composerChoice.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
@@ -42,6 +42,9 @@ import { TopicFrame } from '../agents/TopicFrame.tsx'
 import { sessionSource } from '../sessionSource.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { ComputerChip } from './ComputerChip.tsx'
+import { itemOfSession } from '../board/items.ts'
+import { openItemPage } from '../board/itemPage.ts'
+import { switchWorkView } from '../preferences.ts'
 
 /** The clock's leaf: only these words re-render each second, and the shared ticker stops while the page is hidden. */
 function RunningWords({ live }: { live: RunLive | undefined }) {
@@ -251,6 +254,22 @@ function SourceLink({ source }: { source: HeaderSource }) {
   )
 }
 
+/** The 待办 a session belongs to: its title, which opens its page in 看板. */
+export interface HeaderItem {
+  title: string
+  onOpen: () => void
+}
+function ItemLink({ item }: { item: HeaderItem }) {
+  return (
+    <button type="button" className="topbar-agent topbar-item" title={`待办：${escapeSecurityText(item.title)}`} onClick={item.onOpen}>
+      <ListTodo size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+      <span className="topbar-item-title">
+        <VisibleText text={item.title} />
+      </span>
+    </button>
+  )
+}
+
 /** A session brought in from a harness's own earlier session: 「已接入」, and 「按文字重建」 when it was rebuilt as text. */
 export interface HeaderImported {
   label: string
@@ -289,11 +308,13 @@ function PhoneTopBar({
   changes,
   frame,
   from,
+  item,
   imported,
   computerUse,
 }: {
   /** 「操控这台 Mac」 is in use in this session, or stopping. */
   computerUse?: 'on' | 'stopping' | undefined
+  item?: HeaderItem | undefined
   changes?: HeaderToggle | undefined
   frame?: ReactNode
   from?: HeaderSource | undefined
@@ -332,8 +353,9 @@ function PhoneTopBar({
         <h1 title={title}>
           <TitleMenu title={title} sections={summary ? menu : []} />
         </h1>
-        {(where || state || branch || demo || from || imported || computerUse || connectionProblem(connection)) && (
+        {(where || state || branch || demo || from || item || imported || computerUse || connectionProblem(connection)) && (
           <div className="topbar-subline">
+            {item && <ItemLink item={item} />}
             {from && <SourceLink source={from} />}
             {imported && <ImportedMark mark={imported} />}
             {where && <span className="topbar-source-text">{where}</span>}
@@ -405,9 +427,12 @@ export function SessionHeader({
   changesTotals,
   frame,
   from,
+  item,
   imported,
   computerUse,
 }: {
+  /** The 待办 the session belongs to. */
+  item?: HeaderItem | undefined
   /** 「操控这台 Mac」 is in use in this session (its chip, with 停), or stopping. */
   computerUse?: 'on' | 'stopping' | undefined
   /** The session was brought in from a harness's own earlier session. */
@@ -464,6 +489,7 @@ export function SessionHeader({
         changes={slots.changes}
         frame={frame}
         from={from}
+        item={item}
         imported={imported}
         computerUse={computerUse}
       />
@@ -512,6 +538,7 @@ export function SessionHeader({
                   {crumb?.folders}
                 </ProjectCrumb>
               )}
+              {item && <ItemLink item={item} />}
               {computer && (
                 <span className="topbar-computer">
                   <Icon icon={LaptopGlyph} size={14} />
@@ -591,6 +618,8 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
   const importedFrom = summary?.imported && snapshot.catalog?.harnesses.find(harness => harness.id === summary.imported!.from)
   const imported = summary && importedMark(summary, importedFrom ? harnessName(importedFrom) : undefined)
   const source = summary ? sessionSource(snapshot, summary) : undefined
+  // Membership is read from the 待办 the snapshot lists, never from the session's own field.
+  const item = summary && snapshot.catalog?.features?.workItems ? itemOfSession(snapshot, summary.id) : undefined
   // A session a plugin page started: 「来自 <页面名>」, the way back to the page while it is listed.
   const originApp = summary?.origin?.app
   const originPage = originApp ? listedApps(snapshot).find(page => appRef(page) === originApp) : undefined
@@ -698,6 +727,17 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
           ? { from: pageOrigin }
           : {})}
       imported={imported}
+      {...(item
+        ? {
+            item: {
+              title: item.title,
+              onOpen: () => {
+                openItemPage(snapshot.device.id, item.id)
+                switchWorkView('board')
+              },
+            },
+          }
+        : {})}
       computerUse={current?.computer && current.summary.id === summary?.id ? (current.computer.stopping ? 'stopping' : 'on') : undefined}
       onPanel={() => togglePanel()}
       sessionMenu={titleMenu}

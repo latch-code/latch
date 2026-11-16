@@ -1,0 +1,378 @@
+/*
+ * A 待办's page in 看板's place: its head (← 看板, title, 完成 or 重新打开, ⋯), then 要求 and 会话 beside a facts card.
+ * It reflows by the board's own width (the `work-board` container): the facts card goes above everything below 720px,
+ * as the phone's pushed page has it. The discussion (package H) takes `.item-page-thread` under 会话.
+ */
+.item-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.item-page-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding: var(--sp-12) var(--sp-16);
+}
+.item-page-back {
+  flex: none;
+  margin-inline-start: calc(-1 * var(--sp-4));
+}
+.item-page-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* The button and the field share the title's box, so editing moves nothing. */
+.item-page-title-button,
+.item-page-title-field {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-6);
+  border: 1px solid transparent;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.item-page-title-button:hover {
+  background: var(--hover);
+}
+.item-page-title-button:focus-visible,
+.item-page-title-field:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.item-page-title-field {
+  border-color: var(--line);
+  background: var(--card);
+}
+.item-page-head-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
+.item-page-body {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-areas: 'main facts';
+  align-items: start;
+  align-content: start;
+  gap: var(--sp-16);
+  min-height: 0;
+  padding: 0 var(--sp-16) var(--sp-24);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.item-page-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-16);
+  width: 100%;
+  min-width: 0;
+}
+.item-page-facts {
+  grid-area: facts;
+  position: sticky;
+  top: 0;
+  padding: var(--sp-12);
+  border-radius: var(--r-12);
+  background: var(--sunken);
+}
+@container work-board (max-width: 719px) {
+  .item-page-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'facts'
+      'main';
+    padding-inline: var(--sp-12);
+  }
+  .item-page-facts {
+    position: static;
+  }
+  .item-page-head {
+    padding-inline: var(--sp-12);
+  }
+}
+
+.item-page-facts dl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  margin: 0;
+}
+.item-page-facts dl > div {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 24px;
+}
+.item-page-facts dt {
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.item-page-facts dd {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  overflow-wrap: anywhere;
+}
+.item-page-fact-tags {
+  flex-wrap: wrap;
+}
+.item-page-fact-tags .work-board-tags-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+.item-page-none {
+  color: var(--faint);
+}
+
+.item-page-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 32px;
+  margin-bottom: var(--sp-8);
+}
+.item-page-section-head h2 {
+  flex: 1;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+.item-page-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.item-page-section-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
+.item-page-prompt-text {
+  min-height: 72px;
+  padding: var(--sp-10) var(--sp-12);
+  border-radius: var(--r-8);
+  background: var(--sunken);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.item-page-prompt-field textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+/* The field's own label repeats the section's heading. */
+.item-page-prompt-field > label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.item-page-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.item-page-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 44px;
+  border-radius: var(--r-8);
+  background: var(--card);
+  box-shadow: var(--work-card-shadow);
+}
+.item-page-row[data-marked] {
+  box-shadow:
+    0 0 0 1.5px var(--accent),
+    var(--sh-1);
+}
+.item-page-row[data-withheld] {
+  gap: var(--sp-8);
+  padding-inline: var(--sp-12);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--faint);
+}
+.item-page-row-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  min-height: 44px;
+  padding: var(--sp-6) var(--sp-12);
+  border: 0;
+  border-radius: var(--r-8) 0 0 var(--r-8);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+}
+.item-page-row-main:hover {
+  background: var(--hover);
+}
+.item-page-row-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.item-page-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.item-page-row-state {
+  flex: none;
+}
+.item-page-row-branch {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--sp-4);
+  max-width: 160px;
+  min-width: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.item-page-row-branch > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.item-page-row-main > time {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-variant-numeric: tabular-nums;
+}
+.item-page-row-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-inline: var(--sp-4) var(--sp-8);
+}
+/* Narrow: the branch and the time give way to the title and the state. */
+@container work-board (max-width: 559px) {
+  .item-page-row-branch,
+  .item-page-row-main > time,
+  .item-page-row-bring {
+    display: none;
+  }
+}
+
+/* 加入会话 and 加入待办…: one list of choices. */
+.item-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-height: min(360px, 60vh);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.item-pick-option {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  width: 100%;
+  min-height: 36px;
+  padding: var(--sp-6) var(--sp-8);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+}
+.item-pick-option:hover:not(:disabled) {
+  background: var(--hover);
+}
+.item-pick-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.item-pick-option[aria-busy='true'] {
+  background: var(--hover);
+}
+.item-pick-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.item-pick-meta,
+.item-pick-empty {
+  flex: none;
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+
+/* The session header's 待办: after the project, the way back to its page. */
+.topbar-item {
+  max-width: 240px;
+}
+.topbar-item > svg {
+  flex: none;
+}
+
+/* A session started here that the Host could not put in the 待办: dashed, with its state. */
+.item-page-row[data-outside] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+}

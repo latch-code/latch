@@ -138,6 +138,11 @@ export function useSubmission({
   const setStay = useCallback((on: boolean) => {
     stayRef.current = on
   }, [])
+  /** A new session started now is another session of this 待办 (再开一个 on its page). */
+  const itemRef = useRef<{ id: string; revision: number } | null>(null)
+  const setItem = useCallback((item: { id: string; revision: number } | null) => {
+    itemRef.current = item
+  }, [])
   useLayoutEffect(() => {
     mounted.current = true
     return () => {
@@ -368,6 +373,7 @@ export function useSubmission({
               : {}),
             ...(picks.length ? { config: picks } : {}),
             ...(worktree ? { worktree: worktree.from === 'head' ? (true as const) : worktree } : {}),
+            ...(itemRef.current && !fork ? { itemId: itemRef.current.id, itemRevision: itemRef.current.revision } : {}),
           }
         : {
             requestId: newRequestId(),
@@ -571,6 +577,8 @@ export function useSubmission({
     submit,
     /** While on, a new session this page starts is not opened once the Host takes it (the board's 新建). */
     setStay,
+    /** While set, a new session this page starts belongs to that 待办 (`POST /work/items/:id/start`), as of that revision. */
+    setItem,
     resend: (prompt: string) => submit(undefined, prompt),
     /** The open session's next prompt starts a new context. */
     clearing: selectedId !== null && clearing.has(selectedId),

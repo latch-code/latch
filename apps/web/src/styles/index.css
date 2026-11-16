@@ -48,6 +48,7 @@
 @import './work-surface.css' layer(app);
 @import './usage.css' layer(app);
 @import './work-board.css' layer(app);
+@import './item-page.css' layer(app);
 @import './auth.css' layer(security);
 @import './confirm.css' layer(security);
 @import './security-approval.css' layer(security);
