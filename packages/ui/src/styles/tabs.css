@@ -83,18 +83,51 @@
   min-width: 0;
 }
 .ui-panel-tab-list {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow: hidden;
 }
 .ui-panel-tab {
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
   max-width: 160px;
+}
+/* A tab in the overflow menu keeps its width (it is measured) but stands out of the row. */
+.ui-panel-tab[data-overflow] {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
+.ui-panel-tabs-more {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-4);
+  height: 24px;
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
+}
+.ui-panel-tabs-more:is(:hover, [aria-expanded='true']) {
+  background: var(--hover);
+  color: var(--ink);
+}
+.ui-panel-tabs-more:focus-visible {
+  outline-offset: -2px;
 }
 .ui-panel-tab-face {
   display: inline-flex;

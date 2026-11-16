@@ -34,6 +34,9 @@ import { frameShortcutAllowed } from '../plugin-pages/model.ts'
 import { conversationShown } from '../composer/useArmed.ts'
 import {
   RIGHT_PANEL_DEFAULT,
+  RIGHT_PANEL_MIN,
+  CONVERSATION_MIN,
+  rightPanelMax,
   DOCK_DEFAULT,
   DOCK_MIN,
   SIDEBAR_SNAP_MS,
@@ -43,6 +46,7 @@ import {
   clampSidebar,
   dockMax,
   placeRightPanel,
+  TABLET_RAIL,
   sidebarAfterDrag,
   sidebarMax,
 } from './panelLayout.ts'
@@ -368,6 +372,8 @@ export function useShellLayout({
     if (!entries.includes('settings')) closeSettings()
   }, [closeSettings, entriesKey, route.entry])
   const panelToggle = useRef<HTMLButtonElement>(null)
+  /** Where focus was when the panel was opened from the keyboard: closing it brings focus back there. */
+  const panelReturn = useRef<HTMLElement | null>(null)
   const infoPageRef = useRef<HTMLElement>(null)
   const infoBack = useRef<HTMLButtonElement>(null)
   // The page opens with focus on its way back.
@@ -509,7 +515,13 @@ export function useShellLayout({
   const storedSidebar = preferences.sidebar.width ?? (preferences.workbenchLayout === 'triage' ? 300 : 264)
   const sidebarWidth = clampSidebar(storedSidebar, windowWidth)
   const sidebarCollapsed = sidebarShut
-  const panelLeft = sidebarColumn && !sidebarCollapsed ? sidebarWidth : 0
+  // What stands left of the conversation: the open sidebar, or a tablet's rail in the 侧栏 layout.
+  const panelLeft =
+    sidebarColumn && !sidebarCollapsed
+      ? sidebarWidth
+      : viewport === 'tablet' && preferences.workbenchLayout === 'overview'
+        ? TABLET_RAIL
+        : 0
   const homeInspector = route.overview === true && !phone && canBrowseDraftFiles
   const homeInspectorOpen = homeInspector && draftFilesOpen
   const showingChanges = changesOpen && !fileTabs.active
@@ -560,6 +572,11 @@ export function useShellLayout({
         // A saved layout opens real surfaces on wide windows; a tablet overlay or an empty launcher needs an explicit action.
         || (!!summary && preferences.rightPanel.open && (infoPage || (hasRememberedSurface && placement.kind === 'column'))))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
+  // Beside the conversation the panel widens only as far as the conversation keeps its minimum.
+  const inspectorMax =
+    placement?.kind === 'column'
+      ? Math.max(RIGHT_PANEL_MIN, Math.min(rightPanelMax(windowWidth), windowWidth - panelLeft - CONVERSATION_MIN))
+      : rightPanelMax(windowWidth)
   const drawer = useDrawer({
     enabled: drawerMode && !homeFocused,
     navigation,
@@ -1189,7 +1206,9 @@ export function useShellLayout({
     setFileExpanded(false)
     setColumnOpen(false)
     setInfoPage(false)
-    requestAnimationFrame(() => panelToggle.current?.focus({ preventScroll: true }))
+    const back = panelReturn.current
+    panelReturn.current = null
+    requestAnimationFrame(() => (back?.isConnected ? back : panelToggle.current)?.focus({ preventScroll: true }))
   }
   const openChangesTab = (target?: Omit<ChangesPanelTarget, 'nonce'>) => {
     if (!canViewChanges) return
@@ -1256,7 +1275,19 @@ export function useShellLayout({
     if (changesOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
     else openChangesTab()
   }
-  const togglePanel = () => {
+  /** `keyboard`: opened from a key, so focus moves into the panel's strip and returns on close. */
+  const togglePanel = (keyboard = false) => {
+    const opening = !(columnOpen || (pageMode && infoPage)) || profileColumn
+    if (keyboard && opening && !pageMode) {
+      panelReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() =>
+          document
+            .querySelector<HTMLElement>('.inspector-column [role="tab"][aria-selected="true"], .inspector-column [role="tab"]')
+            ?.focus({ preventScroll: true }),
+        ),
+      )
+    }
     if (homeInspector) {
       setDraftFilesOpen(!homeInspectorOpen)
       if (homeInspectorOpen) requestAnimationFrame(() => panelToggle.current?.focus({ preventScroll: true }))
@@ -1386,7 +1417,7 @@ export function useShellLayout({
       return
     }
     if (action === 'side-panel') {
-      if (summary || canBrowseFiles || homeInspector) togglePanel()
+      if (summary || canBrowseFiles || homeInspector) togglePanel(true)
       return
     }
     if (action === 'changes') {
@@ -1435,7 +1466,7 @@ export function useShellLayout({
     if (phone) setShortcutsOpen(false)
   }, [phone])
   const resizeInspector = (raw: number, step: ResizePhase) => {
-    const width = clampRightPanel(raw, windowWidth)
+    const width = Math.min(clampRightPanel(raw, windowWidth), inspectorMax)
     if (step === 'drag') {
       if (!inspectorDrag) setInspectorDrag(true)
       // A sheet stands out of the grid, so its track stays shut until the drop places it.
@@ -1936,6 +1967,8 @@ export function useShellLayout({
     resizeSidebar,
     setColumnOpen,
     togglePanel,
+    inspectorMax,
+    conversationWidth: windowWidth - panelLeft - (columnOpen && placement?.kind === 'column' ? inspectorWidth : 0),
     workbenchKeys,
     resizeInspector,
     revealRow,

@@ -484,6 +484,30 @@ export function SessionHeader({
         imported={imported}
       />
     )
+  // A session's actions end the line under its title, so the title has the head's whole width.
+  const actions = (
+    <div className="topbar-actions">
+      <ConnectionPill connection={connection} />
+      {demo && (
+        <StatusPill tone="warn" title="此会话使用演示模型，回复由本地脚本生成">
+          演示模型
+        </StatusPill>
+      )}
+      {slots.gitAction}
+      {slots.changes && <ChangesToggle toggle={slots.changes} totals={changesTotals} />}
+      {/* A session reaches its files through the panel; a new one has no panel yet, only this. */}
+      {onFiles && !summary && <IconButton label="浏览项目文件" icon={FolderGlyph} pressed={filesOpen} onClick={onFiles} />}
+      {summary && menu.length > 0 && (
+        <Menu
+          label="会话操作"
+          placement="bottom-end"
+          sections={menu}
+          {...(usageLine ? { footer: () => <p className="session-usage-line">{usageLine}</p> } : {})}
+          trigger={props => <IconButton {...props} label="会话操作" icon={MoreGlyph} />}
+        />
+      )}
+    </div>
+  )
   return (
     <header className="topbar">
       <div className="topbar-title">
@@ -530,31 +554,15 @@ export function SessionHeader({
           </>
         )}
         {summary && !frame && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />}
+        {summary && !frame && actions}
       </div>
-      <div className="topbar-actions">
-        <ConnectionPill connection={connection} />
-        {demo && (
-          <StatusPill tone="warn" title="此会话使用演示模型，回复由本地脚本生成">
-            演示模型
-          </StatusPill>
-        )}
-        {slots.gitAction}
-        {slots.changes && <ChangesToggle toggle={slots.changes} totals={changesTotals} />}
-        {/* A session reaches its files through the panel; a new one has no panel yet, only this. */}
-        {onFiles && !summary && <IconButton label="浏览项目文件" icon={FolderGlyph} pressed={filesOpen} onClick={onFiles} />}
-        {summary && menu.length > 0 && (
-          <Menu
-            label="会话操作"
-            placement="bottom-end"
-            sections={menu}
-            {...(usageLine ? { footer: () => <p className="session-usage-line">{usageLine}</p> } : {})}
-            trigger={props => <IconButton {...props} label="会话操作" icon={MoreGlyph} />}
-          />
-        )}
-      </div>
+      {!(summary && !frame) && actions}
     </header>
   )
 }
+
+/** Below this the head's actions would wrap onto a third line beside an open panel. */
+const HEAD_FOLD_WIDTH = 600
 
 /** The session header with the shell's state. */
 export function ConversationHeader({ shell }: { shell: ShellState }) {
@@ -593,6 +601,9 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
   const desktop = currentShell() !== null
   const topicOf = entries.includes('agents') ? topicOwner(summary) : undefined
   const panelShown = (columnOpen && !shell.profileColumn) || (pageMode && infoPage)
+  // A conversation narrowed by the open panel (whose strip has 改动) keeps its head to two lines: 改动 goes into ⋯,
+  // its key unchanged.
+  const foldChanges = canViewChanges && !phone && columnOpen && !shell.profileColumn && shell.conversationWidth < HEAD_FOLD_WIDTH
   const importedFrom = summary?.imported && snapshot.catalog?.harnesses.find(harness => harness.id === summary.imported!.from)
   const imported = summary && importedMark(summary, importedFrom ? harnessName(importedFrom) : undefined)
   const handedFrom = snapshot.catalog?.features?.handoffs ? sourceCrumb(snapshot, summary?.id) : undefined
@@ -669,7 +680,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
                         label="侧边面板"
                         icon={PanelRightGlyph}
                         pressed={panelShown}
-                        onClick={togglePanel}
+                        onClick={() => togglePanel()}
                       />
                       {topMenu.length > 0 && (
                         <Menu
@@ -702,9 +713,27 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
           ? { from: pageOrigin }
           : {})}
       imported={imported}
-      onPanel={togglePanel}
+      onPanel={() => togglePanel()}
       sessionMenu={titleMenu}
-      menu={topMenu}
+      menu={
+        foldChanges
+          ? [
+              {
+                id: 'surfaces',
+                items: [
+                  {
+                    id: 'changes',
+                    label: '改动',
+                    icon: GitCompare,
+                    meta: desktop ? '⌘D' : 'Alt D',
+                    onSelect: toggleChanges,
+                  },
+                ],
+              },
+              ...topMenu,
+            ]
+          : topMenu
+      }
       connection={connection}
       {...(summary
         ? {
@@ -729,7 +758,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
           }
         : {})}
       slots={{
-        ...(canViewChanges
+        ...(canViewChanges && !foldChanges
           ? {
               changes: {
                 label: '改动',

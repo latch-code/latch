@@ -23,14 +23,7 @@ export function FillTerminalDialog({ workspaceId, unavailable }: { workspaceId: 
       closeLabel="关闭"
       onClose={() => setOpen(false)}>
       <div className="login-terminal-screen fill-terminal-screen">
-        <TerminalPanel
-          target={{ workspaceId }}
-          shown
-          requested={false}
-          {...(unavailable ? { unavailable } : {})}
-          onCollapse={() => setOpen(false)}
-          fillPlace={DETACHED}
-        />
+        <TerminalPanel target={{ workspaceId }} shown requested={false} {...(unavailable ? { unavailable } : {})} fillPlace={DETACHED} />
       </div>
     </Dialog>
   )

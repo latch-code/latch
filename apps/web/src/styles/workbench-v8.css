@@ -13,7 +13,7 @@
   --line: var(--work-line);
   --line-strong: var(--work-line-strong);
   --sidebar: var(--work-sunken);
-  --shell-inset: 0px;
+  --title-row: 52px;
   --fs-ui: var(--fs-work-ui);
   --lh-ui: var(--lh-work-ui);
   --fs-caption: var(--fs-work-caption);
@@ -24,21 +24,21 @@
   background: var(--canvas);
 }
 .app-shell[data-workbench-layout='triage'] {
+  --title-row: 56px;
   --content-width: 820px;
   --gutter: 48px;
-  grid-template-rows: 56px minmax(0, 1fr);
+}
+.app-shell {
+  grid-template-rows: var(--title-row) minmax(0, 1fr);
 }
 .app-shell[data-terminal-dock] {
-  grid-template-rows: 52px minmax(0, 1fr) var(--dock-height);
-}
-.app-shell[data-workbench-layout='triage'][data-terminal-dock] {
-  grid-template-rows: 56px minmax(0, 1fr) var(--dock-height);
+  grid-template-rows: var(--title-row) minmax(0, 1fr) var(--dock-height);
 }
 .app-shell[data-terminal-dock] :is(.sidebar, .workbench-tablet-rail, .inspector-column) {
   grid-row-end: 4;
 }
 .app-shell[data-inspector='sheet'][data-terminal-dock] :is(.inspector-column, .inspector-resize) {
-  bottom: calc(var(--shell-inset) + var(--dock-height));
+  bottom: calc(var(--sp-8) + var(--dock-height));
 }
 .app-shell {
   --workbench-pane-space: calc(var(--workbench-pane-count) * 32px);
@@ -47,23 +47,6 @@
   .app-shell {
     --workbench-pane-space: calc(var(--workbench-pane-count) * 48px);
   }
-}
-.app-shell[data-workbench-layout='triage'][data-inspector='open'] .titlebar {
-  grid-column-end: -1;
-}
-.app-shell[data-workbench-layout='triage'] .inspector-column {
-  grid-row-start: 2;
-}
-.app-shell[data-workbench-layout='triage'] .inspector-column-inner {
-  border-radius: 0;
-  box-shadow: none;
-  border-inline-start: 1px solid var(--line);
-}
-.app-shell[data-inspector='open'] .inspector-column-inner {
-  border-inline-start: 1px solid var(--line-strong);
-}
-.app-shell::before {
-  display: none;
 }
 .app-shell[data-layout-changing] {
   transition-duration: var(--m-micro);
@@ -130,6 +113,12 @@
 }
 .sidebar-work-computer > .ui-button {
   justify-content: start;
+}
+/* The computer's row lines up with the foot's other rows: the same inset, glyph column and gap. */
+.sidebar-work-computer > :is(.workbench-computer, .workbench-computer-button) {
+  gap: 10px;
+  height: 32px;
+  padding-inline: 10px;
 }
 /* After the computer's name while the desktop app keeps this Mac awake; the words are in its hover. */
 .sidebar-awake {
@@ -245,7 +234,7 @@
 .workbench-nav {
   height: 56px;
   gap: var(--sp-16);
-  padding: 0 var(--sp-20);
+  padding: 0 0 0 var(--sp-20);
   border-bottom: 1px solid var(--line);
 }
 .workbench-nav .space-switch {
@@ -432,148 +421,108 @@
   color: var(--muted);
   white-space: nowrap;
 }
+/*
+ * 概要: compact sections of one row style. A section is a small heading with its count and at most one action, over
+ * rows of 32: a 14px glyph, what the row is about (ellipsized), its state as an icon and a short word, a time and at
+ * most one quiet action. A warning row is amber in its glyph only. No boxes, no rules between sections.
+ */
 .session-overview {
-  padding: var(--sp-24);
+  display: grid;
+  gap: var(--sp-20);
+  padding: var(--sp-16) var(--sp-16) var(--sp-24);
   color: var(--ink-2);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
-.session-overview-checks {
-  padding: 0;
+.session-overview-section > header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  height: 24px;
+  margin-bottom: var(--sp-4);
+}
+.session-overview-section h3 {
   margin: 0;
-  list-style: none;
-}
-.session-overview-checks > li {
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--sp-8);
-  padding-block: var(--sp-8);
-}
-.session-overview-checks code {
-  overflow-wrap: anywhere;
+  color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
+  font-weight: 500;
 }
-.session-overview-checks .ui-status-word {
-  white-space: nowrap;
+.session-overview-section > header > .ui-button {
+  margin-inline-start: auto;
 }
-.session-overview-branch {
+.session-overview-section > ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.session-overview-row {
   display: flex;
   align-items: center;
   gap: var(--sp-8);
   min-width: 0;
-  overflow-wrap: anywhere;
+  min-height: 32px;
+}
+.session-overview-glyph {
+  flex: none;
+  color: var(--muted);
+}
+.session-overview-row[data-tone='warn'] > .session-overview-glyph {
+  color: var(--amber);
+}
+.session-overview-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.session-overview-text code {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-.session-overview-steps {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
+.session-overview-base {
+  color: var(--muted);
+}
+.session-overview-link {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 0;
-  margin: var(--sp-16) 0;
-  list-style: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.session-overview-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+:is(.session-overview-word, .session-overview-time),
+.session-overview-row > .ui-status-word {
+  flex: none;
+  white-space: nowrap;
+}
+.session-overview-word,
+.session-overview-time {
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
 }
-.session-overview-steps li + li::before {
-  content: '›';
-  color: var(--faint);
-  margin-right: var(--sp-8);
+/* Last seen running, before the connection was lost: the spinner rests. */
+.session-overview-row > .ui-status-word[data-stale] .ui-spinner {
+  animation-play-state: paused;
 }
-.session-overview-steps [aria-current='step'] {
-  color: var(--ink);
-  font-weight: 600;
-}
-.session-overview-section + .session-overview-section {
-  margin-top: var(--sp-24);
-  border-top: 1px solid var(--line);
-  padding-top: var(--sp-24);
-}
-.session-overview-section > header {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  margin-bottom: var(--sp-12);
-}
-.session-overview-section h3 {
-  margin: 0;
-  color: var(--ink);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  font-weight: 600;
-}
-.session-overview-section header > .ui-status {
-  margin-left: auto;
-}
-.session-overview-section p {
-  margin: var(--sp-8) 0;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-/* Nothing changed, nothing ran and nothing to deliver: the whole panel is this one quiet line. */
+/* Nothing changed, nothing ran and nothing to deliver: the whole panel is this one quiet word. */
 .session-overview-empty {
   margin: 0;
   color: var(--muted);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
-}
-.session-overview-command {
-  display: flex;
-  align-items: start;
-  gap: var(--sp-8);
-  padding: var(--sp-10) var(--sp-12);
-  border-radius: var(--r-8);
-  background: var(--sunken);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  overflow-wrap: anywhere;
-}
-.session-overview-facts {
-  display: grid;
-  gap: var(--sp-8);
-  margin: var(--sp-16) 0 0;
-}
-.session-overview-facts > div {
-  display: flex;
-  align-items: start;
-  gap: var(--sp-12);
-}
-.session-overview-facts dt {
-  color: var(--muted);
-  flex: 0 0 56px;
-}
-.session-overview-facts dd {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-6);
-  margin: 0;
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
-.session-overview-files {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 var(--sp-8);
-}
-.session-overview-files > li {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-}
-.session-overview-files .ui-button {
-  flex: 1;
-  min-width: 0;
-  justify-content: start;
-  overflow-wrap: anywhere;
-}
-.session-overview-files > li > span {
-  color: var(--muted);
-  flex: 0 0 auto;
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
 }
 :is(.workbench-home, .code-home-queue) > .work-overview {
   max-width: 1088px;
@@ -868,6 +817,11 @@
 .workspace .topbar-actions {
   align-self: end;
   flex-shrink: 0;
+}
+/* Under the title, after its meta: the title keeps the head's whole width. */
+.workspace .topbar-title > .topbar-actions {
+  align-self: center;
+  margin-inline-start: auto;
 }
 .workspace.is-new .topbar:has(.topbar-title:empty):not(:has(.ui-status-word, .connection-pill)) {
   display: none;
@@ -1246,7 +1200,8 @@
   .app-shell[data-workbench-layout='overview'][data-sidebar='collapsed'] :is(.workspace, .workbench-home) {
     grid-row: 2 / 3;
   }
-  .app-shell[data-workbench-layout='overview'] .workspace .topbar {
+  /* The window's controls stand over the head's end, unless the right panel holds that end of the title row. */
+  .app-shell[data-workbench-layout='overview']:not([data-inspector='open']) .workspace .topbar {
     padding-right: calc(96px + var(--workbench-pane-space));
   }
   .app-shell[data-workbench-layout='overview'] .titlebar {
@@ -1265,7 +1220,7 @@
 @media (max-width: 1279.98px) {
   .workbench-nav {
     gap: var(--sp-8);
-    padding-inline: var(--sp-12);
+    padding-inline-start: var(--sp-12);
   }
   .workbench-nav .space-switch {
     width: 210px;
@@ -1371,10 +1326,7 @@
   .app-shell:not([data-entry='sessions']) .workbench-tablet-rail > :not(.workbench-rail-brand) {
     visibility: hidden;
   }
-  .app-shell:has(> .settings-overlay[open]) .workbench-tablet-rail {
-    background: var(--canvas);
-  }
-  .app-shell[data-workbench-layout='overview'] .workspace .topbar {
+  .app-shell[data-workbench-layout='overview']:not([data-inspector='open']) .workspace .topbar {
     padding-right: calc(110px + var(--workbench-pane-space));
   }
   .app-shell[data-workbench-layout='triage'] .workbench-home .work-overview-groups {

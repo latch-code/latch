@@ -394,9 +394,10 @@ async function closeDetails(target: Page, viewport: VisualViewport): Promise<voi
   if (viewport.name === 'tablet') {
     const panel = target.getByRole('complementary', { name: '侧边面板', exact: true })
     if (await panel.isVisible()) {
-      const close = panel.getByRole('button', { name: '关闭', exact: true })
-      await reachable(close)
-      await close.click()
+      // Over the conversation the panel is shut by its toggle in the title row (it has no close button of its own).
+      const toggle = target.getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true }).first()
+      await reachable(toggle)
+      await toggle.click()
       await panel.waitFor({ state: 'hidden' })
     }
     return

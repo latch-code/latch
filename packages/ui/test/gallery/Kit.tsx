@@ -153,6 +153,11 @@ function Panels() {
         <Cell caption="悬停：图标变为 ×" force="hover" at=".ui-panel-tab[data-closable]">
           <PanelTabs label="面板 2" value="deck" tabs={TABS.slice(2)} onValueChange={() => {}} />
         </Cell>
+        <Cell caption="放不下：其余的收进 +N，当前标签留在行里">
+          <div style={{ width: 240 }}>
+            <PanelTabs label="面板 4" value={TABS.at(-1)!.value} tabs={TABS} onValueChange={() => {}} />
+          </div>
+        </Cell>
         <Cell caption="可关闭但没有图标：× 有自己的一格" force="hover" at=".ui-panel-tab[data-closable]">
           <PanelTabs
             label="面板 3"

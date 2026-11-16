@@ -192,7 +192,12 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       await page.keyboard.press('Meta+,')
       await page.locator('.settings-page').waitFor({ state: 'visible' })
       await clear('settings-sidebar')
+      // 设置 is a modal over the window: the layout changes under it once it is shut, and it opens again over that.
+      await page.keyboard.press('Escape')
+      await page.locator('.settings-page').waitFor({ state: 'hidden' })
       await switchLayout(page, 'triage')
+      await page.keyboard.press('Meta+,')
+      await page.locator('.settings-page').waitFor({ state: 'visible' })
       await clear('settings-topbar')
       // Full screen hides the lights, and the row starts where it does without them; back out of it, it makes room again.
       // macOS carries a window to full screen only on a display that is awake and unlocked: the page is resized when it

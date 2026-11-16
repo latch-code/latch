@@ -193,28 +193,32 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+/*
+ * The window's controls, one cluster at the end of the title row in both layouts: the pane toggles, a short hairline,
+ * then the layout switch. The shell draws the switch once over the reserved end (.layout-switch-space), so it stays
+ * mounted through a layout change.
+ */
 .shell-layout-switch {
   grid-area: 1 / 1 / 2 / -1;
   align-self: start;
   justify-self: end;
   z-index: 4;
+  /* The same place in both layouts, whose title rows differ in height (52, 56). */
   margin: 13px var(--sp-12) 0 0;
   -webkit-app-region: no-drag;
 }
 .layout-switch-space {
+  position: relative;
   flex: 0 0 auto;
-  width: 76px;
+  width: calc(76px + var(--sp-12) + var(--sp-12));
 }
-/* 侧栏 with the panel open: the panel's strip is the end of the top row, so it keeps the room instead. */
-.app-shell[data-workbench-layout='overview'][data-inspector='open'] .titlebar .layout-switch-space {
-  display: none;
-}
-.app-shell[data-workbench-layout='overview'][data-inspector='open'] .inspector-column .session-panel-strip {
-  padding-right: 84px;
-}
-/* An Agent's profile stands in the same end of the top row. */
-.app-shell[data-workbench-layout='overview'] .agent-profile:not([data-phone]) .agent-profile-head {
-  padding-right: 84px;
+.workbench-pane-controls + .layout-switch-space::before {
+  content: '';
+  position: absolute;
+  inset: calc(50% - 8px) auto auto calc(var(--sp-6) - 1px);
+  width: 1px;
+  height: 16px;
+  background: var(--line);
 }
 /* A layout change cross-fades the whole window; the page under the navigation stays mounted. */
 /* The group's own (250ms by default) holds the transition open, and the window out of reach, after the fade is over. */

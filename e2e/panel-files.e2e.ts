@@ -206,8 +206,8 @@ describe('the right panel', () => {
           expect(await page.locator('.crumb-folder code [aria-hidden]').first().textContent()).toContain(basename(host.workspaceRoot))
           await shot(page, 'crumb', width, theme)
           await page.keyboard.press('Escape')
-          // × shuts the panel and the toggle brings back what was showing, tabs and all.
-          await tabs.locator('..').getByRole('button', { name: '关闭', exact: true }).click()
+          // The toggle shuts the panel and brings back what was showing, tabs and all.
+          await page.getByRole('button', { name: '侧边面板', exact: true }).click()
           await expect.poll(() => page.locator('.session-panels').count()).toBe(0)
           await page.getByRole('button', { name: '侧边面板', exact: true }).click()
           await viewer.getByRole('button', { name: '文件操作', exact: true }).waitFor()

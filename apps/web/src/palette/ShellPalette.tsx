@@ -329,7 +329,13 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       : []),
     ...(summary
       ? [
-          { id: 'info', label: '展开或收起侧边面板', icon: glyph(PanelRightGlyph), ...keys('side-panel'), run: inSession(togglePanel) },
+          {
+            id: 'info',
+            label: '展开或收起侧边面板',
+            icon: glyph(PanelRightGlyph),
+            ...keys('side-panel'),
+            run: inSession(() => togglePanel(true)),
+          },
           {
             id: 'copy',
             label: '复制当前会话为 Markdown',

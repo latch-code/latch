@@ -14,10 +14,7 @@ export function DraftFilePanel({ shell, inline = false }: { shell: ShellState; i
   const folders = shell.access.local && shell.access.admin ? shellFolders() : null
   const canCompose =
     shell.inputId === null && shell.homeComposerState.gate.kind === 'open' && !shell.submission.pending && !shell.submission.sending
-  const onClose = () => {
-    setDraftFilesOpen(false)
-    if (inline) requestAnimationFrame(() => shell.panelToggle.current?.focus({ preventScroll: true }))
-  }
+  const onClose = () => setDraftFilesOpen(false)
   const content = open ? (
     <SessionPanels
       key={fileContextKey(context)}
@@ -29,7 +26,6 @@ export function DraftFilePanel({ shell, inline = false }: { shell: ShellState; i
       onSearchFiles={shell.searchFiles}
       showFiles
       files={tabs.tabs}
-      {...(inline ? { onClose } : {})}
       activeFile={tabs.active}
       onSurface={surface => tabs.select(surface.kind === 'file' ? surface.id : undefined)}
       onCloseFile={id => tabs.close(id)}

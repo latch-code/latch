@@ -5,12 +5,14 @@
   height: 100%;
   min-height: 0;
 }
-.session-panel-strip {
+/*
+ * A dock's head, the same for the right panel and the terminal: 40 tall, its tabs from 12 in and its few actions at the
+ * end, over one hairline. The dock itself has no close button: its toggle in the title row (and its key) shuts it.
+ */
+:is(.session-panel-strip, .terminal-tabs) {
   flex: none;
-  height: var(--panel-strip-height, 40px);
-  padding: 0 var(--sp-12);
-}
-.inspector-column .session-panel-strip {
+  height: 40px;
+  padding: 0 var(--sp-8) 0 var(--sp-12);
   border-bottom: 1px solid var(--line);
 }
 /* A phone's page has its own way back, and is already the whole window. */

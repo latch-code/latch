@@ -581,8 +581,9 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             const resume = home.getByRole('region', { name: '接着做', exact: true })
             await reachable(resume.getByRole('button', { name: new RegExp(recent.summary.title, 'u') }))
             if (width < 768 && layout === 'triage') {
-              await home.getByRole('button', { name: '可交付', exact: true }).click()
-              expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain('没有可交付的')
+              // A connected browser now reads project files: the project, not a Git repository, has nothing to deliver.
+              await home.getByRole('button', { name: /^可交付( \d+)?$/u }).click()
+              expect(await home.locator('[data-group="delivery"]').textContent()).toContain('不支持 Git 交付')
               await capture(page, 'triage-delivery-empty', width, theme)
               await home.getByRole('button', { name: '等你处理 2', exact: true }).click()
             }
@@ -632,25 +633,18 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
               if ((layout === 'overview') !== ((await shell.getAttribute('data-inspector')) === 'open'))
                 await page.keyboard.press('Alt+Shift+b')
               await expect.poll(() => shell.getAttribute('data-inspector')).toBe(layout === 'overview' ? 'open' : null)
-              const close = page.locator('.inspector-column .session-panel-strip').getByRole('button', { name: '关闭', exact: true })
               if (layout === 'overview') {
-                const tabs = page.locator('.inspector-column .ui-panel-tab-list')
-                await reachable(close)
-                await reachable(layoutSwitch(page).getByRole('radio', { checked: true }))
-                const [tabsRight, closeRight, switchLeft] = await Promise.all([
-                  tabs.evaluate(element => element.getBoundingClientRect().right),
-                  close.evaluate(element => element.getBoundingClientRect().right),
-                  layoutSwitch(page).evaluate(element => element.getBoundingClientRect().left),
-                ])
-                expect(tabsRight).toBeLessThan(switchLeft)
-                expect(closeRight).toBeLessThan(switchLeft)
-                const changes = page.locator('.session-overview-section').first()
-                expect(await changes.textContent()).toContain('这台设备不能读取项目改动')
-                expect(await changes.locator('.ui-count').count()).toBe(0)
+                // The panel has no close button of its own; 概要 is sections of one row style, no boxes or loose buttons.
+                expect(
+                  await page.locator('.inspector-column .session-panel-strip').getByRole('button', { name: '关闭', exact: true }).count(),
+                ).toBe(0)
+                const summary = page.locator('.inspector-column .session-overview')
+                await summary.locator('.session-overview-row').first().waitFor()
+                expect(await summary.locator('.ui-notice, .session-overview-section > .ui-button').count()).toBe(0)
               }
               await capture(page, `${layout}-session`, width, theme)
               if (layout === 'overview') {
-                await close.click()
+                await page.keyboard.press('Alt+Shift+b')
                 await expect.poll(() => shell.getAttribute('data-inspector')).toBeNull()
               }
               await openHome(page)
@@ -676,7 +670,8 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             else expect(settingsNav).not.toBe(canvas)
             if (width >= 768) {
               const lead = page.locator('.titlebar-lead:visible, .workbench-nav:visible, .workbench-tablet-rail:visible').first()
-              expect(await paintedBackground(lead)).toBe(canvas)
+              // Navigation is on the ground, the work on the canvas (DESIGN「区域划分」).
+              expect(await paintedBackground(lead)).toBe(settingsNav)
             }
             const previews = layouts.locator('.layout-preview')
             const [side, top] = [previews.first(), previews.last()]
@@ -729,6 +724,176 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
       await owner.request(`tasks/${id}/cancel`, { method: 'POST', body: { requestId: randomUUID() } }).catch(() => {})
     }
     for (const release of releases) release()
+    await browser.close()
+    await host.close()
+  }
+})
+
+/** The colours across a horizontal run of pixels of a screenshot, decoded by the page itself. */
+async function pixelRow(page: Page, png: Buffer, y: number): Promise<number[][]> {
+  return page.evaluate(
+    async ({ data, row }) => {
+      const bytes = Uint8Array.from(atob(data), character => character.charCodeAt(0))
+      const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }))
+      const canvas = new OffscreenCanvas(image.width, image.height)
+      const context = canvas.getContext('2d')!
+      context.drawImage(image, 0, 0)
+      const pixels = context.getImageData(0, row, image.width, 1).data
+      return Array.from({ length: image.width }, (_, x) => [pixels[x * 4]!, pixels[x * 4 + 1]!, pixels[x * 4 + 2]!])
+    },
+    { data: png.toString('base64'), row: y },
+  )
+}
+
+const intersects = (
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+
+it('keeps the window controls apart from the right panel, the title its room, and one line between them', async () => {
+  let toolCalls = 0
+  const plugin: HarnessPlugin = {
+    id: 'panel-fixture',
+    name: '面板验收模型',
+    version: '1',
+    description: 'Local scripted replies only.',
+    activate(context) {
+      context.registerTool({
+        name: 'save_panel_report',
+        description: '保存报告。',
+        kind: 'edit',
+        requiresApproval: true,
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        async execute() {
+          toolCalls++
+          return { text: '已保存。' }
+        },
+      })
+      context.registerProvider({
+        id: 'panel-fixture',
+        name: '面板验收模型',
+        model: 'fixture',
+        async *stream({ messages }) {
+          if (messages.at(-1)?.role !== 'tool') {
+            yield { type: 'tool-call', call: { id: randomUUID(), name: 'save_panel_report', arguments: {} } }
+            yield { type: 'finish', reason: 'tool-calls' }
+            return
+          }
+          yield { type: 'text', text: '好了。' }
+          yield { type: 'finish', reason: 'stop' }
+        },
+      })
+    },
+  }
+  const host = await startTestHost({
+    uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+    demo: false,
+    plugins: [plugin],
+    providerId: 'panel-fixture',
+  })
+  const browser = await chromium.launch(browserLaunchOptions())
+  const owner = await host.enroll({ listener: 'unix' })
+  let started = ''
+  try {
+    const projectPath = join(host.root, 'panel-project')
+    await mkdir(projectPath)
+    const { workspace: project }: { workspace: WorkspaceInfo } = await (
+      await owner.addFolders({ name: '面板项目', paths: [projectPath] })
+    ).json()
+    const title = '核对右侧面板与窗口控件在各种宽度下的排布与对齐并修正标题被挤成省略号的问题'
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        prompt: title,
+        mode: 'agent',
+        workspaceId: project.id,
+        model: { providerId: 'panel-fixture', model: 'fixture' },
+      },
+    })
+    started = sessionId
+    await expect
+      .poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status, { timeout: 10_000 })
+      .toBe('waiting-approval')
+    const context = await visualContext(browser, { name: 'desktop', width: 1440, height: 900, touch: false })
+    try {
+      const page = await context.newPage()
+      await enrollBrowser(page, host, { name: '面板几何验收', scopes: ['view', 'run'] })
+      await choose(page, title)
+      const shell = page.locator('.app-shell')
+      const cluster = () =>
+        page.evaluate(() =>
+          [...document.querySelectorAll<HTMLElement>('.workbench-pane-controls, .shell-layout-switch')]
+            .filter(element => element.checkVisibility())
+            .map(element => element.getBoundingClientRect().toJSON() as { x: number; y: number; width: number; height: number }),
+        )
+      const ends: Record<string, number> = {}
+      for (const width of [1440, 1100, 768]) {
+        await page.setViewportSize({ width, height: 900 })
+        for (const layout of ['overview', 'triage'] as const) {
+          await switchLayout(page, layout)
+          await settleShell(page)
+          if (!(await shell.getAttribute('data-inspector'))) await page.keyboard.press('Alt+Shift+b')
+          await expect.poll(() => shell.getAttribute('data-inspector')).not.toBeNull()
+          const strip = page.locator('.inspector-column .session-panel-strip')
+          await strip.waitFor()
+          await page.waitForTimeout(400)
+          const controls = await cluster()
+          expect(controls.length, `${width} ${layout}`).toBe(2)
+          // The cluster ends the title row at the window's right in both layouts, in the same place.
+          const end = Math.max(...controls.map(box => box.x + box.width))
+          ends[`${width}`] ??= end
+          expect(Math.abs(end - ends[`${width}`]!), `${width} ${layout}`).toBeLessThanOrEqual(1)
+          expect(end).toBeGreaterThan(width - 24)
+          const parts = [
+            await strip.boundingBox(),
+            ...(await strip.getByRole('tab').evaluateAll(tabs => tabs.map(tab => tab.getBoundingClientRect().toJSON()))),
+          ]
+          for (const part of parts) for (const box of controls) expect(intersects(box, part!), `${width} ${layout}`).toBe(false)
+          if ((await shell.getAttribute('data-inspector')) === 'open') {
+            // Beside the conversation: the conversation, with its title, keeps CONVERSATION_MIN (panelLayout.ts).
+            const main = (await page.locator('main.workspace').boundingBox())!
+            const panel = (await page.locator('.inspector-column').boundingBox())!
+            expect(panel.x - main.x, `${width} ${layout}`).toBeGreaterThanOrEqual(440 - 1)
+            expect((await page.locator('.workspace .topbar-title h1').boundingBox())!.width).toBeGreaterThan(160)
+            // Exactly one line between them, in the middle of the window's height.
+            const seam = Math.round(panel.x)
+            const y = Math.round(panel.y + panel.height / 2)
+            const row = await pixelRow(page, await page.screenshot({ clip: { x: seam - 8, y, width: 16, height: 1 } }), 0)
+            const ground = row[0]!
+            const differs = row.map(([r, g, b]) => Math.abs(r! - ground[0]!) + Math.abs(g! - ground[1]!) + Math.abs(b! - ground[2]!) > 6)
+            const runs = differs.filter((value, index) => value && !differs[index - 1]).length
+            expect(runs, `${width} ${layout}`).toBe(1)
+            expect(differs.filter(Boolean).length, `${width} ${layout}`).toBe(1)
+          }
+          await mkdir(OUTPUT, { recursive: true })
+          await page.screenshot({ path: `${OUTPUT}/panel-geometry--${layout}--${width}.png` })
+        }
+      }
+      // Esc inside the panel shuts it, gives focus back to where the key opened it from, and leaves the request alone.
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await switchLayout(page, 'overview')
+      if (await shell.getAttribute('data-inspector')) await page.keyboard.press('Alt+Shift+b')
+      await expect.poll(() => shell.getAttribute('data-inspector')).toBeNull()
+      await settleShell(page)
+      await expect.poll(() => page.locator('.approval-panel[data-arming]').count()).toBe(0)
+      const input = page.locator('.workspace textarea').first()
+      await input.focus()
+      await page.keyboard.press('Alt+Shift+b')
+      await expect
+        .poll(() => page.evaluate(() => document.activeElement?.closest('.inspector-column [role="tablist"]') !== null))
+        .toBe(true)
+      await page.keyboard.press('Escape')
+      await expect.poll(() => shell.getAttribute('data-inspector')).toBeNull()
+      await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
+      await page.waitForTimeout(300)
+      expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).approvals).toHaveLength(1)
+      expect(toolCalls).toBe(0)
+    } finally {
+      await context.close()
+    }
+  } finally {
+    if (started) await owner.request(`tasks/${started}/cancel`, { method: 'POST', body: { requestId: randomUUID() } }).catch(() => {})
     await browser.close()
     await host.close()
   }

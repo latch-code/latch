@@ -1,8 +1,9 @@
-import { useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { CloseGlyph } from './glyphs/index.tsx'
 import { Icon, type IconComponent } from './icon.tsx'
 import { cx, nextIndex } from './internal.ts'
 import { Menu } from './menu.tsx'
+import { fitTabs } from './tabFit.ts'
 
 export interface TabOption<T extends string> {
   value: T
@@ -140,13 +141,18 @@ export interface PanelTab<T extends string> {
   closeLabel?: string
 }
 
+/** The overflow button's width and the space between two tabs, as tabs.css draws them. */
+const MORE_WIDTH = 40
+const TAB_GAP = 2
+
 /**
  * The strip of a side panel: 24px tabs with 6px corners and 12/16·500 words, at most 160 wide. The selection moves at
  * once and never slides. A closable tab is `glyph · label · ×`: the × has its own slot at the end, shown on hover, while
- * focus is in the tab, and always on a touch screen's selected tab, so nothing moves when it appears. Delete, a middle
- * click and the tab's context menu (right click, press and hold, the context-menu key) close it; Delete moves focus to
- * its neighbour. One tab stop; ←/→ move and select, Home and End go to
- * the ends. The list scrolls sideways when it overflows, and keeps the selected tab in view. `actions` ends the row.
+ * focus is in the tab, and always on a touch screen's selected tab, so nothing moves when it appears (its slot counts in
+ * the tab's width). Delete, a middle click and the tab's context menu (right click, press and hold, the context-menu
+ * key) close it; Delete moves focus to its neighbour. One tab stop; ←/→ move and select through every tab,
+ * Home and End go to the ends. Tabs that do not fit go into one menu at the row's end (`fitTabs`); the selected tab
+ * always stands in the row. `actions` ends the row.
  */
 export function PanelTabs<T extends string>({
   label,
@@ -165,44 +171,77 @@ export function PanelTabs<T extends string>({
   actions?: ReactNode
   className?: string
 }) {
-  const buttons = useRef<Array<HTMLButtonElement | null>>([])
+  const row = useRef<HTMLDivElement>(null)
+  const end = useRef<HTMLDivElement>(null)
+  const faces = useRef<Array<HTMLButtonElement | null>>([])
+  const boxes = useRef<Array<HTMLSpanElement | null>>([])
   const base = useId()
   const selected = tabs.findIndex(tab => tab.value === value)
-  useLayoutEffect(() => {
-    buttons.current[selected]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
-  }, [selected])
+  const [shown, setShown] = useState<readonly number[] | null>(null)
+  const signature = tabs.map(tab => `${tab.value}:${tab.label}:${tab.stat ? `${tab.stat.added}/${tab.stat.removed}` : ''}`).join('|')
+  const fit = useCallback(() => {
+    const element = row.current
+    if (!element) return
+    const style = getComputedStyle(element)
+    const gap = parseFloat(style.columnGap) || 0
+    const ending = end.current ? end.current.offsetWidth + gap : 0
+    const available = element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - ending
+    const widths = boxes.current.slice(0, tabs.length).map(box => box?.offsetWidth ?? 0)
+    const next = fitTabs({ widths, selected, available, gap: TAB_GAP, more: MORE_WIDTH })
+    setShown(previous => {
+      const all = next.length === tabs.length
+      if (all) return previous === null ? previous : null
+      return previous && previous.length === next.length && previous.every((index, at) => index === next[at]) ? previous : next
+    })
+  }, [selected, tabs.length])
+  useLayoutEffect(fit, [fit, signature])
+  useEffect(() => {
+    const element = row.current
+    if (!element || typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(() => fit())
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [fit])
+  const standing = (index: number) => shown === null || shown.includes(index)
+  const hidden = tabs.flatMap((tab, index) => (standing(index) ? [] : [{ tab, index }]))
 
   const keydown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const focused = buttons.current.findIndex(tab => tab === event.target)
+    const focused = faces.current.findIndex(tab => tab === event.target)
     if (focused < 0) return
     const current = tabs[focused]
     if (event.key === 'Delete' && current?.closeLabel !== undefined) {
       event.preventDefault()
       onClose?.(current.value)
-      const neighbour = buttons.current[focused + 1] ?? buttons.current[focused - 1]
+      const neighbour = faces.current[focused + 1] ?? faces.current[focused - 1]
       neighbour?.focus()
       return
     }
     const index = nextIndex(event.key, focused, tabs.length, 'horizontal', () => true)
     if (index === undefined) return
     event.preventDefault()
-    buttons.current[index]?.focus()
     const option = tabs[index]
     if (option && option.value !== value) onValueChange(option.value)
+    // A tab from the menu stands in the row once selected: it takes the focus there.
+    if (standing(index)) faces.current[index]?.focus()
+    else requestAnimationFrame(() => faces.current[index]?.focus())
   }
 
   return (
-    <div className={cx('ui-panel-tabs', className)}>
+    <div ref={row} className={cx('ui-panel-tabs', className)}>
       <div className="ui-panel-tab-list" role="tablist" aria-label={label} onKeyDown={keydown}>
         {tabs.map((tab, index) => (
           <span
             key={tab.value}
             id={`${base}-${index}`}
+            ref={element => {
+              boxes.current[index] = element
+            }}
             className="ui-panel-tab"
-            data-closable={tab.closeLabel !== undefined ? '' : undefined}>
+            data-closable={tab.closeLabel !== undefined ? '' : undefined}
+            data-overflow={standing(index) ? undefined : ''}>
             <button
               ref={element => {
-                buttons.current[index] = element
+                faces.current[index] = element
               }}
               type="button"
               role="tab"
@@ -249,7 +288,36 @@ export function PanelTabs<T extends string>({
           </span>
         ))}
       </div>
-      {actions && <div className="ui-tabs-actions">{actions}</div>}
+      {hidden.length > 0 && (
+        <Menu
+          label={`其余 ${hidden.length} 个标签`}
+          align="end"
+          size="sm"
+          sections={[
+            {
+              id: 'tabs',
+              items: hidden.map(({ tab }) => ({
+                id: tab.value,
+                label: tab.label,
+                ...(tab.icon ? { icon: tab.icon } : {}),
+                ...(tab.stat ? { meta: `+${tab.stat.added} −${tab.stat.removed}` } : {}),
+                onSelect: () => onValueChange(tab.value),
+              })),
+            },
+          ]}
+          trigger={props => (
+            <button {...props} type="button" className="ui-panel-tabs-more" aria-label={`其余 ${hidden.length} 个标签`}>
+              +{hidden.length}
+              {hidden.some(({ tab }) => tab.fresh) && <span className="ui-panel-tab-fresh" />}
+            </button>
+          )}
+        />
+      )}
+      {actions && (
+        <div ref={end} className="ui-tabs-actions">
+          {actions}
+        </div>
+      )}
     </div>
   )
 }

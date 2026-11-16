@@ -354,7 +354,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await panes.getByRole('button', { name: '收起侧栏', exact: true }).click()
       await expect.poll(() => page.locator('.app-shell').getAttribute('data-sidebar')).toBe('collapsed')
       await rightPanel.getByRole('region', { name: '项目文件', exact: true }).waitFor()
-      await panel.getByRole('button', { name: '收起终端', exact: true }).click()
+      // The dock has no close button of its own: its toggle shuts it.
+      expect(await panel.getByRole('button', { name: '收起终端', exact: true }).count()).toBe(0)
+      await terminalToggle.click()
       await panel.waitFor({ state: 'hidden' })
       await rightPanel.getByRole('region', { name: '项目文件', exact: true }).waitFor()
       await terminalToggle.click()

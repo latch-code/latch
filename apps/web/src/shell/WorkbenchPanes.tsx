@@ -45,7 +45,7 @@ export function WorkbenchPanes({ shell }: { shell: ShellState }) {
           icon={PanelRightGlyph}
           shortcut={desktop ? '⌥⌘B' : 'Alt Shift B'}
           pressed={panelOpen}
-          onClick={shell.togglePanel}
+          onClick={event => shell.togglePanel(event.detail === 0)}
         />
       )}
     </div>

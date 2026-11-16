@@ -61,9 +61,9 @@ export function TerminalDock({ shell }: { shell: ShellState }) {
         shown={terminalOpen}
         requested={terminalRequested}
         openWhenShown
+        onCollapse={closeTerminal}
         {...(terminalUnavailable ? { unavailable: terminalUnavailable } : {})}
         {...(terminalLocation ? { location: terminalLocation } : {})}
-        onCollapse={closeTerminal}
         onCompose={canCompose ? compose : undefined}
         onOpenService={session && canBrowser && browserShell ? openInBrowser : undefined}
         fillPlace={terminalTarget.sessionId}

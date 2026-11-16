@@ -3,6 +3,8 @@ import { MOTION } from '@latch/ui'
 /** A sheet leaves this much of the window beside it, so what is under it still shows. */
 const SHEET_GAP = 52
 /** The sidebar: 248 by default, 220 to 400, snapping shut when dragged narrower than 160. */
+/** A tablet's navigation rail in the 侧栏 layout. */
+export const TABLET_RAIL = 60
 export const SIDEBAR_DEFAULT = 248
 export const SIDEBAR_MIN = 220
 export const SIDEBAR_MAX = 400
@@ -20,8 +22,11 @@ const CHANGES_PANEL = 660
 const CHANGES_PANEL_TREE = 860
 const CHANGES_SHEET = 420
 const RIGHT_PANEL_MAX_SHARE = 0.7
-/** The conversation stays at least this wide; below that the right panel overlays it as a sheet. */
-const CONVERSATION_MIN = 480
+/**
+ * The conversation, and with it the session's title in its head, stays at least this wide: the right panel gives way to
+ * it down to its own minimum, and below that floats over it.
+ */
+export const CONVERSATION_MIN = 440
 const TABLET_FROM = 768
 
 export interface SidebarPreference {
@@ -100,6 +105,7 @@ export function changesPanelWidth(windowWidth: number, left: number, tree = fals
 export function placeRightPanel({ windowWidth, width, left }: { windowWidth: number; width?: number; left: number }): RightPanelPlacement {
   if (windowWidth < TABLET_FROM) return { kind: 'page' }
   const wanted = clampRightPanel(width ?? RIGHT_PANEL_DEFAULT, windowWidth)
-  if (windowWidth - left - wanted >= CONVERSATION_MIN) return { kind: 'column', width: wanted }
+  const room = windowWidth - left - CONVERSATION_MIN
+  if (room >= RIGHT_PANEL_MIN) return { kind: 'column', width: Math.min(wanted, room) }
   return { kind: 'sheet', width: Math.min(wanted, windowWidth - SHEET_GAP) }
 }

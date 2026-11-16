@@ -29,7 +29,6 @@ import {
   CommitGlyph,
   PluginsGlyph,
   GlobeGlyph,
-  CloseGlyph,
   OverviewGlyph,
 } from '@latch/ui'
 import { api, errorMessage, MessageError } from '../core/api.ts'
@@ -37,9 +36,6 @@ import { VisibleText } from './VisibleText.tsx'
 import { ClientPluginPanel } from './ClientPluginPanel.tsx'
 import { PanelLauncher } from '../panel/PanelLauncher.tsx'
 import { referenceIcon } from '../fileReference.ts'
-import { currentShell } from '../core/shell.ts'
-
-const closeShortcut = () => (currentShell() !== null ? '⌥⌘B' : 'Alt Shift B')
 
 /** What the panel shows; `launcher` when nothing is open. */
 export type PanelSurface =
@@ -87,7 +83,6 @@ export function SessionPanels({
   onTreeViewChange,
   onSurface,
   onTerminalShortcut,
-  onClose,
   plugin,
   onSearchFiles,
   rootReveal,
@@ -127,7 +122,6 @@ export function SessionPanels({
   activeFile?: FileTab
   onSurface?(surface: PanelSurface): void
   onTerminalShortcut?: (() => void) | undefined
-  onClose?(): void
   plugin?: string
   onCloseFile?(id: string): void
   onFileResolved?(id: string, file: FileMetadata): void
@@ -249,12 +243,9 @@ export function SessionPanels({
           if (next.startsWith('file:')) onCloseFile?.(next.slice(5))
         }}
         actions={
-          <>
-            {!launcher && onExpand && (
-              <IconButton size="xs" icon={expanded ? Minimize2 : Maximize2} label={expanded ? '还原' : '铺满'} onClick={onExpand} />
-            )}
-            {onClose && <IconButton size="xs" icon={CloseGlyph} label="关闭" shortcut={closeShortcut()} onClick={onClose} />}
-          </>
+          !launcher && onExpand ? (
+            <IconButton size="xs" icon={expanded ? Minimize2 : Maximize2} label={expanded ? '还原' : '铺满'} onClick={onExpand} />
+          ) : undefined
         }
       />
       {changes && changesStarted && (

@@ -2,10 +2,6 @@
   background: var(--canvas);
 }
 
-.app-shell[data-home-focus]:has(> .code-home.ui-backdrop-host)::before {
-  visibility: hidden;
-}
-
 .app-shell[data-home-focus] > .code-home.ui-backdrop-host .home-focus-frame {
   background: transparent;
 }
@@ -19,6 +15,7 @@
   position: absolute;
   inset: auto 0 0;
   block-size: var(--workbench-connection-height);
+  border-block-start: 1px solid var(--line);
 }
 
 .app-shell[data-home-focus] > .workbench-connection {
@@ -50,13 +47,16 @@
   bottom: var(--workbench-connection-height);
 }
 
-.app-shell[data-connection-strip] .inspector-resize,
-.app-shell[data-connection-strip][data-inspector='sheet'] .inspector-column {
-  bottom: calc(var(--shell-inset) + var(--workbench-connection-height));
+.app-shell[data-connection-strip] .inspector-resize {
+  bottom: var(--workbench-connection-height);
+}
+
+.app-shell[data-connection-strip][data-inspector='sheet'] :is(.inspector-column, .inspector-resize) {
+  bottom: calc(var(--sp-8) + var(--workbench-connection-height));
 }
 
 .app-shell[data-connection-strip][data-inspector='sheet'][data-terminal-dock] :is(.inspector-column, .inspector-resize) {
-  bottom: calc(var(--shell-inset) + var(--dock-height) + var(--workbench-connection-height));
+  bottom: calc(var(--sp-8) + var(--dock-height) + var(--workbench-connection-height));
 }
 
 @media (max-width: 1023.98px), (pointer: coarse) {
@@ -67,7 +67,7 @@
 
 @media (max-width: 1023.98px) {
   .app-shell[data-connection-strip] .sidebar {
-    bottom: calc(var(--shell-inset) + var(--workbench-connection-height));
+    bottom: calc(var(--sp-8) + var(--workbench-connection-height));
   }
 }
 
@@ -81,118 +81,58 @@
   pointer-events: none;
 }
 
+/*
+ * Regions, from 768px: one flat window. Navigation (the sidebar or rail, the 顶栏 row, the status bar) is on the ground
+ * (--sidebar); the work (the main area with its title row, the right panel, the terminal dock) is on the canvas. Regions
+ * meet at single hairlines: the sidebar's end, the 顶栏 row's foot, the right panel's start (from its own top to the
+ * status bar), the dock's top (between the sidebar and the right panel) and the status bar's top. Nothing in the shell
+ * is rounded or lifted; that is for what floats over it.
+ */
 @media (min-width: 768px) {
-  .app-shell[data-entry='sessions'] {
-    --shell-inset: var(--sp-12);
+  .app-shell {
+    --session-head: 100px;
     background: var(--sidebar);
   }
-
-  .app-shell[data-entry='sessions']::before,
-  .app-shell[data-entry='sessions']:not([data-home-focus])::after {
-    display: block;
-    grid-area: 1 / 2 / -1 / -1;
-    border-radius: var(--r-16);
-    pointer-events: none;
+  .app-shell[data-sidebar='open'] .sidebar,
+  .app-shell[data-workbench-layout='overview'] > .titlebar:not([data-shut]) .titlebar-lead {
+    box-shadow: inset -1px 0 var(--line);
   }
-
-  .app-shell[data-entry='sessions']::before {
-    box-shadow: var(--work-card-shadow);
-  }
-
-  /* The reader and its docks paint above the canvas. The edge stays above their backgrounds. */
-  .app-shell[data-entry='sessions']:not([data-home-focus])::after {
-    content: '';
-    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) var(--panel-start);
-    outline: 1px solid var(--line);
-    transition: margin-left var(--m-panel) var(--e-panel);
-    z-index: 4;
-  }
-
-  .app-shell[data-entry='sessions'][data-folding]::after {
-    transition-duration: calc(var(--m-panel) * 0.7);
-    transition-timing-function: var(--e-exit);
-  }
-
-  .app-shell[data-entry='sessions'][data-resizing]::after {
-    transition: none;
-  }
-
-  .app-shell[data-entry='sessions'][data-workbench-layout='triage']::before,
-  .app-shell[data-entry='sessions'][data-workbench-layout='triage']:not([data-home-focus])::after {
-    grid-row-start: 2;
-  }
-
-  .app-shell[data-entry='sessions'][data-workbench-layout='triage']:is([data-overview], [data-all-sessions])::before,
-  .app-shell[data-entry='sessions'][data-workbench-layout='triage']:is([data-overview], [data-all-sessions]):not([data-home-focus])::after {
-    grid-column-start: 1;
-    margin-inline-start: var(--shell-inset);
-  }
-
-  .app-shell[data-entry='sessions'] > .titlebar {
-    background: transparent;
-  }
-
-  .app-shell[data-entry='sessions']:has(> .settings-overlay[open]) > .titlebar {
+  .app-shell[data-workbench-layout='overview'] > .titlebar {
     background: var(--canvas);
   }
-
-  .app-shell[data-entry='sessions'] .titlebar-views {
-    margin-block-start: 0;
+  .app-shell[data-workbench-layout='triage'] > .titlebar {
+    background: var(--sidebar);
   }
-
-  .app-shell[data-entry='sessions'] .titlebar-views .layout-switch-space {
-    inline-size: calc(76px + var(--sp-12));
+  .app-shell[data-workbench-layout='overview'] > .titlebar:not([data-shut]) .titlebar-lead {
+    background: var(--sidebar);
   }
-
-  /* The top navigation contributes its own gap before the reserved switch slot. */
-  .app-shell[data-entry='sessions'] > .workbench-nav {
-    padding-inline-end: var(--sp-4);
+  /* 侧栏: the conversation's head is the title row; its foot (measured by the page) runs on over the right panel. */
+  .app-shell[data-workbench-layout='overview'] {
+    --panel-top: max(calc(var(--title-row) - 1px), calc(var(--session-head) - 1px));
   }
-
-  .app-shell[data-entry='sessions'] .workspace .topbar {
-    background: transparent;
+  /* Over the home there is no session head: the panel (its project's files) starts under the title row. */
+  .app-shell[data-workbench-layout='overview'][data-overview] {
+    --panel-top: calc(var(--title-row) - 1px);
   }
-
-  .app-shell[data-entry='sessions'] .workbench-sessions {
-    background: transparent;
+  /* Where the head starts at the window's top, the title's first line sits on the window controls' centre line. */
+  .app-shell[data-workbench-layout='overview']:not([data-sidebar='collapsed']) .workspace .topbar {
+    align-items: flex-start;
+    min-height: 0;
+    padding-block-start: calc((var(--title-row) - var(--lh-work-title)) / 2);
   }
-
-  .app-shell[data-entry='sessions'][data-overview] > .code-home {
-    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) var(--panel-start);
-    border-radius: var(--r-16);
+  .app-shell[data-workbench-layout='overview']:not([data-sidebar='collapsed']) .workspace .topbar-title {
+    align-content: flex-start;
   }
-
-  .app-shell[data-entry='sessions'][data-workbench-layout='triage'][data-overview] > .code-home {
-    margin-inline-start: var(--shell-inset);
+  .app-shell[data-workbench-layout='overview'] .inspector-column-inner {
+    border-block-start: 1px solid var(--line);
   }
-
-  .app-shell[data-entry='sessions'][data-terminal-dock] .workspace {
-    padding-block-end: 0;
+  .app-shell[data-workbench-layout='triage'] .inspector-column {
+    grid-row-start: 2;
   }
-
-  .app-shell[data-entry='sessions'][data-inspector='open'] .workspace {
-    padding-inline-end: 0;
-  }
-
-  .app-shell[data-entry='sessions'] > .terminal-dock {
-    margin-inline-start: var(--panel-start);
-    margin-inline-end: var(--shell-inset);
-    margin-block-end: var(--shell-inset);
-    border-end-end-radius: var(--r-16);
-    border-end-start-radius: var(--r-16);
-  }
-
-  .app-shell[data-entry='sessions'][data-workbench-layout='triage'][data-overview] > .terminal-dock {
-    margin-inline-start: var(--shell-inset);
-  }
-
-  .app-shell[data-entry='sessions'][data-inspector='open'] > .terminal-dock {
-    margin-inline-end: 0;
-    border-end-end-radius: 0;
-  }
-
-  .app-shell[data-entry='sessions'] > .terminal-dock > .terminal-panel {
-    border-radius: inherit;
+}
+@media (min-width: 1024px) {
+  .app-shell[data-workbench-layout='overview'][data-sidebar='collapsed']:not([data-overview]) {
+    --panel-top: calc(var(--title-row) + max(var(--title-row), var(--session-head)) - 1px);
   }
 }
 

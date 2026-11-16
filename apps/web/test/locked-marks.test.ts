@@ -65,7 +65,8 @@ const LOCKED_SOURCES: ReadonlyArray<[file: string, what: string, needle: RegExp]
   ],
   ['shell/WorkbenchDecision.tsx', '决定与回答结果未知', /<StatusWord tone=\{unknown \? 'warn' : status\.tone\}>/u],
   ['shell/WorkbenchDecision.tsx', '执行结果尚未确认', /<p data-lock=\{task\.runEnd\?\.unknownResultCount \? '' : undefined\}>/u],
-  ['shell/SessionOverview.tsx', '命令结果未知', /data-lock=\{message\.interrupted \? '' : undefined\}/u],
+  // The warn tone is a locked tone: StatusWord carries the lock for it.
+  ['shell/SessionOverview.tsx', '命令结果未知', /const tone: StatusTone = message\.interrupted\s+\? 'warn'/u],
   ['conversation/TurnCards.tsx', '恢复结果未知 · 重试', /className="undo-record-action"\s+data-lock=\{unknown \? '' : undefined\}/u],
   ['conversation/TurnCards.tsx', '恢复结果未知', /<span data-lock=""> · 恢复结果未知<\/span>/u],
   ['conversation/TurnCards.tsx', '撤销结果未知', /className="changed-files-why" data-lock="">\s*撤销结果未知/u],

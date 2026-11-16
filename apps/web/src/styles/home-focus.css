@@ -138,10 +138,6 @@
     background: var(--canvas);
   }
 
-  .app-shell[data-home-focus]::before {
-    opacity: 0;
-  }
-
   /* The retained shell fades behind the moving card. The frame still owns all background clicks. */
   .home-focus-frame[data-active] {
     background: transparent;

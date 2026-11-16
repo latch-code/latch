@@ -139,8 +139,8 @@
     /* The 3px joint where a card meets the composer under it. */
     --joint: rgba(18, 18, 28, 0.1);
 
-    /* Shadows. Depth is drawn with shadows, not lines: sh-panel lifts the work panel off the ground; sh-lift lifts
-     * the composer and a card off the panel; sh-well sinks a well into the surface it sits in. Each carries its own
+    /* Shadows. What floats is lifted by a shadow (the window's own regions are divided by hairlines): sh-panel lifts
+     * a panel-sized surface off the ground; sh-lift lifts the composer and a card off the canvas; sh-well sinks a well into the surface it sits in. Each carries its own
      * hairline ring, so an element that wears one draws no border. sh-1: outlined controls at rest. sh-pop: menus,
      * popovers, tooltips and toasts, with its own hairline ring. sh-dialog: dialogs, sheets and the palette, over the
      * scrim. In the dark theme every floating layer adds an inset top line. Rows have none. */
@@ -412,7 +412,7 @@
       1
     );
 
-    /* Layout. The content canvas is inset from the window by --shell-inset on every side but the sidebar's. From
+    /* Layout. The window is one flat surface divided by hairlines (DESIGN「区域划分」). From
      * 1024px the page sets the sidebar's width (it can be dragged, and is 0 while shut) and the width its content
      * keeps while the column slides shut, --sidebar-open-width. */
     --sidebar-width: 300px;
@@ -422,7 +422,6 @@
     --content-width: 800px;
     --gutter: 32px;
     --topbar-height: 48px;
-    --shell-inset: 8px;
     --touch: 32px;
   }
 

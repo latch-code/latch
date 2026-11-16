@@ -1,6 +1,6 @@
 .workbench-nav {
   gap: var(--sp-8);
-  padding: 0 var(--sp-16);
+  padding: 0 0 0 var(--sp-16);
 }
 .workbench-nav[data-lights] {
   padding-left: var(--lights-lead);
@@ -19,8 +19,7 @@
   align-items: center;
   flex-shrink: 0;
   align-self: flex-start;
-  height: 52px;
-  margin-top: var(--shell-inset);
+  height: var(--title-row);
 }
 .workbench-pane-controls {
   flex: none;
@@ -50,8 +49,6 @@
   min-height: 0;
   overflow: auto;
   background: var(--canvas);
-  margin: 0 var(--shell-inset) var(--shell-inset) 0;
-  border-radius: var(--r-12);
 }
 .app-shell:is([data-overview], [data-all-sessions]) .workspace,
 .app-shell:is([data-overview]:not([data-home-inspector]), [data-all-sessions]) :is(.inspector-column, .inspector-resize) {
@@ -61,7 +58,6 @@
 }
 .app-shell[data-workbench-layout='triage'][data-overview] .workbench-home {
   grid-column: 1 / -1;
-  margin-left: var(--shell-inset);
 }
 .app-shell[data-overview][data-home-inspector][data-inspector='open'] .workbench-home {
   grid-column-end: 3;

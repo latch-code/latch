@@ -1,5 +1,20 @@
+import type { ReactNode } from 'react'
 import { readsProjectFiles, type TaskSummary } from '@latch/protocol'
-import { Button, Count, DiffGlyph, Icon, InlineNotice, StatusWord, TerminalGlyph, BranchGlyph, PullRequestGlyph } from '@latch/ui'
+import {
+  Button,
+  Count,
+  DiffGlyph,
+  Icon,
+  StatusWord,
+  TerminalGlyph,
+  BranchGlyph,
+  PullRequestGlyph,
+  LockGlyph,
+  WarningGlyph,
+  Tooltip,
+  type IconComponent,
+  type StatusTone,
+} from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { toolLabel, turnsOf } from '../conversation.ts'
 import { deliveryChecks, useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
@@ -14,6 +29,51 @@ const commandWords = {
   'awaiting-approval': '等你处理',
   queued: '已排队',
 } as const
+
+const clock = (at: string) => new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+
+/**
+ * One row of the summary, the same for every section: a 14px glyph, what it is about, then its state (an icon and a
+ * short word), a time and at most one action, all on one line.
+ */
+function Row({
+  icon,
+  tone,
+  children,
+  state,
+  time,
+  action,
+}: {
+  icon: IconComponent
+  tone?: 'warn'
+  children: ReactNode
+  state?: ReactNode
+  time?: string
+  action?: ReactNode
+}) {
+  return (
+    <li className="session-overview-row" data-tone={tone}>
+      <Icon icon={icon} size={14} className="session-overview-glyph" />
+      <span className="session-overview-text">{children}</span>
+      {state}
+      {time && <span className="session-overview-time">{time}</span>}
+      {action}
+    </li>
+  )
+}
+
+function Section({ title, count, action, children }: { title: string; count?: number; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="session-overview-section" aria-label={title}>
+      <header>
+        <h3>{title}</h3>
+        {count !== undefined && <Count value={count} />}
+        {action}
+      </header>
+      <ul>{children}</ul>
+    </section>
+  )
+}
 
 /** The latest turn's observed changes and commands, followed by the separately observed repository state. */
 export function SessionOverview({ shell, summary }: { shell: ShellState; summary: TaskSummary }) {
@@ -42,7 +102,9 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
   const state = entry?.state
   const pr = entry?.pr?.pr
   const checks = entry ? deliveryChecks(entry) : undefined
-  const stage = state?.files ? 0 : state?.ahead ? 1 : pr ? 3 : 2
+  const failure = evidence.error ?? entry?.error?.message
+  // While the connection is lost, what is shown is what was last seen, and says when.
+  const seen = !connected && entry ? `上次 ${clock(entry.observedAt)}` : undefined
   const next = state?.conflicted
     ? '查看冲突'
     : state?.gitOperation
@@ -54,13 +116,17 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
           : pr
             ? '查看 PR'
             : '开 PR…'
-  // A section with nothing to show draws no heading; with all three empty the panel is one quiet line.
+  const deliver = (label: string) => (
+    <Button size="xs" variant="ghost" onClick={() => shell.showSurface({ kind: 'delivery' })}>
+      {label}
+    </Button>
+  )
+  // A section with nothing to show draws nothing; with all three empty the panel is one quiet word.
   const showChanges = !canReadChanges || !detail || unavailable || pending || truncated || distinct.length > 0
   const showChecks = commands.length > 0
   // A folder without Git has nothing to deliver, and what this device may not read is already said once above.
   const showDelivery =
-    readsProjectFiles(shell.snapshot.device.dataScope)
-    && (!shell.canDeliver || !!evidence.error || !!entry?.error || entry?.notApplicable !== 'not-repository')
+    readsProjectFiles(shell.snapshot.device.dataScope) && (!shell.canDeliver || !!failure || entry?.notApplicable !== 'not-repository')
   if (!showChanges && !showChecks && !showDelivery)
     return (
       <div className="session-overview">
@@ -70,145 +136,165 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
   return (
     <div className="session-overview">
       {showChanges && (
-        <section className="session-overview-section">
-          <header>
-            <h3>这次改动</h3>
-            {canReadChanges && detail && !unavailable && !pending && <Count value={distinct.length} />}
-          </header>
+        <Section
+          title="这次改动"
+          {...(canReadChanges && detail && !unavailable && !pending ? { count: distinct.length } : {})}
+          {...(distinct.length > 0
+            ? {
+                action: (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => shell.openChangesTab(turn?.user?.turnId ? { turnId: turn.user.turnId } : undefined)}>
+                    全部
+                  </Button>
+                ),
+              }
+            : {})}>
           {!canReadChanges ? (
-            <p>这台设备不能读取项目改动</p>
+            <Row icon={LockGlyph}>这台设备不能读取项目改动</Row>
           ) : !detail ? (
-            <p>正在读取会话…</p>
+            <Row icon={DiffGlyph}>正在读取…</Row>
           ) : (
             <>
-              {distinct.length > 0 && (
-                <ul className="session-overview-files">
-                  {distinct.slice(0, 6).map(file => {
-                    return (
-                      <li key={`${file.root}:${file.path}`}>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          icon={DiffGlyph}
-                          onClick={() =>
-                            shell.openChangesTab({
-                              file: { root: file.root, path: file.path },
-                              ...(turn?.user?.turnId ? { turnId: turn.user.turnId } : {}),
-                            })
-                          }>
-                          <VisibleText text={file.path} />
-                        </Button>
-                        <span>{file.change === 'created' ? '新增' : file.change === 'deleted' ? '删除' : '修改'}</span>
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-              {unavailable ? <p>本轮文件改动暂时读不到</p> : pending ? <p>正在核对文件改动…</p> : null}
-              {truncated && <p>这里只显示部分改动</p>}
-              {distinct.length > 0 && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => shell.openChangesTab(turn?.user?.turnId ? { turnId: turn.user.turnId } : undefined)}>
-                  查看全部改动
-                </Button>
-              )}
+              {distinct.slice(0, 6).map(file => (
+                <Row
+                  key={`${file.root}:${file.path}`}
+                  icon={DiffGlyph}
+                  state={
+                    <span className="session-overview-word">
+                      {file.change === 'created' ? '新增' : file.change === 'deleted' ? '删除' : '修改'}
+                    </span>
+                  }>
+                  <button
+                    type="button"
+                    className="session-overview-link"
+                    onClick={() =>
+                      shell.openChangesTab({
+                        file: { root: file.root, path: file.path },
+                        ...(turn?.user?.turnId ? { turnId: turn.user.turnId } : {}),
+                      })
+                    }>
+                    <VisibleText text={file.path} />
+                  </button>
+                </Row>
+              ))}
+              {unavailable ? (
+                <Row icon={WarningGlyph} tone="warn">
+                  读不到本轮改动
+                </Row>
+              ) : pending ? (
+                <Row icon={DiffGlyph}>正在核对…</Row>
+              ) : null}
+              {truncated && <Row icon={DiffGlyph}>只列出部分</Row>}
             </>
           )}
-        </section>
+        </Section>
       )}
       {showChecks && (
-        <section className="session-overview-section">
-          <header>
-            <h3>检查</h3>
-          </header>
-          <ul className="session-overview-checks">
-            {commands.map(message => {
-              // The row's own words, as the transcript says them; the tool's ID only behind hover.
-              const label = toolLabel(message)
-              const words = label.mono || !label.verb ? label.object : `${label.verb} ${label.object}`
-              return (
-                <li key={message.id}>
-                  <Icon icon={TerminalGlyph} size={14} />
-                  <code title={message.toolName && message.toolName !== words ? message.toolName : undefined}>
-                    <VisibleText text={words} />
-                  </code>
-                  <StatusWord
-                    tone={message.state === 'failed' ? 'failed' : message.state === 'running' && connected ? 'running' : 'neutral'}
-                    data-lock={message.interrupted ? '' : undefined}>
+        <Section title="检查">
+          {commands.map(message => {
+            // The row's own words, as the transcript says them; the tool's ID only behind hover. A finished command is
+            // not a passed test: its word stays neutral, without a check.
+            const label = toolLabel(message)
+            const words = label.mono || !label.verb ? label.object : `${label.verb} ${label.object}`
+            const tone: StatusTone = message.interrupted
+              ? 'warn'
+              : message.state === 'failed'
+                ? 'failed'
+                : message.state === 'running'
+                  ? 'running'
+                  : message.state === 'awaiting-approval'
+                    ? 'waiting'
+                    : 'neutral'
+            return (
+              <Row
+                key={message.id}
+                icon={TerminalGlyph}
+                state={
+                  // A lost connection stops the spinner where it is: the run was last seen running, not seen now.
+                  <StatusWord tone={tone} data-stale={tone === 'running' && !connected ? '' : undefined}>
                     {message.interrupted ? '结果未知' : message.state ? commandWords[message.state] : '未报告结果'}
                   </StatusWord>
-                </li>
-              )
-            })}
-          </ul>
-        </section>
+                }
+                {...(tone === 'running' && seen ? { time: seen } : {})}>
+                <Tooltip content={message.toolName && message.toolName !== words ? message.toolName : undefined}>
+                  <code tabIndex={message.toolName && message.toolName !== words ? 0 : undefined}>
+                    <VisibleText text={words} />
+                  </code>
+                </Tooltip>
+              </Row>
+            )
+          })}
+        </Section>
       )}
       {showDelivery && (
-        <section className="session-overview-section">
-          <header>
-            <h3>交付</h3>
-            {pr && <Icon icon={PullRequestGlyph} size={16} />}
-          </header>
+        <Section title="交付" {...(state && !failure && shell.canDeliver ? { action: deliver(next) } : {})}>
           {!shell.canDeliver ? (
-            <p>这台设备不能进行交付</p>
-          ) : (
+            <Row icon={LockGlyph}>这台设备不能交付</Row>
+          ) : failure ? (
+            <Row
+              icon={WarningGlyph}
+              tone="warn"
+              {...(seen ? { time: seen } : {})}
+              action={
+                connected ? (
+                  <Button size="xs" variant="ghost" onClick={evidence.refresh}>
+                    重试
+                  </Button>
+                ) : (
+                  deliver('查看')
+                )
+              }>
+              <Tooltip content={failure}>
+                <span tabIndex={0}>读不到交付状态</span>
+              </Tooltip>
+            </Row>
+          ) : state ? (
             <>
-              {evidence.error || entry?.error ? (
-                <InlineNotice tone="warn">{evidence.error ?? entry?.error?.message}</InlineNotice>
-              ) : state ? (
-                <>
-                  {state.branch && (
-                    <div className="session-overview-branch">
-                      <Icon icon={BranchGlyph} size={14} />
-                      <VisibleText text={state.branch} />
-                      {pr?.base && (
-                        <>
-                          <span>→</span>
-                          <VisibleText text={pr.base} />
-                        </>
-                      )}
-                    </div>
-                  )}
-                  <ol className="session-overview-steps" aria-label="交付步骤">
-                    {['提交', '推送', '开 PR'].map((label, index) => (
-                      <li key={label} aria-current={index === stage ? 'step' : undefined}>
-                        {label}
-                      </li>
-                    ))}
-                  </ol>
-                  <p>
+              <Row
+                icon={BranchGlyph}
+                state={
+                  <span className="session-overview-word">
                     {state.conflicted
-                      ? `${state.conflicted} 个文件有冲突`
+                      ? `${state.conflicted} 个冲突`
                       : state.gitOperation
-                        ? 'Git 操作尚未结束'
+                        ? 'Git 操作未结束'
                         : state.files
-                          ? `目录未提交 ${state.files} 个文件`
+                          ? `${state.files} 个文件未提交`
                           : state.ahead > 0
                             ? `${state.ahead} 个提交未推送`
-                            : '目录没有未提交的改动'}
-                  </p>
-                </>
-              ) : (
-                <p>{evidence.loading ? '正在读取目录…' : '尚未读取目录状态'}</p>
-              )}
+                            : '已全部提交'}
+                  </span>
+                }
+                {...(seen ? { time: seen } : {})}>
+                {state.branch ? <VisibleText text={state.branch} /> : '分支'}
+                {pr?.base && (
+                  <span className="session-overview-base">
+                    {' → '}
+                    <VisibleText text={pr.base} />
+                  </span>
+                )}
+              </Row>
               {pr && (
-                <p className="session-overview-pr">
+                <Row icon={PullRequestGlyph} {...(checks ? { state: <span className="session-overview-word">{checks}</span> } : {})}>
                   #{pr.number} <VisibleText text={pr.title} />
-                </p>
+                </Row>
               )}
-              {checks && <p>{checks}</p>}
-              {entry?.prError && <InlineNotice tone="warn">{entry.prError.message}</InlineNotice>}
-              <Button size="sm" onClick={() => shell.showSurface({ kind: 'delivery' })}>
-                {state ? next : '查看交付'}
-              </Button>
-              {!connected && entry && (
-                <p>上次状态 {new Date(entry.observedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</p>
+              {entry?.prError && (
+                <Row icon={WarningGlyph} tone="warn">
+                  <Tooltip content={entry.prError.message}>
+                    <span tabIndex={0}>读不到 PR</span>
+                  </Tooltip>
+                </Row>
               )}
             </>
+          ) : (
+            <Row icon={BranchGlyph} action={deliver('查看')}>
+              {evidence.loading ? '正在读取…' : '还没读取'}
+            </Row>
           )}
-        </section>
+        </Section>
       )}
     </div>
   )

@@ -19,7 +19,6 @@ import {
   GlobeGlyph,
   PlusGlyph,
   TerminalGlyph,
-  ChevronDownGlyph,
 } from '@latch/ui'
 import { errorMessage, MessageError } from '../../core/api.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
@@ -50,9 +49,10 @@ export interface TerminalPanelProps {
    * dock. A dialog that types a command in opens its own.
    */
   openWhenShown?: boolean
+  /** The dock's last terminal was closed: the dock shuts (its toggle opens it again). There is no button for it here. */
+  onCollapse?: () => void
   unavailable?: string
   location?: string
-  onCollapse(): void
   /** Puts text into the session's composer draft without sending it; absent while the composer takes none. */
   onCompose?: ((text: string) => void) | undefined
   /** Opens a local service in the 浏览器 tab (the desktop app); ⌘-click still goes to the system browser. */
@@ -91,9 +91,9 @@ export function TerminalPanel({
   shown,
   requested,
   openWhenShown = false,
+  onCollapse,
   unavailable,
   location,
-  onCollapse,
   onCompose,
   onOpenService,
   fillPlace,
@@ -148,10 +148,13 @@ export function TerminalPanel({
     terminals.updated(summary)
     if (summary.login) loginRuns.report(summary)
   }
+  /** Terminals 重新打开 replaces: the old one ending is not the dock emptying. */
+  const reopening = useRef(new Set<string>())
   /** The dock with nothing left in it closes, rather than showing an empty screen. */
   const left = (id: string) => {
     loginRuns.gone(id)
-    if (openWhenShown && tabs.length === 1 && tabs[0]!.id === id) onCollapse()
+    if (reopening.current.delete(id)) return
+    if (openWhenShown && tabs.length === 1 && tabs[0]!.id === id) onCollapse?.()
   }
   const gone = (id: string) => {
     terminals.gone(id)
@@ -260,7 +263,6 @@ export function TerminalPanel({
                 void terminals.open()
               }}
             />
-            <IconButton size="xs" icon={ChevronDownGlyph} label="收起终端" onClick={onCollapse} />
           </>
         }
       />
@@ -335,7 +337,15 @@ export function TerminalPanel({
               </span>
               {/* A login is started again from the row that offers it, never as a plain shell under the Harness's name. */}
               {!current.summary.login && (
-                <Button size="xs" variant="primary" icon={RotateCcw} loading={opening} onClick={() => void terminals.reopen(current)}>
+                <Button
+                  size="xs"
+                  variant="primary"
+                  icon={RotateCcw}
+                  loading={opening}
+                  onClick={() => {
+                    reopening.current.add(current.id)
+                    void terminals.reopen(current)
+                  }}>
                   重新打开
                 </Button>
               )}

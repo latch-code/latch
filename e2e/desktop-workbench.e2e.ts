@@ -99,7 +99,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       await page.screenshot({ path: `${OUT}/personal-agent-inspector-closed-1440-dark.png`, animations: 'disabled' })
       await panelToggle.click()
       await expect.poll(() => panelToggle.getAttribute('aria-pressed')).toBe('true')
-      await inspector.getByRole('button', { name: '关闭', exact: true }).click()
+      await panelToggle.click()
       await inspector.waitFor({ state: 'hidden' })
       const more = page.getByRole('button', { name: '更多操作：桌面资料助手', exact: true }).filter({ visible: true })
       const actions = page.getByRole('menu', { name: '桌面资料助手 的操作' })
@@ -350,7 +350,8 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
           const panels = await page.getByRole('group', { name: '工作台面板', exact: true }).locator('visible=true').boundingBox()
           const viewSwitch = await layoutSwitch(page).boundingBox()
           const window = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
-          expect(frame!.x + frame!.width).toBeLessThan(window.width)
+          // A flat region: it runs to the window's edge, never past it.
+          expect(frame!.x + frame!.width).toBeLessThanOrEqual(window.width)
           expect(frame!.y + frame!.height).toBeLessThan(window.height)
           expect(Math.abs(panels!.y + panels!.height / 2 - viewSwitch!.y - viewSwitch!.height / 2)).toBeLessThanOrEqual(3)
           expect(viewSwitch!.x - panels!.x - panels!.width).toBeGreaterThanOrEqual(12)

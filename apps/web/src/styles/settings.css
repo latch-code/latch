@@ -167,15 +167,9 @@
   overflow: clip;
   background: var(--canvas);
 }
+/* A page in the shell (我的 Agent, 应用) divides like the shell: its list on the ground, its content on the canvas. */
 @media (min-width: 768px) {
-  .app-shell > .settings-page,
-  .app-shell > .settings-page .settings-nav-pane {
-    background: transparent;
-    box-shadow: none;
-  }
-  .app-shell > .settings-page .settings-panel {
-    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) max(0px, var(--shell-inset) - var(--entry-nav-width));
-    border-radius: 0 0 var(--r-12) var(--r-12);
+  .app-shell > .settings-page {
     background: transparent;
   }
 }

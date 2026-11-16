@@ -66,7 +66,6 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
     openChangesTab,
     showSurface,
     launcherTakesFocus,
-    closePanel,
     pluginPanel,
     changesTarget,
     changesTotals,
@@ -225,7 +224,6 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
       onSurface={showSurface}
       onTerminalShortcut={shell.canTerminal ? shell.openTerminal : undefined}
       launcherTakesFocus={launcherTakesFocus}
-      onClose={closePanel}
       {...(pluginPanel !== undefined ? { plugin: pluginPanel } : {})}
       expanded={fileExpanded}
       onExpand={() => {

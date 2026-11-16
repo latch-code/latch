@@ -34,7 +34,7 @@ import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { PhoneTabBar } from './PhoneTabBar.tsx'
 import { PhoneReview } from '../phone-review/PhoneReview.tsx'
 import { TitleBar } from './TitleBar.tsx'
-import { RIGHT_PANEL_MIN, rightPanelMax } from './panelLayout.ts'
+import { RIGHT_PANEL_MIN } from './panelLayout.ts'
 import { SettingsPage } from '../settings/SettingsPage.tsx'
 import { AgentsPage } from '../agents/AgentsPage.tsx'
 import { ProfileLayer } from '../agents/AgentProfile.tsx'
@@ -111,7 +111,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     viewport,
     phone,
     drawerMode,
-    windowWidth,
     sidebarDrag,
     setSidebarDrag,
     infoPage,
@@ -219,6 +218,21 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     if (focus.active && !canFocusHome) resetHomeFocus()
   }, [canFocusHome, focus.active, resetHomeFocus])
   useVisualViewportFit(focus.frame, phone && homeFocused)
+  // The right panel's strip starts where the session's head ends, so the head's foot runs on as one line.
+  const headLayout = shell.preferences.workbenchLayout
+  useLayoutEffect(() => {
+    const frame = appShell.current
+    const head = main.current?.querySelector<HTMLElement>(':scope > .workspace-view > .topbar')
+    if (!frame || !head || phone) return undefined
+    const write = () => frame.style.setProperty('--session-head', `${head.offsetHeight}px`)
+    write()
+    const observer = new ResizeObserver(write)
+    observer.observe(head)
+    return () => {
+      observer.disconnect()
+      frame.style.removeProperty('--session-head')
+    }
+  }, [appShell, main, phone, selectedId, headLayout])
   const closeHomeFocus = useStableCallback((restoreInput = true) => {
     focus.leave()
     if (!restoreInput) return
@@ -548,7 +562,23 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   <aside
                     className="inspector-column"
                     aria-label="侧边面板"
-                    inert={!columnOpen || route.entry !== 'sessions' || homeFocused || (covered && !shell.homeInspectorOpen) || undefined}>
+                    inert={!columnOpen || route.entry !== 'sessions' || homeFocused || (covered && !shell.homeInspectorOpen) || undefined}
+                    onKeyDown={event => {
+                      // Esc inside the panel shuts it, after what is inside had its turn; it never reaches a run or a request.
+                      // Fields, menus, dialogs and editors keep their own Esc.
+                      if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing) return
+                      if (
+                        event.target instanceof Element
+                        && event.target.closest(
+                          'dialog, [popover], [role="menu"], [role="listbox"], [role="dialog"], input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+                        )
+                      )
+                        return
+                      event.preventDefault()
+                      overlayDismissed()
+                      if (shell.homeInspector) shell.togglePanel()
+                      else shell.closePanel()
+                    }}>
                     {column.present && (
                       <div className="inspector-column-inner">
                         {shell.homeInspector ? (
@@ -567,7 +597,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     edge="start"
                     value={inspectorWidth}
                     min={RIGHT_PANEL_MIN}
-                    max={rightPanelMax(windowWidth)}
+                    max={shell.inspectorMax}
                     onResize={resizeInspector}
                     onReset={resetInspector}
                   />
@@ -620,7 +650,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     <header className="workbench-phone-heading" inert={homeFocused || undefined}>
                       {triage && shellSpaces(shell) ? <SpaceSwitch {...shellSpaces(shell)!} /> : <h1>Code</h1>}
                       {!triage && <IconButton label="搜索" icon={SearchGlyph} onClick={openSearch} />}
-                      {access.scopes.has('view') && <UsageEntry />}
+                      {!triage && access.scopes.has('view') && <UsageEntry />}
                       <LayoutSwitch value={shell.preferences.workbenchLayout} />
                     </header>
                   )}
@@ -636,6 +666,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       )}
                       {triage && (
                         <div className="workbench-phone-utilities">
+                          {/* Beside 设置 here: the 顶栏 heading holds the space switch, and 320px has no room for both. */}
+                          {access.scopes.has('view') && <UsageEntry />}
                           {entries.includes('settings') && (
                             <IconButton label="设置" icon={SettingsGlyph} onClick={() => goEntry('settings')} />
                           )}

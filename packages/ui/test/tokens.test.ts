@@ -471,7 +471,7 @@ describe('design tokens', () => {
     const [lockChosen] = blocks(`:root[data-theme='dark'] ${scope}`)
     // Layout, motion and the surface under an element stay free; every other token is locked.
     const free =
-      /^--(?:sidebar-width|sidebar-open-width|inspector-width|inspector-open-width|content-width|gutter|topbar-height|shell-inset|touch|layer-(?:xs|sm|md|lg|xl)|z-[a-z]+|scrim-blur|m-[a-z]+|e-[a-z]+|surface)$/u
+      /^--(?:sidebar-width|sidebar-open-width|inspector-width|inspector-open-width|content-width|gutter|topbar-height|touch|layer-(?:xs|sm|md|lg|xl)|z-[a-z]+|scrim-blur|m-[a-z]+|e-[a-z]+|surface)$/u
     const expected = (theme: Map<string, string>) => [...theme].filter(([name]) => !free.test(name))
     expect([...(lockLight ?? [])]).toEqual(expected(block(':root')))
     expect([...(lockSystem ?? [])]).toEqual(expected(block(":root[data-theme='dark']")))

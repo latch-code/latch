@@ -87,10 +87,10 @@ describe('the launcher', () => {
     expect(render(createElement(SessionPanels, { summary }))).toContain('这个会话没有可以打开的面板')
   })
 
-  it('offers no way to maximise a launcher', () => {
-    const html = render(createElement(SessionPanels, { summary: session(), onExpand: noop, onClose: noop }))
+  it('offers no way to maximise a launcher, and no close button: its toggle shuts it', () => {
+    const html = render(createElement(SessionPanels, { summary: session(), onExpand: noop }))
     expect(html).not.toContain('aria-label="铺满"')
-    expect(html).toContain('aria-label="关闭"')
+    expect(html).not.toContain('aria-label="关闭"')
   })
 })
 

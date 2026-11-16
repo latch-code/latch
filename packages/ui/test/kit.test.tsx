@@ -162,6 +162,56 @@ describe('PanelTabs', () => {
     )
   }
 
+  it('moves what does not fit into one +N menu, keeps the selected tab in the row, and still reaches every tab', async () => {
+    const closed = vi.fn()
+    function Narrow() {
+      const [value, setValue] = useState('a')
+      const [tabs, setTabs] = useState(
+        ['a', 'b', 'c', 'd', 'e', 'f'].map(name => ({
+          value: name,
+          label: `文件 ${name}.md`,
+          icon: FileGlyph,
+          closeLabel: `关闭 ${name}.md`,
+        })),
+      )
+      return (
+        <div style={{ width: '260px' }}>
+          <PanelTabs
+            label="面板"
+            value={value}
+            onValueChange={setValue}
+            onClose={name => {
+              closed(name)
+              setTabs(list => list.filter(tab => tab.value !== name))
+            }}
+            tabs={tabs}
+          />
+        </div>
+      )
+    }
+    const screen = await render(<Narrow />)
+    const standing = () =>
+      [...screen.container.querySelectorAll('.ui-panel-tab:not([data-overflow]) [role="tab"]')].map(tab => tab.textContent)
+    await expect.poll(() => screen.container.querySelector('.ui-panel-tabs-more')?.textContent).toMatch(/^\+\d$/u)
+    // No tab is narrowed to its glyph: each one standing shows its whole label.
+    for (const label of standing()) expect(label).toMatch(/^文件 \w\.md$/u)
+    // The arrows go on past the row's end; the tab they select stands in the row.
+    screen.getByRole('tab', { name: '文件 a.md' }).element().focus()
+    await userEvent.keyboard('{End}')
+    await expect.element(screen.getByRole('tab', { name: '文件 f.md' })).toHaveAttribute('aria-selected', 'true')
+    await expect.poll(standing).toContain('文件 f.md')
+    await expect.poll(() => document.activeElement?.textContent).toBe('文件 f.md')
+    // Delete still closes the focused tab.
+    await userEvent.keyboard('{Delete}')
+    expect(closed).toHaveBeenCalledWith('f')
+    // The menu selects a tab that does not stand in the row.
+    await screen.getByRole('button', { name: /^其余 \d 个标签$/u }).click()
+    const hidden = page.getByRole('menuitem').first()
+    const name = hidden.element().textContent!
+    await hidden.click()
+    await expect.poll(standing).toContain(name)
+  })
+
   it('puts the × after the label, clear of it, in a closable tab without a glyph', async () => {
     const screen = await render(
       <PanelTabs

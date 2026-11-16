@@ -55,7 +55,8 @@ describe('top bar', () => {
     vi.useFakeTimers({ now: Date.parse('2026-11-11T10:01:12Z'), toFake: ['Date'] })
     const pill = (extra: Partial<TaskSummary>, { cancelling = false, connection = 'connected' as 'connected' | 'offline' } = {}) => {
       const html = renderToStaticMarkup(createElement(SessionHeader, { ...topBar, summary: session(extra), cancelling, connection }))
-      const word = /<span class="ui-status-word" data-tone="(\w+)"(?: data-lock="")?>(.*?)<\/span>(?=<\/div>)/u.exec(html)
+      const word =
+        /<span class="ui-status-word" data-tone="(\w+)"(?: data-lock="")?>(.*?)<\/span>(?=<div class="topbar-actions">|<\/div>)/u.exec(html)
       return word && [word[1], word[2]!.replace(/<svg.*?<\/svg>|<span[^>]*><\/span>|<!-- -->/gu, '').replace(/<[^>]+>/gu, '')]
     }
     const live = {

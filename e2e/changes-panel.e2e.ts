@@ -83,8 +83,8 @@ async function openBrowser(page: Page, host: TestHost, sessionId: string, dataSc
   const owner = await host.enroll({ listener: 'unix' })
   const devices = await owner.json<{ devices: Array<{ id: string; name: string }> }>('devices')
   const id = devices.devices.find(item => item.name === name)!.id
-  if (dataScope === 'all')
-    expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+  // A new browser reads project files by default: both scopes are set, the narrower one too.
+  expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope } })).status).toBe(200)
   await reopen(page, sessionId)
 }
 
