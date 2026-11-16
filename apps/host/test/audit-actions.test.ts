@@ -156,6 +156,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'file.list': { workspaceId: 'ws-1', rootHash: hex, dirHash: hex, hidden: false, count: 3, truncated: false },
   'action.failed': { refSeq: 7 },
   'task.question.answered': { sessionId, questionId: 'q-1' },
+  'task.unknown.checked': { sessionId, count: 2 },
   'task.prompt.queued': { sessionId, itemId: 'item-1' },
   'task.prompt.sent': { sessionId, itemId: 'item-1' },
   'task.prompt.edited': { sessionId, itemId: 'item-1' },

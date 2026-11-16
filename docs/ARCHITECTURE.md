@@ -364,9 +364,29 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 - **工具网关。** ACP Driver 另得到 `toolGateway`：Host 运行目录里 0700 的 `tools/` 下的 Unix 套接字 `gateway.sock`（0600），转发浏览器工具的 `tools/list` 与 `tools/call`，以及 `latch-mcp` 桥的请求（[MCP.md](./MCP.md)）。
 - **浏览器工具的令牌。** Driver 每次打开、恢复、载入或分叉 Agent 的会话时换一个 `lbt1.` 令牌，写进新建的 0600 文件，`mcpServers` 只拿到文件路径，读出后即删；Host 只存哈希，令牌绑定会话与进程的生命期。它不是 API 的入口类别：持有令牌的进程不能当设备用。调用只在会话正在运行的一轮里执行，完全访问的会话里 R2 一律拒绝（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md#agent-的工具)）。
 - **远程 MCP。** 远程 MCP 服务器只由 Host 连接（`mcp-remote.ts`、`mcp-oauth.ts`）：请求只经出站策略发往本机确认时绑定的源与路径，不跟随重定向，请求头的值与令牌从不离开 Host。见 [MCP.md](./MCP.md#远程地址)。
-- **会话元数据。** 重命名、置顶、归档保存在 `sessions-meta.json`，对所有 Harness 生效。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`；删除成功后一并删除该会话的元数据与回执。
+- **会话元数据。** 重命名、置顶、归档、标签、优先级与看板记号保存在 `sessions-meta.json`，对所有 Harness 生效；Driver 自报的 `tags`、`priority`、`board` 被丢弃。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`；删除成功后一并删除该会话的元数据与回执。
 - **运行。** Driver 在每次运行开始时给会话写入新的 `TaskSummary.runId` 并持久化。`cancel(sessionId, { runId })` 只在它仍是当前运行时取消，并回答是否取消了什么。
 - **挂载与卸载。** 启停 Harness 插件或修改 Agent 定义时先卸载旧 Driver；仍有运行中或待审批的会话时返回 409 `harness-busy`。
+
+### 看板的组
+
+每个会话的 `TaskSummary.board`（`BoardPlace`：`group`、`reason`、`settle`、`card`）由 Host 推出，客户端只读。`hub.ts` 的 `present()` 在摘要做完之后调用注入的 `HubOptions.board`，即 `board.ts` 的纯函数 `boardPlace`：凡经 `present()` 的摘要（快照、列表、详情、`PATCH`、`attend`、`task-state`）都带组，组只在这一处判定。它读的是 Host 自己的事实：问题数来自问题存储，审批来自 Host 的审批列表，从不等待。
+
+| # | 条件 | 组 | `reason` |
+| --- | --- | --- | --- |
+| 1–4 | 运行中且没有在停止：审批（状态 `waiting-approval` 且没有提问，或 Host 列出它的审批）、提问、未识别的请求之后再无动静、沉默 | `attention` | `approval`、`question`、`unrecognized`、`silent` |
+| 5 | 不在运行，最近一次运行有无人能担保的结果，且这次结算未被核对 | `attention` | `unknown` |
+| 6 | 不在运行，失败（`failed`，或 `idle` 而 `runOutcome` 为 `failed`），且这次结算未被打开 | `attention` | `failed` |
+| 7 | 运行中（含正在停止） | `running` | |
+| 8 | 绑定的 PR 最近一次被读到已合并或已关闭 | `done` | |
+| 9 | Host 读到的本地交付事实为真且归这个会话（见下「交付事实」），或绑定了 PR 而它开着或还没读过 | `deliver` | |
+| 10 | 其余 | `done` | |
+
+- 1–4 与网页的 `waitsOnYou`、桌面端的 `attentionOf` 是同一判定（`packages/protocol` 的 `waitKindOf`，共用向量 `packages/testkit/vectors/board-v1.json`）。
+- `settle` 是结算的名字：`runId`，否则 `runEnd.at`，否则 `updatedAt`。`POST /tasks/:id/attend { settle, opened?, checked? }` 只记在当前结算上，不同就 409 `attend-stale`；下一次运行有新的 `settle`，又会进入等你处理。`opened` 要 `view`，是阅读记号，不写审计；`checked` 要 `run`，先写 `task.unknown.checked`（只有会话 ID 与数目），写不进就不记。它只决定看板上的位置，不改变各请求「结果未知」的核对与放弃。
+- `card`：不是归档、旧助手会话，我的 Agent 的会话只有定时运行。不是卡的会话也有组。
+- **交付事实。** `BoardDelivery` 只在内存中：一次运行结算后、交付的提交、推送或建 PR 之后、任何设备调 `workbench/delivery` 时各读一次，Host 启动约 2 秒后对最近 7 天、空闲、每个目录一个的会话最多读 48 个。只读 Code 会话（不归档、不在运行）的工作目录，经受限运行器只读本地 Git，从不调用 `gh`、不访问网络；PR 状态只来自设备发起的读与人按下的交付。后台同时只读一个，且有两个读取在跑时不开始；设备的读取仍各自最多两批。目录的改动只归一个会话：自己的工作树或会话文件夹、或绑定了 PR 的会话归它自己；几个会话共用一个目录时，归改动记录（`TurnChanges`：已结算、未撤销、`files > 0` 的一轮）里自己改过文件的会话中最近变化的那个。没有会话自己改过文件（例如人手改的），看板上就没有会话认领这个目录的改动。私有会话只与私有会话比，从不让可见的会话进出可交付。结论变了才通知客户端。
+- 标签、优先级经 `PATCH /tasks/:id`，只由人设置，不触发任何动作。标签每个 `trim`、NFKC、去掉不可见字符，1–24 个码点，最多 8 个；含控制字符或换行 400 `tag-invalid`，像密钥 400 `tag-secret`，超过 8 个 400 `tag-limit`。改元数据不改 `updatedAt`。
 
 **生命周期事件。** `session-lifecycle.ts` 把会话与 Host 的变化发给 Host 内按会话保存状态的模块；路由模块经 `RouteContext.lifecycle` 拿到的对象只有 `on`，只能订阅。
 
@@ -444,7 +464,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 | `usage/` | 网关以外的轮次：自己登录与插件服务（[MODEL-GATEWAY.md](./MODEL-GATEWAY.md#网关以外的轮次)） |
 | `mcp/servers.json`、`mcp/secrets.json`、`mcp-ended.json` | MCP 服务器定义与秘密值（目录 0700、文件 0600）、登录已结束但令牌未删净的服务器 ID（[MCP.md](./MCP.md)） |
 | `customization.json` | 外观的修订与写入回执（[CUSTOMIZATION.md](CUSTOMIZATION.md)） |
-| `sessions-meta.json` | Host 为每个会话保存的元数据：标题覆盖、置顶、归档、所属项目、会话文件夹或工作树、分叉来源、接入来源、Agent 归属、绑定的 PR，以及审批、取消、交付与配置修改的回执 |
+| `sessions-meta.json` | Host 为每个会话保存的元数据：标题覆盖、置顶、归档、标签、优先级、看板记号、所属项目、会话文件夹或工作树、分叉来源、接入来源、Agent 归属、绑定的 PR，以及审批、取消、交付与配置修改的回执 |
 | `session-folders.json` | 会话启动请求键的哈希、自有文件夹名与启动目录哈希；Agent 固定家的归属与目录身份（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
 | `sessions/runtime.json`、`runtime.lock` | Standard 的会话、请求回执与删除记录 |
@@ -605,7 +625,8 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `GET /snapshot`、`GET /events?sessionId=`、`GET /tasks/:id` | `view` | 状态、事件流、详情 |
 | `POST /tasks` | `run` | L3 写启动审计，不弹确认；带 `via` 时是插件页面开始会话（[APP-PAGES.md](APP-PAGES.md#会话)） |
 | `POST /tasks/:id/prompt` | `run` | L3 会话也可以从任何设备输入；`queue: true` 见「排队输入」 |
-| `PATCH`/`DELETE /tasks/:id`、`POST /tasks/batch` | `run` | 重命名、置顶、归档、删除；批处理见「会话搜索与批处理」 |
+| `PATCH`/`DELETE /tasks/:id`、`POST /tasks/batch` | `run` | 重命名、置顶、归档、标签、优先级（`high`、`mid`、`low`）、删除；私有会话另需 `all`；批处理见「会话搜索与批处理」 |
+| `POST /tasks/:id/attend` | `opened`：`view`；`checked`：`run`；私有会话另需 `all` | 看板记号，见「看板的组」 |
 | `POST /tasks/:id/cancel`、`…/stop-subagent`、`…/keep-waiting` | `view` | 取消；停止一个子 Agent（[HARNESSES.md](./HARNESSES.md#子-agent)）；推迟沉默提示（[STREAMING.md](./STREAMING.md#运行的真实状态)） |
 | `POST /approvals/:id` | 拒绝 `view`；允许 R1 `approve:standard`；允许 R2 `approve:elevated`；允许 L3 询问 `run` | 见「审批与取消」 |
 | `POST /tasks/:id/config`、`GET /tasks/:id/config-requests/:requestId`、`POST …/check` | 修改与核对 `run`；查询为原设备的 `view` | 见「会话配置修改回执」 |

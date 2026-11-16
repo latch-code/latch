@@ -38,7 +38,10 @@ export function workbenchReadFailure(error: unknown): NonNullable<WorkbenchDeliv
   return { code: error instanceof AppError ? error.code : 'git-failed', message: '暂时无法读取交付状态' }
 }
 
-/** Bounded reads for visible workbench cards. Completed reads are not cached; no background repository polling. */
+/**
+ * Bounded reads for visible workbench cards and the board's own reads (`board.ts`). Only reads under way are shared; the
+ * board keeps what it concluded. `boundPr: false` never starts `gh` or reaches a remote.
+ */
 export class WorkbenchDeliveryReader {
   private readonly states = new Map<string, Promise<Observed<RepositoryRead>>>()
   private readonly prs = new Map<string, Promise<Observed<Pick<GitPrState, 'pr' | 'checks'>>>>()

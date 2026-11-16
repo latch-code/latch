@@ -9,6 +9,7 @@ export type { HostFeatures, SearchHit, SearchResults, SessionBatchResult } from 
 export type { AgentQuestion, QuestionAnswer, QuestionSubmission, QuestionReceipt, QuestionResult } from './questions.ts'
 
 export type * from './sessions.ts'
+export type * from './board.ts'
 export type * from './snapshot.ts'
 export type * from './task-delta.ts'
 export type * from './devices.ts'

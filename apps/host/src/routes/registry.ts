@@ -4,6 +4,7 @@ import type { PluginRegistry } from '@latch/core'
 import type { ProjectFolder } from '@latch/sdk'
 import type { BucketName, Presented, RateLimiter } from '../access.ts'
 import type { AuditActor, AuditLog, StepupMethod } from '../audit.ts'
+import type { BoardDelivery } from '../board.ts'
 import type { ConnectionContext, DeviceStore, EnrollmentService } from '../auth.ts'
 import type { HostConfig } from '../config.ts'
 import type { RepositoryHolds } from '../git-delivery.ts'
@@ -60,6 +61,8 @@ export interface RouteContext {
   config: HostConfig
   plugins: PluginRegistry
   hub: HarnessHub
+  /** The Host's cached local Git facts for the board's 可交付 (`board.ts`); the git routes connect its reader. */
+  board: BoardDelivery
   /** Paths nothing outside the Host's own stores reads or writes. */
   guardedPaths: readonly string[]
   /**

@@ -490,6 +490,18 @@ describe('Host-authorized notifications', () => {
 })
 
 describe('what waits, from Host snapshots', () => {
+  it('lists a session exactly where the Host’s board rule does (board-v1)', async () => {
+    const { waits } = JSON.parse(await readFile('packages/testkit/vectors/board-v1.json', 'utf8')) as {
+      waits: Array<{ name: string; task: { id: string; updatedAt: string }; approval: boolean; wait: string | null }>
+    }
+    // The desktop says `stuck` for both kinds of a run that may have stopped.
+    const kinds: Record<string, string> = { approval: 'approval', question: 'question', unrecognized: 'stuck', silent: 'stuck' }
+    for (const { name, task, approval, wait } of waits) {
+      const approvals = approval ? [{ id: 'a-1', sessionId: task.id, requestedAt: task.updatedAt }] : []
+      expect(attentionOf({ tasks: [task], approvals }).items[0]?.kind ?? null, name).toBe(wait === null ? null : kinds[wait])
+    }
+  })
+
   const at = (seconds: number) => new Date(Date.UTC(2026, 10, 12, 8, 0, seconds)).toISOString()
   const snapshot = {
     tasks: [

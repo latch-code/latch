@@ -8,6 +8,7 @@ import type { ScheduleResult } from './automations.ts'
 import type { AgentBrief, SessionAgentRef } from './custom-agents.ts'
 import type { GatewayLoss } from './gateway-translations.ts'
 import type { TurnSpend } from './model-usage.ts'
+import type { BoardPlace, BoardPriority } from './board.ts'
 
 export interface SessionCommand {
   name: string
@@ -173,6 +174,12 @@ export interface DriverTaskSummary {
   /** Host-level session metadata; it applies to every harness. */
   pinned?: boolean
   archived?: boolean
+  /** Free labels the person gave; filters only, they never trigger anything. Host metadata; a driver's claim is dropped. */
+  tags?: string[]
+  /** 高 or 低; absent is 中. Set by a person only. Host metadata; a driver's claim is dropped. */
+  priority?: BoardPriority
+  /** The Host's group for this session, which rows, counts and the board read. Host-derived; a driver's claim is dropped. */
+  board?: BoardPlace
   /** Accumulated model usage reported by the provider or agent. */
   usage?: TokenUsage
   /** L1: Latch asks before each risky tool call. L3: the harness runs unsandboxed (full access). */

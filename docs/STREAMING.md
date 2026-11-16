@@ -71,6 +71,8 @@ Provider.stream             Standard Runtime             Host                   
 | `host-state` | Host 即将不再应答（`stopping`、`sleeping`）或电脑醒来（`awake`） | 见 [Host 宣布的停止与睡眠](#host-宣布的停止与睡眠) |
 | `app.data`、`app.updated` | 插件页面的文档或已应用页面变了 | 见 [APP-PAGES.md](./APP-PAGES.md#存储) 与[桥](./APP-PAGES.md#桥) |
 
+摘要里的看板组（`board`）随会话元数据、记号与 Host 的交付事实变化，也经 `tasks-invalidated` 与 `task-state` 送达，事件种类不变。
+
 **私有会话不泄露动静。** 私有会话（Agent、通用、接入、定时与 `agentPrivate`）的 `task-state` 与 `tasks-invalidated` 不发给数据范围不是 `all` 的设备，连不带 ID 的提示也不发；原生重放同样按读者略过。`app.data` 只发给能读那个作用域的连接。
 
 **版本与顺序。**

@@ -34,6 +34,8 @@ export const SESSION_ACTIONS = {
   /** Withdrawn before a target existed, or closed once it had (`started`). */
   'handoff.withdrawn': z.strictObject({ handoffId: opaqueId, from: z.enum(['start-failed', 'start-unknown', 'started']) }),
   'task.question.answered': z.strictObject({ sessionId: opaqueId, questionId: opaqueId }),
+  /** A person marked the results of a run nobody could vouch for as checked: the board stops listing it as waiting. */
+  'task.unknown.checked': z.strictObject({ sessionId: opaqueId, count }),
   'task.prompt.queued': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
   'task.prompt.sent': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
   'task.prompt.edited': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),

@@ -20,6 +20,8 @@ import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
 import {
   GENERAL_AGENT_ID,
+  BOARD_SETTLE_CHARS,
+  normalizeBoardTags,
   isMcpToolOn,
   onModelChoice,
   parseModelChoice,
@@ -272,6 +274,7 @@ import {
 } from './config.ts'
 import type { HarnessKind } from './harness-trust.ts'
 import { HarnessHub, listSignature, runEndOutline, type HubCreateInput } from './hub.ts'
+import { BoardDelivery, boardPlace, type DeliveryTarget } from './board.ts'
 import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleListeners } from './session-lifecycle.ts'
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
@@ -347,6 +350,8 @@ const HARNESS_ID = /^[a-zA-Z0-9_-]{1,64}$/
 const LEGACY_PROVIDER_ID = 'openai-compatible'
 const STANDARD = 'standard'
 const ACTIVE_STATUSES: ReadonlySet<TaskStatus> = new Set(['running', 'waiting-approval'])
+/** How long after start the Host waits before its one background read of recent sessions' local Git. */
+const BOARD_WARM_DELAY_MS = 2_000
 const L3_WARNINGS = [
   '它可以读写 Latch 的数据和这台 Mac 的身份密钥，也可以在其他电脑上冒充这台 Mac 上的 Latch。',
   '它发起的询问只是提示，Latch 不隔离它。',
@@ -449,8 +454,32 @@ const taskPatchSchema = z
     title: z.string().trim().min(1).max(120).nullable().optional(),
     pinned: z.boolean().optional(),
     archived: z.boolean().optional(),
+    /** Normalised by `normalizeBoardTags` before anything is written; null or empty removes them. */
+    tags: z.array(z.string().max(256)).max(64).nullable().optional(),
+    /** `mid` is the default: the field goes. */
+    priority: z.enum(['high', 'mid', 'low']).optional(),
   })
-  .refine(value => value.title !== undefined || value.pinned !== undefined || value.archived !== undefined, '没有要修改的内容')
+  .refine(
+    value =>
+      value.title !== undefined
+      || value.pinned !== undefined
+      || value.archived !== undefined
+      || value.tags !== undefined
+      || value.priority !== undefined,
+    '没有要修改的内容',
+  )
+const attendSchema = z
+  .strictObject({
+    settle: z.string().min(1).max(BOARD_SETTLE_CHARS),
+    opened: z.literal(true).optional(),
+    checked: z.literal(true).optional(),
+  })
+  .refine(value => value.opened || value.checked, '没有要记下的内容')
+const TAG_PROBLEMS = {
+  'tag-invalid': '标签要 1–24 个字，不能有换行或控制字符。',
+  'tag-secret': '标签看起来像密钥，没有保存。',
+  'tag-limit': '一个会话最多 8 个标签。',
+} as const
 const commandCatalogueSchema = createTaskSchema
   .pick({ workspaceId: true, mode: true, model: true, config: true, worktree: true, customAgentId: true })
   .strict()
@@ -1980,6 +2009,39 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     const sessionLifecycle = new SessionLifecycle({ log, ...(options.lifecycleBounds ? { bounds: options.lifecycleBounds } : {}) })
     const lifecycleListeners = sessionLifecycle.listenOnly()
+    /** The sessions with an approval pending, read once per turn of the event loop: a listing presents every session. */
+    let approvalMemo: ReadonlySet<string> | undefined
+    function approvalSessions(): ReadonlySet<string> {
+      if (!approvalMemo) {
+        approvalMemo = new Set((hub?.approvals() ?? []).map(approval => approval.sessionId))
+        queueMicrotask(() => {
+          approvalMemo = undefined
+        })
+      }
+      return approvalMemo
+    }
+    /** A session the Host reads local Git for in the background: Code, not archived or running, with its folder. */
+    async function deliveryTarget(sessionId: string): Promise<DeliveryTarget | undefined> {
+      const current = hub
+      if (!current) return undefined
+      const task = await current.summary(sessionId).catch(() => undefined)
+      if (!task || task.archived || task.personal || task.agent || task.generalChat || ACTIVE_STATUSES.has(task.status)) return undefined
+      const roots = await sessionRoots(sessionId).catch(() => undefined)
+      if (!roots || roots === 'removed' || !roots[0]) return undefined
+      // In a folder of its own, or with a pull request bound, the work is its own; in a shared folder only a session the
+      // changes record says changed files may hold it.
+      const own =
+        (task.worktree !== undefined && !task.worktree.removed) || task.sessionFolder === true || current.prOf(sessionId) !== undefined
+      const holds = own || (await changeRoutes.changed(sessionId).catch(() => false))
+      // A Code session that got 通用's private context is private too, and is shown only beside other private sessions.
+      return {
+        folder: roots[0].path,
+        updatedAt: task.updatedAt,
+        holds,
+        ...(current.agentPrivate(sessionId) ? { private: true } : {}),
+      }
+    }
+    const boardDelivery = new BoardDelivery({ log, changed: sessionId => refresh(sessionId), target: deliveryTarget })
     const harnessHub = await HarnessHub.open({
       dataDir,
       defaultId: defaultHarnessId,
@@ -2011,6 +2073,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // A service's name only while its own place is what is waited for; the Host's own limit has no name.
         return waiting.providerId === undefined ? {} : { service: effectiveProvider(waiting.providerId)?.name ?? '模型服务' }
       },
+      // The Host's own counts, never the driver's: questions from the question store, approvals from the Host's list.
+      board: (summary, record) =>
+        boardPlace(summary, {
+          questions: questions.view(summary.id).length,
+          approval: approvalSessions().has(summary.id),
+          ...(record.attended ? { attended: record.attended } : {}),
+          ...(record.pr ? { pr: { ...(boardDelivery.prState(summary.id) ? { state: boardDelivery.prState(summary.id)! } : {}) } } : {}),
+          delivery: boardDelivery.local(summary.id),
+        }),
     })
     hub = harnessHub
     const attachmentStore = await AttachmentStore.open(dataDir, { now, deferPrune: true })
@@ -2593,6 +2664,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       config,
       plugins: registry,
       hub: harnessHub,
+      board: boardDelivery,
       guardedPaths,
       sessionRoots,
       async assertSessionInput(caller, sessionId) {
@@ -8618,15 +8690,55 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (method === 'PATCH' && !action) {
         requireScope(caller, 'run')
-        const input = taskPatchSchema.parse(await jsonBody(req))
+        const { tags: rawTags, priority, ...input } = taskPatchSchema.parse(await jsonBody(req))
+        const normalized = rawTags?.length ? normalizeBoardTags(rawTags) : undefined
+        if (normalized && 'problem' in normalized) throw new AppError(400, normalized.problem, TAG_PROBLEMS[normalized.problem])
+        // The answer carries the session's summary and board place: a private session's only to a device that may read it.
+        checkPrivateSession(caller, id, true)
         recheck(caller, 'run')
         if (input.archived) {
           restrictChatRemoval(id)
           terminalRoutes.checkSessionEnd(caller, id)
         }
-        const summary = await hub!.updateMeta(id, input)
+        const summary = await hub!.updateMeta(id, {
+          ...input,
+          ...(rawTags !== undefined ? { tags: normalized && 'tags' in normalized ? normalized.tags : null } : {}),
+          ...(priority !== undefined ? { priority: priority === 'mid' ? null : priority } : {}),
+        })
+        checkPrivateSession(caller, id, true)
         if (input.archived) memoryRefusals.delete(id)
         json(res, { summary })
+        return true
+      }
+      if (method === 'POST' && action === 'attend') {
+        const input = attendSchema.parse(await jsonBody(req))
+        // Opening is reading; checking unknown results is a person's conclusion about commands that may have run.
+        const scope = input.checked ? 'run' : 'view'
+        requireScope(caller, scope)
+        limits.classC.take(caller.device.id)
+        checkPrivateSession(caller, id, input.checked === true)
+        const summary = await hub!.summary(id)
+        recheck(caller, scope)
+        checkPrivateSession(caller, id, input.checked === true)
+        if (summary.board?.settle !== input.settle) throw new AppError(409, 'attend-stale', '会话已有新的结果，请刷新后再试。')
+        const recorded = hub!.attendedOf(id)
+        const marked = recorded?.settle === input.settle ? recorded : undefined
+        if (marked && (!input.opened || marked.opened) && (!input.checked || marked.checked)) {
+          json(res, { summary })
+          return true
+        }
+        if (input.checked && !marked?.checked)
+          try {
+            await audited({
+              action: 'task.unknown.checked',
+              actor: actorOf(caller),
+              target: id,
+              detail: { sessionId: id, count: summary.runEnd?.unknownResultCount ?? summary.runEnd?.unknownResults?.length ?? 0 },
+            })
+          } catch {
+            throw new AppError(503, 'audit-unavailable', '审计记录暂时无法保存，没有记下已核对，请重试。')
+          }
+        json(res, { summary: await hub!.attend(id, input) })
         return true
       }
       if (method === 'DELETE' && !action) {
@@ -10264,7 +10376,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { state: configRequests.state(id, caller.device.id, configRequest[2]!) })
         return
       }
-      const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|keep-waiting|config|stop-subagent))?$/)
+      const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|keep-waiting|config|stop-subagent|attend))?$/)
       if (task && (await handleTask(req, res, caller, safeDecode(task[1]!), task[2], method))) return
       const approval = path.match(/^\/link\/api\/approvals\/([^/]+)$/)
       if (approval && method === 'POST') {
@@ -10577,6 +10689,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
     })
     starting = false
+    // Once after start: recent idle sessions' local Git for 可交付, in the background (board.ts).
+    const boardWarm = setTimeout(() => {
+      void harnessHub
+        .listTasks()
+        .then(tasks => boardDelivery.warm(tasks, now()))
+        .catch(error => log(`交付状态未能预读：${errorText(error)}`))
+    }, BOARD_WARM_DELAY_MS)
+    boardWarm.unref()
 
     await writeProjectContext(dataDir, {
       workspaceRoot: realWorkspace,
@@ -10605,6 +10725,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       close() {
         return (shutdown ??= (async () => {
           closing = true
+          clearTimeout(boardWarm)
           modelRequests.close()
           // First, while the engines still answer: a check made against a closing Host would pause on its way out.
           await automations.close()

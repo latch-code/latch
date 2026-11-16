@@ -92,6 +92,12 @@ export type ChangeRoutes = RouteModule & {
    * result cards and 资料库; undefined when the record cannot say. The caller has checked the device may see them.
    */
   sessionFiles(sessionId: string): Promise<ChangedFile[] | undefined>
+  /**
+   * Whether one of the session's own settled turns changed files and is not undone, as the changes record says once
+   * the latest settled run is on it: what lets a session in a shared folder hold its work on the board. False when the
+   * record cannot say.
+   */
+  changed(sessionId: string): Promise<boolean>
 }
 
 export function createChangeRoutes(context: RouteContext): ChangeRoutes {
@@ -364,5 +370,16 @@ export function createChangeRoutes(context: RouteContext): ChangeRoutes {
     }
   }
 
-  return { route, features: () => ({ changes: true }), edits, sessionFiles }
+  async function changed(sessionId: string): Promise<boolean> {
+    try {
+      await settling.get(sessionId)
+      const { workspaceId } = await hub.summary(sessionId)
+      const turns = await (await engine()).turns({ session: { id: sessionId, projectId: projectIdOf({ workspaceId }), folders: [] } })
+      return turns.some(turn => turn.state === 'settled' && !turn.undone && (turn.files ?? 0) > 0)
+    } catch {
+      return false
+    }
+  }
+
+  return { route, features: () => ({ changes: true }), edits, sessionFiles, changed }
 }

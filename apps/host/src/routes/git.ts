@@ -67,7 +67,7 @@ type Access = GitDeliveryKind | 'state' | 'pr-state' | 'pr-log' | 'file'
 const READS: ReadonlySet<Access> = new Set(['state', 'pr-state', 'pr-log', 'file'])
 
 export function createGitRoutes(context: RouteContext, options: GitRouteOptions = {}): RouteModule {
-  const { audited, actorOf, devices, hub, lifecycle, limits, recheck, refresh, sessionRoots } = context
+  const { audited, actorOf, board, devices, hub, lifecycle, limits, recheck, refresh, sessionRoots } = context
   const requireScope: RouteContext['requireScope'] = context.requireScope
   const delivery = new GitDelivery({
     ...options,
@@ -80,14 +80,18 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
     },
     now: context.now,
     log: context.log,
-    changed: sessionId => refresh(sessionId),
+    changed: sessionId => {
+      refresh(sessionId)
+      // A commit, push or pull request of 交付 changed the repository: the board reads it again.
+      board.settled(sessionId)
+    },
   })
   const workbench = new WorkbenchDeliveryReader({
     now: context.now,
     state: folder => delivery.state(folder),
     pr: (sessionId, folder) => delivery.prState({ sessionId, folder, discussion: false, title: false, boundOnly: true }),
   })
-  let workbenchBusy = 0
+  board.connect(workbench)
   /** Runs that may be writing files, by session, with that session's folders. */
   const open = new Map<string, { runId: string; folders: ProjectFolder[] }>()
   lifecycle.on('runStarted', ({ sessionId, runId, folders }) => {
@@ -95,12 +99,18 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
   })
   lifecycle.on('runSettled', ({ sessionId, runId }) => {
     if (open.get(sessionId)?.runId === runId) open.delete(sessionId)
+    board.settled(sessionId)
+  })
+  lifecycle.on('sessionArchived', ({ sessionId }) => {
+    board.forget(sessionId)
   })
   lifecycle.on('sessionDeleted', ({ sessionId }) => {
     open.delete(sessionId)
+    board.forget(sessionId)
   })
   lifecycle.on('hostStopping', async () => {
     open.clear()
+    await board.close()
     await delivery.close()
   })
 
@@ -175,8 +185,8 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
       recheck(caller, 'view')
       const unique = [...new Set(ids)]
       for (const id of unique) permitted(caller, id, 'state')
-      if (workbenchBusy >= 2) throw new AppError(429, 'rate-limited', '正在读取交付状态，请稍后再试。', { retryAfter: 1 })
-      workbenchBusy++
+      const release = board.take()
+      if (!release) throw new AppError(429, 'rate-limited', '正在读取交付状态，请稍后再试。', { retryAfter: 1 })
       try {
         const targets: WorkbenchDeliveryTarget[] = []
         for (const sessionId of unique) {
@@ -188,11 +198,13 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
           }
         }
         const result = await workbench.read(targets)
+        // What a device read refreshes the board's cache, whether or not the device may still see it.
+        for (const entry of result.entries) void board.observe(entry)
         recheck(caller, 'view')
         for (const id of unique) permitted(caller, id, 'state')
         json(res, result)
       } finally {
-        workbenchBusy--
+        release()
       }
       return true
     }
@@ -283,6 +295,7 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
       // Reviews, comments and the last commit's subject are the repository's words: for devices that may read its files.
       const all = readsProjectFiles(devices.get(caller.device.id)?.dataScope)
       const state = await delivery.prState({ sessionId, folder, discussion: all, title: all })
+      if (state.pr) board.recordPr(sessionId, state.pr.state)
       permitted(caller, sessionId, 'pr-state')
       const still = readsProjectFiles(devices.get(caller.device.id)?.dataScope)
       if (all && !still) {
@@ -341,16 +354,16 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
     }
     if (part === 'pr') {
       const input = prSchema.parse(body)
-      json(
-        res,
-        await delivery.createPr(callerOf(caller, sessionId, folder, input.requestId), {
-          requestId: input.requestId,
-          title: input.title,
-          body: input.body,
-          base: input.base,
-          ...(input.draft ? { draft: true } : {}),
-        }),
-      )
+      const result = await delivery.createPr(callerOf(caller, sessionId, folder, input.requestId), {
+        requestId: input.requestId,
+        title: input.title,
+        body: input.body,
+        base: input.base,
+        ...(input.draft ? { draft: true } : {}),
+      })
+      // Made now or found open for the branch: either way it is open. A replay says nothing about now.
+      if (!result.replay) board.recordPr(sessionId, 'open')
+      json(res, result)
       return true
     }
     const input = pushSchema.parse(body)

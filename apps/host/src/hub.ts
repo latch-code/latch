@@ -5,6 +5,8 @@ import { pairRoute, PROVIDER_WIRES, readSessionSkills } from '@latch/protocol'
 import { setTimeout as delay } from 'node:timers/promises'
 import type {
   Approval,
+  BoardPlace,
+  BoardPriority,
   HarnessInfo,
   HarnessCapabilities,
   HarnessCommandCatalogue,
@@ -42,6 +44,7 @@ import { harnessFacts, trustOf, type HarnessKind, type HarnessTrust } from './ha
 import { RUN_ID, SessionMetaStore, type ImportedMeta, type PageOrigin, type SessionReceipts } from './session-meta.ts'
 import { SESSION_FOLDER_NAME } from './session-folders.ts'
 import { BranchReader } from './branch-reader.ts'
+import type { BoardAttended } from './board.ts'
 import { projectIdOf, type LifecycleEvent, type SessionLifecycle } from './session-lifecycle.ts'
 import { RunSilence, SILENCE_THRESHOLDS, type LiveRun } from './run-silence.ts'
 
@@ -72,6 +75,10 @@ export interface SessionMetaPatch {
   title?: string | null
   pinned?: boolean
   archived?: boolean
+  /** Normalised tags (`normalizeBoardTags`); null or empty removes them. */
+  tags?: string[] | null
+  /** null is 中: the field goes. */
+  priority?: BoardPriority | null
 }
 
 export interface HarnessMount {
@@ -111,6 +118,11 @@ export interface HubOptions {
   }>
   /** What a model request of the session waits for: `service`, by name, for that service's place; neither for the Host's own limit. */
   queueOf?: (sessionId: string) => { service?: string } | undefined
+  /**
+   * The session's group on the board, from the finished summary and the Host's own records (`board.ts`). Called for
+   * every summary that leaves the hub, so it reads only what is at hand and never waits.
+   */
+  board?: (summary: TaskSummary, record: { attended?: BoardAttended; pr: boolean }) => BoardPlace | undefined
 }
 
 interface Entry {
@@ -897,6 +909,12 @@ export class HarnessHub implements Bridge {
     this.emit(sessionId)
   }
 
+  /** The person's markers on the session's latest marked settlement (`attend`). */
+  attendedOf(sessionId: string): BoardAttended | undefined {
+    const attended = this.meta.get(sessionId)?.attended
+    return attended && { ...attended }
+  }
+
   /** The pull request 交付 bound to the session (docs/GIT-DELIVERY.md#pr-与检查). */
   prOf(sessionId: string): GitPrBinding | undefined {
     const pr = this.meta.get(sessionId)?.pr
@@ -1178,7 +1196,28 @@ export class HarnessHub implements Bridge {
     )
   }
 
-  /** Applies a Host-level title, pin or archive change and returns the updated summary. */
+  /**
+   * Records a person's marker on one settlement of the session: a failed run opened, unknown results checked. A marker
+   * on another settlement replaces it; on the same one the flags add up. The summary's `updatedAt` does not move.
+   */
+  async attend(sessionId: string, mark: BoardAttended): Promise<TaskSummary> {
+    const member = await this.route(sessionId)
+    await this.meta.update(sessionId, current => {
+      const before = current.attended?.settle === mark.settle ? current.attended : undefined
+      return {
+        ...current,
+        attended: {
+          settle: mark.settle,
+          ...(before?.opened || mark.opened ? { opened: true as const } : {}),
+          ...(before?.checked || mark.checked ? { checked: true as const } : {}),
+        },
+      }
+    })
+    this.emit(sessionId)
+    return this.present(member.driver.id, (await member.bridge.detail(sessionId)).summary)
+  }
+
+  /** Applies a Host-level title, pin, archive, tag or priority change and returns the updated summary. */
   async updateMeta(sessionId: string, patch: SessionMetaPatch): Promise<TaskSummary> {
     const member = await this.route(sessionId)
     let archived = false
@@ -1193,6 +1232,14 @@ export class HarnessHub implements Bridge {
       if (patch.archived !== undefined) {
         if (patch.archived) next.archived = true
         else delete next.archived
+      }
+      if (patch.tags !== undefined) {
+        if (patch.tags?.length) next.tags = [...patch.tags]
+        else delete next.tags
+      }
+      if (patch.priority !== undefined) {
+        if (patch.priority) next.priority = patch.priority
+        else delete next.priority
       }
       // Updates run one at a time, so of two requests to archive the same session only one archives it.
       archived = next.archived === true && current.archived !== true
@@ -1334,6 +1381,9 @@ export class HarnessHub implements Bridge {
       automationId: _automationId,
       generalChat: _generalChat,
       origin: _origin,
+      tags: _tags,
+      priority: _priority,
+      board: _board,
       runId,
       live,
       modelRoute,
@@ -1342,7 +1392,7 @@ export class HarnessHub implements Bridge {
     const meta = this.meta.get(summary.id)
     const personal = this.personalOf(summary.id)
     const agent = this.agentOf(summary.id)
-    return this.branches.decorate({
+    const presented = this.branches.decorate({
       ...rest,
       // A run ID a cancel could not carry is left out, so the page sends a plain stop rather than one the Host refuses.
       ...(typeof runId === 'string' && RUN_ID.test(runId) ? { runId } : {}),
@@ -1356,6 +1406,8 @@ export class HarnessHub implements Bridge {
       ...(meta?.title ? { title: meta.title } : {}),
       ...(meta?.pinned ? { pinned: true } : {}),
       ...(meta?.archived ? { archived: true } : {}),
+      ...(meta?.tags?.length ? { tags: [...meta.tags] } : {}),
+      ...(meta?.priority ? { priority: meta.priority } : {}),
       ...(meta?.workspaceId ? { workspaceId: meta.workspaceId } : {}),
       ...(meta?.forkOf ? { forkOf: meta.forkOf } : {}),
       ...(meta?.imported
@@ -1387,6 +1439,11 @@ export class HarnessHub implements Bridge {
         : {}),
       ...(meta?.firstStart ? { firstStart: true as const } : {}),
     })
+    const board = this.options.board?.(presented, {
+      ...(meta?.attended ? { attended: { ...meta.attended } } : {}),
+      pr: meta?.pr !== undefined,
+    })
+    return board ? { ...presented, board } : presented
   }
 
   /** What the route says of its service comes from the Host's records, never from the driver. */

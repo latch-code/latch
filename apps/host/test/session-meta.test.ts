@@ -185,3 +185,51 @@ describe('session store receipts', () => {
     expect(store.approval('approval-1')?.sessionId).toBe('task-receipts')
   })
 })
+
+describe('session board metadata', () => {
+  it('keeps tags, priority and the board marker across a reopen, and reads a file without them as it is', async () => {
+    const directory = await dataDir()
+    await writeFile(
+      join(directory, SESSION_META_FILE),
+      JSON.stringify({ version: 1, sessions: [{ id: 'old', title: 'Before tags', pinned: true }] }) + '\n',
+    )
+    const store = await SessionMetaStore.open(directory, { now: () => T0 })
+    expect(store.get('old')).toEqual({ title: 'Before tags', pinned: true })
+    await store.update('task-1', meta => ({
+      ...meta,
+      tags: ['前端', 'review'],
+      priority: 'high',
+      attended: { settle: 'run-1', opened: true, checked: true },
+    }))
+    const reopened = await SessionMetaStore.open(directory, { now: () => T0 })
+    expect(reopened.get('task-1')).toEqual({
+      tags: ['前端', 'review'],
+      priority: 'high',
+      attended: { settle: 'run-1', opened: true, checked: true },
+    })
+    expect(reopened.get('old')).toEqual({ title: 'Before tags', pinned: true })
+  })
+
+  it('refuses a change it could not read back, and writes nothing', async () => {
+    const directory = await dataDir()
+    const store = await SessionMetaStore.open(directory, { now: () => T0 })
+    for (const bad of [
+      { tags: [] },
+      { tags: ['a\nb'] },
+      { tags: ['x'.repeat(25)] },
+      { tags: Array.from({ length: 9 }, (_, index) => `t${index}`) },
+      { priority: 'mid' },
+      { attended: { settle: '' } },
+      { attended: { settle: 'run-1', opened: false } },
+      { attended: { settle: 'run-1', extra: true } },
+    ])
+      await expect(
+        store.update('task-1', meta => ({ ...meta, ...bad }) as never),
+        JSON.stringify(bad),
+      ).rejects.toMatchObject({
+        code: 'session-meta-invalid',
+      })
+    expect(store.get('task-1')).toBeUndefined()
+    await expect(readFile(join(directory, SESSION_META_FILE), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})

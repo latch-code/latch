@@ -2,7 +2,14 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
-import type { GitPrBinding, TaskSummary } from '@latch/protocol'
+import {
+  BOARD_SETTLE_CHARS,
+  BOARD_TAG_CHARS,
+  BOARD_TAG_LIMIT,
+  type BoardPriority,
+  type GitPrBinding,
+  type TaskSummary,
+} from '@latch/protocol'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { runEndSchema } from '@latch/core/run-end'
 import { HELPER_HOME_NAME, SESSION_FOLDER_NAME } from './session-folders.ts'
@@ -138,12 +145,28 @@ const gitReceiptSchema = z.strictObject({
 })
 const receiptSchema = z.discriminatedUnion('kind', [approvalReceiptSchema, cancelReceiptSchema, configReceiptSchema, gitReceiptSchema])
 
+/** A tag as `normalizeBoardTags` leaves it: 1–24 code points, no control characters or line breaks. */
+const tagText = z.string().refine(value => {
+  const length = [...value].length
+  return length >= 1 && length <= BOARD_TAG_CHARS && !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value)
+})
+
 /** One session's entry; `update` checks each change against it, so the file never holds what it cannot read back. */
 const sessionEntrySchema = z.object({
   id: z.string().min(1).max(256),
   title: z.string().min(1).max(200).optional(),
   pinned: z.literal(true).optional(),
   archived: z.literal(true).optional(),
+  tags: z.array(tagText).min(1).max(BOARD_TAG_LIMIT).optional(),
+  priority: z.enum(['high', 'low']).optional(),
+  /** The person opened this settlement's failed run, or checked its unknown results (`POST /tasks/:id/attend`). */
+  attended: z
+    .strictObject({
+      settle: z.string().min(1).max(BOARD_SETTLE_CHARS),
+      opened: z.literal(true).optional(),
+      checked: z.literal(true).optional(),
+    })
+    .optional(),
   personal: z.strictObject({ assistantId: z.string().min(1).max(128), groupId: z.string().min(1).max(128).optional() }).optional(),
   agent: z.strictObject({ customAgentId: z.string().min(1).max(128) }).optional(),
   automationId: z.string().min(1).max(64).optional(),
@@ -231,7 +254,7 @@ export interface PageOrigin {
   /** A person asked to change the session's permission mode after the page started it. */
   changed?: true
 }
-/** Host-level session metadata (title, pin, archive); receipts are kept beside it. */
+/** Host-level session metadata (title, pin, archive, tags, priority, board markers); receipts are kept beside it. */
 export interface StoredMeta {
   personal?: TaskSummary['personal']
   agent?: TaskSummary['agent']
@@ -246,6 +269,11 @@ export interface StoredMeta {
   title?: string
   pinned?: true
   archived?: true
+  /** Free tags the person gave, as `normalizeBoardTags` keeps them. */
+  tags?: string[]
+  priority?: BoardPriority
+  /** The Host's markers on one settlement of the session (`BoardAttended`). */
+  attended?: { settle: string; opened?: true; checked?: true }
   workspaceId?: string
   sessionFolder?: string
   /**

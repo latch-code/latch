@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "description": "What a session waits on the person for: Host waitKindOf, web waitsOnYou/waitingCount and desktop attentionOf read the same table.",
+  "waits": [
+    {
+      "name": "an approval holds the run",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "waiting-approval",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "live": {
+          "runId": "r-1",
+          "activity": "approval",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z"
+        }
+      },
+      "approval": false,
+      "wait": "approval"
+    },
+    {
+      "name": "a question holds the run at waiting-approval",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "waiting-approval",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "pendingQuestions": 1,
+        "live": {
+          "runId": "r-1",
+          "activity": "approval",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z"
+        }
+      },
+      "approval": false,
+      "wait": "question"
+    },
+    {
+      "name": "a question while running",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "running",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "pendingQuestions": 2,
+        "live": {
+          "runId": "r-1",
+          "activity": "model",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z"
+        }
+      },
+      "approval": false,
+      "wait": "question"
+    },
+    {
+      "name": "a request Latch did not recognise and nothing since",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "running",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "live": {
+          "runId": "r-1",
+          "activity": "model",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z",
+          "unrecognized": {
+            "count": 1,
+            "at": "2026-11-16T08:00:00.000Z"
+          }
+        }
+      },
+      "approval": false,
+      "wait": "unrecognized"
+    },
+    {
+      "name": "the engine went on after the request",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "running",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "live": {
+          "runId": "r-1",
+          "activity": "model",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:05.000Z",
+          "unrecognized": {
+            "count": 1,
+            "at": "2026-11-16T08:00:00.000Z"
+          }
+        }
+      },
+      "approval": false,
+      "wait": null
+    },
+    {
+      "name": "silent past the threshold",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "running",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "live": {
+          "runId": "r-1",
+          "activity": "model",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z",
+          "silent": true,
+          "silenceThresholdMs": 60000
+        }
+      },
+      "approval": false,
+      "wait": "silent"
+    },
+    {
+      "name": "stuck and silent: the request first",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "running",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "live": {
+          "runId": "r-1",
+          "activity": "model",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z",
+          "silent": true,
+          "unrecognized": {
+            "count": 1,
+            "at": "2026-11-16T08:00:00.000Z"
+          }
+        }
+      },
+      "approval": false,
+      "wait": "unrecognized"
+    },
+    {
+      "name": "a stop asked for answers an approval",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "waiting-approval",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "live": {
+          "runId": "r-1",
+          "activity": "cancelling",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z"
+        }
+      },
+      "approval": true,
+      "wait": null
+    },
+    {
+      "name": "a stop asked for answers a question",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "running",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "pendingQuestions": 1,
+        "live": {
+          "runId": "r-1",
+          "activity": "cancelling",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z"
+        }
+      },
+      "approval": false,
+      "wait": null
+    },
+    {
+      "name": "an approval listed for a running session",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "running",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "live": {
+          "runId": "r-1",
+          "activity": "model",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z"
+        }
+      },
+      "approval": true,
+      "wait": "approval"
+    },
+    {
+      "name": "an approval listed for an idle session",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "idle",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake"
+      },
+      "approval": true,
+      "wait": "approval"
+    },
+    {
+      "name": "plain running",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "running",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "live": {
+          "runId": "r-1",
+          "activity": "model",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z"
+        }
+      },
+      "approval": false,
+      "wait": null
+    },
+    {
+      "name": "failed is not a wait",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "failed",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake"
+      },
+      "approval": false,
+      "wait": null
+    },
+    {
+      "name": "idle with a silent flag left over",
+      "task": {
+        "id": "s-1",
+        "title": "t",
+        "status": "idle",
+        "updatedAt": "2026-11-16T08:00:00.000Z",
+        "harnessId": "fake",
+        "live": {
+          "runId": "r-1",
+          "activity": "model",
+          "since": "2026-11-16T08:00:00.000Z",
+          "lastEventAt": "2026-11-16T08:00:00.000Z",
+          "silent": true
+        }
+      },
+      "approval": false,
+      "wait": null
+    }
+  ]
+}
