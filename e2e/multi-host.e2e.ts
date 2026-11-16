@@ -27,8 +27,8 @@ async function freePort(): Promise<number> {
 /**
  * The bootstrap trusts the test certificate of the other computer's HTTPS entry (and resolves its test name to
  * 127.0.0.1) through remote-proxy.cjs's module object, replaces only Electron's Notification class (it records what
- * would be shown, as desktop-notifications.e2e.ts does) and keeps the computers registry, so the test can ask main to
- * look at a computer now instead of waiting for its next look; main, the preload, the proxies and both Hosts stay real.
+ * would be shown, as desktop-notifications.e2e.ts does), uses an in-memory clipboard and keeps the computers registry,
+ * so the test can ask main to look at a computer now. Main, the preload, the proxies and both Hosts stay real.
  */
 async function trustBootstrap(directory: string, ca: string): Promise<string> {
   const path = join(directory, 'multi-host-main.cjs')
@@ -46,14 +46,20 @@ const lookup = (_hostname, options, callback) => {
 remotes.tlsOptions = () => ({ ca: [ca], lookup })
 const Module = require('node:module'), { EventEmitter } = require('node:events')
 const originalLoad = Module._load, electron = require('electron')
-const fixture = globalThis.multiHostFixture = { shown: [], items: [], registry: undefined }
+const fixture = globalThis.multiHostFixture = { shown: [], items: [], registry: undefined, clipboardText: '' }
 class FixtureNotification extends EventEmitter {
   constructor(options) { super(); this.options = { title: options.title, body: options.body }; fixture.items.push(this) }
   static isSupported() { return true }
   show() { fixture.shown.push(this.options) }
 }
 const facade = Object.create(electron)
-Object.defineProperty(facade, 'Notification', { value: FixtureNotification })
+Object.defineProperties(facade, {
+  Notification: { value: FixtureNotification },
+  clipboard: { value: {
+    readText: () => fixture.clipboardText,
+    clear: () => { fixture.clipboardText = '' },
+  } },
+})
 const computers = require(${JSON.stringify(resolve('apps/desktop/src/computers.cjs'))})
 const create = computers.createComputers
 computers.createComputers = options => (fixture.registry = create(options))
@@ -211,8 +217,18 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         await settings.getByText('还没有添加其他电脑。', { exact: true }).waitFor()
         await shots('empty')
 
-        // Nothing on the clipboard: 添加电脑 says so and adds nothing.
-        await app.evaluate(({ clipboard }) => clipboard.writeText('just some text'))
+        const putClipboardText = (text: string) =>
+          app.evaluate((_, value) => {
+            const fixture = Reflect.get(globalThis, 'multiHostFixture') as { clipboardText: string }
+            fixture.clipboardText = value
+          }, text)
+        const clipboardHasText = (text: string) =>
+          app.evaluate((_, value) => {
+            const fixture = Reflect.get(globalThis, 'multiHostFixture') as { clipboardText: string }
+            return fixture.clipboardText === value
+          }, text)
+        // No invitation on the fixture clipboard: 添加电脑 says so and leaves the text alone.
+        await putClipboardText('just some text')
         await settings.getByRole('button', { name: '添加电脑', exact: true }).click()
         await settings.getByText(/没有找到电脑链接/u).waitFor()
         // Main refuses an add that no click on the page started.
@@ -225,15 +241,16 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         ).toMatchObject({
           error: 'gesture-required',
         })
+        expect(await clipboardHasText('just some text')).toBe(true)
 
-        // The other computer's 「复制链接」: its one-time link, on this Mac's clipboard. Main reads it; the page never does.
+        // Main reads the one-time link from its fixture clipboard and clears it when consumed.
         const invitation = await b.invite([...COMPUTER_SCOPES])
-        await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), invitation.url)
+        await putClipboardText(invitation.url)
         await settings.getByRole('button', { name: '添加电脑', exact: true }).click()
         await row.getByText('在线', { exact: true }).waitFor({ timeout: 30_000 })
-        expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe('')
+        expect(await clipboardHasText('')).toBe(true)
         const pageText = await page.evaluate(() => document.documentElement.outerHTML)
-        expect(pageText).not.toContain(invitation.code)
+        expect(pageText.includes(invitation.code)).toBe(false)
         await shots('online')
 
         // What main keeps: the record without a credential, and the credential in its own file, 0600.

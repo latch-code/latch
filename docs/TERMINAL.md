@@ -154,7 +154,7 @@ shell 自行退出时，组件再读取最多 0.5 秒输出，然后报告退出
 - `agent-login.test.ts`（「a harness login in a Latch terminal」）：命令只来自预设、多出的字段被拒绝、家目录与会话文件夹、两条审计先于启动、其他入口与数据范围 `work` 被拒绝、没有登录命令的 Harness 404、输出不能加入对话、运行中关闭要确认、结束后重新运行状态命令、没运行的脚本被删除。`packages/harness-acp/test/login.test.ts`：脚本以登录命令的退出码结束。
 - `apps/web/test/login-terminal.test.ts`：按钮在哪里用 Latch 终端、哪里退回默认终端、哪里只有命令；请求里没有命令；运行中不开第二个；按 Host 的列表跟随到结束；「已登录」只来自 Harness 的回答。
 - `apps/web/test/terminal-model.test.ts`：页签编号与保持选中、结束文案、长粘贴的切分、按键归属、草稿格式，以及流的重放、按偏移重连、`reset`、不再存在的终端、背压与输入的顺序和重试。
-- `e2e/desktop-terminal.e2e.ts`（`LATCH_ELECTRON_E2E=1`，仅 macOS）：桌面端经 `host.sock` 连接配假组件的测试 Host，打开、减弱和恢复动效时的光标及焦点、输入、Ctrl-B 不到工作台、本地服务链接、长粘贴完整且带括号、调整大小与其他设备不能调整、「加入对话」（最后几行与选区）只进草稿、重新载入后重放、第二个终端、忙碌时关闭要确认、退出码与重新打开、768 宽，以及 ⌘J 仍归 Latch；截图在 `test-results/desktop-terminal/`。
+- `e2e/desktop-terminal.e2e.ts`（`LATCH_ELECTRON_E2E=1`，仅 macOS）：桌面端经 `host.sock` 连接配假组件的测试 Host，打开、减弱和恢复动效时的光标及焦点、输入、Ctrl-B 不到工作台、本地服务链接、xterm 的粘贴事件经括号和分片后完整送达、调整大小与其他设备不能调整、「加入对话」（最后几行与选区）只进草稿、重新载入后重放、第二个终端、忙碌时关闭要确认、退出码与重新打开、768 宽，以及 ⌘J 仍归 Latch。粘贴载荷来自测试事件，系统剪贴板和原生 ⌘V 另需实机验证。截图在 `test-results/desktop-terminal/`。
 - `e2e/desktop-login-terminal.e2e.ts`（同上）：真实组件配 `/bin/sh`，测试夹具里的假登录脚本。草稿里的登录对话框（运行、关闭前确认、失败留着）、会话里的登录页签（以 Harness 命名、没有「加入对话」、以 0 结束后那一行只剩「已登录」与「重试」、消息不重发）、设置里的登录（成功后对话框关闭、显示「已登录」），768 宽与深色；登录打印的码不在审计、会话或快照里；截图在 `test-results/desktop-login-terminal/`。
 
 桌面端安装更换 Host 的更新前，正在运行命令的终端算作忙碌，安装等它结束；终端里报告的本地服务只在等待界面列出，随终端一起结束（[UPDATES.md](./UPDATES.md#安装门禁与-host-安装窗口)）。

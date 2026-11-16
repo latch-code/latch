@@ -1,6 +1,6 @@
 # @latch/e2e
 
-Vitest 驱动浏览器、Electron 与原生；剪贴板回归用独立命名板，Host 用临时目录。
+Vitest 驱动浏览器、Electron 与原生。剪贴板用隔离夹具，Host 用临时目录。
 
 | 路径 | 职责 |
 | --- | --- |

@@ -326,13 +326,22 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await waitFor(async () => (await app.evaluate(() => Reflect.get(globalThis, 'openedLinks') as string[])).length === 1)
       expect(await app.evaluate(() => Reflect.get(globalThis, 'openedLinks') as string[])).toEqual(['http://localhost:5173/'])
 
-      // A long paste arrives whole, bracketed, in input calls the Host accepts.
+      // Feed xterm's paste listener without using the system clipboard or invoking a native paste shortcut.
       const long = 'x'.repeat(150_000)
-      await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), long)
-      await screen.locator('.xterm').click()
-      await page.keyboard.press('Meta+v')
-      await waitFor(() => shells[0]!.text.includes('\u001b[201~'))
-      expect(shells[0]!.text).toContain(`\u001b[200~${long}\u001b[201~`)
+      const terminal = screen.locator('.xterm')
+      await terminal.click()
+      const shell = shells[0]!
+      const firstPasteInput = shell.received.length
+      await terminal.locator('.xterm-helper-textarea').evaluate((element, text) => {
+        const data = new DataTransfer()
+        data.setData('text/plain', text)
+        element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+      }, long)
+      const pasteInputs = () => shell.received.slice(firstPasteInput)
+      await waitFor(() => Buffer.concat(pasteInputs()).includes('\u001b[201~'))
+      const bracketed = Buffer.from(`\u001b[200~${long}\u001b[201~`)
+      expect(pasteInputs().map(input => input.length)).toEqual([65_536, 65_536, bracketed.length - 131_072])
+      expect(Buffer.concat(pasteInputs()).equals(bracketed)).toBe(true)
 
       // The owner sizes it: a narrower window resizes the terminal on the Host.
       const sizes = shells[0]!.sizes.length

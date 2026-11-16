@@ -1500,7 +1500,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     const testHost = await startTestHost({ demo: true, uiDir: ui, presenceMode: 'manual' })
     const { host } = testHost
     let application: ElectronApplication | undefined
-    let saved: string | undefined
     try {
       await writeHostState(testHost.dataDir, {
         version: 2,
@@ -1619,30 +1618,24 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       } finally {
         probe.close()
       }
-      // Only with LATCH_E2E_CLIPBOARD=1 does the copy reach the real clipboard; otherwise the page's write is recorded.
-      const realClipboard = latchEnv(process.env, 'E2E_CLIPBOARD') === '1'
-      if (realClipboard) {
-        saved = await application.evaluate(({ clipboard }) => {
-          const before = clipboard.readText()
-          clipboard.writeText('latch-e2e-before-copy')
-          return before
+      // Check the actual permission before recording a write in the renderer. Neither clipboard API nor selection fallback reaches the OS.
+      await page.evaluate(() => {
+        const clipboardCopyFixture = { written: [] as string[], fallbackCopies: 0 }
+        Object.assign(globalThis, { clipboardCopyFixture })
+        Object.defineProperty(navigator, 'clipboard', {
+          value: {
+            async writeText(text: string) {
+              const permission = await navigator.permissions.query({ name: 'clipboard-write' as PermissionName })
+              if (permission.state !== 'granted') throw new DOMException('Clipboard write permission was not granted', 'NotAllowedError')
+              clipboardCopyFixture.written.push(text)
+            },
+          },
         })
-        await page.evaluate(() => {
-          const copy = document.execCommand.bind(document)
-          Object.assign(globalThis, { fallbackCopies: 0 })
-          document.execCommand = (command: string, ...rest: [boolean?, string?]) => {
-            if (command === 'copy') (globalThis as unknown as { fallbackCopies: number }).fallbackCopies++
-            return copy(command, ...rest)
-          }
-        })
-      } else
-        await page.evaluate(() => {
-          const written: string[] = []
-          Object.assign(globalThis, { written })
-          navigator.clipboard.writeText = async text => {
-            written.push(text)
-          }
-        })
+        document.execCommand = command => {
+          if (command === 'copy') clipboardCopyFixture.fallbackCopies++
+          return false
+        }
+      })
       await page.getByRole('textbox', { name: '新会话消息' }).fill('你好')
       await page.getByRole('button', { name: '发送', exact: true }).click()
       await waitFor(async () => (await host.bridge.listTasks()).length === 1)
@@ -1662,14 +1655,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await copy.click()
       await page.getByRole('status').filter({ hasText: '已复制' }).first().waitFor()
       expect(await page.getByText('复制不可用，请手动选择', { exact: true }).count()).toBe(0)
-      if (realClipboard) {
-        await expect.poll(() => application!.evaluate(({ clipboard }) => clipboard.readText())).toBe(reply.text)
-        // The async API wrote it: the selection fallback never ran.
-        expect(await page.evaluate(() => (globalThis as unknown as { fallbackCopies: number }).fallbackCopies)).toBe(0)
-      } else expect(await page.evaluate(() => (globalThis as unknown as { written: string[] }).written)).toEqual([reply.text])
+      expect(await page.evaluate(() => Reflect.get(globalThis, 'clipboardCopyFixture'))).toEqual({
+        written: [reply.text],
+        fallbackCopies: 0,
+      })
       await captureThemes(page, 'desktop-copy-reply')
     } finally {
-      if (saved !== undefined) await application?.evaluate(({ clipboard }, text) => clipboard.writeText(text), saved)
       await application?.close()
       await testHost.close()
       await rm(root, { recursive: true, force: true })
