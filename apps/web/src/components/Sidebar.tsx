@@ -31,7 +31,7 @@ import {
 } from '../sessions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { MarkTile } from './BrandTile.tsx'
-import { Menu, type MenuSection } from './overlays.tsx'
+import { Menu, rowOf, type MenuSection } from './overlays.tsx'
 import { SessionRowGlyph, SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
 import { Collapse, ICON_STROKE, Icon, IconButton, Tooltip, ArchiveGlyph, ChevronLeftGlyph, MoreGlyph, PinGlyph, PlusGlyph } from '@latch/ui'
 import { originTitle } from '../plugin-pages/model.ts'
@@ -202,6 +202,7 @@ const SessionItem = memo(function SessionItem({
           <Menu
             label={`会话操作：${title}`}
             placement="bottom-end"
+            context={rowOf('.session-item')}
             sections={sections}
             trigger={props => (
               <IconButton

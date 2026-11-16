@@ -106,13 +106,8 @@ it('keeps expanded directories while real run changes arrive and exposes the sam
         await original.press('Shift+F10')
         await menu.waitFor()
         await page.keyboard.press('Escape')
-        await expect
-          .poll(() =>
-            original
-              .getByRole('button', { name: 'original.ts 文件操作', exact: true })
-              .evaluate(element => element === document.activeElement),
-          )
-          .toBe(true)
+        // Escape gives focus back to the row the key was pressed on, not to its hidden ⋯.
+        await expect.poll(() => original.evaluate(element => element === document.activeElement)).toBe(true)
         if (width < 768) await page.getByRole('button', { name: '返回', exact: true }).click()
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
         await input.fill(`新增 ${width}-${theme}`)

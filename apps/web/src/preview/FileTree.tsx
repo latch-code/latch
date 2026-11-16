@@ -30,6 +30,7 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { editorLabel, openInEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { FileOpenContext, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
 import { readTreeFile, soleFolder, treeChanges, treeFullPath, treeKey as branchKey, treeLocation, type FileTreeView } from './treeFiles.ts'
+import { rowOf } from '../components/overlays.tsx'
 
 type Branch = { listing?: FileDirectoryListing; loading?: boolean; error?: string; shown: number }
 type TreeRow = {
@@ -302,14 +303,6 @@ export function FileTree({
       }
     }
   }
-  const rowMenu = (element: HTMLElement, row: TreeRow) => {
-    const button = element.querySelector<HTMLButtonElement>('[data-tree-menu]')
-    if (!button) return false
-    setSelected(row.key)
-    button.focus({ preventScroll: true })
-    if (button.getAttribute('aria-expanded') !== 'true') button.click()
-    return true
-  }
   const rows: TreeRow[] = []
   let clipped = false
   const append = (first: TreeRow) => {
@@ -381,13 +374,6 @@ export function FileTree({
   }
   const keydown = (event: KeyboardEvent<HTMLDivElement>, row: TreeRow) => {
     if (event.target !== event.currentTarget || event.nativeEvent.isComposing) return
-    if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
-      if (rowMenu(event.currentTarget, row)) {
-        event.preventDefault()
-        event.stopPropagation()
-      }
-      return
-    }
     const index = rows.findIndex(item => item.key === row.key)
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
@@ -570,12 +556,6 @@ export function FileTree({
                   tabIndex={current === row.key || (!current && index === 0) ? 0 : -1}
                   onFocus={() => setSelected(row.key)}
                   onClick={() => activate(row)}
-                  onContextMenu={event => {
-                    if (rowMenu(event.currentTarget, row)) {
-                      event.preventDefault()
-                      event.stopPropagation()
-                    }
-                  }}
                   onKeyDown={event => keydown(event, row)}>
                   <Icon
                     icon={folder ? (isExpanded ? FolderOpenGlyph : FolderGlyph) : row.kind === 'symlink' ? Link2 : referenceIcon(row.name)}
@@ -595,9 +575,8 @@ export function FileTree({
                       <Menu
                         label={`${row.name} 文件操作`}
                         align="end"
-                        trigger={props => (
-                          <IconButton {...props} data-tree-menu="" label={`${row.name} 文件操作`} size="xs" icon={MoreGlyph} />
-                        )}
+                        context={rowOf('.file-tree-row')}
+                        trigger={props => <IconButton {...props} label={`${row.name} 文件操作`} size="xs" icon={MoreGlyph} />}
                         sections={[
                           {
                             id: 'file',

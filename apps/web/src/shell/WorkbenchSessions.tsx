@@ -22,6 +22,7 @@ import { SessionRowGlyph } from '../components/SessionStatus.tsx'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { workStatus } from './workOverview.ts'
 import type { ShellState } from './useShellLayout.tsx'
+import { rowOf } from '../components/overlays.tsx'
 
 /** The complete Code history, grouped by the Host's project identity, including its existing management actions. */
 export function WorkbenchSessions({ shell, snapshot }: { shell: ShellState; snapshot: AppSnapshot }) {
@@ -122,6 +123,7 @@ export function WorkbenchSessions({ shell, snapshot }: { shell: ShellState; snap
                 <Menu
                   label={`会话操作：${title}`}
                   align="end"
+                  context={rowOf('.workbench-session-entry')}
                   sections={shell.sessionMenu(task)}
                   trigger={props => <IconButton {...props} size="sm" label={`更多操作：${title}`} icon={MoreGlyph} />}
                 />

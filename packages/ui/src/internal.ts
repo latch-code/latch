@@ -151,7 +151,7 @@ function visibleWindow(): { top: number; left: number; width: number; height: nu
  * closing layer fades out in place.
  */
 export function pinLayer(
-  anchor: Element,
+  anchor: Element | PointAnchor,
   layer: HTMLElement,
   { align, side, gap, maxHeight = Infinity, width: sizing = 'own' }: AnchorOptions,
 ): () => void {
@@ -191,7 +191,7 @@ export function pinLayer(
   addEventListener('resize', place)
   // A scroll that moves the trigger moves the layer with it; one elsewhere (inside the layer) leaves both in place.
   const scrolled = (event: Event) => {
-    if (event.target instanceof Node && event.target.contains(anchor)) place()
+    if (anchor instanceof Element && event.target instanceof Node && event.target.contains(anchor)) place()
   }
   addEventListener('scroll', scrolled, true)
   window.visualViewport?.addEventListener('resize', place)
@@ -204,7 +204,7 @@ export function pinLayer(
     cancelAnimationFrame(frame)
     frame = requestAnimationFrame(place)
   })
-  if (sizing === 'anchor') resized.observe(anchor)
+  if (sizing === 'anchor' && anchor instanceof Element) resized.observe(anchor)
   const watch = () => {
     for (const child of layer.children) resized.observe(child)
   }
@@ -222,6 +222,12 @@ export function pinLayer(
     swapped.disconnect()
   }
 }
+
+/** Where a layer opened at the pointer stands: a zero-size box at that point (a context menu). */
+export interface PointAnchor {
+  getBoundingClientRect(): DOMRect
+}
+export const pointAnchor = (x: number, y: number): PointAnchor => ({ getBoundingClientRect: () => new DOMRect(x, y, 0, 0) })
 
 const pinnedLayers = new WeakMap<Element, () => void>()
 

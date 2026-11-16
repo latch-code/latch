@@ -6,6 +6,7 @@ import {
   Collapse,
   ICON_STROKE,
   IconButton,
+  Menu,
   useCopy,
   ChevronRightGlyph,
   AlertGlyph,
@@ -36,6 +37,7 @@ import {
   type LineSelection,
 } from './notes.ts'
 import { NoteCard, NoteEditor, type NoteWriting } from './ReviewNotes.tsx'
+import { rowOf } from '../../components/overlays.tsx'
 
 /**
  * Lines picked by the page around the diff (the phone's review): taps go to `onTap` with both sides' lines, for the
@@ -456,6 +458,27 @@ export function ChangesFile({
             </>
           )}
         </button>
+        {/* The head's hover actions as its context menu too: right click, press and hold, the context-menu key. */}
+        <Menu
+          label={`${escapeHiddenCharacters(file.path)} 的操作`}
+          context={rowOf('.changes-file-head')}
+          sections={[
+            {
+              id: 'file',
+              items: [
+                { id: 'open', label: '打开文件', icon: FileGlyph, onSelect: onOpenFile },
+                ...(editor && !file.secret && !file.binary && file.status !== 'D'
+                  ? [{ id: 'editor', label: editor.label, icon: CodeGlyph, onSelect: editor.run }]
+                  : []),
+                ...(onHistory ? [{ id: 'history', label: '文件历史', icon: HistoryGlyph, onSelect: onHistory }] : []),
+                { id: 'copy', label: '复制路径', icon: CopyGlyph, onSelect: () => void copy(file.path) },
+              ],
+            },
+            ...(onUndo
+              ? [{ id: 'undo', items: [{ id: 'undo', label: '撤销此文件', icon: UndoGlyph, danger: true, onSelect: onUndo }] }]
+              : []),
+          ]}
+        />
         {showActions && (
           <span className="changes-file-actions">
             <IconButton size="xs" icon={FileGlyph} label="打开文件" onClick={onOpenFile} />

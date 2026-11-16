@@ -1,7 +1,8 @@
-import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { CloseGlyph } from './glyphs/index.tsx'
 import { Icon, type IconComponent } from './icon.tsx'
 import { cx, nextIndex } from './internal.ts'
+import { Menu } from './menu.tsx'
 
 export interface TabOption<T extends string> {
   value: T
@@ -142,8 +143,9 @@ export interface PanelTab<T extends string> {
 /**
  * The strip of a side panel: 24px tabs with 6px corners and 12/16·500 words, at most 160 wide. The selection moves at
  * once and never slides. A closable tab is `glyph · label · ×`: the × has its own slot at the end, shown on hover, while
- * focus is in the tab, and always on a touch screen's selected tab, so nothing moves when it appears. Delete and a
- * middle click close the tab; Delete moves focus to its neighbour. One tab stop; ←/→ move and select, Home and End go to
+ * focus is in the tab, and always on a touch screen's selected tab, so nothing moves when it appears. Delete, a middle
+ * click and the tab's context menu (right click, press and hold, the context-menu key) close it; Delete moves focus to
+ * its neighbour. One tab stop; ←/→ move and select, Home and End go to
  * the ends. The list scrolls sideways when it overflows, and keeps the selected tab in view. `actions` ends the row.
  */
 export function PanelTabs<T extends string>({
@@ -164,6 +166,7 @@ export function PanelTabs<T extends string>({
   className?: string
 }) {
   const buttons = useRef<Array<HTMLButtonElement | null>>([])
+  const base = useId()
   const selected = tabs.findIndex(tab => tab.value === value)
   useLayoutEffect(() => {
     buttons.current[selected]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
@@ -192,7 +195,11 @@ export function PanelTabs<T extends string>({
     <div className={cx('ui-panel-tabs', className)}>
       <div className="ui-panel-tab-list" role="tablist" aria-label={label} onKeyDown={keydown}>
         {tabs.map((tab, index) => (
-          <span key={tab.value} className="ui-panel-tab" data-closable={tab.closeLabel !== undefined ? '' : undefined}>
+          <span
+            key={tab.value}
+            id={`${base}-${index}`}
+            className="ui-panel-tab"
+            data-closable={tab.closeLabel !== undefined ? '' : undefined}>
             <button
               ref={element => {
                 buttons.current[index] = element
@@ -231,6 +238,13 @@ export function PanelTabs<T extends string>({
                 }}>
                 <Icon icon={CloseGlyph} size={12} />
               </button>
+            )}
+            {tab.closeLabel !== undefined && onClose && (
+              <Menu
+                label={tab.label}
+                context={() => document.getElementById(`${base}-${index}`)}
+                sections={[{ id: 'tab', items: [{ id: 'close', label: '关闭', icon: CloseGlyph, onSelect: () => onClose(tab.value) }] }]}
+              />
             )}
           </span>
         ))}

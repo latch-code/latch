@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useId,
@@ -23,6 +24,7 @@ import {
   onAnchorScrolled,
   PHONE_QUERY,
   pinLayer,
+  pointAnchor,
   setPopover,
   useMediaQuery,
   useTypeahead,
@@ -54,6 +56,9 @@ function useLayer({ align = 'start', side = 'bottom', maxHeight }: LayerPlacemen
   const trigger = useRef<HTMLButtonElement>(null)
   const layer = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
+  // Opened by the context gesture on a row: the row stands in for the trigger, and the layer sits at the pointer (or
+  // under the row, from the keyboard). Focus goes back to what had it in the row.
+  const [from, setFrom] = useState<{ row: HTMLElement; point?: { x: number; y: number }; focus: HTMLElement | null } | null>(null)
   // The owner hears every opening and closing, whatever caused it (the trigger, a choice, a press outside, Escape).
   const notify = useRef(onOpenChange)
   useLayoutEffect(() => {
@@ -69,16 +74,20 @@ function useLayer({ align = 'start', side = 'bottom', maxHeight }: LayerPlacemen
   useLayoutEffect(() => {
     const element = layer.current
     setPopover(element, open)
-    if (!open || !element || !trigger.current) return undefined
-    return pinLayer(trigger.current, element, { align, side, gap: 6, maxHeight })
-  }, [open, align, side, maxHeight])
+    const anchor = from?.row ?? trigger.current
+    if (!open || !element || !anchor) return undefined
+    if (from?.point)
+      return pinLayer(pointAnchor(from.point.x, from.point.y), element, { align: 'start', side: 'bottom', gap: 2, maxHeight })
+    return pinLayer(anchor, element, { align: from ? 'start' : align, side, gap: 6, maxHeight })
+  }, [open, align, side, maxHeight, from])
   useEffect(() => {
     const element = layer.current
-    const anchor = trigger.current
+    const anchor = from?.row ?? trigger.current
     if (!open || !element || !anchor) return undefined
     const outside = (event: Event) => {
       const target = event.target instanceof Node ? event.target : null
-      if (element.contains(target) || anchor.contains(target)) return
+      // A press anywhere in the row closes a menu opened from the row; one on its own trigger is the trigger's to toggle.
+      if (element.contains(target) || (!from && anchor.contains(target))) return
       setOpen(false)
     }
     document.addEventListener('pointerdown', outside, true)
@@ -89,12 +98,126 @@ function useLayer({ align = 'start', side = 'bottom', maxHeight }: LayerPlacemen
       document.removeEventListener('pointerdown', outside, true)
       stopWatching()
     }
-  }, [open])
+  }, [open, from])
   const close = (restoreFocus: boolean) => {
     setOpen(false)
-    if (restoreFocus) trigger.current?.focus({ preventScroll: true })
+    if (restoreFocus) (from ? from.focus : trigger.current)?.focus({ preventScroll: true })
   }
-  return { trigger, layer, open, setOpen, close }
+  /** Opens from the trigger; a press on it while a context menu is open closes that one. */
+  // Stable, as the state setter they stand in for: owners list them in effects.
+  const toggle = useCallback((next: boolean | ((open: boolean) => boolean)) => {
+    setFrom(null)
+    setOpen(next)
+  }, [])
+  const openFrom = useCallback((row: HTMLElement, point: { x: number; y: number } | undefined, focus: HTMLElement | null) => {
+    setFrom({ row, ...(point ? { point } : {}), focus })
+    setOpen(true)
+  }, [])
+  return { trigger, layer, open, setOpen: toggle, close, openFrom }
+}
+
+/** How long a finger rests on a row before its menu opens, and how far it may wander meanwhile. */
+const HOLD_MS = 500
+const HOLD_SLOP = 8
+
+/**
+ * Whether a context gesture on `target` keeps the browser's own menu: text the person may want to copy or edit (a field,
+ * an editable region, a link, code, the terminal's screen) or a selection that reaches it. Exported for its test.
+ */
+export function keepsNativeMenu(target: EventTarget | null, selection: Selection | null = getSelection()): boolean {
+  if (!(target instanceof Element)) return false
+  if (target.closest('input, textarea, select, a[href], [contenteditable]:not([contenteditable="false"]), pre, code, .xterm')) return true
+  return !!selection && !selection.isCollapsed && selection.containsNode(target, true)
+}
+
+/**
+ * The context gesture on `row` opens its menu: a right click at the pointer, a press and hold on touch (the click that
+ * ends the hold does not also press the row), and the context-menu key or ⇧F10 under the row. Text keeps the browser's
+ * menu (`keepsNativeMenu`).
+ */
+function useContextGesture(
+  resolve: () => HTMLElement | null | undefined,
+  openFrom: (row: HTMLElement, point: { x: number; y: number } | undefined, focus: HTMLElement | null) => void,
+  enabled: boolean,
+) {
+  const opener = useRef(openFrom)
+  useLayoutEffect(() => {
+    opener.current = openFrom
+  })
+  const find = useRef(resolve)
+  find.current = resolve
+  useEffect(() => {
+    const row = find.current()
+    if (!enabled || !row) return undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let start: { x: number; y: number } | null = null
+    let held = false
+    // A press and hold also fires contextmenu on some touch browsers, and the key fires it after keydown.
+    let opened = 0
+    const focusIn = () =>
+      document.activeElement instanceof HTMLElement && row.contains(document.activeElement) ? document.activeElement : null
+    const open = (point: { x: number; y: number } | undefined, focus: HTMLElement | null) => {
+      opened = performance.now()
+      opener.current(row, point, focus ?? row.querySelector<HTMLElement>('button, [tabindex]'))
+    }
+    const contextmenu = (event: MouseEvent) => {
+      if (keepsNativeMenu(event.target)) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (performance.now() - opened < 600) return
+      open({ x: event.clientX, y: event.clientY }, focusIn())
+    }
+    const keydown = (event: globalThis.KeyboardEvent) => {
+      if (!(event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) || keepsNativeMenu(event.target)) return
+      event.preventDefault()
+      event.stopPropagation()
+      open(undefined, event.target instanceof HTMLElement ? event.target : focusIn())
+    }
+    const cancel = () => {
+      clearTimeout(timer)
+      start = null
+    }
+    const down = (event: PointerEvent) => {
+      held = false
+      if (event.pointerType === 'mouse' || keepsNativeMenu(event.target, null)) return
+      start = { x: event.clientX, y: event.clientY }
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        held = true
+        const point = start
+        start = null
+        open(point ?? undefined, null)
+      }, HOLD_MS)
+    }
+    const move = (event: PointerEvent) => {
+      if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > HOLD_SLOP) cancel()
+    }
+    const click = (event: MouseEvent) => {
+      if (!held) return
+      held = false
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    row.addEventListener('contextmenu', contextmenu)
+    row.addEventListener('keydown', keydown)
+    row.addEventListener('pointerdown', down)
+    row.addEventListener('pointermove', move)
+    row.addEventListener('pointerup', cancel)
+    row.addEventListener('pointercancel', cancel)
+    row.addEventListener('pointerleave', cancel)
+    row.addEventListener('click', click, true)
+    return () => {
+      cancel()
+      row.removeEventListener('contextmenu', contextmenu)
+      row.removeEventListener('keydown', keydown)
+      row.removeEventListener('pointerdown', down)
+      row.removeEventListener('pointermove', move)
+      row.removeEventListener('pointerup', cancel)
+      row.removeEventListener('pointercancel', cancel)
+      row.removeEventListener('pointerleave', cancel)
+      row.removeEventListener('click', click, true)
+    }
+  }, [enabled])
 }
 
 /** Closes the layer something is shown in, giving focus back to its trigger; outside a layer it does nothing. */
@@ -428,12 +551,15 @@ function focusInto(panel: HTMLElement | null) {
 
 /**
  * A menu of actions opened by a trigger the caller draws (a ⋯ icon button, a title button with chevron-down). Space,
- * Enter and ↓ on the trigger open it with focus on the first item. On phones it is a bottom sheet.
+ * Enter and ↓ on the trigger open it with focus on the first item. On phones it is a bottom sheet. With `context` the
+ * same menu also opens from its row's context gesture (right click at the pointer, press and hold, the context-menu
+ * key), so a row has one list of actions whichever way it is asked; a row with no ⋯ passes no trigger.
  */
 export function Menu({
   label,
   title,
   trigger,
+  context,
   sections,
   header,
   footer,
@@ -443,14 +569,24 @@ export function Menu({
   ...placement
 }: Omit<PanelProps, 'onChoose' | 'onDismiss' | 'panelRef'>
   & LayerPlacement & {
-    trigger: (props: MenuTriggerProps) => ReactNode
+    trigger?: (props: MenuTriggerProps) => ReactNode
+    /** The row whose context gesture opens this menu: the element, or how to find it from the trigger (or from where
+     * the menu is written, when it has none). */
+    context?: RefObject<HTMLElement | null> | ((trigger: HTMLElement | null) => HTMLElement | null)
     /** The layer's width, a step of the scale. */
     size?: LayerSize
     title?: string
   }) {
   const phone = useMediaQuery(PHONE_QUERY)
   const panel = useRef<HTMLDivElement>(null)
-  const { trigger: triggerRef, layer, open, setOpen, close } = useLayer(placement)
+  const { trigger: triggerRef, layer, open, setOpen, close, openFrom } = useLayer(placement)
+  // Without a trigger, a hidden mark where the menu is written lets `context` find its row the same way.
+  const mark = useRef<HTMLSpanElement>(null)
+  useContextGesture(
+    () => (typeof context === 'function' ? context(triggerRef.current ?? mark.current) : context?.current),
+    openFrom,
+    context !== undefined && sections.some(section => section.items.length > 0),
+  )
   // In a sheet too: its items are out of the Tab order, so the sheet itself does not move focus onto them.
   useEffect(() => {
     if (open) focusInto(panel.current)
@@ -481,7 +617,8 @@ export function Menu({
   )
   return (
     <>
-      {trigger({
+      {!trigger && <span ref={mark} hidden />}
+      {trigger?.({
         ref: triggerRef,
         onClick: () => {
           setOpen(!open)

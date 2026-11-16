@@ -27,6 +27,7 @@ import {
   Badge,
   type ValuePickerProps,
 } from '../src/index.ts'
+import { keepsNativeMenu } from '../src/menu.tsx'
 
 /** Ordered permission levels as a value picker, the way a page lists them: a consequence a line, 默认 on the default. */
 interface PermissionLevel<T extends string> {
@@ -1112,4 +1113,85 @@ it('lets a value picker use a domain-specific search without changing labels', a
   await expect.element(page.getByRole('menuitemradio', { name: 'beta-mini', exact: true })).toBeVisible()
   await expect.element(page.getByRole('menuitemradio', { name: 'alpha-large', exact: true })).not.toBeInTheDocument()
   await userEvent.keyboard('{Escape}{Escape}')
+})
+
+describe("a row's context menu", () => {
+  function Row({ onRename, onOpen }: { onRename: () => void; onOpen: () => void }) {
+    return (
+      <div className="row" data-testid="row">
+        <button type="button" onClick={onOpen}>
+          会话一
+        </button>
+        <input aria-label="备注" defaultValue="可复制的字" />
+        <Menu
+          label="会话操作"
+          context={trigger => trigger?.closest('.row') ?? null}
+          sections={[
+            { id: 'edit', items: [{ id: 'rename', label: '重命名', onSelect: onRename }] },
+            { id: 'danger', items: [{ id: 'delete', label: '删除', danger: true, onSelect() {} }] },
+          ]}
+          trigger={props => <IconButton {...props} size="xs" label="更多操作" icon={MoreGlyph} />}
+        />
+      </div>
+    )
+  }
+
+  it('opens the same menu as its ⋯ at the pointer on right click, and the same items from the keyboard', async () => {
+    const rename = vi.fn()
+    const screen = await render(<Row onRename={rename} onOpen={() => {}} />)
+    const row = screen.getByTestId('row').element()
+    await screen.getByRole('button', { name: '更多操作' }).click()
+    const fromTrigger = [...document.querySelectorAll('[role="menuitem"]')].map(item => item.textContent)
+    await userEvent.keyboard('{Escape}')
+    const box = row.getBoundingClientRect()
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: box.left + 40,
+      clientY: box.top + 4,
+      button: 2,
+    })
+    row.querySelector('button')!.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    await expect.element(page.getByRole('menuitem', { name: '重命名' })).toBeVisible()
+    expect([...document.querySelectorAll('[role="menuitem"]')].map(item => item.textContent)).toEqual(fromTrigger)
+    const layer = document.querySelector<HTMLElement>('.ui-popover:popover-open')!.getBoundingClientRect()
+    expect(Math.abs(layer.left - (box.left + 40))).toBeLessThanOrEqual(2)
+    await page.getByRole('menuitem', { name: '重命名' }).click()
+    expect(rename).toHaveBeenCalledTimes(1)
+    row.querySelector('button')!.focus()
+    await userEvent.keyboard('{Shift>}{F10}{/Shift}')
+    await expect.element(page.getByRole('menuitem', { name: '重命名' })).toBeVisible()
+    await userEvent.keyboard('{Escape}')
+    expect(document.activeElement).toBe(row.querySelector('button'))
+  })
+
+  it('leaves the browser menu on text: a field, and a selection', async () => {
+    const screen = await render(<Row onRename={() => {}} onOpen={() => {}} />)
+    const input = screen.getByRole('textbox', { name: '备注' }).element()
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    input.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(false)
+    expect(keepsNativeMenu(input, null)).toBe(true)
+    const label = screen.getByRole('button', { name: '会话一' }).element()
+    expect(keepsNativeMenu(label, null)).toBe(false)
+    const selection = getSelection()!
+    selection.selectAllChildren(label)
+    expect(keepsNativeMenu(label, selection)).toBe(true)
+    selection.removeAllRanges()
+  })
+
+  it('opens on a press and hold by touch, and the release does not also press the row', async () => {
+    const opened = vi.fn()
+    const screen = await render(<Row onRename={() => {}} onOpen={opened} />)
+    const target = screen.getByRole('button', { name: '会话一' }).element() as HTMLButtonElement
+    const box = target.getBoundingClientRect()
+    const at = { bubbles: true, pointerType: 'touch', clientX: box.left + 4, clientY: box.top + 4 }
+    target.dispatchEvent(new PointerEvent('pointerdown', at))
+    await new Promise(done => setTimeout(done, 600))
+    target.dispatchEvent(new PointerEvent('pointerup', at))
+    target.click()
+    await expect.element(page.getByRole('menuitem', { name: '重命名' })).toBeVisible()
+    expect(opened).not.toHaveBeenCalled()
+  })
 })

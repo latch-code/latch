@@ -18,7 +18,7 @@ import {
   WaitingGlyph,
 } from '@latch/ui'
 import { useLastConfirmed } from '../components/SessionStatus.tsx'
-import { Menu } from '../components/overlays.tsx'
+import { Menu, rowOf } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { startBlock } from '../composerChoice.ts'
 import { MessageError } from '../core/api.ts'
@@ -225,6 +225,7 @@ export function AgentsSpaceList({ shell, rail = false }: { shell: ShellState; ra
       <Menu
         label={`${row.name} 的操作`}
         placement="bottom-end"
+        context={rowOf('.agent-row')}
         sections={[
           {
             id: 'agent',

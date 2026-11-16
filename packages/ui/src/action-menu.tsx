@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { Sheet } from './dialog.tsx'
 import { Menu, MenuPanel, useLayerClose, type MenuItem, type MenuSection, type MenuTriggerProps } from './menu.tsx'
 
@@ -30,6 +30,7 @@ export function ActionMenu({
   title,
   sections,
   trigger,
+  context,
   placement = 'bottom-start',
   selection = false,
   footer,
@@ -38,7 +39,9 @@ export function ActionMenu({
   label: string
   title?: string
   sections: ActionMenuSection[]
-  trigger: (props: MenuTriggerProps) => ReactNode
+  trigger?: (props: MenuTriggerProps) => ReactNode
+  /** The row whose context gesture opens the same menu (see `Menu`). */
+  context?: ComponentProps<typeof Menu>['context']
   placement?: 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end'
   selection?: boolean
   footer?: (close: () => void) => ReactNode
@@ -49,7 +52,8 @@ export function ActionMenu({
       label={label}
       title={title}
       sections={sectionsOf(sections)}
-      trigger={trigger}
+      {...(trigger ? { trigger } : {})}
+      {...(context ? { context } : {})}
       side={placement.startsWith('top') ? 'top' : 'bottom'}
       align={placement.endsWith('end') ? 'end' : 'start'}
       selection={selection}

@@ -77,6 +77,7 @@ import { GitHistoryView, type HistoryMode } from './GitHistoryView.tsx'
 import { StagingFeedback, StagingView } from './StagingView.tsx'
 import { useStaging, type useStagingWrites } from './useStaging.ts'
 import type { GitStagingView } from '@latch/protocol'
+import { rowOf } from '../../components/overlays.tsx'
 
 /** Where the conversation sends the person: a turn and, when it names one, a file of it. */
 export interface ChangesTarget {
@@ -456,16 +457,29 @@ function TreeRows({
                 {statusLetter(row.file)}
               </span>
               {undoable(row.file) && (
-                <IconButton
-                  size="xs"
-                  icon={UndoGlyph}
-                  label={`撤销 ${row.file.path}`}
-                  tooltip="撤销此文件"
-                  className="changes-tree-undo"
-                  onClick={() => {
-                    onUndo(row.file)
-                  }}
-                />
+                <>
+                  <IconButton
+                    size="xs"
+                    icon={UndoGlyph}
+                    label={`撤销 ${row.file.path}`}
+                    tooltip="撤销此文件"
+                    className="changes-tree-undo"
+                    onClick={() => {
+                      onUndo(row.file)
+                    }}
+                  />
+                  {/* Its one hover action as its context menu too. */}
+                  <Menu
+                    label={`${escapeHiddenCharacters(row.file.path)} 的操作`}
+                    context={rowOf('.changes-tree-file')}
+                    sections={[
+                      {
+                        id: 'undo',
+                        items: [{ id: 'undo', label: '撤销此文件', icon: UndoGlyph, danger: true, onSelect: () => onUndo(row.file) }],
+                      },
+                    ]}
+                  />
+                </>
               )}
             </div>
           ),

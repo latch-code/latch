@@ -18,6 +18,7 @@ import { api, errorMessage, MessageError } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
 import { ProjectIcon, projectFolders, projectName } from '../projects.tsx'
 import { VisibleText } from './VisibleText.tsx'
+import { rowOf } from './overlays.tsx'
 
 export interface ProjectNavigationActions {
   onEditProject?: (id: string) => void
@@ -118,11 +119,14 @@ export function ProjectGroupHeading({
         <Menu
           label={`${projectName(project)} 的项目操作`}
           align="end"
+          context={rowOf('.shelf-head')}
           trigger={props => <IconButton {...props} size="xs" label={`${projectName(project)} 的项目操作`} icon={MoreGlyph} />}
           sections={[
             {
               id: 'project',
               items: [
+                // The heading's hover + as an item too, so the right-click menu offers it.
+                ...(onNew && !project.unavailable ? [{ id: 'new', label: '新会话', icon: PlusGlyph, onSelect: onNew }] : []),
                 {
                   id: 'rename',
                   label: '重命名',
