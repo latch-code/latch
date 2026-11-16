@@ -54,6 +54,7 @@ export {
   Popover,
   ValuePicker,
   useLayerClose,
+  useLayerOpen,
   type MenuHeader,
   type MenuItem,
   type MenuSection,
@@ -84,3 +85,13 @@ export type { PluginPanelProps } from './plugins.ts'
 export { Modal, ModalHeader, Scrim } from './dialog.tsx'
 export { ConfirmDialog, PromptDialog } from './async-dialog.tsx'
 export { ActionMenu, ActionSheet, type ActionMenuSection } from './action-menu.tsx'
+export {
+  ModeStrip,
+  PickerBoard,
+  type BoardItem,
+  type BoardLevel,
+  type BoardLevels,
+  type BoardSource,
+  type ModeStripOption,
+  type PickerBoardProps,
+} from './board.tsx'

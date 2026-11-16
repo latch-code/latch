@@ -103,6 +103,7 @@ import {
   type ValuePickerProps,
 } from '../../src/index.ts'
 import { Cell, Row, Section } from './parts.tsx'
+import { Boards } from './Boards.tsx'
 import { Kit } from './Kit.tsx'
 import { V9 } from './V9.tsx'
 
@@ -2202,6 +2203,7 @@ export function Gallery() {
         <Meters />
         <Charts />
         <Pickers />
+        <Boards />
         <Inputs />
         <Section title="输入建议">
           <TopSuggestions />

@@ -1,0 +1,642 @@
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { CheckGlyph, BlockedGlyph, SearchGlyph } from './glyphs/index.tsx'
+import { Icon, Spinner, type IconComponent } from './icon.tsx'
+import { cx, nextIndex, PHONE_QUERY, useMediaQuery } from './internal.ts'
+import { InMenu, useLayerClose, useLayerOpen } from './menu.tsx'
+import { Kbd } from './pill.tsx'
+import { Tooltip } from './tooltip.tsx'
+
+// ---- Mode strip ---------------------------------------------------------------------------------------------------
+
+export interface ModeStripOption<T extends string> {
+  value: T
+  /** The mode's name, shown under the strip while it is chosen or previewed, and the segment's accessible name. */
+  label: string
+  /** One short line on what it does, from the mode's own description. */
+  line?: string
+  icon: IconComponent
+  /** The loosest mode: amber while it is chosen or previewed, never at rest. */
+  risk?: boolean
+  /** Why it cannot be chosen: the segment's tooltip, and it stays focusable. */
+  disabledReason?: string
+}
+
+/**
+ * An ordered set of modes as one row of icon segments, tightest first, with the chosen (or previewed) mode's name and
+ * its one line under it in a block of fixed height, so the layer never changes size. ←/→, Home and End move without
+ * choosing, and hover or focus previews; Enter, Space or a click chooses. A radio group with one tab stop. For two to
+ * five modes with distinct icons; more, or modes without a known icon, take a single-choice list.
+ */
+export function ModeStrip<T extends string>({
+  label,
+  keys,
+  value,
+  options,
+  onChoose,
+  className,
+}: {
+  /** The heading over the strip, also the group's name. */
+  label: string
+  /** The shortcut that opens it, drawn at the heading's end. */
+  keys?: string | undefined
+  value: T | undefined
+  options: ReadonlyArray<ModeStripOption<T>>
+  onChoose: (value: T) => void
+  className?: string
+}) {
+  const id = useId()
+  const open = useLayerOpen()
+  const buttons = useRef<Array<HTMLButtonElement | null>>([])
+  const selected = options.findIndex(option => option.value === value)
+  const [focused, setFocused] = useState(Math.max(0, selected))
+  const [hovered, setHovered] = useState<number | null>(null)
+  const [focusIn, setFocusIn] = useState(false)
+  // Each opening starts on the chosen mode.
+  const [opened, setOpened] = useState(open)
+  if (open !== opened) {
+    setOpened(open)
+    if (open) {
+      setHovered(null)
+      setFocused(Math.max(0, selected))
+    }
+  }
+  const shownIndex = hovered ?? (focusIn ? focused : selected)
+  const shown = shownIndex >= 0 ? options[shownIndex] : undefined
+  const choose = (index: number) => {
+    const option = options[index]
+    if (!option || option.disabledReason !== undefined) return
+    onChoose(option.value)
+  }
+  const keydown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      choose(focused)
+      return
+    }
+    const index = nextIndex(
+      event.key === 'ArrowUp' ? 'ArrowLeft' : event.key === 'ArrowDown' ? 'ArrowRight' : event.key,
+      focused,
+      options.length,
+      'horizontal',
+      () => true,
+    )
+    if (index === undefined) return
+    event.preventDefault()
+    setFocused(index)
+    setHovered(null)
+    buttons.current[index]?.focus()
+  }
+  return (
+    <div className={cx('ui-mode-strip', className)}>
+      <p className="ui-mode-strip-head" id={`${id}-label`}>
+        <span>{label}</span>
+        {keys && <Kbd>{keys}</Kbd>}
+      </p>
+      <div
+        className="ui-mode-strip-track"
+        role="radiogroup"
+        aria-labelledby={`${id}-label`}
+        onKeyDown={keydown}
+        onFocus={() => {
+          setFocusIn(true)
+        }}
+        onBlur={event => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setFocusIn(false)
+        }}
+        onPointerLeave={() => {
+          setHovered(null)
+        }}>
+        {options.map((option, index) => (
+          <Tooltip key={option.value} content={option.disabledReason}>
+            <button
+              ref={element => {
+                buttons.current[index] = element
+              }}
+              type="button"
+              role="radio"
+              className="ui-mode-strip-option"
+              aria-label={option.label}
+              aria-describedby={option.line ? `${id}-${index}` : undefined}
+              aria-checked={index === selected}
+              aria-disabled={option.disabledReason !== undefined || undefined}
+              data-risk={option.risk ? '' : undefined}
+              data-preview={index === shownIndex && index !== selected ? '' : undefined}
+              data-autofocus={index === Math.max(0, selected) ? '' : undefined}
+              tabIndex={index === focused ? 0 : -1}
+              onFocus={() => {
+                setFocused(index)
+              }}
+              onPointerEnter={() => {
+                setHovered(index)
+              }}
+              onClick={() => {
+                choose(index)
+              }}>
+              <Icon icon={option.icon} size={16} />
+              {option.line && (
+                <span id={`${id}-${index}`} hidden>
+                  {option.line}
+                </span>
+              )}
+            </button>
+          </Tooltip>
+        ))}
+      </div>
+      <div className="ui-mode-strip-shown" data-risk={shown?.risk ? '' : undefined} aria-hidden="true">
+        <span className="ui-mode-strip-name">{shown?.label}</span>
+        <span className="ui-mode-strip-line">{shown?.line}</span>
+      </div>
+    </div>
+  )
+}
+
+// ---- Picker board -------------------------------------------------------------------------------------------------
+
+export interface BoardItem<T extends string> {
+  value: T
+  label: string
+  /** The value's own 16px picture (its service's tile). */
+  media?: ReactNode
+  /** Right after the label, for example the 默认 badge. */
+  tag?: ReactNode
+  disabledReason?: string
+}
+
+export interface BoardSource<T extends string> {
+  id: string
+  /** Its full name, over the list while it is shown and the rail button's tooltip. */
+  label: string
+  /** A 16px tile or glyph for the rail. */
+  icon: ReactNode
+  /** More about the source (where its requests go): on hover of its rail entry and heading; on a phone, under the row of sources while it is chosen. */
+  hint?: string | undefined
+  items: Array<BoardItem<T>>
+}
+
+export interface BoardLevel<L extends string> {
+  value: L
+  label: string
+  disabledReason?: string
+}
+
+/** The second choice of the highlighted item (思考 for a model): its values, the chosen one, and a short state. */
+export interface BoardLevels<L extends string> {
+  value: L | undefined
+  options: Array<BoardLevel<L>>
+  /** A write for it, or for the item it belongs to, is under way. */
+  pending?: boolean
+  /** At the column's foot: a short state or the one note it has. */
+  note?: ReactNode
+}
+
+export interface PickerBoardProps<T extends string, L extends string> {
+  /** What the list picks (模型): the list's name, and its search field's. */
+  label: string
+  /** What the second column picks (思考). */
+  levelsLabel: string
+  sources: Array<BoardSource<T>>
+  /** The chosen item. */
+  value: T | undefined
+  /** The second column for an item: it follows the highlighted one. */
+  levels: (item: T | undefined) => BoardLevels<L>
+  onItem: (value: T) => void
+  onLevel: (item: T | undefined, level: L) => void
+  /** Whether choosing this item keeps the board open on its levels; by default when it has more than one. */
+  staysOn?: ((value: T) => boolean) | undefined
+  /** Where focus lands when the layer opens. */
+  focus?: 'list' | 'levels'
+  /** The keys printed on the Nth row of the list (from 0), for the first nine. */
+  keyCaps?: ((index: number) => string | undefined) | undefined
+  /** The row a key press picks (from 0), or undefined when it is no such key. */
+  pickIndex?: ((event: KeyboardEvent) => number | undefined) | undefined
+  searchMatch?: ((item: BoardItem<T>, query: string) => boolean) | undefined
+  /** A request to open on a search: each new revision fills the field. */
+  query?: { query: string; revision: number } | undefined
+  /** The item's other settings, as compact rows at the second column's foot. */
+  settings?: ReactNode
+  /** Rows under the list: where the values are managed, notes on them. */
+  footer?: ReactNode
+  /** sheet: the phone's column, wherever it is drawn; by default it follows the width. */
+  layout?: 'auto' | 'sheet'
+  className?: string
+}
+
+const ROW = '[role^="menuitem"]'
+
+function focusRow(container: HTMLElement | null, which: 'checked' | 'first' | 'last' | HTMLElement | null) {
+  if (!container) return false
+  const rows = Array.from(container.querySelectorAll<HTMLElement>(ROW))
+  const row =
+    which instanceof HTMLElement
+      ? which
+      : which === 'checked'
+        ? (rows.find(item => item.getAttribute('aria-checked') === 'true') ?? rows[0])
+        : which === 'last'
+          ? rows.at(-1)
+          : rows[0]
+  row?.focus({ preventScroll: false })
+  return row !== undefined
+}
+
+/** ↑/↓, Home and End over a column's rows. */
+function moveInColumn(event: KeyboardEvent<HTMLElement>): boolean {
+  const rows = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(ROW))
+  const current = rows.findIndex(row => row === document.activeElement)
+  const next = nextIndex(event.key, current < 0 ? -1 : current, rows.length, 'vertical', () => true)
+  if (next === undefined) return false
+  event.preventDefault()
+  rows[next]?.focus()
+  return true
+}
+
+/**
+ * Two linked choices in one layer of fixed size: a rail of sources (hidden with one), a search field and the chosen
+ * source's items, and a column of the highlighted item's levels. Moving through the list changes the levels without
+ * resizing anything; choosing an item keeps the board open on its levels when it has any, choosing a level closes it.
+ * ↑/↓ move in a column, ←/→ and Tab go between the rail, the list and the levels, typing searches every source, and the
+ * first nine rows take the keys `keyCaps` prints. On phones the sources and the levels are rows of segments around the
+ * list.
+ */
+export function PickerBoard<T extends string, L extends string>({
+  label,
+  levelsLabel,
+  sources,
+  value,
+  levels,
+  onItem,
+  onLevel,
+  staysOn,
+  focus = 'list',
+  keyCaps,
+  pickIndex,
+  searchMatch,
+  query: request,
+  settings,
+  footer,
+  layout = 'auto',
+  className,
+}: PickerBoardProps<T, L>) {
+  const id = useId()
+  const phone = useMediaQuery(PHONE_QUERY) || layout === 'sheet'
+  const open = useLayerOpen()
+  const close = useLayerClose()
+  const home = sources.find(source => source.items.some(item => item.value === value))?.id ?? sources[0]?.id
+  const [viewed, setViewed] = useState(home)
+  const [query, setQuery] = useState(request?.query ?? '')
+  const [highlighted, setHighlighted] = useState<T | undefined>(value)
+  // Where focus goes after the next render: each request a new object, so asking twice for the same place still moves it.
+  const [target, setTarget] = useState<{ to: 'list' | 'levels' | 'search' } | null>(null)
+  const rail = useRef<HTMLDivElement>(null)
+  const list = useRef<HTMLDivElement>(null)
+  const column = useRef<HTMLDivElement>(null)
+  const search = useRef<HTMLInputElement>(null)
+
+  // A search asked for (a slash argument) fills the field, now if the board is open, or when it next opens.
+  const [seenRequest, setSeenRequest] = useState(request)
+  const [asked, setAsked] = useState<string | undefined>(undefined)
+  let waiting = asked
+  if (request !== seenRequest) {
+    setSeenRequest(request)
+    if (request && open) {
+      setQuery(request.query)
+      setTarget({ to: request.query ? 'search' : 'list' })
+    } else if (request) {
+      waiting = request.query
+      setAsked(waiting)
+    }
+  }
+  // Each opening starts on the chosen item, in its source, with no search (or the one asked for); focus where the
+  // trigger asked. Only the opening resets: a value that changes while open is followed by `highlighted` on choice.
+  const [opened, setOpened] = useState(open)
+  if (open !== opened) {
+    setOpened(open)
+    if (open) {
+      setViewed(home)
+      setQuery(waiting ?? '')
+      setAsked(undefined)
+      setHighlighted(value)
+      setTarget({ to: waiting ? 'search' : focus })
+    }
+  }
+  useEffect(() => {
+    if (target === null) return
+    if (target.to === 'levels') {
+      if (!focusRow(column.current, 'checked')) focusRow(list.current, 'checked')
+    } else if (target.to === 'search' || !focusRow(list.current, 'checked')) search.current?.focus()
+  }, [target])
+
+  const shownSource = sources.find(source => source.id === viewed) ?? sources[0]
+  const match = (item: BoardItem<T>) =>
+    searchMatch ? searchMatch(item, query) : item.label.toLowerCase().includes(query.trim().toLowerCase())
+  const sections = query.trim()
+    ? sources.map(source => ({ source, items: source.items.filter(match) })).filter(section => section.items.length)
+    : shownSource
+      ? [{ source: shownSource, items: shownSource.items }]
+      : []
+  const visible = sections.flatMap(section => section.items)
+  const now = highlighted !== undefined && visible.some(item => item.value === highlighted) ? highlighted : value
+  const shownLevels = levels(now)
+  // The list's one tab stop: the highlighted row, or the first one shown.
+  const stop = visible.some(item => item.value === now) ? now : visible[0]?.value
+  const levelStop = shownLevels.options.some(level => level.value === shownLevels.value) ? shownLevels.value : shownLevels.options[0]?.value
+  const withRail = sources.length > 1
+
+  const chooseItem = (item: BoardItem<T>) => {
+    if (item.disabledReason !== undefined) return
+    setHighlighted(item.value)
+    const stays = staysOn ? staysOn(item.value) : levels(item.value).options.length > 1
+    onItem(item.value)
+    if (stays) setTarget({ to: 'levels' })
+    else close()
+  }
+  const chooseLevel = (level: BoardLevel<L>) => {
+    if (level.disabledReason !== undefined) return
+    onLevel(now, level.value)
+    close()
+  }
+  const showSource = (sourceId: string) => {
+    setViewed(sourceId)
+    setQuery('')
+    const source = sources.find(item => item.id === sourceId)
+    const first = source?.items.find(item => item.value === value) ?? source?.items[0]
+    setHighlighted(first?.value)
+  }
+
+  const boardKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    const index = pickIndex?.(event)
+    if (index === undefined) return
+    const item = visible[index]
+    // Held in the board, the key is the board's even where there is no such row: it never reaches the page.
+    event.preventDefault()
+    event.stopPropagation()
+    if (item) chooseItem(item)
+  }
+  const railKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    if (event.key === 'ArrowRight' || event.key === 'Enter') {
+      event.preventDefault()
+      focusRow(list.current, 'checked')
+      return
+    }
+    const current = buttons.findIndex(button => button === document.activeElement)
+    const next = nextIndex(event.key, current, buttons.length, 'vertical', () => true)
+    if (next === undefined) return
+    event.preventDefault()
+    buttons[next]?.focus()
+    const sourceId = sources[next]?.id
+    if (sourceId) showSource(sourceId)
+  }
+  const listKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (moveInColumn(event)) return
+    if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      focusRow(column.current, 'checked')
+    } else if (event.key === 'ArrowLeft' && withRail) {
+      event.preventDefault()
+      rail.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus()
+    } else if (event.key.length === 1 && event.key !== ' ' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      // Typing in the list searches: the key lands in the field.
+      search.current?.focus()
+    }
+  }
+  const searchKeys = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      focusRow(list.current, 'first')
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      const first = visible.find(item => item.disabledReason === undefined)
+      if (first) chooseItem(first)
+    } else if (event.key === 'Escape' && query) {
+      event.preventDefault()
+      event.stopPropagation()
+      setQuery('')
+    }
+  }
+  const levelKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (moveInColumn(event)) return
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      const row = list.current?.querySelector<HTMLElement>(`[data-value="${CSS.escape(now ?? '')}"]`)
+      focusRow(list.current, row ?? 'checked')
+    }
+  }
+
+  // Each row's place in the whole list, for the keys printed on the first nine.
+  const offsets = sections.map((_, index) => sections.slice(0, index).reduce((sum, section) => sum + section.items.length, 0))
+  const items = sections.map((section, sectionIndex) => (
+    <div
+      key={section.source.id}
+      className="ui-board-section"
+      role="group"
+      aria-label={section.source.label}
+      {...(section.source.hint ? { 'aria-description': section.source.hint } : {})}>
+      <Tooltip content={section.source.hint}>
+        <div className="ui-board-heading" aria-hidden="true">
+          {query.trim() && section.source.icon}
+          <span>{section.source.label}</span>
+        </div>
+      </Tooltip>
+      {section.items.map((item, itemIndex) => {
+        const row = (offsets[sectionIndex] ?? 0) + itemIndex
+        const caps = row < 9 ? keyCaps?.(row) : undefined
+        const disabled = item.disabledReason !== undefined
+        return (
+          <Tooltip key={item.value} content={item.disabledReason}>
+            <button
+              type="button"
+              role="menuitemradio"
+              tabIndex={item.value === stop ? 0 : -1}
+              className="ui-menu-item ui-board-item"
+              data-value={item.value}
+              data-label={item.label}
+              data-media={item.media ? '' : undefined}
+              data-highlight={item.value === now ? '' : undefined}
+              aria-checked={item.value === value}
+              aria-disabled={disabled || undefined}
+              aria-labelledby={`${id}-item-${row}`}
+              onFocus={() => {
+                setHighlighted(item.value)
+              }}
+              onClick={() => {
+                chooseItem(item)
+              }}>
+              <span className="ui-menu-item-lead">
+                {item.value === value && <Icon icon={CheckGlyph} size={14} className="ui-menu-check" />}
+              </span>
+              {item.media && <span className="ui-menu-item-media">{item.media}</span>}
+              <span className="ui-menu-item-text">
+                <span id={`${id}-item-${row}`} className="ui-menu-item-label">
+                  <span className="ui-menu-item-title">{item.label}</span>
+                  {item.tag}
+                </span>
+              </span>
+              <span className="ui-menu-item-meta">{disabled ? <Icon icon={BlockedGlyph} size={12} /> : caps && <Kbd>{caps}</Kbd>}</span>
+            </button>
+          </Tooltip>
+        )
+      })}
+    </div>
+  ))
+
+  const levelRows = shownLevels.options.map(level => (
+    <Tooltip key={level.value} content={level.disabledReason}>
+      <button
+        type="button"
+        role="menuitemradio"
+        tabIndex={level.value === levelStop ? 0 : -1}
+        className="ui-menu-item ui-board-level"
+        data-label={level.label}
+        aria-checked={level.value === shownLevels.value}
+        aria-disabled={level.disabledReason !== undefined || undefined}
+        aria-label={level.label}
+        onClick={() => {
+          chooseLevel(level)
+        }}>
+        <span className="ui-menu-item-lead">
+          {level.value === shownLevels.value && <Icon icon={CheckGlyph} size={14} className="ui-menu-check" />}
+        </span>
+        <span className="ui-menu-item-text">
+          <span className="ui-menu-item-label">
+            <span className="ui-menu-item-title">{level.label}</span>
+          </span>
+        </span>
+      </button>
+    </Tooltip>
+  ))
+
+  const searchField = (
+    <div className="ui-board-search">
+      <Icon icon={SearchGlyph} size={14} />
+      <input
+        ref={search}
+        type="search"
+        aria-label={`搜索${label}`}
+        placeholder="搜索"
+        value={query}
+        onChange={event => {
+          setQuery(event.target.value)
+        }}
+        onKeyDown={searchKeys}
+      />
+    </div>
+  )
+
+  const listColumn = (withFooter: boolean) => (
+    <div ref={list} className="ui-board-list" role="menu" aria-label={label} onKeyDown={listKeys}>
+      <div className="ui-board-rows">
+        {items}
+        {visible.length === 0 && (
+          <p className="ui-board-empty" role="none">
+            {query.trim() ? '没有匹配的' : '没有可选的'}
+          </p>
+        )}
+      </div>
+      {withFooter && footer && (
+        <div className="ui-board-footer">
+          <InMenu.Provider value>{footer}</InMenu.Provider>
+        </div>
+      )}
+    </div>
+  )
+
+  if (phone)
+    return (
+      <div className={cx('ui-board', className)} data-phone="" onKeyDown={boardKeys}>
+        {withRail && (
+          <div className="ui-board-tabs" role="tablist" aria-label="来源">
+            {sources.map(source => (
+              <button
+                key={source.id}
+                type="button"
+                role="tab"
+                className="ui-board-tab"
+                aria-label={source.label}
+                aria-selected={source.id === shownSource?.id && !query.trim()}
+                onClick={() => {
+                  showSource(source.id)
+                }}>
+                {source.icon}
+                <span>{source.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {withRail && shownSource?.hint && !query.trim() && <p className="ui-board-hint">{shownSource.hint}</p>}
+        {searchField}
+        {listColumn(false)}
+        <div className="ui-board-phone-levels" role="menu" aria-label={levelsLabel} ref={column} onKeyDown={levelKeys}>
+          <span className="ui-board-heading" aria-hidden="true">
+            {levelsLabel}
+            {shownLevels.pending && <Spinner size={12} />}
+          </span>
+          <div className="ui-board-chips">{levelRows}</div>
+          {shownLevels.note && <div className="ui-board-note">{shownLevels.note}</div>}
+          {settings && <div className="ui-board-settings">{settings}</div>}
+        </div>
+        {/* Under the levels on a phone, so the choice of the model and its thinking stay in one view. */}
+        {footer && <div className="ui-board-footer">{footer}</div>}
+      </div>
+    )
+
+  return (
+    <div className={cx('ui-board', className)} data-rail={withRail ? '' : undefined} onKeyDown={boardKeys}>
+      {withRail && (
+        <div ref={rail} className="ui-board-rail" role="tablist" aria-orientation="vertical" aria-label="来源" onKeyDown={railKeys}>
+          {sources.map(source => {
+            const selectedTab = source.id === shownSource?.id && !query.trim()
+            return (
+              <Tooltip
+                key={source.id}
+                content={
+                  source.hint ? (
+                    <>
+                      <strong>{source.label}</strong>
+                      <br />
+                      {source.hint}
+                    </>
+                  ) : (
+                    source.label
+                  )
+                }
+                describe={source.hint !== undefined}>
+                <button
+                  type="button"
+                  role="tab"
+                  className="ui-board-source"
+                  aria-label={source.label}
+                  aria-selected={selectedTab}
+                  data-current={source.id === home ? '' : undefined}
+                  tabIndex={selectedTab || (query.trim() && source.id === shownSource?.id) ? 0 : -1}
+                  onClick={() => {
+                    showSource(source.id)
+                  }}>
+                  {source.icon}
+                </button>
+              </Tooltip>
+            )
+          })}
+        </div>
+      )}
+      <div className="ui-board-middle">
+        {searchField}
+        {listColumn(true)}
+      </div>
+      <div
+        ref={column}
+        className="ui-board-levels"
+        role="menu"
+        aria-label={levelsLabel}
+        aria-busy={shownLevels.pending || undefined}
+        onKeyDown={levelKeys}>
+        <div className="ui-board-heading ui-board-levels-head" aria-hidden="true" id={`${id}-levels`}>
+          <span>{levelsLabel}</span>
+          {shownLevels.pending && <Spinner size={12} />}
+        </div>
+        <div className="ui-board-rows">{levelRows}</div>
+        {shownLevels.note && <div className="ui-board-note">{shownLevels.note}</div>}
+        {settings && <div className="ui-board-settings">{settings}</div>}
+      </div>
+    </div>
+  )
+}

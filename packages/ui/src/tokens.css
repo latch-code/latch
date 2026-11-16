@@ -318,7 +318,7 @@
 
     /* Overlays: one table for every layer over the page (DESIGN「浮层」). Widths step through five sizes only: xs a
      * short value list, sm menus, pickers and popovers, md the permission and usage panels and the confirmations, lg
-     * forms and the palette, xl two columns. One radius per kind: tooltips 6, popovers, menus and suggestions 12,
+     * forms, the palette and the composer's model panel, xl two columns. One radius per kind: tooltips 6, popovers, menus and suggestions 12,
      * dialogs, sheets and the drawers on the composer 16. Shadows by layer: sh-tip, sh-pop (popovers, menus,
      * suggestions, toasts), sh-lift (the composer and its drawers), sh-dialog (dialogs and sheets over the scrim).
      * Stacking outside the top layer, lowest first: a card floating over its column, the scrim of a slide-over, the

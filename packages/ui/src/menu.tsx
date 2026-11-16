@@ -44,6 +44,11 @@ export interface LayerPlacement {
   side?: 'bottom' | 'top' | 'auto'
   /** Scrolls within past this height. */
   maxHeight?: number
+  /**
+   * The element the layer is placed against instead of its trigger, for two triggers that open the same panel and
+   * should open it in one place. Only the placement: pressing the trigger still toggles it.
+   */
+  anchor?: ((trigger: HTMLElement) => HTMLElement) | undefined
 }
 
 /**
@@ -53,7 +58,10 @@ export interface LayerPlacement {
  * Closing with Escape or by choosing gives focus back to the trigger; a press elsewhere or Tab leaves it where it went.
  * A layer drawn as a bottom sheet (phones) has no popover element; the sheet handles its own dismissal.
  */
-function useLayer({ align = 'start', side = 'bottom', maxHeight }: LayerPlacement, onOpenChange?: (open: boolean) => void) {
+function useLayer(
+  { align = 'start', side = 'bottom', maxHeight, anchor: placeAt }: LayerPlacement,
+  onOpenChange?: (open: boolean) => void,
+) {
   const trigger = useRef<HTMLButtonElement>(null)
   const layer = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
@@ -75,12 +83,12 @@ function useLayer({ align = 'start', side = 'bottom', maxHeight }: LayerPlacemen
   useLayoutEffect(() => {
     const element = layer.current
     setPopover(element, open)
-    const anchor = from?.row ?? trigger.current
+    const anchor = from?.row ?? (trigger.current && placeAt ? placeAt(trigger.current) : trigger.current)
     if (!open || !element || !anchor) return undefined
     if (from?.point)
       return pinLayer(pointAnchor(from.point.x, from.point.y), element, { align: 'start', side: 'bottom', gap: 2, maxHeight })
     return pinLayer(anchor, element, { align: from ? 'start' : align, side, gap: 6, maxHeight })
-  }, [open, align, side, maxHeight, from])
+  }, [open, align, side, maxHeight, from, placeAt])
   useEffect(() => {
     const element = layer.current
     const anchor = from?.row ?? trigger.current
@@ -227,7 +235,17 @@ function useContextGesture(
 const LayerClose = createContext<() => void>(() => {})
 
 /** Inside a menu's list, where the arrow keys move between items (a footer row is one of them). */
-const InMenu = createContext(false)
+export const InMenu = createContext(false)
+
+/**
+ * Whether the layer something is shown in is open; null outside a layer. Content that stays mounted while its layer is
+ * shut (a picker's panel, a popover's body) starts over and takes focus when this turns true.
+ */
+const LayerOpen = createContext<boolean | null>(null)
+
+export function useLayerOpen(): boolean | null {
+  return useContext(LayerOpen)
+}
 
 /**
  * For content inside a menu's, picker's or popover's layer (a footer action, a small form shown in the menu's place):
@@ -832,6 +850,7 @@ export function ValuePicker<T extends string>({
   align,
   side = 'bottom',
   maxHeight,
+  anchor,
   className,
 }: ValuePickerProps<T>) {
   const phone = useMediaQuery(PHONE_QUERY)
@@ -844,7 +863,7 @@ export function ValuePicker<T extends string>({
     open,
     setOpen,
     close: closeLayer,
-  } = useLayer({ align: align ?? pickerAlign(size, bleed), side, maxHeight }, onOpenChange)
+  } = useLayer({ align: align ?? pickerAlign(size, bleed), side, maxHeight, anchor }, onOpenChange)
   const [waiting, setWaiting] = useState(false)
   const [query, setQuery] = useState('')
   const pending = pendingProp || waiting
@@ -1036,19 +1055,21 @@ export function ValuePicker<T extends string>({
             close(true)
           }}>
           <LayerClose.Provider value={closeFromContent}>
-            {form ?? (
-              <>
-                {searchable && <MenuSearch label={label} value={query} onValueChange={setQuery} />}
-                <PickerSheetBody
-                  label={label}
-                  header={header}
-                  groups={visibleGroups}
-                  value={value}
-                  footer={footer}
-                  onValueChange={choose}
-                />
-              </>
-            )}
+            <LayerOpen.Provider value={open}>
+              {form ?? (
+                <>
+                  {searchable && <MenuSearch label={label} value={query} onValueChange={setQuery} />}
+                  <PickerSheetBody
+                    label={label}
+                    header={header}
+                    groups={visibleGroups}
+                    value={value}
+                    footer={footer}
+                    onValueChange={choose}
+                  />
+                </>
+              )}
+            </LayerOpen.Provider>
           </LayerClose.Provider>
         </Sheet>
       </>
@@ -1083,7 +1104,7 @@ export function ValuePicker<T extends string>({
           close(false)
         }}>
         <LayerClose.Provider value={closeFromContent}>
-          {form}
+          <LayerOpen.Provider value={open}>{form}</LayerOpen.Provider>
           {form === undefined && searchable && (
             <MenuSearch
               label={label}
@@ -1231,7 +1252,7 @@ export function Popover({
       value={() => {
         close(true)
       }}>
-      {children}
+      <LayerOpen.Provider value={open}>{children}</LayerOpen.Provider>
     </LayerClose.Provider>
   )
   useEffect(() => {
