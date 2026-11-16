@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
-import { KeyRound, ListRestart, Network } from 'lucide-react'
+import { KeyRound, Network } from 'lucide-react'
 import {
   PROVIDER_KINDS,
-  isProviderKind,
-  type AppSnapshot,
   type ModelCapabilities,
   type ModelFallback,
   type ProviderKind,
@@ -13,16 +11,13 @@ import {
 } from '@latch/protocol'
 import { api, ApiError, errorMessage, inlineError, isUncertain, MessageError } from '../core/api.ts'
 import { keepWhileAway } from '../core/blocking.ts'
-import type { DeviceAccess } from '../core/permissions.ts'
-import { hostView } from '../core/permissions.ts'
 import {
   checkAction,
   checkAddress,
+  changesProviderTarget,
   confirmAddress,
   createProvider,
   describeProbeFailure,
-  latestQuestions,
-  serviceHealth,
   destinationOf,
   isUnconfirmed,
   keyScopeOf,
@@ -37,17 +32,14 @@ import {
   type Destination,
   type NewProvider,
   type ProbeFailure,
-  type ServiceHealth,
   type ProvidersResponse,
 } from '../core/providerSetup.ts'
-import { computerName, PROVIDER_COPY } from '../core/securityCopy.ts'
+import { PROVIDER_COPY } from '../core/securityCopy.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import {
   Badge,
   Button,
-  DemoMark,
-  Dialog,
   Hint,
   Icon,
   IconButton,
@@ -63,55 +55,29 @@ import {
   CircleCheckGlyph,
   InfoGlyph,
   LockGlyph,
-  EditGlyph,
   PlusGlyph,
   TrashGlyph,
 } from '@latch/ui'
 import { THINKING_SETS, thinkingSetText } from '../composer/modelReasoning.ts'
 import { ProviderTile } from '../components/BrandTile.tsx'
-import {
-  IconTile,
-  Loading,
-  MiddleEllipsis,
-  moreButton,
-  NoteLine,
-  ObjectRow,
-  SectionHeading,
-  SettingsGroup,
-  SettingsRow,
-} from './common.tsx'
+import { HealthLine } from '../components/ServiceHealth.tsx'
+import { IconTile, MiddleEllipsis, moreButton, NoteLine, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { FieldDialog } from './dialogs.tsx'
 import { dropProviderDraft, keepProviderDraft, peekProviderDraft, type ProviderDraft } from './providerDraft.ts'
-import { ModelVisibilitySettings } from './ModelVisibilitySettings.tsx'
+import { isSupported, providerKindLabels, type SupportedProvider } from './providerKind.ts'
 import { fallbackLabel, ModelFallbacksDialog } from './ModelFallbacks.tsx'
 import { BudgetRow, PricesDialog, useModelSpend } from './ModelSpend.tsx'
-import { HealthLine } from '../components/ServiceHealth.tsx'
-import { SettingsPages, type SettingsLevel } from './navigation.tsx'
-import { UsageSettings } from './UsageSettings.tsx'
-import { ConfirmedAddresses } from './ConfirmedAddresses.tsx'
-import { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
+import type { ProviderAbilities } from '../core/providerAbilities.ts'
 import { clearProviderAddition, previousProviderInput, providerAddition, rememberProviderAddition } from '../core/providerAddition.ts'
 export { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
 
-type Selection = { kind: 'provider'; id: string; check?: boolean; fetch?: boolean } | null
 type CheckState = { ok: true; latencyMs: number; count: number } | { ok: false; failure: ProbeFailure }
-type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
 
 /** Where an address is confirmed on the desktop that cannot confirm it now: the fix, or the offline command. */
 function offlineText(abilities: ProviderAbilities, providerId?: string): string {
   if (abilities.presenceBroken) return PROVIDER_COPY.presenceBroken(abilities.presenceBroken)
   return providerId ? PROVIDER_COPY.confirmOffline(providerId) : PROVIDER_COPY.confirmOfflineNew
 }
-
-const kindLabels: Record<ProviderKind, string> = {
-  'openai-compatible': 'Chat Completions',
-  'openai-responses': 'Responses',
-  anthropic: 'Anthropic Messages',
-}
-
-/** A saved service Latch can still use: one saved with a protocol it no longer speaks is listed only to be removed. */
-type SupportedProvider = ProviderSettings & { kind: ProviderKind }
-const isSupported = (provider: ProviderSettings): provider is SupportedProvider => isProviderKind(provider.kind)
 
 /** The protocols a service's address speaks, its preset's first; a service with no preset may speak any. */
 export function protocolChoices(preset: ProviderPreset | undefined, current?: ProviderKind): ProviderKind[] {
@@ -1029,7 +995,7 @@ export function ProviderAddForm({
               }}>
               {protocols.map(item => (
                 <option key={item} value={item}>
-                  {kindLabels[item]}
+                  {providerKindLabels[item]}
                 </option>
               ))}
             </select>
@@ -1163,8 +1129,11 @@ function ThinkingPicker({
  * never shown; removing it and deleting the service are in the red group at the end. An address that is not
  * confirmed says so first, with the way to confirm it from here or where to go.
  */
-function ProviderPage({
+export function ProviderPage({
   admin,
+  configReady,
+  targetBlocked,
+  onTargetError,
   supportsAttachments,
   provider,
   data,
@@ -1178,6 +1147,9 @@ function ProviderPage({
   onDeleted,
 }: {
   admin: boolean
+  configReady: boolean
+  targetBlocked: string | undefined
+  onTargetError: (cause: unknown) => void
   supportsAttachments?: boolean
   /** The Host computer's name, for the lines that send another device there. */
   computer: string
@@ -1213,7 +1185,7 @@ function ProviderPage({
   }
   const unconfirmed = isUnconfirmed(provider)
   const keyless = missingKey(provider, data.presets)
-  const keyEditable = abilities.keys && !(unconfirmed && abilities.offline)
+  const keyEditable = targetBlocked === undefined && abilities.keys && !(unconfirmed && abilities.offline)
   const preset = data.presets.find(item => item.id === provider.presetId)
   const requiresKey = preset?.requiresKey ?? false
   const protocols = protocolChoices(preset, provider.kind)
@@ -1231,26 +1203,28 @@ function ProviderPage({
   })
   const checked = useRef(false)
   useEffect(() => {
-    if (!checkOnOpen || unconfirmed || keyless || checked.current) return
+    if (!configReady || !checkOnOpen || unconfirmed || keyless || checked.current) return
     checked.current = true
     void probe.runCheck()
-  }, [checkOnOpen, unconfirmed, keyless, probe])
+  }, [configReady, checkOnOpen, unconfirmed, keyless, probe])
 
   const fetched = useRef(false)
   useEffect(() => {
-    if (!fetchOnOpen || unconfirmed || keyless || fetched.current) return
+    if (!configReady || !fetchOnOpen || unconfirmed || keyless || fetched.current) return
     fetched.current = true
     void probe.fetchModels()
-  }, [fetchOnOpen, unconfirmed, keyless, probe])
+  }, [configReady, fetchOnOpen, unconfirmed, keyless, probe])
 
   /** One change; a confirmation, when the Host asks for one, resends the identical body. Returns the error. */
   const update = async (body: Record<string, unknown>): Promise<string> => {
+    if (targetBlocked !== undefined && changesProviderTarget(body)) return targetBlocked
     setSaving(true)
     setError('')
     try {
-      onSaved(await updateProvider(provider.id, body, { presenter }))
+      onSaved(await updateProvider(provider, body, { presenter }))
       return ''
     } catch (cause) {
+      onTargetError(cause)
       return inlineError(cause)
     } finally {
       setSaving(false)
@@ -1287,6 +1261,7 @@ function ProviderPage({
   const listingFailed = probe.failure === null || probe.failure.kind === 'local' ? undefined : probe.failure.text
   const confirmLabel = unconfirmed && abilities.confirm ? '用 Touch ID 保存' : '保存'
   const scope = origin ? shownAddress(origin) : undefined
+  const newKeyScope = keyScopeOf(provider.baseURL)
   const keyCaption = keyEditable
     ? undefined
     : abilities.offline
@@ -1300,7 +1275,7 @@ function ProviderPage({
         title={provider.name}
         description={
           <>
-            {isDefault ? `${kindLabels[provider.kind]} · 新会话默认使用` : kindLabels[provider.kind]}
+            {isDefault ? `${providerKindLabels[provider.kind]} · 新会话默认使用` : providerKindLabels[provider.kind]}
             <HealthLine health={provider.health} />
           </>
         }
@@ -1323,7 +1298,8 @@ function ProviderPage({
               <Button
                 size="xs"
                 icon={LockGlyph}
-                disabled={busy}
+                disabled={busy || targetBlocked !== undefined}
+                tooltip={targetBlocked}
                 loading={saving}
                 loadingLabel={waiting ? PROVIDER_COPY.waitingTouchID : '确认中…'}
                 onClick={confirmHere}>
@@ -1356,12 +1332,12 @@ function ProviderPage({
               </Button>
             ) : undefined
           }>
-          {keyEditable ? undefined : PROVIDER_COPY.missingKeyElsewhere(provider.name, computer)}
+          {keyEditable ? undefined : (targetBlocked ?? PROVIDER_COPY.missingKeyElsewhere(provider.name, computer))}
         </InlineNotice>
       )}
       <InlineConfirm active={saving} rank={1} />
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
-      <SettingsGroup title="连接">
+      <SettingsGroup title="连接" caption={targetBlocked}>
         <SwitchRow
           className="settings-row"
           title="启用"
@@ -1383,7 +1359,8 @@ function ProviderPage({
           trailing={
             <Button
               variant="ghost"
-              disabled={busy}
+              disabled={busy || targetBlocked !== undefined}
+              tooltip={targetBlocked}
               onClick={() => {
                 setDialog('address')
               }}>
@@ -1399,9 +1376,9 @@ function ProviderPage({
               <ValuePicker
                 label="协议"
                 value={provider.kind}
-                disabled={busy}
+                disabled={busy || targetBlocked !== undefined}
                 bleed="end"
-                options={protocols.map(item => ({ value: item, label: kindLabels[item] }))}
+                options={protocols.map(item => ({ value: item, label: providerKindLabels[item] }))}
                 onValueChange={value => {
                   if (value !== provider.kind) {
                     probe.reset()
@@ -1440,7 +1417,7 @@ function ProviderPage({
         <BudgetRow scope="service" id={provider.id} spend={spending.spend} admin={admin} disabled={busy} onChanged={spending.reload} />
         <CheckRow
           busy={probe.busy === 'check'}
-          disabled={busy || unconfirmed || keyless}
+          disabled={busy || !configReady || unconfirmed || keyless}
           disabledReason={unconfirmed ? PROVIDER_COPY.checkNeedsAddress : keyless ? PROVIDER_COPY.checkNeedsKey : undefined}
           result={probe.check}
           reasonBelow={failedAction !== undefined}
@@ -1454,7 +1431,7 @@ function ProviderPage({
         <LocalAddressNotice
           target={localTarget}
           abilities={abilities}
-          busy={busy}
+          busy={busy || targetBlocked !== undefined}
           waiting={saving && waiting}
           actionLabel={PROVIDER_COPY.allowAgain(localTarget)}
           elsewhere={abilities.offline ? offlineText(abilities, provider.id) : PROVIDER_COPY.allowElsewhere(computer)}
@@ -1613,7 +1590,7 @@ function ProviderPage({
         }}
       />
       <FieldDialog
-        open={dialog === 'address'}
+        open={dialog === 'address' && targetBlocked === undefined}
         title="修改地址"
         label={SERVICE_FORM.address}
         type="url"
@@ -1631,9 +1608,9 @@ function ProviderPage({
         }}
       />
       <FieldDialog
-        open={dialog === 'key'}
+        open={dialog === 'key' && keyEditable && !!newKeyScope}
         title={provider.hasKey ? '替换密钥' : '设置密钥'}
-        subtitle={scope ? `密钥只发往 ${scope}` : undefined}
+        subtitle={newKeyScope ? `密钥只发往 ${shownAddress(newKeyScope)}` : undefined}
         label={SERVICE_FORM.key}
         type="password"
         placeholder="输入密钥"
@@ -1682,488 +1659,48 @@ function ProviderPage({
   )
 }
 
-const EMPTY_PROVIDERS: ProviderSettings[] = []
-const EMPTY_PRESETS: ProviderPreset[] = []
-
-/** What a service's row says about it: facts it knows, or what the latest listing in this visit found. */
-type Health = ServiceHealth
-
-/** How many services are asked at once; each answer can take up to 20 seconds. */
-const CHECKS_AT_ONCE = 4
-
-/**
- * 已连接 has to be something the app just saw, not something it assumes from a saved key, so opening the page lists each
- * usable service's models once. A listing spends no tokens. A new address or key asks again, and a check on a service's
- * own page counts too, so its row never disagrees with the page.
- */
-function useServiceHealth(
-  providers: readonly ProviderSettings[],
-  presets: readonly ProviderPreset[],
-): { health: Record<string, Health>; recheck: (id: string) => void; report: (id: string, failure: ProbeFailure | null) => void } {
-  const [health, setHealth] = useState<Record<string, Health>>({})
-  const usable = useMemo(
-    () => providers.filter(provider => provider.enabled && !isUnconfirmed(provider) && !missingKey(provider, presets)),
-    [providers, presets],
-  )
-  const asked = useRef(new Map<string, string>())
-  const questions = useRef(latestQuestions())
-  useEffect(() => {
-    const due = usable.filter(provider => asked.current.get(provider.id) !== provider.baseURL)
-    if (due.length === 0) return
-    for (const provider of due) asked.current.set(provider.id, provider.baseURL)
-    setHealth(current => ({ ...current, ...Object.fromEntries(due.map(provider => [provider.id, 'checking' as const])) }))
-    const queue = due.map(provider => ({ id: provider.id, latest: questions.current.ask(provider.id) }))
-    const next = async (): Promise<void> => {
-      const question = queue.shift()
-      if (!question) return
-      if (question.latest()) {
-        const result = await listModels(question.id).then(
-          () => serviceHealth(null),
-          (cause: unknown) => serviceHealth(describeProbeFailure(cause)),
-        )
-        if (question.latest()) setHealth(current => ({ ...current, [question.id]: result }))
-      }
-      await next()
-    }
-    for (let worker = 0; worker < CHECKS_AT_ONCE; worker++) void next()
-  }, [usable])
-  return {
-    health,
-    recheck: id => {
-      asked.current.delete(id)
-    },
-    report: useCallback((id, failure) => {
-      questions.current.ask(id)
-      setHealth(current => ({ ...current, [id]: serviceHealth(failure) }))
-    }, []),
-  }
-}
-
-/** The state at a service's end: quiet while it works, a red word with the way out when it does not. */
-function ServiceStatus({
-  provider,
-  presets,
-  health,
+export function ProviderAddContent({
+  preset,
+  data,
   abilities,
   computer,
-  onUpdateKey,
+  footer,
+  committing,
+  onPick,
+  onConfirmed,
+  onSaved,
+  onCancel,
+  onBusy,
 }: {
-  provider: ProviderSettings
-  presets: readonly ProviderPreset[]
-  health: Health | undefined
+  preset: ProviderPreset | null
+  data: ProvidersResponse
   abilities: ProviderAbilities
   computer: string
-  onUpdateKey: () => void
+  footer: HTMLElement | null
+  committing: boolean
+  onPick: (preset: ProviderPreset) => void
+  onConfirmed: (address: string) => void
+  onSaved: (provider: ProviderSettings) => void
+  onCancel: () => void
+  onBusy: (busy: boolean) => void
 }) {
-  const word = (text: string, tone?: 'err' | 'warn', reason?: string) => (
-    <span className="service-status" data-tone={tone} title={reason}>
-      {text}
-    </span>
-  )
-  if (!provider.enabled) return word('已停用')
-  if (isUnconfirmed(provider)) return word(PROVIDER_COPY.unconfirmedBadge, 'warn', PROVIDER_COPY.unconfirmedRow(computer))
-  const keyAction = (label: string) => (
-    <Button
-      variant="outline"
-      disabled={!abilities.keys}
-      tooltip={abilities.keys ? undefined : PROVIDER_COPY.keyElsewhere(computer)}
-      onClick={onUpdateKey}>
-      {label}
-    </Button>
-  )
-  if (missingKey(provider, presets))
-    return (
-      <>
-        {word(PROVIDER_COPY.missingKeyBadge, 'warn')}
-        {keyAction('设置密钥')}
-      </>
-    )
-  switch (health) {
-    case 'key':
-      return (
-        <>
-          {word('密钥无效', 'err')}
-          {keyAction('更新密钥')}
-        </>
-      )
-    case 'unreachable':
-      return word('连不上', 'err')
-    case 'local':
-      return word('等待允许', 'warn')
-    case 'ok':
-      return word('已连接', undefined, PROVIDER_COPY.connectedReason)
-    case 'checking':
-      return word('检测中')
-    default:
-      return null
-  }
-}
-
-export function ProvidersSettings({ snapshot, access, onChanged }: { snapshot: AppSnapshot; access: Access; onChanged: () => void }) {
-  const [data, setData] = useState<ProvidersResponse | null>(null)
-  const [error, setError] = useState('')
-  const [selection, setSelection] = useState<Selection>(null)
-  // A form left for a session (查看会话) opens again where it was.
-  const [adding, setAdding] = useState<{ preset: ProviderPreset | null } | null>(() => {
-    const draft = peekProviderDraft()
-    return draft ? { preset: draft.preset } : null
-  })
-  const [sheetFooter, setSheetFooter] = useState<HTMLElement | null>(null)
-  const [addCommitting, setAddCommitting] = useState(false)
-  const [keyFor, setKeyFor] = useState<ProviderSettings | null>(null)
-  const [removing, setRemoving] = useState<ProviderSettings | null>(null)
-  const load = useCallback(async (select?: Selection) => {
-    try {
-      const next = await api<ProvidersResponse>('providers')
-      setData(next)
-      setError('')
-      if (select !== undefined) setSelection(select)
-    } catch (cause) {
-      setError(errorMessage(cause))
-    }
-  }, [])
-  useEffect(() => {
-    void load()
-  }, [load])
-  const { health, recheck, report } = useServiceHealth(data?.providers ?? EMPTY_PROVIDERS, data?.presets ?? EMPTY_PRESETS)
-
-  const abilities = providerAbilities(access, hostView(snapshot)?.presence)
-  const computer = computerName(snapshot.hostName)
-  const external = snapshot.catalog?.providers.filter(provider => provider.kind === 'demo' || provider.kind === 'plugin') ?? []
-  const defaultProvider = snapshot.catalog?.defaults.model?.providerId
-  const selected =
-    selection?.kind === 'provider' ? data?.providers.filter(isSupported).find(provider => provider.id === selection.id) : undefined
-  const saved = (provider: ProviderSettings, check = false) => {
-    recheck(provider.id)
-    onChanged()
-    void load({ kind: 'provider', id: provider.id, check })
-  }
-  const deleted = () => {
-    onChanged()
-    setSelection(null)
-    void load()
-  }
-  const addService = () => {
-    setAdding({ preset: null })
-  }
-  const confirmed = (address: string) => {
-    setData(current =>
-      current && current.confirmedAddresses && !current.confirmedAddresses.includes(address)
-        ? { ...current, confirmedAddresses: [...current.confirmedAddresses, address] }
-        : current,
-    )
-    onChanged()
-  }
-
-  if (data === null)
-    return error ? (
-      <InlineNotice
-        tone="error"
-        action={
-          <Button
-            onClick={() => {
-              void load()
-            }}>
-            重试
-          </Button>
-        }>
-        {error}
-      </InlineNotice>
-    ) : (
-      <Loading />
-    )
-
-  const local = (provider: ProviderSettings) => data.presets.find(preset => preset.id === provider.presetId)?.requiresKey === false
-  const main = (
-    <>
-      {error && <InlineNotice tone="error">{error}</InlineNotice>}
-      <SettingsGroup
-        title="模型服务"
-        meta={
-          <Button variant="outline" icon={PlusGlyph} onClick={addService}>
-            {SERVICE_FORM.title}
-          </Button>
-        }>
-        {data.providers.length === 0 ? (
-          <SettingsRow title="还没有模型服务" />
-        ) : (
-          data.providers.map(provider =>
-            isSupported(provider) ? (
-              <ObjectRow
-                key={provider.id}
-                className="provider-row"
-                label={`编辑 ${provider.name}`}
-                leading={<ProviderTile provider={provider} size={24} />}
-                dim={!provider.enabled}
-                title={
-                  <span className="settings-row-name">
-                    {provider.name}
-                    {local(provider) && <span className="settings-row-note">本地</span>}
-                    {defaultProvider === provider.id && <span className="settings-row-note">默认</span>}
-                  </span>
-                }
-                description={`${kindLabels[provider.kind]} · ${provider.models.length} 个模型`}
-                onOpen={() => {
-                  setSelection({ kind: 'provider', id: provider.id })
-                }}
-                trailing={
-                  <>
-                    <HealthLine health={provider.health} />
-                    <ServiceStatus
-                      provider={provider}
-                      presets={data.presets}
-                      health={health[provider.id]}
-                      abilities={abilities}
-                      computer={computer}
-                      onUpdateKey={() => {
-                        setKeyFor(provider)
-                      }}
-                    />
-                    <Menu
-                      label={`${provider.name} 的操作`}
-                      align="end"
-                      sections={[
-                        {
-                          id: 'service',
-                          items: [
-                            {
-                              id: 'edit',
-                              label: '编辑…',
-                              icon: EditGlyph,
-                              onSelect: () => {
-                                setSelection({ kind: 'provider', id: provider.id })
-                              },
-                            },
-                            {
-                              id: 'key',
-                              label: '更新密钥…',
-                              icon: KeyRound,
-                              ...(abilities.keys ? {} : { disabledReason: PROVIDER_COPY.keyElsewhere(computer) }),
-                              onSelect: () => {
-                                setKeyFor(provider)
-                              },
-                            },
-                            {
-                              id: 'models',
-                              label: '刷新模型列表',
-                              icon: ListRestart,
-                              onSelect: () => {
-                                setSelection({ kind: 'provider', id: provider.id, fetch: true })
-                              },
-                            },
-                          ],
-                        },
-                        {
-                          id: 'danger',
-                          items: [
-                            {
-                              id: 'remove',
-                              label: '移除…',
-                              icon: TrashGlyph,
-                              danger: true,
-                              onSelect: () => {
-                                setRemoving(provider)
-                              },
-                            },
-                          ],
-                        },
-                      ]}
-                      trigger={moreButton(`${provider.name} 的操作`)}
-                    />
-                  </>
-                }
-              />
-            ) : (
-              <ObjectRow
-                key={provider.id}
-                className="provider-row"
-                label={provider.name}
-                leading={<ProviderTile provider={{ id: provider.id, kind: 'plugin' }} size={24} />}
-                dim
-                title={<span className="settings-row-name">{provider.name}</span>}
-                description="不再支持"
-                trailing={
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setRemoving(provider)
-                    }}>
-                    移除…
-                  </Button>
-                }
-              />
-            ),
-          )
-        )}
-      </SettingsGroup>
-      {external.length > 0 && (
-        <SettingsGroup title="其他来源">
-          {external.map(provider => (
-            <SettingsRow
-              key={provider.id}
-              className="provider-row is-static"
-              leading={<ProviderTile provider={provider} size={24} />}
-              record
-              title={
-                <span className="settings-row-name">
-                  {provider.name}
-                  {provider.kind === 'demo' && <DemoMark compact />}
-                </span>
-              }
-              description={provider.kind === 'demo' ? '本地脚本回复' : '由插件提供'}
-            />
-          ))}
-        </SettingsGroup>
-      )}
-      {access.local && access.admin && (
-        <ConfirmedAddresses
-          providers={data.providers}
-          revision={(data.confirmedAddresses ?? []).join('\n')}
-          onChanged={() => {
-            onChanged()
-            void load()
-          }}
+  return (
+    <div className="provider-sheet">
+      <PresetGrid presets={data.presets} chosen={preset?.id} disabled={committing} onPick={onPick} />
+      {preset && (
+        <ProviderAddForm
+          key={preset.id}
+          preset={preset}
+          data={data}
+          abilities={abilities}
+          computer={computer}
+          footer={footer}
+          onBusy={onBusy}
+          onConfirmed={onConfirmed}
+          onSaved={onSaved}
+          onCancel={onCancel}
         />
       )}
-      {snapshot.catalog?.features?.usage && <UsageSettings catalog={snapshot.catalog} />}
-      {snapshot.catalog && <ModelVisibilitySettings catalog={snapshot.catalog} />}
-      <Dialog
-        open={adding !== null}
-        size="sheet"
-        title={SERVICE_FORM.title}
-        onClose={() => {
-          if (!addCommitting) setAdding(null)
-        }}
-        footer={
-          adding?.preset ? (
-            <div ref={setSheetFooter} className="provider-sheet-footer" />
-          ) : (
-            <Button
-              size="md"
-              onClick={() => {
-                setAdding(null)
-              }}>
-              取消
-            </Button>
-          )
-        }>
-        {adding && (
-          <div className="provider-sheet">
-            <PresetGrid
-              presets={data.presets}
-              chosen={adding.preset?.id}
-              disabled={addCommitting}
-              onPick={preset => {
-                setAdding({ preset })
-              }}
-            />
-            {adding.preset && (
-              <ProviderAddForm
-                key={adding.preset.id}
-                preset={adding.preset}
-                data={data}
-                abilities={abilities}
-                computer={computer}
-                footer={sheetFooter}
-                onBusy={setAddCommitting}
-                onConfirmed={confirmed}
-                onSaved={() => {
-                  setAdding(null)
-                  onChanged()
-                  void load()
-                }}
-                onCancel={() => {
-                  if (!addCommitting) setAdding(null)
-                }}
-              />
-            )}
-          </div>
-        )}
-      </Dialog>
-      <FieldDialog
-        open={keyFor !== null}
-        title={keyFor?.hasKey ? '更新密钥' : '设置密钥'}
-        subtitle={keyFor && keyScopeOf(keyFor.baseURL) ? `密钥只发往 ${shownAddress(keyScopeOf(keyFor.baseURL)!)}` : undefined}
-        label={SERVICE_FORM.key}
-        type="password"
-        placeholder="输入密钥"
-        hint={PROVIDER_COPY.keyHeld.label}
-        confirmLabel={keyFor && isUnconfirmed(keyFor) && abilities.confirm ? '用 Touch ID 保存' : '保存'}
-        onSubmit={async value => {
-          if (!keyFor) return ''
-          try {
-            await updateProvider(keyFor.id, {
-              apiKey: value,
-              ...(isUnconfirmed(keyFor) && abilities.confirm ? { confirmOrigin: true } : {}),
-            })
-            recheck(keyFor.id)
-            onChanged()
-            await load()
-            return ''
-          } catch (cause) {
-            return inlineError(cause)
-          }
-        }}
-        onClose={() => {
-          setKeyFor(null)
-        }}
-      />
-      {removing && (
-        <ConfirmDialog
-          title={`移除「${removing.name}」？`}
-          danger
-          confirmLabel="移除"
-          message="它保存的密钥一起删除；正在使用它的会话要换用其他模型。"
-          onClose={() => {
-            setRemoving(null)
-          }}
-          onConfirm={async () => {
-            try {
-              await api(`providers/${encodeURIComponent(removing.id)}`, { method: 'DELETE' })
-            } catch (cause) {
-              throw new MessageError(errorMessage(cause), { cause })
-            }
-            deleted()
-          }}
-        />
-      )}
-    </>
+    </div>
   )
-
-  const levels: SettingsLevel[] = []
-  const notice: ReactNode = error ? <InlineNotice tone="error">{error}</InlineNotice> : null
-  if (selected)
-    levels.push({
-      key: `provider:${selected.id}`,
-      title: selected.name,
-      onBack: () => {
-        setSelection(null)
-      },
-      content: (
-        <>
-          {notice}
-          <ProviderPage
-            key={selected.id}
-            admin={access.admin}
-            supportsAttachments={snapshot.catalog?.features?.attachments === true}
-            provider={selected}
-            data={data}
-            abilities={abilities}
-            isDefault={defaultProvider === selected.id}
-            checkOnOpen={selection?.kind === 'provider' && selection.check === true}
-            fetchOnOpen={selection?.kind === 'provider' && selection.fetch === true}
-            computer={computer}
-            onProbed={failure => {
-              report(selected.id, failure)
-            }}
-            onSaved={provider => {
-              saved(provider)
-            }}
-            onDeleted={deleted}
-          />
-        </>
-      ),
-    })
-
-  return <SettingsPages main={main} levels={levels} />
 }

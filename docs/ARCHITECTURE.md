@@ -470,7 +470,7 @@ Host 约每 40ms 合并一次变化，把选中会话的 `task-state` 推送给�
 | `POST /native/pairings`、`GET`/`DELETE /native/pairings/:id` | 本机 `host.sock` 的 `admin` 设备 | 手机配对二维码：打开局域网入口后签发（无网络时 409 `native-no-lan`，完全访问时 409 `presence-blocked`）、跟随状态、撤销；`DELETE /native/pairings/:id/device` 移除确认后被否认的设备 |
 | `PATCH /devices/:id/name` | 桌面端 `admin` | 重命名任一设备 |
 | `POST /pairings` | 桌面端 `admin` 或匿名 `host.sock` | 生成配对邀请 `{ scopes?, target? }`：`target` 为 `tls`（默认，另一台电脑或手机；未配置 HTTPS 入口时 409 `tls-not-configured`）或 `loopback`（这台电脑上的浏览器）。桌面端只由主进程调用，页面经转发一律 403 `shell-managed` |
-| `GET/POST /providers`、`PUT/DELETE /providers/:id`、`GET/PUT /provider` | `admin`；填写密钥另需 `secrets`（只在桌面端）；确认地址（`confirmOrigin`）只在桌面端，经本机确认 | 模型服务；`GET /providers` 另返回 `confirmedAddresses` 与本次运行放行的源 `runOrigins`，每个服务带 `destination` |
+| `GET/POST /providers`、`PUT/DELETE /providers/:id`、`GET/PUT /provider` | `admin`；填写密钥另需 `secrets`（只在桌面端）；确认地址（`confirmOrigin`）只在桌面端，经本机确认 | 模型服务；`GET /providers` 另返回 `confirmedAddresses` 与本次运行放行的源 `runOrigins`，每个服务带 `destination`。现有服务的地址、协议、密钥写入与地址确认带 `expectedTarget`，Host 在准备确认和串行修改时核对 |
 | `POST /provider-origins` | `admin`，只在桌面端；尚未确认的地址经本机确认 | 保存服务之前确认一个模型服务地址 |
 | `POST /providers/:id/models`、`POST /provider-checks` | `admin` | 经出站策略获取模型列表、检测连接；用已保存的密钥时只发往已确认的地址 |
 | `GET/POST /agents`、`PUT/DELETE /agents/:id` | `admin`；新增与改命令、参数、变量要 `host.sock` 与本机确认 `harness.command.apply` | ACP Agent 定义；环境变量只返回名称，预设带命令检测结果，`started` 说明是否已以当前定义开启过 L3 会话 |

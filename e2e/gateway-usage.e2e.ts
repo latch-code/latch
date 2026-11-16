@@ -60,18 +60,26 @@ describe('model usage in settings', () => {
       await putSpend('model-prices', { providerId, model: MODEL, prices: { currency, input: 1000, output: 1000 } })
     await limit(15)
     await putSpend('model-budgets', { scope: 'agent', id: agent.id, budget: { unit: 'tokens', limit: 25 } })
+    const waitIdle = async (sessionId: string) => {
+      await vi.waitFor(async () => {
+        expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+      })
+    }
     const send = async (target: { customAgentId: string } | { model: typeof model; mode: 'chat'; harnessId: 'standard' }) => {
       const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
         method: 'POST',
         body: { ...target, prompt: '请回答。', requestId: randomUUID() },
       })
-      await vi.waitFor(async () => {
-        expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
-      })
+      await waitIdle(sessionId)
+      return sessionId
     }
     await send({ model, harnessId: 'standard', mode: 'chat' })
-    await send({ customAgentId: agent.id })
-    await send({ customAgentId: agent.id })
+    const agentChat = await send({ customAgentId: agent.id })
+    await owner.json(`tasks/${agentChat}/prompt`, {
+      method: 'POST',
+      body: { prompt: '请继续。', requestId: randomUUID() },
+    })
+    await waitIdle(agentChat)
     expect(primary.requests).toHaveLength(1)
     expect(backup.requests).toHaveLength(2)
     browser = await chromium.launch(browserLaunchOptions())

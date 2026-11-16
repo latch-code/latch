@@ -371,13 +371,22 @@ export async function createProvider(input: NewProvider, options: ConfirmOptions
   return result.provider
 }
 
-/** One change to a saved service (`confirmOrigin` confirms its address); a confirmation resends the identical body. */
-export async function updateProvider(id: string, body: Record<string, unknown>, options: ConfirmOptions = {}): Promise<ProviderSettings> {
+export const changesProviderTarget = (body: Record<string, unknown>) =>
+  body.baseURL !== undefined || body.kind !== undefined || !!body.apiKey || body.confirmOrigin === true
+
+/** The same body, including the displayed target, is used for every attempt at confirming this edit. */
+export async function updateProvider(
+  provider: Pick<ProviderSettings, 'id' | 'baseURL' | 'kind'>,
+  body: Record<string, unknown>,
+  options: ConfirmOptions = {},
+): Promise<ProviderSettings> {
+  const { id, baseURL, kind } = provider
+  const input = changesProviderTarget(body) ? { ...body, expectedTarget: { baseURL, kind } } : body
   const result = await withConfirmation(
     confirmation =>
       api<{ provider: ProviderSettings }>(`providers/${encodeURIComponent(id)}`, {
         method: 'PUT',
-        body,
+        body: input,
         ...(confirmation ? { confirmation } : {}),
       }),
     options.presenter ? { presenter: options.presenter } : {},

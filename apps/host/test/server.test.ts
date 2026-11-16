@@ -2414,6 +2414,92 @@ describe('full-access (L3) sessions', () => {
 })
 
 describe('providers', () => {
+  it('binds an existing service key entry to the reviewed target across an administrator move', async () => {
+    const first = await localModel()
+    const second = await localModel()
+    const t = await testHost({ demo: false, egressAllow: [first.allow, second.allow] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const admin = await t.enroll({ scopes: [...ADMIN] })
+    const kind = 'openai-compatible'
+    const { provider } = await desktop.json<{ provider: ProviderSettings }>('providers', {
+      body: { name: 'Fixture service', kind, baseURL: first.baseURL, defaultModel: 'alpha' },
+    })
+    const path = `providers/${provider.id}`
+    const expectedTarget = { kind, baseURL: provider.baseURL }
+    await admin.json(path, { method: 'PUT', body: { expectedTarget, baseURL: second.baseURL } })
+    const opaqueValue = randomUUID()
+    const checks = [
+      [{ apiKey: opaqueValue }, 'provider-target-required'],
+      [{ apiKey: opaqueValue, expectedTarget }, 'provider-target-changed'],
+      [{ apiKey: opaqueValue, expectedTarget: { kind: 'anthropic', baseURL: second.baseURL } }, 'provider-target-changed'],
+    ] as const
+    const firstAudit = (await auditRecords(t)).filter(item => item.action === 'provider.secret.set').length
+    for (const [input, error] of checks) {
+      const refused = await desktop.request(path, { method: 'PUT', body: input })
+      expect.soft(refused.status).toBe(409)
+      expect.soft(await body(refused)).toMatchObject({ error })
+    }
+    await desktop.json(`${path}/models`, { method: 'POST' })
+    expect.soft(second.listings.some(({ authorization }) => authorization === `Bearer ${opaqueValue}`)).toBe(false)
+    expect.soft(first.listings.length).toBe(0)
+    expect.soft((await auditRecords(t)).filter(item => item.action === 'provider.secret.set').length).toBe(firstAudit)
+
+    const { providers } = await desktop.json<{ providers: ProviderSettings[] }>('providers')
+    const live = providers.find(item => item.id === provider.id)!
+    expect(live.baseURL).toBe(second.baseURL)
+    const current = { kind: live.kind, baseURL: `${live.baseURL}/` }
+    const saved = await desktop.request(path, { method: 'PUT', body: { apiKey: opaqueValue, expectedTarget: current } })
+    expect(saved.status).toBe(200)
+    await desktop.json(`${path}/models`, { method: 'POST' })
+    expect(second.listings.at(-1)?.authorization === `Bearer ${opaqueValue}`).toBe(true)
+  })
+
+  it('rechecks a service target inside the write lock after destination planning has waited', async () => {
+    const first = await localModel()
+    const second = await localModel()
+    const source = new URL(first.baseURL)
+    source.hostname = 'fixture-provider.test'
+    let release!: () => void
+    const pending = new Promise<void>(done => {
+      release = done
+    })
+    let inspecting = false
+    const t = await testHost({
+      demo: false,
+      egressAllow: [source.host, second.allow],
+      egressLookup(host, _options, done) {
+        if (host !== source.hostname) return done(new Error('Unexpected fixture hostname'), [])
+        inspecting = true
+        void pending.then(() => done(null, [{ address: '127.0.0.1', family: 4 }]))
+      },
+    })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const admin = await t.enroll({ scopes: [...ADMIN] })
+    const kind = 'openai-compatible'
+    const { provider } = await desktop.json<{ provider: ProviderSettings }>('providers', {
+      body: { name: 'Awaited fixture service', kind, baseURL: source.href, defaultModel: 'alpha' },
+    })
+    const path = `providers/${provider.id}`
+    const expectedTarget = { kind, baseURL: provider.baseURL }
+    const writing = desktop.request(path, {
+      method: 'PUT',
+      body: { apiKey: randomUUID(), confirmOrigin: true, expectedTarget },
+    })
+    try {
+      await vi.waitFor(() => expect(inspecting).toBe(true))
+      await admin.json(path, { method: 'PUT', body: { baseURL: second.baseURL, expectedTarget } })
+    } finally {
+      release()
+    }
+    const refused = await writing
+    expect(refused.status).toBe(409)
+    expect(await body(refused)).toMatchObject({ error: 'provider-target-changed' })
+    const current = (await desktop.json<{ providers: ProviderSettings[] }>('providers')).providers.find(item => item.id === provider.id)
+    expect(current).toMatchObject({ baseURL: second.baseURL, hasKey: false })
+    expect((await auditRecords(t)).some(item => item.action === 'provider.secret.set')).toBe(false)
+    expect(first.listings.length + second.listings.length).toBe(0)
+  })
+
   it('sets a key only from the desktop with secrets, confirming a new address once with the key and its allowance', async () => {
     const model = await localModel()
     const t = await testHost({ demo: false })
@@ -2426,15 +2512,21 @@ describe('providers', () => {
       body: { name: 'Local Lab', kind: 'openai-compatible', baseURL: model.baseURL, models: ['alpha'], defaultModel: 'alpha' },
     })
     expect(created.provider).toMatchObject({ id: 'local-lab', hasKey: false, destination: 'unconfirmed' })
+    const expectedTarget = { baseURL: model.baseURL, kind: 'openai-compatible' }
     expect(await body(await browser.request('providers/local-lab', { method: 'PUT', body: { apiKey: 'secret-1' } }))).toMatchObject({
       error: 'scope-required',
       required: 'secrets',
     })
-    expect(await body(await browser.request('providers/local-lab', { method: 'PUT', body: { confirmOrigin: true } }))).toMatchObject({
+    expect(
+      await body(await browser.request('providers/local-lab', { method: 'PUT', body: { confirmOrigin: true, expectedTarget } })),
+    ).toMatchObject({
       error: 'local-only',
     })
     const before = t.presence.requests.length
-    const keyed = await desktop.confirmed('providers/local-lab', { method: 'PUT', body: { apiKey: 'secret-1', confirmOrigin: true } })
+    const keyed = await desktop.confirmed('providers/local-lab', {
+      method: 'PUT',
+      body: { apiKey: 'secret-1', confirmOrigin: true, expectedTarget },
+    })
     expect(keyed.status).toBe(200)
     expect(t.presence.requests.length).toBe(before + 1)
     const settings = (await body<{ provider: ProviderSettings }>(keyed)).provider
@@ -2463,7 +2555,7 @@ describe('providers', () => {
       detail: { fields: ['confirmedAddresses', 'hostEgressAllow'], lowering: false },
     })
     // A confirmed address is confirmed once: a new key, or another service there, needs no confirmation.
-    expect((await desktop.request('providers/local-lab', { method: 'PUT', body: { apiKey: 'secret-1' } })).status).toBe(200)
+    expect((await desktop.request('providers/local-lab', { method: 'PUT', body: { apiKey: 'secret-1', expectedTarget } })).status).toBe(200)
     expect(
       (
         await desktop.request('providers', {
@@ -2499,7 +2591,7 @@ describe('providers', () => {
     expect(model.listings.at(-1)).toEqual({ authorization: 'Bearer secret-1' })
     const moved = await browser.json<{ provider: ProviderSettings }>('providers/local-lab', {
       method: 'PUT',
-      body: { baseURL: 'http://127.0.0.1:9/v1' },
+      body: { baseURL: 'http://127.0.0.1:9/v1', expectedTarget },
     })
     expect(moved.provider.hasKey).toBe(false)
     expect((await HostConfig.open(t.dataDir)).provider('local-lab')).toMatchObject({ apiKey: '' })
@@ -2603,7 +2695,7 @@ describe('providers', () => {
     await run('high')
     const changed = await desktop.json<{ provider: ProviderSettings }>(`providers/${provider.id}`, {
       method: 'PUT',
-      body: { kind: 'openai-responses' },
+      body: { kind: 'openai-responses', expectedTarget: { kind: provider.kind, baseURL: provider.baseURL } },
     })
     expect(changed.provider).toMatchObject({
       kind: 'openai-responses',
@@ -2626,7 +2718,11 @@ describe('providers', () => {
     // Levels sent with the new protocol are that protocol's, and stay.
     const back = await desktop.json<{ provider: ProviderSettings }>(`providers/${provider.id}`, {
       method: 'PUT',
-      body: { kind: 'openai-compatible', modelCapabilities: { 'fake-model': { thinking: ['low', 'high'] } } },
+      body: {
+        kind: 'openai-compatible',
+        modelCapabilities: { 'fake-model': { thinking: ['low', 'high'] } },
+        expectedTarget: { kind: changed.provider.kind, baseURL: changed.provider.baseURL },
+      },
     })
     expect(back.provider.modelCapabilities).toEqual({ 'fake-model': { thinking: ['low', 'high'] } })
     expect((await run('high')).messages.at(-1)).toMatchObject({ role: 'assistant', text: 'ok' })
@@ -2859,7 +2955,14 @@ describe('providers', () => {
     expect((await browser.request('providers/deepseek', { method: 'PUT', body: { enabled: false } })).status).toBe(200)
     expect((await catalog())?.unusableProviders).toEqual([])
     expect((await browser.request('providers/deepseek', { method: 'PUT', body: { enabled: true } })).status).toBe(200)
-    expect((await desktop.request('providers/deepseek', { method: 'PUT', body: { apiKey: 'sk-preset' } })).status).toBe(200)
+    expect(
+      (
+        await desktop.request('providers/deepseek', {
+          method: 'PUT',
+          body: { apiKey: 'sk-preset', expectedTarget: { kind: 'openai-compatible', baseURL: 'https://api.deepseek.com/v1' } },
+        })
+      ).status,
+    ).toBe(200)
     expect((await catalog())?.providers.map(provider => provider.id)).toContain('deepseek')
     expect((await catalog())?.unusableProviders).toEqual([])
   })
@@ -3006,7 +3109,14 @@ describe('providers', () => {
       provider: { id: 'deepseek', hasKey: true, keyOrigin: 'https://api.deepseek.com:443', keyPath: '/v1' },
     })
     // Replacing it and saving another preset's key: still no confirmation.
-    expect((await desktop.request('providers/deepseek', { method: 'PUT', body: { apiKey: 'sk-preset-2' } })).status).toBe(200)
+    expect(
+      (
+        await desktop.request('providers/deepseek', {
+          method: 'PUT',
+          body: { apiKey: 'sk-preset-2', expectedTarget: { kind: 'openai-compatible', baseURL: 'https://api.deepseek.com/v1' } },
+        })
+      ).status,
+    ).toBe(200)
     expect(
       (
         await desktop.request('providers', {
@@ -3029,7 +3139,10 @@ describe('providers', () => {
 
     // Only the exact preset origin: plain HTTP, another port or another host of the same brand is not a preset.
     for (const baseURL of ['http://api.deepseek.com/v1', 'https://api.deepseek.com:8443/v1', 'https://deepseek.example/v1']) {
-      const response = await desktop.request('providers/deepseek', { method: 'PUT', body: { baseURL, apiKey: 'sk-other' } })
+      const response = await desktop.request('providers/deepseek', {
+        method: 'PUT',
+        body: { baseURL, apiKey: 'sk-other', expectedTarget: { kind: 'openai-compatible', baseURL: 'https://api.deepseek.com/v1' } },
+      })
       expect(response.status).toBe(403)
       expect(await body(response)).toMatchObject({ error: 'stepup-required' })
     }
@@ -3076,12 +3189,17 @@ describe('providers', () => {
     expect(elsewhere.status).toBe(409)
     expect(await body(elsewhere)).toMatchObject({ error: 'key-origin-mismatch' })
     // The same path spelled with a trailing slash keeps the key.
-    expect(await desktop.json('providers/gateway', { method: 'PUT', body: { baseURL: `${tenantA}/` } })).toMatchObject({
+    expect(
+      await desktop.json('providers/gateway', {
+        method: 'PUT',
+        body: { baseURL: `${tenantA}/`, expectedTarget: { kind: 'openai-compatible', baseURL: tenantA } },
+      }),
+    ).toMatchObject({
       provider: { hasKey: true },
     })
     const moved = await desktop.json<{ provider: ProviderSettings }>('providers/gateway', {
       method: 'PUT',
-      body: { baseURL: model.baseURL.replace(/\/v1$/u, '/tenant-b/v1') },
+      body: { baseURL: model.baseURL.replace(/\/v1$/u, '/tenant-b/v1'), expectedTarget: { kind: 'openai-compatible', baseURL: tenantA } },
     })
     expect(moved.provider.hasKey).toBe(false)
     expect((await HostConfig.open(t.dataDir)).provider('gateway')).toMatchObject({ apiKey: '' })
