@@ -208,7 +208,7 @@ const browserTab = tabId => (typeof tabId === 'string' && BROWSER_TAB.test(tabId
 const browserProject = projectId => (typeof projectId === 'string' && PROJECT_ID.test(projectId) ? projectId : undefined)
 const BROWSER_SESSION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
 const browserSession = sessionId => (typeof sessionId === 'string' && BROWSER_SESSION.test(sessionId) ? sessionId : undefined)
-const BROWSER_PRESETS = new Set(['fit', 'phone', 'tablet', 'desktop'])
+const BROWSER_PRESETS = new Set(['fit', 'phone-small', 'phone', 'phone-large', 'android', 'tablet', 'desktop'])
 const BROWSER_SCHEMES = new Set(['system', 'light', 'dark'])
 /** Exactly x and y, finite and not negative: a point of the tab in CSS pixels of the page. */
 const browserPoint = point =>

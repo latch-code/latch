@@ -306,7 +306,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await panel.getByRole('button', { name: '视口：适应面板', exact: true }).click()
       await page.getByRole('menuitemradio', { name: /^手机/u }).click()
       await waitFor(async () => (await width()) === 390)
-      await panel.getByText(/^390 × 844 · \d+%$/u).waitFor()
+      await panel.getByText(/^390 × 844 @3x · \d+%$/u).waitFor()
+      // A phone has Latch's frame around it, outside the page.
+      await panel.locator('.browser-phone-frame').waitFor()
       const phone = (await viewOf(guestId))!.bounds
       expect(phone.width).toBeLessThan(placed.width)
       expect(phone.height / phone.width).toBeCloseTo(844 / 390, 1)
@@ -314,6 +316,26 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await panel.getByRole('button', { name: '旋转', exact: true }).click()
       await waitFor(async () => (await width()) === 844)
       await panel.getByRole('button', { name: '视口：手机', exact: true }).click()
+      await page.getByRole('menuitemradio', { name: /^Android 手机/u }).click()
+      // A fractional pixel ratio may round the layout width by one pixel.
+      await waitFor(async () => Math.abs((await width()) - 915) <= 1)
+      // The panel has the new preset before it turns it.
+      await panel.getByRole('button', { name: '视口：Android 手机', exact: true }).waitFor()
+      await panel.getByRole('button', { name: '旋转', exact: true }).click()
+      await waitFor(async () => Math.abs((await width()) - 412) <= 1)
+      expect(await inGuest<number>(guestId, 'devicePixelRatio')).toBeCloseTo(2.625, 2)
+      await captureThemes(app, page, 'android--1440')
+      for (const [label, size] of [
+        ['小屏手机', 375],
+        ['大屏手机', 440],
+      ] as const) {
+        await panel.locator('.browser-toolbar button[aria-label^="视口："]').click()
+        await page.getByRole('menuitemradio', { name: new RegExp(`^${label}`, 'u') }).click()
+        await waitFor(async () => (await width()) === size)
+        await panel.getByRole('button', { name: `视口：${label}`, exact: true }).waitFor()
+        await captureThemes(app, page, `${size === 375 ? 'phone-small' : 'phone-large'}--1440`)
+      }
+      await panel.getByRole('button', { name: '视口：大屏手机', exact: true }).click()
       await page.getByRole('menuitemradio', { name: '适应面板', exact: true }).click()
       await waitFor(async () => (await width()) === placed.width)
 

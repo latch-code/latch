@@ -1363,10 +1363,13 @@ describe('preview browser, version 2', () => {
       screenPosition: 'mobile',
       screenSize: { width: 390, height: 844 },
       viewPosition: { x: 0, y: 0 },
-      deviceScaleFactor: 0,
+      deviceScaleFactor: 3,
       viewSize: { width: 390, height: 844 },
       scale: 0.5,
     })
+    // Each phone renders at its own pixel ratio; only the size and the ratio are emulated.
+    controller.viewport({ tabId, preset: 'android', rotated: false })
+    expect(contents.emulation.at(-1)).toMatchObject({ screenSize: { width: 412, height: 915 }, deviceScaleFactor: 2.625 })
     controller.viewport({ tabId, preset: 'desktop', rotated: true })
     expect(contents.emulation.at(-1)).toMatchObject({ screenPosition: 'desktop', viewSize: { width: 800, height: 1280 } })
     // A new document keeps it.

@@ -185,11 +185,11 @@ export const BROWSER_TOOL_DEFINITIONS: readonly Definition[] = [
     title: '设置视口',
     kind: 'other',
     description:
-      "Lay a tab's page out as a phone (390×844), tablet (820×1180) or desktop (1280×800), or fit the panel; and its prefers-color-scheme.",
+      "Lay a tab's page out as a small phone (375×667 @2x), phone (390×844 @3x), large phone (440×956 @3x), Android phone (412×915 @2.625x), tablet (820×1180) or desktop (1280×800), or fit the panel; and its prefers-color-scheme. Size and pixel ratio only: the user agent and touch events stay the desktop's.",
     parameters: object(
       {
         tabId,
-        preset: { type: 'string', enum: ['fit', 'phone', 'tablet', 'desktop'] },
+        preset: { type: 'string', enum: ['fit', 'phone-small', 'phone', 'phone-large', 'android', 'tablet', 'desktop'] },
         rotated: { type: 'boolean' },
         colorScheme: { type: 'string', enum: ['system', 'light', 'dark'] },
       },

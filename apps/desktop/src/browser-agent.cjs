@@ -139,7 +139,7 @@ const AGENT_INPUTS = Object.freeze({
   browser_viewport: args =>
     shaped(args, {
       tabId: required(tab),
-      preset: optional(oneOf(['fit', 'phone', 'tablet', 'desktop'])),
+      preset: optional(oneOf(['fit', 'phone-small', 'phone', 'phone-large', 'android', 'tablet', 'desktop'])),
       rotated: optional(bool),
       colorScheme: optional(oneOf(['system', 'light', 'dark'])),
     }),

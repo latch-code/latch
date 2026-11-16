@@ -46,11 +46,17 @@ const TAB_ID = /^brw_[A-Za-z0-9_-]{22}$/
 const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/
 /** As the Host hands out session IDs (and as folders.cjs and the preload check them). */
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
-/** The viewport presets, in CSS pixels upright; 「适应面板」 (`fit`) is the panel's own size. */
+/**
+ * The viewport presets, in CSS pixels upright, with the device pixel ratio the page renders at; 「适应面板」 (`fit`) is
+ * the panel's own size. Only the size and the ratio are emulated: no user agent and no touch events (docs/PREVIEW-BROWSER.md).
+ */
 const VIEWPORTS = Object.freeze({
-  phone: Object.freeze({ width: 390, height: 844 }),
-  tablet: Object.freeze({ width: 820, height: 1180 }),
-  desktop: Object.freeze({ width: 1280, height: 800 }),
+  'phone-small': Object.freeze({ width: 375, height: 667, scale: 2 }),
+  phone: Object.freeze({ width: 390, height: 844, scale: 3 }),
+  'phone-large': Object.freeze({ width: 440, height: 956, scale: 3 }),
+  android: Object.freeze({ width: 412, height: 915, scale: 2.625 }),
+  tablet: Object.freeze({ width: 820, height: 1180, scale: 2 }),
+  desktop: Object.freeze({ width: 1280, height: 800, scale: 0 }),
 })
 const VIEWPORT_PRESETS = new Set(['fit', ...Object.keys(VIEWPORTS)])
 /** What `prefers-color-scheme` a tab's pages see: the system's, or light or dark as the person chose. */
@@ -1410,7 +1416,7 @@ function createPreviewBrowser(options) {
       screenPosition: tab.viewport.preset === 'desktop' ? 'desktop' : 'mobile',
       screenSize: size,
       viewPosition: { x: 0, y: 0 },
-      deviceScaleFactor: 0,
+      deviceScaleFactor: VIEWPORTS[tab.viewport.preset].scale,
       viewSize: size,
       scale: tab.scale,
     })

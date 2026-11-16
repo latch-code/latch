@@ -63,7 +63,7 @@ sources:
 | `capture(tabId)` |  | `{ ok, image }` |
 | `annotate(tabId, point)` | `{ x, y }`，从标签左上角算起的页面 CSS 像素 | `{ ok, target }` |
 | `hitTest(tabId, point)` | 同上 | `{ ok, target: { tag, rect } }` |
-| `setViewport(tabId, preset, rotated)` | `fit`、`phone` 390×844、`tablet` 820×1180、`desktop` 1280×800 | `{ ok, viewport, size }` |
+| `setViewport(tabId, preset, rotated)` | `fit`、`phone-small` 375×667 @2x、`phone` 390×844 @3x、`phone-large` 440×956 @3x、`android` 412×915 @2.625x、`tablet` 820×1180 @2x、`desktop` 1280×800 | `{ ok, viewport, size }` |
 | `setColorScheme(tabId, scheme)` | `system`、`light` 或 `dark` | `{ ok, colorScheme }` |
 | `logs(tabId)` |  | `{ ok, console, network }`：各自最近 200 条 |
 | `zoom(tabId, direction)` | `in`、`out` 或 `reset` | `{ ok, zoom }` |
@@ -119,7 +119,9 @@ sources:
 
 ## 视口、外观、控制台与网络
 
-- **视口。** 预设用 `enableDeviceEmulation` 按预设尺寸排版（手机与平板按移动设备），再按视图大小缩小，从不放大。旋转对调宽高。新文档沿用。
+- **视口。** 预设用 `enableDeviceEmulation` 按预设尺寸与像素比排版（手机与平板按移动设备），再按视图大小缩小，从不放大。旋转对调宽高。新文档沿用。
+- **手机外框。** 手机预设的页面外面，面板画一圈圆角外框（10px，原生视图之外，视图会盖住画在它上面的东西），外框两侧的短线标出顶部与底部安全区伸到页面里多远。这只是示意：页面拿不到 `env(safe-area-inset-*)`。
+- 移动端的用户代理与触摸事件尚未实现：那要经调试接口发 `Emulation.setUserAgentOverride` 与 `setTouchEmulationEnabled`，扩大了调试接口的用途，需要单独的安全审阅。要看真的 Safari，用[设备](DEVICE-PREVIEW.md)面板在模拟器里打开地址。
 - **外观。** 只在选了浅色或深色时，主进程连上这个标签自己的 `webContents.debugger`，只发 `Emulation.setEmulatedMedia`（`prefers-color-scheme`）；「跟随系统」清除模拟并断开。调试接口被占用（例如开发者工具）时回答 `emulation-failed`，被断开时标签回到跟随系统。
 - **控制台。** 每条去掉控制字符、格式字符（双向、零宽、软连字符、Unicode 标签）、其他默认可忽略的字符与行、段分隔符，截到 500 个字符，记来源的源与路径。每个标签在环形缓冲里保留最新 500 条，每条带递增的序号。
 - 只因为是 Latch 的预览才出现的两条警告（Chromium 关于 Latch 加给每个文档的沙箱的警告、Electron 未打包时的不安全 CSP 警告）按原文精确匹配后不记，也不计数。
