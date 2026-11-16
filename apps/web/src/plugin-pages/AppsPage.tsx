@@ -51,6 +51,7 @@ import { withConfirmation } from '../core/confirmations.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { NavTop, NewSessionRow, ShellNewAgent, ShellNavFoot, shellSpaces } from '../shell/SpaceNav.tsx'
+import { SidebarComputer } from '../shell/WorkbenchNav.tsx'
 import { settingsSections } from '../settings/SettingsPage.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { AppTarget } from '../shell/routes.ts'
@@ -137,9 +138,7 @@ function AppsNav({ shell, current }: { shell: ShellState; current: AppTarget | u
         }
         onSearch={shell.openSearch}
         drawer={false}
-        onManageComputers={() => {
-          shell.openSettings('computers')
-        }}
+        computer={computers => <SidebarComputer shell={shell} computers={computers} />}
       />
       {!spaces && (
         <button

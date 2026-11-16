@@ -1,3 +1,4 @@
+import type { ComponentProps } from 'react'
 import {
   Button,
   OverviewGlyph,
@@ -11,6 +12,7 @@ import {
   PanelLeftGlyph,
   HistoryGlyph,
   LaptopGlyph,
+  ICON_STROKE,
   Kbd,
   LiveDot,
   StatusStrip,
@@ -19,10 +21,11 @@ import {
 import { currentShell, lightsStyle, useTrafficLights, type ComputersView } from '../core/shell.ts'
 import { ShellNewAgent, SpaceButtons, SpaceSwitch, shellOverview, shellSpaces } from './SpaceNav.tsx'
 import { BrandMark } from '../components/ui.tsx'
-import { ComputerMenu } from '../components/Computers.tsx'
-import { connectionTransport, useComputers } from '../core/computers.ts'
+import { ComputerChip, SidebarComputerTrigger } from '../components/Computers.tsx'
+import { CONNECTION_WORDS, connectionTransport, useComputers } from '../core/computers.ts'
+import { connectWays } from '../settings/devices/deviceRows.ts'
+import { settingsSections } from '../settings/SettingsPage.tsx'
 import { hostView } from '../core/permissions.ts'
-import { computerName } from '../core/securityCopy.ts'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
 import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { WorkbenchPanes } from './WorkbenchPanes.tsx'
@@ -64,42 +67,97 @@ export function TabletRail({ shell }: { shell: ShellState }) {
   )
 }
 
+/** The computer's name as a quiet button: in the status bar, the 顶栏 layout and 我的 Agent's foot. */
+const chipTrigger: ComponentProps<typeof ComputerChip>['trigger'] = (props, here) => (
+  <Button {...props} variant="ghost" className="workbench-computer-button" icon={LaptopGlyph} title={here.name}>
+    <span className="sidebar-host-name">{here.name}</span>
+  </Button>
+)
+
+/** The computer's name where the 顶栏 layout and 我的 Agent stand it: the trigger of the computer popover. */
 export function WorkbenchComputer({ shell }: { shell: ShellState }) {
-  return <ComputerControl shell={shell} computers={useComputers()} />
+  return <ShellComputer shell={shell} computers={useComputers()} trigger={chipTrigger} />
 }
 
-function ComputerControl({ shell, computers }: { shell: ShellState; computers: ComputersView | undefined }) {
-  const name = computerName(shell.snapshot.hostName)
-  if (!shell.entries.includes('settings'))
-    return (
-      <span className="workbench-computer">
-        <Icon icon={LaptopGlyph} size={16} />
-        <span className="sidebar-host-name">{name}</span>
-      </span>
-    )
-  return computers && computers.computers.length > 1 ? (
-    <ComputerMenu snapshot={shell.snapshot} view={computers} onManage={() => shell.openSettings('computers')} />
-  ) : (
-    <Button variant="ghost" className="workbench-computer-button" icon={LaptopGlyph} onClick={() => shell.openSettings('computers')}>
-      <span className="sidebar-host-name">{name}</span>
-    </Button>
+/** The sidebar head's computer row as the popover's trigger: 「这台 Mac」 or the computer's name, and its state. */
+export function SidebarComputer({ shell, computers }: { shell: ShellState; computers: ComputersView | undefined }) {
+  return (
+    <ShellComputer
+      shell={shell}
+      computers={computers}
+      trigger={(props, here) => <SidebarComputerTrigger props={props} name={here.title} state={here.state} />}
+    />
   )
 }
 
-const CONNECTION_WORDS = { connecting: '正在连接', connected: '已连接', reconnecting: '正在重连', offline: '离线' } as const
+/** The phone list's heading line, the computer this list comes from, as the popover's trigger (a sheet there). */
+export function PhoneComputer({ shell }: { shell: ShellState }) {
+  return (
+    <ShellComputer
+      shell={shell}
+      computers={undefined}
+      trigger={(props, here) => (
+        <button {...props} type="button" className="phone-list-host" title={here.name}>
+          <LaptopGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+          <span className="phone-list-host-name">{here.name}</span>
+        </button>
+      )}
+    />
+  )
+}
+
+/**
+ * The computer popover with this shell's ways out: 设置 › 电脑 where the chip used to lead, 设置 › 设备 where this device
+ * sees it, and 连接新设备 where this device can pair.
+ */
+export function ShellComputer({
+  shell,
+  computers,
+  trigger,
+  side,
+}: {
+  shell: ShellState
+  computers: ComputersView | undefined
+  trigger: ComponentProps<typeof ComputerChip>['trigger']
+  side?: 'top' | 'bottom'
+}) {
+  const settings = shell.entries.includes('settings')
+  const devices = settings && settingsSections(shell.snapshot, shell.access).includes('devices')
+  const pair = devices && connectWays(currentShell(), shell.access, shell.snapshot.host.tls).pair
+  return (
+    <ComputerChip
+      snapshot={shell.snapshot}
+      view={computers}
+      connection={shell.connection}
+      transport={shellTransport(shell)}
+      side={side}
+      links={{
+        settings: settings ? () => shell.openSettings('computers') : undefined,
+        devices: devices ? { open: () => shell.openSettings('devices'), count: shell.access.admin } : undefined,
+        connect: pair ? () => shell.openSettings('devices') : undefined,
+      }}
+      trigger={trigger}
+    />
+  )
+}
+
+/** How this window reaches its Host while it is connected (`connectionTransport`). */
+function shellTransport(shell: ShellState): string {
+  return shell.connection === 'connected'
+    ? connectionTransport(window.location, {
+        local: shell.access.local,
+        remote: currentShell()?.remote === true,
+        hostId: hostView(shell.snapshot)?.hostId,
+      })
+    : ''
+}
 
 /** Uses the connection of this page and the computers this desktop has actually listed. */
 export function WorkbenchConnection({ shell, inert }: { shell: ShellState; inert: boolean }) {
   const computers = useComputers()
   const desktop = currentShell()
   const connected = shell.connection === 'connected'
-  const transport = connected
-    ? connectionTransport(window.location, {
-        local: shell.access.local,
-        remote: desktop?.remote === true,
-        hostId: hostView(shell.snapshot)?.hostId,
-      })
-    : ''
+  const transport = shellTransport(shell)
   const online =
     connected && computers && !computers.problem ? computers.computers.filter(computer => computer.state === 'online').length : null
   const facts: StripFact[] = [
@@ -109,7 +167,7 @@ export function WorkbenchConnection({ shell, inert }: { shell: ShellState; inert
       lead: (
         <>
           <LiveDot live={connected} />
-          <ComputerControl shell={shell} computers={computers} />
+          <ShellComputer shell={shell} computers={computers} side="top" trigger={chipTrigger} />
         </>
       ),
     },

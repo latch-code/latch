@@ -26,14 +26,11 @@
   height: 100%;
 }
 
-.workbench-connection :is(.sidebar-host, .workbench-computer-button, .workbench-computer) {
+.workbench-connection .workbench-computer-button {
   width: auto;
   max-width: min(42vw, 240px);
   margin: 0;
   font-family: inherit;
-}
-
-.workbench-connection :is(.sidebar-host, .workbench-computer-button) {
   min-height: 0;
   height: calc(var(--workbench-connection-height) - 1px);
   padding-inline: var(--sp-4);

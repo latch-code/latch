@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ComputerSummary } from '@latch/protocol'
-import { computerState, connectionTransport, olderVersion, otherWaiting } from '../src/core/computers.ts'
+import { computerState, connectionTransport, olderVersion, otherComputerRows, otherWaiting } from '../src/core/computers.ts'
 
 const HOST_A = 'a'.repeat(52)
 const HOST_B = 'b'.repeat(52)
@@ -24,6 +24,22 @@ describe('other computers on this Mac’s page', () => {
     expect(otherWaiting({ computers: [computer({ waiting: [item] })] }, HOST_B)).toEqual([])
     expect(otherWaiting({ computers: [computer({ waiting: [] })] }, HOST_A)).toEqual([])
     expect(otherWaiting(undefined, HOST_A)).toEqual([])
+  })
+
+  it('lists the other computers for the computer popover, counting what waits only where it answers', () => {
+    const local = computer({ hostId: HOST_A, local: true, name: 'studio', version: '1.0.0' })
+    const remote = computer({ waiting: [item], version: '0.9.0' })
+    // From this Mac's page: the remote one, its waiting count and an older version against this Mac's Host.
+    expect(otherComputerRows({ computers: [local, remote] }, HOST_A, '1.0.0')).toEqual([
+      { hostId: HOST_B, name: 'build-mini', state: 'online', text: '在线', count: 1, older: true },
+    ])
+    // From the remote computer's window: this Mac is 「这台 Mac」 and never older; a gone computer says what waited.
+    expect(otherComputerRows({ computers: [local, remote] }, HOST_B, undefined)).toEqual([
+      { hostId: HOST_A, name: '这台 Mac', state: 'online', text: '在线', count: 0, older: false },
+    ])
+    const gone = otherComputerRows({ computers: [local, computer({ state: 'offline', waiting: [item] })] }, HOST_A, undefined)
+    expect(gone[0]).toMatchObject({ text: '离线 · 离线前 1 项', count: 0 })
+    expect(otherComputerRows(undefined, HOST_A, undefined)).toEqual([])
   })
 
   it('says 正在更新 for a Host stopping to update, and compares versions numerically', () => {

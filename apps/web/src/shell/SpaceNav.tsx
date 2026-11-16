@@ -17,12 +17,11 @@ import {
   CloseGlyph,
 } from '@latch/ui'
 import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
-import { ComputerMenu } from '../components/Computers.tsx'
 import { useComputers } from '../core/computers.ts'
 import { deviceAccess } from '../core/permissions.ts'
 import { DEVICE_OFFLINE } from '../core/hostState.ts'
 import { computerName } from '../core/securityCopy.ts'
-import { currentShell } from '../core/shell.ts'
+import { currentShell, type ComputersView } from '../core/shell.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import type { Space } from '../sessions.ts'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
@@ -185,7 +184,7 @@ export function NavTop({
   onSearch,
   drawer,
   onClose,
-  onManageComputers,
+  computer,
   className,
   overview,
   onSchedules,
@@ -198,7 +197,8 @@ export function NavTop({
   onSearch: () => void
   drawer: boolean
   onClose?: (() => void) | undefined
-  onManageComputers?: (() => void) | undefined
+  /** The computer popover with its trigger (`SidebarComputer`), given what the desktop app lists. */
+  computer?: ((computers: ComputersView | undefined) => ReactNode) | undefined
   className?: string
   overview?: { active: boolean; open: () => void }
   onSchedules?: () => void
@@ -211,15 +211,14 @@ export function NavTop({
   return (
     <div className={className ? `sidebar-top ${className}` : 'sidebar-top'}>
       {!computerAtFoot
-        && (several ? (
-          <ComputerMenu snapshot={snapshot} view={computers} onManage={onManageComputers} />
+        && (several || remote)
+        && (computer ? (
+          computer(computers)
         ) : (
-          remote && (
-            <p className="sidebar-host" title={computerName(snapshot.hostName)}>
-              <LaptopGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-              <span className="sidebar-host-name">{computerName(snapshot.hostName)}</span>
-            </p>
-          )
+          <p className="sidebar-host" title={computerName(snapshot.hostName)}>
+            <LaptopGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <span className="sidebar-host-name">{computerName(snapshot.hostName)}</span>
+          </p>
         ))}
       {spaces && (
         <div className="sidebar-nav-line">

@@ -42,6 +42,48 @@ export function computerState(computer: Pick<ComputerSummary, 'state' | 'reason'
   }
 }
 
+/** This page's connection to its Host in a word, beside its live dot. */
+export const CONNECTION_WORDS = { connecting: '正在连接', connected: '已连接', reconnecting: '正在重连', offline: '离线' } as const
+
+/** One other computer in the computer popover: its state, what waits there, and whether its Latch is older. */
+export interface OtherComputerRow {
+  hostId: string
+  name: string
+  state: ComputerSummary['state']
+  text: string
+  count: number
+  older: boolean
+}
+
+/**
+ * The computers other than this page's own Host, in the list's order. A computer counts what waits there only while it
+ * answers; one that went away says how much waited before it went. Versions compare against this Mac's Host, which only
+ * this Mac's page knows (`reference`).
+ */
+export function otherComputerRows(
+  view: ComputersView | undefined,
+  hostId: string | undefined,
+  reference: string | undefined,
+): OtherComputerRow[] {
+  if (!view) return []
+  return view.computers.flatMap(computer => {
+    if (computer.hostId === hostId) return []
+    const live = computer.state === 'online'
+    const waiting = computer.waiting?.length ?? 0
+    const stale = !live && waiting > 0 ? `离线前 ${waiting} 项` : undefined
+    return [
+      {
+        hostId: computer.hostId,
+        name: computer.local ? '这台 Mac' : computer.name,
+        state: computer.state,
+        text: [computerState(computer).text, stale].filter(Boolean).join(' · '),
+        count: live ? waiting : 0,
+        older: !computer.local && olderVersion(computer.version, reference),
+      },
+    ]
+  })
+}
+
 export function connectionTransport(
   location: Pick<Location, 'protocol' | 'hostname'>,
   { local, remote, hostId }: { local: boolean; remote: boolean; hostId: string | undefined },

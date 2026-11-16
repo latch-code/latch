@@ -342,6 +342,7 @@ export function PhoneSessionList({
   sessionMenu,
   now,
   banners,
+  host,
   reviews,
   onReview,
 }: ProjectNavigationActions & {
@@ -373,6 +374,8 @@ export function PhoneSessionList({
   now: number
   /** Notices about the connection and the Host, at the top of the list. */
   banners?: ReactNode
+  /** The computer's name heading the page, as the computer popover's trigger (`PhoneComputer`). */
+  host?: ReactNode
   /** Code's tab where the Host has 我的 Agent: its own sessions, though a search finds delegations too. */
   space?: Space | undefined
 }) {
@@ -404,12 +407,13 @@ export function PhoneSessionList({
   const remote = !deviceAccess(snapshot, currentShell()).local
   return (
     <div className="phone-list-page">
-      {remote && (
-        <p className="phone-list-host" title={computerName(snapshot.hostName)}>
-          <LaptopGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span className="phone-list-host-name">{computerName(snapshot.hostName)}</span>
-        </p>
-      )}
+      {remote
+        && (host ?? (
+          <p className="phone-list-host" title={computerName(snapshot.hostName)}>
+            <LaptopGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+            <span className="phone-list-host-name">{computerName(snapshot.hostName)}</span>
+          </p>
+        ))}
       <header className="phone-list-head">
         <h1>会话</h1>
         <IconButton size="lg" label="新建会话" icon={NewSessionGlyph} onClick={onNew} />

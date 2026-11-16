@@ -54,9 +54,6 @@ function AgentsNav({ shell }: { shell: ShellState }) {
           : {})}
         drawer={false}
         computerAtFoot
-        onManageComputers={() => {
-          shell.openSettings('computers')
-        }}
       />
       <AgentsSpaceList shell={shell} />
       {/* The computer stands at the foot, where the sidebar beside a topic has it, so nothing moves between the two. */}

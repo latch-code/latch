@@ -59,7 +59,7 @@ import type { WorkbenchReviewMemory } from './WorkbenchReviewQueue.tsx'
 import { HomeFocusSummary } from './HomeFocusSummary.tsx'
 import { HOME_FOCUS_LAYER, useHomeFocus } from './useHomeFocus.ts'
 import { workGroups } from './workOverview.ts'
-import { TabletRail, WorkbenchConnection, WorkbenchNav } from './WorkbenchNav.tsx'
+import { PhoneComputer, SidebarComputer, TabletRail, WorkbenchConnection, WorkbenchNav } from './WorkbenchNav.tsx'
 import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { LayoutSwitch } from './LayoutSwitch.tsx'
 import { WorkbenchSessions } from './WorkbenchSessions.tsx'
@@ -333,6 +333,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     <LayoutSwitch value={shell.preferences.workbenchLayout} />
                   </div>
                   <PhoneSessionList
+                    host={<PhoneComputer shell={shell} />}
                     space={entries.includes('agents') ? 'code' : undefined}
                     snapshot={listed}
                     searchResults={searchResults}
@@ -441,9 +442,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         sessionMenu={sessionMenu}
                         now={now}
                         apps={entries.includes('apps') ? { current: false, onOpen: () => shell.openApp() } : undefined}
-                        onManageComputers={() => {
-                          openSettings('computers')
-                        }}
+                        computerChip={computers => <SidebarComputer shell={shell} computers={computers} />}
                         {...(lifecycle.view?.keepAwake.active ? { keepAwake: keepAwakeLine(lifecycle.view.keepAwake) } : {})}
                       />
                     </>

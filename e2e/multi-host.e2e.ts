@@ -195,8 +195,8 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
               if (menu) {
                 if ((await drawer.isVisible()) && (await drawer.getAttribute('aria-expanded')) === 'true')
                   await page.locator('.sidebar').getByRole('button', { name: '关闭会话列表', exact: true }).click()
-                await page.getByRole('group', { name: '连接状态', exact: true }).locator('.sidebar-host-menu').click()
-                await page.getByRole('menu', { name: '电脑' }).waitFor()
+                await page.getByRole('group', { name: '连接状态', exact: true }).locator('.workbench-computer-button').click()
+                await page.getByRole('dialog', { name: '电脑' }).waitFor()
               }
               await page.evaluate(() => document.fonts.ready)
               await page.screenshot({ path: join(SHOTS, `sidebar-${name}--${theme}--${width}.png`), animations: 'disabled' })
@@ -425,9 +425,12 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         ).toBe(true)
         await page.locator('.other-computers-label').getByText('其他电脑', { exact: true }).waitFor()
         await page.locator('.sidebar-host-menu').click()
-        const menu = page.getByRole('menu', { name: '电脑' })
-        await menu.getByRole('menuitemradio', { name: /这台 Mac/u }).waitFor()
-        await menu.getByRole('menuitemradio', { name: new RegExp(bName, 'u') }).waitFor()
+        const menu = page.getByRole('dialog', { name: '电脑' })
+        await menu.locator('[data-computer-here]').waitFor()
+        await menu
+          .getByRole('group', { name: '其他电脑' })
+          .getByRole('button', { name: new RegExp(bName, 'u') })
+          .waitFor()
         await sidebarShots('menu', true)
         await page.keyboard.press('Escape')
         await sidebarShots('waiting')

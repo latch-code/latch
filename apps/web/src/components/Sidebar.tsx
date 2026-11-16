@@ -1,6 +1,6 @@
 import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
-import { Fragment, memo, useCallback, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Coffee, FolderGit2 } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
@@ -30,6 +30,7 @@ import {
   type Space,
 } from '../sessions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
+import type { ComputersView } from '../core/shell.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { Menu, rowOf, type MenuSection } from './overlays.tsx'
 import { SessionRowGlyph, SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
@@ -374,7 +375,7 @@ export function Sidebar({
   now,
   keepAwake,
   apps,
-  onManageComputers,
+  computerChip,
   spaces,
   agents,
   overview,
@@ -382,8 +383,8 @@ export function Sidebar({
   computer,
   projectTree = false,
 }: ProjectNavigationActions & {
-  /** Opens 设置 › 电脑 (the computer menu's 管理电脑…). */
-  onManageComputers?: () => void
+  /** The computer popover in the sidebar's head (`NavTop`'s `computer`). */
+  computerChip?: ((computers: ComputersView | undefined) => ReactNode) | undefined
   /** 应用 at the foot, where plugin pages are applied. */
   apps?: { current: boolean; onOpen: () => void } | undefined
   /** The two places, where the Host has 我的 Agent; without it there is only Code and no switch. */
@@ -435,7 +436,7 @@ export function Sidebar({
         onSearch={onSearch}
         drawer={drawer}
         onClose={onClose}
-        onManageComputers={onManageComputers}
+        computer={computerChip}
         overview={overview}
         onSchedules={onSchedules}
         computerAtFoot={computer !== undefined}

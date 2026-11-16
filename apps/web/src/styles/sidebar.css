@@ -54,9 +54,9 @@
   white-space: nowrap;
 }
 /*
- * With more than one computer the row is the computer menu's trigger: this window's computer, its state when it is not
- * online, and the menu's chevron. Each computer in the menu has a dot: filled while it answers, hollow while it does
- * not, amber or red where the state asks for the person or is unsafe; its count of what waits there is amber.
+ * The row is the computer popover's trigger: this window's computer, its state when it is not online, and a chevron.
+ * Each other computer in the popover has a dot: filled while it answers, hollow while it does not, amber or red where
+ * the state asks for the person or is unsafe; its count of what waits there is amber.
  */
 .sidebar-host-menu {
   width: 100%;
@@ -113,6 +113,94 @@
   color: var(--amber);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
+}
+/*
+ * The computer popover: this computer (live dot, name in mono, the connection in a word; how this window reaches it in
+ * mono hint ink under it), then the other computers as two-line rows, then the ways out. A hair between the groups.
+ */
+.computer-pop {
+  display: grid;
+}
+.computer-pop-here {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-6) var(--sp-10) var(--sp-8);
+}
+.computer-pop-line {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: var(--sp-8);
+  align-items: center;
+}
+.computer-pop-line > .ui-live-dot {
+  justify-self: center;
+}
+.computer-pop-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.computer-pop-state {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.computer-pop-how {
+  padding-inline-start: calc(16px + var(--sp-8));
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.computer-pop-group {
+  display: grid;
+  padding-top: var(--sp-4);
+  margin-top: var(--sp-4);
+  border-top: 1px solid var(--line-strong);
+}
+.computer-pop-other {
+  min-height: 44px;
+  padding-block: var(--sp-4);
+}
+.computer-pop-other-text {
+  display: grid;
+  min-width: 0;
+}
+.computer-pop-other-name,
+.computer-pop-other-state {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.computer-pop-other-state {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.computer-pop-other-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+.computer-pop-devices {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-8);
+}
+.computer-pop-count {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
 }
 .sidebar-nav-line {
   display: flex;

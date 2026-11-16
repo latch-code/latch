@@ -115,7 +115,7 @@
   justify-content: start;
 }
 /* The computer's row lines up with the foot's other rows: the same inset, glyph column and gap. */
-.sidebar-work-computer > :is(.workbench-computer, .workbench-computer-button) {
+.sidebar-work-computer > .workbench-computer-button {
   gap: 10px;
   height: 32px;
   padding-inline: 10px;
@@ -413,13 +413,6 @@
 }
 .workbench-home-composer .send-button {
   border-radius: var(--r-8);
-}
-.workbench-computer {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-8);
-  color: var(--muted);
-  white-space: nowrap;
 }
 /*
  * 概要: compact sections of one row style. A section is a small heading with its count and at most one action, over
