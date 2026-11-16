@@ -294,6 +294,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       const featuredApproval = home.locator(`.work-feature[data-work-session="${waiting}"]`)
       const viewOriginal = featuredApproval.getByRole('button', { name: '查看原请求', exact: true })
       await viewOriginal.waitFor()
+      await featuredApproval.locator('.work-feature-material[data-secure]').waitFor()
       const delivery = home.locator('[data-group="delivery"]')
       const featuredDelivery = home.getByRole('button', { name: '查看交付', exact: true })
       await featuredDelivery.waitFor()

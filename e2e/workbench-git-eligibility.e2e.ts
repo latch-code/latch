@@ -12,7 +12,6 @@ import { LAYOUT_NAMES, switchLayout } from './helpers/workbench.ts'
 
 const OUT = 'test-results/workbench-git-eligibility'
 
-/** `quiet`: nothing is in any group, so the home draws one faint line and no groups. */
 async function capture(page: Page, name: string, words: string, deliveryState: 'quiet' | 'refused' | 'observed') {
   for (const width of [390, 768, 1440]) {
     await page.setViewportSize({ width, height: 1000 })
@@ -21,16 +20,16 @@ async function capture(page: Page, name: string, words: string, deliveryState: '
       await switchLayout(page, key)
       const home = page.locator('.workbench-home')
       const quiet = deliveryState === 'quiet'
-      if (key === 'triage') {
-        if (width === 390 && !quiet) await home.getByRole('button', { name: /^可交付/u }).click()
-        const delivery = quiet ? home.locator('.work-overview') : home.locator('[data-group="delivery"]')
-        if (quiet) expect(await home.locator('[data-group]').count()).toBe(0)
+      if (key === 'triage' && !quiet) {
+        const lane = home.getByRole('button', { name: /^可交付/u })
+        if (await lane.isVisible()) await lane.click()
+        const delivery = home.locator('[data-group="delivery"]')
         await reachable(delivery.getByText(words).first())
       } else {
         const action = home.getByRole('button', { name: '查看交付', exact: true })
         if (deliveryState === 'observed') await reachable(action)
         else {
-          await home.getByRole('region', { name: '接着做', exact: true }).waitFor()
+          await reachable(home.getByRole('button', { name: /记录普通项目目录/u }))
           expect(await action.count()).toBe(0)
         }
       }
@@ -91,15 +90,14 @@ it('distinguishes an ordinary folder from refused Git metadata and later reads a
     await page.reload()
     await connected(page)
     const delivery = page.locator('.workbench-home [data-group="delivery"]')
-    // An ordinary folder has nothing to deliver and nothing else waits: the home says so in one faint line, with no
-    // groups, no sentence about Git and nothing to retry.
+    // The ordinary folder can be resumed, but there is no pending work, delivery, or Git failure to retry.
     const home = page.locator('.workbench-home')
     await switchLayout(page, 'triage')
-    await home.locator('p.work-overview-empty').getByText('没有要你处理的', { exact: true }).waitFor()
+    await reachable(home.getByRole('region', { name: '接着做', exact: true }).getByRole('button', { name: /记录普通项目目录/u }))
     await expect.poll(() => home.locator('[data-group]').count(), { timeout: 10_000 }).toBe(0)
     expect(await home.getByText(/不支持 Git 交付/u).count()).toBe(0)
     expect(await home.getByRole('button', { name: /^(?:重试|刷新)$/u }).count()).toBe(0)
-    await capture(page, 'ordinary-folder', '没有要你处理的', 'quiet')
+    await capture(page, 'ordinary-folder', '记录普通项目目录', 'quiet')
     await openSession(page, sessionId)
     await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
     if ((await page.locator('.app-shell').getAttribute('data-inspector')) !== 'open') await page.keyboard.press('Alt+Shift+b')

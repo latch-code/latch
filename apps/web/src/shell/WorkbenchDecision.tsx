@@ -44,7 +44,7 @@ function DraftExcerpt({ path, text, previous }: { path: string; text: string; pr
       })
     : null
   return (
-    <div className="work-feature-material">
+    <div className="work-feature-material" data-secure="">
       <header>
         <Icon icon={FileGlyph} size={14} />
         <code>
@@ -175,9 +175,11 @@ export function WorkbenchDecision({
     const link =
       approvalUnknown || resultUnknown ? '核对结果' : approval ? '查看原请求' : question ? '查看问题' : failed ? '查看失败' : '查看会话'
     const showText = !draft && detailText && detailText !== title
+    // Keep approval material out of layout snapshots before and after the authorized detail arrives.
+    const secureRequest = !!approval || approvalUnknown || task.status === 'waiting-approval' || !!question || !!task.pendingQuestions
     return (
       <article className="work-feature" ref={read.element} data-work-session={task.id}>
-        <div className="work-feature-summary">
+        <div className="work-feature-summary" data-secure={secureRequest && !draft && !showText ? '' : undefined}>
           <h3 title={escapeHiddenCharacters(title)}>
             <VisibleText text={title} />
           </h3>
@@ -211,7 +213,10 @@ export function WorkbenchDecision({
         {draft ? (
           <DraftExcerpt key={original?.id} path={draft.path} text={draft.newText} previous={draft.oldText} />
         ) : showText ? (
-          <div className="work-feature-material" data-tone={read.error || failed ? 'failed' : undefined}>
+          <div
+            className="work-feature-material"
+            data-secure={secureRequest ? '' : undefined}
+            data-tone={read.error || failed ? 'failed' : undefined}>
             <header>{read.error ? '读取失败' : approval ? '请求说明' : question ? '问题背景' : '失败原因'}</header>
             <div className="work-feature-material-body" tabIndex={0}>
               <p>

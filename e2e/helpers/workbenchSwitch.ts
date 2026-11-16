@@ -58,12 +58,16 @@ export async function measureWorkbenchSwitch(page: Page, output: string, name: s
             }
           const shell = document.querySelector<HTMLElement>('.app-shell')
           const target = document.querySelector<HTMLElement>(expected.entry === 'agents' ? '.agents-page' : '.workbench-home')
-          const content = target?.querySelector<HTMLElement>(expected.entry === 'agents' ? '[data-agent-id]' : '.approval-panel')
+          const featured = expected.entry !== 'agents' && shell?.dataset.workbenchLayout === 'overview'
+          const content = target?.querySelector<HTMLElement>(
+            expected.entry === 'agents' ? '[data-agent-id]' : featured ? '.work-feature-action > button' : '.approval-panel',
+          )
           if (
             clickAt !== undefined
             && firstVisibleMs === undefined
             && target?.checkVisibility({ visibilityProperty: true })
             && content?.checkVisibility({ visibilityProperty: true })
+            && (!featured || content.textContent?.trim() === '查看原请求')
             && Number(getComputedStyle(target).opacity) > 0
             && (!expected.layout || shell?.dataset.workbenchLayout === expected.layout)
             && (!expected.entry || shell?.dataset.entry === expected.entry)

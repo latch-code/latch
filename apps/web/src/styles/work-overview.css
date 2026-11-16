@@ -718,8 +718,8 @@
   min-width: 0;
   align-self: start;
   border-radius: var(--r-14);
-  background: var(--sunken);
-  background: light-dark(var(--sunken), var(--raised));
+  background: var(--work-sunken);
+  background: light-dark(var(--work-sunken), var(--work-raised));
 }
 
 .work-feature-material > header {
@@ -728,8 +728,8 @@
   gap: var(--sp-8);
   min-height: 44px;
   padding: var(--sp-8) var(--sp-20);
-  border-block-end: 1px solid var(--line);
-  color: var(--muted);
+  border-block-end: 1px solid var(--work-line);
+  color: var(--work-muted);
   font-size: var(--fs-work-caption);
   line-height: var(--lh-work-caption);
   overflow-wrap: anywhere;
@@ -755,7 +755,7 @@
   scrollbar-width: thin;
   overscroll-behavior: contain;
   padding: var(--sp-16) var(--sp-20) var(--sp-20);
-  color: var(--ink-2);
+  color: var(--work-ink-2);
   font-size: var(--fs-work-ui);
   line-height: var(--lh-work-card);
   overflow-wrap: anywhere;
@@ -763,7 +763,7 @@
 
 .work-feature-material-body :is(h1, h2, h3, h4) {
   margin: 0 0 var(--sp-8);
-  color: var(--ink);
+  color: var(--work-ink);
   font-size: var(--fs-work-card);
   line-height: var(--lh-work-card);
   font-weight: 600;
@@ -784,8 +784,8 @@
 .work-feature-excerpt-note {
   margin: 0;
   padding: var(--sp-8) var(--sp-20);
-  border-block-start: 1px solid var(--line);
-  color: var(--muted);
+  border-block-start: 1px solid var(--work-line);
+  color: var(--work-muted);
   font-size: var(--fs-work-caption);
   line-height: var(--lh-work-caption);
 }
@@ -998,9 +998,9 @@
 }
 
 .work-feature-reference {
-  border-block-start: 1px solid var(--line);
+  border-block-start: 1px solid var(--work-line);
   padding-inline: var(--sp-20);
-  color: var(--muted);
+  color: var(--work-muted);
   font-size: var(--fs-work-caption);
   line-height: var(--lh-work-caption);
 }
@@ -1016,7 +1016,7 @@
   max-block-size: 8lh;
   overflow-y: auto;
   overscroll-behavior: contain;
-  color: var(--ink-2);
+  color: var(--work-ink-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
