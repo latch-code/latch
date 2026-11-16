@@ -60,6 +60,8 @@ const COPIED_LINK_MS = 10 * 60 * 1000
 /** The nspasteboard.org convention: clipboard managers and history tools do not keep an entry carrying this type. */
 const CONCEALED_FORMAT = 'electron application/osclipboard;format="org.nspasteboard.ConcealedType"'
 const HOST_UNAVAILABLE = '无法连接到 Latch Host，请确认 Host 仍在运行。'
+/** How long the Host may be gone without a restart this app made before the proxy logs it (another launch's restart). */
+const OUTAGE_GRACE_MS = 15_000
 const LINK_MANAGED = '设备链接只由 Latch 桌面端申请'
 const COPY_FAILED = '无法复制链接，请重试。'
 const DROPPED_REQUEST_HEADERS = new Set([
@@ -814,6 +816,7 @@ const JSON_HEADERS = Object.freeze({ 'content-type': 'application/json', accept:
  * @param {string} options.hostId
  * @param {() => Promise<string>} options.resolveSocket  socket path of the verified Host
  * @param {() => void} [options.invalidateSocket]  called after a connection error so the next request re-verifies the Host
+ * @param {() => boolean} [options.hostTransitioning]  whether the Host is being stopped or started on purpose right now
  * @param {Awaited<ReturnType<typeof import('./credentials.cjs').openCredentialStore>>} options.store
  * @param {(message: string) => void} [options.log]
  * @param {() => number} [options.now]
@@ -829,14 +832,52 @@ function createShellProxy(options) {
   let retryAt = 0
   /** Consecutive failed renewals; the wait doubles with each one. */
   let failures = 0
+  /** Errors from reaching the Host at all (no verified Host, or the socket failed), as opposed to the proxy's own. */
+  const unreachable = new WeakSet()
+  /** When the Host stopped answering, unless a restart this app made explains it; whether that was logged. */
+  let outageSince
+  let outageLogged = false
+
+  function hostUnreachable(error) {
+    if (error && typeof error === 'object') unreachable.add(error)
+    return error
+  }
+
+  function hostAnswered() {
+    outageSince = undefined
+    outageLogged = false
+  }
+
+  /**
+   * A request the Host did not answer. While a restart is under way (this app's, or another launch's that ends within
+   * OUTAGE_GRACE_MS) that is expected and the page shows it is reconnecting; a Host still gone after that is logged once
+   * per outage.
+   */
+  function hostFailed(error) {
+    if (options.hostTransitioning?.()) {
+      outageSince = now()
+      return
+    }
+    outageSince ??= now()
+    if (outageLogged || now() - outageSince < OUTAGE_GRACE_MS) return
+    outageLogged = true
+    log(`转发请求失败：${error instanceof Error ? error.message : '未知错误'}`)
+  }
 
   async function upstream(method, path, headers, body, timeoutMs) {
-    const socketPath = await options.resolveSocket()
+    let socketPath
     try {
-      return await socketRequest(socketPath, { method, path, headers, body, timeoutMs })
+      socketPath = await options.resolveSocket()
+    } catch (error) {
+      throw hostUnreachable(error)
+    }
+    try {
+      const result = await socketRequest(socketPath, { method, path, headers, body, timeoutMs })
+      hostAnswered()
+      return result
     } catch (error) {
       options.invalidateSocket?.()
-      throw error
+      throw hostUnreachable(error)
     }
   }
 
@@ -1069,7 +1110,12 @@ function createShellProxy(options) {
       return errorResponse(401, 'unauthorized', NOT_ENROLLED)
     }
     const headers = forwardRequestHeaders(request.headers, current.credential)
-    const socketPath = await options.resolveSocket()
+    let socketPath
+    try {
+      socketPath = await options.resolveSocket()
+    } catch (error) {
+      throw hostUnreachable(error)
+    }
     let result
     try {
       result = await socketRequest(socketPath, {
@@ -1088,8 +1134,9 @@ function createShellProxy(options) {
       if (error && typeof error === 'object' && Reflect.get(error, 'code') === 'body-too-large')
         throw new ProxyError(413, 'body-too-large', '请求内容过长')
       options.invalidateSocket?.()
-      throw error
+      throw error instanceof ProxyError ? error : hostUnreachable(error)
     }
+    hostAnswered()
     if (result.response.statusCode !== 401) return finish(result, 'POST', { kind: 'forward' })
     const failure = await bufferUpstream(result),
       action = authFailureAction(401, failure.json)
@@ -1227,7 +1274,8 @@ function createShellProxy(options) {
       return await forward(request, target, route)
     } catch (error) {
       if (error instanceof ProxyError) return errorResponse(error.status, error.code, error.message)
-      log(`转发请求失败：${error instanceof Error ? error.message : '未知错误'}`)
+      if (error && typeof error === 'object' && unreachable.has(error)) hostFailed(error)
+      else log(`转发请求失败：${error instanceof Error ? error.message : '未知错误'}`)
       return unavailableResponse(target.pathname)
     }
   }

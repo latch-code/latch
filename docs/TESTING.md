@@ -430,6 +430,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 - 只在 macOS 上运行；没有 `LATCH_ELECTRON_E2E=1` 或在其他系统上时整组跳过。
 - 同一开关还控制 `desktop-*.e2e.ts`、`multi-host.e2e.ts`、`app-build.e2e.ts`，以及 `release-check.e2e.ts`、`file-tree-actions.e2e.ts` 与 `html-preview.e2e.ts` 的 Electron 部分。`pnpm check -- --plan` 与 `e2e-desktop` 工作流只运行 `desktop.e2e.ts`；改到对应区域时按文件名另跑。
 - Host 在测试进程内用 `startTestHost` 启动，测试用 `writeHostState` 写出记录测试进程 PID 的 `host.json`，再启动 `apps/desktop/src/main.cjs --latch-host-state=<host.json> --latch-user-data=<临时目录> --use-mock-keychain`。
+- 例外是 `desktop-rebuild.e2e.ts`：它用 `ensureDesktopHost` 从 `dist/start.js` 启动真实 Host（临时数据目录，`policy.json` 停用本机确认，离线连接码连接），在 Host 运行时执行 `pnpm build:web` 重写 `dist/web`，再检查启动器先重启它、窗口连上且没有「转发请求失败」。
 - 临时的 `--latch-user-data` 让凭据文件不碰用户的桌面端数据，`--use-mock-keychain` 让 safeStorage 不使用登录钥匙串。Electron 的环境来自 `desktopShellEnvironment`，不带 Host 设置、模型密钥与调试开关。
 - Electron 由 Playwright 的 `_electron.launch()` 启动；它从自己的安装位置解析 `electron` 包，只能找到根 `node_modules` 中的那一份，所以根 `package.json` 保留 `electron`（CI 的 `pnpm exec install-electron` 也用它）。
 - 原生对话框、`shell.openExternal`、`shell.showItemInFolder`、通知与剪贴板在主进程中替换成记录调用的内存实现：不打开真实面板，不投递系统通知，不读写系统剪贴板。系统剪贴板、原生粘贴快捷键、通知授权与专注模式要实机验证。

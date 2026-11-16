@@ -214,6 +214,8 @@ function parseHostInfo(value) {
     && !(Number.isInteger(value.modelGatewayPort) && value.modelGatewayPort > 0 && value.modelGatewayPort <= 65_535)
   )
     return undefined
+  // Optional: the build it started from (apps/host/src/ui-build.ts readCodeBuild), which the desktop launcher compares.
+  if (value.build !== undefined && !(typeof value.build === 'string' && /^[0-9a-f]{64}$/u.test(value.build))) return undefined
   return value
 }
 

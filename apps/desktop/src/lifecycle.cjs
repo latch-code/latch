@@ -34,6 +34,11 @@ const BACKOFF_MAX_MS = 30_000
 /** A started Host gets as long to answer over host.sock as the launcher gives it (it may build the presence helper). */
 const START_TIMEOUT_MS = 60_000
 const STOP_TIMEOUT_MS = 10_000
+/**
+ * 「重启 Latch」 has already sent SIGTERM when it waits: a Host that ends its sessions' processes slowly still goes, and
+ * giving up sooner would leave no Host and nothing starting one.
+ */
+const RESTART_STOP_TIMEOUT_MS = 60_000
 const POLL_MS = 200
 /** Checks in a row in which a live Host does not answer over host.sock before it is shown as not responding. */
 const UNANSWERED_LIMIT = 3
@@ -282,6 +287,8 @@ function createHostSupervisor(options) {
   let starting
   let unanswered = 0
   let lastView = ''
+  /** This app is stopping the Host on purpose (restart or update); see `transitioning`. */
+  let stopping = false
 
   const sleep = ms => new Promise(done => setTimer(done, ms))
 
@@ -474,6 +481,8 @@ function createHostSupervisor(options) {
    * For the owner's 「重新启动 Host」 and, with `retry` false, for the desktop app finding no Host at startup: one attempt,
    * since the app then shows that it found no Host rather than starting one behind that page.
    */
+  const startFailed = { ok: false, error: 'host-start-failed', message: 'Host 没有启动，请查看数据目录中的 host.log。' }
+
   async function restartNow({ retry = true } = {}) {
     if (starting) return { ok: false, error: 'host-starting', message: 'Host 正在启动，请稍候。' }
     const record = await readLaunch()
@@ -493,18 +502,31 @@ function createHostSupervisor(options) {
       const activity = activityOf(result.info)
       if (activity.running + activity.waiting > 0)
         return { ok: false, error: 'host-busy', message: '有会话正在运行或等待审批，结束后再重新启动 Host。' }
-      await report(live.socketPath, { state: 'stopping', reason: 'restart' }).catch(() => {})
-      signal(live.pid)
-      const deadline = now() + STOP_TIMEOUT_MS
-      while (alive(live.pid) && now() < deadline) await sleep(POLL_MS)
-      if (alive(live.pid)) return { ok: false, error: 'host-stop-timeout', message: 'Host 没有在 10 秒内停止，未重新启动。' }
+      stopping = true
+      try {
+        await report(live.socketPath, { state: 'stopping', reason: 'restart' }).catch(() => {})
+        signal(live.pid)
+        const deadline = now() + RESTART_STOP_TIMEOUT_MS
+        while (alive(live.pid) && now() < deadline) await sleep(POLL_MS)
+        if (alive(live.pid)) return { ok: false, error: 'host-stop-timeout', message: 'Host 没有在 60 秒内停止，未重新启动。' }
+        clearTimer(timer)
+        timer = undefined
+        crashes = []
+        countedPid = undefined
+        // Started before `stopping` clears, so there is no moment between the two in which the outage looks unplanned.
+        const started = start(record.launch, retry)
+        stopping = false
+        return (await started) ? { ok: true } : { ...startFailed }
+      } finally {
+        stopping = false
+      }
     }
     clearTimer(timer)
     timer = undefined
     crashes = []
     countedPid = undefined
     const started = await start(record.launch, retry)
-    return started ? { ok: true } : { ok: false, error: 'host-start-failed', message: 'Host 没有启动，请查看数据目录中的 host.log。' }
+    return started ? { ok: true } : { ...startFailed }
   }
 
   /** Reports sleep, wake or a coming stop to the running Host; best effort. */
@@ -548,11 +570,16 @@ function createHostSupervisor(options) {
     if (!(await inspect(live)).ok) return { ok: false, error: 'host-unverified' }
     clearTimer(timer)
     timer = undefined
-    await report(live.socketPath, { state: 'stopping', reason: 'update' }).catch(() => {})
-    signal(live.pid)
-    const deadline = now() + STOP_TIMEOUT_MS
-    while (alive(live.pid) && now() < deadline) await sleep(POLL_MS)
-    return alive(live.pid) ? { ok: false, error: 'host-stop-timeout' } : { ok: true }
+    stopping = true
+    try {
+      await report(live.socketPath, { state: 'stopping', reason: 'update' }).catch(() => {})
+      signal(live.pid)
+      const deadline = now() + STOP_TIMEOUT_MS
+      while (alive(live.pid) && now() < deadline) await sleep(POLL_MS)
+      return alive(live.pid) ? { ok: false, error: 'host-stop-timeout' } : { ok: true }
+    } finally {
+      stopping = false
+    }
   }
 
   return {
@@ -564,6 +591,11 @@ function createHostSupervisor(options) {
     view,
     /** The instance of the Host last checked over host.sock; a new one has heard nothing from this app yet. */
     instance: () => current?.instanceId,
+    /**
+     * Whether this app is stopping or starting the Host, or waiting to start it again after a crash: a Host that does
+     * not answer now is expected not to (the proxy stays quiet about it).
+     */
+    transitioning: () => stopping || starting !== undefined || status === 'restarting',
     stop() {
       clearTimer(timer)
       timer = undefined

@@ -1159,6 +1159,8 @@ async function start() {
     invalidateSocket() {
       socketPath = undefined
     },
+    // 「重启 Latch」, an update or a crash restart: the window shows it is reconnecting, and the log stays quiet.
+    hostTransitioning: () => supervisor.transitioning(),
   })
   protocol.handle('latch', request => proxy.handle(request))
   protocol.handle('latch-frame', request => proxy.previewFrame(request))

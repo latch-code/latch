@@ -1,5 +1,5 @@
 import { createHash, createPrivateKey, createPublicKey, randomBytes, randomUUID, verify, type KeyObject } from 'node:crypto'
-import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { chmod, mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -128,6 +128,7 @@ const proxy = require('../src/proxy.cjs') as {
     store: CredentialStore
     resolveSocket(): Promise<string>
     invalidateSocket?(): void
+    hostTransitioning?(): boolean
     log?(text: string): void
     now?(): number
   }): ShellProxy
@@ -2001,6 +2002,63 @@ describe('desktop shell proxy', () => {
     expect(page.headers.get('content-type')).toContain('text/html')
     expect(page.headers.get('content-security-policy')).toBe(proxy.HTML_CSP)
     expect(invalidated).toBe(2)
+  })
+
+  it('stays quiet while the Host restarts and logs a Host that stays gone once per outage', async () => {
+    const store = await credentials.openCredentialStore({
+      directory: join(await directory(), 'd'),
+      hostId: HOST_ID,
+      safeStorage: fakeSafeStorage(),
+    })
+    const socketPath = join(await directory(), 'host.sock')
+    let time = 1_000_000
+    let restarting = true
+    let listening: Server | undefined
+    const lines: string[] = []
+    const handler = proxy.createShellProxy({
+      hostId: HOST_ID,
+      store,
+      now: () => time,
+      log: text => lines.push(text),
+      hostTransitioning: () => restarting,
+      // After a failure main re-verifies host.json; no Host there yet reads as not running.
+      resolveSocket: async () => {
+        if (!listening) throw new Error('Latch 服务未运行')
+        return socketPath
+      },
+    })
+    const ask = async () => (await handler.handle(new Request('latch://app/link/api/enrollment-info'))).status
+    // This app's own restart: however long it takes, the window gets 502 (and shows it reconnects) and nothing is logged.
+    expect(await ask()).toBe(502)
+    time += 40_000
+    expect(await ask()).toBe(502)
+    expect(lines).toEqual([])
+    // The restart has ended without a Host, or another launch restarts it: quiet for a grace period, then logged once.
+    restarting = false
+    time += 5_000
+    expect(await ask()).toBe(502)
+    expect(lines).toEqual([])
+    time += 15_000
+    expect(await ask()).toBe(502)
+    time += 5_000
+    expect(await ask()).toBe(502)
+    expect(lines).toEqual(['转发请求失败：Latch 服务未运行'])
+
+    // Back: answered, and the next outage is a new one.
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{}')
+    })
+    await new Promise<void>(resolve => server.listen(socketPath, resolve))
+    listening = server
+    expect(await ask()).toBe(200)
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    listening = undefined
+    expect(await ask()).toBe(502)
+    time += 20_000
+    expect(await ask()).toBe(502)
+    expect(lines).toHaveLength(2)
   })
 })
 

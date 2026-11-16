@@ -77,6 +77,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 `pnpm desktop`（先 `pnpm build`）：
 
 - 为解析出的数据目录在后台启动 Host（日志在 `<数据目录>/host.log`），或复用已在运行的 Host。复用时本次的启动参数与模型环境变量不生效：要改启动配置，先 `pnpm stop`。
+- 重新 `pnpm build` 后，空闲的 Host 会先重启再打开窗口（「检测到新的构建，已重启 Host。」）；有会话正在运行或等待审批时不重启，结束后在窗口里点「重启 Latch」。
 - 只经 `<数据目录>/host.json` 与 `host.sock` 找到并核对 Host，不做网络探测。页面的请求由 Electron 主进程经 `host.sock` 转发，页面接触不到设备密钥与凭据。
 - 设备密钥与凭据用系统安全存储加密，保存在桌面端数据目录（macOS 为 `~/Library/Application Support/Latch/Desktop/`）的 `latch-devices/<hostId>.json`。没有可用的安全存储时桌面端拒绝启动。
 - 上面列出的本机确认只能从这台电脑的桌面端发起。模型密钥、模型服务地址的确认与添加项目另可在 Host 停止时用 `pnpm latch` 完成。

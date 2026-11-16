@@ -51,6 +51,7 @@ interface Supervisor {
   instance(): string | undefined
   systemShutdown(): Promise<void>
   view(): HostView
+  transitioning(): boolean
   stop(): void
 }
 interface KeepAwake {
@@ -257,6 +258,8 @@ function world() {
     answering: true,
     /** The process exits just before it is signalled, so SIGTERM finds no such process. */
     exitBeforeSignal: false,
+    /** How long a signalled Host takes to exit (it ends its sessions' processes first). */
+    exitDelayMs: 0,
     starts: 0,
     terminated: [] as number[],
   }
@@ -289,12 +292,20 @@ function world() {
     },
     startHost,
     terminate: (pid: number) => {
-      alive.delete(pid)
-      exits.get(pid)?.()
-      if (state.exitBeforeSignal) throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+      const exit = () => {
+        alive.delete(pid)
+        exits.get(pid)?.()
+        // An orderly stop removes host.json.
+        if (state.hostJson?.pid === pid) state.hostJson = undefined
+      }
+      if (state.exitBeforeSignal) {
+        alive.delete(pid)
+        exits.get(pid)?.()
+        throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+      }
       state.terminated.push(pid)
-      // An orderly stop removes host.json.
-      if (state.hostJson?.pid === pid) state.hostJson = undefined
+      if (state.exitDelayMs > 0) setTimeout(exit, state.exitDelayMs)
+      else exit()
     },
     report: async (socketPath: string, body: unknown) => {
       reports.push({ socketPath, body })
@@ -531,6 +542,47 @@ describe('Host supervision', () => {
     expect(await w.supervisor.restartNow()).toMatchObject({ ok: false, error: 'host-external' })
     w.state.record = { ...w.state.record, pid: w.state.hostJson!.pid, launch: null }
     expect(await w.supervisor.restartNow()).toMatchObject({ ok: false, error: 'host-environment' })
+  })
+
+  it('counts its own stop and start as expected, and still restarts a Host that takes a while to exit', async () => {
+    vi.useFakeTimers()
+    const w = world()
+    const first = w.launched()
+    await w.supervisor.check()
+    expect(w.supervisor.transitioning()).toBe(false)
+    // 15 seconds to end its sessions' processes: past the old 10-second wait, which left no Host and nothing starting one.
+    w.state.exitDelayMs = 15_000
+    const restarting = w.supervisor.restartNow()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(w.supervisor.transitioning()).toBe(true)
+    await vi.advanceTimersByTimeAsync(10_200)
+    // Gone, the new one not yet answering: still the restart's own outage.
+    expect(w.alive.has(first)).toBe(false)
+    expect(w.supervisor.transitioning()).toBe(true)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(await restarting).toEqual({ ok: true })
+    expect(w.supervisor.view().status).toBe('running')
+    expect(w.supervisor.transitioning()).toBe(false)
+
+    // One that never exits is left alone after a minute, and what follows is no longer expected.
+    w.state.exitDelayMs = 3_600_000
+    const stuck = w.supervisor.restartNow()
+    await vi.advanceTimersByTimeAsync(60_500)
+    expect(await stuck).toMatchObject({ ok: false, error: 'host-stop-timeout' })
+    expect(w.supervisor.transitioning()).toBe(false)
+
+    // Waiting to start a crashed Host again counts too.
+    w.state.exitDelayMs = 0
+    const w2 = world()
+    w2.launched()
+    await w2.supervisor.check()
+    w2.crash()
+    await w2.supervisor.check()
+    expect(w2.supervisor.view().status).toBe('restarting')
+    expect(w2.supervisor.transitioning()).toBe(true)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(w2.supervisor.view().status).toBe('running')
+    expect(w2.supervisor.transitioning()).toBe(false)
   })
 
   it('tells the running Host about sleep and wake, and stops it with a shutdown reason when the system goes down', async () => {
