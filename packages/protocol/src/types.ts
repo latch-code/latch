@@ -10,6 +10,7 @@ export type { AgentQuestion, QuestionAnswer, QuestionSubmission, QuestionReceipt
 
 export type * from './sessions.ts'
 export type * from './board.ts'
+export type * from './work-items.ts'
 export type * from './snapshot.ts'
 export type * from './task-delta.ts'
 export type * from './devices.ts'

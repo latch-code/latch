@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { MAX_MODEL_FALLBACKS, MODEL_FAILURE_CLASSES } from '@latch/protocol'
-import { attachmentId, count, hex64, opaqueId } from './fields.ts'
+import { attachmentId, count, hex64, opaqueId, prefixed } from './fields.ts'
 
 const risk = z.enum(['R0', 'R1', 'R2'])
 const attachmentEvent = z.strictObject({
@@ -33,6 +33,21 @@ export const SESSION_ACTIONS = {
   }),
   /** Withdrawn before a target existed, or closed once it had (`started`). */
   'handoff.withdrawn': z.strictObject({ handoffId: opaqueId, from: z.enum(['start-failed', 'start-unknown', 'started']) }),
+  /**
+   * 待办 (docs/ARCHITECTURE.md#待办): made, edited, deleted, a session joined or left; the title only by its hash.
+   * `revision` is the one the change makes (the last one for a delete). A private session's joining is on record first.
+   */
+  'work.item.changed': z.strictObject({
+    itemId: prefixed('itm'),
+    revision: count,
+    op: z.enum(['created', 'edited', 'deleted', 'joined', 'left']),
+    sessionId: opaqueId.optional(),
+    titleHash: hex64,
+  }),
+  /** Written before a session is started from the 待办; nothing starts without it. The session is in `joined` and `task.l3.started`. */
+  'work.item.started': z.strictObject({ itemId: prefixed('itm'), requestHash: hex64 }),
+  /** A person marked the 待办 done (`closed`) or reopened it. */
+  'work.item.closed': z.strictObject({ itemId: prefixed('itm'), closed: z.boolean() }),
   'task.question.answered': z.strictObject({ sessionId: opaqueId, questionId: opaqueId }),
   /** A person marked the results of a run nobody could vouch for as checked: the board stops listing it as waiting. */
   'task.unknown.checked': z.strictObject({ sessionId: opaqueId, count }),

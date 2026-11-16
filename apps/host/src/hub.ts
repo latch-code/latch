@@ -123,6 +123,10 @@ export interface HubOptions {
    * every summary that leaves the hub, so it reads only what is at hand and never waits.
    */
   board?: (summary: TaskSummary, record: { attended?: BoardAttended; pr: boolean }) => BoardPlace | undefined
+  /** The 待办 a session belongs to, as `TaskSummary.itemId` shows it; read from memory, never waited on. */
+  itemOf?: (sessionId: string) => string | undefined
+  /** Before a session is removed, with whether it is private now: what holds it may need to remember that. A throw keeps it. */
+  beforeRemove?: (sessionId: string, isPrivate: boolean) => Promise<void>
 }
 
 interface Entry {
@@ -1165,6 +1169,7 @@ export class HarnessHub implements Bridge {
     await this.readRunNow(member.bridge, sessionId)
     // Read before the driver and the metadata forget it.
     const projectId = await this.projectFor('sessionDeleted', member, sessionId)
+    await this.options.beforeRemove?.(sessionId, this.agentPrivate(sessionId))
     await member.bridge.remove(sessionId)
     this.routes.delete(sessionId)
     // The session is already gone; a stale overlay entry is harmless, a reported failure would mislead.
@@ -1384,6 +1389,7 @@ export class HarnessHub implements Bridge {
       tags: _tags,
       priority: _priority,
       board: _board,
+      itemId: _itemId,
       runId,
       live,
       modelRoute,
@@ -1439,6 +1445,8 @@ export class HarnessHub implements Bridge {
         : {}),
       ...(meta?.firstStart ? { firstStart: true as const } : {}),
     })
+    const itemId = this.options.itemOf?.(summary.id)
+    if (itemId) presented.itemId = itemId
     const board = this.options.board?.(presented, {
       ...(meta?.attended ? { attended: { ...meta.attended } } : {}),
       pr: meta?.pr !== undefined,

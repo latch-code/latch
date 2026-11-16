@@ -312,6 +312,7 @@ import {
 import type { HarnessKind } from './harness-trust.ts'
 import { HarnessHub, listSignature, runEndOutline, type HubCreateInput } from './hub.ts'
 import { BoardDelivery, boardPlace, type DeliveryTarget } from './board.ts'
+import { itemIsPrivate, itemSummary, WorkItemStore, type WorkItemRecord } from './work-items.ts'
 import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleListeners } from './session-lifecycle.ts'
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
@@ -2150,6 +2151,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
     const boardDelivery = new BoardDelivery({ log, changed: sessionId => refresh(sessionId), target: deliveryTarget })
+    const workItems = await WorkItemStore.open(dataDir, { now })
+    startupCleanup.push(() => workItems.flush())
     const harnessHub = await HarnessHub.open({
       dataDir,
       defaultId: defaultHarnessId,
@@ -2190,6 +2193,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(record.pr ? { pr: { ...(boardDelivery.prState(summary.id) ? { state: boardDelivery.prState(summary.id)! } : {}) } } : {}),
           delivery: boardDelivery.local(summary.id),
         }),
+      itemOf: sessionId => {
+        const item = workItems.itemOf(sessionId)
+        if (!item || !hub) return undefined
+        if (!itemIsPrivate(item, id => hub!.agentPrivate(id))) return item.id
+        workItems.notePrivate(item.id, log)
+        // A session that is not private, in a private 待办, would name the 待办 to devices that may not read it.
+        return hub.agentPrivate(sessionId) ? item.id : undefined
+      },
+      // A private session leaving by deletion must leave its 待办 private: written before the session goes.
+      beforeRemove: async (sessionId, isPrivate) => {
+        const item = workItems.itemOf(sessionId)
+        if (item && isPrivate && !item.private) await workItems.markPrivate(item.id)
+      },
     })
     hub = harnessHub
     const attachmentStore = await AttachmentStore.open(dataDir, { now, deferPrune: true })
@@ -2624,6 +2640,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     // List hints about a private session: only a device that may read it hears them.
     const privateHints = new WeakSet<ChangeEvent | TaskStateEvent>()
     let pendingGlobal = false
+    /** Something only devices with the full data scope may hear of changed (a private 待办): a refresh just for them. */
+    let pendingPrivate = false
     let eventTimer: ReturnType<typeof setTimeout> | undefined
     let flushing = false
     let changes: Promise<void> = Promise.resolve()
@@ -2920,6 +2938,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         },
       },
       handoffs: { handoffs: () => handoffs },
+      workItems: {
+        store: workItems,
+        start: (req, caller, body, res, { withoutPrivateContext }) =>
+          startPersonSession(req, caller, createTaskSchema.parse(body), res, withoutPrivateContext),
+        projectExists: id => id === 'default' || savedProject(id) !== undefined,
+        changed: itemChanged,
+      },
       history: { history: () => historyImports },
       reviewNotes: {
         notes: () => reviewNotes,
@@ -3565,6 +3590,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const reviewNotes = await ReviewNotes.open({ dataDir, now, log })
     startupCleanup.push(() => reviewNotes.close())
     lifecycleListeners.on('sessionDeleted', ({ sessionId }) => handoffs.sessionDeleted(sessionId))
+    // A deleted session leaves its 待办; an archived one stays in it.
+    lifecycleListeners.on('sessionDeleted', ({ sessionId }) => {
+      if (!workItems.itemOf(sessionId)) return
+      void workItems
+        .dropSessions(new Set([sessionId]))
+        .then(left => left.forEach(item => itemChanged(item, [])))
+        .catch(error => log(`会话 ${sessionId} 删除后待办没有更新：${errorText(error)}`))
+    })
     // A session that ended keeps no way to the browser tools, whatever process of it is still running.
     lifecycleListeners.on('sessionDeleted', ({ sessionId }) => toolGateway?.revokeSession(sessionId, 'deleted'))
     lifecycleListeners.on('sessionArchived', ({ sessionId }) => toolGateway?.revokeSession(sessionId, 'archived'))
@@ -7485,6 +7518,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         && (privateHints.has(event) || hub!.agentPrivate(event.sessionId))
       )
         return
+      // A refresh for a private 待办's change: a narrower device has nothing to read again.
+      if (narrow && event.type === 'refresh' && privateHints.has(event)) return
       // A connection can join while an older batch awaits an external Bridge.
       // Equal revisions are valid for different events in the same batch.
       if (event.revision < stream.lastSentRevision) return
@@ -7618,11 +7653,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function flushEvents(): Promise<void> {
       flushing = true
       const global = pendingGlobal
+      const privateOnly = pendingPrivate && !global
       const globalRevision = revision
       const tasks = [...pendingTasks]
       pendingGlobal = false
+      pendingPrivate = false
       pendingTasks.clear()
       try {
+        if (privateOnly) {
+          const event = nativeReplay.publish({
+            type: 'refresh',
+            instanceId,
+            revision: globalRevision,
+            discoveryEpoch: discoveryEpoch(),
+            directoryEpoch: relayDirectory.epoch(),
+          })
+          privateHints.add(event)
+          for (const res of streams.keys()) send(res, event)
+        }
         if (global) {
           const event = nativeReplay.publish({
             type: 'refresh',
@@ -7695,7 +7743,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
       } finally {
         flushing = false
-        if (pendingGlobal || pendingTasks.size) scheduleEvents()
+        if (pendingGlobal || pendingPrivate || pendingTasks.size) scheduleEvents()
       }
     }
 
@@ -7705,6 +7753,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (sessionId) pendingTasks.set(sessionId, nextRevision)
       else pendingGlobal = true
       scheduleEvents()
+    }
+
+    function refreshPrivate(): void {
+      nativeRoutes.reconcile()
+      ++revision
+      pendingPrivate = true
+      scheduleEvents()
+    }
+
+    /** A 待办 changed: clients read the snapshot again, and each named session's summary (its `itemId`). */
+    function itemChanged(item: WorkItemRecord, sessionIds: readonly string[]): void {
+      const isPrivate = itemIsPrivate(item, id => hub!.agentPrivate(id))
+      if (isPrivate) refreshPrivate()
+      else refresh()
+      // A private 待办's change touches no visible session: those are not refreshed, so their streams hear nothing of it.
+      for (const id of sessionIds) if (!isPrivate || hub!.agentPrivate(id)) refresh(id)
     }
     const unsubscribe = harnessHub.subscribe(refresh)
     const heartbeat = setInterval(() => {
@@ -8014,6 +8078,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return
       }
       const input = createTaskSchema.parse(body)
+      if (!input.customAgentId) {
+        json(res, await startPersonSession(req, caller, input, res), 201)
+        return
+      }
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
       if (input.customAgentId) agentAccess(caller, true)
@@ -8054,6 +8122,27 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           : undefined
       if (input.customAgentId) agentAccess(caller, true)
       json(res, { ...started, ...(refused ? { memoryRefused: refused } : {}) }, 201)
+    }
+
+    /**
+     * A person's start of a Code session: `POST /tasks` without a custom Agent, and `POST /work/items/:id/start`. One
+     * function, so both ask the same confirmations and write the same start audits, take the same project queue,
+     * worktree, receipts and checks: an empty prompt is refused, a Harness defined before confirmations is bound on
+     * this Mac, then `startSession`.
+     */
+    async function startPersonSession(
+      req: IncomingMessage,
+      caller: DeviceCaller,
+      input: z.infer<typeof createTaskSchema>,
+      res: ServerResponse,
+      /** What a narrower device wrote is started as that device's own start would be: no private context. */
+      withoutPrivateContext = false,
+    ): Promise<{ sessionId: string }> {
+      if (input.customAgentId) throw new AppError(400, 'invalid-input', '这里只开始 Code 会话。')
+      if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
+        throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
+      await bindUnconfirmedHarness(req, caller, input.harnessId ?? config.settings().defaults.harnessId)
+      return startSession(caller, withoutPrivateContext ? { ...input, withoutPrivateContext: true } : input, res)
     }
 
     const firstChatsInFlight = new Map<string, Promise<{ sessionId: string }>>()
@@ -10510,6 +10599,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const task = snapshot.tasks.find(item => item.id === approval.sessionId)
           return scope === 'files' && task ? filesApproval(approval, insideSession(task)) : workApproval(approval)
         })
+        // 待办 are placed from every session as listed, private ones too; a private 待办 goes to the full data scope only.
+        const listedById = new Map(listing.tasks.map(task => [task.id, task]))
+        const items = workItems.list().flatMap(record => {
+          const isPrivate = itemIsPrivate(record, id => hub!.agentPrivate(id))
+          if (isPrivate) workItems.notePrivate(record.id, log)
+          if (isPrivate && scope !== 'all') return []
+          return [itemSummary(record, { summary: id => listedById.get(id), prState: id => boardDelivery.prState(id) }, isPrivate)]
+        })
+        if (items.length) snapshot.items = items
         traffic.response('snapshot', json(res, snapshot))
         return
       }
@@ -11080,6 +11178,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         .catch(error => log(`交付状态未能预读：${errorText(error)}`))
     }, BOARD_WARM_DELAY_MS)
     boardWarm.unref()
+    // Once after start: sessions deleted while the Host was not running leave their 待办, on a whole listing only, so a
+    // Harness that has not mounted never strips its sessions. Only members held before the listing are judged.
+    const itemsPrune = setTimeout(() => {
+      const held = new Set(workItems.list().flatMap(item => item.sessionIds))
+      if (!held.size) return
+      void harnessHub
+        .listTasksProven()
+        .then(async listing => {
+          if (!wholeListing(listing)) return
+          const present = new Set(listing.tasks.map(task => task.id))
+          const gone = new Set([...held].filter(id => !present.has(id)))
+          if (!gone.size) return
+          for (const item of await workItems.dropSessions(gone)) itemChanged(item, [])
+        })
+        .catch(error => log(`待办的会话未能核对：${errorText(error)}`))
+    }, BOARD_WARM_DELAY_MS)
+    itemsPrune.unref()
 
     await writeProjectContext(dataDir, {
       workspaceRoot: realWorkspace,

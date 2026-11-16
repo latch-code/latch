@@ -407,6 +407,50 @@ describe('route guards', () => {
     expect(results).toEqual(expected)
   })
 
+  it('keeps every 待办 route to its scopes: reading takes view, every change run', async () => {
+    const t = await startTestHost()
+    cleanups.push(() => t.close())
+    const viewer = await t.enroll({ name: 'Viewer', scopes: ['view'] })
+    const member = await t.enroll({ listener: 'unix', name: 'Member', scopes: ['view', 'run'] })
+    const devices: Record<string, TestDevice> = { viewer, member }
+    type Caller = 'anonymous' | 'viewer' | 'member'
+    const call = (caller: Caller, method: Method, path: string, body: unknown): Promise<Response> => {
+      const init = { method, ...(body === undefined ? {} : { body }) }
+      return caller === 'anonymous' ? t.raw('unix', `api/${path}`, init) : devices[caller]!.request(path, init)
+    }
+    const unknown = `work/items/itm_${'0'.repeat(22)}`
+    const rows: Array<Row<Caller>> = [
+      ['POST', 'work/items', {}, { anonymous: [401, 'unauthorized'], viewer: [403, 'scope-required'], member: [400, 'invalid-input'] }],
+      ['GET', 'work/items', undefined, { member: [404, 'not-found'] }],
+      ['GET', unknown, undefined, { anonymous: [401, 'unauthorized'], viewer: [404, 'item-not-found'] }],
+      ['GET', 'work/items/itm_bad', undefined, { viewer: [404, 'item-not-found'] }],
+      [
+        'PATCH',
+        unknown,
+        { baseRevision: 1, closed: true },
+        { anonymous: [401, 'unauthorized'], viewer: [403, 'scope-required'], member: [404, 'item-not-found'] },
+      ],
+      ['DELETE', unknown, { baseRevision: 1 }, { viewer: [403, 'scope-required'], member: [404, 'item-not-found'] }],
+      [
+        'POST',
+        `${unknown}/start`,
+        { requestId: '6f1c2b1e-0a51-4f7e-9d0c-2b9b8f8f6b11', baseRevision: 1 },
+        { viewer: [403, 'scope-required'], member: [404, 'item-not-found'] },
+      ],
+      ['POST', `${unknown}/sessions`, { sessionId: 's' }, { viewer: [403, 'scope-required'], member: [404, 'item-not-found'] }],
+      ['DELETE', `${unknown}/sessions/s`, undefined, { viewer: [403, 'scope-required'], member: [404, 'item-not-found'] }],
+    ]
+    const results: Record<string, Outcome> = {}
+    const expected: Record<string, Outcome> = {}
+    for (const [method, path, body, outcomes] of rows)
+      for (const [caller, outcome] of Object.entries(outcomes) as Array<[Caller, Outcome]>) {
+        const key = `${caller} ${method} /link/api/${path}`
+        expected[key] = outcome
+        results[key] = await responseOutcome(await call(caller, method, path, body))
+      }
+    expect(results).toEqual(expected)
+  })
+
   it('keeps every history route to run and data scope all, before reading anything', async () => {
     const t = await startTestHost()
     cleanups.push(() => t.close())
@@ -555,6 +599,8 @@ describe('route guards', () => {
       ['GET', 'automations', undefined, { phone: [403, 'native-verification-required'] }],
       ['GET', 'handoffs?sessionId=s', undefined, { phone: [403, 'native-verification-required'] }],
       ['POST', 'handoffs', {}, { phone: [403, 'native-verification-required'] }],
+      ['GET', `work/items/itm_${'0'.repeat(22)}`, undefined, { phone: [403, 'native-verification-required'] }],
+      ['POST', 'work/items', {}, { phone: [403, 'native-verification-required'] }],
       ['POST', 'history/list', {}, { phone: [403, 'native-verification-required'] }],
       ['GET', `apps/p/data/status?app=p%2Fmain&revision=${'a'.repeat(64)}`, undefined, { phone: [403, 'native-verification-required'] }],
     ])

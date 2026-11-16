@@ -2,7 +2,9 @@ import {
   boardSettleOf,
   waitKindOf,
   type BoardPlace,
+  type BoardReason,
   type GitPrStatus,
+  type WorkItemPlace,
   type TaskSummary,
   type WorkbenchDeliveryEntry,
 } from '@latch/protocol'
@@ -62,6 +64,32 @@ export function boardPlace(task: TaskSummary, facts: BoardFacts): BoardPlace {
   // A bound pull request not read as merged or closed is open or not read yet.
   if (facts.delivery || facts.pr) return { group: 'deliver', ...base }
   return { group: 'done', ...base }
+}
+
+/** Waiting reasons in the rule order: a 待办 waiting on several sessions shows the first. */
+const REASON_ORDER: readonly BoardReason[] = ['approval', 'question', 'unrecognized', 'silent', 'unknown', 'failed']
+
+/** One session of a 待办 as the Host read it now: its place, and whether its bound pull request was last read as merged. */
+export interface WorkItemMember {
+  place: BoardPlace
+  prMerged: boolean
+}
+
+/**
+ * The 待办 rule table, top to bottom, the first that holds wins (docs/ARCHITECTURE.md#待办). `members` are the sessions
+ * the Host could read now, archived ones included; `count` is how many the 待办 lists. A session not read (its Harness is
+ * not listing) counts for nothing but keeps it out of `todo` and out of rule 6.
+ */
+export function workItemPlace(item: { closedAt?: string }, count: number, members: readonly WorkItemMember[]): WorkItemPlace {
+  if (item.closedAt) return { group: 'done' }
+  if (count === 0) return { group: 'todo' }
+  const waiting = members.flatMap(member => (member.place.group === 'attention' && member.place.reason ? [member.place.reason] : []))
+  if (members.some(member => member.place.group === 'attention'))
+    return { group: 'attention', ...(waiting.length ? { reason: REASON_ORDER.find(reason => waiting.includes(reason))! } : {}) }
+  if (members.some(member => member.place.group === 'running')) return { group: 'running' }
+  if (members.some(member => member.place.group === 'deliver')) return { group: 'deliver' }
+  if (members.length === count && members.every(member => member.prMerged)) return { group: 'done' }
+  return { group: 'deliver', reason: 'settled' }
 }
 
 /** A session the Host may read in the background: its working folder, when it last changed, and whether it is private. */

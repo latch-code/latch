@@ -11,6 +11,7 @@ import type { HarnessInfo } from './harnesses.ts'
 import type { ProviderSummary, SessionDefaults, UnusableProvider, WorkspaceInfo } from './settings.ts'
 import type { TaskStreamStamp } from './task-delta.ts'
 import type { CustomizationState } from './customization.ts'
+import type { WorkItemSummary } from './work-items.ts'
 
 export interface HostView {
   hostId: string
@@ -83,6 +84,8 @@ export interface AppSnapshot {
   handoffs?: HandoffSummary[]
   /** Applied plugin pages; absent on older Hosts. */
   apps?: AppSummary[]
+  /** 待办 this device may read: a private one only with data scope `all`. Absent on older Hosts. */
+  items?: WorkItemSummary[]
   /** Line feedback counts of sessions among `tasks` that have any; the notes themselves need data scope `all`. */
   reviewNotes?: ReviewNoteCounts[]
   /** The Host's customisation in force (docs/CUSTOMIZATION.md); absent on older Hosts. */

@@ -15,6 +15,7 @@ import { RouteRegistry, type RouteContext } from './registry.ts'
 import { createReviewNoteRoutes, type ReviewNoteRouteDeps } from './review-notes.ts'
 import { createSimulatorRoutes } from './simulators.ts'
 import type { Simulators } from '../simulators.ts'
+import { createWorkItemRoutes, type WorkItemRouteDeps } from './work-items.ts'
 import { createTerminalRoutes, type TerminalRoutes, type TerminalWorkspaceOperation } from './terminal.ts'
 import type { TerminalService } from '../terminal/service.ts'
 
@@ -27,6 +28,7 @@ export interface RouteDeps {
   agentLogin: AgentLoginDeps
   automations: AutomationRouteDeps
   handoffs: HandoffRouteDeps
+  workItems: WorkItemRouteDeps
   history: HistoryRouteDeps
   reviewNotes: ReviewNoteRouteDeps
   git?: GitRouteOptions
@@ -80,6 +82,7 @@ export function createRoutes(
       agentLogin,
       createAutomationRoutes(context, deps.automations),
       createHandoffRoutes(context, deps.handoffs),
+      createWorkItemRoutes(context, deps.workItems),
       createHistoryRoutes(context, deps.history),
       customization,
       apps,

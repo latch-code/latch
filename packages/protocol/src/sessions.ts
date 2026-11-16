@@ -180,6 +180,11 @@ export interface DriverTaskSummary {
   priority?: BoardPriority
   /** The Host's group for this session, which rows, counts and the board read. Host-derived; a driver's claim is dropped. */
   board?: BoardPlace
+  /**
+   * The 待办 this session belongs to (`AppSnapshot.items`). Host-derived; a driver's claim is dropped. Left out on a
+   * session that is not private in a private 待办, so a device that may not read the 待办 never learns of it.
+   */
+  itemId?: string
   /** Accumulated model usage reported by the provider or agent. */
   usage?: TokenUsage
   /** L1: Latch asks before each risky tool call. L3: the harness runs unsandboxed (full access). */

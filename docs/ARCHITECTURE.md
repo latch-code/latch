@@ -388,6 +388,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 - **交付事实。** `BoardDelivery` 只在内存中：一次运行结算后、交付的提交、推送或建 PR 之后、任何设备调 `workbench/delivery` 时各读一次，Host 启动约 2 秒后对最近 7 天、空闲、每个目录一个的会话最多读 48 个。只读 Code 会话（不归档、不在运行）的工作目录，经受限运行器只读本地 Git，从不调用 `gh`、不访问网络；PR 状态只来自设备发起的读与人按下的交付。后台同时只读一个，且有两个读取在跑时不开始；设备的读取仍各自最多两批。目录的改动只归一个会话：自己的工作树或会话文件夹、或绑定了 PR 的会话归它自己；几个会话共用一个目录时，归改动记录（`TurnChanges`：已结算、未撤销、`files > 0` 的一轮）里自己改过文件的会话中最近变化的那个。没有会话自己改过文件（例如人手改的），看板上就没有会话认领这个目录的改动。私有会话只与私有会话比，从不让可见的会话进出可交付。结论变了才通知客户端。
 - 标签、优先级经 `PATCH /tasks/:id`，只由人设置，不触发任何动作。标签每个 `trim`、NFKC、去掉不可见字符，1–24 个码点，最多 8 个；含控制字符或换行 400 `tag-invalid`，像密钥 400 `tag-secret`，超过 8 个 400 `tag-limit`。改元数据不改 `updatedAt`。
 
+
 **生命周期事件。** `session-lifecycle.ts` 把会话与 Host 的变化发给 Host 内按会话保存状态的模块；路由模块经 `RouteContext.lifecycle` 拿到的对象只有 `on`，只能订阅。
 
 | 事件 | 何时 |
@@ -402,6 +403,50 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 - 监听器抛错、拒绝或超时只记脱敏的日志，不影响运行与停止。
 
 客户端从快照的 `catalog` 读取可选项：`harnesses`（状态、级别、支持的模式与 `capabilities`；客户端只读这些事实，不判断 Driver 种类）、`providers`（不含密钥）、`workspaces` 与 `defaults`。快照还带当前设备与 Host 信息。
+
+### 待办
+
+待办是一件事：标题、要求、建议的项目、Harness、模型与工作树、标签、优先级，和 0 到 16 个 Code 会话。没有待办的会话自己成卡，不建记录。只由人新建、修改、开始、标完成与重新打开；Agent 与插件页面不能。
+
+**记录。** 数据目录的 `work/items.json`（目录 0700，文件 0600，原子写，一次一个改动，写成功之后才在内存中生效）。schema 是 strict：读到不认识的字段、同一会话在两条待办里、超过上限都拒绝启动并保留原文件（500 `config-corrupt`）。一台设备最多新建到它能读的 2 000 条（409 `item-limit`，只按它能读的计数，所以数据范围较窄的设备数不出私有待办）；文件本身最多 4 000 条，满了是另一个较粗的拒绝 409 `item-store-full`。每条最多 16 个会话；标题 1–120 个码点且只占一行，要求最多 16 000 个字符（与会话的第一条消息相同），都去掉首尾空白、拒控制字符，像密钥 400 `item-secret`；标签与优先级与会话同一规则。`revision` 随每次改动（含加入、移出会话）增加。`startScope` 记下写过开始要用的值（要求、项目、Harness、模型、工作树）的设备中最窄的数据范围，只会变窄。同一文件保存新建与开始的回执（按设备与 `requestId`，7 天，每设备 10 000 条），重试同一请求得到同一条待办或同一个会话，换了内容 409 `request-conflict`。写入失败时 503 `item-write-unknown`，状态不变，重试同一请求即可。
+
+**会话一侧。** `TaskSummary.itemId` 由 `present()` 从待办文件在内存里的索引填入，不另存在 `sessions-meta.json`，所以没有两处要对齐；Driver 自报的被丢弃。私有待办里不私有的会话不带 `itemId`。删除会话（`sessionDeleted`）把它从待办中移出；归档的会话仍是成员。Host 启动约 2 秒后列出全部会话，只在列表完整（每个 Harness 都已挂载并列出）时移出列表里已经没有的成员。删除待办只删记录，会话不动。
+
+**组。** `TaskSummary.board` 之外，每条待办带 Host 推出的 `board`（`board.ts` 的 `workItemPlace`），自上而下第一条命中：
+
+| # | 条件 | 组 | `reason` |
+| --- | --- | --- | --- |
+| 1 | 标了完成（`closedAt`） | `done` | |
+| 2 | 没有会话 | `todo` | |
+| 3 | 任一成员是 `attention` | `attention` | 成员原因中按会话规则顺序最靠前的 |
+| 4 | 任一成员是 `running` | `running` | |
+| 5 | 任一成员是 `deliver` | `deliver` | |
+| 6 | 每个成员都读到了，且绑定的 PR 都最近一次读到已合并 | `done` | |
+| 7 | 其余（都结束了，人还没标完成） | `deliver` | `settled` |
+
+成员读的是它此刻的 `TaskSummary.board` 与 `BoardDelivery` 记下的 PR 状态；归档的成员照算，Harness 没有列出的成员不算，但有成员的待办永远不是 `todo`，也不会因第 6 行到 `done`。
+
+**路由**（`routes/work-items.ts`）。
+
+| 路由 | 做什么 | 权限 |
+| --- | --- | --- |
+| `POST /work/items` | 新建未开始的待办 `{ requestId, title, prompt?, projectId?, harnessId?, model?, worktree?, tags?, priority? }`，201 | `run` |
+| `GET /work/items/:id` | 带要求的整条待办 | `view` |
+| `PATCH /work/items/:id` | `{ baseRevision, title?, prompt?, projectId?, harnessId?, model?, worktree?, tags?, priority?, closed? }`；`null` 清除建议；有会话后改要求 409 `item-started`；`closed` 是完成与重新打开 | `run` |
+| `DELETE /work/items/:id` | `{ baseRevision }`；正在开始会话时 409 `item-starting` | `run` |
+| `POST /work/items/:id/start` | `baseRevision`（人按下开始时看到的修订，不符 409 `item-changed`，什么都不开始）加与 `POST /tasks` 相同的选择项，缺的 `prompt`、`workspaceId`、`harnessId`、`model`、`worktree` 取待办的；不能带 `customAgentId`、`forkOf`、`appDraft`、`via`；已完成 409 `item-closed`，满 16 个 409 `item-full`。201 `{ sessionId, item?, outside? }`：会话开始后没能加入（待办满了或已删除）时 `outside` 是 `item-full` 或 `item-gone`，会话自成一卡，回执照样结清 | `run` |
+| `POST /work/items/:id/sessions` | `{ sessionId }` 加入已有会话：只收 Code 会话（409 `item-session-kind`），已在别的待办里 409 `item-session-taken`；那条待办这台设备读不到时，回答与私有会话相同（403 `agent-scope-required`） | `run`，且能读这个会话 |
+| `DELETE /work/items/:id/sessions/:sessionId` | 移出 | `run` |
+
+`PATCH` 与 `DELETE` 的 `baseRevision` 不符 409 `item-changed`。每个写入都回答整条待办（`{ item }`），并与 Host 其他由人发起的写入一样占用每设备的 `classC` 限速（60 次突发，每秒补 1 次），重写整份文件的代价因此有界。快照的 `items` 是这台设备能读的待办，不带要求（`hasPrompt` 表示有），`catalog.features.workItems` 表示 Host 有这些路由。
+
+**开始走同一条路。** `server.ts` 的 `startPersonSession` 是 `POST /tasks` 不带 `customAgentId` 时的全部：用 `createTaskSchema` 解析、空要求 400 `invalid-prompt`、在这台 Mac 上绑定未确认的 Harness，然后 `startSession`（确认、L3 的启动审计、项目串行、工作树、附件与 Driver 回执）。待办的开始先核对 `baseRevision`，再做三件事：写 `work.item.started`（写不进就 503 `audit-unavailable`，什么都不开始）、记下待开始的回执、把请求标识换成由设备、待办与原 `requestId` 推出的 UUID（与这台设备的 `POST /tasks` 互不相撞，重试时不变，所以 Driver 自己的建立回执在重启后仍答出同一个会话）。会话开始后再写入成员关系，回执在同一次写入里记下会话；写失败时重试同一请求只会读回同一个会话再加入。回执的 `payloadHash` 覆盖开始实际用的全部输入（含取自待办的值与修订），重试只认同一请求。从开始前到会话加入，开始要用的值不能改（409 `item-starting`），待办也不能删除。开始前被拒绝的请求忘掉回执，与 `POST /tasks` 一样。`startScope` 不是 `all` 时，开始带 `withoutPrivateContext`，与这样的设备自己开始的会话一样不带「通用」等私有上下文：较窄的设备写下要求、由完整数据范围的设备按下开始，私有内容不会因此流到它能读回的地方。权限模式只来自请求，待办不保存，也不能放宽。
+
+**私有。** 一条待办只要有一个成员此刻是私有的（`hub.agentPrivate`：例如有完整数据范围的设备带着「通用」的上下文开始或继续了它），就是私有：Host 在读到时（快照、会话摘要、路由）和删除这个成员之前写下 `private`，此后不再取消（移出私有会话也不变：标题与要求里可能已写进私有内容）。加入私有会话要求完整数据范围。数据范围不是 `all` 的设备：快照里没有私有待办，也不计数；每个路由对私有待办的回答与不存在的待办相同（404 `item-not-found`）；它能读的会话不带私有待办的 `itemId`。
+
+**审计**（detail 只有 ID、哈希、计数与枚举）。`work.item.changed`（`itemId`、`revision`、`op`：`created`、`edited`、`deleted`、`joined`、`left`，`sessionId?`，`titleHash`），`work.item.started`（`itemId`、`requestHash`），`work.item.closed`（`itemId`、`closed`）。开始与加入私有会话先写审计，写不进就不做；其余写不进照做并带 `x-latch-audit: failed`。会话被删除而移出不写审计。
+
+**通知。** 待办的变化走现有的刷新：不私有的待办发全局 `refresh`，私有的只发给完整数据范围的连接；成员会话另发各自的变化，但私有待办只刷新它的私有成员，不私有的成员的流听不到这条待办的任何变化。客户端收到后重读快照，不新增事件种类。
 
 ## Standard 的会话与运行
 
@@ -474,6 +519,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 | `agents/custom.json`、`agents/computer.json`、`agents/avatars/` | 我的 Agent 与「通用」的定义与记忆、电脑的睡眠与停止时段、图片头像（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)） |
 | `automations.json` | 保存的任务、运行与回执（[AUTOMATIONS.md](AUTOMATIONS.md)） |
 | `handoffs/handoffs.json` | 交接记录与回执（[HANDOFFS.md](HANDOFFS.md)） |
+| `work/items.json` | 待办与它们新建、开始的回执（见「待办」） |
 | `review-notes/`、`snapshots/` | 行级反馈、每轮的文件快照与记录（[CHANGES.md](CHANGES.md)） |
 | `attachments/`、`file-references/` | 附件存储（[ATTACHMENTS.md](ATTACHMENTS.md)）、会话提到过的文件路径 |
 | `plugin-packages/`、`plugin-data/<pluginId>/` | 自定义插件的资产与构建记录（[PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md)）、插件页面的数据与诊断（[APP-PAGES.md](APP-PAGES.md)） |
@@ -648,6 +694,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `/browser-provider/…`、`/tasks/:id/browser-tabs` | `routes/browser.ts` | 见文档 | [PREVIEW-BROWSER.md](PREVIEW-BROWSER.md) |
 | `/simulators…` | `routes/simulators.ts` | 见文档 | [DEVICE-PREVIEW.md](DEVICE-PREVIEW.md) |
 | `/handoffs…` | `routes/handoffs.ts` | 读 `view`，写 `run`；都要能读相关会话 | [HANDOFFS.md](HANDOFFS.md) |
+| `/work/items…` | `routes/work-items.ts` | 读 `view`，写 `run`；私有待办只给数据范围 `all` | 「待办」 |
 | `/history/…` | `routes/history.ts` | `run` + 数据范围 `all` | [HARNESSES.md](HARNESSES.md#接入已有会话) |
 | `/custom-agents…` | `routes/agents.ts` | 见文档 | [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md) |
 | `/automations…` | `routes/automations.ts` | 见文档 | [AUTOMATIONS.md](AUTOMATIONS.md) |

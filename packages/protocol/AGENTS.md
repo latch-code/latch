@@ -1,6 +1,6 @@
 # @latch/protocol
 
-浏览器与 Host 共用 DTO。会话与审批见 `src/sessions.ts`，看板的组与等待判定见 `src/board.ts`，标签规范见 `src/board-tags.ts`，快照与事件见 `src/snapshot.ts`，正文增量见 `src/task-delta.ts`，设备、登记与本机确认见 `src/devices.ts`。Harness 与 Agent 见 `src/harnesses.ts`（`AgentRecord` 限 Host），模型服务和设置见 `src/settings.ts`，能力、交接、导入会话见 `src/{features,handoffs,history}.ts`，改动与行级反馈见 `src/{changes,review-notes}.ts`。预设及安全文字见 `src/{presets,agent-presets,text,listeners,decision,risk}.ts`，审批卡与本机确认共用 `RISK_REASON_TEXT`。`src/ui.ts` 定义插件面板、技能与有限数据文档，`src/files.ts` 定义预览元数据与目标。不做持久化或 I/O。
+浏览器与 Host 共用 DTO。会话与审批见 `src/sessions.ts`，看板的组与等待判定见 `src/board.ts`，标签规范见 `src/board-tags.ts`，待办见 `src/work-items.ts`，快照与事件见 `src/snapshot.ts`，正文增量见 `src/task-delta.ts`，设备、登记与本机确认见 `src/devices.ts`。Harness 与 Agent 见 `src/harnesses.ts`（`AgentRecord` 限 Host），模型服务和设置见 `src/settings.ts`，能力、交接、导入会话见 `src/{features,handoffs,history}.ts`，改动与行级反馈见 `src/{changes,review-notes}.ts`。预设及安全文字见 `src/{presets,agent-presets,text,listeners,decision,risk}.ts`，审批卡与本机确认共用 `RISK_REASON_TEXT`。`src/ui.ts` 定义插件面板、技能与有限数据文档，`src/files.ts` 定义预览元数据与目标。不做持久化或 I/O。
 
 运行环境 isomorphic：只用 ECMAScript 标准库，不导入 `node:*`，不用 DOM 或 Node 的全局变量（`tsconfig.isomorphic.json`、`.oxlintrc.json`）。没有依赖，不使用其他 workspace 包；模块没有副作用。入口 `@latch/protocol` 导出类型与值；`@latch/protocol/types`（`src/types.ts`）只有类型。
 

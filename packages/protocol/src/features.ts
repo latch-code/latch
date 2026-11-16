@@ -56,6 +56,8 @@ export interface HostFeatures {
   automations?: true
   /** `/handoffs` exists: hand chosen material to a code session and take its result back. */
   handoffs?: true
+  /** `/work/items`: 待办 with 0–16 sessions, started through the same path as `POST /tasks` (docs/ARCHITECTURE.md#待办). */
+  workItems?: true
   mentions?: true
   pairingV3?: true
   nativeElevation?: true

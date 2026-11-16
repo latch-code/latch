@@ -13,7 +13,7 @@ import {
   type TaskSummary,
 } from '@latch/protocol'
 import { AppError, type Bridge, type HarnessDriver } from '@latch/sdk'
-import { BoardDelivery, boardPlace, type BoardFacts, type DeliveryTarget } from '../src/board.ts'
+import { BoardDelivery, boardPlace, workItemPlace, type BoardFacts, type DeliveryTarget, type WorkItemMember } from '../src/board.ts'
 import { HarnessHub, type HarnessMount } from '../src/hub.ts'
 import { WorkbenchDeliveryReader } from '../src/workbench-delivery.ts'
 
@@ -130,6 +130,48 @@ describe('the board rule table', () => {
       reason: 'approval',
       settle: 'run-1',
     })
+  })
+})
+
+describe('the 待办 rule table', () => {
+  const member = (place: BoardPlace, prMerged = false): WorkItemMember => ({ place, prMerged })
+  const open = {}
+
+  it('puts each 待办 in the first group whose rule holds', () => {
+    const rows: Array<[string, { closedAt?: string }, number, WorkItemMember[], ReturnType<typeof workItemPlace>]> = [
+      ['1 closed', { closedAt: T0 }, 2, [member({ group: 'attention', reason: 'approval' })], { group: 'done' }],
+      ['2 no session', open, 0, [], { group: 'todo' }],
+      [
+        '3 attention, the first reason in rule order',
+        open,
+        3,
+        [
+          member({ group: 'running' }),
+          member({ group: 'attention', reason: 'failed' }),
+          member({ group: 'attention', reason: 'question' }),
+        ],
+        { group: 'attention', reason: 'question' },
+      ],
+      ['4 running', open, 2, [member({ group: 'running' }), member({ group: 'deliver' })], { group: 'running' }],
+      ['5 deliver', open, 2, [member({ group: 'deliver' }), member({ group: 'done' }, true)], { group: 'deliver' }],
+      ['6 every pull request merged', open, 2, [member({ group: 'done' }, true), member({ group: 'done' }, true)], { group: 'done' }],
+      [
+        '7 all ended, not marked done',
+        open,
+        2,
+        [member({ group: 'done' }, true), member({ group: 'done' })],
+        { group: 'deliver', reason: 'settled' },
+      ],
+    ]
+    for (const [name, item, count, members, expected] of rows) expect(workItemPlace(item, count, members), name).toEqual(expected)
+  })
+
+  it('never puts a 待办 with sessions in 未开始, nor in 已结束 by rule 6 while one of them could not be read', () => {
+    // Its Harness is not listing: the session counts for nothing.
+    expect(workItemPlace(open, 1, [])).toEqual({ group: 'deliver', reason: 'settled' })
+    expect(workItemPlace(open, 2, [member({ group: 'done' }, true)])).toEqual({ group: 'deliver', reason: 'settled' })
+    // Archived sessions are read like the rest (their place has no card).
+    expect(workItemPlace(open, 1, [member({ group: 'running' })])).toEqual({ group: 'running' })
   })
 })
 
