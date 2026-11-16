@@ -378,12 +378,20 @@
 .workbench-home-composer .composer[data-location-position='toolbar'] {
   display: grid;
   grid-template:
-    'fields fields' auto
-    'location actions' auto / minmax(0, 1fr) minmax(0, max-content);
+    'fields fields fields' auto
+    'add location actions' auto / auto minmax(0, 1fr) minmax(0, max-content);
+}
+.workbench-home-composer .composer[data-location-position='toolbar'] > .composer-add {
+  grid-area: add;
+  display: flex;
+  align-items: center;
+  align-self: start;
+  min-height: 44px;
+  padding: 0 0 var(--sp-12) var(--sp-12);
 }
 .workbench-home-composer .composer[data-location-position='toolbar'] > .home-composer-location {
   grid-area: location;
-  padding: 0 0 var(--sp-12) var(--sp-12);
+  padding: 0 0 var(--sp-12) var(--sp-8);
 }
 .workbench-home-composer .composer[data-location-position='toolbar'] > .composer-home-fields {
   grid-area: fields;
@@ -645,6 +653,10 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  border-block-start: 1px solid transparent;
+}
+.code-home-queue[data-scrolled] {
+  border-block-start-color: var(--line);
 }
 .code-home-queue > * {
   flex-shrink: 0;
@@ -681,21 +693,18 @@
   .app-shell[data-workbench-layout='triage'] .code-home:has(.work-overview) {
     padding-bottom: 0;
   }
-  /* Setup cards share the whole content scroller; with room, each desktop lane can be read on its own. */
+  /* The queue is the one scroller: the lanes reach the window's foot and grow with what they hold. */
   .code-home-queue:not(:has(> .code-home-notices > *)) > .work-overview {
     display: flex;
-    flex: 1;
+    flex: 1 0 auto;
     flex-direction: column;
-    min-height: 0;
   }
   .code-home-queue:not(:has(> .code-home-notices > *)) > .work-overview > .work-overview-groups {
-    flex: 1;
-    grid-template-rows: minmax(0, 1fr);
+    flex: 1 0 auto;
     align-items: stretch;
-    min-height: 0;
   }
   .code-home-queue:not(:has(> .code-home-notices > *)) > .work-overview[data-layout='overview'] > .work-overview-groups {
-    grid-template-rows: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto 1fr;
   }
   .code-home-queue > .work-overview[data-layout='overview'] .work-overview-group[data-group='attention'] {
     grid-column: 1;
@@ -706,10 +715,6 @@
     grid-row: 2;
   }
   .code-home-queue:not(:has(> .code-home-notices > *)) > .work-overview .work-overview-group {
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
     padding-bottom: var(--sp-8);
   }
 }
@@ -1418,9 +1423,10 @@
     width: 244px;
   }
   .workbench-home-composer .composer[data-location-position='toolbar'] {
-    grid-template: 'fields' 'location' 'actions' / minmax(0, 1fr);
+    grid-template: 'fields fields' 'location location' 'add actions' / auto minmax(0, 1fr);
   }
   .workbench-home-composer .composer[data-location-position='toolbar'] > .home-composer-location {
+    padding-inline-start: var(--sp-12);
     padding-block-end: var(--sp-4);
   }
 }

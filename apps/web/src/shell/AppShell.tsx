@@ -81,7 +81,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     onOpenHomeFiles: focus.reset,
   })
   const homeQueue = useRef<WorkOverviewHandle>(null)
-  const homeReviewMemory = useRef<WorkbenchReviewMemory>({ selection: undefined, open: false, scrollTop: 0 })
+  const homeReviewMemory = useRef<WorkbenchReviewMemory>({ selection: undefined, open: false })
   const focusWasVisible = useRef(false)
   const {
     phoneSession,

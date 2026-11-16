@@ -15,7 +15,7 @@ import {
   PlusGlyph,
   CloseGlyph,
 } from '@latch/ui'
-import { attachmentLimits, type AttachmentDraftController, type DraftAttachment } from '../hooks/useAttachments.ts'
+import type { AttachmentDraftController, DraftAttachment } from '../hooks/useAttachments.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 
@@ -68,7 +68,6 @@ export function AttachmentButton({
 }) {
   const input = useRef<HTMLInputElement>(null)
   const blocked = attachmentBlock(controller)
-  const limits = attachmentLimits(controller.caps)
   const pick = () => {
     if (blocked !== undefined) controller.explain(blocked, controller.caps?.reason === blocked ? controller.caps.reasonDetail : undefined)
     else input.current?.click()
@@ -98,7 +97,7 @@ export function AttachmentButton({
                 {
                   id: 'attach',
                   label: '添加文件…',
-                  description: blocked ?? limits,
+                  description: blocked,
                   leading: <Icon icon={FileGlyph} size={14} />,
                   onSelect: pick,
                 },
@@ -111,11 +110,11 @@ export function AttachmentButton({
       ) : (
         <IconButton
           icon={PlusGlyph}
-          label="添加文件…"
+          label="添加文件"
           className="attachment-button"
           data-unavailable={blocked !== undefined && !disabled ? '' : undefined}
           disabled={disabled}
-          tooltip={disabled ? '等待这次提交完成' : (blocked ?? (limits ? `添加文件… · ${limits}` : '添加文件…'))}
+          tooltip={disabled ? '等待这次提交完成' : (blocked ?? '添加文件')}
           onClick={pick}
         />
       )}
@@ -197,14 +196,26 @@ function DraftAttachmentCard({
   }, [item.file, image])
   const name = item.pastedText === undefined ? item.file.name : `已粘贴 ${item.pastedText.length.toLocaleString()} 字`
   const status = (
-    <span className="attachment-state" role="status">
-      {item.status === 'uploading' ? (
+    <span
+      className="attachment-state"
+      role="status"
+      title={item.shrunkFrom === undefined ? undefined : `原图 ${uploadBytes(item.shrunkFrom)}`}>
+      {item.status === 'uploading' && item.shrink ? (
+        <>
+          <Spinner size={12} />
+          缩小中
+        </>
+      ) : item.status === 'uploading' ? (
         <>
           <Spinner size={12} />
           {`${uploadBytes(item.file.size * item.progress)} / ${uploadBytes(item.file.size)}`}
         </>
       ) : item.status === 'ready' ? (
-        `${Math.ceil(item.file.size / 1024)} KB`
+        item.shrunkFrom === undefined ? (
+          `${Math.ceil(item.file.size / 1024)} KB`
+        ) : (
+          `已缩小 · ${uploadBytes(item.file.size)}`
+        )
       ) : (
         item.error
       )}
@@ -238,7 +249,7 @@ function DraftAttachmentCard({
       ) : (
         <div className="attachment-draft-open">{content}</div>
       )}
-      {image && item.status !== 'ready' && status}
+      {image && (item.status !== 'ready' || item.shrunkFrom !== undefined) && status}
       {(item.status === 'failed' || item.status === 'confirm') && (
         <Button
           className="attachment-retry"

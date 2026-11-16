@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, RunLive, TaskSummary } from '@latch/protocol'
 import { observeHostTime, resetHostClock } from '../src/core/hostClock.ts'
 import { WorkOverview } from '../src/shell/WorkOverview.tsx'
-import { workGroups, workStatus } from '../src/shell/workOverview.ts'
+import { rowStep, workGroups, workStatus } from '../src/shell/workOverview.ts'
 
 const task = (id: string, extra: Partial<TaskSummary> = {}): TaskSummary => ({
   id,
@@ -147,5 +147,17 @@ describe('work overview', () => {
       tone: 'neutral',
       words: '上次状态：等你处理',
     })
+  })
+})
+
+describe('overview row keys', () => {
+  it('moves through every shown row and stops at both ends', () => {
+    expect(rowStep('ArrowDown', 0, 8)).toBe(1)
+    expect(rowStep('ArrowDown', 7, 8)).toBe(7)
+    expect(rowStep('ArrowUp', 0, 8)).toBe(0)
+    expect(rowStep('Home', 5, 8)).toBe(0)
+    expect(rowStep('End', 0, 8)).toBe(7)
+    expect(rowStep('Enter', 3, 8)).toBeUndefined()
+    expect(rowStep('ArrowDown', 0, 0)).toBeUndefined()
   })
 })

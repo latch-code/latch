@@ -7,6 +7,7 @@ sources:
   - apps/desktop/src/host.cjs
   - apps/web/src/core/api.ts
   - apps/web/src/hooks/useAttachments.ts
+  - apps/web/src/hooks/imageShrink.ts
   - apps/web/src/hooks/useFileMentions.tsx
   - apps/web/src/settings/devices/ReservedAttachments.tsx
   - apps/host/src/file-mentions.ts
@@ -32,7 +33,7 @@ sources:
 | 项 | 上限 |
 | --- | --- |
 | 每个文件 | 本机（`host.sock`）25 MiB，其他入口 10 MiB |
-| 图片（PNG、JPEG、GIF、WebP） | 5 MiB、4,000 万像素 |
+| 图片（PNG、JPEG、GIF、WebP） | 5 MiB、4,000 万像素；超出的由页面先缩小 |
 | 每条消息 | 8 个附件 |
 | 内置 Harness 的文本 | 256 KiB |
 | ACP 单轮内容 | 编码后 60 MiB（`attachments-too-large`） |
@@ -41,6 +42,8 @@ sources:
 | 索引 | 50,000 个（`attachment-quota`） |
 
 - 文件类型来自内容，不看扩展名。完整文本必须能解码且没有 NUL。
+- **添加时缩小。** 超过这条连接 `imageBytes`（不超过 `fileBytes`）的图片由页面在本机解码、按方向转正后重新编码，直到同时在字节与像素上限内（首次按像素上限与 4096 长边，再降质量或按超出比例缩边，至多 6 次）；不透明的编码为 JPEG，有透明的为 WebP 或 PNG。只上传缩小后的文件，Host 照常嗅探与检查。动图、本机无法解码或仍超限的拒绝并写明原因；附件和提示标「已缩小」，原大小在悬停。
+- 附件按钮的提示只写「添加文件」；上限只在文件真的超出时说出。
 - PDF 尚未实现 Host 解析；其他二进制与 Office 输入明确拒绝。
 - 运行中排队或追加的消息只带文字：带附件或文件引用的以 400 `queue-attachments-unsupported` 拒绝。
 

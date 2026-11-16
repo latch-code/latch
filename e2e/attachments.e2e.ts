@@ -117,7 +117,7 @@ describe('private attachments through the composer', () => {
       try {
         await enrollBrowser(page, host, { name: `附件 ${width}`, scopes: ['admin'] })
         await newDraft(page)
-        await expect.poll(() => page.getByRole('button', { name: '添加文件…', exact: true }).isEnabled()).toBe(true)
+        await expect.poll(() => page.getByRole('button', { name: '添加文件', exact: true }).isEnabled()).toBe(true)
         const composer = width === 390 ? page.locator('.workbench-home') : page
         await composer.getByLabel('选择附件', { exact: true }).setInputFiles({ name: 'sample.png', mimeType: 'image/png', buffer: image })
         const drafts = composer.getByLabel('消息附件', { exact: true })
@@ -411,6 +411,49 @@ describe('private attachments through the composer', () => {
       await context.close()
     }
   })
+  it('shrinks a photo over the image limit before uploading it, and refuses a large animation with its reason', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' }),
+      page = await context.newPage()
+    page.setDefaultTimeout(30_000)
+    // Two frames padded past the limit: re-encoding would keep one, so it is refused before any decoding.
+    const block = [255, ...Array.from({ length: 255 }, (_, index) => index)]
+    const frame = [0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, ...Array.from({ length: 12_000 }, () => block).flat(), 0]
+    const gif = Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0, 0, 0, ...frame, ...frame, 0x3b])
+    try {
+      await enrollBrowser(page, host, { name: '图片缩小', scopes: ['admin'] })
+      await newDraft(page)
+      const photo = await page.evaluate(async () => {
+        const canvas = new OffscreenCanvas(2400, 1800)
+        const context = canvas.getContext('2d')!
+        const pixels = context.createImageData(2400, 1800)
+        for (let index = 0; index < pixels.data.length; index++) pixels.data[index] = index % 4 === 3 ? 255 : (Math.random() * 256) | 0
+        context.putImageData(pixels, 0, 0)
+        const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer())
+        let text = ''
+        for (let index = 0; index < bytes.length; index += 0x8000) text += String.fromCharCode(...bytes.subarray(index, index + 0x8000))
+        return btoa(text)
+      })
+      const original = Buffer.from(photo, 'base64')
+      expect(original.length).toBeGreaterThan(5 * 1024 * 1024)
+      await page.getByLabel('选择附件', { exact: true }).setInputFiles([
+        { name: 'noise.png', mimeType: 'image/png', buffer: original },
+        { name: 'moving.gif', mimeType: 'image/gif', buffer: gif },
+      ])
+      const shrunk = page.locator('.attachment-draft').filter({ has: page.getByRole('button', { name: 'noise.jpg', exact: true }) })
+      await shrunk.getByText(/^已缩小 · /u).waitFor()
+      expect(await shrunk.locator('.attachment-state').getAttribute('title')).toMatch(/^原图 /u)
+      await page.getByText('动图超过 5 MB，缩小会丢掉动画', { exact: true }).waitFor()
+      await page.screenshot({ path: 'test-results/attachments/1440-light-shrunk.png', animations: 'disabled' })
+      await page
+        .locator('.attachment-draft[data-state="refused"]')
+        .getByRole('button', { name: '移除附件 moving.gif', exact: true })
+        .click()
+      await page.getByRole('button', { name: '发送', exact: true }).click()
+      await page.getByText('已收到 1 个附件。', { exact: true }).waitFor()
+    } finally {
+      await context.close()
+    }
+  })
 })
 
 describe('the attach button and @ on every Harness', () => {
@@ -477,7 +520,7 @@ describe('the attach button and @ on every Harness', () => {
             .first()
             .waitFor()
         } else await page.getByRole('menuitemradio', { name: lateName }).first().click()
-        const add = page.getByRole('button', { name: '添加文件…', exact: true })
+        const add = page.getByRole('button', { name: '添加文件', exact: true })
         // No hover on a touch screen: pressing says why, in place.
         await add.click()
         const notice = page.locator('.workbench-home .ui-notice-text').or(page.locator('main.workspace:not([inert]) .ui-notice-text'))

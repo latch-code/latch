@@ -298,7 +298,7 @@ it('keeps the real first characters, the menu and the same sender while hiding d
     await expect.poll(() => model.getAttribute('aria-expanded')).not.toBe('true')
     const [fileChooser] = await Promise.all([
       page.waitForEvent('filechooser'),
-      home.getByRole('button', { name: '添加文件…', exact: true }).click(),
+      home.getByRole('button', { name: '添加文件', exact: true }).click(),
     ])
     await fileChooser.setFiles({ name: 'release-notes.txt', mimeType: 'text/plain', buffer: Buffer.from('fixture notes') })
     await reachable(home.getByRole('button', { name: 'release-notes.txt', exact: true }))

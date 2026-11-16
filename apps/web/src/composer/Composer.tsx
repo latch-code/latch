@@ -588,6 +588,9 @@ export function Composer({
   )
 
   const desktopLocation = !inline && !!location
+  const add = attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />
+  // The location chips share the toolbar's row here, so ＋ goes ahead of them to stay the row's first control.
+  const addLeads = desktopLocation && locationPosition === 'toolbar'
   const fields = (
     <>
       <RunBar run={run} />
@@ -678,6 +681,7 @@ export function Composer({
         )}
         {desktopLocation ? (
           <>
+            {addLeads && add && <div className="composer-add">{add}</div>}
             {location}
             <div className="composer-home-fields">
               {fields}
@@ -702,7 +706,7 @@ export function Composer({
               </div>
             )}
             <div className="composer-line">
-              {attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
+              {add}
               {input}
               {action}
             </div>
@@ -712,7 +716,7 @@ export function Composer({
             {!desktopLocation && input}
             <div className="composer-toolbar">
               <div className="composer-controls">
-                {attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />}
+                {!addLeads && add}
                 {slashButton}
                 {controls}
               </div>

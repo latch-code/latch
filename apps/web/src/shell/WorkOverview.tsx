@@ -30,7 +30,7 @@ import { runClock, runElapsed } from '../conversation.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
 import { CodeHomeOverview } from './CodeHomeOverview.tsx'
-import { recentCodeWork, workGroups, workStatus, type WorkGroupId } from './workOverview.ts'
+import { recentCodeWork, stepRows, useQueueEdge, workGroups, workStatus, type WorkGroupId } from './workOverview.ts'
 import { WorkbenchReviewQueue, type WorkbenchReviewHandle, type WorkbenchReviewMemory } from './WorkbenchReviewQueue.tsx'
 import {
   deliveryCheckSummary,
@@ -268,6 +268,7 @@ function WorkQueue({
   const [lane, setLane] = useState<WorkGroupId>('attention')
   const overview = useRef<HTMLElement>(null)
   const review = useRef<WorkbenchReviewHandle>(null)
+  useQueueEdge(overview)
   useImperativeHandle(
     ref,
     () => ({
@@ -356,7 +357,7 @@ function WorkQueue({
           onValueChange={setLane}
         />
       )}
-      <div className="work-overview-groups">
+      <div className="work-overview-groups" onKeyDown={event => stepRows(event, event.currentTarget)}>
         {(allEmpty ? [] : groups).map(group => (
           <section
             key={group.id}

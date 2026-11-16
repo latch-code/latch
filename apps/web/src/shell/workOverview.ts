@@ -1,4 +1,5 @@
 import type { TaskSummary } from '@latch/protocol'
+import { useEffect, type KeyboardEvent, type RefObject } from 'react'
 import { sessionReadOnly } from '../core/permissions.ts'
 import { activityWords, rowStatus, runningWords, silentWords, spaceOf, waitKind, waitsOnYou, type Space } from '../sessions.ts'
 
@@ -85,4 +86,43 @@ export function workStatus(
   if (status.kind === 'ended') return { tone: 'neutral', words: status.word }
   if (status.kind === 'unread') return { tone: 'neutral', words: '有新内容' }
   return { tone: 'neutral', words: task.runOutcome === 'completed' ? '本轮已结束' : '会话记录' }
+}
+
+/** The row a key moves to among `count` rows from `index`; undefined for any other key. */
+export function rowStep(key: string, index: number, count: number): number | undefined {
+  if (count === 0) return undefined
+  if (key === 'Home') return 0
+  if (key === 'End') return count - 1
+  if (key === 'ArrowDown') return Math.min(index + 1, count - 1)
+  if (key === 'ArrowUp') return Math.max(index - 1, 0)
+  return undefined
+}
+
+const OVERVIEW_ROWS = '.work-overview-review-row, .work-overview-row, .work-delivery-title'
+
+/** Arrow keys, Home and End move the focus through every row shown under `container`, expanded rows included. */
+export function stepRows(event: KeyboardEvent, container: HTMLElement): void {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || !(event.target instanceof HTMLElement)) return
+  if (!event.target.matches(OVERVIEW_ROWS)) return
+  const rows = [...container.querySelectorAll<HTMLElement>(OVERVIEW_ROWS)].filter(row => row.checkVisibility())
+  const next = rowStep(event.key, rows.indexOf(event.target), rows.length)
+  if (next === undefined) return
+  event.preventDefault()
+  rows[next]!.focus({ preventScroll: true })
+  rows[next]!.scrollIntoView({ block: 'nearest' })
+}
+
+/** Marks the home's queue once it scrolls, so rows pass under the top edge behind a hairline, not half cut. */
+export function useQueueEdge(root: RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    const queue = root.current?.closest<HTMLElement>('.code-home-queue')
+    if (!queue) return
+    const read = () => queue.toggleAttribute('data-scrolled', queue.scrollTop > 0)
+    read()
+    queue.addEventListener('scroll', read, { passive: true })
+    return () => {
+      queue.removeEventListener('scroll', read)
+      queue.removeAttribute('data-scrolled')
+    }
+  }, [root])
 }

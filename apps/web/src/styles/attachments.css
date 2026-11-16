@@ -101,6 +101,9 @@
   height: 100%;
   object-fit: cover;
 }
+.attachment-draft[data-kind='image'] > .attachment-state {
+  padding: var(--sp-4) var(--sp-8);
+}
 .attachment-draft[data-kind='image'] > .attachment-remove {
   border-radius: var(--r-full);
   background: var(--pop);

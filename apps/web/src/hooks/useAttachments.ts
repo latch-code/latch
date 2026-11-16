@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AttachmentCapabilities, AttachmentRef, AttachmentSelection } from '@latch/protocol'
 import { api, ApiError, errorMessage, newRequestId, uploadAttachment } from '../core/api.ts'
+import { looksLikeImage, SHRINK_INPUT_BYTES, ShrinkRefusal, shrinkImage } from './imageShrink.ts'
 
 export interface DraftAttachment {
   key: string
@@ -13,6 +14,10 @@ export interface DraftAttachment {
   status: 'uploading' | 'ready' | 'failed' | 'refused' | 'confirm'
   progress: number
   error?: string
+  /** An image over the image limit: shrunk on this device before it is uploaded. */
+  shrink?: true
+  /** The original's size once `file` is its shrunk copy. */
+  shrunkFrom?: number
 }
 const IMAGE_BYTES = 5 * 1024 * 1024
 const FILE_BYTES = 25 * 1024 * 1024
@@ -57,13 +62,27 @@ function largestAccepted(caps: AttachmentCapabilities | undefined): number | und
   return Math.min(file, Math.max(caps.images ? (caps.imageBytes ?? IMAGE_BYTES) : 0, caps.text ? caps.textBytes : 0))
 }
 
+/** The image limit this connection states, when an image over it can be shrunk instead of refused. */
+export function shrinkLimit(
+  file: { name: string; size: number; type?: string },
+  caps: AttachmentCapabilities | undefined,
+): number | undefined {
+  if (!caps?.images || !looksLikeImage(file) || file.size > SHRINK_INPUT_BYTES) return undefined
+  const limit = Math.min(caps.imageBytes ?? IMAGE_BYTES, caps.fileBytes ?? FILE_BYTES)
+  return file.size > limit ? limit : undefined
+}
+
 /**
  * Why this file is not added before it is uploaded: empty, a Harness that takes no attachments at all, or larger than
  * anything it takes. Undefined when the Host decides.
  */
-export function addRefusal(file: Pick<File, 'name' | 'size'>, caps: AttachmentCapabilities | undefined): string | undefined {
+export function addRefusal(
+  file: { name: string; size: number; type?: string },
+  caps: AttachmentCapabilities | undefined,
+): string | undefined {
   if (!file.size) return '空文件不能添加。'
   if (caps && !caps.images && !caps.text) return caps.reason ?? '这个 Harness 不接收附件。'
+  if (shrinkLimit(file, caps) !== undefined) return undefined
   const largest = largestAccepted(caps) ?? FILE_BYTES
   if (file.size > largest)
     return `「${file.name}」超过 ${sizeText(largest)}，没有添加。${attachmentLimits(caps) ? `可以添加：${attachmentLimits(caps)}。` : ''}`
@@ -169,6 +188,36 @@ export function useAttachments({
     const acknowledgedSecret = acknowledged || item.secretAcknowledged === true
     const controller = new AbortController(),
       current = generation.current
+    const limit = item.shrink && shrinkLimit(item.file, caps)
+    if (limit) {
+      update(items => items.map(entry => (entry.key === key ? { ...entry, status: 'uploading', error: undefined, progress: 0 } : entry)))
+      const promise = shrinkImage(item.file, limit, controller.signal, sizeText(limit)).then(
+        file => {
+          if (current !== generation.current || jobs.current.get(key)?.controller !== controller) return
+          jobs.current.delete(key)
+          update(items =>
+            items.map(entry => (entry.key === key ? { ...entry, file, shrink: undefined, shrunkFrom: item.file.size } : entry)),
+          )
+          start(key, acknowledged)
+          return jobs.current.get(key)?.promise
+        },
+        cause => {
+          if (jobs.current.get(key)?.controller === controller) jobs.current.delete(key)
+          if (current !== generation.current) return
+          update(items =>
+            items.map(entry =>
+              entry.key === key
+                ? cause instanceof ShrinkRefusal
+                  ? { ...entry, status: 'refused', error: cause.message }
+                  : { ...entry, status: 'failed', error: controller.signal.aborted ? '已取消，可以重试。' : errorMessage(cause) }
+                : entry,
+            ),
+          )
+        },
+      )
+      jobs.current.set(key, { controller, promise })
+      return
+    }
     update(items =>
       items.map(entry =>
         entry.key === key
@@ -248,6 +297,7 @@ export function useAttachments({
         file,
         status: 'uploading',
         progress: 0,
+        ...(shrinkLimit(file, caps) === undefined ? {} : { shrink: true as const }),
         ...(pastedText === undefined ? {} : { pastedText }),
       })
     }

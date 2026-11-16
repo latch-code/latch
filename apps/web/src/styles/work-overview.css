@@ -72,11 +72,6 @@
 }
 
 .work-overview-review-items {
-  max-block-size: min(48dvh, 360px);
-  overflow: auto;
-  overflow-anchor: none;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
   margin: 0;
   padding: var(--sp-2);
   list-style: none;
@@ -141,16 +136,9 @@
 
 .work-overview-review-nav {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: end;
-  gap: var(--sp-4);
   min-block-size: 28px;
   border-block-start: 1px solid var(--line);
   padding-block-start: var(--sp-4);
-}
-
-.work-overview-review-nav > .ui-button[aria-controls] {
-  margin-inline-end: auto;
 }
 
 @media (pointer: coarse) {
@@ -571,7 +559,6 @@
   }
 }
 
-/* The overview is a reading surface. Only the opened queue scrolls inside the page. */
 .app-shell[data-workbench-layout='overview'] > .code-home {
   --work-landing-width: 1016px;
 }
@@ -635,10 +622,6 @@
   border-inline-end: 0;
   border-block-start: 1px solid var(--line);
   padding-inline-end: 0;
-}
-
-.work-feature-queue .work-overview-review-items {
-  max-block-size: min(24dvh, 192px);
 }
 
 .work-overview-review[data-featured] .work-overview-review-toggle[aria-expanded='true'] > .ui-icon {

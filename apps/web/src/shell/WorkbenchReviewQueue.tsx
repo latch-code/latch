@@ -1,12 +1,12 @@
 import { escapeSecurityText, type TaskSummary } from '@latch/protocol'
 import { Button, ChevronRightGlyph, FolderGlyph, Icon, StatusWord } from '@latch/ui'
-import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type RefObject } from 'react'
+import { useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type RefObject } from 'react'
 import { harnessName } from '../composerChoice.ts'
 import { hostNow } from '../core/hostClock.ts'
 import { APPROVAL_COPY } from '../core/securityCopy.ts'
 import { projectOf } from '../sessions.ts'
 import { WorkbenchDecision } from './WorkbenchDecision.tsx'
-import { workStatus } from './workOverview.ts'
+import { stepRows, workStatus } from './workOverview.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
 const PREVIEW_COUNT = 5
@@ -15,7 +15,6 @@ type Selection = { id: string; position: number }
 export interface WorkbenchReviewMemory {
   selection: Selection | undefined
   open: boolean
-  scrollTop: number
 }
 
 export interface WorkbenchReviewHandle {
@@ -40,7 +39,6 @@ export function WorkbenchReviewQueue({
   const [selection, setSelection] = useState(memory?.current.selection)
   const [all, setAll] = useState(false)
   const [listOpen, setListOpen] = useState(memory?.current.open ?? false)
-  const [edges, setEdges] = useState({ before: false, after: false })
   const detailId = useId()
   const listId = useId()
   const list = useRef<HTMLUListElement>(null)
@@ -53,12 +51,11 @@ export function WorkbenchReviewQueue({
   const hasMore = tasks.length > PREVIEW_COUNT
   const listVisible = multiple && (!featured || listOpen)
   const visible =
-    featured || all || !hasMore
+    all || !hasMore
       ? tasks
       : index >= PREVIEW_COUNT && active
         ? [...tasks.slice(0, PREVIEW_COUNT - 1), active]
         : tasks.slice(0, PREVIEW_COUNT)
-  const visibleIds = visible.map(task => task.id).join('\n')
   useImperativeHandle(
     ref,
     () => ({
@@ -83,11 +80,6 @@ export function WorkbenchReviewQueue({
   )
 
   useLayoutEffect(() => {
-    if (!memory || !list.current || !listVisible) return
-    list.current.scrollTop = memory.current.scrollTop
-  }, [memory, listVisible])
-
-  useLayoutEffect(() => {
     if (!memory) return
     memory.current.selection = selection
     memory.current.open = listOpen
@@ -97,24 +89,6 @@ export function WorkbenchReviewQueue({
     if (selection && activeId && (selection.id !== activeId || selection.position !== index))
       setSelection(current => (current === selection ? { id: activeId, position: index } : current))
   }, [activeId, index, selection])
-
-  const readEdges = useCallback(() => {
-    const element = list.current
-    if (!element) return
-    if (memory) memory.current.scrollTop = element.scrollTop
-    const before = element.scrollTop > 1
-    const after = element.scrollTop + element.clientHeight < element.scrollHeight - 1
-    setEdges(previous => (previous.before === before && previous.after === after ? previous : { before, after }))
-  }, [memory])
-  useEffect(() => {
-    const element = list.current
-    if (!element) return
-    const resize = new ResizeObserver(readEdges)
-    resize.observe(element)
-    for (const row of element.children) resize.observe(row)
-    readEdges()
-    return () => resize.disconnect()
-  }, [listVisible, readEdges, visibleIds])
 
   if (!active) return null
   const workspaces = shell.catalog?.workspaces ?? []
@@ -137,7 +111,12 @@ export function WorkbenchReviewQueue({
           {sameHarness && <span>{escapeSecurityText(harnessName(sourceHarness))}</span>}
         </p>
       )}
-      <ul ref={list} id={listId} className="work-overview-review-items" aria-label="待处理会话" onScroll={readEdges}>
+      <ul
+        ref={list}
+        id={listId}
+        className="work-overview-review-items"
+        aria-label="待处理会话"
+        onKeyDown={featured ? event => stepRows(event, event.currentTarget) : undefined}>
         {visible.map(task => {
           const selected = task.id === activeId
           const status = workStatus(task, { connected: shell.connection === 'connected', now: hostNow() })
@@ -192,31 +171,11 @@ export function WorkbenchReviewQueue({
           )
         })}
       </ul>
-      {((hasMore && !featured) || edges.before || edges.after) && (
+      {hasMore && (
         <div className="work-overview-review-nav">
-          {hasMore && !featured && (
-            <Button variant="ghost" size="xs" aria-controls={listId} aria-expanded={all} onClick={() => setAll(!all)}>
-              {all ? '收起' : `还有 ${tasks.length - PREVIEW_COUNT} 件`}
-            </Button>
-          )}
-          {(edges.before || edges.after) && (
-            <>
-              <Button
-                variant="ghost"
-                size="xs"
-                disabled={!edges.before}
-                onClick={() => list.current?.scrollBy(0, -list.current.clientHeight)}>
-                上一组
-              </Button>
-              <Button
-                variant="ghost"
-                size="xs"
-                disabled={!edges.after}
-                onClick={() => list.current?.scrollBy(0, list.current.clientHeight)}>
-                下一组
-              </Button>
-            </>
-          )}
+          <Button variant="ghost" size="xs" aria-controls={listId} aria-expanded={all} onClick={() => setAll(!all)}>
+            {all ? '收起' : `还有 ${tasks.length - PREVIEW_COUNT} 件`}
+          </Button>
         </div>
       )}
     </div>

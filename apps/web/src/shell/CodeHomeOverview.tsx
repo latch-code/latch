@@ -23,7 +23,7 @@ import { HistoryImportEntry } from '../history/HistoryImport.tsx'
 import { projectOf, spaceOf } from '../sessions.ts'
 import { WorkbenchReviewQueue, type WorkbenchReviewHandle, type WorkbenchReviewMemory } from './WorkbenchReviewQueue.tsx'
 import { deliverySessions, useWorkbenchSession, type DeliveryRead } from './useWorkbenchEvidence.ts'
-import { recentCodeWork, workGroups, workStatus } from './workOverview.ts'
+import { recentCodeWork, useQueueEdge, workGroups, workStatus } from './workOverview.ts'
 import type { WorkOverviewHandle } from './WorkOverview.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -131,6 +131,7 @@ export function CodeHomeOverview({
 }) {
   const root = useRef<HTMLElement>(null)
   const review = useRef<WorkbenchReviewHandle>(null)
+  useQueueEdge(root)
   useImperativeHandle(
     ref,
     () => ({
