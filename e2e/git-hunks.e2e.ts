@@ -9,7 +9,7 @@ import type { GitCommitDiff, GitHistory, GitStageLinesResult, TaskDetail } from 
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession, reachable, settleShell } from './helpers/layout.ts'
+import { noHorizontalOverflow, openPanelTab, openSession, reachable, settleShell } from './helpers/layout.ts'
 
 const OUT = 'test-results/git-hunks'
 const SLOW = { timeout: 30_000 }
@@ -76,9 +76,7 @@ async function openChanges(page: Page): Promise<Locator> {
   if (await toggle.isVisible()) await toggle.click()
   else {
     await page.getByRole('button', { name: '侧边面板', exact: true }).first().click()
-    const row = page.locator('.panel-launcher-row', { hasText: '改动' })
-    if (await row.isVisible()) await row.click()
-    else await page.getByRole('tab', { name: '改动', exact: true }).click()
+    await openPanelTab(page, '改动')
   }
   await panel.waitFor()
   return panel

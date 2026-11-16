@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserTabState } from '../src/core/shell.ts'
 import { shellBrowser } from '../src/core/shell.ts'
-import { launcherRows } from '../src/panel/PanelLauncher.tsx'
+import { panelChoices } from '../src/panel/panelTabs.ts'
 import {
   RETRY_FOR_MS,
   consoleLine,
@@ -69,11 +69,11 @@ describe('the 浏览器 tab is only where the desktop app can keep tabs for a se
     expect(shellBrowser()).toBeNull()
   })
 
-  it('has a launcher row with B, and ⇧⌘B only in the desktop app', () => {
-    expect(launcherRows({ changes: true, browser: true, delivery: true }).map(row => [row.label, row.letter])).toEqual([
-      ['改动', 'D'],
+  it('leads the panel’s 「+」 with B, and ⇧⌘B only in the desktop app', () => {
+    expect(panelChoices({ changes: true, browser: true, delivery: true }).map(row => [row.label, row.letter])).toEqual([
       ['浏览器', 'B'],
-      ['交付', undefined],
+      ['改动', 'D'],
+      ['交付', 'P'],
     ])
     const stroke = { code: 'KeyB', metaKey: true, ctrlKey: false, altKey: false, shiftKey: true }
     expect(workbenchShortcut(stroke, true)).toBe('browser')

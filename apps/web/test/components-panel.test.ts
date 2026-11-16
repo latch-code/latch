@@ -3,7 +3,15 @@ import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, FileDirectoryListing, HostCatalog, TaskDetail, TaskSummary } from '@latch/protocol'
-import { launcherRows } from '../src/panel/PanelLauncher.tsx'
+import {
+  closePanelTab,
+  freshPanelMemory,
+  openPanelTab,
+  panelChoices,
+  parsePanelMemory,
+  shownPanelTabs,
+  type PanelMemory,
+} from '../src/panel/panelTabs.ts'
 import { SessionPanels } from '../src/components/SessionPanels.tsx'
 import { FileBreadcrumb, breadcrumbFolders } from '../src/preview/FileBreadcrumb.tsx'
 import { soleFolder } from '../src/preview/treeFiles.ts'
@@ -62,35 +70,111 @@ const appSnapshot = (extra: Partial<AppSnapshot> = {}): AppSnapshot => ({
 
 const render = (element: Parameters<typeof renderToStaticMarkup>[0]) => renderToStaticMarkup(element)
 
-describe('the launcher', () => {
-  it('offers only what this session can open, with the letter that opens it', () => {
-    expect(launcherRows({ changes: true, files: true }).map(row => [row.label, row.letter])).toEqual([
+describe('what the panel can open', () => {
+  it('offers only what exists and is allowed here, in one order, each fixed panel with its letter', () => {
+    expect(
+      panelChoices({ browser: true, terminal: true, files: true, changes: true, delivery: true, overview: true }).map(row => [
+        row.label,
+        row.letter,
+      ]),
+    ).toEqual([
+      ['浏览器', 'B'],
+      ['终端', 'T'],
+      ['文件', 'F'],
       ['改动', 'D'],
-      ['文件', 'F'],
+      ['交付', 'P'],
+      ['概要', 'O'],
     ])
-    expect(launcherRows({ files: true, plugins: [{ id: 'p', title: '发布' }] }).map(row => [row.label, row.letter])).toEqual([
-      ['文件', 'F'],
-      ['发布', undefined],
+    // A phone or another computer: no terminal; a read-only device: no 改动 or 交付.
+    expect(panelChoices({ files: true, plugins: [{ id: 'p', title: '发布' }] }).map(row => [row.key, row.letter])).toEqual([
+      ['files', 'F'],
+      ['plugin:p', undefined],
     ])
-    expect(launcherRows({})).toEqual([])
+    expect(panelChoices({})).toEqual([])
+  })
+})
+
+describe('the open tabs', () => {
+  const memory = (tabs: PanelMemory['tabs'], active?: PanelMemory['active']): PanelMemory => (active ? { tabs, active } : { tabs })
+
+  it('start on 概要 where the session has one, else with nothing open', () => {
+    expect(freshPanelMemory(true)).toEqual(memory(['overview'], 'overview'))
+    expect(freshPanelMemory(false)).toEqual(memory([]))
   })
 
-  it('stands in for the panel when nothing is open, and says so when there is nothing to open', () => {
-    const summary = session({ cwd: '/work/app' })
-    const html = render(createElement(SessionPanels, { summary, changes: 'changes', fileContext: { kind: 'session', sessionId: 's' } }))
-    expect(html).toContain('打开一个面板')
+  it('focus a single-instance tab that is open instead of adding another, and add a new one at the end', () => {
+    const open = memory(['overview', 'changes'], 'overview')
+    expect(openPanelTab(open, 'changes')).toEqual(memory(['overview', 'changes'], 'changes'))
+    expect(openPanelTab(open, 'terminal')).toEqual(memory(['overview', 'changes', 'terminal'], 'terminal'))
+  })
+
+  it('hand the selection to the next tab when the selected one closes, or the one before at the end, or to nothing', () => {
+    const open = memory(['overview', 'changes', 'browser'], 'changes')
+    expect(closePanelTab(open, 'changes')).toEqual(memory(['overview', 'browser'], 'browser'))
+    expect(closePanelTab(memory(['overview', 'browser'], 'browser'), 'browser')).toEqual(memory(['overview'], 'overview'))
+    expect(closePanelTab(memory(['overview'], 'overview'), 'overview')).toEqual(memory([]))
+    expect(closePanelTab(open, 'overview')).toEqual(memory(['changes', 'browser'], 'changes'))
+  })
+
+  it('show only what this device may open of what was remembered', () => {
+    const remembered = memory(['terminal', 'changes', 'plugin:gone'], 'terminal')
+    // On a phone the terminal stays remembered but is not shown; the selection falls to the first shown.
+    expect(shownPanelTabs(remembered, key => key === 'changes')).toEqual(memory(['changes'], 'changes'))
+    expect(shownPanelTabs(remembered, () => false)).toEqual(memory([]))
+  })
+
+  it('read back only valid tabs from storage', () => {
+    expect(parsePanelMemory({ tabs: ['changes', 'nope', 'plugin:x', 'changes', 3], active: 'plugin:x' })).toEqual(
+      memory(['changes', 'plugin:x'], 'plugin:x'),
+    )
+    expect(parsePanelMemory({ tabs: ['changes'], active: 'browser' })).toEqual(memory(['changes']))
+    expect(parsePanelMemory({ tabs: ['plugin:\u0007'] })).toEqual(memory([]))
+    expect(parsePanelMemory('changes')).toBeUndefined()
+  })
+})
+
+describe('the panel strip', () => {
+  const summary = session({ cwd: '/work/app' })
+  const choices = panelChoices({ files: true, changes: true, overview: true })
+
+  it('shows the open tabs with a 「+」 and every one closable', () => {
+    const html = render(
+      createElement(SessionPanels, {
+        summary,
+        open: ['overview', 'changes'],
+        active: 'overview',
+        overview: 'overview',
+        changes: 'changes',
+        choices,
+        onChoose: noop,
+        onCloseTab: noop,
+      }),
+    )
     expect(html).toContain('aria-label="会话面板"')
-    // The tabs stand in the strip with none of them selected.
-    expect(html).not.toContain('aria-selected="true"')
-    // A tab left open keeps its content mounted and hidden; one never opened is not read at all.
+    expect(html).toContain('aria-label="打开面板"')
+    expect(html).toContain('aria-label="关闭概要"')
+    expect(html).toContain('aria-label="关闭改动"')
+    // A tab not yet shown is not read at all.
     expect(html).not.toContain('session-panel-changes')
-    expect(render(createElement(SessionPanels, { summary }))).toContain('这个会话没有可以打开的面板')
+    // 文件 was never opened: it waits in 「+」, not in the strip.
+    expect(html).not.toMatch(/role="tab"[^>]*>[^<]*<[^>]*>[^<]*文件/u)
   })
 
-  it('offers no way to maximise a launcher, and no close button: its toggle shuts it', () => {
-    const html = render(createElement(SessionPanels, { summary: session(), onExpand: noop }))
+  it('with nothing open shows the choices as icons and names with their keys, and no sentence', () => {
+    const html = render(createElement(SessionPanels, { summary, open: [], choices, onChoose: noop, onCloseTab: noop, onExpand: noop }))
+    expect(html).toContain('panel-empty-choice')
+    for (const label of ['文件', '改动', '概要']) expect(html).toContain(label)
+    expect(html).toContain('aria-keyshortcuts="F"')
+    expect(html).not.toContain('aria-selected="true"')
+    // Nothing to maximise and no close button: the panel's toggle shuts it.
     expect(html).not.toContain('aria-label="铺满"')
-    expect(html).not.toContain('aria-label="关闭"')
+    expect(html).not.toMatch(/<p[ >]/u)
+  })
+
+  it('hides a remembered tab whose content this session lacks', () => {
+    const html = render(createElement(SessionPanels, { summary, open: ['terminal', 'changes'], active: 'terminal', changes: 'changes' }))
+    expect(html).not.toContain('终端')
+    expect(html).toContain('session-panel-changes')
   })
 })
 

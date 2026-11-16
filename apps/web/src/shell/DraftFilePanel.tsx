@@ -24,7 +24,8 @@ export function DraftFilePanel({ shell, inline = false }: { shell: ShellState; i
       onTreeViewChange={tabs.setTreeView}
       fileSearch={shell.catalog?.features?.fileSearch === true}
       onSearchFiles={shell.searchFiles}
-      showFiles
+      open={['files']}
+      active="files"
       files={tabs.tabs}
       activeFile={tabs.active}
       onSurface={surface => tabs.select(surface.kind === 'file' ? surface.id : undefined)}

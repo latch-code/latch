@@ -593,7 +593,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
   // A dot while the newest turn changed files nobody has opened here yet.
   const seen = useRef<Map<string, string>>(new Map())
   const latest = current?.messages.findLast(message => message.role === 'user')?.turnId
-  const showing = changesOpen && !fileTabs.active
+  const showing = shell.panelVisible && shell.panelSelected === 'changes'
   if (showing && summary && latest) seen.current.set(summary.id, latest)
   const unread =
     !showing

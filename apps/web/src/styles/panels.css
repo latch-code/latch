@@ -30,25 +30,21 @@
 .session-panel-body[hidden] {
   display: none;
 }
-.panel-launcher {
-  display: grid;
-  place-items: center;
-  height: 100%;
+.panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
   padding: var(--sp-16);
   outline: none;
 }
-.panel-launcher-list {
-  width: min(280px, 100%);
+.panel-empty-choices {
+  display: grid;
+  gap: var(--sp-2);
+  width: min(240px, 100%);
 }
-.panel-launcher h3 {
-  margin-bottom: var(--sp-12);
-  color: var(--ink);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  font-weight: 500;
-  text-align: center;
-}
-.panel-launcher-row {
+.panel-empty-choice {
   display: flex;
   align-items: center;
   gap: var(--sp-10);
@@ -65,10 +61,10 @@
   text-align: start;
   cursor: pointer;
 }
-.panel-launcher-row > svg {
+.panel-empty-choice > svg {
   color: var(--muted);
 }
-.panel-launcher-row > span {
+.panel-empty-choice > span {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -76,35 +72,44 @@
   white-space: nowrap;
 }
 @media (hover: hover) {
-  .panel-launcher-row:hover {
+  .panel-empty-choice:hover {
     background: var(--hover);
     color: var(--ink);
   }
+  .panel-empty-choice:hover > svg {
+    color: var(--ink-2);
+  }
 }
-.panel-launcher-facts {
+.panel-facts {
+  width: min(240px, 100%);
   margin-top: var(--sp-16);
   padding: var(--sp-12) var(--sp-8) 0;
   border-top: 1px solid var(--line);
 }
-.session-panel-body > .panel-launcher-facts {
+.session-panel-body > .panel-facts {
+  width: auto;
   margin: 0;
   padding: var(--sp-24);
   border-top: 0;
   border-bottom: 1px solid var(--line);
 }
-.panel-launcher-empty {
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  text-align: center;
-}
 @media (pointer: coarse) {
-  .panel-launcher-row {
+  .panel-empty-choice {
     height: 44px;
   }
-  .panel-launcher-row > .ui-kbd {
+  .panel-empty-choice > .ui-kbd {
     display: none;
   }
+}
+.session-panel-terminal {
+  display: flex;
+  flex-direction: column;
+}
+.session-panel-terminal > .terminal-panel {
+  flex: 1;
+}
+.session-panel-terminal[hidden] {
+  display: none;
 }
 .plugin-panel {
   display: grid;

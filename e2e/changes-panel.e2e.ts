@@ -71,6 +71,12 @@ async function choose(page: Page, sessionId: string) {
   await openSession(page, sessionId)
 }
 
+/** The header's toggle opens 改动, unless the panel this device remembered for the session already shows it. */
+async function showChanges(page: Page) {
+  if (await page.locator('.changes-panel').filter({ visible: true }).count()) return
+  await page.getByRole('button', { name: '改动', exact: true }).click()
+}
+
 async function reopen(page: Page, sessionId: string) {
   await page.reload()
   await choose(page, sessionId)
@@ -105,7 +111,7 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     await openBrowser(page, host, sessionId)
 
     // The header's toggle opens the tab: scope, stat, undo, and the first file already open.
-    await page.getByRole('button', { name: '改动', exact: true }).click()
+    await showChanges(page)
     const panel = page.locator('.changes-panel')
     await panel.getByText('report.txt', { exact: true }).waitFor()
     await expect.poll(() => panel.locator('.changes-scope-button').innerText()).toBe('本轮')
@@ -147,7 +153,7 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     // A file changed since: the same place says why.
     await writeFile(join(host.workspaceRoot, 'report.txt'), 'later\n')
     await reopen(page, sessionId)
-    await page.getByRole('button', { name: '改动', exact: true }).click()
+    await showChanges(page)
     await panel.getByText('之后又改过这些文件，不能撤销').waitFor()
     await writeFile(join(host.workspaceRoot, 'report.txt'), 'first\nsecond\nchanged\n')
 
@@ -187,7 +193,7 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     git('checkout', '-q', 'main')
     expect(() => git('merge', 'side')).toThrow()
     await reopen(page, sessionId)
-    await page.getByRole('button', { name: '改动', exact: true }).click()
+    await showChanges(page)
     await panel.locator('.changes-scope-button').click()
     await page.getByRole('menuitemradio', { name: /未提交/u }).click()
     await panel.getByText('仓库正在合并 · 1 个文件有冲突').waitFor()
@@ -209,7 +215,7 @@ it('tells a device outside the data scope why it sees nothing, and the Host agre
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     await openBrowser(page, host, sessionId, 'work')
-    await page.getByRole('button', { name: '改动', exact: true }).click()
+    await showChanges(page)
     await page.locator('.changes-panel').getByText('这台设备看不到会话文件夹里的文件').waitFor()
     await context.close()
   } finally {
@@ -402,7 +408,7 @@ it('tells the truth at both ends of a turn, whatever the turn record has reached
       return route.fulfill({ response })
     })
     await openBrowser(page, host, sessionId)
-    await page.getByRole('button', { name: '改动', exact: true }).click()
+    await showChanges(page)
     const panel = page.locator('.changes-panel')
     const undoTurn = panel.getByRole('button', { name: '撤销本轮', exact: true })
     await undoTurn.waitFor()
@@ -484,7 +490,7 @@ it('shows nothing of the last scope under the next label, keeps a list a failed 
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     await openBrowser(page, host, sessionId)
-    await page.getByRole('button', { name: '改动', exact: true }).click()
+    await showChanges(page)
     const panel = page.locator('.changes-panel')
     const undoTurn = panel.getByRole('button', { name: '撤销本轮', exact: true })
     await undoTurn.waitFor()
@@ -568,7 +574,7 @@ it('keeps a very long list quick: a window of tree rows, a page of file rows, ea
       detailReads = 0
       await reopen(page, sessionId)
       const started = Date.now()
-      await page.getByRole('button', { name: '改动', exact: true }).click()
+      await showChanges(page)
       await page.locator('.changes-file').first().waitFor()
       const ready = Date.now() - started
       const panel = page.locator('.changes-panel')
@@ -628,7 +634,7 @@ it('draws every state at three widths in both themes', async () => {
       for (const next of FRAMES) {
         frame = next
         await reopen(page, sessionId)
-        await page.getByRole('button', { name: '改动', exact: true }).click()
+        await showChanges(page)
         const panel = page.locator('.changes-panel')
         await panel.locator('.changes-scope-row').waitFor()
         if (next.list.scope === 'uncommitted') {

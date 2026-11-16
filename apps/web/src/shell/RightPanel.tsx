@@ -16,6 +16,10 @@ import { projectOf } from '../sessions.ts'
 import { SessionFacts, SessionFolders, frozenFolders, liveFolder } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { SessionOverview } from './SessionOverview.tsx'
+import { SessionTerminal } from './TerminalDock.tsx'
+import type { PanelKey } from '../panel/panelTabs.ts'
+import { currentShell } from '../core/shell.ts'
+import { shortcutKeys } from '../workbenchShortcuts.ts'
 
 /** The session's panels: the same surfaces in the column beside the conversation and in the page over it. */
 export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagingWrites: ReturnType<typeof useStagingWrites> }) {
@@ -39,7 +43,6 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
     fileTabs,
     fileExpanded,
     setFileExpanded,
-    filesOpen,
     filesVisible,
     canBrowseFiles,
     contextKey,
@@ -51,22 +54,20 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
     snapshot,
     connection,
     canViewChanges,
-    changesOpen,
     canDeliver,
-    deliveryOpen,
     sessionTerminal,
     browserShell,
     browserProject,
     canBrowser,
     browserList,
-    browserOpen,
     browserRequest,
     attachmentDraft,
-    infoPage,
     openChangesTab,
     showSurface,
-    launcherTakesFocus,
-    pluginPanel,
+    emptyTakesFocus,
+    panelShown,
+    panelSelected,
+    panelVisible,
     changesTarget,
     changesTotals,
     setChangesTotals,
@@ -91,6 +92,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
   }
   const readsChanges = canViewChanges && readsProjectFiles(snapshot.device.dataScope)
   // The page pipeline is this Mac's: the desktop's admin device with all data.
+  const showing = (key: PanelKey) => panelVisible && panelSelected === key
   const pageDrafts =
     catalog?.features?.appPages === 1
     && catalog.features.pluginPackages === true
@@ -100,7 +102,14 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
   return (
     <SessionPanels
       key={contextKey}
-      {...(summary && shell.space === 'code' ? { overview: <SessionOverview shell={shell} summary={summary} /> } : {})}
+      open={panelShown.tabs}
+      active={panelShown.active}
+      choices={shell.panelChoiceList}
+      onChoose={shell.choosePanel}
+      onCloseTab={shell.closePanelTabKey}
+      addTrigger={shell.panelAdd}
+      addShortcut={shortcutKeys('panel-add', currentShell() !== null)}
+      {...(summary && shell.panelAvailable('overview') ? { overview: <SessionOverview shell={shell} summary={summary} /> } : {})}
       {...(summary && canViewChanges
         ? {
             changes: (
@@ -151,7 +160,6 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
             ),
           }
         : {})}
-      changesOpen={changesOpen}
       {...(summary && canDeliver
         ? {
             delivery: (
@@ -161,7 +169,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                   key={summary.id}
                   summary={summary}
                   revision={current?.summary.id === summary.id ? current.sync?.revision : undefined}
-                  open={deliveryOpen && !fileTabs.active}
+                  open={showing('delivery')}
                   canRun={access.scopes.has('run')}
                   {...(snapshot.hostName ? { hostName: snapshot.hostName } : {})}
                   offline={offline}
@@ -177,12 +185,9 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
             ),
           }
         : {})}
-      deliveryOpen={deliveryOpen}
       {...(summary && browserList
         ? {
-            browser: (
-              <BrowserTabList key={summary.id} sessionId={summary.id} shown={browserOpen && !fileTabs.active && (!pageMode || infoPage)} />
-            ),
+            browser: <BrowserTabList key={summary.id} sessionId={summary.id} shown={showing('browser')} />,
           }
         : summary && canBrowser && browserShell && browserProject
           ? {
@@ -193,7 +198,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                   sessionId={summary.id}
                   projectId={browserProject.id}
                   deviceId={snapshot.device.id}
-                  shown={browserOpen && !fileTabs.active && (!pageMode || infoPage)}
+                  shown={showing('browser')}
                   terminals={sessionTerminal}
                   request={browserRequest}
                   onCompose={canCompose ? compose : undefined}
@@ -209,11 +214,13 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
               ),
             }
           : {})}
-      browserOpen={browserOpen}
+      {...(summary && shell.terminalInPanel
+        ? { terminal: <SessionTerminal shell={shell} shown={showing('terminal')} place="panel" /> }
+        : {})}
       {...(summary && (phone || noCrumb)
         ? {
             launcherNote: (
-              <div className="crumb-body panel-launcher-facts">
+              <div className="crumb-body panel-facts">
                 <SessionFolders summary={summary} snapshot={snapshot} local={access.local} admin={access.admin} />
                 <SessionFacts summary={summary} detail={current} harness={topHarness} gate={gate} />
               </div>
@@ -222,9 +229,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
         : {})}
       {...(changesTotals ? { changesTotals } : {})}
       onSurface={showSurface}
-      onTerminalShortcut={shell.canTerminal ? shell.openTerminal : undefined}
-      launcherTakesFocus={launcherTakesFocus}
-      {...(pluginPanel !== undefined ? { plugin: pluginPanel } : {})}
+      emptyTakesFocus={emptyTakesFocus}
       expanded={fileExpanded}
       onExpand={() => {
         setFileExpanded(value => !value)
@@ -234,7 +239,6 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
       fileRevision={JSON.stringify(summary?.folders ?? workspaceForFiles?.folders ?? workspaceForFiles?.path)}
       treeView={fileTabs.treeView}
       onTreeViewChange={fileTabs.setTreeView}
-      showFiles={filesOpen}
       onSearchFiles={searchFiles}
       {...(folderShell && project
         ? {
@@ -266,7 +270,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
       detail={current}
       onFileView={fileTabs.view}
       onCloseFile={id => {
-        const last = fileTabs.tabs.length === 1
+        const last = fileTabs.tabs.length === 1 && panelShown.tabs.length === 0
         fileTabs.close(id, () => {
           setFileExpanded(false)
           if (last) {

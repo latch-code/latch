@@ -10,7 +10,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, installFakeGh, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession, settleShell } from './helpers/layout.ts'
+import { noHorizontalOverflow, openPanelTab, openSession, settleShell } from './helpers/layout.ts'
 
 const OUT = 'test-results/delivery'
 const SLOW = { timeout: 30_000 }
@@ -85,9 +85,7 @@ async function openDelivery(page: Page): Promise<Locator> {
   const tab = page.getByRole('tab', { name: '交付', exact: true })
   if (!(await tab.isVisible())) {
     await page.getByRole('button', { name: '侧边面板', exact: true }).first().click()
-    const row = page.locator('.panel-launcher-row', { hasText: '交付' })
-    if (await row.isVisible()) await row.click()
-    else await page.getByRole('tab', { name: '交付', exact: true }).click()
+    await openPanelTab(page, '交付')
   } else await tab.click()
   const panel = page.locator('.delivery-panel').filter({ visible: true })
   await panel.waitFor()

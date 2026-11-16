@@ -51,6 +51,11 @@ describe('workbench key routing', () => {
     expect(workbenchShortcut(key('Comma', { altKey: true }), false)).toBe('settings')
     expect(workbenchShortcut(key('KeyB', { altKey: true, shiftKey: true }), false)).toBe('side-panel')
     expect(workbenchShortcut(key('KeyB', { metaKey: true, altKey: true }), true)).toBe('side-panel')
+    // ⌥⌘T, and a browser's Alt Shift T: the right panel's 「+」; plain ⌘T stays the system's.
+    expect(workbenchShortcut(key('KeyT', { metaKey: true, altKey: true }), true)).toBe('panel-add')
+    expect(workbenchShortcut(key('KeyT', { altKey: true, shiftKey: true }), false)).toBe('panel-add')
+    expect(workbenchShortcut(key('KeyT', { metaKey: true }), true)).toBeNull()
+    expect(shortcutKeys('panel-add', true)).toBe('⌥⌘T')
     // ⌥⌘L, and a browser's Alt Shift L: the other workbench layout, on any page.
     expect(workbenchShortcut(key('KeyL', { metaKey: true, altKey: true }), true)).toBe('layout')
     expect(workbenchShortcut(key('KeyL', { altKey: true, shiftKey: true }), false)).toBe('layout')

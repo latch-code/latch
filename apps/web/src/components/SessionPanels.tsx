@@ -7,7 +7,7 @@ import { FileTree } from '../preview/FileTree.tsx'
 import { fileContextKey } from '../preview/fileContext.ts'
 import type { FileQuote } from '../preview/quote.ts'
 import type { FileTreeView } from '../preview/treeFiles.ts'
-import { useEffect, useId, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode, type RefObject } from 'react'
 import {
   escapeSecurityText,
   isUiPanelDocument,
@@ -17,41 +17,33 @@ import {
   type UiPanelInfo,
 } from '@latch/protocol'
 import { Maximize2, Minimize2 } from 'lucide-react'
-import {
-  Button,
-  IconButton,
-  InlineNotice,
-  Loading,
-  PanelTabs,
-  type PanelTab,
-  DiffGlyph,
-  FolderGlyph,
-  CommitGlyph,
-  PluginsGlyph,
-  GlobeGlyph,
-  OverviewGlyph,
-} from '@latch/ui'
+import { Button, IconButton, InlineNotice, Loading, PanelTabs, type PanelTab } from '@latch/ui'
 import { api, errorMessage, MessageError } from '../core/api.ts'
 import { VisibleText } from './VisibleText.tsx'
 import { ClientPluginPanel } from './ClientPluginPanel.tsx'
-import { PanelLauncher } from '../panel/PanelLauncher.tsx'
+import { PanelAddMenu, PanelEmpty } from '../panel/PanelChoices.tsx'
+import { panelFace, type PanelChoice, type PanelKey } from '../panel/panelTabs.ts'
 import { referenceIcon } from '../fileReference.ts'
 
-/** What the panel shows; `launcher` when nothing is open. */
+/** What the panel shows: one of its tabs, an opened file, or nothing (the choices). */
 export type PanelSurface =
-  | { kind: 'launcher' }
+  | { kind: 'empty' }
+  | { kind: 'overview' }
   | { kind: 'changes' }
   | { kind: 'delivery' }
   | { kind: 'browser' }
+  | { kind: 'terminal' }
   | { kind: 'files' }
   | { kind: 'file'; id: string }
   | { kind: 'plugin'; id: string }
 
-function surfaceOf(value: string): PanelSurface {
-  if (value === 'overview') return { kind: 'launcher' }
-  if (value === 'changes' || value === 'files' || value === 'delivery' || value === 'browser') return { kind: value }
-  if (value.startsWith('file:')) return { kind: 'file', id: value.slice(5) }
-  return { kind: 'plugin', id: value.slice(7) }
+export function surfaceKey(surface: PanelSurface): PanelKey | undefined {
+  if (surface.kind === 'empty' || surface.kind === 'file') return undefined
+  return surface.kind === 'plugin' ? `plugin:${surface.id}` : surface.kind
+}
+
+function surfaceOf(key: PanelKey): PanelSurface {
+  return key.startsWith('plugin:') ? { kind: 'plugin', id: key.slice(7) } : ({ kind: key } as PanelSurface)
 }
 
 export function offersPluginPanel(panel: UiPanelInfo, session: TaskSummary): boolean {
@@ -61,8 +53,27 @@ export function offersPluginPanel(panel: UiPanelInfo, session: TaskSummary): boo
   )
 }
 
-/** The right panel: a strip of tabs over 改动, 文件, the opened files and the panels enabled plugins contribute. */
+/** Mounted once first shown, then kept (hidden) while another tab shows, so it keeps its place and streams. */
+function useStarted(showing: boolean): boolean {
+  const [started, setStarted] = useState(showing)
+  useEffect(() => {
+    if (showing) setStarted(true)
+  }, [showing])
+  return started || showing
+}
+
+/**
+ * The right panel: a strip of the tabs opened here (概要, 改动, 文件, 浏览器, 终端, 交付, plugin panels), then the opened
+ * files, then 「+」 with everything else this session can open. With no tab open it shows those choices.
+ */
 export function SessionPanels({
+  open = [],
+  active,
+  choices,
+  onChoose,
+  onCloseTab,
+  addTrigger,
+  addShortcut,
   panels = [],
   summary,
   canCompose = false,
@@ -82,8 +93,6 @@ export function SessionPanels({
   treeView,
   onTreeViewChange,
   onSurface,
-  onTerminalShortcut,
-  plugin,
   onSearchFiles,
   rootReveal,
   fileSearch = false,
@@ -91,38 +100,41 @@ export function SessionPanels({
   onQuote,
   folders,
   cwd,
-  showFiles = false,
   changes,
-  changesOpen = false,
   changesTotals,
   delivery,
-  deliveryOpen = false,
   browser,
-  browserOpen = false,
+  terminal,
   launcherNote,
-  launcherTakesFocus,
+  emptyTakesFocus,
   overview,
 }: {
+  /** The tabs open here, in order; only those this session can show. */
+  open?: readonly PanelKey[]
+  /** The selected one; an active file stands over it. */
+  active?: PanelKey | undefined
+  /** What 「+」 and the empty panel offer; without it there is no 「+」. */
+  choices?: readonly PanelChoice[]
+  onChoose?(key: PanelKey): void
+  /** Makes the tabs closable. */
+  onCloseTab?(key: PanelKey): void
+  addTrigger?: RefObject<HTMLButtonElement | null>
+  addShortcut?: string | null
   overview?: ReactNode
-  launcherTakesFocus?(): boolean
+  emptyTakesFocus?(): boolean
   /** A phone's only home for the folders and facts held by the title row's popover elsewhere. */
   launcherNote?: ReactNode
-  /** The 改动 tab's content, when the session has one. */
   changes?: ReactNode
-  changesOpen?: boolean
-  /** The 交付 tab's content, when the Host delivers and the session has a folder. */
   delivery?: ReactNode
-  deliveryOpen?: boolean
-  /** The 浏览器 tab's content, only in the desktop app's own window on this Mac. */
+  /** The desktop app's own window on this Mac: the browser; elsewhere a read-only list of its tabs. */
   browser?: ReactNode
-  browserOpen?: boolean
+  /** The session's terminals, when they live here rather than in the dock. */
+  terminal?: ReactNode
   /** The number on the tab, only while another tab is showing. */
   changesTotals?: { add: number; del: number; files: number }
   files?: FileTab[]
   activeFile?: FileTab
   onSurface?(surface: PanelSurface): void
-  onTerminalShortcut?: (() => void) | undefined
-  plugin?: string
   onCloseFile?(id: string): void
   onFileResolved?(id: string, file: FileMetadata): void
   onExpand?(): void
@@ -136,7 +148,6 @@ export function SessionPanels({
   fileRevision?: string
   treeView?: FileTreeView
   onTreeViewChange?(view: FileTreeView): void
-  showFiles?: boolean
   onSearchFiles?(): void
   rootReveal?(rootId: string): (() => void) | undefined
   fileSearch?: boolean
@@ -150,10 +161,28 @@ export function SessionPanels({
 }) {
   const id = useId()
   const offered = summary ? panels.filter(panel => offersPluginPanel(panel, summary)) : []
-  const [treeStarted, setTreeStarted] = useState(showFiles)
-  useEffect(() => {
-    if (showFiles) setTreeStarted(true)
-  }, [showFiles])
+  const content = (key: PanelKey): boolean =>
+    key === 'overview'
+      ? !!overview
+      : key === 'changes'
+        ? !!changes
+        : key === 'delivery'
+          ? !!delivery
+          : key === 'browser'
+            ? !!browser
+            : key === 'terminal'
+              ? !!terminal
+              : key === 'files'
+                ? !!fileContext
+                : offered.some(panel => `plugin:${panel.id}` === key)
+  const tabsOpen = open.filter(content)
+  const selected = activeFile ? undefined : active !== undefined && tabsOpen.includes(active) ? active : tabsOpen[0]
+  const showing = (key: PanelKey) => selected === key
+  const changesStarted = useStarted(showing('changes'))
+  const deliveryStarted = useStarted(showing('delivery'))
+  const browserStarted = useStarted(showing('browser'))
+  const terminalStarted = useStarted(showing('terminal'))
+  const treeStarted = useStarted(showing('files'))
   const histories = detail ? fileHistories(detail) : []
   const turnStart = Math.max(0, detail?.messages.findLastIndex(message => message.role === 'user') ?? 0)
   const observedFiles = detail?.fileChanges?.files ?? detail?.messages.slice(turnStart).flatMap(message => message.outputs ?? []) ?? []
@@ -166,43 +195,25 @@ export function SessionPanels({
   const history = activeFile
     ? histories.find(item => item.path === activeFile.target.reference && item.root === activeFile.target.rootId)
     : undefined
-  const [changesStarted, setChangesStarted] = useState(changesOpen)
-  useEffect(() => {
-    if (changesOpen) setChangesStarted(true)
-  }, [changesOpen])
-  const [deliveryStarted, setDeliveryStarted] = useState(deliveryOpen)
-  useEffect(() => {
-    if (deliveryOpen) setDeliveryStarted(true)
-  }, [deliveryOpen])
-  const showingChanges = changesOpen && !activeFile
-  const showingDelivery = deliveryOpen && !activeFile && !showingChanges
-  const [browserStarted, setBrowserStarted] = useState(browserOpen)
-  useEffect(() => {
-    if (browserOpen) setBrowserStarted(true)
-  }, [browserOpen])
-  const showingBrowser = browserOpen && !activeFile && !showingChanges && !showingDelivery
-  const showingFiles = showFiles && !activeFile && !showingChanges && !showingDelivery && !showingBrowser
-  const active =
-    !activeFile && !showingChanges && !showingDelivery && !showingBrowser && !showingFiles
-      ? offered.find(panel => panel.id === plugin)
-      : undefined
-  const launcher = !activeFile && !showingChanges && !showingDelivery && !showingBrowser && !showingFiles && !active
+  const plugin = selected?.startsWith('plugin:') ? offered.find(panel => `plugin:${panel.id}` === selected) : undefined
+  const empty = !activeFile && selected === undefined
+  const closable = (name: string) => (onCloseTab ? { closeLabel: `关闭${name}` } : {})
   const tabs: Array<PanelTab<string>> = [
-    ...(overview ? [{ value: 'overview', label: '概要', icon: OverviewGlyph, controls: id }] : []),
-    ...(changes
-      ? [
-          {
-            value: 'changes',
-            label: '改动',
-            icon: DiffGlyph,
-            controls: id,
-            ...(!showingChanges && changesTotals?.files ? { stat: { added: changesTotals.add, removed: changesTotals.del } } : {}),
-          },
-        ]
-      : []),
-    ...(fileContext ? [{ value: 'files', label: '文件', icon: FolderGlyph, controls: id }] : []),
-    ...(browser ? [{ value: 'browser', label: '浏览器', icon: GlobeGlyph, controls: id }] : []),
-    ...(delivery ? [{ value: 'delivery', label: '交付', icon: CommitGlyph, controls: id }] : []),
+    ...tabsOpen.map(key => {
+      const panel = key.startsWith('plugin:') ? offered.find(item => `plugin:${item.id}` === key) : undefined
+      const face = panelFace(key, panel ? escapeSecurityText(panel.title) : '')
+      const label = face.label
+      return {
+        value: key,
+        label,
+        icon: face.icon,
+        controls: id,
+        ...closable(label),
+        ...(key === 'changes' && !showing('changes') && changesTotals?.files
+          ? { stat: { added: changesTotals.add, removed: changesTotals.del } }
+          : {}),
+      }
+    }),
     ...files.map(tab => {
       const name = escapeSecurityText(tab.file?.name ?? tab.target.reference.split(/[\\/]/u).at(-1) ?? tab.target.reference)
       return {
@@ -214,23 +225,10 @@ export function SessionPanels({
         ...(tab.fresh ? { fresh: true } : {}),
       }
     }),
-    ...offered.map(panel => ({ value: `plugin:${panel.id}`, label: escapeSecurityText(panel.title), icon: PluginsGlyph, controls: id })),
   ]
-  const value = activeFile
-    ? `file:${activeFile.id}`
-    : showingChanges
-      ? 'changes'
-      : showingDelivery
-        ? 'delivery'
-        : showingBrowser
-          ? 'browser'
-          : showingFiles
-            ? 'files'
-            : active
-              ? `plugin:${active.id}`
-              : overview
-                ? 'overview'
-                : ''
+  const value = activeFile ? `file:${activeFile.id}` : (selected ?? '')
+  const choose = (key: PanelKey) => onChoose?.(key)
+  const inBody = !showing('changes') && !showing('delivery') && !showing('browser') && !showing('terminal') && !showing('files')
   return (
     <div className="session-panels">
       <PanelTabs
@@ -238,33 +236,42 @@ export function SessionPanels({
         className="session-panel-strip"
         value={value}
         tabs={tabs}
-        onValueChange={next => onSurface?.(surfaceOf(next))}
+        onValueChange={next => onSurface?.(next.startsWith('file:') ? { kind: 'file', id: next.slice(5) } : surfaceOf(next as PanelKey))}
         onClose={next => {
           if (next.startsWith('file:')) onCloseFile?.(next.slice(5))
+          else onCloseTab?.(next as PanelKey)
         }}
+        {...(choices && choices.length > 0 && onChoose
+          ? { add: <PanelAddMenu choices={choices} onChoose={choose} trigger={addTrigger} shortcut={addShortcut} /> }
+          : {})}
         actions={
-          !launcher && onExpand ? (
+          !empty && onExpand ? (
             <IconButton size="xs" icon={expanded ? Minimize2 : Maximize2} label={expanded ? '还原' : '铺满'} onClick={onExpand} />
           ) : undefined
         }
       />
       {changes && changesStarted && (
-        <div className="session-panel-changes" hidden={!showingChanges}>
+        <div className="session-panel-changes" hidden={!showing('changes')}>
           {changes}
         </div>
       )}
       {delivery && deliveryStarted && (
-        <div className="session-panel-changes" hidden={!showingDelivery}>
+        <div className="session-panel-changes" hidden={!showing('delivery')}>
           {delivery}
         </div>
       )}
       {browser && browserStarted && (
-        <div className="session-panel-changes" hidden={!showingBrowser}>
+        <div className="session-panel-changes" hidden={!showing('browser')}>
           {browser}
         </div>
       )}
+      {terminal && terminalStarted && (
+        <div className="session-panel-changes session-panel-terminal" hidden={!showing('terminal')}>
+          {terminal}
+        </div>
+      )}
       {fileContext && treeStarted && (
-        <div className="session-file-tree" hidden={!showingFiles}>
+        <div className="session-file-tree" hidden={!showing('files')}>
           <FileTree
             key={`${fileContextKey(fileContext)}:${fileRevision ?? ''}`}
             context={fileContext}
@@ -283,10 +290,10 @@ export function SessionPanels({
       )}
       <div
         className="session-panel-body"
-        hidden={showingChanges || showingDelivery || showingBrowser || showingFiles}
-        role={launcher && !overview ? undefined : 'tabpanel'}
+        hidden={!inBody}
+        role={empty ? undefined : 'tabpanel'}
         id={id}
-        aria-label={launcher ? (overview ? '会话概要' : undefined) : (activeFile?.file?.name ?? active?.title)}>
+        aria-label={empty ? undefined : (activeFile?.file?.name ?? plugin?.title ?? (showing('overview') ? '会话概要' : undefined))}>
         {activeFile?.target.view === 'changes' ? (
           <FileHistoryPreview
             history={history}
@@ -311,39 +318,31 @@ export function SessionPanels({
             onQuote={canCompose ? onQuote : undefined}
             running={summary?.status === 'running' || summary?.status === 'waiting-approval'}
           />
-        ) : active?.moduleHash && summary ? (
-          <section className="plugin-panel" aria-label={active.title}>
+        ) : plugin?.moduleHash && summary ? (
+          <section className="plugin-panel" aria-label={plugin.title}>
             <p className="plugin-panel-caption">
-              由 <VisibleText text={active.pluginName} /> 提供
+              由 <VisibleText text={plugin.pluginName} /> 提供
             </p>
             <ClientPluginPanel
-              key={`${active.id}:${active.moduleHash}:${summary.id}`}
-              panel={active}
+              key={`${plugin.id}:${plugin.moduleHash}:${summary.id}`}
+              panel={plugin}
               summary={summary}
               canCompose={canCompose}
               onCompose={onCompose}
             />
           </section>
-        ) : active && summary ? (
-          <PluginPanel key={active.id} panel={active} summary={summary} />
-        ) : overview ? (
+        ) : plugin && summary ? (
+          <PluginPanel key={plugin.id} panel={plugin} summary={summary} />
+        ) : showing('overview') ? (
           <>
             {launcherNote}
             {overview}
           </>
-        ) : (
-          <PanelLauncher
-            {...(changes ? { changes: true } : {})}
-            files={!!fileContext}
-            {...(browser ? { browser: true } : {})}
-            {...(delivery ? { delivery: true } : {})}
-            plugins={offered.map(panel => ({ id: panel.id, title: panel.title }))}
-            {...(launcherTakesFocus ? { takesFocus: launcherTakesFocus } : {})}
-            onTerminalShortcut={onTerminalShortcut}
-            onOpen={surface => onSurface?.(surface)}>
+        ) : empty ? (
+          <PanelEmpty choices={choices ?? []} onChoose={choose} {...(emptyTakesFocus ? { takesFocus: emptyTakesFocus } : {})}>
             {launcherNote}
-          </PanelLauncher>
-        )}
+          </PanelEmpty>
+        ) : null}
       </div>
     </div>
   )

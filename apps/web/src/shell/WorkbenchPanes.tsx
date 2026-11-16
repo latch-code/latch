@@ -33,8 +33,8 @@ export function WorkbenchPanes({ shell }: { shell: ShellState }) {
           label="终端"
           icon={TerminalGlyph}
           shortcut={desktop ? '⌘J' : 'Alt J'}
-          pressed={shell.terminalOpen}
-          aria-controls="terminal-dock"
+          pressed={shell.terminalInPanel ? shell.panelVisible && shell.panelSelected === 'terminal' : shell.terminalOpen}
+          {...(shell.terminalInPanel ? {} : { 'aria-controls': 'terminal-dock' })}
           onClick={shell.toggleTerminal}
         />
       )}

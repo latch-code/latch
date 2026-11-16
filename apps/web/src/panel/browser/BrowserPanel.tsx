@@ -88,8 +88,11 @@ export interface BrowserPanelProps {
   shown: boolean
   /** The session has a terminal tab here: the blank page lists the local services its terminals announced. */
   terminals: boolean
-  /** An address to open in a new tab (a local service the terminal announced); `nonce` makes each request new. */
-  request?: { url: string; nonce: number } | undefined
+  /**
+   * A new tab to open: at an address (a local service the terminal announced), or blank (the right panel's 「+」);
+   * `nonce` makes each request new.
+   */
+  request?: { url?: string; nonce: number } | undefined
   /** Puts text into the composer draft without sending; absent while the composer takes none. */
   onCompose?: ((text: string) => void) | undefined
   /** Puts images into the draft's attachments. */
@@ -408,7 +411,9 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
   useEffect(() => {
     if (!request || handled.current === request.nonce || browser.listed !== 'ready') return
     handled.current = request.nonce
-    void openAddress(request.url, true)
+    if (request.url === undefined) {
+      if (browser.total < BROWSER_TAB_LIMIT) void browser.open()
+    } else void openAddress(request.url, true)
   }, [request, browser.listed])
 
   const stopPicking = () => {

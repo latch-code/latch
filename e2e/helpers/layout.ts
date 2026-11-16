@@ -238,6 +238,25 @@ export async function closeSettings(settings: Locator): Promise<void> {
   await panel.waitFor({ state: 'detached' })
 }
 
+/** A tab of the session panel: selected where it stands, else opened from the empty panel's choices or the strip's 「+」. */
+export async function openPanelTab(page: Page, name: string): Promise<void> {
+  const tab = page
+    .getByRole('tablist', { name: '会话面板', exact: true })
+    .getByRole('tab', { name: new RegExp(`^${name}`, 'u') })
+    .filter({ visible: true })
+  if (await tab.count()) {
+    await tab.first().click()
+    return
+  }
+  const choice = page.locator('.panel-empty-choice', { hasText: name }).filter({ visible: true })
+  if (await choice.count()) {
+    await choice.first().click()
+    return
+  }
+  await page.getByRole('button', { name: '打开面板', exact: true }).filter({ visible: true }).first().click()
+  await page.getByRole('menuitem', { name, exact: true }).click()
+}
+
 /** The selected file tab goes the way a keyboard closes it: its × only shows under the pointer. */
 export async function closeActiveFile(page: Page): Promise<void> {
   const tab = page.getByRole('tablist', { name: '会话面板', exact: true }).getByRole('tab', { selected: true })

@@ -81,7 +81,16 @@ import { usePromptTemplates } from '../hooks/usePromptTemplates.ts'
 import { useSessionSearch } from '../hooks/useSessionSearch.ts'
 import { SessionSearchResults } from '../components/SessionSearchResults.tsx'
 import { ArchiveBatch } from '../components/ArchiveBatch.tsx'
-import { offersPluginPanel, type PanelSurface } from '../components/SessionPanels.tsx'
+import { offersPluginPanel, surfaceKey, type PanelSurface } from '../components/SessionPanels.tsx'
+import {
+  closePanelTab,
+  freshPanelMemory,
+  openPanelTab,
+  panelChoices,
+  shownPanelTabs,
+  usePanelTabs,
+  type PanelKey,
+} from '../panel/panelTabs.ts'
 import { EASING, MOTION, motionAllowed, usePresence, type ResizePhase, EnterGlyph } from '@latch/ui'
 import { popWait } from './popWait.ts'
 import { settingsSections, type SettingsSection } from '../settings/SettingsPage.tsx'
@@ -404,12 +413,10 @@ export function useShellLayout({
     && (fileContext?.kind !== 'workspace' || readsProjectFiles(snapshot.device.dataScope))
   const fileTabs = previewAllowed ? savedFileTabs : { ...savedFileTabs, tabs: [], active: undefined }
   const [fileExpanded, setFileExpanded] = useState(false)
-  const [filesOpen, setFilesOpen] = useState(false)
-  const [pluginPanel, setPluginPanel] = useState<string>()
-  /** What ⌥⌘B brings back: the panel keeps its place while it is shut. */
-  const lastSurface = useRef<PanelSurface>({ kind: 'launcher' })
-  /** Set when the launcher was asked for; a launcher that merely mounted (a session switch, a reload) leaves focus alone. */
-  const launcherAsked = useRef(false)
+  /** The file a shut panel was showing: opening it again goes back to it. */
+  const lastFile = useRef<string | undefined>(undefined)
+  /** Set when the empty panel was asked for; one that merely mounted (a session switch, a reload) leaves focus alone. */
+  const emptyAsked = useRef(false)
   const canBrowseFiles =
     catalog?.features?.fileTree === true
     && readsProjectFiles(snapshot.device.dataScope)
@@ -421,16 +428,11 @@ export function useShellLayout({
     && readsProjectFiles(snapshot.device.dataScope)
     && access.scopes.has('view')
     && draftFileContext !== null
-  const filesVisible = !!fileTabs.active || (filesOpen && canBrowseFiles)
   const contextKey = fileContext ? fileContextKey(fileContext) : ''
   // A device without the data scope still gets the tab: it says why there is nothing to read, instead of a toggle that vanished.
   const canViewChanges = catalog?.features?.changes === true && access.scopes.has('view') && !!summary && summary.mode !== 'chat'
-  const [changesWanted, setChangesWanted] = useState(false)
-  const changesOpen = changesWanted && canViewChanges
   // Like 改动, a device without the data scope keeps the tab: it says the list is locked, and a commit and a push still work.
   const canDeliver = catalog?.features?.gitDelivery === true && access.scopes.has('view') && !!summary && summary.mode !== 'chat'
-  const [deliveryWanted, setDeliveryWanted] = useState(false)
-  const deliveryOpen = deliveryWanted && canDeliver
   const hasTerminal =
     catalog?.features?.terminal === true && access.local && access.scopes.has('run') && snapshot.device.dataScope === 'all'
   const sessionTerminal = hasTerminal && !!summary && !summary.archived && !summary.personal
@@ -450,16 +452,13 @@ export function useShellLayout({
       : (terminalWorkspace?.unavailable ?? (terminalWorkspace ? undefined : '找不到所选项目的文件夹'))
   const terminalLocation = terminalTarget?.workspaceId !== undefined ? terminalWorkspace?.name : summary?.cwd && basename(summary.cwd)
   const canTerminal = terminalTarget !== undefined && !phone && route.entry === 'sessions' && !route.allSessions
-  const terminalOpen = canTerminal && preferences.dockOpen
+  const dockWanted = canTerminal && preferences.dockOpen
   const [terminalIntent, setTerminalIntent] = useState<string>()
   useLayoutEffect(() => {
     setTerminalIntent(undefined)
   }, [terminalKey, route.entry])
   const dockHeight = clampDockHeight(preferences.dockHeight ?? DOCK_DEFAULT, windowHeight)
   const dockLimit = dockMax(windowHeight)
-  useLayoutEffect(() => {
-    if (!terminalOpen || dockLimit < DOCK_MIN) setDockDrag(false)
-  }, [terminalOpen, dockLimit])
   // Only the desktop app's own window on this Mac (`latchShell.browser` version 2), for a live session of a project.
   const browserShell = shellBrowser()
   const browserProject =
@@ -473,11 +472,63 @@ export function useShellLayout({
     && !summary.personal
     && projectOf(summary, catalog.workspaces) !== undefined
   const canBrowser = (browserShell !== null && browserProject !== undefined) || browserList
-  const [browserWanted, setBrowserWanted] = useState(false)
-  const browserOpen = browserWanted && canBrowser
+  /** The session's terminals may stand in the right panel instead of the dock (not on a phone, which has neither). */
+  const panelTerminal = canTerminal && !!summary && terminalTarget?.sessionId === summary.id
+  const offeredPanels = summary ? (catalog?.uiPanels ?? []).filter(panel => offersPluginPanel(panel, summary)) : []
+  const panelAvailable = (key: PanelKey): boolean =>
+    key === 'overview'
+      ? !!summary && spaceOf(summary) === 'code'
+      : key === 'changes'
+        ? canViewChanges
+        : key === 'delivery'
+          ? canDeliver
+          : key === 'browser'
+            ? canBrowser
+            : key === 'terminal'
+              ? panelTerminal
+              : key === 'files'
+                ? canBrowseFiles
+                : offeredPanels.some(panel => `plugin:${panel.id}` === key)
+  const panelChoiceList = panelChoices({
+    browser: canBrowser,
+    terminal: panelTerminal,
+    files: canBrowseFiles,
+    changes: canViewChanges,
+    delivery: canDeliver,
+    overview: panelAvailable('overview'),
+    plugins: offeredPanels.map(panel => ({ id: panel.id, title: panel.title })),
+  })
+  // The right panel's tabs and the selected one, remembered per session (or project files) on this device.
+  const panelStore = usePanelTabs(snapshot.device.id, contextKey)
+  const panelFresh = freshPanelMemory(panelAvailable('overview'))
+  const panelMemory = panelStore.memory ?? panelFresh
+  const panelShown = shownPanelTabs(panelMemory, panelAvailable)
+  const changePanel = (next: (memory: typeof panelMemory) => typeof panelMemory) => {
+    panelStore.change(panelFresh, next)
+  }
+  /** The terminals stand in the panel while it has their tab; the dock then stays empty. */
+  const terminalInPanel = panelTerminal && panelMemory.tabs.includes('terminal')
+  /** Set by showing a surface, cleared by shutting the panel: an overlay panel opens only when asked for. */
+  const [surfaceShown, setSurfaceShown] = useState(false)
+  /** What the panel shows when a file is not over it. */
+  const panelSelected = fileTabs.active ? undefined : panelShown.active
+  const selectedShown = (key: PanelKey) => surfaceShown && panelSelected === key
+  const changesOpen = selectedShown('changes')
+  const deliveryOpen = selectedShown('delivery')
+  const browserOpen = selectedShown('browser')
+  const filesOpen = selectedShown('files')
+  const terminalPanelOpen = selectedShown('terminal')
+  const pluginPanel = panelSelected?.startsWith('plugin:') && surfaceShown ? panelSelected.slice(7) : undefined
+  const filesVisible = !!fileTabs.active || filesOpen
+  const terminalOpen = dockWanted && !terminalInPanel
+  useLayoutEffect(() => {
+    if (!terminalOpen || dockLimit < DOCK_MIN) setDockDrag(false)
+  }, [terminalOpen, dockLimit])
   useEndedSessionTabs(browserShell, snapshot, snapshot.device.dataScope === 'all' && snapshot.device.scopes.includes('view'))
   /** A local service the terminal asked to open in the 浏览器 tab. */
-  const [browserRequest, setBrowserRequest] = useState<{ url: string; nonce: number }>()
+  const [browserRequest, setBrowserRequest] = useState<{ url?: string; nonce: number }>()
+  /** Another terminal asked for from 「+」 while the terminals already stand in the panel. */
+  const [terminalRequest, setTerminalRequest] = useState(0)
   const [changesTarget, setChangesTarget] = useState<ChangesPanelTarget>()
   const [changesTotals, setChangesTotals] = useState<ChangeTotals>()
   /**
@@ -501,15 +552,11 @@ export function useShellLayout({
   /** The profile stands in the right panel's column beside a topic. */
   const profileColumn = profileShown !== null && route.entry === 'sessions' && !phone
   useLayoutEffect(() => {
-    setFilesOpen(false)
-    setPluginPanel(undefined)
-    lastSurface.current = { kind: 'launcher' }
-    launcherAsked.current = false
+    setSurfaceShown(false)
+    lastFile.current = undefined
+    emptyAsked.current = false
     setInfoPage(false)
     setFileExpanded(false)
-    setChangesWanted(false)
-    setDeliveryWanted(false)
-    setBrowserWanted(false)
     setBrowserRequest(undefined)
     setChangesTarget(undefined)
     setChangesTotals(undefined)
@@ -526,14 +573,14 @@ export function useShellLayout({
         : 0
   const homeInspector = route.overview === true && !phone && canBrowseDraftFiles
   const homeInspectorOpen = homeInspector && draftFilesOpen
-  const showingChanges = changesOpen && !fileTabs.active
+  const showingChanges = panelSelected === 'changes'
   const panelWidth =
     preferences.rightPanel.width
     ?? (homeInspector
       ? undefined
       : showingChanges
         ? changesPanelWidth(windowWidth, panelLeft, preferences.diffTree ?? (changesTotals?.files ?? 0) >= TREE_FROM_FILES)
-        : !filesVisible && !deliveryOpen && !browserOpen && pluginPanel === undefined
+        : !fileTabs.active && (panelSelected === undefined || panelSelected === 'overview')
           ? 400
           : undefined)
   const placed = placeRightPanel({
@@ -545,7 +592,7 @@ export function useShellLayout({
     ? placed
     : !summary && !filesVisible
       ? null
-      : !profileColumn && (filesVisible || changesOpen || deliveryOpen || browserOpen || pluginPanel !== undefined) && fileExpanded
+      : !profileColumn && (!!fileTabs.active || panelSelected !== undefined) && fileExpanded
         ? { kind: 'page' as const }
         : profileColumn && placed.kind === 'page'
           ? null
@@ -1164,46 +1211,41 @@ export function useShellLayout({
   const setColumnOpen = (open: boolean) => {
     setPreference('rightPanel', { ...preferences.rightPanel, open })
   }
-  /** Shows one surface of the panel, opening the panel if it is shut. */
+  /** The panel is on screen: beside the conversation, over it, or as its page. */
+  const panelVisible = columnOpen || (pageMode && infoPage)
+  const showingTab = (key: PanelKey) => panelVisible && panelSelected === key
+  /** Shows one surface of the panel, opening the panel if it is shut; a tab not yet open joins the strip. */
   const showSurface = (surface: PanelSurface) => {
     setProfile(null)
-    launcherAsked.current = surface.kind === 'launcher'
-    setChangesWanted(surface.kind === 'changes')
-    setDeliveryWanted(surface.kind === 'delivery')
-    setBrowserWanted(surface.kind === 'browser')
-    setFilesOpen(surface.kind === 'files')
-    setPluginPanel(surface.kind === 'plugin' ? surface.id : undefined)
+    emptyAsked.current = surface.kind === 'empty'
+    const key = surfaceKey(surface)
+    if (key) changePanel(memory => openPanelTab(memory, key))
     fileTabs.select(surface.kind === 'file' ? surface.id : undefined)
+    setSurfaceShown(true)
     setFileExpanded(false)
     setColumnOpen(true)
     setInfoPage(true)
   }
-  const launcherTakesFocus = () => {
-    const asked = launcherAsked.current
-    launcherAsked.current = false
+  const emptyTakesFocus = () => {
+    const asked = emptyAsked.current
+    emptyAsked.current = false
     return asked
   }
-  const shownSurface = (): PanelSurface =>
-    fileTabs.active
-      ? { kind: 'file', id: fileTabs.active.id }
-      : changesOpen
-        ? { kind: 'changes' }
-        : deliveryOpen
-          ? { kind: 'delivery' }
-          : browserOpen
-            ? { kind: 'browser' }
-            : filesOpen
-              ? { kind: 'files' }
-              : pluginPanel !== undefined
-                ? { kind: 'plugin', id: pluginPanel }
-                : { kind: 'launcher' }
+  /** What the panel shows now, or would show once opened again. */
+  const shownSurface = (): PanelSurface => {
+    if (fileTabs.active) return { kind: 'file', id: fileTabs.active.id }
+    const file = lastFile.current && fileTabs.tabs.find(tab => tab.id === lastFile.current)
+    if (file) return { kind: 'file', id: file.id }
+    if (panelShown.active === undefined) return { kind: 'empty' }
+    return panelShown.active.startsWith('plugin:')
+      ? { kind: 'plugin', id: panelShown.active.slice(7) }
+      : ({ kind: panelShown.active } as PanelSurface)
+  }
+  /** Shuts the panel; its tabs and the selected one stay for the next opening. */
   const closePanel = () => {
     setProfile(null)
-    lastSurface.current = shownSurface()
-    setChangesWanted(false)
-    setDeliveryWanted(false)
-    setBrowserWanted(false)
-    setFilesOpen(false)
+    lastFile.current = fileTabs.active?.id
+    setSurfaceShown(false)
     fileTabs.select(undefined)
     setFileExpanded(false)
     setColumnOpen(false)
@@ -1212,15 +1254,14 @@ export function useShellLayout({
     panelReturn.current = null
     requestAnimationFrame(() => (back?.isConnected ? back : panelToggle.current)?.focus({ preventScroll: true }))
   }
+  /** Closes one tab; the panel stays open on its neighbour, or on the choices once none is left. */
+  const closePanelTabKey = (key: PanelKey) => {
+    changePanel(memory => closePanelTab(memory, key))
+    if (key === 'terminal') setTerminalIntent(undefined)
+  }
   const openChangesTab = (target?: Omit<ChangesPanelTarget, 'nonce'>) => {
     if (!canViewChanges) return
-    setProfile(null)
-    setChangesWanted(true)
-    setDeliveryWanted(false)
-    setBrowserWanted(false)
-    setFilesOpen(false)
-    fileTabs.select(undefined)
-    setInfoPage(true)
+    showSurface({ kind: 'changes' })
     if (target) setChangesTarget(previous => ({ ...target, nonce: (previous?.nonce ?? 0) + 1 }))
   }
   const closeTerminal = () => {
@@ -1228,19 +1269,68 @@ export function useShellLayout({
     setPreference('dockOpen', false)
     requestAnimationFrame(() => terminalToggle.current?.focus({ preventScroll: true }))
   }
+  const focusTerminalScreen = (place: HTMLElement | null) =>
+    place?.querySelector<HTMLElement>('.terminal-pane[data-focused]:not([hidden]) .xterm-helper-textarea')?.focus()
   const openTerminal = () => {
     if (!canTerminal) return
     setTerminalIntent(terminalKey)
-    if (!terminalOpen) setPreference('dockOpen', true)
-    else terminalDock.current?.querySelector<HTMLElement>('.terminal-pane[data-focused]:not([hidden]) .xterm-helper-textarea')?.focus()
+    if (terminalInPanel) {
+      if (showingTab('terminal')) focusTerminalScreen(document.querySelector('.session-panel-terminal'))
+      else showSurface({ kind: 'terminal' })
+    } else if (!terminalOpen) setPreference('dockOpen', true)
+    else focusTerminalScreen(terminalDock.current)
   }
-  /** A command is to be typed into the session's terminal: the dock opens, and the fill focuses the screen itself. */
-  const revealTerminal = () => {
-    if (canTerminal && !terminalOpen) setPreference('dockOpen', true)
+  /** A command is to be typed into the session's terminal (or its login shown): where the terminals stand comes forward. */
+  const revealTerminal = (asked = false) => {
+    if (!canTerminal) return
+    if (asked) setTerminalIntent(terminalKey)
+    if (terminalInPanel) {
+      if (!showingTab('terminal')) showSurface({ kind: 'terminal' })
+    } else if (!terminalOpen) setPreference('dockOpen', true)
   }
   const toggleTerminal = () => {
-    if (terminalOpen) closeTerminal()
-    else openTerminal()
+    if (terminalInPanel ? showingTab('terminal') : terminalOpen) {
+      if (terminalInPanel) closePanel()
+      else closeTerminal()
+    } else openTerminal()
+  }
+  /** The session's terminals leave the dock for a tab of the right panel, or go back to the dock. */
+  const moveTerminal = (to: 'panel' | 'dock') => {
+    if (!panelTerminal) return
+    setTerminalIntent(terminalKey)
+    if (to === 'panel') {
+      setPreference('dockOpen', false)
+      showSurface({ kind: 'terminal' })
+    } else {
+      changePanel(memory => closePanelTab(memory, 'terminal'))
+      setPreference('dockOpen', true)
+    }
+  }
+  /** 「+」 and the empty panel: opens a tab, or focuses the one open; the browser and the terminal add a page or a shell. */
+  const choosePanel = (key: PanelKey) => {
+    if (key === 'terminal') {
+      if (terminalInPanel) setTerminalRequest(previous => previous + 1)
+      else setPreference('dockOpen', false)
+      setTerminalIntent(terminalKey)
+    }
+    if (key === 'browser' && browserShell && panelMemory.tabs.includes('browser'))
+      setBrowserRequest(previous => ({ nonce: (previous?.nonce ?? 0) + 1 }))
+    if (key === 'changes') {
+      openChangesTab()
+      return
+    }
+    showSurface(key.startsWith('plugin:') ? { kind: 'plugin', id: key.slice(7) } : ({ kind: key } as PanelSurface))
+  }
+  /** The 「+」 menu, from its key: the panel opens first when it is shut. */
+  const panelAdd = useRef<HTMLButtonElement>(null)
+  const openPanelMenu = () => {
+    if (!summary && !canBrowseFiles) return
+    const press = () => panelAdd.current?.click()
+    if (panelVisible) press()
+    else {
+      showSurface(shownSurface())
+      requestAnimationFrame(() => requestAnimationFrame(press))
+    }
   }
   const resizeTerminal = (raw: number, step: ResizePhase) => {
     const height = clampDockHeight(raw, windowHeight)
@@ -1259,11 +1349,10 @@ export function useShellLayout({
   useEffect(() => {
     if (revealedLogin === undefined || shownLogin.current === revealedLogin) return
     shownLogin.current = revealedLogin
-    setTerminalIntent(terminalKey)
-    setPreference('dockOpen', true)
+    revealTerminal(true)
   })
   const toggleBrowser = () => {
-    if (browserOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
+    if (showingTab('browser')) closePanel()
     else if (canBrowser) showSurface({ kind: 'browser' })
   }
   /** A local service from the terminal: in the 浏览器 tab where there is one. */
@@ -1274,7 +1363,7 @@ export function useShellLayout({
     return true
   }
   const toggleChanges = () => {
-    if (changesOpen && !fileTabs.active && (!pageMode || infoPage)) closePanel()
+    if (showingTab('changes')) closePanel()
     else openChangesTab()
   }
   /** `keyboard`: opened from a key, so focus moves into the panel's strip and returns on close. */
@@ -1299,18 +1388,9 @@ export function useShellLayout({
       showSurface({ kind: 'files' })
       return
     }
-    if (profileColumn) {
-      // The profile stands in the panel's place: the toggle brings the panel back in its stead.
-      const shown = shownSurface()
-      showSurface(shown.kind === 'launcher' ? lastSurface.current : shown)
-      return
-    }
-    if (columnOpen || (pageMode && infoPage)) closePanel()
-    else {
-      // A page sent back (Esc, the platform's back, sending from it) still holds its surface; only closePanel lets go of it.
-      const shown = shownSurface()
-      showSurface(shown.kind === 'launcher' ? lastSurface.current : shown)
-    }
+    // The profile stands in the panel's place: the toggle brings the panel back in its stead.
+    if (profileColumn || !(columnOpen || (pageMode && infoPage))) showSurface(shownSurface())
+    else closePanel()
   }
   const workbenchKeys = useStableCallback((event: KeyboardEvent) => {
     if (event.defaultPrevented) return
@@ -1426,6 +1506,10 @@ export function useShellLayout({
     }
     if (action === 'side-panel') {
       if (summary || canBrowseFiles || homeInspector) togglePanel(true)
+      return
+    }
+    if (action === 'panel-add') {
+      if (!homeInspector && !profileColumn) openPanelMenu()
       return
     }
     if (action === 'changes') {
@@ -1663,19 +1747,8 @@ export function useShellLayout({
       return
     }
     if (!canBrowseFiles) return
-    setChangesWanted(false)
-    setDeliveryWanted(false)
-    setBrowserWanted(false)
-    if (filesOpen && !fileTabs.active && (!pageMode || infoPage)) {
-      setFilesOpen(false)
-      setInfoPage(false)
-      setColumnOpen(false)
-      return
-    }
-    setFilesOpen(true)
-    fileTabs.select(undefined)
-    setInfoPage(true)
-    setFileExpanded(false)
+    if (showingTab('files')) closePanel()
+    else showSurface({ kind: 'files' })
   }
   const searchFiles = () => {
     setCommandMode('files')
@@ -1755,11 +1828,11 @@ export function useShellLayout({
   const page = usePresence(pageMode && infoPage, MOTION.pushExit)
   const closeInfoPage = () => {
     setInfoPage(false)
-    if (changesOpen) setFileExpanded(false)
+    if (panelSelected === 'changes') setFileExpanded(false)
     if (phone && selectedId === null) {
-      lastSurface.current = shownSurface()
+      lastFile.current = fileTabs.active?.id
       fileTabs.select(undefined)
-      setFilesOpen(false)
+      setSurfaceShown(false)
       showHome()
     }
     panelToggle.current?.focus({ preventScroll: true })
@@ -1881,7 +1954,6 @@ export function useShellLayout({
     fileExpanded,
     setFileExpanded,
     filesOpen,
-    setFilesOpen,
     canViewChanges,
     changesOpen,
     canDeliver,
@@ -1917,9 +1989,20 @@ export function useShellLayout({
     browserRequest,
     openInBrowser,
     showSurface,
-    launcherTakesFocus,
+    emptyTakesFocus,
     closePanel,
-    pluginPanel,
+    panelShown,
+    panelSelected,
+    panelVisible,
+    panelChoiceList,
+    panelAvailable,
+    choosePanel,
+    closePanelTabKey,
+    panelAdd,
+    terminalInPanel,
+    terminalRequest,
+    moveTerminal,
+    panelTerminal,
     openChanges,
     toggleChanges,
     openChangesTab,

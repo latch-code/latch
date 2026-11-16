@@ -132,7 +132,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     infoBack,
     lifecycle,
     fileTabs,
-    filesOpen,
     filesVisible,
     placement,
     pageMode,
@@ -163,9 +162,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     column,
     page,
     closeInfoPage,
-    changesOpen,
-    deliveryOpen,
-    browserOpen,
     selectedId,
     resync,
     connection,
@@ -534,19 +530,11 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                           )}
                           <div className="info-page-title">
                             <h2>
-                              {changesOpen && !fileTabs.active
-                                ? '改动'
-                                : deliveryOpen && !fileTabs.active
-                                  ? '交付'
-                                  : browserOpen && !fileTabs.active
-                                    ? '浏览器'
-                                    : fileTabs.active?.target.view === 'changes'
-                                      ? '代码审阅'
-                                      : fileTabs.active
-                                        ? '文件预览'
-                                        : filesOpen
-                                          ? '文件'
-                                          : '面板'}
+                              {fileTabs.active?.target.view === 'changes'
+                                ? '代码审阅'
+                                : fileTabs.active
+                                  ? '文件预览'
+                                  : (shell.panelChoiceList.find(choice => choice.key === shell.panelSelected)?.label ?? '面板')}
                             </h2>
                             <span>{summary?.title || workspaceForFiles?.name || '项目文件'}</span>
                           </div>

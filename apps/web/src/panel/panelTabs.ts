@@ -1,0 +1,146 @@
+import { useEffect, useState } from 'react'
+import { CommitGlyph, DiffGlyph, FolderGlyph, GlobeGlyph, OverviewGlyph, PluginsGlyph, TerminalGlyph, type IconComponent } from '@latch/ui'
+import { storageGet, storageSet } from '../preferences.ts'
+
+/**
+ * What a tab of the right panel holds. 概要, 改动, 交付, 文件 and each plugin panel stand once; the browser and the
+ * terminal are one tab each whose own strip holds several pages or terminals. Opened files are tabs of their own
+ * (`useFileTabs`), after these.
+ */
+export type PanelKey = 'overview' | 'changes' | 'files' | 'browser' | 'terminal' | 'delivery' | `plugin:${string}`
+
+/** The open tabs in order and the one selected; absent from storage until the person first opens or closes one. */
+export interface PanelMemory {
+  tabs: PanelKey[]
+  active?: PanelKey
+}
+
+const FIXED: ReadonlySet<string> = new Set(['overview', 'changes', 'files', 'browser', 'terminal', 'delivery'])
+const MAX_TABS = 24
+const MAX_CONTEXTS = 40
+
+function isPanelKey(value: unknown): value is PanelKey {
+  if (typeof value !== 'string') return false
+  if (FIXED.has(value)) return true
+  const id = value.startsWith('plugin:') ? value.slice(7) : ''
+  return id.length > 0 && id.length <= 200 && ![...id].some(char => char.charCodeAt(0) < 0x20 || char.charCodeAt(0) === 0x7f)
+}
+
+/** Opening a tab that stands already selects it; otherwise it joins the end of the strip. */
+export function openPanelTab(memory: PanelMemory, key: PanelKey): PanelMemory {
+  return { tabs: memory.tabs.includes(key) ? memory.tabs : [...memory.tabs, key], active: key }
+}
+
+/** The tab after the closed one takes over, or the one before it at the end of the strip. */
+export function closePanelTab(memory: PanelMemory, key: PanelKey): PanelMemory {
+  const at = memory.tabs.indexOf(key)
+  if (at < 0) return memory
+  const tabs = memory.tabs.filter(item => item !== key)
+  const active = memory.active === key ? (tabs[at] ?? tabs[at - 1]) : memory.active
+  return active === undefined ? { tabs } : { tabs, active }
+}
+
+/** What this session shows of what was remembered: only what it can open here, the selection falling to the first. */
+export function shownPanelTabs(memory: PanelMemory, available: (key: PanelKey) => boolean): PanelMemory {
+  const tabs = memory.tabs.filter(available)
+  const active = memory.active !== undefined && tabs.includes(memory.active) ? memory.active : tabs[0]
+  return active === undefined ? { tabs } : { tabs, active }
+}
+
+/** A session never arranged on this device starts on its 概要 where it has one, else with nothing open. */
+export function freshPanelMemory(overview: boolean): PanelMemory {
+  return overview ? { tabs: ['overview'], active: 'overview' } : { tabs: [] }
+}
+
+export function parsePanelMemory(value: unknown): PanelMemory | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const tabs: unknown = Reflect.get(value, 'tabs')
+  if (!Array.isArray(tabs)) return undefined
+  const valid = [...new Set(tabs.filter(isPanelKey))].slice(0, MAX_TABS)
+  const active: unknown = Reflect.get(value, 'active')
+  return isPanelKey(active) && valid.includes(active) ? { tabs: valid, active } : { tabs: valid }
+}
+
+function restore(key: string): Record<string, PanelMemory> {
+  const result: Record<string, PanelMemory> = Object.create(null)
+  try {
+    const raw = storageGet(key)
+    if (!raw || raw.length > 64_000) return result
+    const value: unknown = JSON.parse(raw)
+    if (!Array.isArray(value)) return result
+    for (const item of value.slice(-MAX_CONTEXTS)) {
+      if (!Array.isArray(item) || typeof item[0] !== 'string' || item[0].length > 512) continue
+      const memory = parsePanelMemory(item[1])
+      if (memory) result[item[0]] = memory
+    }
+  } catch {
+    /* Unreadable: every session starts fresh. */
+  }
+  return result
+}
+
+const keyFor = (deviceId: string) => `latch.panel-tabs.${location.origin}.${deviceId}`
+
+/**
+ * The right panel's tabs for each session or project files context, kept per device in this browser like the panel's
+ * width; never sent to the Host.
+ */
+export function usePanelTabs(deviceId: string, contextKey: string) {
+  const key = keyFor(deviceId)
+  const [bank, setBank] = useState(() => ({ key, contexts: restore(key) }))
+  const contexts = bank.key === key ? bank.contexts : restore(key)
+  if (bank.key !== key) setBank({ key, contexts })
+  useEffect(() => {
+    storageSet(key, JSON.stringify(Object.entries(contexts).slice(-MAX_CONTEXTS)))
+  }, [key, contexts])
+  const memory = contextKey && Object.hasOwn(contexts, contextKey) ? contexts[contextKey] : undefined
+  const change = (fresh: PanelMemory, next: (memory: PanelMemory) => PanelMemory) => {
+    if (!contextKey) return
+    setBank(previous => {
+      if (previous.key !== key) return previous
+      const before = Object.hasOwn(previous.contexts, contextKey) ? previous.contexts[contextKey]! : fresh
+      const rest = Object.entries(previous.contexts).filter(([id]) => id !== contextKey)
+      return { key, contexts: Object.fromEntries([...rest.slice(-(MAX_CONTEXTS - 1)), [contextKey, next(before)]]) }
+    })
+  }
+  return { memory, change }
+}
+
+export interface PanelChoice {
+  key: PanelKey
+  label: string
+  icon: IconComponent
+  /** The letter that opens it while the menu or the empty panel has the keys. */
+  letter?: string
+}
+
+const FACES: Record<Exclude<PanelKey, `plugin:${string}`>, Omit<PanelChoice, 'key'>> = {
+  browser: { label: '浏览器', icon: GlobeGlyph, letter: 'B' },
+  terminal: { label: '终端', icon: TerminalGlyph, letter: 'T' },
+  files: { label: '文件', icon: FolderGlyph, letter: 'F' },
+  changes: { label: '改动', icon: DiffGlyph, letter: 'D' },
+  delivery: { label: '交付', icon: CommitGlyph, letter: 'P' },
+  overview: { label: '概要', icon: OverviewGlyph, letter: 'O' },
+}
+
+/** A tab's name and glyph; a plugin panel's name is its own title. */
+export function panelFace(key: PanelKey, title = ''): Omit<PanelChoice, 'key'> {
+  return key.startsWith('plugin:') ? { label: title, icon: PluginsGlyph } : FACES[key as keyof typeof FACES]
+}
+
+/** Everything this session can open in the panel here, in one order for the 「+」 menu and the empty panel. */
+export function panelChoices(input: {
+  browser?: boolean
+  terminal?: boolean
+  files?: boolean
+  changes?: boolean
+  delivery?: boolean
+  overview?: boolean
+  plugins?: ReadonlyArray<{ id: string; title: string }>
+}): PanelChoice[] {
+  const order = ['browser', 'terminal', 'files', 'changes', 'delivery', 'overview'] as const
+  return [
+    ...order.filter(key => input[key]).map(key => ({ key, ...FACES[key] })),
+    ...(input.plugins ?? []).map(plugin => ({ key: `plugin:${plugin.id}` as const, ...panelFace(`plugin:${plugin.id}`, plugin.title) })),
+  ]
+}

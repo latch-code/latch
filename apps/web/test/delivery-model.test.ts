@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GitDeliveryState } from '@latch/protocol'
-import { launcherRows } from '../src/panel/PanelLauncher.tsx'
+import { panelChoices } from '../src/panel/panelTabs.ts'
 import {
   canPush,
   checkDuration,
@@ -233,11 +233,11 @@ describe('the delivery tab', () => {
     expect(hooksDetail({ hooks: [], filters: false })).toMatch(/^仓库里没有可执行的钩子。提交与推送以你/u)
   })
 
-  it('puts 交付 in the launcher after 文件, without a key', () => {
-    expect(launcherRows({ changes: true, files: true, delivery: true }).map(row => [row.label, row.letter])).toEqual([
-      ['改动', 'D'],
+  it('puts 交付 in the panel’s 「+」 after 改动, with P', () => {
+    expect(panelChoices({ changes: true, files: true, delivery: true }).map(row => [row.label, row.letter])).toEqual([
       ['文件', 'F'],
-      ['交付', undefined],
+      ['改动', 'D'],
+      ['交付', 'P'],
     ])
   })
 

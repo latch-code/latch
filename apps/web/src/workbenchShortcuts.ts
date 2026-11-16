@@ -13,6 +13,8 @@ export type WorkbenchAction =
   | 'close-file'
   | 'compose'
   | 'side-panel'
+  /** ⌥⌘T: the right panel's 「+」 menu. */
+  | 'panel-add'
   | 'settings'
   /** ⇧⌘U: 额度与用量. */
   | 'usage'
@@ -74,6 +76,7 @@ const SHORTCUTS = [
   { id: 'palette', label: '搜索', desktop: '⌘K', browser: 'Mod K' },
   { id: 'sidebar', label: '收起或展开侧栏', desktop: '⌘B', browser: 'Alt B' },
   { id: 'side-panel', label: '侧边面板', desktop: '⌥⌘B', browser: 'Alt Shift B' },
+  { id: 'panel-add', label: '在侧边面板打开…', desktop: '⌥⌘T', browser: 'Alt Shift T' },
   { id: 'layout', label: '切换侧栏、顶栏布局', desktop: '⌥⌘L', browser: 'Alt Shift L' },
   { id: 'changes', label: '改动', desktop: '⌘D', browser: 'Alt D' },
   { id: 'terminal', label: '终端', desktop: '⌘J', browser: 'Alt J' },
@@ -187,6 +190,7 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
   }
   if (desktop && event.code === 'KeyB' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'side-panel'
   if (desktop && event.code === 'KeyL' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'layout'
+  if (desktop && event.code === 'KeyT' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'panel-add'
   // The terminal's panes: the desktop app only, as the terminal itself. ⌘ chords are the only keys that leave it.
   if (desktop && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) {
     if (event.code === 'BracketRight') return { kind: 'terminal-pane', step: 1 }
@@ -198,6 +202,7 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
   if (!modifier) return null
   if (!desktop && event.code === 'KeyB' && event.shiftKey) return 'side-panel'
   if (!desktop && event.code === 'KeyL' && event.shiftKey) return 'layout'
+  if (!desktop && event.code === 'KeyT' && event.shiftKey) return 'panel-add'
   if (desktop && event.code === 'KeyB' && event.shiftKey) return 'browser'
   if (event.code === 'KeyE' && event.shiftKey) return 'files'
   if (event.code === 'KeyU' && event.shiftKey) return 'usage'

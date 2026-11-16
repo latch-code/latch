@@ -9,7 +9,7 @@ import type { AppSnapshot } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeActiveFile, openSession, settleShell } from './helpers/layout.ts'
+import { closeActiveFile, openPanelTab, openSession, settleShell } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/panel-files'
 const { word, workbook, presentation, pdf } = documentFixtures(files =>
@@ -104,8 +104,8 @@ describe('the right panel', () => {
     return tabs
   }
   const openFiles = async (page: Page) => {
-    const tabs = await openPanel(page)
-    await tabs.getByRole('tab', { name: '文件', exact: true }).click()
+    await openPanel(page)
+    await openPanelTab(page, '文件')
   }
 
   for (const [width, theme] of [
@@ -123,13 +123,22 @@ describe('the right panel', () => {
         await panelTabs.getByRole('tab', { name: '概要', selected: true }).waitFor()
         await settleShell(page)
         await shot(page, 'overview', width, theme)
-        // The browser only advertises surfaces that this Host and device can actually use.
-        expect(await panelTabs.getByRole('tab').allTextContents()).toEqual(['概要', '改动', '文件', '交付'])
-        const filesTab = panelTabs.getByRole('tab', { name: '文件', exact: true })
+        // A session starts on 概要; 「+」 offers only what this Host and device can actually use, each with its key.
+        expect(await panelTabs.getByRole('tab').allTextContents()).toEqual(['概要'])
+        const add = page.getByRole('button', { name: '打开面板', exact: true }).filter({ visible: true })
         if (width >= 768) {
-          await filesTab.focus()
+          await add.focus()
           await page.keyboard.press('Enter')
-        } else await filesTab.click()
+          const menu = page.getByRole('menu', { name: '打开面板', exact: true })
+          // A browser page has neither the desktop's browser nor this Mac's terminal: they are left out, not greyed.
+          expect(await menu.getByRole('menuitem').allTextContents()).toEqual(['文件F', '改动D', '交付P', '概要O'])
+          await settleShell(page)
+          await shot(page, 'add-menu', width, theme)
+          await page.keyboard.press('f')
+        } else {
+          await add.click()
+          await page.getByRole('menuitem', { name: '文件', exact: true }).click()
+        }
         await row(page, 'guide.md').waitFor()
         await settleShell(page)
 

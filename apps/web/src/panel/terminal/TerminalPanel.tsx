@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
-import { Columns2, MessageSquarePlus, RotateCcw, Rows2, SquareActivity } from 'lucide-react'
+import { Columns2, MessageSquarePlus, PanelBottom, PanelRight, RotateCcw, Rows2, SquareActivity } from 'lucide-react'
 import { TERMINALS_PER_SESSION, type TerminalSize, type TerminalSummary, type TerminalTarget } from '@latch/protocol'
 import {
   Button,
@@ -92,6 +92,10 @@ export interface TerminalPanelProps {
   layoutKey?: string | undefined
   /** The workbench's pane keys reach this panel through it while it is mounted. */
   paneKeys?: RefObject<((action: TerminalPaneAction) => void) | null> | undefined
+  /** Moves the terminals between the dock and the right panel: an item of every tab's menu. */
+  move?: { to: 'panel' | 'dock'; onSelect(): void } | undefined
+  /** Counts the requests for another terminal from outside (the right panel's 「+」); each new count opens one. */
+  request?: number | undefined
 }
 
 /** The terminal font's cell, as xterm lays it out. */
@@ -157,6 +161,8 @@ export function TerminalPanel({
   onFillReveal,
   layoutKey,
   paneKeys,
+  move,
+  request = 0,
 }: TerminalPanelProps) {
   const id = useId()
   const screens = useRef<HTMLDivElement>(null)
@@ -323,6 +329,15 @@ export function TerminalPanel({
     }
   }
 
+  // A request made before this panel mounted is the one that opened it, which `requested` already answers.
+  const answered = useRef(request)
+  useEffect(() => {
+    if (request === answered.current || read.kind !== 'ready' || opening || unavailable) return
+    answered.current = request
+    if (tabs.length >= TERMINALS_PER_SESSION) return
+    setFocusScreen(true)
+    void terminals.open()
+  }, [request, read.kind, opening, unavailable, tabs.length, terminals])
   const full = tabs.length >= TERMINALS_PER_SESSION
   const limitNote = `每个${target.workspaceId === undefined ? '会话' : '项目'}最多 ${TERMINALS_PER_SESSION} 个终端`
   const blocked = opening || Boolean(unavailable) || read.kind !== 'ready'
@@ -408,7 +423,19 @@ export function TerminalPanel({
       icon: tabIcon(tab.panes.flatMap(item => tabs.find(entry => entry.id === item)?.summary ?? [])),
       controls: id,
       closeLabel: `关闭${name}`,
-      menu: splitItems(focused),
+      menu: [
+        ...splitItems(focused),
+        ...(move
+          ? [
+              {
+                id: 'move',
+                label: move.to === 'panel' ? '移到右侧面板' : '移到底部',
+                icon: move.to === 'panel' ? PanelRight : PanelBottom,
+                onSelect: move.onSelect,
+              },
+            ]
+          : []),
+      ],
     }
   })
   const splitShown = (currentTab?.panes.length ?? 0) > 1
