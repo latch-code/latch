@@ -650,6 +650,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /agents/:id/probe` | `admin` 与 `run` | 检测一个 Agent 定义 |
 | `POST /agents/:id/commands` | `view` | 读取 Harness 的命令目录 |
 | `POST /agents/:id/catalogue`、`POST /agents/:id/mcp`、`PUT /agents/:id/models` | `run` | 不开始会话读取模型与选项、Harness 自己的 MCP；保存自己填写的模型 ID（[HARNESSES.md](./HARNESSES.md#开始前的选项)） |
+| `POST /quota/refresh` | `run` | 有人看「额度」时在后台读已绑定 Harness 缺失或过时的额度，不起模型轮次，立即回答 `asked`（[HARNESSES.md](./HARNESSES.md#额度)） |
 | `GET /workspaces` | `view` | 项目列表，含文件夹与不可用原因 |
 | `POST /folder-grants`、`POST /workspaces`、`POST /workspaces/:id/folders` | 本机 `admin`；后两者另需签名 | 见「谁能添加」 |
 | `PATCH /workspaces/:id`、`DELETE /workspaces/:id`、`DELETE /workspaces/:id/folders/:folderId` | `admin` | 重命名、图标、文件夹顺序；移除项目或文件夹（文件不删除） |

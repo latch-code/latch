@@ -60,6 +60,8 @@ import type {
   ServiceModelOptions,
   HarnessOwnMcp,
   HarnessQuota,
+  HarnessQuotaRead,
+  QuotaReadFailure,
   TokenUsage,
   CatalogueRead,
   ToolDecision,
@@ -194,6 +196,7 @@ import {
   sessionState,
   FORK_METHOD,
   MCP_STATUS_METHOD,
+  QUOTA_READ_METHOD,
   MCP_STATUS_UPDATE,
   ownMcpStatus,
   STEER_METHOD,
@@ -316,6 +319,13 @@ const MCP_READ_MS = 60_000
 /** A harness is asked for its limits no more often than this, however many sessions open or turns end. */
 const QUOTA_ASK_FLOOR_MS = 5 * 60_000
 const QUOTA_ASK_TIMEOUT_MS = 15_000
+/** What someone looking finds known this recently is not asked again. */
+const QUOTA_FRESH_MS = 5 * 60_000
+/** Reads for someone looking start no more often than this; a person's 重试 no more often than the second. */
+const QUOTA_LOOK_FLOOR_MS = 60_000
+const QUOTA_RETRY_FLOOR_MS = 10_000
+/** One read for someone looking, a process's start included. */
+const QUOTA_LOOK_MS = 30_000
 
 /** Why a Latch MCP server did not start, as the session says it. */
 const MCP_FAILURE_TEXT: Readonly<Record<McpStartFailure, string>> = {
@@ -950,6 +960,14 @@ export class AgentRuntime implements Bridge {
   private quotaAskedAt?: number
   /** Who said what the Host's own read reported: not a process, so it never goes away with one. */
   private readonly hostQuotaSource = {}
+  /** Who said what a read for someone looking reported; its next read replaces it. */
+  private readonly lookQuotaSource = {}
+  /** A read for someone looking in progress; a second request shares it. */
+  private quotaLooking?: Promise<void>
+  /** When the last read for someone looking started. Memory only: a restarted Host may ask at once. */
+  private quotaLookedAt?: number
+  /** How the last read for someone looking ended with nothing, for the definition it was made under. Memory only. */
+  private quotaLookFailed?: { definitionHash: string; at: string; reason: QuotaReadFailure }
   private started?: Promise<void>
   private closing?: Promise<void>
   private closed = false
@@ -1599,6 +1617,7 @@ export class AgentRuntime implements Bridge {
     const now = this.clock()
     const before = shown(this.quotaFacts.snapshot(now))
     this.quotaFacts.note(source, report, now)
+    delete this.quotaLookFailed
     const after = this.quotaFacts.snapshot(now)
     // Kept with the sessions, so the last word and its time are there after a restart.
     if (after) this.state.quota = { definitionHash, value: after }
@@ -1621,7 +1640,7 @@ export class AgentRuntime implements Bridge {
     // A session on a model service runs without the harness's own login: there is no subscription to ask about.
     const task = this.state.tasks[live.key]
     if (task?.acp.route) return
-    const now = Date.now()
+    const now = this.clock()
     if (this.quotaAskedAt !== undefined && now - this.quotaAskedAt < QUOTA_ASK_FLOOR_MS) return
     this.quotaAskedAt = now
     if (hostRead) {
@@ -1647,6 +1666,129 @@ export class AgentRuntime implements Bridge {
       },
       () => {},
     )
+  }
+
+  /**
+   * How someone looking can have the limits asked for without a model turn: `request` on a process of the harness (a
+   * session's, or one started for it), `command` its own program's command, `host` the Host's own read. Undefined: none,
+   * so they arrive only as its turns run, or never.
+   */
+  private quotaLookRoute(): 'request' | 'command' | 'host' | undefined {
+    const profile = this.selection.profile
+    if (profile?.wire === 'codex' || profile?.quota?.request) return 'request'
+    if (profile?.quota?.command) return 'command'
+    return this.limits.readQuota ? 'host' : undefined
+  }
+
+  /** See `HarnessInfo.quotaRead`. */
+  quotaRead(): HarnessQuotaRead | undefined {
+    if (!this.quotaLookRoute()) return this.selection.profile?.quota ? { afterTurn: true } : undefined
+    const failed = this.quotaLookFailed?.definitionHash === this.definitionNow() ? this.quotaLookFailed : undefined
+    if (!this.quotaLooking && !failed) return undefined
+    return {
+      ...(this.quotaLooking ? { running: true as const } : {}),
+      ...(failed ? { failed: { at: failed.at, reason: failed.reason } } : {}),
+    }
+  }
+
+  /**
+   * Someone looks at the limits: they are asked for on the cheapest way that runs no model turn, when what is known is
+   * missing or older than `QUOTA_FRESH_MS`. One read at a time, at most one start in `QUOTA_LOOK_FLOOR_MS`
+   * (`QUOTA_RETRY_FLOOR_MS` for 重试), within `QUOTA_LOOK_MS`. The Host's own read keeps its own five-minute floor.
+   * Never on a timer; a failure is kept as a fixed word, never the program's text.
+   */
+  refreshQuota(options: { retry?: boolean; before?: () => Promise<void> } = {}): Promise<void> {
+    if (this.quotaLooking) return this.quotaLooking
+    const route = this.quotaLookRoute()
+    if (!route || this.closed) return Promise.resolve()
+    const now = this.clock()
+    const known = this.quota()
+    if (!options.retry && known && now - Date.parse(known.observedAt) < QUOTA_FRESH_MS) return Promise.resolve()
+    const floor = options.retry ? QUOTA_RETRY_FLOOR_MS : QUOTA_LOOK_FLOOR_MS
+    if (this.quotaLookedAt !== undefined && now - this.quotaLookedAt < floor) return Promise.resolve()
+    // A vendor asked with a key the Host read: no more often than as turns end, whoever asks.
+    if (route === 'host' && this.quotaAskedAt !== undefined && now - this.quotaAskedAt < QUOTA_ASK_FLOOR_MS) return Promise.resolve()
+    this.quotaLookedAt = now
+    const looking = (async () => {
+      await this.ready()
+      const definitionHash = this.definitionNow()
+      if (!definitionHash) return
+      await options.before?.()
+      this.assertOpen()
+      this.quotaAskedAt = this.clock()
+      this.notify()
+      const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(this.quotaLookMs())])
+      let report: QuotaReport | null | undefined
+      let reason: QuotaReadFailure = 'failed'
+      try {
+        report = await this.lookForQuota(route, definitionHash, signal)
+      } catch (error) {
+        if (error instanceof RpcError && error.code === RPC.authRequired) reason = 'login'
+      }
+      if (this.closed || this.definitionNow() !== definitionHash) return
+      if (report) return this.noteQuota(this.lookQuotaSource, report)
+      if (report === null && route === 'host') {
+        this.forgetQuota()
+        reason = 'no-key'
+      }
+      this.quotaLookFailed = { definitionHash, at: this.now(), reason }
+    })()
+      .catch(() => {})
+      .finally(() => {
+        if (this.quotaLooking === looking) this.quotaLooking = undefined
+        this.notify()
+      })
+    this.quotaLooking = looking
+    return looking
+  }
+
+  private quotaLookMs(): number {
+    return Math.min(QUOTA_LOOK_MS, this.limits.requestTimeoutMs)
+  }
+
+  /** One read for someone looking. `undefined`: it did not finish; `null` (the Host's read): nothing to report. */
+  private async lookForQuota(
+    route: 'request' | 'command' | 'host',
+    definitionHash: string,
+    signal: AbortSignal,
+  ): Promise<QuotaReport | null | undefined> {
+    const quota = this.selection.profile?.quota
+    if (route === 'host') return this.limits.readQuota!({ signal })
+    if (route === 'command') return readQuotaCommand(this.agent, quota!.command!, this.clock(), { signal })
+    const codex = this.selection.profile?.wire === 'codex'
+    const method = codex ? QUOTA_READ_METHOD : quota!.request!.method
+    const read = (answer: unknown): QuotaReport | undefined => {
+      if (!codex) return quota!.request!.read(answer, this.clock())
+      const parsed = quotaReport.safeParse(answer)
+      return parsed.success ? (parsed.data as QuotaReport) : undefined
+    }
+    const deadline = Date.now() + this.quotaLookMs()
+    const ask = async (live: Live) => {
+      const left = deadline - Date.now()
+      if (left <= 0) throw new RequestTimeout(method)
+      return read(await live.wire.request(method, {}, left, signal))
+    }
+    // A process already running on the harness's own login answers for the same account; one on a model service not.
+    const running = [...this.lives.values()].find(
+      live => live.initialized && !live.wire.stopping && !live.gateway && this.state.tasks[live.key]?.acp.route === undefined,
+    )
+    if (running) return ask(running)
+    const key = `quota-${randomUUID()}`
+    const cwd = await this.makeTemporaryDirectory('quota-')
+    try {
+      const launch = this.currentLaunch(await this.projectConfig(cwd))
+      if (launch.definitionHash !== definitionHash) return undefined
+      const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
+      this.enter(this.holds, key)
+      try {
+        return await ask(live)
+      } finally {
+        this.leave(this.holds, key)
+      }
+    } finally {
+      await this.discardProcess(key)
+      await this.removeTemporaryDirectory(cwd).catch(() => {})
+    }
   }
 
   /** Nothing more to report from the Host's own read: what was shown of it (and kept from before a restart) goes. */

@@ -1443,9 +1443,11 @@ export class HarnessHub implements Bridge {
     let reported: HarnessInfo['attachmentsReported']
     let ownMcp: HarnessInfo['ownMcp']
     let quota: HarnessInfo['quota']
+    let quotaRead: HarnessInfo['quotaRead']
     try {
       ownMcp = entry.bridge?.ownMcp?.()
       quota = entry.bridge?.quota?.()
+      quotaRead = entry.bridge?.quotaRead?.()
       reported = entry.bridge?.promptCapabilities?.()
       catalogue = entry.bridge?.catalogue?.()
       const declarations = entry.bridge?.serviceOptions ? this.serviceDeclarations(capabilities) : []
@@ -1479,6 +1481,7 @@ export class HarnessHub implements Bridge {
       ...(customModels?.length ? { customModels: [...customModels] } : {}),
       ...(ownMcp ? { ownMcp: structuredClone(ownMcp) } : {}),
       ...(quota ? { quota: structuredClone(quota) } : {}),
+      ...(quotaRead ? { quotaRead: structuredClone(quotaRead) } : {}),
       ...(driver.historyImport || driver.seededStart
         ? {
             history: {
@@ -1522,6 +1525,14 @@ export class HarnessHub implements Bridge {
     if (!member) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
     if (!member.bridge.readOwnMcp || !member.bridge.ownMcp?.()) throw new AppError(409, 'mcp-not-reported', '这个 Harness 不报告自己的 MCP')
     await member.bridge.readOwnMcp({ before })
+  }
+
+  /** Someone looks at a harness's limits; see `Bridge.refreshQuota`. False: it has no way to be asked. */
+  refreshHarnessQuota(id: string, options: { retry: boolean; before: () => Promise<void> }): boolean {
+    const bridge = this.member(id)?.bridge
+    if (!bridge?.refreshQuota) return false
+    void bridge.refreshQuota(options).catch(() => {})
+    return true
   }
 
   /** Logs a harness out; see `Bridge.logout`. */

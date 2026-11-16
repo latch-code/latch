@@ -370,7 +370,16 @@ export class QuotaFacts {
     if (report.whole) entry.windows.clear()
     if (report.whole && !report.windows.length && report.balanceCents !== undefined) entry.balanceOnly = true
     else delete entry.balanceOnly
-    for (const window of report.windows.slice(0, MAX_WINDOWS)) entry.windows.set(keyOf(window), { window, at: now })
+    for (const window of report.windows.slice(0, MAX_WINDOWS)) {
+      const key = keyOf(window)
+      // A word on a window without a figure (Claude's status-only `allowed`) says nothing of how much is used: the
+      // figure last said for it stays, with the time it was said, and takes the new status.
+      const figure = !report.whole && window.usedPercent === undefined ? this.lastFigure(key, now) : undefined
+      entry.windows.set(
+        key,
+        figure ? { window: { ...figure.window, ...window, usedPercent: figure.window.usedPercent! }, at: figure.at } : { window, at: now },
+      )
+    }
     if (report.plan) entry.plan = report.plan
     if (report.account) entry.account = report.account
     if (report.balanceCents !== undefined) {
@@ -384,6 +393,22 @@ export class QuotaFacts {
     this.said.delete(source)
     this.said.set(source, entry)
     if (this.said.size > MAX_SOURCES) this.said.delete(this.said.keys().next().value!)
+  }
+
+  /** The newest figure any source said for a window that has not reset yet. */
+  private lastFigure(key: string, now: number): { window: QuotaWindow; at: number } | undefined {
+    let found: { window: QuotaWindow; at: number } | undefined
+    for (const entry of this.said.values()) {
+      const item = entry.windows.get(key)
+      if (item?.window.usedPercent === undefined) continue
+      const resets = item.window.resetsAt === undefined ? undefined : Date.parse(item.window.resetsAt)
+      if (resets !== undefined && resets <= now) continue
+      if (!found || item.at >= found.at) found = item
+    }
+    if (!found) return undefined
+    // Its own reset time stays when the new word gives none; its status is the new word's.
+    const { state: _state, ...window } = found.window
+    return { window, at: found.at }
   }
 
   /**

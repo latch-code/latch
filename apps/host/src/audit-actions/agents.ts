@@ -46,6 +46,8 @@ export const AGENT_ACTIONS = {
    * (`cli-quota.ts`). Which Harness only: never the key, the balance or the account.
    */
   'agent.quota.read': z.strictObject({ agentId: opaqueId, presetId: z.literal('dsh') }),
+  /** Someone looked at the limits and the harness is about to be asked: its command, a request, or the Host's own read. */
+  'agent.quota.requested': z.strictObject({ agentId: opaqueId }),
   /** The harness is about to be asked to log out. */
   'agent.logout': z.strictObject({ agentId: opaqueId }),
   'agent.defined': z.strictObject({ agentId: opaqueId, definitionHash: hex64, created: z.boolean() }),

@@ -39,11 +39,12 @@ export interface AcpAgentOptions {
   requireConfirmedCommand?: boolean
   /**
    * The Host's own read of this definition's limits, outside the agent's process: for a preset whose CLI holds an API
-   * key for a vendor with an official balance endpoint (`apps/host/src/cli-quota.ts`). Asked only as a turn ends, at
-   * most once in five minutes, with the session's folder. `null`: there is nothing to report (no key, a refusal, a
-   * setting that sends the key elsewhere), and what was shown goes; `undefined`: this read did not finish.
+   * key for a vendor with an official balance endpoint (`apps/host/src/cli-quota.ts`). Asked as a turn ends, with the
+   * session's folder, and when someone looks at the limits, with none; at most once in five minutes either way. `null`:
+   * there is nothing to report (no key, a refusal, a setting that sends the key elsewhere), and what was shown goes;
+   * `undefined`: this read did not finish.
    */
-  readQuota?: (input: { cwd: string; signal: AbortSignal }) => Promise<QuotaReport | null | undefined>
+  readQuota?: (input: { cwd?: string; signal: AbortSignal }) => Promise<QuotaReport | null | undefined>
   /**
    * The Host's own read of a turn's tokens from the CLI's record of this one session (`apps/host/src/cli-usage.ts`),
    * for a preset whose adapter reports none. Asked once as a turn on the Harness's own login ends with no usage from

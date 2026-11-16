@@ -30,6 +30,7 @@ import { CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
 import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
 import {
   MCP_STATUS_METHOD,
+  QUOTA_READ_METHOD,
   MCP_STATUS_UPDATE,
   RPC,
   RpcError,
@@ -530,6 +531,8 @@ export class CodexWire implements AgentWire {
         return this.send('account/logout', undefined, timeoutMs, signal)
       case MCP_STATUS_METHOD:
         return this.mcpStatus(params, timeoutMs, signal)
+      case QUOTA_READ_METHOD:
+        return this.readQuota(timeoutMs, signal)
       default:
         return Promise.reject(new RpcError(RPC.methodNotFound, `Method not found: ${clip(method, 200)}`))
     }
@@ -1064,6 +1067,20 @@ export class CodexWire implements AgentWire {
         if (report) this.update({ sessionUpdate: QUOTA_UPDATE, ...report })
       })
       .catch(() => {})
+  }
+
+  /**
+   * The plan's limits asked for by someone looking, with or without a thread: the same two account reads, starting
+   * nothing and running no turn. Codex's own word that it is not logged in is `RPC.authRequired`.
+   */
+  private async readQuota(timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+    if (this.route) return null
+    const who = await this.send('account/read', {}, timeoutMs, signal)
+    const read = account.safeParse(who)
+    if (read.success && read.data.account == null && read.data.requiresOpenaiAuth === true)
+      throw new RpcError(RPC.authRequired, 'Codex is not logged in')
+    const limits = await this.send('account/rateLimits/read', { excludeResetCreditDetails: true }, timeoutMs, signal)
+    return codexQuota(limits, who, Date.now()) ?? null
   }
 
   /** A thread's turns as the updates a session would have had: what the person said, Codex's replies and its calls. */

@@ -294,6 +294,12 @@ export const FORK_METHOD = '_latch/session/fork'
  * which Codex gives as names only (`namesOnly`, every state `unknown`).
  */
 export const MCP_STATUS_METHOD = '_latch/mcp/status'
+/**
+ * Latch's own request to a wire that reads its harness's limits itself (Codex's app-server): params `{}`, answered with a
+ * `QuotaReport`, or `null` when the process runs on a model service or the answer has no figure. It needs no session
+ * and runs no turn; `RPC.authRequired` when the harness says it is not logged in.
+ */
+export const QUOTA_READ_METHOD = '_latch/quota/read'
 /** The session update such a wire sends as the session's servers start: `{ sessionUpdate, servers }`, all of them. */
 export const MCP_STATUS_UPDATE = '_latch_mcp_status'
 /** What such a wire answers and sends, as the runtime keeps it: names, states, counts and origins only. */

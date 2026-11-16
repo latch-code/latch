@@ -111,12 +111,13 @@ async function silent(path: string, uid: number): Promise<boolean> {
  * DeepSeek Harness's key for its DeepSeek route. `none`: there is none to use for this home (no key, a home that is not
  * the fixed one, a file that fails its checks, or a setting of the home that could point the route elsewhere).
  * `skip`: this session's folder could point it elsewhere (its `.env`, which DeepSeek Harness also reads), which says
- * nothing about the home. `env` is what DeepSeek Harness inherits: the Host's environment and the login shell's.
+ * nothing about the home. `env` is what DeepSeek Harness inherits: the Host's environment and the login shell's. Without
+ * `cwd` (someone looking at the limits, with no session) there is no folder to check: the home's checks are all of it.
  */
 export async function readDshKey(input: {
   home: string
   env: Readonly<Record<string, string | undefined>>
-  cwd: string
+  cwd?: string
   uid: number
 }): Promise<{ key: string } | 'none' | 'skip'> {
   const { home, env, cwd, uid } = input
@@ -130,7 +131,7 @@ export async function readDshKey(input: {
     join(dir, 'profiles', DSH_PROFILE, '.env'),
   ])
     if (!(await silent(path, uid))) return 'none'
-  if (!(await silent(join(cwd, '.env'), uid))) return 'skip'
+  if (cwd !== undefined && !(await silent(join(cwd, '.env'), uid))) return 'skip'
   const read = await readOwnFile(join(dir, '.credentials.yaml'), uid, true)
   if (read === 'absent' || read === 'refused') return 'none'
   const key = deepSeekKeyOf(read.text)

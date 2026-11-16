@@ -27,6 +27,7 @@ import {
   grokQuota,
   harnessQuota,
   maskAccount,
+  type QuotaReport,
 } from '../src/quota.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
@@ -318,6 +319,29 @@ const agyUsage = (now: number, change: (groups: Array<Record<string, unknown>>) 
   })
 }
 
+/** `agy` in `bin`: the fake ACP agent, except that `-p /usage` prints `output` and `--version` a version. */
+async function agy(root: string, output: string, env: Record<string, string> = {}): Promise<{ bin: string; seen: string }> {
+  const bin = join(root, 'bin')
+  await mkdir(bin, { recursive: true })
+  const seen = join(root, 'seen')
+  const exports = Object.entries(env)
+    .map(([name, value]) => `export ${name}='${value}'`)
+    .join('\n')
+  await writeFile(
+    join(bin, 'agy'),
+    [
+      '#!/bin/sh',
+      `if [ "$1" = --version ]; then printf '1.5.8\\n'; exit 0; fi`,
+      `if [ "$1" = -p ]; then printf '%s|%s\\n' "$*" "$AGY_CLI_DISABLE_AUTO_UPDATE" >> '${seen}'; printf 'a notice on stderr\\n' >&2; printf '%s' '${output}'; exit 0; fi`,
+      exports,
+      `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+      '',
+    ].join('\n'),
+  )
+  await chmod(join(bin, 'agy'), 0o755)
+  return { bin, seen }
+}
+
 describe('Antigravity', () => {
   it('reads what is used of each window of the two general groups, and leaves out a group it has no name for', () => {
     expect(readAntigravityUsage(agyUsage(NOW), NOW)).toEqual({
@@ -355,29 +379,6 @@ describe('Antigravity', () => {
     const percent = agyUsage(NOW, groups => [{ ...groups[0], buckets: [{ window: 'weekly', remaining_fraction: 75 }] }])
     expect(readAntigravityUsage(percent, NOW)).toBeUndefined()
   })
-
-  /** `agy` in `bin`: the fake ACP agent, except that `-p /usage` prints `output` and `--version` a version. */
-  async function agy(root: string, output: string, env: Record<string, string> = {}): Promise<{ bin: string; seen: string }> {
-    const bin = join(root, 'bin')
-    await mkdir(bin, { recursive: true })
-    const seen = join(root, 'seen')
-    const exports = Object.entries(env)
-      .map(([name, value]) => `export ${name}='${value}'`)
-      .join('\n')
-    await writeFile(
-      join(bin, 'agy'),
-      [
-        '#!/bin/sh',
-        `if [ "$1" = --version ]; then printf '1.5.8\\n'; exit 0; fi`,
-        `if [ "$1" = -p ]; then printf '%s|%s\\n' "$*" "$AGY_CLI_DISABLE_AUTO_UPDATE" >> '${seen}'; printf 'a notice on stderr\\n' >&2; printf '%s' '${output}'; exit 0; fi`,
-        exports,
-        `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
-        '',
-      ].join('\n'),
-    )
-    await chmod(join(bin, 'agy'), 0o755)
-    return { bin, seen }
-  }
 
   it('runs as a status command does: only once the Host may run programs, without a secret in the arguments, and reads standard output alone', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-quota-cmd-')))
@@ -812,5 +813,217 @@ describe('Grok Build', () => {
     expect(received(log, '_x.ai/billing')).toHaveLength(1)
     expect(received(log, '_x.ai/billing')[0]!.params).toEqual({})
     expect(received(log, 'session/prompt')).toHaveLength(2)
+  })
+})
+
+describe('when someone looks', () => {
+  const billing = (now: number) =>
+    JSON.stringify({
+      config: { creditUsagePercent: 4, currentPeriod: { type: 'weekly', start: iso(now - HOUR), end: iso(now + 100 * HOUR) } },
+      subscription_tier: 'SuperGrok',
+    })
+  const events = (log: LogEntry[], event: string) => log.filter(entry => entry.event === event)
+
+  it('reads Codex in a process of its own with no thread and no turn, stops that process, and keeps the figure', async () => {
+    const now = Date.now()
+    const t = await computer('codex', 'codex', { FAKE_CODEX_RATE_LIMITS: JSON.stringify(codexRead(now)) })
+    expect(t.bridge.quotaRead?.()).toBeUndefined()
+    const reading = t.bridge.refreshQuota!()
+    // A second look while the first reads shares it.
+    const again = t.bridge.refreshQuota!()
+    expect(t.bridge.quotaRead?.()).toEqual({ running: true })
+    await Promise.all([reading, again])
+    expect(t.bridge.quota?.()).toMatchObject({
+      windows: [{ kind: 'five-hour' }, { kind: 'weekly' }],
+      plan: 'plus',
+      account: 'p•••@e•••.com',
+    })
+    expect(t.bridge.quotaRead?.()).toBeUndefined()
+    await vi.waitFor(async () => expect(events(await t.log(), 'exit')).toHaveLength(1))
+    const log = await t.log()
+    expect(events(log, 'start')).toHaveLength(1)
+    expect(events(log, 'rate-limits-read')).toHaveLength(1)
+    for (const method of ['thread/start', 'thread/resume', 'turn/start']) expect(received(log, method)).toHaveLength(0)
+
+    // Known a moment ago: not asked again, also after the floor; a retry asks.
+    t.later(2 * 60_000)
+    await t.bridge.refreshQuota!()
+    expect(events(await t.log(), 'rate-limits-read')).toHaveLength(1)
+    await t.bridge.refreshQuota!({ retry: true })
+    expect(events(await t.log(), 'rate-limits-read')).toHaveLength(2)
+    // Old: asked again, once the floor has passed.
+    t.later(6 * 60_000)
+    await t.bridge.refreshQuota!()
+    expect(events(await t.log(), 'rate-limits-read')).toHaveLength(3)
+  })
+
+  it('asks on the process of a running session rather than starting one', async () => {
+    const now = Date.now()
+    const t = await computer('codex', 'codex', { FAKE_CODEX_RATE_LIMITS: JSON.stringify(codexRead(now)) })
+    expect((await t.start('echo hi')).summary.status).toBe('idle')
+    await vi.waitFor(async () => expect(events(await t.log(), 'rate-limits-read')).toHaveLength(1))
+    t.later(6 * 60_000)
+    await t.bridge.refreshQuota!()
+    const log = await t.log()
+    expect(events(log, 'rate-limits-read')).toHaveLength(2)
+    expect(events(log, 'start')).toHaveLength(1)
+  })
+
+  it('says a Codex that is not logged in is not, and a read that fails is failed, in a fixed word only', async () => {
+    const t = await computer('codex', 'codex', {
+      FAKE_CODEX_LOGGED_OUT: '1',
+      FAKE_CODEX_RATE_LIMITS: JSON.stringify(codexRead(Date.now())),
+    })
+    await t.bridge.refreshQuota!()
+    expect(t.bridge.quota?.()).toBeUndefined()
+    expect(t.bridge.quotaRead?.()).toEqual({ failed: { at: expect.any(String), reason: 'login' } })
+    expect(events(await t.log(), 'rate-limits-read')).toHaveLength(0)
+    // Within the floor nothing more starts; a retry waits only ten seconds.
+    await t.bridge.refreshQuota!()
+    t.later(11_000)
+    await t.bridge.refreshQuota!({ retry: true })
+    await vi.waitFor(async () => expect(events(await t.log(), 'exit')).toHaveLength(2))
+    expect(events(await t.log(), 'start')).toHaveLength(2)
+  })
+
+  it('asks Grok Build its billing extension without a session or a prompt', async () => {
+    const now = Date.now()
+    const t = await computer('fake-agent', 'grok', { FAKE_ACP_BILLING: billing(now) })
+    await t.bridge.refreshQuota!()
+    expect(t.bridge.quota?.()).toMatchObject({ windows: [{ kind: 'billing-period', usedPercent: 4 }], plan: 'supergrok' })
+    await vi.waitFor(async () => expect(events(await t.log(), 'exit')).toHaveLength(1))
+    const log = await t.log()
+    expect(received(log, '_x.ai/billing')).toHaveLength(1)
+    for (const method of ['session/new', 'session/load', 'session/resume', 'session/prompt']) expect(received(log, method)).toHaveLength(0)
+  })
+
+  it('gives up on a program that does not answer in time, stops it, and keeps the last figure', async () => {
+    const t = await computer('fake-agent', 'grok', { FAKE_ACP_BILLING: 'hang' })
+    const started = Date.now()
+    await t.bridge.refreshQuota!()
+    // The test computer's requests time out after five seconds, which bounds this read too.
+    expect(Date.now() - started).toBeLessThan(15_000)
+    expect(t.bridge.quotaRead?.()).toEqual({ failed: { at: expect.any(String), reason: 'failed' } })
+    await vi.waitFor(async () => expect(events(await t.log(), 'exit')).toHaveLength(1))
+  }, 20_000)
+
+  it('runs Antigravity’s own command with no process of the harness', async () => {
+    const now = Date.now()
+    const t = await computer('agy', 'antigravity', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'default,accept-edits,auto' }, root =>
+      agy(root, agyUsage(now)),
+    )
+    await t.bridge.refreshQuota!()
+    expect(t.bridge.quota?.()?.windows).toHaveLength(4)
+    expect((await readFile(join(t.root, 'seen'), 'utf8')).trim().split('\n')).toEqual(['-p /usage --output-format json|true'])
+    expect(events(await t.log(), 'start')).toHaveLength(0)
+  })
+
+  it('asks Claude Agent nothing: its limits come with its turns', async () => {
+    const t = await computer('fake-agent', 'claude-agent', CLAUDE)
+    expect(t.bridge.quotaRead?.()).toEqual({ afterTurn: true })
+    await t.bridge.refreshQuota!()
+    expect(await t.log()).toEqual([])
+    expect(t.bridge.quotaRead?.()).toEqual({ afterTurn: true })
+  })
+
+  it('asks the Host’s own read with no folder, at most once in five minutes, and says when it has no key', async () => {
+    const asked: Array<{ cwd?: string }> = []
+    let answer: QuotaReport | null = { windows: [], whole: true, balanceCents: 1234, currency: 'CNY', limited: false }
+    const record: AgentRecord = {
+      id: `quota-${++requests}`,
+      name: 'DSH',
+      presetId: 'dsh',
+      command: 'dsh',
+      args: [],
+      env: {},
+      enabled: true,
+    }
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-quota-host-')))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    await mkdir(join(root, 'tmp'), { mode: 0o700 })
+    await mkdir(join(root, 'bin'))
+    await writeFile(join(root, 'bin', 'dsh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+    setCommandSearch(() => [join(root, 'bin')])
+    forgetCommandLookups()
+    let ahead = 0
+    const driver = await activate(
+      createAcpAgentPlugin(record, {
+        log: () => {},
+        readQuota: async input => {
+          asked.push(input.cwd === undefined ? {} : { cwd: input.cwd })
+          return answer
+        },
+      }),
+    )
+    const bridge = driver.create({
+      dataDir: join(root, 'data'),
+      workspaceRoot: root,
+      tmpRoot: join(root, 'tmp'),
+      workspaces: () => [root],
+      providerId: 'unused',
+      registry: {
+        acquire() {
+          throw new Error('unused')
+        },
+      },
+      securityEvent: () => {},
+      clock: () => Date.now() + ahead,
+    })
+    cleanups.push(() => bridge.close())
+    await bridge.start()
+    await bridge.refreshQuota!()
+    expect(asked).toEqual([{}])
+    expect(bridge.quota?.()).toMatchObject({ balanceCents: 1234, currency: 'CNY' })
+    // Even a retry waits out the vendor's five minutes.
+    ahead += 2 * 60_000
+    await bridge.refreshQuota!({ retry: true })
+    expect(asked).toHaveLength(1)
+    ahead += 4 * 60_000
+    answer = null
+    await bridge.refreshQuota!()
+    expect(asked).toHaveLength(2)
+    expect(bridge.quota?.()).toBeUndefined()
+    expect(bridge.quotaRead?.()).toEqual({ failed: { at: expect.any(String), reason: 'no-key' } })
+  })
+})
+
+describe('Claude Agent between figures', () => {
+  // As claude-agent-acp 0.101.0 forwarded it on a one-call turn (2026-11-16), and the status-only word it can also send.
+  const captured = (now: number) => ({
+    status: 'allowed',
+    resetsAt: seconds(now + 100 * HOUR),
+    rateLimitType: 'seven_day',
+    overageStatus: 'rejected',
+    overageDisabledReason: 'org_level_disabled',
+    isUsingOverage: false,
+    unifiedWindows: { seven_day: { utilization: 0.39, resetsAt: seconds(now + 100 * HOUR), status: 'allowed' } },
+  })
+  const statusOnly = (now: number, status = 'allowed') => ({ status, resetsAt: seconds(now + 100 * HOUR), rateLimitType: 'seven_day' })
+
+  it('keeps the last figure, with its time, when a later word on that window has none', () => {
+    const facts = new QuotaFacts()
+    const process = {}
+    facts.note(process, claudeRateLimit(captured(NOW), NOW)!, NOW)
+    facts.note(process, claudeRateLimit(statusOnly(NOW), NOW + HOUR)!, NOW + HOUR)
+    expect(facts.snapshot(NOW + HOUR)).toMatchObject({ windows: [{ kind: 'weekly', usedPercent: 39 }], state: 'ok' })
+    // A warning without a figure takes the window's status and keeps its figure; the next figure replaces both.
+    facts.note(process, claudeRateLimit(statusOnly(NOW, 'allowed_warning'), NOW + 2 * HOUR)!, NOW + 2 * HOUR)
+    expect(facts.snapshot(NOW + 2 * HOUR)?.windows).toEqual([
+      { kind: 'weekly', usedPercent: 39, resetsAt: iso(NOW + 100 * HOUR), state: 'near' },
+    ])
+    facts.note(process, claudeRateLimit(statusOnly(NOW), NOW + 3 * HOUR)!, NOW + 3 * HOUR)
+    expect(facts.snapshot(NOW + 3 * HOUR)?.windows).toEqual([{ kind: 'weekly', usedPercent: 39, resetsAt: iso(NOW + 100 * HOUR) }])
+  })
+
+  it('shows the figure a real turn reported, keeps it through a turn that reports none, and asks nothing when someone looks', async () => {
+    const now = Date.now()
+    const t = await computer('fake-agent', 'claude-agent', CLAUDE)
+    const first = await t.start(`limit ${JSON.stringify(captured(now))}`)
+    expect(t.bridge.quota!()).toMatchObject({ windows: [{ kind: 'weekly', usedPercent: 39 }], state: 'ok' })
+    await t.send(first.summary.id, `limit ${JSON.stringify(statusOnly(now))}`)
+    expect(t.bridge.quota!()).toMatchObject({ windows: [{ kind: 'weekly', usedPercent: 39 }] })
+    await t.bridge.refreshQuota!()
+    expect(t.bridge.quotaRead?.()).toEqual({ afterTurn: true })
+    expect(received(await t.log(), 'session/prompt')).toHaveLength(2)
   })
 })

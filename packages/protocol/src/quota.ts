@@ -71,6 +71,25 @@ export interface HarnessQuota {
   observedAt: string
 }
 
+/**
+ * Why a read of a harness's limits ended with nothing: `login`, the program says it is not logged in; `no-key`, the
+ * Host's own read found no key it may use (DeepSeek Harness); `failed`, anything else.
+ */
+export type QuotaReadFailure = 'login' | 'no-key' | 'failed'
+
+/** The reads of a harness's limits Latch makes when someone looks at them (docs/HARNESSES.md#额度). */
+export interface HarnessQuotaRead {
+  /** A read is on its way. */
+  running?: true
+  /** The last read ended with nothing, and why; it is gone once any figure arrives. */
+  failed?: { at: string; reason: QuotaReadFailure }
+  /**
+   * Nothing can be asked outside a turn: the program reports its limits only as one of its turns runs, and only some of
+   * the time (Claude Agent).
+   */
+  afterTurn?: true
+}
+
 /** From this share of a window on, it is nearly used up. */
 export const QUOTA_NEAR_PERCENT = 80
 

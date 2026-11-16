@@ -1368,7 +1368,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         cliQuota.fetch
         ?? createEgressFetch({ allow: () => [], ...(options.egressLookup ? { lookup: options.egressLookup } : {}), connectTimeoutMs: 5000 })
       const uid = process.getuid?.()
-      return async (agentId: string, input: { cwd: string; signal: AbortSignal }) => {
+      return async (agentId: string, input: { cwd?: string; signal: AbortSignal }) => {
         const current = config.settings().agents.find(agent => agent.id === agentId)
         if (!current || !readsCliQuota(current) || uid === undefined) return null
         // What DeepSeek Harness inherits (`agentEnvironment`): `DSH_HOME` from the Host or the login shell.
@@ -1376,7 +1376,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           DSH_HOME: process.env.DSH_HOME || loginShellValues().DSH_HOME,
           DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? loginShellValues().DEEPSEEK_BASE_URL,
         }
-        const read = await readDshKey({ home: cliQuota.home, env, cwd: input.cwd, uid })
+        const read = await readDshKey({ home: cliQuota.home, env, ...(input.cwd !== undefined ? { cwd: input.cwd } : {}), uid })
         // A folder that could send the key elsewhere skips this read and keeps what the others showed.
         if (read === 'skip') return undefined
         if (read === 'none') return null
@@ -9518,6 +9518,34 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           refresh()
         }
         json(res, { ownMcp: hub!.info(id)?.ownMcp ?? {} })
+        return true
+      }
+      // Someone looks at the limits (额度): each bound Harness that can say them without a model turn is asked, in the
+      // background, where what is known is missing or old. The same gate as starting a session, since it may start the
+      // same program in a private empty folder with no session; a device without it sees the last values only. Answered
+      // at once: what arrives goes out with the catalog.
+      if (path === '/link/api/quota/refresh' && method === 'POST') {
+        requireScope(caller, 'run')
+        const input = z
+          .object({ ids: z.array(z.string().min(1).max(256)).max(64).optional(), retry: z.boolean().optional() })
+          .strict()
+          .parse(await jsonBody(req))
+        recheck(caller, 'run')
+        const wanted = input.ids ? new Set(input.ids) : undefined
+        const bound = new Set(config.settings().agents.flatMap(agent => (agent.confirmedCommand !== undefined ? [agent.id] : [])))
+        const asked: string[] = []
+        for (const harness of hub!.drivers()) {
+          const id = harness.id
+          if (wanted && !wanted.has(id)) continue
+          if (!harness.editable || harness.status !== 'ready' || !harness.capabilities.models.quota || !bound.has(id)) continue
+          const before = async () => {
+            if (closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
+            recheck(caller, 'run')
+            await audited({ action: 'agent.quota.requested', actor: actorOf(caller), target: id, stepup: 'none', detail: { agentId: id } })
+          }
+          if (hub!.refreshHarnessQuota(id, { retry: input.retry === true, before })) asked.push(id)
+        }
+        json(res, { asked })
         return true
       }
       const modelsMatch = path.match(/^\/link\/api\/agents\/([^/]+)\/models$/)

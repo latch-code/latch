@@ -971,9 +971,11 @@ async function handle(method, params) {
       if (!caps.has('close')) throw rpcError(-32601, 'Method not found')
       existing(params.sessionId)
       return {}
-    // Grok Build's billing extension: FAKE_ACP_BILLING is the JSON it answers; without it the agent has no such method.
+    // Grok Build's billing extension: FAKE_ACP_BILLING is the JSON it answers (`hang`: it never answers); without it the
+    // agent has no such method.
     case '_x.ai/billing':
       if (!env.FAKE_ACP_BILLING) throw rpcError(-32601, `Method not found: ${method}`)
+      if (env.FAKE_ACP_BILLING === 'hang') return new Promise(() => {})
       return JSON.parse(env.FAKE_ACP_BILLING)
     default:
       throw rpcError(-32601, `Method not found: ${method}`)

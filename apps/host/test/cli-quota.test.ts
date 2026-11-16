@@ -89,6 +89,12 @@ describe('reading the key from a home', () => {
     expect(await read(root, {}, quiet)).toEqual({ key: KEY })
   })
 
+  it('checks no folder when there is no session, and every setting of the home still', async () => {
+    expect(await readDshKey({ home: await home(), env: {}, uid })).toEqual({ key: KEY })
+    expect(await readDshKey({ home: await home({ '.dsh/.env': 'DEEPSEEK_BASE_URL=https://x\n' }), env: {}, uid })).toBe('none')
+    expect(await readDshKey({ home: await home(), env: { DSH_HOME: '/elsewhere' }, uid })).toBe('none')
+  })
+
   it('reads nothing from a file others can read, a link, a link to the home, another owner’s files, or no file', async () => {
     const loose = await home()
     await chmod(join(loose, '.dsh', '.credentials.yaml'), 0o644)
@@ -371,4 +377,52 @@ it('reads no key for a DeepSeek Harness definition that is not the preset’s ow
     }
   }
   expect(vendor.requests).toHaveLength(0)
+})
+
+it('reads DeepSeek Harness’s balance when someone looks, with no session and no turn, on record before the key leaves', async () => {
+  const root = await temp('latch-cli-quota-look-')
+  const bin = join(root, 'bin')
+  await mkdir(bin)
+  const log = join(root, 'agent.jsonl')
+  await writeFile(
+    join(bin, 'dsh'),
+    `#!/bin/sh\nif [ "$1" = --version ]; then echo 0.2.2-rc.1; exit 0; fi\nexport FAKE_ACP_LOG='${log}' FAKE_ACP_PROCESS_MODE=1 FAKE_ACP_CONFIG=options FAKE_ACP_MODES=read-only,workspace-write,danger-full-access FAKE_ACP_INITIAL_MODE=read-only\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"\n`,
+  )
+  await chmod(join(bin, 'dsh'), 0o755)
+  const vendor = await fakeDeepSeek(() => ({
+    status: 200,
+    body: { is_available: true, balance_infos: [{ currency: 'USD', total_balance: '3.50' }] },
+  }))
+  const t = await startTestHost({
+    demo: false,
+    commandDirectories: () => [bin],
+    loginPrograms: (name: string) => (name === 'dsh' ? join(bin, 'dsh') : undefined),
+    detectPreset: (preset: { id: string }) => (preset.id === 'dsh' ? { found: true, path: join(bin, 'dsh') } : { found: false }),
+    cliQuota: { home: await home(), fetch: vendor.fetch },
+  })
+  cleanups.push(() => t.close())
+  const owner = await t.enroll({ listener: 'unix' })
+  await owner.confirmedJson('agents', {
+    body: { id: 'dsh', name: 'DeepSeek Harness', presetId: 'dsh', command: 'dsh', args: ['--profile', 'acp'], env: {} },
+  })
+  const actions: string[] = []
+  const append = t.host.security.audit.append.bind(t.host.security.audit)
+  vi.spyOn(t.host.security.audit, 'append').mockImplementation(event => {
+    actions.push(event.action)
+    return append(event)
+  })
+  const quotaOf = async () => (await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'dsh')?.quota
+  expect(await owner.json('quota/refresh', { method: 'POST', body: {} })).toEqual({ asked: ['dsh'] })
+  await vi.waitFor(async () => expect(await quotaOf()).toMatchObject({ balanceCents: 350, currency: 'USD' }), {
+    timeout: 8_000,
+    interval: 20,
+  })
+  expect(actions).toEqual(['agent.quota.requested', 'agent.quota.read'])
+  expect(vendor.requests).toEqual([{ authorization: `Bearer ${KEY}` }])
+  // No DeepSeek Harness process ran for it.
+  expect(await readFile(log, 'utf8').catch(() => '')).toBe('')
+  // Even 重试 waits out the five minutes for the vendor.
+  await owner.json('quota/refresh', { method: 'POST', body: { ids: ['dsh'], retry: true } })
+  await new Promise(resolve => setTimeout(resolve, 200))
+  expect(vendor.requests).toHaveLength(1)
 })

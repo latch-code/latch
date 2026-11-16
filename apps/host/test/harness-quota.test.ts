@@ -155,3 +155,59 @@ it('asks a Codex session on a model service nothing about the plan, logged in or
   expect(events.filter(entry => entry.event === 'recv' && entry.method === 'account/rateLimits/read')).toHaveLength(0)
   expect((await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(harness => harness.id === 'codex')).not.toHaveProperty('quota')
 })
+
+it('reads the limits when someone with the right to start a session looks, before any session, on the record and only once a minute', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-host-quota-look-')))
+  cleanups.push(() => rm(root, { recursive: true, force: true }))
+  const log = join(root, 'agent.jsonl')
+  const now = Date.now()
+  const limits = JSON.stringify({
+    rateLimits: {
+      limitId: 'codex',
+      primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: seconds(now + 2 * HOUR) },
+      planType: 'pro',
+    },
+  })
+  await mkdir(join(root, 'bin'))
+  const command = join(root, 'bin', 'codex')
+  await writeFile(
+    command,
+    `#!/bin/sh\nexport FAKE_ACP_LOG='${log}' FAKE_CODEX_RATE_LIMITS='${limits}'\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`,
+  )
+  await chmod(command, 0o755)
+  const t = await startTestHost({ demo: false })
+  cleanups.push(() => t.close())
+  const owner = await t.enroll({ listener: 'unix' })
+  await owner.confirmedJson('agents', { body: { id: 'codex', name: 'Codex', presetId: 'codex', command, args: [], env: {} } })
+  await owner.confirmedJson('agents', { body: { id: 'other', name: 'Other', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} } })
+  const events = async (event: string) =>
+    (await readFile(log, 'utf8').catch(() => ''))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line) as { event: string; method?: string })
+      .filter(entry => entry.event === event)
+  const harness = async (id = 'codex') => (await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === id)
+  const audited = vi.spyOn(t.host.security.audit, 'append')
+
+  // A device that may only look sees the last values and starts nothing.
+  const viewer = await t.enroll({ scopes: ['view'] })
+  expect((await viewer.request('quota/refresh', { body: {} })).status).toBe(403)
+  expect(await events('start')).toHaveLength(0)
+
+  // Only Harnesses that can report are asked.
+  expect(await owner.json('quota/refresh', { method: 'POST', body: {} })).toEqual({ asked: ['codex'] })
+  await vi.waitFor(async () => expect((await harness())?.quota).toBeDefined(), { timeout: 8_000, interval: 20 })
+  expect((await harness())?.quota).toMatchObject({ windows: [{ kind: 'five-hour', usedPercent: 7 }], plan: 'pro', state: 'ok' })
+  await vi.waitFor(async () => expect(await events('exit')).toHaveLength(1), { timeout: 8_000, interval: 20 })
+  expect(await events('rate-limits-read')).toHaveLength(1)
+  expect((await events('recv')).filter(entry => entry.method === 'thread/start' || entry.method === 'turn/start')).toHaveLength(0)
+  expect(audited.mock.calls.map(([event]) => event).filter(event => event.action === 'agent.quota.requested')).toEqual([
+    expect.objectContaining({ target: 'codex', detail: { agentId: 'codex' } }),
+  ])
+  expect((await harness('other'))?.quotaRead).toBeUndefined()
+
+  // Opening the view again at once asks nothing more.
+  await owner.json('quota/refresh', { method: 'POST', body: { ids: ['codex'] } })
+  await new Promise(resolve => setTimeout(resolve, 200))
+  expect(await events('start')).toHaveLength(1)
+})

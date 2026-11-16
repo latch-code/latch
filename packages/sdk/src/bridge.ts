@@ -14,6 +14,7 @@ import type {
   HarnessCommandCatalogue,
   HarnessOwnMcp,
   HarnessQuota,
+  HarnessQuotaRead,
   CatalogueRead,
   ModelCapabilities,
   ServiceModelOptions,
@@ -364,6 +365,15 @@ export interface Bridge {
    * and values of the protocol's fixed sets only. Undefined: nothing that still holds.
    */
   quota?(): HarnessQuota | undefined
+  /** Optional, with `refreshQuota`. Reads of the limits made because someone looked (`HarnessInfo.quotaRead`). */
+  quotaRead?(): HarnessQuotaRead | undefined
+  /**
+   * Optional. Someone looks at the limits: asks the harness's own program for them on a way that runs no model turn,
+   * when what is known is missing or old. One read at a time, a second call shares it; at most one start a minute (ten
+   * seconds with `retry`), bounded in time, any process it starts stopped after. `before` runs once, just before
+   * anything is started or asked, and its failure stops the read.
+   */
+  refreshQuota?(options?: { retry?: boolean; before?: () => Promise<void> }): Promise<void>
   /**
    * Optional, with `ownMcp`. 读取: asks the harness, in a process with no session, for every MCP server it has
    * configured, which it starts to answer; one read at a time. `before` runs once, just before the process starts.

@@ -1,7 +1,7 @@
 import type { AgentPreset, HelperCard } from './agent-presets.ts'
 import type { AgentProbeResult } from './features.ts'
 import type { HarnessOwnMcp } from './mcp.ts'
-import type { HarnessQuota } from './quota.ts'
+import type { HarnessQuota, HarnessQuotaRead } from './quota.ts'
 import type { ModeTier, SessionCommand, SessionConfigOption, SessionSkill, TaskMode } from './sessions.ts'
 
 /** How a person logs in to a harness: its own program, in a terminal on the computer that runs it. */
@@ -107,8 +107,8 @@ export interface HarnessCapabilities {
      */
     serviceThinking?: true
     /**
-     * Its own program reports its subscription's limits (`HarnessInfo.quota`) once a session runs. Absent: it never
-     * does, and a client says so rather than waiting for them.
+     * Its own program reports its subscription's limits (`HarnessInfo.quota`): asked when someone looks, or as its turns
+     * run (`HarnessInfo.quotaRead`). Absent: it never does, and a client says so rather than waiting for them.
      */
     quota?: true
   }
@@ -279,6 +279,8 @@ export interface HarnessInfo {
    * so in one line where it lists every Harness's limits.
    */
   quota?: HarnessQuota
+  /** Reads of `quota` made when someone looks, for a harness that reports limits. Absent: none ran or failed. */
+  quotaRead?: HarnessQuotaRead
   /**
    * 接入已有会话 (docs/HARNESSES.md#接入已有会话). `list`: it lists and brings in its own earlier sessions. `rebuild`: a
    * session brought in from another harness can be rebuilt as text on it. Absent: neither.
