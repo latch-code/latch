@@ -9,6 +9,10 @@ sources:
   - packages/harness-acp/test
   - packages/testkit
   - packages/ui/test
+  - packages/app-sdk/test
+  - packages/link-wire/test
+  - packages/link-client/test
+  - apps/relay/test
   - scripts
   - vitest.config.ts
   - lefthook.yml
@@ -17,508 +21,389 @@ sources:
 ---
 # Latch 测试指南
 
-`native-swift.test.ts` 的私有页面到期恢复用例调用 App 共用的 `PhoneUnlock` 编排，核对人物话题先重新确认私有快照、普通 Code 保持原入口，以及 Face ID、旧 Host/阅读意图和取消的负例。它不启动 GUI，也不代替十分钟窗口到期的实际 iPhone/iPad 验收。
+测试只用 Vitest；Playwright 只在 Vitest 内作为真实浏览器与 Electron 的驱动。
 
-`task-content.test.ts` 与 `task-content-projection.test.ts` 验证文件差异的work投影、原审批/回执、真实Host重启、延迟读取期间收紧/撤销及精确JSON数字；`native.test.ts` 同时检查原生增量与canonical游标重放。`restricted-diff.e2e.ts` 从真实临时Host的正常会话菜单下载Markdown，比较work/all及收紧后的实际文件，不以CSS隐藏或单独调用导出函数代替。ACP的`file-output.test.ts`、Codex/pi协议用例验证安全输出来源与旧摘要失效。
+所有测试都遵守：
 
-`e2e/helper-chat.e2e.ts` 用临时 Host、假 ACP 与本地 Provider 验证两步创建、换候选保留草稿、角色化对话和原生斜杠命令、上传中取消、带项目与附件的原请求重试。创建回执丢失后覆盖跨入口、刷新、双窗口串行重试、敏感正文不落盘、撤权后旧回复不能覆盖新请求，以及旧放弃确认不能清掉替换后的请求。手机、平板与桌面的深浅色截图写入 `test-results/helper-chat/`。存储读取失败、坏记录、跨窗口锁与设备换代边界在 `agent-creation.test.ts`、`session-drafts.test.ts`、`slash-history.test.ts`；这些夹具不等于真实 Harness 或原生 iOS 操作验收。
+- 只用临时目录、端口 0（或临时选出的空闲端口）、本地假模型服务、假 ACP Agent 与测试确认后端。
+- 不读取用户密钥，不调用付费模型，不启动真实 Agent CLI（[需要显式开启的用例](#需要显式开启的用例)除外）。
+- 不使用默认数据目录、`.runtime*/` 或端口 4317，不停止或重启用户正在运行的 Host。
+- 不读写系统剪贴板（[iOS 模拟器用例](#ios-模拟器用例)里显式开启的 GUI 剪贴板验收除外），不投递系统通知，不显示真实的系统确认表单。
+- 配置、清单与文档的字面内容直接阅读，不为它们写断言。
 
-模型网关的机制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。`model-gateway.test.ts` 覆盖四协议入口、头白名单、进程凭据、上游错误脱敏、流式用量与下游取消；`codex-gateway.test.ts` 通过假原生 Codex 真实调用 Host 网关，检查服务独有模型、失败不回退及重启恢复。`codex-environment.test.ts` 检查有效命令环境规则在新建与恢复前读取并保留，未知规则拒绝开线程。
-
-`gateway-history.test.ts` 以真实回环 HTTP 核对非法 Responses 调用图与非有限 schema/参数均在出站前 400、零上游调用，同时保留合法并行历史及数字词元。`gateway-responses.test.ts` 验证 Anthropic→Responses 的完整历史、工具内图片、原生思考回放、流与最终内容核对、终态用量、HTTP 前置拒绝和凭据密文拒绝。`gateway-anthropic-upstream.test.ts` 验证 Responses→Anthropic 的签名思考完整回放、文字块边界、工具内图片、精确数字、累计用量与流顺序拒绝；真实 HTTP 核对服务密钥与 API 版本、两轮历史、零出站拒绝和秘密思考状态拒绝。`gateway-reasoning.test.ts` 检查思考封装的协议绑定、原生加密状态完整保留、跨协议拒绝和封装前脱敏。`gateway-translation.test.ts` 覆盖 Responses→Chat 的命名空间、custom 工具、图片结果来源与并行顺序、完整事件、取消、错误、用量、密封思考和分块/JSON 参数脱敏；参数数字词元保留原样，非有限数拒绝。`codex-gateway.test.ts` 同时验证同协议与转换路线的保存、失败和恢复。`codex-model-gateway.e2e.ts` 覆盖三条路线，Chat、Anthropic 菜单另检查 320/390/768/1440 深浅色与损耗说明。
-
-`codex-chat-gateway.live.test.ts` 仅在明确授权并设置 `LATCH_CODEX_GATEWAY_BINARY` 时运行：临时 Host/HOME/CODEX_HOME 与本机假 Chat 上游，核对真实 custom apply_patch、目录外型号经命令工具 apply_patch、思考回放、工具环境只报告凭据存在与否、停止回执与上游连接关闭、失败不回退。测试不读取用户登录文件，不等于真实 BYOK；未知型号的原生工具范围由 Codex 决定。
-
-`codex-anthropic-gateway.live.test.ts` 使用同一 opt-in 和隔离规则，把真实 Codex 的目录内型号及服务自定义型号接到本地假 Anthropic 上游；实际执行 custom 或命令工具的 apply_patch、读取结果，逐块核对原生 thinking/signature 和 redacted_thinking/data 的两轮回放，确认工具环境无网关凭据、取消关闭上游、服务失败不回退。它不证明真实模型提供商接受这些请求或真实 BYOK 成功。
-
-`e2e/codex-model-gateway.e2e.ts` 默认用假 app-server，验证菜单模型选择与恢复。只有所有者明确授权的验收才设置 `LATCH_CODEX_GATEWAY_BINARY` 使用真实 Codex 并执行夹具提供的无害诊断工具；仍用临时 HOME/CODEX_HOME、临时 Host 与本地假模型，不读取原登录文件，也不把它称为真实 BYOK 成功。
-
-`apps/host/test/claude-gateway.live.test.ts` 默认显式跳过，仅在所有者授权后设置 `LATCH_CLAUDE_GATEWAY_BINARY`。它使用临时 HOME/XDG、CLAUDE_CONFIG_DIR、Host 与本地假 Anthropic、Chat 或 Responses 服务，执行真实 Bash、SessionStart hook 与 stdio MCP，核对路由覆盖陷阱、凭据不进入子进程或私有文件。还核对同服务任意 ID 切换、Host 恢复、取消与服务拒绝。`e2e/claude-model-gateway.e2e.ts` 用同一 opt-in 变量在三宽、深色的真实菜单选择与恢复，同协议与实验性 Chat、Responses 转换分别检查。版本门用例另验证适配器入口未变但内置 CLI 降级或版本未知时仍拒绝。
-
-`e2e/harness-model-gateway.e2e.ts` 默认用假 OpenCode/dsh/pi，走三宽模型与思考菜单、深色、Host 重启恢复；只在所有者明确授权后分别设置 `LATCH_OPENCODE_GATEWAY_BINARY`、`LATCH_DSH_GATEWAY_BINARY`、`LATCH_PI_GATEWAY_BINARY`，才使用真实 CLI。`apps/host/test/{opencode,dsh,pi}-gateway.live.test.ts` 默认显式跳过，使用同名变量独立核对三种协议、实际工具、凭据不进入工具环境、模型切换、恢复、停止与上游拒绝；Pi 另检查预算拒绝、官方目录、原生压缩及请求钩子失配零出站；`dsh-gateway-auxiliary.live.test.ts` 另验证真实子 Agent 与自动压缩也走所选服务。全部使用临时 HOME/XDG、临时 Host/项目与本地假模型，不读取用户 CLI 登录文件；真实 CLI、真实图片编码与实际参数都不能代替真实 BYOK 或本人系统确认。
-
-预览引用边界由 `apps/web/test/preview-quotes.test.ts` 覆盖，真实的 Office 页/选区、表格选区与更新后的冻结偏好由 `e2e/preview-renderers.e2e.ts` 验证；`file-tree.e2e.ts` 验证三种宽度的真实文件摘录只追加草稿且不发请求，`file-preview.e2e.ts` 检查文件自动更新后保留阅读行。
-
-`e2e/workflows.e2e.ts` 覆盖外观切换时保留草稿、输入聚焦与上一条消息、Host 分支投影、可操作首次引导及通知首次选择；通知 UI 使用有限壳夹具，真实主进程状态和 preload 过滤由 `apps/desktop/test/notifications.test.ts` 验证，Electron 用例核对实际公开接口。`e2e/file-tree.e2e.ts` 同时验证没有标签时的文件快捷键。
-`e2e/palette.e2e.ts` 在三种宽度与深浅色用真实 Host 走完命令面板的分组、搜索中与失败的文字、Esc 逐级退回、焦点回到输入框，查找条的位置（不挤压对话）、长回答内的定位、运行中不跳走与不丢步，迟到的结果不换回车打开的行，输入法组合键，Esc 不误停运行或误拒请求，以及只显示当前客户端按键的快捷键浮层与它链到的快捷键页；截图写入 `test-results/palette/`。
-`e2e/workbench-keyboard.e2e.ts` 在三种宽度驱动真实 Alt 按键，核对会话循环、数字跳到第 N 个会话（超出不动）、待处理审批卡的循环与焦点高亮、文件搜索及关闭；同时检查草稿、消息与审批身份保留，且导航不增加模型调用或执行提交。另在 Chromium 与 WebKit 的三宽里检查 Alt / 的快捷键浮层盖在运行中的会话上（焦点进搜索、Esc 回到输入框、再按关上、不导航）与 Alt Shift 1–4 在会话和新会话页各打开自己的控件菜单，手机宽度两者都没有，按键不离开页面、不打开新页。
-`e2e/my-agents.e2e.ts` 用临时 Host 与假 ACP 验证新建、自建 Agent 与通用的同一聊天、重开与布局切换保留草稿、历史入口、范围与已有审批，另验首次提交结果未知时重试同一请求。侧栏没有话题树，聊天页没有新话题切换。截图写入 `test-results/my-agents/`。
-
-同一 E2E 文件还有行操作用例。键盘打开通用的设置菜单，确认自建 Agent 删除，模拟已删除但响应丢失，再用同一请求重试并检查原聊天仍可读。截图为 `agent-menu-1440.png` 与 `agent-delete-1440.png`。
-
-`apps/host/test/agent-routes.test.ts` 验证两个设备同时首次发送、原回执冲突、已有历史迁移和普通写入阻止、待确认首发后的重启和原请求恢复、工作范围下隐藏私有映射，以及 Standard 下一轮模型与 ACP 显式清空上下文。纯视图逻辑在 `apps/web/test/agent-chat.test.ts` 与 `apps/web/test/agent-roster.test.ts`。
-`e2e/agent-memory.e2e.ts` 用真实 Host 与挂载 MCP 服务的假 ACP Agent（`FAKE_ACP_MCP=dsh`，它的 `propose` 调用技能服务的 `propose_memory`）：Agent 提议与人的「记住：…」各在来自的那一轮之后出现一行（「它推断的」「你说的」），读过网页后的提议标「来自外部内容」，Host 里没有记忆；「保存」后写「已保存 · 从下一个话题起」，「不要」后写「不要了」，都以 Host 为准；资料面板的「记忆」最上面是待处理的提议，从提议保存的记忆写出来源并链到话题；修改后「撤销修改」经 Host 恢复原文。320、390、768、1440 的浅色与深色不横向溢出。Host 的提议存储、回执、拒绝密钥、上限、撤销与清除在 `apps/host/test/memory-proposals.test.ts`，路由、驱动归属、排队的「记住…」、数据范围与审计不含文字在 `apps/host/test/memory-proposal-routes.test.ts`，内置运行循环的 `propose_memory` 在 `tests/propose-memory.test.ts`，技能服务经 stdio 的上限、文件读取与会话归属在 `packages/harness-acp/test/acp.test.ts`（`propose_memory`），提议行的各状态在 `apps/web/test/memory-proposals.test.ts`。截图写入 `test-results/agent-memory/`。
-我的 Agent 的三项数据能力各有聚焦用例。查记忆（只有内置 Harness）：匹配与运行循环的 `recall_memory`（只给带 `proposals` 的运行、不经分级、查到外部内容后再提议的标记）在 `tests/recall-memory.test.ts`；Host 只回这个归属已确认的记忆、提议与别的 Agent 查不到、计入动态、其他设备的数据范围在 `apps/host/test/agent-recall.test.ts`。不是用户原话的记忆（两段标题、提议标外部、「设为我说的」的回执与审计、删除最后一条导入记忆后 ACP 原话题仍标外部）在 `apps/host/test/agent-memory-material.test.ts`。导出与导入：导出前的预览（各自计数的不导出项）、下载文件的实际编码、大文件往返、超过 16 个定时拒绝、像密钥的 Harness ID 在导入及导出拒绝且不回显、文件内容与逐项「不含」的扫描、审计只有 ID 与条数、预览不创建、总是新建、回执与冲突、缺 Harness、别的版本、多余字段、超限与密钥、设备范围、原生连接不能导入在 `apps/host/test/agent-transfer.test.ts`；导入页的各状态、文件来源标签、隐藏字符、导出预览与导出文件名在 `apps/web/test/agent-transfer.test.ts`。图片头像：解码进程（只留像素、按文件头认类型、改名的程序、声明超大尺寸、解压炸弹、损坏与不支持的 PNG、多格式拼接文件）、存放权限、读取的响应头、快照里没有字节、回执、替换与清除、设备范围、排队上限与启动时清除在 `apps/host/test/agent-avatar-image.test.ts`；页面在 PNG、JPEG、WebP 解码前检查文件头与尺寸、三种失败、进度、结果未知与括号脸回退在 `apps/web/test/agent-avatar-image.test.ts`。`e2e/agent-data.e2e.ts` 在三种宽度、深浅色下走真实页面：导出预览与下载、缺 Harness 的导入预览、导入新建、头像行的三种失败、PNG 与浏览器里转换的 JPEG、清除；截图写入 `test-results/agent-data/`。
-
-`e2e/agent-activity.e2e.ts` 用真实 Host、一个项目与挂载 MCP 服务的假 ACP Agent（它的 `schedule` 调用技能服务的 `propose_schedule`，定时运行的 `shell-edit` 改一个文件、用命令写另一个）：话题里出现「想定时：晚间精选 · 每天 20:00」，Host 里还没有新的定时任务；立即运行结算后，当前话题里出现「定时 · 早间精选 · 已完成」的卡，带回复与两个文件，话题自己的消息不变；「打开运行」打开那次运行；提议的「打开」进入预填的定时编辑，「创建」后 Host 有了这个定时任务，提议写「已保存」；资料面板的「动态」列出定时结果、提议定时与新话题，「资料库」只列运行的文件，点开在文件预览里；没有话题的 Agent 的中断运行，卡等在新话题页，写原因与「立即运行」。320、390、768、1440 的浅色与深色不横向溢出。结果卡的幂等、各结果、拒绝的启动、话题收下与会话删除，动态与资料库的推导与翻页在 `apps/host/test/schedule-results.test.ts`，定时提议的存储与拒绝在 `apps/host/test/schedule-proposals.test.ts`，路由、内置 Harness 的 `propose_schedule`、保存时的核对与数据范围在 `apps/host/test/agent-activity-routes.test.ts`，运行循环在 `tests/propose-memory.test.ts`，技能服务与驱动在 `packages/harness-acp/test/acp.test.ts`（`propose_schedule`），卡、提议行与动态的文字在 `apps/web/test/agent-activity.test.ts`。截图写入 `test-results/agent-activity/`。
-`e2e/agent-computer.e2e.ts` 用真实 Host（可前移的测试时钟 `now`）与假 ACP Agent：资料面板的「电脑」在 Host 应答时写「在线」，从不写「永远在线」；打开「到点前后保持唤醒」后 Host 记在 Agent 上，桌面端没有报告时写「Latch 应用没有运行，现在不起作用」，经 host.sock 报告 `keepAwake: 'schedule'` 后写「保持唤醒中」；「通知 › 完成」关掉后 Host 记下 `notifications`；报告睡眠、时钟越过定时、报告醒来后写「上次唤醒」与「错过 1 次」（「Mac 在睡眠」）和「立即运行」，运行之后这一行消失；新建 Agent 直接填写名称、职责与指令，提交前 Host 未创建 Agent。390、768、1440 的浅色与深色不横向溢出。错过的逐个记录（含假计时器下的睡眠间隙）与保持唤醒的时间和上限在 `apps/host/test/automations.test.ts`，睡眠记录与桌面端报告在 `apps/host/test/computer.test.ts`，开关的存储与审计在 `apps/host/test/custom-agents.test.ts`，路由、`host-info` 与数据范围在 `apps/host/test/agent-routes.test.ts`，主进程的保持唤醒窗口与报告在 `apps/desktop/test/lifecycle.test.ts`，按 Agent 过滤通知在 `apps/desktop/test/notifications.test.ts`，「电脑」与「通知」的状态在 `apps/web/test/agent-computer.test.ts`。截图写入 `test-results/agent-computer/`。
-`e2e/agent-schedules.e2e.ts` 用真实 Host（可前移的测试时钟 `now`）与假 ACP Agent：从资料面板的「即将进行」进入定时编辑，新建定时任务（工作位置预填 Agent 的默认项目，可以改），「立即运行」只发一次请求并在运行记录里打开它的会话，暂停与继续以 Host 为准，时钟越过下次时间后显示「错过 1 次」与「没有运行」及原因且不补跑，编辑只改重复方式；运行保留为独立会话；先于聊天结束的定时成果在首次聊天中出现并可打开运行；只读设备的开关不可用、没有编辑；390 深色、320、768 与深色 1440 不横向溢出。纯逻辑在 `apps/web/test/agent-schedules.test.ts`。截图写入 `test-results/agent-schedules/`。
-`e2e/handoffs.e2e.ts` 用真实 Host、本地模型服务与假 ACP Agent：先只用键盘从用户消息打开交接卡（焦点在「要求」，Tab 走到主按钮，Esc 关闭并把焦点还给那个操作，减少动效时卡片不动），再从内置 Harness 会话一轮回复的 ⋯ 把回复与这一轮的文件交给项目里 ACP Agent 的新会话（文件引用换成目标的文件夹名，标题取要求的第一行）：选定后改动文件得到 409 并指出那项材料，重新固定后双击只建一个目标，目标的第一条消息带要求、决定与材料；目标页头「来自 <来源>」，列表写「待交回」，交回结论与证据后来源出现「交回的结果」，文件与消息链接可用，「带入输入框」只进草稿；交给已有会话时丢掉回答，「查询」按同一 `requestId` 找回；数据范围较小的设备看到「无权查看」，只读设备与离线时卡片不能交；三宽深浅色、320 与 768 的卡片和 390 深色的各状态不横向溢出。纯逻辑在 `apps/web/test/handoffs.test.ts`。截图写入 `test-results/handoffs/`（`LATCH_HANDOFF_SHOTS` 可改）。
-`e2e/session-drafts.e2e.ts` 用另一个真实登记设备删除当前普通或 Agent 会话，验证客户端清除对应草稿，新会话不会继承文字，也不会自动提交；另把真实 Host 的发送与重新发送回执延迟到切换会话之后，检查阅读目标和两段草稿保持各自归属；再刷新两次，核对会话与新会话的文字都还在，其他设备删除、本页删除与移除这台设备后浏览器存储里不再有对应草稿。按会话隔离、私有清理、数量与字符上限、存储失败退回内存、多窗口合并与退出后不再写入由 `apps/web/test/session-drafts.test.ts` 覆盖。
-连接插件的定向回归包括 `tests/transport-registry.test.ts`、`packages/link-client/test/transport.test.ts`、`carrier-vector.test.ts` 与 Host 的 `native.test.ts`；`e2e/native-relay.e2e.ts` 通过本机确认添加真实自建 Go 中继，检查错误注册、原请求重放、跨网连接恢复、撤销与中继回收，也把官方 relay 协议通过注册 driver 消费。MessagePort 示例会实际加载并运行。它们是纯 Node/Go 与本机消息测试，不等同真实飞书、手机 connector、OS 通知或真机验收。
-
-`packages/harness-acp/test/acp.test.ts` 的 `ACP session configuration` 在启动指纹或项目目录准备暂停时启动核对，再放行修改：修改须立即以 `config-check-running` 拒绝，不等核对结束后再写；同值请求同样拒绝，假 Agent 不收到配置 RPC。
-
-系统性测试统一使用 Vitest；Playwright 只在 Vitest 内作为真实浏览器与 Electron 的驱动。测试只使用临时目录、端口 0（或临时选出的空闲端口）、本地假模型服务、假 ACP Agent 与测试用的本机确认后端：不读取用户密钥，不调用付费模型，不启动真实 Agent CLI，不使用默认数据目录、`.runtime*/` 或端口 4317，也不停止或重启用户正在运行的 Host。
-
-构建与原生链路测试需要已修补的 Go 1.26.10 或 1.27.3 及其后续安全补丁；宿主机已有的旧 Go 不能替代此要求。可用 `LATCH_RELAY_GO=/absolute/path/to/go` 指定经过核对的编译器。CI 的共同 setup 固定 `actions/setup-go` 的完整提交、明确使用 Go 1.26.10，并关闭模块缓存；没有 go.mod，也不在构建时下载 Go 模块。action 的 v7.0.0 发布于 2026-07-16，固定提交已与官方标签核对。
+用例的具体场景以测试文件为准，本文只写怎样运行、怎样选择、辅助与接缝的规则，以及自动化不能证明什么。
 
 ## 命令
 
-手机接入的 `desktop-native.e2e.ts` 经真实 Electron 的 host.sock 代理打开配对表单、签发非 URL 二维码，并核对没有设置表单、权限选择、暂停或倒计时，关闭表单后 Host 上的二维码失效，Touch ID 之后连按 Esc 也不起作用。设置页覆盖 390/820/1280、浅深色；截图只在没有二维码时写到 `test-results/native-phone/`。`phone-page.e2e.ts` 在浏览器里把这台设备当作 Mac 上的桌面端、Host 的回答换成固定值，走完 设置 › 设备 与配对表单的每个状态，三宽浅深色截图写到 `test-results/phone-page/`，并在桌面宽度核对列表读取失败、两个开关与恢复的请求体（「可以看项目文件」只发 `dataScope`，手机行没有这个开关）、「另一台电脑」只在有 HTTPS 入口时出现且页面上不出现链接、无法确认后恢复、被拦下与请求不重叠，以及「连接新设备」与设备页的开关在注入样式下不变；那里的二维码由失效的固定内容生成。`desktop.e2e.ts` 经真实 host.sock 走「可以看项目文件」的一次确认（系统窗口那句含「查看全部数据」）与不要确认的关闭，以及被外部 Harness 会话挡住时每个会话一行的通知。开关、请求体与「连接新设备」各行的条件在 `phone-devices.test.ts`。`native-settings.test.ts` 检查 `native/info` 的内容，且配置与暂停路由已不存在。
-
-Host、host-swift、link-client 与 relay 四个 Node project 的 globalSetup 会从本地产品源码构建原生 TLS 组件，UI project 不触发它。需要修复过 TLS 安全问题的 Go 1.26.x ≥1.26.10 或 1.27.x ≥1.27.3；`LATCH_RELAY_GO` 只选择构建编译器，不传运行时密钥。配置与清单约束直接读文件，不为它们添加字面断言。
-
-`files-helper.test.ts` 通过真实编译签名的组件核对空目录自检，并用返回错误协议结果的候选产物验证构建失败不会覆盖旧版本。`file-tree.test.ts` 与 `native.test.ts` 继续在原有请求预算内验证真实目录读取和正文窗口到期后的拒绝。
+命令都在仓库根目录运行，并显式给出 `--config`：Vitest 不会到上级目录查找配置文件。
 
 ```sh
-pnpm check:quick                             # fmt:check、lint、typecheck、check:boundaries、check:agents，见下方「仓库检查」
+pnpm check:quick                             # fmt:check、lint、typecheck、check:boundaries、check:agents
 pnpm check                                   # check:quick 加 knip 与 test；每项都运行，最后逐项汇报
-pnpm check -- --plan                         # 只列出改动要求的检查与用例，不运行；--base <ref> 比较某个提交以来的改动
-pnpm typecheck                               # tsc -b，分同构包、插件 SDK、core、浏览器、Host（含 ACP Driver）、桌面端 CJS 与测试检查
-pnpm lint                                    # oxlint 与类型感知规则；导入边界、循环导入与运行环境的全局变量是错误，其余只报告
-pnpm fmt:check                               # oxfmt 格式检查（不改文件）；pnpm fmt 写入，不处理 Markdown 与 packages/testkit/vectors/
-pnpm test                                    # 各项目的单元与集成用例（见下方「测试位置」），默认用例超时 15 秒
-pnpm test --project @latch/host              # 只运行一个项目：latch（tests/）、@latch/host、@latch/host-swift、@latch/web、@latch/desktop、@latch/harness-acp、@latch/ui
-pnpm build                                   # e2e 使用 dist/web；macOS 上同时构建 dist/native/latch-presence
+pnpm check -- --plan                         # 只列出改动要求的检查，不运行；--base <ref> 比较某个提交以来的改动
+pnpm typecheck                               # tsc -b
+pnpm lint                                    # oxlint；导入边界、循环导入与运行环境的全局变量是错误，其余只报告
+pnpm fmt:check                               # oxfmt 检查；pnpm fmt 写入，不处理 Markdown 与 packages/testkit/vectors/
+pnpm test                                    # 各项目的单元与集成用例，默认用例超时 15 秒
+pnpm test --project @latch/host              # 只运行一个项目，名称见「测试位置」
+pnpm build                                   # host、web、relay，macOS 上另有确认组件；e2e 使用 dist/web
 pnpm --filter @latch/e2e exec playwright install chromium   # 或用 LATCH_BROWSER_PATH 指定已安装的 Chrome
-pnpm test:e2e                                # e2e/ 中的 *.e2e.ts（e2e/vitest.config.ts），文件依次运行，默认用例与钩子超时 120 秒
-pnpm check:boundaries                        # workspace 项目的运行环境与可用的 workspace 包，见 ARCHITECTURE.md「Workspace 项目」
+pnpm test:e2e                                # e2e/ 中的 *.e2e.ts，文件依次运行，用例与钩子超时 120 秒
+pnpm check:boundaries                        # workspace 项目的运行环境与可用的 workspace 包
 pnpm knip                                    # 未声明或无法解析的导入即失败，其余发现只报告
-pnpm check:supply                            # 依赖例外、packageManager 的 sha512 与安装金丝雀，见下方「供应链金丝雀」
-pnpm check:workflows                         # actionlint 与 zizmor 检查 .github/，见下方「持续集成」
-pnpm check:agents                            # AGENTS.md、CLAUDE.md、技能与 docs/ 的结构性检查，见下方「仓库检查」
+pnpm check:supply                            # 见「供应链金丝雀」
+pnpm check:workflows                         # actionlint 与 zizmor 检查 .github/
+pnpm check:agents                            # AGENTS.md、CLAUDE.md、技能与 docs/ 的结构
 pnpm docs:affected                           # 改动可能需要更新的 docs/ 与 AGENTS.md；--base <ref> 同上
-pnpm security:scan                           # 新增行中的秘密形状与禁用 API、需要一起修改的文件；--base <ref> 同上
+pnpm security:scan                           # 新增行中的秘密形状与禁用 API；--base <ref> 同上
 pnpm agents:sync                             # 把 .agents/skills/<名称> 链接到 .claude/skills/<名称>
+pnpm build:presence                          # 只重新构建 macOS 确认组件（源码比产物新时才编译）
 
-pnpm exec vitest run --config vitest.config.ts <目录>/<name>.test.ts      # 定向运行单元与集成用例，如 apps/host/test/server.test.ts
-pnpm exec vitest run --config e2e/vitest.config.ts e2e/<name>.e2e.ts    # 定向运行 e2e
-pnpm exec vitest run --config vitest.config.ts <目录>/<name>.test.ts -t '<分组> > <用例>'   # -t 匹配以 " > " 连接的完整用例名
-
-LATCH_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
-LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts     # 只在 macOS 运行
-pnpm build:presence                          # 只重新构建 macOS 确认组件（源码比产物新时才重新编译）
+pnpm exec vitest run --config vitest.config.ts <目录>/<name>.test.ts
+pnpm exec vitest run --config vitest.config.ts <目录>/<name>.test.ts -t '<分组> > <用例>'
+pnpm exec vitest run --config e2e/vitest.config.ts e2e/<name>.e2e.ts
+LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts   # 只在 macOS
 ```
 
-e2e 相关的环境变量：`LATCH_BROWSER_PATH`（使用已安装的 Chrome）、`LATCH_E2E_UI_DIR`（浏览器 e2e 的页面目录，默认 `dist/web`）、`LATCH_ELECTRON_E2E=1`（运行原生窗口用例），都经 `@latch/host/env` 的 `latchEnv` 读取；视觉截图另有 `LATCH_VISUAL_BASELINE`、`LATCH_VISUAL_STRICT` 与 `LATCH_VISUAL_BOARDS`（见[视觉截图](#视觉截图)）。
-
-命令都在仓库根目录运行，并显式给出 `--config`：Vitest 不会到上级目录查找配置文件。
+- `-t` 匹配以 ` > ` 连接的完整用例名。
+- e2e 的环境变量：`LATCH_BROWSER_PATH`（已安装的 Chrome）、`LATCH_E2E_UI_DIR`（页面目录，默认 `dist/web`）、`LATCH_ELECTRON_E2E=1`（Electron 用例）。
+- 构建与原生链路的用例需要 Go 1.26.x ≥ 1.26.10 或 1.27.x ≥ 1.27.3，其他版本编出的 TLS 组件被拒收。`LATCH_RELAY_GO=/absolute/path/to/go` 只选择编译器；构建不下载 Go 模块。
 
 ### 测试位置
 
-单元与集成用例跟随它所测的项目，放在该项目的 `test/` 中；`vitest.config.ts` 为每个有用例的项目声明一个 Vitest project（名称即包名），共用同一组选项与 Vite 服务器：
+单元与集成用例放在所测项目的 `test/` 中；`vitest.config.ts` 为每个有用例的项目声明一个 Vitest project，名称即包名。各 project 的工作目录都是仓库根，`dist/web` 这类相对路径含义相同。
 
-| project | 目录 | 内容 |
+| project | 目录 | 说明 |
 | --- | --- | --- |
-| `@latch/host` | `apps/host/test/` | Host、内置插件与 Host 脚本（启动、停止、`pnpm latch`、桌面启动器、构建） |
-| `@latch/host-swift` | `apps/host/test/native-swift.test.ts` | Swift 原生核心与 Host 的互操作；全局 setup 在任何用例开始前编译 `LatchNativeFixture`，新检出首次约一分多钟，其余运行不触发 |
-| `@latch/web` | `apps/web/test/` | 浏览器客户端（组件以 `react-dom/server` 渲染为字符串，不启动浏览器）、样式表与开发代理 |
-| `@latch/desktop` | `apps/desktop/test/` | 桌面端壳的 CommonJS 模块（经 `createRequire` 加载，不启动 Electron） |
+| `latch` | `tests/` | `@latch/core`、`@latch/sdk`、根包的再导出与仓库脚本 |
+| `@latch/host` | `apps/host/test/` | Host、内置插件与 Host 脚本 |
+| `@latch/host-swift` | `apps/host/test/native-swift.test.ts` | Swift 原生核心与 Host 的互操作；全局 setup 先编译 Swift 夹具，其他 Host 运行不触发 |
+| `@latch/web` | `apps/web/test/` | 组件渲染为字符串，不启动浏览器 |
+| `@latch/desktop` | `apps/desktop/test/` | CommonJS 模块经 `createRequire` 加载，不启动 Electron |
 | `@latch/harness-acp` | `packages/harness-acp/test/` | ACP Driver |
-| `@latch/ui` | `packages/ui/test/` | 设计系统：令牌、样式表与原语组件，在真实浏览器中运行（见下方「组件测试」） |
-| `latch` | `tests/` | 尚未带测试目录的包（`@latch/core`、`@latch/sdk` 与根包的再导出）与仓库脚本（`scripts/`） |
+| `@latch/app-sdk` | `packages/app-sdk/test/` | 插件页面的桥 |
+| `@latch/ui` | `packages/ui/test/` | 在真实浏览器中运行，见下 |
+| `@latch/link-wire`、`@latch/link-client`、`@latch/relay` | `packages/link-wire/test/`、`packages/link-client/test/`、`apps/relay/test/` | 原生连接；共用 `packages/testkit/vectors/link-v1.json`，只连本地端口 0 |
 
-原生连接底座还有三个 Vitest project：`@latch/link-wire`、`@latch/link-client` 与 `@latch/relay`，共同使用 `packages/testkit/vectors/link-v1.json`；用例只连本地端口 0，不能据此声称 Secure Enclave、Face ID、App Attest 或公网部署已验收。`pnpm build:relay` 生成 `dist/relay/latch-relay.mjs` 并拒绝测试代码进入产物。
+`@latch/host`、`@latch/host-swift`、`@latch/link-client` 与 `@latch/relay` 的全局 setup 从本地源码构建原生 TLS 组件。
 
-各 project 的工作目录都是仓库根，所以用例里的 `dist/web`、`node_modules/.bin/tsx` 等相对路径在每个 project 中含义相同。`@latch/ui` 是浏览器模式的 project，有自己的 Vite 服务器。
-
-全部 e2e 在 workspace 项目 `@latch/e2e`（`e2e/`）中，由它自己的配置 `e2e/vitest.config.ts` 运行（见[浏览器 e2e](#浏览器-e2e)与[Electron e2e](#electron-e2e)）。这个配置不设 `root`，同样从仓库根运行：`include` 与用例里的路径都按工作目录解析。
+全部 e2e 在 `e2e/`（`@latch/e2e`），由 `e2e/vitest.config.ts` 运行，同样以仓库根为工作目录。
 
 ### 组件测试（浏览器模式）
 
-`@latch/ui` 的用例在真实浏览器中运行：Vitest 浏览器模式（`@vitest/browser-playwright` 只作驱动），浏览器是 `LATCH_BROWSER_PATH` 指定的 Chrome，没有设置时是 `pnpm --filter @latch/e2e exec playwright install chromium` 装好的 Chromium，都无头运行。这些用例检查只有浏览器才算得出的东西：角色与可访问名称、焦点与键盘、提示框、计算后的样式与尺寸、层叠层、顶层（top layer）的弹层与模态对话框。它们属于 `pnpm test`，所以 `pnpm test`（与 pre-push 钩子）需要上面两种浏览器之一。
+`@latch/ui` 的用例用 Vitest 浏览器模式在无头浏览器中运行：`LATCH_BROWSER_PATH` 指定的 Chrome，否则是 Playwright 安装的 Chromium。它们属于 `pnpm test`，所以 `pnpm test` 与 pre-push 钩子需要其中之一。
 
-- 组件用 `vitest-browser-react` 的 `render` 渲染（每个用例后自动卸载，`test/setup.ts` 打开 React 的严格模式，挂载时的副作用都运行两遍）；交互用 `vitest/browser` 的 `userEvent`（Playwright 的真实键盘与指针），断言用 `expect.element(定位器)`，它会等待到条件成立。`aria-disabled` 的控件 Playwright 不肯点击，要验证它拦下点击时用 `test/helpers.ts` 的 `press`（经 DOM 点击）。
-- `test/setup.ts` 按页面的顺序把 `tokens.css` 与 `ui.css` 注入页面（Vite 的 `?inline`），所以样式与层叠层和页面一致；读样式表源码的用例用 `?raw` 或 `import.meta.glob`，读其他文件用 `vitest/browser` 的 `commands.readFile`（路径从仓库根算起）。
-- 触屏用 DevTools 协议模拟：`test/helpers.ts` 的 `onTouchScreen` 打开 `Emulation.setTouchEmulationEnabled`，`(pointer: coarse)` 随之成立；深色与减少动效用同一文件的 `emulateMedia`：`Emulation.setEmulatedMedia` 每次替换全部模拟的媒体特性，没写的特性回到系统偏好，所以它每次写全 `vitest.config.ts` 里 Playwright 上下文的浅色与其余默认值，结束后恢复，系统为深色时后面的用例仍是浅色；不要直接调用 `setEmulatedMedia`。手机宽度用 `page.viewport(390, 844)`，用例结束前恢复 1280×800。
-- 用例导入的依赖在第一个用例之前就预构建（`optimizeDeps.entries` 指向这些用例），运行中途不会因发现新依赖而重新加载页面。
-- `test/gallery/` 是原语总览页：`Gallery.tsx` 由用例渲染（检查每个样式表画的原语都在页上、每个控件都有名称、总览页的排版不改原语的标题、手机宽度下就地画出的对话框与弹层不超出卡片、深色与减少动效），`index.html` 与 `main.tsx` 由视觉截图构建（见[视觉截图](#视觉截图)）。它只在测试中构建，不进入 `dist/web`。
-
-`packages/ui/test/v9-performance.test.tsx` 是 v9 背景层与动效的测量：1440×900、CPU 4 倍降速，记录背景层每帧的脚本耗时（三种效果、两档强度、是否专注）与每个动效在起始帧里的脚本耗时，对照每帧 8ms 的预算，写入 `test-results/v9-foundation/performance.json`。默认跳过，在安静的机器上用 `VITE_LATCH_UI_PERF=1 pnpm exec vitest run --config vitest.config.ts packages/ui/test/v9-performance.test.tsx` 运行；`VITE_LATCH_UI_PERF_ENFORCE=1` 时超预算即失败。只量脚本，合成时间量不到；读数用于同机对比，不作跨机器阈值。截图用 `data-capture="still"` 冻结头像与背景层（`e2e/helpers/visual.ts` 的 `stillMotion`），它与设置写的 `data-motion` 是两个属性。
-
-`e2e/design.e2e.ts` 在三宽从「设置 › 通用」切换「减弱」与「跟随系统」，核对预览的活动边并截图。`e2e/streaming-ui.e2e.ts` 用可控的临时模型验证回复进行中打开「减弱」后，后续文字仍完整，回复结算保留原消息 ID。`e2e/desktop-terminal.e2e.ts` 用假终端验证减弱和恢复动效时光标的闪烁、终端焦点和输入。
-
-`e2e/home-focus.e2e.ts` 在桌面宽度检查首页同一个输入卡片的开始、途中和结束位置，验证导航淡变、选区和草稿保留。平板和手机覆盖系统减少动效，输入法用浏览器的组合输入事件。
-
-`packages/ui/test/button-width.test.tsx` 在真实浏览器中检查 Button 的自然宽度缓存、外部 minWidth、连续忙态、字体/语言变化、隐藏恢复、容器缩放与减少动效；三宽深浅截图写入 `test-results/button-width/`。固定 16 个按钮随父组件更新 50 次，在 CPU 4 倍降速下记录全部提交耗时与同步宽度读取次数到同目录 `performance.json`；读取次数是回归断言，耗时用于同机安静窗口前后对比，不作为跨机器的固定性能阈值。
-
-`e2e/harness-quota.e2e.ts` 在三宽浅深色浏览 Host 额度，核对多个 Harness、已用比例、遮蔽账号、鼠标预览不抢焦点、键盘打开与触屏底部面板。短高窗口检查滚动，用浏览器时钟核对离线报告到期，再切到另一台临时 Host 检查无数据串用。
-
-`e2e/shell.e2e.ts` 与 `e2e/workbench-layout.e2e.ts` 核对设置覆盖时底下的原草稿、原控件与抽屉保留，键盘不穿透、关闭后焦点归还，手机返回逐层关闭。设置内的未知写和撤权见 `e2e/customization.e2e.ts`。
+- 组件用 `vitest-browser-react` 的 `render` 渲染，交互用 `vitest/browser` 的 `userEvent`，断言用会等待的 `expect.element(定位器)`。
+- Playwright 不点击 `aria-disabled` 的控件；要验证它拦下点击时用 `test/helpers.ts` 的 `press`。
+- `test/setup.ts` 按页面的顺序注入 `tokens.css` 与 `ui.css`，并打开 React 严格模式（挂载副作用运行两遍）。
+- 触屏用 `test/helpers.ts` 的 `onTouchScreen`，深色与减少动效用 `emulateMedia`。不要直接调用 `Emulation.setEmulatedMedia`：它每次替换全部模拟的媒体特性，`emulateMedia` 负责写全并在结束后恢复。
+- 改视口的用例结束前恢复 1280×800。
+- `test/gallery/` 是原语总览页，只在测试中构建，不进入 `dist/web`；视觉截图也截它。
 
 ### 报告与用例集合
 
-- Vitest 的报告与附件写入 `.vitest/`（已在 `.gitignore` 中）：`--reporter=json` 写 `.vitest/json/output.json`，`--reporter=junit` 写 `.vitest/junit/output.xml`，附件在 `.vitest/attachments/`。e2e 截图仍由用例写入 `test-results/`。
-- 升级 Vitest、移动或改名测试文件时，比较前后的用例集合（文件加完整用例名）。集合来自 JSON 报告，或来自只收集不运行的 `pnpm exec vitest list --config <配置> --staticParse=false --json=<文件>`。每个消失或新增的用例都要说明原因。`vitest list` 默认静态解析源码，不展开 `it.each`，还会把 `testHost(…)` 这类辅助函数调用当成用例，所以不加 `--staticParse=false` 的结果不能用来比较。
+- Vitest 的报告与附件写入被忽略的 `.vitest/`；e2e 截图由用例写入 `test-results/`。
+- 升级 Vitest、移动或改名测试文件时，比较前后的用例集合（文件加完整用例名），每个消失或新增的用例都要说明原因。
+- 集合用 `pnpm exec vitest list --config <配置> --staticParse=false --json=<文件>` 取得。不加 `--staticParse=false` 的结果不能用来比较：静态解析不展开 `it.each`，还会把辅助函数调用当成用例。
 
 ## 按改动选择回归
 
-`workbench-layout.e2e.ts` 核对侧栏模式下右栏标签与布局开关各自可达。`workbench-scroll.e2e.ts` 验证手机总览来源的长标题从开头显示。工作数据范围的设备能在「更多」查看已知文件工具的原 ID，写入详情只显示路径。`helper-home.e2e.ts` 检查平板定时片可读完整数量且能打开定时页。
+先运行 `pnpm check -- --plan`（规则在 `scripts/verify-plan.ts`）：它按改动路径列出要运行的检查、项目用例、构建、e2e、Electron、共享编码与确认组件的定向用例、`check:supply`、`check:workflows` 与布局检查。依赖文件与它不认识的路径要求全部检查。
 
-外观定制的三个字段、写入权限、审计、基版、恢复默认与目录同步失败后的原请求回执由 `apps/host/test/customization.test.ts` 覆盖。浏览器的启动缓存、预览、安全模式和写入身份隔离见 `apps/web/test/customization.test.ts`，桌面安全模式菜单见 `apps/desktop/test/safe-mode.test.ts`。UI 令牌用例检查允许写入的令牌全部在 `data-secure` 与 `data-lock` 的锁内。`e2e/customization.e2e.ts` 在真实页面更换外观，复查设备、状态与审批区域的计算样式和操作，并验证恢复默认、旧草稿冲突和跨设置与安全模式保留原请求。见 [CUSTOMIZATION.md](CUSTOMIZATION.md)。
+它只按路径判断。下面是它算不出来的部分：
 
-命令建议缓存用 `command-cache.test.ts`、`acp.test.ts` 的实际命令报告和 `harness-commands.test.ts` 验证来源、0600/大小界限、重启零额外 CLI、目录与完整启动指纹异步复核、删除/私有化/撤权和 Driver 代次。`e2e/harness-command-cache.e2e.ts` 经正常 UI 验证三宽深浅、项目/Harness 切换、迟到响应、草稿仅插入、命令版本与可见集合失效、30 秒有界刷新、短高视口和缩放。浏览器时钟只推进刷新间隔，HTTP 仍走临时 Host；document 可见性夹具不是 OS 后台验收。当前会话 Slash 的 Chrome/WebKit 回归由 `slash.e2e.ts` 覆盖，包括假 ACP 报告的 `mcp:files:review` 出现在普通 Harness 组、Tab 插入可编辑草稿和原样发送。
+- 改动触及连接、登记、审批、取消或流式状态时，即使路径只要求单个项目，也运行下表的定向用例与对应 e2e。
+- 改共享协议（`packages/protocol/src/types.ts`、`packages/sdk/src/bridge.ts`、`plugins.ts`、`harness.ts`）时，先跑定向用例，再跑完整的 `pnpm test` 与 `pnpm test:e2e`。
+- 计划只列 `e2e/desktop.e2e.ts`；其他 Electron 用例见 [Electron e2e](#electron-e2e)。
+- 真实 CLI、iOS 模拟器与性能测量默认跳过，见下面三节。
 
-模型请求队列用 `model-request-queue.test.ts` 验证全 Host 上限、FIFO、等待时间、取消和容量回收；`providers.test.ts` 验证内置 Provider 与实际 HTTP 网关共用名额、响应未结束时不提前释放；`model-gateway.test.ts` 验证排队后凭据或服务变化拒绝旧请求，以及协议错误形状。`model-request-queue-review.test.ts` 从合法自定义 Driver 的启动入口租用真实服务，经临时 HTTP 上游验证冷启动初始化顺序。
-
-调度用三层用例，时间都用 `apps/host/test/helpers/manual-clock.ts` 的手动时钟（`sleep` 只在 `advance` 到点时返回，`random` 固定），不等真实的退避、首字节时限或熔断的一分钟：`model-scheduler.test.ts` 用脚本化的尝试核对错误分类、401/402/429/5xx 各自的去向、休息阶梯、退避的 30% 抖动、60 秒与 90 秒、熔断打开与半开只放一个、名额归还、亲和、单服务排队与 `gateway-busy`、切换前先写记录；`gateway-scheduling.test.ts` 让真实回环网关面对两个 `startFakeModels`（脚本化 401、402、429 带 `retry-after`、500–529、`delayMs` 的首字节慢、`cut` 的中途断开），核对首字节前换候选、之后只发入口协议的流内错误、每个服务只收到自己的密钥、日志与记录里没有密钥和正文；`model-scheduling-host.test.ts` 在测试 Host 上核对设置接口与权限、`routeHash` 含候选、内置 Harness 与假 ACP 会话的 `turn.routed` 和 `task.model.fallback`、项目默认模型的先后与 `live.queuedFor`。`e2e/gateway-scheduling.e2e.ts` 在真实页面走「出错时改用」的添加、排序与保存、同时请求，并在三宽浅深色截「备选」标签、模型菜单与设置里的健康状态，截图在 `test-results/gateway-scheduling/`。`scheduled-provider.test.ts` 用同一个时钟核对内置 Harness 的路径：备选回答前先发 `route`、响应到达后不再受首字节时限、等名额不算服务的沉默。`agent-plans.test.ts` 核对定时运行取模型的先后。假服务的 `dropped` 让流式回复发完响应头就断开，`silentMs` 让流式回复先发响应头再沉默，`delayMs` 计时器不保活进程。
-
-用量账本与预算见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#用量花费与预算)。`model-usage-host.test.ts` 以临时 Host 和回环假模型验证读账本期间降权或删除后的匿名汇总、Agent 主模型和备选都需同币种单价，触顶 Agent 的新 Standard 话题零出站、同时开始的不同 Agent 与普通 Code 的隔离归属，较早通过审计的预算写入提交后按实际值检查放宽、设备在 Agent 预算审计期间降权、原子替换后结果未知及原请求重试、双设备覆盖后重启仍只回原收据。`model-usage.test.ts` 还检查无变化请求的回执到期后旧修订无法重放，并复制在途追加的磁盘前缀重开，核对 v2 合计、v1 重建、截断行恢复及失败追加不进入持久合计。浏览器的 `e2e/gateway-usage.e2e.ts` 经设置的用量页检查币种、手填价格、备选请求、预算触顶与降权后迟到响应，三宽深浅色截图写入 `test-results/gateway-usage/`。
-
-原生与中继的回归见 `apps/host/test/native*.test.ts` 与 `e2e/native-*.e2e.ts`。`e2e/ios-app.e2e.ts` 用临时 DerivedData 构建真实 iPhone/iPad App，禁用签名且不启动 App。`e2e/ios-screens.e2e.ts`（`LATCH_IOS_SCREENS=1`，需要已安装的 iOS 模拟器运行时）构建独立的 `LatchScreens` 目标，选能同时运行窄屏 iPhone、宽屏 iPhone 与 iPad 的最新运行时（只支持一种设备的运行时不选），在自己新建的模拟器上按启动参数 `-LatchScene` 截各场景的浅深色，写入 `LATCH_IOS_SCREENS_DIR` 或 `test-results/ios-screens/`；`LATCH_IOS_SCENES`（逗号分隔的前缀）只截改动涉及的场景；`LATCH_IOS_SCREENS_DEVICE=<udid>` 只在这台已有的模拟器上截（没在运行时启动它），不新建、关闭、抹掉或删除任何设备，结束时恢复它原来的浅深色，用于所有者授权的 `latch-hands-on` 与已有的 iPad；场景数据是固定样本，不连 Host，不等于对真实 Host 的验收。每台自建模拟器截图完成即关闭、删除后再创建下一台，失败仍由最终清理兜底；已有设备分支不清理设备。 `LATCH_IOS_SCREENS_KEEP_RUNNING=1` 仅与显式 `LATCH_IOS_SCREENS_DEVICE` 一起使用，截图后留下夹具 App，供通过系统界面实际展开菜单；不自动打开菜单，操作者完成后关闭本次测试 App。
-
-`e2e/ios-live.e2e.ts`（`LATCH_IOS_LIVE=1`，需要模拟器运行时，默认路由是带私网 IPv4 的 Wi-Fi 或以太网）让 iOS 改动能在模拟器里真实点一遍：构建 `LatchScreens` 并核对 Live 标记与软件密钥符号确实在其中，新建并启动自己的模拟器、装好 App，之后才用 `startTestHost` 起临时 Host（演示模型、假 ACP Agent「Fake Agent」、临时 Git 项目、不弹窗的测试确认）。Host 的原生监听绑定默认路由接口的私网地址（不用 VPN 隧道或虚拟机网桥），只在这次运行期间存在、局域网可达，连接仍需连接码。以 `-LatchLive 1` 启动 App，再把连接码经官方 `devicectl device pasteboard copy` 的标准输入放进模拟器剪贴板，供配对页的「粘贴」使用；每写一个码都记下当时已登记与等待登记的手机数，数目增加（这个码被用了）才清空，换码前与结束时也清空，连接码不进参数、环境、文件与日志。Simulator / DeviceHub 的「Automatically Sync Pasteboard」（默认开）会把模拟器剪贴板同步到本机剪贴板与通用剪贴板，默认测试不依赖未验证的关闭选项，以无界面方式运行模拟器，开始时与每次写码前都检查 Simulator 与 DeviceHub：打开时开始阶段跳过，保持运行时不写码并在 `<文件>.info` 中写明原因。`LATCH_IOS_LIVE_PAIR_SECONDS` 等人在该时限内配对并断言成功；`LATCH_IOS_LIVE_HOLD=<文件>` 保持运行直到该文件出现或 `LATCH_IOS_LIVE_HOLD_MINUTES`（默认 120）到期，`<文件>.pair` 换一个新连接码，`<文件>.info` 写出模拟器 UDID；`LATCH_IOS_LIVE_HOSTS=2` 在同一私网地址上再起一台测试 Host（自己的数据目录、假 ACP Agent 与项目），用于多台电脑：`<文件>.pair2` 把它的新连接码放进剪贴板（同一套写码、清空与 Simulator / DeviceHub 规则；那台 Host 有等你处理的会话时不出码，写进 `.info`），`<文件>.wait<n>` 在第 n 台上开一个等你批准的假 Agent 会话，`<文件>.revoke<n>` 以所有者身份移除第 n 台上的手机，`<文件>.stop<n>` 停掉第 n 台。测试 Host 不发布 Bonjour，配对码的局域网提示 2 分钟后失效，之后那台电脑连不上（不在线），多电脑的手动步骤要在这个时间内完成；用例时限按各步上限之和加上这两项计算，保持运行的截止时间在每次等待中检查。手动操作用一台可复用的模拟器 `latch-hands-on`：模拟器控制工具对每台新设备都要所有者授权一次，它就是所有者授权的那一台。`LATCH_IOS_LIVE_KEEP=1` 创建它（已有同名设备时沿用）并留下，UDID 写入输出目录的 `device.txt`；之后用 `LATCH_IOS_LIVE_DEVICE=<udid>` 在它（或任何已有模拟器）上运行。测试不关闭、抹掉或删除这台设备，只安装、启动与停止 App 并清空剪贴板；不按名称清理历史测试设备，只关闭和删除本次创建的设备。截图写入 `LATCH_IOS_LIVE_DIR` 或 `test-results/ios-live/`。`LATCH_IOS_LIVE_HISTORY=1` 另加一个两文件夹的项目与扮作 Codex、经自己的适配器列出与加载会话的假 Agent（`writeFakeHistory`），供手动走「接入已有会话」。`LATCH_IOS_LIVE_AGENTS=1` 另加一个用内置 Harness 与本地固定 Provider 的 Agent「代码审阅」和它的一条每日定时任务，供手动走我的 Agent 的对话、资料面板、定时开关与记忆提议。`LATCH_IOS_LIVE_ATTACH=1` 另加声明收图片与文字的假 Agent「Fake Images」（「Fake Agent」什么都不收），供手动走附件；`LATCH_IOS_LIVE_ACTIVITY=1` 另加在假 ACP Agent 上、有自己项目的 Agent「资讯」，带运行时改文件与运行中退出的两个关闭的人工任务，不授予后台执行权限，保持运行时 `<file>.run` 与 `<file>.fail` 立即运行它们，供手动走结果卡、立即运行、定时提议（`schedule <名称> <weekdays> <HH:MM> <输入>`）、动态与资料库；`LATCH_IOS_LIVE_COMPUTER=1` 另加使用 Standard 与本地固定 Provider 的「晨报助手」与一条每日定时任务：配对前在睡眠与醒来的报告之间把 Host 的时钟前移过它的时间、再移回，供手动走「电脑」的「错过 1 次」、立即运行与通知、保持唤醒的开关；保持运行时 `<文件>.received` 把 Host 各会话里消息附件的名称、类型、大小与宽度（不含字节）写进 `<文件>.received.json`。Live 模式只在 `LatchScreens` 中编译，用进程内存里的 CryptoKit P-256 软件密钥代替 Secure Enclave，资料库密钥也只在内存、目录随进程；TLS、敲门 HMAC、根证明、正文窗口与 requestId 与产品相同。它不证明 Secure Enclave、Face ID、钥匙串或真机行为，也不验证 Bonjour 重连（测试 Host 不发布），重开 App 需重新配对。`ios-app.e2e.ts` 核对 `Latch.app` 不含这些标记，`nm -u` 中也没有 `SecKeyCreateWithData`、`kSecAttrKeyClassPrivate` 与任何 `P256.Signing.PrivateKey` 符号；`pnpm check:boundaries` 按对象 ID 解析 `project.pbxproj`，核对只有 LatchScreens（仅模拟器）构建 `Screens/` 并设置 `LATCH_SCREENS`、Latch 与项目配置不引用 xcconfig、也不经变量间接设置编译条件，找不到 Screens 组或目标时失败（注释只在字符串之外跳过），并核对这些代码、软件密钥调用与未指定 `kSecAttrTokenIDSecureEnclave` 的 `SecKeyCreateRandomKey` 只在 `Screens/` 与 `App/` 的 `#if LATCH_SCREENS` 中。
-
-需要 Device Hub 正常界面操作时，只有显式 `LATCH_IOS_LIVE_GUI_CLIPBOARD=1` 的受控手动验收可以验证共享开关；默认仍拒绝 GUI，不把一次未同步当成隔离。它要求 `HOLD` 与本轮新建的模拟器，或 `DEVICE` 明确指向这次专用设备；不允许隐式复用 `KEEP` 的已有设备。先在该设备正常打开扫码页，再请求 `.pair`（第二台仍为 `.pair2`），按 `<文件>.clipboard-info` 的阶段操作官方菜单：
-
-1. 测试 Swift 子进程只在内存保存 Mac 剪贴板各项、各格式，随后两端只放公开随机文本。无法完整读取、超限或包含需要原提供者回调的文件 promise 时拒绝，不替换原内容。
-2. 在指定设备的 `Edit > Use Shared Clipboard` 开启共享，随后创建 `<文件>.clipboard-on`。两个方向都必须在各自五秒内实际同步成功；两边都不通不能通过。
-3. 关闭同一菜单开关，创建 `<文件>.clipboard-off`。用相同格式和选项分别观察两个方向十秒，都不能同步；没有成功的正控时不接受负控。
-4. 通过后才创建邀请并经 stdin 写入指定模拟器。窗口从负控结束起最长十秒、仅一次，绑定同一 Device Hub PID 与设备；通过 App 原有“粘贴”和连接、核对流程，不直接设置 App 或 Host 的配对状态。
-5. 持有期间持续检查进程与剪贴板变化；失效先关闭本测试的临时 Host，使邀请码失效，不自动重发。共享状态不再可确认时，先按提示使用官方 `Quit and Keep Simulators Running`，实际确认两个 GUI 均退出后，只清仍匹配本轮公开标记或邀请、且目标设备未变的模拟器剪贴板；人后来复制的新内容保留。GUI 晚于控制器等待期限退出时，收到 Swift 的退出/恢复回执后仍补做同一归属检查与清理。
-6. 无论配对成功还是异常，恢复 Mac 原格式前都先用官方 `Quit and Keep Simulators Running` 退出两个 GUI；Swift 辅助自己检查进程，绝不以 Node 的 OFF 声明豁免。GUI 仍在时只保留内存并写 waitingForGui 状态，EOF、TERM、超时、坏输入或控制器断开都不先恢复；Node 不强杀唯一的内存持有者。GUI 退出且剪贴板仍属本次测试时恢复各格式，使用 current-host-only 避免重新发布通用剪贴板；人复制了新内容就保留新内容。收到恢复回执后可重开 Device Hub，模拟器与已连接 App 一直运行。不把中断或等待称为通过。
-
-这是本机受控窗口内的验收前提，不是永久隔离保证。`e2e/helpers/ClipboardLease.swift` 只由 Vitest 编译并驱动，不进入任何 App target；它不输出原剪贴板内容、配对码或可复用摘要。`e2e/ios-clipboard.e2e.ts` 默认只使用随机命名的独立 pasteboard，验证各格式恢复、外部复制、异常退出、超时和一次性证明，不读写系统剪贴板。显式 `LATCH_IOS_CLIPBOARD_TEST_DEVICE=<自有 UDID>` 可在两个 GUI 均关闭时验证公开标记实际往返与清空，只接受 `latch-live-root-` 前缀的自有运行中模拟器；断言只打印布尔值。设备写入使用 devicectl 默认的三种标准文本 UTI，读回指定 UTF-8 类型；只用 stdin/stdout，单条命令最多 5 秒，配对证明仍在原 10 秒内失效，不因命令延迟续期。真实 GUI 验收仍需独立记录正常原生流程与结果，软件密钥、临时 Host 和假模型的边界不变。
-
-Live 公开阶段页的“开始本次配对”仅在 idle/restored 阶段可用，等价于触碰本轮 hold.pair；它只开始原有验证流程，不生成或传递邀请码。按钮与 ACK 共用本页 Origin、当前版本及每阶段一次门，不能在 ON/OFF 或码窗内重入。由同一次界面工具调用开始并完成官方菜单操作，避免跨调用耗尽原45秒人工期限；其余期限和失败清理不变。
-
-GUI 模式另开本轮 `127.0.0.1:0` 公开阶段页，不含邀请码、Host 地址、正文或产品写接口。默认页面只读；GUI 夹具额外提供“已打开共享”“已关闭共享”按钮，等价于原本触碰本轮 `.clipboard-on/off` 文件。先实际操作官方菜单，再点击当前阶段的确认按钮，不能预排 ACK。端点只接受本页 Origin/Host、固定阶段与当前公开版本，每阶段一次；上一项确认落盘后才切换阶段，旧页面不能确认下一轮。OFF 确认后只以官方 `open -b com.apple.dt.Devices` 激活已存在的 DeviceHub，前后 PID 必须相同；激活失败使整条验证失效，不能利用已经写入的 ACK 继续发码。仍须通过实际双向正负控、同一 GUI PID/设备和原期限，按钮本身不构成隔离证据。正常界面工具可在同一次调用依次操作 ON/确认、OFF/确认、等待 `paste-ready`、点击真实原生粘贴、观察消费并官方 QuitKeep，再等恢复回执；失败时不点击过期粘贴。页面串行轮询，服务随夹具关闭。Screens-only 配对诊断只记固定阶段与单调毫秒；真实 App 二进制拒绝这些标记。`LATCH_IOS_STAGE_PROBE=<本轮临时前缀>` 可运行只读公开阶段探针，按 `.info` 页面观察，`.start` 后二十秒变就绪，确认后写 `.done`；不操作模拟器、剪贴板或产品状态。
+定向安全用例（没有写目录的文件在 `apps/host/test/`）：
 
 | 改动 | 用例 |
 | --- | --- |
-| 共享安全编码 | `crypto.test.ts`、`identity.test.ts`、`presence.test.ts`、`client-security.test.ts`、`desktop-proxy.test.ts` |
-| 设备与凭据 | `auth.test.ts` |
-| 监听入口 | `auth.test.ts`、`server.test.ts` |
-| 本机确认服务 | `presence.test.ts` |
-| Agent 启动诊断 | `agent-probes.test.ts`、`packages/harness-acp/test/probe.test.ts`、`presence.test.ts` |
-| 安全策略 | `policy.test.ts` |
-| 审计 | `audit.test.ts`、`audit-actions.test.ts`、`cli.test.ts` |
-| 出站策略 | `egress.test.ts` |
-| 路径与项目目录：数据目录解析顺序、运行目录、项目登记规则、受保护目录、macOS 路径别名、私有文件检查；从每个 workspace 项目内都得到仓库根作为程序目录，在每个项目目录中启动的进程里 `latchCodeRoot()` 也返回仓库根 | `paths.test.ts` |
-| 项目生命周期：旧会话与只接收主文件夹的 Driver 换序后继续、无预览插件的全部目录确认、手工不一致状态的保留、移除或替换与新会话的竞争、策略收紧不等待慢启动、自有目录跨重启幂等；默认项目名称长度与离线实际启动上下文 | `project-regressions.test.ts`、`projects.test.ts`、`cli.test.ts`；旧桌面端文件夹协议门禁见 `shell-folders.test.ts` |
-| 会话自己的文件夹：名称、0700、从不沿用已存在的条目、同一请求得到同一个文件夹、没建成会话时删除空文件夹、只认启动目录中的真实目录 | `session-folders.test.ts`；在真实 Host 中的新建、只对话与所有者指定的启动目录、重启后继续、链接替换、远程策略、L3 确认中的工作目录与「存为项目」见 `server.test.ts` 的 `sessions in folders of their own` |
-| 新建工作树：钩子、fsmonitor、filter（仓库、include 与全局配置，含全局 `includeIf "onbranch:latch/**"` 只在新分支上带进的驱动）与 LFS 从不运行，继承的 `GIT_*` 变量不起作用，每种拒绝都不留下分支或工作树，任一步失败都回滚，`.worktreeinclude` 的复制规则，只认带标记的工作树（换分支或分离 HEAD 后仍认），重启后的重试找回同一个，没开始的会话只在 Git 判断没有改动时移除，不在 Latch 自己的目录周围新建；会话在工作树里开始：启动指纹取工作树里的配置，引用文件在工作树里核对，确定失败不留下工作树与分支，标记不再属于会话时之后的轮次被拒绝；起点：另一个分支或提交、检出已有分支（已检出时拒绝、从不删除它）、沿用残留或已归档会话的工作树（会话还在时拒绝），分支名的固定规则与 `check-ref-format`；移除：干净时不带 `--force`、有未提交的文件时要确认当前数目再强制、`-d` 保留未合并的分支、回合运行时拒绝、审计先于写入且不写路径、别人的工作树不动、会话之后只读，残留从项目里移除 | `worktrees.test.ts`、`worktree-sessions.test.ts`；会话记录见 `hub.test.ts` 的 `keeps the worktree a session was started in`；共用的 Git 运行器见 `changes-git.test.ts`；页面见 `e2e/worktrees.e2e.ts` 与 `e2e/worktree-lifecycle.e2e.ts`（其他起点的面板、丢弃确认、移除干净的工作树与 390 宽，截图在 `test-results/worktree-lifecycle/`） |
-| 交付：读状态、无 filter 的暂存与取消暂存从不运行钩子、fsmonitor 与 filter，提交运行钩子（跳过钩子时不运行），有 filter 时经你的 Git 暂存；你的 Git 的环境没有 Latch 秘密且不会提示，信息不进参数；审计与调用方复查先于执行；每个仓库一次一个写入；回执在重启后找回提交、结果未知从不再提交；推送的固定失败原因；路由的权限、数据范围、私有会话、运行中的回合与合并中 | `git-delivery.test.ts`（临时仓库与本地裸远端，不连网络）、`git-routes.test.ts`；审计 schema 见 `audit-actions.test.ts` |
-| 按行暂存与历史：索引的新内容由 Host 从文件与索引拼出、请求里没有补丁文字，行段要有序、不重叠、有上限，文件或索引变了是 409 且不覆盖，只能整个处理的文件（filter、二进制、过长、重命名、`git add -N`、执行位、链接、子模块、冲突、像密钥）不给内容的哈希，路径按字面读、不经链接，审计先于写入且每次都有结果，回执让重试不写第二次、无从判断时保持结果未知，钩子与 filter 从不运行；历史只读 HEAD 的祖先、有上限，只给数据范围 `all` 的设备 | `apps/host/test/git-hunks.test.ts`、`git-routes.test.ts`、`apps/web/test/staging.test.ts`；回执的 schema 见 `session-meta.test.ts` |
-| 交付的 PR：远端地址的形式、`gh` 的固定原因、检查归类与失败任务、日志摘录的行数字节与脱敏；经假 `gh` 创建（先审计、正文只在文件里、没有 token）、绑定已开的 PR 不再新建、结果未知的重试先按分支查找、未登录与没有 `gh`、不在 GitHub 的远端与未推送的分支在运行之前拒绝；读状态、评论与日志；路由的权限、元数据与安装更新期间的拒绝 | `git-pr.test.ts`、`git-routes.test.ts`（`@latch/testkit` 的 `installFakeGh`，不连 GitHub、找不到真的 `gh`） |
-| Standard 工具的风险分级（R0/R1/R2，按所选项目文件夹判断） | `risk.test.ts`；运行时按分级询问见 `runtime.test.ts` 的 `Host risk classification` |
-| 日志脱敏，以及文本是否含密钥（`containsSecret`） | `redact.test.ts` |
-| 插件页面框：引导页哈希与 CSP、可复现构建、模块接口、握手（source、`'null'` 来源、nonce）、安全界面打开时 `inert`、桥只给白名单字段、能力预检与七个失败码、离线后完整重发、停用后不再发送；Electron `latch-frame://app/` 的权限、导航与 `latchShell` | `app-frame.test.ts`、`app-pages.test.ts`（Web 与 `@latch/app-sdk` 的 `bridge.test.ts`）、`desktop-frames.test.ts`；浏览器 `app-pages.e2e.ts`，Electron `desktop-app-pages.e2e.ts` |
-| 会话文件：引用解析、文件夹边界、文件分类与句柄、本机动作、预览范围与审计；桌面端原生动作与内容代理；回复里的路径标记 | `files.test.ts`、`file-content.test.ts`、`desktop-files.test.ts`、`desktop-proxy.test.ts`、`file-reference.test.ts`、`file-references.test.ts`、`message-content.test.ts`；浏览器 `file-chips.e2e.ts`，Electron `desktop-files.e2e.ts` |
-| HTTP API：监听入口、登记与续期、事件流、限流、权限、审批、完全访问（L3）会话、模型服务密钥与地址确认、项目、策略与审计接口、会话与插件 | `server.test.ts`、`harness-host.test.ts`；路由模块保留各自的监听入口与 scope 检查：`route-guards.test.ts` |
-| 审批与取消的回执：重启前决定、重启后重试同一请求（Driver 未挂载时也重放）、同一取消的并发副本（含第一个副本失败）、对已结束运行的取消与迟到的取消不停止新的一轮；回执随会话保存、旧文件、读不懂的条目、7 天与每台设备 1 万条的上限、写入失败、合并写入 | `server.test.ts` 的 `receipts and cancels`、`session-meta.test.ts`；Driver 的 `runId` 在 `runtime.test.ts` 与 `acp.test.ts`，Hub 不转出格式不符的 `runId` 在 `hub.test.ts` |
-| 流量计数：大小分档、按会话与事件流汇总、上限、只有数字、只给 `admin` 与匿名 `host.sock` | `traffic.test.ts`、`server.test.ts` 的 `traffic counters`；`pnpm latch traffic` 在 `cli.test.ts` |
-| Host 进程：`apps/host/scripts/start.ts` 的输出与凭据不落盘、明文局域网与 HTTPS 绑定地址的拒绝、从打包产物启动时只运行 Host（不运行一同打包的确认组件构建；按 `apps/host/scripts/host-bundle.ts` 的选项打包）、Host 构建遇到测试代码（`@latch/testkit`、`packages/testkit/`、`tests/`、`e2e/`、各项目的 `test/`）即失败、数据目录锁、旧版本 `host.json`、`pnpm stop` 的核对与说明、IPv4 映射的 Tailscale 地址 | `security.test.ts` |
-| `pnpm latch` 命令、离线命令与数据目录锁（过期锁接管、开机时间、多进程争用、接管残留）、`--code-file`、`--disable-sigusr1`（等待输入时 SIGUSR1 不打开调试端口，需经 pnpm 运行） | `cli.test.ts` |
-| 模型协议（OpenAI 兼容、Anthropic）、思考、模型列表与检测、只经注入的 fetch 出站、密钥的源与路径绑定、上游错误中的密钥脱敏、演示模型与演示工具 | `providers.test.ts` |
-| 配置文件、迁移（含已有密钥的源与路径绑定）、0600 原子写入 | `config.test.ts` |
-| Standard 执行循环、模型与目录选择、用量、审批选项、风险分级、删除与恢复 | `runtime.test.ts` |
-| 插件生命周期、租约、替换与卸载 | `registry.test.ts` |
-| 自定义插件资产：有限模板/声明、路径与预算、私有原子存储与原请求恢复、确认前不导入、相同摘要重启复用、草稿与应用分离、激活回滚、运行中 Harness 拒绝卸载、旧租约释放、等待后撤权与审计故障收紧 | `plugin-assets.test.ts`、`plugin-package-api.test.ts`、`plugin-packages.test.ts`、`presence.test.ts` |
-| `latch/plugin-sdk` 与 `harness-sdk`（再导出 `@latch/sdk` 的类型子路径）在外部 TypeScript 项目中通过检查（不开启 `allowImportingTsExtensions`），以改名前的包名安装时也通过 | `plugin-sdk.test.ts` |
-| 多 Harness 路由、审批路由、权限级别、会话元数据 | `hub.test.ts`、`harness-host.test.ts` |
-| 会话生命周期事件：运行开始先于第一条提示到达模型或 Agent，带会话的项目与文件夹；运行结束每次一个，只在真实结算之后（请求取消不算）；归档与删除各一次，带项目；停止时先于关闭 Driver 与监听入口，未结束的运行不再有运行结束事件；等待中的运行可被取消，Host 停止时不会再发出提示；没有监听器时不读 Driver，读取有合并，迟到的读取不影响新一轮；监听器抛错、拒绝或超时不影响运行与停止；订阅者拿到的对象只能监听 | `session-lifecycle.test.ts` |
-| ACP：环境白名单与私有临时目录、启动指纹、项目配置、权限模式读回与漂移、映射、审批与选项过滤、取消、崩溃与恢复、进程上限；子 Agent 的审批（含一轮结束后才到或仍在等的请求、OpenCode 2.x 发在启动它的会话上的更新与请求、以会话的权限为上限的拒绝与审计、报告更宽模式时停止、单独停止在它报告之前不写已停止） | `acp.test.ts`（`ACP subagents`）、`subagents.test.ts`、`replay.test.ts`（`opencode/2.x/subagent_*`）；单独停止的路由与审计、子 Agent 请求挂起时本机确认全部被拒绝见 `server.test.ts` 的 `lets any device stop one subagent alone`（另见 [HARNESSES.md](HARNESSES.md) 的「测试」） |
-| 经 Latch 使用模型服务：网关只认回环 `Host`、不带 `Origin`、认得的凭据与绑定的模型，入站认证头不转发，错误去掉密钥，不跟随重定向，Agent 断开即中止上游，进程结束或服务设置变化即失效；Host 重算一对能否转发、审计路由；Codex 的 `providers/set` 与 OpenCode 的启动变量、凭据换新进程、不再转发的协议（保存过的路由、它的路径与密钥头）一律拒绝、被拒绝的请求不算绕过、绕过的提示 | `apps/host/test/model-gateway.test.ts`、`acp.test.ts` 的 `sessions on a model service through the gateway`；页面与真实 Host 见 `e2e/model-gateway.e2e.ts`（Codex 草稿与会话的模型菜单，浏览器里的句子写电脑名）；用不了的服务、电脑名、菜单标题的键与 Harness 弹层的分叉行见 `apps/web/test/composer-menus.test.ts` |
-| 工作区工具（含 `folder` 参数与 `list_folders`）、受保护路径、写入预览与路径检查 | `workspace.test.ts` |
-| 改动：每轮快照（克隆、跨卷只存小文件、像密钥的文件不读）、四种范围与「由命令修改」的归因、撤销与恢复本轮、撤销文件与全部改动、补丁、保留上限、git 只跑只读底层命令、写入前先审计 | `changes-snapshots.test.ts`、`changes-diff.test.ts`、`changes-git.test.ts`、`changes-engine.test.ts`；路由、权限、下一条消息的说明与确认：`changes-routes.test.ts`、`e2e/changes.e2e.ts` |
-| 文件编辑：`baseHash` 冲突、改名写入与权限位、换行与 BOM、先审计、回执、运行中拒绝、链接与受保护路径、`run` 与数据范围、「你的修改」与下一轮的说明 | `apps/host/test/file-edits.test.ts`、`apps/web/test/file-editor.test.ts`；保存、409 时不写入并「载入最新」后再保存、下一轮读到说明与手机 390/320 整屏编辑：`e2e/file-edits.e2e.ts` |
-| 在编辑器中打开：白名单、URL 模板与奇怪的路径（空格、`#`、`%`、Unicode，换行拒绝）、手势与主进程复查 | `apps/desktop/test/desktop-editors.test.ts`、`desktop-files.test.ts`；Host 的裁决与 `file.editor` 审计：`apps/host/test/files.test.ts`。测试只用假的应用列表，从不启动真实编辑器 |
-| 诊断导出：每个字段经过已知秘密形状后都不留下、人定义的 Harness 只写序号与预设、只回答本机、计数审计、0600 不覆盖 | `apps/host/test/diagnostics.test.ts`、`apps/host/test/cli.test.ts`、`apps/desktop/test/desktop-proxy.test.ts` |
-| 行级反馈：重新定位（原位、随行移动、两处同样近或原文太单薄时过期）、消息文字、回执与 strict schema、权限与快照计数、发送的重试与拒绝后回到待发 | `review-notes.test.ts`；选择与放置：`apps/web/test/review-notes.test.ts`；真实仓库与假 ACP Agent：`e2e/review-notes.e2e.ts` |
-| 终端：帧格式、环境白名单与 Latch 标记、回放与输出上限、「加入对话」的文本与脱敏、观看名额与数据范围、只有 `host.sock` 上数据范围为 `all` 的设备能打开输入关闭、流随设备与凭据结束、归档时不结束这台电脑的 shell、配对码不显示在 Latch 终端里、真实组件的进程清理 | `terminal-frames.test.ts`、`terminal-environment.test.ts`、`terminal-output.test.ts`、`terminal-service.test.ts`、`terminal-helper.test.ts`、`terminal-cli.test.ts`、`terminal-routes.test.ts`（路由、审计、入口、能力标记、归档与删除的检查） |
-| SSE 合并、会话隔离、刷新回退、事件与快照带的 Host 时间 | `streaming.test.ts` |
-| Host 记录的时间与用量：审批等待按并集计、不计入用时，思考用时，工具的开始与结束，回合的 `turn`，用量的缓存与推理部分只在每一步都报告时保留，ACP 的 `starting` 阶段与 `usage_update` | `timing.test.ts`、`runtime.test.ts` 的 `times and usage the runtime records`、`acp.test.ts` 的 `ACP times and usage reports`、`providers.test.ts` |
-| 对话的推导：回合、结果（按这一轮实际留下的内容）、复制与用量合计、回复的时间与它的提示、工作行的说法与用时、回合的块与折叠、送达的过程、重试前的说明、按 Host 时钟的已运行时间、状态行的说法与沉默的询问、运行的结束方式、运行中回合的模型 | `conversation.test.ts` |
-| 输入框的状态行：每段只写报告了的（Latch 内置没有上下文、外部 Harness 的费用总带「不是账单」与报告者、经服务的路与停用后的说法、还没结算的一轮、草稿只写在哪与走哪条路），手机只留上下文，标题行弹层与状态行读同一个 `sessionTotals`；窄栏按用时、输入输出、费用、路的顺序收起，四个控件在 560 宽仍是一行，320 宽不横向溢出；卡与输入框之间的接缝 | `composer-status.test.ts`；真实 Host 与假 Agent 见 `e2e/composer-status.e2e.ts` |
-| 回合与每轮记录的匹配、回合卡片的数字来源、撤销前说明恢复不了的文件、卡片与「改动」页签同一个撤销判断与同一句原因 | `turn-changes.test.ts`；在真实 Host 上撤销与恢复见 `e2e/turn-undo.e2e.ts` |
-| 每个数都带单位：回合脚部、活的一行与项目弹层的行里没有不带单位的数 | `components-*.test.ts` 的 `units` |
-| 消息到达的动效只在页面亲眼看到时播放（重新加载与切换会话后没有），减少动效时直接出现；切换会话时对话区淡入 | `streaming-ui.e2e.ts` |
-| 右侧面板：启动面板、标签条、面包屑、文件树的合并行与各渲染器（三种宽度，含深色）；与侧栏和对话画布的宽度分配、平板与手机换成页面 | `panel-files.e2e.ts`、`panel-layout.test.ts`、`visual.e2e.ts` |
-| Host 的运行状态通告（只在 `host.sock` 上接受报告、睡眠与唤醒、关闭时带原因的最后一帧）、`host-info` 的运行与等待计数、HTTPS 证书热加载（换用续期的证书，私钥不匹配、主机名不符或私钥权限过宽时继续用原证书并记录一次原因）、密钥与 Agent 定义排除在时间机器之外（`xattr` 属性、幂等、跳过符号链接并以 `-s` 作用于路径本身，`providers.json` 与 `settings.json` 每次写入后仍被排除） | `lifecycle.test.ts`；真实 Host 进程上的 `pnpm stop --reason` 与排除属性在 `security.test.ts` |
-| 退出清理 | `shutdown.test.ts` |
-| 客户端版本门禁与超时 | `projection.test.ts` |
-| 阅读位置、用户意图、布局重排、`reveal` | `reading-position.test.ts`、`streaming-ui.e2e.ts` |
-| 高亮调度、流式代码块尾部与逐行着色、已结算轮次的渲染次数与 span 数、长行、查找跨 token；尾轮转入历史跨组或收到补齐前文的完整状态时保留节点、展开与选区 | `highlight-scheduler.test.ts`、`streaming-render.e2e.ts` |
-| 读取输出按文件名着色、行号与外层标记、上限、着色不移动会话 | `tool-output-code.test.ts`、`tool-highlight.e2e.ts` |
-| 工具行与命令块：细轨、动词列、等宽路径（从会话文件夹写起，文件名不截断）、运行中与失败的命令块只画协议里有的（命令、用时、工具报告的最后几行、调用自己的失败状态，没有退出码）、结束的命令成行、块状光标只在运行中、输出到达时阅读位置不动、子 Agent 行与「停止」列 | `components-conversation.test.ts` 的 `tool rows and command blocks`；真实 Host、本文件里的最小 ACP Agent 与假 ACP Agent 的三宽两色见 `e2e/transcript-rows.e2e.ts`（截图写入 `test-results/transcript-rows/`） |
-| Markdown/URL 安全、不加载图片、代码与表格、隐藏字符标记 | `message-content.test.ts`、`components-*.test.ts`、`streaming-ui.e2e.ts` |
-| 客户端安全逻辑：共享编码的浏览器实现、事件流解析与续期后重连、权限展示（`apps/web/src/core/permissions.ts`）、安全文案（`apps/web/src/core/securityCopy.ts`）、`api()` 与本机确认流程、凭据续期（Web Locks、应答丢失、退避、浏览器没有保存新 Cookie）、审批回执、停止请求的重用与回答、审计回滚提示 | `client-security.test.ts` |
-| 开发代理只对 `h-<hostId>.localhost` 转交凭据 Cookie | `client-devproxy.test.ts` |
-| 客户端纯逻辑：组件、差异、会话分组、导出、选择器修正、格式化、旧版 Host；Host 宣布的停止与睡眠（解析、状态行、按 `retryAfter` 重连）与桌面端生命周期的文案 | `client-*.test.ts`（后两项在 `client-lifecycle.test.ts`）；页面上的状态行、重连时间、手机与平板宽度及深色模式的截图，以及通告之后被撤销的设备进入连接页，在 `host-state.e2e.ts` |
-| 桌面端启动 Host、实例核对与复用、启动环境、`--disable-sigusr1`（SIGUSR1 不打开调试端口）、启动记录 `desktop-launch.json`（环境中有 Host 设置时不记录启动方式，写入失败时保留已启动的 Host 并提示） | `desktop-host.test.ts` |
-| 桌面端的 Host 生命周期：启动记录的严格解析（没有额外的 Node 参数、Node 可执行文件可信）与 0600 文件、重新启动 Host 的参数与环境、崩溃后按退避重启、10 分钟内第 5 次崩溃后停止、桌面端启动时只启动一次、发送 SIGTERM 前进程已退出时照常记账、不再应答的 Host 不算运行中也不保持唤醒、不是自己启动的 Host 不重启、所有者重启前先报告原因、睡眠与关机的报告（只为通知之后 30 秒内的那一次退出停止 Host，被取消的注销不停止）、忙时防睡（接电源与用电池、每次最长 1 小时）、登录项只给打包后的应用、凭据目录排除在时间机器之外 | `apps/desktop/test/lifecycle.test.ts`；设置页的「后台运行」与防睡状态、关闭最后一个窗口后仍保持唤醒并能重新打开窗口在 `desktop.e2e.ts` |
-| 桌面端壳：请求范围与导航、外部链接确认、调试参数、转发与凭据附加、凭据文件（safeStorage、0600、写入失败不留临时文件）、续期（应答丢失、保存失败、失败退避）、CommonJS 的 Host 核对、「在这台电脑的浏览器中打开」与另一台电脑的「复制链接」（只接受本 Host 的回环链接或 host-info 报告的 HTTPS 源、顶层页面的 IPC、只在 macOS、不记录链接；剪贴板项带隐藏类型，10 分钟后仍是该链接才清除；页面经转发不能申请任何邀请） | `desktop-proxy.test.ts`（含对测试 Host 的续期、回环与 HTTPS 邀请用例）、`desktop.e2e.ts` |
-| 桌面端自动更新：签名与字段校验、平台与同源资产、哈希与大小不符删除、下载中断、检查去重与后台计划、自动下载偏好、只换 App 与换 Host、安装门禁（等待、取消、失败离开窗口、退出与系统退出）、插件兼容；Host 的安装窗口（新开始 409 `host-updating`、已有运行照常结算、只接受 host.sock 上的桌面端、审计）与更新后停用的插件；关于页各状态 | `apps/desktop/test/updater.test.ts`、`apps/host/test/update-window.test.ts`、`apps/web/test/about-updates.test.ts`；经真实 Electron、假签名更新源与假安装器见 `desktop-update.e2e.ts`（关于页各状态的浅深色 1440 截图写到 `test-results/desktop-update/`） |
-| 桌面端的其他电脑：`computers.json`（严格、上限、损坏时移开不猜、0600）、状态机与退避、链接只收 HTTPS `/link/#pair=`、远程来源的请求导航与子框、按来源选凭据（交替与并发请求不串号）、页面 Cookie 与 `Set-Cookie` 不过页面、hostId 不符不发凭据（`wrong-host`）、证书不受信任（`cert-error`）、被撤销（`revoked`）、远程来源拒绝的路由、新登记总是新密钥、添加与移除（那台 Host 撤销设备）、其他电脑的等你处理（条目与 `waitingCount` 一致、每台 50 条、只给这台 Mac 的页面、离线保留与 `revoked` 清空、15 s / 60 s / 退避）、带电脑名前缀的通知与点击路由、Dock 总数、preload 对条目的逐项检查 | `apps/desktop/test/computers.test.ts`（两台带测试证书的 HTTPS 测试 Host）、`notifications.test.ts`、`apps/web/test/computers.test.ts`；经真实 Electron 见 `multi-host.e2e.ts`（引导文件让主进程信任测试证书，以内存替代系统剪贴板与通知；剪贴板添加、在远程窗口完整用一次会话与审批、隔离断言、B 的审批出现在 A 窗口的「其他电脑」并点开 B 的窗口、一条带前缀的通知与 Dock 计数、关于里 B 的版本、离线后的灰色「离线前」、`wrong-host`、`revoked`、移除；设置 › 电脑 与侧栏的 1440/768 浅深色截图写到 `test-results/multi-host/`） |
-| 桌面端的文件夹操作：只回应主窗口的顶层页面、输入校验、原生对话框与确认、签名提交、Host 拒绝的路径逐个报告、「存为项目」与在访达中显示 | `desktop-folders.test.ts`（含经真实代理与测试 Host 的新建、加入、存为项目与显示）；经真实的主进程、preload 与 Host 见 `desktop.e2e.ts`（面板、访达与 `openPath` 在主进程中记录） |
-| 桌面端的预览浏览器：分区、权限、导航、preload 的参数与事件、截图与标注的上限、遮挡、快捷键转发、开发者工具与清除数据 | `desktop-browser.test.ts`（假的 Electron 对象与真实的 preload）；经真实 Electron 见 `desktop.e2e.ts` |
-| Agent 的浏览器工具：提供者登记只经 `host.sock` 的签名设备、先审计再发出（`toolCallId` 与 `approvalId`）、没有提供者即失败、取消等主进程结算、`not-local` 与本机地址的范围、分级（密码框 R2，逐键与焦点被挪走也拒绝）、敏感字段不出值（含改成 `type=text` 之后）、只收标签名/id/class 的选择器、被盖住与框架目标、接手中止进行中的调用、整轮离不开本机、只在看得见的标签上（控件的提示盖住画面不算，菜单或对话框盖住时是 `panel-covered`）、R1 审批卡写出页面与元素（`browser-labels.test.ts`）、每次请求只再发最近 3 张工具图片 | `apps/host/test/browser-broker.test.ts`、`browser-routes.test.ts`、`tool-images-wire.test.ts`、`tests/tool-images.test.ts`、`desktop-browser.test.ts`（真实的 `agentWorld` 跑在 happy-dom 上）；经真实 Electron 与假模型见 `desktop-browser-agent.e2e.ts`（`LATCH_ELECTRON_E2E=1`，截图写到 `test-results/desktop-browser-agent/`） |
-| 外部 Harness 的浏览器工具（`latch-browser` 与工具网关）：stdio 上的 MCP 服务只转发、逐个请求带令牌、令牌文件不私有时不启动、读后删除；网关只有 0600 的 Unix 套接字、令牌只存哈希、错的旧的已结束会话的令牌被拒、非本协议的请求被断开、取消与断开中止调用、`gatewayRefusal`；`lbt1.` 不进参数与环境、进程结束作废、恢复与清空上下文时换新、桌面端没开时不附加、对上 Agent 自己的询问（相同调用与别的服务不记审批）、停止一轮要等调用结算；两轮之间被拒；归档与删除作废；pi 与我的 Agent 的会话没有；Codex 线程的 `mcp_servers`；完全访问里 R2 被拒、审计 `via: 'mcp'` | `packages/harness-acp/test/browser-server.test.ts`、`acp.test.ts`（the browser tools for ACP sessions）、`codex.test.ts`、`pi.test.ts`、`apps/host/test/tool-gateway.test.ts`、`browser-mcp.test.ts`、`tests/redact.test.ts`；经真实 Electron 与假 ACP Agent 见 `desktop-browser-mcp.e2e.ts`（`LATCH_ELECTRON_E2E=1`） |
-| 浏览器登记：回环需要邀请、指纹核对、拒绝后要新邀请、续期、旧版登录、本机确认不可用时不提交、HTTPS 邀请（手机的说明不写终端命令）；一个按钮、折叠的校验码与句子、链接能管理这台 Mac 时的一行与「不要」、桌面端链接与读取失败时不申请、权限较少的链接只申请它允许的、失效的链接当场说明；连接页在注入的样式下不变；离线连接码（只在 `host.sock` 上：本机确认不可用时连接页只提供它，介绍不提 Touch ID） | `enrollment.e2e.ts`；离线连接码在 `desktop.e2e.ts` |
-| 启动目录位于 Latch 程序目录内：设置 › 项目、新会话与项目弹层三处的琥珀提示（桌面与手机宽度截图，含深色） | `code-root.e2e.ts` |
-| 权限展示：浏览器上允许 R2、开始并继续 Harness 会话、放宽模式都不弹确认且留审计，漂移停止会话；审批卡与安全横幅在注入的样式下不变（`helpers/security.ts`）；审批卡到达与收起的过渡取自动效令牌（停在 0、60、120、180ms 截图），减少动效时近乎瞬时；「手机可以开始新会话」在浏览器里只能关闭（打开的原因写在行上，Host 也拒绝） | `permissions-ui.e2e.ts`；在桌面端经本机确认调高见 `desktop.e2e.ts` |
-| 电脑到手机、审批、断线与取消 | `takeover.e2e.ts` |
-| 自定义 Provider 与页面插件启停 | `extensions.e2e.ts` |
-| 设计令牌与样式表：深色令牌与浅色一一对应、层叠层顺序，样式表只读已定义的令牌，颜色、字级、间距、圆角与透明度，动效令牌与减少动效，浏览器栏颜色（`theme-color`）与侧栏色的令牌一致 | `tokens.test.ts`、`styles.test.ts`，以及 `visual.e2e.ts` 的截图 |
-| 界面原语（`@latch/ui`）：角色与名称、键盘与焦点、提示框、禁用与运行中、选值与权限菜单（含等待验证）、对话框与底部面板、触屏命中区、展开块（曲线与时长、`until-found` 与页内查找、关闭中 `inert`、延迟渲染）、替换与离开、进行中的文字、动效令牌与 `MOTION` 一致、深色与减少动效、原语样式都在 ui 层 | `packages/ui/test/` 的浏览器用例（见[组件测试](#组件测试浏览器模式)）；总览页的截图在 `visual.e2e.ts`，改 `packages/ui/test/gallery/` 时 `pnpm check -- --plan` 也要求它 |
-| 布局、设置、平板滑出的会话列表、手机的列表根页与新会话面板、控件可达、深色模式 | `design.e2e.ts` |
-| 手机的页面栈：列表是根页，会话页推入与滑回（时长与曲线取自令牌，被盖住的列表不可操作，推入后焦点在页头的返回按钮，返回后焦点回到那一行），减少动效时只淡入；会话页的输入框静止时是 52 高的一行；平台的返回（`page.goBack()`）依次关闭菜单面板、右侧面板与会话页，重新载入不多加历史条目，地址不变；新会话面板（停在 92% 且不随原因换行伸缩、焦点在选中的磁贴上、不能选的磁贴说明原因、对话时没有项目、取消保留草稿）；按住一行打开它的菜单（那一行保持按下，触屏打开时不画焦点底），搜索的「取消」把焦点还给搜索按钮 | `phone.e2e.ts`；历史条目的规则在 `back-stack.test.ts` |
-| 设置的每一页在三宽两色下的真实渲染：模型服务的已连接、密钥无效、连不上与检测中来自本地假服务的回答，组不画框。服务的协议：OpenAI 从 Responses 开始、只有一种协议的预置服务没有这一项、自定义服务四种都可选并按所选保存；服务页换协议前说明会清除思考深度，换后清除，列表与服务页重新载入后都读回新协议 | `settings-pages.e2e.ts`；可选的协议在 `components-settings.test.ts` |
-| 这台电脑上已确认的地址、固定新会话默认、Toast 不盖住输入框的三宽两色渲染，以及进度、失败与移除后的状态 | `e2e/policy-limits.e2e.ts`；经真实 `host.sock`：`e2e/desktop-models.e2e.ts` |
-| 首次准备的权限、暂缓与完成、设置和服务回执的目录同步故障、满额与重试、同项目启动队列中的 Harness 与模型归属。Electron 覆盖暂缓、重开、配置后完成和三宽两色；Swift 验证普通会话的外部来源及交接边界 | `first-setup.test.ts`、`client-choice.test.ts`、`desktop-models.e2e.ts`、`native-swift.test.ts` |
-| 设置的层级动效：手机上第一次进入分区与分区里的页面滑入、返回反向滑出，减少动效时只交叉淡化；从页面回到分区时淡入，离开设置时淡出；时长与曲线取自令牌。添加模型服务：获取模型失败时一句原因与手动添加模型 ID（超出限制时行内说明）、获取已经失败的服务保存后不立即检测，检测时是中性的「无法自动检测」而不是「移除此服务」、需要密钥的预置服务商在不能填写密钥的设备上保存前说明、保存后显示「缺密钥」、未确认地址的开关与检测说明原因且不出现命令行、表单里没有同名按钮。保存 Agent 定义不弹确认、显示「还没有开启过会话」，第一次以它开启完全访问会话（经本机确认）之后不再显示 | `settings.e2e.ts` |
-| 工作面板：768、1024、1440 两色下面板浮在地面上（上右下各留 8、圆角 12、带阴影、在窗口内、没有横向滚动），侧栏打开、收起、拖宽与平板滑出时左边跟着侧栏，标题行的控件都在面板里且可点；运行中、等你处理、失败与完成的标题行状态，「改动」读到行数后才写 `+a −d`；右侧面板并排或浮层时贴着面板的边；设置以独立面板覆盖工作区，关闭后原工作区坐标不变；减少动效时轨道不滑；手机没有面板。截图在 `test-results/work-panel/` | `work-panel.e2e.ts`；标题行的状态词与改动行数在 `components-shell.test.ts` |
-| 可调宽的侧栏：拖拽、双击复原、键盘步进、吸附收起与展开（逐帧检查是滑过去的）、按断点类别记住、对话画布至少 520；收起与展开时顶栏标题只朝一个方向移动 | `sidebar.e2e.ts`、`sidebar-layout.test.ts`（收紧与偏好）、`packages/ui/test/resize.test.tsx`（把手） |
-| 会话菜单：标题、标题行的 ⋯、侧栏行的 ⋯ 与手机上按住一行打开的是同一份，打开的会话八项、别的行七项（没有「清空上下文」），没有分叉与「同步最新状态」；运行中「清空上下文」与「删除」灰着并写原因；1440 浅色、768 深色、390 浅色下空闲与运行中各读一遍并截图到 `test-results/session-menu/` | `session-menu.test.ts`；`shell.e2e.ts` 的「the session menu」 |
-| Harness 与模型服务的图标：每个预设都有图标，没有图标的有图形，图标文件安全且都被用到 | `brands.test.ts` |
-| Harness 官方图标：小尺寸、浅深色可读、三宽菜单选择与未知标识回退；iOS 同源品牌图集 | `brands.test.ts`、`brands.e2e.ts`；`LATCH_IOS_SCENES=brands` 的 `ios-screens.e2e.ts` |
-| 界面各状态在三种宽度与两种主题下的截图、与上一次运行的逐像素比较 | `visual.e2e.ts`（见[视觉截图](#视觉截图)） |
-| 依赖供应链：`pnpm-workspace.yaml` 例外的格式、到期与锁文件核对，`packageManager` 的 sha512 | `supply-chain.test.ts` |
-| 安装金丝雀：在当前设置下逐个使安装失败，放宽对应设置后能安装 | `supply-canaries.test.ts`（需经 pnpm 运行） |
-| `pnpm check:workflows` 的工具下载：SHA-256 不符时不安装、只取出二进制、复用已下载的版本、没有固定归档的平台 | `workflow-tools.test.ts` |
-| `pnpm check:boundaries`：运行环境声明、按项目表与运行环境允许的 workspace 依赖（仓库根也按它的行检查）、只供测试的包只能写在 devDependencies、`workspace:*` 与 `@latch/` 名称、`pnpm-workspace.yaml` 中项目的列举、iOS `LatchScreens` 专用代码不进 `Latch` | `boundaries.test.ts` |
-| `pnpm check:agents` 与 `pnpm docs:affected`：字节预算、`CLAUDE.md`、链接与锚点、提到的路径与用例、根地图中的项目、技能链接、docs 的 front matter、不应提交的路径与词；候选文档 | `agent-docs.test.ts` |
-| `pnpm check -- --plan`：按改动路径选择检查与用例，不认识的路径要求全部检查 | `verify-plan.test.ts` |
-| `pnpm security:scan`：新增行中的秘密形状与禁用 API、测试代码中的匹配只列出、需要一起修改的文件 | `security-rules.test.ts` |
-| 仓库检查读取的文件与改动：git 列出的文件与忽略规则、符号链接、相对某个提交的改动与改名、新增的行 | `repository.test.ts` |
-| 测试辅助（`packages/testkit`：Host 夹具、测试确认后端、共享向量、假 ACP Agent、测试证书）、`e2e/helpers/`、`apps/host/test/helpers/` 与 `apps/desktop/test/helpers/` | 使用它们的全部用例：完整的 `pnpm test` 与 `pnpm test:e2e` |
+| 设备、凭据、登记与监听入口 | `auth.test.ts`、`server.test.ts`、`route-guards.test.ts`；页面 `e2e/enrollment.e2e.ts` |
+| 本机确认 | `presence.test.ts`；页面 `e2e/permissions-ui.e2e.ts` |
+| 安全策略、出站 | `policy.test.ts`、`egress.test.ts` |
+| 审计 | `audit.test.ts`、`audit-actions.test.ts` |
+| 日志脱敏与秘密形状 | `tests/redact.test.ts`；新增秘密格式时补用例 |
+| Host 进程、数据目录锁、`pnpm latch`、`--disable-sigusr1` | `security.test.ts`、`cli.test.ts` |
+| 路径、项目目录与会话文件夹 | `paths.test.ts`、`projects.test.ts`、`session-folders.test.ts` |
+| 风险分级与审批 | `risk.test.ts`、`tests/runtime.test.ts`、`hub.test.ts` |
+| 审批与取消的回执 | `server.test.ts` 的 `receipts and cancels`、`session-meta.test.ts` |
+| 事件流与阅读位置 | `streaming.test.ts`、`apps/web/test/reading-position.test.ts`、`e2e/streaming-ui.e2e.ts`、`e2e/takeover.e2e.ts` |
+| ACP 进程：环境白名单、启动指纹、权限模式、子 Agent | `packages/harness-acp/test/` 的 `acp.test.ts`、`subagents.test.ts`、`replay.test.ts` |
+| 模型服务、密钥与网关 | `providers.test.ts`、`config.test.ts`、`model-gateway.test.ts` |
+| Git 受限运行器、工作树与交付 | `changes-git.test.ts`、`worktrees.test.ts`、`git-delivery.test.ts`、`git-hunks.test.ts`、`git-pr.test.ts`、`git-routes.test.ts` |
+| 会话文件与预览 | `files.test.ts`、`file-content.test.ts`、`file-tree.test.ts` |
+| 插件页面框 | `app-frame.test.ts`、`app-pages.test.ts`（Host 与 `apps/web/test/` 各一份）、`apps/desktop/test/desktop-frames.test.ts`、`e2e/app-pages.e2e.ts` |
+| 插件资产与生命周期 | `plugin-assets.test.ts`、`plugin-packages.test.ts`、`tests/registry.test.ts` |
+| MCP 与工具网关 | `mcp-remote.test.ts`、`mcp-oauth.test.ts`、`tool-gateway.test.ts`、`browser-broker.test.ts` |
+| 终端 | `terminal-service.test.ts`、`terminal-routes.test.ts`、`terminal-environment.test.ts` |
+| 客户端安全逻辑与开发代理 | `apps/web/test/` 的 `client-security.test.ts`、`client-devproxy.test.ts` |
+| 桌面端壳：转发、凭据、其他电脑、更新 | `apps/desktop/test/` 的 `desktop-proxy.test.ts`、`computers.test.ts`、`updater.test.ts`；Host 侧 `desktop-host.test.ts` |
+| 测试辅助（`packages/testkit`、各 `helpers/`） | 完整的 `pnpm test` 与 `pnpm test:e2e` |
 
-改共享协议（`packages/protocol/src/types.ts`、`packages/sdk/src/bridge.ts`、`plugins.ts`、`harness.ts`）时，先跑定向用例，再跑完整的 `pnpm test` 与 `pnpm test:e2e`。
+### 需要显式开启的用例
 
-文件内容回归在 `apps/host/test/file-content.test.ts` 与 `files.test.ts`：真实临时文件与端口 0，覆盖引用持久化、设备/会话绑定、秘密复核、Range/ETag、审计失败、撤销、目录变动、搜索与限额。`file-content.test.ts` 和 `image-preview.e2e.ts` 用带正确长度与 CRC 的 PNG IHDR 声明超限尺寸，验证只读头部就拒绝预览；未知尺寸的 JPEG 另作对照。桌面代理覆盖安全读取白名单与不透明来源拒绝；这些用例不代表 Quick Look 的外部资源验收。
+这些用例运行真实已安装的 CLI，默认跳过，只在这台电脑的所有者明确授权后设置变量运行。共同规则：
 
-本机 MCP 提示由 `mcp-bridge.test.ts` 和 Host 的 `mcp-prompts.test.ts` 覆盖，包括本机命令收到原参数、来源标签、只有名称哈希的审计、标记或审计失败时零额外转发、撤权与远程两种提示请求的拒绝。夹具还挡住本机进程在许可前的抢答，检查网关关闭只结算一次、启动未获准时不接受取提示请求，以及清空后保留新会话绑定时实际读取的提示来源。`hub.test.ts` 与 `acp.test.ts` 验证驱动缺少标记能力或会话时拒绝。夹具验证桥与命令透传，不能代替真实 Harness 的命令报告和执行、或 iOS 来源标签的界面验收。
+- 临时 HOME/XDG 与 CLI 配置目录、临时 Host 与项目，上游是本地假模型服务；不读取用户的 CLI 登录文件。
+- 通过只说明真实 CLI 与 Latch 的接线，不能称为真实模型服务或 BYOK 成功；夹具回答的审批也不代替页面审批或本人的系统确认。
 
-`file-mentions.test.ts` 通过实际输入事件覆盖裸 `@` 的方向键选择、删除与 Escape 后重开，以及查询时的补全键。`e2e/attachments.e2e.ts` 从真实网页检查同样的重开与真实文件选择。
+没有写目录的文件在 `apps/host/test/`。
+
+| 变量 | 用例 |
+| --- | --- |
+| `LATCH_CODEX_GATEWAY_BINARY` | `codex-chat-gateway.live.test.ts`、`codex-anthropic-gateway.live.test.ts`、`e2e/codex-model-gateway.e2e.ts`（不设时用假 app-server） |
+| `LATCH_CLAUDE_GATEWAY_BINARY` | `claude-gateway.live.test.ts`、`e2e/claude-model-gateway.e2e.ts` |
+| `LATCH_OPENCODE_GATEWAY_BINARY`、`LATCH_DSH_GATEWAY_BINARY`、`LATCH_PI_GATEWAY_BINARY` | `opencode-gateway.live.test.ts`、`dsh-gateway.live.test.ts`、`dsh-gateway-auxiliary.live.test.ts`、`pi-gateway.live.test.ts`、`gateway-fallback.live.test.ts`、`e2e/harness-model-gateway.e2e.ts`（不设时用假 CLI） |
+| `LATCH_NO_LOGIN_<ID>=<程序路径>` | `gateway-no-login.live.test.ts`：空的临时 HOME、不带登录 |
+| `LATCH_SLASH_LIVE=1` 加 Codex 或 pi 的上述路径 | `packages/harness-acp/test/` 的 `codex-commands.live.test.ts`、`codex-skills.live.test.ts`；`e2e/codex-compact.e2e.ts`、`e2e/codex-skills.e2e.ts`、`e2e/pi-commands.e2e.ts` |
+| `LATCH_HELPER_LIVE=1` 加 pi、Codex 或 OpenCode 的上述路径 | `e2e/helper-live.e2e.ts` |
+| `LATCH_HELPER_PROPOSALS_LIVE=1` 加 Codex 或 OpenCode 的上述路径 | `e2e/helper-proposals.e2e.ts`、`packages/harness-acp/test/codex-skills.live.test.ts` |
+| `LATCH_CODEX_ACTIONS_LIVE=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `packages/harness-acp/test/codex-actions.live.test.ts` |
+| `LATCH_DSH_BINARY` | `packages/harness-acp/test/dsh-mode.test.ts` 的真实部分，无模型调用 |
+| `LATCH_AGY_BINARY` | `antigravity.live.test.ts` |
+| `LATCH_CODEX_QUOTA_BINARY` | `harness-quota.live.test.ts`，结果写到 `LATCH_CODEX_QUOTA_OUT` |
+
+最后两行是例外：它们使用 CLI 自己已有的登录并调用真实模型（没有可指向的本地假服务），所以只发一条或几条极短的提示，在临时 Host 与临时项目里运行，仍不读取 CLI 自己的任何文件。
+
+`LATCH_GATEWAY_EVIDENCE_DIR` 与 `LATCH_AGY_EVIDENCE_DIR` 收每一轮去掉正文的结果。
+
+### iOS 模拟器用例
+
+| 开关 | 用例 | 作用 |
+| --- | --- | --- |
+| 无 | `e2e/ios-app.e2e.ts` | 用临时 DerivedData 构建真实 App，禁用签名，不启动；核对 `Latch.app` 不含 Live 标记与软件密钥符号 |
+| `LATCH_IOS_SCREENS=1` | `e2e/ios-screens.e2e.ts` | 构建 `LatchScreens`，在自己新建的模拟器上按 `-LatchScene` 截固定样本场景的浅深色，不连 Host |
+| `LATCH_IOS_LIVE=1` | `e2e/ios-live.e2e.ts` | `LatchScreens` 的 Live 模式连接 `startTestHost` 的临时 Host，供人在模拟器里实走 |
+| `LATCH_IOS_CLIPBOARD_TEST_DEVICE=<UDID>` | `e2e/ios-clipboard.e2e.ts` | 默认只用随机命名的独立 pasteboard；设置后在自有模拟器上验证公开标记的往返与清空 |
+| `LATCH_IOS_STAGE_PROBE=<前缀>` | `e2e/ios-pairing-stage.e2e.ts` | 只读的公开阶段探针，不操作模拟器、剪贴板或产品状态 |
+
+`ios-screens` 与 `ios-live` 需要已安装的 iOS 模拟器运行时。`ios-screens` 的选项：`LATCH_IOS_SCENES`（逗号分隔的场景前缀）、`LATCH_IOS_SCREENS_DIR`、`LATCH_IOS_SCREENS_DEVICE=<udid>`（只在这台已有模拟器上截）、`LATCH_IOS_SCREENS_KEEP_RUNNING=1`（仅与前者一起，截图后留下夹具 App）。
+
+`ios-live` 的选项：
+
+| 变量 | 作用 |
+| --- | --- |
+| `LATCH_IOS_LIVE_HOLD=<文件>`、`LATCH_IOS_LIVE_HOLD_MINUTES` | 保持运行直到该文件出现或到期（默认 120 分钟） |
+| `LATCH_IOS_LIVE_PAIR_SECONDS` | 等人在该时限内配对并断言成功 |
+| `LATCH_IOS_LIVE_HOSTS=2` | 同一私网地址上再起一台测试 Host |
+| `LATCH_IOS_LIVE_KEEP=1`、`LATCH_IOS_LIVE_DEVICE=<udid>` | 创建并留下可复用的模拟器 `latch-hands-on`（UDID 写入输出目录的 `device.txt`）；在已有模拟器上运行 |
+| `LATCH_IOS_LIVE_DIR` | 输出目录，默认 `test-results/ios-live/` |
+| `LATCH_IOS_LIVE_HISTORY`、`_AGENTS`、`_ATTACH`、`_ACTIVITY`、`_COMPUTER`、`_METRICS`（各 `=1`）、`LATCH_IOS_SLASH=1` | 另加对应的夹具数据：可接入的历史、我的 Agent 与定时、收附件的假 Agent、人工任务、错过的定时、正文流的流量采样、命令与模板 |
+| `LATCH_IOS_LIVE_GUI_CLIPBOARD=1` | 受控的共享剪贴板验收，见下 |
+
+保持运行时用控制文件驱动：`<文件>.pair`（`.pair2`）换新连接码，`.wait<n>`、`.revoke<n>`、`.stop<n>` 操作第 n 台 Host，`.run`、`.fail` 运行人工任务，`.received`、`.metrics` 写出只含元数据的采样；状态与原因写在 `<文件>.info`。
+
+规则：
+
+- **模拟器。** 只关闭与删除本次创建的设备，不按名称清理历史设备。对 `DEVICE` 指定的已有设备不关闭、抹掉或删除，只安装、启动与停止 App 并清空剪贴板；`ios-screens` 结束时恢复它原来的浅深色。
+- **连接码。** 只经 `devicectl device pasteboard copy` 的标准输入进模拟器剪贴板，不进参数、环境、文件与日志；码被用掉后、换码前与结束时清空。
+- **剪贴板同步。** Simulator 或 DeviceHub 打开时会把模拟器剪贴板同步到本机与通用剪贴板，所以默认无界面运行模拟器，开始时与每次写码前都检查这两个程序：打开时不写码，并在 `.info` 写明原因。
+- **GUI 剪贴板验收。** 只在 `LATCH_IOS_LIVE_GUI_CLIPBOARD=1`、有 `HOLD`、且设备是本轮新建或 `DEVICE` 明确指定时进行。先在内存保存 Mac 剪贴板（读不全即拒绝，不替换原内容），用公开随机文本做双向同步的正控（各 5 秒内）与关闭共享后的负控（各 10 秒），没有成功的正控不接受负控；通过后才发一次码。两个 GUI 都退出且剪贴板仍属本次测试时才恢复原内容；人后来复制的内容保留。中断或等待不算通过，这也不是永久隔离保证。
+- **网络。** Host 的原生监听绑定默认路由接口的私网地址，只在这次运行期间存在、局域网可达，连接仍需连接码。测试 Host 不发布 Bonjour，配对码的局域网提示 2 分钟后失效。
+
+Live 模式只在 `LatchScreens`（仅模拟器）中编译，用进程内存里的软件密钥代替 Secure Enclave；TLS、敲门 HMAC、根证明、正文窗口与 requestId 与产品相同。`pnpm check:boundaries` 核对这些代码不进 `Latch` 目标。
+
+### 性能测量
+
+默认跳过。读数只用于同一台机器、安静窗口里的前后对比，不作跨机器阈值；没有开启断言的基线通过不代表预算达标。
+
+| 开关 | 用例 | 选项 |
+| --- | --- | --- |
+| `VITE_LATCH_UI_PERF=1` | `packages/ui/test/v9-performance.test.tsx` | `VITE_LATCH_UI_PERF_ENFORCE=1` 时超过每帧 8ms 的脚本预算即失败；只量脚本，不量合成 |
+| `LATCH_STREAM_BENCH=1` | `e2e/stream-performance.e2e.ts` | `LATCH_STREAM_LABEL`（结果名）、`LATCH_STREAM_TRANSPORT=full`（去掉增量协商作对照）、`LATCH_STREAM_PROFILE=1`、`LATCH_STREAM_QUIET=1`、`LATCH_STREAM_MOTION=1`、`LATCH_STREAM_ENFORCE_BUDGET=1`（每帧脚本不超过 8ms 且没有 50ms 长任务）；`LATCH_E2E_UI_DIR` 可对照旧构建 |
+| `LATCH_NATIVE_CADENCE=1` | `apps/host/test/native-swift.test.ts -t "large-history publication cadence"` | 不含 SwiftUI 渲染 |
+
+堆内存没有强制 GC，不能用来宣称泄漏。
 
 ## 测试辅助
 
-测试辅助在 `packages/testkit`（`@latch/testkit`，只供测试，见[构建产物检查](#构建产物检查)）。它不导入 Host：Host 夹具经参数拿到启动函数。Host 的绑定 `host.ts` 有三份，内容相同：`apps/host/test/helpers/host.ts` 供 Host 自己的用例（相对路径导入 `startServer`），`e2e/helpers/host.ts` 供 e2e、`apps/desktop/test/helpers/host.ts` 供桌面端壳的用例（都经 `@latch/host` 导入）；改其中一份时同步其他两份。浏览器 e2e 的辅助也在 `e2e/helpers/`：`browser.ts`（登记与连接）、`layout.ts`（控件可达、弹层在窗口内、横向溢出、打开设置）与 `visual.ts`（视觉截图与比较）。
+测试辅助在 `packages/testkit`（`@latch/testkit`，只供测试，见[构建产物检查](#构建产物检查)）。它不导入 Host：Host 夹具经参数拿到启动函数。
+
+`startTestHost` 的绑定 `host.ts` 有三份，除导入方式外相同，改一份时同步另两份：
+
+| 文件 | 使用者 | 导入 `startServer` |
+| --- | --- | --- |
+| `apps/host/test/helpers/host.ts` | Host 自己的用例 | 相对路径 |
+| `e2e/helpers/host.ts` | e2e | `@latch/host` |
+| `apps/desktop/test/helpers/host.ts` | 桌面端壳的用例 | `@latch/host` |
+
+浏览器 e2e 的辅助在 `e2e/helpers/`：`browser.ts`（登记与连接）、`layout.ts`（控件可达、弹层在窗口内、横向溢出、按 Host ID 打开会话）、`visual.ts`（截图与比较）、`security.ts`（注入样式后安全界面不变）。
+
+testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`、`FAKE_MCP_STDIO`（假进程的路径）、`startFakeModels`、`startFakeMcpHttp`、`startFakeOAuth`、`installFakeGh`（不连 GitHub）、`writeFakeHistory`、`documentFixtures`。
 
 ### `startTestHost()`
 
-`helpers/host.ts`（三份见上）把 testkit 的 `startHostFixture(start, options)`（`packages/testkit/src/host.ts`）绑定到本 Host 的 `startServer`，在进程内启动一个 Host：
+把 testkit 的 `startHostFixture(start, options)`（`packages/testkit/src/host.ts`）绑定到本 Host 的 `startServer`，在进程内启动一个 Host。
 
-- 数据目录、工作区、运行目录的父目录与 TLS 材料都放在一个新的临时目录中（前缀短，`host.sock` 路径不超过 macOS 的 104 字节上限）；`close()` 关闭 Host 并删除整个目录。
-- 默认 `port: 0`、`demo: true`、`uiDir: dist/web`、`rateLimits: 'relaxed'`，以及测试确认后端（`presenceMode: 'approve'`）。其他 `ServerOptions` 原样传给 `startServer`。这些 Host 选项与默认值写在绑定中；夹具只准备临时目录、测试确认后端与 TLS 材料（`HostFixtureSetup`），再调用 `start`，并提供下面的客户端。
-- 三种入口：`'unix'` 经 `host.sock`，凭据放在 `Authorization: Latch-Device …`；`'loopback-tcp'` 访问 `h-<hostId>.localhost`（测试中解析到 127.0.0.1），凭据是 Cookie `latch_<hostId8>`；`'tls'` 需要 `tls` 选项，Cookie 为 `__Host-latch_<hostId8>`。`raw(listener, path, init)` 发送 `/link/` 下的原始请求，不跟随重定向。
-- `enroll({ listener, name, scopes, invitation, offlineCode })` 走完整登记：生成 P-256 设备密钥、创建登记、由测试确认后端批准、签名完成，返回 `TestDevice`。`host.sock` 以外的入口没有给出邀请或离线码时，自动为该入口创建邀请（邀请不带 `approve:elevated` 与 `secrets`），因为只有 `host.sock` 能不经邀请登记。`invite(scopes, listener)` 经 `host.sock` 创建邀请：默认为 TLS 入口，`'loopback-tcp'` 为回环入口。
-- `TestDevice` 提供 `request()`、`json()`（非 2xx 抛出带状态码与响应体的 `HttpFailure`）、`confirmed()`（收到 403 `stepup-required` 时经测试确认后端批准，再带 `x-latch-confirmation` 重发）、`renew()`（质询、签名、换用新凭据）与 `addFolders()`（像桌面端主进程那样取得 nonce、用设备密钥签名请求体，添加项目或加入文件夹；`signedBody`、`nonce` 用来构造被拒绝的请求）。
-- `tls: true` 用 `makeTestTls` 生成证书，监听 127.0.0.1 上的空闲端口，公开地址为 `https://latch-test.localhost:<port>`，并允许本机对端；也可以传入完整的 `TlsListenerOptions`。
+- 数据目录、工作区、运行目录的父目录与 TLS 材料都在一个新的临时目录中（前缀短，`host.sock` 路径不超过 macOS 的 104 字节上限）；`close()` 关闭 Host 并删除整个目录。
+- 默认 `port: 0`、`demo: true`、`uiDir: dist/web`、`rateLimits: 'relaxed'` 与测试确认后端（`presenceMode: 'approve'`）；其他 `ServerOptions` 原样传给 `startServer`。
+- 不传 `commandDirectories` 的测试 Host 按名字找不到任何命令；需要假 CLI 的用例用 `loginPrograms` 与 `commandDirectories` 只指向临时目录。
+- 三种入口：
+
+  | 入口 | 地址 | 凭据 |
+  | --- | --- | --- |
+  | `'unix'` | `host.sock` | `Authorization: Latch-Device …` |
+  | `'loopback-tcp'` | `h-<hostId>.localhost`（解析到 127.0.0.1） | Cookie `latch_<hostId8>` |
+  | `'tls'`（需要 `tls` 选项） | `https://latch-test.localhost:<port>` | Cookie `__Host-latch_<hostId8>` |
+
+- `enroll({ listener, name, scopes, invitation, offlineCode })` 走完整登记并返回 `TestDevice`。只有 `host.sock` 能不经邀请登记；其他入口没有给出邀请或离线码时，自动创建不带 `approve:elevated` 与 `secrets` 的邀请。
+- `invite(scopes, listener)` 经 `host.sock` 创建邀请；`raw(listener, path, init)` 发送 `/link/` 下的原始请求，不跟随重定向。
+- `TestDevice`：`request()`、`json()`（非 2xx 抛出）、`confirmed()`（收到 403 `stepup-required` 时经测试确认后端批准，再带 `x-latch-confirmation` 重发）、`renew()`、`addFolders()`（像桌面端主进程那样取 nonce 并签名请求体）。
+- `tls: true` 用 `makeTestTls` 生成证书并允许本机对端；也可传入完整的 `TlsListenerOptions`。
 
 ### `createTestPresence()`
 
-`packages/testkit/src/presence.ts`。测试用的本机确认后端，形状与 Host 的 `PresenceBackend` 相同（预览与结果的类型 `PresencePreview`、`PresenceOutcome` 在 `@latch/protocol`）：
+`packages/testkit/src/presence.ts`。测试确认后端，形状与 Host 的 `PresenceBackend` 相同。
 
-- 模式 `approve`（立即批准，回显 nonce 与 previewHash）、`deny`、`unavailable`、`manual`（请求排队，由 `approveNext()`、`denyNext()`、`timeoutNext()` 依次结算）；`method` 为 `biometric` 或 `password`。模式可以在用例中途修改。
-- `requests` 记录每次收到的预览、previewHash 与是否要求生物识别；`waitForRequest(timeoutMs)` 按到达顺序返回下一条尚未取走的请求。
-- 只能通过 `startServer({ presence })` 或 `new PresenceService({ backend })` 注入，类型检查在注入处核对它与 `PresenceBackend` 一致。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 `@latch/testkit`，生产代码选不到它（见「构建产物检查」）。
+- 模式 `approve`、`deny`、`unavailable`、`manual`（请求排队，由 `approveNext()`、`denyNext()`、`timeoutNext()` 依次结算），可在用例中途修改。
+- `requests` 记录每次收到的预览与 previewHash；`waitForRequest(timeoutMs)` 按到达顺序返回下一条尚未取走的请求。
+- 只能通过 `startServer({ presence })` 或 `new PresenceService({ backend })` 注入；生产代码选不到它。
 
 ### `makeTestTls()`
 
-`packages/testkit/src/tls.ts`。用 `/usr/bin/openssl` 为 `latch-test.localhost` 生成自签名 P-256 证书（自身即 CA，命名曲线编码，私钥 0600），返回 `certPath`、`keyPath` 与 `ca`。Node 端请求用 `ca` 信任它；浏览器上下文设 `ignoreHTTPSErrors: true`。Chrome 不接受显式写出 EC 参数的证书，自行生成证书时也要加 `-pkeyopt ec_param_enc:named_curve`。
+`packages/testkit/src/tls.ts`。用 `/usr/bin/openssl` 为 `latch-test.localhost` 生成自签名 P-256 证书（自身即 CA，私钥 0600）。Node 端用返回的 `ca` 信任它，浏览器上下文设 `ignoreHTTPSErrors: true`。Chrome 不接受显式写出 EC 参数的证书，自行生成时也要加 `-pkeyopt ec_param_enc:named_curve`。
 
 ### `enrollBrowser()`
 
-`e2e/helpers/browser.ts`。`enrollBrowser(page, testHost, { name, scopes, url })`（页面不问名称，`name` 经 `nameNextEnrollment` 写进登记请求）通过真实的连接页面在回环地址上登记 `page` 所在的浏览器，并等待工作区连接（`connected(page)`，即 `.app-shell[data-connection="connected"]`）。回环登记需要邀请，所以它先经 `host.sock` 创建回环邀请，再打开带 `#pair=` 的地址（或 `url`）。连接页请求邀请允许的权限，所以 `scopes` 只决定邀请是否包含「管理此 Host」，不给时在还没有设备能管理 Host 时包含；`manual` 模式下由它批准本机确认。`browserLaunchOptions()` 返回无头启动参数，设置了 `LATCH_BROWSER_PATH` 时使用该路径的 Chrome。
+`e2e/helpers/browser.ts`。`enrollBrowser(page, testHost, { name, scopes, url })` 经真实的连接页在回环地址上登记 `page` 所在的浏览器，并等待工作区连接（`connected(page)`）。
+
+- 回环登记需要邀请，所以它先经 `host.sock` 创建回环邀请，再打开带 `#pair=` 的地址。
+- 连接页请求邀请允许的权限，`scopes` 只决定邀请是否包含「管理此 Host」。
+- `manual` 模式下由它批准本机确认。
+- `browserLaunchOptions()` 返回无头启动参数，并遵守 `LATCH_BROWSER_PATH`。
 
 ### 共享向量
 
-`packages/testkit/vectors/security-v1.json` 由 Host、浏览器、桌面端主进程与 macOS 确认组件的 `--self-test` 共同校验；修改共享编码的要求见根 `AGENTS.md`。
+`packages/testkit/vectors/` 的向量由多个实现共同校验，改编码时同时改向量与每个实现：
+
+| 文件 | 校验者 |
+| --- | --- |
+| `security-v1.json` | Host、浏览器、桌面端主进程与 macOS 确认组件的 `--self-test`（要求见根 `AGENTS.md`「共享安全编码」） |
+| `link-v1.json` | `@latch/link-wire`、`@latch/link-client`、`@latch/relay` |
+| `task-delta-v1.json`、`slash-match-v1.json` | TypeScript 与 Swift 核心（`native-swift.test.ts`） |
+| `shell-unwrap-v1.json` | 命令外壳还原 |
 
 ### 文件内的约定
 
-- 每个文件用 `cleanups` 数组配合 `afterEach` 逆序清理；临时目录用 `mkdtemp(join(tmpdir(), …))`；轮询用 `vi.waitFor`、`expect.poll` 或文件内的 `waitFor`。
-- Vitest 在每个用例开始前清空所有 mock 的调用记录（默认的 `clearMocks`），所以 `vi.fn` 与 `vi.spyOn` 在用例内或由用例调用的辅助函数中创建，调用次数只在本用例内断言。清空不会撤销替换：`vi.stubGlobal` 与 `vi.spyOn` 仍在 `afterEach` 或 `finally` 中恢复。
-- `resolves`、`rejects` 与 `expect.poll` 断言必须在用例结束前 `await`，否则用例失败。`resolves` 与 `rejects` 可以先保存返回的 promise，稍后再 await；`expect.poll` 在 await 时才开始轮询，不 await 就不会执行。
-- 模型服务用本地 HTTP 服务模拟：`server.test.ts` 的 `localModel()` 返回 `baseURL` 与对应的出站白名单项 `allow`；`providers.test.ts` 有 SSE 构造器与脚本化的 `FetchLike`。除回环地址外不访问网络。
-- 配置、清单与文档链接直接阅读或用 `rg` 检查，不为它们的字面内容写测试。
+- 每个文件用 `cleanups` 数组配合 `afterEach` 逆序清理；临时目录用 `mkdtemp(join(tmpdir(), …))`；轮询用 `vi.waitFor` 或 `expect.poll`。
+- Vitest 在每个用例开始前清空 mock 的调用记录，所以 `vi.fn` 与 `vi.spyOn` 在用例内创建。清空不会撤销替换：`vi.stubGlobal` 与 `vi.spyOn` 仍在 `afterEach` 或 `finally` 中恢复。
+- `resolves`、`rejects` 与 `expect.poll` 断言必须在用例结束前 `await`；`expect.poll` 不 await 就不会执行。
+- 模型服务用本地 HTTP 服务或脚本化的 `FetchLike` 模拟，除回环地址外不访问网络。
+- 时间用注入的时钟（见下节与 `apps/host/test/helpers/manual-clock.ts`），不等真实的退避、时限或定时。
 
 ## 测试接缝
 
 | 接缝 | 位置 | 用途 |
 | --- | --- | --- |
-| `now` | `ServerOptions`；`DeviceStore.open`、`EnrollmentService`、`PresenceService`、`createOfflineTicket`、`AuditLog.open` 与桌面端的 `createShellProxy` 也各自接受 | 替换凭据、登记与确认使用的时钟，测试续期、过期、宽限期与确认超时。e2e 用 `now: () => Date.now() + offset` 把 Host 时钟拨快 25 小时，浏览器与桌面端壳保持真实时钟 |
-| `clock` | `ServerOptions`；`createRuntime(options)` 与 `HarnessHostOptions` 由它传入 | 消息与运行记录的时间（`createdAt`、用时、审批等待、思考用时）以及发给客户端的 `hostTime`。与 `now` 分开，凭据与确认不受影响；`visual.e2e.ts` 用一个由脚本推进的时钟，让截图里的时间与用时每次相同 |
-| `rateLimits` | `ServerOptions` | `'relaxed'` 把所有限流桶放大 100 倍，是 `startTestHost` 的默认值；限流用例显式传 `'default'`。生产从不设置 |
-| `allowLocalPeers` | `TlsListenerOptions`（`apps/host/src/listeners.ts`） | HTTPS 入口默认拒绝来自本机地址的连接；只有测试打开它，才能从 127.0.0.1 访问 TLS 入口 |
-| `egressAllow`、`egressLookup` | `ServerOptions` | `egressAllow` 是进程级附加的出站白名单（`host:port`），不写入 `policy.json`，它的源（任何路径）在本次运行中也算已确认的模型服务地址：测试用它放行本地假模型服务 `127.0.0.1:<port>`，`apps/host/scripts/start.ts` 用它放行 `LATCH_BASE_URL` 的地址。要测试地址确认本身，就不传它。`egressLookup` 替换 DNS 解析。单独测试出站时直接用 `createEgressFetch({ allow, lookup, localAddresses })` |
-| Provider 的 `fetch` | `providerPlugin(record, { fetch })`、`listProviderModels`、`checkProvider` | 注入脚本化的 `FetchLike`，确认内置协议只经注入的 fetch 发请求、不跟随重定向 |
+| `now` | `ServerOptions`；`DeviceStore.open`、`EnrollmentService`、`PresenceService`、`AuditLog.open` 与桌面端的 `createShellProxy` 也各自接受 | 凭据、登记与确认的时钟：续期、过期、宽限期与确认超时 |
+| `clock` | `ServerOptions`，传给运行时与 Harness | 消息与运行记录的时间，以及发给客户端的 `hostTime`；与 `now` 分开，凭据与确认不受影响 |
+| `rateLimits` | `ServerOptions` | `'relaxed'` 把限流桶放大 100 倍，是 `startTestHost` 的默认值；限流用例显式传 `'default'`。生产从不设置 |
+| `allowLocalPeers` | `TlsListenerOptions` | HTTPS 入口默认拒绝本机地址的连接；只有测试打开它 |
+| `egressAllow`、`egressLookup` | `ServerOptions` | 进程级附加的出站白名单（不写入 `policy.json`，它的源也算已确认的模型服务地址）与 DNS 解析。要测试地址确认本身就不传 `egressAllow` |
+| Provider 的 `fetch` | `providerPlugin(record, { fetch })`、`listProviderModels`、`checkProvider` | 确认内置协议只经注入的 fetch 出站、不跟随重定向 |
 | `presence` | `ServerOptions` | 注入测试确认后端 |
-| `runtimeParent`、`codeRoot` | `ServerOptions` | 运行目录的父目录与 Latch 程序目录；`startTestHost` 把运行目录放在自己的临时目录下 |
-| `fs` | `DeviceStore.open`、`AuditLog.open` | 注入写入失败与短写，测试撤销与审计的持久性 |
-| `classifyToolCall` | `createRuntime(options)`（`packages/core/src/runtime.ts`） | Host 的风险分级器。测试传入返回固定级别的函数；抛错或返回未知值按 R2。不传时沿用旧规则（`requiresApproval` 为 R1，否则 R0），只出现在直接构造运行时的测试中 |
-| ACP 选项 | `createAcpAgentPlugin(definition, options)` | `acp.test.ts` 缩短取消、停止、重启与请求超时（`FAST`），并收集写入 Host 日志的诊断 |
+| `runtimeParent`、`codeRoot` | `ServerOptions` | 运行目录的父目录与 Latch 程序目录 |
+| `hostName` | `ServerOptions` | 固定截图里的电脑名称 |
+| `fs` | `DeviceStore.open`、`AuditLog.open` | 注入写入失败与短写 |
+| `classifyToolCall` | `createRuntime(options)` | 风险分级器；抛错或返回未知值按 R2。不传时按 `requiresApproval` 分 R1/R0，只出现在直接构造运行时的测试中 |
+| ACP 选项 | `createAcpAgentPlugin(definition, options)` | 缩短取消、停止、重启与请求超时（`acp.test.ts` 的 `FAST`） |
 
 ### 假 ACP Agent
 
-Codex 停止回归在 `packages/harness-acp/test/codex.test.ts`：允许但没有输出的命令、子 Agent 命令、`failed` 与 `interrupted` 的结束、后台终端未结束、进程列表失败、无关 PID 和退出的进程组长都不能让停止提前确认；只对夹具启动的进程做清理。`apps/host/test/acp-stop-starting.test.ts` 经真实 Host 路由检查恢复中的新 `runId`、开始期间停止、重启后的同一取消回执和同一提示 `requestId`，不会重发提示。`acp.test.ts` 还检查重启时已批准但仍标记排队的工具保留结果未知。
+`packages/testkit/fixtures/` 下的假进程都是确定性的手写替身，按各程序的公开协议与源码写成，不是录制，也不调用模型：
 
-`packages/testkit/fixtures/fake-acp-agent.mjs` 是确定性的 ACP v1 Agent，不调用模型，只有 `model` 一轮访问客户端指给它的模型服务；`FAKE_ACP_GATEWAY=opencode|dsh|qwen|goose|grok` 让它按对应程序的方式读网关配置（Qwen Code 的系统设置文件与 `envKey`，`FAKE_QWEN_USER_SETTINGS` 代表这个人自己的设置；goose 的环境变量；Grok Build 家目录里的 `config.toml`），都是照源码与文档读出来写的，不是录制，没有登录的假 Agent 被指向一个服务后照常回答；`packages/harness-acp/test/qwen-gateway.test.ts` 与 `goose-grok-gateway.test.ts` 检查三个 profile 写出的变量与文件。`apps/host/test/gateway-no-login.live.test.ts`（按 `LATCH_NO_LOGIN_<ID>=<程序路径>` 逐个打开）让真实 CLI 在空的临时 HOME 下、不带登录，经临时 Host 对本地假服务跑一轮，`LATCH_GATEWAY_EVIDENCE_DIR` 收每一轮的结果；`e2e/gateway-no-login.e2e.ts` 用没有登录的假 Agent 检查模型菜单的两组、选了服务模型后登录提示消失并直接运行；testkit 以 `FAKE_ACP_AGENT` 导出它的路径，用 `process.execPath` 运行。`acp.test.ts` 的 `setup()` 用临时目录启动它，并把预览的 `launchHash` 作为 `expectedLaunchHash` 传给 `createTask`，代替 Host 的本机确认；`preset(presetId)` 把预设的权限配置套用到假 Agent 上（不算已验证的预设）；`open(workspaces, projects)` 给 Bridge 传入 Host 列出的目录与项目；`hostEnv()` 只在一个用例内设置 Host 的环境变量。`fixtures/fake-codex-app-server.mjs`（`FAKE_CODEX_APP_SERVER`）说 Codex 的 app-server：按 Codex 0.167 的形状回答握手、`account/read`、`model/list`、thread 与 turn，按输入的第一个词回复、运行命令或改文件（先请求审批，`never` 策略除外）、报告计划、一直运行到被中断或失败，thread 存在 `FAKE_CODEX_STATE`（或假 ACP Agent 状态旁），`--version` 打印 `codex-cli` 版本；假 ACP Agent 以 `app-server` 启动时也是它，所以名为 `codex` 的假程序直连时说 app-server，`codex login` 照旧；它还能请求联网、更多权限、MCP 询问与它没有名字的请求，让子 Agent 的 thread 运行命令并请求审批，在 `agent` 模式下由审阅模型放行或拦下，中途退出，延迟或永不结束被中断的一轮（`FAKE_CODEX_INTERRUPT_MS`、`FAKE_CODEX_INTERRUPT_NEVER`），以及恢复时给出别的拒绝（`FAKE_CODEX_RESUME_ERROR`）；`FAKE_CODEX_MCP`（`McpServerStatus` 的 JSON 数组）是它自己的 MCP 服务器：`mcpServerStatus/list` 按 `limit` 翻页（`FAKE_CODEX_MCP_LIMIT` 把每页改小，`FAKE_CODEX_MCP_PAGE_MS` 让每页晚这么多毫秒回答）并列出线程配置里 Latch 的服务器，thread 开始或恢复后逐个报告 `mcpServer/startupStatus/updated`；`packages/harness-acp/test/codex.test.ts` 用它覆盖直连的流式、审批与卡片说明、四档模式（含可写根、不联网与恢复时发出的设置）、Codex 自己的 MCP（会话里不启动、排除 Latch 的服务器、跟随启动报告，「读取」不开 thread）、停止只在这一轮结束后确认、永不结束时强制结束、停止后的审批、追加、中途退出、不交给人的请求、子 Agent、模型审阅与拦下、恢复错误、未登录、接入已有会话，以及低于 0.156.0 时拒绝、只有没装 Codex 时才用 codex-acp。`fixtures/fake-pi-agent.mjs`（`FAKE_PI_AGENT`）同样确定，说 pi 的 RPC：按输入里的词运行短命令、慢命令、一直运行到停止的命令、模型服务失败或扩展确认，运行中收到的追加各自回复，`FAKE_PI_TOO_OLD=1` 时像 0.84.4 之前的 pi 不认识 `clear_queue`，`FAKE_PI_SHAPE=1.5` 时像 pi 1.5 先发 `queue_update`、`new_session` 晚于其后的命令回答；它像 pi 一样把会话记成带 ID、父条目与时间的条目树，设了 `FAKE_PI_SESSIONS` 时写成会话文件，所以另一个进程能 `switch_session`、`get_entries`、`fork` 与 `clone`，`recall` 回答分支上之前的用户消息，第一条消息含 `no-fork` 的会话由扩展取消分叉；`e2e/pi.e2e.ts` 用它经真实 Host 与页面走完找到、读列表、发送、停止、追加、失败、重新加载，从某一轮用 pi 自己的记录分叉并重试分叉的第一轮（只重发人写的话），以及会话与测试启动拒绝过旧的 pi。
-
-进程级行为由环境变量决定：
-
-| 变量 | 作用 |
+| 文件（testkit 导出的路径） | 扮演 |
 | --- | --- |
-| `FAKE_ACP_STATE` | 会话状态文件。多个进程（每会话一个）共享它，每次保存都合并磁盘上的内容 |
-| `FAKE_ACP_LOGIN_FILE` | 像真实 CLI：`login status` 按这个文件回答并退出，`login` 写它；文件不存在，或启动时不存在时（进程只读一次登录），`session/new` 与提示都返回 `auth_required` |
-| `FAKE_ACP_TERMINAL_LOGIN` | 客户端声明 `auth.terminal` 时列出一个 `terminal` 登录（参数 `login`，变量 `FAKE_ACP_LOGIN_VIA`），运行它就写 `FAKE_ACP_LOGIN_FILE`；`bad` 另列一个点名 `NODE_OPTIONS` 的 |
-| `FAKE_ACP_AUTH_STATUS`、`FAKE_ACP_AUTH_STATUS_DELAY` | 在 `initialize` 的回答之后（延迟若干毫秒）与退出登录之后推送 `_auth/status_update`：`1` 按登录文件报 `account`（带客户端不该留下的 email 与组织）或 `none`，`api_key` 报这一类，`silent` 只宣告不推送 |
-| `FAKE_ACP_LOGOUT` | 宣告并处理 ACP `logout`：删掉登录文件 |
-| `FAKE_ACP_LOG` | 逐行 JSON 日志：收到的消息、启动时的 cwd、定义之后的启动参数（`argv`）、收到的 `LATCH_*` 变量名（`latchEnv`，应为空）与 `TMPDIR` |
-| `FAKE_ACP_STORE` | Latch 的 `acp.json`，用来检查收到提示时会话是否已持久化 |
-| `FAKE_ACP_CAPS`、`FAKE_ACP_CAPS_FILE` | `resume`、`load`、`delete`、`close`、`dirs`（`sessionCapabilities.additionalDirectories`）的逗号列表；设置了 `FAKE_ACP_CAPS_FILE` 时每个进程启动时从这个文件读取，同一定义之后的进程因此可以改变声明 |
-| `FAKE_ACP_CONFIG` | `legacy`（旧式 models 与 modes）或 `options`（configOptions） |
-| `FAKE_ACP_MODES`、`FAKE_ACP_INITIAL_MODE` | 模式列表与初始模式 |
-| `FAKE_ACP_MODELS`、`FAKE_ACP_MODELS_FILE` | `options` 下提供的模型（逗号分隔，默认 `small,large`）；文件每个会话读一次，用来让后来的会话不再提供某个模型 |
-| `FAKE_ACP_START_MODEL` | 新会话的模型，列表里有没有都用它，像自己记着所选模型的 Agent；不设时取系统设置里的 `model.name`，再不然取列表第一个 |
-| `FAKE_ACP_EFFORT_BY_MODEL` | `1`：`large` 模型多一档 `max` 思考，像思考档位随模型变的 Agent |
-| `FAKE_ACP_EFFORT_ID` | 思考选项的 ID，默认 `effort`；codex-acp 叫 `reasoning_effort` |
-| `FAKE_ACP_EFFORT_DESCRIPTIONS=1` | 每档思考带一句英文说明，像 DeepSeek Harness 与 Codex 发来的那样 |
-| `FAKE_ACP_STRICT_MODELS=1` | 拒绝设置不在列表里的模型，像不接受自己填写的模型 ID 的 Agent |
-| `FAKE_CODEX_MODELS`、`FAKE_CODEX_MODEL`、`FAKE_CODEX_LIST_ERROR` | 以 `cli app-server` 启动时，假 Agent 像 codex-acp 那样回答 Codex 的 `initialize`、`config/read` 与 `model/list`（`fixtures/fake-codex-app-server.mjs`，每页两个）：模型列表（Codex 的 JSON 形状）、配置里的模型、让 `model/list` 失败 |
-| `FAKE_CODEX_RATE_LIMITS`、`FAKE_CODEX_RATE_LIMITS_UPDATE` | 假 app-server 的套餐额度：前者是 `account/rateLimits/read` 的回答（`GetAccountRateLimitsResponse`，不设时像没有这个方法的 Codex）；后者是每轮结束时推送的 `account/rateLimits/updated`（`RateLimitSnapshot`），或保存它的文件路径，每轮结束时读一次 |
-| `FAKE_ACP_BILLING` | Grok Build 的扩展请求 `_x.ai/billing` 的回答；不设时没有这个方法 |
-| `FAKE_ACP_STICKY_MODE=1` | 忽略修改模式的请求 |
-| `FAKE_ACP_RESUME_MODE`、`FAKE_ACP_RESUME_SILENT=1` | 恢复或加载后回到的模式；恢复时不报告状态 |
-| `FAKE_ACP_SELF_MODE` | 处理修改模式的请求时自行切换到的模式 |
-| `FAKE_ACP_MODE_REPORT` | 模式报告的形状：`full`、`uncategorized`、`unlisted`、`none` |
-| `FAKE_ACP_VERSION` | `agentInfo.version`；`none` 表示省略 |
-| `FAKE_ACP_CLI_VERSION` | 以 `--version` 启动时像 CLI 那样输出 `fake-cli <版本>` 后退出；`fail` 什么也不输出、以 1 退出 |
-| `FAKE_ACP_MCP=dsh` | 像 DeepSeek Harness 那样接收 `mcpServers`：只收命令为绝对路径的 stdio 服务；会话建立前先让一个临时副本回答 `server/discover`，再启动、`initialize`（2025 版握手）并 `tools/list`，任何一步失败就拒绝建立会话；日志记 `mcp-mounted` 与 `mcp-refused` |
-| `mcp <服务器> <工具> [JSON]`、`mcp-list <服务器>`（提示） | 在 `FAKE_ACP_MCP=dsh` 下调用会话里一个 Latch MCP 服务器（经 `latch-mcp`）的工具并报告为工具行，或说出它列出的工具；假 MCP 服务器是 `fixtures/fake-mcp-stdio.mjs`（`FAKE_MCP_STDIO`，`FAKE_MCP_MODE` 与 `FAKE_MCP_LOG` 见 [MCP.md](MCP.md#测试替身)），远程地址的是只听回环的 `startFakeMcpHttp`（`src/fake-mcp-http.ts`；Host 的客户端、确认绑定、桥的远程模式与内置 Harness 的 R2 见 `apps/host/test/mcp-remote.test.ts`）；它的登录用假授权服务器 `startFakeOAuth`（`src/fake-oauth.ts`）与 `protect` 选项（发现、确认、PKCE、`iss`、回调的各种拒绝、续期、撤销与令牌不外泄的扫描见 `apps/host/test/mcp-oauth.test.ts`，设置页的五种状态见 `e2e/mcp-oauth.e2e.ts`，截图在 `test-results/mcp-oauth/`） |
-| `FAKE_ACP_DUMP_ENV=1` | 把完整环境写入日志，检查环境白名单 |
-| `FAKE_ACP_PROVIDERS`、`FAKE_ACP_PROVIDER_ID`、`FAKE_ACP_PROVIDERS_SET` | `1`：像 codex-acp 那样宣告并处理 ACP `providers/*`：一个可设置的服务（ID 默认 `openai`，类型 `openai`）；`providers/set` 用给它的头读 `<baseUrl>/models`，之后只提供它认识而列表里也有的模型，日志只记头的名字；`fail` 拒绝设置 |
-| `FAKE_ACP_PROTOCOL`、`FAKE_ACP_AUTH`、`FAKE_ACP_INIT_ERROR`、`FAKE_SECRET` | 协议版本、需要登录（`new`、`prompt`）、初始化失败；`FAKE_SECRET` 出现在 stderr 与错误中，检查脱敏 |
-| `FAKE_ACP_SLOW_SETUP`、`FAKE_ACP_EXIT_DELAY`、`FAKE_ACP_IGNORE_TERM`、`FAKE_ACP_GRANDCHILD`、`FAKE_ACP_STARTUP_NOISE` | 慢的会话建立、延迟退出、忽略 SIGTERM、派生孙进程、启动时输出非 JSON |
+| `fake-acp-agent.mjs`（`FAKE_ACP_AGENT`） | ACP v1 Agent；以 `app-server` 启动时转为假 Codex |
+| `fake-codex-app-server.mjs`（`FAKE_CODEX_APP_SERVER`） | Codex 的 app-server |
+| `fake-pi-agent.mjs`（`FAKE_PI_AGENT`） | pi 的 RPC |
+| `fake-mcp-stdio.mjs`（`FAKE_MCP_STDIO`） | stdio 的 MCP 服务器，见 [MCP.md](MCP.md#测试替身) |
+| `fake-gh.mjs`（`installFakeGh`） | `gh` |
 
-每一轮的行为由提示的第一个词决定（其他输入按 `echo` 回显）：
+`fake-acp-agent.mjs` 的规则：
 
-| 关键词 | 场景 |
-| --- | --- |
-| `count <n>`、`ids`、`think`、`tool`、`diffs`、`plan`、`reuse`、`stray`、`big <n>`、`noise`、`flood` | 流式文本、消息 ID 切换、思考、工具与 diff、计划与用量、复用的工具 ID、轮次外的文本、超长输出、非 JSON 输出与 stderr 洪泛 |
-| `permission`、`parallel`、`withdraw`、`plan-ask` | 审批、同一会话的并发审批、Agent 撤回审批；先报告两步计划（一步进行中、一步待开始）再询问 |
-| `persistent-only`、`only-always`、`unknown-kind`、`unknown-only`、`amendment` | 只给出这一组选项询问一次，检查选项过滤与自动拒绝 |
-| `drift <mode>` | 询问的同时把自己切换到 `<mode>`，然后等待取消 |
-| `endturn`、`hang`、`crash` | 取消后以 `end_turn` 结束、永不结束、崩溃退出 |
-| `probe` | 调用 `fs/read_text_file`，检查 Latch 不提供客户端文件系统 |
-| `skills` | 调用会话第一个 MCP 服务的 `list_skills`，回复它返回的内容 |
-| `refuse` | 以 `refusal` 结束 |
-| `model [as:<模型>]` | 向客户端指给它的模型服务发一次请求并回复拿到的文字：`providers/set` 设过的走 Responses，`FAKE_ACP_GATEWAY` 指明启动路线时按那条路线的协议；都没有时不访问任何服务就回复，用来检查绕过的提示。流式回复读到最后一个事件（Responses 的 `response.completed`、Chat 的 `[DONE]`、Anthropic 的 `message_stop`）就不再读，服务还没关闭连接也一样 |
+- 写 `FAKE_ACP_STATE`（会话状态，多个进程共享、每次保存都合并磁盘内容）与 `FAKE_ACP_LOG`（逐行 JSON 日志）；此外只有 `shell-edit` 一轮在会话目录写两个文件、用例排进 `FAKE_ACP_EDIT_QUEUE` 的文件改动，以及扮演 Qwen Code 时夹具家目录里的设置。
+- 唯一的网络访问是 `model` 一轮：访问客户端指给它的模型服务。
+- 进程级行为由 `FAKE_ACP_*` 环境变量决定，每一轮的行为由提示的第一个词决定（其他输入回显）。变量与关键词在该文件中查找（`grep -o 'FAKE_[A-Z_]*'`）。
+- `FAKE_SECRET` 出现在 stderr 与错误中，`FAKE_ACP_DUMP_ENV=1` 把完整环境写入日志：分别用来检查脱敏与环境白名单。日志里的 `latchEnv`（收到的 `LATCH_*` 变量名）应为空。
+- `acp.test.ts` 的 `setup()` 把预览的 `launchHash` 作为 `expectedLaunchHash` 传入，代替 Host 的本机确认；`preset(presetId)` 套用预设的权限配置，不算已验证的预设。
+
+`startFakeModels()`（`packages/testkit/src/fake-models.ts`）在 127.0.0.1 上按脚本回答 Chat Completions、Responses 与 Anthropic Messages，并记下每个请求：只有带来的密钥与头的名字，不含头的值。
 
 ### 回放与录制
 
-`packages/testkit/fixtures/replay/<预设>/<场景>.ndjson` 是每个预设的 ACP 对话（同一 Agent 帧不同的另一个大版本放在 `<预设>/<大版本>.x/<场景>.ndjson`，例如 `opencode/2.x/`，头部的版本必须属于这个大版本）：第一行 `transcript_start` 写明预设、场景、`source`（`hand-written` 或 `recorded`）、所依据的 Agent 版本与源码位置（`basis`）和一个人要做的步骤（`steps`）；之后每行一帧：`expect_outbound`（Latch 应发的帧）、`emit_inbound`（Agent 发来的帧）或 `runtime_exit`（进程在这里结束；带 `code` 时是 Agent 自己以这个码退出）。帧写成 `{ kind, method, params | result | error }`，JSON-RPC 的 ID 由回放补上；pi 的对话头部写 `protocol: "pi-rpc"`，命令的 `type` 是 `method`、其余字段是 `params`，响应按它回答的命令补上 ID；`<any>` 匹配任何值或字符串中的任何一段，`<workspace>` 是会话目录。现有的都是 `hand-written`：按各 Agent 的公开协议和源码手写，不是从运行中的 Agent 抓到的。
+`packages/testkit/fixtures/replay/<预设>/<场景>.ndjson` 是每个预设的 ACP 对话；同一 Agent 帧不同的另一个大版本放在 `<预设>/<大版本>.x/`。
 
-`fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent：逐帧比对 Latch 发来的帧，发出其后 Agent 的帧，把进度、第一处不符、每个进程的启动参数和被指向的程序（`CODEX_PATH`、`HOME`）写进 `REPLAY_STATUS`；`runtime_exit` 之后的帧交给下一个进程。`packages/harness-acp/test/replay.test.ts` 对每个文件用真实的 ACP 驱动、映射与会话按 `steps` 走一遍（`playScenario`），检查回放走完、没有不符、没有悬空的审批、进程数与 `runtime_exit` 一致，再按场景名检查人看到的结果；`pi.test.ts` 另用临时写出的 pi 对话检查保存时拒绝的参数、拒绝早于 0.84.4 的 pi、只在请求时读列表、扩展的选择题、模型服务的失败与压缩失败、停止 `/compact` 与拒绝把它追加到运行中的一轮，以及用 pi 自己的记录分叉：在下一轮的第一条用户消息之前 `fork`、扩展取消、会话文件已不在、复制出的文件没有停在那一轮、第一轮在 pi 打开会话之前停止后下一轮不再分叉，和按时间切分支的 `forkPlan`；pi 的 `compact_command`、`compact_failed`、`compact_cancelled` 是 `/compact` 的成功、失败与扩展取消，`e2e/pi.e2e.ts` 在页面里走一遍 `/compact` 与运行中的拒绝；`replay.test.ts` 还把 Codex 的对话改出带密钥形状文字的提示、压缩失败与 `session/prompt` 错误，检查进入会话前已脱敏。按名字找命令只指向临时目录里的假程序（运行就留下标记），用例断言没有标记、适配器被指向的是这些假程序。新增场景要在测试的 `SCENARIOS` 里写明它的检查。场景的 `adopt` 步骤按「接入已有会话」列出、加载并接入 Agent 自己的一个会话，之后的步骤在这个会话上继续（`opencode/2.x/history_adopt.ndjson`：列表两页、加载前按目录再读一行、重放、关闭预览、`session/resume` 后的一轮）；只有带这个步骤的场景才有项目。
+- 第一行 `transcript_start` 写明预设、场景、`source`（`hand-written` 或 `recorded`）、所依据的 Agent 版本与源码位置（`basis`）和人要做的步骤（`steps`）。
+- 之后每行一帧：`expect_outbound`（Latch 应发的帧）、`emit_inbound`（Agent 发来的帧）或 `runtime_exit`（进程在这里结束）。JSON-RPC 的 ID 由回放补上。
+- `<any>` 匹配任何值或字符串中的任何一段，`<workspace>` 是会话目录；pi 的对话头部写 `protocol: "pi-rpc"`。
+- 现有的都是 `hand-written`，不是从运行中的 Agent 抓到的。
 
-`startFakeModels()`（`src/fake-models.ts`）在 127.0.0.1 上同时回答 Chat Completions（`/v1/chat/completions`）、Responses（`/v1/responses`）与 Anthropic Messages（`/v1/messages`），流式或不流式，按脚本给出思考、文本、一个工具调用（工具名可以是一个模式，取请求提供的第一个匹配的工具）或一个协议格式的错误（`answeredBy` 让回复说另一个模型回答了它：Responses 的 `model`；不写时是请求点名的模型。`lingerMs` 让流式回复在最后一个事件之后再保持连接这么久，像经过代理或保持连接时那样），并记下每个请求（不含头的值，只有带来的密钥 `key` 与头的名字）。第 n 个请求的工具调用 ID 带上 n，所以一轮可以连续调用工具；Anthropic 的思考签名是 `fake-signature-<n>`，Responses 在请求了 `reasoning.encrypted_content` 时给推理项 `fake-encrypted-<n>`，测试据此看出后来的请求带回了哪一次回复的推理（`server.test.ts` 的 `carries … reasoning back through one tool loop`）。`apps/host/test/providers.test.ts` 与 `provider-protocols.test.ts` 用 Host 自己的客户端读它，`model-gateway.test.ts` 用它检查网关转发的是服务的密钥，以及每轮记下的模型与令牌（回复的读法另见 `model-reply.test.ts`）。
+`fixtures/replay-agent.mjs`（`REPLAY_AGENT`）代替真实 Agent 逐帧比对，把进度与第一处不符写进 `REPLAY_STATUS`。`packages/harness-acp/test/replay.test.ts` 用真实的驱动按 `steps` 走每个文件；新增场景要在它的 `SCENARIOS` 里写明检查。按名字找命令只指向临时目录里的假程序。
 
-`startFakeModels` 的 `search.input` 只产生 Responses 的客户端 `tool_search_call`，目录必须由真实客户端返回；`tool.namespace` 保留后续函数调用的命名空间，不由夹具猜工具目录。`fake-models.test.ts` 核对流式与非流式的调用 ID 和完成事件，真实 CLI 接线另用上述 opt-in 验证。
+`pnpm harness:record -- --harness <预设> --scenario <场景>` 录制已安装的真实 Agent，只由这台电脑的所有者手动运行，只支持 macOS：
 
-`pnpm harness:record -- --harness <预设> --scenario <场景>` 由这台电脑的所有者手动运行，录制已安装的真实 Agent（`src/record.ts`、`fixtures/record-tee.mjs`、`packages/harness-acp/test/record-harness.ts`）：真实驱动按场景操作，Agent 经 `record-tee.mjs` 在 `sandbox-exec` 中启动，网络只放行到假模型服务端口的连接（本机其他端口可能是通往外网的本地代理，一并挡住；本机套接字不挡），挡住真实家目录中的钥匙串文件和各 Agent 的登录目录，并拒绝钥匙串服务的查找（这一项没有对真实钥匙串验证过）；环境只留白名单和 `--env` 给的变量，`HOME` 与 `XDG_*` 是新的临时目录；每次启动前先确认沙箱挡住了一次对外连接和一次到本机另一个端口的连接，否则不启动 Agent；自己在本机另开端口通信的 Agent 因此无法这样录制。Agent 要经 `--env` 或 `--home-file` 配置成使用假模型服务（`{{MODEL_ORIGIN}}`），各家的配置方式还没有用真实 Agent 验证过。结果把工作区、家目录、数据与临时路径、UUID、时间与邮箱规范化，再经 `redactSecrets`，仍含本机家目录或用户名时不写出；写到临时目录，由人读过后移入 fixtures。只支持 macOS。`record.test.ts` 只用假 ACP Agent 运行它：检查 Agent 的环境、规范化、录下的文件能回放，以及沙箱挡住外连、本机其他端口和钥匙串文件，不挡时拒绝启动。测试从不运行真实 Agent。
+- Agent 在 `sandbox-exec` 中启动：网络只放行到假模型服务的端口，挡住钥匙串文件与各 Agent 的登录目录；`HOME` 与 `XDG_*` 是新的临时目录，环境只留白名单与 `--env` 给的变量。
+- 每次启动前先确认沙箱挡住了一次对外连接和一次到本机另一个端口的连接，否则不启动 Agent。
+- Agent 经 `--env` 或 `--home-file` 配置成使用假模型服务（`{{MODEL_ORIGIN}}`）。
+- 结果规范化路径、UUID、时间与邮箱并脱敏，仍含本机家目录或用户名时不写出；写到临时目录，由人读过后移入 fixtures。
+- 尚未验证：拒绝钥匙串服务查找这一项没有对真实钥匙串验证过；各家 Agent 指向假模型服务的配置方式没有用真实 Agent 验证过。
+- `record.test.ts` 只用假 ACP Agent 运行它；测试从不运行真实 Agent。
 
 ## 启动脚本的子进程用例
 
 `security.test.ts`、`cli.test.ts` 与 `desktop-host.test.ts`（都在 `apps/host/test/`）会真实启动 `apps/host/scripts/` 下的 `start.ts`、`stop.ts` 或 `latch.ts`。规则：
 
-- 每次都显式传临时 `--data-dir`，子进程的 `cwd` 也设为临时目录。数据目录按 `--data-dir`、`LATCH_DATA_DIR`、当前目录下旧的 `./.runtime`、平台默认目录的顺序解析，在仓库根目录运行可能落到 `.runtime/` 或用户的默认数据目录。
-- 子进程环境去掉开发者终端里的 `LATCH_*` 变量（`security.test.ts` 的 `childEnv()`、`desktop-host.test.ts` 的 `cleanEnvironment()`），模型密钥、数据目录与端口不会传进去。
+- 每次都显式传临时 `--data-dir`，子进程的 `cwd` 也设为临时目录：省略时数据目录可能落到仓库的 `.runtime/` 或用户的默认数据目录。
+- 子进程环境去掉开发者终端里的 `LATCH_*` 变量（`childEnv()`、`cleanEnvironment()`）。
 - Host 用 `--port 0`；HTTPS 用临时选出的空闲端口，从不使用 4317。
-- 预先写入 `policy.json`，把本机确认关掉：`{ ...defaultPolicy(platform), presence: { backend: 'none', helperCdhash: null } }`。这样 `start.ts` 在 macOS 上不会构建或调用真实确认组件，`presence test` 也不会弹出窗口。
-- 需要 Host 的进程号等于子进程号（锁记录、`pnpm stop` 的核对）时，用 `process.execPath --import <tsx 的 loader.mjs> apps/host/scripts/start.ts` 启动，不经 `tsx` 包装进程；一次性命令用 `node_modules/.bin/tsx`。
-- 只停止自己启动的进程：`apps/host/scripts/stop.ts --data-dir <同一临时目录>`，或向自己 spawn 的子进程发 SIGTERM。子进程里的 Host 使用默认的每用户运行目录（按该数据目录的 `hostId8` 命名），用例结束时删除它。
-- 让启动停在中途时，用 `--plugin` 加载临时模块：激活时等待一个门文件出现的插件让 Host 停在「已持锁、尚未写出 `host.json`」的窗口；导出 `{}` 的模块让通过检查的启动立即以「插件模块无效」失败，从不运行 `startServer`。
-- 用当前测试进程的 PID 冒充存活的锁持有者或旧版本 Host，用已退出子进程的 PID 表示已结束的持有者；开机时间相关的用例改写锁记录中的 `bootTime`。`cli.test.ts` 用 tsx 加载器启动 8 个子进程同时争抢一个过期锁，断言每一轮恰好一个持有者。
-- `cli.test.ts` 的大多数用例在进程内调用 `runLatch(argv, io)`，由 `CliIO` 提供 `stdout.isTTY`、`readSecret()` 与 `cwd`；进程内的 Host 写出记录测试进程 PID 的 `host.json` 后，CLI 把它当作运行中的 Host。其中只有用法与退出码的用例运行脚本本身；`security.test.ts` 在子进程 Host 旁运行 `latch.ts`。
-- 平台相关：`--code-file` 的 ACL 用例只在 macOS 运行，目录属主用例以 root 运行时跳过；IPv4 映射的 Tailscale 地址用例选一个本机没有的 `100.64.0.0/10` 地址，让 `listen` 失败并在错误中写出实际绑定的地址。
+- 预先写入把本机确认关掉的 `policy.json`（`presence.backend` 为 `none`，参照 `cli.test.ts` 的 `stoppedDataDir()`），这样 `start.ts` 不构建或调用真实确认组件，`presence test` 也不弹窗。
+- 需要 Host 的进程号等于子进程号（锁记录、`pnpm stop` 的核对）时，用 `process.execPath --import <tsx 的加载器>` 启动，不经 `tsx` 包装进程。
+- 只停止自己启动的进程：`stop.ts --data-dir <同一临时目录>`，或向自己 spawn 的子进程发 SIGTERM；用例结束时删除它的运行目录。
+- 让启动停在中途时用 `--plugin` 加载临时模块（等待门文件的插件，或导出 `{}` 让启动以「插件模块无效」失败）。
+- 用当前测试进程的 PID 冒充存活的锁持有者，用已退出子进程的 PID 表示已结束的持有者。
+- `cli.test.ts` 的大多数用例在进程内调用 `runLatch(argv, io)`，由 `CliIO` 提供终端与输入。
+- 平台相关：`--code-file` 的 ACL 用例只在 macOS 运行，目录属主用例以 root 运行时跳过。
 
 ## 浏览器 e2e
 
-`settings-loading.e2e.ts` 暂留真实 Host 的模型服务、用量与预算响应，核对三宽深浅的冷首开和切回，检查显示模型、添加服务和用量筛选在慢统计期间可用。具体筛选的迟到结果、读取失败后的重试、撤回管理权限后的缓存清理一并验证。截图在 `test-results/settings-direct/`。`gateway-usage.e2e.ts` 另外核对当前设备缩小数据范围后立即撤下旧 Agent 统计和预算，待真实新响应显示较窄结果。模型服务 Host 回归用两个本地假服务验证地址、协议与密钥写入的前提，覆盖旧请求、管理员同时改址和重新读到新目标后的正常写入。
-
-`preview-renderers.e2e.ts`、`streaming-render.e2e.ts`、`file-edits.e2e.ts` 与 `policy-limits.e2e.ts` 的正向复制用例只在所测顶层页面记录内存写入并阻断选区复制。真实按钮和菜单继续检查每次写入的原文或反馈，包括流式最新 Markdown、结算后再复制、完整代码、冲突草稿与手机菜单。系统剪贴板传输另需实机验证，子框的权限拒绝仍由真实浏览器执行。
-
-`shell.e2e.ts` 使用临时 Git 项目在两布局的 390、768、1440 宽核对会话标题与重命名。桌面压窄至并排面板时长标题省略，铅笔仍在标题行。悬停和键盘聚焦保持位置，取消与保存走原对话框，手机使用标题菜单。截图在 `test-results/session-title-icon/`。同文件检查并排侧栏的分隔线、键盘与拖动高亮，以及覆盖时的样式。
-
-`codex-chat-gateway.live.test.ts` 的 deepseek-flash 场景不声明 thinking，并用官方启动配置模拟已有 medium 默认；真实 CLI 必须正常读写、回复与取消，转发不带继承的 effort。其他声明了思考的场景实际选择 high，再恢复默认，逐请求检查而不是只看菜单。`codex-model-gateway.e2e.ts` 从正常页面验证默认、显式选择、尚未使用便重启以及换回无档位模型；只用真实已安装 Codex 和临时受控上游，不能称为真实 DeepSeek 付费服务通过。Host 假协议回归另核持久恢复及下一轮意图；fake Codex 真实转发它当前 thread 的 effort，避免无字段的替身掩盖默认值问题。
-
-`helpers/layout.ts` 的 `openSession(page, sessionId)` 按 Host ID 走正常入口：手机从 Code 首页进入「全部会话」，平板展开会话抽屉，桌面从可见项目树或完整历史选择。`backToPhoneSessions` 回到显式历史；`openSessions` 从设置返回 Code 首页或原会话，不把 Code 首页等同于历史列表。`phone.e2e.ts` 覆盖两个布局在 320 / 390 的首页、历史与会话往返、草稿、菜单与平台返回；`shell.e2e.ts` 另外检查发送回执晚到不会抢走设置或历史页面。
-
-`permissions-ui.e2e.ts` 核对常驻但关闭的 Sheet 不拦 Esc，真正打开的菜单/底部面板仍先处理它；同一用例保留输入法、长按、组合键与 R2 不允许快捷批准的负控。`worktrees.e2e.ts` 暂留真实 Host 的 includeIf 拒绝响应，区分读取状态与具体拒绝原因，释放并等待 handler 结算后才拆除拦截。
-
-`helper-home.e2e.ts` 通过临时 Host 与假 ACP 的正常创建、从 Code 的定时入口打开资料和当前聊天设置核对固定家、模型/思考/权限的真实读回，未确认权限时不发送；截图覆盖三宽深浅。跨桌面与手机检查同一表单 DOM、未保存默认项、活动焦点、未知写入同一 requestId 与关闭后的焦点归还，避免只检查重新入场后的画面。
-
-`helper-boundary.e2e.ts` 用假原生 Codex 与权限未读回的假 ACP，在新话题、首轮、重开与三宽浅深页面检查只有一个帮手边界入口，展开仍含本机读写/命令能力；独立首次启动的 Code 对照仍有时间线提示。真实 CLI 的 `helper-live` 也检查没有重复首启行。
-
-`helper-live.e2e.ts` 默认跳过；只有所有者明确授权、设置 `LATCH_HELPER_LIVE=1` 和对应 `LATCH_PI_GATEWAY_BINARY`、`LATCH_CODEX_GATEWAY_BINARY` 或 `LATCH_OPENCODE_GATEWAY_BINARY` 才启动真实 CLI。它使用临时 HOME/XDG、临时 Host 与本地脚本化 Chat 服务，经正常页面创建帮手、资料选择服务、实际审批，在 0700 的家写 `notes.md`，用 CLI 自有命令工具读取受控本地网页标题；停止只验证模型请求期间的 Host 取消回执，恢复固定原话题并核对上游收到原工具历史。三宽深浅截图与分项证据写入 `test-results/helper-live/`。测试不读取用户 CLI 登录存储，不验证真实模型或 BYOK，也没有桌面浏览器 provider；命令读取网页不计为 `latch-browser` MCP 调用，提议与其他 MCP 能力另行验证。
-
-`helper-proposals.e2e.ts` 另需 `LATCH_HELPER_PROPOSALS_LIVE=1` 和上述 Codex / OpenCode 的命令路径，沿相同临时目录规则验证真实 `latch-skills`。Codex 使用同协议假 Responses 服务，由客户端 `tool_search` 发现其 MCP 目录；OpenCode 使用假 Chat 服务，经实际提供的 `execute` 搜索并调用目录里的工具。帮手由夹具创建，提示、原生审批、记忆保存与日程「保存为关闭」经页面完成；提议须为 `origin:agent`，人保存前不产生记忆或日程，保存后 L3 日程仍为关闭状态。三宽深浅提议卡与表单在 `test-results/helper-proposals/`。它不验证付费模型、后台定时执行或浏览器 MCP；pi 不支持 MCP，不加入此用例。`codex-skills.live.test.ts` 在相同 opt-in 下向新建的自有线程读取官方 MCP 状态，再用本地假模型驱动一次成功提议和一次非法空提议，保存原生完成/失败事件；这个诊断用例的审批由夹具回答，页面审批另由 e2e 验证，不访问 CLI 存储。跨协议的工具发现限制见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#responses-转-chat)。
-
-`codex-commands.live.test.ts`、`codex-compact.e2e.ts` 与 `pi-commands.e2e.ts` 默认跳过；所有者授权后设置 `LATCH_SLASH_LIVE=1` 及对应 `LATCH_CODEX_GATEWAY_BINARY` / `LATCH_PI_GATEWAY_BINARY` 才运行真实已安装 CLI。它们使用私有 HOME/XDG/CLI 目录、临时 Host 与本地假模型服务，不读取用户 CLI 存储。Codex 核对配置不符时没有上游请求、普通提示先应用配置、原生 compact 的真实完成及取消；页面覆盖正常补全后手动发送、运行中置灰与 HTTP 409、手机/平板/桌面截图，并验证 `/review` 明确拒绝且不新增上游请求。pi 用自有扩展、模板与技能验证真实展开和运行中追加，扩展命令的执行不花模型请求；原生 `/mcp` 出现在列表不等于 Latch 注入 MCP 已实现。假 app-server 和 pi fixture 的对应回归是手写替身，不是这些真实 CLI 的录制。 `codex-skills.live.test.ts` 另有同一 `LATCH_SLASH_LIVE` 下的原生技能用例：真实 Codex 从临时项目的官方目录读取技能，核对本轮原文产生的结构化项、受控上游收到技能正文，以及上下文中同名例子不产生结构化项。`codex-skills.e2e.ts` 从正常页面选择本地服务模型，手动输入 `$name` 后，从三宽命令菜单选择真实技能，核对 Enter 只插入、手动发送后真实 CLI 收到技能正文；没有新增 `$` 触发菜单。pi 用例还核对独立的公开 skills 元数据不带路径、不重复说明。假进程与回放用例覆盖同名拒绝、目录失败与迟到更新、200 项和 UTF-8 预算；`apps/host/test/harness-commands.test.ts` 核对技能缓存重启不启动 CLI、私有来源的新报告不可见。
-
-`apps/host/test/antigravity.live.test.ts` 默认跳过；所有者授权后设置 `LATCH_AGY_BINARY` 为已安装的 `agy` 才运行。它与其他真实 CLI 用例不同，使用 CLI 自己已有的登录与真实模型（没有可指向的本地假服务），所以只发几条极短的提示，全部在临时项目里；不读取 CLI 自己的任何文件。经临时 Host 依次核对：检测与版本门槛、按请求读取的模型目录、读文件的一轮、允许与拒绝各一次审批、模式与模型和思考的设置读回、取消、同一数据目录上重启后的 `session/resume`（之后模型与思考仍是重启前所选）、项目配置变化的拒绝与第二个文件夹。设置 `LATCH_AGY_EVIDENCE_DIR` 时把去掉正文的 ACP 帧与各步结果写到那里。CLI 回答「Agent execution terminated due to error」时在第一轮后停止并报告。
-
-`workbench-layout.e2e.ts` 验证侧栏与顶栏两种布局的共用会话、草稿与布局偏好，布局开关、⌥⌘L 与命令面板三个入口，切换后停在同一页并保留焦点，以及手机、平板、桌面的浅深色截图。支持视图过渡的浏览器在普通会话切换两种布局时有淡化，等待审批的会话直接切换并保留同一张卡、风险与按钮。分类的失败、未知、停止与归档/私有话题边界见 `apps/web/test/work-overview.test.ts`；默认偏好、旧数据和本地存储见 `workbench-preferences.test.ts`。
-
-`workbench-scroll.e2e.ts` 用真实滚轮验证三种宽度和两种布局：外层首页与文档不滚，队列内容滚动，导航与输入框留在原处；展开更多后最后一项可点击，矮窗长草稿仍可用 Harness 选择和附件。`workbench-layout.e2e.ts` 读取页面实际画出的底色，核对两种布局的工作面、设置标题与导航、两张布局预览一致，以及输入框和决定卡与画布有层次。
-
-`workbench-git-eligibility.e2e.ts` 经真实 Host API 对照普通文件夹、损坏 HEAD 与实际 Git 改动，再从首页刷新、打开概要和交付，截图覆盖三宽、两布局、浅深色。不适用不冒称读取失败，损坏状态不冒称没有改动。Host 的同名测试另检查权限、链接、目录及祖先替换后还原的拒绝。`desktop-workbench.e2e.ts` 使用真实临时 Git 仓库验证有内容的三道与布局/空间切换，并在 Electron 正常入口从首页批准写入、继续原会话和查看 Git 改动，保留两套草稿与附件。
-
-同一文件也从 Electron 的个人 Agent 入口发送首条消息和下一轮，刷新并核对 Host 的唯一聊天 ID，再检查行菜单和取消删除。深色截图仍写在 `test-results/desktop-workbench`。
-
-`palette.e2e.ts` 在六种宽度/配色下用受控 Provider 实际追加新匹配，核对运行中即更新计数、保留选中位置；旧行插入/移除、完成、重开查找和键盘退回仍覆盖。`agent-activity.e2e.ts` 的外部 L3 任务保存为关闭后人工运行，不为展示结果卡开启后台执行。
-
-`agent-computer.e2e.ts` 使用内置 Harness 与演示模型，实际启用定时后模拟 Host 睡眠越过运行时间，检查错过记录、手动补跑及保持唤醒和通知设置；不为外部 L3 放宽无人值守上限。
-
-`transcript-find.e2e.ts` 经真实 Standard 读取本地报告，在三宽验证从未挂载的工具输出可查找、内外折叠展开、逐项 Highlight、清空查询和焦点／草稿保留，不额外发起模型调用。`preview-renderers.e2e.ts` 生成含一万形状的实际 PPTX，检查固定复杂度拒绝、释放 frame 和随后正常打开 DOCX；普通 30 页首屏性能仍独立测量，不用拒绝样本替代正常预览。
-
-流式 Markdown 的切块等价性由 `stream-markdown.test.ts` 在六十篇以上样本的每个前缀检查；`preview-renderers.e2e.ts` 检查代码展开、焦点、表格行身份、未闭合图表与数学，生成 `test-results/stream-markdown/` 的五宽深浅截图；`streaming-render.e2e.ts` 检查真实 Transcript 中的消息身份与结算后原文复制。
-
-`e2e/stream-render.e2e.ts` 用本文件里的脚本化 ACP Agent 在三宽两色下检查一轮工作的画法（[STREAMING.md](STREAMING.md#工作过程的行)）：去外壳的命令、结束的命令成行、最多 5 个屏幕行的尾巴、审批卡上的整条命令与「经 zsh -lc」、Harness 分类的读取行与 3 条起的分组、思考的标题与受限 Markdown、自动收起的高度过渡（阅读时锚点偏移不超过 1px、跟随时贴底）、文字匀速显现、「回到最新」的位置与文字、「工作过程」三档；截图写入 `test-results/stream-render/`。外壳还原的共享向量是 `packages/testkit/vectors/shell-unwrap-v1.json`（`shell-unwrap.test.ts`）；思考的安全用例在 `thinking.test.ts`，节奏与每帧一次在 `paced-text.test.ts`。`packages/harness-acp/test/codex-actions.live.test.ts` 默认跳过：所有者授权后设置 `LATCH_CODEX_ACTIONS_LIVE=1` 与 `LATCH_CODEX_GATEWAY_BINARY`，用真实已安装的 Codex、私有 HOME/CODEX_HOME 与本机脚本化上游跑几条无害命令，把它报告的 `commandActions` 写入 `test-results/codex-actions/`；不读登录，不调用模型。`stream-performance.e2e.ts` 加 `LATCH_STREAM_MOTION=1` 时不减弱动效，量的是带匀速显现的页面。
-
-`streaming-render.e2e.ts` 还在真实 DOM 中给已结算消息的字段读取计数，验证 300 轮历史的正文追加不重复投影；计数是工作量，不代表毫秒预算。回归覆盖尾轮晋升后的同节点/展开/文字选择、共享展示与未知 prop、审批/提问、文件记录刷新和权限撤回、空历史合成回复的记录与插入索引、已提交 live ID 的空值切换。`conversation.test.ts` 核对同 ID/新字段重写、运行事实清空与时间/状态的即时变化；正文与状态均不依赖缓存的旧权限。
-
-长会话定位条在 `streaming-render.e2e.ts` 用 300 轮验证首尾键盘可达、刻度独立滚动、历史锚点和会话切换，并核对正文增长的增量与完整帧均不重渲染刻度。另核对导入说明没有错误点亮最新轮次，以及原生对话框、弹层和被盖住的定位条怎样交还 Esc。100 轮夹具核对触屏滑动与命中区、预览与查找条及 Esc 的优先级，在 390、768、1440 宽以浅色和深色截图至 `test-results/conversation-rail/`。`stream-render.e2e.ts` 经临时 Host 和假 ACP 启动八轮会话，用构建后的页面实走命令面板、两种布局、右栏和查找同时打开时的跳转与点击，截图放同一目录。
-
-`stream-delta.e2e.ts` 经真实临时 Host 和正常输入框验证大历史的增量正文、同一消息节点、最终原文与草稿；测试传输故障只在 Host 已授权的响应之后注入，检查真正中断旧 reader、一次完整状态修复和换网后的新基线。远程壳标记的浏览器用例只验证前端省略协商头，不冒充真实原生链路；`native.test.ts` 用真实已验证的原生 HTTP/2 连接核对明确协商、首帧完整、增量 UTF-8 偏移、同连接旧客户端仍完整，以及按原 canonical cursor 重连后的新订阅。未知协商头仍完整；`native-replay.test.ts` 验证游标只属于实际发布的不可变事件。共享 UTF-8 标量与事件向量是 `packages/testkit/vectors/task-delta-v1.json`。
-
-`native-swift.test.ts` 统一编译 Core/Testkit，用真实临时 Host 和 HTTP/2 核对正文发布回执：公开 parser 或其他 reader 的事件不能确认游标，回调拒绝/重入不推进，选择/权限/窗口变化撤销旧候选，未知写保持原字节。共享 Unicode 帧及顺序故障只替换真实 Host 已授权成功的响应；覆盖 HTTP 领先时仍逐帧推进影子、相同 revision 的流优先、250ms 元数据响应期间不越过屏障、八条待处理上限、实际关闭旧流、一次完整修复、响应头迟到的旧打开被取消和换网后保留版本地板。统计写入 `test-results/native-body-publication/`；这些协议夹具不等于 App 已接入、真实 Face ID 或像素绘制验收。
-
-同一向量文件还包含 full/delta、HTTP/source priority 与旧选择序列，`task-stream-vectors.test.ts` 和现有 Swift Testkit 的 `taskStreamProjection` 操作共同消费。无效字符串以外层合法的 `rawJSON` 保存，不使 Foundation 在读取整份夹具时先失败。`native-swift.test.ts` 另验证原生 1MiB 候选、补字段后的对象宽度、合计追加上限、旧连接票据与版本地板。这里只测试纯值核心，未启用原生协商或 App 消费，也不替代 lease、实际取消、padding 与游标确认的后续互操作验收。
-
-同一 Swift 互操作入口的 `phoneHelperCreate` 检查原生创建候选、显式模型/配置、UTF-16 长度、精确模型身份、跨 Harness 保留文稿、项目文件夹限制和原请求恢复；与 TypeScript `pairRoute` 对照服务路线，把 Swift 构造的请求真正送到临时 Host 验证创建、默认项窄补丁、幂等及过期版本拒绝。人物状态和权限未确认也从实际字段投影。`nativeWorkspace` 另在真实 HTTP/2 里替换已授权创建的成功正文，验证缺少身份时保留原请求并从真实回执恢复，只创建一个 Agent。它们不启动 CLI、不打开 App，也不能替代两步界面和未知写恢复的实际交互验收。
-
-Host 的 `native.test.ts` 另检查 scope 收紧后公共会话下一帧重新完整、正文到期后流结束而元数据仍可读取；`native-relay.e2e.ts` 在真实中继、TLS 与 padding 上验证首完整帧及追加帧均登记活动，运行未结束时关闭响应会实际清除活动。方法 spy 只观察原实现，不替换传输或时钟；这仍不等于 App 已接入增量消费。
-
-耗时基线单独运行 `LATCH_STREAM_BENCH=1 LATCH_STREAM_LABEL=<结果名> pnpm exec vitest run --config e2e/vitest.config.ts e2e/stream-performance.e2e.ts`，默认跳过。用临时 Host、本地固定 Provider、10/100/300 轮历史和两万字回复，CPU 4 倍节流，记录脚本区间、长任务、帧字节、JSON 解析、滚动和内存；完整帧与追加帧各自计数，同时保留合计；输出在 `test-results/stream-performance/`。同一构建的协议对照用 `LATCH_STREAM_TRANSPORT=full` 在测试浏览器内仅移除固定增量协商头，默认 `delta`；两组使用不同 `LATCH_STREAM_LABEL` 保留结果，报告核对相同页面/传输源码指纹与实际帧类别。可用 `LATCH_E2E_UI_DIR` 对照已保存的旧构建，报告记录页面构建指纹；`LATCH_STREAM_PROFILE=1` 额外记录去掉 URL 的 CPU 采样。比较前后应协调无并行构建/e2e的窗口并设置 `LATCH_STREAM_QUIET=1`，保留系统负载与重复样本；heap未强制GC，不能用来宣称泄漏。预算断言由 `LATCH_STREAM_ENFORCE_BUDGET=1` 开启：尾段要有样本，每帧脚本不超过8ms，且没有50ms长任务。未开启断言的基线通过不代表预算达标。
-
-- e2e 在同一个 Vitest 进程内用 `startTestHost` 启动 Host，页面来自 `dist/web`（或 `LATCH_E2E_UI_DIR`），所以改客户端后先 `pnpm build`。
-- Playwright（`@latch/e2e` 的 devDependency）默认使用 `pnpm --filter @latch/e2e exec playwright install chromium` 安装的 Chromium；设置 `LATCH_BROWSER_PATH` 时改用该路径的 Chrome。都以无头模式运行。
-- 每台设备是独立的 BrowserContext，用 `enrollBrowser` 经真实连接页面、带回环邀请在回环地址上登记。手机经 HTTPS 与邀请登记的流程只在 `enrollment.e2e.ts` 覆盖（Host 带 `tls` 选项与命名曲线证书，手机上下文设 `ignoreHTTPSErrors`）。需要本机桌面端或另一台设备时，用 `testHost.enroll({ listener: 'unix' })` 等 API 设备直接驱动 Host（见 `permissions-ui.e2e.ts`）。
-- 截图写入 `test-results/`（`design/`、`enrollment/`、`permissions/`、`streaming/`、`visual/` 子目录与根目录）。截图不能包含凭据。
-
-布局用例另以桌面 DPR 2 与手机 DPR 3 验证草稿增长、紧凑选择器与发送控件可达性，并确认新会话不挂载环境背景。`e2e/plugin-packages.e2e.ts` 使用本地发布检查包，在 390 / 820 / 1440px 浅色与深色下验证真实 React 界面的编辑与草稿、模块渲染失败、数据加载/失败/空状态、迟到响应与停用后的撤下，截图在 `test-results/plugin-packages/`。审批用例在手机与平板重复加载、切换会话并检查真实点击命中，防止滚动区遮罩与切换动画让可见按钮不可点。
+- **先构建。** e2e 在同一个 Vitest 进程内用 `startTestHost` 启动 Host，页面来自 `dist/web`（或 `LATCH_E2E_UI_DIR`）；改客户端后先 `pnpm build`，否则测的是旧页面。
+- **浏览器。** 默认用 `playwright install chromium` 装的 Chromium，设置 `LATCH_BROWSER_PATH` 时用该路径的 Chrome，都无头运行。WebKit 用例（`webkit.e2e.ts`、`preview-security-webkit.e2e.ts`，以及 `slash.e2e.ts` 等的 WebKit 分支）需要 `pnpm --filter @latch/e2e exec playwright install webkit`。
+- **设备。** 每台设备是独立的 BrowserContext，用 `enrollBrowser` 经真实连接页登记。手机经 HTTPS 与邀请的登记只在 `enrollment.e2e.ts`。需要本机桌面端或另一台设备时，用 `testHost.enroll({ listener: 'unix' })` 等 API 设备直接驱动 Host。
+- **走正常入口。** 用例经页面的真实控件到达状态：按 Host ID 打开会话用 `helpers/layout.ts` 的 `openSession`，不用 CSS 隐藏、直接调用内部函数或手填 DTO 代替。
+- **故障注入。** 拦截与替换只放在 Host 已授权的响应之后；拆除拦截前先释放并等待处理结算。
+- **剪贴板。** 复制用例只在所测顶层页面记录内存写入并阻断选区复制，不读写系统剪贴板；系统剪贴板的传输要实机验证。
+- **宽度与主题。** UI 用例覆盖手机、平板与桌面宽度和浅深色，并断言没有横向溢出、控件可达（`helpers/layout.ts` 的 `reachable`、`layersInWindow`）。
+- **安全界面。** 连接页、审批卡与安全横幅在注入的样式下不变（`helpers/security.ts`）。
+- **截图。** 写入 `test-results/<用例名>/`，不能包含凭据；二维码与设备指纹在截图前换成固定图案或设为透明。
+- **夹具的限度。** 浏览器的可见性、时钟与触控模拟不等于 OS 后台、真机软键盘或真机 Safari；WebKit 不支持的能力不能算作该平台通过。
 
 ## 视觉截图
 
-`attachments.e2e.ts` 覆盖草稿图片缩略图、文字卡片、发送后按授权显示图片、预览/移除/重试、失败文字可读性，以及 320/390/768/1440 浅深色；`LATCH_ATTACHMENT_SAMPLE` 可指定一份已核对无敏感数据的本地图片，用于独立的混合附件视觉场景，默认截取临时页面作为样本。`permissions-ui.e2e.ts` 核对审批按钮没有常驻键帽或隐藏占位、标签居中、焦点变化不改宽度，仍按真实风险与焦点执行快捷键；Button 的辅助技术属性由浏览器组件用例覆盖。
+`e2e/visual.e2e.ts` 是 `pnpm test:e2e` 的一部分：把真实产品驱动到浏览器能到达的每个状态，在手机 390×844、平板 768×1024（都模拟触控）与桌面 1440×900 下以 `deviceScaleFactor` 1 截浅色与深色，并截原语总览页（`ui-gallery-<分组>`）。截取哪些状态以该文件为准。
 
-`latch-ui-check` 技能调用 `pnpm exec tsx scripts/ui-check.ts`，顺序运行快速检查、UI 与 web 组件用例、构建及设计/视觉 e2e。`--plan` 只列命令；`--boards <JSON>` 映射画板，`--baseline <目录>` 生成比较报告，只有预期逐像素一致时才加 `--strict`。跨 worktree 的视觉用例共用截图锁，必须串行运行。检查生成的索引与正常、加载、等待、失败、空内容、只读、减少动效截图；自动化不代替本机确认与真机验收。
+技能 `latch-ui-check` 调用 `pnpm exec tsx scripts/ui-check.ts`：依次运行 `check:quick`、`@latch/ui` 与 `@latch/web` 的用例、构建，以及 `design.e2e.ts` 与 `visual.e2e.ts`。`--plan` 只列命令，`--boards`、`--baseline`、`--strict` 对应下面三个变量。
 
-`e2e/visual.e2e.ts` 是 `pnpm test:e2e` 的一部分。它把真实产品驱动到浏览器能到达的每个状态，在手机 390×844、平板 768×1024（都模拟触控）与桌面 1440×900 下以 `deviceScaleFactor` 1 截图，每个状态截浅色与深色（`emulateMedia`）。 主视觉设备在任何 L3 会话启动前，经临时本机设备的正常确认流程授予 `all`，以覆盖文件与 diff 界面。副设备保持 `work`；用例同时检查真实 HTTP 工具载荷和展开后的工具行没有 diff，保留状态与路径，并截取受限视图。
+**输出。** `test-results/visual/<状态>--<视口>--<主题>.png` 与 `index.json`（每张图的状态、视口、主题、说明、尺寸与参考图 `board`）。参考图由 `LATCH_VISUAL_BOARDS=<json 文件>` 给出，格式为 `{ "<状态>": { "<视口>": "<文件名，{theme} 换成主题>" } }`。
 
-- 产品：进程内的测试 Host 与 `dist/web` 页面；按提示返回固定内容的本地模型插件，带一个运行到测试结束或被取消的 `run_tests` 工具（第三方工具，所以是高风险），另用内置的 `read_file` 与 `write_file`；假 ACP Agent 提供完全访问会话的思考、diff、计划与询问。会话由本机桌面端的 API 设备经 Host API 建立并批准；三台浏览器设备经真实连接页登记，先截取登记表单、等待本机确认与还没有会话时的新会话。
-- 状态：新会话的 Harness 磁贴、填写中的草稿、模型与项目菜单（平板与桌面）、模型菜单原地换成的添加模型服务面板与需要密钥的服务在浏览器上说明在哪里设置、还没有模型服务时的卡片与在卡片里展开的添加面板（快照的目录被拦下去掉服务）、演示模型的示例卡片（快照把脚本模型服务当作演示服务）、「添加 Agent」的预设列表与一个预设的面板（这台电脑上找没找到命令随机器而变，所以页面拦下 `GET agents` 的回答，把每个预设都当作没找到）、手机的新会话面板及项目、模型的嵌套选择面板；桌面另截执行端桌面端的样子（同一设备的另一个标签页，注入桌面端接口并把快照里的入口当作本机套接字，只用于显示）：选中完全访问的 Agent 后还没输入时与输入后的「开始会话」、上下文行的「完全访问」与说明，以及本机确认不可用时（快照里的本机确认改为不可用）不能开始的样子；运行中（工具执行中，最新一轮末尾是活的一行、运行条不出现）、停止结果未知时的运行条「重试」与停止进行中的「正在停止…」（拦下停止请求得到，请求不到达 Host）、正在思考、离线、完成（另截展开的 diff、桌面上悬停时出现的回合脚部、答案前折叠的过程、点开的工具卡，以及平板与桌面上下一条消息的模型切换和菜单脚部的「撤销切换」）、带计划的完成、失败（带「重新发送」）、已取消；普通审批及其 ⋯ 选项（手机为「更多选项」底部面板）、预览从默认状态展开或折起、卡片取得焦点时的快捷键提示（非触屏）、结果未知时的「重试」（拦下这次决定的请求得到），内容含不可见字符的审批、浏览器上不能批准的高风险审批、完全访问会话的提示性询问、没有「批准普通操作」权限的设备上的普通审批、保留有效 Host 身份但缺少可选风险、选项与 advisory 字段时的保守 R2 审批；运行条里点开的计划；连接页的表单、等待与被拒绝；右侧面板的启动面板（桌面是栏，平板与手机是页面，以及栏边把手的悬停与键盘聚焦）；从标题打开的会话菜单（平板与桌面）；手机的会话列表、推入的会话页与平板的会话导航；设置的每个分区（「电脑」另截两条上限菜单、「其他设备可用的 Agent」与「其他设备可用的项目」列表页，以及一次没写入审计的降低；「模型服务」另截一个已保存服务的页面、选择预设与添加表单；「Agent 成员」另截一个 Agent 的页面），以及没有「管理此 Host」的设备看到的只读「电脑」；桌面侧栏在各状态下（含选中等待批准的会话）的单独截图，以及会话行的悬停与 ⋯ 菜单、项目组头的悬停、置顶组、带筛选的搜索、列表末尾的「已归档」行与已归档筛选、收起的侧栏与侧栏把手的悬停和键盘聚焦（悬停与聚焦用 `CSS.forcePseudoState` 保持）；桌面另截顶栏的 ⋯ 菜单（会话页与新会话页）。每次截图都断言页面没有横向滚动，开着的弹层（菜单、选值、弹层及它原地换成的面板）整层在窗口内、离边缘 8，且层里最后一个控件滚到眼前时可以点到（`layout.ts` 的 `layersInWindow`），主要控件经 `layout.ts` 的 `reachable` 检查可见、可点且在视口内；状态也逐一核对：执行中的工具行有转圈，桌面侧栏每个会话行的状态槽用状态词显示它该显示的一样（运行中、等你处理、没有动静、正在停止、已停止、失败、未读的对勾或时间），手机的会话列表与平板的会话列表同样用状态词，待批准的工具卡头部是琥珀的「待批准」状态词，桌面侧栏的搜索与「等你处理」行静止时没有底色、只有打开的会话那一行有选中卡片，项目分组的「在 … 中新建会话」、收起后顶栏的「展开侧栏」与「新建会话」都可达，收起时焦点移到「展开侧栏」；页面开着时第一项审批到达，桌面标题行的「等你处理」计数与面板的「等你处理」分组淡入；桌面页面看着一次运行被取消时，工具卡的转圈与工具图标交叉淡化、状态文字淡入；桌面打开未读会话时，那一行的对勾与时间交叉淡化。
-- 原语总览（`ui-gallery-<分组>`）：用例用 Vite 把 `packages/ui/test/gallery/` 构建到系统临时目录，由 Vite 的预览服务器在 127.0.0.1 的空闲端口上提供，三种视口、两种主题逐组截取；页上标 `data-force="<伪类>"` 的样本（可加 `data-force-at` 指向样本里的元素）经 DevTools 协议的 `CSS.forcePseudoState` 强制成悬停、按下或键盘焦点，用的是真实的样式表。总览页比视口高得多，而 Chrome 截取超出视口的元素时（`captureBeyondViewport`）会在那次截图里丢掉触屏模拟，手机与平板的截图就成了鼠标尺寸；总览整页还会超过 Chromium 的 16384px 纹理限制，所以逐组把视口加高到该组的高度（宽度、移动设备模拟与触屏不变），并断言该组放得进视口、开关轨道在触屏视口是 44px。所有组都截取，沿用总览的参考图映射。它与 `dist/web` 无关，结束时删除临时目录。
-- 浏览器到不了的状态不截：页面里的本机确认卡片、添加项目、手机配对的二维码与桌面端可以回应的「仅提示」询问只出现在执行端桌面端（由 `desktop.e2e.ts` 以浅色与深色截图：卡片里的高风险确认在等待与没有通过时、调整权限对话框里的确认在等待与没有执行时、输入框上方开启完全访问会话的确认（截图前断言那句话、两条警告、命令与工作目录都已显示）、配对的未生成、二维码（截图前换成同样大小的固定图案，邀请码不进入截图）与有设备在等待时，以及注入样式时的不变；高风险确认与开启会话的卡片另在 820 宽截图并断言没有横向滚动，桌面端窗口不窄于 768，没有手机宽度；调整权限对话框里的卡片到达时停在 0、60、120、180ms 截图，并核对按高度展开 180ms、内容淡入 120ms；Host 在测试里开了 HTTPS 入口；「电脑」的上限、出站白名单对话框与添加项目另存一张浅色截图）；浏览器截到的配对是说明原因的一行。没有「批准普通操作」权限的设备与旧版 Host 的审批卡由页面拦下 Host 的回答再截：前者从快照的设备权限里去掉这一项，后者去掉快照的 `host` 与审批的风险和选项，其余都是 Host 的真实数据。桌面截图在普通审批上另做一次注入样式的核对（差异与折叠条），手机截图核对差异不超过 240、每行只有一列行号且只占一行。
-- 另截拒绝后的状态 `session-rejected`与输入拒绝说明的 `approval-r1-note`，三种宽度与两种主题均覆盖。
-- 桌面端另截完全访问会话阻塞持久授权与配对的状态，包括查看、停止与停止后的重试。
-- 输出：`test-results/visual/<状态>--<视口>--<主题>.png` 与 `index.json`，后者为每张图列出状态、视口、主题、说明、尺寸与要对照的参考图 `board`。参考图由 `LATCH_VISUAL_BOARDS=<json 文件>` 给出，格式为 `{ "<状态>": { "<视口>": "<文件名，{theme} 换成主题>" } }`；没有给出时为 null。
-- 每次运行结果相同：页面时钟用 Playwright 的 `clock.setFixedTime` 固定在一个早于任何运行的时刻（工作面板后的粒子场按 `Date.now()` 取帧，所以截图里是同一帧静止的画面，`e2e/particle-field.e2e.ts` 核对两次载入像素相同），Host 的 `now` 固定在同一时刻，凭据期限、连接倒计时与设备时间因而不变；会话列表按真实时间记录，所以都显示「刚刚」并归入「今天」。消息、运行与每轮改动记录的时间用 Host 的 `clock`：它从页面时钟之后一分钟开始，由脚本推进（每段思考、正文、工具调用、完成与失败各走一段固定的时长，审批前另走一段），所以消息的时刻、思考与工具的用时、回合脚部的时间与它提示里的用时、时间分隔每次都相同。文件观察在运行结束后还持续两秒，而后面的会话写同一个文件夹，所以脚本等上一轮的观察结束才继续；会话列表的滚动位置在截图前设好，不取决于点击时行是否还在移动。新会话页不挂载环境背景；回到其他页面前取消模拟。截图停止动画、隐藏光标，先等待字体、图片与两帧；鼠标停在左上角；触控视口也用点击驱动，因为模拟的轻点会在页面上留下 Chrome 的点按高亮。每个状态都从新开的标签页出发（清空 sessionStorage，页面打开最近更新的会话），不依赖上一个状态。侧栏页脚的电脑名称由测试 Host 的 `hostName` 固定，不随运行的机器变化。设备指纹与核对码来自每次新生成的密钥，截图时只把这些等宽文字设为透明，布局不变。项目目录会出现在会话详情、项目选择器与设置中，所以放在系统临时目录下固定的 `latch-visual/`，其中的 `.owner` 记录进程号，防止两次运行共用；结束时删除。同一次运行中重新驱动几个状态再截图，按下面的比较规则与第一次比较，不允许任何计入的不同像素；不要求每个像素的值都相同，因为即使在同一次运行中，Chrome 也偶尔把个别像素画得相差一两级。
-- 比较：设置 `LATCH_VISUAL_BASELINE=<目录>` 时，最后一个用例把每张截图与该目录中同名的图比较，为改变的图写出差异图（红色为计入的不同像素，黄色为不计入的抗锯齿像素，其余为淡化的基线），并写出 `test-results/visual-diff/report.json`（相同、改变、缺少基线、基线中有而本次没有截取）。只有 `LATCH_VISUAL_STRICT=1` 时，不相同的结果才使用例失败；没有设置基线时该用例跳过。每次运行先清空 `test-results/visual/` 与 `test-results/visual-diff/`，所以基线目录必须在它们之外，否则用例在开始时报错。比较在浏览器页面里进行：Chrome 原样解码 PNG（不做色彩转换与预乘），按 YIQ 感知色差（与 pixelmatch 的公式相同）逐像素比较，阈值 0.1，不需要额外依赖。阈值忽略很淡的色差，仍能发现改变的颜色令牌与移动的文字。亮度介于一个更暗与一个更亮的相邻像素之间、且其中一个相邻像素在两张图中都处于平坦区域的像素视为抗锯齿边缘，不计入，因为 Chrome 在两次运行之间可能把小图形的边缘画得略有不同；代价是一条夹在两种不同纯色之间的 1px 线改了颜色时可能被当作抗锯齿而漏报。其余超过阈值的像素一个也不允许。字体与渲染随系统不同，所以只比较同一台机器上的截图。
+**每次运行结果相同。** 改截取的状态时保持这些措施：
+
+- 页面时钟用 `clock.setFixedTime` 固定，Host 的 `now` 固定在同一时刻；消息与运行的时间用 Host 的 `clock`，由脚本推进。
+- 会话内容、设备名、电脑名称（`hostName`）与项目路径固定。项目放在系统临时目录下固定的 `latch-visual/`，其中的 `.owner` 记录进程号：同一台机器上一次只能有一个视觉运行，跨 worktree 也要串行。
+- 截图用 `data-capture="still"` 冻结动效（`e2e/helpers/visual.ts` 的 `stillMotion`），它独立于设置写的 `data-motion`；隐藏光标，先等字体、图片与两帧，鼠标停在左上角。
+- 触控视口也用点击驱动：模拟的轻点会留下 Chrome 的点按高亮。
+- 每个状态都从新开的标签页出发，不依赖上一个状态。
+- 设备指纹与核对码来自每次新生成的密钥，截图时只把这些文字设为透明，布局不变。
+- 悬停、按下与键盘焦点用 DevTools 协议的 `CSS.forcePseudoState` 保持。
+- 总览页逐组把视口加高到该组的高度再截：截取超出视口的元素（`captureBeyondViewport`）会丢掉触屏模拟，整页还会超过 Chromium 的 16384px 纹理限制。
+- 同一次运行中重新驱动几个状态再截图，与第一次比较，不允许任何计入的不同像素。
+
+**浏览器到不了的状态不截。** 本机确认卡片、添加项目、手机配对的二维码与桌面端可以回应的「仅提示」询问只出现在桌面端，由 `desktop.e2e.ts` 截图；二维码截图前换成同样大小的固定图案。
+
+**比较。**
 
 ```sh
 pnpm build
@@ -528,6 +413,13 @@ LATCH_VISUAL_BASELINE=<基线目录> pnpm exec vitest run --config e2e/vitest.co
 LATCH_VISUAL_BASELINE=<基线目录> LATCH_VISUAL_STRICT=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/visual.e2e.ts
 ```
 
+- 设置 `LATCH_VISUAL_BASELINE` 时，最后一个用例把每张截图与基线中同名的图比较，为改变的图写差异图，并写出 `test-results/visual-diff/report.json`（相同、改变、缺少基线、基线中有而本次没有）。没有设置时该用例跳过。
+- 只有 `LATCH_VISUAL_STRICT=1` 时，不相同的结果才使用例失败。
+- 每次运行先清空 `test-results/visual/` 与 `test-results/visual-diff/`，基线目录必须在它们之外，否则用例开始时报错。
+- 按 YIQ 感知色差逐像素比较，阈值 0.1：忽略很淡的色差，仍能发现改变的颜色令牌与移动的文字。
+- 亮度介于更暗与更亮的相邻像素之间、且其中一个相邻像素在两张图中都处于平坦区域的像素视为抗锯齿边缘，不计入。代价：夹在两种纯色之间的 1px 线改了颜色时可能漏报。
+- 字体与渲染随系统不同，只比较同一台机器上的截图。
+
 ## Electron e2e
 
 ```sh
@@ -536,22 +428,22 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 ```
 
 - 只在 macOS 上运行；没有 `LATCH_ELECTRON_E2E=1` 或在其他系统上时整组跳过。
-- Host 在测试进程内用 `startTestHost({ presenceMode: 'manual', now })` 启动，测试用 `writeHostState` 写出 `host.json`（记录测试进程的 PID），再以 `apps/desktop/src/main.cjs --latch-host-state=<host.json> --latch-user-data=<临时目录> --use-mock-keychain` 启动 Electron。临时的 `--latch-user-data` 让凭据文件留在临时目录，不碰用户的桌面端数据；`--use-mock-keychain` 让 safeStorage 不使用登录钥匙串。Electron 的环境来自 `desktopShellEnvironment`，不带 Host 设置、模型密钥与调试开关。
-- Electron 由 Playwright 的 `_electron.launch()` 启动。没有给出 `executablePath` 时，Playwright 从它自己的安装位置解析 `electron` 包，在 pnpm 的目录布局下只能找到根 `node_modules` 中的那一份，所以根 `package.json` 保留 `electron`（CI 的 `pnpm exec install-electron` 也用它）。
-- `desktop.e2e.ts` 的回复复制核对真实 Electron 顶层、子框和预览的剪贴板权限。消息脚部的实际点击使用渲染进程内存记录异步写入的原文，同时拦截并记录选区复制的尝试。`multi-host.e2e.ts` 用主进程内存剪贴板检查真实添加与已消费链接的清除。`desktop-terminal.e2e.ts` 用事件数据触发 xterm 的粘贴。这三处覆盖权限、内容和传输链路，系统剪贴板与原生粘贴快捷键另需实机验证。
-- 覆盖：经 `host.sock` 登记并核对指纹，另一个用例在本机确认不可用时只用离线连接码登记；「设置 › 通用」的「这台 Mac」（开发运行时主进程报告登录项不可用，没有这一行，会话运行时显示保持唤醒并可关闭，关闭写入临时 `--latch-user-data` 中的 `lifecycle.json`，没有重新启动 Host 的按钮），以及页面经转发报告运行状态得到 403；主进程在 `powerMonitor` 的 `suspend` 时经 `host.sock` 报告睡眠，页面显示「电脑已休眠」，`resume` 后按通告的时间重新连接（测试在主进程触发这两个事件）；凭据只在主进程（0600 加密文件，渲染进程没有 Cookie 与存储，自行调用续期接口得到 403）；渲染进程没有自己的网络（fetch、WebSocket、图片与 `window.open` 都被拦截，回环端口上的连接计数始终为 0）；脚本外链先经原生确认，实际文档点击一次打开（在主进程替换 `dialog.showMessageBox` 与 `shell.openExternal` 记录调用，并验证合成点击无效）；R2 审批经本机确认后执行；Host 时钟拨快 25 小时后由主进程续期；被撤销后回到连接页并删除凭据文件；关闭最后一个窗口后桌面端仍在运行并保持唤醒，`activate` 重新打开窗口；退出桌面端后 Host 继续运行。
-- 模型服务：预置服务商密钥免确认；本机地址和出站许可只确认一次，保存不再重复确认。测试阻断外部 DNS，只用本地假服务。
-- 项目操作：「设置 › 项目」的添加项目经替换的 `dialog.showOpenDialog` 选中两个临时文件夹，审计记为 `via: 'picker'`，在访达中显示只把已登记文件夹的真实路径交给替换的 `shell.showItemInFolder`（未知标识 `not-found`，`shell.openPath` 从未调用），页面直接 POST 添加路由得到 403 `shell-managed`，`drop` 对不是磁盘文件的值什么都不问，经 `<input type=file>` 得到的磁盘文件先进入默认「取消」的原生确认（文件夹对话框只为有焦点的窗口打开，测试把 `BrowserWindow.prototype.isFocused` 替换为总是有焦点）。
-- 拒绝导航的检查放在用例最后：Playwright 会把被拒绝的导航一直当作进行中，所以由主进程触发，并在主进程监听 `will-frame-navigate` 观察，之后只读取地址、不再驱动页面。
-- 用例以开发模式运行（`devMode: true`）。打包版本才启用的启动参数与调试开关检查只有 `desktop-proxy.test.ts` 的单元用例覆盖：打包构建尚未实现，仓库中还没有可供 e2e 启动的打包产物。
+- 同一开关还控制 `desktop-*.e2e.ts`、`multi-host.e2e.ts`、`app-build.e2e.ts`，以及 `release-check.e2e.ts`、`file-tree-actions.e2e.ts` 与 `html-preview.e2e.ts` 的 Electron 部分。`pnpm check -- --plan` 与 `e2e-desktop` 工作流只运行 `desktop.e2e.ts`；改到对应区域时按文件名另跑。
+- Host 在测试进程内用 `startTestHost` 启动，测试用 `writeHostState` 写出记录测试进程 PID 的 `host.json`，再启动 `apps/desktop/src/main.cjs --latch-host-state=<host.json> --latch-user-data=<临时目录> --use-mock-keychain`。
+- 临时的 `--latch-user-data` 让凭据文件不碰用户的桌面端数据，`--use-mock-keychain` 让 safeStorage 不使用登录钥匙串。Electron 的环境来自 `desktopShellEnvironment`，不带 Host 设置、模型密钥与调试开关。
+- Electron 由 Playwright 的 `_electron.launch()` 启动；它从自己的安装位置解析 `electron` 包，只能找到根 `node_modules` 中的那一份，所以根 `package.json` 保留 `electron`（CI 的 `pnpm exec install-electron` 也用它）。
+- 原生对话框、`shell.openExternal`、`shell.showItemInFolder`、通知与剪贴板在主进程中替换成记录调用的内存实现：不打开真实面板，不投递系统通知，不读写系统剪贴板。系统剪贴板、原生粘贴快捷键、通知授权与专注模式要实机验证。
+- 模型服务用例阻断外部 DNS，只用本地假服务；终端用例用假终端组件，登录用例运行夹具里的假 `codex login`，从不运行真实 CLI 的登录。
+- 拒绝导航的检查放在用例最后：Playwright 把被拒绝的导航一直当作进行中，所以由主进程触发并监听 `will-frame-navigate`，之后只读取地址、不再驱动页面。
+- 用例以开发模式运行（`devMode: true`）。打包构建尚未实现，仓库中没有可供 e2e 启动的打包产物；打包版本才启用的启动参数与调试开关只有 `desktop-proxy.test.ts` 的单元用例覆盖。
 
 ## 构建产物检查
 
-测试代码是 `@latch/testkit`（`packages/testkit/`）、`tests/`、`e2e/` 与各项目 `test/`（`apps/host/test/`、`apps/web/test/`、`apps/desktop/test/`、`packages/harness-acp/test/`）中的文件，只有测试导入它们：
+测试代码是 `@latch/testkit`（`packages/testkit/`）、`tests/`、`e2e/` 与各项目 `test/` 中的文件，只有测试导入它们：
 
-- `pnpm check:boundaries`：`@latch/testkit` 在 `PROJECTS` 中标为只供测试，任何项目（包括仓库根）只能把它写在 devDependencies。
-- `pnpm lint`：测试目录以外导入 `@latch/testkit`，或经相对路径导入 `tests/`、`test/` 中的文件即失败；任何项目经相对路径进入 `e2e/` 也失败（它与 `apps/`、`packages/` 一样是 workspace 项目，且没有 exports）。这条规则不检查 `require()`，所以桌面端的 CommonJS 源码另用 `grep -rnE "testkit|tests?/|e2e/|createTestPresence" apps/desktop/src` 检查，必须没有输出。
-- Host 构建：`apps/host/scripts/host-bundle.ts` 的 esbuild 插件在入口引到 `@latch/testkit`，或加载 `packages/testkit/`、`tests/`、`e2e/`、`apps/*/test/`、`packages/*/test/` 下的任何文件时让构建失败（按解析后的真实路径判断，经 workspace 链接或相对路径都算）。测试中打包 Host 入口用同一份选项。
+- `pnpm check:boundaries`：`@latch/testkit` 在 `PROJECTS` 中标为只供测试，任何项目只能把它写在 devDependencies。
+- `pnpm lint`：测试目录以外导入 `@latch/testkit`，或经相对路径导入 `tests/`、`test/`、`e2e/` 中的文件即失败。这条规则不检查 `require()`，所以桌面端的 CommonJS 源码另用 `grep -rnE "testkit|tests?/|e2e/|createTestPresence" apps/desktop/src` 检查，必须没有输出。
+- Host 构建：`apps/host/scripts/host-bundle.ts` 的 esbuild 插件在入口引到上述任何文件时让构建失败（按解析后的真实路径判断）。
 
 `pnpm build` 之后运行：
 
@@ -559,36 +451,47 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/
 ```
 
-必须没有输出（grep 以状态 1 结束），说明测试辅助没有进入 Host、页面与确认组件的产物。Host 的 bundle 不压缩，带源文件路径注释与 source map；页面产物经过压缩，名称可能被改写，所以也匹配测试证书的主机名这类会原样保留的字符串。
+必须没有输出（grep 以状态 1 结束）。页面产物经过压缩，名称可能被改写，所以也匹配测试证书的主机名这类会原样保留的字符串。
 
 ## 仓库检查
 
-这些命令检查仓库自身的结构，不运行产品代码，都在仓库根运行；改动、新增与未跟踪的文件按 git 的列表读取，`.gitignore` 忽略的文件（构建产物、依赖、用户数据）不在其中。
+这些命令检查仓库自身的结构，不运行产品代码；文件按 git 的列表读取，被忽略的文件不在其中。
 
-- **`pnpm check:quick` 与 `pnpm check`**（`scripts/check.ts`）：依次运行各项，一项失败也继续，最后逐项写出通过或失败，有失败时以状态 1 结束。
-- **`pnpm check -- --plan`**（规则在 `scripts/verify-plan.ts`）：比较工作区与 `--base`（默认 HEAD）以及未跟踪的文件，按改动路径列出要运行的命令与触发它的文件，以及「不需要运行」的命令。依赖文件（`package.json`、`pnpm-workspace.yaml`、锁文件）与规则不认识的路径要求全部检查；Electron 用例按 `e2e-desktop` 工作流的路径列出；只在对应路径改动时才列出共享编码的定向用例、确认组件的重新构建与布局检查。它只按路径判断：改动是否触及连接、登记、审批、取消或流式状态，仍由改动者按根 `AGENTS.md`「完成标准」决定。技能 `latch-verify` 按它运行并汇报。
-- **`pnpm check:agents`**（`scripts/check-agents.ts`，规则在 `scripts/agent-docs.ts` 与 `scripts/doc-hygiene.ts`）检查结构，措辞只比对一份词表：
+- **`pnpm check:quick` 与 `pnpm check`**（`scripts/check.ts`）：依次运行各项，一项失败也继续，最后逐项写出结果，有失败时以状态 1 结束。
+- **`pnpm check -- --plan`**（`scripts/verify-plan.ts`）：见[按改动选择回归](#按改动选择回归)。技能 `latch-verify` 按它运行并汇报。
+- **`pnpm check:agents`**（`scripts/check-agents.ts`，规则在 `scripts/agent-docs.ts` 与 `scripts/doc-hygiene.ts`）：
   - 预算按 UTF-8 字节：根 `AGENTS.md` 不超过 16 KiB，其余每个不超过 4 KiB，从仓库根到任一 `AGENTS.md` 的路径上合计不超过 24 KiB（Codex 把这条路径上的文件拼在一起，超过 32 KiB 的部分不读）。超限时把只对子目录有效的规则移到子目录，或把机制说明移进 `docs/` 并留链接。
-  - 每个 `AGENTS.md` 旁有 `CLAUDE.md`：项目中的内容恰为 `@AGENTS.md`，根文件以它开头；没有 `CLAUDE.md` 落单。
-  - 每个 Markdown 文件中的相对链接指向存在的文件，`#锚点` 对应目标文件中的标题（GitHub 的规则：小写、去掉标点、空格变为 `-`）。
-  - `AGENTS.md`、`CLAUDE.md` 与 `SKILL.md` 在行内代码与 shell 代码块中提到的路径存在：相对该文件的目录、仓库根，或作为某个路径的结尾；带 `<…>` 或 `*` 的占位与通配、URL、包名开头的导入路径与 git 忽略的路径不检查。
-  - 写成 `<文件>#<用例名>` 的用例引用：文件存在，名称按 ` > ` 分开的每一段都以字符串字面量出现在文件中（`it.each` 引用带 `%s` 的模板）。
-  - 根 `AGENTS.md` 提到每个 workspace 项目的目录；`.agents/skills` 中每个技能的 `SKILL.md` 有与目录同名的 `name` 与 1 到 1024 字符的 `description`，`.claude/skills` 中恰好有指向它们的链接。
+  - 每个 `AGENTS.md` 旁有 `CLAUDE.md`：项目中的内容恰为 `@AGENTS.md`，根文件以它开头。
+  - 每个 Markdown 文件中的相对链接指向存在的文件，`#锚点` 对应目标文件中的标题（GitHub 的规则）。
+  - `AGENTS.md`、`CLAUDE.md` 与 `SKILL.md` 在行内代码与 shell 代码块中提到的路径存在；占位、通配、URL、包名开头的导入路径与 git 忽略的路径不检查。
+  - 写成 `<文件>#<用例名>` 的用例引用：文件存在，名称按 ` > ` 分开的每一段都以字符串字面量出现在文件中。
+  - 根 `AGENTS.md` 提到每个 workspace 项目的目录；每个技能的 `SKILL.md` 有与目录同名的 `name` 与 `description`，`.claude/skills` 中恰好有指向它们的链接。
   - 每个 `docs/*.md` 以 front matter 开头，含 `description` 与非空的 `sources`，`sources` 中的路径都存在。
-  - 本机专用目录没有被跟踪，`.gitignore` 有它那一行；`docs/` 的文件名都在 `scripts/doc-hygiene.ts` 的列表里；`docs/`、`AGENTS.md` 与 `README.md` 不含词表中的词。词表只存哈希，防误写，不是保密手段。
-- **`pnpm docs:affected`**（`scripts/docs-affected.ts`）：列出 `sources` 覆盖改动路径的 `docs/*.md`、改动文件所在目录及其上层的项目 `AGENTS.md`，以及有目录新增或消失时的根 `AGENTS.md`；只是候选，从不失败。
-- **`pnpm agents:sync`**（`scripts/agents-sync.ts`）：为每个技能建立相对链接 `.claude/skills/<名称>` → `../../.agents/skills/<名称>`（Claude Code 读取项目的 `.claude/skills/`，并跟随其中的符号链接；Codex 自己读取 `.agents/skills`），删除指向已不存在的技能的链接，不动其他文件。检出不支持符号链接时（如没有开启 `core.symlinks` 的 Windows）`check:agents` 失败；复制加校验的做法尚未实现。
-- **`pnpm security:scan`**（`scripts/security-scan.ts`）：规则在 `scripts/security-rules.ts`，只看新增行。它是安全审阅的机械部分，技能 `latch-security-review` 在它之后按不变量审阅。
+  - `docs/` 的文件名都在 `scripts/doc-hygiene.ts` 的列表里；`docs/`、`AGENTS.md` 与 `README.md` 不含词表中的词。词表只存哈希，防误写，不是保密手段。
+- **`pnpm docs:affected`**（`scripts/docs-affected.ts`）：列出 `sources` 覆盖改动路径的 `docs/*.md` 与相关的 `AGENTS.md`；只是候选，从不失败。
+- **`pnpm agents:sync`**（`scripts/agents-sync.ts`）：为每个技能建立相对链接 `.claude/skills/<名称>` → `../../.agents/skills/<名称>`，删除指向已不存在的技能的链接。检出不支持符号链接时 `check:agents` 失败；复制加校验的做法尚未实现。
+- **`pnpm security:scan`**（`scripts/security-scan.ts`，规则在 `scripts/security-rules.ts`）：只看新增行，是安全审阅的机械部分；技能 `latch-security-review` 在它之后按不变量审阅。
 
 ## 供应链金丝雀
 
 `pnpm check:supply` 依次检查三件事，任何一项失败都以状态 1 结束：
 
-- **例外**：`pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 与 `trustPolicyExclude` 只能写 `name@精确版本`（可用 `||` 列出几个精确版本）；每组以 `reason:`、`reviewer:`、`expires:` 注释开头，`expires` 是 UTC 日期，当天仍有效、次日起失败，最多写到 90 天后，到期后删除或重新审阅；条目必须仍在 `pnpm-lock.yaml` 中。
-- **`packageManager`**：sha512 必须等于 `https://registry.npmjs.org` 为该 pnpm 版本公布的完整性值。pnpm 自己切换版本时不读这个哈希（它从 registry 解析，并按隔离期与信任策略检查），只有经 Corepack 安装时才校验，所以由这里核对。需要网络，读不到时失败。
-- **安装金丝雀**：在 127.0.0.1 上启动只含夹具包的 registry，每个金丝雀在自己的临时项目、store、cache 与 `HOME` 中，用仓库的 `pnpm-workspace.yaml` 运行一次 `pnpm install`，必须以对应的错误码失败：带 postinstall 的包（`ERR_PNPM_IGNORED_BUILDS`，且脚本没有运行）、发布 3 天的版本（`ERR_PNPM_NO_MATURE_MATCHING_VERSION`，pnpm 自带的 1 天默认值拦不住它）、git 来源的传递依赖（`ERR_PNPM_EXOTIC_SUBDEP`）、没有 `time` 的元数据（`ERR_PNPM_MISSING_TIME`）、信任证据下降的版本（`ERR_PNPM_TRUST_DOWNGRADE`）、锁文件中发布不足 7 天的版本的冻结安装（`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`）。另有一个满 7 天、无脚本的对照包必须能安装，否则失败说明不了策略。金丝雀用运行脚本的 pnpm（`npm_execpath`），版本必须等于 `packageManager`，所以要经 pnpm 运行（`pnpm check:supply`、`pnpm test` 或 `pnpm exec vitest`）。
+- **例外**：`pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 与 `trustPolicyExclude` 只能写 `name@精确版本`（可用 `||` 列出几个精确版本）；每组以 `reason:`、`reviewer:`、`expires:` 注释开头。`expires` 是 UTC 日期，当天仍有效、次日起失败，最多写到 90 天后；条目必须仍在 `pnpm-lock.yaml` 中。
+- **`packageManager`**：sha512 必须等于 `https://registry.npmjs.org` 为该 pnpm 版本公布的完整性值。pnpm 自己切换版本时不读这个哈希，只有经 Corepack 安装时才校验，所以由这里核对。需要网络，读不到时失败。
+- **安装金丝雀**：在 127.0.0.1 上启动只含夹具包的 registry，每个金丝雀在自己的临时项目、store、cache 与 `HOME` 中，用仓库的 `pnpm-workspace.yaml` 运行一次 `pnpm install`，必须以对应的错误码失败（见下表）。另有一个满 7 天、无脚本的对照包必须能安装，否则失败说明不了策略。
 
-`supply-canaries.test.ts` 用同一套夹具再验证一遍，并把每个金丝雀守护的设置放宽（例如 `strictDepBuilds: false`、`minimumReleaseAge: 1440`），断言此时安装成功，证明每个金丝雀只因它对应的设置而失败。升级 pnpm 前先让这些用例在新版本上通过。
+| 金丝雀 | 错误码 |
+| --- | --- |
+| 带 postinstall 的包（且脚本没有运行） | `ERR_PNPM_IGNORED_BUILDS` |
+| 发布 3 天的版本 | `ERR_PNPM_NO_MATURE_MATCHING_VERSION` |
+| git 来源的传递依赖 | `ERR_PNPM_EXOTIC_SUBDEP` |
+| 没有 `time` 的元数据 | `ERR_PNPM_MISSING_TIME` |
+| 信任证据下降的版本 | `ERR_PNPM_TRUST_DOWNGRADE` |
+| 锁文件中发布不足 7 天的版本的冻结安装 | `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` |
+
+金丝雀用运行脚本的 pnpm（`npm_execpath`），版本必须等于 `packageManager`，所以要经 pnpm 运行（`pnpm check:supply`、`pnpm test` 或 `pnpm exec vitest`）。
+
+`supply-canaries.test.ts` 用同一套夹具再验证一遍，并把每个金丝雀守护的设置放宽，断言此时安装成功：每个金丝雀只因它对应的设置而失败。升级 pnpm 前先让这些用例在新版本上通过。
 
 ## 持续集成
 
@@ -596,178 +499,69 @@ GitHub Actions 的工作流在 `.github/workflows/`：
 
 | 工作流 / 作业 | 触发 | 运行器 | 内容 |
 | --- | --- | --- | --- |
-| `ci` / `static` | PR、推送到 `main` | `ubuntu-24.04` | `pnpm check:supply`、`fmt:check`、`lint`、`typecheck`、`check:boundaries`、`check:agents`、`knip`、`check:workflows`（带只读的 `github.token`，zizmor 另做在线审计） |
-| `ci` / `unit` | PR、推送到 `main` | `ubuntu-24.04` | `pnpm test`（`@latch/ui` 的浏览器用例用运行器自带的 Google Chrome） |
-| `ci` / `build` | PR、推送到 `main` | `macos-26` | `pnpm build`；确认组件必须已构建且签名有效；运行 `presence.test.ts`（含组件的 `--self-test`）；构建产物检查 |
+| `ci` / `static` | PR、推送到 `main` | `ubuntu-24.04` | `pnpm check:supply`、`fmt:check`、`lint`、`typecheck`、`check:boundaries`、`check:agents`、`knip`、`check:workflows` |
+| `ci` / `unit` | PR、推送到 `main` | `ubuntu-24.04` | `pnpm test`（浏览器用运行器自带的 Google Chrome） |
+| `ci` / `build` | PR、推送到 `main` | `macos-26` | `pnpm build`；确认组件签名有效；`presence.test.ts`（含组件的 `--self-test`）；构建产物检查 |
 | `e2e-web` | 每天 03:23（Asia/Shanghai）与手动 | `ubuntu-24.04` | `pnpm build` 后用运行器自带的 Google Chrome 运行 `pnpm test:e2e` |
-| `e2e-desktop` | 改动 `apps/desktop/`、桌面启动脚本、Host 发现与凭据（`host-state.ts`、`listeners.ts`、`access.ts`、`auth.ts`、`apps/web/src/core/credentials.ts`）、CSP（`http-util.ts`）、Node 或依赖版本、本用例、它的配置与辅助（`e2e/package.json`、`e2e/vitest.config.ts`、`e2e/helpers/`、`packages/testkit/`）的 PR；推送到 `main`、`v*` 标签与手动 | `macos-26` | `pnpm build`、`pnpm exec install-electron`，再以 `LATCH_ELECTRON_E2E=1` 运行 `desktop.e2e.ts` |
+| `e2e-desktop` | 改动该工作流 `paths` 所列文件的 PR；推送到 `main`、`v*` 标签与手动 | `macos-26` | `pnpm build`、`pnpm exec install-electron`，再以 `LATCH_ELECTRON_E2E=1` 运行 `desktop.e2e.ts` |
 
-每个作业先经 `.github/actions/setup/` 安装：`.node-version` 的 Node.js；Node 自带的 Corepack 安装 `packageManager` 指定的 pnpm，sha512 不符时拒绝；`pnpm install --frozen-lockfile` 对锁文件中的每个版本重新执行隔离期与信任检查。e2e 失败时上传 `test-results/`（保留 7 天）。`unit` 在 Linux 上运行，macOS 专用的用例（路径别名、`--code-file` 的 ACL）在那里跳过，由本机的 `pnpm test`（pre-push 钩子）覆盖。
+- `e2e-desktop` 的 `paths` 是桌面端壳、桌面启动脚本、Host 发现与凭据、页面 CSP、依赖版本、该用例与它的辅助；`scripts/verify-plan.ts` 按同一组路径列出 Electron 用例，改一处时同步另一处。
+- 每个作业先经 `.github/actions/setup/` 安装 `.node-version` 的 Node.js 与 `.go-version` 的 Go；Corepack 安装 `packageManager` 指定的 pnpm，sha512 不符时拒绝；`pnpm install --frozen-lockfile` 对锁文件中的每个版本重新执行隔离期与信任检查。
+- e2e 失败时上传 `test-results/`（保留 7 天）。
+- `unit` 在 Linux 上运行，macOS 专用的用例在那里跳过，由本机的 `pnpm test`（pre-push 钩子）覆盖。
 
 工作流的规则，`pnpm check:workflows` 检查其中大部分：
 
 - 每个 `uses:` 固定到完整的提交 SHA，行尾注释写版本；仓库内的 action 用 `uses: $/<路径>` 引用，GitHub 从正在运行的提交读取它，而不是读工作区中可能被前面步骤改过的文件。
-- 工作流级 `permissions: {}`，作业只列出需要的权限（目前都是 `contents: read`）；`actions/checkout` 设 `persist-credentials: false`；不用 `pull_request_target` 与 `workflow_run`，不使用密钥。
-- 工作流级 `cache-mode: none`，`setup-node` 设 `package-manager-cache: false`：没有作业读写 Actions 缓存，一次运行（包括外部 PR 的运行）留不下被后续运行读取的文件。zizmor 的 `cache-poisoning` 规则在 `.github/zizmor.yml` 中升为最高级别；zizmor 的任何发现都使检查失败。
-- actionlint 1.7.12 还不认识 `cache-mode` 与 `$/`，`.github/actionlint.yaml` 只忽略这两条报错；固定的 actionlint 支持后删除对应条目。
+- 工作流级 `permissions: {}`，作业只列出需要的权限；`actions/checkout` 设 `persist-credentials: false`；不用 `pull_request_target` 与 `workflow_run`，不使用密钥。
+- 工作流级 `cache-mode: none`，`setup-node` 设 `package-manager-cache: false`，Go 也关闭缓存：一次运行（包括外部 PR 的运行）留不下被后续运行读取的文件。zizmor 的任何发现都使检查失败，`cache-poisoning` 规则在 `.github/zizmor.yml` 中升为最高级别。
+- actionlint 1.7.12 不认识 `cache-mode` 与 `$/`，`.github/actionlint.yaml` 只忽略这两条报错；固定的 actionlint 支持后删除对应条目。
 - 更新 action：用 `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` 取提交（附注标签再取 `git/tags/<sha>` 的 `object.sha`），只选发布满 7 天的版本，更新每处引用的 SHA 与版本注释后运行 `pnpm check:workflows`。
-- 更新 actionlint 或 zizmor：在 `scripts/workflow-tools.ts` 中修改版本与四个平台归档的 SHA-256；每个归档先用 `gh attestation verify <文件> --repo <项目>` 核对它由该项目在对应标签上的发布工作流构建。`pnpm check:workflows` 下载后先核对 SHA-256，不符时不解压。
+- 更新 actionlint 或 zizmor：在 `scripts/workflow-tools.ts` 中修改版本与四个平台归档的 SHA-256；每个归档先用 `gh attestation verify <文件> --repo <项目>` 核对来源。`pnpm check:workflows` 下载后先核对 SHA-256，不符时不解压。
 
 ## Git 钩子
 
-每个克隆手动设置一次：`pnpm exec lefthook install` 安装 Git 钩子（`lefthook.yml`：pre-commit 检查暂存文件的格式与 lint 错误，pre-push 运行 `pnpm typecheck` 与 `pnpm test`）；`git config blame.ignoreRevsFile .git-blame-ignore-revs` 让 `git blame` 跳过只改格式的提交。`pnpm install` 不会安装钩子（`allowBuilds` 禁止 lefthook 的安装脚本）。
+每个克隆手动设置一次：
+
+- `pnpm exec lefthook install` 安装 `lefthook.yml` 的钩子：pre-commit 检查暂存文件的格式与 lint 错误，pre-push 运行 `pnpm typecheck` 与 `pnpm test`。`pnpm install` 不会安装钩子（`allowBuilds` 禁止 lefthook 的安装脚本）。
+- `git config blame.ignoreRevsFile .git-blame-ignore-revs` 让 `git blame` 跳过只改格式的提交。
 
 Git 已设置 `core.hooksPath` 时 lefthook 拒绝安装：不要加 `--force`（会写入那个目录）或 `--reset-hooks-path`（会删除该设置），改为提交前运行 `pnpm exec lefthook run pre-commit`、推送前运行 `pnpm exec lefthook run pre-push`。
 
-
-Agent 诊断的界面回归在 `apps/web/test/agent-probe.test.ts` 与 `e2e/desktop.e2e.ts`：覆盖不弹确认的握手、登录未验证说明、定义变更清除旧结果、失败诊断脱敏、无会话副作用，以及三种宽度的浅色/深色截图。
+只定义 pre-commit 与 pre-push：钩子执行检出内容里的 `lefthook.yml`，检出或合并类钩子会在切换分支的瞬间运行那个分支的命令。
 
 ## 人工检查本机确认（Touch ID）
 
-自动化测试从不显示真实的系统确认表单。唯一运行真实组件的用例是 `presence.test.ts` 的自检：`latch-presence --self-test packages/testkit/vectors/security-v1.json` 在空环境中只计算并比对向量，不调用 LocalAuthentication；它只在 macOS 上、且 `dist/native/latch-presence` 已构建时运行。
+自动化测试从不显示真实的系统确认表单。唯一运行真实组件的用例是 `presence.test.ts` 的自检：`latch-presence --self-test packages/testkit/vectors/security-v1.json` 只计算并比对向量，不调用 LocalAuthentication；它只在 macOS 上、且 `dist/native/latch-presence` 已构建时运行。
 
-系统表单、Touch ID 与登录密码只做人工检查：
+系统表单、Touch ID 与登录密码只由本人检查，Agent 不运行这条命令：
 
 ```sh
 pnpm build:presence
 pnpm latch presence test --data-dir <临时目录>
 ```
 
-- 它先打印「系统提示应显示：允许「示例设备（只是检查）」连接这台 Mac」，再弹出 macOS 的标准 Touch ID 表单。核对表单里的理由与打印的一致，并记下表单显示的应用名与图标：组件内嵌的 Info.plist 把名称设为 Latch，表单若仍写 latch-presence 或其他程序名，记下来再改；Latch 自己不画任何窗口。
-- 依次检查：Touch ID（这台 Mac 不支持时改用登录密码）、「取消」，以及放置不动直到超时（组件 115 秒后自己关闭表单，结果为 `timeout`）。命令输出 `结果：approved（biometric）` 等结果。
+- 它先打印系统提示应显示的理由，再弹出 macOS 的标准 Touch ID 表单。核对表单里的理由与打印的一致，表单显示的应用名应为 Latch；Latch 自己不画任何窗口。
+- 依次检查：Touch ID（这台 Mac 不支持时改用登录密码）、「取消」，以及放置不动直到超时（组件 115 秒后自己关闭表单，结果为 `timeout`）。
 - 对没有运行 Host 的临时数据目录，命令持有数据目录锁，并在第一次使用时登记组件签名。重新构建组件会改变签名，之后换一个新的临时目录，或运行 `pnpm latch presence repin --data-dir <同一目录>`。
 
 ## 不在自动化范围内
 
-- iOS/iPadOS 真机的软键盘、后台挂起与读屏；真机经 Tailscale 证书的 HTTPS 访问；公网代理。
-- 真实模型服务的兼容矩阵，以及真实 ACP Agent 的提示执行。对真实 Agent 只做人工验收；可以在不发送提示的前提下检查握手（`initialize`、`session/new`）。
-- macOS 的系统确认表单本身（见上一节）。Linux 与 Windows 上的本机确认尚未实现（没有对应的确认组件），相关用例只覆盖「不可用」路径与桌面端的离线连接码。
-- 打包后的 Electron 应用（尚未实现，见「Electron e2e」）。
+- iOS/iPadOS 真机：软键盘、输入法、后台挂起、读屏、Secure Enclave、Face ID、钥匙串、App Attest、Bonjour 重连与跨网络；真机经 Tailscale 证书的 HTTPS 访问；公网代理与中继的公网部署。
+- 模拟器里的 App：SDK 编译与固定样本截图不代替安装后的布局、主线程与流量验收；Swift 互操作用例（`native-swift.test.ts`）只测核心与协议，不启动 App。
+- 真实模型服务的兼容矩阵、真实 BYOK，以及真实 ACP Agent 的提示执行。假进程与手写回放不是真实 CLI 的录制。对真实 Agent 只做人工验收；可以在不发送提示的前提下检查握手（`initialize`、`session/new`）。
+- macOS 的系统确认表单（见上一节）、原生文件夹面板、Quick Look、系统通知与系统剪贴板。
+- Linux 与 Windows 上的本机确认尚未实现（没有对应的确认组件），相关用例只覆盖「不可用」路径与桌面端的离线连接码。
+- 打包后的 Electron 应用（尚未实现）。
+- 真机 Safari：Playwright WebKit 与 Chromium 的手机尺寸、触控模拟都不代表它。
 
 ## 已执行与未执行
 
 汇报时逐条写出实际运行的命令及结果（通过、失败、跳过的数量）；没有运行的检查写明「未运行」与原因。以下情况即使命令整体通过，也算未执行：
 
-- Vitest 报告为跳过的用例：没有 `LATCH_ELECTRON_E2E=1` 或不在 macOS 上的 `desktop.e2e.ts`；不在 macOS 上或 `dist/native/latch-presence` 未构建时的组件自检；非 macOS 上的路径别名与 `--code-file` ACL 用例；以 root 运行时的目录属主用例；Windows 上的 FIFO 与符号链接替换用例；非 POSIX 系统上的文件权限用例。
+- Vitest 报告为跳过的用例：没有对应开关的 Electron、真实 CLI、iOS 与性能用例；不在 macOS 上或 `dist/native/latch-presence` 未构建时的组件自检；非 macOS 上的路径别名、`--code-file` ACL 与目录枚举用例；以 root 运行时的目录属主用例。
 - 改了客户端却没有重新 `pnpm build` 就运行的 e2e：它测的是旧的 `dist/web`。改了 `native/macos/LatchPresence.swift` 却没有重新构建组件时的自检同理。
 - 没有对当前构建运行的「构建产物检查」。
 - 没有人实际操作过的人工检查（Touch ID 窗口、真机、真实 Agent）。
 
-浏览器 e2e 通过不代表桌面端已验收；测试夹具与演示模型不代表真实模型；Chromium 的手机尺寸与触控模拟不代表真机。
-
-`e2e/projects.e2e.ts` 在临时 Host 上通过签名夹具创建多文件夹项目，再用真实浏览器验证空项目常驻、组内重命名、编辑器主文件夹排序、会话数只读与目录丢失后的保留。覆盖手机、平板、桌面及深色模式，截图在 `test-results/projects/`。签名夹具不等于原生文件夹面板或 Touch ID 的人工验收。
-
-文件内容列回归：`e2e/file-preview.e2e.ts` 用临时 Host、本地假模型与生成的文档验证文本、DOCX、CSV、SVG、音频与秘密文件拒绝，覆盖三种宽度与深浅主题。`e2e/file-chips.e2e.ts` 通过删除响应中的内容能力标记模拟旧 Host 契约，保留旧菜单降级覆盖；后端仍使用真实登记与会话。`preview-frames.test.ts` 和 `desktop-frames.test.ts` 验证文档框入口的拒绝路径。`e2e/app-pages.e2e.ts` 装一个预先构建的格式 2 测试页面：页面列出会话、开始一个并读回复；框里的 `fetch('/link/api/snapshot')`、`document.cookie`、`parent.document`、`window.open`、`alert`、`top.location`、全屏与存储都失败；框里画的仿审批卡不挡住框外的真审批（Toast 出现时框是 `inert`）；390 宽度从底部栏打开；停用后入口与框立刻消失。截图在 `test-results/app-pages/`。
-
-`e2e/release-check.e2e.ts` 用假 ACP Agent 走完示例 `examples/release-check/`：Agent 在一轮里把示例写进会话的 `latch-app/`（`FAKE_ACP_EDIT_QUEUE` 的一项可以是一组文件），导入、构建（含类型检查）、经测试确认后端应用；1440 宽浏览器里空清单、编辑、另一设备先写时的「清单在别处改过」、开始检查（`FAKE_ACP_REPLY_QUEUE` 排好回复，`until` 让这一轮停在运行中，`error` 让它失败）、逐项结果与意见的「已保存」、重新加载后不多开会话、读不出代码块的「没有结构化结果」、会话失败、开始的回答丢失后「查询结果」与重新打开都按 requestId 找回同一个会话、离线时清单只读；390 宽手机网页从「应用」读到同样的结果，手机写的意见桌面不重载就看到。每个状态截浅色与深色，写入 `test-results/release-check/`。Electron 部分（`LATCH_ELECTRON_E2E=1`）从会话改动页签的「作为应用草稿」走到构建、预览（按钮不动）、应用与侧栏入口。`tests/release-check-example.test.ts` 覆盖提示词与回复代码块的解析，`app-build.test.ts` 用 Host 的构建工具构建这个示例。真实 Quick Look 网络行为仍需独立人工验收。
-
-会话分叉由 `apps/host/test/forks.test.ts` 检查边界、截断、清空上下文后的种子起点、权限、幂等、元数据重载与自有目录复用；`apps/host/test/pi-fork.test.ts` 用假 pi 经真实 Host 检查 pi 自己的分叉：从第一轮、最新一轮与分叉的分叉，来源的文件不变、来源照常继续，换 Harness、扩展取消与会话文件不在时以文字带上；清空上下文由 `apps/host/test/fresh-context.test.ts`（路由的拒绝与记录）、`tests/runtime.test.ts`（Latch 内置发给模型的历史）、`packages/harness-acp/test/acp.test.ts` 的「a new context in a session」（新 Agent 会话、选项重设、关闭旧会话、指令重发、被拒绝后的边界）与 `pi.test.ts`（pi 的新会话）覆盖，假 Agent 的 `recall` 说出会话里之前有几条输入，`e2e/context.e2e.ts` 在桌面与手机上走一遍 `/clear`、撤销、会话菜单、选定后重试、分隔线与刷新，`apps/host/test/native-swift.test.ts` 检查 iPhone 的分隔线与 Host 已清空时的提示；两种 Driver 的现有重启用例核对用户消息 requestId。`e2e/forks.e2e.ts` 在桌面、平板与手机验证预填、可编辑输入与折叠的真实上下文，并用两个假 Agent 验证分叉草稿沿用来源的模型、思考与权限档、换 Harness 后的对应与说明（goose 的选项在选它之后才读取，读取期间说明里出现过的每一行都要属实），以及假 Agent 用 `drift <模式>` 自己换到更宽的模式后，「在新会话中继续」仍从人选的档位开始；还从会话的 Harness 弹层分叉最新一轮（Harness 菜单开着、换到 goose 时用更严的「先问你」并写明），最新一轮运行时这一行不可按并写原因；`/btw` 旁支提问由 `apps/web/test/side-question.test.ts`（问题解析、分叉点不进入运行中的一轮、只对话与同一模型、菜单里「尚不支持」）与 `e2e/side-question.e2e.ts`（内置 Harness 一轮运行时提问，来源的历史与状态不变，插入与关闭后归档，1440/768/390）覆盖；`apps/web/test/fork-choice.test.ts` 覆盖同一 Harness、换 Harness、来源模型已不可选、经 Latch 转发的服务、来源没有模式、来源的模式被 Harness 自己改过或没能确认、目标 Harness 的选项还没读到与人在草稿里改选。
-
-文档与富文本的定向用例为 `apps/web/test/preview-data.test.ts`、`apps/web/test/rich-rendering.test.ts` 和 `e2e/preview-renderers.e2e.ts`。浏览器用例运行独立临时端口的 Vite 夹具与构建出的 Office/Diagram IIFE，覆盖真实 worker、缓存公式、PDF Range、不可见字符、数学 DOM 与图表。字体/分式和实际 canvas 像素也必须验证，节点存在不等于内容已经渲染。
-
-`e2e/preview-security-webkit.e2e.ts` 使用产品 `DocumentPreview`、`Diagram` 和 `FileSandbox`，在实际 WebKit 的三种宽度与浅深色下读取 Office、PDF 像素、静态 HTML 和需点击开始的 Mermaid，并核对框内的拒绝行为。WebKit 不支持的能力不能算作该平台通过，由对应浏览器和桌面用例验证。
-
-`e2e/file-preview.e2e.ts` 另通过真实 Host 在三种宽度验证 Markdown 预览/源码切换、相对链接、已授权项目图片、秘密图片拒绝、公式、图表和共享代码高亮，以及更新文本后的行位置保留。测试图片必须先在会话中有引用；浏览器默认的 `work` 范围不能借 Markdown 枚举其他文件。
-
-排队：apps/host/test/prompt-queues.test.ts 覆盖 FIFO、容量、回执、编辑、未知结果、重启、审计与权限失败；prompt-queue-api.test.ts 经 HTTP 覆盖手机 L1、Stop（含只答复上一轮之后子 Agent 请求的 Stop 也暂停）、撤回权限、手机禁止给 L3 输入而仍可移除，以及审计失败仍移除。native.test.ts 验证队列不改绑新的手机窗口。两种 Driver 的重启用例核对 queuedAt/requestId/runOutcome。apps/web/test/prompt-queue.test.ts 检查旧 Host 降级、双槽与只读托盘；e2e/prompt-queue.e2e.ts 在三宽度与浅深模式验证编辑、FIFO、暂停、手动继续、移除和失去权限的实际渲染。
-
-问答：`apps/host/test/questions.test.ts` 覆盖题包与答案校验、首答竞争、请求绑定、审计失败、晚到撤权、取消与重启时的精确工具输出恢复；`questions-api.test.ts` 经真实 HTTP 验证远程 L1 回答、只读拒绝与模型继续。`tests/runtime.test.ts` 验证等待暂停计时及持久化结果先于确认和下一次模型调用。`e2e/questions.e2e.ts` 在桌面、平板、手机深色模式验证多题、其他答案、设备草稿重载与回答后的继续执行。
-
-附件定向覆盖 `apps/host/test/attachments.test.ts`、`attachment-routes.test.ts`、`provider-attachments.test.ts`、`packages/harness-acp/test/attachments.test.ts` 和 `apps/desktop/test/desktop-uploads.test.ts`。它们只用临时目录、socket、测试确认和内存 Provider，检查绑定、过期、幂等、损坏/中断恢复、Range、视觉声明和内容块；桌面用例还证明大附件通过专用流，而其他 JSON 路由仍拒绝相同大小的正文。
-
-`e2e/attachments.e2e.ts` 用真实 Host、浏览器与内存模型覆盖三种宽度、深色、仅图片消息、预览、失败重试、未知提交重试、长粘贴编辑、取消等待和显式文件选择；另在 390 与 1440 的浅色、深色下用假 ACP Agent 核对附件按钮按下即说明原因、Agent 在别的设备启动后不刷新就能添加、被拒绝的文件没有「重试上传」、不接收附件的 Harness 直接说明、数据范围不够时 @ 的说明，以及设备页的数据范围与「保留的附件」确认（保留数由路由替身给出，释放规则在 `apps/host/test/attachment-routes.test.ts`）；`e2e/desktop-attachments.e2e.ts` 在独立桌面数据目录验证实际 Electron 上传大于 JSON 限额的图片与私有预览。ACP 的真实假进程用例核对协商、输入块、Agent 图片输出和重启后的 metadata；它不是实际 Agent CLI 验收。
-
-文件引用的标记和按键判断在 `apps/web/test/file-mentions.test.ts`。`e2e/attachments.e2e.ts` 验证清空裸 `@` 或按 Escape 关闭后，再输入会重新查询 Host，方向键可重新选中，未选中时按 Enter 依照发送键设置换行。
-
-发送投影：`apps/web/test/sending-message.test.ts` 检查设备会话归属、旧 Host 降级、队列隐藏、各 Harness 的新会话立即显示，以及请求标识和附件/文件引用的精确匹配。`e2e/sending-message.e2e.ts` 在三种宽度延迟实际写请求、模拟连接中断，核对即时文字、发送中、未知状态、原请求重试和唯一的已确认消息，并核对完全访问 Harness 的新会话同样立即显示；Harness 起不来（503 `agent-start-failed`）是确定的拒绝：文字留在输入框、原因与「打开设置 › Harness」「重试」就地显示、刷新后没有未确认的消息，结果未知的原因刷新后照旧；iPhone 的同一规则在 `native-swift.test.ts`（`phoneRefusals`）。
-文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。
-
-`apps/host/test/file-tree.test.ts` 经真实 Host 检查会话与带 Harness 的项目懒加载、主根限制、隐藏项、符号链接、`work` 拒绝、跨设备句柄、根换序／同路径替换、迟到撤权和哈希审计；受控子进程检查无排队并发和取消后的真实退出。`files-helper.test.ts` 编译真实 Swift 组件，验证私有路径、Unicode 与上限；`native.test.ts` 的文件树用例经真实原生 TLS 验证正文窗口前后与到期迟到结果。非 macOS 跳过实际枚举，缺组件仍检查诚实拒绝。标准 `build:host` 同时构建目录组件，运行测试只用临时 Host 和测试确认后端。
-
-文档样例统一由 `@latch/testkit` 的 `documentFixtures` 生成，覆盖备注、窗口化大页数与缓存公式；格式浏览器回归还核对保页、键盘缩放、横向手势和链接显式打开，见 [文档预览](DOCUMENT-PREVIEWS.md)。
-
-`delivery.e2e.ts` 用真实临时仓库、本地裸远端与假 ACP Agent 走完交付页签：逐个暂存与取消暂存、通过与失败的提交钩子（「加入对话」只进草稿不发送）、跳过钩子、推送并设上游、远端 `pre-receive` 拒绝的行、没有远端、推送结果未知后用同一请求重试、回合等审批时停用写入，以及 390 与 320 宽和数据范围不足的设备仍能提交与推送（截图在 `test-results/delivery/`，含 768 与深色）。
-
-`desktop-terminal.e2e.ts`（`LATCH_ELECTRON_E2E=1`）让桌面端经 `host.sock` 连接配假终端组件的测试 Host（不启动真实 shell）：打开、输入与回显、Ctrl-B 留在终端、本地服务链接、15 万字节经 xterm 粘贴事件加括号后顺序分片并完整送达、底部终端与左右栏独立、拖动和按键调节、布局与设置保持终端实例、默认目录和选定项目独立于会话、其他设备不能调整、「加入对话」只进草稿、重新载入后重放、第二个终端、忙碌时关闭要确认、退出码与重新打开、⌘J 仍归 Latch（截图在 `test-results/desktop-terminal/`，含 768 与深色）。`desktop-login-terminal.e2e.ts`（同一开关）用真实终端组件配 `/bin/sh` 运行夹具里的假 `codex login`（打印一个假设备码、等回车，从不运行真实 CLI 的登录）：草稿里的登录对话框、会话「终端」页签里的登录标签、设置里的登录，退出码与重新检查，以及假设备码不出现在审计、会话与快照里（截图在 `test-results/desktop-login-terminal/`）。`desktop-first-use.e2e.ts` 的登录用例把终端组件指向不存在的文件，保留「没有 Latch 终端时用默认终端」的路径；它等登录请求回答之后才触发重新检查，因为夹具在请求回答之前就运行登录，早到的检查会并入登录还没完成时开始的那一次。
-
-`app-build.e2e.ts` 在隔离的 Electron 窗口以 1440、768 和 390 宽打开「让 Agent 做」，核对长 Harness 列表、输入框和提交区域可达，并以实际假 ACP 创建会话和页面草稿。它还验证设置内的预览可操作，另一对话框或应用确认打开时预览停止接受输入，应用后的页面能在设置之外打开。
-
-`pr-checks.e2e.ts` 用假 `gh`（远端名为 GitHub、推送到本地裸仓库）走完 PR 一节：创建 PR、另一个会话按同一分支绑定而不新建、失败检查的日志与「加入对话」只进草稿、审阅与行级评论进草稿、「旧提交」、gh 未登录与没有 gh，以及 390 与 320 宽（截图在 `test-results/pr-checks/`，含 768 与深色）；假 `gh` 没有记下任何 token 违规。
-
-`git-hunks.e2e.ts` 用真实临时仓库与假 ACP Agent 走完「未暂存」「已暂存」与历史视图：按块、按行（键盘与 Shift）暂存与取消暂存，只能整个处理的文件，答复丢失后切换范围、关开面板、收紧数据范围再恢复，仍凭同一个请求确认且只写一次。另核对文件变动后的拒绝、提交与分支比较、文件历史和 `work` 设备的 403。三宽深浅截图在 `test-results/git-hunks/`。
-
-`changes-panel.e2e.ts` 用真实工具与真实 Git 仓库走完改动页签的范围、撤销与恢复、合并中的拒绝和数据范围不足的说明，再按 Host 的答复在三种宽度、浅深色下画出每个状态（截图在 `test-results/changes-panel/`），并量过两万个文件的列表。
-
-`review-notes.e2e.ts` 用真实 Git 仓库与假 ACP Agent（`FAKE_ACP_EDIT_QUEUE` 排好它每轮改的文件）：桌面宽度按行号与 Shift 选中 42–45 行、用键盘在空反馈框里 Shift ↑ / ↓ 选第 18 行，加入两条待发；390 宽的第二个浏览器看到同样两条；「发给 Agent」后两条成为已发送并带同一条消息的 ID，Agent 那一轮在文件顶部加两行并改掉第 18 行，第一条随行移到 44–47 行，第二条标「位置可能过期」并带原文；标记「Agent 称已修」与「已复核」后手机不重载就看到。截图写入 `test-results/review-notes/`。
-
-`phone-review.e2e.ts` 在 390 宽的触屏浏览器上用真实临时仓库、本地裸远端与假 ACP Agent（`FAKE_ACP_EDIT_QUEUE`）走完手机的复核：列表行的「复核 1 处改动」、本轮的差异、按两下选 42–45 行与按一下选第 18 行并在底部面板写两条反馈、320 宽没有横向滚动且底栏可达、「发给 Agent (2)」后页面跟到 Agent 修订后的结果、回到列表滚动位置不变而卡片因反馈待复核仍在、两条标为已复核、「未提交」里上下翻文件、只暂存 rates.ts 并提交与推送、返回直接回到列表且卡片消失；再用数据范围 `work` 的设备看到锁住的改动与交付，并提交已暂存的。截图在 `test-results/phone-review/`。
-
-`file-history.e2e.ts` 用真实工具写入生成两文件、三次差异；设备先以默认的 `work` 范围核对详情不含差异正文、这一轮改动的文件只打开产物，再由所有者经确认把范围改为 `all`，从文件标签的「查看改动」检查最新优先、旧记录展开、手机行内、宽屏左右对照与展开宽度、删除重载后的历史保留；同时核对差异最后一行没有额外空白。`diff-layout.test.ts` 检查不等长变更块、空行和两侧行序号守恒。
-
-`file-tree.e2e.ts` 使用临时真实项目，在手机、平板、桌面浅深色验证发消息前浏览、草稿保持、多根预览/搜索、键盘、目录分页、缺失重试与结构化引用；先证明 `work` 不显示树，再由测试执行端明确授予范围。`desktop-files.e2e.ts` 还验证实际 Electron preload、有限目录代理与项目句柄的访达动作。
-
-`desktop-plugins.e2e.ts` 在真实 Electron 与临时 Host 中核对「添加插件」只有「新建工具」与「导入文件…」，导入技能文件存成草稿、应用、修改、启停与删除，并验证新的 React 模块只确认一次；应用已送达而响应丢失时，界面保留同一请求再恢复。`plugin-assets.test.ts` 检查导入边界、UTF-8 大小、路径冲突与保留未知贡献，Host 对完整资产和实际执行生命周期另有回归。
-
-`assistant-sessions.test.ts` 用早先构建留下的数据启动 Host：带 `personal.changed` 的审计照常打开，助手与群聊跑过的会话只对数据范围 `all` 的设备可读、发消息、排队、改设置、附件与撤销都回答 409 `session-read-only`（批准与回答问答要先有等待中的请求，只读的会话不再运行、造不出这样的请求，这两处没有用例），只读设备看不到也打不开它们，带 `assistantId` 的新建会话两次都回答 409 `assistant-removed` 且不新建会话（`native-swift.test.ts` 的工作台用例另核对 iPhone 不再列出这样的未确认提交，也不列出写到 `/link/api/personal/` 的群聊消息与定时任务删除）。`e2e/read-only-session.e2e.ts` 在页面上打开这样的会话（桌面浅色与手机深色），本轮改动卡、改动面板与会话菜单都不提供撤销、恢复与清空上下文。`agent-relay.test.ts` 检查一条消息在 Agent 之间接力的上限、未完成即停、设置变化即停与停止等结算。
-`agent-journal.test.ts` 检查有限私有存储、严格解析、串行写入、未知结果恢复与异步后撤权。
-
-`automations.test.ts` 用确定性时钟检查排队与错过、运行期间经过的时间、暂停原因、编辑期间的检查和单行失败不影响其他行；`automations-bundle.test.ts` 构建生产 Host bundle，启用 Harness 后重启，核对「通用」上的定时任务仍开启并实际运行。`agent-routes.test.ts` 用真实 Standard 和假模型检查范围较小的设备收不到「通用」、收到过的会话与定时任务运行私有，以及 Host 停止时不再检查。这些都不代替真实模型或真实 Agent 的验收。
-
-原生工作台：native-swift.test.ts 的 Workspace 用例通过实际 Swift Workspace 连接临时 Host，验证正文窗口、同一请求的重试、离线列表只留行上需要的字段、继续等、手机默认的新会话选择、排队的原始请求身份，以及丢失回执后严格恢复的停止；会话动作用例经同一 Workspace 对带假 ACP Agent 的临时 Host 以表单的选择开始不带模型的新会话、单独停止子 Agent（窗口外拒绝、等假 Agent 的请求后核对审批选项、被拒的停止撤下「正在停止…」、第二次是 Host 的拒绝）、追加并重试同一请求、重试、带着来源的模型与权限分叉并重试同一请求、会话中改模型并读回、清空上下文、正文搜索（命中不进离线列表）、重命名/置顶/归档/删除与被拒后不留待确认写入；`phoneActions` 夹具覆盖这些动作的界面判断（子 Agent 行与停止的撤下、轮次动作与重试警告、追加或排队、权限/模型/思考的行与「更多」、会话菜单、请求与拒绝、分叉草稿沿用与说明、新会话的模型、搜索命中的 UTF-16 范围、已归档、审批的「更多」选项与不可见字符）。复核与交付用例经同一 Workspace 对临时 Git 仓库（失败的 `pre-commit` 钩子）与假 ACP Agent 的 `shell-edit` 一轮读本轮的改动与一个文件、写一条反馈并发送（同一请求再发得到回执，会话里只有一条反馈消息）、暂存、被钩子拒绝的提交保留暂存且重试由回执回答、跳过钩子提交、保存一个小文件并让过期的 `baseHash` 被拒绝、按文件现在的内容「核对并放下」、一次丢了答复的提交（钩子比等待慢）在去掉 `run` 后重试仍是未知、恢复后由回执（`replay`）定论、一次丢了答复的推送在 HEAD 分离后重试由回执回答而不是 `git-detached`、带这一轮的消息交给新会话；`phoneReview` 夹具覆盖复核行、别的会话的未确认发送不被这个列表丢掉、重试的哪些拒绝算定论、不可见字符的标出、带 `..` 的文件名、选行与 100 行上限、反馈定位与过期、折叠、底栏、提交页的分组与主按钮、钩子摘录、编辑与交接的请求、Host 的更新与睡眠横幅和 Markdown 导出。接入用例经同一 Workspace 对声明 list/load 的假 ACP Agent（`writeFakeHistory`）在窗口外被拒、经 `GET /history/sources?projectId=` 的只读查询、列出（项目范围与其他文件夹的数量）、忙碌的预览、接入并以同一 `requestId` 再发得到同一会话、列表的勾、另一请求得到 `history-already-imported` 与那个会话、过期的预览、按文字重建到另一个 ACP Harness（等第一条消息）与关闭后的预览不能再接入；`phoneHistory` 夹具覆盖入口出现与上锁、继续用与按文字重建的 Harness、列表与预览的各状态、请求的形状与拒绝、重试的定论、页头标记、第一条消息前的说明与按 UTF-16 折叠的重建文字。App 的 iPhone/iPad SDK 双架构编译不代替安装后的视觉或真机身份验收。
-
-`native-swift.test.ts` 另以真实 HTTP/2 事件流验证响应头前后到期、头前断流和 500 的分类，并在同一连接重新验证，核对旧租约与空租约不能撤下新窗口。SSE 提前结束/500 后同连接快照成功可重开流；传输关闭、快照 503、畸形快照仍失败，迟到确认不改变新阅读。所有恢复只读，原 pending 的编号、方法、路径与字节保持。Agent 读取故障与投影向量区分本地撤下、Host 未确认写和跨清理代次的迟到读取。文件汇总覆盖绝对／相对路径、多根同名、嵌套根、未知路径与 NFC/NFD 字节不同的文件。SDK 构建仍由 `e2e/ios-app.e2e.ts` 验证，真实界面步骤用独立的 `ios-live` 临时 Host 完成；夹具并不等于真机或 Touch ID。
-
-`ios-live` 的 Screens-only 连接诊断仅记固定阶段、单调毫秒和租约/连接布尔值，不记地址、窗口回执、正文或错误说明。结束时只读取本次 App PID 的专用日志，配对与连接记录分开保存；真实 App 二进制拒绝这些诊断标记。
-
-Live 的 Fake Agent 与 Fake Images 通过假 ACP 自己的 legacy 配置响应提供模型和 mode；预检读取真实 Host 投影，并在同一个会话发送第二条消息。不手填能力 DTO，不把显示出的模式名称当作隔离或扩大授权。两台临时电脑的初始 Git 提交各含同名 `computer.txt`，只有公开的 A/B 标记，供从正常文件入口核对当前电脑。普通 `ios-live` 预检不操作模拟器与剪贴板；真实双 Host 的往返仍需在配对提示有效期内验证，超过该窗口的同机 Bonjour 地址会被正常 peer 检查拒绝，不能代替物理设备跨网络验收。
-
-`LATCH_IOS_LIVE_METRICS=1` 为真实 App 正文流验收准备一条 Fake Agent 的十轮历史（每轮两万字节），仍经正常 Host API 与假 ACP 生成。App 中打开“原生流式验收”，发送已有假 Agent 命令 `count 6000` 可观察约一分钟的连续回复。测试每五秒经已有管理员 `traffic` API 记录完整/增量帧字节、正文 GET 次数与连接计数；消息身份与字节长度只经自有 Host 的只读 bridge 读取，不额外发正文 GET。最多2048个采样写到本轮 `traffic.json`，不含正文、地址或凭据；`<hold>.metrics` 可追加一次只读采样。该观测不会启动 Agent 写操作、替 App 协商能力或修改权限，`ios-live-metrics.e2e.ts` 验证采样不增加正文请求并保留真实请求计数。
-
-显式 `LATCH_IOS_SLASH=1` 将本轮 Fake Agent/Images 改用实际 ACP options 响应；正常发送 `plan` 后，假 Agent 自己报告 200 条命令与 `command-197` 的参数提示。两台临时 Host 都经正常模板 API 建立“代码审查”和“重庆行程”。不开这个选项仍用 legacy。`ios-slash-fixture.e2e.ts` 与该开关下的 Live 预检核对真实命令/模板读回，不操作 GUI，也不替代实际键盘、输入法和点击不发送的验收。
-
-同一开关准备会话「MCP 来源对照」。假 ACP 经本机 stdio 桥取到提示，随后发送一条普通消息，预检确认只有前一条有来源。开启 `LATCH_IOS_LIVE_AGENTS=1` 后，「代码审阅」走上传接口保存一张图片，Host 读回的资料同时保留方括号脸。模拟器中可检查这条来源标签和 iOS 头像回退。
-
-客户端的 `workspace-recovery.e2e.ts` 真实删除原会话目录，验证三宽的项目选择、草稿、焦点与显式提交；`webkit.e2e.ts` 用实际 WebKit 检查三宽授权文件读取和引用发送。`desktop-models.e2e.ts` 在隔离 Electron 中更改假 ACP 的真实模型与推理选项，模拟执行后丢回复，确认只读恢复、没有重复写入和额外认证。配对回归另检查默认收起公开指纹后，展开仍与系统确认的原身份一致。以上夹具不代替真机 Safari、真实 Agent、Touch ID 或公网验收。
-
-配置回执：`apps/host/test/config-requests.test.ts` 覆盖原子前置标记、终态落盘未知、重启与容量；`config-request-api.test.ts` 使用真实假 ACP 验证并发合并、相同编号冲突、失回执不重发、只读查询、真实模式放宽确认、异步撤权，以及这一轮还在启动时被拒绝的修改记为失败；`e2e/harness-options.e2e.ts` 验证刚选的思考深度在消息与重试之前送达。`native.test.ts` 验证已接受请求不改绑新的 App 验证窗口，窗口到期后查询也被拒绝。
-
-`e2e/archive.e2e.ts` 通过临时 Host 的真实已结束会话验证三种宽度的归档批量恢复、删除确认与 Shift 连选；核对请求 ID 集合、实际回执、快照和删除后 404，并保留工作目录中的文件。标为未读经真实菜单操作，刷新后保留，打开对应会话后清除，不把本设备阅读标记当作 Host 内容变化。
-
-`e2e/harness-quota.e2e.ts` 走 Harness 的额度（[HARNESSES.md](HARNESSES.md#额度)）：假 app-server 按 Codex 0.167 的形状回答 `account/rateLimits/read` 并在每轮结束时推送 `account/rateLimits/updated`，输入框的控件之后、发送之前出现环与百分比（在 1440、768、390 把它移出布局再放回，四个控件的位置与输入框的高度都不变），悬停一行、点开面板（手机上是底部面板）、套餐与遮住的账号（完整邮箱不出现在页面里），下一轮的报告不重新载入就到页面，80% 起琥珀、到上限红；套着 Claude Agent profile 的假 ACP Agent 用 `limit <json>` 一轮发出适配器的 `_claude/rateLimit`，显示警告标记与重置时间、没有环与百分比；什么都不报的 Harness 不画任何东西。每个状态在 1440、768、390 的浅色与深色截图到 `test-results/harness-quota/`。各家报告的解析、遮住账号、未知种类与文字被丢掉、只在内存里、过了重置时间就消失、Grok 两次询问之间的间隔、Antigravity 的命令（agy 1.5.8 录制的形状、只在允许运行程序时运行、随会话运行且五分钟内不重复、失败不出声、不认识的组被丢掉），在 `packages/harness-acp/test/quota.test.ts`；随目录发给谁、原始内容不进快照、日志与数据目录，以及经模型服务的 Codex 会话（没有登录）不读套餐额度也不显示，在 `apps/host/test/harness-quota.test.ts`；经模型服务的 Grok 会话不发 `_x.ai/billing` 在 `packages/harness-acp/test/acp.test.ts`；标记、一行与面板的文字在 `apps/web/test/harness-quota.test.ts`。`apps/host/test/harness-quota.live.test.ts` 默认跳过：所有者授权后设置 `LATCH_CODEX_QUOTA_BINARY` 为已安装的 `codex`，它在临时 Host 上用 Codex 自己的登录开一个会话、发一句很短的提示，把 Latch 发布的字段（只有数字与固定词，不含账号）写到 `LATCH_CODEX_QUOTA_OUT`；不读 Codex 的任何文件。假 ACP Agent 的 `limit refuse <json>` 让一轮以带 `rateLimit` 的限额错误结束。
-
-`e2e/gateway-no-login.e2e.ts` 走没登录的 Harness：假 Codex 在自己的模型上显示登录那一行，选了服务的模型后不显示、这一轮照常跑完，会话的模型控件保留服务的图标；没有状态命令的假 Qwen Code 在读模型列表被拒绝后显示同一行、菜单里只写「还没登录」，选服务的模型时都不显示，「重新检查」在登录后读到列表、这一行消失。`e2e/harness-login.e2e.ts` 用假 `codex` 走登录：开始前的提示、被拒绝的一轮、太早重试、重新载入、登录后继续、登录过期后恢复同一会话、在设置里取消与确认退出登录、「测试启动」读到不同的登录状态时「登录」一组跟着变（Host 丢掉记住的回答也在 `apps/host/test/agent-login.test.ts`）、握手被拒绝而状态命令仍说已登录时这一组写「登录可能已失效」并列出登录方式（手机深色、新开页面后仍在）；Agent 声明的终端登录、登录推送与退出的规则在 `packages/harness-acp/test/auth.test.ts` 与 `apps/host/test/agent-login.test.ts`，状态命令与推送谁更新、页面显示哪一个在 `apps/host/test/agent-login.test.ts` 与 `apps/web/test/harness-login.test.ts`；Electron 的登录终端（含打不开）在 `e2e/desktop-first-use.e2e.ts`。`e2e/harness-connect.e2e.ts` 走连不上的 Harness：已保存但太旧的 DeepSeek Harness 在新会话的 Harness 菜单里是灰色的「需要升级」、不能选（没读过版本的预设不算太旧，设置写「已找到」、ⓘ 后「版本未读」），「设置 › Harness」写「需要升级」、它的页面给出缺的版本、升级命令与「重新检测」，开始会话被拒绝（409 `harness-version-unsupported`）；只装了 `codex` 的 Codex 写出缺的适配器与安装命令（1440 与 390，浅色与深色）；版本门槛与握手时限的规则在 `packages/harness-acp/test/connect.test.ts` 与 `apps/host/test/harness-connect.test.ts`（`FAKE_ACP_INIT_SILENT`、`FAKE_ACP_NEW_SILENT`、`FAKE_ACP_PROVIDERS_SILENT` 让假 Agent 不回答 `initialize`、`session/new` 或 `providers/list`）。`e2e/harness-options.e2e.ts` 走开始前的选项：第一次打开模型菜单时读 Codex 自己的模型列表（不开会话，只读一次），之后列出上次会话报告的模型、思考与模式，四个模式时「按规则放行」收在「更多」里（展开、收起、再展开后选，手机表单里同样），选了再开始并读回，自己填写的模型 ID 开始时原样发出、移除后不再列出，下一个草稿记住为这个 Harness 选过的模型、思考与模式，重新载入后也在，模型不再提供时这一轮失败并说清楚、草稿里的思考与模式照常设好、重试用会话显示的，手机的新会话表单（浅色与深色），没有权限 profile 的 Harness 在手机与桌面上先打开权限也会读取并在开始前列出模式，Codex 先打开权限不读取、说发第一条消息后可以换，读取会报告模式的 Qwen Code 先打开权限时说正在读取、读到后列出模式。这些测试都用 `loginPrograms` 与 `commandDirectories` 只在临时目录里找程序；不传 `commandDirectories` 的测试 Host 按名字找不到任何命令，`server.test.ts` 用 `node` 核对这一点。
-
-接入已有会话：`apps/host/test/history-import.test.ts` 用假 Agent 的历史夹具（`FAKE_ACP_HISTORY_FILE`，`@latch/testkit` 的 `writeFakeHistory`）检查列出的项目范围、预览的上限与脱敏、忙碌、幂等与唯一（进行中的接入回执为 202，同一请求的两次按文字重建只有一个新会话）、私有、审计、文字重建与首条消息的 `importContext`，以及目录里哪个 Harness 声明 `history`；`apps/web/test/history-import.test.ts` 覆盖入口出现与上锁、继续用的 Harness、列表与预览的各状态、重试复用 `requestId` 与 409 打开已接入的会话、页头标记与第一条消息前的说明。`e2e/history-import.e2e.ts` 在真实 Host 上用同一夹具走一遍：列表（项目范围、其他文件夹的数量、项目外不出现）、预览（密钥显示为 `[redacted]`、工具输出与思考不出现、忙碌只有「再看一次」）、原样接入后继续（假 Agent 收到 `session/resume`、预览从不 `session/prompt`）、再次接入打开同一会话、另一请求先接入时 409 打开它、按文字重建到另一个 ACP Harness（第一条消息前没有 `session/prompt`，之后的提示带重建文字而不带密钥与思考）、原样接入后假 Agent 的存储里没有了这个会话（`harness-session-lost`）时从停止行按文字重建（新会话带标记、第一条消息前没有 `session/prompt`，原会话只能查看并链到新会话）、数据范围 `work` 的设备看到上锁的入口、390 宽的整页与浏览器返回；截图写入 `test-results/history-import/`。`packages/harness-acp/test/history.test.ts` 另用假 Agent 按 OpenCode 的 profile 检查：没有 `session/list` 的 1.x 与没有核对过的版本线在发出列表或加载之前被拒绝、带目录授权的会话不列出且加载前再读一行后拒绝、预览与恢复都不带其他文件夹、接入后的第一轮设回 Latch 的模式、删除不发 `session/delete`；pi、Qwen Code、goose 等不声明接入。
-
-`e2e/desktop-first-use.e2e.ts` 使用 `demo:false`、进程内假 Provider、真实假 ACP 和独立 Electron 数据目录检查首次使用与斜杠命令。桌面和平板验证逐步跳过、About 重新显示与首次真实会话后隐藏；手机沿实际新会话面板验证入口。命令来自 Agent 的实际更新，检查模板 ID／名称匹配、键盘只插入草稿、来源分组、排序、空态与三宽可达，并核对 ACP 日志中没有额外 prompt；不启用系统通知。
-
-
-`file-search-index.test.ts` 检查暖索引不重新枚举、当前秘密内容/符号链接/窗口仍拒绝；真实新增与改名触发失效，构建等待期间的事件不发布旧代。缓存20,000项之外的匹配仍通过原50,000项现场搜索可见；监听上限、短TTL、配置/根inode、取消及延迟close事件均有受控回归。实际Host的暖缓存请求另验证work范围、撤销设备与移除文件夹仍拒绝，Native正文门禁沿用同一每await裁决。
-`e2e/preview-access.e2e.ts` 以真实工作区工具产物和权限 PATCH/SSE 验证预览授权变化：工作范围先显式打开合法会话产物，全部范围再打开工作区文本／DOCX；将 document.hidden 设为 true 并阻断 meta 请求后收紧到 work，内容和文档框仍须撤下。合法会话产物只能经新的显式 resolve 恢复，不依赖旧预览 metadata 或旧 handle 缓存。
-
-
-`desktop-notifications.e2e.ts` 在实际Electron主进程导入main前替换Notification类，保留真实host.sock快照、preload、偏好保存、焦点与点击路径；本地受控Provider产生真实Host完成/失败/审批/取消状态。Node夹具状态回归可单独运行；Electron部分由`LATCH_ELECTRON_E2E=1`开启，使用临时用户目录和mock keychain，不投递系统通知。它不代表系统通知授权或专注模式验收。
-
-
-专用bulk的原生H2回归使用便利SDK以外的真实HTTP/2请求头：同一已激活句柄、正确If-Match、≤1MiB Range与错误If-Range必须关闭且不交付正文，不能回退成200整文件；普通文件服务另保留If-Range匹配206、失配200的标准行为。
-
-Harness 选项回归：`acp.test.ts` 覆盖草稿严格应用、按模型读取排队、dsh 无 ACP config 时的官方服务报告、重启互斥与授权复查、Cursor force/显式拒绝/收紧；`pi-gate.test.ts` 执行实际扩展字节验证四档工具决策与拒绝。`dsh-mode.test.ts` 默认只跑假服务；所有者明确授权后可单独设置 `LATCH_DSH_BINARY` 运行安装程序的无提示创建、换档恢复和只读核对，临时 HOME，无模型调用。默认测试与 e2e 不启动真实 Agent。
-
-首轮草稿中断后的重选由 `acp.test.ts` 检查同值、不同值权限及进程/启动设置的持久化；`harness-options.e2e.ts` 检查网页明确重选严格档后下一轮不重新应用旧宽松档。`harness-launch-options.e2e.ts` 在手机、平板、桌面及深浅色显示 Cursor 的启动设置来源并实际写入假 CLI 参数。`native-swift.test.ts` 的 session-actions 夹具覆盖 iOS 来源、官方档位名称与合法同值选择。
-
-
-`e2e/slash.e2e.ts` 在 Chromium 与 WebKit 的桌面、平板和手机深浅色中检查 200 条命令可达、Tab/点击不发送、无参 Enter 仅发送一次、模型搜索、模板占位、参数提示与手机插入入口；同时检查 `/new`、`/fork` 不创建任务且原草稿被原子消费，以及同一草稿在 1440→390→1440 时保留并重新测量高度。`apps/web/test/slash-match.test.ts` 读取共享匹配向量，`slash-history.test.ts` 覆盖标识限定与设备清理；Suggest 的真实浏览器组件用例在 `packages/ui/test/suggest.test.tsx`。
-
-`native-swift.test.ts` 的 `phoneSlash` 经真实 Swift Core 读取同一份 `slash-match-v1.json`，对照打分、拼音、UTF-16 高亮位置、全角/行内触发、路径与八个保留动作；同时核对 200 项、模板作用域、可编辑占位选区、草稿变化后拒绝旧选择、未知提交及关闭窗口的投影。该夹具直接用产品的有界 JSONDecoder 读取向量，避免 JSONSerialization 丢掉字符串开头的 U+FEFF。
-
-`ios-slash-fixture.e2e.ts` 经临时 Host 的正常接口准备模板，并由假 ACP 的实际首轮报告 200 条命令、参数提示与真实方向控制字符。`helpers/iosSlash.ts` 供原生操作验收复用；这项预检及 `ios-app.e2e.ts` 的 SDK 编译不代表键盘、IME、焦点、点按不发送或会话切换竞争已经通过 GUI 验收。会话、新会话与人物新话题的上述路径需在融合 App 中实走，另核对正文关闭和待确认请求不能触发命令。
-
-`native-swift.test.ts` 的 current-summary 场景使用实际 `PhoneSessions.currentSummary`，覆盖终态正文先到、新一轮元数据先到、同版本、缓存、Host 实例变化和不使用 Driver cursor。相邻投影验证人物头像状态与已有任务行同步、全局版本不变且不插入隐藏行；真实原生 Host 的 metadata-retry/detail-retry 场景分别让第一份 snapshot/正文答503，确认同一 notice 的一次只读重试后屏障及时释放，不新开 reader；unknown写、forbidden与expired不重试。原生 App 的 beginBody/readBody/逐帧 receive 接线另经 SDK 构建验证；真实设备操作与网络请求计数须在融合 App 中验收，不能用 Testkit 的手动 publication 回调代替。
-
-原生 body scope 场景还核对已验权限变化与窗口到期的分类：同 lease 可读新的公开会话且无新增签名；随后真正使 lease 失效仍返回 expired。临时设备被撤销后 metadata 失败且不发送新正文 GET，未知写的原请求不因范围切换改写。
-
-原生大历史发布节拍的可选诊断用 `LATCH_NATIVE_CADENCE=1 pnpm exec vitest run --config vitest.config.ts apps/host/test/native-swift.test.ts -t "large-history publication cadence"`：真实临时 Host、假 ACP、10×20KB 历史、6000 片段及 100ms 合并发布，结果写 `test-results/native-cadence/result.json`。它不包含 SwiftUI 渲染，不能替代真实 App 的性能验收。Screens 的修复诊断仅记录固定类别、有界账本计数及单调耗时，不记录正文、身份或任意错误字符串；正常 App 不包含该日志。
-
-`e2e/slash-skills.e2e.ts` 在 Chromium/WebKit 的三宽深浅色中从真实 Host 目录列出 200 个技能，验证原生名称、来源、末项可达、截断提示、句中补全、点击与 Enter 不发送、草稿缓存标记与正常手动发送。通过假 Codex 的官方目录变更通知核对旧技能和最近项撤下、私有路径不进页面；真实 CLI 的同路径验收由上面的显式 opt-in 用例另行证明。
-
-原生正文证明账本的 `vault-covered` / `metadata-covered` 用真实 HTTP/2 和仅存在于 Testkit 的缓存 actor 阻塞／延迟快照回答，区分已应用前缀与首部元数据屏障。定向检查合并后的最终持久游标、屏障前不确认、真实未应用的八槽仍溢出；纯状态补充覆盖旧写入捕获前缀后的新尾、空 cursor 保留 epoch、HTTP 同版本优先级、重置与撤销。此回归不代表实际 App 的布局、主线程或流量验收通过。
+浏览器 e2e 通过不代表桌面端已验收；测试夹具、测试确认后端与演示模型不代表真实模型、Touch ID 或真机。

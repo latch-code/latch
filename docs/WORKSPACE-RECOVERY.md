@@ -10,28 +10,49 @@ sources:
 ---
 # 项目目录变化后的继续方式
 
-会话固定创建时的文件夹身份。文件夹丢失、替换或移出项目后，Host 以 `workspace-changed` 拒绝继续运行；读取已保存的会话记录仍需原有的查看权限，但不要求旧文件夹可用。恢复不会改写旧会话的目录。
+会话固定创建时的文件夹身份。文件夹丢失、被替换或移出项目后，Host 以 409 `workspace-changed` 拒绝继续运行。
 
-`WorkspaceRecovery` 在原会话内提供项目选择和“在所选项目继续”。它只产生一个分叉意图：`taskId`、已结束回复的 `upToMessageId` 与用户明确选择的 `workspaceId`。上层保留当前草稿，进入新会话的待发送状态，用户下一次发送才调用既有 `POST /tasks`。组件本身不请求 Host、不发送提示、不生成请求 ID，也不清理原会话或草稿。
+- 读取已保存的会话记录仍只需要原有的查看权限，不要求旧文件夹可用。
+- 恢复不改写旧会话的目录，而是从它已结算的历史分叉到一个人明确选择的项目。
 
-工作台已接入这个流程：确定的目录拒绝由恢复面板解释，不再叠加失败红条；原输入仍可编辑，发送被阻止。手机继续到新会话时，面板把焦点交还草稿，不再重新聚焦 Agent 选择。`e2e/workspace-recovery.e2e.ts` 通过真实临时 Host、已删除的原文件夹和有效保存项目，验证三宽的草稿、焦点与用户明确发送前没有创建请求。
+## 恢复面板
 
-## 受控输入与接线
+`WorkspaceRecovery`（`apps/web/src/composer/WorkspaceRecovery.tsx`）在原会话的输入框上方给出项目选择与「在新会话中继续」。确定的目录拒绝由它说明，不再叠加失败横幅；原输入仍可编辑，发送被阻止。
 
-`apps/web/src/composer/WorkspaceRecovery.tsx` 接收完整 `source: TaskDetail`、当前 `workspaces`、受控的 `workspaceId` / `onWorkspaceChange`，以及下列真实状态：
+**它只产生一个分叉意图**：`taskId`、已结束回复的 `upToMessageId` 与人选的 `workspaceId`。
 
-- `forkSupported` 只在 `catalog.features.fork === true` 时传入 `true`。旧 Host 缺少能力时显示不能继续的原因。
-- `runGate` 为 `{ allowed: true }` 或 `{ allowed: false, reason }`。调用方使用当前设备的 `run` 权限和实际所选 Harness 的启动门禁；原因沿用已有权限文案。组件展示判断不替代 Host 授权。
-- `local` 表示当前请求确实经 `host.sock`，不能把回环浏览器当本机。`harness` 传入真正用于新会话的 Harness 名称和文件夹数量限制。
-- `phase` 为 `idle`、`busy` 或 `unknown`。未知提交仍恢复原请求的原始请求体和 `requestId`；不能将未知结果转成一次新的分叉。正在取消或运行的来源也先等真实结算。
-- `onFork(taskId, upToMessageId, workspaceId)` 仅准备分叉草稿。上层保留现有草稿及其附件语义，不自动发送，继续沿用正常提交与授权复查。
+- 组件不请求 Host、不发送提示、不生成 `requestId`，也不清理原会话或草稿。
+- 上层（`onFork`）保留当前草稿与附件，进入新会话的待发送状态；人下一次发送才调用 `POST /tasks`，沿用正常的提交与授权复查。
 
-组件要求显式保存的当前可用项目，排除不可用文件夹、不允许远程启动的项目与超出所选 Harness 文件夹数量上限的项目。`default` 不作为恢复目标：普通分叉有意复用 Host 已知的自有默认会话目录，不能借此避开旧目录失效。添加或修复项目后，上层更新项目列表即可原地重新选择；失效的旧选择不会自动回退到其他项目。
+**可选的项目**（`recoveryWorkspaces`）：显式保存、当前可用的项目，排除有不可用文件夹的与超出所选 Harness 文件夹数量上限的。
 
-来源最后一个可用边界为已结束的助手回复，其前缀不能包含排队、运行或等待审批的消息。没有回复、来源仍运行或上次提交结果未知时，操作保留可见并说明原因。项目列表与来源历史分别判断，旧项目不存在不妨碍选择有效的新项目。
+- `default` 不作恢复目标：普通分叉有意复用 Host 的默认自有会话目录，不能借它绕过旧目录失效。
+- 添加或修复项目后，上层更新项目列表即可原地重新选择；失效的旧选择不自动退到别的项目。
+
+**分叉边界**（`recoveryMessage`）是最后一条已结束、有正文的助手回复，它之前不能有排队、运行或等待审批的消息。项目列表与来源历史分别判断。
+
+**不能继续时操作仍可见，并写出原因**（`workspaceRecovery`，按这个顺序判断）：
+
+| 情况 | 输入 |
+| --- | --- |
+| 上次提交的结果未知 | `phase: 'unknown'`。未知的提交仍恢复原请求体与原 `requestId`，**不能转成一次新的分叉** |
+| 正在处理原会话 | `phase: 'busy'` |
+| 来源仍在运行、等待审批或取消中 | 等真实结算 |
+| Host 不支持分叉 | `forkSupported` 只在 `catalog.features.fork === true` 时为真 |
+| 当前设备不能启动 | `runGate: { allowed: false, reason }`，来自设备的 `run` 权限与所选 Harness 的启动门禁；原因沿用已有的权限文案 |
+| 没有已结束的回复、没有可用项目，或选择已失效 | — |
+
+这些判断只管显示，不代替 Host 的授权。
 
 ## Host 仍是权威
 
-既有 `POST /tasks` 同时接受 `forkOf: { taskId, upToMessageId }` 和显式 `workspaceId`。Host 从持久历史生成有界的背景文本，再核对新项目、文件夹身份、设备权限与 Harness；客户端不提交历史。显式保存项目使用新项目的根，跳过默认自有会话目录的复用路径。文件不会复制或回滚，隐藏推理和原工具参数也不进入分叉种子；种子上限与来源记录见 [ARCHITECTURE.md](./ARCHITECTURE.md#会话分叉)。
+`POST /tasks` 同时接受 `forkOf: { taskId, upToMessageId }` 与显式的 `workspaceId`。
 
-`apps/host/test/fork-recovery.test.ts` 使用临时 Host 验证旧自有文件夹真实删除后：继续原会话被拒绝、历史可读、无效目标被拒绝、有效保存项目产生新会话、精确重试不重复创建。`apps/web/test/workspace-recovery.test.ts` 覆盖未知结果、忙碌、权限与能力缺失、目标变化、历史边界以及项目名的隐藏字符展示。浏览器中的原地选择、草稿焦点和实际发送由工作台集成用例验证；纯 Node 用例不证明这些浏览器交互或真实系统确认已通过。
+- Host 从持久历史生成有界的背景文本；客户端不提交历史。
+- Host 再核对新项目、文件夹身份、设备权限与 Harness。
+- 显式保存的项目使用新项目的根，不走默认自有会话目录的复用路径。
+- 文件不复制也不回滚；隐藏的推理与原工具参数不进入分叉种子。种子上限与来源记录见 [ARCHITECTURE.md](./ARCHITECTURE.md#会话分叉)。
+
+## 验证的限度
+
+`apps/host/test/fork-recovery.test.ts` 与 `apps/web/test/workspace-recovery.test.ts` 是纯 Node 用例，不证明浏览器里的原地选择、草稿焦点与实际发送；这些由 `e2e/workspace-recovery.e2e.ts` 在三种宽度下用真实的临时 Host 验证。真实的系统确认不在自动化范围内。

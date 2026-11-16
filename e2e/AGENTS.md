@@ -4,13 +4,13 @@ Vitest 驱动浏览器、Electron 与原生。剪贴板用隔离夹具，Host �
 
 | 路径 | 职责 |
 | --- | --- |
-| `*.e2e.ts` | 浏览器登记、接管、流式、审批、插件、项目、布局、搜索与文件预览；桌面壳为 `desktop*.e2e.ts`（`LATCH_ELECTRON_E2E=1`，仅 macOS），场景与截图见 [TESTING.md](../docs/TESTING.md) |
+| `*.e2e.ts` | 浏览器登记、接管、流式、审批、插件、项目、布局、搜索与文件预览；桌面壳为 `desktop*.e2e.ts`（`LATCH_ELECTRON_E2E=1`，仅 macOS） |
 | `helpers/host.ts`、`helpers/browser.ts` | `startTestHost`（经 `@latch/host` 绑定 testkit 的夹具，与 `apps/host/test/helpers/host.ts`、`apps/desktop/test/helpers/host.ts` 保持一致）；`enrollBrowser`、`connected` 与 `browserLaunchOptions` |
 | `helpers/layout.ts`、`helpers/motion.ts`、`helpers/visual.ts`、`helpers/security.ts` | 可达与溢出、按 Host ID 打开会话、手机栈、关闭设置；按令牌读出的过渡与动画；视觉截图的视口、固定时钟与冻结的动作（`stillMotion`）、截图、索引与逐像素比较；向页面注入样式并核对安全界面不变 |
 | `vitest.config.ts` | 文件依次运行，用例与钩子超时 120 秒 |
 
 `desktop-native.e2e.ts` 检查 Mac 手机配置、系统确认接线、三宽浅深色和样式覆盖；只截无邀请的设置，生成的二维码不截图。
-`workbench-scroll.e2e.ts`、`workbench-keyboard.e2e.ts` 验证三宽队列、矮窗输入、审批菜单、键盘和焦点。截图见 TESTING。
+`workbench-scroll.e2e.ts`、`workbench-keyboard.e2e.ts` 验证三宽队列、矮窗输入、审批菜单、键盘和焦点。
 `desktop-terminal.e2e.ts` 用假 shell（TERMINAL）。
 
 `ios-app.e2e.ts` 用临时 DerivedData、固定依赖和禁签名的 iOS Simulator SDK 构建真实 App，检查 Mach-O 产物不含夹具身份；不启动模拟器或访问钥匙串。SDK 编译不能代替运行时布局、平台许可或真机验收。

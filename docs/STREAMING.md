@@ -1,10 +1,11 @@
 ---
-description: 流式执行与阅读界面：三段链路、Host 的状态流、客户端的事件流与版本门禁、消息身份、审批与取消、时间与用量、阅读位置、Markdown 与代码渲染。
+description: 流式执行与阅读界面：三段链路、Host 的状态流、客户端的事件流与版本门禁、原生客户端的流、消息身份、审批与取消、写入的结果未知、时间与用量、运行的真实状态、阅读位置、Markdown 与代码渲染。
 sources:
   - packages/core/src/runtime.ts
   - packages/core/src/store.ts
   - packages/sdk/src/bridge.ts
   - packages/protocol/src/types.ts
+  - packages/protocol/src/sessions.ts
   - packages/protocol/src/task-delta.ts
   - packages/harness-acp/src/mapping.ts
   - packages/harness-acp/src/runtime.ts
@@ -15,10 +16,12 @@ sources:
   - apps/host/src/session-meta.ts
   - apps/host/src/traffic.ts
   - apps/host/src/task-delta.ts
+  - apps/host/src/native-replay.ts
   - apps/web/src/core
   - apps/web/src/components
   - apps/web/src/conversation.ts
   - apps/web/src/conversation/useTranscriptProjection.ts
+  - apps/web/src/hooks/useSubmission.ts
   - apps/web/src/MessageContent.tsx
   - apps/desktop/src/proxy.cjs
   - native/ios/Sources/LatchNativeCore/TaskStreamProjection.swift
@@ -30,15 +33,9 @@ sources:
 ---
 # Latch 流式执行与阅读界面
 
-本文件描述当前源码的实现，是传输、消息投影、重连、审批决定和阅读位置的单一机制参考。核心架构与持久化保证见 [ARCHITECTURE.md](./ARCHITECTURE.md)，扩展契约见 [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md)，ACP Agent 的事件映射见 [HARNESSES.md](./HARNESSES.md)，界面表现见 [DESIGN.md](./DESIGN.md)。
+状态怎样从执行端到达每台设备并保持一致：传输、消息投影、重连、审批与取消的回执、写入的结果未知、阅读位置。架构与持久化见 [ARCHITECTURE.md](./ARCHITECTURE.md)，扩展契约见 [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md)，ACP Agent 的事件映射见 [HARNESSES.md](./HARNESSES.md)，界面表现见 [DESIGN.md](./DESIGN.md)。
 
 ## 三段链路
-
-原生连接设置使用持久请求编号与配置哈希确认结果，页面重试原始内容，超时不生成新编号。设备原生访问状态由 Host 判定；手机当前快照的正文期限只属于当前连接，Mac 管理列表可展示当前 App 打开代次的有效期限。
-
-原生业务 SSE 在 Host 运行代次内使用独立连续序号，保留真实发布状态的有界重放日志，数量与字节分别封顶。它和界面批次 revision 分开：一个批次可有多个不同事件，列表快照更新也不能确认尚未应用的会话正文。客户端只在应用事件后推进选中流游标，换网后在同样的设备与正文窗口校验下接续；淘汰或重启明确要求快照/详情同步。浏览器的现有 revision SSE 保持兼容。
-
-Swift `NativeWorkspace` 将最多 16 个流的已应用 epoch/sequence/revision 加密保存，列表与各会话分别确认；`heartbeat` 和 `resumed` 的注释尾帧也携带游标。`accepts` 不推进进度，调用者应用状态后再 `acknowledge`；确认前复核流的连接代次和正文 lease。窗口过期、旧连接迟到或其他选中会话的事件不确认；缓冲溢出只清除该流的恢复游标并要求 checkpoint，不撤销登记身份。
 
 ```text
 Provider.stream             Standard Runtime             Host                   浏览器
@@ -53,250 +50,526 @@ Provider.stream             Standard Runtime             Host                   
   连接重新打开：浏览器 GET snapshot → GET 当前 detail → 版本检查 → 标记已连接
 ```
 
-模型流与浏览器状态流的协议不同。Provider 的 `text` 与 `reasoning` 是新增片段；Host 合并变化后给浏览器完整 `TaskDetail`，或在明确协商且其余状态未变时给正文追加帧。追加帧属于 Host 的订阅基线，不直接转发 Provider token。工具执行目前返回一次 `{ text }` 结果，没有通用 stdout 流或百分比进度 SDK。
+- 模型流与状态流是两种协议。Provider 的 `text` 与 `reasoning` 是新增片段；Host 给客户端的是合并后的完整 `TaskDetail`，或在协商后、其余状态未变时的正文追加帧。追加帧属于 Host 的订阅基线，不转发 Provider 的 token。
+- 工具执行只返回一次 `{ text }` 结果；通用的 stdout 流与百分比进度尚未实现。
+- **没有 WAL、持久事件队列、Last-Event-ID 历史重放或逐事件缺口恢复。** 浏览器断线后通过当前快照收敛，不保证看过每个短暂的中间状态。SSE 关闭只移除订阅，不取消运行。创建与输入的幂等回执由 Runtime 持久化，审批决定与取消的回执由 Host 随会话保存。
 
 ## Host 的状态流
 
-源码：[server.ts](../apps/host/src/server.ts)、[hub.ts](../apps/host/src/hub.ts)、[bridge.ts](../packages/sdk/src/bridge.ts)、[types.ts](../packages/protocol/src/types.ts)。多个 Harness 的变化通知先经 HarnessHub 汇合，再进入下面的合并流程。
+源码：[server.ts](../apps/host/src/server.ts)、[hub.ts](../apps/host/src/hub.ts)、[bridge.ts](../packages/sdk/src/bridge.ts)、[types.ts](../packages/protocol/src/types.ts)。各 Harness 的变化通知先经 HarnessHub 汇合。
 
-客户端用 `GET /link/api/events?sessionId=<当前任务>` 订阅，凭据与其他 API 请求相同（浏览器为设备 Cookie，桌面端由主进程附加），设备需要「查看」权限。Host 打开流后先发送一个 `refresh`。不传 sessionId 时只接收整体或列表变化，不接收其他任务正文。这里的“仅选中任务”是订阅与带宽策略，不是任务级权限控制；设备仍按当前数据范围过滤私有会话。
+**订阅。** `GET /link/api/events?sessionId=<当前会话>`，凭据与其他 API 相同，需要 `view`。不传 `sessionId` 时只收整体与列表变化。只推选中会话的正文是带宽策略，不是会话级权限；私有会话另按设备的数据范围过滤。流打开后 Host 先发一个 `refresh`。
 
-`Bridge.subscribe` 的通知进入待处理集合。Host 自首次待发通知起等待约 40ms，将同一任务的多次变化合并；一轮读取尚未完成时不并发执行另一轮，期间新增通知安排下一轮。该间隔不是严格帧率，也不保证每个中间状态都会发送。
+**合并。** `Bridge.subscribe` 的通知进入待处理集合，自第一个待发通知起约 40ms 后一起读取。一轮读取未完成时不并发下一轮，期间的通知排到下一轮。这不是帧率，也不保证每个中间状态都发出。
 
 | SSE 事件 | 发送条件 | 客户端动作 |
 | --- | --- | --- |
-| `task-state` | 某任务变化，且此连接选中了该任务 | 校验事件和版本，替换当前 detail；同时合并该任务的摘要和审批 |
-| `task-delta` | 本连接已协商且收到完整基线，同一轮同一消息仅正文/思考前缀延长及有限时间字段变化 | 验证基线与 UTF-8 偏移，重建不可变 detail，再经过原版本门禁 |
-| `tasks-invalidated` | 未选中的任务摘要或审批变化。私有会话（Agent、通用、接入、定时与 `agentPrivate`）的这一帧不发给数据范围不是 `all` 的设备，连不带 ID 的提示也不发（否则能看出私有会话何时有动静）；原生回放同样按读者略过，原生游标只看先后，序号留下空缺没有关系 | HTTP 只同步 snapshot；不逐 token 拉取当前 detail |
-| `refresh` | 设备、配置等整体变化（含 Harness 的版本检测结果变化），流刚打开，或读取任务失败后的回退 | HTTP 同步 snapshot 与选中 detail |
-| `host-state` | Host 宣布它即将不再应答：`stopping`（Host 关闭时，每条流的最后一帧）或 `sleeping`（电脑即将睡眠）；以及电脑醒来后的 `awake` | 见下文「Host 宣布的停止与睡眠」 |
-| `app.data` | 插件页面的一个文档变了：`{ type, instanceId, pluginId, scope, key, version }`（删除时 `version` 为 0）；只发给能读那个作用域的连接，私有会话的文档只给数据范围 `all` 的设备 | 打开着该插件页面的客户端只把本插件、页面声明过的作用域的变化经桥转给页面（`storage.onChange`），页面自己决定是否重读；不参与 revision 顺序，不带 SSE `id`（[APP-PAGES.md](./APP-PAGES.md#存储)） |
-| `app.updated` | 插件的已应用页面变了（应用、回退、启停、删除）：`{ type, instanceId, pluginId }`，发给每条仍被接受的流 | 客户端重读快照；快照里页面的修订或 `bundleHash` 变了，打开着的框带着 `view` 状态重建；不参与 revision 顺序，不带 SSE `id`（[APP-PAGES.md](./APP-PAGES.md#桥)） |
+| `task-state` | 某会话变化，且此连接选中它 | 经版本门禁后替换当前 detail，并合并该会话的摘要与审批 |
+| `task-delta` | 已协商且已发过完整基线，只有正文或思考变长（见[协商后的正文追加](#协商后的正文追加)） | 校验基线后重建 detail，再过同一道版本门禁 |
+| `tasks-invalidated` | 未选中的会话的摘要或审批变了 | 只同步 snapshot，不为每个 token 拉取 detail |
+| `refresh` | 设备、配置等整体变化（含 Harness 版本检测结果），流刚打开，或本轮有会话读取失败 | 同步 snapshot 与选中的 detail |
+| `host-state` | Host 即将不再应答（`stopping`、`sleeping`）或电脑醒来（`awake`） | 见 [Host 宣布的停止与睡眠](#host-宣布的停止与睡眠) |
+| `app.data`、`app.updated` | 插件页面的文档或已应用页面变了 | 见 [APP-PAGES.md](./APP-PAGES.md#存储) 与[桥](./APP-PAGES.md#桥) |
 
-`task-state` 形状如下，正文省略：
+**私有会话不泄露动静。** 私有会话（Agent、通用、接入、定时与 `agentPrivate`）的 `task-state` 与 `tasks-invalidated` 不发给数据范围不是 `all` 的设备，连不带 ID 的提示也不发；原生重放同样按读者略过。`app.data` 只发给能读那个作用域的连接。
 
-```ts
-{
-  type: 'task-state',
-  instanceId: string,
-  revision: number,
-  sessionId: string,
-  hostTime?: string,
-  detail: {
-    summary, messages, approvals, liveText, cursor,
-    activity?, liveMessageId?, liveReasoning?, liveReasoningStartedAt?, liveReasoningMs?,
-    runStartedAt?, runWaitMs?, runWaitingSince?, lastOutputAt?, usageReport?,
-    plan?, config?, permission?,
-    sync: { instanceId, revision, hostTime? }
-  }
-}
-```
+**版本与顺序。**
 
-`hostTime` 是 Host 发出这一帧时自己的时钟（ISO 时间），同时写在事件与 `detail.sync` 上；快照（`GET /link/api/snapshot`）也带 `hostTime`。`GET` 单个会话的 detail 不带它，所以两台设备同时读到的 detail 仍完全相同。时间字段的含义见下文「时间与用量」。
+- 每个 Host 进程有一个 `instanceId`，每次通知递增内存里的 `revision`。合并会跳过中间 revision，同一轮的不同会话共用一个 revision；它不是连续的增量日志。
+- 浏览器入口每帧的 SSE `id` 是 revision，浏览器不使用它。`TaskDetail.cursor` 是 Driver 的状态版本（Standard 中随持久提交增加），区分不了内存里的每个文本片段。
+- 每条连接记住 `lastSentRevision` 并丢弃更旧的待发事件，所以慢 Bridge 的旧一轮不会在新订阅之后倒序到达；同 revision 的不同事件照发。
+- `task-state` 与它的 `detail.sync` 带 `{ instanceId, revision, hostTime }`，快照也带 `hostTime`。`GET` 单个会话的 detail 不带 `hostTime`，所以两台设备同时读到的 detail 完全相同。
+- `host-state`、`app.data`、`app.updated` 不参与 revision 顺序，不带 SSE `id`。
 
-每个实例生成一个 `instanceId`，每次通知递增内存 `revision`。合并会跳过中间 revision，同一轮不同任务可以共享一个传输 revision；它不是连续增量日志。每帧的 SSE `id` 就是这个 revision，客户端不使用它。`TaskDetail.cursor` 则是 Driver 的状态版本，Standard 中随持久提交增加，不能用于区分每个内存文本片段。
+**`host-state`。** 形状为 `{ type, instanceId, state: 'stopping' | 'sleeping' | 'awake', reason?: 'restart' | 'update' | 'sleep' | 'shutdown', retryAfter?: 秒, at }`；`stopping` 与 `sleeping` 必带 `reason` 与 `retryAfter`。Host 关闭时先向每条仍被接受的流写出 `stopping` 再结束它们，最多等 0.5 秒让最后一帧发出；`awake` 之后另发一次 `refresh`。谁报告、各原因的默认 `retryAfter` 见 [ARCHITECTURE.md](./ARCHITECTURE.md#host-的生命周期)。
 
-每条连接保存 `lastSentRevision`，丢弃比它更旧的待发事件，避免慢外部 Bridge 的旧 flush 在新订阅建立后倒序送达。同 revision 的不同事件仍允许发送。
+**连接的保护。**
 
-`host-state` 不参与 revision 顺序，也不带 SSE `id`，形状为 `{ type: 'host-state', instanceId, state: 'stopping' | 'sleeping' | 'awake', reason?: 'restart' | 'update' | 'sleep' | 'shutdown', retryAfter?: 秒, at }`；`stopping` 与 `sleeping` 必带原因与 `retryAfter`。谁报告、各原因的默认 `retryAfter` 见 [ARCHITECTURE.md](./ARCHITECTURE.md)「Host 的生命周期」。Host 关闭时先向每条仍被接受的流写出 `stopping`，再结束这些流，最多等 0.5 秒让最后一帧发出；`awake` 之后另发一次 `refresh`。
-
-某个会话的 detail 读取失败时，本轮只向各连接发送一次 `refresh`。Host 每 15 秒发送注释心跳。每次推送与心跳前，Host 检查打开该流的凭据是否仍会被接受，不再被接受时结束该流。若连接已积压超过 256 KiB，断开该慢连接，让客户端重新同步。这是积压保护，不是单个事件或总内存的硬上限。每个 task-state 仍包含该任务完整 messages 与累计 liveText，负载会随会话历史增长。未协商的完整帧可共享序列化；带订阅戳的完整帧与追加帧按连接编码，不修改共享事件或原生 replay。
+- Host 每 15 秒发注释心跳。每次推送与心跳前检查打开这条流的凭据是否仍被接受，不被接受就结束这条流。
+- 某个会话的 detail 读取失败时，本轮只向各连接发一次 `refresh`。
+- 连接积压超过 256 KiB 时断开它，让客户端重新同步。这是积压保护，不是单帧或总内存的上限：每个 `task-state` 仍含该会话的完整 `messages` 与累计 `liveText`，随历史增长。
 
 ### 协商后的正文追加
 
-浏览器与本机 Electron 的选中会话请求带固定头 `x-latch-state: delta-v1`，不增加 URL 字段或身份信息。Host 只在选中会话且该头精确匹配时接受，原生入口也支持显式协商；Swift App 的选中会话显式发送该头，列表流不协商；Node 原生客户端与其他电脑的 Electron 页面仍省略它，使用完整帧。新连接的第一个正文帧为完整 `task-state`，增加 `stream: { protocol: 'delta-v1', subscriptionId, stateSeq }`。subscriptionId 每个网络连接随机生成，stateSeq 从 1 开始，只计算该连接实际发送的正文帧；与 revision、cursor、原生重放序号相互独立。未带回执的完整帧按原协议显示，不能用 HTTP 响应猜测追加基线。
+源码：[task-delta.ts](../packages/protocol/src/task-delta.ts)、[task-delta.ts](../apps/host/src/task-delta.ts)、[taskStream.ts](../apps/web/src/core/taskStream.ts)。
 
-原生协商只改变授权完成后的逐读者编码。replay 仍保存有界的不可变完整事件；完整帧和追加帧的 SSE id 都取该事件原有的 canonical cursor，不用 revision 或订阅序号代替。新连接回放的第一份正文为完整帧，后续才可追加；未入日志的即时 checkpoint 保持 `resumeRequired`，并清掉追加基线。正文窗口、scope、积压和原生 padding 活跃状态先于编码检查，连接关闭仍清理活跃标记。原生完整帧超过原上限仍先记录 refresh，不因追加协议扩大帧或缓存上限。
+**协商。** 选中会话的请求带固定头 `x-latch-state: delta-v1`；Host 只在有 `sessionId` 且头精确匹配时接受。浏览器、本机 Electron 与 Swift App 的选中会话发它；列表流、Node 原生客户端与其他电脑的 Electron 页面不发，只收完整帧。
 
-`task-delta` 只含实例、会话、runId、liveMessageId、revision、hostTime、stream、baseSeq；正文 `text` 与思考 `reasoning` 各为 `{ offset, append }`。offset 是上一份原文的 UTF-8 字节数；reasoning 为 null 表示前后都没有该字段，空字符串仍表示字段存在。片段必须是 Unicode 标量串，不把未配对 surrogate 替换成另一个字符再继续追加。每帧正文与思考片段合计至多 64 KiB，每个累计串至多 16 MiB，越界或无法验证时发完整状态。有限元数据包括 cursor、summary.updatedAt、detail.lastOutputAt，以及已存在 summary.live 的 lastEventAt/lastOutputAt；可选时间用 null 表示缺省。客户端严格拒绝追加帧中的未知字段。
+**基线。** 新连接的第一个正文帧是完整 `task-state`，带 `stream: { protocol: 'delta-v1', subscriptionId, stateSeq }`。`subscriptionId` 每个网络连接随机生成；`stateSeq` 从 1 开始，只数这条连接实际发出的正文帧，与 revision、cursor、原生重放序号互相独立。不带这个回执的完整帧按原协议显示，客户端不能用 HTTP 响应当追加基线。
 
-Host 只在 running、稳定 run/message 身份、正文与思考均为前缀延长时考虑追加。历史、工具、审批、队列、问题、计划、配置、权限、用量、活动阶段、终态或任意未知字段变化都回完整状态。比较基线保存不可变签名与字符串，不保留可能被 Bridge 改写的对象引用。Host 仍可能扫描完整投影，也保留原生完整 replay；带宽减少不代表 Host 所有序列化成本消失。
+**何时追加。** 只在 `running`、`runId` 与 `liveMessageId` 不变、正文与思考都只是前缀变长时。历史、工具、审批、队列、问题、计划、配置、权限、用量、活动阶段、终态或任何未知字段变化，都发完整状态。
 
-每个订阅最多缓存一份基线，Host 合计最多 128 份、32 MiB，单份至多 4 MiB；按 UTF-16 字符串占用估算并计固定开销，超过预算只发完整帧，不增加日志。每次编码先按当前设备、凭据和私有数据范围过滤。scopes/dataScope 改变、失去授权、私有事件被省略或连接关闭立即清理该基线；被省略的事件既不推进序号，也不发提示。重新获得可见性后先发完整基线。
+**帧。** `task-delta` 只含实例、会话、`runId`、`liveMessageId`、revision、`hostTime`、`stream`、`baseSeq`，以及：
 
-客户端为每条连接维护独立的流影子，HTTP 不写它。每次追加校验实例、会话、订阅、精确 baseSeq、run/message 身份和 UTF-8 偏移，重建 detail、summary、sync 与 live 对象，复用只读历史数组和历史消息。即使 HTTP 已发布更高 revision，较旧的流也只推进影子，补齐后的 detail 仍由原 ProjectionGuard 决定能否发布；相同 revision 的来源优先级不变。
+- 正文 `text` 与思考 `reasoning` 各为 `{ offset, append }`，`offset` 是上一份原文的 UTF-8 字节数。`reasoning` 为 null 表示前后都没有该字段，空字符串表示字段存在。
+- 片段必须是 Unicode 标量串，未配对的 surrogate 不替换成别的字符后继续追加。
+- 每帧正文与思考片段合计至多 64 KiB，每个累计串至多 16 MiB；越界或无法验证时发完整状态。
+- 可带的元数据只有 `cursor`、`summary.updatedAt`、`detail.lastOutputAt`，以及已存在的 `summary.live` 的 `lastEventAt`、`lastOutputAt`；可选时间用 null 表示缺省。
+- 客户端拒绝追加帧里的未知字段。
 
-重复帧忽略；缺帧、错误订阅/run/message 身份或偏移、无法识别的操作触发修复；其他实例或会话的帧忽略。一个逻辑订阅最多修复一次：真正 abort fetch 并取消 reader，丢弃旧连接缓冲，立即建立完整状态连接，余下重连均不再协商追加。新连接的 onOpen 照常同步；换会话创建新的逻辑订阅。更换设备或权限代次时同步清掉影子、关闭旧流并使旧投影票据失效。读取位置、草稿、唯一 sender 与写请求编号都不参与这个传输优化。
+**Host 的基线缓存。**
 
-原生核心的 `NativeTaskStreamProjection` 提供同一契约的纯值投影，`NativeWorkspace` 的独立正文阅读接口已接入它；`PhoneModel` 的选中会话经该接口接收并发布正文，列表流保持完整模式。`events(for:incremental:)` 和底层 HTTP/2 接口只有显式传入 `true` 才协商追加。纯值投影不接受 HTTP 更新影子；`NativeTaskPublicationGate` 单独按实例、会话、选择/连接票据及 revision/source priority 筛选 HTTP 与流候选，替换连接使旧票据失效但不降低版本地板。纯候选和票据都不是正文 lease，也不能用来确认原生游标。
+- 每个订阅至多一份，Host 合计至多 128 份、32 MiB，单份至多 4 MiB（按 UTF-16 字符串占用估算并计固定开销）；超过预算只发完整帧。
+- 基线保存不可变的签名与字符串，不保留可能被 Bridge 改写的对象引用。
+- 每次编码前先按当前设备、凭据与数据范围过滤。scopes 或数据范围改变、失去授权、私有事件被省略或连接关闭时立即清掉基线；被省略的事件不推进序号也不发提示，恢复可见后先发完整基线。
+- 未协商的完整帧共用一份序列化；带订阅回执的完整帧与追加帧按连接编码，不改共享事件与原生重放。
 
-正文阅读由 `beginBody` 绑定当前实例、会话、Workspace 与已有正文窗口，既不签名也不开新窗口。真正的网络 collector 为每帧附上不可由公开 parser 构造的 reader 身份及连续序号；跨 reader、旧连接或旧选择的事件不能进入影子。新的打开意图取消并等旧打开过程关闭，收到响应头之前的取消也关闭实际 HTTP/2 子流。解析失败、缺帧或八条待应用记录耗尽时关闭实际旧流，最多进行一次完整帧修复；此后该阅读对象不再协商追加，第二次失败直接交还调用方。修复结果同时携带固定来源类别及有界账本计数，供 Screens 区分投影、候选、待应用记录与事件缓冲；该诊断不改变修复路径，正常 App 不输出正文或修复日志。
+**客户端的流影子。**
 
-`readBody` 和 `receive` 只提供不可自行构造的 `NativeBodyUpdate`。消费者在 `@MainActor NativeBodyPublication.apply` 的同步回调内核对自己的活动选择并赋值，返回 `true` 才得到 `NativeBodyApplied`；返回 `false`、重入、失去窗口或旧选择都不推进发布门。锁只覆盖同步身份核对与赋值，没有网络或存储等待。回执只证明该回调接受了值，不证明屏幕已经绘制，App 仍负责关闭窗口、退到后台与切换页面后的撤下。
-
-只有 `Workspace.applied` 接受实际发布回执后，才推进 detailRevisions、已应用来源和原生游标。正文和列表快照分别确认：较旧的 HTTP 正文可被拒绝，同时应用更新的快照；`refresh` 与 `tasks-invalidated` 构成元数据屏障，后续正文或心跳不能越过尚未应用的屏障。待处理记录与待确认候选各最多八条，仅保存证明元数据。槽位满时，已被实际应用回执覆盖的相邻正文/心跳证明可合成一个最后序号与有效游标；尚未应用的正文和所有快照屏障均不合并，不跳过网络帧。持久化仍在原来的写盘和身份复核完成后，只清除本次写入捕获的序号前缀，不清掉等待期间形成的新尾证明；Workspace 另外只保留最新一份候选用于加密缓存，不把尚未应用的新候选当成旧回执的缓存。新选择、权限范围改变、窗口失效和关闭清理影子与证明；替换连接保留发布版本地板，但旧网络证据失效。旧完整帧接口保持兼容，新正文 reader 拒绝旧的数字版 `acknowledge`。
-
-App 的 `openSession` 与 `refresh` 也通过同一 `readBody`/publication，不再把 HTTP 详情直接覆盖已发布的较新流。每一帧先 `receive`，100ms 只合并已校验的候选；元数据 notice 独立读取与发布，不被正文替换。真正赋值后才提交 `applied` 回执；scope 变化导致 `adoptSnapshot` 撤下内容时，本次正文赋值停止且不出回执。当前摘要在同实例、同会话、非缓存且正文的 `sync.revision` 不低于快照 `revision` 时用正文，否则用列表；这两个版本都来自 Host 全局计数，不使用 Driver 的 `cursor`。已接受的正文摘要只替换快照中已有的同 ID 任务行，让人物头像和话题列表反映终态；全局快照版本与其他字段不变，后到的元数据仍按同一版本规则投影。
-
-同一阅读代次重开网络流保留修复次数和发布地板；App 也记录 collector 在 `receive` 之前报告的坏帧或队列溢出。第一次关掉旧 reader、重开完整流并并发 HTTP 恢复，第二次语义失败停下报告，不能用新建阅读对象绕过限额。旧清理只关闭旧句柄；切会话、换 Host、窗口与权限撤下同步清掉待发布状态。notice 与恢复 HTTP 读取遇到网络不可用或明确的408/5xx读取失败时在同 reading 内只重试一次；仍失败则关闭它所属的具体流，把错误交给原 SSE 恢复，不能丢下元数据屏障等下一帧。过期不重试，旧读取失败不关闭新 reader。原有 SSE 暂断后的 metadata 核对与退避、后台撤下、未知写入原请求和只读离线缓存均保留；缓存展示没有应用回执。 已验证同实例 checkpoint 的权限范围变化单独使阅读对象失效，不等于正文窗口到期；Core 只在这条路径报告 bodyAccessChanged，真正过期的 lease 优先。App 先撤下内容，再读一次真实 metadata；仅窗口仍有效、当前设备仍有 view 且会话仍在可见列表时重建阅读，继承已使用的修复次数，不签新窗口。服务端明确窗口拒绝和其他 expired 路径仍按原规则撤下。实际手机收益、键盘交互与 CPU 预算须另行实测，SDK 编译不代表已通过。
-
-Swift 的身份按 UTF-8 字节精确比较，长度按 UTF-16 单元与 Web 对齐。JSONDecoder 拒绝非法 UTF-8 与未配对 surrogate，不以替换字符继续追加。原生输入及重建候选仍受 `NativeJSON` 的 1MiB、深度、数组和对象宽度限制；候选经编码再读回确认这些约束，保留 O(history) 成本，不能称为常数 CPU。原生时钟只接受完整 ISO 时间，Web 的 `Date.parse` 还接受日期但没有时间的旧格式；共享向量明确这一区别，以及原生不能表示非法 surrogate 全量正文的边界。完整帧中的未知事实保持，追加帧的未知字段拒绝。
-
-### 流量计数
-
-Host 从启动起计数自己发出的字节（[traffic.ts](../apps/host/src/traffic.ts)），作为以后改进同步方式时的基线，只在内存中，重启清零：
-
-- **计什么。** 事件流每一帧写出的文本（`task-state`、`task-delta`、`tasks-invalidated`、`refresh`、`host-state`、`app.data`、`app.updated` 与心跳），以及客户端重新同步时读取的快照（`GET /snapshot`）与会话详情（`GET /tasks/:id`）的响应体。HTTP 头、分块编码与 TLS 记录不计入：同一份内容经 TLS 发出时，线上字节还要多出记录头与握手。
-- **怎么分。** 每一类有次数、字节数与大小分布（≤256 B、1、4、16、64、256 KiB、1、4 MiB 与更大，共 9 档）；每个会话有点名它的帧（`task-state`、`task-delta`、`tasks-invalidated`，所有连接合计）与它的详情响应；每条事件流有入口类别、打开与关闭时间、帧数（含心跳）、字节数与心跳数。会话最多保留 1000 个（最近计入的），已关闭的事件流保留最近 100 条。
-- **只有数字。** 计数只含次数、字节、时间、入口类别、Host 内的连接序号与会话 ID，不含正文、标题、设备 ID 或设备名。
-- **谁能看。** `GET /link/api/traffic` 只读，需要 `admin`，或 `host.sock` 上的匿名命令行；`pnpm latch traffic` 打印摘要（`--json` 打印原样）。
-
-## 客户端：事件流、凭据与版本门禁
-
-设置切换的未知结果按会话保留原始请求；模型菜单、思考控件和输入框的「⋯」共用同一道写入门禁。未知时输入框上方写出所选的值、时间、「结果未知」、「核对」与「重试同一请求」，不出红色横幅；核对请 Host 向 Agent 读取当前设置后结算（Agent 忙、读不到或读到第三个值时仍未知），重试同一请求只得到回执，两者都不再发送修改；结算后再选用新的请求编号。核对没能结算之后可以「放弃这次结果」：只在这个页面上放下，Host 的回执不变，原请求编号不再发送。旧 Host 没有核对时只查回执；没有配置回执时，只有真实配置已经读回目标值才解除未知状态，不能把一个仍旧的值当成失败。项目目录失效的确定拒绝则由项目恢复面板承接，保留可编辑草稿；结果未知时不能转成一次新的分叉。实现见 [模型配置](./MODEL-CONFIGURATION.md) 与 [项目恢复](./WORKSPACE-RECOVERY.md)。
-
-未发送的文字按设备与会话（新会话也算一份）存在本机浏览器存储 `latch.drafts.<origin>.<deviceId>`，刷新或重启后还在；桌面端用同一页面。只存文字，附件与文件引用只在内存。打开中的输入框稍后写入，离开页面时立即写入；同一设备的多个窗口只写自己改过的草稿。私有会话的草稿，以及含项目文件摘录（引用）的草稿，带私有标记，设备不再能读私有内容时移除。含 Host 日志会遮去的任何内容（凭据本身，以及 Cookie、设备请求头、`?token=`、URL 里的 `user:pass@`；`@latch/protocol` 的 `looksSecret`，与 `redactSecrets` 同一组规则）的草稿只在内存，不提示。数据范围不是 `all` 时，私有与含摘录的草稿在每次写入时都不存。重新发送的旧消息（`resent`）送达或被拒都不动输入框里的文字、附件与文件引用。14 天没有改动的草稿在下次加载时丢弃。删除会话时清除：在这里删除、打开中的会话被 Host 报告已删除，或一次完整的列表（快照的 `tasksComplete`，按配置而不只按已挂载的判断，见 [ATTACHMENTS.md](ATTACHMENTS.md)）在这台能看见全部会话的设备上不再有它；打开中的会话答 404 `task-not-found` 时，也只在同一次快照完整时才算删除，Harness 停用或重新挂载期间保持选中；列出失败、只列出一部分、已归档或因范围与私有被隐藏都不算删除。撤权与退出时立即清除：页面一收到不再被接受的回答，就删掉这个来源下所有设备的草稿，并写下共享的退出标记，所有窗口之后都不再写入；页面加载时只留下当前设备的。存储不可用时只在内存。提交捕获当前会话或新会话草稿的选择代次。同一页面中的重试按原请求编号保留首次来源，卸载后失效。回执到达前切换过会话时，只结算原请求，不自动选回原会话、清空当前输入或修改当前分叉。普通发送消费原会话的草稿；重新发送旧消息不消费草稿。当前会话被另一设备删除时，选择清空也同时清除对应活动草稿。刷新恢复未知结果时，只有原目标匹配当前输入才恢复文字；其余只恢复原请求卡片和编号。
-
-源码：[useHarness.ts](../apps/web/src/core/useHarness.ts)、[eventStream.ts](../apps/web/src/core/eventStream.ts)、[credentials.ts](../apps/web/src/core/credentials.ts)、[api.ts](../apps/web/src/core/api.ts)、[projection.ts](../apps/web/src/core/projection.ts)。
-
-创建 Agent 的未知请求独立于消息草稿，沿用创建控制器与原请求编号；跨窗口先取得 Web Lock，再核对同一记录。创建、草稿与 Slash 最近项共用当前设备归属，换设备后旧句柄不能重新落盘。创建正文的私有权限、敏感内容只留内存、存储故障与明确放弃规则见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#创建的待确认请求)。
-
-### 基于 fetch 的事件流
-
-客户端不使用 `EventSource`：`eventStream.ts` 用 `fetch(url, { credentials: 'same-origin', cache: 'no-store' })` 读取同一个 `text/event-stream` 响应，自带解析器处理 CR、LF、CRLF（包括跨数据块的行尾）、多行 `data`、`event`、`id`、注释与字节序标记。这样能看到 HTTP 状态：`401` 不会被当作“断线后无限重试”，而是交给认证处理；桌面端的事件流也经过主进程转发，与其他 API 请求一样。
-
-| 情况 | 行为 |
-| --- | --- |
-| 响应 2xx | 触发 open，之后逐帧派发 `refresh`、`tasks-invalidated`、`task-state`、`task-delta`、`host-state` |
-| 连接失败、非 2xx、流结束，或 45 秒没有收到任何字节（含等待响应头的时间；Host 每 15 秒发心跳） | 视为断线，按 1、2、4、8 秒退避，之后每 15 秒重连；浏览器重新联网，或页面重新可见且在线时，跳过剩余等待立即重连 |
-| 浏览器 offline | 断开事件流、取消在途 HTTP，并停止重连，直到浏览器重新联网或页面重新可见且在线 |
-| `401 renewal-required` | 先续期凭据；续期成功后立即重连一次。续期失败、正在等待下一次续期（桌面端页面从不自己续期），或续期后流打开前 Host 仍要求续期，都按退避重连 |
-| 其他 `401` | 按退避重试；每次断线后的快照同步决定进入连接页还是只是暂时失败，页面离开工作区时关闭事件流 |
-| `deferReconnect(ms)` | 放下当前连接，此后每次重连前至少等待 `ms`（与退避取较大者），直到下一条流打开为止 |
-
-事件流 open 不直接标记“已连接”：先完成 HTTP snapshot/detail 同步，确认选择仍有效、事件流仍打开且浏览器在线，`.app-shell` 的 `data-connection` 才变为 `connected`；其他取值为 `connecting`、`reconnecting`、`offline`。网络错误显示重连中；浏览器 offline 时保留已读内容，显示离线。online 或页面重新可见时再同步。`refresh` 与 `tasks-invalidated` 只有在 `instanceId` 与当前 Host 相同且 revision 新于当前 snapshot 时才触发同步；`instanceId` 不同则立即重新同步并重新绑定。
-
-重新建立状态的同步（首次加载与连接页的「重试」、事件流每次打开、重新联网或页面重新可见、续期之后、任一请求发现凭据失效之后、断线时的同步，以及用户点「同步最新状态」、连接状态或横幅里的「重试」时的 `resync`）发布快照时，`useHarness` 的 `resyncs` 加一；跟随变化的同步（`refresh` 与 `tasks-invalidated` 事件、`task-state` 推送、用户操作之后的 `refresh`、选择会话）不加，排在一起的请求只要有一个是重新建立就算重新建立。工作区把 `resyncs` 作为外壳（侧栏与图标栏）的纪元交给 `LiveChanges`，对话区与会话详情的纪元另加打开的会话：计数的淡入、会话行状态的交叉淡化、工具卡的状态过渡这类一次性过渡只为同一纪元里的变化播放，首次加载与重连后的快照同步直接显示新值，切换会话时对话区也直接显示；会话列表跨会话存在，所以打开一个未读会话时它那一行的对勾照常淡出、时间淡入（[DESIGN.md](./DESIGN.md)「界面原语」）。
-
-凭据失效时事件流结束，客户端重连；消息内容按不可信文本显示。
-
-### Host 宣布的停止与睡眠
-
-收到实例与当前 Host 相同、形状正确的 `stopping` 或 `sleeping`（[hostState.ts](../apps/web/src/core/hostState.ts) 校验）时，页面记下这条通告，连接状态变为 `reconnecting`，并以 `retryAfter` 调用 `deferReconnect`：Host 已说明暂时不会应答，所以页面不按 1 秒起的退避猜测，也不在断线时立即请求快照；浏览器重新联网或页面重新可见时照常立即重连一次。横幅标题按通告给出原因与开始时间，替代「连不上 <电脑>，正在重连…」：`sleeping` 为「电脑已休眠（22:41 起）」，`restart` 为「电脑上的 Latch 正在重启」，`update` 为「电脑上的 Latch 正在更新」，`shutdown` 为「电脑上的 Latch 已停止（21:03 起）」。重连后的快照同步成功、页面标为 `connected` 时清除通告；收到 `awake` 时清除通告并立即同步。只有连接失败才按通告等待：重连得到 `401` 说明 Host 已经在应答，续期不能解决时页面清除通告，照常请求快照，由快照决定进入连接页（设备被撤销、凭据过期等）还是显示暂时故障，不会停在过时的「电脑已休眠」上。实例不同的通告被忽略。没有通告时横幅只说页面知道的：浏览器报告没有网络（`navigator.onLine` 为假）时写「这台设备没有联网」；Host 以 5xx 应答时写「<电脑> 上的 Latch 出错（HTTP 503）」；Host 以其他错误拒绝时写它自己的原因；请求没有得到应答时写「连不上 <电脑>，正在重连…」，没有第二行，不猜原因。桌面端页面另外显示主进程对 Host 的判断（正在重启、反复崩溃后停止自动重启、已停止、没有响应），Host 停止或反复崩溃后横幅给出「启动 Host」。
-
-### 失败的说法与旧 Host
-
-页面上的失败只按页面知道的说（`errorMessage`，[api.ts](../apps/web/src/core/api.ts)）：Host 的错误与页面写给人的文字（`ClientError`、`MessageError`；`pnpm lint` 让 apps/web/src 里的 `new Error` 只带 ASCII 字面量的内部代码）照原文；fetch 本身失败（请求或答复没有到达；请求头不合法这类页面自己的错误在发出前就抛出，不算）在 `api()` 里变成 `NoAnswerError`，写「连不上 <电脑> 上的 Latch」；复制失败写「复制不可用，请手动选择」；其余都是页面自己的错误，写「页面出错了（<错误名>）· 刷新」，并把错误与调用栈打印到控制台一次，不上报。不把页面的错误说成网络问题。
-
-每次构建页面生成构建号（UTC 构建时间加随机部分）：页面带着它，`dist/web/build.json` 记下它。Host 启动时读一次所在页面目录的 `build.json`，在快照的 `build` 里报告。页面的构建号比 Host 报告的新，或 Host 没有报告时（早于这项的 Host），显示一条琥珀提示「<电脑> 上的 Latch 还是旧版本」与「重启 Latch 后才能用新功能」，ⓘ 里写停止、需要时 `pnpm latch presence repin`、再启动。只有桌面端那台 Mac 的窗口给出「重启 Latch」（主进程的 `restartHost`）。比 Host 旧的页面（重启前打开的标签）不提示；开发服务器与测试里的页面没有构建号。页面不为旧 Host 写降级。iOS 尚未比较构建号。
-
-### 桌面端的转发与流
-
-桌面端页面加载自 `latch://app/link/`。`latch` 协议注册为支持 fetch 与流式响应，主进程（[proxy.cjs](../apps/desktop/src/proxy.cjs)）把请求经本机 `host.sock` 转发并附加设备凭据，响应体以流的形式回传；页面关闭或取消读取时主进程断开上游连接。因此桌面端与浏览器使用同一份事件流代码。
-
-### 版本门禁
-
-浏览器通过 `ProjectionGuard` 检查三件事：
-
-1. **选择代次**：切换会话、绑定新的 Host 实例或使旧请求失效时，更新 generation。旧 HTTP 请求和旧事件流不能覆盖新选择。
-2. **实例**：SSE/detail 的 sync.instanceId 必须等于当前 HTTP 确认的 Host。重启后的状态不能与旧实例混合。
-3. **版本与来源**：同一选择中，低于已接受 revision 的 detail 被丢弃。相同 revision 时 stream 优先于 HTTP：流可以更新此前的 HTTP 正文，迟到 HTTP 和重复 stream 都不能覆盖已接受的流正文。已经接受带版本状态后，不再接受无版本 detail 回退。
-
-切换会话会取消待处理 HTTP、清除当前 detail、重建带新 sessionId 的事件流。事件 JSON 至少验证事件类型、版本、session ID 与正文的基本形状；它不是对外提供的通用不可信 JSON 导入器。设备被撤销、登记满 30 天或凭据属于别的访问地址时，页面清除任务内容并进入连接页。
-
-snapshot 与 task-state 可能交错。摘要与审批只在 detail.revision 大于或等于 snapshot.revision 时由选中 detail 覆盖；更旧 detail 不得覆盖较新的 snapshot。这个列表合并规则与上述正文来源优先级分开处理，不会把一个任务的 detail 替换到另一个任务上。
-
-**当前没有 WAL、持久事件队列、Last-Event-ID 历史重放或逐事件缺口恢复。** 断线后通过当前快照收敛，不保证客户端看过所有短暂中间状态。SSE 关闭只移除订阅，不取消 run。创建/输入的幂等回执另由 Runtime 持久化，审批决定与取消的回执由 Host 随会话保存（见下文）；浏览器保存的待确认提交用于显式重试，不是自动离线任务队列。这条记录只有一条：输入框为它锁定；「未确认送达」和重试只显示在它所属的会话或新会话，其他会话写「另一个会话有消息未确认送达」并给「打开」与「放弃这次提交」。记录同时带着正在等待的确认票据（`awaitingConfirmation`）时，内容还没有发出：重新打开页面会取消这张票据（系统表单随之关闭），把文字放回输入框，不显示未确认送达。同一设备的另一个窗口结算后，经 `storage` 事件清除这一行。
+- 每条连接一份，HTTP 不写它。每次追加校验实例、会话、订阅、精确的 `baseSeq`、run 与消息身份和 UTF-8 偏移，再重建 detail。
+- 重建出的 detail 仍由 `ProjectionGuard` 决定能否发布；HTTP 已发布更高 revision 时，较旧的流只推进影子。
+- 重复帧忽略；其他实例或会话的帧忽略；缺帧、身份或偏移不符、无法识别的操作触发修复。
+- 一个逻辑订阅只修复一次：abort 请求并取消 reader，丢弃旧连接的缓冲，立即以完整帧协议重连，之后的重连都不再协商追加。换会话是新的逻辑订阅。
+- 换设备或权限代次时清掉影子、关闭旧流并使旧的投影票据失效。阅读位置、草稿与写请求的 `requestId` 不参与这项传输优化。
 
 ### 文件差异的设备投影
 
-Host 按发送时设备的当前数据范围生成详情和审批的展示投影。`all` 保留原内容；`work` 不收到 `ToolDetail.diffs` 的正文，路径并入 `locations`，文件编辑的参数仅保留路径与有限控制元数据。其他字符串值和不明结构明确省略，JSON 数字词元不重编码，不把大整数或 `-0` 改成另一值。省略字段不逐条插入占位文案，生产者摘要的 JSON 编码字节数不得大于原输出，避免受限投影把合法原生帧膨胀到既有上限之外。消息、工具、审批、运行和 requestId、时间、decision、judged、blocked与失败/取消/结果未知的事实保持；子 Agent 的步骤递归应用相同规则。
+Host 按发送时设备的数据范围生成详情与审批的展示投影：`all` 保留原内容，`work` 收不到文件正文。总规则见 [ARCHITECTURE.md](./ARCHITECTURE.md)；这里是协议与旧历史的规则。
 
-可信生产者可提供 `ToolDetail.outputWithoutFiles`，内容是原结果中不含文件正文的说明，空字符串表示原输出全为文件内容。Standard 的 `ToolResult.textWithoutFiles` 进入此字段；Codex fileChange 与 pi 明确的 `details.diff` 标记为文件输出，不用未分类的另一段文字充当安全摘要。两套会话 schema 都保存它，但任何设备响应都剥离这个来源字段，`all` 也不重复接收摘要。canonical 原生复放只保留可发送的完整投影，按该不可变事件身份关联的 `work` 投影另留 Host 内存；重放时仍按当前 scope 选择，复放游标和增量基线不由来源字段决定。ACP 每次替换 rawOutput/content 时，没有新标记就清掉旧安全摘要，不能把旧结果的说明套在新输出上。执行端追加的结果未知/未开始说明同时进入安全摘要；发送给模型与 `all` 的完整结果不改。
+- **`work` 省略什么。** `ToolDetail.diffs` 的正文省略，路径并入 `locations`；文件编辑的参数只留路径与有限的控制元数据，其他字符串与不明结构省略。`Message.text` 里的工具载荷副本同样投影，子 Agent 的步骤递归应用。
+- **保留什么。** 消息、工具、审批与运行的身份，`requestId`、时间、`decision`、`judged`、`blocked`，以及失败、取消、结果未知的事实。
+- **不膨胀、不改值。** 不为省略的字段插入占位文案；JSON 数字词元不重编码（大整数与 `-0` 不变）；生产者摘要的 JSON 编码字节数不得大于原输出，受限投影不会把合法的原生帧推过既有上限。
+- **安全摘要。** 可信生产者可给 `ToolDetail.outputWithoutFiles`（原结果中不含文件正文的说明，空字符串表示原输出全是文件内容）。Standard 的 `ToolResult.textWithoutFiles` 进入它；Codex fileChange 与 pi 明确的 `details.diff` 标为文件输出，不拿未分类的另一段文字当摘要。ACP 每次替换 rawOutput 或 content 而没有新标记时清掉旧摘要。执行端追加的结果未知、未开始说明同时进入摘要。
+- **来源字段不下发。** 两套会话 schema 都保存 `outputWithoutFiles`，但任何设备的响应都剥离它，`all` 也不收到。
+- **没有摘要时保守。** 旧历史与没有摘要的编辑结果，省略分不清的内容段，保留路径、已知结果码与状态，不猜工具是否执行成功；普通命令、MCP 与聊天正文不按关键词改写。
+- **不影响执行。** Host 仍用原参数分级、计算预览哈希并处理原审批 ID 与原 `requestId`；发给模型的完整结果不变。Markdown 导出消费同一份已授权的详情，没有另一个未过滤的出口。
+- **编码顺序。** SSE 逐读者先投影再做追加编码，原事件与 Driver 对象不被修改，两种数据范围的帧缓存不共用。原生重放保存 canonical 事件，`work` 投影按该事件的身份另留内存、沿用原游标，重放时按当前范围重新选择。范围变化清掉追加基线，下一帧完整发送。
 
-旧历史与没有提供安全摘要的编辑结果，Host保守省略无法区分的内容段，保留路径、已知结果码与状态，不猜测工具执行成功或没有执行；普通命令/MCP/聊天正文不按关键词改写。`Message.text` 的工具载荷副本同时投影。审批展示参数被省略不影响 Host 用原参数分级、计算预览哈希和处理原审批ID/原requestId。Markdown 导出消费同一已授权详情，没有另一个未过滤的历史出口。
+### 流量计数
 
-SSE 逐读者先投影再 `TaskDeltaStream.encode`，原事件和 Driver 对象不被修改；两种数据范围的帧缓存不共用。NativeReplay 仍保存 Host 的 canonical 事件，投影序列化沿用该事件的原游标；重放时重新核对当前范围。scope变化仍清掉旧增量基线，第一帧重新完整发送，原积压与回放上限不变。
+Host 从启动起在内存里计数自己发出的字节（[traffic.ts](../apps/host/src/traffic.ts)），重启清零。
+
+- **计什么。** 事件流每一帧写出的文本（含心跳），以及快照（`GET /snapshot`）与会话详情（`GET /tasks/:id`）的响应体。HTTP 头、分块编码与 TLS 记录不计入。
+- **怎么分。** 每一类有次数、字节数与 9 档大小分布（≤256 B、1、4、16、64、256 KiB、1、4 MiB 与更大）；每个会话有点名它的帧与它的详情响应；每条事件流有入口类别、开关时间、帧数、字节数与心跳数。会话至多保留 1000 个，已关闭的事件流保留最近 100 条。
+- **只有数字。** 只含次数、字节、时间、入口类别、Host 内的连接序号与会话 ID，不含正文、标题、设备 ID 或设备名。
+- **谁能看。** `GET /link/api/traffic` 需要 `admin`，或 `host.sock` 上的匿名命令行；`pnpm latch traffic` 打印摘要，`--json` 打印原样。
+
+## 客户端：事件流、凭据与版本门禁
+
+源码：[useHarness.ts](../apps/web/src/core/useHarness.ts)、[eventStream.ts](../apps/web/src/core/eventStream.ts)、[credentials.ts](../apps/web/src/core/credentials.ts)、[api.ts](../apps/web/src/core/api.ts)、[projection.ts](../apps/web/src/core/projection.ts)。
+
+### 基于 fetch 的事件流
+
+客户端不用 `EventSource`：`eventStream.ts` 用 `fetch` 读同一个 `text/event-stream` 响应并自己解析，所以能看到 HTTP 状态，`401` 交给认证处理而不是无限重试。
+
+| 情况 | 行为 |
+| --- | --- |
+| 响应 2xx | 触发 open，之后逐帧派发事件 |
+| 连接失败、非 2xx、流结束，或 45 秒没有收到任何字节（含等响应头的时间） | 视为断线，按 1、2、4、8 秒退避，之后每 15 秒重连；浏览器重新联网，或页面重新可见且在线时，立即重连 |
+| 浏览器 offline | 断开事件流、取消在途 HTTP 并停止重连，直到重新联网或页面重新可见且在线 |
+| `401 renewal-required` | 先续期凭据，成功后立即重连一次。续期失败、正在等下一次续期（桌面端页面从不自己续期），或续期后 Host 仍要求续期，都按退避重连 |
+| 其他 `401` | 按退避重试；每次断线后的快照同步决定进入连接页还是只是暂时失败 |
+| `deferReconnect(ms)` | 放下当前连接，此后每次重连前至少等 `ms`（与退避取较大者），直到下一条流打开 |
+
+**open 不等于已连接。** 流打开后先完成 snapshot 与 detail 的 HTTP 同步，确认选择仍有效、流仍打开且浏览器在线，`.app-shell` 的 `data-connection` 才变为 `connected`；其他取值是 `connecting`、`reconnecting`、`offline`。离线时保留已读内容。
+
+**`refresh` 与 `tasks-invalidated`** 只在 `instanceId` 与当前 Host 相同且 revision 新于当前 snapshot 时触发同步；`instanceId` 不同则立即重新同步并重新绑定。
+
+**重新建立与跟随。** `useHarness` 的 `resyncs` 只在重新建立状态的同步发布快照时加一：首次加载与连接页的重试、事件流每次打开、重新联网或页面重新可见、续期之后、任一请求发现凭据失效之后、断线时的同步，以及人按下的同步或重试。跟随变化的同步（`refresh`、`tasks-invalidated`、`task-state`、用户操作之后的刷新、选择会话）不加；排在一起的请求有一个是重新建立就算重新建立。界面用它作一次性过渡的纪元，见 [DESIGN.md](./DESIGN.md)「界面原语」。
+
+### Host 宣布的停止与睡眠
+
+[hostState.ts](../apps/web/src/core/hostState.ts) 只接受实例与当前 Host 相同、形状正确的通告。
+
+- 收到 `stopping` 或 `sleeping`：记下通告，连接状态变为 `reconnecting`，以 `retryAfter` 调用 `deferReconnect`。Host 已说明暂时不应答，所以页面不按 1 秒起的退避猜测，也不在断线时立即请求快照；重新联网或页面重新可见时仍立即重连一次。
+- 横幅按通告写原因与开始时间。没有通告时只说页面知道的：没有网络、Host 的 5xx、Host 自己给的拒绝原因，或请求没有得到应答；不猜原因。
+- 清除通告：重连后的快照同步成功并标为 `connected`，或收到 `awake`（并立即同步）。
+- 只有连接失败才按通告等待。重连得到 `401` 说明 Host 已在应答：续期解决不了时清除通告并照常请求快照，由快照决定进入连接页还是显示暂时故障。
+- 桌面端页面另外显示主进程对 Host 的判断（正在重启、反复崩溃后停止自动重启、已停止、没有响应）。
+
+### 失败的说法与旧 Host
+
+页面上的失败只按页面知道的说（`errorMessage`，[api.ts](../apps/web/src/core/api.ts)），不把页面的错误说成网络问题：
+
+- Host 的错误与页面写给人的文字（`ClientError`、`MessageError`）照原文。`pnpm lint` 让 `apps/web/src` 里的 `new Error` 只带 ASCII 字面量的内部代码。
+- fetch 本身失败（请求或答复没有到达）在 `api()` 里变成 `NoAnswerError`。页面自己在发出前抛出的错误不算。
+- 其余是页面自己的错误：写出错误名，并把错误与调用栈打印到控制台一次，不上报。
+
+**构建号。** 每次构建页面生成构建号，`dist/web/build.json` 记下它；Host 启动时读一次，在快照的 `build` 里报告。页面的构建号比 Host 报告的新，或 Host 没有报告时，页面提示重启 Latch；只有桌面端那台 Mac 的窗口给出重启（主进程的 `restartHost`）。比 Host 旧的页面不提示；开发服务器与测试里的页面没有构建号。页面不为旧 Host 写降级。iOS 尚未比较构建号。
+
+### 桌面端的转发与流
+
+桌面端页面加载自 `latch://app/link/`。`latch` 协议注册为支持 fetch 与流式响应，主进程（[proxy.cjs](../apps/desktop/src/proxy.cjs)）经 `host.sock` 转发请求并附加设备凭据，响应体以流回传；页面关闭或取消读取时主进程断开上游。所以桌面端与浏览器用同一份事件流代码。
+
+### 版本门禁
+
+`ProjectionGuard` 检查三件事：
+
+1. **选择代次。** 切换会话、绑定新的 Host 实例或使旧请求失效时更新 generation；旧的 HTTP 请求与旧事件流不能覆盖新选择。
+2. **实例。** SSE 与 detail 的 `sync.instanceId` 必须等于当前 HTTP 确认的 Host；重启后的状态不与旧实例混合。
+3. **版本与来源。** 同一选择中，低于已接受 revision 的 detail 丢弃。相同 revision 时 stream 优先于 HTTP：流可以更新此前的 HTTP 正文，迟到的 HTTP 与重复的 stream 都不能覆盖已接受的流正文。接受过带版本的状态后，不再接受无版本的 detail。
+
+其他规则：
+
+- 切换会话会取消待处理的 HTTP、清除当前 detail，并重建带新 `sessionId` 的事件流。
+- snapshot 与 `task-state` 可能交错：选中 detail 只在它的 revision 不低于 snapshot 的 revision 时覆盖列表里的摘要与审批。这条列表合并规则与正文的来源优先级分开，也不会把一个会话的 detail 写到另一个会话上。
+- 事件 JSON 至少校验事件类型、版本、会话 ID 与正文的基本形状；它不是通用的不可信 JSON 导入器。消息内容按不可信文本显示。
+- 设备被撤销、登记满 30 天或凭据属于别的访问地址时，页面清除会话内容并进入连接页。
+
+### 未发送的草稿
+
+未发送的文字按设备与会话（新会话也算一份）存在浏览器存储 `latch.drafts.<origin>.<deviceId>`，桌面端用同一页面。
+
+- **只存文字。** 附件与文件引用只在内存。存储不可用时草稿也只在内存。
+- **不落盘的草稿。** 含 Host 日志会遮去的内容（`@latch/protocol` 的 `looksSecret`，与 `redactSecrets` 同一组规则）的草稿只在内存，不提示。私有会话的草稿与含项目文件摘录的草稿带私有标记：设备不再能读私有内容时移除，数据范围不是 `all` 时每次写入都不存。
+- **写入时机。** 打开中的输入框稍后写入，离开页面时立即写入；同一设备的多个窗口只写自己改过的草稿。14 天没有改动的草稿在下次加载时丢弃。
+- **删除会话时清除。** 在这里删除；打开中的会话被 Host 报告已删除；或一次完整的列表（快照的 `tasksComplete`）在能看见全部会话的设备上不再有它。打开中的会话答 404 `task-not-found` 时，也只在同一次快照完整时才算删除。列出失败、只列出一部分、已归档、因范围或私有被隐藏，都不算删除；Harness 停用或重新挂载期间保持选中。
+- **撤权与退出时立即清除。** 页面一收到不再被接受的回答，就删掉这个来源下所有设备的草稿并写下共享的退出标记，所有窗口之后都不再写入；页面加载时只留当前设备的。
+- **归属。** 草稿、创建 Agent 的请求与 Slash 最近项共用当前设备的归属，换设备后旧句柄不能再落盘。提交捕获当时的会话（或新会话）选择代次；同一页面里的重试按原 `requestId` 保留首次来源，卸载后失效。
+- **提交与草稿。** 普通发送消费原会话的草稿，重新发送旧消息（`resent`）不动输入框里的文字、附件与文件引用。回执到达前切换过会话时只结算原请求，不自动选回原会话，不清空当前输入。
+- **刷新后的未知结果。** 只有原目标匹配当前输入才恢复文字，其余只恢复原请求卡片与 `requestId`。
+
+创建 Agent 的未知请求独立于消息草稿，沿用原 `requestId`，跨窗口先取得 Web Lock 再核对同一记录；规则见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#创建的待确认请求)。
+
+## 原生客户端的流
+
+源码：[native-replay.ts](../apps/host/src/native-replay.ts)、`native/ios/Sources/LatchNativeCore/` 的 `Workspace.swift`、`BodyReading.swift`、`BodyPublication.swift`、`TaskStreamProjection.swift`、`Events.swift`。
+
+原生 HTTP/2 客户端（Swift 核心与 Node `NativeWorkspace`）用同一组 Host API 与 SSE 内容格式。网络连接不决定执行结果；后台重连在连接关闭或网络变化时重新取候选路径，从不自动重发写入。
+
+### 重放与游标
+
+- **独立序号。** 原生业务 SSE 在 Host 运行代次内有自己的连续序号与有界的重放日志（数量与字节分别封顶），保存不可变的 canonical 完整事件。它与 revision 分开：一个批次可以有多个事件。
+- **SSE `id`。** 完整帧与追加帧的 `id` 都是该事件的 canonical 游标，不用 revision 或订阅序号代替；心跳与 `resumed` 注释帧也带游标。
+- **续接。** 请求带 `resumeEpoch` 与 `resumeAfter`（不合法时 400 `invalid-resume`），在同样的设备与正文窗口校验下接续；回放的第一份正文是完整帧。日志已淘汰或 Host 重启时要求重新同步快照与详情。
+- **未入日志的事件。** 即时 checkpoint 带 `resumeRequired`，并清掉追加基线。完整帧超过原上限时仍先记录 `refresh`，追加协议不放宽帧或缓存的上限。
+- **先应用再确认。** 客户端只在应用事件之后推进游标；列表快照的更新不能确认尚未应用的会话正文。
+- **Swift 的游标。** `NativeWorkspace` 加密保存至多 16 个流的已应用 epoch、sequence 与 revision，列表与各会话分别确认。`accepts` 不推进进度，应用后才 `acknowledge`，确认前复核流的连接代次与正文 lease。窗口过期、旧连接迟到或其他选中会话的事件不确认。缓冲溢出只清除该流的恢复游标并要求 checkpoint，不撤销登记身份。
+- **Node 的路径切换。** `NativeWorkspace` 在安装新路径前恢复正文回执并读取 checkpoint；同一 Host 实例的 revision 只能前进，新路径失败时保留旧连接，迟到的快照不覆盖当前路径。
+- **检查先于编码。** 正文窗口、scope、积压与原生 padding 的活跃状态先于追加编码检查；连接关闭时清掉活跃标记。
+- **连接设置。** 原生连接设置的写入用持久的请求编号与配置哈希确认结果，重试发原始内容，超时不生成新编号。设备的原生访问状态由 Host 判定；手机当前快照的正文期限只属于当前连接。
+
+### 正文阅读与发布
+
+Swift 的选中会话经独立的正文阅读接口接收追加帧；列表流保持完整模式，`events(for:incremental:)` 只在显式传 `true` 时协商。
+
+**投影与发布门。**
+
+- `NativeTaskStreamProjection` 是与网页流影子同一契约的纯值投影，不接受 HTTP 更新。
+- `NativeTaskPublicationGate` 按实例、会话、选择与连接票据、revision 与来源优先级筛选 HTTP 与流的候选。替换连接使旧票据失效，但不降低版本地板。
+- 候选与票据都不是正文 lease，不能用来确认原生游标。
+
+**阅读对象。**
+
+- `beginBody` 绑定当前实例、会话、Workspace 与已有的正文窗口，不签名也不开新窗口。
+- 网络 collector 给每帧附上公开解析器构造不出的 reader 身份与连续序号；跨 reader、旧连接或旧选择的事件进不了影子。
+- 新的打开意图先取消并等旧的打开过程关闭；收到响应头之前的取消也关闭实际的 HTTP/2 子流。
+
+**发布回执。**
+
+- `readBody` 与 `receive` 只给出外部构造不了的 `NativeBodyUpdate`。消费者在 `@MainActor NativeBodyPublication.apply` 的同步回调里核对自己的活动选择并赋值，返回 `true` 才得到 `NativeBodyApplied`；返回 `false`、重入、失去窗口或旧选择都不推进发布门。
+- 回执只证明回调接受了值，不证明屏幕已绘制；App 仍负责关闭窗口、退到后台与切换页面后的撤下。
+- 只有 `Workspace.applied` 接受发布回执后，才推进 `detailRevisions`、已应用来源与原生游标。新的正文 reader 拒绝旧的数字版 `acknowledge`。
+- 正文与列表快照分别确认：较旧的 HTTP 正文可以被拒绝，同时应用更新的快照。`refresh` 与 `tasks-invalidated` 是元数据屏障，之后的正文或心跳不能越过尚未应用的屏障。
+- 待处理记录与待确认候选各至多 8 条，只存证明元数据。槽位满时，已被应用回执覆盖的相邻正文与心跳证明可以合成一条；尚未应用的正文与所有快照屏障不合并，不跳过网络帧。
+- 持久化在写盘与身份复核完成后，只清除本次写入捕获的序号前缀，不清等待期间形成的新证明。尚未应用的新候选不当成旧回执的缓存。
+
+**修复。**
+
+- 解析失败、缺帧或待应用记录耗尽时关闭旧流，至多做一次完整帧修复，此后这个阅读对象不再协商追加；第二次失败交还调用方。
+- 同一阅读代次重开网络流时保留修复次数与发布地板，新建阅读对象绕不过限额。App 也记下 collector 在 `receive` 之前报告的坏帧与队列溢出。
+- 元数据 notice 与恢复用的 HTTP 读取遇到网络不可用或明确的 408、5xx 时，在同一阅读内只重试一次；仍失败就关闭它所属的那条流，把错误交给 SSE 恢复，不能丢下元数据屏障等下一帧。过期不重试；旧读取的失败不关闭新 reader。
+- 修复结果带固定的来源类别与有界计数，只供 `LatchScreens` 诊断；正常 App 不输出正文或修复日志。
+
+**App 的使用。**
+
+- `openSession` 与 `refresh` 走同一条 `readBody` 与发布路径，HTTP 详情不直接覆盖已发布的较新的流。
+- 每帧先 `receive`，100ms 内只合并已校验的候选；元数据 notice 独立读取与发布。真正赋值后才提交 `applied` 回执；范围变化使 `adoptSnapshot` 撤下内容时，本次赋值停止且不出回执。
+- 摘要取哪一份：同实例、同会话、非缓存且正文的 `sync.revision` 不低于快照的 `revision` 时用正文，否则用列表。两个版本都来自 Host 的全局计数，不用 Driver 的 `cursor`。已接受的正文摘要只替换快照里已有的同 ID 行。
+- 切会话、换 Host、窗口与权限撤下时同步清掉待发布状态；替换连接保留发布地板，旧的网络证据失效。离线缓存的展示没有应用回执。
+
+**编码边界。**
+
+- 身份按 UTF-8 字节精确比较，长度按 UTF-16 单元与网页对齐。`JSONDecoder` 拒绝非法 UTF-8 与未配对的 surrogate。
+- 原生输入与重建出的候选都受 `NativeJSON` 的 1 MiB、深度、数组与对象宽度限制；候选编码后再读回以确认，成本随历史增长。
+- 原生时钟只接受完整的 ISO 时间，网页的 `Date.parse` 还接受只有日期的写法；共享向量 `packages/testkit/vectors/task-delta-v1.json` 写明这一区别，以及原生表示不了含非法 surrogate 的完整正文。
+- 完整帧里的未知事实保留，追加帧里的未知字段拒绝。
+
+SDK 编译与互操作用例不证明真机上的收益、键盘交互与 CPU 预算。
+
+### 正文窗口
+
+原生正文窗口绑定已认证的连接与 App 的打开回执，到期后正文流停止，列表仍可读。
+
+- **到期只撤正文。** 到期撤下该窗口的正文与预览，不把仍有效的 HTTP/2 连接标为离线。事件流在响应头之前或之后遇到同一租约到期都报 `expired`；断流、超时或普通 5xx 不冒充到期。
+- **按租约失效。** 事件打开与失效绑定同一个不透明租约，按租约身份原子失效；旧窗口与没有窗口的迟到应答关不掉新窗口。
+- **新窗口。** 绑定新窗口不改会话选择、草稿或附件，但先撤旧正文、预览与本地文件编辑的显示；晚回的缓存仍核对原租约。文件编辑的未知请求留在待确认存储里，撤下编辑页不等于放弃写入。
+- **范围变化不是到期。** 已验证的同实例 checkpoint 的权限范围变化只使阅读对象失效（`bodyAccessChanged`），真正过期的 lease 优先。App 先撤下内容再读一次元数据；只有窗口仍有效、设备仍有 `view` 且会话仍在可见列表时才重建阅读，沿用已用掉的修复次数，不签新窗口。
+- **窗口外仍可用。** 取消与不带附言的拒绝只返回回执，写入结果未知时保留原 `requestId`。
+
+### 原生私有页面的到期恢复
+
+Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入口自动恢复；开启时保留明确的「查看」入口，由人打开。关闭 Face ID 不绕过 Host 的正文验证。
+
+- 我的 Agent 列表与人物话题都先验证并刷新私有快照，再沿 `refresh` 读仍选中的话题。单个话题的 detail 不能把 `PhonePrivateSnapshot.confirmed` 置为真，也不靠恢复流下一次碰巧的通知补齐快照。
+- 恢复开始时固定 Host 代次、页面、Agent 路径、会话与阅读代次；验证晚回后不为已切换的意图读私有内容。
+- 恢复频率限制、后台撤下与未知写入的回执不变。
+
+### iPhone 与 iPad 的连接和写入
+
+- **SSE 失败只说明这条流失败。** App 在原连接上读一次经过校验的快照：成功才保持在线并退避重开事件流，失败才进入连接恢复。重试间隔从 0.5 秒增到 30 秒，收到心跳或持续有效的事件后复位。重开用真实的正文租约，不续期、不重放写入；迟到的成功不能覆盖新选择或新窗口。
+- **超时的读取**当作 Mac 暂时连不上：列表横幅说明，不弹提示；有效窗口内只读这个窗口已存的正文并标明是旧内容。
+- **写入一次一个。** 发送、追加（`steer: true`）、排队、改权限、模型或思考、分叉、重试与审批选项都带持久的 `requestId`，结果未知时原样重试，一次只有一个待确认。结果未知的写入在会话列表与会话里都能重试，否则看不见的那一个会挡住之后的所有写入。
+- **停止**等到 Host 结算（至多 45 秒），上一个未确认前不发下一个。
+- **放弃这次提交**（新会话的第一条与会话的下一条）：先重新读该会话，已列出带这个 `requestId` 的用户消息就按已送达结算并撤掉这个会话的清空上下文选择；否则在本设备放下它，文字接回输入框（`PhonePending`）。
+- **普通请求。** 重命名、置顶、归档与删除不带 `requestId`、不留待确认；失败或没有答复时说明一次并重读列表，以 Host 列出的为准。
+- **搜索。** 正文搜索（`POST /search`）只在有效窗口内发，结果只在内存、不进离线缓存；Host 一次只做一个搜索，429 时保留上次的结果。
+- **文件汇总。** 回合的文件汇总按 Host 固定的 `folders` 与 `cwd` 区分完整的文件身份，合并同一文件的绝对与相对引用，不合并不同目录的同名文件；路径按 UTF-8 字节比较，不把 Unicode 规范等价的字符串当作同一文件。这只影响显示与计数，打开文件仍由 Host 按根权限核对。
 
 ## 消息、审批与取消
 
-源码：[runtime.ts](../packages/core/src/runtime.ts)、[Transcript.tsx](../apps/web/src/components/Transcript.tsx)、[ToolCard.tsx](../apps/web/src/components/ToolCard.tsx)、[MessageRow.tsx](../apps/web/src/components/MessageRow.tsx)、[approvalDecision.ts](../apps/web/src/core/approvalDecision.ts)、[confirmations.ts](../apps/web/src/core/confirmations.ts)。
+源码：[runtime.ts](../packages/core/src/runtime.ts)、[Transcript.tsx](../apps/web/src/components/Transcript.tsx)、[ToolCard.tsx](../apps/web/src/components/ToolCard.tsx)、[conversation.ts](../apps/web/src/conversation.ts)、[approvalDecision.ts](../apps/web/src/core/approvalDecision.ts)、[cancelRequest.ts](../apps/web/src/core/cancelRequest.ts)。
 
-- 每次模型调用在收到文字前创建 `liveMessageId`。文字只更新内存里的累计 `liveText`，思考更新 `liveReasoning`；正常完成或异常保留部分内容时，最终 assistant 消息沿用该 ID，思考保存在其 `reasoning` 中。Harness 说这条回复中途断开、从头重新生成时（profile 的 `readRetry`，见 [HARNESSES.md](HARNESSES.md#通知与压缩)），`liveText` 清空后重新累计，ID 不变。detail 不同时暴露同 ID 的 live 与已提交消息。
-- React 按 message.id 渲染，并为消息行设置 `data-message-id`。消息组件比较 ID、正文、状态和角色等字段，未变化的历史行不因每次状态替换而重渲染。
-- Transcript 按会话和不可变 `messages` 引用缓存已提交轮次、切换标记、时间索引与运行工具事实。完整消息列表变化仍比较全部字段，包含同 ID 重写与未知新字段。历史 JSX 缓存保留全部共享展示输入，审批、提问、人物、权限、文件记录和其他新增 prop 变化都会重新核对。连续的轮次每 24 轮建一个无 DOM 包裹的 React 组件，正文追加帧复用历史组，只更新尾轮所在组。尾轮转为历史与在完整快照里补入较早的轮次时，原轮次沿用原组的 key，保留展开、选择、复制和查找锚点。状态词与时钟仍读最新 detail，React 仍协调顶层组和当前组内的轮次。
-- 收到完整模型终止事件后，先持久化助手文字和工具批次，再串行执行工具。工具消息使用 `tool:<callId>`，按 `queued → awaiting-approval（若需要）→ running → completed/failed/cancelled` 更新同一行。拒绝不会经过 running。
-- 审批显示在输入框上方的抽屉里，不进入对话；携带 `toolCallId` 时用 `tool:<toolCallId>` 工具行的文字与差异。审批按钮来自 `Approval.options`，缺省为允许与拒绝；当前设备能看到哪些按钮由风险等级与设备权限决定（见 [DESIGN.md](./DESIGN.md)）。工具行默认收起（带输出的失败自己展开），展开后显示参数、文件差异与纯文本输出（第一次展开时才渲染）；收起时文件差异作为证据显示在行下。
-- 客户端把消息按回合分组（一条用户消息与回答它的一切，[conversation.ts](../apps/web/src/conversation.ts)），只是排列方式：每一行仍按 message.id 渲染、带 `data-message-id`。正常完成的回合把答案前的过程折叠成一行时，被折叠的行仍挂载在 `hidden="until-found"` 的容器里，文档里行的顺序与身份不变。
-- `activity` 表达当前 `starting / model / tool / approval / cancelling`，用于区分正在启动 Agent（进程与会话在准备，还没有发出提示；已有会话的下一条在恢复会话期间还没有记录，摘要也投影为 `running` 与 `starting`，带这一轮新的 `runId`（不带上一轮的 `runOutcome`、`runEnd`），所以按它停止能停到这一轮；这时停止会把这条记为已发送、在送到 Agent 之前停止的一轮）、等待模型、执行工具、等待用户和取消中；`since` 是这个阶段开始的时间，只在阶段变化时更新。它不代表百分比进度。`plan` 为 Harness 报告的最新计划（整体替换）；`config` 为 Harness 允许修改的会话选项。
-- 审批认领在异步等待前完成，重复或迟到的决定失败；同一审批的决定在 Host 上串行处理。取消会请求 Provider/工具中止，等待实际结束与状态提交；如果仅网络请求失败，UI 不能宣称已取消。
-- 每次运行（创建或一次输入触发）有自己的 `TaskSummary.runId`，由 Driver 在运行开始时写入会话并持久化；取消用它指明要停止哪一次运行（见下文）。不记录运行的外部 Driver 不提供它。
-- 模型流截断或取消会尽量保留已经收到的正文，并标记失败或已停止。崩溃前尚未结算的内存文字仍可能丢失。中断的工具结果可能未知，不会自动重放或自动回滚。
+**消息身份。**
 
-Provider 不能在 finish 后继续发送内容，缺少 finish 也视为失败；Standard 不会派发该次未确认的工具调用。普通 chat 模式遇到工具调用会明确失败，而非执行后隐藏记录。
+- 每次模型调用在收到文字前创建 `liveMessageId`。文字只更新内存里的累计 `liveText`，思考更新 `liveReasoning`。正常完成或异常保留部分内容时，最终的 assistant 消息沿用这个 ID，思考存在它的 `reasoning` 里。
+- detail 不同时给出同 ID 的 live 消息与已提交消息。
+- Harness 说这条回复中途断开、从头重新生成时（profile 的 `readRetry`，见 [HARNESSES.md](HARNESSES.md#通知与压缩)），`liveText` 清空后重新累计，ID 不变。
+- 页面按 `message.id` 渲染并给每行 `data-message-id`。按回合分组、把过程折叠成一行都只是排列方式：被折叠的行仍挂在 `hidden="until-found"` 的容器里，文档里行的顺序与身份不变。
+- 流式帧不重绘历史行；尾轮转为历史或完整快照补入较早的轮次时，原轮次沿用原来的 key，保留展开、选择、复制与查找锚点。
 
-### 审批决定的请求 ID 与回执
+**工具与结算的顺序。**
 
-`POST /link/api/approvals/:id` 的请求体为 `{ decision, optionId?, requestId?, note? }`（`note` 是拒绝时「告诉 Harness 改做什么」的说明，同一说明的重试用同一个 `requestId`，换一句说明算换一个选择）。浏览器总是带上 `requestId`：为每个审批上的每个选择生成一个（`DecisionRequests`），同一页面同一审批同时只发出一个决定：
+- 收到完整的模型终止事件后，先持久化助手文字与工具批次，再串行执行工具。Provider 不能在 finish 之后继续发内容，缺少 finish 视为失败；Standard 不派发那次未确认的工具调用。普通 chat 模式遇到工具调用明确失败，不执行后隐藏记录。
+- 工具消息的 ID 是 `tool:<callId>`，按 `queued → awaiting-approval（需要时）→ running → completed/failed/cancelled` 更新同一行。拒绝不经过 `running`。
+- 模型流截断或取消时尽量保留已收到的正文，并标为失败或已停止；崩溃前尚未结算的内存文字可能丢失。被中断的工具结果可能未知，不自动重放也不回滚。
 
-- **结果未知时重用。** 网络错误、超时（15 秒）、408 或 5xx 时，结果未知，`requestId` 保留，审批卡里出现「结果未知」与「重试」，说明可以重试同一选择、不会重复提交；「重试」或再按同一个按钮都重发同一请求。审批从快照里消失（已由某台设备结算）时，这条提示随之去掉。明确的 5xx 拒绝（见下文「确定的拒绝」）与其他明确回答之后，`requestId` 丢弃。换一个选择总是使用新的 `requestId`。
-- **回执。** Host 接受后返回 `{ accepted: true, receipt: { approvalId, decision, optionId?, at } }`。同一设备用同一 `requestId` 重发时返回原回执并带 `replay: true`，不会再次决定或审计。
-- **已被处理。** 其他情况下，已经处理或已失效的审批返回 `409 approval-settled`，`decidedBy` 为 `{ kind: 'device', self, deviceName, decision, optionKind, at }`，或 `{ kind: 'system' }`（会话结束或取消使其失效）。`deviceName` 是作出决定的设备当前的名称，Host 已不认识该设备时为空。客户端据此判断：本设备此前作出了同一决定（Host 给出 `optionKind` 时还要求选项类别相同）就视为已生效；本设备此前作了不同的选择时，提示本次选择未生效；由其他设备处理时提示「已由「设备名」处理」，设备名为空或不符合设备名称规则时只提示「该审批已结束」；`system` 同样提示「该审批已结束」。
-- **随会话保存。** 决定记录（审批 ID、`requestId`、作出决定的设备 ID、决定与选项、时间）在回答之前写入数据目录的 `sessions-meta.json`，与该会话的标题、置顶等放在一起，所以 Host 重启后重试同一个 `requestId` 仍得到原回执（`replay: true`），其他设备仍得到 `decidedBy`。记录保留 7 天，每台设备最多 1 万条、合计最多 10 万条，最旧的先删除；删除会话时一并删除。写入失败时决定照常生效，记录留在内存中并进入下一次写入，日志记下失败。
-- **决定不弹确认。** 允许与拒绝都由设备的权限范围决定，发出后等 Host 回执；结果未知时卡片可以用同一 `requestId` 重试。
+**审批的位置与顺序。**
 
-### 取消的请求 ID 与回执
+- 审批显示在输入框上方的抽屉里，不进入对话；带 `toolCallId` 时用 `tool:<toolCallId>` 那一行的文字与差异。按钮来自 `Approval.options`，缺省为允许与拒绝；当前设备能看到哪些由风险等级与设备权限决定（[DESIGN.md](./DESIGN.md)）。
+- 审批的认领在异步等待之前完成，重复或迟到的决定失败；同一审批的决定在 Host 上串行处理。
 
-`POST /link/api/tasks/:id/cancel` 的请求体为 `{ requestId?, runId? }`，两项都可选，所以加入它们之前载入的页面仍能停止运行。页面总是带上 `requestId`，并带上它显示的那次运行的 `runId`（会话摘要有时）：同一会话同一次运行的停止在结果未知（网络错误、超时、408 或 5xx）时重用同一个 `requestId`，明确回答之后丢弃；运行变了就用新的（[cancelRequest.ts](../apps/web/src/core/cancelRequest.ts)）。
+**运行与活动。**
 
-- **只停止指名的运行。** `runId` 与会话当前的运行不同（那次运行已经结束，之后又开始了新的一轮）时，Host 不停止任何东西，回答 `ended` 且不带 `status`；相同但已经结束时回答 `ended` 与它结束时的状态。指名的运行仍在进行时（Driver 列不出该会话、Host 无从判断时也一样），Host 先审计 `task.cancelled`（detail 含 `runId`），再把 `runId` 交给 Driver：Driver 在开始取消的同一步核对它，所以审计期间结束、又开始的新一轮不会被停止。等运行真正结算后回答 `stopped` 与结算后的状态（通常是 `cancelled`；结算前刚好完成时是 `idle`）。不带 `runId` 的请求保持原来的含义：停止正在进行的运行，没有时回答 `ended`。
-- **回执。** 回答为 `{ accepted: true, receipt: { sessionId, requestId?, runId?, outcome: 'stopped' | 'ended', status?, at } }`。带 `requestId` 的回执与审批决定一样随会话保存（同样的保留期限与上限，按会话、设备与 `requestId` 区分），同一设备在同一会话用同一 `requestId` 重试，包括 Host 重启之后（该会话的 Driver 未能挂载时也一样），都得到原回执并带 `replay: true`，不会再次审计或取消；同一个 `requestId` 换了 `runId` 返回 409 `request-conflict`。同一请求的两个副本同时到达时，后到的等前一个结算，得到同一份回执。
-- **强制停止。** 回执还带着这次运行的 `runEnd`（见下文「运行的真实状态」）：停止没有在宽限期内结算、进程被结束时，`reason` 是 `forced-stop`，`unknownResultCount` 说明有几条命令结果未知。回执不带它们的名称：原生客户端在正文窗口之外也能取消，名称在会话详情的 `runEnd` 里。
-- **页面的显示。** 回答 `ended` 时页面立即结束「正在停止」：带状态时提示「这一轮已经结束，无需停止」，不带时提示「要停止的那一轮已经结束，新的一轮仍在运行」。旧 Host 只回答 `{ accepted: true }`，页面照旧等待会话状态变化。
+- 每次运行（创建或一次输入触发）有自己的 `TaskSummary.runId`，由 Driver 在运行开始时写入会话并持久化；不记录运行的外部 Driver 不提供它。
+- `activity` 是 `starting / model / tool / approval / cancelling`，`since` 只在阶段变化时更新；它不是百分比进度。`plan` 是 Harness 报告的最新计划（整体替换），`config` 是 Harness 允许修改的会话选项。
+- 已有会话的下一条在恢复会话期间还没有记录时，摘要也投影为 `running` 与 `starting`，带这一轮新的 `runId`，不带上一轮的 `runOutcome` 与 `runEnd`。所以这时停止能停到这一轮，记为已发送、在送到 Agent 之前停止的一轮。
+- **取消等真实结算。** 取消请求 Provider 与工具中止，等实际结束与状态提交后才确认；只是网络请求失败时，界面不能说已取消。
 
-经 `api.ts` 发出的请求在 `429 rate-limited` 且 `retryAfter` 不超过 5 秒时自动等待并重试一次：被限速的请求没有执行，所以重试是安全的。
+经 `api.ts` 发出的请求在 `429 rate-limited` 且 `retryAfter` 不超过 5 秒时自动等待并重试一次：被限速的请求没有执行，重试是安全的。
 
 撤销之后的第一条用户消息，文字最前面带一段给 Agent 的说明（[CHANGES.md](CHANGES.md#撤销与丢弃)），消息文字就是实际发出的内容。
 
+### 审批决定的请求 ID 与回执
+
+`POST /link/api/approvals/:id` 的请求体为 `{ decision, optionId?, requestId?, note? }`。`note` 是拒绝时给 Harness 的说明；同一说明的重试用同一个 `requestId`，换一句说明算换一个选择。浏览器总是带 `requestId`：每个审批上的每个选择一个（`DecisionRequests`），同一页面同一审批同时只发出一个决定。
+
+- **结果未知时重用。** 网络错误、超时（15 秒）、408 或 5xx 时结果未知，`requestId` 保留，重试或再按同一个按钮都重发同一请求。审批从快照里消失（已由某台设备结算）时提示随之去掉。[确定的拒绝](#确定的拒绝)与其他明确回答之后丢弃 `requestId`。换一个选择总是用新的 `requestId`。
+- **回执。** Host 接受后返回 `{ accepted: true, receipt: { approvalId, decision, optionId?, at } }`。同一设备用同一 `requestId` 重发时返回原回执并带 `replay: true`，不再决定也不再审计。
+- **已被处理。** 其他情况下，已处理或已失效的审批返回 `409 approval-settled`，`decidedBy` 为 `{ kind: 'device', self, deviceName, decision, optionKind, at }`，或 `{ kind: 'system' }`（会话结束或取消使其失效）。`deviceName` 是作出决定的设备当前的名称，Host 已不认识它时为空。
+- **客户端的判断。** 本设备此前作了同一决定（有 `optionKind` 时还要求选项类别相同）视为已生效；作了不同的选择时提示本次选择未生效；由其他设备处理时写出设备名，设备名为空或不合设备名称规则时、以及 `system`，只说该审批已结束。
+- **随会话保存。** 决定记录（审批 ID、`requestId`、设备 ID、决定与选项、时间）在回答之前写入数据目录的 `sessions-meta.json`，所以 Host 重启后同一 `requestId` 仍得到原回执，其他设备仍得到 `decidedBy`。记录保留 7 天，每台设备至多 1 万条、合计至多 10 万条，最旧的先删；删除会话时一并删除。
+- **写入失败不挡决定。** 决定照常生效，记录留在内存并进入下一次写入，日志记下失败。
+- **决定不弹确认。** 允许与拒绝都由设备的权限范围决定。
+
+### 取消的请求 ID 与回执
+
+`POST /link/api/tasks/:id/cancel` 的请求体为 `{ requestId?, runId? }`，两项都可选。页面总是带 `requestId`，并带它显示的那次运行的 `runId`（摘要里有时）。同一会话同一次运行的停止在结果未知时重用同一个 `requestId`，明确回答之后丢弃；运行变了就用新的。
+
+- **只停止指名的运行。** `runId` 与会话当前的运行不同时，Host 不停止任何东西，回答 `ended` 且不带 `status`；相同但已结束时回答 `ended` 与它结束时的状态。不带 `runId` 的请求停止正在进行的运行，没有时回答 `ended`。
+- **先审计，再核对，再停止。** 指名的运行仍在进行时（Driver 列不出该会话、Host 无从判断时也一样），Host 先审计 `task.cancelled`（detail 含 `runId`），再把 `runId` 交给 Driver。Driver 在开始取消的同一步核对它，所以审计期间结束、又开始的新一轮不会被停止。
+- **结算后才回答。** 运行真正结算后回答 `stopped` 与结算后的状态（通常是 `cancelled`；结算前刚好完成时是 `idle`）。
+- **回执。** `{ accepted: true, receipt: { sessionId, requestId?, runId?, outcome: 'stopped' | 'ended', status?, at } }`。带 `requestId` 的回执与审批决定一样随会话保存（同样的期限与上限，按会话、设备与 `requestId` 区分）。
+- **重试。** 同一设备在同一会话用同一 `requestId` 重试，包括 Host 重启之后与该会话的 Driver 未能挂载时，都得到原回执并带 `replay: true`，不再审计或取消。同一 `requestId` 换了 `runId` 返回 409 `request-conflict`。同一请求的两个副本同时到达时，后到的等前一个结算，得到同一份回执。
+- **强制停止。** 回执带这次运行的 `runEnd`（见[运行的真实状态](#运行的真实状态)）：`reason` 为 `forced-stop` 时，`unknownResultCount` 说明有几条命令结果未知。回执不带它们的名称，因为原生客户端在正文窗口之外也能取消。
+- **页面。** 回答 `ended` 时立即结束「正在停止」，并说明是这一轮已结束，还是要停的那一轮已结束而新的一轮仍在运行。不带回执的回答（旧 Host）让页面照旧等会话状态变化。
+
+### 会话设置的写入
+
+模型菜单、思考控件与输入框的「⋯」共用一道写入门禁，未知结果按会话保留原始请求。
+
+- 未知时不出红色横幅，给出核对、重试同一请求与放弃。核对请 Host 向 Agent 读取当前设置后结算；Agent 忙、读不到或读到第三个值时仍未知。重试同一请求只得到回执。两者都不再发送修改。结算后再选才用新的 `requestId`。
+- 放弃只在这个页面上放下，Host 的回执不变，原 `requestId` 不再发送。
+- 没有配置回执的 Host：只有真实配置已读回目标值才解除未知，不能把一个仍旧的值当成失败。
+- 项目目录失效的确定拒绝由项目恢复面板承接，保留可编辑的草稿；结果未知时不能转成一次新的分叉。
+
+实现见 [MODEL-CONFIGURATION.md](./MODEL-CONFIGURATION.md) 与 [WORKSPACE-RECOVERY.md](./WORKSPACE-RECOVERY.md)。Harness 的进程级换档在空闲时结束旧进程并恢复同一外部会话，准备与恢复期间拒绝发送、追加与其他配置写入（[HARNESSES.md](./HARNESSES.md)）。
+
+### 输入身份与分叉上下文
+
+- **`requestId` 写在用户消息上。** Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消息，两种消息存储的 schema 都保留它；`catalog.features.messageIdentity` 声明这一点。客户端据此关联重试与发送中的气泡。
+- **分叉。** Host 为分叉的首条消息补 `forkContext`，`prefixLength` 是正文开头的上下文字符数，其余是新输入。正文完整发给 Harness；消息带 `nativeFork` 时例外：Harness 用自己的记录分叉了，开头的上下文没有发给它（[ARCHITECTURE.md](./ARCHITECTURE.md#会话分叉)）。
+- **重试分叉的一轮。** 带 `nativeFork` 的只重发新输入；其余连同上下文一起重发，因为第一轮失败时上下文可能还没到 Harness。折叠只是显示方式，复制消息保留完整正文。
+- **接入的会话。** `TaskSummary.imported` 的会话里，从 Harness 重放来的消息带 `imported: true`，不属于任何一轮。按文字重建的会话首条消息开头 `imported.prefixLength` 个字符是带上的对话文字，Host 补 `importContext`；页面据此折叠，重试只重发新输入，因为这段文字已随第一次发送交给会话（[HARNESSES.md](./HARNESSES.md#接入已有会话)）。
+- `Message.thinking` 是助手消息那一步的思考深度，与 `Message.model` 一起让客户端标出两轮之间换了什么；没有记录的消息不标。
+
+### 本设备的发送投影
+
+源码：[useSubmission.ts](../apps/web/src/hooks/useSubmission.ts)、[sendingMessage.ts](../apps/web/src/core/sendingMessage.ts)。
+
+**临时气泡。** 提交后立即显示临时文字，500ms 后才显示「发送中…」；按相同的 `requestId`、文字与附件或文件引用匹配到 Host 的消息后隐藏。临时状态不写入 `TaskDetail`、快照或 Host 的存储；会话仍由 Host 维护。队列接收不生成临时气泡。
+
+**结果未知。**
+
+- 保留原提交，以同一请求体与同一 `requestId` 重试；重试从不更换 `requestId`。
+- 每台设备只有一条未确认的消息，输入框为它锁定。它不是自动的离线任务队列。它所属的会话（或新会话）显示重试，其他会话只提示并给出打开与放弃。
+- 卡片写出最近一次重试为什么仍未确认；原因按 `requestId` 存在 `latch.pending.<origin>.<deviceId>.reason`，像凭据的原因只在内存。
+
+**未知只由两件事结束：Host 的证据，或人放弃。**
+
+- **证据**是会话列出带这个 `requestId` 的用户消息（只比 `requestId`，不比文字）：打开的会话出现它时按已送达结算，原会话存着的同一段草稿一并删除。新会话的提交在答复前没有会话 ID，无从核对。
+- **带附件的例外。** Host 可能先列出消息，再以 503 `attachment-publish-unknown` 要求同一请求；页面因此用同一 `requestId` 静默再发一次，以它的答复结算，人放弃时才按已送达结算。
+- **放弃**先重新读一次该会话（读不到才用屏幕上的副本），已列出就按已送达结算。否则只在本设备放下：存储里仍是这条记录时才删除，文字回到原输入框（原会话不在屏幕上时存为它的草稿），附件与文件引用清空并提示重新添加，因为附件已保留给被放弃的请求（`attachment-claimed`）。
+- **放弃之后再发送**是一条新消息、新的 `requestId`；Host 如果其实收到过，就多出一条。
+- **排队或追加的提交。** 会话的队列里有同样文字的一项时，卡片说明队列里有一条在等待或已暂停。队列不下发 `requestId` 与设备，那一项可能是别的设备的，所以只比文字、只作说明，从不挡住放弃。
+
+**同一设备的多个窗口。**
+
+- 发送前再读一次存储：另一个窗口已存下别的未确认消息时不发送，改为显示它的卡片。
+- 发送或重试中的窗口在 `latch.pending.<origin>.<deviceId>.sending` 写下 `{requestId, until}`（20 秒，长于请求的 15 秒超时）；其他窗口在它到期或被清除前不提供放弃。
+- 每个窗口结算时只删除仍是自己这条 `requestId` 的记录；另一个窗口结算后，经 `storage` 事件清除这一行。
+
+### 确定的拒绝
+
+一次写入是否「结果未知」按 Host 的错误码判断，不只看状态（`@latch/protocol` 的 `refusedBeforeAccepting`）：
+
+- **结果未知：** 网络错误、超时、408 与 5xx。
+- **确定的拒绝：** 4xx（408 除外），以及错误码在 `NOT_ACCEPTED_5XX` 里的 5xx：`audit-unavailable`、`presence-unavailable`、`agent-busy`、`agent-start-failed`、`agent-refused`、`agent-paused`、`agent-handshake-timeout`、`model-gateway-unavailable`。4xx 的例子：409 `harness-unavailable`、`harness-version-unsupported`。
+
+规则：
+
+- **清单里的码只在 Host 什么都没记下时出现**：没有用户消息、没有回执，也没有之后还可能把它发出去的排队项。新增一个在接收前拒绝的 5xx 时，同时加入 `NOT_ACCEPTED_5XX` 与 Swift 的 `NativeHostRefusal.notAccepted5xx`（`native-swift.test.ts` 核对两份一致）；接收之后才可能出现的码不能加入。
+- **ACP 重新接上 Agent 时**（这一轮还没有记录）进程退出或不再应答，Host 答 503 `agent-start-failed`；Agent 回答错误（会话被别的客户端占用、回答无效）时答 502 `agent-refused`，带它自己的原因。
+- **页面。** 确定的拒绝之后丢弃 `requestId`，文字留在输入框，原因就地显示，并按错误码给出下一步。Host 同时放下为这个请求保留的附件。
+- **立即发送的排队消息**（会话空闲时 `queue: true`）先写下排队回执再发送。发送被这样拒绝时，Host 先删掉这一项与它的回执再回答，并为已写下的 `task.prompt.queued`、`task.prompt.sent` 审计各补一条 `action.failed`。删不掉就把这一项留作发送结果未确认，改答不在清单里的 503 `queue-send-unknown`。所以同一段文字只有一条重发的路。
+- **重试被拒绝。** 网页上，同一 `requestId` 的重试得到确定的拒绝也结束等待。iPhone 与 iPad 上，第一次提交的确定拒绝不留作结果未知；重试的拒绝只有 Host 按第一次提交的回执作答时（`retryAnswered`，例如 `attachment-released`）才结束等待，其他拒绝仍留作结果未知，因为重试被拒绝说明不了第一次是否已被接收。
+- **Host 先认回执。** Driver 把这一轮写稳之后，Host 在内存里按会话、设备与 `requestId` 记下所发内容的哈希。同一设备带同样内容的重试不再做提交前的检查，直接答已接收（带附件的再补一次绑定）；所以项目、Harness 版本、模型、文件引用或数据范围的变化不会把已送达的消息说成被拒绝。
+- **仍照常检查的重试：** 别的设备、还在写稳中的一轮与 Host 重启之后（重启后 Driver 自己的回执仍按 `requestId` 防止重复）。同一 `requestId` 换了内容是 409 `request-conflict`。
+
+### 清空上下文
+
+`TaskDetail.clearContext` 为真时，`POST /tasks/:id/prompt` 接受 `freshContext: true`：这一轮在新的上下文里开始，Harness 看不到之前的消息，消息仍留在会话记录里。
+
+- **边界持久。** Driver 把它记在这一轮的用户消息上（`Message.freshContext`，两种消息存储的 zod schema 都保留），重连、切换会话与刷新都不会丢掉或移动这条边界。从边界之后某一轮分叉时，种子从这条边界开始。
+- **拒绝。** 与 `queue`、`steer` 一起用是 400 `fresh-context-queued`；不声明的 Driver 答 409 `clear-context-unsupported`；来自已移除 Agent 的只读会话答 409 `session-read-only`。
+- **重试**沿用原 `requestId`；带不带 `freshContext` 是不同的请求（`request-conflict`）。
+- **实现。** Latch 内置清空发给模型的历史；ACP 开新的 Agent 会话（[HARNESSES.md](./HARNESSES.md#清空上下文)）。
+- **发送前只是本设备的选择。** 网页与桌面端是 `/clear` 或会话菜单，iPhone 与 iPad 是页头会话菜单（只在 App 内存里）；不写 Host，运行中不能选，一轮开始时选择撤掉。选定后重试最新一轮，重发的这一轮也带 `freshContext`。它随待发送的提交一起保存，结果未知时原样重试。
+- **`TaskDetail.contextCleared`。** Driver 在这一轮开始前已放下旧上下文、这一轮却被拒绝或没有开始时，下一条消息不论是否要求都在新的上下文里；各端写出这一点，不再提供撤销。
+
+### 排队状态与实际发送
+
+- 详情与 SSE 的 `TaskDetail.queue` 是 `{ id, text, queuedAt, state, reason? }`，`state` 为 `waiting`、`parked` 或 `dropped`；设备身份与请求回执不下发。
+- 入队回执不生成用户消息；实际派发才生成带 `requestId` 与 `queuedAt` 的正常消息。编辑会换派发标识，原提交的重试仍命中同一项。
+- 两种 Driver 的 zod 快照保留 `queuedAt` 与 `TaskSummary.runOutcome`。新运行清除旧 outcome，真实结算后才写完成、失败、取消或中断。队列不从网络状态、`idle` 或文字猜测完成。
+
+### 追加到运行中的一轮
+
+`TaskDetail.steer` 为真时，正在运行的这一轮还能接收文字，提交带 `steer: true`。它只来自本轮进程的协商（ACP Agent 在 `initialize` 的 `_meta.steering.supported` 声明），轮次被要求停止后即消失。
+
+- **接收。** Host 经 `Bridge.steer` 转给 Harness；Agent 接收则回答 `{ steered: true }`，消息作为带 `steered` 的用户消息进入这一轮，不开新的一轮，客户端也不按它分轮。
+- **退回排队。** Harness 不支持、轮次已结束或 Agent 回答 `promptRequired` 时，同一请求按排队处理：有轮次在跑就排队，没有就直接作为新一轮发送。
+- **拒绝是确定的。** Agent 拒绝时返回 409 `steer-failed`：内容没有发出，不是结果未知。
+- **重试用原 `requestId`**，得到第一次的结果。第一次已按排队处理时，重试只命中那一轮或那一项，即使这时的轮次能接收追加。
+- **没有回答就不重发。** Agent 没有回答（超时或进程中断）时回执保持发送中，之后的重试一律 409 `steer-unknown`，因为 Agent 给每次请求另起消息，分不出重发。
+- **`steered` 只表示 Agent 接收了**，不表示它在本轮结束前读到。本轮没有正常完成、期间有过追加、而最后一次追加之后 Agent 再没有任何输出时，结束时写一条系统消息说明它可能没有读到。
+- 追加不带附件与文件引用，也不替人拒绝等待中的审批。
+
+### 子 Agent
+
+- Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Message.subagent`（名字、说明、状态、步骤）。它的状态只来自它自己的报告；所在的一轮结束时仍未报告停止的记为 `unknown`。
+- 它请求的审批在会话的 `approvals` 里，`Approval.subagent` 是它的名字，没有 `toolCallId`。一轮结束后才到或仍在等的这类审批让会话处于 `waiting-approval`，详情里没有 `activity`；答复后会话回到这一轮结束时的状态。
+- 能单独停止的子 Agent 带 `Subagent.stoppable`；停止之后带 `stopping`，直到它报告结果或这一轮结束，页面在此之前不说已停止。
+
+机制见 [HARNESSES.md](./HARNESSES.md#子-agent)。
+
+### Codex Agent 团队
+
+Codex 的原生委派在同一会话的详情里沿用 `Message.subagent`。
+
+- 有父轮与直接父关系证据的行带 `Subagent.team`；待处理的 `Approval.subagentId` 指向发起审批的 Latch 消息。客户端只提交原有会话与审批的标识。
+- Team 的变化随完整的 `task-state` 传输，正文追加帧不承载它。
+- Host 丢失进程时保存的成员留在原行；只有验证过的官方读回能补上缺失的状态，正文重连不自动派发工作。
+
+## Agent 提问与回答
+
+`catalog.features.questions` 表示 Host 支持内置问答接口。ACP Agent 的提问经 `HarnessHostOptions.askUser` 进入同一张提问卡（[HARNESSES.md](./HARNESSES.md#agent-的提问)）。
+
+- 题包只出现在所选会话的 detail 与事件里，页面把它画在输入框上方的提问卡里（`QuestionDrawer`），不画在工具行上。草稿与当前题号只存在本设备，切换会话或重载后恢复。
+- 提交前保存完整的 `requestId` 与 answers；结果未知时以相同内容重试，卡片卸载不取消已被接纳的写请求。工具结果落盘后才替换为已回答的记录，随后模型继续。
+- 问答沿用审批等待的传输状态，详情里的 `questions` 决定界面显示提问卡；工作计时与审批等待共用同一暂停区间。
+- Host 重启结束未答的题。回答被接收与工具结果落盘之间崩溃时，只有实际会话的 completed 输出完全匹配才恢复已回答的回执，不凭客户端声称的成功继续执行。
+
+## 附件输入
+
+附件字节独立上传，消息流只同步 `Message.attachments` 的元数据；接口、存储与权限见 [ATTACHMENTS.md](ATTACHMENTS.md)。与本文有关的规则：
+
+- 发送引用前保存原 `requestId` 与 `attachmentIds`；响应丢失后重试相同请求，绑定后的附件也能认出原创建请求。上传中断或失败不等于消息已发送。
+- 附件队列是客户端的草稿状态：点发送后先等上传，再建立持久的待确认提交。取消等待只终止上传，不调用会话取消。
+- 文件选择的结构化引用与原请求一起保存；文字编辑移除标记也移除它的选择。
+
 ## 时间与用量
 
-源码：[timing.ts](../packages/core/src/node-kit/timing.ts)、[runtime.ts](../packages/core/src/runtime.ts)、[runtime.ts](../packages/harness-acp/src/runtime.ts)、[hostClock.ts](../apps/web/src/core/hostClock.ts)、[conversation.ts](../apps/web/src/conversation.ts)。
+源码：[timing.ts](../packages/core/src/node-kit/timing.ts)、[hostClock.ts](../apps/web/src/core/hostClock.ts)、[conversation.ts](../apps/web/src/conversation.ts)。
 
-界面上的每个时间与计数都来自 Host 的记录，客户端不估算；字段都是可选的，旧 Host、插件 Driver 与记录这些字段之前的历史没有它们，缺少时对应的部分不显示。时间是 Host 时钟的 ISO 字符串，由 `ServerOptions.clock`（默认 `Date.now`）给出，内置 Harness 与 ACP Driver 经 `HarnessHostOptions.clock` 用同一个时钟。
+界面上的每个时间与计数都来自 Host 的记录，客户端不估算。字段都可选（旧 Host、插件 Driver 与更早的历史没有），缺少时对应的部分不显示。时间是 Host 时钟的 ISO 字符串，来自 `ServerOptions.clock`；内置 Harness 与 ACP Driver 经 `HarnessHostOptions.clock` 用同一个时钟。
 
-- **持久的。** 会话摘要的 `createdAt`。每条消息的 `createdAt`（用户消息被接受、助手一步开始、工具调用被记录、说明写入的时刻）；工具的 `startedAt`（审批之后真正开始运行）与 `completedAt`（结算）；助手一步的 `completedAt`、`reasoningMs`（从第一段推理到第一段正文或这一步结束）与回答它的 `model`（内置 Harness 另有 `providerId`）。开启一轮的用户消息在这一轮结算时得到 `turn`：`endedAt`、`activeMs`（从提示到结束，减去等待审批的时间）与 `waitMs`（至少有一个审批在等人的时间，多个审批重叠时按并集计），会话经 Latch 转发到模型服务时还有 `routed`（网关自己数的请求、模型与令牌，以及闭合枚举的实际转换损耗 dropped，见 [HARNESSES.md](./HARNESSES.md) 的「每轮的模型与用量」）。Host 重启中断的一轮没有 `turn`。这些字段都写进各自存储的 zod schema。
-- **运行中的投影。** 运行期间 detail 带 `runStartedAt`、`runWaitMs`（已结束的审批等待）与 `runWaitingSince`（有审批正在等待时），客户端据此算出不含等待的已运行时间，等待时停住；`lastOutputAt` 是可见输出最后一次变化（正文、推理、工具、计划、新消息），客户端用它说出「N 分钟没有新输出」；`liveReasoningStartedAt` 与正文开始后的 `liveReasoningMs` 给出正在流出的思考用时。
-- **Host 时钟。** 客户端从快照与每个 `task-state` 的 `hostTime` 得到 Host 时钟与本机时钟的差，变化小于一秒视为网络抖动、不更新；所有活的计时（已运行、工具用时、思考秒数）都按 Host 时钟计算，所以手机时钟不准时各设备读到的仍一样。旧 Host 不发 `hostTime` 时差为零，运行时间退回为页面看到运行开始以来的时间。走秒由页面共享的一个计时器驱动，只有显示数值的叶子组件订阅，页面隐藏时停止。
-- **用量。** 每一步的 `usage` 是 `inputTokens`（含缓存）与 `outputTokens`（含推理），模型服务报告时另有 `cacheReadTokens`、`cacheWriteTokens` 与 `reasoningTokens`；Host 与客户端合计多步时，某一部分只有每一步都报告了才保留，所以合计从不把「没报告」当成 0。ACP Agent 报告的 `usage_update`（当前上下文已用、窗口大小与费用）存为会话的 `usageReport`，只作为 Agent 的报告显示，不当作账单，也不从 tokens 推算。Claude 经模型网关时丢弃 CLI 对自定义模型推测的窗口与费用，只保留已用上下文 token；pi 的网关同样不把运行预算与占位价格当成容量或费用。
+**持久的字段**（都在各自存储的 zod schema 里）：
+
+| 字段 | 含义 |
+| --- | --- |
+| 摘要与消息的 `createdAt` | 用户消息被接受、助手一步开始、工具调用被记录、说明写入的时刻 |
+| 工具的 `startedAt`、`completedAt` | 审批之后真正开始运行；结算 |
+| 助手一步的 `completedAt`、`reasoningMs`、`model` | `reasoningMs` 从第一段推理到第一段正文或这一步结束；内置 Harness 另有 `providerId` |
+| 用户消息的 `turn` | 这一轮结算时写入：`endedAt`、`activeMs`（提示到结束，减去等审批的时间）、`waitMs`（至少有一个审批在等人的时间，重叠时按并集）。经 Latch 转发到模型服务时另有 `routed`（[HARNESSES.md](./HARNESSES.md)「每轮的模型与用量」）。Host 重启中断的一轮没有 `turn` |
+
+**运行中的投影。** detail 带 `runStartedAt`、`runWaitMs`（已结束的审批等待）与 `runWaitingSince`（有审批正在等时），客户端据此算出不含等待的已运行时间，等待时停住。`lastOutputAt` 是可见输出（正文、推理、工具、计划、新消息）最后一次变化。`liveReasoningStartedAt` 与正文开始后的 `liveReasoningMs` 给出正在流出的思考用时。
+
+**Host 时钟。** 客户端从快照与每个 `task-state` 的 `hostTime` 得到 Host 时钟与本机时钟的差；变化小于一秒视为网络抖动，不更新。所有活的计时都按 Host 时钟算，手机时钟不准时各设备读到的仍一样。Host 不发 `hostTime` 时差为零。走秒由页面共享的一个计时器驱动，页面隐藏时停止。
+
+**用量。**
+
+- 每一步的 `usage` 是 `inputTokens`（含缓存）与 `outputTokens`（含推理），模型服务报告时另有 `cacheReadTokens`、`cacheWriteTokens`、`reasoningTokens`。
+- 合计多步时，某一部分只有每一步都报告了才保留：合计从不把没报告当成 0。
+- ACP Agent 的 `usage_update`（上下文已用、窗口大小与费用）存为会话的 `usageReport`，只作为 Agent 的报告显示，不当作账单，也不从 tokens 推算。
+- Claude 经模型网关时丢弃 CLI 对自定义模型推测的窗口与费用，只留已用上下文；pi 的网关同样不把运行预算与占位价格当成容量或费用。
 
 ## 运行的真实状态
 
-源码：[run-silence.ts](../apps/host/src/run-silence.ts)、[hub.ts](../apps/host/src/hub.ts)、[runtime.ts](../packages/core/src/runtime.ts)、[runtime.ts](../packages/harness-acp/src/runtime.ts)、[sessions.ts](../packages/protocol/src/sessions.ts)。
+源码：[run-silence.ts](../apps/host/src/run-silence.ts)、[hub.ts](../apps/host/src/hub.ts)、[sessions.ts](../packages/protocol/src/sessions.ts)。
 
-已运行时间不代表进展。Host 记录每次运行最后一次有动静的时间，只说事实，**从不因为沉默而停止运行**。`catalog.features.runLiveness` 声明这些都可用；旧 Host 没有这些字段，旧客户端忽略它们。
+已运行时间不代表进展。Host 记录每次运行最后一次有动静的时间，只说事实，**从不因为沉默而停止运行**。`catalog.features.runLiveness` 声明这些字段可用。
 
-**`TaskSummary.live`**（运行期间才有，只在内存，不持久化）：
+**`TaskSummary.live`**（运行期间才有，只在内存）：
 
 | 字段 | 含义 |
 | --- | --- |
 | `runId` | 这次运行 |
 | `activity` | `starting`（进程与会话在准备）、`model`（等模型）、`command`（命令在运行）、`tool`（其他工具在运行）、`approval`（等人）、`cancelling`（停止中，等执行端结算） |
-| `commandName` | `command` 与 `tool` 时运行的是什么，只有一行，已脱敏；**只在会话详情里** |
+| `commandName` | `command` 与 `tool` 时运行的是什么，一行、已脱敏；**只在会话详情里** |
 | `since` | 这项活动开始的时间 |
-| `runStartedAt`、`runWaitMs`、`runWaitingSince` | 整次运行开始的时间与等人的时间，和详情里的同名字段一致。`since` 随活动重新开始，整次运行的时钟读这三项；列表也带它们，它们不含正文 |
-| `lastEventAt` | 最后的动静：Harness 为这个会话发来的任何东西（输出、工具更新、用量报告、请求），或一项活动的开始（比如审批刚被答复）。Agent 的 stderr 不算：它不属于任何一次运行 |
+| `queued`、`queuedFor` | 这次运行的模型请求在等空位；等某个服务的空位时 `queuedFor` 是它的名称。只由 Host 设置 |
+| `runStartedAt`、`runWaitMs`、`runWaitingSince` | 整次运行的时钟，与详情里的同名字段一致；`since` 随活动重新开始，所以整次运行读这三项 |
+| `lastEventAt` | 最后的动静：Harness 为这个会话发来的任何东西，或一项活动的开始（如审批刚被答复）。Agent 的 stderr 不算：它不属于任何一次运行 |
 | `lastOutputAt` | 可见输出最后一次变化 |
 | `silenceThresholdMs`、`silent` | Host 的判断，见下 |
-| `unrecognized` | Harness 发来过 Latch 不认识的请求：`count` 与最新的 `at`。ACP 为该请求同时更新 `at` 和 `lastEventAt`，共用同一时间；`lastEventAt` 尚未晚于 `at` 表示之后再无动静；Harness 继续时列表重读一次，不随每个词重读；会话详情里另有 `method` 与记录它的系统消息 `messageId` |
+| `unrecognized` | Harness 发来过 Latch 不认识的请求：`count` 与最新的 `at`。`lastEventAt` 尚未晚于 `at` 表示之后再无动静。详情里另有 `method` 与记录它的系统消息 `messageId` |
 
-Driver 报告除 `silenceThresholdMs`、`silent` 以外的各项，`silenceThresholdMs` 与 `silent` 只由 Host 计算，Driver 的说法会被丢弃。Standard 的 `lastEventAt` 随 Provider 的每个事件前进，工具的 `kind: 'execute'` 算命令，名称是工具的标题；ACP 的 `lastEventAt` 随该会话的每个 `session/update` 与请求前进，`kind: 'execute'` 算命令，名称优先取调用的 `rawInput.command`。ACP 同时运行几个调用时，一个结束后活动仍是还在运行的那个，不会说成在等模型。
+- **谁写。** Driver 报告除 `silenceThresholdMs`、`silent` 以外的各项；这两项只由 Host 计算，Driver 写了会被丢弃。
+- **Standard。** `lastEventAt` 随 Provider 的每个事件前进；工具的 `kind: 'execute'` 算命令，名称是工具的标题。
+- **ACP。** `lastEventAt` 随该会话的每个 `session/update` 与请求前进；`kind: 'execute'` 算命令，名称优先取 `rawInput.command`。同时运行几个调用时，一个结束后活动仍是还在运行的那个。
+- **列表不带正文。** 快照的 `live` 不含 `commandName`、`unrecognized.method` 与 `messageId`，因为原生客户端在正文窗口之外也能读列表。
 
-**阈值与沉默。** 模型（含 `starting`）2 分钟，命令与工具 10 分钟；等人和停止中没有阈值。`silent` 表示 `lastEventAt` 距今超过阈值，每次读取时计算，所以不会读到过期的答案。
+**阈值与沉默。** 模型（含 `starting`）2 分钟，命令与工具 10 分钟；等人与停止中没有阈值。`silent` 表示 `lastEventAt` 距今超过阈值，每次读取时计算，所以读不到过期的答案。电脑睡眠的时间也算沉默。
 
-**没有周期开销。** Host 只有一个定时器，等最早到期的阈值，只在有运行可能越过阈值或正在沉默时存在，读的是 `Bridge.liveRuns()`（内存中的运行，不列全部会话）。越过时只发一次普通的会话变化（`task-state`，其他连接收到 `tasks-invalidated`）；沉默中的运行每 30 秒复查一次，因为 Driver 不必为每个动静都通知，复查发现它恢复时同样发一次变化；空闲的 Host 没有定时器。没有 `liveRuns` 的 Driver 仍在读取时算出沉默、可以继续等，但 Host 不主动宣布越过。客户端自己用 `lastEventAt` 与 Host 时钟算出「N 分钟」，不需要 Host 持续推送。`lastEventAt` 的变化本身不会让其他设备重读列表，只有活动、阈值、沉默或 `unrecognized` 的计数变化才会，所以列表中的 `lastEventAt` 可以落后于详情，判断沉默以 `silent` 为准；要比较 `unrecognized.at` 与 `lastEventAt` 看 Harness 是否继续了，也只在详情里比较。电脑从睡眠中醒来时，睡眠的时间也算沉默。
+**没有周期开销。**
 
-**列表不带正文。** 快照的 `live` 不含 `commandName`、`unrecognized.method` 与 `messageId`，因为原生客户端在正文窗口之外也能读列表。
+- Host 只有一个定时器，等最早到期的阈值；只在有运行可能越过阈值或正在沉默时存在，读的是 `Bridge.liveRuns()`（内存里的运行）。
+- 越过时只发一次普通的会话变化。沉默中的运行每 30 秒复查一次（Driver 不必为每个动静都通知），发现恢复时同样发一次变化。
+- 没有 `liveRuns` 的 Driver 仍在读取时算出沉默、可以继续等，但 Host 不主动宣布越过。
+- 客户端用 `lastEventAt` 与 Host 时钟自己算分钟数，不需要 Host 持续推送。
+- `lastEventAt` 的变化本身不让其他设备重读列表，只有活动、阈值、沉默或 `unrecognized` 计数的变化才会。所以列表里的 `lastEventAt` 可以落后于详情：判断沉默以 `silent` 为准，比较 `unrecognized.at` 与 `lastEventAt` 只在详情里做。
 
 **继续等。** `POST /link/api/tasks/:id/keep-waiting`，权限 `view`，请求体 `{ runId, thresholdMs }`，`thresholdMs` 是页面看到的阈值。回答 `{ accepted: true, outcome, thresholdMs? }`：
 
 | `outcome` | 含义 |
 | --- | --- |
-| `extended` | 阈值翻倍，只对这次运行的这类活动（模型与命令各算各的）；如果下一次询问会在半个原阈值之内到来（页面放了很久才点），再翻一倍 |
-| `unchanged` | 阈值已不是请求看到的那个：一次重试或另一台设备已经点过。所以它不需要 `requestId`，重试总是安全的 |
+| `extended` | 阈值翻倍，只对这次运行的这类活动（模型与命令各算各的）；下一次询问会在半个原阈值之内到来时再翻一倍 |
+| `unchanged` | 阈值已不是请求看到的那个：一次重试或另一台设备已点过。所以它不需要 `requestId`，重试总是安全的 |
 | `not-silent` | 现在并不沉默，或正在等人、停止中 |
 | `ended` | 这次运行已不是活动的 |
 
-阈值只在内存：Host 重启会中断运行，运行结束时一并丢弃。这个操作不授予任何权限，不写审计。
+延长的阈值只在内存，运行结束时丢弃。这个操作不授予任何权限，不写审计。
 
 **`TaskSummary.runEnd`**（随会话持久化，新运行开始时清除）说明一次运行不是以普通回答结束的：
 
@@ -306,184 +579,153 @@ Driver 报告除 `silenceThresholdMs`、`silent` 以外的各项，`silenceThres
 | `forced-stop` | 停止在 30 秒内没有结算，Latch 结束了进程 | `interrupted` |
 | `host-stopped` | Host 在运行期间停止或重启（正常停止与崩溃后重启都算，不当作谁的取消） | `interrupted`，`runOutcome` 也是 `interrupted` |
 | `turn-ended` | Harness 结束了这一轮，但有调用没有报告结果 | 按这一轮的结果 |
+| `login-required` | Agent 以要求登录拒绝了这一轮 | `failed` |
 
-`host-stopped` 的这一轮另外留下一条系统消息「Latch 重启时中断。…」（`state: 'cancelled'`、`Message.interrupted`），不是失败；当时没有报告结果的工具行带 `interrupted`：开始过的是 `failed` 且输出含 `TOOL_OUTCOME_UNKNOWN`（做了什么没人知道），没开始的是 `cancelled`；中断前已报告完成的调用照旧是完成。客户端把这些行写成「已中断 · 结果未知」或「已中断」（琥珀色），没有 `interrupted` 而结果未知的写「结果未知」，都不写成失败；最新一轮的结束行写「Latch 重启时中断」并给「重试」（ACP 会话重试时照常先 `session/resume`、`session/load`，都不支持则 `harness-session-lost` 与「在新会话中继续」），重试前的确认会说明有几个操作结果未知。
+- **结果未知的调用。** `unknownResults` 列出当时在运行的调用（`messageId` 是工具行，`name` 是命令文本），至多 32 条，更多时带 `unknownResultsTruncated`。因为含命令文本，它**只在会话详情里**；列表与取消回执只带 `unknownResultCount`。
+- **进程退出不是可重试的失败。** 进程退出的运行 `status` 是 `failed`，但 `runOutcome` 仍是 `interrupted`：那条命令是否生效没人知道，定时任务不能把它当作可重试的失败。
+- **`host-stopped` 的记录。** 这一轮留下一条系统消息（`state: 'cancelled'`、`Message.interrupted`），不是失败。当时没有报告结果的工具行带 `interrupted`：开始过的是 `failed` 且输出含 `TOOL_OUTCOME_UNKNOWN`，没开始的是 `cancelled`；中断前已报告完成的调用照旧是完成。
+- **客户端不把中断写成失败。** 最新一轮给出重试；ACP 会话重试时先 `session/resume`、`session/load`，都不支持则 `harness-session-lost`，改在新会话中继续。重试前的确认说明有几个操作结果未知。
+- **Standard 没有强制停止。** 工具与模型在进程内运行，停止只发中止信号并等它们真实结算；不理会中止的插件工具会让运行一直停在 `cancelling`。
 
-**失败在原地说明。** 一轮失败时的系统消息就是原因：Host 或模型服务的 `AppError` 文字、Harness 的错误，都先经 `redactSecrets`。它带 `Message.errorCode`（AppError 的 code；模型服务的 HTTP 状态记为 `http-401` 这样的码），客户端据此给出一个下一步（`apps/web/src/conversation/failureAction.ts`）：Harness 的命令、版本或定义问题「打开设置 › Harness」，模型不能回答「换个模型」（打开输入框的模型菜单），模型服务拒绝密钥或地址不允许「打开设置 › 模型服务」，会话不能继续「在新会话中继续」，项目目录失效不给按钮（由项目恢复面板说明），其他都是「重试」。设置只对所有者设备出现。输入框里被 Host 确定拒绝的发送按同一个 code 在原因旁给出同样的下一步。
-
-`unknownResults` 列出当时在运行的调用（`messageId` 是工具行，`name` 是名称），最多 32 条，更多时带 `unknownResultsTruncated`。`name` 是命令文本，所以 `unknownResults` **只在会话详情里**；列表与取消回执只带条数 `unknownResultCount`。进程退出的运行 `status` 是 `failed`，但 `runOutcome` 仍是 `interrupted`：那条命令是否生效没人知道，定时任务不能把它当作可以重试的失败。
-
-Standard 的工具与模型在进程内运行，没有可结束的进程：停止只发出中止信号并等待它们真实结算，没有强制停止，不理会中止的插件工具会让运行一直停在 `cancelling`。
+**失败在原地说明。** 一轮失败时的系统消息就是原因：Host 或模型服务的 `AppError` 文字、Harness 的错误，都先经 `redactSecrets`。它带 `Message.errorCode`（AppError 的 code；模型服务的 HTTP 状态记为 `http-401` 这样的码），客户端据此给出一个下一步（`apps/web/src/conversation/failureAction.ts`）；通向设置的下一步只对所有者设备出现，项目目录失效不给按钮（由项目恢复面板说明）。输入框里被 Host 确定拒绝的发送按同一个 code 给出同样的下一步。
 
 ## 阅读位置
 
-源码：[useReadingPosition.ts](../apps/web/src/core/useReadingPosition.ts)。
-
-滚动容器使用 hook 返回的 containerRef 与 handlers，正文 wrapper 使用 contentRef。`ready` 必须表示 detail 已加载且属于当前 session；在此之前不写滚动位置。正文的 scrollTop 由这一处写入。
+源码：[useReadingPosition.ts](../apps/web/src/core/useReadingPosition.ts)。正文的 `scrollTop` 只由这个 hook 写入。`ready` 必须表示 detail 已加载且属于当前会话，在此之前不写滚动位置。
 
 | 模式 | 行为 |
 | --- | --- |
-| `follow` | 流式正文或容器尺寸变化后，保持在当前底部 |
-| `read` | 记录首个可见 `data-message-id` 与其相对视口 offset；布局变化后尽量保持这条消息的位置，不跟随新增正文 |
+| `follow` | 流式正文或容器尺寸变化后保持在当前底部 |
+| `read` | 记录首个可见 `data-message-id` 与它相对视口的 offset；布局变化后保持这条消息的位置，不跟随新增正文 |
 
-在已观察的同一会话中，跟随位置随正文或视口的 ResizeObserver 尺寸变更在绘制前对齐。逐段正文提交无需提前强制读取布局。切换会话、收到首份详情与显式跳转仍立即对齐。阅读模式继续在提交时核对锚点，覆盖总高度不变但锚点已移动的重排。
+- **谁能离开 follow。** 上翻的 wheel、键盘、触摸与滚动条拖动是用户意图。嵌套可滚动区能消费的滚动不释放外层的 follow；程序自己的滚动与视口变大引起的 clamp 不算上翻。
+- **手势期间不补偿。** 用户手势或惯性期间不做锚点补偿，避免与拖动竞争。锚点只在读者滚动时更新，程序写入不替换它。
+- **回到 follow。** 「回到最新」、成功提交输入，或用户向下滚到接近底部。
+- **对齐时机。** 同一会话里，跟随位置随正文或视口的 ResizeObserver 尺寸变化在绘制前对齐；切换会话、收到首份详情与显式跳转立即对齐。阅读模式在提交时核对锚点，覆盖总高度不变但锚点已移动的重排。
+- **`reveal(messageId)`** 把指定消息行滚入视野，目标已在底部附近时等同于回到最新。目标在收起的折叠里时，页面先向它外层每个 `hidden="until-found"` 的容器派发 `beforematch`（与浏览器页内查找同一条路径），下一帧再 `reveal`。
+- **嵌套滚动框**（思考、运行中的工具输出）用 `flex-direction: column-reverse` 从末尾排布，自然跟随最新内容，不写 `scrollTop`。
+- **每个会话各自的位置。** 切换会话保存各自的模式与锚点，至多 100 个会话，只在内存：不写磁盘或浏览器存储，刷新整页不保证恢复。锚点消息消失时用限制在有效范围内的旧 offset。
+- **未绘制的轮次。** 视野外的已结算轮次用 `content-visibility: auto` 推迟绘制（打印时恢复）。它只占估计高度，行却按完整高度测量，所以定位锚点时先让锚点所在轮次与视野内其下的轮次真正绘制（`data-drawn`），且只在与视口相交的轮次里测量。切回会话、页内查找与 `reveal` 因此落在同一行。
+- **会话定位条**与消息列表共用已提交轮次的投影，跳转用 `reveal`；只让正文变长的帧沿用同一份投影。
 
-上翻 wheel、键盘、触摸、滚动条拖动提供用户意图；嵌套可滚动区能消费的滚动不释放外层 follow。自己的程序滚动与视口变大引起的 clamp 不视为用户上翻。用户手势或惯性期间暂不做锚点补偿，避免与拖动竞争。
-
-「回到最新」在会话区最下面 40px 的一条里居中（输入框正上方），显示时会话内容在这一条里淡出，不压在文字或行上；它写「回到最新」，读者离开后有新块到达时写「N 条新内容」。“回到最新”和成功提交输入显式恢复 follow；用户向下滚到接近底部也可恢复。`reveal(messageId)` 把指定消息行滚入视野（静默提示行的「查看」、回到等你允许的审批卡），它同样由 hook 执行，目标已在底部附近时等同于回到最新。目标在收起的折叠里时，页面先向它外层每个 `hidden="until-found"` 的容器派发 `beforematch`（与浏览器页内查找走同一条路径，各自的主人随之展开），下一帧再 `reveal`。展开块的高度动画对 hook 来说是内容尺寸变化，阅读模式按锚点保持位置。思考与运行中的工具输出这类嵌套滚动框用 `flex-direction: column-reverse` 从末尾排布，自然跟随最新内容，不写 `scrollTop`。切换会话保存独立模式与锚点，当前 hook 最多保留 100 个会话的内存记录。它不把阅读位置保存到磁盘或浏览器存储，刷新整页不保证恢复原锚点。锚点消息消失时使用限制在有效范围内的旧 offset。锚点只在读者滚动时更新，程序写入不替换它。
-
-会话定位条与消息列表共用已提交轮次投影。刻度优先以用户消息为目标，导入的开头一轮可以用已有回复正文。摘录取已加载消息的开头，去掉附带的分叉上下文和变更备注后截断并转义不可见字符。当前刻度读已有消息锚点，跟随或阅读当轮的流式回复时指向最新轮次。阅读导入的开头说明等没有可定位轮次的内容时，刻度保持常态，键盘入口落在第一条。跳转直接使用 `reveal` 绘制视野外的轮次并定位到消息。仅正文增长的增量帧沿用同一份轮次投影，旧协议的完整帧核对已提交轮次相同后也沿用它。
-
-同一轮提交回复时，定位条更新消息与刻度的对应关系。自动量取刻度位置按刻度顺序和当前目标变化触发，刻度列尺寸变化仍由 ResizeObserver 处理。
-
-当前使用完整消息列表，视野外的历史轮次用 `content-visibility` 推迟绘制。捕获阅读锚点时先读轮次的外框，只在与视口相交的轮次中按文档顺序测量消息，避免展开尚未绘制的远处正文。消息列表没有历史分页或虚拟列表，也没有“已发送”阅读状态或预留回复空间。手机视口变化通过 ResizeObserver 参与布局，但浏览器尺寸验收不能等同于 iPhone/Android 真机软键盘和全部惯性滚动行为已经验证。
-
-前台会话只为正在流式传输的正文、展开的思考或旁支回答加可见性标记。`IntersectionObserver` 根据实际正文所处视野暂停背景和活动边。总览、设置、手机页面或离线状态遮住会话时撤下相应标记。背景按固定阅读窗留出内容区域，普通流式跟随滚动沿用这个范围，滚动仍由阅读位置控制器管理。
-
-## 工作过程的行
-
-源码：[ToolCard.tsx](../apps/web/src/components/ToolCard.tsx)、[shellUnwrap.ts](../apps/web/src/core/shellUnwrap.ts)、[conversation.ts](../apps/web/src/conversation.ts)。这一节只是画法：Host 给的消息、ID、状态与工具输入不变。
-
-**命令。** Agent 报告的命令行是 `sh`、`bash` 或 `zsh`（只认裸名字，或正好在 `/bin`、`/usr/bin`、`/usr/local/bin`、`/opt/homebrew/bin` 下的；项目里的 `tools/bash`、经 `..` 到达的、相对路径的都是别的程序）加 `-c` 或 `-lc` 再加**恰好一个** shell 词时，行里显示这个词去掉引号后的内容（`unwrapShell`）；别处的 shell、多出参数、别的开关、词里有会被外层 shell 展开的 `$` 或反引号、未闭合的引号、空命令，都按报告的原样显示，只还原一层。共享向量是 `packages/testkit/vectors/shell-unwrap-v1.json`（每条还原的用例都用真实 `/bin/sh` 核对过）。报告的原文在行的提示里，展开后在参数里一字不少。命令里的路径按报告的写，不改写成 `~`。
-
-**审批卡不改写。** 调用的标题就是这条命令时，卡片显示还原后的整条命令，保留换行、不截断，下面一行写外壳报告的原样（「经 /bin/zsh -lc」）；标题是 Agent 另写的说明时照旧显示说明，参数里是报告的原文。很长的命令在自己的框里滚动；框下面还有内容时，框底淡出，并在框下写「还有 N 行」（N 由框自己的滚动高度量出，滚到底就消失），命令的最后一行不会不声不响地藏在下面。
-
-**行与块。** 已结束的命令是一行（`is-command`），输出在展开后才出现。运行中、失败、被打断或结果未知的命令是块（`is-block`）：下面是工具报告的输出的最后 5 行，每行不换行、最多 400 字符、在右边淡出，所以折叠的尾巴不超过 5 个屏幕行；展开后的输出照旧换行并在自己的框里滚动。协议不带退出码，所以不画退出码；用时不足一秒不写。
-
-**Harness 自己分好类的命令。** `ToolDetail.actions`（可选，最多 16 项，每项 `kind` 为 `read`、`list` 或 `search`，带 `path` 与 `query`）是 Harness 自己对一条命令的解析，目前只有 Codex 报告（[HARNESSES.md](HARNESSES.md) 的 Codex 一节）；只在它把命令的每一部分都认成读取、列出或搜索时才有，有一项认不得就整个不带。它只能把一条简单命令画得更安静，不能反过来：还原后的命令里有 `|`、`;`、`&`、`>`、`<`、反引号、`$(` 或换行（或者命令行读不出来）时不用这个字段，命令照旧是命令行，不进分组，各档位下也按命令对待（Codex 把 `cat a | wc -l` 报成一次读取，`cat list | xargs rm` 也可能是）。Host 只接受自己的 Codex 线路给出的 `actions`：其他 ACP Agent 发来的在读取处丢弃（`ownFields`），接入历史时同样丢弃，保留下来的 `path` 与 `query` 和标题、输入一样经过脱敏。带着它的命令画成「读取 `SKILL.md`」「列出 `docs`」「搜索 `AGENTS`」这样的行（多项时写「读取 2 个文件，搜索 1 次」），输出默认收起，报告的命令原文仍在提示与展开后的参数里；等待批准或排队的调用始终按命令显示，审批卡不用这个字段。Latch 不从命令文字推断读取、列出或搜索：没有这个字段的 `cat`、`rg` 仍是命令行。
-
-**分组。** 同一段工作里连续 3 条及以上、已经结束、没有人需要决定的读取、列出与搜索收成一行（`joinQuiet`、`quietGroupWords`）：「读取 4 个文件」「读取 3 个文件，搜索 2 次」，点开是原来的各行。数字只数条目自己报告的（带 `actions` 的命令按动作数，其余每条算一次）。命令、改文件、失败、被拒、被打断、结果未知、带图片的调用与子 Agent 从不进组；正在运行的那一条留在外面，结束后才并入。运行中的一轮与已结算的一轮规则相同；组以第一条的 ID 为键，变长时保持位置与展开状态。
-
-**显示档位。** 设置 › 通用 › 使用 的「工作过程」按设备保存（`Preferences.workDisplay`，只在浏览器里）：「全部显示」（默认）、「只留失败」、「收起」。后两档下始终显示的行（`alwaysShown`）不变：等待批准的调用、失败、被拒、已取消、被打断、结果未知、与批准记录矛盾的调用，以及还能单独停止或含有这类步骤的子 Agent；提问、失败说明与回复正文不属于工作过程，任何档位都不隐藏，审批卡照旧在输入框上方。「只留失败」不画其余的行；「收起」把它们收在始终显示的行之间的「工作过程 · N 步」里（N 只数工具步骤，思考不算；只有思考时不写数字），点开是原来的行。档位只改这台设备画什么，不改会话、导出或其他设备。
-
-**思考。** 思考行的身体按标题分节（`reasoningSections`）：空行之后整行只有一个加粗短语的是标题（Codex 的摘要每一段这样开头），没有这种行的思考是一节、原样显示。进行中的那一行写「思考中 · 当前标题」，标题还没写完时不显示它；结束后写用时，展开后标题是各节的小标题。正文走回复的 Markdown 管线（同一个解析器、深度上限与 URL 规则；到达期间同样按块复用并只在显示层补全未闭合的标记），但只画段落、列表、强调与行内代码（`ReasoningContent`）：链接、图片、标题、引用、代码块、HTML 都显示成写下的原文，不启用 GFM 与数学，所以思考里没有能点、能加载、能执行的东西；含不可见字符或嵌套过深的思考整段按纯文本显示并标出每个字符。本页没有展开过的思考（历史）保持纯文本，展开时才解析一次。思考随回答开始自动收起时走 `Collapse` 的高度过渡，跟随时仍贴底、阅读时锚点不动（`e2e/stream-render.e2e.ts`）。
-
-**一帧最多画一次。** 只让正文或思考变长的帧（`task-delta`）立即通过版本门禁并更新最新状态，但每个动画帧最多渲染一次（`core/frameGate.ts`）：一帧里到了几份只画最后一份，页面在后台时不画，回到前台画一次；画的永远是已接受的最新状态，所以不会把旧状态画回来。其余的帧（状态、工具、审批、结算）仍然立刻发布，后台时的提醒与计数不受影响。
-
-**匀速显现。** 正在生成的回复，新到的文字约 180ms 内匀速露出（`core/pacedText.ts`、`hooks/usePacedText.ts`）：一个动画帧计时器推进「显示到第几个字」，不为每个字建节点，不加动画；落后超过 1,200 字、页面在后台、减弱动效或连接断开时直接显示全部；未闭合的代码围栏里按整行露出；不切开代理对。只影响画出来的时刻：消息文字、消息 ID、复制的内容与阅读位置的计算都用原文，回复结束后画的就是原文。页面打开时已经在途的回复不重放。 系统偏好或设备设置切到减少动效时，立即显示已经到达的正文。SSE 消费与帧合并照常，进行中与结算沿用原消息 ID。
-
-## Markdown、代码与安全边界
-
-源码：[MessageContent.tsx](../apps/web/src/MessageContent.tsx)、[markdown.css](../apps/web/src/styles/markdown.css)、[DiffView.tsx](../apps/web/src/components/DiffView.tsx)。
-
-消息里的 Markdown 不执行原始 HTML：`literalHtml` 把回复里的原始 HTML 换成文字（句中）或 HTML 代码块（成块），`<br>` 换成换行，注释省略，`<details>` 与 `<summary>` 只留其中的文字，文字不丢失；回复仍在到达时，这样的代码块在后面出现内容后即算结束；Markdown 文件预览仍跳过它们，由源码视图查看。URL 只允许安全协议，图片不加载；显示规则见 [DESIGN.md](./DESIGN.md#流式与阅读)。
-
-回复到达时，只在空行后已经出现独立新块的位置切分，缓存前面没有改变的解析结果与元素；不凭结尾的空行认定前一块结束。引用定义、脚注、HTML、引用容器、块数学及其他不确定的文档上下文仍用整段解析。只补当前尾块的行内强调、代码与未完成链接的显示；尚未收到有效分隔行的管道表头暂时显示文字。补全不改消息原文，复制与保存仍用原文。结束时对原文完整解析一次，扁平元素序列保持相同的节点位置，保留代码的展开、焦点与已有表格行；文件预览始终整段解析。
-
-回复先将代码外成对的 TeX 转义定界符转换为美元符号。实际传给 Markdown 的字符串没有字面美元符号时，省去数学语法登记，内联数学约束、深度限制、原始 HTML 与链接检查照常执行。
-
-回复还在生成时，回合脚部已可复制当前收到的完整回复正文；下一次点按取最新原始 Markdown，不复制显示层补上的符号。运行中不展示结算用量、重试或分叉；结束后在同一脚部补齐这些动作，复制控件和消息节点保持不变。
-
-Mermaid 围栏和块数学必须实际闭合后才交给原有安全渲染器；取消或失败不会替未闭合内容补围栏。内容未闭合时保留代码，图表及数学的帧隔离、URL 与 DOM 校验不变。
-
-工具声明为读取且已完成的调用，其输出按读取的文件名着色（可能含密钥的文件名不着色，只报告结构化结果的 JSON 不按文件语言着色）：Agent 加的行号与外层标记留在语法之外，行进入视野附近才着色，最多着色 1,000 行或 20,000 个片段，其余保持纯文本。字重不变，所以着色不改变换行与阅读位置。运行中、失败的调用与命令输出保持纯文本。
-
-代码块超过 18 行可展开/收起，支持复制，失败时提示手动选择。复制都经 `writeClipboard`（`@latch/ui`）：先用 Clipboard API，没有它（HTTP 局域网）或被拒时用隐藏文本框与 `execCommand('copy')`，两种都失败才说「复制不可用」，不显示虚假的复制成功。桌面端的权限处理只管异步 Clipboard API：`clipboard-sanitized-write` 只准本窗口来源的顶层页，另一台电脑的页还要 5 秒内的真实点按或按键（不消耗打开链接的手势）；读剪贴板一律拒绝。`execCommand('copy')` 不经这些处理，点按后的任何框（含子框）仍能用它复制选中的文字。表格横向滚动，脚注 ID 按消息隔离；组件类型保持稳定，避免每次分片创建新的代码组件。代码块在共享 worker 内着色，超出 200 KB 时整块保留纯文本，超过 1,000 字符的单行只有这一行保留纯文本。长行在代码块内横向滚动，可聚焦后用键盘滚动，还有内容的一侧边缘变暗。
-
-调度（[highlightScheduler.ts](../apps/web/src/preview/highlightScheduler.ts)）：worker 串行，所以只有一项在途，其余在栈里等待，最新的先出；取消的直接出栈。已结算的块在接近视口（滚动容器上下 800 px，[viewportGate.ts](../apps/web/src/preview/viewportGate.ts)）时才请求，并且不等待：只有文本还在变时才防抖 300 ms；缓存命中在同一次渲染显示。看门狗只针对在途项（新 worker 的第一项还要等它加载，给 30 秒）：超时时销毁 worker，其余任务留在栈中，超时项放到栈底再试一次并给四倍时限，再超时才记入负缓存，之后不再请求。worker 连续崩溃三次时放弃等待中的任务，下一次请求重新开始。
-
-会话回复正文里的代码块直接使用阅读控制器持有的滚动容器，免去每个块沿祖先同步读取样式。工具输出、文件预览等其他位置仍按各自最近的滚动容器确定着色范围。
-
-未闭合的围栏逐行着色：worker 按块保留 `grammarState`，只分词新完成的行，每块只有一个请求在途，下一个带上这期间完成的所有行；最后一行可能还会变，保持纯文本。文本不再是已分词内容的延长时从头开始，worker 已不持有该块时回答 `restart`。已完成的行有稳定的 DOM 节点，闭合后整块分词的结果相同时也不替换。超过 18 行的未闭合块只渲染最新 17 行，上方一行「前 N 行已收起」，光标在最后一个字符之后，所以可见部分就是在变化的部分；总高度与闭合后的 18 行相同，不写滚动位置。这期间被收起的行不在 DOM 中，也就不在会话内查找的范围内，展开或闭合后恢复；复制取原文。闭合后折叠的块只把前 19 行渲染成 token，其余仍是文本，可以查找和选择。会话内查找把代码块当成一段文本，匹配可以跨 token，着色替换文本节点后重新定位而不移动阅读位置。
-
-流式帧不重绘其他轮次：全量帧每次重新解析所有消息，`stableTurns` 把数据相同的轮次保留为同一个对象（逐字段比较，不会漏掉新字段），`TurnView` 只接收属于自己的内容，只有最新一轮看到 detail。已结算的轮次用 `content-visibility: auto`，打印时恢复显示；这个属性也裁剪超出轮次的绘制，轮次内的内容不能画到轮次之外。未绘制的轮次只占一个估计高度，它的行却按完整高度测量，所以 `useReadingPosition` 定位锚点时先让锚点所在轮次与视野内其下的轮次真正绘制（`data-drawn`），取视野顶部的行时也不算超出占位的部分；切回会话、页内查找和 `reveal` 因此落在同一行。未闭合围栏与失败内容保留源码，详见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
-
-一次运行开始或结算时，历史消息的编辑入口读会话的运行状态，消息正文继续复用。历史改动卡仅在有关联记录时跟随撤销状态和记录版本，运行中的编辑与撤销限制照常生效。
-
-## 继续开发时的验证入口
-
-| 改动 | 优先检查 |
-| --- | --- |
-| 合并、订阅、重连与版本 | [streaming.test.ts](../apps/host/test/streaming.test.ts)、[projection.test.ts](../apps/web/test/projection.test.ts) |
-| 事件流解析、退避、401 续期、单飞、丢失的续期应答、审批回执与停止请求 | [client-security.test.ts](../apps/web/test/client-security.test.ts)、[enrollment.e2e.ts](../e2e/enrollment.e2e.ts) |
-| 事件流随凭据失效而结束 | [server.test.ts](../apps/host/test/server.test.ts)、[auth.test.ts](../apps/host/test/auth.test.ts) |
-| 桌面端转发、流式响应与主进程续期 | [desktop-proxy.test.ts](../apps/desktop/test/desktop-proxy.test.ts)、[desktop.e2e.ts](../e2e/desktop.e2e.ts)（`LATCH_ELECTRON_E2E=1`） |
-| 模型、工具、审批与取消 | [runtime.test.ts](../tests/runtime.test.ts)、[providers.test.ts](../apps/host/test/providers.test.ts)、[acp.test.ts](../packages/harness-acp/test/acp.test.ts) |
-| 多 Harness 路由 | [hub.test.ts](../apps/host/test/hub.test.ts)、[harness-host.test.ts](../apps/host/test/harness-host.test.ts) |
-| 阅读意图与布局竞争 | [reading-position.test.ts](../apps/web/test/reading-position.test.ts) |
-| Markdown、差异与危险内容 | [message-content.test.ts](../apps/web/test/message-content.test.ts)、[client-diff.test.ts](../apps/web/test/client-diff.test.ts)、[components-conversation.test.ts](../apps/web/test/components-conversation.test.ts)、[client-export.test.ts](../apps/web/test/client-export.test.ts) |
-| 开发服务器代理 | [client-devproxy.test.ts](../apps/web/test/client-devproxy.test.ts) |
-| 真实 Host 的完整界面链路 | [streaming-ui.e2e.ts](../e2e/streaming-ui.e2e.ts)、[takeover.e2e.ts](../e2e/takeover.e2e.ts)、[extensions.e2e.ts](../e2e/extensions.e2e.ts)、[permissions-ui.e2e.ts](../e2e/permissions-ui.e2e.ts) |
-
-统一使用 Vitest；浏览器用例在 Vitest 内使用 Playwright。运行结果以最近一次实际执行为准，本文不固定测试数量。继续修改时重点保留：旧 HTTP 不能盖过新流、A/B 不串会话、live 结算不重复、审批位置不乱、同一审批决定不重复提交、取消不提前确认、阅读历史不被新文字抢走，以及危险链接/HTML 不执行。
-
-## 插件的会话面板
-
-面板发现来自 Host 的 `catalog.uiPanels`，缺少字段时不显示插件标签。数据面板的异步响应按包、面板、会话、运行与重试序号归属；切换会话或卸载时中止读取，迟到响应不能替换新内容。面板的读取租约保留到 Host 回调实际结算。客户端不会按流式 token 请求面板数据，在会话运行状态改变或明确刷新时重新读取。
-
-React 模块按内容摘要加载，组件在切换会话、离开页签与停用包时卸载；组件 effect 返回自己的资源清理函数。`readData` 的请求跟随组件寿命取消，卸载后的 `compose` 回调不修改新会话草稿。「写入对话」只追加草稿，不发起运行；发送仍经 `useSubmission`，由它持久化待发送内容、保留结果未知状态和复用原 requestId。
-
-Standard 的技能指令在每轮开始时与输入一起持久化，同轮的流式步骤固定该份正文。插件替换不改变已开始的一轮；下一轮从当前启用集合重新组装。
-
-原生 HTTP/2 客户端复用相同的 Host API 与 SSE 内容格式，网络连接不决定执行结果。原生正文窗口按已认证连接与 App 打开回执绑定，过期后流停止；列表可重新读取。取消与无附言拒绝保持可用，只返回回执，写入结果未知时继续保留原 requestId。Node `NativeWorkspace` 在安装新路径前恢复正文回执并读取 checkpoint，同一 Host 实例的 revision 只能前进；新路径失败时保留旧连接，迟到的快照不覆盖当前路径。后台重连循环在真实连接关闭或网络变化时重新获取候选，用同一 PathManager 安装新连接，且从不自动重发写入。
-
-原生正文窗口到期只撤下该窗口的正文与预览，不把仍有效的 HTTP/2 连接标为离线。事件流在响应头之前、之后遇到同一租约到期，都保留 `expired`；断流、超时或普通 5xx 不冒充窗口到期。事件打开与失效绑定同一个不透明租约；验证方按租约身份原子失效，旧窗口和没有窗口的迟到应答不能关掉新的窗口。Face ID 关闭时，当前会话、Agent 列表与新话题可以在原连接上重新验证；开启时仍由人打开。新窗口绑定不改会话选择、输入草稿或附件，但先撤旧正文、预览与本地文件编辑显示；缓存晚回仍须核对原租约，不能借新窗口重新出现。文件编辑的未知请求留在待确认存储中，撤下编辑页不等于放弃写入。
-
-SSE 结束或返回失败只证明该 HTTP 流失败。iOS 在原连接上读取一次经过校验的快照；成功才保持在线并退避重开事件流，失败才进入连接恢复。确认和返回都核对连接、流与私有阅读代次；迟到的成功不能覆盖新选择或新窗口。重试间隔从 0.5 秒增至 30 秒，收到心跳或持续有效事件后复位；重开仍使用真实正文租约，不续期、不重放写入。
-
-原生回合的文件汇总按 Host 固定的 `folders` / `cwd` 区分完整文件身份，把同一文件的绝对工具差异与相对输出合并；不同目录的同名文件不合并。路径前缀、分组键与目录比较按 UTF-8 字节处理，不把 Unicode 规范等价字符串当作相同文件；不能映射的引用保持分开。这只影响显示与计数，打开文件仍由 Host 按根权限核对。
-
-iOS 客户端把超时的读取当作 Mac 暂时连不上：列表横幅说明，不弹提示；有效窗口内只读这个窗口已存的正文并标明是旧内容。停止的请求等到 Host 结算（至多 45 秒），一次只发一个，上一个未确认前不发下一个。运行中的一轮在 `TaskDetail.steer` 时，输入框的发送键写「追加」并带 `steer: true`，否则在 Host 有队列时写「排队」；两者与其他写入一样带持久的 requestId，结果未知时原样重试。会话中改权限/模型/思考、分叉、重试与更多里的审批选项也是这样的写入，一次只有一个待确认；结果未知的写入在会话列表与会话里都能「重试这次提交」，否则看不见的那一个会挡住之后的所有写入。消息（新会话的第一条与会话的下一条）另有「放弃这次提交」：先重新读一次该会话（读不到才用屏幕上的），已列出带这个 `requestId` 的用户消息时写「已送达」并撤掉这个会话的清空上下文；否则在本设备放下它，文字接在输入框已有的文字之后，队列里有同样文字的一项时另作提示（`PhonePending.prompt`、`delivered`、`queuedTwin`、`joined`）。重命名、置顶、归档与删除与网页一样是普通请求，不带 requestId、不留待确认；失败或没有答复时说明一次并重新读取列表，以 Host 列出的为准。正文搜索（`POST /search`）只在有效窗口内发，结果只在内存里，不进离线列表缓存；Host 一次只做一个搜索，429 时保留上次的结果，停顿后再问。
+消息列表没有历史分页或虚拟列表。手机视口变化经 ResizeObserver 参与布局，但浏览器尺寸的验收不等于真机软键盘与惯性滚动。
 
 ### 搜索定位与阅读标记
 
-正文搜索响应不是会话状态更新。点击结果先切换到原会话，等待对应 detail 后再通过 `useReadingPosition` 定位消息；迟到的搜索响应不会改变当前会话正文。会话内查找只创建 DOM Range 与 CSS Highlight，折叠行通过 `beforematch` 展开，不改写消息节点或增加一条消息。查找打开时按 `detail.sync.revision` 重扫流式追加，旧 Host 没有同步版本时才回退到 `detail.cursor`；正文追加可能保持 cursor 和已提交 messages 引用不变，不能据此跳过新文字。重新计数仍按消息与匹配身份保留当前选择。手动「标为未读」是每台设备的本地阅读偏好，持久化到已有阅读标记中；重新打开或收到该会话更新时清除，删除会话后清理。
+- 正文搜索的响应不是会话状态更新。点击结果先切到原会话，等对应 detail 后再经 `useReadingPosition` 定位；迟到的搜索响应不改当前会话的正文。
+- 会话内查找只创建 DOM Range 与 CSS Highlight，折叠行经 `beforematch` 展开，不改写消息节点。
+- 查找打开时按 `detail.sync.revision` 重扫流式追加，没有同步版本时才退回 `detail.cursor`：正文追加可能让 `cursor` 与已提交的 `messages` 引用都不变，不能据此跳过新文字。重新计数按消息与匹配身份保留当前选择。
+- 手动「标为未读」是每台设备的本地阅读偏好，存在已有的阅读标记里；重新打开或收到该会话的更新时清除，删除会话后清理。
+- 文件标签是客户端的阅读状态，不改 Host 的会话状态；文件列按会话与项目分开保留引用，切换上下文取消旧的读取，迟到的结果不更新新上下文。契约见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)；运行期间的文件变化见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md)。
 
-文件标签是客户端阅读状态，不改变 Host 的会话状态。文件分块读取绑定打开时的 ETag，元数据变化先显示待更新提示；权限失效卸载解析器，标签切换取消 fetch、worker、PDF render 与 MessagePort。手机文件页复用页面返回栈；阅读位置仍由会话的控制器管理。相关契约见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
+## 工作过程的行
 
-### 输入身份与分叉上下文
+源码：[ToolCard.tsx](../apps/web/src/components/ToolCard.tsx)、[shellUnwrap.ts](../apps/web/src/core/shellUnwrap.ts)、[conversation.ts](../apps/web/src/conversation.ts)。这一节只是画法：Host 给的消息、ID、状态与工具输入不变，报告的原文始终在行的提示与展开后的参数里。
 
-Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消息，两种消息存储的 schema 都保留它，客户端据此关联重试和发送中的气泡。Host 为分叉首条消息补充可选 `forkContext`，`prefixLength` 是正文开头的上下文字符数，其余是新输入；正文仍完整发送给 Harness，只有消息带 `nativeFork` 时例外：Harness 用自己的记录分叉了，开头的上下文没有发给它（见 [ARCHITECTURE.md](./ARCHITECTURE.md#会话分叉)）。重试这一轮时页面同样处理：带 `nativeFork` 的只重发新输入；其余的连同上下文一起重发，因为第一轮失败时上下文可能还没有到达 Harness。折叠只是显示方式，复制消息保留完整正文。旧 Host 不带这些字段时沿用原有显示。接入的会话（`TaskSummary.imported`）里从 Harness 重放来的消息带 `imported: true`，不属于任何一轮；按文字重建的会话首条消息开头 `imported.prefixLength` 个字符是带上的对话文字，Host 在这条消息上补充 `importContext`（来源 Harness 的名称与同一长度），页面据此折叠，重试只重发新输入，因为这段文字已随第一次发送交给会话（见 [HARNESSES.md](./HARNESSES.md#接入已有会话)）。
+**命令外壳的还原**（`unwrapShell`，共享向量 `packages/testkit/vectors/shell-unwrap-v1.json`）。
 
-### 清空上下文
+- 只在命令行是 `sh`、`bash` 或 `zsh`（裸名字，或正好在 `/bin`、`/usr/bin`、`/usr/local/bin`、`/opt/homebrew/bin` 下）加 `-c` 或 `-lc` 再加**恰好一个** shell 词时，显示这个词去掉引号后的内容。只还原一层。
+- 别处的 shell、多出的参数、别的开关、词里有会被外层 shell 展开的 `$` 或反引号、未闭合的引号、空命令，都按报告的原样显示。
+- 命令里的路径按报告的写，不改写成 `~`。
 
-`TaskDetail.clearContext` 为真时，`POST /tasks/:id/prompt` 接受 `freshContext: true`：这一轮在新的上下文里开始，Harness 看不到之前的消息，消息仍留在会话记录里。Driver 把它记在这一轮的用户消息上（`Message.freshContext`，两种消息存储的 zod schema 都保留），所以重连、切换会话与刷新都不会丢掉或移动这条边界。它不能与 `queue`、`steer` 一起用（400 `fresh-context-queued`），不声明的 Driver 回答 409 `clear-context-unsupported`，早先助手跑过的会话回答 409 `session-read-only`。重试沿用原 `requestId`，带不带它是不同的请求（`request-conflict`）。Latch 内置清空发给模型的历史；ACP 开新的 Agent 会话，见 [HARNESSES.md](./HARNESSES.md#清空上下文)。从边界之后某一轮分叉时，种子从这条边界开始。
+**审批卡不改写。** 调用的标题就是这条命令时，卡片显示还原后的整条命令，保留换行、不截断，并另写外壳报告的原样；标题是 Agent 另写的说明时显示说明。很长的命令在自己的框里滚动，框下写出还有几行，最后一行不会不声不响地藏在下面。
 
-发送之前它只是本设备的一个选择（网页与桌面端输入框的 `/clear` 或会话菜单的「清空上下文」；iPhone/iPad 是页头会话菜单的「清空上下文」，只存在 App 的内存里），不写 Host；运行中不能选，一轮开始时选择撤掉。选定后点最新一轮的「重试」，重发的这一轮也带 `freshContext`。它随待发送的提交一起保存，结果未知时原样重试。Driver 在这一轮开始前已经放下旧的上下文、这一轮却被拒绝或没有开始时，详情带 `TaskDetail.contextCleared`：下一条消息不论是否要求都在新的上下文里，网页、桌面端与 iPhone 都写出这一点，不再提供撤销；带 `Message.freshContext` 的一轮在各处都画「清空了上下文」的线。
+**行与块。** 已结束的命令是一行，输出展开后才出现。运行中、失败、被打断或结果未知的命令是块：显示输出的最后 5 行，每行不换行、至多 400 字符。协议不带退出码，所以不画退出码。
 
-`Message.thinking` 是助手消息那一步的思考深度（Harness 的叫法，Latch 内置是深度 ID），与 `Message.model` 一起让客户端在两轮之间标出换了什么；没有记录的旧消息不标。
+**Harness 自己分好类的命令。** `ToolDetail.actions`（可选，至多 16 项，`kind` 为 `read`、`list` 或 `search`，带 `path` 与 `query`）是 Harness 对一条命令的解析。
 
-### 排队状态与实际发送
+- 目前只有 Codex 报告（[HARNESSES.md](HARNESSES.md)），且只在它把命令的每一部分都认成读取、列出或搜索时才有。
+- Host 只接受自己的 Codex 线路给出的 `actions`：其他 ACP Agent 发来的在读取处丢弃（`ownFields`），接入历史时同样丢弃。保留下来的 `path` 与 `query` 和标题、输入一样经过脱敏。
+- 它只能把一条简单命令画得更安静，不能反过来：还原后的命令里有 `|`、`;`、`&`、`>`、`<`、反引号、`$(` 或换行（或命令行读不出来）时不用这个字段，命令照旧是命令行，不进分组。
+- 等待批准或排队的调用始终按命令显示；审批卡不用这个字段。
+- Latch 不从命令文字推断读取、列出或搜索：没有这个字段的 `cat`、`rg` 仍是命令行。
 
-详情与 SSE 的 TaskDetail.queue 投影 `{id,text,queuedAt,state,reason?}`，state 为 waiting、parked 或 dropped；设备身份与请求回执不下发。入队回执不生成用户消息，实际派发才生成带 requestId 与 queuedAt 的正常消息。编辑换派发标识，原提交重试仍命中同一项。两种 Driver 的 zod 快照保留 queuedAt 与 TaskSummary.runOutcome；新运行清除旧 outcome，真实结算后才写明确完成、失败、取消或中断。队列不从网络状态、idle 或文字猜测完成。
+**分组**（`joinQuiet`）。同一段工作里连续 3 条及以上、已经结束、没有人需要决定的读取、列出与搜索收成一行，点开是原来的各行。
 
-### 追加到运行中的一轮
+- 数字只数条目自己报告的：带 `actions` 的命令按动作数，其余每条算一次。
+- 命令、改文件、失败、被拒、被打断、结果未知、带图片的调用与子 Agent 从不进组；正在运行的那一条留在外面，结束后才并入。
+- 组以第一条的 ID 为键，变长时保持位置与展开状态。
 
-`TaskDetail.steer` 为真时，正在运行的这一轮还能接收文字：输入框的发送键是「追加」，提交带 `steer: true`。它只来自本轮进程的协商（ACP Agent 在 `initialize` 的 `_meta.steering.supported` 声明），轮次被要求停止后即消失。Host 经 `Bridge.steer` 转给 Harness，Agent 接收则回答 `{steered:true}`，消息作为带 `steered` 的用户消息进入这一轮，不开新的一轮，客户端也不按它分轮；Harness 不支持、轮次已结束或 Agent 回答 `promptRequired` 时，同一请求按排队处理（有轮次在跑就排队，没有就直接作为新一轮发送）。Agent 拒绝时返回 409 `steer-failed`：内容没有发出，这是确定的结果，不是「结果未知」。
+**显示档位。** `Preferences.workDisplay` 按设备存在浏览器里：全部显示（默认）、只留失败、收起。它只改这台设备画什么，不改会话、导出或其他设备。
 
-追加用原 `requestId`：重试得到第一次的结果，第一次已按排队处理（直接作为新一轮发送或进入队列）时，重试也只命中那一轮或那一项，即使这时的轮次能接收追加；Agent 没有回答（超时或进程中断）时回执保持「发送中」，之后的重试一律 409 `steer-unknown`，不再发出，因为 Agent 给每次请求另起消息，分不出重发。`steered` 只表示 Agent 接收了，不表示它在本轮结束前读到了；本轮没有正常完成、期间有过追加、而最后一次追加之后 Agent 再没有任何输出时，结束时写一条系统消息说明它可能没有读到。追加不带附件和文件引用，也不替人拒绝等待中的审批。
+- 后两档下始终显示的行（`alwaysShown`）：等待批准的调用、失败、被拒、已取消、被打断、结果未知、与批准记录矛盾的调用，以及还能单独停止或含有这类步骤的子 Agent。
+- 提问、失败说明与回复正文不属于工作过程，任何档位都不隐藏；审批卡照旧在输入框上方。
 
-### 子 Agent
+**思考。**
 
-Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Message.subagent`（名字、说明、状态、步骤）；它的状态只来自它自己的报告，所在的一轮结束时仍未报告停止的记为 `unknown`。它请求的审批在会话的 `approvals` 里，`Approval.subagent` 是它的名字，没有 `toolCallId`。一轮结束后才到或仍在等的这类审批让会话处于 `waiting-approval`，详情里没有 `activity`；答复后会话回到这一轮结束时的状态。能单独停止的子 Agent 带 `Subagent.stoppable`；停止它之后带 `stopping`，直到它报告结果或这一轮结束，页面在此之前不写「已停止」。机制见 [HARNESSES.md](./HARNESSES.md#子-agent)。
+- 思考按标题分节（`reasoningSections`）：空行之后整行只有一个加粗短语的是标题；没有这种行的思考是一节。
+- 正文走回复的 Markdown 管线（同一个解析器、深度上限与 URL 规则），但只画段落、列表、强调与行内代码（`ReasoningContent`）。链接、图片、标题、引用、代码块与 HTML 都显示成写下的原文，不启用 GFM 与数学：思考里没有能点、能加载、能执行的东西。
+- 含不可见字符或嵌套过深的思考整段按纯文本显示并标出每个字符。本页没有展开过的历史思考保持纯文本，展开时才解析一次。
 
-### Codex Agent 团队
+**一帧最多画一次**（`core/frameGate.ts`）。只让正文或思考变长的帧立即通过版本门禁并更新最新状态，但每个动画帧最多渲染一次：一帧里到了几份只画最后一份，页面在后台时不画，回到前台画一次。画的永远是已接受的最新状态。其余的帧（状态、工具、审批、结算）立刻发布。
 
-Codex 的原生委派在同一会话的详情中沿用 `Message.subagent`。有父轮与直接父关系证据的行带 `Subagent.team`（会话范围内的委派与成员标识、可选的用户消息标识与返回内容）；待处理的 `Approval.subagentId` 指向发起审批的 Latch 消息。右侧栏或手机阅读窗口关闭时沿用该会话的正文权限。客户端只提交原有会话和审批使用的标识。Team 变化随完整任务状态传输，SSE 文本追加不承载其事实。Host 丢失进程时保存的成员留在原行；只有验证过的官方读回能补上缺失状态，正文重连不自动派发工作。
+**匀速显现**（`core/pacedText.ts`）。正在生成的回复，新到的文字约 180ms 内匀速露出。
 
-## Agent 提问与回答
+- 落后超过 1,200 字、页面在后台、减弱动效或连接断开时直接显示全部；未闭合的代码围栏里按整行露出；不切开代理对。页面打开时已在途的回复不重放。
+- 只影响画出来的时刻：消息文字、消息 ID、复制的内容与阅读位置的计算都用原文，回复结束后画的就是原文。
 
-`catalog.features.questions` 表示 Host 支持内置问答接口。ACP Agent 的提问（标准的 `elicitation/create` 表单模式，以及任何 Agent 发来的 `cursor/ask_question`）经 `HarnessHostOptions.askUser` 进入同一张提问卡，见 [HARNESSES.md](./HARNESSES.md#agent-的提问)。题包只在所选会话 detail/事件里出现，工具行按 toolCallId 显示向导。草稿与当前题号仅在本设备存储；切换会话或重载页面后恢复。提交前保存完整 requestId/answers；未知结果保持相同内容重试，卡片卸载不取消已经接纳的写请求。工具结果落盘后替换为可展开的已回答记录，随后模型继续。
+## Markdown、代码与安全边界
 
-问答沿用审批等待的传输状态，详情里的 questions 决定界面显示「等你回答」。工作计时与审批等待使用同一暂停区间。Host 重启结束未答题；回答接收与工具结果之间崩溃时，只有实际会话的 completed 输出完全匹配才恢复已回答回执，不据客户端声称的成功继续执行。
+源码：[MessageContent.tsx](../apps/web/src/MessageContent.tsx)、[DiffView.tsx](../apps/web/src/components/DiffView.tsx)、[highlightScheduler.ts](../apps/web/src/preview/highlightScheduler.ts)。显示规则见 [DESIGN.md](./DESIGN.md#流式与阅读)，文件预览见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
 
-## 附件输入
+**安全边界。**
 
-附件字节独立上传，消息流只同步 `Message.attachments` 的 metadata。发送引用前保存原 requestId 和 attachmentIds；响应丢失后重试相同请求，绑定后的附件也能识别原创建请求。Host 中的 Standard 历史只存引用，在调用 Provider 前读取真实内容；ACP 内容块不进入公开会话响应。上传的中断或失败不等于消息已经发送，接口与权限见 [ATTACHMENTS.md](ATTACHMENTS.md)。
+- 消息里的 Markdown 不执行原始 HTML：`literalHtml` 把它换成文字（句中）或 HTML 代码块（成块），`<br>` 换成换行，注释省略，`<details>` 与 `<summary>` 只留其中的文字。文字不丢失。
+- URL 只允许安全协议，图片不加载。
+- Mermaid 围栏与块数学必须实际闭合才交给各自的安全渲染器；取消或失败不替未闭合的内容补围栏，未闭合时保留代码。
+- 脚注 ID 按消息隔离。
 
-输入的附件队列是客户端草稿状态；点击发送后先等待上传再建立持久待确认提交。取消等待只终止上传，不调用会话取消。文件选择的结构化引用与原请求一起保存，文字编辑移除标记也移除其选择；网络重试继续使用已保存的引用。
+**流式解析。**
 
-### 原生私有页面的到期恢复
+- 回复到达时，只在空行之后已出现独立新块的位置切分，缓存前面没有改变的解析结果与元素；不凭结尾的空行认定前一块结束。引用定义、脚注、HTML、引用容器、块数学等不确定的上下文仍整段解析。
+- 只补当前尾块的行内强调、代码与未完成链接的显示；尚未收到有效分隔行的管道表头暂时显示文字。补全不改消息原文，复制与保存用原文。
+- 结束时对原文完整解析一次，保持相同的节点位置，保留代码的展开、焦点与已有的表格行。
+- 回复先把代码外成对的 TeX 转义定界符换成美元符号。传给 Markdown 的字符串没有字面美元符号时不登记数学语法；深度限制、原始 HTML 与链接检查照常执行。
+- 回复还在生成时回合脚部已可复制当前收到的原始 Markdown；结算用量、重试与分叉在结束后才出现，复制控件与消息节点保持不变。
 
-Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入口自动恢复。我的 Agent 列表和人物话题都先验证并刷新私有快照，再沿 `refresh` 读取仍选中的话题；单个话题的 detail 不能把 `PhonePrivateSnapshot.confirmed` 置为真，也不能依赖恢复流下一次碰巧变化的通知补齐快照。关闭 Face ID 并不绕过 Host 的正文验证。恢复开始时固定 Host 代次、页面、Agent 路径、会话与阅读代次，验证晚回后不再为已切换的意图读取私有内容；Face ID 开启时保留明确的「查看」入口。原来的恢复频率限制、后台撤下和未知写入回执均不改变。
+**复制。** 都经 `@latch/ui` 的 `writeClipboard`：先用 Clipboard API，没有它（HTTP 局域网）或被拒时用隐藏文本框与 `execCommand('copy')`，两种都失败才说复制不可用，不显示虚假的成功。桌面端的权限处理只管异步 Clipboard API：`clipboard-sanitized-write` 只准本窗口来源的顶层页，另一台电脑的页还要 5 秒内的真实点按或按键；读剪贴板一律拒绝。`execCommand('copy')` 不经这些处理。
 
-### 本设备的发送投影
+**代码着色的上限。**
 
-**确定的拒绝。** 一次写入是否「结果未知」按 Host 的错误码判断，不只看状态：网络错误、超时、408 与 5xx 是结果未知，只有一种例外：5xx 的错误码在 `NOT_ACCEPTED_5XX`（`@latch/protocol` 的 `refusedBeforeAccepting`）里。这些码只在 Host 记录请求之前抛出，说明什么都没有接收：`audit-unavailable`、`presence-unavailable`、`agent-busy`、`agent-start-failed`、`agent-refused`、`agent-paused`、`agent-handshake-timeout`、`model-gateway-unavailable`。4xx（408 除外）同样是确定的拒绝，例如 `harness-unavailable`、`harness-version-unsupported`。ACP 会话重新接上 Agent 时（这一轮还没有记录）进程退出或不再应答时，Host 答 503 `agent-start-failed`；Agent 回答错误（会话被别的客户端占用、回答无效）时答 502 `agent-refused`，带它自己的原因。确定的拒绝之后页面丢弃 `requestId`，文字留在输入框，原因就地显示，并按错误码给出下一步（Harness 起不来：能改设置的设备给「打开设置 › Harness」，所有设备给「重试」）；Host 同时放下为这个请求保留的附件。这些码只在 Host 什么都没有记下时出现：没有用户消息、没有回执，也没有之后还可能把它发出去的排队项。立即发送的排队消息（会话空闲时 `queue: true`）先写下排队回执再发送；发送被这样拒绝时，Host 先删掉这一项和它的回执再回答（为它写下的 `task.prompt.queued`、`task.prompt.sent` 审计各补一条 `action.failed`），删不掉就把这一项留作「发送结果未确认」并改答不在清单里的 503 `queue-send-unknown`，所以同一段文字永远只有一条重发的路。iPhone/iPad 用同一份清单（`NativeHostRefusal.notAccepted5xx`，`native-swift.test.ts` 核对两份一致）：第一次提交得到确定的拒绝时不留作「结果未知」，文字留在输入框，写出 Host 的原话。两端只在重试时不同：网页上，重试（同一 `requestId`）得到确定的拒绝也结束等待；iPhone/iPad 上，重试的拒绝只有 Host 按第一次提交的回执作答时（`retryAnswered`，例如 `attachment-released`）才结束等待，其他拒绝（4xx 与清单里的 5xx）仍留作「结果未知」并写出 Host 的原话，因为重试被拒绝说明不了第一次提交是否已被接收。网页能这样做，是因为 Host 对自己接收过的一轮先认回执：Driver 把这一轮写稳之后，Host 在内存里按会话、设备与 `requestId` 记下所发内容的哈希；同一设备带同样内容的重试不再做提交前的检查，直接答已接收（带附件的再补一次绑定），检查变化（项目、Harness 版本、模型、文件引用、数据范围）不会把已送达的消息说成被拒绝；同一 `requestId` 换了内容仍是 409 `request-conflict`；别的设备、还在写稳中的一轮与 Host 重启之后的重试照常检查（重启后 Driver 自己的回执仍按 `requestId` 防止重复）。新增一个在接收前拒绝的 5xx 时把它同时加入 `NOT_ACCEPTED_5XX` 与 Swift 核心；接收之后才可能出现的码不能加入。
+- 代码块在共享 worker 里着色。整块超过 200 KB 时保留纯文本，超过 1,000 字符的单行只有这一行保留纯文本。超过 18 行的块可展开与收起；收起的已闭合块只把前 19 行渲染成 token，其余仍是文本，可以查找和选择。
+- 工具声明为读取且已完成的调用，输出按读取的文件名着色：可能含密钥的文件名不着色，Agent 加的行号与外层标记留在语法之外，至多着色 1,000 行或 20,000 个片段。运行中、失败的调用与命令输出保持纯文本。
+- 着色不改字重，所以不改变换行与阅读位置。
 
-`catalog.features.messageIdentity` 明确声明用户消息保留 requestId。客户端在本设备提交后立即显示临时文字，500ms 后才显示「发送中…」；按相同请求标识、文字及附件/文件引用匹配 Host 消息后隐藏临时投影，实际会话仍由 Host 维护。临时状态不写入 TaskDetail、快照或服务器存储。结果未知保留原提交，并以同一请求体重试，卡片写出最近一次重试为什么仍未确认（超时、Host 自己的 5xx 说明、断线或限流）；这句原因按 `requestId` 存在 `latch.pending.<origin>.<deviceId>.reason`，刷新后照旧显示，不退回「没有收到电脑的答复」（像凭据的原因只在内存）。未知只由两件事结束：Host 的证据，或人按「放弃这次提交」。证据是会话列出带这个 `requestId` 的用户消息（只比 `requestId`，不比文字）：打开的会话出现它时按已送达结算（「已送达」），不再占住输入框，原会话存着的同一段草稿一并删除。带附件的提交例外：Host 可能先列出消息、再以 503 `attachment-publish-unknown` 要求同一请求，页面因此用同一 `requestId` 静默再发一次，以它的答复结算；人放弃时才按已送达结算。新会话的提交在答复前没有会话 ID，无从核对。「放弃这次提交」先重新读一次该会话（读不到才用屏幕上的副本）：已列出就按上面结算。否则只在本设备放下它：存储里仍是这条记录时才删除，文字回到原输入框，原会话不在屏幕上时存为该会话的草稿；附件和文件引用清空并提示重新添加，因为附件已保留给放弃的那个请求（`attachment-claimed`）。再发送是一条新消息、新的 `requestId`（新会话则是另一个会话，可能另建一个工作树）；Host 如果其实已经收到，就多出一条。排队（或追加）的提交：会话的队列里有同样文字的一项时，卡片写「队列里有同样的一条在等待」（等这一轮结束自己发出）或「…已暂停」（只在有人发送时发出，Host 重启会暂停所有等待项），放弃之后提示在队列里发送或移除。队列不下发请求编号与设备，那一项可能是别的设备的，所以只比文字、只作说明，从不挡住放弃。同一设备的多个窗口：发送之前再读一次存储，另一个窗口已存下别的未确认消息时不发送，改为显示它的卡片；发送或重试中的窗口在 `latch.pending.<origin>.<deviceId>.sending` 写下 `{requestId, until}`（20 秒，超过请求的 15 秒超时，关掉的窗口不会一直占着），其他窗口在它到期或被清除前不提供放弃，写「另一个窗口正在重试」；每个窗口结算时只删除仍是自己这条 `requestId` 的记录。重试从不更换 `requestId`，每台设备仍只有一条未确认的消息。队列接收不生成临时气泡；新会话不论哪个 Harness（包括完全访问的）都和继续对话一样立即显示。旧 Host 缺少标记时保留原显示。
-文件变化的范围、运行结算、可选插件契约与验证见 [运行期间的文件变化](FILE-OUTPUTS.md)。
+**调度。**
 
-文件列按 session 与 workspace/Harness 分开保留相对引用；切换上下文取消旧解析、目录读取与搜索，迟到结果不更新新上下文。项目预览不创建会话。目录与句柄见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
+- worker 串行：只有一项在途，其余在栈里等，最新的先出，取消的直接出栈。
+- 已结算的块接近视口（滚动容器上下 800 px，[viewportGate.ts](../apps/web/src/preview/viewportGate.ts)）时才请求，且不等待；只有文本还在变时才防抖 300 ms。缓存命中在同一次渲染显示。
+- 看门狗只针对在途项（新 worker 的第一项给 30 秒）：超时时销毁 worker，其余任务留在栈里，超时项放到栈底再试一次并给四倍时限，再超时才记入负缓存。
+- worker 连续崩溃三次时放弃等待中的任务，下一次请求重新开始。
 
-Harness 的进程级换档在空闲时结束旧进程、恢复同一外部会话；准备与恢复期间拒绝发送、追加和其他配置写入。dsh 以官方服务报告同会话的实际权限为证据；Cursor force 只表示新进程的启动配置，界面明确标为未独立读回，未知结果仍沿原 requestId 保留。
+**未闭合的围栏逐行着色。**
+
+- worker 按块保留 `grammarState`，只分词新完成的行；每块只有一个请求在途。最后一行可能还会变，保持纯文本。
+- 文本不再是已分词内容的延长时从头开始；worker 已不持有该块时回答 `restart`。已完成的行有稳定的 DOM 节点。
+- 超过 18 行的未闭合块只渲染最新 17 行，总高度与闭合后相同，不写滚动位置。被收起的行不在 DOM 里，也就不在会话内查找的范围内，展开或闭合后恢复；复制取原文。
+- 会话内查找把代码块当成一段文本，匹配可以跨 token；着色替换文本节点后重新定位，不移动阅读位置。
+
+**不重绘其他轮次。** `stableTurns` 把数据相同的轮次保留为同一个对象（逐字段比较，不漏掉新字段），只有最新一轮看到 detail。运行开始或结算时，历史消息的编辑入口读会话的运行状态，正文继续复用。
+
+## 插件的会话面板
+
+页面与桥见 [APP-PAGES.md](./APP-PAGES.md)，面板的作者面见 [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md)。与状态一致性有关的规则：
+
+- 面板来自 Host 的 `catalog.uiPanels`，没有这个字段时不显示插件标签。
+- 数据面板的异步响应按包、面板、会话、运行与重试序号归属；切换会话或卸载时中止读取，迟到的响应不能替换新内容。读取租约保留到 Host 的回调实际结算。
+- 客户端不按流式 token 请求面板数据，只在会话运行状态改变或明确刷新时重读。
+- React 模块按内容摘要加载，组件在切换会话、离开页签与停用包时卸载；`readData` 的请求随组件寿命取消，卸载后的 `compose` 回调不改新会话的草稿。
+- 「写入对话」只追加草稿，不发起运行；发送仍经 `useSubmission`，由它持久化待发送内容、保留结果未知并复用原 `requestId`。
+- Standard 的技能指令在每轮开始时与输入一起持久化，同轮的流式步骤固定用这份正文。插件替换不改已开始的一轮，下一轮从当前启用的集合重新组装。
+
+## 继续开发时的验证入口
+
+命令、按改动选择回归与事件流的定向用例见 [TESTING.md](TESTING.md#按改动选择回归)，共享向量见 [TESTING.md](TESTING.md#共享向量)。那里没有列出的：
+
+| 改动 | 用例 |
+| --- | --- |
+| 版本门禁与来源优先级 | `apps/web/test/projection.test.ts` |
+| 工作过程的行、流式渲染与思考的收起 | `e2e/stream-render.e2e.ts` |
+| Markdown、差异与危险内容 | `apps/web/test/message-content.test.ts`、`client-diff.test.ts`、`client-export.test.ts` |
+
+流式性能的测量默认跳过，见 [TESTING.md](TESTING.md#性能测量)。

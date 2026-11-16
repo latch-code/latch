@@ -29,6 +29,6 @@
 - 文件树/搜索限 `all`；macOS 仅经 `latch-files` 描述符。索引不存权限，预览绑定 Harness/根身份/版本，晚回复查设备与正文窗口（ARCHITECTURE）。
 - 插件草稿与应用分离，批准执行摘要后才导入，旧租约真实释放后回收（PLUGIN-DEVELOPMENT、`test/plugin-package-api.test.ts`）。
 - 准备与配置回执见 ARCHITECTURE。外观写入要求基版与回执，替换前复查权限，目录同步未确认保持原请求（CUSTOMIZATION）。交付授权与受限 Git 见 GIT-DELIVERY。
-- 插件连接仅随原生入口启用；远程 review/正文窗口与真实关闭见 [TRANSPORT-PLUGINS.md](../../docs/TRANSPORT-PLUGINS.md)。
+- 插件连接仅随原生入口启用；远程 review/正文窗口与真实关闭见 [STREAMING](../../docs/STREAMING.md#原生客户端的流)。
 
 - 家只由分配器生成并核对原目录身份；默认项走 startConfig。后台按实际等级核上限，手动运行不授后台权（CUSTOM-AGENTS、AUTOMATIONS）。
