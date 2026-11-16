@@ -671,13 +671,9 @@ it('decides a topic’s approval from the space’s 总览, raises the toast onl
     page.setDefaultTimeout(15_000)
     await fullScopeBrowser(page, host, owner, '总览里的审批')
     await page.locator(`[data-work-session="${code}"]`).first().waitFor()
-    await page.locator('.workbench-home').locator(`[data-approval-id="${codeApproval}"]`).waitFor()
-    await page.keyboard.press('Meta+k')
-    const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
-    await palette.getByRole('searchbox').fill('把这件事记下来')
-    await palette
-      .getByRole('option', { name: /把这件事记下来/u })
-      .first()
+    await page
+      .locator(`.workbench-home .work-feature[data-work-session="${code}"]`)
+      .getByRole('button', { name: '查看原请求', exact: true })
       .click()
     const covered = page.locator(`main.workspace [data-approval-id="${codeApproval}"]`)
     await covered.waitFor()

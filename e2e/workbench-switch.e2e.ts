@@ -95,6 +95,8 @@ it('switches the two layouts and spaces without replacing the sender, losing inp
     await input.waitFor()
     await expect.poll(async () => (await host.host.bridge.listTasks())[0]?.status).toBe('idle')
     expect((await host.host.bridge.listTasks())[0]?.harnessId).toBe('standard')
+    let waiting = ''
+    let running = ''
     for (const prompt of ['保存待处理的配置', '继续准备发布记录']) {
       const created = await owner.json<{ sessionId: string }>('tasks', {
         method: 'POST',
@@ -103,6 +105,8 @@ it('switches the two layouts and spaces without replacing the sender, losing inp
       await expect
         .poll(async () => (await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status)
         .toBe(prompt === '保存待处理的配置' ? 'waiting-approval' : 'running')
+      if (prompt === '保存待处理的配置') waiting = created.sessionId
+      else running = created.sessionId
     }
     await input.fill('会话草稿保留')
     const sender = await input.elementHandle()
@@ -114,11 +118,11 @@ it('switches the two layouts and spaces without replacing the sender, losing inp
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     const reading = await transcript.evaluate(element => element.scrollTop)
     await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    const approval = home.locator('.approval-panel')
-    await approval.waitFor()
-    const approvalId = await approval.getAttribute('data-approval-id')
-    expect(approvalId).not.toBeNull()
-    expect(await home.locator('[data-group="running"] [data-work-session]').count()).toBe(1)
+    const approvalId = (await owner.json<TaskDetail>(`tasks/${waiting}`)).approvals[0]!.id
+    const current = home.locator(`.work-feature[data-work-session="${waiting}"]`).getByRole('button', { name: '查看原请求', exact: true })
+    await current.waitFor()
+    const continuation = home.getByRole('region', { name: '接着做', exact: true })
+    expect(await continuation.locator(`[data-work-session="${running}"]`).count()).toBe(1)
     const newInput = home.getByRole('textbox', { name: '新会话消息', exact: true })
     await newInput.fill('首页草稿保留')
     await home
@@ -144,7 +148,8 @@ it('switches the two layouts and spaces without replacing the sender, losing inp
       expect(await sender!.evaluate(element => element.isConnected)).toBe(true)
       expect(await input.inputValue()).toBe('会话草稿保留')
       expect(await transcript.evaluate(element => element.scrollTop)).toBe(reading)
-      expect(await approval.getAttribute('data-approval-id')).toBe(approvalId)
+      if (target === 'triage') await home.locator(`[data-approval-id="${approvalId}"]`).waitFor()
+      else await current.waitFor()
       expect(await radio(target).evaluate(element => element === document.activeElement)).toBe(true)
       expect(await page.locator('.workbench-home').getAttribute('aria-label')).toBe('总览')
     }

@@ -201,8 +201,14 @@ it('finds real evidence on the home, decides there, and continues the original s
         await switchLayout(page, layout)
         await settleShell(page)
         await page.evaluate(() => document.fonts.ready)
-        await expect.poll(() => approval.getByRole('button', { name: '允许', exact: true }).isDisabled()).toBe(false)
-        await checks.waitFor()
+        if (layout === 'triage') {
+          await expect.poll(() => approval.getByRole('button', { name: '允许', exact: true }).isDisabled()).toBe(false)
+          await checks.waitFor()
+        } else {
+          await approval.getByRole('button', { name: '查看原请求', exact: true }).waitFor()
+          expect(await approval.getByRole('button', { name: '允许', exact: true }).count()).toBe(0)
+          await home.getByRole('button', { name: '查看交付', exact: true }).waitFor()
+        }
         await noHorizontalOverflow(page)
         await page.screenshot({ path: `${OUT}/${layout}-home--1440--${theme}.png`, animations: 'disabled' })
       }
@@ -315,6 +321,10 @@ it('finds real evidence on the home, decides there, and continues the original s
       await page.screenshot({ path: `${OUT}/overview-session-evidence--1440--${theme}.png`, animations: 'disabled' })
     }
     await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
+    await home.getByRole('button', { name: '查看交付', exact: true }).click()
+    await page.locator('.delivery-panel').waitFor()
+    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
+    await switchLayout(page, 'triage')
     await expect.poll(() => home.locator('[data-group="delivery"]').textContent(), { timeout: 10_000 }).toContain('检查通过 2/2')
     await checks.waitFor()
     git('commit', '--allow-empty', '-m', 'Prepare a new head without checks')

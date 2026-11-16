@@ -309,7 +309,8 @@ it.each([768, 390])('keeps controls in view at %i with reduced motion', async wi
         view.dispatchEvent(new Event('resize'))
       })
       const retainedQueue = page.locator('.code-home-queue')
-      await retainedQueue.locator('.approval-panel[data-secure]').waitFor({ state: 'attached' })
+      await retainedQueue.locator(`.work-feature[data-work-session="${waiting}"]`).waitFor({ state: 'attached' })
+      expect(await retainedQueue.locator('.approval-panel').count()).toBe(0)
       expect(await retainedQueue.getAttribute('inert')).toBe('')
       expect(await retainedQueue.evaluate(queue => getComputedStyle(queue).opacity)).toBe('0')
     }
@@ -434,6 +435,7 @@ it('takes Escape after the returned card has armed, without moving its focus aga
     const page = await context.newPage()
     await page.clock.install()
     await enrollBrowser(page, host, { name: '摘要归焦键位验收', scopes: ['admin'] })
+    await switchLayout(page, 'triage')
     const card = page.locator(`.code-home-queue [data-work-session="${started.sessionId}"] .approval-panel`)
     await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
     await homeInput(page).fill('摘要归焦前的草稿')
@@ -460,8 +462,16 @@ it('takes Escape after the returned card has armed, without moving its focus aga
     // Esc has its own grace period after a layer returns, independent of the card's arming delay.
     await page.clock.fastForward(600)
     await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
-    await expect.poll(() => card.locator('[aria-keyshortcuts="Escape"]').count()).toBe(1)
-    expect(await card.evaluate(node => node === document.activeElement)).toBe(true)
+    expect(
+      await card.evaluate(node => ({
+        focused: node === document.activeElement,
+        inert: !!node.closest('[inert]'),
+        visible: node.checkVisibility({ visibilityProperty: true }),
+        layer: document.querySelector(':popover-open:not([role="tooltip"]), dialog[open]')?.getAttribute('aria-label') ?? null,
+      })),
+    ).toEqual({ focused: true, inert: false, visible: true, layer: null })
+    // The first card in the triage layout draws the numeric cue, while its focused Escape action still applies.
+    await expect.poll(() => card.getByRole('button', { name: '拒绝', exact: true }).getAttribute('aria-keyshortcuts')).toBe('1')
     const rejected = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname.includes('/approvals/'))
     await page.keyboard.press('Escape')
     expect((await rejected).postDataJSON()).toMatchObject({ decision: 'reject' })
@@ -490,18 +500,37 @@ it('persists list density in both layouts and preserves approval and touch geome
     await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
     const page = await context.newPage()
     await enrollBrowser(page, host, { name: '工作台密度验收', scopes: ['admin'] })
-    const row = page.locator('.work-overview-recent-row').filter({ hasText: title })
-    const card = page.locator(`.code-home-queue [data-work-session="${waiting}"] .approval-panel[data-secure]`)
-    const dimensions = async () => ({
-      row: (await row.boundingBox())!.height,
-      approval: (await card.boundingBox())!.height,
-    })
+    const row = page.locator('.work-overview-recent-row, .work-landing-row').filter({ hasText: title })
+    const approvalId = (await owner.json<TaskDetail>(`tasks/${waiting}`)).approvals[0]!.id
+    const dimensions = async (layout: 'overview' | 'triage') => {
+      await row.waitFor()
+      const height = (await row.boundingBox())!.height
+      const decision = page.locator(`.code-home-queue [data-work-session="${waiting}"]`)
+      const card =
+        layout === 'overview'
+          ? page.locator(`main.workspace [data-approval-id="${approvalId}"][data-secure]`)
+          : decision.locator('.approval-panel[data-secure]')
+      if (layout === 'overview') {
+        const current = page.locator('.code-home-queue .work-feature')
+        await current.waitFor()
+        if ((await current.getAttribute('data-work-session')) !== waiting) {
+          await current.getByRole('button', { name: /^\d+ 项待处理$/u }).click()
+          await current.locator(`[data-request-session="${waiting}"]`).click()
+        }
+        await decision.getByRole('button', { name: '查看原请求', exact: true }).click()
+      } else {
+        const queued = page.locator(`.code-home-queue [data-request-session="${waiting}"]`)
+        if (await queued.isVisible()) await queued.click()
+      }
+      await card.waitFor()
+      const approval = (await card.boundingBox())!.height
+      if (layout === 'overview') await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
+      return { row: height, approval }
+    }
     const standard = []
     for (const layout of ['overview', 'triage'] as const) {
       await switchLayout(page, layout)
-      await row.waitFor()
-      await card.waitFor()
-      standard.push(await dimensions())
+      standard.push(await dimensions(layout))
     }
     const shots = 'test-results/workbench-density'
     await mkdir(shots, { recursive: true })
@@ -515,7 +544,7 @@ it('persists list density in both layouts and preserves approval and touch geome
     await expect.poll(() => page.locator('html').getAttribute('data-density')).toBe('compact')
     for (const [index, layout] of (['overview', 'triage'] as const).entries()) {
       await switchLayout(page, layout)
-      const compact = await dimensions()
+      const compact = await dimensions(layout)
       expect(compact.row).toBeLessThan(standard[index]!.row)
       expect(compact.row).toBeGreaterThanOrEqual(44)
       expect(compact.approval).toBe(standard[index]!.approval)

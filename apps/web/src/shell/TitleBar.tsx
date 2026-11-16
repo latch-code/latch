@@ -1,8 +1,21 @@
 import { ArrowLeft } from 'lucide-react'
-import { OverviewGlyph, Count, IconButton, useLivePrevious, InboxGlyph, PanelLeftGlyph, NewSessionGlyph } from '@latch/ui'
+import {
+  OverviewGlyph,
+  Count,
+  Icon,
+  IconButton,
+  useLivePrevious,
+  InboxGlyph,
+  PanelLeftGlyph,
+  NewSessionGlyph,
+  LaptopGlyph,
+  FolderGlyph,
+} from '@latch/ui'
 import { currentShell, lightsStyle, useTrafficLights } from '../core/shell.ts'
+import { computerName } from '../core/securityCopy.ts'
 import { waitingCount } from '../sessions.ts'
 import { BrandMark } from '../components/ui.tsx'
+import { VisibleText } from '../components/VisibleText.tsx'
 import { ShellNewAgent, SpaceButtons, shellOverview, shellSpaces } from './SpaceNav.tsx'
 import { ShellQuota } from './ShellQuota.tsx'
 import { WorkbenchPanes, workbenchPanes } from './WorkbenchPanes.tsx'
@@ -41,6 +54,8 @@ export function TitleBar({ shell }: { shell: ShellState }) {
   const shut = sidebarColumn ? sidebarCollapsed : drawerMode && sessions
   // With two places, the shut lead holds the way between them, and the place's own primary.
   const placed = spaces !== undefined && (sessions || route.entry === 'agents')
+  const overviewContext = sessions && route.overview && shell.preferences.workbenchLayout === 'overview'
+  const project = overviewContext && shell.catalog?.workspaces.find(item => item.id !== 'default' && item.id === shell.choice.workspaceId)
   return (
     <div
       ref={titlebar}
@@ -116,7 +131,24 @@ export function TitleBar({ shell }: { shell: ShellState }) {
           </>
         )}
       </div>
-      {(!sessions || route.overview) && <header ref={setTitleSlot} className="topbar titlebar-page" />}
+      {(!sessions || route.overview) && (
+        <header ref={setTitleSlot} className="topbar titlebar-page">
+          {overviewContext && (
+            <div className="work-landing-context">
+              <span>
+                <Icon icon={LaptopGlyph} size={12} />
+                {computerName(snapshot.hostName)}
+              </span>
+              {project && (
+                <span>
+                  <Icon icon={FolderGlyph} size={12} />
+                  <VisibleText text={project.name} />
+                </span>
+              )}
+            </div>
+          )}
+        </header>
+      )}
       <div className="titlebar-views">
         {sidebarColumn && sidebarCollapsed && <ShellQuota shell={shell} />}
         {/* A tablet's rail already holds 总览; the layout switch itself is the shell's, drawn over this reserved end. */}

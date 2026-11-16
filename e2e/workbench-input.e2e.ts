@@ -284,6 +284,14 @@ it('retries a failed session through the one sender while preserving the home dr
     await enrollBrowser(page, host, { name: '首页重试设备', scopes: ['admin'] })
     await connected(page)
     const home = page.locator('.workbench-home')
+    const failure = home.locator(`.work-feature[data-work-session="${sessionId}"]`)
+    await failure.getByRole('button', { name: '查看失败', exact: true }).click()
+    await page
+      .locator('main.workspace:not([inert]) .transcript')
+      .getByText(/测试临时失败/u)
+      .waitFor()
+    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
+    await switchLayout(page, 'triage')
     const draft = home.getByRole('textbox', { name: '新会话消息', exact: true })
     await draft.fill('首页草稿继续保留')
     await home

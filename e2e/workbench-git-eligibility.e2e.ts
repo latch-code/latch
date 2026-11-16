@@ -13,18 +13,27 @@ import { LAYOUT_NAMES, switchLayout } from './helpers/workbench.ts'
 const OUT = 'test-results/workbench-git-eligibility'
 
 /** `quiet`: nothing is in any group, so the home draws one faint line and no groups. */
-async function capture(page: Page, name: string, words: string, quiet = false) {
+async function capture(page: Page, name: string, words: string, deliveryState: 'quiet' | 'refused' | 'observed') {
   for (const width of [390, 768, 1440]) {
     await page.setViewportSize({ width, height: 1000 })
     for (const key of ['overview', 'triage'] as const) {
       const layout = LAYOUT_NAMES[key]
       await switchLayout(page, key)
       const home = page.locator('.workbench-home')
-      if (width === 390 && key === 'triage' && !quiet) await home.getByRole('button', { name: /^可交付/u }).click()
-      const delivery = quiet ? home.locator('.work-overview') : home.locator('[data-group="delivery"]')
-      if (quiet) expect(await home.locator('[data-group]').count()).toBe(0)
-      // The empty line holds its words and, where there is one, its small button.
-      await reachable(delivery.getByText(words).first())
+      const quiet = deliveryState === 'quiet'
+      if (key === 'triage') {
+        if (width === 390 && !quiet) await home.getByRole('button', { name: /^可交付/u }).click()
+        const delivery = quiet ? home.locator('.work-overview') : home.locator('[data-group="delivery"]')
+        if (quiet) expect(await home.locator('[data-group]').count()).toBe(0)
+        await reachable(delivery.getByText(words).first())
+      } else {
+        const action = home.getByRole('button', { name: '查看交付', exact: true })
+        if (deliveryState === 'observed') await reachable(action)
+        else {
+          await home.getByRole('region', { name: '接着做', exact: true }).waitFor()
+          expect(await action.count()).toBe(0)
+        }
+      }
       for (const theme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: theme })
         await settleShell(page)
@@ -85,11 +94,12 @@ it('distinguishes an ordinary folder from refused Git metadata and later reads a
     // An ordinary folder has nothing to deliver and nothing else waits: the home says so in one faint line, with no
     // groups, no sentence about Git and nothing to retry.
     const home = page.locator('.workbench-home')
+    await switchLayout(page, 'triage')
     await home.locator('p.work-overview-empty').getByText('没有要你处理的', { exact: true }).waitFor()
     await expect.poll(() => home.locator('[data-group]').count(), { timeout: 10_000 }).toBe(0)
     expect(await home.getByText(/不支持 Git 交付/u).count()).toBe(0)
     expect(await home.getByRole('button', { name: /^(?:重试|刷新)$/u }).count()).toBe(0)
-    await capture(page, 'ordinary-folder', '没有要你处理的', true)
+    await capture(page, 'ordinary-folder', '没有要你处理的', 'quiet')
     await openSession(page, sessionId)
     await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
     if ((await page.locator('.app-shell').getAttribute('data-inspector')) !== 'open') await page.keyboard.press('Alt+Shift+b')
@@ -114,7 +124,7 @@ it('distinguishes an ordinary folder from refused Git metadata and later reads a
     await expect.poll(() => delivery.textContent()).toContain('部分目录暂时无法读取')
     expect(await delivery.locator('.ui-count').count()).toBe(0)
     await reachable(delivery.getByRole('button', { name: '重试', exact: true }))
-    await capture(page, 'refused-metadata', '部分目录暂时无法读取')
+    await capture(page, 'refused-metadata', '部分目录暂时无法读取', 'refused')
 
     await rm(join(folder, '.git'), { recursive: true })
     execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'init', '--template=', '--initial-branch=main', folder], {
@@ -131,7 +141,7 @@ it('distinguishes an ordinary folder from refused Git metadata and later reads a
     expect(await delivery.locator('.work-delivery').count()).toBe(1)
     expect(await delivery.getByRole('button', { name: '重试', exact: true }).count()).toBe(0)
     expect(await delivery.getByText('未提交 1 个文件', { exact: true }).count()).toBe(1)
-    await capture(page, 'real-git-change', '未提交 1 个文件')
+    await capture(page, 'real-git-change', '未提交 1 个文件', 'observed')
     await delivery.getByRole('button', { name: '查看改动', exact: true }).click()
     await page.locator('.delivery-panel').getByText('release.md', { exact: true }).waitFor()
   } catch (error) {

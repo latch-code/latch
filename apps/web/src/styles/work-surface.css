@@ -87,20 +87,43 @@
     background: var(--sidebar);
   }
 
-  .app-shell[data-entry='sessions']::before {
+  .app-shell[data-entry='sessions']::before,
+  .app-shell[data-entry='sessions']:not([data-home-focus])::after {
     display: block;
     grid-area: 1 / 2 / -1 / -1;
     border-radius: var(--r-16);
-    outline: 1px solid var(--line);
-    box-shadow: var(--work-card-shadow);
     pointer-events: none;
   }
 
-  .app-shell[data-entry='sessions'][data-workbench-layout='triage']::before {
+  .app-shell[data-entry='sessions']::before {
+    box-shadow: var(--work-card-shadow);
+  }
+
+  /* The reader and its docks paint above the canvas. The edge stays above their backgrounds. */
+  .app-shell[data-entry='sessions']:not([data-home-focus])::after {
+    content: '';
+    margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) var(--panel-start);
+    outline: 1px solid var(--line);
+    transition: margin-left var(--m-panel) var(--e-panel);
+    z-index: 4;
+  }
+
+  .app-shell[data-entry='sessions'][data-folding]::after {
+    transition-duration: calc(var(--m-panel) * 0.7);
+    transition-timing-function: var(--e-exit);
+  }
+
+  .app-shell[data-entry='sessions'][data-resizing]::after {
+    transition: none;
+  }
+
+  .app-shell[data-entry='sessions'][data-workbench-layout='triage']::before,
+  .app-shell[data-entry='sessions'][data-workbench-layout='triage']:not([data-home-focus])::after {
     grid-row-start: 2;
   }
 
-  .app-shell[data-entry='sessions'][data-workbench-layout='triage']:is([data-overview], [data-all-sessions])::before {
+  .app-shell[data-entry='sessions'][data-workbench-layout='triage']:is([data-overview], [data-all-sessions])::before,
+  .app-shell[data-entry='sessions'][data-workbench-layout='triage']:is([data-overview], [data-all-sessions]):not([data-home-focus])::after {
     grid-column-start: 1;
     margin-inline-start: var(--shell-inset);
   }

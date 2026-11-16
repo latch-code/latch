@@ -301,13 +301,15 @@ describe('session panel', () => {
   const height = (id: string) => row(id).evaluate(element => Math.round(element.getBoundingClientRect().height))
 
   it('gathers work that needs attention on Home while keeping every session in the project tree', async () => {
-    const attention = page.locator('.workbench-home .work-overview-group[data-group="attention"]')
+    const attention = page.getByRole('region', { name: '当前请求', exact: true })
+    const toggle = attention.getByRole('button', { name: '4 项待处理', exact: true })
+    await toggle.click()
     expect(
       await attention
         .locator('[data-request-session]')
         .evaluateAll(rows => rows.map(item => item.getAttribute('data-request-session')).toSorted()),
     ).toEqual(['failed', 'forced', 'silent', 'waiting'])
-    expect(await attention.locator('.work-overview-group-heading .ui-count').textContent()).toBe('4')
+    expect(await toggle.getAttribute('aria-expanded')).toBe('true')
     // Only the two waiting requests count in the tab; failed and unknown results also need review on Home.
     expect(await page.title()).toBe('(2) Latch')
     expect(await attention.locator('[data-request-session="silent"]').textContent()).toContain('没有动静 3 分钟')
@@ -316,7 +318,6 @@ describe('session panel', () => {
     const project = page.locator('nav.session-list .session-group[data-shelf="other"]')
     expect(await project.locator('[data-task-id]').count()).toBe(8)
     expect(await page.locator('nav.session-list .session-group[data-shelf="waiting"]').count()).toBe(0)
-    expect(await attention.locator('.ui-count').evaluate(item => getComputedStyle(item).fontVariantNumeric)).toBe('tabular-nums')
     expect(await project.locator('.shelf-head').evaluate(head => getComputedStyle(head).borderBottomStyle)).toBe('none')
   })
 

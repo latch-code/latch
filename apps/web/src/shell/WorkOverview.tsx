@@ -1,4 +1,4 @@
-import { useImperativeHandle, useRef, useState, type Ref } from 'react'
+import { useImperativeHandle, useRef, useState, type Ref, type RefObject } from 'react'
 import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
 import {
   Button,
@@ -29,8 +29,9 @@ import { SessionRowGlyph } from '../components/SessionStatus.tsx'
 import { runClock, runElapsed } from '../conversation.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
+import { CodeHomeOverview } from './CodeHomeOverview.tsx'
 import { recentCodeWork, workGroups, workStatus, type WorkGroupId } from './workOverview.ts'
-import { WorkbenchReviewQueue, type WorkbenchReviewHandle } from './WorkbenchReviewQueue.tsx'
+import { WorkbenchReviewQueue, type WorkbenchReviewHandle, type WorkbenchReviewMemory } from './WorkbenchReviewQueue.tsx'
 import {
   deliveryCheckSummary,
   deliverySessions,
@@ -208,23 +209,7 @@ function QueueTime({ task, connected, now }: { task: TaskSummary; connected: boo
   return <time dateTime={task.updatedAt}>{elapsed === undefined ? relativeTime(task.updatedAt, new Date(now)) : runClock(elapsed)}</time>
 }
 
-/** Both layouts and the session queue read the same summaries and open the same conversation. */
-export function WorkOverview({
-  snapshot,
-  layout,
-  connection,
-  now,
-  onSelect,
-  onNew,
-  onSearch,
-  compact = false,
-  selectedId,
-  isUnread,
-  cancelling,
-  evidence,
-  shell,
-  ref,
-}: {
+interface WorkOverviewProps {
   snapshot: AppSnapshot
   layout: 'overview' | 'triage'
   connection: ConnectionStatus
@@ -239,7 +224,43 @@ export function WorkOverview({
   evidence?: DeliveryRead
   shell?: ShellState
   ref?: Ref<WorkOverviewHandle>
-}) {
+  reviewMemory?: RefObject<WorkbenchReviewMemory> | undefined
+}
+
+/** Both layouts read the same summaries and open the same conversation. */
+export function WorkOverview(props: WorkOverviewProps) {
+  const { snapshot, layout, compact, shell, onNew, onSelect, evidence, ref, reviewMemory } = props
+  if (!compact && shell && layout === 'overview')
+    return (
+      <CodeHomeOverview
+        snapshot={snapshot}
+        shell={shell}
+        onNew={onNew}
+        onSelect={onSelect}
+        evidence={evidence}
+        ref={ref}
+        reviewMemory={reviewMemory}
+      />
+    )
+  return <WorkQueue {...props} />
+}
+
+function WorkQueue({
+  snapshot,
+  layout,
+  connection,
+  now,
+  onSelect,
+  onNew,
+  onSearch,
+  compact = false,
+  selectedId,
+  isUnread,
+  cancelling,
+  evidence,
+  shell,
+  ref,
+}: WorkOverviewProps) {
   const delivered = deliverySessions(snapshot.tasks, evidence?.entries ?? new Map())
   const groups = workGroups(snapshot.tasks, cancelling, delivered)
   const codeHome = !compact && shell !== undefined

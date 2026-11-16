@@ -79,13 +79,18 @@ it.each([
       await enrollBrowser(page, host, { name: '问题恢复验收', scopes: ['admin'] })
       const home = page.locator('.workbench-home')
       const card = home.locator(`[data-work-session="${sessionId}"]`)
-      await card.getByRole('button', { name: '确认发布', exact: true }).click()
+      await card.getByRole('button', { name: '查看问题', exact: true }).click()
       const conversation = page.locator('.workspace .question-card')
       await expect.poll(() => conversation.getAttribute('data-arming')).toBe(null)
       await conversation.getByRole('button', { name: /预览环境/ }).click()
       await conversation.getByText('如何发布？', { exact: true }).filter({ visible: true }).waitFor()
       await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
-      await card.getByText('如何发布？', { exact: true }).filter({ visible: true }).waitFor()
+      const viewQuestion = card.getByRole('button', { name: '查看问题', exact: true })
+      await viewQuestion.waitFor()
+      expect(await card.locator('.question-card').count()).toBe(0)
+      await viewQuestion.click()
+      await conversation.getByText('如何发布？', { exact: true }).filter({ visible: true }).waitFor()
+      await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
       const requests: QuestionSubmission[] = []
       const answerGate = new Promise<void>(resolve => {
         releaseAnswer = resolve

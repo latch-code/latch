@@ -1,9 +1,10 @@
 import type { AgentAvatar as AgentAvatarValue, TaskSummary } from '@latch/protocol'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   AlertGlyph,
   Button,
   ChevronRightGlyph,
+  FileGlyph,
   FolderGlyph,
   Icon,
   InlineNotice,
@@ -14,7 +15,7 @@ import {
 } from '@latch/ui'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
-import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
+import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
@@ -27,6 +28,50 @@ import { useWorkbenchSession } from './useWorkbenchEvidence.ts'
 import type { ShellState } from './useShellLayout.tsx'
 import { failureAction } from '../conversation/failureAction.ts'
 import { toolHeading, toolRowId } from '../conversation.ts'
+import { basename } from '../format.ts'
+import { previousState } from '../diff.ts'
+import { renderMarkdown } from '../MessageContent.tsx'
+
+function DraftExcerpt({ path, text, previous }: { path: string; text: string; previous: string | undefined }) {
+  const excerpt = text.slice(0, 900).split(/\r?\n/u).slice(0, 7).join('\n').trimEnd()
+  const incomplete = excerpt !== text.trimEnd()
+  const markdown = /\.(?:md|markdown)$/iu.test(path)
+    ? renderMarkdown({
+        children: excerpt,
+        allowedElements: ['h1', 'h2', 'h3', 'h4', 'p', 'ul', 'ol', 'li', 'strong', 'em', 'code', 'pre'],
+        skipHtml: true,
+        unwrapDisallowed: true,
+      })
+    : null
+  return (
+    <div className="work-feature-material">
+      <header>
+        <Icon icon={FileGlyph} size={14} />
+        <code>
+          <VisibleText text={path} />
+        </code>
+        <span>{incomplete ? '拟写内容 · 摘录' : '拟写内容'}</span>
+      </header>
+      <div className="work-feature-material-body" role="region" aria-label="拟写内容" tabIndex={0}>
+        {markdown ?? (
+          <pre>
+            <VisibleText text={excerpt} />
+          </pre>
+        )}
+      </div>
+      {incomplete && <p className="work-feature-excerpt-note">完整内容见原请求</p>}
+      {previous?.trim() && (
+        <details className="work-feature-reference">
+          <summary>核对材料 · 原文件内容</summary>
+          <pre>
+            <VisibleText text={previous.slice(0, 900)} />
+          </pre>
+          {previous.length > 900 && <p>完整差异见原请求</p>}
+        </details>
+      )}
+    </div>
+  )
+}
 
 /** The same requests and decision controller as the conversation, presented where the person finds their work. */
 export function WorkbenchDecision({
@@ -36,6 +81,8 @@ export function WorkbenchDecision({
   expanded = true,
   onExpand,
   firstKeys = false,
+  featured = false,
+  navigation,
   person,
 }: {
   task: TaskSummary
@@ -49,6 +96,8 @@ export function WorkbenchDecision({
   expanded?: boolean
   onExpand?: () => void
   firstKeys?: boolean
+  featured?: boolean
+  navigation?: ReactNode
 }) {
   const enabled = shell.connection === 'connected' && shell.access.scopes.has('view')
   const scope = `${shell.snapshot.device.id}:${shell.snapshot.device.dataScope}:${shell.snapshot.device.scopes.join(',')}`
@@ -92,6 +141,100 @@ export function WorkbenchDecision({
   const resultIcon = status.tone === 'failed' ? AlertGlyph : resultUnknown ? UnknownGlyph : WaitingGlyph
   const sessionTitle = task.title || '未命名会话'
   const asker = person?.name ?? (harness ? harnessName(harness) : 'Agent')
+  if (featured) {
+    const original = approvalUnknown
+      ? (detail?.approvals[unknownIndex]
+        ?? shell.snapshot.approvals.find(item => item.sessionId === task.id && shell.statuses.get(item.id)?.uncertain))
+      : approval
+    const tool = toolMessage?.tool ?? approval?.tool
+    const diffs = tool?.diffs ?? approval?.tool?.diffs ?? []
+    const diff = diffs.length === 1 ? diffs[0] : undefined
+    const approvalGate = approval ? shell.gateFor(approval) : undefined
+    const draft =
+      diff
+      && diff.newText.trim()
+      && (previousState(diff) === 'text' || previousState(diff) === 'none')
+      && tool?.kind === 'edit'
+      && approval?.risk === 'R1'
+      && !approval.advisory
+      && approvalGate?.kind === 'R1'
+      && !approvalGate.hint
+      && !approvalGate.note
+      && !approvalUnknown
+      && ![action, diff.path, diff.oldText, diff.newText, approval.reason, approval.arguments, tool.input].some(hasHiddenCharacters)
+        ? diff
+        : undefined
+    const question = asked?.question
+    const failed = status.tone === 'failed'
+    const title = approvalUnknown
+      ? APPROVAL_COPY.uncertainApproval
+      : draft
+        ? `允许${previousState(draft) === 'none' ? '写入' : '更新'} ${basename(draft.path)}？`
+        : (action ?? (question ? question.questions[0]?.label || question.prompt : undefined) ?? sessionTitle)
+    const detailText = read.error ?? (approvalUnknown ? undefined : approval ? approval.reason : question?.prompt || failure?.text)
+    const link =
+      approvalUnknown || resultUnknown ? '核对结果' : approval ? '查看原请求' : question ? '查看问题' : failed ? '查看失败' : '查看会话'
+    const showText = !draft && detailText && detailText !== title
+    return (
+      <article className="work-feature" ref={read.element} data-work-session={task.id}>
+        <div className="work-feature-summary">
+          <h3 title={escapeHiddenCharacters(title)}>
+            <VisibleText text={title} />
+          </h3>
+          <div className="work-feature-meta">
+            {harness && (
+              <span>
+                <HarnessTile harness={harness} size={16} />
+                <VisibleText text={asker} />
+              </span>
+            )}
+            {project && (
+              <span>
+                <Icon icon={FolderGlyph} size={12} />
+                <VisibleText text={project.name} />
+              </span>
+            )}
+            <StatusWord tone={approvalUnknown ? 'warn' : status.tone}>
+              {approvalUnknown
+                ? '结果未知'
+                : approval && enabled
+                  ? approvalGate?.options.length
+                    ? APPROVAL_COPY.waiting
+                    : '等待审批'
+                  : status.words}
+            </StatusWord>
+            {approval?.risk === 'R2' && !approvalUnknown && <StatusWord tone="failed">{APPROVAL_COPY.highRisk}</StatusWord>}
+            {approval?.advisory && !approvalUnknown && <StatusWord tone="warn">{APPROVAL_COPY.advisory}</StatusWord>}
+          </div>
+        </div>
+        {navigation}
+        {draft ? (
+          <DraftExcerpt key={original?.id} path={draft.path} text={draft.newText} previous={draft.oldText} />
+        ) : showText ? (
+          <div className="work-feature-material" data-tone={read.error || failed ? 'failed' : undefined}>
+            <header>{read.error ? '读取失败' : approval ? '请求说明' : question ? '问题背景' : '失败原因'}</header>
+            <div className="work-feature-material-body" tabIndex={0}>
+              <p>
+                <VisibleText text={detailText} />
+              </p>
+            </div>
+          </div>
+        ) : read.loading ? (
+          <div className="work-feature-material" role="status" aria-label="正在读取请求">
+            <div className="work-feature-material-body">
+              <Skeleton width="65%" height={16} />
+            </div>
+          </div>
+        ) : null}
+        <div className="work-feature-action">
+          <Button variant="primary" size="sm" onClick={() => (original ? shell.openApproval(task.id, original.id) : shell.choose(task.id))}>
+            {link}
+            <Icon icon={ChevronRightGlyph} size={14} />
+          </Button>
+        </div>
+      </article>
+    )
+  }
   const source = person ? (
     <span className="work-decision-person">
       <AgentAvatar avatar={person.avatar} size={16} />

@@ -132,12 +132,18 @@ export function useWorkbenchDelivery(
 }
 
 /** Detail stays behind the same endpoint as a conversation, and is read only once its card is visible. */
-export function useWorkbenchSession(task: TaskSummary, scope: string, enabled: boolean, refreshMs?: number) {
-  const element = useRef<HTMLElement>(null)
+export function useWorkbenchSession<Element extends HTMLElement = HTMLElement>(
+  task: TaskSummary,
+  scope: string,
+  enabled: boolean,
+  refreshMs?: number,
+  settling?: (detail: TaskDetail) => boolean,
+) {
+  const element = useRef<Element>(null)
   const [visible, setVisible] = useState(false)
   const [read, setRead] = useState<{ key: string; detail?: TaskDetail; error?: string }>()
   const [revision, setRevision] = useState(0)
-  const key = `${scope}:${task.id}:${refreshMs ? task.runId : task.updatedAt}:${task.status}`
+  const key = `${scope}:${task.id}:${refreshMs && !settling ? task.runId : task.updatedAt}:${task.status}`
   const [loadingKey, setLoadingKey] = useState<string>()
   useEffect(() => {
     if (!enabled || !visible || read?.key === key) return
@@ -162,16 +168,21 @@ export function useWorkbenchSession(task: TaskSummary, scope: string, enabled: b
       clearTimeout(timer)
       if (document.visibilityState === 'hidden' || busy) return
       busy = true
+      let repeat = !settling
       void api<TaskDetail>(`tasks/${encodeURIComponent(task.id)}`, { signal: controller.signal })
         .then(detail => {
-          if (!controller.signal.aborted && detail.summary.id === task.id) setRead({ key, detail })
+          if (controller.signal.aborted || detail.summary.id !== task.id) return
+          setRead({ key, detail })
+          // Completed runs can report file outputs after their visible summary stops changing.
+          repeat = !settling || settling(detail)
         })
         .catch(cause => {
           if (!controller.signal.aborted) setRead({ key, error: errorMessage(cause) })
         })
         .finally(() => {
           busy = false
-          if (refreshMs && !controller.signal.aborted && document.visibilityState !== 'hidden') timer = setTimeout(load, refreshMs)
+          if (refreshMs && repeat && !controller.signal.aborted && document.visibilityState !== 'hidden')
+            timer = setTimeout(load, refreshMs)
         })
     }
     load()
@@ -181,7 +192,7 @@ export function useWorkbenchSession(task: TaskSummary, scope: string, enabled: b
       clearTimeout(timer)
       document.removeEventListener('visibilitychange', load)
     }
-  }, [key, visible, enabled, revision, refreshMs])
+  }, [key, visible, enabled, revision, refreshMs, settling])
   return {
     element,
     loading: enabled && visible && read?.key !== key && loadingKey === key,

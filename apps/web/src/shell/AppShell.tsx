@@ -55,6 +55,7 @@ import { useSideQuestionForks, withoutSideForks } from '../conversation/SideQues
 import { useShellLayout } from './useShellLayout.tsx'
 import { OverviewGlyph } from '@latch/ui'
 import { WorkOverview, type WorkOverviewHandle } from './WorkOverview.tsx'
+import type { WorkbenchReviewMemory } from './WorkbenchReviewQueue.tsx'
 import { HomeFocusSummary } from './HomeFocusSummary.tsx'
 import { HOME_FOCUS_LAYER, useHomeFocus } from './useHomeFocus.ts'
 import { workGroups } from './workOverview.ts'
@@ -80,6 +81,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     onOpenHomeFiles: focus.reset,
   })
   const homeQueue = useRef<WorkOverviewHandle>(null)
+  const homeReviewMemory = useRef<WorkbenchReviewMemory>({ selection: undefined, open: false, scrollTop: 0 })
   const focusWasVisible = useRef(false)
   const [preparing, setPreparing] = useState(false)
   const [preparationFinished, setPreparationFinished] = useState(false)
@@ -717,7 +719,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       <HistoryImportEntry snapshot={snapshot} workspaceId={choice.workspaceId} phone={phone} onOpen={choose} />
                     </div>
                   )}
-                  <WorkOverview ref={homeQueue} {...work} />
+                  <WorkOverview ref={homeQueue} reviewMemory={homeReviewMemory} {...work} />
                 </div>
               </section>
             )}

@@ -89,7 +89,8 @@ it.each(
     ] as const
   ).flatMap(([width, height]) => (['overview', 'triage'] as const).map(layout => ({ width, height, layout }))),
 )('scrolls the queue while the composer and navigation stay put at $width x $height in $layout', async ({ width, height, layout }) => {
-  const independent = width >= 1024 && height >= 480
+  const featured = layout === 'overview'
+  const independent = !featured && width >= 1024 && height >= 480
   const shot = `${OUT}/${layout}-${width}${height === 420 ? 'x420' : ''}`
   const context = await browser.newContext({
     viewport: { width, height },
@@ -103,14 +104,14 @@ it.each(
     await enrollBrowser(page, host, { name: '队列滚动验收', scopes: ['admin'] })
     await switchLayout(page, layout)
     const home = page.getByRole('region', { name: '总览', exact: true })
-    const attention = home.getByRole('region', { name: '等你处理', exact: true })
+    const attention = home.getByRole('region', { name: featured ? '当前请求' : '等你处理', exact: true })
     const heading = attention.getByRole('heading')
     await heading.waitFor()
-    const approval = attention.locator('.approval-panel')
+    const approval = featured ? attention.getByRole('button', { name: '查看原请求', exact: true }) : attention.locator('.approval-panel')
     await approval.waitFor()
-    await expect.poll(() => approval.getAttribute('data-arming')).toBeNull()
+    if (!featured) await expect.poll(() => approval.getAttribute('data-arming')).toBeNull()
     await settleShell(page)
-    if (width === 390) {
+    if (width === 390 && !featured) {
       const box = await approval.boundingBox()
       expect(box!.x).toBeGreaterThanOrEqual(8)
       expect(box!.x + box!.width).toBeLessThanOrEqual(width - 8)
@@ -118,14 +119,23 @@ it.each(
     }
 
     const outer = () => home.evaluate(element => ({ home: element.scrollTop, document: document.scrollingElement?.scrollTop }))
+    const workScroll = () => home.locator('.code-home-queue').evaluate(node => node.scrollTop)
+    const list = attention.getByRole('list', { name: '待处理会话', exact: true })
+    const more = attention.getByRole('button', { name: featured ? '9 项待处理' : '还有 4 件', exact: true })
+    if (featured) {
+      await more.click()
+      await list.scrollIntoViewIfNeeded()
+    }
     const inner = () =>
-      attention.evaluate((element, desktop) => {
-        if (desktop) return element.scrollTop
-        let offset = 0
-        for (let node: Element | null = element; node && !node.matches('.workbench-home'); node = node.parentElement)
-          offset += node.scrollTop
-        return offset
-      }, independent)
+      featured
+        ? list.evaluate(node => node.scrollTop)
+        : attention.evaluate((element, desktop) => {
+            if (desktop) return element.scrollTop
+            let offset = 0
+            for (let node: Element | null = element; node && !node.matches('.workbench-home'); node = node.parentElement)
+              offset += node.scrollTop
+            return offset
+          }, independent)
     const frame = async () => ({
       composer: await home.locator('.workbench-home-composer').boundingBox(),
       switch: await layoutSwitch(page).boundingBox(),
@@ -136,12 +146,13 @@ it.each(
         : [],
     })
     const wheelAtHeading = async (delta: number) => {
-      const box = await heading.boundingBox()
+      const box = await (featured ? list : heading).boundingBox()
       expect(box).not.toBeNull()
       await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
       await page.mouse.wheel(0, delta)
     }
 
+    const contentScroll = await workScroll()
     const before = await frame()
     expect(before.composer).not.toBeNull()
     expect(before.switch).not.toBeNull()
@@ -150,12 +161,14 @@ it.each(
     await expect.poll(async () => ({ moved: (await inner()) > 0, ...(await outer()) })).toEqual({ moved: true, home: 0, document: 0 })
     expect(await frame()).toEqual(before)
 
-    const list = attention.getByRole('list', { name: '待处理会话', exact: true })
-    const more = attention.getByRole('button', { name: '还有 4 件', exact: true })
-    await reachable(more)
-    await more.click()
+    if (featured) expect(await workScroll()).toBe(contentScroll)
+    else {
+      await reachable(more)
+      await more.click()
+    }
     const last = list.locator(':scope > li').last().getByRole('button').first()
     await reachable(last)
+    const tailContentScroll = await workScroll()
     expect(await list.locator(':scope > li').count()).toBe(9)
     // Continue wheeling at the end; the scroll must not chain to the composer.
     const lastBox = await last.boundingBox()
@@ -164,6 +177,7 @@ it.each(
     await settleShell(page)
     expect(await outer()).toEqual({ home: 0, document: 0 })
     expect(await frame()).toEqual(before)
+    if (featured) expect(await workScroll()).toBe(tailContentScroll)
     await page.screenshot({ path: `${shot}-end.png`, animations: 'disabled' })
 
     const input = homeInput(page)
@@ -190,7 +204,8 @@ it.each(
     if (width === 390) {
       await last.tap()
       expect(await last.getAttribute('aria-current')).toBe('true')
-      await attention.locator('.work-overview-review-detail .work-decision-result').waitFor()
+      if (featured) await attention.getByRole('button', { name: '查看失败', exact: true }).waitFor()
+      else await attention.locator('.work-overview-review-detail .work-decision-result').waitFor()
       expect(await input.inputValue()).toBe(draft)
     }
   } finally {

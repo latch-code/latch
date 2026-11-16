@@ -167,10 +167,8 @@ describe('sidebar rows', () => {
     try {
       const command = page.locator('.workbench-home [data-work-session="command"]')
       const routed = page.locator('.workbench-home [data-work-session="routed"]')
-      expect(await command.locator('.work-running-action').textContent()).toBe('在跑命令')
-      expect(await routed.locator('.work-running-action').textContent()).toBe('在等模型')
-      await expect.poll(() => command.locator('.work-running-time').textContent()).toMatch(/^0:4\d$/u)
-      await expect.poll(() => routed.locator('.work-running-time').textContent()).toMatch(/^0:0\d$/u)
+      await expect.poll(() => command.locator('.ui-status-word').textContent()).toMatch(/^在跑命令 0:4\d$/u)
+      await expect.poll(() => routed.locator('.ui-status-word').textContent()).toMatch(/^在等模型 0:0\d$/u)
     } finally {
       await page.context().close()
     }
@@ -179,7 +177,8 @@ describe('sidebar rows', () => {
   it('keeps attention on Home, and never turns an unverified summary path into request evidence', async () => {
     const page = await open(1440, 900, 'light')
     try {
-      const waiting = page.locator('.workbench-home .work-overview-group[data-group="attention"]')
+      const waiting = page.getByRole('region', { name: '当前请求', exact: true })
+      await waiting.getByRole('button', { name: '3 项待处理', exact: true }).click()
       expect(
         await waiting
           .locator('[data-request-session]')

@@ -619,7 +619,7 @@ export function SessionComposer({
       drawers={drawers}
       stepBack={approvals.length > 0 || answersQuestion}
       status={home ? undefined : status}
-      locationPosition={base.preferences.workbenchLayout === 'triage' && !homeFocus?.close ? 'toolbar' : 'top'}
+      locationPosition={!homeFocus?.close && (home || base.preferences.workbenchLayout === 'triage') ? 'toolbar' : 'top'}
       location={
         home ? (
           <div className="home-composer-location">
@@ -634,10 +634,12 @@ export function SessionComposer({
                 starts
               />
             )}
-            <span className="home-composer-computer">
-              <Icon icon={LaptopGlyph} size={14} />
-              {computerName(base.snapshot.hostName)}
-            </span>
+            {(phone || homeFocus?.close || base.preferences.workbenchLayout === 'triage') && (
+              <span className="home-composer-computer">
+                <Icon icon={LaptopGlyph} size={14} />
+                {computerName(base.snapshot.hostName)}
+              </span>
+            )}
           </div>
         ) : undefined
       }

@@ -696,6 +696,17 @@ export function useSessionController({
   }, [approvalToast, selectedId])
   const approvalCursor = useRef<string | null>(null)
   const [approvalFocus, setApprovalFocus] = useState<string | null>(null)
+  const [approvalTarget, setApprovalTarget] = useState<{ sessionId: string; approvalId: string }>()
+  const openApproval = useStableCallback((sessionId: string, approvalId: string) => {
+    const target = snapshot.approvals.find(approval => approval.id === approvalId && approval.sessionId === sessionId)
+    choose(sessionId, () => {
+      if (!target) return
+      approvalCursor.current = target.id
+      setApprovalTarget({ sessionId, approvalId })
+      setApprovalFocus(target.id)
+      reading.show(sessionId, toolRowId(target))
+    })
+  })
   const nextApproval = useStableCallback(() => {
     const ordered = snapshot.approvals.toSorted((a, b) => a.requestedAt.localeCompare(b.requestedAt))
     if (!ordered.length) return
@@ -1223,9 +1234,8 @@ export function useSessionController({
             : !catalog && snapshot.execution?.ready === false
               ? '当前模型接口不可用，请检查模型插件状态。'
               : undefined
-  const [approvalTarget, setApprovalTarget] = useState<{ sessionId: string; approvalId: string }>()
   useEffect(() => {
-    setApprovalTarget(undefined)
+    setApprovalTarget(target => (target?.sessionId === selectedId ? target : undefined))
   }, [selectedId])
   const approvalIndex =
     approvalTarget?.sessionId === selectedId
@@ -1538,6 +1548,7 @@ export function useSessionController({
     reveal,
     jumpToLatest,
     openApprovals,
+    openApproval,
     previousApprovals,
     approvalToast,
     setApprovalToast,

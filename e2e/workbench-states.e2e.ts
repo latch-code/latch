@@ -34,6 +34,7 @@ async function shot(page: Page, name: string, width: number, theme: 'light' | 'd
         '.workbench-home-composer textarea',
         '.workbench-home-composer .composer-toolbar',
         '.work-overview',
+        '.work-landing',
       ].map(selector => {
         const element = document.querySelector(selector)
         if (!element) return [selector, null]
@@ -145,12 +146,28 @@ it('renders the empty, loading, many, limited, read-only and offline states from
     await page.reload()
     await connected(page)
     const home = page.locator('.workbench-home')
+    const current = home.getByRole('region', { name: '当前请求', exact: true })
+    const preview = current.locator('.work-feature-material')
+    const originalCard = (id: string) => page.locator(`main.workspace [data-approval-id="${id}"]`)
+    const viewOriginal = async (id: string, label = '查看原请求') => {
+      await current.getByRole('button', { name: label, exact: true }).click()
+      const card = originalCard(id)
+      await card.waitFor()
+      return card
+    }
+    const returnHome = () => page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
+    const showChanges = async (card: ReturnType<typeof originalCard>) => {
+      const expand = card.getByRole('button', { name: '查看改动', exact: true })
+      if (await expand.isVisible()) await expand.click()
+    }
     expect(await home.locator('.work-overview-group').count()).toBe(0)
     await page.locator('.workbench-empty').getByRole('heading', { name: '还没有会话' }).waitFor()
     await shot(page, 'overview-empty', 1440, 'dark')
     const emptyCard = await page.locator('.workbench-home-composer .composer').boundingBox()
     const emptyStack = await page.locator('.workbench-home-composer .composer-stack').boundingBox()
-    expect(emptyCard!.y - (await home.boundingBox())!.y).toBe(48)
+    const emptyHome = (await home.boundingBox())!
+    expect(emptyHome.y + emptyHome.height - emptyCard!.y - emptyCard!.height).toBeLessThanOrEqual(18)
+    expect(emptyCard!.y).toBeGreaterThan(emptyHome.y + emptyHome.height / 2)
     expect(emptyStack!.height).toBe(emptyCard!.height)
     await layout(page, 'triage')
     await shot(page, 'triage-empty', 1440, 'dark')
@@ -180,28 +197,26 @@ it('renders the empty, loading, many, limited, read-only and offline states from
       await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${task.sessionId}`)).approvals.length).toBe(1)
     }
     const newest = ids.at(-1)!
-    await page.locator('.work-decision-placeholder[aria-label="正在读取请求"]').waitFor()
+    await current.getByRole('status', { name: '正在读取请求' }).waitFor()
     await shot(page, 'overview-loading', 1440, 'dark')
     releaseRead?.()
     await page.unrouteAll({ behavior: 'wait' })
+    await preview.getByText('拟写内容', { exact: true }).waitFor()
+    expect(await preview.textContent()).toContain('settings-10.ts')
+    expect(await preview.textContent()).toContain('export const keep = true')
+    expect(await home.locator('.approval-panel').count()).toBe(0)
     const review = home.locator('.approval-panel[data-document-review]')
-    await review.getByText('拟议改动', { exact: true }).waitFor()
-    expect(await review.locator('.approval-preview').textContent()).toContain('settings-10.ts')
-    await review
-      .locator('.diff-text')
-      .filter({ hasText: /export const keep = true/u })
-      .waitFor()
-    await expect.poll(() => home.locator('.approval-panel').getByRole('button', { name: '允许', exact: true }).isDisabled()).toBe(false)
     const queue = home.getByRole('list', { name: '待处理会话', exact: true })
     const queued = (id: string) => queue.locator(`[data-request-session="${id}"]`)
-    expect(await queue.getByRole('listitem').count()).toBe(5)
+    const queueToggle = (count: number) => home.getByRole('button', { name: `${count} 项待处理`, exact: true })
+    expect(await queue.count()).toBe(0)
     const expandedReads: string[] = []
     const recordRead = (request: Request) => {
       const detail = /^\/link\/api\/tasks\/([^/]+)$/u.exec(new URL(request.url()).pathname)
       if (request.method() === 'GET' && detail) expandedReads.push(detail[1]!)
     }
     page.on('request', recordRead)
-    await home.getByRole('button', { name: '还有 5 件', exact: true }).click()
+    await queueToggle(requestCount).click()
     expect(await queue.getByRole('listitem').count()).toBe(requestCount)
     expect(await queued(newest).textContent()).toContain(workspace.name)
     expect(await queued(ids[1]!).textContent()).toContain(secondWorkspace.name)
@@ -216,19 +231,22 @@ it('renders the empty, loading, many, limited, read-only and offline states from
     expect(top).toBeGreaterThan(0)
     const earlier = queued(ids[1]!)
     await earlier.press('Enter')
-    await review.locator('.approval-document-header').getByText('settings-2.ts', { exact: true }).waitFor()
-    await review
-      .locator('.diff-text')
-      .filter({ hasText: /export const field0 = true/u })
-      .waitFor()
+    await preview.getByText('settings-2.ts', { exact: true }).waitFor()
+    expect(await preview.textContent()).toContain('export const field0 = true')
     expect(await earlier.evaluate(element => document.activeElement === element)).toBe(true)
     expect(await earlier.getAttribute('aria-current')).toBe('true')
     expect(await queue.boundingBox()).toEqual(listBox)
     expect(await queue.evaluate(element => element.scrollTop)).toBe(top)
     await shot(page, 'overview-queue-last', 1440, 'light')
-    await review.getByRole('button', { name: '允许', exact: true }).click()
+    const earlierId = (await owner.json<TaskDetail>(`tasks/${ids[1]}`)).approvals[0]!.id
+    const earlierApproval = await viewOriginal(earlierId)
+    await showChanges(earlierApproval)
+    expect(await earlierApproval.textContent()).toContain('export const field0 = true')
+    await earlierApproval.getByRole('button', { name: '允许', exact: true }).click()
+    await expect.poll(() => readFile(join(retained, 'settings-2.ts'), 'utf8')).toContain('export const field0 = true')
+    await returnHome()
     await expect.poll(() => queue.getByRole('listitem').count()).toBe(requestCount - 1)
-    await review.locator('.approval-document-header').getByText('settings-1.ts', { exact: true }).waitFor()
+    await preview.getByText('settings-1.ts', { exact: true }).waitFor()
     expect(await queued(ids[0]!).getAttribute('aria-current')).toBe('true')
     expect(
       await queue.evaluate(
@@ -236,9 +254,7 @@ it('renders the empty, loading, many, limited, read-only and offline states from
         top,
       ),
     ).toBe(true)
-    await expect.poll(() => readFile(join(retained, 'settings-2.ts'), 'utf8')).toContain('export const field0 = true')
-    expect(await home.getByRole('button', { name: '收起', exact: true, expanded: true }).count()).toBe(1)
-    await home.getByRole('button', { name: '收起', exact: true, expanded: true }).click()
+    expect(await queueToggle(requestCount - 1).getAttribute('aria-expanded')).toBe('true')
     const delayed = ids[7]!
     let didRead: (() => void) | undefined
     const staleStarted = new Promise<void>(resolve => {
@@ -258,11 +274,11 @@ it('renders the empty, loading, many, limited, read-only and offline states from
     await queued(delayed).click()
     await staleStarted
     await queued(newest).click()
-    await review.locator('.approval-document-header').getByText('settings-10.ts', { exact: true }).waitFor()
+    await preview.getByText('settings-10.ts', { exact: true }).waitFor()
     releaseRead?.()
     await page.unrouteAll({ behavior: 'wait' })
     expect(await queued(newest).getAttribute('aria-current')).toBe('true')
-    expect(await review.locator('.approval-document-header').textContent()).toContain('settings-10.ts')
+    expect(await preview.textContent()).toContain('settings-10.ts')
     await layout(page, 'triage')
     await expect.poll(() => review.count()).toBe(1)
     await expect.poll(() => review.getAttribute('data-arming')).toBeNull()
@@ -290,9 +306,13 @@ it('renders the empty, loading, many, limited, read-only and offline states from
     await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
     await page.reload()
     await connected(page)
-    await home.locator('.approval-panel').waitFor()
-    expect(await home.locator('.diff-line').count()).toBe(0)
-    expect(await home.locator('.approval-panel[data-document-review]').count()).toBe(0)
+    const original = (await owner.json<TaskDetail>(`tasks/${newest}`)).approvals[0]!
+    await current.getByRole('button', { name: '查看原请求' }).waitFor()
+    expect(await current.textContent()).not.toContain('export const keep')
+    expect(await home.getByRole('region', { name: '最近成果' }).count()).toBe(0)
+    await shot(page, 'overview-limited', 1440, 'dark')
+    const limitedCard = await viewOriginal(original.id)
+    expect(await limitedCard.locator('.diff-line').count()).toBe(0)
     const limited = await page.evaluate(async id => {
       const current: TaskDetail = await (await fetch(`/link/api/tasks/${id}`)).json()
       return current.approvals[0]
@@ -301,18 +321,20 @@ it('renders the empty, loading, many, limited, read-only and offline states from
     expect(limited?.tool).not.toHaveProperty('diffs')
     expect(JSON.stringify(limited)).toContain('settings-10.ts')
     expect(JSON.stringify(limited)).not.toContain('export const keep')
-    expect(await home.locator('[data-group="delivery"]').textContent()).toContain('这台设备不能读取项目改动')
-    await shot(page, 'overview-limited', 1440, 'dark')
+    await returnHome()
     await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all', scopes: ['view'] } })
     await page.reload()
     await connected(page)
-    await home.locator('.approval-panel').waitFor()
-    expect(await home.locator('.approval-panel').getByRole('button', { name: '允许', exact: true }).count()).toBe(0)
-    expect(await home.locator('.approval-panel').getByRole('button', { name: '拒绝', exact: true }).count()).toBe(1)
-    expect(await review.count()).toBe(0)
-    expect(await home.locator('.approval-hint').textContent()).toContain('这台设备')
-    expect(await home.locator('.approval-preview .diff-line').count()).toBeGreaterThan(0)
-    await expect.poll(() => home.locator('.approval-panel').getByRole('button', { name: '拒绝', exact: true }).isDisabled()).toBe(false)
+    await current.getByRole('button', { name: '查看原请求' }).waitFor()
+    expect(await current.getByRole('button', { name: '允许', exact: true }).count()).toBe(0)
+    const readOnlyCard = await viewOriginal(original.id)
+    expect(await readOnlyCard.getByRole('button', { name: '允许', exact: true }).count()).toBe(0)
+    expect(await readOnlyCard.getByRole('button', { name: '拒绝', exact: true }).count()).toBe(1)
+    expect(await readOnlyCard.locator('.approval-hint').textContent()).toContain('这台设备')
+    await showChanges(readOnlyCard)
+    expect(await readOnlyCard.locator('.approval-preview .diff-line').count()).toBeGreaterThan(0)
+    await expect.poll(() => readOnlyCard.getByRole('button', { name: '拒绝', exact: true }).isDisabled()).toBe(false)
+    await returnHome()
     await shot(page, 'overview-readonly', 1440, 'dark')
     await owner.confirmedJson(`devices/${device.id}`, {
       method: 'PATCH',
@@ -320,7 +342,7 @@ it('renders the empty, loading, many, limited, read-only and offline states from
     })
     await page.reload()
     await connected(page)
-    await home.locator('.approval-panel').waitFor()
+    await preview.getByText('settings-10.ts', { exact: true }).waitFor()
     await context.setOffline(true)
     await expect.poll(() => page.locator('.app-shell').getAttribute('data-connection')).toMatch(/offline|reconnecting/u)
     for (const theme of ['light', 'dark'] as const) await shot(page, 'overview-offline', 1440, theme)
@@ -337,14 +359,13 @@ it('renders the empty, loading, many, limited, read-only and offline states from
     await page.keyboard.press('Escape')
     await settings.waitFor({ state: 'detached' })
 
-    const original = (await owner.json<TaskDetail>(`tasks/${newest}`)).approvals[0]!
     const writes: Array<{ decision: string; requestId: string; optionId?: string }> = []
     await page.route(`**/link/api/approvals/${original.id}`, async route => {
       writes.push(route.request().postDataJSON())
       if (writes.length === 1) await route.abort('connectionreset')
       else await route.continue()
     })
-    const card = home.locator(`[data-approval-id="${original.id}"]`)
+    const card = await viewOriginal(original.id)
     await card.getByRole('button', { name: '允许', exact: true }).click()
     await card.getByText('「允许」的结果未知', { exact: true }).waitFor()
     for (const name of ['拒绝', '允许']) expect(await card.getByRole('button', { name, exact: true }).isDisabled()).toBe(true)
@@ -352,6 +373,8 @@ it('renders the empty, loading, many, limited, read-only and offline states from
     await page.keyboard.press('Escape')
     await page.keyboard.press('2')
     expect(writes).toHaveLength(1)
+    await returnHome()
+    if ((await queueToggle(requestCount - 1).getAttribute('aria-expanded')) !== 'true') await queueToggle(requestCount - 1).click()
     await queued(ids[8]!).click()
     await queued(newest).getByText('审批结果尚未确认', { exact: true }).waitFor()
     await writeFile(join(folder, 'settings-11.ts'), 'export const keep = false\n')
@@ -372,13 +395,14 @@ it('renders the empty, loading, many, limited, read-only and offline states from
     await context.setOffline(true)
     await expect.poll(() => page.locator('.app-shell').getAttribute('data-connection')).toMatch(/offline|reconnecting/u)
     await queued(newest).click()
-    await home.locator('.work-overview-review-detail').getByText('审批结果尚未确认', { exact: true }).waitFor()
-    expect(await home.locator('.work-overview-review-detail').getByRole('button', { name: '重试', exact: true }).count()).toBe(0)
+    await current.getByRole('heading', { name: '审批结果尚未确认', exact: true }).waitFor()
+    expect(await current.getByRole('button', { name: '重试', exact: true }).count()).toBe(0)
     await shot(page, 'overview-approval-unconfirmed-offline', 1440, 'dark')
 
     await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { scopes: ['view'] } })
     await context.setOffline(false)
     await connected(page)
+    await viewOriginal(original.id, '核对结果')
     await card.getByText('审批结果尚未确认', { exact: true }).waitFor()
     expect(await card.getByRole('button', { name: '重试', exact: true }).count()).toBe(0)
     expect(await card.getByRole('button', { name: '拒绝', exact: true }).isDisabled()).toBe(true)

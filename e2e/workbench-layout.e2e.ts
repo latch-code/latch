@@ -483,11 +483,16 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
             await layoutMenu(page, layout)
             const home = page.locator('.workbench-home')
             await reachable(home.locator(`[data-work-session="${waiting.summary.id}"]`))
-            // A failure is titled by what the person does, the verb then the session; the bare word 失败 is not its title.
-            expect(await home.locator(`[data-request-session="${failed.summary.id}"] .work-decision-verb`).first().textContent()).toMatch(
-              /^(重试|查看)$/u,
-            )
-            expect(await home.locator(`[data-request-session="${failed.summary.id}"] strong`).allTextContents()).not.toContain('失败')
+            // A failure is titled by its action and session. In the side layout the queue opens on demand.
+            const toggle = home.getByRole('button', { name: '2 项待处理', exact: true })
+            if (layout === 'overview') await toggle.click()
+            const failureRow = home.locator(`[data-request-session="${failed.summary.id}"]`)
+            expect(await failureRow.locator('.work-decision-verb').first().textContent()).toMatch(/^(重试|查看)$/u)
+            expect(await failureRow.locator('strong').allTextContents()).not.toContain('失败')
+            if (layout === 'overview') {
+              await toggle.click()
+              await home.locator('.code-home-queue').evaluate(element => (element.scrollTop = 0))
+            }
             if (width === 390 && theme === 'light' && layout === 'overview') {
               const edge = home.locator(`[data-work-session="${running.summary.id}"] .ui-running-edge`)
               const state = () => edge.locator('i').evaluate(element => getComputedStyle(element).animationPlayState)
@@ -506,19 +511,32 @@ it('keeps real sessions and drafts through layout changes, and shows both homes 
               await page.emulateMedia({ reducedMotion: 'reduce' })
               expect(await runningEdge.evaluate(element => getComputedStyle(element).display)).toBe('none')
               await page.emulateMedia({ reducedMotion: 'no-preference' })
-              // The risk line stays one row: the red reason, the short fact and its ⓘ.
-              const clause = home.locator('.approval-clause').first()
-              expect(await clause.textContent()).toContain('每次都要确认')
-              expect((await clause.boundingBox())!.height).toBeLessThan(32)
+              if (layout === 'triage') {
+                // The risk line stays one row: the red reason, the short fact and its ⓘ.
+                const clause = home.locator('.approval-clause').first()
+                expect(await clause.textContent()).toContain('每次都要确认')
+                expect((await clause.boundingBox())!.height).toBeLessThan(32)
+              } else {
+                const request = home.getByRole('region', { name: '当前请求', exact: true })
+                await request.getByRole('button', { name: '查看原请求', exact: true }).waitFor()
+                await request.locator('.ui-status-word[data-tone="failed"]').waitFor()
+                expect(await request.locator('.approval-panel').count()).toBe(0)
+              }
             }
             await capture(page, layout, width, theme)
             await noHorizontalOverflow(page, home)
             const canvas = await paintedBackground(home)
             canvasByLayout.push(canvas)
-            expect(await paintedBackground(home.locator('.composer').first())).not.toBe(canvas)
+            const composer = home.locator('.composer').first()
+            if (layout === 'triage' || width < 768) expect(await paintedBackground(composer)).not.toBe(canvas)
+            else expect(await composer.evaluate(element => getComputedStyle(element).boxShadow)).not.toBe('none')
             const approval = home.locator('.approval-panel').first()
             const reviewSurface =
-              (await approval.getAttribute('data-document-review')) === null ? approval : approval.locator('.approval-preview')
+              layout === 'overview'
+                ? home.locator('.work-feature-material')
+                : (await approval.getAttribute('data-document-review')) === null
+                  ? approval
+                  : approval.locator('.approval-preview')
             expect(await paintedBackground(reviewSurface)).not.toBe(canvas)
             if (layout === 'overview' && width >= 768) {
               const navigation = page
