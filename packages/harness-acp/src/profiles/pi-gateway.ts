@@ -62,8 +62,10 @@ export default function (pi) {
     const known = catalog.filter(model => model.id === item.id && model.api === data.api);
     const bounds = new Map(known.map(model => [model.contextWindow + '/' + model.maxTokens, model]));
     const exact = bounds.size === 1 ? [...bounds.values()][0] : undefined;
-    const contextWindow = data.budget?.contextTokens ?? exact?.contextWindow;
-    const maxTokens = data.budget?.outputTokens ?? exact?.maxTokens;
+    // The service's own declaration comes before pi's catalogue; with no output bound from either, pi's documented default.
+    const declared = item.capabilities?.contextTokens;
+    const contextWindow = data.budget?.contextTokens ?? declared ?? exact?.contextWindow;
+    const maxTokens = data.budget?.outputTokens ?? exact?.maxTokens ?? (declared ? Math.min(16384, declared) : undefined);
     if (!Number.isSafeInteger(contextWindow) || !Number.isSafeInteger(maxTokens) || contextWindow < 1 || maxTokens < 1 || maxTokens > contextWindow) {
       if (item.id === data.selected) throw new Error('${MISSING}');
       continue;

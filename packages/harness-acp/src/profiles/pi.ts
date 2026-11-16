@@ -5,7 +5,7 @@ import { deliverPiGateway, PI_GATEWAY_PROVIDER, piGatewayBudget, piGatewayStartu
 
 export const piProfile: HarnessProfile = {
   presetId: 'pi',
-  version: 6,
+  version: 7,
   wire: 'pi',
   gateway: {
     via: 'launch',

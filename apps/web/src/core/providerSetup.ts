@@ -1,4 +1,11 @@
-import { escapeSecurityText, type HostCatalog, type ProviderKind, type ProviderPreset, type ProviderSettings } from '@latch/protocol'
+import {
+  escapeSecurityText,
+  type HostCatalog,
+  type ModelCapabilities,
+  type ProviderKind,
+  type ProviderPreset,
+  type ProviderSettings,
+} from '@latch/protocol'
 import { api, ApiError, ApiTimeoutError, errorMessage } from './api.ts'
 import { confirmationStore, withConfirmation, type ConfirmationPresenter } from './confirmations.ts'
 import { computerName, PROVIDER_COPY, safeTarget } from './securityCopy.ts'
@@ -270,9 +277,14 @@ export interface ProbeInput {
   providerId?: string
 }
 
-export interface CheckResult {
-  ok: true
+/** A model listing, with the context length the service reported for some of its models. */
+export interface ListedModels {
   models: string[]
+  contextTokens?: Record<string, number>
+}
+
+export interface CheckResult extends ListedModels {
+  ok: true
   latencyMs: number
 }
 
@@ -291,8 +303,8 @@ export function checkAddress(input: ProbeInput): Promise<CheckResult> {
 }
 
 /** Lists a saved service's models with its saved key. */
-export function listModels(providerId: string): Promise<{ models: string[] }> {
-  return api<{ models: string[] }>(`providers/${encodeURIComponent(providerId)}/models`, { method: 'POST', body: {}, timeoutMs: 20_000 })
+export function listModels(providerId: string): Promise<ListedModels> {
+  return api<ListedModels>(`providers/${encodeURIComponent(providerId)}/models`, { method: 'POST', body: {}, timeoutMs: 20_000 })
 }
 
 /**
@@ -345,6 +357,8 @@ export interface NewProvider {
   apiKey?: string
   models: string[]
   defaultModel: string
+  /** What the listing said of the chosen models (their context length), saved as the owner's declaration. */
+  modelCapabilities?: Record<string, ModelCapabilities>
   /** Desktop with local confirmation: confirm the address in the same request when it needs it. */
   confirmOrigin?: boolean
   addition?: { id: string; requestId: string }
@@ -361,6 +375,7 @@ export async function createProvider(input: NewProvider, options: ConfirmOptions
     models: input.models,
     defaultModel: input.models.includes(input.defaultModel) ? input.defaultModel : input.models[0],
     enabled: true,
+    ...(input.modelCapabilities && Object.keys(input.modelCapabilities).length ? { modelCapabilities: input.modelCapabilities } : {}),
     ...(input.apiKey ? { apiKey: input.apiKey } : {}),
     ...(input.confirmOrigin ? { confirmOrigin: true } : {}),
   }

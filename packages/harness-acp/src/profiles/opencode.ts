@@ -144,7 +144,7 @@ function withoutOwnPlugin(text: string): unknown {
 
 export const opencodeProfile: HarnessProfile = {
   presetId: 'opencode',
-  version: 6,
+  version: 7,
   // It lists `effort` only for a model with variants (2.x `config-option.ts`).
   thinkingPerModel: true,
   // An empty session runs no turn and calls no model.
@@ -188,6 +188,8 @@ export const opencodeProfile: HarnessProfile = {
                     output: ['text'],
                     reasoning: capabilities?.thinking?.length ? { supported: true, effort: capabilities.thinking } : { supported: false },
                   },
+                  // 2.x `Config.Model.Limit`: the window its compaction works against for a model it has no catalogue entry for.
+                  ...(capabilities?.contextTokens ? { limit: { context: capabilities.contextTokens } } : {}),
                 },
               ]),
             ),

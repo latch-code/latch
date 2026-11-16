@@ -1,4 +1,12 @@
-import { PROVIDER_PRESETS, isProviderKind, type ProviderKind, type ProviderSettings, type ProviderSummary } from '@latch/protocol'
+import {
+  MAX_CONTEXT_TOKENS,
+  MIN_CONTEXT_TOKENS,
+  PROVIDER_PRESETS,
+  isProviderKind,
+  type ProviderKind,
+  type ProviderSettings,
+  type ProviderSummary,
+} from '@latch/protocol'
 import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { createAnthropicPlugin } from './plugins/providers/anthropic/index.ts'
 import { anthropicWire } from './plugins/providers/anthropic-wire.ts'
@@ -255,7 +263,7 @@ function networkFailure(error: unknown, redacted: (text: string) => string): Pro
 export async function listProviderModels(
   input: ModelListInput,
   signal: AbortSignal,
-  options: { fetch: FetchLike; timeoutMs?: number },
+  options: { fetch: FetchLike; timeoutMs?: number; contextTokens?: Map<string, number> },
 ): Promise<string[]> {
   signal.throwIfAborted()
   if (/[\r\n]/u.test(input.apiKey)) throw new ProviderError('API Key 包含无效换行。', 'invalid-key')
@@ -265,10 +273,15 @@ export async function listProviderModels(
   const models = new Set<string>()
   const page: ModelPage = (url, headers) => fetchPage(options.fetch, url, headers, combined, redacted)
   try {
-    for (const { id } of await wires[input.kind].listModels(input.baseURL, input.apiKey, page)) {
+    for (const { id, contextTokens } of await wires[input.kind].listModels(input.baseURL, input.apiKey, page)) {
       const model = id.trim()
       // Store limits; unusable IDs are skipped rather than failing the whole list.
-      if (model && model.length <= 200 && !/[\u0000-\u001f\u007f]/u.test(model)) models.add(model)
+      if (model && model.length <= 200 && !/[\u0000-\u001f\u007f]/u.test(model)) {
+        models.add(model)
+        // Only a length a declaration could hold: the person sees it as a prefilled value they can change.
+        if (contextTokens !== undefined && contextTokens >= MIN_CONTEXT_TOKENS && contextTokens <= MAX_CONTEXT_TOKENS)
+          options.contextTokens?.set(model, contextTokens)
+      }
       if (models.size > MAX_LISTED_MODELS) throw new ProviderError('模型列表条目过多。', 'response-too-large')
     }
   } catch (error) {
@@ -284,7 +297,7 @@ export async function listProviderModels(
 export async function checkProvider(
   input: ModelListInput,
   signal: AbortSignal,
-  options: { fetch: FetchLike; timeoutMs?: number },
+  options: { fetch: FetchLike; timeoutMs?: number; contextTokens?: Map<string, number> },
 ): Promise<{ ok: true; models: string[]; latencyMs: number }> {
   const started = performance.now()
   const models = await listProviderModels(input, signal, options)

@@ -5,7 +5,9 @@ import { z } from 'zod'
 import {
   MAX_MODEL_FALLBACKS,
   MAX_SERVICE_CONCURRENCY,
+  MAX_CONTEXT_TOKENS,
   MAX_THINKING_LEVELS,
+  MIN_CONTEXT_TOKENS,
   MODEL_EFFORT,
   PROJECT_GLYPHS,
   PROVIDER_KINDS,
@@ -166,6 +168,12 @@ export const modelCapabilitiesSchema = z.strictObject({
     .min(1)
     .max(MAX_THINKING_LEVELS)
     .refine(levels => new Set(levels).size === levels.length, '思考深度不能重复')
+    .optional(),
+  contextTokens: z
+    .number()
+    .int('上下文长度必须是整数')
+    .min(MIN_CONTEXT_TOKENS, `上下文长度至少 ${MIN_CONTEXT_TOKENS}`)
+    .max(MAX_CONTEXT_TOKENS, `上下文长度至多 ${MAX_CONTEXT_TOKENS}`)
     .optional(),
 })
 const baseURL = z

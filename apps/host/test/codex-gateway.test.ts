@@ -358,3 +358,76 @@ it('offers a new session the thinking levels the service declared, before it sta
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it.each([
+  ['reports its own window', '0', 64_000],
+  ['reports none', '1', 64_000],
+])(
+  'opens a Codex thread with the context window the service declared for its model, and the session %s',
+  async (_case, noWindow, shown) => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-codex-window-'))
+    const bin = join(root, 'bin')
+    await mkdir(bin)
+    const command = join(bin, 'codex')
+    const log = join(root, 'agent.jsonl')
+    await writeFile(
+      command,
+      `#!/bin/sh\nexport FAKE_ACP_LOG='${log}' FAKE_CODEX_STATE='${join(root, 'threads.json')}' FAKE_CODEX_NO_CONTEXT_WINDOW='${noWindow}'\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`,
+    )
+    await chmod(command, 0o755)
+    const models = await startFakeModels({ replies: [{ text: 'small window' }] })
+    const host = await startTestHost({
+      demo: false,
+      dataDir: join(root, 'data'),
+      workspaceRoot: join(root, 'project'),
+      commandDirectories: () => [bin],
+      loginPrograms: (name: string) => (name === 'codex' ? command : undefined),
+      detectPreset: (preset: { id: string }) => (preset.id === 'codex' ? { found: true, path: command } : { found: false }),
+    })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const body = {
+        name: 'Small service',
+        kind: 'openai-responses',
+        baseURL: `${models.origin}/v1`,
+        apiKey: 'sk-test-small-window-service-0123456789',
+        models: ['small'],
+        defaultModel: 'small',
+        confirmOrigin: true,
+      }
+      // A window outside the bounds a declaration may hold is refused, not clamped.
+      const refused = await owner.request('providers', {
+        method: 'POST',
+        body: { ...body, modelCapabilities: { small: { contextTokens: 100 } } },
+      })
+      expect(refused.status).toBe(400)
+      const created = await owner.confirmed('providers', {
+        method: 'POST',
+        body: { ...body, modelCapabilities: { small: { contextTokens: 64_000 } } },
+      })
+      const provider = ((await created.json()) as { provider: ProviderSettings }).provider
+      expect(provider.modelCapabilities).toEqual({ small: { contextTokens: 64_000 } })
+      await owner.confirmed('agents', {
+        method: 'POST',
+        body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex', args: [], env: {} },
+      })
+      const start = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { harnessId: 'codex', prompt: 'hello', requestId: randomUUID(), model: { providerId: provider.id, model: 'small' } },
+      })
+      const detail = () => owner.json<TaskDetail>(`tasks/${start.sessionId}`)
+      await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'), { timeout: 10_000 })
+      const started = (await readFile(log, 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line) as { event: string; method?: string; params?: { config?: Record<string, unknown> } })
+        .find(event => event.event === 'recv' && event.method === 'thread/start')
+      expect(started?.params?.config?.model_context_window).toBe(64_000)
+      expect((await detail()).usageReport).toMatchObject({ contextSize: shown })
+    } finally {
+      await host.close()
+      await models.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)

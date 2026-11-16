@@ -1340,6 +1340,18 @@ export class AgentRuntime implements Bridge {
    * What a new session on a model of a service reported that follows the model, for drafts on the same pair: once per
    * session, from the first report on the route's own model, before the draft's other choices or the person's change it.
    */
+  /** The context window the person declared for the routed model the session runs now, if they declared one. */
+  private declaredContext(task: AcpTask, live: Live): number | undefined {
+    const route = task.acp.route
+    const lease = live.gateway
+    if (!route || !lease?.modelCapabilities) return undefined
+    const gateway = this.selection.profile?.gateway
+    const current = task.config?.find(item => item.category === 'model')?.currentValue
+    const valueOf = (id: string) => (gateway?.via === 'launch' && gateway.models ? gateway.models.value(id, route.wire) : id)
+    const model = (current === undefined ? undefined : lease.models.find(id => id === current || valueOf(id) === current)) ?? route.model
+    return lease.modelCapabilities[model]?.contextTokens
+  }
+
   private noteServiceOptions(task: AcpTask, options: SessionConfigOption[], lease: ModelGatewayLease | undefined): void {
     const route = task.acp.route
     const definitionHash = task.acp.definitionHash ?? task.acp.launchHash
@@ -6225,9 +6237,11 @@ export class AgentRuntime implements Bridge {
         const { used, size, cost } = parsed.data
         if (used === undefined && size === undefined && !cost) return
         const tokensOnly = task.acp.route && this.selection.profile?.gateway?.usage === 'tokens-only'
+        // The Harness's own figure first; on a route without one, the window the person declared for the model.
+        const window = !tokensOnly && size !== undefined ? size : this.declaredContext(task, live)
         task.usageReport = {
           ...(used !== undefined ? { contextUsed: used } : {}),
-          ...(!tokensOnly && size !== undefined ? { contextSize: size } : {}),
+          ...(window !== undefined ? { contextSize: window } : {}),
           ...(!tokensOnly && cost ? { cost: { amount: cost.amount, currency: cost.currency } } : {}),
           at: this.now(),
         }

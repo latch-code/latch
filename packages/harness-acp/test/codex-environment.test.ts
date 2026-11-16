@@ -96,6 +96,49 @@ describe('Codex gateway command environment', () => {
     },
   )
 
+  it('gives a new and a resumed thread the context window declared for its routed model, and none when undeclared', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'latch-codex-window-'))
+    const log = join(cwd, 'wire.jsonl')
+    const open = async (model: string) => {
+      const wire = CodexWire.spawn(
+        {
+          command: process.execPath,
+          args: [FAKE_CODEX_APP_SERVER],
+          cwd,
+          env: { FAKE_ACP_LOG: log, FAKE_CODEX_STATE: join(cwd, 'state.json'), FAKE_CODEX_SHELL_ENVIRONMENT: '{}' },
+          maxLineBytes: 1 << 20,
+          redact: text => text,
+        },
+        { request: async () => ({}), notification: () => {}, exit: () => {} },
+        { model, models: ['small', 'plain'], modelCapabilities: { small: { contextTokens: 64_000 } } },
+      )
+      try {
+        await wire.request('initialize', {}, 5_000)
+        const opened = (await wire.request('session/new', { cwd }, 5_000)) as { sessionId: string }
+        await wire.request('session/resume', { cwd, sessionId: opened.sessionId }, 5_000)
+      } finally {
+        await wire.stop('stop', 100)
+      }
+    }
+    try {
+      await open('small')
+      await open('plain')
+      const threads = (await readFile(log, 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line) as { event: string; method?: string; params?: { model?: string; config?: Record<string, unknown> } })
+        .filter(event => event.event === 'recv' && (event.method === 'thread/start' || event.method === 'thread/resume'))
+      expect(threads.map(event => [event.params?.model, event.params?.config?.model_context_window])).toEqual([
+        ['small', 64_000],
+        ['small', 64_000],
+        ['plain', undefined],
+        ['plain', undefined],
+      ])
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('opens no thread when the effective filters are malformed', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'latch-codex-bad-filters-'))
     const log = join(cwd, 'wire.jsonl')

@@ -21,7 +21,7 @@ const MINIMUM_VERSION = {
 
 export const dshProfile: HarnessProfile = {
   presetId: 'dsh',
-  version: 3,
+  version: 4,
   processMode: { prepare: prepareDshMode, read: readDshMode },
   // dsh-acp offers `reasoning_effort` when the exact model declares one (its README).
   thinkingPerModel: true,
@@ -55,6 +55,8 @@ export const dshProfile: HarnessProfile = {
                   id,
                   name: id,
                   input: capabilities?.vision ? ['text', 'image'] : ['text'],
+                  // llm-pi-ai's own model field; without it the provider's `defaultContextWindow` (1,000,000) applies.
+                  ...(capabilities?.contextTokens ? { contextWindow: capabilities.contextTokens } : {}),
                   reasoningEfforts: capabilities?.thinking?.length
                     ? Object.fromEntries(capabilities.thinking.map(level => [level, level === 'off' ? null : level]))
                     : false,

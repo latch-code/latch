@@ -15,6 +15,7 @@ import {
   sseData,
   toolArguments,
   turnStart,
+  type ListedModel,
   type ModelPage,
   type ModelWire,
   type WireRequest,
@@ -430,10 +431,10 @@ const listingSchema = z.object({
 })
 
 /** Every page of `/v1/models`, up to ten. */
-async function listAnthropicModels(baseURL: string, apiKey: string, page: ModelPage): Promise<Array<{ id: string }>> {
+async function listAnthropicModels(baseURL: string, apiKey: string, page: ModelPage): Promise<ListedModel[]> {
   const endpoint = new URL(anthropicEndpoint(baseURL, '/models'))
   endpoint.searchParams.set('limit', '1000')
-  const models: Array<{ id: string }> = []
+  const models: ListedModel[] = []
   for (let index = 0; index < MAX_LIST_PAGES; index++) {
     const result = listingSchema.safeParse(await page(endpoint.toString(), anthropicHeaders(apiKey)))
     if (!result.success) throw invalidListing()

@@ -971,6 +971,29 @@ describe('Host provider helpers', () => {
     ])
   })
 
+  it('reads a listed context length from the fields services use, and none that a declaration could not hold', async () => {
+    const endpoint = await listen((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          data: [
+            { id: 'router', context_length: 131_072 },
+            { id: 'groq', context_window: 32_768 },
+            { id: 'vllm', max_model_len: 65_536 },
+            { id: 'tiny', context_length: 512 },
+            { id: 'odd', context_length: '128k' },
+            { id: 'plain' },
+          ],
+        }),
+      )
+    })
+    const contextTokens = new Map<string, number>()
+    expect(
+      await listProviderModels({ kind: 'openai-compatible', baseURL: endpoint, apiKey: '' }, freshSignal(), { ...direct, contextTokens }),
+    ).toEqual(['groq', 'odd', 'plain', 'router', 'tiny', 'vllm'])
+    expect(Object.fromEntries(contextTokens)).toEqual({ router: 131_072, groq: 32_768, vllm: 65_536 })
+  })
+
   it('pages through Anthropic models with native headers', async () => {
     const seen: Array<{ url: string | undefined; key: unknown; version: unknown }> = []
     const endpoint = await listen((request, response) => {

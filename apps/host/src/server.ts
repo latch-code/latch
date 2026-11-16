@@ -4135,10 +4135,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!res.writableFinished) controller.abort(new Error('Client disconnected'))
       }
       res.once('close', abort)
+      // What the listing says of each model's context length, for the page to prefill; never saved by the Host itself.
+      const contextTokens = new Map<string, number>()
+      const listed = (result: { models: string[] }) =>
+        contextTokens.size ? { ...result, contextTokens: Object.fromEntries(contextTokens) } : result
       try {
-        return check
-          ? await checkProvider(input, controller.signal, { fetch })
-          : { models: await listProviderModels(input, controller.signal, { fetch }) }
+        return listed(
+          check
+            ? await checkProvider(input, controller.signal, { fetch, contextTokens })
+            : { models: await listProviderModels(input, controller.signal, { fetch, contextTokens }) },
+        )
       } catch (error) {
         if (error instanceof AppError) throw error
         const code = codeOf(error) ?? 'provider-error'

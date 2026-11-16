@@ -670,7 +670,15 @@ export class CodexWire implements AgentWire {
         // A configuration error may quote private values. Only the fact that no safe policy was read leaves this wire.
       }
       if (!environment) throw new RpcError(RPC.internal, '无法读取 Codex 的命令环境规则，未打开会话。')
-      settings.config = { ...(isRecord(settings.config) ? settings.config : {}), shell_environment_policy: environment }
+      // `model_context_window`: the window Codex assumes for the thread's model, which it knows nothing of on Latch's
+      // provider; without it Codex takes a default far larger than many services' models and compacts only after the
+      // service refuses a turn. Its automatic compaction keeps its own default relative to this window.
+      const contextTokens = this.route.modelCapabilities?.[this.route.model]?.contextTokens
+      settings.config = {
+        ...(isRecord(settings.config) ? settings.config : {}),
+        shell_environment_policy: environment,
+        ...(contextTokens ? { model_context_window: contextTokens } : {}),
+      }
       // A model chosen in Latch is durable even before the next turn records it in Codex's own thread.
       settings.model = this.route.model
     }

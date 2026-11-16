@@ -945,6 +945,12 @@
 .model-row .settings-row-name {
   flex-wrap: nowrap;
 }
+/* The model's declared context length beside its thinking: a narrow number field. */
+.model-context {
+  inline-size: 9ch;
+  min-inline-size: 0;
+  font-variant-numeric: tabular-nums;
+}
 /* The model's thinking levels, under its ID so the row's end keeps only the image switch and remove. */
 .model-thinking {
   display: flex;

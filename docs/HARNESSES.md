@@ -606,7 +606,7 @@ Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额
 | `current_mode_update` / `config_option_update` | 更新记录的模式；被放宽时见「权限模式」 |
 | `session_info_update.title` | 会话标题（用户重命名优先） |
 | `PromptResponse.usage` | 会话与这一轮的用量，按 profile 的 `usageScope`（见「通知与压缩」的用量） |
-| `usage_update` | `TaskDetail.usageReport`：上下文已用、窗口大小与费用，整体替换；不算可见输出，不计入 tokens |
+| `usage_update` | `TaskDetail.usageReport`：上下文已用、窗口大小与费用，整体替换；不算可见输出，不计入 tokens。经网关的会话没报窗口大小时，用服务为当前模型声明的上下文长度（[MODEL-GATEWAY](MODEL-GATEWAY.md#凭据)） |
 
 - 未知的更新类型被忽略。
 - 上限：单条工具文本 64 KiB；每个工具最多 32 个 diff，原内容与新内容各截到 128 KiB；单行协议消息超过 64 MiB 终止进程。

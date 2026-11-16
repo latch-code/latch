@@ -28,7 +28,9 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 - 凭据只由 runtime 注入 profile 允许的环境变量（`tokenEnv`，或按协议的 `tokenEnvByWire`），codex-acp 经 ACP 头字段。它不进参数、私有文件、URL、日志、审计、SSE、启动预览与持久化会话。
 - 作废：进程退出、Host 关闭，或服务的协议、地址、密钥、可用性、模型清单、声明能力变化。下一轮重新准备进程与凭据；服务不能用了就明确失败。
 - 会话不能换服务，同服务内只提供凭据允许的模型。
-- Host 保存的 vision/thinking 声明随租约（`ModelGatewayLease.modelCapabilities`）交给 profile，不从模型名猜图片、思考、价格或容量。
+- Host 保存的 vision/thinking/上下文长度声明随租约（`ModelGatewayLease.modelCapabilities`）交给 profile，不从模型名猜图片、思考、价格或容量。
+
+**上下文长度。** 设置 › 模型 给每个模型一个可选的数字（`modelCapabilities[model].contextTokens`，1024–16777216，超出 400）。服务的 `/models` 在 `context_length`、`context_window` 或 `max_model_len` 里报了长度时，从列表加入的模型预填它，人可以改；Anthropic 的列表不报。各 Harness 怎样收到见下表的「上下文」。Harness 自己不报窗口大小时，会话的上下文占用以这个数为分母（`TaskDetail.usageReport.contextSize`）。
 
 工具网关的 `lbt1.` 令牌是另一套：每个 `latch-mcp` 桥一个，经 0600 的令牌文件交给桥，不进参数与环境，Host 只存哈希（[MCP.md](MCP.md#latch-mcp-桥)）。
 
@@ -130,17 +132,17 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 
 各 Harness 说的协议、最低版本与限制在 [HARNESSES.md](HARNESSES.md#经-latch-使用模型服务) 的表里（来自 profile 的 `gateway`）。这里是接线：凭据放在哪、工具子进程怎样拿不到它。
 
-| Harness | 接线 | 凭据 | 工具子进程 |
-| --- | --- | --- | --- |
-| Codex 直连 | 启动参数里的自定义 provider `latch`，只有地址、变量名与公开选项 | `LMG_TOKEN` | 线程 config 的环境过滤规则排除它 |
-| codex-acp | ACP `providers/set`，只在适配器声明并列出该 provider 与 API 类型时 | ACP 头字段 | — |
-| OpenCode | `OPENCODE_CONFIG_CONTENT` 里的私有 provider `latch` 与会话私有插件 | `LMG_TOKEN` | 插件清空它的值 |
-| DeepSeek Harness | 私有 `--patch`：provider `latch-gateway`、ACP 与默认模型 | `LMG_TOKEN` | dsh 自己清除敏感变量 |
-| Claude Agent | 官方环境变量与会话的 `modelPicker` | `ANTHROPIC_AUTH_TOKEN` | `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` |
-| pi | 私有扩展调用 `registerProvider`，只在当前进程 | `LMG_TOKEN`，扩展读入内存 | 从继承环境删除 |
-| Qwen Code | `QWEN_CODE_SYSTEM_SETTINGS_PATH` 指向会话私有系统设置，条目 `envKey: LMG_TOKEN` | `LMG_TOKEN` | 继承 |
-| goose | 只有环境变量 | `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`（它的 provider 规定） | 继承 |
-| Grok Build | `GROK_HOME` 指向会话私有的家，`config.toml` 里 `env_key = "LMG_TOKEN"` | `LMG_TOKEN` | 继承 |
+| Harness | 接线 | 凭据 | 工具子进程 | 上下文 |
+| --- | --- | --- | --- | --- |
+| Codex 直连 | 启动参数里的自定义 provider `latch`，只有地址、变量名与公开选项 | `LMG_TOKEN` | 线程 config 的环境过滤规则排除它 | 线程 config 的 `model_context_window` |
+| codex-acp | ACP `providers/set`，只在适配器声明并列出该 provider 与 API 类型时 | ACP 头字段 | — | 不交 |
+| OpenCode | `OPENCODE_CONFIG_CONTENT` 里的私有 provider `latch` 与会话私有插件 | `LMG_TOKEN` | 插件清空它的值 | 模型的 `limit.context` |
+| DeepSeek Harness | 私有 `--patch`：provider `latch-gateway`、ACP 与默认模型 | `LMG_TOKEN` | dsh 自己清除敏感变量 | llm-pi-ai 模型的 `contextWindow` |
+| Claude Agent | 官方环境变量与会话的 `modelPicker` | `ANTHROPIC_AUTH_TOKEN` | `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` | 不交 |
+| pi | 私有扩展调用 `registerProvider`，只在当前进程 | `LMG_TOKEN`，扩展读入内存 | 从继承环境删除 | 模型的 `contextWindow`（见 pi 运行预算） |
+| Qwen Code | `QWEN_CODE_SYSTEM_SETTINGS_PATH` 指向会话私有系统设置，条目 `envKey: LMG_TOKEN` | `LMG_TOKEN` | 继承 | 不交 |
+| goose | 只有环境变量 | `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`（它的 provider 规定） | 继承 | 不交 |
+| Grok Build | `GROK_HOME` 指向会话私有的家，`config.toml` 里 `env_key = "LMG_TOKEN"` | `LMG_TOKEN` | 继承 | 不交 |
 
 Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）；未知的自定义命令同样。订阅登录不进入网关。凭据被继承的后果见 [HARNESSES.md](HARNESSES.md#经-latch-使用模型服务)。
 
@@ -162,6 +164,7 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 - 模型列表取服务声明，允许 Codex 原生目录之外的模型。目录外模型用 Codex 自己的后备描述；Latch 不改模型 ID 去套另一个型号的能力，也不把后备描述里的容量当作服务声明。
 - **思考。** 「默认」指模型服务的默认。wire 提供的思考选项由 `gatewayEffortOption` 按服务声明生成，Host 用同一个函数给新会话草稿投影（[HARNESSES.md](HARNESSES.md#开始前的选项)），所以开始前就能选。wire 用租约的 `setThinking(model, effort)` 登记当前模型的意图：`null` 时出站只删这个模型请求的 `reasoning.effort`（Codex 自己的 `model_reasoning_effort` 可能补上一个值），其余字段不动；显式选择只允许服务声明的档位，实际请求必须相符。没登记意图的模型按原规则校验。
 - 显式选择随会话 config 持久化，恢复后优先于 Codex 的旧配置。运行中的选择只保存下一轮意图；换模型清掉原选择。尚未应用的改档不能用 compact 绕过上下文核对。
+- **上下文长度。** 线程开始与恢复时，所选模型声明了长度就写进线程 config 的 `model_context_window`（Codex 配置参考：「Context window tokens available to the active model」）；`model_auto_compact_token_limit` 不写，自动压缩用 Codex 相对这个窗口的默认。不写时 Codex 对它不认识的模型假定 258,400，只在服务以上下文溢出拒绝一轮后才压缩。0.169 实测：声明 64,000 时它报告 `modelContextWindow` 60,800（窗口的 95%），用量过线后在下一轮发出之前先压缩。窗口按线程打开时的模型定下：会话中换到声明了另一长度的模型，下次打开线程才生效。
 - 原生委派的成员继承父轮的 provider 与进程内凭据；角色改用的模型超出会话的服务模型名单时网关拒绝。成员请求与父轮共享会话用量，账本没有成员 ID（[Codex 的 Agent 团队](HARNESSES.md#codex-的-agent-团队)）。
 
 ### OpenCode
@@ -221,9 +224,9 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 
 pi 的模型注册 API 必须有输入上下文与输出上限。
 
-- 私有扩展优先用已安装 pi 的公开目录里模型 ID 与协议都精确匹配、且边界一致的数值；没有精确值时不推测。
+- 上下文按「运行预算、服务为模型声明的上下文长度、已安装 pi 的公开目录里模型 ID 与协议都精确匹配且边界一致的数值」取第一个；输出上限按「运行预算、目录」，只有声明了上下文时才退到 pi 文档的默认 16384（不超过上下文）。都没有时不推测。
 - 可以在这个 Harness 的高级环境里写 `PI_GATEWAY_CONTEXT_TOKENS`（1–16777216）与 `PI_GATEWAY_OUTPUT_TOKENS`（1–1048576）：两个都要，都是正整数，输出不大于上下文，否则 400 `invalid-gateway-budget`。改动后启动指纹变化。
-- 缺少有效预算的未选模型不注册；所选模型缺少预算时拒绝开始。
+- 缺少有效上限的未选模型不注册；所选模型缺少时拒绝开始。
 - 这是适配器的运行预算，不是模型的标称容量，不产生价格或余额。pi 强制要求的价格字段只是内部占位；经服务的会话不把它们或运行预算变成 Agent 报告的费用与上下文容量。
 
 扩展的其余规则：
@@ -413,6 +416,7 @@ Latch 没有内置价格表，也不从 token 猜费用。花费只在两种情�
 ## 尚未实现与没有核对的
 
 - Chat Completions 入口到其他协议的转换尚未实现。
+- codex-acp、Claude Agent、Qwen Code、goose 与 Grok Build 不收声明的上下文长度：尚未核对它们给自定义模型定窗口的字段。OpenCode、pi 与 DeepSeek Harness 只按配置字段交付，没有对真实程序看它们是否按这个窗口压缩。
 - Responses 的 `tool_search` 尚未转换（见「转换的共同规则」）。
 - 预算拒绝（402 `budget-exceeded`）没有对着真实的 Harness 看它是否停下而不是重试。
 - 真实服务的 `usage.cost` 字段与币种只用本地假服务核对过。

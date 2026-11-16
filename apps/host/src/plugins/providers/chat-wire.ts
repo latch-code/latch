@@ -8,10 +8,12 @@ import {
   ProviderError,
   errorMessage,
   invalidListing,
+  listedModelSchema,
   parseBaseURL,
   sseData,
   toolArguments,
   toolImageLabel,
+  type ListedModel,
   type ModelPage,
   type ModelWire,
   type WireRequest,
@@ -246,13 +248,10 @@ async function* decodeChatStream(
 }
 
 // Some local servers answer with a bare array.
-const listingSchema = z.union([
-  z.object({ data: z.array(z.object({ id: z.string() })) }).transform(page => page.data),
-  z.array(z.object({ id: z.string() })),
-])
+const listingSchema = z.union([z.object({ data: z.array(listedModelSchema) }).transform(page => page.data), z.array(listedModelSchema)])
 
 /** One page: the service's `/models`, which Chat Completions and Responses services share. */
-export async function listChatModels(baseURL: string, apiKey: string, page: ModelPage): Promise<Array<{ id: string }>> {
+export async function listChatModels(baseURL: string, apiKey: string, page: ModelPage): Promise<ListedModel[]> {
   const listed = listingSchema.safeParse(await page(chatEndpoint(baseURL, '/models'), chatHeaders(apiKey)))
   if (!listed.success) throw invalidListing()
   return listed.data

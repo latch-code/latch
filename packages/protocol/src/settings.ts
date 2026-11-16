@@ -17,7 +17,13 @@ export interface ModelCapabilities {
   vision?: boolean
   /** The thinking levels the model accepts, weakest first, as sent on the wire. Absent: none is ever sent. */
   thinking?: string[]
+  /** The model's context window in tokens, given to a Harness that runs it through the gateway. Absent: unknown. */
+  contextTokens?: number
 }
+
+/** The bounds of a declared context window. */
+export const MIN_CONTEXT_TOKENS = 1024
+export const MAX_CONTEXT_TOKENS = 16_777_216
 
 /**
  * The protocol a model service speaks: OpenAI's Chat Completions (`openai-compatible`, a name kept for saved data),

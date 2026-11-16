@@ -117,7 +117,8 @@ sources:
 
 Latch 内置直接调模型服务，思考深度来自 设置 › 模型 里对每个模型的声明：`modelCapabilities[model].thinking`，由弱到强的上线值。
 
-- 服务的 `/models` 只给 ID，Latch 不按模型名猜。设置页按协议给几组常见档位，默认不设置。
+- 服务的 `/models` 不报思考档位，Latch 不按模型名猜。设置页按协议给几组常见档位，默认不设置。
+- 同一行有一个可选的上下文长度（token），交给经网关的 Harness；列表报了长度时预填（[MODEL-GATEWAY](MODEL-GATEWAY.md#凭据)）。
 - 没有声明时思考写「默认」，点开说明去哪里设置。
 
 **选择。** 随 `ModelRef.effort` 走，与模型一样「下一条」生效，两个菜单都有「撤销切换」。

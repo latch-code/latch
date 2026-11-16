@@ -72,9 +72,28 @@ export interface ModelWire {
     safeError: (text: string) => string,
     signer: string,
   ): AsyncIterable<ModelDelta>
-  /** Every model ID the service lists, over as many pages as the protocol has. */
-  listModels(baseURL: string, apiKey: string, page: ModelPage): Promise<Array<{ id: string }>>
+  /** Every model ID the service lists, over as many pages as the protocol has, with the context length it reports. */
+  listModels(baseURL: string, apiKey: string, page: ModelPage): Promise<ListedModel[]>
 }
+
+/** A listed model; `contextTokens` only where the service's listing names one in a field Latch knows. */
+export interface ListedModel {
+  id: string
+  contextTokens?: number
+}
+
+const tokenCount = z.number().int().positive().optional().catch(undefined)
+
+/**
+ * The fields services list a model's context length in: `context_length` (OpenRouter, vLLM-compatible servers),
+ * `context_window` (Groq) and `max_model_len` (vLLM). The first one present is taken; nothing is guessed from an ID.
+ */
+export const listedModelSchema = z
+  .object({ id: z.string(), context_length: tokenCount, context_window: tokenCount, max_model_len: tokenCount })
+  .transform(({ id, context_length, context_window, max_model_len }): ListedModel => {
+    const contextTokens = context_length ?? context_window ?? max_model_len
+    return contextTokens === undefined ? { id } : { id, contextTokens }
+  })
 
 /** An invalid model listing, in the same words for every protocol. */
 export const invalidListing = (): ProviderError => new ProviderError('模型列表格式无效。', 'invalid-response')

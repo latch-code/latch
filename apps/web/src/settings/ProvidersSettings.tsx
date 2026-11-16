@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode, typ
 import { createPortal } from 'react-dom'
 import { KeyRound, Network } from 'lucide-react'
 import {
+  MAX_CONTEXT_TOKENS,
+  MIN_CONTEXT_TOKENS,
   PROVIDER_KINDS,
   type ModelCapabilities,
   type ModelFallback,
@@ -30,6 +32,7 @@ import {
   trackedPresenter,
   updateProvider,
   type Destination,
+  type ListedModels,
   type NewProvider,
   type ProbeFailure,
   type ProvidersResponse,
@@ -125,8 +128,10 @@ export function PresetGrid({
  * count) and fetching the model list. Each failure becomes one sentence with its kind; a local address is not an
  * error, it is what the address confirmation allows.
  */
-function useProbe(probe: () => Promise<{ models: string[]; latencyMs?: number }>, onKeyMismatch?: () => void) {
+function useProbe(probe: () => Promise<ListedModels & { latencyMs?: number }>, onKeyMismatch?: () => void) {
   const [busy, setBusy] = useState<null | 'check' | 'fetch'>(null)
+  // The context length the last listing reported per model, read at once by a save that follows in the same handler.
+  const listedContext = useRef<Record<string, number>>({})
   const [check, setCheck] = useState<CheckState | null>(null)
   const [fetched, setFetched] = useState<string[] | null>(null)
   const [failure, setFailure] = useState<ProbeFailure | null>(null)
@@ -146,6 +151,7 @@ function useProbe(probe: () => Promise<{ models: string[]; latencyMs?: number }>
     const started = performance.now()
     try {
       const result = await probe()
+      listedContext.current = result.contextTokens ?? {}
       setCheck({ ok: true, latencyMs: result.latencyMs ?? Math.round(performance.now() - started), count: result.models.length })
       return result.models
     } catch (cause) {
@@ -161,7 +167,8 @@ function useProbe(probe: () => Promise<{ models: string[]; latencyMs?: number }>
     setFailure(null)
     last.current = null
     try {
-      const { models } = await probe()
+      const { models, contextTokens } = await probe()
+      listedContext.current = contextTokens ?? {}
       setFetched(models)
       return models
     } catch (cause) {
@@ -177,7 +184,10 @@ function useProbe(probe: () => Promise<{ models: string[]; latencyMs?: number }>
     setFetched(null)
     setFailure(null)
   }
-  return { busy, check, fetched, failure, runCheck, fetchModels, setFetched, reset, lastFailure: () => last.current }
+  /** What the last listing said of `model`'s context length, to prefill its declaration when it is added. */
+  const listedContextOf = (model: string): number | undefined =>
+    Object.hasOwn(listedContext.current, model) ? listedContext.current[model] : undefined
+  return { busy, check, fetched, failure, runCheck, fetchModels, setFetched, reset, listedContextOf, lastFailure: () => last.current }
 }
 
 /**
@@ -366,6 +376,7 @@ function ModelsGroups({
   onVision,
   kind,
   onThinking,
+  onContext,
   fallbacks,
   services,
   onFallbacks,
@@ -391,6 +402,8 @@ function ModelsGroups({
   /** The service's protocol, which decides the level sets on offer. */
   kind: ProviderKind
   onThinking: (model: string, levels: string[] | undefined) => void
+  /** The model's declared context length; absent on the add form, which declares only what the listing said. */
+  onContext?: (model: string, contextTokens: number | undefined) => void
   /** 「出错时改用」 by model, with the saved services their entries name. Absent on the add form, which has nothing saved yet. */
   fallbacks?: Record<string, ModelFallback[]>
   services?: readonly Pick<ProviderSettings, 'id' | 'name'>[]
@@ -466,6 +479,16 @@ function ModelsGroups({
                     onThinking(model, levels)
                   }}
                 />
+                {onContext && (
+                  <ContextField
+                    model={model}
+                    value={modelCapabilities?.[model]?.contextTokens}
+                    disabled={disabled}
+                    onChange={contextTokens => {
+                      onContext(model, contextTokens)
+                    }}
+                  />
+                )}
                 {fallbacks?.[model]?.length ? (
                   <span className="model-fallback-note">
                     出错时改用 {fallbackLabel(fallbacks[model]![0]!, services ?? [])}
@@ -821,6 +844,12 @@ export function ProviderAddForm({
       baseURL,
       models: chosen,
       defaultModel: choice,
+      modelCapabilities: Object.fromEntries(
+        chosen.flatMap(model => {
+          const contextTokens = probe.listedContextOf(model)
+          return contextTokens === undefined ? [] : [[model, { contextTokens }]]
+        }),
+      ),
       ...(typedKey ? { apiKey: typedKey } : {}),
       ...(abilities.confirm ? { confirmOrigin: true } : {}),
     }
@@ -1067,6 +1096,61 @@ export function ProviderAddForm({
       <InlineConfirm active={saving || confirming} rank={2} />
       {footer ? createPortal(actions, footer) : footer === undefined && <div className="settings-actions">{actions}</div>}
     </Form>
+  )
+}
+
+/**
+ * One model's context length in tokens, typed as a number: saved when it is left or Enter is pressed, cleared when
+ * emptied. A value outside the Host's bounds goes back to the saved one.
+ */
+function ContextField({
+  model,
+  value,
+  disabled,
+  onChange,
+}: {
+  model: string
+  value: number | undefined
+  disabled: boolean
+  onChange: (contextTokens: number | undefined) => void
+}) {
+  const [text, setText] = useState(value === undefined ? '' : String(value))
+  useEffect(() => {
+    setText(value === undefined ? '' : String(value))
+  }, [value])
+  const commit = () => {
+    const trimmed = text.trim().replace(/[,_\s]/gu, '')
+    if (trimmed === '') {
+      if (value !== undefined) onChange(undefined)
+      return
+    }
+    const parsed = /^[0-9]{1,9}$/u.test(trimmed) ? Number(trimmed) : Number.NaN
+    if (!Number.isSafeInteger(parsed) || parsed < MIN_CONTEXT_TOKENS || parsed > MAX_CONTEXT_TOKENS) {
+      setText(value === undefined ? '' : String(value))
+      return
+    }
+    if (parsed !== value) onChange(parsed)
+  }
+  return (
+    <input
+      className="ui-input model-context"
+      inputMode="numeric"
+      aria-label={`${model} 的上下文长度（token）`}
+      title="上下文长度（token）"
+      placeholder="上下文"
+      value={text}
+      disabled={disabled}
+      onChange={event => {
+        setText(event.target.value)
+      }}
+      onBlur={commit}
+      onKeyDown={event => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          commit()
+        }
+      }}
+    />
   )
 }
 
@@ -1513,7 +1597,16 @@ export function ProviderPage({
         }}
         onRemove={removeModel}
         onAdd={model => {
-          apply({ models: [...provider.models, model] })
+          const contextTokens = probe.listedContextOf(model)
+          apply({
+            models: [...provider.models, model],
+            ...(contextTokens !== undefined && provider.modelCapabilities?.[model]?.contextTokens === undefined
+              ? { modelCapabilities: withCapability(provider.modelCapabilities, model, { contextTokens }) }
+              : {}),
+          })
+        }}
+        onContext={(model, contextTokens) => {
+          apply({ modelCapabilities: withCapability(provider.modelCapabilities, model, { contextTokens }) })
         }}
         fallbacks={provider.fallbacks}
         services={data.providers}

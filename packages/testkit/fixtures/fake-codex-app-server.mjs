@@ -921,7 +921,8 @@ async function runTurn(input) {
         outputTokens: 10,
         reasoningOutputTokens: 0,
       },
-      modelContextWindow: 200000,
+      // The thread's configured window; FAKE_CODEX_NO_CONTEXT_WINDOW: none reported, as for a model Codex cannot size.
+      ...(env.FAKE_CODEX_NO_CONTEXT_WINDOW === '1' ? {} : { modelContextWindow: threadWindow ?? 200000 }),
     },
   })
   const status = outcome === 'interrupted' ? 'interrupted' : typeof outcome === 'object' ? outcome.status : 'completed'
@@ -959,6 +960,8 @@ function opened(record) {
 const ownMcp = env.FAKE_CODEX_MCP ? JSON.parse(env.FAKE_CODEX_MCP) : []
 /** The thread's Latch servers, which Codex lists beside its own. */
 let threadMcp = []
+/** The `model_context_window` the thread was opened or resumed with. */
+let threadWindow
 
 function announceMcp(threadId) {
   setTimeout(() => {
@@ -1098,6 +1101,7 @@ async function handle(method, params) {
       }
       save(thread)
       threadMcp = Object.keys(params.config?.mcp_servers ?? {})
+      threadWindow = params.config?.model_context_window
       announceMcp(thread.id)
       return opened(thread)
     }
@@ -1112,6 +1116,7 @@ async function handle(method, params) {
         save(thread)
       }
       threadMcp = Object.keys(params.config?.mcp_servers ?? {})
+      threadWindow = params.config?.model_context_window
       announceMcp(found.id)
       return opened(found)
     }

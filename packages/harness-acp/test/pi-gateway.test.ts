@@ -128,3 +128,55 @@ it.each(['chat-completions', 'responses', 'anthropic-messages'] as const)(
     }
   },
 )
+
+it('sizes a model the catalogue does not know by its declared window, with pi’s default output bound', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-pi-gateway-declared-'))
+  const file = join(root, 'pi-gateway.mjs')
+  const url = pathToFileURL(file).href
+  try {
+    const module = join(root, 'node_modules', '@earendil-works', 'pi-ai')
+    await mkdir(module, { recursive: true })
+    await writeFile(
+      join(module, 'package.json'),
+      JSON.stringify({
+        type: 'module',
+        exports: { './providers/all': './catalog.mjs', './models': './models.mjs', './compat': './stream.mjs' },
+      }),
+    )
+    await writeFile(join(module, 'catalog.mjs'), 'export const getBuiltinProviders = () => []; export const getBuiltinModels = () => [];')
+    await writeFile(join(module, 'models.mjs'), 'export const clampThinkingLevel = (_model, level) => level;')
+    await writeFile(
+      join(module, 'stream.mjs'),
+      'const api = () => ({}); export { api as openAICompletionsApi, api as openAIResponsesApi, api as anthropicMessagesApi };',
+    )
+    const launch = deliverPiGateway(
+      {
+        baseURL: 'http://127.0.0.1:1234',
+        file: name => join(root, name),
+        models: [
+          { id: 'declared', capabilities: { contextTokens: 64_000 } },
+          { id: 'tiny', capabilities: { contextTokens: 8_192 } },
+          { id: 'unknown' },
+        ],
+      },
+      { providerId: 'service', model: 'declared', wire: 'chat-completions', origin: 'https://example.invalid' },
+    )
+    await writeFile(file, launch.files!['pi-gateway.ts']!)
+    await writeFile(join(root, 'pi-gateway.json'), launch.files!['pi-gateway.json']!)
+    const extension = (await import(url)) as { default: (pi: object) => void }
+    const registerProvider = vi.fn()
+    vi.stubEnv('LMG_TOKEN', `lmg1.${'d'.repeat(43)}`)
+    extension.default({ registerProvider })
+    const models = (registerProvider.mock.calls[0]![1] as { models: Array<{ id: string; contextWindow: number; maxTokens: number }> })
+      .models
+    // A model with neither a declaration nor a catalogue entry is left out, as before.
+    expect(models.map(({ id, contextWindow, maxTokens }) => ({ id, contextWindow, maxTokens }))).toEqual([
+      { id: 'declared', contextWindow: 64_000, maxTokens: 16_384 },
+      { id: 'tiny', contextWindow: 8_192, maxTokens: 8_192 },
+    ])
+  } finally {
+    vi.unstubAllEnvs()
+    Reflect.deleteProperty(globalThis, Symbol.for(`${url}:gateway-token`))
+    await rm(root, { recursive: true, force: true })
+  }
+})
