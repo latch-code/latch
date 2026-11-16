@@ -87,14 +87,19 @@
   transform: none !important;
 }
 :where([data-secure] :not(.sr-only, svg, svg *, dialog)) {
-  opacity: 1 !important;
   transform: none !important;
+}
+/* xterm hides its IME input and paints the cursor and ANSI backgrounds inside its own viewport. */
+:where([data-secure] :not(.sr-only, svg, svg *, dialog, .terminal-panel[data-secure] .terminal-screen .xterm *)) {
+  opacity: 1 !important;
 }
 /*
  * No part has a background of its own unless it is pinned below or is a layer (a popover, a tooltip, a sheet), so a
  * background painted from outside cannot cover or tint the words.
  */
-:where([data-secure] :not(svg, svg *, dialog, [popover], [popover] *, .ui-sheet *)) {
+:where(
+  [data-secure] :not(svg, svg *, dialog, [popover], [popover] *, .ui-sheet *, .terminal-panel[data-secure] .terminal-screen .xterm *)
+) {
   background-color: transparent !important;
 }
 :where([data-secure] :not(.sr-only, svg *)) {
