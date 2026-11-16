@@ -28,7 +28,6 @@
 @import './overlays.css' layer(app);
 @import './settings.css' layer(app);
 @import './first-setup.css' layer(app);
-@import './host-quota.css' layer(app);
 @import './customization.css' layer(app);
 @import './agents.css' layer(app);
 @import './agent-avatar.css' layer(app);
@@ -49,6 +48,7 @@
 @import './workbench-sessions.css' layer(app);
 @import './work-surface.css' layer(app);
 @import './home-focus.css' layer(app);
+@import './usage.css' layer(app);
 @import './auth.css' layer(security);
 @import './confirm.css' layer(security);
 @import './security-approval.css' layer(security);

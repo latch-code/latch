@@ -26,7 +26,7 @@ import { currentShell } from '../core/shell.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import type { Space } from '../sessions.ts'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
-import { ShellQuota } from './ShellQuota.tsx'
+import { UsageEntry } from '../usage/UsageEntry.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** The switch's state: the place shown (none on pages both places share), the way to a place, and where something waits. */
@@ -358,7 +358,7 @@ export function ShellNavFoot({ shell }: { shell: ShellState }) {
   return (
     <NavFoot
       apps={shell.entries.includes('apps') ? { current: shell.route.entry === 'apps', onOpen: () => shell.openApp() } : undefined}
-      quota={<ShellQuota shell={shell} appearance="row" />}
+      quota={shell.access.scopes.has('view') ? <UsageEntry appearance="row" /> : undefined}
       settings={shell.entries.includes('settings') ? () => shell.goEntry('settings') : undefined}
       trouble={connectionTrouble(shell.connection, shell.hostProblem)}
     />

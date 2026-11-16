@@ -9,7 +9,6 @@ import { AgentRow, engineGroups, missingText } from '../src/settings/AgentsSetti
 import { PresetGrid, protocolChoices, ProviderAddForm } from '../src/settings/ProvidersSettings.tsx'
 import { ProviderSetupPanel } from '../src/components/SetupPanels.tsx'
 import { SERVICE_FORM } from '../src/core/providerSetup.ts'
-import { usageTotal } from '../src/settings/UsageSettings.tsx'
 import { ProjectRow } from '../src/settings/WorkspacesSettings.tsx'
 
 const noop = () => {}
@@ -224,18 +223,5 @@ describe('workspace settings', () => {
     )
     expect(usable).not.toMatch(/不可用|的操作/)
     expect(usable).toContain('默认')
-  })
-})
-
-describe('the usage total', () => {
-  it('adds input and output across the rows', () => {
-    const row = (inputTokens: number, outputTokens: number) => ({
-      harnessId: 'standard',
-      source: 'provider' as const,
-      messages: 1,
-      usage: { inputTokens, outputTokens },
-      partial: { cacheReadTokens: false, cacheWriteTokens: false, reasoningTokens: false },
-    })
-    expect(usageTotal([row(100, 20), row(5, 1)])).toBe(126)
   })
 })

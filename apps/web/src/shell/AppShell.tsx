@@ -61,7 +61,7 @@ import { HomeFocusSummary } from './HomeFocusSummary.tsx'
 import { HOME_FOCUS_LAYER, useHomeFocus } from './useHomeFocus.ts'
 import { workGroups } from './workOverview.ts'
 import { TabletRail, WorkbenchConnection, WorkbenchNav } from './WorkbenchNav.tsx'
-import { ShellQuota } from './ShellQuota.tsx'
+import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { LayoutSwitch } from './LayoutSwitch.tsx'
 import { WorkbenchSessions } from './WorkbenchSessions.tsx'
 import { useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
@@ -391,7 +391,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         onSchedules={
                           catalog?.features?.automations ? () => shell.openMyAgent({ id: 'general', tab: 'schedules' }) : undefined
                         }
-                        computer={!triage && viewport !== 'tablet' ? <ShellQuota shell={shell} appearance="row" /> : undefined}
+                        computer={!triage && viewport !== 'tablet' && access.scopes.has('view') ? <UsageEntry appearance="row" /> : undefined}
                         snapshot={listed}
                         archiveBatch={archiveBatch}
                         archiveUndo={archiveUndo}
@@ -629,6 +629,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     <header className="workbench-phone-heading" inert={homeFocused || undefined}>
                       {triage && shellSpaces(shell) ? <SpaceSwitch {...shellSpaces(shell)!} /> : <h1>Code</h1>}
                       {!triage && <IconButton label="搜索" icon={SearchGlyph} onClick={openSearch} />}
+                      {access.scopes.has('view') && <UsageEntry />}
                       <LayoutSwitch value={shell.preferences.workbenchLayout} />
                     </header>
                   )}
@@ -644,7 +645,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       )}
                       {triage && (
                         <div className="workbench-phone-utilities">
-                          <ShellQuota shell={shell} />
                           {entries.includes('settings') && (
                             <IconButton label="设置" icon={SettingsGlyph} onClick={() => goEntry('settings')} />
                           )}

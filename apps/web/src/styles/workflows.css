@@ -397,33 +397,6 @@
   outline-offset: var(--sp-2);
 }
 
-.usage-table {
-  overflow-x: auto;
-}
-.usage-table table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-}
-.usage-table th,
-.usage-table td {
-  padding: var(--sp-8);
-  border-block-end: 1px solid var(--line);
-  text-align: start;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.usage-table th {
-  font-weight: 500;
-}
-.usage-table small {
-  display: block;
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-
 /*
  * /btw: the side question floats above the input at the conversation's far side, clear of the turn that runs; on a
  * phone it is a page of its own. Its answer scrolls inside it.

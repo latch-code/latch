@@ -301,7 +301,6 @@ describe('model and usage settings reads', () => {
       const modelsSection = settings.getByRole('region', { name: '显示的模型', exact: true })
       const edit = settings.getByRole('button', { name: `编辑 ${service}`, exact: true })
       const coldProviders = await hold('providers')
-      const modelTokens = await hold('usage')
       await openSection(settings, '模型')
       await coldProviders.wait()
       expect.soft(await add.isVisible()).toBe(true)
@@ -309,7 +308,6 @@ describe('model and usage settings reads', () => {
       expect(await edit.count()).toBe(0)
       await capture('model-cold')
       coldProviders.release()
-      await modelTokens.wait()
       await reachable(add)
       await reachable(edit)
       await noHorizontalOverflow(page)
@@ -322,35 +320,14 @@ describe('model and usage settings reads', () => {
           ),
         )
         .toBe(false)
-      const legacyUsage = settings.getByRole('region', { name: '用量', exact: true })
-      await legacyUsage.getByText('正在读取用量…', { exact: true }).waitFor()
-      await capture('model-stats-held')
       await add.click()
       const dialog = page.getByRole('dialog', { name: '添加模型服务', exact: true })
       await dialog.waitFor()
       await dialog.getByRole('button', { name: '取消', exact: true }).click()
       await dialog.waitFor({ state: 'hidden' })
-      modelTokens.release()
-      await modelTokens.delivered
 
-      const coldUsage = await hold('model-usage')
-      const budget = await hold('model-spend')
-      await openSection(settings, '用量')
-      await coldUsage.wait()
-      await budget.wait()
-      const usage = settings.getByRole('region', { name: '用量', exact: true })
-      const budgetRegion = settings.getByRole('region', { name: '本月预算', exact: true })
-      await reachable(usage.getByRole('radio', { name: '本月', exact: true }))
-      await reachable(usage.getByRole('radio', { name: '服务', exact: true }))
-      expect(await usage.getByText('这个期间还没有请求。').count()).toBe(0)
-      await capture('usage-cold')
-      coldUsage.release()
-      await usage.getByText('这个期间还没有请求。').waitFor()
-      expect(await budgetRegion.count()).toBe(0)
-      await capture('usage-budget-held')
-      budget.release()
-      await budgetRegion.getByText(service, { exact: true }).waitFor()
-
+      // Back to 模型 from another section: what was read shows at once while it is read again.
+      await openSection(settings, '通用')
       const warmProviders = await hold('providers')
       await openSection(settings, '模型')
       await warmProviders.wait()
@@ -358,18 +335,6 @@ describe('model and usage settings reads', () => {
       await capture('model-warm')
       warmProviders.release()
       await edit.waitFor()
-
-      const warmUsage = await hold('model-usage')
-      const warmBudget = await hold('model-spend')
-      await openSection(settings, '用量')
-      await warmUsage.wait()
-      await warmBudget.wait()
-      expect.soft(await usage.getByText('这个期间还没有请求。').isVisible()).toBe(true)
-      expect.soft(await budgetRegion.getByText(service, { exact: true }).isVisible()).toBe(true)
-      await capture('usage-warm')
-      warmUsage.release()
-      warmBudget.release()
-      await usage.getByText('这个期间还没有请求。').waitFor()
       await noHorizontalOverflow(page)
     } finally {
       holds.forEach(item => item.release())
@@ -377,7 +342,7 @@ describe('model and usage settings reads', () => {
     }
   })
 
-  it('keeps the visible query through a late result and retries only the failed read', async () => {
+  it('in 额度与用量, holds a skeleton of the final layout, keeps the visible query through a late result and retries only the failed read', async () => {
     const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: {
@@ -396,22 +361,40 @@ describe('model and usage settings reads', () => {
     const holds: Array<Awaited<ReturnType<typeof holdRead>>> = []
     try {
       await enrollBrowser(page, host)
-      const settings = await openSettings(page)
-      await openSection(settings, '用量')
-      const usage = settings.getByRole('region', { name: '用量', exact: true })
+      const usage = page.getByRole('dialog', { name: '额度与用量', exact: true })
+      const pick = async (picker: string, option: string) => {
+        await usage.getByRole('button', { name: new RegExp(`^${picker}：`, 'u') }).click()
+        await page.getByRole('menuitemradio', { name: option, exact: true }).click()
+      }
+      // While the first read is held the view is a skeleton of the boxes that replace it: the rows land where it stood.
+      const first = await holdRead(page, 'model-usage')
+      holds.push(first)
+      await page.keyboard.press('Alt+Shift+U')
+      await usage.getByRole('radio', { name: '用量', exact: true }).click()
+      await first.wait()
+      const skeleton = usage.locator('.usage-skeleton')
+      await skeleton.waitFor()
+      const held = (await skeleton.locator('.usage-total').boundingBox())!
+      await page.screenshot({ path: resolve(output, 'usage-skeleton--1440--dark.png'), animations: 'disabled' })
+      first.release()
       const row = usage.getByRole('rowheader', { name: service, exact: true })
       await row.waitFor()
+      const landed = (await usage.locator('.usage-total').boundingBox())!
+      expect([landed.x, landed.y]).toEqual([held.x, held.y])
+      const surfaceBox = await usage.locator('.ui-dialog-surface').boundingBox()
 
       const pendingModel = await holdRead(page, 'model-usage')
       holds.push(pendingModel)
-      await usage.getByRole('radio', { name: '模型', exact: true }).click()
+      await pick('分组', '按模型')
       await pendingModel.wait()
       expect(await row.count()).toBe(0)
-      await usage.getByText('正在读取用量…', { exact: true }).waitFor()
+      await usage.locator('.usage-skeleton').waitFor()
+      // The surface keeps its size whatever it shows.
+      expect(await usage.locator('.ui-dialog-surface').boundingBox()).toEqual(surfaceBox)
 
       const pendingService = await holdRead(page, 'model-usage')
       holds.push(pendingService)
-      await usage.getByRole('radio', { name: '服务', exact: true }).click()
+      await pick('分组', '按服务')
       await pendingService.wait()
       await row.waitFor()
       pendingModel.release()
@@ -431,11 +414,10 @@ describe('model and usage settings reads', () => {
           }),
         { times: 1 },
       )
-      const range = usage.getByRole('radio', { name: '30 天', exact: true })
-      await range.click()
+      await pick('统计期间', '30 天')
       await usage.getByText(failure, { exact: true }).waitFor()
       expect(await row.count()).toBe(0)
-      expect(await range.getAttribute('aria-checked')).toBe('true')
+      await usage.getByRole('button', { name: '统计期间：30 天', exact: true }).waitFor()
       await page.screenshot({ path: resolve(output, 'usage-failure--1440--dark.png'), animations: 'disabled' })
       await usage.getByRole('button', { name: '重试', exact: true }).click()
       await row.waitFor()
@@ -461,7 +443,7 @@ describe('model and usage settings reads', () => {
       const edit = settings.getByRole('button', { name: `编辑 ${service}`, exact: true })
       const tab = settings.getByRole('tab', { name: '模型', exact: true })
       await edit.waitFor()
-      await openSection(settings, '用量')
+      await openSection(settings, '通用')
 
       const old = await holdRead(page, 'providers')
       holds.push(old)
@@ -506,7 +488,7 @@ describe('model and usage settings reads', () => {
       const row = settings.getByRole('button', { name: `编辑 ${service}`, exact: true })
       await openSection(settings, '模型')
       await row.waitFor()
-      await openSection(settings, '用量')
+      await openSection(settings, '通用')
 
       const snapshot = await holdRead(page, 'snapshot')
       const refused = await holdRead(page, 'providers')
@@ -556,7 +538,7 @@ describe('model and usage settings reads', () => {
       )
       await settings.getByRole('switch', { name: '启用', exact: true }).click()
       await expect.poll(() => intercepted).toBe(true)
-      await openSection(settings, '用量')
+      await openSection(settings, '通用')
       const stale = await holdRead(page, 'providers')
       holds.push(stale)
       await openSection(settings, '模型')
@@ -604,7 +586,7 @@ describe('model and usage settings reads', () => {
       await settings.getByRole('switch', { name: '启用', exact: true }).click()
       await first.wait()
 
-      await openSection(settings, '用量')
+      await openSection(settings, '通用')
       await openSection(settings, '模型')
       await disabledService.waitFor()
       await row.click()

@@ -1624,35 +1624,6 @@
   min-width: 0;
 }
 
-/* 用量: figures line up at the group's right edge, and the first column starts on the group's left edge. */
-.usage-total {
-  margin-block: var(--sp-8);
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
-}
-.usage-total strong {
-  margin-inline-end: var(--sp-4);
-  color: var(--ink);
-  font-size: var(--fs-title);
-  line-height: var(--lh-title);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.usage-table thead th {
-  color: var(--ink-2);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-.usage-table :is(thead, tbody) th:first-child {
-  padding-inline-start: 0;
-  white-space: normal;
-}
-.usage-table :is(thead th:not(:first-child), td) {
-  padding-inline-end: 0;
-  text-align: end;
-}
-
 /* 设置 › 设备: the devices, 连接新设备, then 关于连接; a device opens as a page inside the section. */
 .device-list {
   display: grid;
@@ -2192,12 +2163,4 @@
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
-}
-/* 设置 › 用量: the grouping sits above the table; the table scrolls inside itself on a narrow screen. */
-.model-usage-bar {
-  display: flex;
-  margin-block: var(--sp-8);
-}
-.model-usage-table td small {
-  display: block;
 }

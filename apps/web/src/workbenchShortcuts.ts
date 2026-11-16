@@ -14,6 +14,8 @@ export type WorkbenchAction =
   | 'compose'
   | 'side-panel'
   | 'settings'
+  /** ⇧⌘U: 额度与用量. */
+  | 'usage'
   /** ⌥⌘L: the other workbench layout. */
   | 'layout'
   /** ⇧⌘1 and ⇧⌘2: Code and 我的 Agent. */
@@ -90,6 +92,7 @@ const SHORTCUTS = [
   { id: 'recall', label: '空输入框取回上一条消息', desktop: '↑', browser: '↑' },
   { id: 'stop', label: '在输入框里停止运行', desktop: 'esc esc', browser: 'Esc Esc' },
   { id: 'undo-archive', label: '撤销归档', desktop: '⌘Z', browser: 'Mod Z' },
+  { id: 'usage', label: '额度与用量', desktop: '⇧⌘U', browser: 'Alt Shift U' },
   { id: 'shortcuts', label: '快捷键', desktop: '⌘/', browser: 'Alt /' },
 ] as const
 
@@ -154,6 +157,7 @@ export function shortcutWorksOnPage(action: WorkbenchAction): boolean {
     || action === 'sidebar'
     || action === 'shortcuts'
     || action === 'settings'
+    || action === 'usage'
     || action === 'layout'
     || (typeof action === 'object' && action.kind === 'space')
   )
@@ -182,6 +186,7 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
   if (!desktop && event.code === 'KeyL' && event.shiftKey) return 'layout'
   if (desktop && event.code === 'KeyB' && event.shiftKey) return 'browser'
   if (event.code === 'KeyE' && event.shiftKey) return 'files'
+  if (event.code === 'KeyU' && event.shiftKey) return 'usage'
   // ⌘[ and ⌘] are a Mac's back and forward; moving between sessions is moving between tabs, which it shifts.
   if (event.code === 'BracketLeft' && event.shiftKey === desktop) return 'previous'
   if (event.code === 'BracketRight' && event.shiftKey === desktop) return 'next'

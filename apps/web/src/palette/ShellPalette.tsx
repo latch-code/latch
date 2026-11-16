@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import {
+  ChartNoAxesColumn,
   ClipboardCopy,
   FileSearch,
   FolderTree,
@@ -41,6 +42,7 @@ import type { ShellState } from '../shell/useShellLayout.tsx'
 import { composerActions } from '../shell/composerActions.ts'
 import { shortcutKeys, type ShortcutId } from '../workbenchShortcuts.ts'
 import { AgentAvatar, AgentsGlyph } from '../agents/AgentAvatar.tsx'
+import { openUsage } from '../usage/surface.ts'
 import { CommandPalette } from './CommandPalette.tsx'
 import { recentSessions, type PaletteEntry } from './model.ts'
 
@@ -48,7 +50,7 @@ const glyph = (icon: IconComponent) => <Icon icon={icon} size={16} />
 
 /** Each settings section, in the order of the page, with the words it also answers to. */
 const SETTINGS_ROWS: ReadonlyArray<{ section: SettingsSection; keywords?: string }> = [
-  { section: 'general', keywords: '外观 主题 通知 发送键 用量' },
+  { section: 'general', keywords: '外观 主题 通知 发送键' },
   { section: 'providers', keywords: '模型 密钥' },
   { section: 'engines', keywords: 'agent' },
   { section: 'workspaces', keywords: '文件夹' },
@@ -295,6 +297,22 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
         openSettings()
       },
     },
+    ...(access.scopes.has('view')
+      ? [
+          {
+            id: 'usage',
+            label: '额度与用量',
+            keywords: '额度 用量 tokens 花费 预算 限额',
+            icon: glyph(ChartNoAxesColumn),
+            root: true,
+            ...keys('usage'),
+            run: () => {
+              closePalette()
+              openUsage({ view: 'limits' })
+            },
+          },
+        ]
+      : []),
     ...(selectedId
       ? [
           {

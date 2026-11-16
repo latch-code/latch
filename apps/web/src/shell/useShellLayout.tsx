@@ -85,6 +85,7 @@ import { useSessionController, type SessionSelectionIntent } from './useSessionC
 import type { ChangesLink, ChangesTarget } from '../conversation/changesLink.ts'
 import { useFrozenAt } from '../conversation/useFrozenAt.ts'
 import { overlayDismissed } from '../escapeGrace.ts'
+import { toggleUsage } from '../usage/surface.ts'
 
 type Harness = ReturnType<typeof useHarness>
 
@@ -1285,7 +1286,9 @@ export function useShellLayout({
     const dialogs = document.querySelectorAll('dialog[open]')
     const only = dialogs.length === 1 ? dialogs[0]! : null
     // An open dialog keeps the keys, but for the one key of what it is: ⌘/ closes the shortcuts it opened.
-    const passes = action === 'shortcuts' && only?.classList.contains('shortcuts-overlay')
+    const passes =
+      (action === 'shortcuts' && only?.classList.contains('shortcuts-overlay'))
+      || (action === 'usage' && only?.classList.contains('usage-surface'))
     if (dialogs.length && !passes) return
     // The home's input is the new session's: its four controls and its project's files keep their keys there.
     const homeInputKey =
@@ -1401,6 +1404,10 @@ export function useShellLayout({
     }
     if (action === 'shortcuts') {
       if (!phone) setShortcutsOpen(open => !open)
+      return
+    }
+    if (action === 'usage') {
+      if (access.scopes.has('view')) toggleUsage()
       return
     }
     const target = steppedSession(steppedRows(), selectedId, action === 'next' ? 1 : -1)

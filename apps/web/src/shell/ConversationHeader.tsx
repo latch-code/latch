@@ -623,7 +623,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     && !!current?.messages
       .slice(current.messages.findLastIndex(message => message.role === 'user'))
       .some(message => message.outputs?.length)
-  // A helper's tokens are its model's, kept to 设置 › 用量: a topic's menu has no usage row.
+  // A helper's tokens are its model's, kept to 额度与用量: a topic's menu has no usage row.
   const usageLine = summary && !topicOf ? usageWords(sessionTotals({ summary, detail: current, harness: topHarness })) : undefined
   return (
     <SessionHeader

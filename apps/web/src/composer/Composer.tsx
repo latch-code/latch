@@ -125,6 +125,7 @@ export function Composer({
   readOnlyReason,
   answer,
   meta,
+  usage,
   drawers,
   stepBack = false,
   below,
@@ -208,8 +209,13 @@ export function Composer({
    * stays the stop circle, since nothing else stops a run that waits on a question.
    */
   answer?: { kind: 'reject' | 'question'; onSubmit: () => void }
-  /** The footer's right side, before send: usage and 「⋯」. */
+  /** The footer's right side, before send: 「⋯」. */
   meta?: ReactNode
+  /**
+   * The limit of what runs it (a Harness's window, a service's budget), last before send. On a phone it stays at the end
+   * of the row of chips while that row scrolls, so it is always in sight and never moves another chip.
+   */
+  usage?: ReactNode
   /** Attached above the card: the approval, question, queue and notice drawers. */
   drawers?: ReactNode
   /** The stop circle gives way to what a drawer asks. */
@@ -682,7 +688,7 @@ export function Composer({
         {inline ? (
           <>
             {/* A phone: what the message goes with is one row of chips that scrolls sideways; under it ＋, the input, send. */}
-            {(location || controls || trailing || meta) && (
+            {(location || controls || trailing || meta || usage) && (
               <div className="composer-chips" role="group" aria-label="会话选项">
                 {location}
                 <div className="composer-inline-controls">
@@ -690,6 +696,7 @@ export function Composer({
                   {trailing}
                   {meta}
                 </div>
+                {usage}
               </div>
             )}
             <div className="composer-line">
@@ -710,6 +717,7 @@ export function Composer({
               <div className="composer-end">
                 {trailing}
                 {meta && <div className="composer-meta">{meta}</div>}
+                {usage}
                 {action}
               </div>
             </div>

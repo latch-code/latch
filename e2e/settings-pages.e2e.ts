@@ -120,57 +120,11 @@ describe('settings pages', () => {
         await settings.getByText('密钥无效', { exact: true }).waitFor()
         // A browser cannot take a key: the way out is drawn, disabled, and says where to go.
         await settings.getByRole('button', { name: '更新密钥', exact: true }).waitFor()
-        await settings.getByRole('heading', { name: '用量', exact: true }).waitFor()
         await settings.getByRole('heading', { name: '显示的模型', exact: true }).waitFor()
         await noHorizontalOverflow(page, settings)
         await shot('models')
 
-        // 用量: the total and the table from what the Host recorded, then the same period when it cannot be read.
         await settings.getByRole('searchbox', { name: '搜索模型' }).waitFor()
-        await page.route('**/link/api/usage', route =>
-          route.fulfill({
-            json: {
-              days: 30,
-              from: '2026-10-02',
-              to: '2026-11-01',
-              rows: [
-                {
-                  harnessId: 'standard',
-                  model: 'fixture-small',
-                  source: 'provider',
-                  messages: 12,
-                  usage: { inputTokens: 1_920_000, outputTokens: 214_000 },
-                  partial: { cacheReadTokens: false, cacheWriteTokens: false, reasoningTokens: false },
-                },
-                {
-                  harnessId: 'codex',
-                  source: 'agent',
-                  messages: 3,
-                  usage: { inputTokens: 846_000, outputTokens: 92_400 },
-                  partial: { cacheReadTokens: false, cacheWriteTokens: false, reasoningTokens: false },
-                },
-              ],
-              unattributedMessages: 0,
-              truncated: false,
-            },
-          }),
-        )
-        await settings.getByRole('radio', { name: '30 天' }).click()
-        await settings.getByText('3.07M', { exact: true }).waitFor()
-        await settings.getByRole('cell', { name: '214k' }).waitFor()
-        await noHorizontalOverflow(page, settings)
-        await settings.getByRole('heading', { name: '用量', exact: true }).scrollIntoViewIfNeeded()
-        await settle(page)
-        await shot('usage')
-        await page.unroute('**/link/api/usage')
-        await page.route('**/link/api/usage', route =>
-          route.fulfill({ status: 500, json: { error: { code: 'internal', message: '读不到用量' } } }),
-        )
-        await settings.getByRole('radio', { name: '7 天' }).click()
-        await settings.locator('.settings-group', { hasText: '用量' }).locator('.ui-notice, [role="alert"]').first().waitFor()
-        await settle(page)
-        await shot('usage-failed')
-        await page.unroute('**/link/api/usage')
 
         await settings.getByRole('button', { name: '添加模型服务', exact: true }).click()
         const sheet = page.getByRole('dialog', { name: '添加模型服务' })

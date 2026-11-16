@@ -3,7 +3,6 @@ description: 首屏静态依赖图、可选设置与表单的按需加载边界�
 sources:
   - apps/web/src/settings/SettingsPage.tsx
   - apps/web/src/settings/ProvidersSection.tsx
-  - apps/web/src/settings/ModelUsagePage.tsx
   - apps/web/src/settings/modelSettingsReads.ts
   - apps/web/src/components/DeferredContent.tsx
   - apps/web/src/components/SetupPanels.tsx
@@ -23,7 +22,7 @@ sources:
 | 会话、输入、Markdown 解析和安全控件 | KaTeX 的引擎与样式、PDF 引擎和 worker |
 | 设置的覆盖面板、分类导航、关闭控件与权限说明 | Office 和 Mermaid（只进入固定的不透明文档框） |
 | 「模型」的服务区和快照中已有的模型控件 | 语法高亮的语法表（由 worker 加载） |
-| 「用量」的期间与分组控件 | 其他可选设置分类（选中后）、模型服务表单和详情（打开时） |
+|  | 其他可选设置分类（选中后）、模型服务表单和详情（打开时） |
 |  | 配对二维码的编码器（请求像素时） |
 
 - 消息解析器留在初始图里：不在第一条回复出现后再下载。
@@ -52,7 +51,7 @@ sources:
 
 - **只在内存。** 读回的数据只在当前设置实例的内存中保留。主机、Host 进程、设备、权限、数据范围或相应能力变化就丢弃此前的读回。
 - **迟到的响应。** 分类或筛选切换后的迟到响应不会覆盖当前视图。写回执及写入前开始的读取都不能覆盖当前配置。
-- **先显示再核对。** 切回「模型」或「用量」立即显示这次设置中已经读到的数据，并再次向 Host 核对；错误在对应区域可见，可重试。
+- **先显示再核对。** 切回「模型」立即显示这次设置中已经读到的数据，并再次向 Host 核对；错误在对应区域可见，可重试。
 - **旧列表不能改。** 用上次的服务列表绘制时，等待新读回后才允许修改服务地址、协议或密钥。发起更新时带上看到的目标，Host 检查匹配后才保存。
 - 收到写入回执后，当前模型页重新读取 Host。
 - 服务配置尚未到达时，服务区就地等待；本设备显示的模型不等它就可以改。

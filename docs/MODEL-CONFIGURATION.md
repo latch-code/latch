@@ -6,7 +6,7 @@ sources:
   - apps/web/src/composer/modelReasoning.ts
   - apps/web/src/settings/ProvidersSettings.tsx
   - apps/web/src/settings/ModelSpend.tsx
-  - apps/web/src/settings/ModelUsagePage.tsx
+  - apps/web/src/usage
   - apps/web/src/settings/modelSpend.ts
   - apps/host/src/plugins/providers/chat-wire.ts
   - apps/host/src/plugins/providers/responses-wire.ts
@@ -181,12 +181,11 @@ Latch 内置直接调模型服务，思考深度来自 设置 › 模型 里对�
 规则与存储在 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#用量花费与预算)，这里是界面。
 
 - **单价**在模型行的「⋯」里；**本月预算**在服务页「连接」与 Agent 设置「执行方式」里。两者单独保存，不跟服务或 Agent 的其他修改一起提交，要 `admin`。
-- 预算行到 80% 写琥珀色，用完写红色；说明写明按这台 Mac 的时间算月。
+- 预算是一个限额窗口，与 Harness 的窗口同一画法：到 80% 条与数字写琥珀色，用完写红色；说明写明按这台 Mac 的时间算月。
 - 按花费设预算前，它覆盖的模型都要先填这个币种的单价，否则保存被拒绝并写明缺哪些模型。
-- **设置 › 用量**对所有能查看的设备开放（模型一节只给能管理这台 Mac 的设备）。没有服务报告的数写「未报告」，不写 0；按单价算出的花费标「按你填的单价」。
+- **用量**在「额度与用量」的用量视图（[DESIGN.md](DESIGN.md#组件)「额度与用量」），对所有能查看的设备开放；设置里只有单价与预算。没有服务报告的数写「未报告」，不写 0；花费标「估算」与依据（「按你填的单价」或服务报告），并写出未计价请求的比例。
 - 这台设备读不到的会话、已删除的会话与没有会话的请求并成「其他会话」一行；不属于 Agent 或这台设备不能读 Agent 时并成「其他」。
 - 按花费的预算有算不出花费的请求时写「未计入 N 次」。
-- 模型一节里的「用量」按会话消息统计，含 Harness 自己报告的数，与账本不是同一个来源。
 - 一轮的页脚在花费已知时写花费；这一轮让某个预算到 80% 或用完时写对应的琥珀或红色字样。
 
 ## 模型服务的编辑

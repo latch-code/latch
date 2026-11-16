@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
-import { BarChart3, Cable } from 'lucide-react'
+import { Cable } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
@@ -9,7 +9,6 @@ import { currentShell, shellComputers } from '../core/shell.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
 import { deferredComponent } from '../components/DeferredContent.tsx'
-import { ModelUsagePage } from './ModelUsagePage.tsx'
 import { ProvidersSection } from './ProvidersSection.tsx'
 import { ModelSettingsReads, settingsReadAudience } from './modelSettingsReads.ts'
 import {
@@ -58,8 +57,7 @@ const WorkspacesSettings = deferredComponent(
 /** What each section holds, so 搜索设置 finds a setting by the words on its row. */
 const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   general: '外观 主题 深色 浅色 自定义 主色 圆角 字号 恢复默认 布局 侧栏 顶栏 按项目 按状态 发送消息 回车 新文档 自动打开 通知 唤醒 名称',
-  providers: '服务 密钥 key 添加服务 添加模型服务 用量 tokens 显示的模型 已确认的地址 地址 出站',
-  usage: '用量 tokens 请求 失败 花费 预算',
+  providers: '服务 密钥 key 添加服务 添加模型服务 单价 预算 显示的模型 已确认的地址 地址 出站',
   engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
   mcp: 'mcp 服务器 工具 连接器 npx 命令',
   workspaces: '文件夹 添加项目 新建项目 快照',
@@ -91,11 +89,10 @@ const sections: Array<{
   secured?: boolean
   shell?: boolean
   /** A Host feature the section's routes need. */
-  feature?: 'mcp' | 'modelUsage'
+  feature?: 'mcp'
 }> = [
   { id: 'general', label: '通用', icon: SettingsGlyph, admin: false },
   { id: 'providers', label: '模型', icon: ModelGlyph, admin: true, catalog: true },
-  { id: 'usage', label: '用量', icon: BarChart3, admin: false, catalog: true, feature: 'modelUsage' },
   { id: 'engines', label: 'Harness', icon: HarnessGlyph, admin: true, catalog: true },
   { id: 'mcp', label: 'MCP', icon: Cable, admin: true, catalog: true, feature: 'mcp' },
   { id: 'workspaces', label: '项目', icon: FolderGlyph, admin: true, catalog: true },
@@ -358,7 +355,7 @@ export function SettingsPage({
                   // 设备 (its list, a device's permissions, pairing) keeps the product's own tokens under every customisation.
                   <div
                     key={panel}
-                    className={panel === 'providers' || panel === 'usage' ? 'settings-content' : 'settings-content settings-enter'}
+                    className={panel === 'providers' ? 'settings-content' : 'settings-content settings-enter'}
                     data-lock={panel === 'devices' ? '' : undefined}>
                     {/* The section's name heads it; a page opened inside it names itself under its way back. */}
                     {!phone && depth === 0 && current && <h1 className="settings-title">{current.label}</h1>}
@@ -368,7 +365,6 @@ export function SettingsPage({
                     {panel === 'providers' && (
                       <ProvidersSection key={reads.audience} snapshot={snapshot} access={access} reads={reads} onChanged={onChanged} />
                     )}
-                    {panel === 'usage' && <ModelUsagePage snapshot={snapshot} access={access} reads={reads} />}
                     {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}
                     {panel === 'mcp' && <McpSettings snapshot={snapshot} />}
                     {panel === 'shortcuts' && (

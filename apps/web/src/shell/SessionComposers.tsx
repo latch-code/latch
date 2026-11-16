@@ -26,7 +26,7 @@ import { useHarnessCommands } from '../hooks/useHarnessCommands.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
 import { CodexTeam } from '../composer/CodexTeam.tsx'
-import { HarnessQuotaMark } from '../composer/HarnessQuota.tsx'
+import { HarnessLimitChip, ServiceBudgetChip } from '../usage/UsageChip.tsx'
 import { ComposerControl, openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { composerActions } from './composerActions.ts'
 import { MoreMenu } from '../composer/Footer.tsx'
@@ -522,17 +522,24 @@ export function SessionComposer({
             },
           }
         : undefined
-  // The subscription's limits are not those of a model service the draft or the session runs on instead.
-  const quotaHarness = !catalog
-    ? undefined
-    : selectedId === null
-      ? chosenHarness && !servicePick(catalog, chosenHarness, choice.config)
-        ? chosenHarness
-        : undefined
-      : summary && !summary.modelRoute
-        ? harnessInfo
-        : undefined
-  const quotaMark = quotaHarness && <HarnessQuotaMark quota={quotaHarness.quota} harness={harnessName(quotaHarness)} />
+  // A Harness on its own login shows its subscription's limits; a draft or session on one of Latch's services shows that
+  // service's budget instead, never the subscription's.
+  const draftService = selectedId === null && catalog && chosenHarness ? servicePick(catalog, chosenHarness, choice.config) : undefined
+  const sessionService =
+    selectedId === null || !summary
+      ? undefined
+      : (summary.modelRoute?.providerId ?? (harnessInfo?.capabilities.models.owner === 'latch' ? summary.providerId : undefined))
+  const serviceId = draftService?.providerId ?? sessionService
+  const ownLogin = selectedId === null ? (draftService ? undefined : chosenHarness) : summary && !serviceId ? harnessInfo : undefined
+  const usageChip = !catalog ? undefined : serviceId ? (
+    <ServiceBudgetChip
+      providerId={serviceId}
+      name={catalog.providers.find(provider => provider.id === serviceId)?.name ?? serviceId}
+      revision={current?.messages.length}
+    />
+  ) : ownLogin && ownLogin.capabilities.models.owner === 'harness' ? (
+    <HarnessLimitChip harness={ownLogin} />
+  ) : undefined
   return (
     <Composer
       showSlashButton={speaker === undefined}
@@ -716,18 +723,10 @@ export function SessionComposer({
       queueable={canQueue && !answer}
       steerable={steer && !answer}
       inline={phone}
-      // The limits mark arrives seconds after a turn starts and leaves with the Host's memory: last before send at every
-      // width, so the controls before it stay where they are.
-      meta={
-        !showControls ? undefined : phone ? (
-          quotaMark
-        ) : (
-          <>
-            <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />
-            {quotaMark}
-          </>
-        )
-      }
+      meta={!showControls || phone ? undefined : <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}
+      // The limit arrives seconds after a turn starts and leaves with the Host's memory: last before send at every width,
+      // so the controls before it stay where they are.
+      usage={showControls ? usageChip : undefined}
       controls={
         !showControls ? null : !catalog ? (
           selectedId === null ? (

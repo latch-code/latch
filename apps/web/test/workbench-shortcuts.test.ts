@@ -59,6 +59,10 @@ describe('workbench key routing', () => {
     expect(workbenchShortcut(key('KeyN', { altKey: true, isComposing: true }), false)).toBeNull()
     expect(workbenchShortcut(key('KeyE', { metaKey: true, shiftKey: true }), true)).toBe('files')
     expect(workbenchShortcut(key('KeyE', { altKey: true, shiftKey: true }), false)).toBe('files')
+    // 额度与用量: ⇧⌘U in the desktop app, Alt Shift U in a browser; a plain ⌘U stays the page's.
+    expect(workbenchShortcut(key('KeyU', { metaKey: true, shiftKey: true }), true)).toBe('usage')
+    expect(workbenchShortcut(key('KeyU', { altKey: true, shiftKey: true }), false)).toBe('usage')
+    expect(workbenchShortcut(key('KeyU', { metaKey: true }), true)).toBeNull()
   })
   it('jumps to the Nth session with a digit and opens a composer control with ⌥ (desktop) or Shift (browser)', () => {
     for (let index = 1; index <= 9; index++) {
@@ -118,7 +122,7 @@ describe('workbench key routing', () => {
     }
   })
   it('keeps only what still shows over a page, whose session columns are hidden', () => {
-    for (const action of ['new', 'sidebar', 'shortcuts', 'settings'] as const) expect(shortcutWorksOnPage(action)).toBe(true)
+    for (const action of ['new', 'sidebar', 'shortcuts', 'settings', 'usage'] as const) expect(shortcutWorksOnPage(action)).toBe(true)
     for (const action of ['previous', 'next', 'files', 'file-search', 'close-file', 'compose', 'side-panel'] as const)
       expect(shortcutWorksOnPage(action)).toBe(false)
   })

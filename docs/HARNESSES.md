@@ -511,7 +511,7 @@ Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥�
 
 ## 额度
 
-Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额度（界面见 [DESIGN.md](DESIGN.md)「Harness 额度」）。Latch 只听它已经为会话运行的那个进程：不读任何 CLI 的令牌或存储，不自己调用厂商接口，不为额度启动会话或模型轮次，不定时轮询。
+Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额度（界面见 [DESIGN.md](DESIGN.md)「额度与用量」）。Latch 只听它已经为会话运行的那个进程：不读任何 CLI 的令牌或存储，不自己调用厂商接口，不为额度启动会话或模型轮次，不定时轮询。
 
 | Harness | 来源 | 显示 |
 | --- | --- | --- |
@@ -520,7 +520,7 @@ Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额
 | Claude Agent | `usage_update._meta["_claude/rateLimit"]` 的限额事件，与一轮因限额失败时错误 `data` 里的 `rateLimit` | 没有常驻百分比：只在窗口 `allowed_warning` 或 `rejected` 时显示警告与重置时间，同一窗口再报 `allowed` 就消失。只认 `five_hour`、`seven_day`、`seven_day_opus`、`seven_day_sonnet`；不用 `utilization`。不发 `/usage` |
 | Grok Build | ACP 扩展请求 `_x.ai/billing`，在会话接上进程时与每轮结束时发，两次至少隔 5 分钟 | 本计费周期一行（`creditUsagePercent`、`currentPeriod.end`）；已知的 `subscriptionTier`；`prepaidBalance` 大于零时显示为余额 |
 | Antigravity | 它自己的命令 `agy -p /usage --output-format json`（`profiles/antigravity-quota.ts`，不起模型轮次），在会话接上进程时与每轮结束时在旁边运行，至少隔 5 分钟，不等它；按登录状态命令的规则运行，加 `AGY_CLI_DISABLE_AUTO_UPDATE=true`，20 秒后连进程组结束，失败不说话 | `remaining_fraction` 是剩余比例；`window` 只认 `5h` 与 `weekly`。只显示 `Gemini Models` 与 `Claude and GPT models` 两个组，其余整个丢掉；`num_turns` 不为 0 或形状不同的输出不用 |
-| Cursor、OpenCode、Qwen Code、goose、pi、DeepSeek Harness | 程序不报告订阅额度 | 不显示，也没有占位 |
+| Cursor、OpenCode、Qwen Code、goose、pi、DeepSeek Harness | 程序不报告订阅额度 | 输入框不显示；「额度与用量」里写一行「尚未报告额度」 |
 
 - **形状。** `HarnessInfo.quota`（`packages/protocol/src/quota.ts`）全部是数字与固定集合里的值，没有厂商写的文字：不认识的窗口种类整个丢掉，不在集合里的套餐名不显示（`packages/harness-acp/src/quota.ts` 的 `harnessQuota`）。Codex 的 `rateLimitUpsell`、`limitName`、`accountId` 与完整邮箱不离开读它的进程；邮箱读到时就遮住。
 - **只在内存。** 按 Agent 定义保存在驱动里，不写磁盘、日志与审计。窗口过了重置时间不再显示；报告它的进程退出后，有重置时间的窗口留到重置为止（额度属于账号），没有的随进程消失。退出登录或定义变化后全部清除。

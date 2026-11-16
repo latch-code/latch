@@ -250,7 +250,8 @@ export interface HarnessInfo {
   login?: HarnessLogin
   /**
    * What its own program last said about the subscription it is logged in to (docs/HARNESSES.md#额度). Kept in memory
-   * only. Absent: it has said nothing that still holds, or it never does; a client then shows nothing.
+   * only. Absent: it has said nothing that still holds, or it never does; a client then draws no limit beside it, and says
+   * so in one line where it lists every Harness's limits.
    */
   quota?: HarnessQuota
   /**

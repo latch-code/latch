@@ -7,7 +7,9 @@ import {
   type ModelPrices,
   type ModelSpend,
 } from '@latch/protocol'
-import { Button, Dialog, Hint, InlineNotice, Meter, SegmentedControl, StatusWord, TextField } from '@latch/ui'
+import { Button, Dialog, Hint, InlineNotice, SegmentedControl, StatusWord, TextField } from '@latch/ui'
+import { LimitBar } from '../usage/LimitWindow.tsx'
+import { budgetLimit } from '../usage/limits.ts'
 import { api, errorMessage } from '../core/api.ts'
 import { SettingsRow } from './common.tsx'
 import { useSpendWrite, type SpendChange } from './modelSpendWrites.tsx'
@@ -282,9 +284,10 @@ export function PricesDialog({
 export function BudgetProgressLine({ budget }: { budget: BudgetProgress }) {
   const words = budgetWords(budget.state)
   const text = budgetProgressText(budget)
+  const limit = budgetLimit(budget, '本月预算', '')
   return (
     <span className="budget-progress">
-      <Meter value={budget.used} max={budget.limit} label="本月预算" valueText={text} />
+      <LimitBar percent={limit.percent ?? 0} state={limit.state} label="本月预算" />
       <span className="budget-progress-text">{text}</span>
       {words ? (
         <StatusWord tone={words.tone}>{words.text}</StatusWord>

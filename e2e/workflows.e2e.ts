@@ -128,7 +128,7 @@ describe('session search and workbench navigation', () => {
       await host.close()
     }
   })
-  it('filters abbreviated model names, remembers choices, hides models locally and shows reported period usage', async () => {
+  it('filters abbreviated model names, remembers choices, hides models locally and says what the gateway did not meter', async () => {
     const plugin: HarnessPlugin = {
       id: 'workflow-models',
       description: '只在测试中提供模型和计数。',
@@ -165,12 +165,20 @@ describe('session search and workbench navigation', () => {
       const visible = settings.getByRole('switch', { name: /gpt-5\.0-mini/u })
       await visible.click()
       expect(await visible.getAttribute('aria-checked')).toBe('false')
-      await settings.locator('.usage-table').waitFor()
-      expect(await settings.locator('.usage-table').textContent()).toContain('123')
-      await settings.getByRole('radio', { name: '30 天', exact: true }).click()
-      await settings.locator('.usage-total').getByText('最近 30 天', { exact: false }).waitFor()
-      await page.screenshot({ path: 'test-results/workflow-model-usage.png', fullPage: true })
       await closeSettings(settings)
+      // 额度与用量 counts what went through Latch's gateway; a plugin's own provider is not metered there, and the view
+      // says so plainly rather than drawing zeros. It is reached by its shortcut, over a chosen period.
+      await page.keyboard.press('Alt+Shift+U')
+      const usage = page.getByRole('dialog', { name: '额度与用量', exact: true })
+      await usage.getByRole('radio', { name: '用量', exact: true }).click()
+      await usage.getByText('这个期间还没有经 Latch 的请求', { exact: true }).waitFor()
+      expect(await usage.locator('.usage-total').count()).toBe(0)
+      await usage.getByRole('button', { name: /^统计期间：/u }).click()
+      await page.getByRole('menuitemradio', { name: '30 天', exact: true }).click()
+      await usage.getByRole('button', { name: '统计期间：30 天', exact: true }).waitFor()
+      await page.screenshot({ path: 'test-results/workflow-model-usage.png', fullPage: true })
+      await page.keyboard.press('Escape')
+      await usage.waitFor({ state: 'hidden' })
       await page.keyboard.press('Alt+n')
       await page.locator('.model-picker:visible').click()
       await page.getByRole('searchbox', { name: '搜索模型', exact: true }).fill('gpt5m')

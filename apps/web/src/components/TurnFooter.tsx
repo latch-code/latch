@@ -65,7 +65,7 @@ function SettledFacts({
   outcome: TurnOutcome
   context?: number
   worked: boolean
-  /** A helper's turn: when and how long only; tokens, requests and the context are the model's, kept to 设置 › 用量. */
+  /** A helper's turn: when and how long only; tokens, requests and the context are the model's, kept to 额度与用量. */
   person: boolean
 }) {
   const times = turnTimes(turn)

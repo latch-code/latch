@@ -17,7 +17,7 @@ import { waitingCount } from '../sessions.ts'
 import { BrandMark } from '../components/ui.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { ShellNewAgent, SpaceButtons, shellOverview, shellSpaces } from './SpaceNav.tsx'
-import { ShellQuota } from './ShellQuota.tsx'
+import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { WorkbenchPanes, workbenchPanes } from './WorkbenchPanes.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -150,7 +150,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
         </header>
       )}
       <div className="titlebar-views">
-        {sidebarColumn && sidebarCollapsed && <ShellQuota shell={shell} />}
+        {sidebarColumn && sidebarCollapsed && shell.access.scopes.has('view') && <UsageEntry />}
         {/* A tablet's rail already holds 总览; the layout switch itself is the shell's, drawn over this reserved end. */}
         {sidebarColumn && shut && !home.active && <IconButton label="总览" icon={OverviewGlyph} onClick={home.open} />}
         <WorkbenchPanes shell={shell} />

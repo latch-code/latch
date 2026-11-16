@@ -32,7 +32,6 @@ import { ModelVisibilitySettings } from './ModelVisibilitySettings.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import { peekProviderDraft } from './providerDraft.ts'
 import { isSupported, providerKindLabels, type SupportedProvider } from './providerKind.ts'
-import { UsageSettings } from './UsageSettings.tsx'
 import { readDenied, type ModelSettingsReads } from './modelSettingsReads.ts'
 
 const ProviderPage = deferredComponent(async () => ({ default: (await import('./ProvidersSettings.tsx')).ProviderPage }), '服务详情')
@@ -468,7 +467,6 @@ export function ProvidersSection({
         <ConfirmedAddresses providers={data.providers} revision={(data.confirmedAddresses ?? []).join('\n')} onChanged={changed} />
       )}
       {snapshot.catalog && <ModelVisibilitySettings catalog={snapshot.catalog} />}
-      {snapshot.catalog?.features?.usage && <UsageSettings catalog={snapshot.catalog} reads={reads} />}
       <Dialog
         open={adding !== null && !!data}
         size="lg"

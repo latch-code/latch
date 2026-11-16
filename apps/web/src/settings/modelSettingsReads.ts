@@ -1,4 +1,4 @@
-import type { AppSnapshot, ModelSpend, ModelUsageSummary, UsageGroup, UsagePeriod, UsageSummary } from '@latch/protocol'
+import type { AppSnapshot, ModelSpend } from '@latch/protocol'
 import { ApiError } from '../core/api.ts'
 import { hostView, type DeviceAccess } from '../core/permissions.ts'
 import type { ProvidersResponse } from '../core/providerSetup.ts'
@@ -9,11 +9,6 @@ export class ModelSettingsReads {
   #providersVersion = 0
   #providerListeners = new Set<() => void>()
   #spend: ModelSpend | undefined
-  #period: UsagePeriod = 'month'
-  #group: UsageGroup = 'service'
-  #days: 7 | 30 = 7
-  readonly legacyUsage = new Map<7 | 30, UsageSummary>()
-  readonly usage = new Map<`${UsagePeriod}:${UsageGroup}`, ModelUsageSummary>()
 
   constructor(readonly audience: string) {}
 
@@ -50,27 +45,6 @@ export class ModelSettingsReads {
   keepSpend(value: ModelSpend | undefined) {
     this.#spend = value
   }
-
-  get period() {
-    return this.#period
-  }
-
-  get group() {
-    return this.#group
-  }
-
-  keepUsageChoice(period: UsagePeriod, group: UsageGroup) {
-    this.#period = period
-    this.#group = group
-  }
-
-  get days() {
-    return this.#days
-  }
-
-  keepLegacyUsageChoice(days: 7 | 30) {
-    this.#days = days
-  }
 }
 
 /** These reads belong to the current settings visit and the authority that supplied its snapshot. */
@@ -86,8 +60,6 @@ export function settingsReadAudience(snapshot: AppSnapshot, access: DeviceAccess
     access.admin,
     [...access.scopes].toSorted(),
     !!snapshot.catalog,
-    snapshot.catalog?.features?.usage === true,
-    snapshot.catalog?.features?.modelUsage === true,
     snapshot.catalog?.features?.providerUpdateTarget === true,
   ])
 }

@@ -7,6 +7,7 @@ import { toolRowId } from '../conversation.ts'
 import { Button, Toast } from '@latch/ui'
 import { settingsSections } from '../settings/SettingsPage.tsx'
 import { ShortcutsOverlay } from './ShortcutsOverlay.tsx'
+import { UsageSurface } from '../usage/UsageSurface.tsx'
 import { LoginTerminalDialog } from '../panel/terminal/LoginTerminalDialog.tsx'
 import { FillTerminalDialog } from '../panel/terminal/FillTerminalDialog.tsx'
 import { RemoveWorktreeDialog, removalWords } from '../components/RemoveWorktreeDialog.tsx'
@@ -130,6 +131,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
   return (
     <>
       {commandOpen && <ShellPalette shell={shell} />}
+      <UsageSurface snapshot={snapshot} access={access} offline={shell.connection === 'offline' || shell.connection === 'reconnecting'} />
       {snapshot.catalog?.features?.terminal === true && <LoginTerminalDialog />}
       {snapshot.catalog?.features?.terminal === true && <FillTerminalDialog {...detachedWorkspace(snapshot.catalog)} />}
       {shortcutsOpen && (

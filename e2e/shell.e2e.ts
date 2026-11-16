@@ -169,12 +169,13 @@ describe('the shell', () => {
     await page.context().close()
   })
 
-  it('gives a phone a tab bar with Settings and quota, and a full-screen settings stack', async () => {
+  it('gives a phone a tab bar of places only, and a full-screen settings stack', async () => {
     const page = await open(390, 844, '壳层手机')
     expect(await page.locator('.titlebar').count()).toBe(0)
     expect(await page.locator('.workbench-connection').count()).toBe(0)
     const tabs = page.getByRole('navigation', { name: '主导航', exact: true })
-    expect(await tabs.getByRole('button').allTextContents()).toEqual(['Code', '我的 Agent', '设置', '额度'])
+    // 额度与用量 is no place: it opens as a sheet from the home's header and from the composer.
+    expect(await tabs.getByRole('button').allTextContents()).toEqual(['Code', '我的 Agent', '设置'])
     const bar = await box(page, '.phone-tabs')
     expect(bar.top + bar.height).toBe(844)
     await mkdir(CONNECTION_SHOTS, { recursive: true })
@@ -199,10 +200,10 @@ describe('the shell', () => {
     }
     const owner = await open(1440, 900, '壳层分区管理', true)
     await allData(owner)
-    expect(await tabsOf(owner)).toEqual(['通用', '模型', '用量', 'Harness', 'MCP', '项目', '插件', '设备', '快捷键', '关于'])
+    expect(await tabsOf(owner)).toEqual(['通用', '模型', 'Harness', 'MCP', '项目', '插件', '设备', '快捷键', '关于'])
     await owner.context().close()
     const guest = await open(1440, 900, '壳层分区只读')
-    expect(await tabsOf(guest)).toEqual(['通用', '用量', '设备', '快捷键', '关于'])
+    expect(await tabsOf(guest)).toEqual(['通用', '设备', '快捷键', '关于'])
     await guest.context().close()
   })
 

@@ -17,7 +17,7 @@ import { useBackLayer } from '../hooks/backStack.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { NavTop, shellOverview, shellSpaces, ShellNewAgent, ShellNavFoot, SpaceSwitch } from '../shell/SpaceNav.tsx'
 import { WorkbenchComputer } from '../shell/WorkbenchNav.tsx'
-import { ShellQuota } from '../shell/ShellQuota.tsx'
+import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { AgentsSpaceList } from './AgentsSpaceList.tsx'
 import { askDelegateFocus } from './delegateFocus.ts'
 import { HelperCreate } from './HelperCreate.tsx'
@@ -163,7 +163,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
                     <h2>我的 Agent</h2>
                   </>
                 )}
-                {triage && <ShellQuota shell={shell} />}
+                {triage && shell.access.scopes.has('view') && <UsageEntry />}
                 {triage && shell.entries.includes('settings') && (
                   <IconButton size="lg" label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />
                 )}

@@ -10,6 +10,7 @@ sources:
   - apps/web/src/composer
   - apps/web/src/conversation
   - apps/web/src/palette
+  - apps/web/src/usage
   - apps/web/public
   - native/ios/Sources/LatchNativeCore/PhoneSlash.swift
   - build/icon.png
@@ -464,11 +465,13 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 
 **会话用量。** 上下文、输入输出、费用与用时由页头与项目弹层显示，读同一个函数（[sessionTotals.ts](../apps/web/src/composer/sessionTotals.ts)）。只写报告了的数；外部 Harness 的数注明由谁报告，Harness 报告的费用总带「不是账单」。
 
-**Harness 额度。** 输入框控件行的最后一个控件：一个环加最满窗口的百分比；没有数据的 Harness 什么都不画，也不占位。已用到 80%（`QUOTA_NEAR_PERCENT`）起是琥珀，到上限是红，数字一直在，颜色不单独出现。悬停一行（窗口、已用百分比、重置时间），点开是各窗口的面板，手机上是底部面板；窗口的叫法在两处相同。来源与何时不显示见 [HARNESSES.md](HARNESSES.md#额度)（[HarnessQuota.tsx](../apps/web/src/composer/HarnessQuota.tsx)）。
+**额度与用量。** 一个界面、一套组件、一套词（[apps/web/src/usage/](../apps/web/src/usage)）。来源见 [HARNESSES.md](HARNESSES.md#额度) 与 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#用量花费与预算)。
 
-- 小片排在输入框各控件的最后、发送之前：它晚出现、Host 重启后消失，来去都不挪动别的控件。
-- 80% 起是琥珀色（`QUOTA_NEAR_PERCENT`），到上限是红色；数字或重置时间一直在，颜色从不单独出现。
-- 没有可显示的额度时什么都不画，也不写「不支持」。
+- **限额窗口**（`LimitWindow`）是唯一的画法，Harness 的窗口与每月预算共用：名字、「已用 N%」、铺满容器的连续条、重置时间。80%（`QUOTA_NEAR_PERCENT`）起条与数字一起变琥珀，到上限一起变红；没有数字的窗口写「将用尽」「已用尽」，不画条；还没开始的窗口不写会走的重置时间。
+- **输入框的小片**排在各控件最后、发送之前，来去不挪动别的控件；手机上钉在选项行的末端，始终可见。Harness 用自己的登录时写最紧的窗口（`leadingQuotaWindow`）的名字与「已用 N%」，或写明是额度（「5 小时额度将用尽」）；会话走 Latch 的模型服务时写那个服务的本月预算。没有数据就不画。
+- **一个界面**（`UsageSurface`）：输入框小片（只看那个 Harness 或服务）、全局入口（侧栏底部或手机首页页头，所有 Harness）、命令面板与 ⇧⌘U（浏览器 Alt Shift U，印在入口上）都打开它；宽屏是固定大小的对话框，手机是底部面板，不是一级标签。只靠点击或按键打开。
+- 「额度」视图逐个 Harness：套餐与遮住的账号、各窗口；没有报告的写一行「尚未报告额度」。「用量」视图是经 Latch 的请求：期间、分组、tokens、估算花费（标「估算」与依据，写出未计价的比例，从不称账单）、预算与各行。加载时是与结果同形的骨架，数据到了不挪位置。
+- 设置只放配置（单价、预算），不显示用量。
 
 **设置的各分区。** 分区在 `SettingsPage.tsx` 的 `sections`；设备见「设备与权限」。
 

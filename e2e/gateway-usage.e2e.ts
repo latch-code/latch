@@ -6,14 +6,14 @@ import type { CustomAgent, ModelSpend, ModelSpendReceipt, ProviderSettings, Task
 import { startFakeModels, type FakeModels, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSession, openSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/gateway-usage'
 const MODEL = 'fake-model'
 const AGENT_NAME = '用量测试 Agent'
 const NOW = Date.parse('2026-11-15T04:00:00Z')
 
-describe('model usage in settings', () => {
+describe('model usage in 额度与用量, prices and budgets in settings', () => {
   let browser: Browser
   let host: TestHost
   let owner: TestDevice
@@ -21,6 +21,7 @@ describe('model usage in settings', () => {
   let backup: FakeModels
 
   let primaryId: string
+  let chatSession = ''
 
   const readSpend = () => owner.json<ModelSpend>('model-spend')
   const putSpend = async (route: 'model-prices' | 'model-budgets', values: object) => {
@@ -73,7 +74,7 @@ describe('model usage in settings', () => {
       await waitIdle(sessionId)
       return sessionId
     }
-    await send({ model, harnessId: 'standard', mode: 'chat' })
+    chatSession = await send({ model, harnessId: 'standard', mode: 'chat' })
     const agentChat = await send({ customAgentId: agent.id })
     await owner.json(`tasks/${agentChat}/prompt`, {
       method: 'POST',
@@ -93,6 +94,7 @@ describe('model usage in settings', () => {
     await backup?.close()
   })
 
+  /** 额度与用量's 用量 view, opened from the global entry; with `admin`, 设置 instead, where prices and budgets are set. */
   const open = async (width: number, colorScheme: 'light' | 'dark', purpose = '汇总', admin = false) => {
     const context = await browser.newContext({
       viewport: { width, height: 900 },
@@ -110,15 +112,27 @@ describe('model usage in settings', () => {
     await owner.confirmedJson(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })
     await page.reload()
     await connected(page)
-    const settings = await openSettings(page)
-    await openSection(settings, '用量')
+    const surface = page.getByRole('dialog', { name: '额度与用量', exact: true })
+    if (admin) return { page, id, settings: await openSettings(page), surface, usage: surface, budgets: surface }
+    await page.locator('.usage-entry:visible').first().click()
+    await surface.getByRole('radio', { name: '用量', exact: true }).click()
     return {
       page,
       id,
-      settings,
-      usage: settings.getByRole('region', { name: '用量', exact: true }),
-      budgets: settings.getByRole('region', { name: '本月预算', exact: true }),
+      settings: surface,
+      surface,
+      usage: surface.getByRole('table', { name: '用量', exact: true }),
+      budgets: surface.getByRole('region', { name: '本月预算', exact: true }),
     }
+  }
+  /** Chooses in one of the surface's pickers: a menu on a wide window, a sheet of radios on a phone. */
+  async function pick(page: import('@playwright/test').Page, picker: string, option: string): Promise<void> {
+    await page
+      .getByRole('dialog', { name: '额度与用量', exact: true })
+      .getByRole('button', { name: new RegExp(`^${picker}：`, 'u') })
+      .click()
+    const phone = (page.viewportSize()?.width ?? 1440) < 768
+    await page.getByRole(phone ? 'radio' : 'menuitemradio', { name: option, exact: true }).click()
   }
 
   async function openPrimary(settings: Locator) {
@@ -163,20 +177,66 @@ describe('model usage in settings', () => {
     }
   })
 
-  it('shows manual pricing in separate currencies, the answering fallback, and budgets in three widths and both themes', async () => {
+  it('shows the estimate in separate currencies, the answering fallback, and budgets as limit windows in three widths and both themes', async () => {
     for (const width of [1440, 768, 390])
       for (const theme of ['light', 'dark'] as const) {
-        const { page, usage, budgets } = await open(width, theme)
+        const { page, surface, usage, budgets } = await open(width, theme)
         const rows = usage.getByRole('row')
         const primaryRow = rows.filter({ has: page.getByRole('rowheader', { name: '主服务', exact: true }) })
-        const backupRow = rows.filter({ has: page.getByRole('rowheader', { name: '备用服务', exact: true }) })
-        await expect.poll(() => primaryRow.getByRole('cell').allTextContents()).toEqual(['1', '0', '0', '10', '5', '$0.0150按你填的单价'])
-        await expect.poll(() => backupRow.getByRole('cell').allTextContents()).toEqual(['2', '0', '2', '20', '10', '¥0.0300按你填的单价'])
-        await budgets.getByText(AGENT_NAME, { exact: true }).waitFor()
-        await expect.poll(() => budgets.getByText('本月预算已用完', { exact: true }).count()).toBe(2)
+        const backupRow = rows.filter({ has: page.getByRole('rowheader', { name: /^备用服务/u }) })
+        await expect.poll(() => primaryRow.getByRole('cell').allTextContents()).toEqual(['1', '15', '$0.0150'])
+        await expect.poll(() => backupRow.getByRole('cell').allTextContents()).toEqual(['2', '30', '¥0.0300'])
+        expect(await backupRow.getByRole('rowheader').textContent()).toBe('备用服务备选 2')
+        // An estimate says it is one, and what it was worked out from; it is never called a bill.
+        await surface.locator('.usage-total-cost').getByText('估算', { exact: true }).waitFor()
+        expect(await surface.locator('.usage-total-cost').textContent()).toContain('按你填的单价')
+        expect(await surface.textContent()).not.toContain('账单')
+        // Both budgets are used up: the same window as a Harness's, red, with the word 已用.
+        await budgets.locator('.limit-window').filter({ hasText: AGENT_NAME }).waitFor()
+        await expect.poll(() => budgets.locator('.limit-window[data-state="limited"]').count()).toBe(2)
+        expect(await budgets.locator('.limit-window').first().locator('.limit-window-value').textContent()).toBe('已用 100%')
         await noHorizontalOverflow(page)
         await page.screenshot({ path: `${OUTPUT}/usage--${theme}--${width}.png`, animations: 'disabled' })
         await page.context().close()
+      }
+  })
+
+  it('shows the budget of the service a session runs on in its composer, and opens that service’s use', async () => {
+    for (const width of [1440, 390])
+      for (const theme of ['light', 'dark'] as const) {
+        const context = await browser.newContext({
+          viewport: { width, height: 900 },
+          colorScheme: theme,
+          locale: 'zh-CN',
+          reducedMotion: 'reduce',
+          ...(width < 768 ? { isMobile: true, hasTouch: true } : {}),
+        })
+        const page = await context.newPage()
+        page.setDefaultTimeout(15_000)
+        try {
+          await page.clock.setFixedTime(NOW)
+          await enrollBrowser(page, host, { name: `预算小片 ${width} ${theme}`, scopes: ['view', 'run'] })
+          await openSession(page, chatSession)
+          // A session on Latch's service has no subscription limit: the chip is that service's budget, in the same words.
+          const chip = page.locator('main.workspace:not([inert]) form.composer .usage-chip')
+          await chip.getByText('本月预算已用 100%', { exact: true }).waitFor()
+          expect(await chip.getAttribute('data-state')).toBe('limited')
+          const box = (await chip.boundingBox())!
+          expect(box.x >= 0 && box.x + box.width <= width).toBe(true)
+          await noHorizontalOverflow(page)
+          await page.screenshot({ path: `${OUTPUT}/budget-chip--${theme}--${width}.png`, animations: 'disabled' })
+          await chip.click()
+          const surface = page.getByRole('dialog', { name: '额度与用量', exact: true })
+          await surface.locator('.usage-scope-name').getByText('主服务', { exact: true }).waitFor()
+          await surface.getByRole('button', { name: '全部服务', exact: true }).waitFor()
+          const rows = surface.getByRole('table', { name: '用量', exact: true })
+          await rows.getByRole('rowheader', { name: MODEL, exact: true }).waitFor()
+          expect(await rows.getByRole('rowheader').count()).toBe(1)
+          expect(await surface.getByRole('region', { name: '本月预算', exact: true }).locator('.limit-window').count()).toBe(1)
+          await page.screenshot({ path: `${OUTPUT}/budget-panel--${theme}--${width}.png`, animations: 'disabled' })
+        } finally {
+          await context.close()
+        }
       }
   })
 
@@ -196,8 +256,9 @@ describe('model usage in settings', () => {
     let newUsage = false
     let newSpend = false
     try {
-      await usage.getByRole('radio', { name: 'Agent', exact: true }).click()
-      const privateRow = usage.getByRole('rowheader', { name: AGENT_NAME, exact: true })
+      await pick(page, '分组', '按 Agent')
+      // A row's header is its name, then what of it failed or fell back.
+      const privateRow = usage.getByRole('rowheader', { name: new RegExp(`^${AGENT_NAME}`, 'u') })
       await privateRow.waitFor()
       await budgets.getByText(AGENT_NAME, { exact: true }).waitFor()
       await page.route('**/link/api/model-usage', async route => {
@@ -228,8 +289,8 @@ describe('model usage in settings', () => {
         await newReady
         await route.fulfill({ response }).catch(() => {})
       })
-      await usage.getByRole('radio', { name: '7 天', exact: true }).click()
-      await usage.getByRole('radio', { name: '本月', exact: true }).click()
+      await pick(page, '统计期间', '7 天')
+      await pick(page, '统计期间', '本月')
       await expect.poll(() => oldUsage).toBe(true)
       await privateRow.waitFor()
       narrowed = true
@@ -241,7 +302,7 @@ describe('model usage in settings', () => {
       await expect.poll(() => oldFinished).toBe(true)
       expect(await privateRow.count()).toBe(0)
       releaseNew()
-      await usage.getByRole('rowheader', { name: '其他', exact: true }).waitFor()
+      await usage.getByRole('rowheader', { name: /^其他/u }).waitFor()
       await budgets.getByText('主服务', { exact: true }).waitFor()
       expect(await budgets.getByText(AGENT_NAME, { exact: true }).count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/restricted--dark--390.png`, animations: 'disabled' })

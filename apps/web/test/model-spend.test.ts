@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { AppSnapshot, BudgetProgress, ModelUsageRow } from '@latch/protocol'
 import { TurnFooter } from '../src/components/TurnFooter.tsx'
 import { BudgetProgressLine } from '../src/settings/ModelSpend.tsx'
-import { usageRowDetail, usageRowName, usageTotals } from '../src/settings/ModelUsagePage.tsx'
+import { usageRowDetail, usageRowName, usageTotals } from '../src/usage/usage.ts'
 import { settingsSections } from '../src/settings/SettingsPage.tsx'
 import {
   budgetProgressText,
@@ -227,10 +227,9 @@ describe('the turn footer', () => {
   })
 })
 
-describe('设置 › 用量', () => {
-  it('is there for every device once the Host has it, admin or not', () => {
-    expect(settingsSections(snapshot(['view', 'run']))).toEqual(['general', 'usage', 'devices', 'shortcuts', 'about'])
-    expect(settingsSections(snapshot(['view', 'run', 'admin']))).toContain('usage')
-    expect(settingsSections(snapshot(['view', 'run'], {}))).not.toContain('usage')
+describe('设置', () => {
+  it('keeps only configuration: what was used is in 额度与用量, not a section of its own', () => {
+    expect(settingsSections(snapshot(['view', 'run']))).toEqual(['general', 'devices', 'shortcuts', 'about'])
+    expect(settingsSections(snapshot(['view', 'run', 'admin']))).not.toContain('usage')
   })
 })

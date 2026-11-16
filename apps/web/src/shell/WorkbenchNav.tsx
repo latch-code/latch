@@ -24,7 +24,7 @@ import { connectionTransport, useComputers } from '../core/computers.ts'
 import { hostView } from '../core/permissions.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
-import { ShellQuota } from './ShellQuota.tsx'
+import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { WorkbenchPanes } from './WorkbenchPanes.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -58,7 +58,7 @@ export function TabletRail({ shell }: { shell: ShellState }) {
         onClick={() => shell.drawer.show()}
       />
       <span className="workbench-rail-spacer" />
-      <ShellQuota shell={shell} />
+      {shell.access.scopes.has('view') && <UsageEntry />}
       {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}
     </nav>
   )
@@ -183,7 +183,7 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
         <Kbd>⌘K</Kbd>
       </Button>
       {shell.route.entry !== 'sessions' && <WorkbenchComputer shell={shell} />}
-      <ShellQuota shell={shell} />
+      {shell.access.scopes.has('view') && <UsageEntry />}
       {shell.entries.includes('apps') && <IconButton label="应用" icon={PluginsGlyph} onClick={() => shell.openApp()} />}
       {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}
       <WorkbenchPanes shell={shell} />
