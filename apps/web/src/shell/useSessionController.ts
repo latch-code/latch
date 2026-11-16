@@ -33,7 +33,7 @@ import {
   type SessionStopCode,
 } from '../core/securityCopy.ts'
 import { retryOfRefused, type RefusedInput } from '../core/refusedInput.ts'
-import { sessionMenuSections } from '../sessionMenu.ts'
+import { sessionMenuSections, type BoardMarkActions, type SessionPatch } from '../sessionMenu.ts'
 import {
   emptySeen,
   isUnread,
@@ -129,6 +129,7 @@ export function useSessionController({
   else if (privateDraftId.current !== selectedId) privateDraftId.current = null
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const [renaming, setRenaming] = useState<TaskSummary | null>(null)
+  const [tagging, setTagging] = useState<TaskSummary | null>(null)
   const [deleting, setDeleting] = useState<TaskSummary | null>(null)
   const [removingWorktree, setRemovingWorktree] = useState<TaskSummary | null>(null)
   const [toast, setToast] = useState<ToastMessage | null>(null)
@@ -1067,7 +1068,7 @@ export function useSessionController({
   }
 
   // A local action says nothing when it works: the row moving or folding away is the feedback. Failures are toasts.
-  const patchTask = useStableCallback(async (task: TaskSummary, patch: { pinned?: boolean; archived?: boolean }) => {
+  const patchTask = useStableCallback(async (task: TaskSummary, patch: SessionPatch) => {
     try {
       await api<unknown>(`tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: patch })
       await refresh()
@@ -1097,6 +1098,21 @@ export function useSessionController({
     }
   })
   const manageable = catalog !== undefined
+  /** 标签… and 优先级, where the Host groups sessions and this device may change them: the session menu and the board's cards. */
+  const boardMarks = useCallback(
+    (task: TaskSummary): BoardMarkActions | undefined =>
+      task.board && manageable && access.scopes.has('run')
+        ? {
+            setPriority: priority => {
+              void patchTask(task, { priority: priority ?? 'mid' })
+            },
+            editTags: () => {
+              setTagging(task)
+            },
+          }
+        : undefined,
+    [manageable, access, patchTask],
+  )
   const copyTask = useStableCallback(async (task: TaskSummary) => {
     try {
       const data = task.id === current?.summary.id ? current : await api<TaskDetail>(`tasks/${encodeURIComponent(task.id)}`)
@@ -1136,6 +1152,7 @@ export function useSessionController({
           rename: () => {
             setRenaming(task)
           },
+          marks: boardMarks(task),
           pin: () => {
             void patchTask(task, { pinned: !task.pinned })
           },
@@ -1197,6 +1214,7 @@ export function useSessionController({
       exportTask,
       copyTask,
       manageable,
+      boardMarks,
       setRenaming,
       setDeleting,
       access,
@@ -1497,6 +1515,9 @@ export function useSessionController({
     composerRef,
     renaming,
     setRenaming,
+    tagging,
+    setTagging,
+    boardMarks,
     deleting,
     setDeleting,
     removingWorktree,

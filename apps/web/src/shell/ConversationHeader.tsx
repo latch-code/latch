@@ -25,6 +25,7 @@ import {
   EditGlyph,
   BranchGlyph,
   LaptopGlyph,
+  ScheduleGlyph,
   Icon,
 } from '@latch/ui'
 import { importedMark } from '../history/model.ts'
@@ -38,7 +39,7 @@ import { CrumbRow, SessionFacts, SessionFolders } from './SessionEnvironment.tsx
 import type { ShellState } from './useShellLayout.tsx'
 import { topicOwner } from '../agents/chat.ts'
 import { TopicFrame } from '../agents/TopicFrame.tsx'
-import { sourceCrumb } from '../handoffs/model.ts'
+import { sessionSource } from '../sessionSource.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { ComputerChip } from './ComputerChip.tsx'
 
@@ -216,13 +217,17 @@ function ProjectCrumb({
   )
 }
 
-/** Where a handed-off session came from: 「来自 <来源会话>」, a link when this device lists the source. */
+/** Where a session came from: 「来自 <来源>」, a link when this device can open it. */
 export interface HeaderSource {
   title?: string | undefined
   onOpen?: (() => void) | undefined
+  /** What it came from, for the glyph: a handoff or a plugin page (the default), a fork, a schedule. */
+  kind?: 'fork' | 'schedule' | undefined
 }
+const SOURCE_GLYPH = { fork: BranchGlyph, schedule: ScheduleGlyph } as const
 function SourceLink({ source }: { source: HeaderSource }) {
-  const glyph = <EnterGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+  const Glyph = source.kind ? SOURCE_GLYPH[source.kind] : EnterGlyph
+  const glyph = <Glyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
   if (!source.title || !source.onOpen)
     return (
       <span className="topbar-agent topbar-handoff">
@@ -585,7 +590,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
   const foldChanges = canViewChanges && !phone && columnOpen && !shell.profileColumn && shell.conversationWidth < HEAD_FOLD_WIDTH
   const importedFrom = summary?.imported && snapshot.catalog?.harnesses.find(harness => harness.id === summary.imported!.from)
   const imported = summary && importedMark(summary, importedFrom ? harnessName(importedFrom) : undefined)
-  const handedFrom = snapshot.catalog?.features?.handoffs ? sourceCrumb(snapshot, summary?.id) : undefined
+  const source = summary ? sessionSource(snapshot, summary) : undefined
   // A session a plugin page started: 「来自 <页面名>」, the way back to the page while it is listed.
   const originApp = summary?.origin?.app
   const originPage = originApp ? listedApps(snapshot).find(page => appRef(page) === originApp) : undefined
@@ -672,15 +677,21 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
             ),
           }
         : {})}
-      {...(handedFrom
+      {...(source
         ? {
             from: {
-              title: handedFrom.title,
-              onOpen: handedFrom.title
-                ? () => {
-                    shell.choose(handedFrom.sourceId)
-                  }
-                : undefined,
+              title: source.title,
+              ...(source.kind !== 'handoff' ? { kind: source.kind } : {}),
+              onOpen:
+                source.kind === 'schedule'
+                  ? () => {
+                      shell.openMyAgent({ id: source.owner, tab: 'schedules' })
+                    }
+                  : source.listed
+                    ? () => {
+                        shell.choose(source.sessionId)
+                      }
+                    : undefined,
             },
           }
         : pageOrigin

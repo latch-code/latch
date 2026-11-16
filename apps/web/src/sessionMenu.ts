@@ -1,11 +1,56 @@
-import { ArchiveRestore, Eraser, FolderPlus, FolderX, Mail } from 'lucide-react'
-import { ArchiveGlyph, DownloadGlyph, CopyGlyph, EditGlyph, PinGlyph, UnpinGlyph, TrashGlyph } from '@latch/ui'
-import type { TaskSummary } from '@latch/protocol'
+import { ArchiveRestore, Eraser, FolderPlus, FolderX, Mail, Tag } from 'lucide-react'
+import { ArchiveGlyph, CheckGlyph, DownloadGlyph, CopyGlyph, EditGlyph, PinGlyph, UnpinGlyph, TrashGlyph } from '@latch/ui'
+import type { BoardPriority, TaskSummary } from '@latch/protocol'
 import type { MenuSection } from './components/overlays.tsx'
 import { isActive } from './format.ts'
 
+/** What `PATCH /tasks/:id` changes from a menu; `priority: 'mid'` removes it. */
+export interface SessionPatch {
+  pinned?: boolean
+  archived?: boolean
+  tags?: string[] | null
+  priority?: BoardPriority | 'mid'
+}
+
+/** 标签… and 优先级 of a session, offered only where the Host groups sessions and the device may change them. */
+export interface BoardMarkActions {
+  /** Undefined is 中, the default. */
+  setPriority: (priority: BoardPriority | undefined) => void
+  editTags: () => void
+}
+
+const PRIORITIES: ReadonlyArray<{ value: BoardPriority | undefined; id: string; label: string }> = [
+  { value: 'high', id: 'priority-high', label: '高' },
+  { value: undefined, id: 'priority-mid', label: '中' },
+  { value: 'low', id: 'priority-low', label: '低' },
+]
+
+/**
+ * 标签… and the three priorities, the chosen one checked: the same items in the session menu and on a board card's ⋯,
+ * so both read and change the same Host metadata.
+ */
+export function boardMarkSections(task: Pick<TaskSummary, 'priority'>, actions: BoardMarkActions): MenuSection[] {
+  return [
+    { id: 'tags', items: [{ id: 'tags', label: '标签…', icon: Tag, onSelect: actions.editTags }] },
+    {
+      id: 'priority',
+      label: '优先级',
+      items: PRIORITIES.map(({ value, id, label }) => ({
+        id,
+        label,
+        ...(task.priority === value ? { icon: CheckGlyph } : {}),
+        onSelect: () => {
+          if (task.priority !== value) actions.setPriority(value)
+        },
+      })),
+    },
+  ]
+}
+
 export interface SessionActions {
   rename: () => void
+  /** 标签… and 优先级 (`boardMarkSections`). */
+  marks?: BoardMarkActions | undefined
   pin: () => void
   archive?: () => void
   export: () => void
@@ -23,7 +68,8 @@ export interface SessionActions {
 
 /**
  * The one session menu: the title row's ⋯ (and its title), a sidebar row's ⋯ and a phone row held down all draw this.
- * The open session has eight items; any other row seven, since only the open one can clear its context. While a turn
+ * The open session has eight items; any other row seven, since only the open one can clear its context; a Host that
+ * groups sessions adds 标签… and 优先级 for a device that may change them. While a turn
  * runs or waits, 清空上下文 and 删除 stay in place, greyed, each with the reason under it. 同步最新状态 is not here: the
  * connection's own notice retries. A Host without a catalog predates rename, pin, archive and delete, so only export
  * remains there.
@@ -40,6 +86,7 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
         ...(actions.unread ? [{ id: 'unread', label: '标为未读', icon: Mail, onSelect: actions.unread }] : []),
       ],
     },
+    ...(actions.marks ? boardMarkSections(task, actions.marks) : []),
     {
       id: 'share',
       items: [...(actions.copy ? [{ id: 'copy', label: '复制为 Markdown', icon: CopyGlyph, onSelect: actions.copy }] : []), exportItem],

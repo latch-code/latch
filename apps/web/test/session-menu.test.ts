@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { TaskStatus, TaskSummary } from '@latch/protocol'
-import { sessionMenuSections, type SessionActions } from '../src/sessionMenu.ts'
+import { boardMarkSections, sessionMenuSections, type SessionActions } from '../src/sessionMenu.ts'
 import { SessionHeader } from '../src/shell/ConversationHeader.tsx'
 
 const noop = () => {}
@@ -76,6 +76,51 @@ describe('the one session menu', () => {
 
   it('keeps only export for a Host without a catalog', () => {
     expect(sessionMenuSections(task(), open, false).flatMap(section => section.items.map(item => item.id))).toEqual(['export'])
+  })
+
+  it('adds 标签… and 优先级 after the first group only where the caller may change them, the chosen priority checked', () => {
+    const chosen: Array<string | undefined> = []
+    let tagged = 0
+    const marks = {
+      setPriority: (priority: 'high' | 'low' | undefined) => {
+        chosen.push(priority)
+      },
+      editTags: () => {
+        tagged++
+      },
+    }
+    expect(ids('idle', { ...row, marks })).toEqual([
+      'rename',
+      'pin',
+      'unread',
+      'tags',
+      'priority-high',
+      'priority-mid',
+      'priority-low',
+      'copy',
+      'export',
+      'archive',
+      'delete',
+    ])
+    expect(ids('idle', row)).not.toContain('tags')
+    const sections = sessionMenuSections({ ...task(), priority: 'low' }, { ...row, marks }, true)
+    const priority = sections.find(section => section.id === 'priority')!
+    expect(priority.label).toBe('优先级')
+    expect(priority.items.map(item => [item.label, item.icon !== undefined])).toEqual([
+      ['高', false],
+      ['中', false],
+      ['低', true],
+    ])
+    // Absent is 中; choosing what is already chosen sends nothing.
+    expect(
+      boardMarkSections(task(), marks)
+        .find(section => section.id === 'priority')!
+        .items.map(item => item.icon !== undefined),
+    ).toEqual([false, true, false])
+    for (const item of priority.items) item.onSelect()
+    sections.find(section => section.id === 'tags')!.items[0]!.onSelect()
+    expect(chosen).toEqual(['high', undefined])
+    expect(tagged).toBe(1)
   })
 
   it('opens the same sections from the title and from ⋯ in the title row, and from the title on a phone', () => {

@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { HarnessLogin, KeepWaitingResult, TaskDetail } from '@latch/protocol'
 import { Button, ICON_STROKE, Icon, AlertGlyph, CircleCheckGlyph, WarningGlyph } from '@latch/ui'
 import { runEndLine, runStatus, type LivePhaseOptions, type RunMessageFacts, type RunStatus } from '../conversation.ts'
-import { api } from '../core/api.ts'
+import { api, ApiError, isUncertain } from '../core/api.ts'
+import { attend, checkSettle } from '../core/attend.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { HarnessLoginSteps } from '../components/HarnessLogin.tsx'
 import type { LoginSurface } from '../panel/terminal/loginRuns.ts'
@@ -153,6 +154,54 @@ export function StatusLine({
   )
 }
 
+const CHECK_TRIES = 4
+const pause = (ms: number) =>
+  new Promise<void>(resolve => {
+    setTimeout(resolve, ms)
+  })
+
+/**
+ * 已核对 for the settlement on screen: busy until the Host answers. A request whose result is unknown (a timeout, a lost
+ * connection) is sent again as it was, a few times; the Host answers a marker it already wrote as it is. Once it
+ * answers, the button stays away until the session's place changes.
+ */
+function useUnknownCheck(summary: TaskDetail['summary'], onError: ((error: unknown) => void) | undefined) {
+  const settle = checkSettle(summary)
+  const [busy, setBusy] = useState(false)
+  const [sent, setSent] = useState<string>()
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+  const id = summary.id
+  const run = useCallback(() => {
+    if (settle === undefined || busy) return
+    setBusy(true)
+    void (async () => {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await attend(id, { settle, checked: true })
+          if (alive.current) setSent(`${id}\n${settle}`)
+          break
+        } catch (cause) {
+          if (isUncertain(cause) && attempt < CHECK_TRIES && alive.current) {
+            await pause(1000 * 2 ** attempt)
+            continue
+          }
+          // A newer settlement has replaced this one: its own line comes with it.
+          if (alive.current && !(cause instanceof ApiError && cause.code === 'attend-stale')) onError?.(cause)
+          break
+        }
+      }
+      if (alive.current) setBusy(false)
+    })()
+  }, [id, settle, busy, onError])
+  return { busy, run, sent: settle !== undefined && sent === `${id}\n${settle}` }
+}
+
 /**
  * The line that stays under a turn whose run ended without a plain answer: what happened, what nobody can vouch for, and
  * what to do about it.
@@ -164,9 +213,14 @@ export function RunEndNote({
   onContinue,
   login,
   shown,
+  canCheck = false,
+  onError,
 }: {
   summary: TaskDetail['summary']
   harness: string
+  /** This device may run sessions: 已核对 is offered while the Host holds the session for unknown results. */
+  canCheck?: boolean
+  onError?: (error: unknown) => void
   /** The IDs of the turn's rows: a call shown there is not listed again. */
   shown?: ReadonlySet<string>
   onRetry?: () => void
@@ -183,6 +237,7 @@ export function RunEndNote({
     setLoggedInAt(endedAt)
   }, [endedAt])
   const loggedIn = refused && loggedInAt !== undefined && loggedInAt === endedAt
+  const check = useUnknownCheck(summary, onError)
   const line = runEndLine(summary, harness, shown, loggedIn)
   if (!line) return null
   const Glyph = line.tone === 'plain' ? CircleCheckGlyph : AlertGlyph
@@ -191,6 +246,11 @@ export function RunEndNote({
       <div className="run-end-line">
         <Glyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span>{line.text}</span>
+        {line.check && canCheck && !check.sent && (
+          <Button size="xs" variant="secondary" loading={check.busy} onClick={check.run}>
+            已核对
+          </Button>
+        )}
         {line.retry && onRetry && (
           // Logged in, sending again is the one thing left to do; it is still the person who sends.
           <Button size="xs" variant={loggedIn ? 'primary' : 'secondary'} onClick={onRetry}>

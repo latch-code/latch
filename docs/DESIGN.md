@@ -185,7 +185,9 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 - 只有连接本机 socket 的桌面端把电脑称作「这台 Mac」；回环上的浏览器按远程设备显示电脑名。
 - 会话的页头（[ConversationHeader.tsx](../apps/web/src/shell/ConversationHeader.tsx)）写标题、项目、分支、电脑与 Host 报告的状态。断线时不画实时进行中；改动的增删数只在读到后出现。
 - 标题按钮、页头菜单、侧栏行的菜单与手机上按住一行打开的是同一份会话菜单（`sessionMenuSections`）。运行或等你处理时，「清空上下文」与「删除」留在原处停用并写原因。
-- 交接来源与待交回见 [HANDOFFS.md](HANDOFFS.md#界面)。
+- Host 给出会话的组（`TaskSummary.board`）且设备能发起会话时，菜单在第一组后多「标签…」与「优先级」（高、中、低，当前的带对勾，没设是中）。看板卡片的菜单用同一份 `boardMarkSections`；标签在对话框里编辑（[SessionTagsDialog.tsx](../apps/web/src/components/SessionTagsDialog.tsx)），侧栏行不画标签与优先级。
+- 页头只写一个「来自 …」（[sessionSource.ts](../apps/web/src/sessionSource.ts)）：交接来源，否则分叉来源，否则定时任务，再否则插件页面。来源会话在列表里、定时任务这台设备拿得到时是链接。交接来源与待交回见 [HANDOFFS.md](HANDOFFS.md#界面)。
+- 失败的会话真正显示在主区时（对话可见：不是悬停或预读，不在起始页、设置、应用页面或看板之下，标签页可见），页面向 Host 记一次「打开过」（`attend`，每次结算一次，失败的下次打开或重连再发），它离开等你处理，红色「失败」留在行与卡上。
 
 **两个空间。** Code 与我的 Agent 是两个空间，开关不是列表筛选；另一空间有待处理时带琥珀点。应用与设置是共用目的地，按 Host 能力与设备权限决定是否出现（[routes.ts](../apps/web/src/shell/routes.ts)）。切换保留会话、阅读位置、草稿与面板。我的 Agent 的空间不出现 Harness 与模型（只在创建与资料的设置里）；布局与组件见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#界面)，应用见 [APP-PAGES.md](APP-PAGES.md#壳层)。
 
@@ -460,6 +462,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 - 沉默的询问是琥珀色，带「继续等」与「停止」。
 - 连接中断时这一行不出现：横幅说连接，会话行写上次确认的时间。
 - 运行不是以普通回答结束时，回合下留一行：进程退出是红色，强制停止与中断是琥珀色，并列出结果未知的命令。
+- Host 因结果未知把会话放在等你处理时，这一行有次要按钮「已核对」（能发起会话的设备）：按下后忙到 Host 答复，结果未知就原样重发；之后这一行写「已核对」。各请求的核对与放弃不变。
 - 失败的系统消息就是原因（已脱敏），旁边只给一个下一步（[failureAction.ts](../apps/web/src/conversation/failureAction.ts)）。
 
 **回合卡片。** 结束的回合有文件变化时带一张卡（[TurnCards.tsx](../apps/web/src/conversation/TurnCards.tsx)）。

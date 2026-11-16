@@ -11,6 +11,7 @@ import {
   type ToolDecision,
   type ToolKind,
 } from '@latch/protocol'
+import { checkSettle, unknownChecked } from './core/attend.ts'
 import { parseDuration, parseTime } from './core/hostClock.ts'
 import { unwrapShell, type UnwrappedCommand } from './core/shellUnwrap.ts'
 import { stripAnsi } from './conversation/ansi.ts'
@@ -1207,6 +1208,8 @@ export interface RunEndLine {
   /** What was running when it ended, and has no row of its own in the turn: nobody can vouch for these. */
   unknown: string[]
   retry: boolean
+  /** The Host holds the session in 等你处理 for these results: 已核对 takes it out. */
+  check: boolean
 }
 
 /**
@@ -1224,19 +1227,21 @@ export function runEndLine(
   const results = end.unknownResults ?? []
   const unknown = results.filter(result => !shown?.has(result.messageId)).map(result => result.name)
   const count = end.unknownResultCount ?? results.length
-  const uncertain = count > 0 ? ` · 这 ${count} 条命令结果未知，请核对` : ''
+  const checked = unknownChecked(summary)
+  const uncertain = count > 0 ? ` · 这 ${count} 条命令结果未知${checked ? ' · 已核对' : '，请核对'}` : ''
+  const check = count > 0 && checkSettle(summary) !== undefined
   switch (end.reason) {
     case 'process-exited':
-      return { tone: 'red', text: `${harness} 已退出 · 这一轮没有完成${uncertain}`, unknown, retry: true }
+      return { tone: 'red', text: `${harness} 已退出 · 这一轮没有完成${uncertain}`, unknown, retry: true, check }
     case 'forced-stop':
-      return { tone: 'amber', text: `已强制停止${uncertain}`, unknown, retry: false }
+      return { tone: 'amber', text: `已强制停止${uncertain}`, unknown, retry: false, check }
     case 'host-stopped':
-      return { tone: 'amber', text: `Latch 重启时中断${uncertain}`, unknown, retry: true }
+      return { tone: 'amber', text: `Latch 重启时中断${uncertain}`, unknown, retry: true, check }
     case 'login-required':
       return loggedIn
-        ? { tone: 'plain', text: '已登录', unknown, retry: true }
-        : { tone: 'amber', text: `${harness} 还没登录 · 登录后重试`, unknown, retry: true }
+        ? { tone: 'plain', text: '已登录', unknown, retry: true, check: false }
+        : { tone: 'amber', text: `${harness} 还没登录 · 登录后重试`, unknown, retry: true, check: false }
     case 'turn-ended':
-      return count > 0 ? { tone: 'amber', text: `${harness} 结束了这一轮${uncertain}`, unknown, retry: false } : undefined
+      return count > 0 ? { tone: 'amber', text: `${harness} 结束了这一轮${uncertain}`, unknown, retry: false, check } : undefined
   }
 }

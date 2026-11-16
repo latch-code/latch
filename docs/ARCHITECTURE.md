@@ -383,7 +383,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 | 10 | 其余 | `done` | |
 
 - 1–4 与网页的 `waitsOnYou`、桌面端的 `attentionOf` 是同一判定（`packages/protocol` 的 `waitKindOf`，共用向量 `packages/testkit/vectors/board-v1.json`）。
-- `settle` 是结算的名字：`runId`，否则 `runEnd.at`，否则 `updatedAt`。`POST /tasks/:id/attend { settle, opened?, checked? }` 只记在当前结算上，不同就 409 `attend-stale`；下一次运行有新的 `settle`，又会进入等你处理。`opened` 要 `view`，是阅读记号，不写审计；`checked` 要 `run`，先写 `task.unknown.checked`（只有会话 ID 与数目），写不进就不记。它只决定看板上的位置，不改变各请求「结果未知」的核对与放弃。
+- `settle` 是结算的名字：`runId`，否则 `runEnd.at`，否则 `updatedAt`。`POST /tasks/:id/attend { settle, opened?, checked? }` 只记在当前结算上，不同就 409 `attend-stale`；下一次运行有新的 `settle`，又会进入等你处理。`opened` 要 `view`，是阅读记号，不写审计；`checked` 要 `run`，先写 `task.unknown.checked`（只有会话 ID 与数目），写不进就不记。它只决定看板上的位置，不改变各请求「结果未知」的核对与放弃。网页在失败的会话真正显示在主区时发 `opened`，运行结束行的「已核对」发 `checked`（[DESIGN.md](DESIGN.md)）；iOS 尚未发送。
 - `card`：不是归档、旧助手会话，我的 Agent 的会话只有定时运行。不是卡的会话也有组。
 - **交付事实。** `BoardDelivery` 只在内存中：一次运行结算后、交付的提交、推送或建 PR 之后、任何设备调 `workbench/delivery` 时各读一次，Host 启动约 2 秒后对最近 7 天、空闲、每个目录一个的会话最多读 48 个。只读 Code 会话（不归档、不在运行）的工作目录，经受限运行器只读本地 Git，从不调用 `gh`、不访问网络；PR 状态只来自设备发起的读与人按下的交付。后台同时只读一个，且有两个读取在跑时不开始；设备的读取仍各自最多两批。目录的改动只归一个会话：自己的工作树或会话文件夹、或绑定了 PR 的会话归它自己；几个会话共用一个目录时，归改动记录（`TurnChanges`：已结算、未撤销、`files > 0` 的一轮）里自己改过文件的会话中最近变化的那个。没有会话自己改过文件（例如人手改的），看板上就没有会话认领这个目录的改动。私有会话只与私有会话比，从不让可见的会话进出可交付。结论变了才通知客户端。
 - 标签、优先级经 `PATCH /tasks/:id`，只由人设置，不触发任何动作。标签每个 `trim`、NFKC、去掉不可见字符，1–24 个码点，最多 8 个；含控制字符或换行 400 `tag-invalid`，像密钥 400 `tag-secret`，超过 8 个 400 `tag-limit`。改元数据不改 `updatedAt`。

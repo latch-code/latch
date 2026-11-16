@@ -801,12 +801,19 @@ describe('the live run', () => {
     expect(runEndLine(summary(undefined), 'Codex')).toBeUndefined()
     expect(
       runEndLine(summary({ reason: 'process-exited', at: at(0), unknownResults: [{ messageId: 'm', name: 'pnpm test' }] }), 'Codex'),
-    ).toEqual({ tone: 'red', text: 'Codex 已退出 · 这一轮没有完成 · 这 1 条命令结果未知，请核对', unknown: ['pnpm test'], retry: true })
+    ).toEqual({
+      tone: 'red',
+      text: 'Codex 已退出 · 这一轮没有完成 · 这 1 条命令结果未知，请核对',
+      unknown: ['pnpm test'],
+      retry: true,
+      check: false,
+    })
     expect(runEndLine(summary({ reason: 'forced-stop', at: at(0), unknownResultCount: 2 }), 'Codex')).toEqual({
       tone: 'amber',
       text: '已强制停止 · 这 2 条命令结果未知，请核对',
       unknown: [],
       retry: false,
+      check: false,
     })
     expect(runEndLine(summary({ reason: 'turn-ended', at: at(0) }), 'Codex')).toBeUndefined()
     // The Host's stop is nobody's cancel: it says so, offers 重试, and claims nothing about the calls it cut off.
@@ -816,19 +823,53 @@ describe('the live run', () => {
         text: 'Latch 重启时中断 · 这 1 条命令结果未知，请核对',
         unknown: ['make'],
         retry: true,
+        check: false,
       },
     )
     // Refused for want of a login: amber until the Harness itself says it is logged in, then 已登录 with 重试 alone. The
     // record of the run does not change, and no other ending is ever read as resolved.
     const refused = summary({ reason: 'login-required', at: at(0) })
-    expect(runEndLine(refused, 'Codex')).toEqual({ tone: 'amber', text: 'Codex 还没登录 · 登录后重试', unknown: [], retry: true })
-    expect(runEndLine(refused, 'Codex', undefined, true)).toEqual({ tone: 'plain', text: '已登录', unknown: [], retry: true })
+    expect(runEndLine(refused, 'Codex')).toEqual({
+      tone: 'amber',
+      text: 'Codex 还没登录 · 登录后重试',
+      unknown: [],
+      retry: true,
+      check: false,
+    })
+    expect(runEndLine(refused, 'Codex', undefined, true)).toEqual({ tone: 'plain', text: '已登录', unknown: [], retry: true, check: false })
     expect(runEndLine(summary({ reason: 'process-exited', at: at(0) }), 'Codex', undefined, true)).toMatchObject({ tone: 'red' })
     // A call whose own row is in the turn already says 结果未知 there: the note counts it and does not list it again.
     const stopped = summary({ reason: 'host-stopped', at: at(0), unknownResults: [{ messageId: 'm', name: '运行长任务' }] })
     expect(runEndLine(stopped, 'Codex', new Set(['m']))).toMatchObject({
       text: 'Latch 重启时中断 · 这 1 条命令结果未知，请核对',
       unknown: [],
+    })
+  })
+
+  it('offers 已核对 only while the Host holds the session for unknown results, and says so once it no longer does', () => {
+    const ended = (board: TaskSummary['board'], runEnd: TaskSummary['runEnd'], status: TaskSummary['status'] = 'failed'): TaskSummary => ({
+      harnessId: 'standard',
+      id: 's',
+      title: 't',
+      status,
+      updatedAt: '',
+      ...(runEnd ? { runEnd } : {}),
+      ...(board ? { board } : {}),
+    })
+    const cut = { reason: 'host-stopped' as const, at: at(0), unknownResultCount: 2 }
+    const waiting = ended({ group: 'attention', reason: 'unknown', settle: 'run-1', card: true }, cut)
+    expect(runEndLine(waiting, 'Codex')).toMatchObject({ text: 'Latch 重启时中断 · 这 2 条命令结果未知，请核对', check: true })
+    // Checked: the failure may still hold it, but no longer for these results.
+    const checked = ended({ group: 'attention', reason: 'failed', settle: 'run-1', card: true }, cut)
+    expect(runEndLine(checked, 'Codex')).toMatchObject({ text: 'Latch 重启时中断 · 这 2 条命令结果未知 · 已核对', check: false })
+    expect(runEndLine(ended({ group: 'done', settle: 'run-1' }, cut, 'idle'), 'Codex')).toMatchObject({ check: false })
+    // Nothing unknown, or a Host that groups nothing: no button, and the words of before.
+    expect(
+      runEndLine(ended({ group: 'attention', reason: 'failed', settle: 'run-1' }, { reason: 'process-exited', at: at(0) }), 'Codex'),
+    ).toMatchObject({ check: false })
+    expect(runEndLine(ended(undefined, cut), 'Codex')).toMatchObject({
+      text: 'Latch 重启时中断 · 这 2 条命令结果未知，请核对',
+      check: false,
     })
   })
 

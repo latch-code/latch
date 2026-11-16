@@ -32,6 +32,7 @@ import { SideQuestionPanel, useSideQuestion } from '../conversation/SideQuestion
 import { useTopicResults } from '../agents/TopicResults.tsx'
 import { speakerOf } from '../agents/model.ts'
 import { loginSurface } from '../panel/terminal/loginRuns.ts'
+import { useOpenedMark } from '../core/attend.ts'
 
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
 export function ConversationView({ shell, visible, backdrop }: { shell: ShellState; visible: boolean; backdrop: BackdropLevel }) {
@@ -85,6 +86,8 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
   const sideQuestion = useSideQuestion(selectedId)
   const showTranscript = visible && !(phone && sideQuestion)
   const showBackdrop = showTranscript && backdrop !== 'off'
+  // Only a conversation in view marks a failed run opened: not under the start page, settings, a page or the board.
+  useOpenedMark(current?.summary, visible && (access.legacy || access.scopes.has('view')), connection === 'connected')
   const projection = useTranscriptProjection(current)
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
   // A topic of 我的 Agent is a conversation with the helper: it answers, under its own face and name.
@@ -286,6 +289,7 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
                         replyViewport={reading.containerRef}
                         onSource={choose}
                         failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
+                        checkUnknown={access.scopes.has('run')}
                         onFailureStep={step => takeFailureStep(step, openSettings)}
                         onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
                         onFork={

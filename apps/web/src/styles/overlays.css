@@ -9,3 +9,61 @@
   line-height: var(--lh-caption);
   font-weight: 500;
 }
+
+/* 标签: the session's tags as chips on the tag fill, then the field, then other sessions' tags to pick. */
+.session-tags-dialog .ui-modal-body {
+  display: grid;
+  gap: var(--sp-12);
+}
+.session-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.session-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 var(--sp-2) 0 var(--sp-8);
+  border-radius: var(--r-6);
+  background: var(--tag);
+  color: var(--ink);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.session-tag > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-tag .ui-icon-button {
+  width: 20px;
+  height: 20px;
+}
+.session-tag-pick {
+  gap: var(--sp-4);
+  padding: 0 var(--sp-8);
+  border: 0;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--muted);
+  cursor: pointer;
+}
+.session-tag-pick:hover:not(:disabled) {
+  background: var(--tag);
+  color: var(--ink);
+}
+.session-tag-pick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The field keeps room for its one note, so the counter or the reason never moves what is under it. */
+.session-tags-dialog .ui-field-control:not(:has(.ui-field-error)) {
+  padding-bottom: calc(var(--lh-caption-para) + var(--sp-4));
+}

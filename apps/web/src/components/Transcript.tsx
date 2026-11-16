@@ -235,6 +235,8 @@ interface TurnViewProps {
   /** 交给代码任务… with the chosen messages. */
   onHandoff?: (messageIds: string[]) => void
   onContinue?: () => void
+  /** 已核对 on the run's end line. */
+  checkUnknown?: boolean
   /** The failure steps this device can take, and how. */
   onFailureStep?: FailureSteps
   changes?: TurnChanges
@@ -415,6 +417,7 @@ const TurnView = memo(function TurnView({
   onEdit,
   onHandoff,
   onContinue,
+  checkUnknown,
   onFailureStep,
   changes,
   sessionActive,
@@ -587,6 +590,8 @@ const TurnView = memo(function TurnView({
               onContinue={onContinue}
               login={login}
               shown={new Set(turn.replies.map(message => message.id))}
+              canCheck={checkUnknown === true}
+              {...(onChangesError ? { onError: onChangesError } : {})}
             />
           )}
           {showOutcome && <OutcomeRecord turn={turn} outcome={outcome} onRetry={onRetry} />}
@@ -710,6 +715,8 @@ interface TranscriptProps {
   retry?: RetryAccess
   /** Forks up to a message, with a draft in the composer. */
   onFork?: (upToMessageId: string, draft?: string) => void
+  /** This device may mark a run's unknown results checked (已核对). */
+  checkUnknown?: boolean
   /** Takes a failure's next step: 设置 › Harness or 模型服务 (only where this device can change them), or the model menu. */
   failureSteps?: readonly FailureStep[]
   onFailureStep?: (step: FailureStep) => void
@@ -761,6 +768,7 @@ export function Transcript(props: TranscriptProps) {
     placed,
     failureSteps,
     onFailureStep,
+    checkUnknown,
   } = props
   const ownProjection = useTranscriptProjection(props.projection ? null : detail)
   const projection = props.projection ?? ownProjection
@@ -921,6 +929,7 @@ export function Transcript(props: TranscriptProps) {
           onCopyUpTo={!trailingLive ? copyUpTo : undefined}
           {...(onFork && index > 0 ? { onEdit: editFrom } : {})}
           {...(onFork ? { onContinue: continueRun } : {})}
+          {...(latest && checkUnknown ? { checkUnknown: true } : {})}
           {...(steps ? { onFailureStep: steps } : {})}
           {...(record ? { changes: record } : {})}
           sessionActive={active && hasChangeRecord}

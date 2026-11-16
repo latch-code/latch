@@ -11,6 +11,7 @@ import { UsageSurface } from '../usage/UsageSurface.tsx'
 import { LoginTerminalDialog } from '../panel/terminal/LoginTerminalDialog.tsx'
 import { FillTerminalDialog } from '../panel/terminal/FillTerminalDialog.tsx'
 import { RemoveWorktreeDialog, removalWords } from '../components/RemoveWorktreeDialog.tsx'
+import { knownTags, SessionTagsDialog } from '../components/SessionTagsDialog.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { spaceOf } from '../sessions.ts'
 import { canDelegate } from '../agents/model.ts'
@@ -87,6 +88,8 @@ export function Overlays({ shell }: { shell: ShellState }) {
   const {
     renaming,
     setRenaming,
+    tagging,
+    setTagging,
     deleting,
     setDeleting,
     sessionDrafts,
@@ -172,6 +175,24 @@ export function Overlays({ shell }: { shell: ShellState }) {
           onSubmit={async title => {
             try {
               await api<unknown>(`tasks/${encodeURIComponent(renaming.id)}`, { method: 'PATCH', body: { title } })
+            } catch (cause) {
+              throw new MessageError(errorMessage(cause))
+            }
+            await refresh()
+          }}
+        />
+      )}
+      {tagging && (
+        <SessionTagsDialog
+          task={tagging}
+          known={knownTags(snapshot.tasks)}
+          phone={shell.phone}
+          onClose={() => {
+            setTagging(null)
+          }}
+          onSave={async tags => {
+            try {
+              await api<unknown>(`tasks/${encodeURIComponent(tagging.id)}`, { method: 'PATCH', body: { tags } })
             } catch (cause) {
               throw new MessageError(errorMessage(cause))
             }
