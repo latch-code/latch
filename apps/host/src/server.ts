@@ -18,7 +18,7 @@ import { AgentPlans, canPropose } from './agent-plans.ts'
 import { resultContent } from './agent-activity.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
-import { GENERAL_AGENT_ID, refusedBeforeAccepting, type AgentExecutionContext, type AutomationConfig } from '@latch/protocol'
+import { GENERAL_AGENT_ID, isMcpToolOn, refusedBeforeAccepting, type AgentExecutionContext, type AutomationConfig } from '@latch/protocol'
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
 import { readAppFrame } from './app-frame.ts'
 import { readUiBuild } from './ui-build.ts'
@@ -210,6 +210,7 @@ import {
   type McpServerRecord,
 } from './mcp.ts'
 import { McpOAuth } from './mcp-oauth.ts'
+import type { ComputerDriverOptions } from './mcp-computer.ts'
 import { McpRemotePool, McpRemoteSession, builtinToolName, maskStrings, remoteFailure, type RemoteAnswer } from './mcp-remote.ts'
 import {
   authFailure,
@@ -745,6 +746,11 @@ export interface ServerOptions {
    * `detectPresetCommands`; left out, as in tests, no real command on this computer can end up chosen for a session.
    */
   detectPreset?: (preset: AgentPreset) => CommandDetection
+  /**
+   * Where 「操控这台 Mac」 looks for Cua Driver. The start script passes `COMPUTER_APP` on macOS; left out, as in tests
+   * that do not name a fake, the preset is not offered and no real driver on this computer is ever run.
+   */
+  computerDriver?: ComputerDriverOptions
 }
 
 export interface StartedHost {
@@ -2714,6 +2720,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ]
           return used.some(url => hostPortOf(url) === target) ? undefined : target
         },
+        ...(options.computerDriver ? { computer: options.computerDriver } : {}),
       },
       browser: {
         broker: browserBroker,
@@ -4525,6 +4532,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       mcpRemote.closeWhere(`std:${sessionId}:`)
     })
 
+    /**
+     * Whether a server may be given to this session: 「操控这台 Mac」 never goes to an unattended run (an automation's,
+     * which is how 我的 Agent's schedules run), known while the run's session is still being created.
+     */
+    const mcpGiven = (record: McpServerRecord, sessionId: string) =>
+      !(record.transport === 'stdio' && record.preset === 'computer' && hub!.unattended(sessionId))
+
     async function mcpSetHashOf(sessionId: string, harnessId: string): Promise<string | undefined> {
       if (hub!.info(harnessId)?.skills !== 'server') return undefined
       const given = mcpSets.get(sessionId)
@@ -4537,7 +4551,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return setHash(
         mcpStore
           .usedIn({ ...(summary.agent ? { agentId: summary.agent.customAgentId } : {}), projectId: projectIdOf(summary) })
-          .filter(record => mcpConfirmed(record)),
+          .filter(record => mcpConfirmed(record) && mcpGiven(record, sessionId)),
       )
     }
 
@@ -4674,7 +4688,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               })
               .then(() => refresh())
               .catch(() => {})
-            return { record, key, tools: tools.filter(tool => keptToolName(tool.name) && !record.disabledTools.includes(tool.name)) }
+            return { record, key, tools: tools.filter(tool => keptToolName(tool.name) && isMcpToolOn(record, tool.name)) }
           } catch (error) {
             if (!signal.aborted) {
               const reason = remoteFailure(error)
@@ -4718,7 +4732,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                   || !mcpUsedIn(latest.scope, where)
                 )
                   throw new Error('这个 MCP 服务器已在 Latch 里移除、停用或修改。')
-                if (latest.disabledTools.includes(tool.name)) throw new Error('这个工具已在 Latch 里关掉。')
+                if (!isMcpToolOn(latest, tool.name)) throw new Error('这个工具已在 Latch 里关掉。')
                 const callId = await recordCall(latest, sessionId, tool.name)
                 let answer: RemoteAnswer
                 try {
@@ -4784,7 +4798,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               throw error
             })
             reportOn({ ok: true, tools: tools.map(tool => tool.name) })
-            return maskStrings({ tools: tools.filter(tool => !record.disabledTools.includes(tool.name)) }, redactKnownSecrets)
+            return maskStrings({ tools: tools.filter(tool => isMcpToolOn(record, tool.name)) }, redactKnownSecrets)
           }
           const tool = typeof params.name === 'string' ? params.name : ''
           const args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments) ? params.arguments : {}
@@ -4795,14 +4809,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             : maskStrings(answer.result, redactKnownSecrets)
         },
         async select(input) {
-          const chosen = mcpStore.usedIn(input).filter(record => mcpConfirmed(record))
+          const chosen = mcpStore.usedIn(input).filter(record => mcpConfirmed(record) && mcpGiven(record, input.sessionId))
           mcpSets.set(input.sessionId, setHash(chosen))
           return chosen.map(record => ({ serverId: record.id, name: record.name, specHash: record.specHash }))
         },
         async launch(binding) {
           const record = current(binding)
           // Still used in this session: 「用在」 may have changed since the agent started.
-          if (!record || !mcpUsedIn(record.scope, binding)) throw gone()
+          if (!record || !mcpUsedIn(record.scope, binding) || !mcpGiven(record, binding.sessionId)) throw gone()
           // The person's program starts now (a remote server's session opens), on record first: no record, no start.
           try {
             await audit.append({
@@ -4830,6 +4844,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ),
             cwd,
             disabledTools: [...record.disabledTools],
+            ...(record.knownTools ? { knownTools: [...record.knownTools] } : {}),
           }
         },
         report(binding, report) {
@@ -4866,8 +4881,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         },
         async callStarted(binding, tool) {
           const record = current(binding)
-          if (!record || !mcpUsedIn(record.scope, binding)) throw gone()
-          if (record.disabledTools.includes(tool)) throw new AppError(403, 'mcp-tool-off', 'This tool is switched off in Latch.')
+          if (!record || !mcpUsedIn(record.scope, binding) || !mcpGiven(record, binding.sessionId)) throw gone()
+          if (!isMcpToolOn(record, tool)) throw new AppError(403, 'mcp-tool-off', 'This tool is switched off in Latch.')
           return recordCall(record, binding.sessionId, tool)
         },
         callEnded(binding, callId, result, ms) {

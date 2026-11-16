@@ -1,10 +1,11 @@
 ---
-description: Latch 的 MCP 服务器：本机命令与远程地址的定义与秘密、本机确认与出站许可、测试、「用在」、latch-mcp 桥与工具网关、Host 作为远程 MCP 客户端、远程服务器的登录（OAuth）、交给各 Harness、审计与限制。
+description: Latch 的 MCP 服务器：本机命令与远程地址的定义与秘密、本机确认与出站许可、测试、「用在」、latch-mcp 桥与工具网关、Host 作为远程 MCP 客户端、远程服务器的登录（OAuth）、交给各 Harness、「操控这台 Mac」（Cua Driver）、审计与限制。
 sources:
   - apps/host/src/mcp.ts
   - apps/host/src/mcp-remote.ts
   - apps/host/src/mcp-oauth.ts
   - apps/host/src/mcp-import.ts
+  - apps/host/src/mcp-computer.ts
   - apps/host/src/routes/mcp.ts
   - apps/host/src/audit-actions/mcp.ts
   - apps/host/src/tool-gateway.ts
@@ -18,11 +19,13 @@ sources:
   - packages/testkit/fixtures/fake-mcp-stdio.mjs
   - packages/testkit/src/fake-mcp-http.ts
   - packages/testkit/src/fake-oauth.ts
+  - packages/testkit/src/fake-cua-driver.ts
   - apps/host/test/mcp.test.ts
   - apps/host/test/mcp-remote.test.ts
   - apps/host/test/mcp-oauth.test.ts
   - apps/host/test/mcp-prompts.test.ts
   - apps/host/test/mcp-import.test.ts
+  - apps/host/test/mcp-computer.test.ts
   - packages/harness-acp/test/mcp-bridge.test.ts
   - e2e/mcp.e2e.ts
   - e2e/mcp-oauth.e2e.ts
@@ -51,7 +54,7 @@ Latch 的服务器有两种：
 
 **`servers.json`：定义。**
 
-- 本机命令：ID（`mcp_` 加 22 位）、名称、命令（保存时找到的绝对路径）、参数、普通变量（名字与值，属于确认过的定义，设备可读）、秘密变量的名字、「在项目文件夹里启动」、「用在」、开关、关掉的工具、修订号。
+- 本机命令：ID（`mcp_` 加 22 位）、名称、命令（保存时找到的绝对路径）、参数、普通变量（名字与值，属于确认过的定义，设备可读）、秘密变量的名字、「在项目文件夹里启动」、「用在」、开关、关掉的工具、修订号；[操控这台 Mac](#操控这台-mac) 另有 `preset` 与 `knownTools`。
 - 远程地址（`transport: 'http'`）：没有命令、参数与变量，只有地址 `url`（源与路径）与请求头的名字 `headerNames`；登录后另有 `oauth`（`issuer`、`scopes`、`resource`）。
 - `specHash`：本机命令是命令、参数、普通变量、秘密变量名与工作目录方式的 SHA-256；远程地址是地址、请求头名字与 `oauth` 的 SHA-256。
 - `confirmed`：本机确认通过时的 `specHash` 与它点名的秘密变量名或请求头名字，只在确认通过时写。测试与每次启动之前都核对定义与它一致（`isConfirmed`）。
@@ -97,6 +100,7 @@ Latch 的服务器有两种：
 | `POST /mcp/servers/:id/oauth/login` | `host.sock` 的 `admin` | `{ requestId, clientId?, clientSecret? }`；回答 `{ authorizationUrl, until, server }` |
 | `POST /mcp/servers/:id/oauth/logout` | `host.sock` 的 `admin` | `{ requestId }`；回答 `{ oauth, server }` |
 | `GET /mcp/import?project=<项目 ID>` | `host.sock` 的 `admin` | 见[从项目导入](#从项目导入) |
+| `GET /mcp/computer` | `host.sock` 的 `admin` | 见[操控这台 Mac](#操控这台-mac)；Host 没有指定位置时 404 |
 | `POST /agents/:id/mcp` | `run` | 「读取」这个 Harness 自己的 MCP |
 
 - 同一设备的同一 `requestId` 带同样的请求体：按回执回答，不再确认、不再执行；带不同的请求体：409 `request-conflict`。修订号不对：409 `mcp-changed`。
@@ -427,12 +431,49 @@ detail 只有服务器 ID 与类别。令牌、code、state、verifier、Client 
 
 **添加。** 选一个后预填表单（名称在合规且没人用时才填），然后是正常的添加：本机确认，审计带 `importedFrom`。导入后是 Latch 自己的一份，仓库以后怎么改都不影响它。
 
+## 操控这台 Mac
+
+把 Cua Driver（MIT，人自己安装）加成一个本机命令。Latch 只把工具交给 Agent，不另做控制层：不代理、不分档、不按 App 授权、不管理它的守护进程、不把截图放进会话。
+
+**检测**（`mcp-computer.ts`，只在启动脚本于 macOS 上给出 `computerDriver` 时；测试 Host 不给就不提供，也碰不到真的 Driver）
+
+- 只看 `/Applications/CuaDriver.app`：本身是目录而不是链接，`Contents/MacOS/cua-driver` 是普通可执行文件、别人不能写；否则 `refused`（`bundle`）。
+- `codesign --verify --strict` 按要求核对：标识 `com.trycua.driver`、Apple 签发、团队 `YCK386LBJ7`；否则 `refused`（`signature`），程序不运行。
+- 再运行 `cua-driver --version`：不经 shell、空的工作目录、只带关遥测的变量与 `PATH`，最多 5 秒、4 KiB，然后结束进程组。读不出 `cua-driver <版本>` 是 `refused`（`version`）。
+- 低于 0.10.0 是 `old`：`telemetry disable` 从 0.9.0 起有，`revoke --all` 从 0.10.0 起有。没有安装是 `absent`。
+- 这是添加时的检查，不保证文件以后不变。
+
+**添加**（`POST /mcp/servers` 带 `{ requestId, baseRevision, preset: 'computer', scope }`）
+
+- Host 再检测一次，只有 `ok` 才添加；命令、参数、变量由 Host 写，请求体不能给。名称 `computer`，同一台 Host 只有一个。
+- 然后与任何本机命令一样：`mcp.server.apply` 确认（命令的绝对路径、`mcp`、变量全文，加一句「以你的身份操作这台 Mac 上的 App，不是沙箱」），先写 `mcp.server.added`（`preset: 'computer'`）。
+- 页面给的「用在」是空的：人在「用在」里选会话。
+- 未安装或版本太旧时只给上游的安装命令（「在终端里打开」与复制，同 Harness 的安装行）（固定版本，带 `CUA_DRIVER_NO_CONNECT`、`NO_TEST`、`NO_MODIFY_PATH`，不改 Agent CLI 的配置与 shell 配置），由人在终端里运行。Latch 不下载、不安装、不升级它。
+
+**默认**
+
+- 普通变量 `DO_NOT_TRACK=1`、`CUA_DRIVER_RS_TELEMETRY_ENABLED=false`、`CUA_TELEMETRY_ENABLED=false`、`CUA_DRIVER_RS_UPDATE_CHECK=false`。它们只作用于 `mcp` 进程：macOS 上它把调用交给 CuaDriver.app 的守护进程，那是 LaunchServices 启动的，拿不到这些变量。守护进程的遥测要人自己在终端运行 `<程序路径> telemetry disable`：设置里这一行给「在终端里打开」与复制，添加前在「操控这台 Mac」里、添加后在服务器的页面上。
+- 不用限制模式（bounded）：它属于守护进程的启动参数，`mcp` 不接受；要用时人按 Driver 自己的文档启动守护进程与授权清单。
+- 关掉的工具（`COMPUTER_TOOLS_OFF`，名字取自 0.44.0 的文档，人可以逐个打开）：剪贴板；在 Driver 里运行别的工具的（`run_script`、`run_steps`、`replay_trajectory`、`escalate_session`），它们绕过 Latch 的逐个开关与逐次记录；启动或结束程序的 `launch_app`（收地址与额外参数）、`kill_app`；`start_recording`；能藏起 Agent 光标的 `set_agent_cursor_enabled`；`page` 与 `browser_*`；`check_for_update`、`install_ffmpeg`、`install_extension`、`set_config`。
+- `get_window_state` 与 `get_desktop_state` 的 `screenshot_out_file` 参数能把截图写到任意文件；它不是单独的工具，Latch 按工具开关，关不掉一个参数。
+- **新工具默认关。** 定义带 `knownTools`（0.44.0 文档列出的全部工具）：不在其中的工具是新的，不列给 Agent、调用被拒（`isMcpToolOn`，桥与 Host 各查一次），设置里标「新」。打开它就加入 `knownTools`，与重新打开工具一样算 `use`：先审计，不确认。
+
+**限制**
+
+- 不给无人值守的运行：自动化（我的 Agent 的定时运行）的会话拿不到它，从创建时起（`hub.unattended`）。
+- 要立刻停下 Driver 正在做的一切：在终端运行 `cua-driver revoke --all`（重启守护进程前一直拒绝）；在 Latch 里停用这个服务器则结束各会话的桥。
+- 它以你的身份操作这台 Mac，不是沙箱。完全访问（L3）的 Agent 本来就能直接运行 `cua-driver`，绕过 Latch 的开关与记录。
+- 不要让它操作 Electron 与 Chromium 应用（含 Latch 与 VS Code）：上游 #7292（像素点击让渲染进程崩溃）、#6258（后台拖动或悬停发 SIGUSR1，没有调试开关的应用退出）还开着。所有版本都标为预发布。
+- 谁能用它按「用在」与[各 Harness](#各-harness)：ACP 预设与 Codex 直连可以，pi 与内置 Harness 不能用本机命令。
+- 辅助功能与屏幕录制由人在系统设置里授予 CuaDriver.app；「测试」会启动 Driver 的守护进程，只由人按。
+
 ## 界面
 
 - **设置 › MCP** 对 `admin` 设备可见。「添加…」与除停用以外的改动只在这台 Mac 的桌面端出现；其他设备只看、只能停用。
 - 值从不显示：变量与请求头只列名字与「已设置」。
 - 状态用词与颜色：失败是红色，原因在悬停里；要登录的远程服务器「未登录」「需要重新登录」是琥珀，「登录失败」是红色。
 - `npx`、`uvx` 等没写版本时写琥珀色「每次启动可能下载新版本」。
+- 「操控这台 Mac」只在这台 Mac 的桌面端、Host 给了位置且还没添加时出现：一行状态（未安装、版本太旧、不是签名的 Cua Driver、已找到），按状态给安装或升级命令（「在终端里打开」与复制）或「添加…」，找到后另有关遥测的命令；ⓘ 里是以你的身份、不是沙箱、先不要用于 Electron 应用、Latch 的变量到不了守护进程。
 - **我的 Agent › 资料面板 › MCP** 列出这个 Agent 的会话拿到的服务器。桌面端的开关改的是服务器的「用在」，不要确认。
 
 ## 测试替身
@@ -443,6 +484,7 @@ HTTP 的两个只听 127.0.0.1。它们记下请求头与参数的名字，值�
 | --- | --- | --- |
 | `packages/testkit/src/fake-mcp-http.ts`（`startFakeMcpHttp`） | 进程内的 Streamable HTTP 服务器；工具 `echo`（可把指名的请求头说回来，用于检查遮盖）、`slow`、`big` | 要求登录；作受保护的资源（`protect`：元数据指向别处、别的 `resource`、不带指针的挑战、403 `insufficient_scope`）；重定向；忘掉会话；在回答前发自己的请求 |
 | `packages/testkit/src/fake-oauth.ts`（`startFakeOAuth`） | 进程内的授权服务器：RFC 8414 元数据、动态注册、授权码加 PKCE、续期（轮换）、撤销。`authorize()` 代替人的浏览器，返回回调地址而不访问它 | 错的或缺的 `iss`；改写元数据；不提供注册；续期被拒；不发 refresh token；多给范围；撤销失败；令牌立刻作废（`expireAccess`） |
-| `packages/testkit/fixtures/fake-mcp-stdio.mjs`（`FAKE_MCP_STDIO`） | stdio 服务器；工具 `echo`、`slow`、`env_names`、`where`；`FAKE_MCP_LOG` 只记环境变量的名字 | `FAKE_MCP_MODE`：`crash`、`silent`、`noisy`、`ask`、`changed` |
+| `packages/testkit/fixtures/fake-mcp-stdio.mjs`（`FAKE_MCP_STDIO`） | stdio 服务器；工具 `echo`、`slow`、`env_names`、`where`，`FAKE_MCP_EXTRA_TOOLS` 再加几个；`FAKE_MCP_LOG` 只记环境变量的名字 | `FAKE_MCP_MODE`：`crash`、`silent`、`noisy`、`ask`、`changed` |
+| `packages/testkit/src/fake-cua-driver.ts`（`writeFakeCuaDriver`） | 未签名的 `CuaDriver.app`：`--version` 回答指定版本，其余运行上面的 stdio 服务器 | 版本、版本行、多出的工具 |
 
 假 ACP Agent 在 `FAKE_ACP_MCP=dsh` 下：提示 `mcp <服务器> <工具> [JSON 参数]` 调用一个工具，`mcp-list <服务器>` 列出工具。

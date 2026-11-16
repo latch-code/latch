@@ -2126,6 +2126,13 @@
   display: inline-flex;
   gap: var(--sp-4);
 }
+/* A tool's name, and 新 when it is new to a server that keeps new tools off. */
+.mcp-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+}
 .mcp-env-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;

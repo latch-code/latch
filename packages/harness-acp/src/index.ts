@@ -30,7 +30,7 @@ import { AgentHealth, resolveOptions, type AcpAgentOptions, type AgentRecord } f
 export { agentProbePreview, probeAgent } from './probe.ts'
 export { checkLogin, harnessLogin, loginCheckAddsDate, loginTerminalScript, presetRecord, setLoginPrograms } from './login.ts'
 export { loadLoginShell } from './login-shell.ts'
-export { onVersionChange } from './version.ts'
+export { compareVersions, onVersionChange } from './version.ts'
 export { personCommandDirectories, resolveCommand, setCommandSearch } from './command.ts'
 export { commandName, launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 export type { AcpAgentOptions, AgentRecord } from './types.ts'

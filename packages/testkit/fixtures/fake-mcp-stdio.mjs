@@ -6,12 +6,13 @@
 //
 // FAKE_MCP_MODE: `crash` exits at once; `silent` never answers `initialize`; `noisy` writes a line longer than any limit;
 // `ask` sends a sampling request of its own after `initialize`; `changed` sends `notifications/tools/list_changed`.
+// FAKE_MCP_EXTRA_TOOLS: more tools by name, comma separated, each answering `<name>: ok`.
 import { appendFileSync } from 'node:fs'
 
 const env = process.env
 const mode = env.FAKE_MCP_MODE ?? ''
 const log = (event, detail = {}) => {
-  if (env.FAKE_MCP_LOG) appendFileSync(env.FAKE_MCP_LOG, `${JSON.stringify({ event, pid: process.pid, ...detail })}\n`)
+  if (env.FAKE_MCP_LOG) appendFileSync(env.FAKE_MCP_LOG, `${JSON.stringify({ event, pid: process.pid, at: Date.now(), ...detail })}\n`)
 }
 const send = message => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`)
 
@@ -23,6 +24,10 @@ const TOOLS = [
   { name: 'slow', description: 'Waits, then answers.', inputSchema: { type: 'object', properties: { ms: { type: 'number' } } } },
   { name: 'env_names', description: 'Lists its variables by name.', inputSchema: { type: 'object', properties: {} } },
   { name: 'where', description: 'Says its working folder.', inputSchema: { type: 'object', properties: {} } },
+  ...(env.FAKE_MCP_EXTRA_TOOLS ?? '')
+    .split(',')
+    .filter(Boolean)
+    .map(name => ({ name, description: 'An extra tool.', inputSchema: { type: 'object', properties: {} } })),
 ]
 const timers = new Map()
 // Prompts: `review` takes arguments, `picture` answers with an image only, `long` with 30,000 characters, one has
@@ -111,6 +116,7 @@ function handle(message) {
       )
       return
     }
+    if ((env.FAKE_MCP_EXTRA_TOOLS ?? '').split(',').includes(params?.name)) return text(`${params.name}: ok`)
     return send({ id, result: { content: [{ type: 'text', text: `unknown tool ${params?.name}` }], isError: true } })
   }
   send({ id, error: { code: -32601, message: 'Method not found' } })

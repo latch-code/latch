@@ -66,6 +66,45 @@ export interface McpStdioServerView extends McpServerCommon {
   projectCwd: boolean
   /** `npx`, `uvx` and the like with a package that names no version: each start may fetch a new one. */
   unpinned?: boolean
+  /** Added as 「操控这台 Mac」 (Cua Driver): never given to an unattended run. */
+  preset?: 'computer'
+  /**
+   * The tools Latch has listed for this server's switches: any other tool it names (after an upgrade) is new and off
+   * until switched on. Absent: every tool not in `disabledTools` is on.
+   */
+  knownTools?: string[]
+}
+
+/**
+ * The command that switches Cua Driver's own telemetry off, in its background service, which Latch's variables do not
+ * reach. The person runs it; Latch only shows it.
+ */
+export const driverTelemetryOff = (command: string) => `${command} telemetry disable`
+
+/** Whether a server's tool is offered to agents: not switched off, and not new to a server that keeps new tools off. */
+export function isMcpToolOn(
+  server: { disabledTools: readonly string[]; knownTools?: readonly string[] | undefined },
+  tool: string,
+): boolean {
+  return !server.disabledTools.includes(tool) && (server.knownTools === undefined || server.knownTools.includes(tool))
+}
+
+/**
+ * 「操控这台 Mac」 on this Mac's desktop app: whether Cua Driver is at its expected place, as Latch found it by its code
+ * signature and its `--version`. `absent`: not installed. `old`: older than `minimum`. `refused`: something else is
+ * there (`bundle`: not a regular app with that program; `signature`: not signed as Cua Driver; `version`: no version
+ * read). `added`: the server already made from it.
+ */
+export interface McpComputerCheck {
+  state: 'absent' | 'old' | 'ok' | 'refused'
+  reason?: 'bundle' | 'signature' | 'version'
+  version?: string
+  minimum: string
+  /** The program the server runs. */
+  command: string
+  /** Installs or upgrades it, as the person runs it in their terminal; Latch never runs it. */
+  install: string
+  added?: string
 }
 
 /**

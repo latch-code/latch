@@ -217,7 +217,11 @@ export class HarnessHub implements Bridge {
    * The project of the session being created. A driver starts the first run before `createTask` returns and the session's
    * project is recorded, so that run's lookup would otherwise file its changes under the default project.
    */
-  private readonly creatingTask = new AsyncLocalStorage<{ workspaceId: string | undefined; agentId: string | undefined }>()
+  private readonly creatingTask = new AsyncLocalStorage<{
+    workspaceId: string | undefined
+    agentId: string | undefined
+    automation: boolean
+  }>()
   private readonly personalOwners = new Map<string, NonNullable<TaskSummary['personal']>>()
   private readonly agentOwners = new Map<string, NonNullable<TaskSummary['agent']>>()
   private readonly briefSessions = new Set<string>()
@@ -614,7 +618,10 @@ export class HarnessHub implements Bridge {
     }
     const result = await this.accept(entry as Member, bridge =>
       withHarnessPromptSource({ method: 'create', requestId: input.requestId, text: input.prompt }, () =>
-        this.creatingTask.run({ workspaceId, agentId: input.agentContext?.agent?.customAgentId }, () => bridge.createTask(task)),
+        this.creatingTask.run(
+          { workspaceId, agentId: input.agentContext?.agent?.customAgentId, automation: automationId !== undefined },
+          () => bridge.createTask(task),
+        ),
       ),
     )
     if (!this.claim(id, result.sessionId)) {
@@ -717,6 +724,13 @@ export class HarnessHub implements Bridge {
   /** The schedule a session is a run of, once its record is written. */
   automationOf(sessionId: string): string | undefined {
     return this.meta.get(sessionId)?.automationId
+  }
+  /**
+   * Whether the session runs with nobody watching: an automation's run (我的 Agent's schedules are automations), also
+   * while it is still being created, before its record is written.
+   */
+  unattended(sessionId: string): boolean {
+    return this.automationOf(sessionId) !== undefined || this.creatingTask.getStore()?.automation === true
   }
   /** Whether the session was started with `proposals` in its context. */
   proposalsOf(sessionId: string): boolean {

@@ -20,6 +20,8 @@ export const MCP_ACTIONS = {
     transport: z.literal('http').optional(),
     /** 从项目导入: the project whose `.mcp.json` prefilled it, by ID. */
     importedFrom: opaqueId.optional(),
+    /** 「操控这台 Mac」: the Host wrote the definition for Cua Driver. */
+    preset: z.literal('computer').optional(),
   }),
   'mcp.server.changed': z.strictObject({
     serverId,

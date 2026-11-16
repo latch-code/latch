@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { isUnpinnedRunner, type AppSnapshot, type HarnessInfo, type McpHttpServerView, type McpServerView } from '@latch/protocol'
 import { agentServers, harnessNote } from '../src/agents/McpSection.tsx'
 import { detailsLeftOut } from '../src/components/InlineConfirm.tsx'
-import { MCP_LOGIN_FAILURE_TEXT, McpStatusWord, mcpStatus, remoteUrl, scopeText } from '../src/settings/McpSettings.tsx'
+import { MCP_LOGIN_FAILURE_TEXT, McpStatusWord, computerWord, mcpStatus, remoteUrl, scopeText } from '../src/settings/McpSettings.tsx'
 
 const AGENT = `agt_${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`
 
@@ -50,6 +50,29 @@ describe('设置 › MCP', () => {
     // A remote server that asks for a login waits for the person, in amber.
     const login = { ...failed, reason: 'auth-required' as const }
     expect(mcpStatus(server({ report: login }))).toEqual({ tone: 'warn', text: '需要登录' })
+  })
+
+  it('counts a tool new to a server that keeps new tools off as off', () => {
+    const report = {
+      status: 'ok' as const,
+      tools: ['click', 'clipboard_read', 'browser_motion_policy'],
+      at: '2026-11-13T00:00:00.000Z',
+      via: 'test' as const,
+    }
+    const computer = server({
+      report,
+      disabledTools: ['clipboard_read'],
+      knownTools: ['click', 'clipboard_read'],
+    } as Partial<McpServerView>)
+    expect(mcpStatus(computer)).toEqual({ tone: 'done', text: '可用 · 1 个工具' })
+  })
+
+  it('says how 「操控这台 Mac」 stands in a word: not installed, too old, refused or found', () => {
+    const check = { minimum: '0.10.0', command: '/Applications/CuaDriver.app/Contents/MacOS/cua-driver', install: 'install' }
+    expect(computerWord({ ...check, state: 'absent' })).toEqual({ tone: 'neutral', text: '未安装' })
+    expect(computerWord({ ...check, state: 'old', version: '0.7.1' })).toEqual({ tone: 'warn', text: '版本太旧 · 0.7.1' })
+    expect(computerWord({ ...check, state: 'refused', reason: 'signature' })).toEqual({ tone: 'failed', text: '不是签名的 Cua Driver' })
+    expect(computerWord({ ...check, state: 'ok', version: '0.44.0' })).toEqual({ tone: 'done', text: '已找到 · 0.44.0' })
   })
 
   it('says a remote server’s login in a word: 未登录, 登录中, 已登录, 需要重新登录, or 登录失败 with why', () => {

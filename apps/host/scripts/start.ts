@@ -16,6 +16,7 @@ import {
   writeHostState,
 } from '../src/host-state.ts'
 import { latchEnv } from '../src/env.ts'
+import { COMPUTER_APP } from '../src/mcp-computer.ts'
 import { latchCodeRoot, resolveLatchPaths } from '../src/paths.ts'
 import { presenceHelperPath } from '../src/presence.ts'
 import { buildPresenceHelper } from './presence-helper.ts'
@@ -218,6 +219,8 @@ async function main(): Promise<void> {
     sessionFolders,
     detectPreset: detectPresetCommands,
     loginPrograms: resolveCommand,
+    // 「操控这台 Mac」 looks for Cua Driver at its one place, on macOS only.
+    ...(process.platform === 'darwin' ? { computerDriver: { app: COMPUTER_APP } } : {}),
     commandDirectories: personCommandDirectories,
     agentsDir: paths.agentsDir,
     uiDir: resolve(codeRoot, 'dist/web'),

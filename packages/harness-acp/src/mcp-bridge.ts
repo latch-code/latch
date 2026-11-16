@@ -118,6 +118,9 @@ let revoked = false
 let broken
 let reported = false
 let disabled = new Set()
+// A server that keeps new tools off: only these are not new.
+let known
+const off = name => disabled.has(name) || (known !== undefined && !known.has(name))
 let childBuffer = ''
 // Request ID (as JSON) → what the agent asked, for its reply.
 const pending = new Map()
@@ -192,7 +195,7 @@ function fromChild(message) {
         reported = true
         tell('mcp/report', { ok: true, tools: tools.map(tool => tool.name) })
       }
-      return write({ id: entry.id, result: { ...message.result, tools: tools.filter(tool => !disabled.has(tool.name)) } })
+      return write({ id: entry.id, result: { ...message.result, tools: tools.filter(tool => !off(tool.name)) } })
     }
     if (!reported) {
       reported = true
@@ -216,6 +219,7 @@ async function start(request) {
   }
   const launch = reply.result
   disabled = new Set(Array.isArray(launch.disabledTools) ? launch.disabledTools : [])
+  known = Array.isArray(launch.knownTools) ? new Set(launch.knownTools) : undefined
   if (launch.remote === true) {
     remote = true
     const answer = await ask('mcp/remote', { method: 'initialize', params: request.params && typeof request.params === 'object' ? request.params : {} })
@@ -270,7 +274,7 @@ async function start(request) {
 // A remote server's list or call, through the Host; a cancel from the agent stops it there.
 async function relay(id, method, params) {
   const args = params && typeof params === 'object' ? params : {}
-  if (method === 'tools/call' && (typeof args.name !== 'string' || disabled.has(args.name)))
+  if (method === 'tools/call' && (typeof args.name !== 'string' || off(args.name)))
     return write({ id, result: { content: [{ type: 'text', text: 'This tool is switched off in Latch.' }], isError: true } })
   const entry = { id, method, remote: true }
   pending.set(JSON.stringify(id), entry)
@@ -342,7 +346,7 @@ async function handle(request) {
     return answerBroken(entry)
   }
   const name = params && params.name
-  if (typeof name !== 'string' || disabled.has(name))
+  if (typeof name !== 'string' || off(name))
     return write({ id, result: { content: [{ type: 'text', text: 'This tool is switched off in Latch.' }], isError: true } })
   const entry = { id, method, at: Date.now() }
   pending.set(JSON.stringify(id), entry)

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { AppSnapshot, McpServersResponse, McpServerView, TaskDetail } from '@latch/protocol'
-import { FAKE_ACP_AGENT, FAKE_MCP_STDIO, startFakeMcpHttp, startFakeModels, type TestDevice } from '@latch/testkit'
+import { FAKE_ACP_AGENT, FAKE_MCP_STDIO, startFakeMcpHttp, startFakeModels, writeFakeCuaDriver, type TestDevice } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
@@ -296,6 +296,117 @@ describe('Latch’s MCP servers, end to end', () => {
         .map(line => JSON.parse(line) as { action: string; detail: Record<string, unknown> })
       expect(audit.find(record => record.action === 'mcp.server.added')?.detail).toMatchObject({ importedFrom: workspace.id })
       expect(JSON.stringify(audit)).not.toContain('typed-on-this-mac-123')
+      await context.close()
+    } finally {
+      await browser.close()
+      await testHost.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+  it('「操控这台 Mac」: offered on this Mac, added with the confirmation naming the command, every call on record before it runs, a switched-off tool never offered', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-mcp-computer-e2e-')))
+    const uiDir = resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web')
+    const log = join(root, 'driver.log')
+    const app = await writeFakeCuaDriver(root, { tools: ['click', 'clipboard_read'], log })
+    const browser = await chromium.launch(browserLaunchOptions())
+    const testHost = await startTestHost({
+      demo: false,
+      uiDir,
+      dataDir: join(root, 'data'),
+      workspaceRoot: join(root, 'workspace'),
+      // The unsigned fake stands in for the signed app; no real driver on this Mac is looked at.
+      computerDriver: { app, verify: async () => true },
+    })
+    try {
+      const desktop = await testHost.enroll({ listener: 'unix', name: '本机桌面端' })
+      await desktop.confirmedJson('agents', {
+        body: {
+          id: 'mcp-agent',
+          name: 'MCP Agent',
+          command: process.execPath,
+          args: [FAKE_ACP_AGENT],
+          env: { FAKE_ACP_MCP: 'dsh', FAKE_ACP_STATE: join(root, 'acp-state.json') },
+        },
+      })
+      // The desktop app on this Mac: its shell, its device on host.sock, the confirmation by the test backend.
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', deviceScaleFactor: 1 })
+      context.setDefaultTimeout(15_000)
+      const page = await context.newPage()
+      await enrollBrowser(page, testHost, { name: 'MCP 电脑', scopes: ['view', 'run', 'approve:standard', 'admin'] })
+      await page.addInitScript(() => {
+        Object.defineProperty(window, 'latchShell', { value: { kind: 'electron', devMode: false, platform: 'darwin' } })
+      })
+      await page.route('**/link/api/snapshot', async route => {
+        const response = await route.fetch()
+        const snapshot: AppSnapshot = await response.json()
+        await route.fulfill({ response, json: { ...snapshot, device: { ...snapshot.device, listener: 'unix' } } })
+      })
+      await page.route('**/link/api/mcp/**', async route => {
+        const request = route.request()
+        const url = new URL(request.url())
+        const answer = await desktop.confirmed(`${url.pathname.replace('/link/api/', '')}${url.search}`, {
+          method: request.method(),
+          ...(request.postData() ? { body: request.postDataJSON() } : {}),
+        })
+        await route.fulfill({ status: answer.status, contentType: 'application/json', body: await answer.text() })
+      })
+      await page.reload()
+      await connected(page)
+      const settings = await openSettings(page)
+      await openSection(settings, 'MCP')
+      const row = settings.locator('[data-mcp-computer="ok"]')
+      await row.getByText('已找到 · 0.44.0', { exact: true }).waitFor()
+      const before = testHost.presence.requests.length
+      await row.getByRole('button', { name: '添加…', exact: true }).click()
+      await settings.locator('.mcp-heading').getByRole('heading', { name: 'computer', exact: true }).waitFor()
+      expect(testHost.presence.requests.length).toBe(before + 1)
+      const asked = testHost.presence.requests.at(-1)!.preview
+      expect(asked.action).toBe('mcp.server.apply')
+      expect(JSON.stringify(asked)).toContain(join(app, 'Contents/MacOS/cua-driver'))
+      expect(JSON.stringify(asked)).toContain('CUA_DRIVER_RS_TELEMETRY_ENABLED=false')
+      expect(await settings.locator('[data-mcp-computer]').count()).toBe(0)
+
+      const { servers } = await desktop.json<McpServersResponse>('mcp/servers')
+      const server = servers[0]!
+      await desktop.json(`mcp/servers/${server.id}`, {
+        method: 'PATCH',
+        body: { requestId: randomUUID(), baseRevision: server.revision, scope: { all: true, agents: [], projects: [] } },
+      })
+      const created = await desktop.confirmedJson<{ sessionId: string }>('tasks', {
+        body: { prompt: 'mcp-list computer', requestId: randomUUID(), harnessId: 'mcp-agent' },
+      })
+      // clipboard_read is off by name; the fake's other tools are new to Latch, so off too.
+      expect(said(await settled(desktop, created.sessionId))).toBe('computer tools: click')
+      await desktop.json(`tasks/${created.sessionId}/prompt`, { body: { requestId: randomUUID(), prompt: 'mcp computer click' } })
+      expect(said(await settled(desktop, created.sessionId))).toBe('computer.click: ok: click: ok')
+      await desktop.json(`tasks/${created.sessionId}/prompt`, { body: { requestId: randomUUID(), prompt: 'mcp computer clipboard_read' } })
+      expect(said(await settled(desktop, created.sessionId))).toMatch(/^computer\.clipboard_read: error: /u)
+
+      const audit = (await readFile(join(root, 'data', 'audit', 'audit.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as { action: string; at: string; detail: Record<string, unknown> })
+      const calls = audit.filter(record => record.action === 'mcp.tool.called' && record.detail.serverId === server.id)
+      const sent = (await readFile(log, 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as { method?: string; tool?: string; at: number })
+        .filter(line => line.method === 'tools/call')
+      // One call reached the driver, the one on record, and its record came first; the switched-off one never left Latch.
+      expect(calls).toHaveLength(1)
+      expect(sent.map(line => line.tool)).toEqual(['click'])
+      expect(Date.parse(calls[0]!.at)).toBeLessThanOrEqual(sent[0]!.at)
+
+      // In settings the server's tools show after the session's report: the new ones marked 新 and off.
+      await page.reload()
+      await connected(page)
+      const again = await openSettings(page)
+      await openSection(again, 'MCP')
+      await again.getByRole('button', { name: '打开 computer', exact: true }).click()
+      await expect.poll(() => again.getByRole('switch', { name: '使用 click', exact: true }).isChecked()).toBe(true)
+      expect(await again.getByRole('switch', { name: '使用 clipboard_read', exact: true }).isChecked()).toBe(false)
+      expect(await again.getByRole('switch', { name: '使用 echo', exact: true }).isChecked()).toBe(false)
+      expect(await again.getByText('新', { exact: true }).count()).toBe(4)
       await context.close()
     } finally {
       await browser.close()

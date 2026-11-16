@@ -4,9 +4,12 @@ import {
   escapeSecurityText,
   isLoopbackHost,
   isMcpHeaderName,
+  driverTelemetryOff,
   isMcpServerName,
+  isMcpToolOn,
   isUnpinnedRunner,
   type AppSnapshot,
+  type McpComputerCheck,
   type McpFailure,
   type McpHttpServerView,
   type McpOAuthFailure,
@@ -16,10 +19,14 @@ import {
   type McpStdioServerView,
 } from '@latch/protocol'
 import {
+  Badge,
   Button,
   Checkbox,
+  CopyButton,
   Dialog,
   GlobeGlyph,
+  LaptopGlyph,
+  RefreshGlyph,
   Hint,
   InlineNotice,
   SegmentedControl,
@@ -39,6 +46,7 @@ import { deviceAccess } from '../core/permissions.ts'
 import { currentShell } from '../core/shell.ts'
 import { ConfirmDialog } from '../components/overlays.tsx'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
+import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 import { dateTime } from '../format.ts'
 import { IconTile, Loading, MiddleEllipsis, NoteLine, ObjectRow, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
@@ -107,6 +115,134 @@ const BUILTIN_NOTE = {
     '命令交给 Claude Agent、Codex 等外部 Harness；pi 不接收 MCP 服务器。内置 Harness 要由 Latch 自己在这台 Mac 上运行命令，尚未实现；远程地址由 Latch 调用，每次都要你确认。',
 }
 
+const COMPUTER_NOTE = {
+  label: '以你的身份操作这台 Mac',
+  detail:
+    '它以你的身份点击、输入和读取这台 Mac 上的 App。这不是沙箱，Latch 不隔离它。先不要让它操作 Electron 应用（包括 Latch 与 VS Code）。Latch 的变量到不了它的后台服务：在终端运行 cua-driver telemetry disable 关掉它的遥测。',
+}
+
+/** A command the person runs: copy, and typed in at the prompt of a Latch terminal on this Mac's desktop. */
+function CommandActions({ command, label }: { command: string; label: string }) {
+  return (
+    <span className="command-actions">
+      <CopyButton text={command} label={label} />
+      <TerminalFillButton command={command} detached />
+    </span>
+  )
+}
+
+/** Cua Driver's own telemetry, which the person switches off in its background service. */
+function TelemetryRow({ command }: { command: string }) {
+  const line = driverTelemetryOff(command)
+  return (
+    <SettingsRow
+      title="关闭 Driver 的遥测"
+      description={<code className="settings-mono">{line}</code>}
+      trailing={<CommandActions command={line} label="复制关闭遥测的命令" />}
+    />
+  )
+}
+
+/** 「操控这台 Mac」 in a word: not there, too old, refused, or found with its version. */
+export function computerWord(check: McpComputerCheck): { tone: StatusTone; text: string } {
+  if (check.state === 'absent') return { tone: 'neutral', text: '未安装' }
+  if (check.state === 'old') return { tone: 'warn', text: `版本太旧 · ${check.version ?? ''}` }
+  if (check.state === 'refused') return { tone: 'failed', text: check.reason === 'version' ? '读不到版本' : '不是签名的 Cua Driver' }
+  return { tone: 'done', text: `已找到 · ${check.version ?? ''}` }
+}
+
+/**
+ * 「操控这台 Mac」, on this Mac's desktop app only: Cua Driver as Latch found it, with the command that installs or
+ * upgrades it (the person runs it), or 添加, which goes through the same confirmation as any local command.
+ */
+function ComputerGroup({ revision, onAdded }: { revision: number; onAdded: (server: McpServerView) => void }) {
+  const [check, setCheck] = useState<McpComputerCheck | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const write = useWrite()
+  const read = useCallback(async () => {
+    setChecking(true)
+    try {
+      setCheck(await api<McpComputerCheck>('mcp/computer'))
+    } catch {
+      // Not on this Mac, or not macOS: no entry at all.
+      setCheck(null)
+    } finally {
+      setChecking(false)
+    }
+  }, [])
+  // Read again whenever the list changes: a removed server makes the entry come back.
+  useEffect(() => {
+    void read()
+  }, [read, revision])
+  if (!check || check.added) return null
+  const word = computerWord(check)
+  const add = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const result = await write('computer', requestId =>
+        withConfirmation(confirmation =>
+          api<{ server: McpServerView }>('mcp/servers', {
+            method: 'POST',
+            // Used nowhere until the person chooses where, in 「用在」.
+            body: { requestId, baseRevision: revision, preset: 'computer', scope: { all: false, agents: [], projects: [] } },
+            ...(confirmation ? { confirmation } : {}),
+          }),
+        ),
+      )
+      onAdded(result.server)
+    } catch (cause) {
+      setError(inlineError(cause))
+      void read()
+    } finally {
+      setBusy(false)
+    }
+  }
+  const command = check.state === 'absent' || check.state === 'old' ? check.install : undefined
+  return (
+    <SettingsGroup
+      title="操控这台 Mac"
+      meta={
+        <Button variant="ghost" size="xs" icon={RefreshGlyph} loading={checking} onClick={() => void read()}>
+          重新检测
+        </Button>
+      }
+      note={<NoteLine brief={COMPUTER_NOTE} />}>
+      <div data-mcp-computer={check.state}>
+        <SettingsRow
+          leading={<IconTile icon={LaptopGlyph} />}
+          title="Cua Driver"
+          description={
+            <StatusWord tone={word.tone} title={check.state === 'old' ? `需要 ${check.minimum} 或更高` : undefined}>
+              {word.text}
+            </StatusWord>
+          }
+          trailing={
+            check.state === 'ok' ? (
+              <Button size="sm" loading={busy} onClick={() => void add()}>
+                添加…
+              </Button>
+            ) : command ? (
+              <CommandActions command={command} label={check.state === 'old' ? '复制升级命令' : '复制安装命令'} />
+            ) : undefined
+          }
+        />
+        {command && (
+          <SettingsRow
+            title={check.state === 'old' ? '升级命令' : '安装命令'}
+            description={<code className="settings-mono">{command}</code>}
+          />
+        )}
+        {check.state === 'ok' && <TelemetryRow command={check.command} />}
+      </div>
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      <InlineConfirm active={busy} rank={1} />
+    </SettingsGroup>
+  )
+}
+
 /** How a remote server's login stands, in a word: amber waits for the person, red is an attempt that failed. */
 export function mcpLoginStatus(server: McpHttpServerView): { tone: StatusTone; text: string; reason?: string } | undefined {
   const oauth = server.oauth
@@ -133,7 +269,7 @@ export function mcpStatus(server: McpServerView): { tone: StatusTone; text: stri
   // A login is something the person does, not a failure.
   if (report.status === 'failed' && report.reason === 'auth-required') return { tone: 'warn', text: '需要登录' }
   if (report.status === 'failed') return { tone: 'failed', text: '失败', reason: report.reason ? MCP_FAILURE_TEXT[report.reason] : '' }
-  const on = report.tools.filter(tool => !server.disabledTools.includes(tool)).length
+  const on = report.tools.filter(tool => isMcpToolOn(server, tool)).length
   return { tone: 'done', text: `可用 · ${on} 个工具` }
 }
 
@@ -1184,6 +1320,7 @@ function StdioGroups({
           description={server.args.length ? <MiddleEllipsis text={server.args.join(' ')} className="settings-mono" /> : '无'}
         />
         <SettingsRow title="工作目录" description={server.projectCwd ? '会话的项目文件夹' : '会话的空文件夹'} />
+        {server.preset === 'computer' && <TelemetryRow command={server.command} />}
         {server.unpinned && (
           <SettingsRow
             title={
@@ -1400,23 +1537,34 @@ function ServerPage({
       )}
       <SettingsGroup title="工具" meta={tools.length > 0 ? `${tools.length} 个` : undefined}>
         {tools.length === 0 && <SettingsRow title={server.report ? '没有工具' : '测试后列出工具'} />}
-        {tools.map(tool => (
-          <SettingsRow
-            key={tool}
-            title={<code className="settings-mono">{tool}</code>}
-            trailing={
-              <Switch
-                label={`使用 ${tool}`}
-                checked={!server.disabledTools.includes(tool)}
-                disabled={!local || busy !== null}
-                onCheckedChange={on => {
-                  const disabledTools = on ? server.disabledTools.filter(item => item !== tool) : [...server.disabledTools, tool]
-                  void patch('tools', { disabledTools }).then(text => text && setError(text))
-                }}
-              />
-            }
-          />
-        ))}
+        {tools.map(tool => {
+          // A server that keeps new tools off: one it never listed before is new, and off until switched on.
+          const known = server.transport === 'stdio' ? server.knownTools : undefined
+          const fresh = known !== undefined && !known.includes(tool) && !server.disabledTools.includes(tool)
+          return (
+            <SettingsRow
+              key={tool}
+              title={
+                <span className="mcp-tool">
+                  <code className="settings-mono">{tool}</code>
+                  {fresh && <Badge tone="warn">新</Badge>}
+                </span>
+              }
+              trailing={
+                <Switch
+                  label={`使用 ${tool}`}
+                  checked={isMcpToolOn(server, tool)}
+                  disabled={!local || busy !== null}
+                  onCheckedChange={on => {
+                    const disabledTools = on ? server.disabledTools.filter(item => item !== tool) : [...server.disabledTools, tool]
+                    const knownTools = known && !known.includes(tool) ? { knownTools: [...known, tool] } : {}
+                    void patch('tools', { disabledTools, ...knownTools }).then(text => text && setError(text))
+                  }}
+                />
+              }
+            />
+          )
+        })}
       </SettingsGroup>
       <ScopeGroup
         snapshot={snapshot}
@@ -1544,6 +1692,15 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
           />
         ))}
       </SettingsGroup>
+      {local && (
+        <ComputerGroup
+          revision={data.revision}
+          onAdded={server => {
+            setEditing({ kind: 'server', id: server.id })
+            void load()
+          }}
+        />
+      )}
       <HarnessesMcp
         harnesses={snapshot.catalog?.harnesses ?? []}
         run={access.scopes.has('run')}

@@ -10,11 +10,27 @@ import { lstat, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-import { isMcpServerName, type McpFailure, type McpImportCandidate, type McpImportFile, type McpServerView } from '@latch/protocol'
+import {
+  isMcpServerName,
+  type McpComputerCheck,
+  type McpFailure,
+  type McpImportCandidate,
+  type McpImportFile,
+  type McpServerView,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { StepupMethod } from '../audit.ts'
 import { json, jsonBody, safeDecode } from '../http-util.ts'
+import {
+  checkComputerDriver,
+  COMPUTER_ARGS,
+  COMPUTER_ENV,
+  COMPUTER_KNOWN_TOOLS,
+  COMPUTER_NAME,
+  COMPUTER_TOOLS_OFF,
+  type ComputerDriverOptions,
+} from '../mcp-computer.ts'
 import { parseProjectMcp, readProjectMcpText } from '../mcp-import.ts'
 import type { McpOAuth } from '../mcp-oauth.ts'
 import { middleSlot } from '../presence-reason.ts'
@@ -80,6 +96,13 @@ const createRemoteSchema = z.strictObject({
   headers: headersInput,
   scope: scopeSchema,
 })
+/** 「操控这台 Mac」: the Host fills in what runs; the person chooses only where it is used. */
+const createComputerSchema = z.strictObject({
+  requestId,
+  baseRevision: revision,
+  preset: z.literal('computer'),
+  scope: scopeSchema,
+})
 const toolName = z.string().regex(/^[A-Za-z0-9_.:/-]{1,128}$/u)
 const patchSchema = z.strictObject({
   requestId,
@@ -93,6 +116,8 @@ const patchSchema = z.strictObject({
   scope: scopeSchema.optional(),
   enabled: z.boolean().optional(),
   disabledTools: z.array(toolName).max(256).optional(),
+  /** Only for a server that keeps new tools off: the tools that are no longer new. */
+  knownTools: z.array(toolName).max(256).optional(),
   url: remoteUrl.optional(),
   headers: headersPatch.optional(),
 })
@@ -113,6 +138,7 @@ const LOGOUT_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)\/oauth\/logout$/u
 const SERVER_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)$/u
 const TEST_PATH = /^\/link\/api\/mcp\/servers\/([^/]+)\/test$/u
 const IMPORT_PATH = '/link/api/mcp/import'
+const COMPUTER_PATH = '/link/api/mcp/computer'
 
 export interface McpRouteDeps {
   store: McpStore
@@ -158,6 +184,8 @@ export interface McpRouteDeps {
    * `host:port`. Asked after the definition that used it is gone or changed.
    */
   unusedAllowance: (address: string) => string | undefined
+  /** Where Cua Driver is looked for (「操控这台 Mac」); absent, as off macOS and in tests that do not name one, no preset. */
+  computer?: ComputerDriverOptions
 }
 
 const changed = () => new AppError(409, 'mcp-changed', 'MCP 服务器已被修改，请刷新后重试')
@@ -359,6 +387,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
     spec: McpSpec,
     scope: McpServerRecord['scope'],
     secrets: Record<string, string | null>,
+    notes: string[] = [],
   ) {
     const target = runnerTarget(spec.command, spec.args)
     return context.confirm(
@@ -390,7 +419,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
           }
         : { form: 'mcp.server.apply', slots: { command: spec.command, server: name } },
       previewLines(name, spec, scope),
-      spec.projectCwd ? ['这个命令会在会话的项目文件夹里启动，能读写那里的文件。'] : [],
+      [...notes, ...(spec.projectCwd ? ['这个命令会在会话的项目文件夹里启动，能读写那里的文件。'] : [])],
     )
   }
 
@@ -486,9 +515,10 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
   })
 
   const stateOf = (
-    record: McpSpec & Pick<McpServerRecord, 'scope' | 'enabled' | 'disabledTools'>,
+    record: McpSpec & Pick<McpServerRecord, 'scope' | 'enabled' | 'disabledTools'> & { knownTools?: string[] | undefined },
     secrets: Record<string, string>,
   ): McpState => ({
+    knownTools: record.knownTools,
     command: record.command,
     args: record.args,
     env: record.env,
@@ -635,6 +665,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
       || input.projectCwd !== undefined
       || input.env !== undefined
       || input.secrets !== undefined
+      || input.knownTools !== undefined
     )
       throw new AppError(400, 'mcp-transport', '远程地址没有命令、参数或环境变量')
     const name = input.name ?? current.name
@@ -748,6 +779,81 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
     }
     context.refresh()
     answer(res, id)
+  }
+
+  /** 「操控这台 Mac」 as it stands: the driver at its place, and the server made from it, if any. */
+  async function computerCheck(options: ComputerDriverOptions): Promise<McpComputerCheck> {
+    const check = await checkComputerDriver(options)
+    const added = store.records().find(record => record.transport === 'stdio' && record.preset === 'computer')
+    return added ? { ...check, added: added.id } : check
+  }
+
+  /**
+   * Adds 「操控这台 Mac」: the Host looks at the driver again and writes the definition itself (its program by absolute
+   * path, `mcp`, the plain variables that switch the `mcp` process's telemetry and update check off), with the high-risk
+   * tools off and new tools off. Then the same confirmation and record as any local command.
+   */
+  async function addComputer(
+    req: Parameters<RouteContext['confirm']>[0],
+    res: Parameters<typeof json>[0],
+    caller: DeviceCaller,
+    input: z.infer<typeof createComputerSchema>,
+  ): Promise<void> {
+    if (!deps.computer) throw new AppError(404, 'mcp-computer-unavailable', '这台电脑上没有「操控这台 Mac」')
+    context.recheck(caller, 'admin')
+    const done = store.receipt(caller.device.id, input.requestId, input)
+    if (done) return answer(res, done.serverId, 201)
+    if (input.baseRevision !== store.revision()) throw changed()
+    const check = await computerCheck(deps.computer)
+    if (check.added) throw new AppError(409, 'mcp-computer-added', '已经添加过「操控这台 Mac」')
+    if (check.state === 'absent') throw new AppError(409, 'mcp-computer-absent', '没有找到 Cua Driver：请先安装')
+    if (check.state === 'old')
+      throw new AppError(409, 'mcp-computer-old', `Cua Driver 版本太旧：需要 ${check.minimum} 或更高（当前 ${check.version ?? '未知'}）`)
+    if (check.state !== 'ok') throw new AppError(409, 'mcp-computer-refused', '这里的程序不是签名的 Cua Driver，Latch 不添加它')
+    if (sameName(COMPUTER_NAME)) throw new AppError(409, 'mcp-name-taken', `已有名为 ${COMPUTER_NAME} 的 MCP 服务器`)
+    const spec: McpSpec = { command: check.command, args: [...COMPUTER_ARGS], env: { ...COMPUTER_ENV }, secretNames: [], projectCwd: false }
+    const stepup = await confirmSpec(req, caller, COMPUTER_NAME, spec, input.scope, {}, ['它以你的身份操作这台 Mac 上的 App，不是沙箱。'])
+    const id = await context.serial(caller, 'admin', async () => {
+      if (input.baseRevision !== store.revision()) throw changed()
+      if (sameName(COMPUTER_NAME)) throw new AppError(409, 'mcp-name-taken', `已有名为 ${COMPUTER_NAME} 的 MCP 服务器`)
+      const serverId = newServerId()
+      const hash = specHash(spec)
+      await context.audited({
+        action: 'mcp.server.added',
+        actor: context.actorOf(caller),
+        target: serverId,
+        stepup,
+        detail: {
+          serverId,
+          specHash: hash,
+          envCount: Object.keys(spec.env).length,
+          scope: input.scope.all ? 'all' : 'chosen',
+          projectCwd: false,
+          preset: 'computer',
+        },
+      })
+      return store.change({ deviceId: caller.device.id, requestId: input.requestId, payload: input }, ({ servers, stamp }) => {
+        servers.servers.push({
+          id: serverId,
+          name: COMPUTER_NAME,
+          transport: 'stdio',
+          ...spec,
+          preset: 'computer',
+          scope: input.scope,
+          enabled: true,
+          disabledTools: [...COMPUTER_TOOLS_OFF],
+          knownTools: [...COMPUTER_KNOWN_TOOLS],
+          revision: 1,
+          specHash: hash,
+          confirmed: { hash, secretNames: [] },
+          createdAt: stamp,
+          updatedAt: stamp,
+        })
+        return serverId
+      })
+    })
+    context.refresh()
+    answer(res, id, 201)
   }
 
   type Ending = Awaited<ReturnType<McpOAuth['forget']>>
@@ -987,10 +1093,23 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         json(res, { workspaceId, files: await importFrom(workspaceId) })
         return true
       }
+      // 「操控这台 Mac」: only where adding is, the desktop app on this Mac, and only where the start script names a place.
+      if (path === COMPUTER_PATH && method === 'GET') {
+        context.requireScope(caller, 'admin')
+        context.requireLocal(caller)
+        if (!deps.computer) throw new AppError(404, 'mcp-computer-unavailable', '这台电脑上没有「操控这台 Mac」')
+        context.recheck(caller, 'admin')
+        json(res, await computerCheck(deps.computer))
+        return true
+      }
       if (path === '/link/api/mcp/servers' && method === 'POST') {
         context.requireScope(caller, 'admin')
         context.requireLocal(caller)
         const body = await jsonBody(req, CONFIG_BODY_LIMIT)
+        if (body && typeof body === 'object' && Object.hasOwn(body, 'preset')) {
+          await addComputer(req, res, caller, createComputerSchema.parse(body))
+          return true
+        }
         if (body && typeof body === 'object' && (body as { transport?: unknown }).transport === 'http') {
           await addRemote(req, res, caller, createRemoteSchema.parse(body))
           return true
@@ -1088,6 +1207,8 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
           return true
         }
         if (input.url !== undefined || input.headers !== undefined) throw new AppError(400, 'mcp-transport', '本机命令没有地址或请求头')
+        if (input.knownTools !== undefined && !current.knownTools)
+          throw new AppError(400, 'mcp-known-tools', '这个服务器的新工具不是默认关闭的')
         const name = input.name ?? current.name
         if (input.name !== undefined && !isMcpServerName(name)) throw new AppError(400, 'mcp-name-invalid', '名称无效')
         if (input.name !== undefined && sameName(name, id)) throw new AppError(409, 'mcp-name-taken', `已有名为 ${name} 的 MCP 服务器`)
@@ -1127,6 +1248,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
             scope: input.scope ?? current.scope,
             enabled: input.enabled ?? current.enabled,
             disabledTools: input.disabledTools ? [...new Set(input.disabledTools)] : current.disabledTools,
+            knownTools: input.knownTools ? [...new Set(input.knownTools)] : current.knownTools,
           },
           secrets,
         )
@@ -1139,6 +1261,8 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         if (canonicalJson(after.scope) !== canonicalJson(current.scope)) kinds.add('scope')
         if (after.enabled !== current.enabled) kinds.add('enabled')
         if (canonicalJson(after.disabledTools.toSorted()) !== canonicalJson(current.disabledTools.toSorted())) kinds.add('tools')
+        if (canonicalJson(after.knownTools?.toSorted() ?? null) !== canonicalJson(current.knownTools?.toSorted() ?? null))
+          kinds.add('tools')
         if (!kinds.size) {
           answer(res, id)
           return true
@@ -1172,6 +1296,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
               record.scope = after.scope
               record.enabled = after.enabled
               record.disabledTools = after.disabledTools
+              if (after.knownTools) record.knownTools = after.knownTools
               if (kinds.has('spec')) delete record.report
               record.revision += 1
               record.updatedAt = stamp

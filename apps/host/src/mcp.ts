@@ -210,6 +210,10 @@ const stdioRecord = z.strictObject({
   /** Secret variables, by name: their values are in secrets.json. */
   secretNames: z.array(envName).max(32),
   projectCwd: z.boolean(),
+  /** Added as 「操控这台 Mac」: never given to an unattended run. */
+  preset: z.literal('computer').optional(),
+  /** The tools its switches have listed; any other is new and off (`isMcpToolOn`). Absent: new tools are on. */
+  knownTools: z.array(toolName).max(256).optional(),
 })
 /** An OAuth scope token (RFC 6749 §3.3). */
 export const oauthScope = z.string().regex(/^[\x21\x23-\x5B\x5D-\x7E]{1,128}$/u)
@@ -415,6 +419,8 @@ interface McpUse {
   scope: McpScope
   enabled: boolean
   disabledTools: string[]
+  /** A server that keeps new tools off: the tools that are not new. */
+  knownTools?: string[] | undefined
   /** Each secret's value (a variable's, a header's), by its SHA-256. */
   secretHashes: Record<string, string>
 }
@@ -484,10 +490,17 @@ export function widens(before: McpState, after: McpState): 'spec' | 'use' | fals
     gains
     || (after.enabled && !before.enabled)
     || before.disabledTools.some(tool => !after.disabledTools.includes(tool))
+    || toolsComeOn(before, after)
     || secretRotated(before, after)
   )
     return 'use'
   return false
+}
+
+/** Whether a tool that was new (and so off) is no longer: it joined the known tools, or new tools stopped being off. */
+function toolsComeOn(before: McpUse, after: McpUse): boolean {
+  if (!before.knownTools) return false
+  return !after.knownTools || after.knownTools.some(tool => !before.knownTools!.includes(tool))
 }
 
 /**
@@ -759,6 +772,8 @@ export function serverView(
     ],
     projectCwd: record.projectCwd,
     ...(isUnpinnedRunner(record.command, record.args) ? { unpinned: true as const } : {}),
+    ...(record.preset ? { preset: record.preset } : {}),
+    ...(record.knownTools ? { knownTools: [...record.knownTools] } : {}),
   }
 }
 

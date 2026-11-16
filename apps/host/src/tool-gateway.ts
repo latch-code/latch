@@ -94,7 +94,15 @@ export interface McpBinding {
  * then relays to the Host (`mcp/remote`), which is the server's client, and starts nothing.
  */
 export type McpLaunchReply =
-  | { command: string; args: string[]; env: Record<string, string>; cwd: string; disabledTools: string[] }
+  | {
+      command: string
+      args: string[]
+      env: Record<string, string>
+      cwd: string
+      disabledTools: string[]
+      /** A server that keeps new tools off: the tools that are not new. */
+      knownTools?: string[]
+    }
   | { remote: true; disabledTools: string[] }
 
 /** What a bridge relays to a remote server through the Host. */
