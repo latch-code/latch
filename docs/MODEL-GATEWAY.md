@@ -376,7 +376,7 @@ Host 每发出或拒绝一个模型请求，就在数据目录的 `gateway/usage
 - 有模型路由的会话一行都不写：它的请求已在账本里，不重复计。
 - 内置 Harness 用插件自己的模型服务（不经网关、不进账本）的轮次也写一行，带 `via: plugin` 与 `providerId`，tokens 是这一轮各步报告的和（`turnTokens`）；用已保存的模型服务的轮次在账本里，演示模型的轮次哪里都不记。汇总里它的来源是 `plugin`。
 - Harness 报的是会话累计而这一轮之前没有报过（接入的会话、晚开始报告的 Harness）时，除会话首轮外不写 tokens 与花费：差值里有 Latch 之前的用量。
-- 只算 Latch 自己跑的轮，从不读 CLI 自己的日志或存储。文件的写法、轮转、90 天删除与读取上限与账本相同（`usage-log.ts`）；删会话不删行。
+- 只算 Latch 自己跑的轮。Agent 这一轮什么 tokens 都没报时，DeepSeek Harness 的轮次由 Host 从它自己这一个会话的日志里读数（[HARNESSES.md](HARNESSES.md#deepseek-harness-的会话日志)），这一行等读完再写；其他 CLI 的日志与存储不读。文件的写法、轮转、90 天删除与读取上限与账本相同（`usage-log.ts`）；删会话不删行。
 
 ### 汇总
 

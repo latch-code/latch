@@ -325,7 +325,7 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 
 `fake-acp-agent.mjs` 的规则：
 
-- 写 `FAKE_ACP_STATE`（会话状态，多个进程共享、每次保存都合并磁盘内容）与 `FAKE_ACP_LOG`（逐行 JSON 日志）；此外只有 `shell-edit` 一轮在会话目录写两个文件、用例排进 `FAKE_ACP_EDIT_QUEUE` 的文件改动，以及扮演 Qwen Code 时夹具家目录里的设置。
+- 写 `FAKE_ACP_STATE`（会话状态，多个进程共享、每次保存都合并磁盘内容）与 `FAKE_ACP_LOG`（逐行 JSON 日志）；此外只有 `shell-edit` 一轮在会话目录写两个文件、用例排进 `FAKE_ACP_EDIT_QUEUE` 的文件改动，扮演 Qwen Code 时夹具家目录里的设置，以及设了 `FAKE_ACP_DSH_LOG` 时那个家目录里 DeepSeek Harness 格式的会话日志。
 - 唯一的网络访问是 `model` 一轮：访问客户端指给它的模型服务。
 - 进程级行为由 `FAKE_ACP_*` 环境变量决定，每一轮的行为由提示的第一个词决定（其他输入回显）。变量与关键词在该文件中查找（`grep -o 'FAKE_[A-Z_]*'`）。
 - `FAKE_SECRET` 出现在 stderr 与错误中，`FAKE_ACP_DUMP_ENV=1` 把完整环境写入日志：分别用来检查脱敏与环境白名单。日志里的 `latchEnv`（收到的 `LATCH_*` 变量名）应为空。

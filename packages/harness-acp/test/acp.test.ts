@@ -2661,6 +2661,73 @@ describe('ACP turn mapping', () => {
     expect((await (await fixture.open()).detail(sessionId)).summary.usage).toEqual({ inputTokens: 100, outputTokens: 20 })
   })
 
+  it('asks the Host for a turn’s tokens only when the agent reported none, and records the turn once with them', async () => {
+    const turns: HarnessTurnRecord[] = []
+    const asked: Array<{ sessionId: string; cwd: string; from: number; to: number }> = []
+    const fixture = await setup(
+      { FAKE_ACP_CONFIG: 'legacy' },
+      {
+        readTurnUsage: async ({ signal: _signal, ...input }) => {
+          asked.push(input)
+          return { inputTokens: 7, outputTokens: 3 }
+        },
+      },
+      {},
+      { turnEnded: turn => void turns.push(turn) },
+    )
+    const bridge = await fixture.open()
+    // The agent reports this turn's usage: the Host is not asked, and nothing is counted twice.
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
+    await settled(bridge, sessionId)
+    expect(asked).toEqual([])
+    await bridge.prompt(sessionId, 'echo silent', rid())
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(turns).toHaveLength(2))
+    expect(asked).toHaveLength(1)
+    expect(asked[0]!.sessionId).toMatch(/^sess-/u)
+    expect(asked[0]!.from).toBeLessThanOrEqual(asked[0]!.to)
+    expect(turns[0]!.usage).toEqual({ inputTokens: 10, outputTokens: 20 })
+    expect(turns[1]!.usage).toEqual({ inputTokens: 7, outputTokens: 3 })
+    // The session itself shows only what the agent said.
+    expect((await bridge.detail(sessionId)).summary.usage).toEqual({ inputTokens: 10, outputTokens: 20 })
+  })
+
+  it('records the turn without tokens and closes when the Host’s read never settles', async () => {
+    const turns: HarnessTurnRecord[] = []
+    const fixture = await setup(
+      { FAKE_ACP_CONFIG: 'legacy' },
+      { turnUsageReadMs: 50, readTurnUsage: () => new Promise(() => {}) },
+      {},
+      { turnEnded: turn => void turns.push(turn) },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo silent', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.close()
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).not.toHaveProperty('usage')
+  })
+
+  it('records the turn without tokens when the Host’s read finds none, and waits for it before closing', async () => {
+    const turns: HarnessTurnRecord[] = []
+    let release!: () => void
+    const fixture = await setup(
+      { FAKE_ACP_CONFIG: 'legacy' },
+      { readTurnUsage: () => new Promise(resolve => (release = () => resolve(undefined))) },
+      {},
+      { turnEnded: turn => void turns.push(turn) },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo silent', requestId: rid() })
+    await settled(bridge, sessionId)
+    expect(turns).toEqual([])
+    const closing = bridge.close()
+    release()
+    await closing
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).not.toHaveProperty('usage')
+  })
+
   it('applies plan, title, commands and usage updates, persists commands and ignores unknown update kinds', async () => {
     const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy' })
     const bridge = await fixture.open()

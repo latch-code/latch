@@ -1,4 +1,5 @@
 export type { AgentRecord } from '@latch/protocol'
+import type { TokenUsage } from '@latch/protocol'
 import type { QuotaReport } from './quota.ts'
 
 /** Timing and size limits and the diagnostics sink. The defaults suit production; tests shorten them. */
@@ -43,6 +44,21 @@ export interface AcpAgentOptions {
    * setting that sends the key elsewhere), and what was shown goes; `undefined`: this read did not finish.
    */
   readQuota?: (input: { cwd: string; signal: AbortSignal }) => Promise<QuotaReport | null | undefined>
+  /**
+   * The Host's own read of a turn's tokens from the CLI's record of this one session (`apps/host/src/cli-usage.ts`),
+   * for a preset whose adapter reports none. Asked once as a turn on the Harness's own login ends with no usage from
+   * the agent, never for a session brought in: `sessionId` is the agent's ID Latch started, `cwd` the folder sent with
+   * it, and the times the turn's. Undefined: not known, and the turn is recorded without tokens.
+   */
+  readTurnUsage?: (input: {
+    sessionId: string
+    cwd: string
+    from: number
+    to: number
+    signal: AbortSignal
+  }) => Promise<TokenUsage | undefined>
+  /** How long `readTurnUsage` may take; past it, plus a second, the turn is recorded without tokens. Default 10 s. */
+  turnUsageReadMs?: number
 }
 
 export interface ResolvedOptions {
@@ -59,6 +75,8 @@ export interface ResolvedOptions {
   log(text: string): void
   requireConfirmedCommand: boolean
   readQuota?: AcpAgentOptions['readQuota']
+  readTurnUsage?: AcpAgentOptions['readTurnUsage']
+  turnUsageReadMs: number
 }
 
 export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
@@ -76,6 +94,7 @@ export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
     handshakeTimeoutMs: pick(options.handshakeTimeoutMs, 30_000),
     sessionSetupTimeoutMs: pick(options.sessionSetupTimeoutMs, 60_000),
     stopGraceMs: pick(options.stopGraceMs, 5_000),
+    turnUsageReadMs: pick(options.turnUsageReadMs, 10_000),
     maxLineBytes: pick(options.maxLineBytes, 64 * 1024 * 1024),
     restartDelayMs: pick(options.restartDelayMs, 250),
     maxProcesses: (() => {
@@ -85,6 +104,7 @@ export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
     })(),
     log: options.log ?? (text => console.error(`[Latch] ${text}`)),
     ...(options.readQuota ? { readQuota: options.readQuota } : {}),
+    ...(options.readTurnUsage ? { readTurnUsage: options.readTurnUsage } : {}),
   }
 }
 

@@ -485,7 +485,17 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 | Grok Build | `PromptResponse._meta.usage`（`turnUsage`） | 一轮 | 已含 |
 | Qwen Code | 每次模型调用（含子 Agent 的）后一条空文字的 `agent_message_chunk` 的 `_meta.usage`（`callUsage`，0.26.8），只在已发出的一轮里收，相加；载入历史时重放的不收 | 一轮 | 已含；有一次没报缓存，这一轮就不记缓存 |
 | Antigravity | `PromptResponse.usage` | 未核实，按会话 | 报 0 |
-| DeepSeek Harness | 不报告 tokens，只有 `usage_update` 的上下文 | — | — |
+| DeepSeek Harness | 适配器不报告 tokens（`usage_update` 只有上下文）；自己登录的轮次由 Host 读它这一个会话的日志（见下） | 一轮，只进轮次记录 | 日志里输入不含缓存，加回 |
+
+### DeepSeek Harness 的会话日志
+
+Latch 不读 CLI 自己的存储，有两个例外，这是第二个（第一个是下面的「DeepSeek Harness 的余额」）。Host 只读它启动的那一个会话的日志里的 tokens 数（`apps/host/src/cli-usage.ts`），依据 `@deepseek-ai/dsh-session-persistence-jsonl` 与 `dsh-session` 0.2.2-rc.1 的源码与说明：
+
+- **何时。** 只对预设自己的命令（与额度同一判断 `readsCliQuota`），只在启动脚本给了 `cliUsage` 时；测试 Host 没有它就不读。一轮不经模型路由、Agent 没报这一轮的 tokens、会话不是接入的（`imported`）时，轮次结束 1 秒后读一次（dsh 每 200 ms 批量写一次事件），10 秒内读不完就按没有 tokens 记；驱动另有自己的计时，读的一方再过 1 秒还没答复，这一行照写、关闭也不等它。
+- **读哪个文件。** 固定路径 `~/.dsh/sessions/<projectKey(cwd)>/<会话 ID>/session.v4.jsonl.zstd`：`cwd` 是 Latch 在 `session/new` 发的目录，ID 是 dsh-acp 回的 UUID（形状不对不读）。不列目录、不找别的格式代号。`DSH_HOME` 有值，或 `~/.dsh/cordis.patch.yml`、`~/.dsh/profiles/acp/cordis.patch.yml` 提到 `session-persistence` 或 `compression`，就不读。
+- **怎么读。** 每层目录都必须是这个用户的真目录（不是链接）；文件以不跟随链接的方式打开，必须是这个用户的普通文件，不超过 64 MiB；Zstandard 流式解压、逐行处理，文字超过 256 MiB、一行超过 16 MiB 或这几类事件超过 10 万条就放弃；中止或读失败时整条解压链一起结束。最后一帧写了一半时，它之前的完整行照用。首行必须是这个 ID、这个目录、格式 4。只看 `turn/start`、`turn/end`、`assistant/message`、`subagent/catalog`，每行必须以 `{"type":` 开头；回复会随整行解析进内存，只取出轮号、时间与 `usage` 的数字，其余随行丢掉。
+- **怎么归到这一轮。** 开始与结束都在 Latch 这一轮之内的 dsh 轮次，把它们的 `assistant/message.usage` 相加（输入加回缓存读写）。有 dsh 轮次跨过这一轮的边、没有完整的轮、有回复没带 `usage`、会话到这一轮为止建过子 Agent（它的用量在 Latch 没有 ID 的子会话日志里），都一个数也不写。
+- **去向。** 只有数字，只进轮次记录（`usage/turns-*.jsonl`），不进会话的 `TurnStats`，不进日志、错误、SSE。失败不说话。不写审计：不碰秘密，没有东西离开这台电脑，读到的数就是记录里那一行。
 
 ## 登录
 
@@ -520,11 +530,11 @@ Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥�
 
 其他设备只看到命令。macOS 以外的 Host 上这两条路径尚未实现。Claude Agent 没有登录命令，也就没有按钮。
 
-**测试 Host。** `startServer` 没有 `loginPrograms` 时不运行任何登录命令，没有 `cliQuota` 时不读任何 CLI 的凭据、不问厂商余额；没有 `commandDirectories` 时只认绝对路径，按名字找命令一律找不到。只有启动脚本传 `resolveCommand` 与 `personCommandDirectories`，所以带预设定义的测试 Host 碰不到这台电脑上真实安装的程序。
+**测试 Host。** `startServer` 没有 `loginPrograms` 时不运行任何登录命令，没有 `cliQuota` 时不读任何 CLI 的凭据、不问厂商余额，没有 `cliUsage` 时不读任何 CLI 的会话日志；没有 `commandDirectories` 时只认绝对路径，按名字找命令一律找不到。只有启动脚本传 `resolveCommand` 与 `personCommandDirectories`，所以带预设定义的测试 Host 碰不到这台电脑上真实安装的程序。
 
 ## 额度
 
-Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额度（界面见 [DESIGN.md](DESIGN.md)「额度与用量」）。Latch 只听它已经为会话运行的那个进程，不为额度启动会话或模型轮次，不定时轮询。唯一的例外是 DeepSeek Harness 的余额：Host 用它自己保存的 DeepSeek API 密钥问 DeepSeek 文档里的余额接口（见下面「DeepSeek Harness 的余额」）；其他 CLI 的令牌与存储不读，其他厂商接口不调。
+Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额度（界面见 [DESIGN.md](DESIGN.md)「额度与用量」）。Latch 只听它已经为会话运行的那个进程，不为额度启动会话或模型轮次，不定时轮询。唯一的例外是 DeepSeek Harness 的余额：Host 用它自己保存的 DeepSeek API 密钥问 DeepSeek 文档里的余额接口（见下面「DeepSeek Harness 的余额」）；其他 CLI 的令牌不读，存储只读上面「DeepSeek Harness 的会话日志」那一处，其他厂商接口不调。
 
 | Harness | 来源 | 显示 |
 | --- | --- | --- |
@@ -834,7 +844,7 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 
 ## 接入已有会话
 
-用户在 Latch 之外用 CLI 做过的会话，可以经它自己的适配器列出、预览并接入为一个 Latch 会话。Latch 从不读取任何 CLI 的文件夹。接管终端里正开着的会话不做，遇到时拒绝。
+用户在 Latch 之外用 CLI 做过的会话，可以经它自己的适配器列出、预览并接入为一个 Latch 会话。找会话与接入都不读 CLI 的文件夹。接管终端里正开着的会话不做，遇到时拒绝。
 
 **范围与权限。**
 

@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { zstdCompressSync } from 'node:zlib'
 import { callFakeModel } from './fake-model-client.mjs'
 
 const env = process.env
@@ -795,7 +796,8 @@ async function handle(method, params) {
       if (env.FAKE_ACP_NEW_SILENT === '1') await new Promise(() => {})
       if (env.FAKE_ACP_AUTH === 'new' || needsLogin()) throw rpcError(-32000, 'Authentication required')
       if (slowSetup && Object.keys(readDisk()).length > 0) await delay(slowSetup)
-      const sessionId = `sess-${randomUUID()}`
+      // FAKE_ACP_DSH_LOG: IDs as dsh-acp makes them, a bare UUID.
+      const sessionId = env.FAKE_ACP_DSH_LOG ? randomUUID() : `sess-${randomUUID()}`
       await mountMcp(sessionId, params.mcpServers ?? [], params.cwd)
       if (Number(env.FAKE_ACP_MCP_PROMPT_ON_NEW) === Object.keys(sessions).length + 1) {
         const server = mcpServers.get(sessionId)?.find(item => item.name === 'files')
@@ -1044,12 +1046,75 @@ async function prompt({ sessionId, prompt: blocks }) {
   queuedEdit(session, tool)
   const steers = []
   running.set(sessionId, steers)
+  const turn = dshTurn(sessionId, session)
   const result = await Promise.resolve()
     .then(() => scenario({ sessionId, session, input, argument, say, think, tool, permission, steers }))
     .finally(() => running.delete(sessionId))
+  turn?.end(reply.join(''), input)
   session.history.push({ role: 'agent', text: reply.join('') })
   save()
   return result
+}
+
+/** dsh's directory name for a project folder (dsh-session-persistence-jsonl 0.2.2-rc.1 `projectKey`). */
+function dshProjectKey(cwd) {
+  let out = ''
+  let run = false
+  for (const ch of cwd) {
+    if (ch === '/' || ch === '\\' || ch === ':') {
+      if (!run) out += '-'
+      run = true
+    } else {
+      out += /^[A-Za-z0-9._-]$/.test(ch)
+        ? ch
+        : [...ch].map(unit => `~${unit.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`).join('')
+      run = false
+    }
+  }
+  return `--${(out.replace(/^-+/, '') || 'root').slice(0, 251)}--`
+}
+
+/**
+ * FAKE_ACP_DSH_LOG names a home: each prompt is written to `<home>/.dsh/sessions/<project>/<id>/session.v4.jsonl.zstd`
+ * as DeepSeek Harness writes its session log (format 4, a Zstandard frame per append): `turn/start`, then one
+ * `assistant/message` holding the reply's text and FAKE_ACP_DSH_USAGE (a JSON object in dsh's own counts), then
+ * `turn/end`. A prompt that says `with-subagent` also records a child in the catalog.
+ */
+function dshTurn(sessionId, session) {
+  const home = env.FAKE_ACP_DSH_LOG
+  if (!home) return undefined
+  const dir = join(home, '.dsh', 'sessions', dshProjectKey(session.cwd), sessionId)
+  const file = join(dir, 'session.v4.jsonl.zstd')
+  const write = rows => appendFileSync(file, zstdCompressSync(Buffer.from(rows.map(row => `${JSON.stringify(row)}\n`).join(''))))
+  if (!existsSync(file)) {
+    mkdirSync(dir, { recursive: true })
+    session.dshSeq = 0
+    session.dshTurn = 0
+    write([{ type: 'session', version: 4, id: sessionId, createdAt: Date.now(), isSeeded: false, delegationDepth: 0, cwd: session.cwd }])
+  }
+  const turn = session.dshTurn++
+  const event = (type, data) => ({ type, seq: session.dshSeq++, time: Date.now(), data })
+  write([event('turn/start', { turn }), event('user/message', { turn, step: 0, message: { role: 'user', content: 'private prompt' } })])
+  return {
+    end(text, input) {
+      const usage = env.FAKE_ACP_DSH_USAGE ? JSON.parse(env.FAKE_ACP_DSH_USAGE) : undefined
+      write([
+        event('step/start', { turn, step: 0 }),
+        event('assistant/message', {
+          turn,
+          step: 0,
+          message: { role: 'assistant', content: [{ type: 'text', text }] },
+          stream: [],
+          ...(usage ? { usage } : {}),
+        }),
+        ...(input.includes('with-subagent')
+          ? [event('subagent/catalog', { childId: randomUUID(), childCreatedAt: Date.now(), version: 0, mode: 'one-shot' })]
+          : []),
+        event('step/end', { turn, step: 0 }),
+        event('turn/end', { turn, reason: { kind: 'completed' } }),
+      ])
+    },
+  }
 }
 
 /**

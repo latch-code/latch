@@ -103,6 +103,7 @@ import {
   type UnusableProvider,
   type WorkspaceInfo,
   type ListenerClass,
+  type TokenUsage,
 } from '@latch/protocol'
 import {
   AppError,
@@ -161,6 +162,8 @@ import { HostAddressBooks } from './relay/address-book.ts'
 import { HostRelayDirectory } from './relay/directory.ts'
 import { createEgressFetch, createEgressInspector, type EgressReason, type FetchLike, type LookupFunction } from './egress.ts'
 import { DEEPSEEK_ORIGIN, fetchDeepSeekBalance, readDshKey } from './cli-quota.ts'
+import { readDshTurnUsage } from './cli-usage.ts'
+import { setTimeout as delay } from 'node:timers/promises'
 import { loadOrCreateHostIdentity } from './identity.ts'
 import { ModelGatewayServer, type GatewayService } from './model-gateway.ts'
 import { ModelRequestQueue } from './model-request-queue.ts'
@@ -731,6 +734,11 @@ export interface ServerOptions {
    */
   cliQuota?: { home: string; fetch?: FetchLike }
   /**
+   * The home directory whose DeepSeek Harness session logs the Host may read for the token counts of turns it ran
+   * there (`cli-usage.ts`). The start script passes the person's home; left out, as in tests, no CLI record is read.
+   */
+  cliUsage?: { home: string }
+  /**
    * Where a bare command name is looked for: an agent's command, its adapter, the programs a preset points it at. The
    * start script passes `personCommandDirectories`; left out, as in tests, only absolute commands are found, so no real
    * agent on this computer can be described, offered or started. Tests name their own directories.
@@ -1118,8 +1126,9 @@ function programOf(agent: Pick<AgentRecord, 'presetId' | 'command'>): string | u
 }
 
 /**
- * Whether the Host may read this definition's CLI credential for its quota (`cli-quota.ts`): DeepSeek Harness's own
- * preset command, exactly as the preset table names it with no variables, bound to a program this Mac confirmed.
+ * Whether the Host may read this definition's CLI credential for its quota (`cli-quota.ts`) and its record of a session
+ * Latch started for that session's tokens (`cli-usage.ts`): DeepSeek Harness's own preset command, exactly as the
+ * preset table names it with no variables, bound to a program this Mac confirmed.
  */
 function readsCliQuota(agent: AgentRecord): boolean {
   return agent.presetId === 'dsh' && agent.confirmedCommand !== undefined && runsPresetCommand(agent)
@@ -1166,6 +1175,8 @@ function withVersion(preset: AgentPreset, detected: CommandDetection): CommandDe
 
 /** PATH lookups touch the file system and the catalog is read often; as long as a driver's own status keeps one. */
 const PRESET_LOOKUP_TTL_MS = 5_000
+/** dsh writes its session events in batches 200 ms apart (`enqueueLive`): the wait before its log is read for a turn. */
+const TURN_LOG_SETTLE_MS = 1_000
 /** How long reading the agent settings waits for commands to print their versions. */
 const VERSION_RECHECK_MS = 5_000
 
@@ -1386,6 +1397,30 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     // The balance goes only to the DeepSeek preset's own HTTPS origin, a named destination that needs no confirmation;
     // were it no longer a preset's, the read is not offered at all.
     const readCliQuota = options.cliQuota && isPresetKeyOrigin(originOf(DEEPSEEK_ORIGIN)) ? cliQuotaReader(options.cliQuota) : undefined
+    /**
+     * The Host's read of a turn's tokens from DeepSeek Harness's own log of that one session (`cli-usage.ts`), for a
+     * definition that still is the preset's own when asked. Only numbers come back; nothing is audited, since nothing
+     * leaves this computer and no secret is touched.
+     */
+    const cliUsageReader = (cliUsage: NonNullable<ServerOptions['cliUsage']>) => {
+      const uid = process.getuid?.()
+      return async (
+        agentId: string,
+        input: { sessionId: string; cwd: string; from: number; to: number; signal: AbortSignal },
+      ): Promise<TokenUsage | undefined> => {
+        const current = config.settings().agents.find(agent => agent.id === agentId)
+        if (!current || !readsCliQuota(current) || uid === undefined) return undefined
+        await delay(TURN_LOG_SETTLE_MS, undefined, { signal: input.signal }).catch(() => {})
+        if (input.signal.aborted) return undefined
+        return readDshTurnUsage({
+          home: cliUsage.home,
+          env: { DSH_HOME: process.env.DSH_HOME || loginShellValues().DSH_HOME },
+          uid,
+          ...input,
+        })
+      }
+    }
+    const readCliUsage = options.cliUsage ? cliUsageReader(options.cliUsage) : undefined
     const buildAgentPlugin =
       options.agentPlugin
       ?? ((agent: AgentRecord) =>
@@ -1393,6 +1428,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           log,
           requireConfirmedCommand: true,
           ...(readCliQuota && readsCliQuota(agent) ? { readQuota: input => readCliQuota(agent.id, input) } : {}),
+          ...(readCliUsage && readsCliQuota(agent) ? { readTurnUsage: input => readCliUsage(agent.id, input) } : {}),
         }))
     const egressExtra = [...(options.egressAllow ?? [])]
     const egressFetch = createEgressFetch({

@@ -81,6 +81,7 @@ import {
   type ExternalSessionList,
   type ExternalSessionLoad,
   type ExternalSessionPlace,
+  type HarnessTurnRecord,
   type LaunchPreview,
   type ModelGatewayLease,
   type ToolGatewayCallContext,
@@ -952,6 +953,8 @@ export class AgentRuntime implements Bridge {
   private started?: Promise<void>
   private closing?: Promise<void>
   private closed = false
+  /** Turn records waiting on the Host's read of their tokens (`readTurnUsage`). */
+  private readonly usageReads = new Set<Promise<void>>()
   private loaded = false
   private storageFailure?: unknown
   private writing?: Promise<void>
@@ -1112,6 +1115,8 @@ export class AgentRuntime implements Bridge {
       await Promise.allSettled([...this.inflight.values()].map(entry => entry.promise))
       await Promise.all([...this.runs.values()].map(run => run.done))
       await this.fileTracking.close()
+      // Turns whose tokens the Host is still reading are recorded before the driver is gone.
+      await Promise.allSettled([...this.usageReads])
       if (this.loaded) await this.flush().catch(() => {})
       await this.commandCache.close()
       try {
@@ -4336,18 +4341,44 @@ export class AgentRuntime implements Bridge {
     const model =
       turn.findLast(message => message.role === 'assistant' && message.model)?.model
       ?? task.config?.find(option => option.category === 'model')?.currentValue
-    try {
-      this.options.turnEnded({
-        sessionId: task.summary.id,
-        startedAt: isoTime(run.clock.startedAt),
-        endedAt: prompt.turn.endedAt,
-        ...(prompt.turn.activeMs !== undefined ? { activeMs: prompt.turn.activeMs } : {}),
-        steps: turn.filter(message => message.role === 'tool' && !message.subagent).length,
-        ...(model ? { model } : {}),
-        ...(task.summary.workspaceId ? { projectId: task.summary.workspaceId } : {}),
-        ...(usage ? { usage } : {}),
-        ...(cost && cost.amount > 0 ? { cost } : {}),
+    const record: HarnessTurnRecord = {
+      sessionId: task.summary.id,
+      startedAt: isoTime(run.clock.startedAt),
+      endedAt: prompt.turn.endedAt,
+      ...(prompt.turn.activeMs !== undefined ? { activeMs: prompt.turn.activeMs } : {}),
+      steps: turn.filter(message => message.role === 'tool' && !message.subagent).length,
+      ...(model ? { model } : {}),
+      ...(task.summary.workspaceId ? { projectId: task.summary.workspaceId } : {}),
+      ...(usage ? { usage } : {}),
+      ...(cost && cost.amount > 0 ? { cost } : {}),
+    }
+    const read = this.limits.readTurnUsage
+    const agentSessionId = run.acpSessionId
+    const from = run.clock.startedAt
+    const to = Date.parse(prompt.turn.endedAt)
+    // The agent said nothing about this turn's tokens: the Host may read them from the CLI's record of this session, one
+    // Latch started (not one brought in), and the line waits for that read.
+    if (read && !run.tokens?.turn && agentSessionId && task.acp.imported?.agentSessionId !== agentSessionId && Number.isFinite(to)) {
+      const signal = AbortSignal.timeout(this.limits.turnUsageReadMs)
+      // The hook is the Host's, but a read that never settles must neither hold the driver's close nor lose the turn: past
+      // its time the line is written without tokens, whatever the hook does later.
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const late = new Promise<undefined>(resolve => {
+        timer = setTimeout(() => resolve(undefined), this.limits.turnUsageReadMs + 1_000)
       })
+      const pending = Promise.race([read({ sessionId: agentSessionId, cwd: task.acp.cwd, from, to, signal }).catch(() => undefined), late])
+        .then(found => this.sendTurn(found ? { ...record, usage: found } : record))
+        .finally(() => clearTimeout(timer))
+      this.usageReads.add(pending)
+      void pending.finally(() => this.usageReads.delete(pending))
+      return
+    }
+    this.sendTurn(record)
+  }
+
+  private sendTurn(record: HarnessTurnRecord): void {
+    try {
+      this.options.turnEnded?.(record)
     } catch {
       // The record is the Host's; a failure there never touches the session.
     }

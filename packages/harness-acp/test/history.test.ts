@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DriverTaskDetail } from '@latch/protocol'
-import type { Bridge, HarnessDriver, HarnessPlugin, HostProject } from '@latch/sdk'
+import type { Bridge, HarnessDriver, HarnessPlugin, HarnessTurnRecord, HostProject } from '@latch/sdk'
 import {
   FAKE_ACP_AGENT,
   FAKE_HISTORY_SECRETS,
@@ -68,6 +68,7 @@ async function fixture(
   env: Record<string, string> = {},
   overrides: Partial<AgentRecord> = { presetId: 'codex' },
   extra: (folders: { main: string; other: string }) => FakeHistorySession[] = () => [],
+  hooks: { options?: AcpAgentOptions; turnEnded?: (turn: HarnessTurnRecord) => void } = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-history-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -113,7 +114,7 @@ async function fixture(
     env: { ...CODEX, FAKE_ACP_STATE: join(root, 'agent-state.json'), FAKE_ACP_LOG: logFile, FAKE_ACP_HISTORY_FILE: history, ...env },
     ...overrides,
   }
-  const driver = await activate(createAcpAgentPlugin(record, FAST))
+  const driver = await activate(createAcpAgentPlugin(record, { ...FAST, ...hooks.options }))
   const projects: HostProject[] = [
     {
       id: 'proj',
@@ -137,6 +138,7 @@ async function fixture(
         },
       },
       securityEvent: () => {},
+      ...(hooks.turnEnded ? { turnEnded: hooks.turnEnded } : {}),
     })
     cleanups.push(() => bridge.close())
     await bridge.start()
@@ -302,6 +304,34 @@ describe('bringing in an earlier session of the agent', () => {
     ).toMatchObject({
       droppedBefore: CAPTURE_MESSAGES - 500 + 3,
     })
+  })
+
+  it('never asks the Host to read the CLI’s record of a session brought in, only of one Latch started', async () => {
+    const asked: string[] = []
+    const turns: HarnessTurnRecord[] = []
+    const test = await fixture({}, { presetId: 'codex' }, () => [], {
+      options: {
+        readTurnUsage: async ({ sessionId }) => {
+          asked.push(sessionId)
+          return undefined
+        },
+      },
+      turnEnded: turn => void turns.push(turn),
+    })
+    const bridge = await test.open()
+    const load = await bridge.loadExternalSession!(test.place('ext-main'))
+    const sessionId = newId()
+    await bridge.adoptExternalSession!({ ...test.place('ext-main'), sessionId, loadId: load.loadId, title: 'Brought in' })
+    await bridge.prompt(sessionId, 'echo continue', `request-${randomUUID()}`)
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(turns).toHaveLength(1))
+    expect(asked).toEqual([])
+    // A new context is a session Latch started: its turn may be read.
+    await bridge.prompt(sessionId, 'echo fresh', `request-${randomUUID()}`, { freshContext: true })
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(turns).toHaveLength(2))
+    expect(asked).toHaveLength(1)
+    expect(asked[0]).not.toBe('ext-main')
   })
 
   it('adopts once per session ID, resumes it natively with Latch’s mode, and never deletes the agent’s own session', async () => {
