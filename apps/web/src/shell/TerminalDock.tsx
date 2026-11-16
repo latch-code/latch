@@ -1,5 +1,6 @@
 import { ResizeHandle } from '@latch/ui'
 import { TerminalPanel } from '../panel/terminal/TerminalPanel.tsx'
+import { paneStorageKey } from '../panel/terminal/panes.ts'
 import { DOCK_MIN } from './panelLayout.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -68,6 +69,8 @@ export function TerminalDock({ shell }: { shell: ShellState }) {
         onOpenService={session && canBrowser && browserShell ? openInBrowser : undefined}
         fillPlace={terminalTarget.sessionId}
         onFillReveal={shell.revealTerminal}
+        layoutKey={terminalKey && paneStorageKey(shell.snapshot.device.id, terminalKey)}
+        paneKeys={shell.terminalKeys}
       />
     </aside>
   )

@@ -48,9 +48,19 @@ export function nameTabs(previous: readonly TerminalTab[], terminals: readonly T
   return tabs.toSorted((a, b) => a.number - b.number)
 }
 
-/** The tab that stays selected: the same one while it exists, else its neighbour, else the first. */
-export function keepActive(tabs: readonly TerminalTab[], active: string | undefined, before: readonly TerminalTab[] = tabs) {
+/**
+ * The terminal that stays focused: the same one while it exists, else `successor`'s pick (a sibling pane of the same
+ * tab), else its neighbour by number, else the first.
+ */
+export function keepActive(
+  tabs: readonly TerminalTab[],
+  active: string | undefined,
+  before: readonly TerminalTab[] = tabs,
+  successor?: (id: string) => string | undefined,
+) {
   if (active && tabs.some(tab => tab.id === active)) return active
+  const next = active === undefined ? undefined : successor?.(active)
+  if (next !== undefined && tabs.some(tab => tab.id === next)) return next
   const at = before.findIndex(tab => tab.id === active)
   const neighbour = at >= 0 ? (tabs.find(tab => tab.number > before[at]!.number) ?? tabs.at(-1)) : tabs[0]
   return neighbour?.id

@@ -12,10 +12,19 @@ export type CloseResult = { kind: 'closed' } | { kind: 'busy'; program?: string 
  * The target's terminals as the Host lists them. While the surface is shown and wants one (`autoOpen`), an empty list
  * opens the first terminal, once per showing: hiding the surface lets the next showing open one again.
  */
-export function useTerminals(input: { target: TerminalTarget; shown: boolean; autoOpen: boolean; size: () => TerminalSize }) {
+export function useTerminals(input: {
+  target: TerminalTarget
+  shown: boolean
+  autoOpen: boolean
+  size: () => TerminalSize
+  /** Which terminal takes the focus when the focused one goes (a sibling pane); else its neighbour by number. */
+  successor?: (id: string) => string | undefined
+}) {
   const { target, shown, autoOpen } = input
   const sizeRef = useRef(input.size)
   sizeRef.current = input.size
+  const successorRef = useRef(input.successor)
+  successorRef.current = input.successor
   const [tabs, setTabs] = useState<TerminalTab[]>([])
   const [active, setActive] = useState<string>()
   const [read, setRead] = useState<TerminalsRead>({ kind: 'loading' })
@@ -29,7 +38,7 @@ export function useTerminals(input: { target: TerminalTarget; shown: boolean; au
   const apply = useCallback((next: (previous: TerminalTab[]) => TerminalTab[]) => {
     setTabs(previous => {
       const updated = next(previous)
-      setActive(current => keepActive(updated, current, previous))
+      setActive(current => keepActive(updated, current, previous, successorRef.current))
       return updated
     })
   }, [])
@@ -47,8 +56,12 @@ export function useTerminals(input: { target: TerminalTarget; shown: boolean; au
   }, [apply, base])
 
   const open = useCallback(
-    /** Resolves with the new terminal's ID, or undefined when none was opened (the failure says why). */
-    (number?: number): Promise<string | undefined> => {
+    /**
+     * Resolves with the new terminal's ID, or undefined when none was opened (the failure says why). `placed` hears the ID
+     * in the same update that adds the tab, so a split's pane never shows as a tab of its own first; `size` overrides the
+     * whole area's.
+     */
+    (number?: number, options: { placed?: (id: string) => void; size?: TerminalSize } = {}): Promise<string | undefined> => {
       // A second caller while one opens (the first-terminal start and a command waiting to be filled in) shares it.
       if (inFlight.current) return inFlight.current
       autoOpened.current = true
@@ -58,9 +71,10 @@ export function useTerminals(input: { target: TerminalTarget; shown: boolean; au
         try {
           const { terminal } = await api<{ terminal: TerminalSummary }>(base, {
             method: 'POST',
-            body: sizeRef.current(),
+            body: options.size ?? sizeRef.current(),
             timeoutMs: 20_000,
           })
+          options.placed?.(terminal.id)
           apply(previous =>
             nameTabs(previous, [...previous.map(tab => tab.summary), terminal], new Map(number ? [[terminal.id, number]] : [])),
           )
@@ -128,11 +142,11 @@ export function useTerminals(input: { target: TerminalTarget; shown: boolean; au
     [base, gone, list],
   )
 
-  /** An ended terminal makes way for a new one under the same name. */
+  /** An ended terminal makes way for a new one under the same name (and, with `placed`, in the same pane). */
   const reopen = useCallback(
-    async (tab: TerminalTab) => {
+    async (tab: TerminalTab, placed?: (id: string) => void) => {
       const result = await close(tab.id, true)
-      if (result.kind === 'closed') await open(tab.number)
+      if (result.kind === 'closed') await open(tab.number, placed ? { placed } : {})
       else if (result.kind === 'failed') setFailure(result.text)
     },
     [close, open],

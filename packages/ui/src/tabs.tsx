@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import { CloseGlyph } from './glyphs/index.tsx'
 import { Icon, type IconComponent } from './icon.tsx'
 import { cx, nextIndex } from './internal.ts'
-import { Menu } from './menu.tsx'
+import { Menu, type MenuItem } from './menu.tsx'
 import { fitTabs } from './tabFit.ts'
 
 export interface TabOption<T extends string> {
@@ -139,6 +139,8 @@ export interface PanelTab<T extends string> {
   fresh?: boolean
   /** Makes the tab closable; its × and what Delete does say this. */
   closeLabel?: string
+  /** More of the tab's own actions, in its context menu before 关闭. */
+  menu?: MenuItem[]
 }
 
 /** The overflow button's width and the space between two tabs, as tabs.css draws them. */
@@ -278,11 +280,20 @@ export function PanelTabs<T extends string>({
                 <Icon icon={CloseGlyph} size={12} />
               </button>
             )}
-            {tab.closeLabel !== undefined && onClose && (
+            {((tab.closeLabel !== undefined && onClose) || tab.menu?.length) && (
               <Menu
                 label={tab.label}
                 context={() => document.getElementById(`${base}-${index}`)}
-                sections={[{ id: 'tab', items: [{ id: 'close', label: '关闭', icon: CloseGlyph, onSelect: () => onClose(tab.value) }] }]}
+                sections={[
+                  { id: 'actions', items: tab.menu ?? [] },
+                  {
+                    id: 'tab',
+                    items:
+                      tab.closeLabel !== undefined && onClose
+                        ? [{ id: 'close', label: '关闭', icon: CloseGlyph, onSelect: () => onClose(tab.value) }]
+                        : [],
+                  },
+                ].filter(section => section.items.length > 0)}
               />
             )}
           </span>

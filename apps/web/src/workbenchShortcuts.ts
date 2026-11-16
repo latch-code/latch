@@ -24,6 +24,10 @@ export type WorkbenchAction =
   | { kind: 'session'; index: number }
   /** ⌥⌘1 to ⌥⌘4: open one of the composer's four controls. */
   | { kind: 'control'; control: ComposerControl }
+  | TerminalPaneAction
+
+/** ⌘\ and ⇧⌘\ split the terminal's pane side by side or stacked; ⌥⌘] and ⌥⌘[ go to its next or previous pane. */
+export type TerminalPaneAction = { kind: 'terminal-split'; direction: 'row' | 'column' } | { kind: 'terminal-pane'; step: 1 | -1 }
 
 /** The composer's four controls in key order; each is the trigger inside `[data-composer-control="<name>"]`. */
 export const COMPOSER_CONTROLS = ['harness', 'model', 'thinking', 'permission'] as const
@@ -73,6 +77,9 @@ const SHORTCUTS = [
   { id: 'layout', label: '切换侧栏、顶栏布局', desktop: '⌥⌘L', browser: 'Alt Shift L' },
   { id: 'changes', label: '改动', desktop: '⌘D', browser: 'Alt D' },
   { id: 'terminal', label: '终端', desktop: '⌘J', browser: 'Alt J' },
+  { id: 'terminal-split', label: '终端左右分屏', desktop: '⌘\\', browser: null },
+  { id: 'terminal-split-down', label: '终端上下分屏', desktop: '⇧⌘\\', browser: null },
+  { id: 'terminal-pane', label: '终端的下一个、上一个窗格', desktop: '⌥⌘] · ⌥⌘[', browser: null },
   { id: 'browser', label: '浏览器', desktop: '⇧⌘B', browser: null },
   { id: 'pick', label: '在浏览器里选取元素', desktop: '⇧⌘S', browser: null },
   { id: 'find', label: '在会话中查找', desktop: '⌘F', browser: 'Mod F' },
@@ -180,6 +187,13 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
   }
   if (desktop && event.code === 'KeyB' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'side-panel'
   if (desktop && event.code === 'KeyL' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'layout'
+  // The terminal's panes: the desktop app only, as the terminal itself. ⌘ chords are the only keys that leave it.
+  if (desktop && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) {
+    if (event.code === 'BracketRight') return { kind: 'terminal-pane', step: 1 }
+    if (event.code === 'BracketLeft') return { kind: 'terminal-pane', step: -1 }
+  }
+  if (desktop && event.code === 'Backslash' && (event.metaKey || event.ctrlKey) && !event.altKey)
+    return { kind: 'terminal-split', direction: event.shiftKey ? 'column' : 'row' }
   const modifier = desktop ? (event.metaKey || event.ctrlKey) && !event.altKey : event.altKey && !event.metaKey && !event.ctrlKey
   if (!modifier) return null
   if (!desktop && event.code === 'KeyB' && event.shiftKey) return 'side-panel'
@@ -203,4 +217,10 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
     Comma: 'settings',
   }
   return actions[event.code] ?? null
+}
+
+/** A terminal pane key: the screen leaves it to the workbench rather than encoding it for the shell. */
+export function isTerminalPaneKey(event: KeyStroke): boolean {
+  const action = workbenchShortcut(event, true)
+  return typeof action === 'object' && action !== null && (action.kind === 'terminal-split' || action.kind === 'terminal-pane')
 }

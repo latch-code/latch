@@ -20,6 +20,7 @@ sources:
   - apps/web/test/terminal-fill.test.ts
   - e2e/desktop-terminal-fill.e2e.ts
   - apps/web/test/terminal-model.test.ts
+  - apps/web/test/terminal-panes.test.ts
   - e2e/desktop-terminal.e2e.ts
   - apps/web/test/login-terminal.test.ts
   - e2e/desktop-login-terminal.e2e.ts
@@ -175,8 +176,15 @@ shell 自行退出时，组件再读取最多 0.5 秒输出，然后报告退出
 - **展开即开。** 底部终端在屏幕上而目标还没有终端时，读完列表就开第一个（每次展开至多一次），没有中间按钮；开不了时只写原因和它的一个动作（重试，或设备、文件夹、连接的原因）。关闭最后一个页签同时收起底部终端；「重新打开」换掉的终端不算。
 - **页签。** 终端图形、名字、末尾的 ×：× 占着自己的位置，悬停、焦点在页签内或触屏上的选中页签时显示；中键、Delete 与右键菜单也关闭。前台有程序时图形换成运行中的标记。
 - **关闭。** 先不带 `force` 关闭；Host 回答 409 `terminal-busy` 时询问，确认后带 `force` 再关。
+- **分屏。** 一个页签可以把 2 到 4 个终端排成一个方向的窗格（左右或上下）：页签行「+」旁的两个按钮、页签与窗格的右键菜单、⌘\ 与 ⇧⌘\（只在桌面端）。每个窗格是普通的 Host 终端，和新页签一样开在会话的文件夹、计入同样的上限；哪些终端同页签是这台设备的布局（`panes.ts`，按设备与目标存在浏览器里），Host 与其他设备看到的仍是各自的终端。
+  - 新窗格在聚焦窗格之后，分走它一半；满 4 个时新终端另开页签；另一方向的分屏尚未实现（先保持简单，不做嵌套）。
+  - 窗格之间一条细线，拖动调大小（每个窗格至少 20 列或 4 行），双击均分，大小按页签记住；每个窗格按自己的框调整行列。
+  - 点按或 ⌥⌘] / ⌥⌘[ 换聚焦窗格；输入、「加入对话」、选区动作与「在终端里打开」都去聚焦窗格，脚部写它的 shell 与文件夹。窗格的头写名字、结束状态与「重新打开」和 ×；关掉的窗格把位置让给同页签的其他窗格，最后一个关掉即关页签。页签名在多于一个窗格时带数量（「终端 1 · 3」），关闭页签关掉其中所有终端，忙的一起询问一次。
+  - 区域放不下两个 40 列的窗格（或上下排时每个窗格放不下 4 行）时，窗格逐个显示为页签，布局保留，变宽后恢复。
+  - 分屏与换窗格的键归工作台，xterm 不把它们编码给 shell。
 - **尺寸。** 只有打开它的设备（`sizeOwner`）按面板大小调整（停稳 120 ms 后发 `resize`），其他设备按 Host 的大小显示。
 - **流与重连。** 每个终端一条流，页签或底部终端折叠时仍保持；切到其他目标时原 shell 在 Host 继续运行，回来重放。断开后带最后的偏移重连（退避 0.5 到 8 秒），`reset` 时清屏后接着显示，`closed`、404 或 403 时页签移除。
+- **底色。** xterm 自带样式把行下的余量画成黑色；视口改用画布色，浅色与深色都与终端主题一致（底部终端、登录与填入对话框）。
 - **背压。** 输出交给 xterm 后等它解析；尚未解析的超过 256 KiB 时停止读取响应，Host 的写入随之停下，页面内存不随输出增长。
 - **输入不乱序、不重复。** 按 64 KiB 切开，一次一个按顺序发送；429 `terminal-input-busy` 时稍后重发同一段；其他失败丢弃之后排队的输入并在页签里说「输入可能没有送达终端」。
 - **按键。** 终端有焦点时按键都交给终端（Ctrl、⌥、Esc、Tab），只有 ⌘ 组合键仍是 Latch 与系统的。
@@ -220,7 +228,7 @@ shell 自行退出时，组件再读取最多 0.5 秒输出，然后报告退出
 
 ## 测试
 
-用例在 `apps/host/test/terminal-*.test.ts`、`agent-login.test.ts`、`apps/web/test/terminal-model.test.ts` 与 `login-terminal.test.ts`；运行方式见 [TESTING.md](TESTING.md)。
+用例在 `apps/host/test/terminal-*.test.ts`、`agent-login.test.ts`、`apps/web/test/terminal-model.test.ts`、`terminal-panes.test.ts` 与 `login-terminal.test.ts`；运行方式见 [TESTING.md](TESTING.md)。
 
 - `terminal-helper.test.ts` 只在 macOS 上构建并运行真实组件；`terminal-service.test.ts` 与多数路由用例用假组件。
 - `e2e/desktop-terminal.e2e.ts` 与 `e2e/desktop-login-terminal.e2e.ts` 需要 `LATCH_ELECTRON_E2E=1`，仅 macOS。前者配假组件；后者用真实组件配 `/bin/sh` 与夹具里的假登录脚本，不运行任何真实 Harness 的登录。

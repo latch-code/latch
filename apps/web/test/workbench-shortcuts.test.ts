@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isTerminalPaneKey,
   shortcutButtonKeys,
   shortcutCaps,
   shortcutKeys,
@@ -218,5 +219,23 @@ describe('workbench key routing', () => {
     }
     expect(ids.has('session') && ids.has('controls')).toBe(true)
     expect(ids.has('files') && ids.has('side-panel') && ids.has('previous') && ids.has('next')).toBe(true)
+  })
+  it('splits the terminal with ⌘\\ and ⇧⌘\\ and steps its panes with ⌥⌘] and ⌥⌘[, in the desktop app only', () => {
+    expect(workbenchShortcut(key('Backslash', { metaKey: true }), true)).toEqual({ kind: 'terminal-split', direction: 'row' })
+    expect(workbenchShortcut(key('Backslash', { metaKey: true, shiftKey: true }), true)).toEqual({
+      kind: 'terminal-split',
+      direction: 'column',
+    })
+    expect(workbenchShortcut(key('BracketRight', { metaKey: true, altKey: true }), true)).toEqual({ kind: 'terminal-pane', step: 1 })
+    expect(workbenchShortcut(key('BracketLeft', { metaKey: true, altKey: true }), true)).toEqual({ kind: 'terminal-pane', step: -1 })
+    // ⇧⌘[ and ⇧⌘] stay the sessions'.
+    expect(workbenchShortcut(key('BracketLeft', { metaKey: true, shiftKey: true }), true)).toBe('previous')
+    expect(workbenchShortcut(key('Backslash', { altKey: true }), false)).toBe(null)
+    expect(isTerminalPaneKey(key('Backslash', { metaKey: true }))).toBe(true)
+    expect(isTerminalPaneKey(key('KeyJ', { metaKey: true }))).toBe(false)
+    expect(shortcutKeys('terminal-split', true)).toBe('⌘\\')
+    expect(shortcutKeys('terminal-split-down', true)).toBe('⇧⌘\\')
+    expect(shortcutKeys('terminal-pane', true)).toBe('⌥⌘] · ⌥⌘[')
+    expect(shortcutKeys('terminal-split', false, true)).toBeNull()
   })
 })

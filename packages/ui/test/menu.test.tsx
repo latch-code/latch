@@ -1179,6 +1179,12 @@ describe("a row's context menu", () => {
     selection.selectAllChildren(label)
     expect(keepsNativeMenu(label, selection)).toBe(true)
     selection.removeAllRanges()
+    // The terminal's screen has its own menu, even on the hidden input xterm moves under the pointer.
+    const xterm = document.createElement('div')
+    xterm.className = 'xterm'
+    const helper = document.createElement('textarea')
+    xterm.append(helper)
+    expect(keepsNativeMenu(helper, null)).toBe(false)
   })
 
   it('opens on a press and hold by touch, and the release does not also press the row', async () => {

@@ -122,11 +122,13 @@ const HOLD_SLOP = 8
 
 /**
  * Whether a context gesture on `target` keeps the browser's own menu: text the person may want to copy or edit (a field,
- * an editable region, a link, code, the terminal's screen) or a selection that reaches it. Exported for its test.
+ * an editable region, a link, code) or a selection that reaches it. Exported for its test.
  */
 export function keepsNativeMenu(target: EventTarget | null, selection: Selection | null = getSelection()): boolean {
   if (!(target instanceof Element)) return false
-  if (target.closest('input, textarea, select, a[href], [contenteditable]:not([contenteditable="false"]), pre, code, .xterm')) return true
+  // xterm moves its hidden input under the pointer on a right click; the screen's menu has 复制 instead.
+  if (target.closest('.xterm')) return false
+  if (target.closest('input, textarea, select, a[href], [contenteditable]:not([contenteditable="false"]), pre, code')) return true
   return !!selection && !selection.isCollapsed && selection.containsNode(target, true)
 }
 

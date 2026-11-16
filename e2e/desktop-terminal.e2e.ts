@@ -191,9 +191,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await page.getByRole('button', { name: '继续', exact: true }).click()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       const connection = page.getByRole('group', { name: '连接状态', exact: true })
-      await connection.getByText('host.sock', { exact: true }).waitFor()
-      await connection.getByText('1 台在线', { exact: true }).waitFor()
-      await connection.getByText('⌘K', { exact: true }).waitFor()
+      await connection.getByText('host.sock', { exact: true }).filter({ visible: true }).waitFor()
+      await connection.getByText('1 台在线', { exact: true }).filter({ visible: true }).waitFor()
+      await connection.getByText('⌘K', { exact: true }).filter({ visible: true }).waitFor()
       // Recorded in main instead of opening the browser.
       await app.evaluate(({ shell }) => {
         const opened: string[] = []
@@ -590,6 +590,174 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await page.keyboard.press('Meta+Shift+e')
       await page.locator('.app-shell[data-home-focus]').waitFor({ state: 'detached' })
       await rightPanel.getByRole('treeitem', { name: 'README.md', exact: true }).waitFor()
+
+      // Split panes, in the session's tab: each pane is its own Host terminal and fits its own rows and columns.
+      await resize(1440)
+      await page.locator(`[data-task-id="${sessionId}"]`).click()
+      await tabs.getByRole('tab', { name: '终端 1', exact: true, selected: true }).waitFor()
+      const visiblePanes = panel.locator('.terminal-pane:not([hidden])')
+      // Every running pane owned here draws as many rows as the Host gave its shell, and no row is below its box.
+      const panesFit = async () => {
+        const { terminals } = await owner.json<TerminalListResponse>(`tasks/${sessionId}/terminals`)
+        const drawn = await visiblePanes.evaluateAll(panes =>
+          panes.map(pane => {
+            const box = pane.querySelector('.terminal-screen')!.getBoundingClientRect()
+            const screen = pane.querySelector('.xterm-screen')!.getBoundingClientRect()
+            const outer = pane.getBoundingClientRect()
+            return {
+              id: pane.getAttribute('data-pane'),
+              rows: pane.querySelectorAll('.xterm-rows > div').length,
+              inside:
+                screen.height > 0 && screen.bottom <= box.bottom + 0.5 && box.bottom <= outer.bottom && screen.right <= box.right + 0.5,
+            }
+          }),
+        )
+        return drawn.every(item => {
+          const host = terminals.find(terminal => terminal.id === item.id)
+          return item.inside && (host?.status !== 'running' || host.rows === item.rows)
+        })
+      }
+      await panel.locator('.terminal-pane[data-focused] .xterm').click()
+      // The session's 终端 1 is whichever stand-in hears what is typed here; each split adds the newest shell.
+      await page.keyboard.type('echo mark')
+      await page.keyboard.press('Enter')
+      await waitFor(() => shells.some(item => item.text.includes('echo mark\r')))
+      const leftShell = shells.find(item => item.text.includes('echo mark\r'))!
+      const sentBefore = Buffer.concat(leftShell.received).length
+      const shellCount = shells.length
+      await page.keyboard.press('Meta+Backslash')
+      await waitFor(() => shells.length === shellCount + 1)
+      await tabs.getByRole('tab', { name: '终端 1 · 2', exact: true, selected: true }).waitFor()
+      await expect.poll(() => visiblePanes.count()).toBe(2)
+      // The shortcut is the workbench's: not one byte of it reached the shell.
+      expect(Buffer.concat(leftShell.received).length).toBe(sentBefore)
+      const rightShell = shells.at(-1)!
+      expect(rightShell).not.toBe(leftShell)
+      // The new pane has the focus: typing goes there, then ⌥⌘[ goes back to the first pane.
+      await expect.poll(() => visiblePanes.nth(1).getAttribute('data-focused')).toBe('')
+      await page.keyboard.type('echo right')
+      await page.keyboard.press('Enter')
+      await waitFor(() => rightShell.text.includes('echo right\r'))
+      await page.keyboard.press('Meta+Alt+BracketLeft')
+      await expect.poll(() => visiblePanes.nth(0).getAttribute('data-focused')).toBe('')
+      await page.keyboard.type('echo left')
+      await page.keyboard.press('Enter')
+      await waitFor(() => leftShell.text.endsWith('echo left\r'))
+      expect(rightShell.text).not.toContain('echo left')
+      expect(Buffer.concat(leftShell.received).toString()).not.toContain('\\')
+      await expect.poll(panesFit).toBe(true)
+      // Nothing of xterm's own black shows: under the last row every surface is the theme's background, in both themes.
+      const canvasUnder = () =>
+        visiblePanes.evaluateAll(panes =>
+          panes.every(pane => {
+            // The theme's background, which xterm puts on its scrollable element.
+            const canvas = (pane.querySelector('.xterm-scrollable-element') as HTMLElement).style.backgroundColor
+            return [...pane.querySelectorAll('.xterm, .xterm-viewport, .xterm-scrollable-element')].every(element => {
+              const color = getComputedStyle(element).backgroundColor
+              return color === canvas || color === 'rgba(0, 0, 0, 0)'
+            })
+          }),
+        )
+      await expect.poll(canvasUnder).toBe(true)
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await expect.poll(canvasUnder).toBe(true)
+      await page.emulateMedia({ colorScheme: 'light' })
+      await expect.poll(canvasUnder).toBe(true)
+      await capture(page, 'split-two-row-1440')
+
+      // The header's button splits again; the other direction is refused in a tab whose panes run one way.
+      await panel.getByRole('button', { name: '左右分屏', exact: true }).click()
+      await tabs.getByRole('tab', { name: '终端 1 · 3', exact: true }).waitFor()
+      await expect.poll(() => visiblePanes.count()).toBe(3)
+      expect(await panel.getByRole('button', { name: '上下分屏', exact: true }).getAttribute('aria-disabled')).toBe('true')
+      await expect.poll(panesFit).toBe(true)
+      await capture(page, 'split-three-row-1440')
+
+      // Dragging a hairline moves the two panes beside it; a double click evens them; every pane still fits.
+      const hairline = panel.getByRole('separator', { name: '调整窗格宽度', exact: true }).first()
+      const firstWidth = Number(await hairline.getAttribute('aria-valuenow'))
+      const line = (await hairline.boundingBox())!
+      await page.mouse.move(line.x + line.width / 2, line.y + line.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(line.x + line.width / 2 + 90, line.y + line.height / 2, { steps: 5 })
+      await page.mouse.up()
+      await expect.poll(async () => Number(await hairline.getAttribute('aria-valuenow'))).toBeGreaterThan(firstWidth + 60)
+      await expect.poll(panesFit).toBe(true)
+      await hairline.dblclick()
+      await expect
+        .poll(async () => {
+          const widths = await visiblePanes.evaluateAll(panes => panes.map(pane => pane.getBoundingClientRect().width))
+          return Math.max(...widths) - Math.min(...widths)
+        })
+        .toBeLessThan(2)
+      // The dock's own height and the window's width: each pane refits.
+      const dockLine = (await resizer.boundingBox())!
+      await page.mouse.move(dockLine.x + dockLine.width / 2, dockLine.y + dockLine.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(dockLine.x + dockLine.width / 2, dockLine.y - 70, { steps: 5 })
+      await page.mouse.up()
+      await expect.poll(panesFit).toBe(true)
+      await resize(1240)
+      await expect.poll(panesFit).toBe(true)
+      await resize(1440)
+      await expect.poll(panesFit).toBe(true)
+
+      // The pane's own menu closes it; its space goes to its siblings.
+      const third = visiblePanes.nth(1)
+      const thirdId = await third.getAttribute('data-pane')
+      await third.locator('.xterm').click({ button: 'right' })
+      const paneMenu = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: '上下分屏' }) })
+      await paneMenu.getByRole('menuitem', { name: '关闭', exact: true }).click()
+      await tabs.getByRole('tab', { name: '终端 1 · 2', exact: true }).waitFor()
+      await expect.poll(() => panel.locator(`.terminal-pane[data-pane="${thirdId}"]`).count()).toBe(0)
+      await expect.poll(panesFit).toBe(true)
+      // The × in the pane's head closes the other one: one pane left, a plain tab again.
+      await visiblePanes.nth(1).locator('.terminal-pane-close').click()
+      await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
+      await expect.poll(() => visiblePanes.count()).toBe(1)
+
+      // Stacked: ⇧⌘\ from the terminal; a shell that ends shows how it ended in its own pane, with 重新打开.
+      await panel.locator('.terminal-pane[data-focused] .xterm').click()
+      const beforeStack = shells.length
+      await page.keyboard.press('Meta+Shift+Backslash')
+      await waitFor(() => shells.length === beforeStack + 1)
+      await tabs.getByRole('tab', { name: '终端 1 · 2', exact: true }).waitFor()
+      expect(await panel.locator('.terminal-screens').getAttribute('data-split')).toBe('column')
+      await expect.poll(panesFit).toBe(true)
+      await capture(page, 'split-stacked-1440')
+      const lower = shells.at(-1)!
+      await expect.poll(() => visiblePanes.nth(1).getAttribute('data-focused')).toBe('')
+      await page.keyboard.type('exit 4')
+      await page.keyboard.press('Enter')
+      await panel.getByText('已退出 · 代码 4', { exact: true }).waitFor()
+      expect(lower.text).toContain('exit 4')
+      await page.keyboard.press('Meta+Alt+BracketRight')
+      await expect.poll(() => visiblePanes.nth(0).getAttribute('data-focused')).toBe('')
+      const endedPane = visiblePanes.nth(1).locator('.terminal-pane-head')
+      await endedPane.getByText('已退出 · 代码 4', { exact: true }).waitFor()
+      await capture(page, 'split-ended-1440')
+      const beforeReopen = shells.length
+      await endedPane.getByRole('button', { name: '重新打开', exact: true }).click()
+      await waitFor(() => shells.length === beforeReopen + 1)
+      await tabs.getByRole('tab', { name: '终端 1 · 2', exact: true }).waitFor()
+      await expect.poll(() => visiblePanes.locator('.terminal-pane-head .terminal-ended').count()).toBe(0)
+      await expect.poll(panesFit).toBe(true)
+
+      // Narrow: the dock beside the side panel cannot give two panes 40 columns, so the strip shows them one at a
+      // time; with the room back, the split returns as it was.
+      await resize(1100)
+      if ((await rightToggle.getAttribute('aria-pressed')) !== 'true') await rightToggle.click()
+      await rightPanel.waitFor()
+      await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
+      await tabs.getByRole('tab', { name: '终端 2', exact: true }).waitFor()
+      await expect.poll(() => visiblePanes.count()).toBe(1)
+      await expect.poll(panesFit).toBe(true)
+      await capture(page, 'split-narrow-1100')
+      await rightToggle.click()
+      await rightPanel.waitFor({ state: 'hidden' })
+      await tabs.getByRole('tab', { name: '终端 1 · 2', exact: true }).waitFor()
+      await expect.poll(() => visiblePanes.count()).toBe(2)
+      await resize(1440)
     } finally {
       await application?.close()
       await testHost.close()

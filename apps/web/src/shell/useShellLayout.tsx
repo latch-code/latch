@@ -29,7 +29,7 @@ import { setSessionOpener } from '../core/blocking.ts'
 import { ArchiveUndo } from '../components/ArchiveUndo.tsx'
 import { basename } from '../format.ts'
 import { setPreference, toggleWorkbenchLayout, usePreferences } from '../preferences.ts'
-import { shortcutWorksOnPage, workbenchShortcut } from '../workbenchShortcuts.ts'
+import { shortcutWorksOnPage, workbenchShortcut, type TerminalPaneAction } from '../workbenchShortcuts.ts'
 import { frameShortcutAllowed } from '../plugin-pages/model.ts'
 import { conversationShown } from '../composer/useArmed.ts'
 import {
@@ -261,6 +261,8 @@ export function useShellLayout({
   const appShell = useRef<HTMLDivElement>(null)
   const titlebar = useRef<HTMLDivElement>(null)
   const terminalDock = useRef<HTMLElement>(null)
+  /** The open terminal panel's pane keys (split, next and previous pane); set by the panel while it is mounted. */
+  const terminalKeys = useRef<((action: TerminalPaneAction) => void) | null>(null)
   const terminalToggle = useRef<HTMLButtonElement>(null)
   /** The current entry, its section, and where a page puts its title. */
   // A wide window opens where this device was last; a session the page restores keeps its own place.
@@ -1230,7 +1232,7 @@ export function useShellLayout({
     if (!canTerminal) return
     setTerminalIntent(terminalKey)
     if (!terminalOpen) setPreference('dockOpen', true)
-    else terminalDock.current?.querySelector<HTMLElement>('.terminal-screen:not([hidden]) .xterm-helper-textarea')?.focus()
+    else terminalDock.current?.querySelector<HTMLElement>('.terminal-pane[data-focused]:not([hidden]) .xterm-helper-textarea')?.focus()
   }
   /** A command is to be typed into the session's terminal: the dock opens, and the fill focuses the screen itself. */
   const revealTerminal = () => {
@@ -1316,7 +1318,8 @@ export function useShellLayout({
     const typing = focused?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') != null
     const action = workbenchShortcut({ ...stroke(event), typing }, currentShell() !== null)
     if (!action) return
-    if (homeFocused && (action === 'layout' || action === 'sidebar' || action === 'side-panel' || action === 'terminal')) return
+    const paneKey = typeof action === 'object' && (action.kind === 'terminal-split' || action.kind === 'terminal-pane')
+    if (homeFocused && (action === 'layout' || action === 'sidebar' || action === 'side-panel' || action === 'terminal' || paneKey)) return
     const dialogs = document.querySelectorAll('dialog[open]')
     const only = dialogs.length === 1 ? dialogs[0]! : null
     // An open dialog keeps the keys, but for the one key of what it is: ⌘/ closes the shortcuts it opened.
@@ -1331,6 +1334,7 @@ export function useShellLayout({
       && ((typeof action === 'object' && action.kind === 'control')
         || action === 'files'
         || action === 'terminal'
+        || paneKey
         || action === 'side-panel')
     if ((route.entry !== 'sessions' || route.overview || route.allSessions) && !shortcutWorksOnPage(action) && !homeInputKey) return
     if (typeof action === 'object') {
@@ -1343,6 +1347,10 @@ export function useShellLayout({
       if (action.kind === 'session') {
         const target = steppedRows()[action.index - 1]
         if (target && target.id !== selectedId) choose(target.id)
+        return
+      }
+      if (action.kind === 'terminal-split' || action.kind === 'terminal-pane') {
+        if (terminalOpen) terminalKeys.current?.(action)
         return
       }
       // A key opens the control's own menu, as a click would; it never picks a value. Phones have no keys for it.
@@ -1886,6 +1894,7 @@ export function useShellLayout({
     terminalLocation,
     terminalRequested: terminalKey !== undefined && terminalIntent === terminalKey,
     terminalDock,
+    terminalKeys,
     terminalToggle,
     closeTerminal,
     openTerminal,
