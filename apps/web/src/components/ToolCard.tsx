@@ -53,7 +53,10 @@ import {
   CheckGlyph,
   ChevronDownGlyph,
   ChevronUpGlyph,
+  Tooltip,
+  WarningGlyph,
 } from '@latch/ui'
+import { bypassesComputer } from '../conversation/computerBypass.ts'
 import { SyntaxLine, useHighlightedTokens } from '../preview/HighlightedCode.tsx'
 import { useSeen } from '../preview/viewportGate.ts'
 import { colouredRowCount, outputGrammar, readOutputLanguage, sourceView } from './toolOutputCode.ts'
@@ -495,6 +498,13 @@ export const ToolCard = memo(
           <span className="process-stat">
             <span className="stat-add">+{stat.add}</span> <span className="stat-del">−{stat.del}</span>
           </span>
+        )}
+        {kind === 'execute' && bypassesComputer(evidence?.command ?? object) && (
+          <Tooltip content="直接运行 Cua，没有经过「操控这台 Mac」的开关与记录">
+            <span className="process-bypass" data-computer-bypass="" tabIndex={0} aria-label="绕过操控这台 Mac">
+              <Icon icon={WarningGlyph} size={12} />
+            </span>
+          </Tooltip>
         )}
       </>
     )

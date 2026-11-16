@@ -40,6 +40,7 @@ import { topicOwner } from '../agents/chat.ts'
 import { TopicFrame } from '../agents/TopicFrame.tsx'
 import { sourceCrumb } from '../handoffs/model.ts'
 import { computerName } from '../core/securityCopy.ts'
+import { ComputerChip } from './ComputerChip.tsx'
 
 /** The clock's leaf: only these words re-render each second, and the shared ticker stops while the page is hidden. */
 function RunningWords({ live }: { live: RunLive | undefined }) {
@@ -284,7 +285,10 @@ function PhoneTopBar({
   frame,
   from,
   imported,
+  computerUse,
 }: {
+  /** 「操控这台 Mac」 is in use in this session, or stopping. */
+  computerUse?: 'on' | 'stopping' | undefined
   changes?: HeaderToggle | undefined
   frame?: ReactNode
   from?: HeaderSource | undefined
@@ -323,7 +327,7 @@ function PhoneTopBar({
         <h1 title={title}>
           <TitleMenu title={title} sections={summary ? menu : []} />
         </h1>
-        {(where || state || branch || demo || from || imported || connectionProblem(connection)) && (
+        {(where || state || branch || demo || from || imported || computerUse || connectionProblem(connection)) && (
           <div className="topbar-subline">
             {from && <SourceLink source={from} />}
             {imported && <ImportedMark mark={imported} />}
@@ -335,6 +339,7 @@ function PhoneTopBar({
                 演示
               </StatusPill>
             )}
+            {computerUse && summary && <ComputerChip sessionId={summary.id} stopping={computerUse === 'stopping'} />}
             <ConnectionPill connection={connection} />
           </div>
         )}
@@ -396,7 +401,10 @@ export function SessionHeader({
   frame,
   from,
   imported,
+  computerUse,
 }: {
+  /** 「操控这台 Mac」 is in use in this session (its chip, with 停), or stopping. */
+  computerUse?: 'on' | 'stopping' | undefined
   /** The session was brought in from a harness's own earlier session. */
   imported?: HeaderImported | undefined
   /** The session is a topic of a conversation in 我的 Agent: its Agent's frame stands in the title's place. */
@@ -452,11 +460,13 @@ export function SessionHeader({
         frame={frame}
         from={from}
         imported={imported}
+        computerUse={computerUse}
       />
     )
   // A session's actions end the line under its title, so the title has the head's whole width.
   const actions = (
     <div className="topbar-actions">
+      {computerUse && summary && <ComputerChip sessionId={summary.id} stopping={computerUse === 'stopping'} />}
       <ConnectionPill connection={connection} />
       {demo && (
         <StatusPill tone="warn" title="此会话使用演示模型，回复由本地脚本生成">
@@ -677,6 +687,7 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
           ? { from: pageOrigin }
           : {})}
       imported={imported}
+      computerUse={current?.computer && current.summary.id === summary?.id ? (current.computer.stopping ? 'stopping' : 'on') : undefined}
       onPanel={() => togglePanel()}
       sessionMenu={titleMenu}
       menu={

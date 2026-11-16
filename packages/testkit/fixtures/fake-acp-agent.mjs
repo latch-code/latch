@@ -1640,6 +1640,14 @@ const scenarios = {
     })
     return END
   },
+  // `shell-row <command>`: reports a shell command that ran, as a tool row, without running anything.
+  'shell-row': ({ input, say, tool }) => {
+    const command = input.trim().replace(/^shell-row\s+/u, '')
+    tool({ toolCallId: 'call_shell', title: command, kind: 'execute', status: 'in_progress', rawInput: { command } })
+    tool({ toolCallId: 'call_shell', status: 'completed', content: [text('ok')] }, 'tool_call_update')
+    say('ran')
+    return END
+  },
   permission: async ({ say, tool, permission }) => {
     const call = { toolCallId: 'call_1', title: 'Run ls', kind: 'execute', status: 'pending', rawInput: { command: 'ls' } }
     tool(call)

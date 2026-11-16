@@ -17,6 +17,9 @@ sources:
   - apps/web/src/settings/McpImport.tsx
   - packages/harness-acp/src/wires/codex.ts
   - apps/web/src/agents/McpSection.tsx
+  - apps/web/src/settings/computerTools.ts
+  - apps/web/src/shell/ComputerChip.tsx
+  - apps/web/src/conversation/computerBypass.ts
   - packages/testkit/fixtures/fake-mcp-stdio.mjs
   - packages/testkit/src/fake-mcp-http.ts
   - packages/testkit/src/fake-oauth.ts
@@ -528,6 +531,9 @@ Latch 只写与厂商不同的地方（`computerRules`，`mcp-computer.ts`，英
 - 值从不显示：变量与请求头只列名字与「已设置」。
 - 状态用词与颜色：失败是红色，原因在悬停里；要登录的远程服务器「未登录」「需要重新登录」是琥珀，「登录失败」是红色。
 - `npx`、`uvx` 等没写版本时写琥珀色「每次启动可能下载新版本」。
+- 「操控这台 Mac」的服务器页：工具按组列出（看、操作、启动 App、批量、脚本、浏览器、剪贴板、录屏、管理，`COMPUTER_TOOL_GROUPS`；不在任何组的列在「其他」），组名旁是开着的个数，新工具标「新」；「Cua Driver」一组有版本（只在这台 Mac 的桌面端读得到：对照最低版本着色，悬停是最低版本与安装命令的固定版本）与「可以使用」的 Harness 图标（收 Latch 的 MCP 服务器的亮，其他变淡，悬停写名字）。守护进程的遥测状态不显示：不启动守护进程也能从它自己的文件与变量得知，但那要 Latch 运行 Driver 的另一个命令或读它的文件，两样都不做；关遥测的命令照旧给出。
+- 会话正在用「操控这台 Mac」时，标题行（手机在标题下）有安静的状态片「操控这台 Mac」和「停」。「停」之后还有调用可能在 Driver 里完成时，状态片写「正在停止」，没有「停」，悬停说明撤不回。iOS 尚未实现：要读 `TaskDetail.computer`（含 `stopping`），在会话头部显示同样的状态片，「停」发 `POST /tasks/:id/computer-stop`。
+- 工具行里 shell 命令运行 `cua-driver`、`cua do` 或 `cua mcp` 时加琥珀标记（`bypassesComputer`），悬停说明没有经过这个预设的开关与记录。只是显示，不阻止。
 - 「操控这台 Mac」只在这台 Mac 的桌面端、Host 给了位置且还没添加时出现：一行状态（未安装、版本太旧、不是签名的 Cua Driver、已找到），按状态给安装或升级命令（「在终端里打开」与复制）或「添加…」，找到后另有关遥测的命令；ⓘ 里是以你的身份、不是沙箱、先不要用于 Electron 应用、Latch 的变量到不了守护进程。
 - **我的 Agent › 资料面板 › MCP** 列出这个 Agent 的会话拿到的服务器。桌面端的开关改的是服务器的「用在」，不要确认。
 

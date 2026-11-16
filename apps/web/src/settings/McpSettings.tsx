@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Cable, Hammer } from 'lucide-react'
 import {
   escapeSecurityText,
@@ -53,6 +53,9 @@ import { IconTile, Loading, MiddleEllipsis, NoteLine, ObjectRow, SettingsGroup, 
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import { HarnessesMcp } from './HarnessMcp.tsx'
 import { ImportDialog, importedForm } from './McpImport.tsx'
+import { HarnessTile } from '../components/BrandTile.tsx'
+import { harnessName } from '../composerChoice.ts'
+import { computerHarnesses, computerToolSections, computerVersion, defaultsNote } from './computerTools.ts'
 
 export const MCP_ICON = Cable
 
@@ -1488,6 +1491,96 @@ function StdioGroups({
   )
 }
 
+/**
+ * 「操控这台 Mac」 on its server's page: the driver's version against the minimum (on this Mac's desktop app, where
+ * Latch can read it), and which Harnesses can use it. Its daemon's telemetry is not shown: Latch could learn it only by
+ * running another of the driver's commands or reading its files, and does neither.
+ */
+function ComputerFacts({ snapshot, local }: { snapshot: AppSnapshot; local: boolean }) {
+  const [check, setCheck] = useState<McpComputerCheck | null>(null)
+  useEffect(() => {
+    if (!local) return
+    void api<McpComputerCheck>('mcp/computer').then(setCheck, () => setCheck(null))
+  }, [local])
+  const version = check ? computerVersion(check) : undefined
+  const harnesses = computerHarnesses(snapshot.catalog?.harnesses ?? [])
+  return (
+    <SettingsGroup title="Cua Driver">
+      {version && (
+        <SettingsRow
+          title="版本"
+          description={
+            <StatusWord tone={version.tone} title={version.title} data-computer-version="">
+              {version.text}
+            </StatusWord>
+          }
+        />
+      )}
+      {harnesses.length > 0 && (
+        <SettingsRow
+          title="可以使用"
+          description={
+            <span className="mcp-computer-harnesses">
+              {harnesses.map(({ harness, usable }) => (
+                <span
+                  key={harness.id}
+                  className="mcp-computer-harness"
+                  data-usable={usable ? '' : undefined}
+                  title={`${harnessName(harness)} · ${usable ? '可以使用' : '不接收 MCP 服务器'}`}>
+                  <HarnessTile harness={harness} size={16} />
+                </span>
+              ))}
+            </span>
+          }
+        />
+      )}
+    </SettingsGroup>
+  )
+}
+
+/** One switch of a tool: on, off, or new (and off until switched on). */
+function ToolRow({
+  server,
+  tool,
+  local,
+  busy,
+  patch,
+  setError,
+}: {
+  server: McpServerView
+  tool: string
+  local: boolean
+  busy: boolean
+  patch: (key: string, change: Record<string, unknown>) => Promise<string>
+  setError: (text: string) => void
+}) {
+  // A server that keeps new tools off: one it never listed before is new, and off until switched on.
+  const known = server.transport === 'stdio' ? server.knownTools : undefined
+  const fresh = known !== undefined && !known.includes(tool) && !server.disabledTools.includes(tool)
+  return (
+    <SettingsRow
+      title={
+        <span className="mcp-tool">
+          <code className="settings-mono">{tool}</code>
+          {fresh && <Badge tone="warn">新</Badge>}
+        </span>
+      }
+      trailing={
+        <Switch
+          label={`使用 ${tool}`}
+          checked={isMcpToolOn(server, tool)}
+          disabled={!local || busy}
+          onCheckedChange={on => {
+            const disabledTools = on ? server.disabledTools.filter(item => item !== tool) : [...server.disabledTools, tool]
+            const knownTools = known && !known.includes(tool) ? { knownTools: [...known, tool] } : {}
+            void patch('tools', { disabledTools, ...knownTools }).then(text => text && setError(text))
+          }}
+        />
+      }
+    />
+  )
+}
+
 /** A server's page: what runs, its variables by name, its tools with switches, 「用在」, 测试, 停用 and 移除. */
 function ServerPage({
   snapshot,
@@ -1553,6 +1646,7 @@ function ServerPage({
     }
   }
   const tools = server.report?.tools ?? []
+  const computer = server.transport === 'stdio' && server.preset === 'computer'
   const status = mcpStatus(server)
   const report = server.report
   return (
@@ -1625,37 +1719,28 @@ function ServerPage({
       ) : (
         <StdioGroups server={server} local={local} busy={busy} setDialog={setDialog} patch={patch} setError={setError} />
       )}
-      <SettingsGroup title="工具" meta={tools.length > 0 ? `${tools.length} 个` : undefined}>
-        {tools.length === 0 && <SettingsRow title={server.report ? '没有工具' : '测试后列出工具'} />}
-        {tools.map(tool => {
-          // A server that keeps new tools off: one it never listed before is new, and off until switched on.
-          const known = server.transport === 'stdio' ? server.knownTools : undefined
-          const fresh = known !== undefined && !known.includes(tool) && !server.disabledTools.includes(tool)
-          return (
-            <SettingsRow
-              key={tool}
-              title={
-                <span className="mcp-tool">
-                  <code className="settings-mono">{tool}</code>
-                  {fresh && <Badge tone="warn">新</Badge>}
-                </span>
-              }
-              trailing={
-                <Switch
-                  label={`使用 ${tool}`}
-                  checked={isMcpToolOn(server, tool)}
-                  disabled={!local || busy !== null}
-                  onCheckedChange={on => {
-                    const disabledTools = on ? server.disabledTools.filter(item => item !== tool) : [...server.disabledTools, tool]
-                    const knownTools = known && !known.includes(tool) ? { knownTools: [...known, tool] } : {}
-                    void patch('tools', { disabledTools, ...knownTools }).then(text => text && setError(text))
-                  }}
-                />
-              }
-            />
-          )
-        })}
-      </SettingsGroup>
+      {computer && <ComputerFacts snapshot={snapshot} local={local} />}
+      {computer && tools.length > 0 ? (
+        computerToolSections(tools).map(section => (
+          <SettingsGroup
+            key={section.id}
+            title={section.label}
+            meta={`${section.tools.filter(tool => isMcpToolOn(server, tool)).length}/${section.tools.length}`}>
+            <div data-mcp-tool-group={section.id}>
+              {section.tools.map(tool => (
+                <ToolRow key={tool} server={server} tool={tool} local={local} busy={busy !== null} patch={patch} setError={setError} />
+              ))}
+            </div>
+          </SettingsGroup>
+        ))
+      ) : (
+        <SettingsGroup title="工具" meta={tools.length > 0 ? `${tools.length} 个` : undefined}>
+          {tools.length === 0 && <SettingsRow title={server.report ? '没有工具' : '测试后列出工具'} />}
+          {tools.map(tool => (
+            <ToolRow key={tool} server={server} tool={tool} local={local} busy={busy !== null} patch={patch} setError={setError} />
+          ))}
+        </SettingsGroup>
+      )}
       <ScopeGroup
         snapshot={snapshot}
         scope={server.scope}
@@ -1767,19 +1852,39 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
         note={<NoteLine brief={BUILTIN_NOTE} />}>
         {data.servers.length === 0 && <SettingsRow title="还没有 MCP 服务器" />}
         {data.servers.map(server => (
-          <ObjectRow
-            key={server.id}
-            data={{ 'data-mcp-server': server.name }}
-            leading={<IconTile icon={server.transport === 'http' ? GlobeGlyph : TerminalGlyph} />}
-            title={server.name}
-            description={scopeText(server.scope, snapshot)}
-            dim={!server.enabled}
-            label={`打开 ${server.name}`}
-            trailing={<McpStatusWord server={server} />}
-            onOpen={() => {
-              setEditing({ kind: 'server', id: server.id })
-            }}
-          />
+          <Fragment key={server.id}>
+            <ObjectRow
+              data={{ 'data-mcp-server': server.name }}
+              leading={<IconTile icon={server.transport === 'http' ? GlobeGlyph : TerminalGlyph} />}
+              title={server.name}
+              description={scopeText(server.scope, snapshot)}
+              dim={!server.enabled}
+              label={`打开 ${server.name}`}
+              trailing={<McpStatusWord server={server} />}
+              onOpen={() => {
+                setEditing({ kind: 'server', id: server.id })
+              }}
+            />
+            {/* Once, after the Host moved 「操控这台 Mac」's switches to new defaults; the switches undo it. */}
+            {server.transport === 'stdio' && server.defaultsMoved?.length ? (
+              <SettingsRow
+                title={<span data-mcp-defaults-moved="">{defaultsNote(server.defaultsMoved)}</span>}
+                trailing={
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => {
+                      void api(`mcp/servers/${encodeURIComponent(server.id)}`, {
+                        method: 'PATCH',
+                        body: { requestId: newRequestId(), baseRevision: server.revision, defaultsSeen: true },
+                      }).then(load, () => {})
+                    }}>
+                    知道了
+                  </Button>
+                }
+              />
+            ) : null}
+          </Fragment>
         ))}
       </SettingsGroup>
       {local && (

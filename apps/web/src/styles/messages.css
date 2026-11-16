@@ -567,6 +567,14 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* A shell command that runs Cua past 「操控这台 Mac」: amber, display only. */
+.process-bypass {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  margin-left: var(--sp-6);
+  color: var(--amber-icon);
+}
 .stat-add {
   color: var(--green);
 }

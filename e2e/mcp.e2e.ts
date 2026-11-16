@@ -9,7 +9,7 @@ import { FAKE_ACP_AGENT, FAKE_MCP_STDIO, startFakeMcpHttp, startFakeModels, writ
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { openSection, openSettings } from './helpers/layout.ts'
+import { openSection, openSession, openSessions, openSettings } from './helpers/layout.ts'
 
 async function waitFor<T>(read: () => Promise<T>, done: (value: T) => boolean): Promise<T> {
   for (let attempt = 0; attempt < 600; attempt++) {
@@ -407,6 +407,35 @@ describe('Latch’s MCP servers, end to end', () => {
       expect(await again.getByRole('switch', { name: '使用 clipboard_read', exact: true }).isChecked()).toBe(false)
       expect(await again.getByRole('switch', { name: '使用 echo', exact: true }).isChecked()).toBe(false)
       expect(await again.getByText('新', { exact: true }).count()).toBe(4)
+      // Grouped by what they do; the tools new to Latch under 其他.
+      await again.locator('[data-mcp-tool-group="act"]').getByRole('switch', { name: '使用 click', exact: true }).waitFor()
+      await again.locator('[data-mcp-tool-group="clipboard"]').getByRole('switch', { name: '使用 clipboard_read', exact: true }).waitFor()
+      await again.locator('[data-mcp-tool-group="other"]').getByRole('switch', { name: '使用 echo', exact: true }).waitFor()
+      await again.locator('[data-computer-version]').getByText('0.44.0', { exact: true }).waitFor()
+
+      // In the session: the chip while the preset is in use, an amber mark on a shell command that runs Cua past it, and 停.
+      await desktop.json(`tasks/${created.sessionId}/prompt`, {
+        body: { requestId: randomUUID(), prompt: 'shell-row cua-driver call click {"pid":501}' },
+      })
+      await settled(desktop, created.sessionId)
+      await openSessions(page)
+      await openSession(page, created.sessionId)
+      const chip = page.locator('[data-computer-use]').filter({ visible: true })
+      await chip.waitFor()
+      // The turn's steps are folded under 已工作: open the last one.
+      await page
+        .getByRole('button', { name: /已工作/u })
+        .last()
+        .click()
+      await page.locator('[data-computer-bypass]').filter({ visible: true }).first().waitFor()
+      await chip.getByRole('button', { name: '停止操控这台 Mac', exact: true }).click()
+      await expect.poll(() => chip.count()).toBe(0)
+      const stopped = (await readFile(join(root, 'data', 'audit', 'audit.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as { action: string; detail: Record<string, unknown> })
+        .filter(record => record.action === 'mcp.server.stopped')
+      expect(stopped.map(record => record.detail)).toEqual([{ serverId: server.id, sessionId: created.sessionId }])
       await context.close()
     } finally {
       await browser.close()

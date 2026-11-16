@@ -831,6 +831,31 @@
 .topbar-computer > svg {
   flex-shrink: 0;
 }
+/* 「操控这台 Mac」 in use: a quiet chip with 停, never louder than the session's own state. */
+.topbar-computer-use {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding-left: var(--sp-6);
+  border-radius: var(--r-4);
+  background: var(--hover);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.topbar-computer-use-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.topbar-computer-use-label > svg {
+  flex-shrink: 0;
+}
+.topbar-computer-use[data-failed] .topbar-computer-use-label {
+  color: var(--red);
+}
 .workspace .topbar-actions {
   align-self: end;
   flex-shrink: 0;

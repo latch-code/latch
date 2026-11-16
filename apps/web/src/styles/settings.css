@@ -2097,6 +2097,19 @@
   display: inline-flex;
   gap: var(--sp-4);
 }
+/* 「操控这台 Mac」: the Harnesses that can use it as icons; one that cannot is dimmed. */
+.mcp-computer-harnesses {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+}
+.mcp-computer-harness {
+  display: inline-flex;
+  opacity: 0.35;
+}
+.mcp-computer-harness[data-usable] {
+  opacity: 1;
+}
 /* A tool's name, and 新 when it is new to a server that keeps new tools off. */
 .mcp-tool {
   display: inline-flex;
