@@ -28,6 +28,7 @@ import { settingsSections } from '../settings/SettingsPage.tsx'
 import { hostView } from '../core/permissions.ts'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
 import { UsageEntry } from '../usage/UsageEntry.tsx'
+import { ShellUpdateCheck } from './UpdateCheck.tsx'
 import { WorkbenchPanes } from './WorkbenchPanes.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -63,6 +64,7 @@ export function TabletRail({ shell }: { shell: ShellState }) {
       <span className="workbench-rail-spacer" />
       {shell.access.scopes.has('view') && <UsageEntry />}
       {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}
+      <ShellUpdateCheck shell={shell} />
     </nav>
   )
 }
@@ -244,6 +246,7 @@ export function WorkbenchNav({ shell }: { shell: ShellState }) {
       {shell.access.scopes.has('view') && <UsageEntry />}
       {shell.entries.includes('apps') && <IconButton label="应用" icon={PluginsGlyph} onClick={() => shell.openApp()} />}
       {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}
+      <ShellUpdateCheck shell={shell} />
       <WorkbenchPanes shell={shell} />
       {/* The layout switch is the shell's, drawn over this reserved end in both layouts. */}
       <span className="layout-switch-space" aria-hidden="true" />

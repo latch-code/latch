@@ -313,10 +313,11 @@ describe('the sidebar foot and the computer name', () => {
     expect(phoneList(snapshotOf('unix'))).not.toContain('phone-list-host')
   })
 
-  it('puts 设置 with its word at the foot, 添加项目 only where the app offers it, and no 手机', () => {
+  it('puts 设置 as an icon in the foot row, 添加项目 only where the app offers it, and no 手机', () => {
     const foot = (html: string) => html.slice(html.indexOf('<nav class="sidebar-foot"'))
     const remote = foot(sidebar(snapshotOf('loopback-tcp')))
-    expect(remote).toMatch(/<button[^>]*class="ui-button sidebar-nav-row sidebar-settings"[^>]*>.*设置<\/button>/)
+    expect(remote).toMatch(/<button[^>]*class="ui-icon-button"[^>]*aria-label="设置"/)
+    expect(remote).not.toContain('sidebar-nav-row')
     expect(remote).not.toContain('添加项目')
     expect(remote).not.toContain('手机')
     vi.stubGlobal('window', { latchShell: { kind: 'electron', platform: 'darwin' } })

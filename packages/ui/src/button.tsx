@@ -248,7 +248,7 @@ export function ButtonLink({
 
 /** Square icon buttons: 24, 28, 32 and a 44 circle, with 14, 16, 16 and 20 glyphs. */
 export type IconButtonSize = ButtonSize
-const ICON_GLYPH: Record<IconButtonSize, IconSize> = { xs: 14, sm: 16, md: 16, lg: 20 }
+const ICON_GLYPH: Record<IconButtonSize, Exclude<IconSize, 24>> = { xs: 14, sm: 16, md: 16, lg: 20 }
 
 type IconButtonProps = Omit<ComponentProps<'button'>, 'children' | 'disabled'> & {
   /** The accessible name and the tooltip. */
@@ -267,6 +267,8 @@ type IconButtonProps = Omit<ComponentProps<'button'>, 'children' | 'disabled'> &
   badge?: ReactNode
   /** A change of glyph (copy turning into a check) swaps in: it scales up from 80% as it fades in. */
   swap?: boolean
+  /** Running: a spinner stands where the glyph was, at its size, and the button says it is busy. */
+  busy?: boolean
 }
 
 /**
@@ -285,12 +287,13 @@ export function IconButton({
   shortcut,
   badge,
   swap = false,
+  busy = false,
   type = 'button',
   className,
   onClick,
   ...props
 }: IconButtonProps) {
-  const glyph = <Icon icon={icon} size={ICON_GLYPH[size]} />
+  const glyph = busy ? <Spinner size={ICON_GLYPH[size]} /> : <Icon icon={icon} size={ICON_GLYPH[size]} />
   return (
     <Tooltip content={tooltip ?? label} shortcut={shortcut} describe={tooltip !== undefined && tooltip !== label}>
       <button
@@ -302,6 +305,7 @@ export function IconButton({
         aria-label={label}
         aria-pressed={pressed}
         aria-disabled={disabled || undefined}
+        aria-busy={busy || undefined}
         onClick={guard(disabled, onClick)}>
         {swap ? <Swap value={icon.displayName ?? String(icon)}>{glyph}</Swap> : glyph}
         {badge !== undefined && (

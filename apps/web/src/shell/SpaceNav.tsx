@@ -24,8 +24,9 @@ import { computerName } from '../core/securityCopy.ts'
 import { currentShell, type ComputersView } from '../core/shell.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import type { Space } from '../sessions.ts'
-import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
+import { shortcutButtonKeys, shortcutKeys } from '../workbenchShortcuts.ts'
 import { UsageEntry } from '../usage/UsageEntry.tsx'
+import { ShellUpdateCheck } from './UpdateCheck.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** The switch's state: the place shown (none on pages both places share), the way to a place, and where something waits. */
@@ -260,55 +261,48 @@ export function connectionTrouble(
 }
 
 /**
- * The foot, shared by both places and always in reach: 应用 where plugin pages are applied, and 设置 with the trouble
- * dot while the Mac cannot be reached as it should.
+ * The foot, shared by both places and always in reach: one row of icons. At the left 设置 (an amber or red dot while
+ * the Mac cannot be reached as it should, the sentence on hover), 额度与用量 and 应用 where plugin pages are applied;
+ * the keep-awake mark after them; 检查更新 at the right end.
  */
 export function NavFoot({
   apps,
   quota,
   settings,
   trouble,
+  awake,
+  update,
 }: {
   apps?: { current: boolean; onOpen: () => void } | undefined
   quota?: ReactNode
   settings?: (() => void) | undefined
   trouble: { tone: 'warn' | 'error'; text: string } | null
+  awake?: ReactNode
+  update?: ReactNode
 }) {
-  const desktop = currentShell() !== null
+  const keys = shortcutKeys('settings', currentShell() !== null) ?? undefined
   return (
     <nav className="sidebar-foot" aria-label="主导航">
-      {apps && (
-        <button
-          type="button"
-          className="sidebar-nav-row sidebar-foot-row"
-          aria-current={apps.current ? 'page' : undefined}
-          onClick={apps.onOpen}>
-          <PluginsGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span>应用</span>
-        </button>
+      {settings ? (
+        <IconButton
+          label="设置"
+          icon={SettingsGlyph}
+          shortcut={keys}
+          onClick={settings}
+          {...(trouble ? { tooltip: `设置 · ${trouble.text}`, badge: <span className="icon-dot" data-tone={trouble.tone} /> } : {})}
+        />
+      ) : (
+        trouble && (
+          <span className="icon-dot" data-tone={trouble.tone} role="status" title={trouble.text}>
+            <span className="sr-only">{trouble.text}</span>
+          </span>
+        )
       )}
       {quota}
-      {(settings || trouble) && (
-        <div className="sidebar-nav-line sidebar-foot-line">
-          {settings ? (
-            <Button
-              variant="ghost"
-              className="sidebar-nav-row sidebar-settings"
-              icon={SettingsGlyph}
-              shortcut={desktop ? '⌘,' : 'Alt ,'}
-              onClick={settings}>
-              设置
-            </Button>
-          ) : (
-            <span className="sidebar-foot-spacer" />
-          )}
-          {trouble && (
-            <span className="sidebar-trouble" data-tone={trouble.tone} role="status" title={trouble.text}>
-              <span className="sr-only">{trouble.text}</span>
-            </span>
-          )}
-        </div>
-      )}
+      {apps && <IconButton label="应用" icon={PluginsGlyph} aria-current={apps.current ? 'page' : undefined} onClick={apps.onOpen} />}
+      {awake}
+      <span className="sidebar-foot-spacer" />
+      {update}
     </nav>
   )
 }
@@ -357,9 +351,10 @@ export function ShellNavFoot({ shell }: { shell: ShellState }) {
   return (
     <NavFoot
       apps={shell.entries.includes('apps') ? { current: shell.route.entry === 'apps', onOpen: () => shell.openApp() } : undefined}
-      quota={shell.access.scopes.has('view') ? <UsageEntry appearance="row" /> : undefined}
+      quota={shell.access.scopes.has('view') ? <UsageEntry /> : undefined}
       settings={shell.entries.includes('settings') ? () => shell.goEntry('settings') : undefined}
       trouble={connectionTrouble(shell.connection, shell.hostProblem)}
+      update={<ShellUpdateCheck shell={shell} />}
     />
   )
 }

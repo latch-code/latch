@@ -166,11 +166,6 @@
   background: var(--raised);
 }
 
-/* The global entry: a row of the sidebar's foot like 设置, or an icon. */
-.usage-entry.ui-button {
-  justify-content: start;
-}
-
 /*
  * The surface fits what it holds under a fixed top edge, so a switch of view or data arriving only moves its bottom; the
  * views are its header's control, beside the close button (on a phone, the first row of the sheet).

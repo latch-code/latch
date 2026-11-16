@@ -346,7 +346,7 @@ function useFoldedShelves(key: string) {
  * computer, the switch between Code and 我的 Agent (where the Host has it), the place's primary and 搜索 (the palette
  * searches). Code lists its shelves: 等你处理, each project, 无项目 and a quiet 已归档 row, without the sessions delegated to
  * an Agent; 我的 Agent lists your Agents and their recent delegations. 「项目」 heads the projects with a + that adds one (on
- * this Mac). At the foot, shared: the computer, 应用 and 设置. A shelf folds with its chevron; what ended up there stays one click away.
+ * this Mac). At the foot, shared: one row of icons (`NavFoot`). A shelf folds with its chevron; what ended up there stays one click away.
  */
 export function Sidebar({
   snapshot,
@@ -380,7 +380,9 @@ export function Sidebar({
   agents,
   overview,
   onSchedules,
-  computer,
+  quota,
+  update,
+  computerAtFoot = false,
   projectTree = false,
 }: ProjectNavigationActions & {
   /** The computer popover in the sidebar's head (`NavTop`'s `computer`). */
@@ -393,7 +395,12 @@ export function Sidebar({
   agents?: { primary: import('react').ReactNode; list: import('react').ReactNode } | undefined
   overview?: { active: boolean; open: () => void }
   onSchedules?: () => void
-  computer?: import('react').ReactNode
+  /** 额度与用量 in the foot's row, where this window shows it there. */
+  quota?: import('react').ReactNode
+  /** 检查更新 at the right end of the foot's row. */
+  update?: import('react').ReactNode
+  /** The status bar names the computer, so the head does not. */
+  computerAtFoot?: boolean
   projectTree?: boolean
   snapshot: AppSnapshot
   archiveBatch?: import('react').ReactNode
@@ -439,7 +446,7 @@ export function Sidebar({
         computer={computerChip}
         overview={overview}
         onSchedules={onSchedules}
-        computerAtFoot={computer !== undefined}
+        computerAtFoot={computerAtFoot}
       />
       {inAgents ? (
         agents.list
@@ -468,20 +475,23 @@ export function Sidebar({
           {archiveUndo}
         </>
       )}
-      {/* The computer's row; while the desktop app keeps this Mac awake, a small glyph after its name says so on hover. */}
-      {(computer || awake) && (
-        <div className="sidebar-work-computer">
-          {computer}
-          {awake && (
+      <NavFoot
+        apps={apps}
+        quota={quota}
+        settings={onSettings}
+        trouble={connectionTrouble(connection, hostProblem)}
+        update={update}
+        // While the desktop app keeps this Mac awake, a small glyph in the row says so on hover.
+        awake={
+          awake && (
             <Tooltip content={keepAwake}>
               <span className="sidebar-awake" tabIndex={0} role="img" aria-label={KEEP_AWAKE_LABEL}>
                 <Icon icon={Coffee} size={14} />
               </span>
             </Tooltip>
-          )}
-        </div>
-      )}
-      <NavFoot apps={apps} settings={onSettings} trouble={connectionTrouble(connection, hostProblem)} />
+          )
+        }
+      />
     </div>
   )
 }

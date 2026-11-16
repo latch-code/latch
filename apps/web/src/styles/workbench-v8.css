@@ -150,9 +150,6 @@
   margin-right: var(--sp-6);
   color: var(--muted);
 }
-.sidebar-foot {
-  border: 0;
-}
 .sidebar-host {
   box-shadow: none;
   background: transparent;

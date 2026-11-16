@@ -752,17 +752,15 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await shell.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('space-code')?.click())
       await expect.poll(() => place('Code').getAttribute('aria-checked')).toBe('true')
       await page.locator('.agents-page').waitFor({ state: 'detached' })
-      // The computer's row says so with a small glyph after its name, the reason behind its hover; the footer keeps no
+      // The foot's row says so with a small glyph after its icons, the reason behind its hover; the footer keeps no
       // line or button of its own for it.
-      const awake = page.locator('.sidebar-work-computer .sidebar-awake[role="img"][aria-label="保持唤醒中"]')
+      const awake = page.locator('.sidebar-foot .sidebar-awake[role="img"][aria-label="保持唤醒中"]')
       await awake.waitFor()
       expect(await page.locator('.sidebar-footer').getByRole('button', { name: '保持唤醒中', exact: true }).count()).toBe(0)
       expect(await page.locator('.sidebar').getByText('保持唤醒中', { exact: true }).count()).toBe(0)
       await awake.hover()
       await page.getByRole('tooltip').filter({ hasText: '保持唤醒中：有会话在运行' }).waitFor()
-      await page
-        .locator('.sidebar-work-computer')
-        .screenshot({ path: 'test-results/native-desktop-keep-awake.png', animations: 'disabled' })
+      await page.locator('.sidebar-foot').screenshot({ path: 'test-results/native-desktop-keep-awake.png', animations: 'disabled' })
       await page.mouse.move(0, 0)
       // The page cannot report sleep or a stop for main.
       expect(

@@ -61,6 +61,7 @@ import { HOME_FOCUS_LAYER, useHomeFocus } from './useHomeFocus.ts'
 import { workGroups } from './workOverview.ts'
 import { PhoneComputer, SidebarComputer, TabletRail, WorkbenchConnection, WorkbenchNav } from './WorkbenchNav.tsx'
 import { UsageEntry } from '../usage/UsageEntry.tsx'
+import { ShellUpdateCheck } from './UpdateCheck.tsx'
 import { LayoutSwitch } from './LayoutSwitch.tsx'
 import { WorkbenchSessions } from './WorkbenchSessions.tsx'
 import { useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
@@ -395,9 +396,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         onSchedules={
                           catalog?.features?.automations ? () => shell.openMyAgent({ id: 'general', tab: 'schedules' }) : undefined
                         }
-                        computer={
-                          !triage && viewport !== 'tablet' && access.scopes.has('view') ? <UsageEntry appearance="row" /> : undefined
-                        }
+                        computerAtFoot={!triage && viewport !== 'tablet' && access.scopes.has('view')}
+                        {...(!triage && viewport !== 'tablet' && access.scopes.has('view') ? { quota: <UsageEntry /> } : {})}
+                        update={<ShellUpdateCheck shell={shell} />}
                         snapshot={listed}
                         archiveBatch={archiveBatch}
                         archiveUndo={archiveUndo}
@@ -650,6 +651,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       {triage && shellSpaces(shell) ? <SpaceSwitch {...shellSpaces(shell)!} /> : <h1>Code</h1>}
                       {!triage && <IconButton label="搜索" icon={SearchGlyph} onClick={openSearch} />}
                       {!triage && access.scopes.has('view') && <UsageEntry />}
+                      {!triage && <ShellUpdateCheck shell={shell} />}
                       <LayoutSwitch value={shell.preferences.workbenchLayout} />
                     </header>
                   )}
@@ -670,6 +672,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                           {entries.includes('settings') && (
                             <IconButton label="设置" icon={SettingsGlyph} onClick={() => goEntry('settings')} />
                           )}
+                          <ShellUpdateCheck shell={shell} />
                         </div>
                       )}
                     </nav>

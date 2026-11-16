@@ -185,7 +185,7 @@ Host 从启动起在内存里计数自己发出的字节（[traffic.ts](../apps/
 - fetch 本身失败（请求或答复没有到达）在 `api()` 里变成 `NoAnswerError`。页面自己在发出前抛出的错误不算。
 - 其余是页面自己的错误：写出错误名，并把错误与调用栈打印到控制台一次，不上报。
 
-**构建号。** 每次构建页面生成构建号，`dist/web/build.json` 记下它；Host 启动时读一次，在快照的 `build` 里报告。页面的构建号比 Host 报告的新，或 Host 没有报告时，页面提示重启 Latch；只有桌面端那台 Mac 的窗口给出重启（主进程的 `restartHost`）。比 Host 旧的页面不提示；开发服务器与测试里的页面没有构建号。页面不为旧 Host 写降级。iOS 尚未比较构建号。`pnpm desktop` 在打开窗口前比较另一个构建号（`host-info` 的 `build`，见 [ARCHITECTURE.md](./ARCHITECTURE.md#host-的生命周期)「重建后启动」），空闲的旧 Host 先被重启，这条提示就不出现。
+**构建号。** 每次构建页面生成构建号，`dist/web/build.json` 记下它；Host 启动时读一次，在快照的 `build` 里报告。页面的构建号比 Host 报告的新，或 Host 没有报告时，页面提示重启 Latch；只有桌面端那台 Mac 的窗口给出重启（主进程的 `restartHost`）。比 Host 旧的页面不弹提示，只由「检查更新」（[DESIGN.md](./DESIGN.md#布局)「侧栏底部」）点开时再读 `/link/build.json`，比本页新就带点并给「重新载入」；开发服务器与测试里的页面没有构建号。页面不为旧 Host 写降级。iOS 尚未比较构建号。`pnpm desktop` 在打开窗口前比较另一个构建号（`host-info` 的 `build`，见 [ARCHITECTURE.md](./ARCHITECTURE.md#host-的生命周期)「重建后启动」），空闲的旧 Host 先被重启，这条提示就不出现。
 
 ### 桌面端的转发与流
 

@@ -2001,6 +2001,7 @@ export function useShellLayout({
     changesLink,
     shellHost,
     hostProblem,
+    computer,
     notice,
     connectionTitle,
     connectionText,

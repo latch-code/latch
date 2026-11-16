@@ -707,39 +707,32 @@
 }
 
 /*
- * The foot, under a line and always in reach however long the list is: 应用 and 设置 as quiet rows, the trouble dot
- * after 设置.
+ * The foot, under a line and always in reach however long the list is: one row of quiet icons, 检查更新 at its right
+ * end. The current place (应用) is the selected fill.
  */
 .sidebar-foot {
-  /* Counts on its buttons are cut out of the ground. */
+  /* Dots on its buttons are cut out of the ground. */
   --surface: var(--sidebar);
-  display: grid;
-  gap: 1px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   flex-shrink: 0;
   margin-inline: calc(-1 * var(--sp-8));
   padding: var(--sp-6) var(--sp-8) calc(var(--sp-6) + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
 }
+.sidebar-work-computer + .sidebar-foot {
+  border-top: 0;
+}
 .sidebar-foot-spacer {
   flex: 1;
 }
-.sidebar-foot .sidebar-nav-row {
-  color: var(--muted);
+.sidebar-foot .ui-icon-button[aria-current='page'] {
+  color: var(--ink);
 }
-.sidebar-foot .sidebar-nav-row:hover {
-  color: var(--ink-2);
-}
-.sidebar-foot .sidebar-nav-row[aria-current='page'] {
+.sidebar-foot .ui-icon-button[aria-current='page']::before {
   background: var(--selected);
   box-shadow: var(--selected-ring);
-  color: var(--ink);
-}
-.sidebar-foot .sidebar-nav-row[aria-current='page'] > svg {
-  color: var(--ink);
-}
-/* 设置 is a Button for its tooltip; laid out as the row above it. */
-.sidebar-foot .sidebar-settings.ui-button {
-  padding: 0 10px;
 }
 
 /*
@@ -779,17 +772,49 @@
   display: inline-flex;
   gap: var(--sp-2);
 }
-/* Beside 设置, only while the Mac cannot be reached as it should; the sentence is in its title. */
-.sidebar-trouble {
+/*
+ * A state on an icon: amber while something waits for you (an update ready, the Mac reconnecting), red for a real
+ * failure; its words are in the icon's tooltip. Standing alone it keeps a little room.
+ */
+.icon-dot {
+  display: block;
   flex-shrink: 0;
-  width: 8px;
-  height: 8px;
-  margin-inline: var(--sp-4);
+  width: 6px;
+  height: 6px;
   border-radius: var(--r-full);
   background: var(--amber);
 }
-.sidebar-trouble[data-tone='error'] {
+.icon-dot[data-tone='error'] {
   background: var(--red);
+}
+.sidebar-foot > .icon-dot {
+  width: 8px;
+  height: 8px;
+  margin-inline: var(--sp-8);
+}
+/* 检查更新's layer: what was found in a line, its build beside it, and at most one thing to do. */
+.update-check-body {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12);
+}
+.update-check-text {
+  display: grid;
+  flex: 1;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.update-check-title {
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.update-check-meta {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
 }
 .project-group-caption {
   display: grid;
@@ -852,4 +877,10 @@
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
+}
+/* A phone narrower than 375px has no room for 检查更新 in its heading; the old-Host notice still says what matters. */
+@media (max-width: 374.98px) {
+  :is(.workbench-phone-heading, .workbench-phone-utilities) .update-check {
+    display: none;
+  }
 }

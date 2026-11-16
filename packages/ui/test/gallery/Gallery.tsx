@@ -423,6 +423,9 @@ function Buttons() {
         <Cell caption="计数">
           <IconButton label="2 项待批准" icon={ShieldAlertGlyph} badge={<Count value={2} tone="warn" />} />
         </Cell>
+        <Cell caption="运行中">
+          <IconButton label="检查更新" icon={SettingsGlyph} busy />
+        </Cell>
         <Cell caption="圆形">
           <span className="gallery-send">
             <IconButton label="发送" icon={ArrowUp} round size="md" />

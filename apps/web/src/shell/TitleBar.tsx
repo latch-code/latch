@@ -10,6 +10,7 @@ import {
   NewSessionGlyph,
   LaptopGlyph,
   FolderGlyph,
+  SettingsGlyph,
 } from '@latch/ui'
 import { currentShell, lightsStyle, useTrafficLights } from '../core/shell.ts'
 import { computerName } from '../core/securityCopy.ts'
@@ -18,6 +19,8 @@ import { BrandMark } from '../components/ui.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { ShellNewAgent, SpaceButtons, shellOverview, shellSpaces } from './SpaceNav.tsx'
 import { UsageEntry } from '../usage/UsageEntry.tsx'
+import { shortcutKeys } from '../workbenchShortcuts.ts'
+import { ShellUpdateCheck } from './UpdateCheck.tsx'
 import { WorkbenchPanes, workbenchPanes } from './WorkbenchPanes.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -150,7 +153,17 @@ export function TitleBar({ shell }: { shell: ShellState }) {
         </header>
       )}
       <div className="titlebar-views">
+        {/* Shut, the sidebar's foot stands here: 设置, 额度与用量 and 检查更新. */}
+        {sidebarColumn && sidebarCollapsed && shell.entries.includes('settings') && (
+          <IconButton
+            label="设置"
+            icon={SettingsGlyph}
+            shortcut={shortcutKeys('settings', desktop !== null) ?? undefined}
+            onClick={() => shell.goEntry('settings')}
+          />
+        )}
         {sidebarColumn && sidebarCollapsed && shell.access.scopes.has('view') && <UsageEntry />}
+        {sidebarColumn && sidebarCollapsed && <ShellUpdateCheck shell={shell} />}
         {/* A tablet's rail already holds 总览; the layout switch itself is the shell's, drawn over this reserved end. */}
         {sidebarColumn && shut && !home.active && <IconButton label="总览" icon={OverviewGlyph} onClick={home.open} />}
         <WorkbenchPanes shell={shell} />

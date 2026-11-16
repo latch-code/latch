@@ -224,6 +224,16 @@ describe('buttons', () => {
     })
   })
 
+  it('puts a spinner of the glyph size in place of a busy icon button glyph', async () => {
+    const screen = await render(<IconButton label="检查更新" icon={SettingsGlyph} busy />)
+    const button = screen.getByRole('button', { name: '检查更新' })
+    await expect.element(button).toHaveAttribute('aria-busy', 'true')
+    expect(button.element().querySelector('svg')).toBeNull()
+    const spinner = button.element().querySelector<HTMLElement>('.ui-spinner')!
+    expect(spinner.dataset.size).toBe('16')
+    expect(button.element().getBoundingClientRect().width).toBe(28)
+  })
+
   it('shows the trigger of an open menu as a neutral press, like a toggle that is on', async () => {
     const screen = await render(
       <>

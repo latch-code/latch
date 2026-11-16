@@ -3,24 +3,12 @@ import { LEGACY_HOST_TEXT } from '../core/permissions.ts'
 import { hostNeedsStart } from '../core/shellLifecycle.ts'
 import { Banner } from '../components/Banner.tsx'
 import { Button, Hint, Icon, IconButton, InlineNotice, CloseGlyph, RefreshGlyph } from '@latch/ui'
+import { restartLatch } from './UpdateCheck.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** The connection and the Host itself: over the open conversation, or at the top of a phone's list. */
 export function ConnectionBanners({ shell }: { shell: ShellState }) {
-  const {
-    setToast,
-    access,
-    lifecycle,
-    audit,
-    connectionProblem,
-    shellHost,
-    hostProblem,
-    connectionTitle,
-    connectionText,
-    resync,
-    connection,
-    oldHost,
-  } = shell
+  const { access, audit, connectionProblem, shellHost, hostProblem, connectionTitle, connectionText, resync, connection, oldHost } = shell
   return (
     <>
       <Banner show={Boolean(connectionProblem)}>
@@ -32,9 +20,7 @@ export function ConnectionBanners({ shell }: { shell: ShellState }) {
               <Button
                 size="xs"
                 onClick={() => {
-                  void lifecycle.restartHost().then(message => {
-                    if (message) setToast({ text: message, tone: 'error' })
-                  })
+                  restartLatch(shell)
                 }}>
                 启动 Latch
               </Button>
@@ -62,9 +48,7 @@ export function ConnectionBanners({ shell }: { shell: ShellState }) {
                 <Button
                   size="xs"
                   onClick={() => {
-                    void lifecycle.restartHost().then(message => {
-                      if (message) setToast({ text: message, tone: 'error' })
-                    })
+                    restartLatch(shell)
                   }}>
                   重启 Latch
                 </Button>

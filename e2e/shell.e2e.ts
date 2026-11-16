@@ -56,7 +56,12 @@ describe('the shell', () => {
     expect((await box(page, 'main.workspace')).left).toBe(264)
     // A browser knows its transport and the current computer. The desktop's computer list is absent.
     const foot = page.getByRole('navigation', { name: '主导航', exact: true })
-    expect(await foot.getByRole('button').allTextContents()).toEqual(['设置'])
+    // One row of icons, named by their labels: 设置 and 额度与用量 at the left, 检查更新 at the right end.
+    expect(await foot.getByRole('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label')))).toEqual([
+      '设置',
+      '额度与用量',
+      '检查更新',
+    ])
     const connection = page.getByRole('group', { name: '连接状态', exact: true })
     const computer = connection.getByRole('button', { name: '验收电脑', exact: true })
     await computer.waitFor()
