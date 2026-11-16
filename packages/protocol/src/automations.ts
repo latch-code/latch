@@ -26,6 +26,7 @@ export interface AutomationConfig {
 export type AutomationPauseReason =
   | 'definition-changed'
   | 'owner-unavailable'
+  | 'level-over'
   | 'agent-unavailable'
   | 'unknown-outcome'
   | 'audit-unavailable'

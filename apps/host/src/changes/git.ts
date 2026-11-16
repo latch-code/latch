@@ -216,6 +216,18 @@ export class GitReader {
     }
   }
 
+  /** How many commits `to` has that `from` lacks, or undefined when either is not a commit. */
+  async ahead(layout: GitLayout, from: string, to: string): Promise<number | undefined> {
+    if (!OID.test(from) || !OID.test(to)) return undefined
+    try {
+      const out = (await this.run(layout, ['rev-list', '--count', `${from}..${to}`, '--'], { maxBytes: 64 })).toString('utf8').trim()
+      return /^\d+$/u.test(out) ? Number(out) : undefined
+    } catch (error) {
+      if (error instanceof GitError && error.reason === 'failed') return undefined
+      throw error
+    }
+  }
+
   async mergeBase(layout: GitLayout, a: string, b: string): Promise<string | undefined> {
     if (!OID.test(a) || !OID.test(b)) return undefined
     try {

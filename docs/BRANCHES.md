@@ -209,7 +209,7 @@ Host 写 Git 只在两处：`apps/host/src/worktrees.ts` 新建、沿用与移�
 
 ## 移除之后与重试
 
-会话保留，元数据记 `removed`，摘要带 `worktree.removed`：会话只能查看，不再给「撤销本轮」；新一轮、终端、文件与交付得到 409 `worktree-removed`。
+会话保留，元数据记 `removed`，摘要带 `worktree.removed`：会话只能查看，不再给「撤销本轮」；新一轮、文件与交付得到 409 `worktree-removed`，终端得到 409 `terminal-folder-unavailable`。
 
 | 重试同一 `requestId` | 回答 |
 | --- | --- |

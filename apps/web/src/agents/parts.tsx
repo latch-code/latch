@@ -6,6 +6,7 @@ import { MODE_COPY } from '../core/securityCopy.ts'
 import type { AvatarState } from './avatarFace.ts'
 import { isolationBrief } from './helpers.ts'
 import { ACTIVITY_WORDS } from './model.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 /** The state word beside a face, for the states that have one; `live`: what a running one is doing, in a person's words. */
 export function ActivityWord({ state, live }: { state: AvatarState; live?: { words: string } | undefined }) {
@@ -24,7 +25,7 @@ export function Availability({ available, reason, offline }: { available: boolea
     return (
       <span className="agent-availability" data-tone="warn">
         <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-        <span>Mac 不在线</span>
+        <span>{DEVICE_OFFLINE}</span>
       </span>
     )
   if (available) return <span className="agent-availability">可用</span>

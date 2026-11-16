@@ -4189,6 +4189,21 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         filters: false,
         remote: 'origin',
       },
+      gitFetched: {
+        branch: 'main',
+        head: 'abc',
+        upstream: 'origin/main',
+        ahead: 1,
+        behind: 2,
+        fetchedAt: '2026-11-16T07:00:00.000Z',
+        staged: [],
+        unstaged: [],
+        untracked: [],
+        conflicted: [],
+        hooks: [],
+        filters: false,
+        remote: 'origin',
+      },
       gitUnstaged: {
         branch: 'main',
         head: 'abc',
@@ -4375,6 +4390,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(delivery.groups).toEqual([['修改 a.ts'], ['删除 b.ts'], ['未跟踪 c.ts'], []])
     expect(delivery.primary).toEqual(['提交 1 个文件', '暂存全部', '推送 2 个提交', '暂存全部'])
     expect(delivery.stageAll).toEqual(['b.ts', 'c.ts', 'd.ts', 'e.ts'])
+    // Behind only as of a fetch: without one, nothing says the branch is up to date.
+    expect(delivery.aheadBehind).toEqual(['已推送', '领先 2', '领先 1 · 落后 2'])
     expect(delivery.foot).toEqual(['只提交已暂存的 · 未暂存的 2 个文件不提交', '1 个文件未暂存'])
     expect(delivery.copy).toEqual(['Agent 正在改这个文件夹', '变基进行中，在终端里完成', '这台电脑正在安装更新', ''])
     // The draft gets the hook's last 80 lines in a fence its own backticks cannot close.

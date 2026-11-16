@@ -1,5 +1,6 @@
 import { looksSecret, splitChangeNote, type AppSnapshot, type TaskDetail } from '@latch/protocol'
 import { errorMessage, inlineError, isUncertain, readPending, writePending, type PendingSubmission } from './api.ts'
+import { DEVICE_OFFLINE } from './hostState.ts'
 
 /** Client presentation only. The Host's messages and receipt remain the authority. */
 export interface SendingMessage {
@@ -45,8 +46,10 @@ export function deliveredSubmission(pending: PendingSubmission | null, detail: T
 }
 
 /** Why a submission is still unconfirmed after a send or retry, or null when the Host answered and it is settled. */
-export function unconfirmedReason(cause: unknown): string | null {
-  return isUncertain(cause) ? inlineError(cause) || errorMessage(cause) : null
+export function unconfirmedReason(cause: unknown, online = typeof navigator === 'undefined' || navigator.onLine !== false): string | null {
+  if (!isUncertain(cause)) return null
+  // No answer while this device has no network says nothing about the computer.
+  return online ? inlineError(cause) || errorMessage(cause) : DEVICE_OFFLINE
 }
 
 /**

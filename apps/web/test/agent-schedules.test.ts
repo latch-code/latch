@@ -130,7 +130,8 @@ describe('a schedule on the page', () => {
   })
 
   it('says why this device cannot add or run one, and offers it when it can', () => {
-    expect(scheduleBlock({ offline: true, canRun: true })).toMatch(/不在线/u)
+    // The device itself has no network: it says so, not that the computer is away.
+    expect(scheduleBlock({ offline: true, canRun: true })).toBe('这台设备没有联网，恢复后再改')
     expect(scheduleBlock({ offline: false, canRun: false })).toMatch(/只能查看/u)
     expect(scheduleBlock({ offline: false, canRun: true, agent: { canAutomate: false, unavailableReason: '默认项目已移除' } })).toBe(
       '默认项目已移除',

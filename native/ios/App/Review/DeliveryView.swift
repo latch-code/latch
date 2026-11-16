@@ -255,8 +255,7 @@ struct DeliveryView: View {
                     Text(PhoneConversation.visible(remote)).font(.system(size: 13, design: .monospaced)); Image(systemName: "chevron.right").font(.system(size: 10))
                     Text(PhoneConversation.visible(branch)).font(.system(size: 13, design: .monospaced)).lineLimit(1)
                     Spacer()
-                    Text(state.upstream == nil ? "新分支" : state.ahead > 0 || state.behind > 0
-                        ? [state.ahead > 0 ? "领先 \(state.ahead)" : "", state.behind > 0 ? "落后 \(state.behind)" : ""].filter { !$0.isEmpty }.joined(separator: " · ") : "已是最新")
+                    Text(state.aheadBehind)
                         .font(.system(size: 12)).foregroundStyle(PhoneTheme.muted)
                 }.foregroundStyle(PhoneTheme.ink2)
                 if state.upstreamOther, let copy = PhoneDelivery.copy("git-upstream-other-branch") { line(copy.label, tone: .neutral, detail: (copy.detail ?? "") + " 上游：" + (state.upstream ?? "")) }

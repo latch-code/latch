@@ -151,7 +151,7 @@ sources:
 
 ## 输入与预览
 
-- **添加。** 输入框接收文件选择、图片粘贴和文件拖入。超过上限的文件不上传，直接说明；不能添加时按钮不停用，按下说明原因。超过 2,000 字的文字粘贴折为文本附件。
+- **添加。** 输入框接收文件选择、图片粘贴和文件拖入。超过上限的文件不上传，直接说明；Harness 不收任何附件时说它不收，不说文件太大；不能添加时按钮不停用，按下说明原因。超过 2,000 字的文字粘贴折为文本附件。
 - **永久拒绝。** Host 按这些错误码拒绝的文件只能移除，不提供重试：`attachment-invalid`、`attachment-too-large`、`attachment-type-unsupported`、`attachment-image-unsupported`、`attachment-text-unsupported`、`attachment-image-invalid`、`attachment-text-invalid`、`attachment-text-too-large`、`attachments-unsupported`。网页（`useAttachments.ts` 的 `REFUSED`）与手机（`PhoneAttachments` 的 `refused`）是同一组。
 - **可重试。** 其余的可以重试，包括 400 `attachment-incomplete`、网络、超时与 5xx。每个文件独立重试与移除；编辑后的字节用新的上传请求。
 - **发送。** 点击发送时等待当前上传；取消等待不发送消息且保留草稿。失败和结果未知不清空内容：未知提交保留 `attachmentIds`、`fileRefs` 与原 `requestId`，确认后再清理。

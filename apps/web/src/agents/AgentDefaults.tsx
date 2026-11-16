@@ -10,6 +10,7 @@ import type { DeviceAccess } from '../core/permissions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { isPersonalChat, topicOwner } from './chat.ts'
 import { agentDefaultChoice, usesHostModels, withAgentDefaultChoice, type AgentDraft } from './model.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 /** The same controls as a new Code session, saved as defaults without writing to any existing topic. */
 export function AgentDefaults({
@@ -110,7 +111,7 @@ export function CurrentAgentOptions({ shell, owner }: { shell: ShellState; owner
   const locked = !access.scopes.has('run')
     ? '这台设备只能查看'
     : shell.connection === 'offline'
-      ? 'Mac 不在线'
+      ? DEVICE_OFFLINE
       : shell.active
         ? '这一轮结束后可用'
         : busy

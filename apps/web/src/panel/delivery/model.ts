@@ -1,4 +1,5 @@
 // The 交付 tab's pure logic: where the repository stands, what the one blue button does, and what each fixed reason says.
+import { relativeTime } from '../../format.ts'
 import type {
   GitCheck,
   GitCheckState,
@@ -25,13 +26,31 @@ export function deliveryStep(state: GitDeliveryState, pr: { bound: boolean } = {
   if (state.staged.length > 0) return 'commit'
   if (changedCount(state) > 0) return 'stage'
   if (canPush(state)) return 'push'
-  if (prAvailable(state) && !pr.bound) return 'pr'
+  if (prAvailable(state) && !nothingToMerge(state) && !pr.bound) return 'pr'
   return 'done'
 }
 
-/** The branch is on its remote as the same name, so a pull request can be made from it. */
+/** The branch is on its remote as the same name, so a pull request can be made from it, or one is bound to it. */
 export function prAvailable(state: Pick<GitDeliveryState, 'branch' | 'remote' | 'upstream'>): boolean {
   return !!state.branch && !!state.remote && state.upstream === `${state.remote}/${state.branch}`
+}
+
+/** It is the base branch itself, or has no commit the base lacks: a new pull request would merge nothing. */
+export function nothingToMerge(state: Pick<GitDeliveryState, 'base'>): boolean {
+  return state.base?.ahead === 0
+}
+
+/**
+ * The line beside the remote: 新分支, 领先 and 落后, or 已是最新. Behind is counted from the last fetch, so it shows only
+ * with that time, which goes with it; without one nothing says the branch is up to date.
+ */
+export function aheadBehind(state: Pick<GitDeliveryState, 'upstream' | 'ahead' | 'behind' | 'fetchedAt'>, now = new Date()): string {
+  if (!state.upstream) return '新分支'
+  const ahead = state.ahead ? `领先 ${state.ahead}` : ''
+  if (state.fetchedAt === undefined) return ahead || '已推送'
+  const when = relativeTime(state.fetchedAt, now)
+  const fetched = /(分钟|小时|天)$/u.test(when) ? `${when}前拉取` : /^\d/u.test(when) ? `${when} 拉取` : `${when}拉取`
+  return [ahead, state.behind ? `落后 ${state.behind}` : '', !ahead && !state.behind ? '已是最新' : '', fetched].filter(Boolean).join(' · ')
 }
 
 /** Files that can still be staged: unstaged, untracked and conflicted. */
@@ -181,7 +200,7 @@ export function failureCopy(code: string, operation?: GitOperation): FailureCopy
     case 'git-push-auth':
       return { label: '远端不接受凭据', tone: 'failed', detail: '在终端里检查这个仓库的登录或 SSH 密钥。' }
     case 'git-push-non-fast-forward':
-      return { label: '远端有你没有的提交', tone: 'failed', detail: '先在终端里拉取并合并，再推送。Latch 从不强制推送。' }
+      return { label: '远端有你没有的提交', tone: 'failed', detail: '先拉取并合并（git pull），再推送。Latch 从不强制推送。' }
     case 'git-push-remote-rejected':
       return { label: '远端钩子拒绝了推送', tone: 'failed' }
     case 'git-push-unreachable':
@@ -231,6 +250,8 @@ export function failureCopy(code: string, operation?: GitOperation): FailureCopy
       return { label: '这个分支已有 PR，不在推送的仓库里', tone: 'warn', detail: '在 GitHub 上查看这个分支的 PR。' }
     case 'pr-not-pushed':
       return { label: '先推送这个分支', tone: 'neutral' }
+    case 'pr-nothing-ahead':
+      return { label: '没有可以合入的提交', tone: 'neutral' }
     case 'pr-create-failed':
       return { label: 'PR 没有创建', tone: 'failed' }
     case 'pr-input-invalid':
@@ -416,3 +437,6 @@ export function commentExcerpt(input: { number: number; comment: GitPrComment })
   const fence = fenceFor(text)
   return `PR #${input.number} · ${comment.author} · ${commentPlace(comment)}：\n\n${fence}text\n${text}\n${fence}`
 }
+
+/** What to run after a push the remote refused as not a fast-forward: the upstream's commits, merged or rebased as your Git is set. */
+export const PULL_COMMAND = 'git pull'

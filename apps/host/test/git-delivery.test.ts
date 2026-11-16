@@ -196,6 +196,11 @@ describe('git delivery', () => {
     })
     expect(state.head).toMatch(/^[0-9a-f]{40}$/u)
     expect(state.running).toBeUndefined()
+    // Never fetched: the behind count says nothing, so no time comes with it. Your Git's fetch gives it one.
+    expect(state.fetchedAt).toBeUndefined()
+    f.git('fetch', '-q', 'origin')
+    const fetched = await (await f.delivery()).state(f.repo)
+    expect(Date.parse(fetched.fetchedAt ?? '')).toBeGreaterThan(Date.now() - 60_000)
   })
 
   it('runs no hook, fsmonitor or filter to read, stage without filters and unstage; a commit runs hooks unless skipped', SLOW, async () => {

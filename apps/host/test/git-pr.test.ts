@@ -309,6 +309,22 @@ describe('the pull request step', () => {
     expect((await failure(delivery.createPr(caller, { requestId: id(7), ...input, base: '--exec=x' }))).code).toBe('pr-input-invalid')
   })
 
+  it('makes no pull request with nothing to merge: from the base into itself, or with no commit the base lacks', SLOW, async () => {
+    const f = await fixture()
+    const delivery = await f.delivery()
+    const caller = f.caller()
+    expect((await delivery.state(f.repo)).base).toEqual({ name: 'main', ahead: 1 })
+    f.git('switch', '-q', 'main')
+    expect((await delivery.state(f.repo)).base).toEqual({ name: 'main', ahead: 0 })
+    expect((await failure(delivery.createPr(caller, { requestId: id(1), ...input }))).code).toBe('pr-nothing-ahead')
+    f.git('switch', '-q', '-c', 'same')
+    f.git('push', '-q', '-u', 'origin', 'same')
+    expect((await delivery.state(f.repo)).base).toEqual({ name: 'main', ahead: 0 })
+    expect((await failure(delivery.createPr(caller, { requestId: id(2), ...input }))).code).toBe('pr-nothing-ahead')
+    expect(await creates(f.gh)).toHaveLength(0)
+    expect(caller.audits).toEqual([])
+  })
+
   it('reads the bound pull request, its checks, reviews and comments, and a failed job’s log', SLOW, async () => {
     const f = await fixture()
     const delivery = await f.delivery()

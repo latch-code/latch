@@ -357,7 +357,9 @@ test('a queued 「记住…」 proposes when it is sent, a withdrawn one never, 
   expect(await list()).toEqual(['用 pnpm'])
   expect(detail.memoryRefusals).toEqual([{ requestId: sent.requestId, reason: '内容像是密钥或凭据，没有记下。' }])
   expect(await list()).toEqual(['用 pnpm'])
-  // Archiving the session forgets the refusals.
+  // Archiving the session forgets the refusals. An Agent's one chat is archived only once the Agent is gone.
+  await owner.json(`custom-agents/${agent.id}`, { method: 'DELETE', body: { requestId: randomUUID() } })
+  expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).memoryRefusals).toHaveLength(1)
   await owner.json(`tasks/${sessionId}`, { method: 'PATCH', body: { archived: true } })
   expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).memoryRefusals).toBeUndefined()
 })

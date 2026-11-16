@@ -125,6 +125,16 @@ it('keeps line feedback on the Host: a range, the pending set, one message, re-a
     expect(message.text).toContain('rates.ts 第 42–45 行')
     expect(message.text).toContain('export const v42 = 42 * rate')
     expect(message.text).toContain('rates.ts 第 18 行')
+    // The bubble shows the quoted lines as code, not the fences around them.
+    const bubble = desk.page.locator(`.transcript [data-message-id="${messageId}"] .user-bubble-text`)
+    await expect.poll(() => bubble.locator('pre.user-code').count(), SLOW).toBe(2)
+    expect(await bubble.locator('pre.user-code').first().innerText()).toContain('export const v42 = 42 * rate')
+    expect(await bubble.innerText()).not.toContain('```')
+    for (const scheme of ['light', 'dark'] as const) {
+      await desk.page.emulateMedia({ colorScheme: scheme })
+      await bubble.screenshot({ path: join(OUT, `sent-bubble--desktop--${scheme}.png`), animations: 'disabled' })
+    }
+    await desk.page.emulateMedia({ colorScheme: 'light' })
     await expect.poll(status, SLOW).toBe('idle')
     await expect.poll(async () => (await turns()).map(turn => turn.state), SLOW).toEqual(['settled', 'settled'])
 

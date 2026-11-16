@@ -50,6 +50,7 @@ import {
   type WriteFailure,
 } from './model.ts'
 import { fileHash, unansweredCreate, type SessionHandoffs } from './useHandoffs.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 /** 交给代码任务… from a message: which messages, and the text selected in them at the time. */
 export interface HandoffRequest {
@@ -499,7 +500,7 @@ export function SourceHandoffDock({
               {failure?.message ?? '已发出，Mac 没有回答；重试不会多建一个会话。'}
             </InlineNotice>
           )}
-          {offline && <p className="handoff-offline">Mac 不在线 · 恢复后再交</p>}
+          {offline && <p className="handoff-offline">{connection === 'offline' ? DEVICE_OFFLINE : 'Mac 不在线'} · 恢复后再交</p>}
           <footer className="handoff-card-foot">
             {problem && !unknown && <span className="handoff-muted">{problem}</span>}
             <span className="handoff-spacer" />

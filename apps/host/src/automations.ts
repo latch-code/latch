@@ -106,7 +106,14 @@ const automation = config.extend({
   state: z.enum(['off', 'ready', 'running', 'paused']),
   pause: z
     .strictObject({
-      reason: z.enum(['definition-changed', 'owner-unavailable', 'agent-unavailable', 'unknown-outcome', 'audit-unavailable']),
+      reason: z.enum([
+        'definition-changed',
+        'owner-unavailable',
+        'level-over',
+        'agent-unavailable',
+        'unknown-outcome',
+        'audit-unavailable',
+      ]),
       message: z.string().max(200),
     })
     .optional(),
@@ -207,10 +214,19 @@ type Row = z.infer<typeof row>
 const PAUSE_MESSAGES: Record<AutomationPauseReason, string> = {
   'definition-changed': '模型、插件或策略已变化，请确认后重新开启。',
   'owner-unavailable': '开启它的设备已不能运行任务，请重新开启。',
+  'level-over': 'Harness 的等级高于后台运行的上限，请调整后重新开启。',
   'agent-unavailable': 'Agent、模型或项目暂不可用，请检查后重新开启。',
   'unknown-outcome': '上一次运行的结果未知，为避免重复没有继续，请查看后重新开启。',
   'audit-unavailable': '操作记录写入失败，这次没有运行，请重新开启。',
 }
+
+/** Why a refused start pauses: the Harness's level, the device that turned it on, or the Agent and what it needs. */
+const refusedPause = (error: unknown): AutomationPauseReason =>
+  error instanceof AppError && error.status === 403
+    ? error.code === 'automation-level'
+      ? 'level-over'
+      : 'owner-unavailable'
+    : 'agent-unavailable'
 
 const digest = (value: unknown) => sha256Hex(canonicalJson(value))
 
@@ -801,7 +817,7 @@ export class Automations {
       plan = this.options.plan(definition, 'schedule')
     } catch (error) {
       if (passing(error)) return
-      await this.markPaused(item, error instanceof AppError && error.status === 403 ? 'owner-unavailable' : 'agent-unavailable')
+      await this.markPaused(item, refusedPause(error))
       return
     }
     if (this.basis(definition, plan) !== item.grant.basis) {
@@ -881,10 +897,7 @@ export class Automations {
       )
     } catch (error) {
       if (this.journal.hasPending() || passing(error)) return
-      await this.markPaused(
-        item,
-        auditing ? 'audit-unavailable' : error instanceof AppError && error.status === 403 ? 'owner-unavailable' : 'agent-unavailable',
-      )
+      await this.markPaused(item, auditing ? 'audit-unavailable' : refusedPause(error))
       return
     }
     this.options.changed()
@@ -926,7 +939,7 @@ export class Automations {
             this.update(target, { state: missed ? 'missed' : 'failed' })
             delete target.attempt
             if (passing(error)) this.rest(target)
-            else this.pause(target, error instanceof AppError && error.status === 403 ? 'owner-unavailable' : 'agent-unavailable')
+            else this.pause(target, refusedPause(error))
             this.deliver(state, card)
             return { value: true }
           })

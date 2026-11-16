@@ -64,6 +64,8 @@ public struct PhoneGitState: Equatable, Sendable {
     public let upstream: String?
     public let ahead: Int
     public let behind: Int
+    /** When the repository last fetched: `behind` is as of then, and says nothing without it. */
+    public let fetchedAt: String?
     public let staged: [PhoneDeliveryRow]
     public let unstaged: [PhoneDeliveryRow]
     public let untracked: [String]
@@ -75,7 +77,7 @@ public struct PhoneGitState: Equatable, Sendable {
     public let filters: Bool
     public let remote: String?
     public static func == (a: Self, b: Self) -> Bool {
-        a.branch == b.branch && a.head == b.head && a.upstream == b.upstream && a.ahead == b.ahead && a.behind == b.behind && a.staged == b.staged
+        a.branch == b.branch && a.head == b.head && a.upstream == b.upstream && a.ahead == b.ahead && a.behind == b.behind && a.fetchedAt == b.fetchedAt && a.staged == b.staged
             && a.unstaged == b.unstaged && a.untracked == b.untracked && a.conflicted == b.conflicted && a.more == b.more && a.operation == b.operation
             && a.running?.kind == b.running?.kind && a.running?.hook == b.running?.hook && a.hooks == b.hooks && a.filters == b.filters && a.remote == b.remote
     }
@@ -90,6 +92,7 @@ public struct PhoneGitState: Equatable, Sendable {
         }
         branch = value["branch"].string; head = value["head"].string; upstream = value["upstream"].string
         ahead = Int(clamping: value["ahead"].integer ?? 0); behind = Int(clamping: value["behind"].integer ?? 0)
+        fetchedAt = value["fetchedAt"].string
         staged = files(value["staged"], staged: true); unstaged = files(value["unstaged"], staged: false)
         untracked = value["untracked"].array.prefix(2000).compactMap(\.string); conflicted = value["conflicted"].array.prefix(2000).compactMap(\.string)
         more = Int(clamping: value["more"].integer ?? 0); operation = value["gitOperation"].string
@@ -114,6 +117,14 @@ public struct PhoneGitState: Equatable, Sendable {
     public var canPush: Bool { branch != nil && head != nil && remote != nil && (upstream == nil || ahead > 0) }
     public var upstreamOther: Bool { upstream != nil && remote != nil && branch != nil && upstream != "\(remote!)/\(branch!)" }
     public var pushLabel: String { upstream != nil && ahead > 0 ? "推送 \(ahead) 个提交" : "推送" }
+    /** 新分支, 领先 and 落后, or 已是最新, as the web's `aheadBehind`: behind only with the last fetch's time. */
+    public var aheadBehind: String {
+        guard upstream != nil else { return "新分支" }
+        let known = fetchedAt != nil
+        let words = [ahead > 0 ? "领先 \(ahead)" : "", known && behind > 0 ? "落后 \(behind)" : ""].filter { !$0.isEmpty }
+        if !words.isEmpty { return words.joined(separator: " · ") }
+        return known ? "已是最新" : "已推送"
+    }
 }
 
 /** The one blue button of 提交. */
@@ -189,7 +200,7 @@ public enum PhoneDelivery {
         case "git-commit-failed": return c("提交失败", .failed)
         case "git-commit-not-made": return c("没有生成提交，可以重新提交", .neutral)
         case "git-push-auth": return c("远端不接受凭据", .failed, "在终端里检查这个仓库的登录或 SSH 密钥。")
-        case "git-push-non-fast-forward": return c("远端有你没有的提交", .failed, "先在终端里拉取并合并，再推送。Latch 从不强制推送。")
+        case "git-push-non-fast-forward": return c("远端有你没有的提交", .failed, "先拉取并合并（git pull），再推送。Latch 从不强制推送。")
         case "git-push-remote-rejected": return c("远端钩子拒绝了推送", .failed)
         case "git-push-unreachable": return c("连不上远端", .failed)
         case "git-push-host-key": return c("远端主机密钥没有通过验证", .failed, "在终端里连一次这个远端，核对并记下主机密钥。")

@@ -441,6 +441,23 @@ describe('the background layer', () => {
     })
   })
 
+  it('holds the same still frame for a capture after the layer shrank and grew back', async () => {
+    document.documentElement.dataset.capture = 'still'
+    const stats = reader()
+    const screen = await render(<Stage stats={stats} />)
+    const canvas = screen.container.querySelector('canvas')!
+    await expect.poll(() => stats.read?.().paused ?? []).toContain('capture')
+    await expect.poll(() => drawn(canvas, WHOLE)).toBeGreaterThan(0)
+    const first = canvas.toDataURL()
+    await screen.rerender(<Stage stats={stats} style={{ width: 160, height: 120 }} />)
+    await expect.poll(() => canvas.clientWidth).toBe(160)
+    await pause(100)
+    await screen.rerender(<Stage stats={stats} />)
+    await expect.poll(() => canvas.clientWidth).toBe(400)
+    // The particles seeded again for the larger area are the ones it had, not the next of one running sequence.
+    await expect.poll(() => canvas.toDataURL()).toBe(first)
+  })
+
   it.each(['#2c426e', '#cedaee'])('draws the frozen backdrop with a compiled hex ink %s', async ink => {
     document.documentElement.dataset.capture = 'still'
     const stats = reader()

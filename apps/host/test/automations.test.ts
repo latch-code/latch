@@ -123,12 +123,13 @@ test('restored background grants recheck the ceiling while an explicit manual ru
   const { value } = await service.create(definition(), actor)
   await service.close()
   f.onAuthorize = trigger => {
-    if (trigger === 'schedule') throw new AppError(403, 'automation-owner', 'Background level refused')
+    if (trigger === 'schedule') throw new AppError(403, 'automation-level', 'Background level refused')
   }
   const again = await f.open()
   services.push(again)
   await again.tick()
-  expect(again.get(value.id)).toMatchObject({ enabled: false, state: 'paused', pause: { reason: 'owner-unavailable' } })
+  // The Harness's level, not the device, says why it paused.
+  expect(again.get(value.id)).toMatchObject({ enabled: false, state: 'paused', pause: { reason: 'level-over' } })
   expect(start).not.toHaveBeenCalled()
   await again.runNow(value.id, { requestId: randomUUID() }, actor)
   expect(start).toHaveBeenCalledTimes(1)

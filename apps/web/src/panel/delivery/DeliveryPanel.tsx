@@ -14,12 +14,16 @@ import {
   ChevronRightGlyph,
   AlertGlyph,
   CommitGlyph,
+  CopyButton,
   InfoGlyph,
   WarningGlyph,
 } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from '../../components/VisibleText.tsx'
 import { computerName, SETUP_COPY } from '../../core/securityCopy.ts'
+import { TerminalFillButton } from '../../components/TerminalFillButton.tsx'
+import { dateTime } from '../../format.ts'
 import {
+  aheadBehind,
   canPush,
   changedCount,
   checksSummary,
@@ -32,7 +36,9 @@ import {
   HOOKS_UNLISTED,
   operationNote,
   primaryAction,
+  nothingToMerge,
   prAvailable,
+  PULL_COMMAND,
   pushLabel,
   RUNNING_WORD,
   runningLabel,
@@ -161,7 +167,19 @@ function FailureLine({ failure, state }: { failure: DeliveryFailure; state?: Git
     <Line
       tone={copy.tone === 'failed' ? 'red' : copy.tone === 'warn' ? 'amber' : 'muted'}
       icon={copy.tone === 'failed' ? AlertGlyph : copy.tone === 'warn' ? WarningGlyph : InfoGlyph}
-      detail={copy.detail}>
+      detail={copy.detail}
+      {...(failure.code === 'git-push-non-fast-forward'
+        ? {
+            // The next step, as a command to copy or type into this session's terminal; Latch itself never fetches.
+            action: (
+              <span className="delivery-command">
+                <code>{PULL_COMMAND}</code>
+                <CopyButton text={PULL_COMMAND} label="复制拉取命令" size="xs" />
+                <TerminalFillButton command={PULL_COMMAND} />
+              </span>
+            ),
+          }
+        : {})}>
       {label}
     </Line>
   )
@@ -250,6 +268,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       form={prForm}
       onForm={setPrForm}
       canWrite={canWrite}
+      nothingAhead={!!state && nothingToMerge(state)}
       disabled={prBlocked}
       creating={pull.creating}
       failure={pull.failure}
@@ -603,12 +622,12 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                   <VisibleText text={state.branch} />
                 </code>
                 <span className="delivery-space" />
-                <span className="delivery-count">
-                  {!state.upstream
-                    ? '新分支'
-                    : state.ahead || state.behind
-                      ? [state.ahead ? `领先 ${state.ahead}` : '', state.behind ? `落后 ${state.behind}` : ''].filter(Boolean).join(' · ')
-                      : '已是最新'}
+                <span
+                  className="delivery-count"
+                  title={
+                    state.upstream ? (state.fetchedAt ? `最近拉取 ${dateTime(state.fetchedAt)}` : '还没有拉取过，落后数未知') : undefined
+                  }>
+                  {aheadBehind(state)}
                 </span>
               </div>
               {upstreamOther && (

@@ -101,6 +101,19 @@
 .user-bubble-text {
   min-width: 0;
 }
+/* Code quoted in a person's message, a line feedback's lines among them. */
+.user-code {
+  max-width: 100%;
+  margin: var(--sp-4) 0;
+  padding: var(--sp-8) var(--sp-12);
+  overflow-x: auto;
+  border-radius: var(--r-8);
+  background: var(--sunken);
+  white-space: pre;
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+}
 .user-bubble[data-clamped] > .user-bubble-text {
   max-height: 176px;
   overflow: hidden;

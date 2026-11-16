@@ -204,7 +204,8 @@ describe('terminal routes', () => {
     const append = vi.spyOn(t.host.security.audit, 'append')
     const opened = await openTerminal(desktop, sessionId, { cols: 100, rows: 30 })
     expect(opened).toMatchObject({ sessionId, status: 'running', cols: 100, rows: 30, sizeOwner: true, shell: 'sh', busy: false })
-    expect(launched[0]!.launch.cwd).toBe((await t.host.bridge.detail(sessionId)).summary.cwd)
+    // The shell starts in the folder the Host opened and checked: the recorded folder's real path, not a link to it.
+    expect(launched[0]!.launch.cwd).toBe(await realpath((await t.host.bridge.detail(sessionId)).summary.cwd!))
     expect(append.mock.calls.map(([event]) => event).filter(event => event.action.startsWith('terminal.'))).toEqual([
       {
         action: 'terminal.open',

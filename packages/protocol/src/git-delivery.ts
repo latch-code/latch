@@ -32,6 +32,10 @@ export interface GitDeliveryState {
   /** Commits ahead of and behind the upstream, from local refs only (nothing is fetched); 0 without one. */
   ahead: number
   behind: number
+  /** When this repository last fetched (FETCH_HEAD's time): `behind` is as of then, and says nothing without it. */
+  fetchedAt?: string
+  /** The branch a pull request goes into (main or master) and HEAD's commits it lacks, from local refs; 0 on it. */
+  base?: { name: string; ahead: number }
   /** Index against HEAD. */
   staged: GitDeliveryFile[]
   /** Work tree against the index. */
@@ -165,6 +169,7 @@ export type GitPrError =
   | 'gh-failed'
   | 'pr-exists-elsewhere'
   | 'pr-not-pushed'
+  | 'pr-nothing-ahead'
   | 'pr-create-failed'
   | 'pr-input-invalid'
   | 'pr-check-not-found'

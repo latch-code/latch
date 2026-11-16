@@ -78,6 +78,8 @@ it.each([false, true])('clears the active draft when another device deletes its 
         if (request.method() === 'POST' && /\/api\/tasks(?:\/[^/]+\/prompt)?$/u.test(new URL(request.url()).pathname))
           submissions.push(request.postData() ?? '')
       })
+      // An Agent's one chat is deleted only after the Agent itself.
+      if (agent) await owner.json('custom-agents/' + agent.id, { method: 'DELETE', body: { requestId: randomUUID() } })
       expect((await owner.request('tasks/' + sessionId, { method: 'DELETE' })).status).toBe(200)
       await expect.poll(() => page.getByText('会话已被删除', { exact: true }).isVisible(), { timeout: 10_000 }).toBe(true)
       await page.keyboard.press('Alt+l')

@@ -494,7 +494,7 @@ Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥�
   - Codex：`codex login status`。退出 0 算已登录；退出 1 且文字是 `Not logged in` 才算未登录，其他都是 `unknown`。
   - Claude Agent：适配器自带 CLI 的 `claude-agent-acp --cli auth status --json`，只读 `loggedIn`、`apiKeySource`、`apiProvider` 与 `loginExpiresAt`。有推送时它仍运行，因为推送里没有到期日。
   - 超时 10 秒。输出只在判断时读一次，可能含账号或部分密钥，不返回、不记录。
-- **三态接口。** `POST /link/api/harnesses/:id/login-status`（`run`，可带 `fresh`）返回 `{ status, label?, expiresAt? }`。有运行中的进程推送过、而状态命令说不出更多时直接用推送，不运行程序。两者都有时较新的说了算；标签只取推送的，日期只取命令的，各自只在结果与它的来源都说已登录时给出。结果缓存 30 秒；「测试启动」读到不同的明确状态时缓存作废。
+- **三态接口。** `POST /link/api/harnesses/:id/login-status`（`run`，可带 `fresh`）返回 `{ status, label?, expiresAt? }`。有运行中的进程推送过、而状态命令说不出更多时直接用推送，不运行程序。两者都有时较新的说了算；标签只取推送的，日期只取命令的，各自只在结果与它的来源都说已登录时给出。结果缓存 30 秒；「测试启动」读到不同的明确状态时缓存作废。`fresh`（「重新检查」）总会再运行程序，只有 2 秒内的上一次 `fresh` 结果能代替它。
 - **审计。** 每次实际运行前写 `agent.login.requested`（写不进就不运行），结束后 `agent.login.checked`，只含 ID 与状态。
 - **不挡发送。** 页面选中 Harness 与窗口回到前台时检查；只在 `unauthenticated` 时显示登录说明，登录 10 天内到期时提示，都不挡发送，因为程序才说了算。没有状态命令的 Harness 在读模型列表被以没登录拒绝时（`catalogueRead.last.loginRequired`）显示同一行说明。
 - **被拒的一轮。** 在这一轮结尾显示命令与「重试」。登录后消息仍由人按「重试」发出，这一轮在记录里仍是失败；下一轮启动新进程，读到新的登录。

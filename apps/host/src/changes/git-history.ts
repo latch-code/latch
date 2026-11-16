@@ -49,6 +49,30 @@ export async function baseOfBranch(
   return undefined
 }
 
+/**
+ * The branch a pull request from HEAD would go into (main or master, the remote's first) and the commits HEAD has that it
+ * lacks, from local refs: on that branch itself, none.
+ */
+export async function aheadOfBase(
+  git: GitReader,
+  layout: GitLayout,
+  head: string,
+  remote: string | undefined,
+): Promise<{ name: string; ahead: number } | undefined> {
+  if (!('branch' in layout.head)) return undefined
+  for (const name of BASES) {
+    if (layout.head.branch === name) return { name, ahead: 0 }
+    const refs = [...(remote ? [`refs/remotes/${remote}/${name}` as const] : []), `refs/heads/${name}` as const]
+    for (const ref of refs) {
+      const tip = await git.commit(layout, ref)
+      if (!tip) continue
+      const ahead = await git.ahead(layout, tip, head)
+      return ahead === undefined ? undefined : { name, ahead }
+    }
+  }
+  return undefined
+}
+
 async function listCommits(
   git: GitReader,
   layout: GitLayout,

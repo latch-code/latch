@@ -55,6 +55,7 @@ import {
 } from './scheduleModel.ts'
 import { writeFor, type AgentWrites } from './useAgentWrites.ts'
 import { inputRows, type SchedulePrefill } from './activity.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 const DAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 const KINDS = [
@@ -548,7 +549,7 @@ export function SchedulesTab({
     <div className="agent-schedules">
       <div className="agent-memory-bar">
         {block ? (
-          <Hint label={runBlock ? (canRun && !offline ? '现在不能新建或运行' : offline ? 'Mac 不在线' : '只能查看') : '仅手动运行'}>
+          <Hint label={runBlock ? (canRun && !offline ? '现在不能新建或运行' : offline ? DEVICE_OFFLINE : '只能查看') : '仅手动运行'}>
             {block}
           </Hint>
         ) : (

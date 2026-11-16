@@ -7,6 +7,7 @@ import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
 import type { useStagingWrites } from '../panel/changes/useStaging.ts'
 import { AppDraftEntry } from '../plugin-pages/AppDraftEntry.tsx'
 import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
+import { FillPlace } from '../panel/terminal/fills.ts'
 import { BrowserPanel } from '../panel/browser/BrowserPanel.tsx'
 import { BrowserTabList } from '../panel/browser/BrowserTabList.tsx'
 import { errorMessage } from '../core/api.ts'
@@ -155,22 +156,25 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
       {...(summary && canDeliver
         ? {
             delivery: (
-              <DeliveryPanel
-                key={summary.id}
-                summary={summary}
-                revision={current?.summary.id === summary.id ? current.sync?.revision : undefined}
-                open={deliveryOpen && !fileTabs.active}
-                canRun={access.scopes.has('run')}
-                {...(snapshot.hostName ? { hostName: snapshot.hostName } : {})}
-                offline={offline}
-                phone={phone}
-                onOpenFile={path => {
-                  const root = summary.folders?.[0]?.id
-                  if (readsChanges) openChangesTab({ scope: 'uncommitted', file: { path, ...(root ? { root } : {}) } })
-                  else openFile({ sessionId: summary.id, reference: path, ...(root ? { rootId: root } : {}) })
-                }}
-                onCompose={canCompose ? compose : undefined}
-              />
+              // A command it suggests goes to this session's terminal, as one in the transcript does.
+              <FillPlace.Provider value={shell.canTerminal && shell.terminalTarget?.sessionId === summary.id ? summary.id : undefined}>
+                <DeliveryPanel
+                  key={summary.id}
+                  summary={summary}
+                  revision={current?.summary.id === summary.id ? current.sync?.revision : undefined}
+                  open={deliveryOpen && !fileTabs.active}
+                  canRun={access.scopes.has('run')}
+                  {...(snapshot.hostName ? { hostName: snapshot.hostName } : {})}
+                  offline={offline}
+                  phone={phone}
+                  onOpenFile={path => {
+                    const root = summary.folders?.[0]?.id
+                    if (readsChanges) openChangesTab({ scope: 'uncommitted', file: { path, ...(root ? { root } : {}) } })
+                    else openFile({ sessionId: summary.id, reference: path, ...(root ? { rootId: root } : {}) })
+                  }}
+                  onCompose={canCompose ? compose : undefined}
+                />
+              </FillPlace.Provider>
             ),
           }
         : {})}

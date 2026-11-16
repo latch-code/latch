@@ -1,4 +1,4 @@
-import { MentionedText } from './MentionedText.tsx'
+import { UserText } from './MentionedText.tsx'
 import { MessageAttachments } from './MessageAttachments.tsx'
 import { createContext, Fragment, memo, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { GitFork, RotateCcw } from 'lucide-react'
@@ -370,7 +370,7 @@ function UserMessage({
                 </pre>
               </details>
             )}
-            <MentionedText text={text} refs={message.fileRefs} />
+            <UserText text={text} refs={message.fileRefs} />
           </div>
           {tall && (
             <button

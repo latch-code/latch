@@ -73,11 +73,26 @@ const file = (harnessId: string): AgentFile => ({
   schedules: [],
 })
 const proposals = (owner: Device, agent: string) => owner.json<MemoryProposalList>(`custom-agents/${agent}/proposals`)
-const propose = async (owner: Device, agent: string, words: string, extra: Record<string, unknown> = {}) => {
+/**
+ * Sends `propose …` as a new topic: the Agent's one chat starts with it, and later it goes on in that chat with a fresh
+ * context, which takes the Agent's instructions and memories anew.
+ */
+const chats = new Map<string, string>()
+const startOrClear = async (owner: Device, agent: string, prompt: string): Promise<string> => {
+  const chat = chats.get(agent)
+  if (chat) {
+    await owner.json(`tasks/${chat}/prompt`, { method: 'POST', body: { prompt, requestId: randomUUID(), freshContext: true } })
+    return chat
+  }
   const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
     method: 'POST',
-    body: { customAgentId: agent, prompt: `propose ${words}`, requestId: randomUUID(), ...extra },
+    body: { customAgentId: agent, prompt, requestId: randomUUID() },
   })
+  chats.set(agent, sessionId)
+  return sessionId
+}
+const propose = async (owner: Device, agent: string, words: string) => {
+  const sessionId = await startOrClear(owner, agent, `propose ${words}`)
   await settled(owner, sessionId)
   await expect
     .poll(async () => (await proposals(owner, agent)).proposals.some(item => item.content === words), { timeout: 15_000 })
@@ -222,10 +237,7 @@ test('external Harness: the first-turn block carries an imported memory as mater
       .join('\n')
   // The first turn carries the block before the person's words, so the fake agent only answers it; the next turn proposes.
   const topic = async (words: string) => {
-    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
-      method: 'POST',
-      body: { customAgentId: agent.id, prompt: 'echo hi', requestId: randomUUID() },
-    })
+    const sessionId = await startOrClear(owner, agent.id, 'echo hi')
     await settled(owner, sessionId)
     await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: `propose ${words}`, requestId: randomUUID() } })
     await settled(owner, sessionId)
@@ -242,7 +254,8 @@ test('external Harness: the first-turn block carries an imported memory as mater
 
   const [memory] = (await owner.json<CustomAgentDetail>(`custom-agents/${agent.id}`)).memories as [AgentMemory]
   expect((await own(owner, agent.id, memory)).status).toBe(200)
-  // A new topic: its first-turn block has the memory under the person's heading, and its proposal is the person's.
+  // A fresh context in the one chat: its first-turn block has the memory under the person's heading, and its proposal is
+  // the person's.
   expect(await topic('第二条')).toMatchObject({ origin: 'agent', external: false })
   const second = (await sent()).slice(first.length)
   expect(second).toContain(OWN)

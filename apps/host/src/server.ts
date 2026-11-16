@@ -3041,12 +3041,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         || !devices.standsBehind(deviceId)
         || device.dataScope !== 'all'
         || !device.scopes.includes('run')
-        || (trigger === 'schedule'
-          && (!level
-            || !levelAtMost(level, current.unattended.maxLevel)
-            || now() - Date.parse(device.lastSeenAt) > current.unattended.pauseAfterIdleDays * 86400000))
+        || (trigger === 'schedule' && now() - Date.parse(device.lastSeenAt) > current.unattended.pauseAfterIdleDays * 86400000)
       )
         throw new AppError(403, 'automation-owner', '这台设备不能开启这个定时任务。')
+      // The Harness's own level, not the device, is what keeps it from running unattended.
+      if (trigger === 'schedule' && (!level || !levelAtMost(level, current.unattended.maxLevel)))
+        throw new AppError(
+          403,
+          'automation-level',
+          level ? `这个 Harness 是 ${level}，后台运行最高 ${current.unattended.maxLevel}。` : '这个 Harness 现在不可用，不能后台运行。',
+        )
     }
     const automations = await Automations.open({
       dataDir,

@@ -32,6 +32,7 @@ import { readsAgents } from './model.ts'
 import { LockedAgents } from './parts.tsx'
 import { personActivity } from './personWords.ts'
 import { addressable, addressee, agentsOverview, defaultAddressee, OVERVIEW_ROWS, rowFor, type RosterRow } from './roster.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 /** A topic's row is signed by its helper: the face and the name, never a project, Harness or model. */
 const personOf = (rows: readonly RosterRow[], task: TaskSummary) => {
@@ -269,7 +270,7 @@ export function AgentsHome({ shell }: { shell: ShellState }) {
                 variant="primary"
                 icon={PlusGlyph}
                 disabled={offline}
-                tooltip={offline ? 'Mac 不在线' : undefined}
+                tooltip={offline ? DEVICE_OFFLINE : undefined}
                 onClick={() => {
                   shell.openMyAgent({ id: 'new' })
                 }}>

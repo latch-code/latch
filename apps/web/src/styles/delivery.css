@@ -560,3 +560,26 @@
 .delivery-panel[data-phone] .delivery-foot {
   padding-bottom: calc(var(--sp-8) + env(safe-area-inset-bottom, 0px));
 }
+
+/* A command the next step needs (the pull after a refused push): copy it, or type it into this session's terminal. */
+.delivery-command {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  max-width: 100%;
+  margin-inline-start: auto;
+  padding: 0 0 0 var(--sp-8);
+  border-radius: var(--r-6);
+  background: var(--sunken);
+}
+.delivery-command code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}

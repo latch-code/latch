@@ -57,6 +57,19 @@ function largestAccepted(caps: AttachmentCapabilities | undefined): number | und
   return Math.min(file, Math.max(caps.images ? (caps.imageBytes ?? IMAGE_BYTES) : 0, caps.text ? caps.textBytes : 0))
 }
 
+/**
+ * Why this file is not added before it is uploaded: empty, a Harness that takes no attachments at all, or larger than
+ * anything it takes. Undefined when the Host decides.
+ */
+export function addRefusal(file: Pick<File, 'name' | 'size'>, caps: AttachmentCapabilities | undefined): string | undefined {
+  if (!file.size) return '空文件不能添加。'
+  if (caps && !caps.images && !caps.text) return caps.reason ?? '这个 Harness 不接收附件。'
+  const largest = largestAccepted(caps) ?? FILE_BYTES
+  if (file.size > largest)
+    return `「${file.name}」超过 ${sizeText(largest)}，没有添加。${attachmentLimits(caps) ? `可以添加：${attachmentLimits(caps)}。` : ''}`
+  return undefined
+}
+
 /** Files remain immutable for a request ID; the Host is the authority for type and capability checks. */
 export function useAttachments({
   enabled,
@@ -222,17 +235,11 @@ export function useAttachments({
       return
     }
     const accepted: DraftAttachment[] = []
-    const largest = largestAccepted(caps) ?? FILE_BYTES
     setNote('')
     for (const file of files) {
-      if (!file.size) {
-        setError('空文件不能添加。')
-        continue
-      }
-      if (file.size > largest) {
-        setError(
-          `「${file.name}」超过 ${sizeText(largest)}，没有添加。${attachmentLimits(caps) ? `可以添加：${attachmentLimits(caps)}。` : ''}`,
-        )
+      const refusal = addRefusal(file, caps)
+      if (refusal) {
+        setError(refusal)
         continue
       }
       accepted.push({

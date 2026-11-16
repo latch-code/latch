@@ -51,6 +51,8 @@ export interface PullRequestSectionProps {
   form: PrForm
   onForm: (form: PrForm) => void
   canWrite: boolean
+  /** Nothing to merge into the base (`nothingToMerge`): no form to make a pull request. */
+  nothingAhead?: boolean
   disabled: boolean
   creating: boolean
   failure?: PrFailure | undefined
@@ -223,7 +225,7 @@ function PrRow({ pr, onReload, loading }: { pr: PullRequest; onReload: () => voi
 
 /** The pull request step of 交付: 创建 PR, or the bound pull request with its checks, reviews and comments. */
 export function PullRequestSection(props: PullRequestSectionProps) {
-  const { read, head, branch, form, onForm, canWrite, disabled, creating, failure, unknown, logs, onCompose } = props
+  const { read, head, branch, form, onForm, canWrite, nothingAhead, disabled, creating, failure, unknown, logs, onCompose } = props
   const state = read.kind === 'ready' ? read.state : undefined
   const pr = state?.pr
   const stale = pr ? checksStale(pr, head) : false
@@ -332,7 +334,12 @@ export function PullRequestSection(props: PullRequestSectionProps) {
           )}
         </>
       )}
-      {state && !pr && canWrite && (
+      {state && !pr && nothingAhead && (
+        <Line tone="muted" icon={InfoGlyph}>
+          {failureCopy('pr-nothing-ahead')?.label}
+        </Line>
+      )}
+      {state && !pr && canWrite && !nothingAhead && (
         <div className="delivery-pr-form">
           <TextField
             label="标题"

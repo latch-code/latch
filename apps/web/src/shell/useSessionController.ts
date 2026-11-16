@@ -478,6 +478,30 @@ export function useSessionController({
   useEffect(() => {
     if (held && !submission.sending && deliveredSubmission(held, current)) void settleListed(held, false)
   }, [held, submission.sending, current, settleListed])
+  // Back online after an unconfirmed send: the same request (same requestId) goes once by itself, so the Host's answer
+  // settles it, or the card stays with the reason. Another window already retrying it is left to do so.
+  const lastConnection = useRef(harness.connection)
+  const retryHeld = useStableCallback(async () => {
+    const pending = submission.pending
+    if (!pending || submission.sending || submission.sendingElsewhere || abandoning) return
+    // Evidence first: the session read afresh lists it, so it was delivered. Only otherwise the same request goes again,
+    // which the Host answers from its receipt if it took the first.
+    if (pending.sessionId !== undefined) {
+      const fresh = await api<TaskDetail>(`tasks/${encodeURIComponent(pending.sessionId)}`, { timeoutMs: 5_000 }).catch(() => null)
+      if (submission.pending?.requestId !== pending.requestId) return
+      if (deliveredSubmission(pending, fresh)) {
+        await settleListed(pending, false)
+        return
+      }
+    }
+    await retryDraft()
+  })
+  useEffect(() => {
+    const before = lastConnection.current
+    lastConnection.current = harness.connection
+    // Only a return from a lost connection: a page's first connection, or a stream opened for another session, is not one.
+    if (harness.connection === 'connected' && (before === 'offline' || before === 'reconnecting')) void retryHeld()
+  }, [harness.connection, retryHeld])
   /** The open session's queue holds the same text as the pending queued submission, perhaps another device's. */
   const pendingQueued = queuedTwin(held, current)
   /**

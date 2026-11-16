@@ -713,7 +713,7 @@ test('uses the actual Agent Harness level for the unattended ceiling before acce
     },
   })
   expect(response.status).toBe(403)
-  expect(await response.json()).toMatchObject({ error: 'automation-owner' })
+  expect(await response.json()).toMatchObject({ error: 'automation-level', message: '这个 Harness 是 L3，后台运行最高 L1。' })
   expect((await owner.json<CustomAgentList>('custom-agents')).agents.find(item => item.id === agent.id)?.canAutomate).toBe(false)
   expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
   expect(await readFile(log, 'utf8').catch(() => '')).not.toContain('session/prompt')
@@ -1135,7 +1135,11 @@ test('keeps L3 manual starts on record, refuses unattended L3 and runs 通用 th
     },
   })
   expect(onHarness.status).toBe(403)
-  expect(await onHarness.json()).toMatchObject({ error: 'automation-owner' })
+  // The refusal names the Harness's level, not the device.
+  expect(await onHarness.json()).toMatchObject({
+    error: 'automation-level',
+    message: expect.stringMatching(/^这个 Harness 是 L\d，后台运行最高 L\d。$/u),
+  })
   const manual = await owner.json<{ sessionId: string }>('tasks', {
     method: 'POST',
     body: {

@@ -156,7 +156,7 @@ function NewAgentRow({
       icon={PlusGlyph}
       pressed={active}
       disabled={offline}
-      tooltip={offline ? 'Mac 不在线' : undefined}
+      tooltip={offline ? DEVICE_OFFLINE : undefined}
       onClick={onNew}
     />
   ) : (
@@ -166,7 +166,7 @@ function NewAgentRow({
       data-space-primary=""
       aria-pressed={active}
       disabled={offline}
-      tooltip={offline ? 'Mac 不在线' : undefined}
+      tooltip={offline ? DEVICE_OFFLINE : undefined}
       onClick={onNew}>
       <PlusGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
       <span>新建 Agent</span>

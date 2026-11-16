@@ -8,6 +8,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { backToPhoneSessions, settleShell } from './helpers/layout.ts'
+import { openHomeDecision } from './helpers/workbench.ts'
 
 it.each([
   [390, 'light'],
@@ -67,8 +68,7 @@ it.each([
       await page.reload()
       await connected(page)
       expect(await page.getByRole('button', { name: '终端', exact: true }).count()).toBe(0)
-      const openOld = () =>
-        page.locator(`.workbench-home [data-work-session="${sessionId}"] :is(.work-decision-session, .work-decision-object)`).click()
+      const openOld = () => openHomeDecision(page, sessionId)
       await openOld()
       await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
       const header = page.locator('.topbar[data-phone]')
@@ -314,9 +314,9 @@ it('browses a saved project before creating a session, previews and quotes real 
           await settleShell(page)
           expect(await host.host.bridge.listTasks()).toHaveLength(taskCount)
           if (width === 390) {
-            // Over the home the draft's files are a sheet with 完成; over a session, the panel's page with 返回.
+            // Over the home the draft's files are a sheet closed by 关闭; over a session, the panel's page with 返回.
             await page
-              .getByRole('button', { name: /^(?:返回|完成)$/u })
+              .getByRole('button', { name: /^(?:返回|关闭)$/u })
               .filter({ visible: true })
               .first()
               .click()

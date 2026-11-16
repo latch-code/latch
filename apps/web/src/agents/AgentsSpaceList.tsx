@@ -31,6 +31,7 @@ import { ownerName, topicOwner } from './chat.ts'
 import { generalChoice, readsAgents } from './model.ts'
 import { LockedAgents } from './parts.tsx'
 import { queueOrder, rosterRows, type RosterRow, type RosterState } from './roster.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 /** The roster as the shell's snapshot gives it: your Agents, 通用 where this device reads Agents, and deleted ones with topics. */
 export function shellRoster(shell: Pick<ShellState, 'snapshot' | 'catalog'>): RosterRow[] {
@@ -264,7 +265,7 @@ export function AgentsSpaceList({ shell, rail = false }: { shell: ShellState; ra
           className="agent-queue-new"
           aria-current={route.entry === 'agents' && route.myAgent?.id === 'new' ? 'page' : undefined}
           aria-disabled={offline || undefined}
-          title={offline ? 'Mac 不在线' : undefined}
+          title={offline ? DEVICE_OFFLINE : undefined}
           onClick={() => {
             if (!offline) shell.openMyAgent({ id: 'new' })
           }}>

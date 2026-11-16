@@ -43,7 +43,10 @@ export interface AgentLoginDeps {
 }
 
 const STATUS_TTL_MS = 30_000
-/** Each check runs a program and adds audit lines, so even `fresh` does not run back to back. */
+/**
+ * Each check runs a program and adds audit lines, so `fresh` checks do not run back to back. Only an earlier `fresh` one
+ * stands in for it: an automatic check from before the person pressed 重新检查 may predate what they just changed.
+ */
 const FRESH_FLOOR_MS = 2_000
 const PATH = /^\/link\/api\/harnesses\/([^/]+)\/(login-status|login-terminal|logout)$/u
 const statusBody = z.strictObject({ fresh: z.boolean().optional() })
@@ -82,9 +85,9 @@ export interface AgentLoginRoutes extends RouteModule {
 
 export function createAgentLoginRoutes(context: RouteContext, deps: AgentLoginDeps): AgentLoginRoutes {
   /** `pushed`: what a running process had pushed when the program ran, so a later push is told from an older one. */
-  type Known = { at: number; check: HarnessLoginCheck; pushed: HarnessLogin['reported'] }
+  type Known = { at: number; check: HarnessLoginCheck; pushed: HarnessLogin['reported']; fresh: boolean }
   const known = new Map<string, Known>()
-  const running = new Map<string, Promise<Known>>()
+  const running = new Map<string, Promise<Known> & { fresh?: boolean }>()
   /** A check already running when this is called finishes for whoever waits on it, but is not remembered. */
   const forget = (id: string) => {
     known.delete(id)
@@ -210,12 +213,12 @@ export function createAgentLoginRoutes(context: RouteContext, deps: AgentLoginDe
       }
       const answer = ({ check, pushed }: Known) => settleLogin(check, pushed, deps.login(id)?.reported)
       const cached = known.get(id)
-      if (cached && context.now() - cached.at < (fresh ? FRESH_FLOOR_MS : STATUS_TTL_MS)) {
+      if (cached && (fresh ? cached.fresh && context.now() - cached.at < FRESH_FLOOR_MS : context.now() - cached.at < STATUS_TTL_MS)) {
         json(res, answer(cached))
         return true
       }
       let flight = running.get(id)
-      if (!flight) {
+      if (!flight || (fresh && !flight.fresh)) {
         const actor = context.actorOf(caller)
         // Recorded before the program runs: when the audit cannot be written, it does not run.
         flight = context.audit
@@ -229,13 +232,14 @@ export function createAgentLoginRoutes(context: RouteContext, deps: AgentLoginDe
               stepup: 'none',
               detail: { agentId: id, status: check.status },
             })
-            const entry = { at: context.now(), check, pushed: reported }
+            const entry = { at: context.now(), check, pushed: reported, fresh: fresh === true }
             if (running.get(id) === flight) known.set(id, entry)
             return entry
           })
           .finally(() => {
             if (running.get(id) === flight) running.delete(id)
           })
+        flight.fresh = fresh === true
         running.set(id, flight)
       }
       const entry = await flight

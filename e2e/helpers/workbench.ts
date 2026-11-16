@@ -34,3 +34,16 @@ export async function returnFromHomeFocus(page: Page): Promise<void> {
   const exit = page.getByRole('button', { name: '退出专注', exact: true })
   if (await exit.isVisible()) await exit.click()
 }
+
+/**
+ * Opens a session from Home's decisions: among several each is a row whose session link opens it; the only one is
+ * featured, opened by its own action (查看失败, 查看原请求, …).
+ */
+export async function openHomeDecision(page: Page, sessionId: string): Promise<void> {
+  const item = page.locator(`.workbench-home [data-work-session="${sessionId}"]`)
+  await item
+    .locator(':is(.work-decision-session, .work-decision-object)')
+    .or(item.locator('.work-feature-action').getByRole('button'))
+    .first()
+    .click()
+}

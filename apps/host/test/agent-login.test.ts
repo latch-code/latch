@@ -64,7 +64,12 @@ describe('harness login routes', () => {
     await writeFile(loginFile, 'yes')
     // Asked again without `fresh`, the cached answer stands; after logging in, the page asks for a fresh one.
     expect((await reply(await desktop.request('harnesses/codex/login-status', { body: {} })))[1]).toEqual({ status: 'unauthenticated' })
-    await new Promise(resolve => setTimeout(resolve, 2100))
+    // 重新检查 right after the automatic check runs the program: that answer predates the login.
+    expect((await reply(await desktop.request('harnesses/codex/login-status', { body: { fresh: true } })))[1]).toEqual({
+      status: 'authenticated',
+    })
+    // Pressed again at once, the fresh answer just read stands; the program does not run back to back.
+    await rm(loginFile)
     expect((await reply(await desktop.request('harnesses/codex/login-status', { body: { fresh: true } })))[1]).toEqual({
       status: 'authenticated',
     })

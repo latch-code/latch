@@ -51,7 +51,7 @@ sources:
 - 手动运行在记录和审计中是 `trigger: manual`，只使用当前调用者的授权，不产生后台授权。
 - 审批沿用普通会话，不附加无人值守的审批时限。
 
-**后台**：开启后台执行的设备是定时任务的授权来源（`grant.deviceId`）。开启、恢复和每次运行前都复查，任何一项不符就是 403 `automation-owner`，已开启的暂停：
+**后台**：开启后台执行的设备是定时任务的授权来源（`grant.deviceId`）。开启、恢复和每次运行前都复查，任何一项不符就是 403（等级超出上限是 `automation-level`，其余是 `automation-owner`），已开启的暂停：
 
 - 这台设备仍可使用，有 `run` 与完整数据范围；
 - 它在 `policy.json` 的 `unattended.pauseAfterIdleDays` 天内连接过（默认 14）；
@@ -81,6 +81,7 @@ sources:
 | --- | --- |
 | `definition-changed` | 授权的依据变了（模型、插件、策略等），或它不能跨重启核对 |
 | `owner-unavailable` | 开启它的设备已不能运行 |
+| `level-over` | Harness 的实际等级超过 `unattended.maxLevel`（403 `automation-level`） |
 | `agent-unavailable` | Agent（含已删除）、模型或项目不可用 |
 | `unknown-outcome` | 上一次启动的结果未知；不重发 |
 | `audit-unavailable` | 审计写入失败，这次没有运行 |

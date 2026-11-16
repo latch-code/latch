@@ -30,6 +30,7 @@ import { forkedChoice, type ForkSource } from '../forkChoice.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { saveOfferedPreset } from '../core/offeredHarness.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 import {
   abandonSubmission,
   endFlight,
@@ -472,7 +473,8 @@ export function useSubmission({
         setPending(null)
       }
       setPendingReason(reason ?? '')
-      if (uncertain) writePendingReason(pendingKey, submission.requestId, reason)
+      // This device's own network says nothing that should outlive it: the row says so only while it lasts.
+      if (uncertain && reason !== DEVICE_OFFLINE) writePendingReason(pendingKey, submission.requestId, reason)
       if (!uncertain && cause instanceof ApiError && cause.code === 'attachment-released' && fromInput(submission)) {
         const restored = mounted.current && storedOwnsInput(submission, destination.current.selectedId)
         if (restored) setDraft(previous => (previous.trim() ? previous : submission.prompt))

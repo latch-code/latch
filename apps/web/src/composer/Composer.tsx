@@ -283,6 +283,8 @@ export function Composer({
   }, [textareaRef, readOnly, inline])
 
   const locked = sending || pending !== null || attachments?.preparing === true
+  // One unconfirmed write per device: nothing else is sent meanwhile, but only the input that holds its text is held.
+  const textLocked = sending || (pending !== null && onOpenPending === undefined) || attachments?.preparing === true
   const empty = draft.trim().length === 0 && !attachments?.items.length
   const typedAction = answer === undefined ? latchActionOf(draft) : undefined
   const queueDraft =
@@ -444,7 +446,7 @@ export function Composer({
       placeholder={placeholder}
       value={draft}
       rows={1}
-      disabled={locked}
+      disabled={textLocked}
       onClick={event => {
         if (event.isTrusted) onEngage?.()
       }}

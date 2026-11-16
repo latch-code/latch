@@ -10,7 +10,7 @@ import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSession, reachable } from './helpers/layout.ts'
 import { motions, tokens } from './helpers/motion.ts'
-import { homeInput, switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
+import { homeInput, openHomeDecision, switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
 
 /**
  * A phone stacks its pages: the session list is the root, a session's page is pushed over it and slides back, and a new
@@ -88,8 +88,7 @@ describe('the phone stack', () => {
           await input.fill('首页尚未发送的草稿')
           await returnFromHomeFocus(page)
           const before = (await local.json<{ tasks: unknown[] }>('snapshot')).tasks.length
-          const request = home.locator(`[data-work-session="${sessions[1]}"]`)
-          await request.locator('.work-decision-session').click()
+          await openHomeDecision(page, sessions[1]!)
           await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
           await settled(page)
           await expect
@@ -310,7 +309,8 @@ describe('the phone stack', () => {
       expect(await send.getAttribute('aria-disabled')).toBe('true')
       await input.fill('展示流式输出')
       await expect.poll(() => send.getAttribute('aria-disabled')).toBeNull()
-      // Leaving for the list keeps what was typed for the next time 新建会话 leads here.
+      // Leaving for the list keeps what was typed for the next time 新建会话 leads here; typing put Home in focus first.
+      await returnFromHomeFocus(page)
       await home.getByRole('button', { name: '全部会话', exact: true }).click()
       await page.locator('.phone-list:not([inert])').waitFor()
       await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
@@ -385,7 +385,8 @@ describe('the phone stack', () => {
       const info = page.getByRole('region', { name: '侧边面板', exact: true })
       await info.getByRole('tabpanel', { name: '会话概要', exact: true }).waitFor()
       await reachable(info.getByRole('tab', { name: '概要', exact: true }))
-      await info.getByRole('heading', { name: '这次改动', exact: true }).waitFor()
+      // A connected browser reads project files: a session without changes says so in one line, with no heading.
+      await info.locator('.session-overview').waitFor()
       expect(await info.locator('.ui-kbd').filter({ visible: true }).count()).toBe(0)
       await page.goBack()
       await info.waitFor({ state: 'detached' })

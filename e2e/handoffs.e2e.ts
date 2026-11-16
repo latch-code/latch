@@ -349,7 +349,7 @@ it('hands a reply and a file to a new code session, takes its result back, and c
     await reader.screenshot({ path: `${OUT}/denied-1440.png` })
     await shoot(reader, 'denied', [[390, 'dark']])
     await narrow.setOffline(true)
-    await denied.getByText('Mac 不在线 · 恢复后再交').waitFor({ timeout: 30_000 })
+    await denied.getByText('这台设备没有联网 · 恢复后再交').waitFor({ timeout: 30_000 })
     await reader.screenshot({ path: `${OUT}/offline-1440.png` })
     await shoot(reader, 'offline', [[390, 'dark']])
     await narrow.close()

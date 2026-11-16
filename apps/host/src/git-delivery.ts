@@ -33,7 +33,7 @@ import { canonicalJson, redactKnownSecrets, sha256Hex } from '@latch/core/node-k
 import type { RESULT_CODES } from './audit-actions/git.ts'
 import { readGitLayout, type GitLayout } from './branch-reader.ts'
 import { GitError, GitReader, findGit, gitOperation } from './changes/git.ts'
-import { baseOfBranch, reachableCommit, readHistory, readTreeDiff, readTreeFile } from './changes/git-history.ts'
+import { aheadOfBase, baseOfBranch, reachableCommit, readHistory, readTreeDiff, readTreeFile } from './changes/git-history.ts'
 import {
   SelectionError,
   baseOf,
@@ -269,6 +269,22 @@ type Program = 'git' | 'gh'
 const refuse = (code: string, message: string, details?: Record<string, unknown>) => new AppError(409, code, message, details)
 const gitFailed = () => new AppError(500, 'git-failed', 'Git 没有完成读取，请稍后再试。')
 const existsElsewhere = () => new AppError(409, 'pr-exists-elsewhere', '这个分支已有打开的 PR，没有再建一个。在 GitHub 上查看它。')
+/** The pull request would merge nothing into its base. */
+const nothingAhead = (base: string) => refuse('pr-nothing-ahead', `这个分支没有 ${base} 之外的提交，没有可以合入的。`)
+
+/** When this repository last fetched (FETCH_HEAD's time, the newer of the worktree's and the common one); undefined if never. */
+async function lastFetch(gitdir: string, common: string): Promise<string | undefined> {
+  const times = await Promise.all(
+    [...new Set([gitdir, common])].map(dir =>
+      lstat(join(dir, 'FETCH_HEAD')).then(
+        info => (info.isFile() ? info.mtimeMs : undefined),
+        () => undefined,
+      ),
+    ),
+  )
+  const latest = Math.max(...times.filter((time): time is number => time !== undefined))
+  return Number.isFinite(latest) ? new Date(latest).toISOString() : undefined
+}
 const noRemote = () => new AppError(409, 'gh-no-remote', '推送的远端不是 GitHub 上的仓库。')
 const unknown = (details: Record<string, unknown> = {}) =>
   new AppError(504, 'git-result-unknown', '还不知道 Git 是否完成。用同一个请求重试会查看结果，不会再执行一次。', {
@@ -518,12 +534,18 @@ export class GitDelivery {
       } catch {
         remote = undefined
       }
+      const [base, fetchedAt] = await Promise.all([
+        status.head ? aheadOfBase(git, layout, status.head, remote) : undefined,
+        lastFetch(layout.gitdir, common),
+      ])
       return {
         ...(status.branch ? { branch: status.branch } : {}),
         ...(status.head ? { head: status.head } : {}),
         ...(status.upstream ? { upstream: status.upstream } : {}),
         ahead: status.ahead,
         behind: status.behind,
+        ...(fetchedAt ? { fetchedAt } : {}),
+        ...(base ? { base } : {}),
         staged: status.staged,
         unstaged: status.unstaged,
         untracked: status.untracked,
@@ -1572,8 +1594,14 @@ export class GitDelivery {
       const layout = await this.layout(caller.folder)
       const target = await this.pushRepo(layout, caller.sessionId)
       const git = this.git()
-      if (!(await git.commit(layout, `refs/remotes/${target.remote}/${target.branch}`).catch(() => undefined)))
-        throw refuse('pr-not-pushed', '这个分支还不在远端。先推送，再创建 PR。')
+      const pushed = await git.commit(layout, `refs/remotes/${target.remote}/${target.branch}`).catch(() => undefined)
+      if (!pushed) throw refuse('pr-not-pushed', '这个分支还不在远端。先推送，再创建 PR。')
+      // Nothing to merge: the branch is its base, or has no commit the base lacks (as far as this repository knows).
+      if (input.base === target.branch) throw nothingAhead(input.base)
+      const baseTip =
+        (await git.commit(layout, `refs/remotes/${target.remote}/${input.base}`).catch(() => undefined))
+        ?? (await git.commit(layout, `refs/heads/${input.base}`).catch(() => undefined))
+      if (baseTip && (await git.ahead(layout, baseTip, pushed).catch(() => undefined)) === 0) throw nothingAhead(input.base)
       return this.hold(caller, layout, 'pr', input.requestId, async running => {
         const request = { sessionId: caller.sessionId, requestHash: sha256Hex(input.requestId) }
         const where = { remoteHash: sha256Hex(target.remote), headHash: sha256Hex(target.branch) }

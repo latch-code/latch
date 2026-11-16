@@ -59,7 +59,7 @@ Host 不运行仓库里的程序，交付除外：读取与多数索引写入用
 
 | 用途 | 命令与规则 |
 | --- | --- |
-| 状态 | `status --porcelain=v2 -z --branch --untracked-files=all --no-renames --ignore-submodules=all`。比较工作区会运行 clean filter，所以配置里的每个 filter 驱动在这个进程里经环境的命令行配置置空（不改文件）：这类文件可能显示为已修改。子模块不列出。领先落后只用本地引用，不 fetch。 |
+| 状态 | `status --porcelain=v2 -z --branch --untracked-files=all --no-renames --ignore-submodules=all`。比较工作区会运行 clean filter，所以配置里的每个 filter 驱动在这个进程里经环境的命令行配置置空（不改文件）：这类文件可能显示为已修改。子模块不列出。领先落后只用本地引用，不 fetch：`fetchedAt` 是 `FETCH_HEAD` 的时间，落后数只作那时的数并与这个时间一起显示，没有它就不显示落后数，也不说已是最新。`base` 是 main 或 master（先远端的）与 HEAD 比它多的提交数，就在它上面时是 0。 |
 | 无 filter 驱动的仓库的暂存 | `add --pathspec-from-file=- --pathspec-file-nul` |
 | 取消暂存 | `reset --quiet --no-refresh --pathspec-from-file=- <HEAD>`；还没有提交时 `rm --cached --ignore-unmatch`。不碰也不比较工作区，filter 同样置空。 |
 | 按行暂存与取消暂存 | `hash-object -w --no-filters --stdin` 与 `update-index -z --index-info`；不运行 `git apply`，不经任何 filter，有没有 filter 驱动都在这里。 |
@@ -231,7 +231,7 @@ Git 会把换行转成 LF 的文件（`text`、`eol` 属性或 `core.autocrlf`�
 | --- | --- |
 | `git-hook-failed` | `pre-push` 没通过，带 `hook`、`exitCode`、`tail` |
 | `git-push-remote-rejected` | 远端钩子拒绝，带经脱敏的 `remote:` 行 `remoteLines`（最多 100 行） |
-| `git-push-non-fast-forward` | 远端有这里没有的提交 |
+| `git-push-non-fast-forward` | 远端有这里没有的提交；界面给出 `git pull` 与「在终端里打开」 |
 | `git-push-auth`、`git-push-host-key`、`git-push-unreachable` | 凭据、主机密钥、连不上 |
 | `git-push-failed` | 其余，带 `exitCode` |
 
@@ -332,10 +332,11 @@ PR 只做 GitHub，只经你的 `gh`（GitHub CLI）；其他平台尚未实现�
 请求 `{ requestId, title, body, base, draft? }`：标题一行、最多 256 个字符，基线是分支名，正文最多 64 KB，否则 400 `pr-input-invalid`。
 
 1. 分支还不在远端（没有 `refs/remotes/<远端>/<分支>`）：409 `pr-not-pushed`。
-2. `gh pr list --head=<分支> --state open`。这个分支在推送远端的仓库里有已开的 PR（不是分叉来的）就绑定它：复查、记审计 `git.pr.link`，回答 `linked`，不新建。它的基线存不进元数据（超过 256 个字符或有控制字符）时 409 `pr-exists-elsewhere`，同样不新建。
-3. 没有才复查、记审计 `git.pr.create`、写 `pending` 回执，再 `gh pr create --head=<分支> --base=<基线> --title=<标题> --body-file=<0600 文件> [--draft]`。
-4. 读出它打印的地址；地址不在推送远端的仓库里时不绑定，算结果未知。
-5. `gh` 说这个分支已有 PR 时再查一次，查到就绑定，查不到是 409 `pr-exists-elsewhere`。
+2. 基线就是这个分支，或推送远端的基线引用（没有时用本地的同名分支）已含这个分支的全部提交：409 `pr-nothing-ahead`，界面也不给「创建 PR」。
+3. `gh pr list --head=<分支> --state open`。这个分支在推送远端的仓库里有已开的 PR（不是分叉来的）就绑定它：复查、记审计 `git.pr.link`，回答 `linked`，不新建。它的基线存不进元数据（超过 256 个字符或有控制字符）时 409 `pr-exists-elsewhere`，同样不新建。
+4. 没有才复查、记审计 `git.pr.create`、写 `pending` 回执，再 `gh pr create --head=<分支> --base=<基线> --title=<标题> --body-file=<0600 文件> [--draft]`。
+5. 读出它打印的地址；地址不在推送远端的仓库里时不绑定，算结果未知。
+6. `gh` 说这个分支已有 PR 时再查一次，查到就绑定，查不到是 409 `pr-exists-elsewhere`。
 
 **回执。** 操作 `pr`，记下绑定的 PR。`gh pr create` 超时、答复里没有地址或连接中断是 504 `git-result-unknown`；同一请求重试先按分支查找，找到就是那一次建的（`replay`），找不到才再建。
 
@@ -361,7 +362,7 @@ PR 只做 GitHub，只经你的 `gh`（GitHub CLI）；其他平台尚未实现�
 | `gh-no-remote`（409） | 推送远端不在 GitHub，或 GitHub 上找不到这个仓库 |
 | `gh-unreachable`（502，超时 504）、`gh-failed`（502） | 连不上；其余失败或输出读不出 |
 | `pr-create-failed`（422） | 带经脱敏的 `gh` 输出最后 20 行、最多 4 KiB |
-| `pr-exists-elsewhere`、`pr-not-pushed`、`pr-input-invalid`、`pr-check-not-found` | 见上 |
+| `pr-exists-elsewhere`、`pr-not-pushed`、`pr-nothing-ahead`、`pr-input-invalid`、`pr-check-not-found` | 见上 |
 
 ## 验证
 

@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   AgentRecord,
   AppSnapshot,
+  Automation,
+  AutomationDetail,
   CustomAgent,
   CustomAgentList,
   ModelSpend,
@@ -410,44 +412,45 @@ describe('usage, prices and budgets in the Host', () => {
     const fake = await models([{ text: 'one' }, { text: 'two' }, { text: 'three' }])
     const { desktop, admin, service } = await host()
     const first = await service('First', `${fake.origin}/v1`)
-    const agent = await desktop.json<CustomAgent>('custom-agents', {
-      method: 'POST',
-      body: {
-        requestId: randomUUID(),
-        name: '资料整理',
-        description: '查资料',
-        harnessId: 'standard',
-        mode: 'chat',
-        model: { providerId: first.id, model: 'fake-model' },
-        instructions: 'x',
-        skills: [],
-      },
-    })
+    const makeAgent = (name: string) =>
+      desktop.json<CustomAgent>('custom-agents', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          name,
+          description: '查资料',
+          harnessId: 'standard',
+          mode: 'chat',
+          model: { providerId: first.id, model: 'fake-model' },
+          instructions: 'x',
+          skills: [],
+        },
+      })
+    const chat = async (agentId: string, prompt: string) => {
+      const { sessionId } = await desktop.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { customAgentId: agentId, prompt, requestId: randomUUID() },
+      })
+      await settled(desktop, sessionId)
+      return sessionId
+    }
+    const agent = await makeAgent('资料整理')
+    // Each Agent has one chat, which cannot be deleted while the Agent exists: the deleted one is a removed Agent's.
+    const left = await makeAgent('已删除')
     const plain = await start(admin, first.id)
     await settled(admin, plain)
-    const topic = (
-      await desktop.json<{ sessionId: string }>('tasks', {
-        method: 'POST',
-        body: { customAgentId: agent.id, prompt: 'private topic', requestId: randomUUID() },
-      })
-    ).sessionId
-    await settled(desktop, topic)
-    const gone = (
-      await desktop.json<{ sessionId: string }>('tasks', {
-        method: 'POST',
-        body: { customAgentId: agent.id, prompt: 'another private topic', requestId: randomUUID() },
-      })
-    ).sessionId
-    await settled(desktop, gone)
+    const topic = await chat(agent.id, 'private topic')
+    const gone = await chat(left.id, 'another private topic')
     await put(desktop, 'model-budgets', { scope: 'agent', id: agent.id, budget: { unit: 'tokens', limit: 1000 } })
     await put(admin, 'model-budgets', { scope: 'service', id: first.id, budget: { unit: 'tokens', limit: 1000 } })
+    await desktop.json(`custom-agents/${left.id}`, { method: 'DELETE', body: { requestId: randomUUID() } })
     // The private topic is deleted: no live session says it was private any more.
     expect((await desktop.request(`tasks/${gone}`, { method: 'DELETE' })).status).toBeLessThan(300)
     await desktop.json(`devices/${admin.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
     const limited = admin
     for (const group of ['session', 'agent', 'service', 'model']) {
       const text = JSON.stringify(await usage(limited, group))
-      for (const hidden of [topic, gone, agent.id]) expect(text, group).not.toContain(hidden)
+      for (const hidden of [topic, gone, agent.id, left.id]) expect(text, group).not.toContain(hidden)
     }
     // Its own session by name; the two private ones, the deleted one among them, in one row without a name.
     const sessions = (await usage(limited, 'session')).rows
@@ -464,7 +467,9 @@ describe('usage, prices and budgets in the Host', () => {
     const all = (await usage(desktop, 'session')).rows
     expect(all.find(row => row.sessionId === topic)).toMatchObject({ requests: 1 })
     expect(all.find(row => row.sessionId === gone)).toBeUndefined()
-    expect((await usage(desktop, 'agent')).rows.find(row => row.agentId === agent.id)).toMatchObject({ requests: 2 })
+    const agents = (await usage(desktop, 'agent')).rows
+    expect(agents.find(row => row.agentId === agent.id)).toMatchObject({ requests: 1 })
+    expect(agents.find(row => row.agentId === left.id)).toMatchObject({ requests: 1 })
   })
 
   it.each(['narrow', 'delete'] as const)(
@@ -778,7 +783,7 @@ describe('usage, prices and budgets in the Host', () => {
     }
   })
 
-  it('stops the first turn of a new Standard topic before asking either service when that Agent’s budget is used', async () => {
+  it('stops the first turn of an Agent’s Standard chat before asking either service when that Agent’s budget is used', async () => {
     const reply = { text: 'from the primary', usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }
     const a = await models([reply, reply, reply])
     const b = await models([{ text: 'fallback must not be asked' }])
@@ -813,7 +818,6 @@ describe('usage, prices and budgets in the Host', () => {
         method: 'POST',
         body: { requestId: randomUUID(), customAgentId: id, prompt: 'new topic' },
       })
-    const one = await newTopic(agent.id)
     const terminal = (id: string) =>
       vi.waitFor(
         async () => {
@@ -823,12 +827,29 @@ describe('usage, prices and budgets in the Host', () => {
         },
         { timeout: 6_000 },
       )
-    expect((await terminal(one.sessionId)).summary.status).toBe('idle')
+    // A run of its automation spends the Agent's budget without taking its one chat.
+    const plan = await desktop.json<Automation>('automations', {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        name: '整理',
+        customAgentId: agent.id,
+        prompt: 'scheduled',
+        schedule: { kind: 'daily', time: '09:00' },
+        notify: false,
+      },
+    })
+    await desktop.json(`automations/${plan.id}/run`, { method: 'POST', body: { requestId: randomUUID() } })
+    await vi.waitFor(
+      async () => expect((await desktop.json<AutomationDetail>(`automations/${plan.id}`)).automation.lastRun?.state).toBe('completed'),
+      { timeout: 8_000 },
+    )
+    const ran = (await desktop.json<AutomationDetail>(`automations/${plan.id}`)).automation.lastRun!.sessionId!
     const budgetOf = async (id: string) => (await desktop.json<ModelSpend>('model-spend')).budgets.find(item => item.id === id)
     expect(await budgetOf(agent.id)).toMatchObject({ scope: 'agent', used: 15, state: 'over' })
-    const [two, another, code] = await Promise.all([newTopic(agent.id), newTopic(other.id), start(admin, first.id)])
-    expect(one.sessionId).not.toBe(two.sessionId)
-    const [detail, otherDetail, codeDetail] = await Promise.all([terminal(two.sessionId), terminal(another.sessionId), terminal(code)])
+    // The chat's first turn is stopped; the other Agent's first turn and a Code session are not held by this budget.
+    const [one, another, code] = await Promise.all([newTopic(agent.id), newTopic(other.id), start(admin, first.id)])
+    const [detail, otherDetail, codeDetail] = await Promise.all([terminal(one.sessionId), terminal(another.sessionId), terminal(code)])
     expect(detail.summary).toMatchObject({ status: 'failed', agent: { customAgentId: agent.id } })
     expect(otherDetail.summary).toMatchObject({ status: 'idle', agent: { customAgentId: other.id } })
     expect(codeDetail.summary.status).toBe('idle')
@@ -838,6 +859,7 @@ describe('usage, prices and budgets in the Host', () => {
     expect(b.requests).toHaveLength(0)
     expect(await budgetOf(agent.id)).toMatchObject({ used: 15, state: 'over' })
     expect(await budgetOf(other.id)).toMatchObject({ used: 15 })
+    expect((await desktop.json<AppSnapshot>('snapshot')).agentChats?.[agent.id]).toEqual({ state: 'ready', sessionId: one.sessionId })
     await vi.waitFor(async () => {
       const lines = (await ledgerText(t))
         .trim()
@@ -845,8 +867,8 @@ describe('usage, prices and budgets in the Host', () => {
         .map(line => JSON.parse(line) as { sessionId: string })
       const record = (id: string) => lines.find(line => line.sessionId === id)
       expect(lines).toHaveLength(4)
-      expect(record(one.sessionId)).toMatchObject({ agentId: agent.id, attempts: 1, outcome: 'ok' })
-      expect(record(two.sessionId)).toMatchObject({ agentId: agent.id, attempts: 0, outcome: 'budget', fallback: false })
+      expect(record(ran)).toMatchObject({ agentId: agent.id, attempts: 1, outcome: 'ok' })
+      expect(record(one.sessionId)).toMatchObject({ agentId: agent.id, attempts: 0, outcome: 'budget', fallback: false })
       expect(record(another.sessionId)).toMatchObject({ agentId: other.id, attempts: 1, outcome: 'ok' })
       expect(record(code)).toMatchObject({ attempts: 1, outcome: 'ok' })
       expect(record(code)).not.toHaveProperty('agentId')

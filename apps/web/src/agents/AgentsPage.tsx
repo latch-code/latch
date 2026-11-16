@@ -28,6 +28,7 @@ import { AgentTopics } from './AgentTopics.tsx'
 import { GENERAL_NAME, readsAgents } from './model.ts'
 import { LockedAgents } from './parts.tsx'
 import { useAgentWrites } from './useAgentWrites.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 /**
  * The left of 我的 Agent on wide windows. 侧栏 layout: the sidebar's own top (the switch, 总览, 新建 Agent, 搜索, 定时任务),
@@ -143,7 +144,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
             {offline && (
               <span className="agents-offline">
                 <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-                Mac 不在线
+                {DEVICE_OFFLINE}
               </span>
             )}
           </div>,

@@ -17,6 +17,7 @@ import {
   type WriteFailure,
 } from './model.ts'
 import { fileHash, type SessionHandoffs } from './useHandoffs.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 /**
  * The target side, above the composer: once a handoff that expects a result has started here and the turn has ended,
@@ -183,7 +184,7 @@ export function TargetHandoffDock({ shell, handoffs }: { shell: ShellState; hand
               {failure.message}
             </InlineNotice>
           )}
-          {offline && <p className="handoff-offline">Mac 不在线 · 恢复后再交回</p>}
+          {offline && <p className="handoff-offline">{connection === 'offline' ? DEVICE_OFFLINE : 'Mac 不在线'} · 恢复后再交回</p>}
           <footer className="handoff-card-foot">
             <span className="handoff-spacer" />
             {unknown ? (

@@ -144,9 +144,14 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
     return amount
   }
 
-  // A fixed sequence: the still frame of a given size is the same every time.
-  let sequence = 7
-  const random = () => (sequence = (sequence * 16807) % 2147483647) / 2147483647
+  /**
+   * Particle `index` always draws the same numbers, whatever was seeded before it: the still frame of a given size is
+   * the same every time, also after the layer shrank and grew back.
+   */
+  const sequenceFor = (index: number) => {
+    let sequence = ((index + 1) * 48271) % 2147483647 || 7
+    return () => (sequence = (sequence * 16807) % 2147483647) / 2147483647
+  }
   /**
    * Sets the particles for the size the layer has now. The ones it had keep their place in proportion (a resized
    * window does not reshuffle its field); a larger area gets more from the same fixed sequence, a smaller one keeps
@@ -165,6 +170,7 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
       next[at + 1] = particles[at + 1]! * sy
     }
     for (let index = kept; index < count; index++) {
+      const random = sequenceFor(index)
       const depth = 0.35 + random() * 0.65
       const at = index * STRIDE
       next[at] = random() * width

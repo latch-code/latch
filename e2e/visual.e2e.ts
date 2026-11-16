@@ -889,13 +889,19 @@ describe('visual capture of the real product', () => {
   it('drives sessions into every state through the Host API', async () => {
     local = await testHost.enroll({ listener: 'unix', name: '本机桌面端' })
     // Full file/diff surfaces require explicit data access before any L3 session can block widening.
-    // The separate non-admin devices remain work-scoped for restricted file and settings captures.
+    // The separate non-admin devices are narrowed to work for restricted file and settings captures: a connected
+    // browser starts able to read project files.
+    for (const { page: target } of readOnlyPages.values()) {
+      const device = await target.evaluate(async () => ((await (await fetch('/link/api/snapshot')).json()) as AppSnapshot).device)
+      expect(device.dataScope).toBe('files')
+      await local.json(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
+    }
     for (const { page: target } of pages.values()) {
       const device = await target.evaluate(async () => {
         const snapshot: AppSnapshot = await (await fetch('/link/api/snapshot')).json()
         return snapshot.device
       })
-      expect(device.dataScope).toBe('work')
+      expect(device.dataScope).toBe('files')
       await local.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })
       expect(
         await target.evaluate(async () => {
@@ -1000,15 +1006,9 @@ describe('visual capture of the real product', () => {
 
     const hidden = await start(PROMPTS.hidden)
     await pendingApproval(hidden)
-    // The first approval joins the already failed session in Home's attention group; the live count changes from one to two.
-    await pages
-      .get('desktop')!
-      .page.locator('.workbench-home [data-group="attention"] .ui-count[data-shift]', { hasText: /^2$/u })
-      .waitFor({ state: 'attached' })
-    await pages
-      .get('tablet')!
-      .page.locator('.workbench-home [data-group="attention"] .ui-count[data-shift]', { hasText: /^2$/u })
-      .waitFor({ state: 'attached' })
+    // The first approval reaches Home live: the overview features it as the decision that waits.
+    for (const name of ['desktop', 'tablet'] as const)
+      await pages.get(name)!.page.locator(`.workbench-home [data-work-session="${hidden}"]`).waitFor({ state: 'attached' })
     const r2 = await start(PROMPTS.r2)
     await pendingApproval(r2)
     expect((await detail(r2)).approvals[0].risk).toBe('R2')

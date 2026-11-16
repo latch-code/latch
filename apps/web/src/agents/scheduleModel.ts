@@ -11,6 +11,7 @@ import type {
   Message,
 } from '@latch/protocol'
 import { worksIn } from './model.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 /** What the 定时 form edits. `location` is a project ID, or `default` for the owner's fixed home. */
 export interface ScheduleDraft {
@@ -175,7 +176,7 @@ export function scheduleBlock(input: {
   agent?: { available?: boolean; canAutomate: boolean; unavailableReason?: string } | undefined
   trigger?: 'schedule' | 'manual'
 }): string | undefined {
-  if (input.offline) return 'Mac 不在线，恢复后再改'
+  if (input.offline) return `${DEVICE_OFFLINE}，恢复后再改`
   if (!input.canRun) return '这台设备只能查看定时任务：它没有开始会话的权限。'
   if (input.agent?.available === false || input.agent?.unavailableReason) return input.agent.unavailableReason ?? '这个 Agent 现在不可用。'
   if (input.trigger !== 'manual' && input.agent && !input.agent.canAutomate) return '这个 Agent 不能后台运行，可保存后点「立即运行」。'

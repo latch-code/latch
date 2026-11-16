@@ -160,8 +160,11 @@ describe('logging in to a Harness from a browser', () => {
     await page.getByRole('dialog').getByRole('button', { name: '取消' }).click()
     expect(existsSync(loginFile)).toBe(true)
     await group.getByRole('button', { name: '退出登录' }).click()
-    await page.getByRole('dialog').getByText('有会话正在运行时不能退出', { exact: false }).waitFor()
-    await page.getByRole('dialog').getByRole('button', { name: '退出登录' }).click()
+    // The confirmation is its own dialog over 设置; the row's button under it is inert while it is open.
+    const confirm = page.getByRole('dialog', { name: '退出登录', exact: true })
+    await confirm.getByText('有会话正在运行时不能退出', { exact: false }).waitFor()
+    expect(await confirm.evaluate(element => element.matches(':modal'))).toBe(true)
+    await confirm.getByRole('button', { name: '退出登录' }).click()
     await group.getByText('已退出登录', { exact: true }).waitFor()
     await group.getByText('codex login', { exact: true }).waitFor()
     expect(existsSync(loginFile)).toBe(false)

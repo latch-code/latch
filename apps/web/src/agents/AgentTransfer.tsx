@@ -15,6 +15,7 @@ import { WriteNotice } from './AgentForm.tsx'
 import { scheduleWords } from './model.ts'
 import { exportFileName, fileMemoryWords, readAgentFileText } from './transfer.ts'
 import { writeFor, type AgentWrites, type WriteState } from './useAgentWrites.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 const failure = (error: unknown, fallback: string) => (error instanceof ApiError ? error.message : fallback)
 
@@ -104,7 +105,7 @@ export function AgentExport({ agent, offline }: { agent: Pick<CustomAgent, 'id' 
             icon={DownloadGlyph}
             loading={state.phase === 'reading'}
             disabled={offline || state.phase === 'reading'}
-            title={offline ? 'Mac 不在线' : undefined}
+            title={offline ? DEVICE_OFFLINE : undefined}
             onClick={() => void look()}>
             导出
           </Button>
@@ -217,7 +218,7 @@ export function AgentImport({
       <Button
         variant={chosen.phase === 'shown' ? 'secondary' : 'primary'}
         disabled={offline || chosen.phase === 'reading' || saving || writes.held}
-        title={offline ? 'Mac 不在线' : undefined}
+        title={offline ? DEVICE_OFFLINE : undefined}
         onClick={() => input.current?.click()}>
         {chosen.phase === 'shown' ? '换一个文件' : '选择文件'}
       </Button>
@@ -386,7 +387,7 @@ export function ImportPreview({
           variant="primary"
           loading={saving}
           disabled={blocked || saving || !preview.harness.ready}
-          title={offline ? 'Mac 不在线' : undefined}
+          title={offline ? DEVICE_OFFLINE : undefined}
           onClick={onImport}>
           导入
         </Button>

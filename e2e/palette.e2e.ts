@@ -345,6 +345,19 @@ it.each([
 
       // The find bar floats: opening it leaves the conversation's lane where it was.
       const content = page.locator('.transcript-content')
+      // The lane widens back as the changes panel closes: measure once it has stopped moving.
+      let last = ''
+      await expect
+        .poll(
+          async () => {
+            const now = JSON.stringify(await content.boundingBox())
+            const same = now === last
+            last = now
+            return same
+          },
+          { interval: 150 },
+        )
+        .toBe(true)
       const before = await content.boundingBox()
       await page.keyboard.press('Meta+f')
       const find = page.getByRole('search', { name: '会话内查找' })

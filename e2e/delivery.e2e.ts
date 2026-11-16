@@ -74,6 +74,8 @@ async function openBrowser(
   const id = devices.devices.find(item => item.name === name)!.id
   if (options.dataScope === 'all')
     expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+  // A connected browser starts able to read project files: narrowed for the case of a device that cannot.
+  else expect((await owner.request(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
   await page.reload()
   await choose(page, sessionId)
   return { context, page }
@@ -260,7 +262,9 @@ touch '${control}/commit-ran'`,
     await primary.click()
     await panel.getByText('已设为上游', { exact: false }).waitFor()
     expect(git(remote, 'rev-parse', 'main')).toBe(git(repo, 'rev-parse', 'HEAD'))
-    await panel.getByText('已是最新').waitFor()
+    // Nothing fetched yet: the branch is pushed, and no behind count claims it is up to date.
+    await panel.getByText('已推送', { exact: true }).waitFor()
+    expect(await panel.getByText('已是最新').count()).toBe(0)
     await shots(page, 'pushed')
 
     // The remote's own hook refuses: its lines, and nothing else of the output.
@@ -377,6 +381,30 @@ touch '${control}/commit-ran'`,
     // And a file of 交付 opens its diff in 未提交.
     await panel.getByRole('button', { name: 'later.txt', exact: true }).click()
     await page.locator('.changes-panel').filter({ visible: true }).locator('.diff-add', { hasText: 'later' }).waitFor()
+
+    // Someone else pushed meanwhile: the push is refused as not a fast-forward, with the pull to run next.
+    const other = join(scratch, 'other')
+    git(scratch, 'clone', '-q', remote, other)
+    git(other, 'config', 'user.name', 'Other')
+    git(other, 'config', 'user.email', 'other@example.invalid')
+    git(other, 'commit', '-q', '--allow-empty', '-m', 'from elsewhere')
+    git(other, 'push', '-q', 'origin', 'main')
+    git(repo, 'add', 'later.txt')
+    git(repo, 'commit', '-q', '-m', 'later')
+    const back = await openDelivery(page)
+    await comeBack(page)
+    const pushNow = back.locator('.delivery-foot .ui-button[data-variant="primary"]')
+    await expect.poll(() => pushNow.innerText(), SLOW).toBe('推送 1 个提交')
+    await pushNow.click()
+    const nonFast = back.locator('.delivery-line', { hasText: '远端有你没有的提交' })
+    await nonFast.waitFor(SLOW)
+    expect(await nonFast.locator('.delivery-command code').innerText()).toBe('git pull')
+    await nonFast.getByRole('button', { name: '复制拉取命令', exact: true }).waitFor()
+    // Your Git's fetch gives the behind count its time.
+    git(repo, 'fetch', '-q', 'origin')
+    await comeBack(page)
+    await back.getByText('领先 1 · 落后 1 · 刚刚拉取', { exact: true }).waitFor(SLOW)
+    await shots(page, 'non-fast-forward')
 
     for (const item of [desk, phone, locked]) await item.context.close()
   } finally {

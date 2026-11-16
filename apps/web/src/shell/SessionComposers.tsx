@@ -18,6 +18,7 @@ import {
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, computerName } from '../core/securityCopy.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 import { projectOf } from '../sessions.ts'
 import { seedWaiting } from '../history/model.ts'
 import { basename } from '../format.ts'
@@ -476,7 +477,7 @@ export function SessionComposer({
         key={`queue:${selectedId}`}
         sessionId={selectedId}
         items={current.queue}
-        canSend={gate.kind === 'open' && sessionBlock === undefined && !submission.pending}
+        canSend={gate.kind === 'open' && sessionBlock === undefined && !submission.pending && shell.connection !== 'offline'}
         canRemove={access.scopes.has('run')}
         onChanged={refresh}
       />
@@ -500,6 +501,8 @@ export function SessionComposer({
   const sideQuestion = sideOffered && !sideRefusal ? sideQuestionOf(submission.draft) : undefined
   // `/btw …` where it is not available stays in the input with the reason; it never goes to the Harness.
   const sideBlocked = sideQuestionBlock(submission.draft, sideOffered, sideRefusal)
+  // No network on this device: the text stays a draft, and Enter obeys the same gate as the button.
+  const offline = shell.connection === 'offline'
   const answer = asked
     ? answersQuestion
       ? {
@@ -598,7 +601,7 @@ export function SessionComposer({
             void sendDraft()
           })
         : {})}
-      pendingReason={submission.pendingReason}
+      pendingReason={offline ? DEVICE_OFFLINE : submission.pendingReason}
       onRetry={() => {
         void retryDraft()
       }}
@@ -611,9 +614,13 @@ export function SessionComposer({
         pendingQueued === 'waiting' ? '队列里有同样的一条在等待' : pendingQueued === 'parked' ? '队列里有同样的一条已暂停' : undefined
       }
       canSend={
-        gate.kind === 'open' && (selectedId === null ? block === null : sessionBlock === undefined) && !sideBlocked && !permissionBlocked
+        !offline
+        && gate.kind === 'open'
+        && (selectedId === null ? block === null : sessionBlock === undefined)
+        && !sideBlocked
+        && !permissionBlocked
       }
-      blockReason={block?.message ?? sessionBlock ?? sideBlocked}
+      blockReason={offline ? DEVICE_OFFLINE : (block?.message ?? sessionBlock ?? sideBlocked)}
       readOnly={
         gate.kind === 'read-only'
           ? gate.text

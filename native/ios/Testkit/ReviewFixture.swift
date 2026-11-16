@@ -120,6 +120,7 @@ func phoneReviewFixture(_ input: [String: Any]) throws -> [String: Any] {
             "primary": [PhoneDelivery.primary(git, justCommitted: false)?.label ?? "", PhoneDelivery.primary(committedGit, justCommitted: false)?.label ?? "",
                         PhoneDelivery.primary(committedGit, justCommitted: true)?.label ?? "", PhoneDelivery.primary(PhoneGitState(value["gitUnstaged"])!, justCommitted: false)?.label ?? ""],
             "stageAll": PhoneGitState(value["gitUnstaged"])!.stageAllPaths,
+            "aheadBehind": [git.aheadBehind, committedGit.aheadBehind, PhoneGitState(value["gitFetched"])!.aheadBehind],
             "foot": [PhoneDelivery.footNote(git) ?? "", PhoneDelivery.footNote(committedGit) ?? ""],
             "copy": ["git-turn-running", "git-operation-in-progress", "host-updating", "file-scope"].map { PhoneDelivery.copy($0, operation: "rebase")?.label ?? "" },
             "excerpt": PhoneDelivery.hookExcerpt(hook: "pre-commit", exitCode: 1, tail: (1...90).map { "line \($0)" }.joined(separator: "\n") + "\n```\n", push: false),

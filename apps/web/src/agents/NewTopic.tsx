@@ -11,6 +11,7 @@ import { useMounted } from '../hooks/useMounted.ts'
 import { useAttachments } from '../hooks/useAttachments.ts'
 import { projectFolders, projectName } from '../projects.tsx'
 import { CODE_ROOT_COPY } from '../core/securityCopy.ts'
+import { DEVICE_OFFLINE } from '../core/hostState.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { generalSubmission, newTopicShowing, personalChat } from './chat.ts'
 import { agentHarnesses, agentSessions, delegationChoice, delegationSubmission, generalChoice } from './model.ts'
@@ -164,6 +165,14 @@ export function NewTopic({
     revision: JSON.stringify([harness?.status, harness?.attachmentsReported ?? null]),
     locked,
   })
+  // Back online with this Agent's first message unconfirmed: the same request goes once, and the Host answers it from
+  // the chat it recorded if it took the first.
+  const wasOffline = useRef(offline)
+  useEffect(() => {
+    const back = wasOffline.current && !offline
+    wasOffline.current = offline
+    if (back && mine && !delegation.sending) void delegation.retry()
+  }, [offline])
   useEffect(() => {
     if (refused?.code === 'attachment-released' && attachments.items.some(item => item.ref && item.status !== 'refused'))
       attachments.markReleased('已在 设置 › 设备 里释放，请移除后重新添加。')
@@ -176,7 +185,7 @@ export function NewTopic({
   const available = agent ? agent.available : generalBlock === null
   const canStart = chat?.state === 'empty' && !offline && available && harness !== undefined && access.scopes.has('run')
   const blockReason = offline
-    ? 'Mac 不在线，恢复后再发'
+    ? DEVICE_OFFLINE
     : !access.scopes.has('run')
       ? '这台设备不能开始会话'
       : catalog.features?.singleAgentChat !== true

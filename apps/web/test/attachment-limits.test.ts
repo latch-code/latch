@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { attachmentBlock } from '../src/composer/AttachmentDrafts.tsx'
 import { ApiError } from '../src/core/api.ts'
-import { attachmentLimits, refusedUpload, type AttachmentDraftController } from '../src/hooks/useAttachments.ts'
+import { addRefusal, attachmentLimits, refusedUpload, type AttachmentDraftController } from '../src/hooks/useAttachments.ts'
 
 const controller = (patch: Partial<AttachmentDraftController>) => ({ checking: false, ...patch }) as AttachmentDraftController
 
@@ -23,6 +23,18 @@ describe('what the attach button says before anything is uploaded', () => {
     ).toBe('这个 Harness 不接收图片和文件。')
     expect(attachmentBlock(controller({ checking: true }))).toContain('正在确认')
     expect(attachmentBlock(controller({ checking: false }))).toBe('暂时不能添加文件。')
+  })
+  it('says a Harness that takes no attachments takes none, not that a small file is too large', () => {
+    const png = { name: 'a.png', size: 70 }
+    expect(addRefusal(png, { images: false, text: false, textBytes: 0 })).toBe('这个 Harness 不接收附件。')
+    expect(addRefusal(png, { images: false, text: false, textBytes: 0, reason: '这个 Harness 不接收图片和文件。' })).toBe(
+      '这个 Harness 不接收图片和文件。',
+    )
+    expect(addRefusal(png, { images: true, text: false, textBytes: 0 })).toBeUndefined()
+    expect(addRefusal({ name: 'big.txt', size: 2048 }, { images: false, text: true, textBytes: 1024 })).toBe(
+      '「big.txt」超过 1 KB，没有添加。可以添加：文字文件 1 KB 内 · 每条 8 个。',
+    )
+    expect(addRefusal({ name: 'empty', size: 0 }, undefined)).toBe('空文件不能添加。')
   })
   it('offers a retry by the refusal’s code, not its status', () => {
     expect(refusedUpload(new ApiError(415, 'attachment-type-unsupported', ''))).toBe(true)

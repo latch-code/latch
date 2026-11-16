@@ -88,14 +88,27 @@ export async function backToPhoneSessions(page: Page): Promise<void> {
     .getByRole('button', { name: /^(返回会话列表|返回总览)$/u })
     .filter({ visible: true })
   if ((await back.count()) > 0) await back.click()
+  await leaveHomeFocus(page)
   if (await page.locator('.workbench-home').isVisible())
-    await page.getByRole('navigation', { name: '会话导航', exact: true }).getByRole('button', { name: '全部会话', exact: true }).click()
+    // 全部会话 is in the workbench's own navigation, above the overview.
+    await page.getByRole('button', { name: '全部会话', exact: true }).filter({ visible: true }).first().click()
   await page.locator('.phone-list:not([inert])').waitFor()
   await settleShell(page)
 }
 
+/**
+ * Writing in Home's input puts it in focus over the navigation (DESIGN.md「首页专注输入」), as a person sees it: 退出专注
+ * leaves it with the draft kept.
+ */
+export async function leaveHomeFocus(page: Page): Promise<void> {
+  if ((await page.locator('.app-shell[data-home-focus]').count()) === 0) return
+  await page.getByRole('button', { name: '退出专注', exact: true }).click()
+  await page.locator('.app-shell[data-home-focus]').waitFor({ state: 'detached' })
+}
+
 /** Opens an exact Host session through the visible history, project tree or tablet drawer. */
 export async function openSession(page: Page, sessionId: string): Promise<void> {
+  await leaveHomeFocus(page)
   if ((await page.locator('.phone-tabs').count()) > 0) {
     if ((await page.locator('.app-shell').getAttribute('data-entry')) !== 'sessions')
       await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
@@ -151,6 +164,7 @@ export async function openEntry(page: Page, name: string): Promise<void> {
     return
   }
   if (await settingsPage(page).isVisible()) return
+  await leaveHomeFocus(page)
   await settleShell(page)
   if (!(await entryButton(page, name).isVisible())) {
     if (await isPhone(page)) await backToPhoneSessions(page)

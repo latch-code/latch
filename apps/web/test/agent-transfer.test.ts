@@ -173,7 +173,7 @@ describe('导出 in an Agent’s settings', () => {
     expect(html.match(/<button/gu)!.length).toBeGreaterThanOrEqual(1)
     const offline = renderToStaticMarkup(createElement(AgentExport, { agent: { id: 'agt_1', name: '资料' }, offline: true }))
     expect(offline).toContain('disabled')
-    expect(offline).toContain('Mac 不在线')
+    expect(offline).toContain('这台设备没有联网')
   })
 })
 
