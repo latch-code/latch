@@ -210,6 +210,11 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
     if (stale) setShowPrompt(true)
   }, [stale])
   const promptShown = todo && (showPrompt || stale)
+  // With one session its row says where things stand; the head says it only for what the row cannot (done).
+  const headState = state && !(sessions.length === 1 && unlisted === 0 && item.board.group !== 'done') ? state : undefined
+  const canFinish = !todo && onDone !== undefined && item.board.reason === 'settled'
+  // 完成 alone sits on the project's line, so it adds no row of its own; a write's state takes the foot as before.
+  const floatFoot = canFinish && (!write || write.state === 'sending')
   return (
     <article
       className="work-board-card"
@@ -217,7 +222,8 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
       data-work-item={item.id}
       data-marked={marked ? '' : undefined}
       data-tone={state?.tone}
-      data-busy={busy ? '' : undefined}>
+      data-busy={busy ? '' : undefined}
+      data-float-foot={floatFoot ? '' : undefined}>
       <button
         type="button"
         className="work-board-card-main"
@@ -241,9 +247,9 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
           </span>
           {todo && item.worktree === 'new' && <span className="work-board-item-hint">新工作树</span>}
         </span>
-        {state && (
-          <StatusWord className="work-board-card-state" tone={state.tone}>
-            {state.words}
+        {headState && (
+          <StatusWord className="work-board-card-state" tone={headState.tone}>
+            {headState.words}
           </StatusWord>
         )}
         {item.tags?.length ? <TagChips tags={item.tags} /> : null}
@@ -264,8 +270,8 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
         </ul>
       )}
       {decision && <div className="work-board-item-decision">{decision}</div>}
-      {(write || todo || (onDone && item.board.reason === 'settled')) && (
-        <div className="work-board-item-foot">
+      {(write || todo || canFinish) && (
+        <div className="work-board-item-foot" data-float={floatFoot ? '' : undefined}>
           {todo && (
             <button
               type="button"
@@ -299,7 +305,7 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
               开始
             </Button>
           )}
-          {!todo && onDone && item.board.reason === 'settled' && (busy || !blocked) && (
+          {canFinish && (busy || !blocked) && (
             <Button
               size="xs"
               variant="outline"

@@ -51,7 +51,7 @@ function Row({
           onOpen(task.id)
         }}>
         <span className="work-board-row-title">
-          <PriorityMark task={task} />
+          <PriorityMark task={task} reserve />
           <span className="work-board-card-title">{title}</span>
           <TagChips tags={task.tags} />
         </span>
@@ -151,7 +151,7 @@ function ItemRow({
             onOpenItem(item)
           }}>
           <span className="work-board-row-title">
-            <PriorityMark task={item} />
+            <PriorityMark task={item} reserve />
             <Icon icon={ListTodo} size={14} className="work-board-item-glyph" />
             <span className="work-board-card-title">{title}</span>
             {sessions.length > 1 && <span className="work-board-row-count">{sessions.length}</span>}

@@ -582,12 +582,36 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--sp-6);
-  min-height: 32px;
+  /* One xs button tall: the card ends 8px under it, as under its other rows. */
+  min-height: 24px;
   padding: 0 var(--sp-8) var(--sp-8) var(--sp-8);
 }
-.work-board-item-prompt + .work-board-item-foot,
-.work-board-item-sessions + .work-board-item-foot {
-  padding-top: var(--sp-2);
+/* 完成 alone: on the right of the project's line, so the card grows no row for one button. */
+.work-board-item-foot[data-float] {
+  position: absolute;
+  top: calc(var(--sp-10) + var(--lh-ui) + var(--sp-4) + var(--lh-caption) / 2 - 12px);
+  right: var(--sp-8);
+  min-height: 0;
+  padding: 0;
+}
+.work-board-card[data-float-foot] .work-board-card-place {
+  padding-inline-end: var(--sp-48);
+}
+/* A refusal takes a line of its own above the buttons, whole; nothing else on the card moves. */
+.work-board-item-foot:has(> .work-board-item-write[data-state='refused']) {
+  flex-wrap: wrap;
+  row-gap: var(--sp-4);
+}
+.work-board-item-write[data-state='refused'] {
+  flex: 1 0 100%;
+  order: -1;
+  align-items: flex-start;
+}
+.work-board-item-write[data-state='refused'] > :first-child {
+  flex: 1 1 auto;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .work-board-item-write {
   display: inline-flex;

@@ -55,9 +55,10 @@ export function cardState(
 }
 
 /** 高 a filled dot, 低 a hollow one; 中 draws nothing. */
-export function PriorityMark({ task }: { task: Pick<TaskSummary, 'priority'> }) {
+/** `reserve`: 中 keeps the mark's slot empty, so titles in a list line up whatever their priority. */
+export function PriorityMark({ task, reserve = false }: { task: Pick<TaskSummary, 'priority'>; reserve?: boolean }) {
   const priority = priorityOf(task)
-  if (priority === 'mid') return null
+  if (priority === 'mid') return reserve ? <span className="work-board-priority" aria-hidden="true" /> : null
   return <span className="work-board-priority" data-priority={priority} role="img" aria-label={`优先级${PRIORITY_LABELS[priority]}`} />
 }
 
