@@ -128,7 +128,7 @@ describe('session search and workbench navigation', () => {
       await host.close()
     }
   })
-  it('filters abbreviated model names, remembers choices, hides models locally and says what the gateway did not meter', async () => {
+  it('filters abbreviated model names, remembers choices, hides models locally and shows what the gateway did not meter as reported', async () => {
     const plugin: HarnessPlugin = {
       id: 'workflow-models',
       description: '只在测试中提供模型和计数。',
@@ -166,16 +166,20 @@ describe('session search and workbench navigation', () => {
       await visible.click()
       expect(await visible.getAttribute('aria-checked')).toBe('false')
       await closeSettings(settings)
-      // 额度与用量 counts what went through Latch's gateway; a plugin's own provider is not metered there, and the view
-      // says so plainly rather than drawing zeros. It is reached by its shortcut, over a chosen period.
+      // 额度与用量: a plugin's own provider is not metered by the gateway, so what its messages reported stands in its own
+      // group, tokens only; the gateway's part says plainly it saw nothing. Reached by its shortcut, over a chosen period.
       await page.keyboard.press('Alt+Shift+U')
       const usage = page.getByRole('dialog', { name: '额度与用量', exact: true })
       await usage.getByRole('radio', { name: '用量', exact: true }).click()
       await usage.getByText('这个期间还没有经 Latch 的请求', { exact: true }).waitFor()
-      expect(await usage.locator('.usage-total').count()).toBe(0)
+      const reported = usage.getByRole('region', { name: 'Harness 自己报告', exact: true })
+      await reported.getByRole('rowheader', { name: /^测试模型/u }).waitFor()
+      expect(await reported.textContent()).toContain('168')
+      expect(await reported.textContent()).not.toMatch(/[$¥]/u)
       await usage.getByRole('button', { name: /^统计期间：/u }).click()
       await page.getByRole('menuitemradio', { name: '30 天', exact: true }).click()
       await usage.getByRole('button', { name: '统计期间：30 天', exact: true }).waitFor()
+      await reported.getByRole('rowheader', { name: /^测试模型/u }).waitFor()
       await page.screenshot({ path: 'test-results/workflow-model-usage.png', fullPage: true })
       await page.keyboard.press('Escape')
       await usage.waitFor({ state: 'hidden' })

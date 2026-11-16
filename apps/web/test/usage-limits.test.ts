@@ -67,9 +67,11 @@ describe('one limit window', () => {
     }
   })
 
-  it('says the state in words where the source gave no figure, with no bar to read', () => {
+  it('says the state and reset time in one line where the source gave no figure, with no bar to read', () => {
     const markup = window({ key: 'w', name: '5 小时', state: 'near', status: '将用尽', reset: '2 小时后重置' })
-    expect(text(markup)).toBe('5 小时 将用尽 2 小时后重置')
+    // One line: the name, then the state and when it resets.
+    expect(text(markup)).toBe('5 小时 将用尽 · 2 小时后重置')
+    expect(markup).toContain('data-words=""')
     expect(markup).not.toContain('role="meter"')
     expect(markup).not.toContain('%')
   })
@@ -160,7 +162,10 @@ describe('what a Harness reports beside its windows', () => {
       observedAt,
     }
     expect(harnessLimits(grouped, NOW)!.windows.map(item => item.group)).toEqual(['Gemini 模型', 'Claude 与 GPT 模型'])
-    expect(harnessLimits({ ...ok, balanceCents: 1234 }, NOW)!.facts).toEqual(['Plus', 'n•••@f•••.com', '余额 $12.34'])
+    expect(harnessLimits({ ...ok, balanceCents: 1234 }, NOW)).toMatchObject({
+      facts: ['Plus', 'n•••@f•••.com', '余额 $12.34'],
+      who: 'n•••@f•••.com',
+    })
     expect(harnessLimits({ ...ok, plan: 'supergrok', balanceCents: 0 }, NOW)!.facts).toEqual(['SuperGrok', 'n•••@f•••.com'])
   })
 })

@@ -381,7 +381,7 @@ describe('model and usage settings reads', () => {
       await row.waitFor()
       const landed = (await usage.locator('.usage-total').boundingBox())!
       expect([landed.x, landed.y]).toEqual([held.x, held.y])
-      const surfaceBox = await usage.locator('.ui-dialog-surface').boundingBox()
+      const top = (await usage.locator('.ui-modal-surface').boundingBox())!.y
 
       const pendingModel = await holdRead(page, 'model-usage')
       holds.push(pendingModel)
@@ -389,8 +389,8 @@ describe('model and usage settings reads', () => {
       await pendingModel.wait()
       expect(await row.count()).toBe(0)
       await usage.locator('.usage-skeleton').waitFor()
-      // The surface keeps its size whatever it shows.
-      expect(await usage.locator('.ui-dialog-surface').boundingBox()).toEqual(surfaceBox)
+      // The surface keeps its top edge whatever it shows: only its bottom moves.
+      expect((await usage.locator('.ui-modal-surface').boundingBox())!.y).toBe(top)
 
       const pendingService = await holdRead(page, 'model-usage')
       holds.push(pendingService)

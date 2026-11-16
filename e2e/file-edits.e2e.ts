@@ -195,9 +195,7 @@ describe('editing a file from its preview', () => {
         await editor.getByRole('button', { name: '取消', exact: true }).click()
         await page.getByRole('button', { name: '放弃', exact: true }).waitFor()
         await page.screenshot({ path: `${OUT}/discard-${width}-${theme}.png`, animations: 'disabled' })
-        // A phone asks in a sheet, closed by its close button; a wider window in a dialog with 取消.
-        if (width < 768) await page.locator('dialog.ui-sheet[open] .ui-sheet-close').last().click()
-        else await page.getByRole('button', { name: '取消', exact: true }).last().click()
+        await page.getByRole('button', { name: '取消', exact: true }).last().click()
         expect(await area.inputValue()).toBe(`alpha\nbeta\n${width}\n`)
         await save.click()
         await preview.getByText(String(width), { exact: true }).waitFor()

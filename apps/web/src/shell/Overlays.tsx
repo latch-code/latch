@@ -131,7 +131,12 @@ export function Overlays({ shell }: { shell: ShellState }) {
   return (
     <>
       {commandOpen && <ShellPalette shell={shell} />}
-      <UsageSurface snapshot={snapshot} access={access} offline={shell.connection === 'offline' || shell.connection === 'reconnecting'} />
+      <UsageSurface
+        snapshot={snapshot}
+        access={access}
+        phone={shell.phone}
+        offline={shell.connection === 'offline' || shell.connection === 'reconnecting'}
+      />
       {snapshot.catalog?.features?.terminal === true && <LoginTerminalDialog />}
       {snapshot.catalog?.features?.terminal === true && <FillTerminalDialog {...detachedWorkspace(snapshot.catalog)} />}
       {shortcutsOpen && (

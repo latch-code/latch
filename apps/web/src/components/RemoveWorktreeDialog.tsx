@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { WorktreeInventory, WorktreeRemoval } from '@latch/protocol'
-import { Button, Checkbox, Hint, InlineNotice, Modal, ModalHeader, Sheet, Spinner, StatusWord } from '@latch/ui'
+import { Button, Checkbox, Hint, InlineNotice, Modal, ModalHeader, Spinner, StatusWord } from '@latch/ui'
 import { ApiError, api, errorMessage, isUncertain, newRequestId } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { useViewport } from '../breakpoints.ts'
@@ -270,14 +270,9 @@ export function RemoveWorktreeDialog({
       {uncertain ? '重试同一请求' : '移除工作树'}
     </Button>
   )
-  if (phone)
-    return (
-      <Sheet open title={heading} className="confirm-dialog" onClose={close} action={action}>
-        <div className="ui-sheet-dialog-body">{body}</div>
-      </Sheet>
-    )
+  // A phone shows the same modal as a sheet: the answers stay in the footer; its close button only dismisses.
   return (
-    <Modal label={heading} variant="dialog" onClose={close} className="confirm-dialog">
+    <Modal label={heading} variant={phone ? 'sheet' : 'dialog'} dismissible={!busy} onClose={close} className="confirm-dialog">
       <ModalHeader title={heading} onClose={close} />
       <div className="ui-modal-body">{body}</div>
       <footer className="ui-modal-footer">

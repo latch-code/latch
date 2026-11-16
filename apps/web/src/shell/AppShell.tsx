@@ -391,7 +391,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         onSchedules={
                           catalog?.features?.automations ? () => shell.openMyAgent({ id: 'general', tab: 'schedules' }) : undefined
                         }
-                        computer={!triage && viewport !== 'tablet' && access.scopes.has('view') ? <UsageEntry appearance="row" /> : undefined}
+                        computer={
+                          !triage && viewport !== 'tablet' && access.scopes.has('view') ? <UsageEntry appearance="row" /> : undefined
+                        }
                         snapshot={listed}
                         archiveBatch={archiveBatch}
                         archiveUndo={archiveUndo}

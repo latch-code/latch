@@ -727,7 +727,7 @@ describe('visual capture of the real product', () => {
     await target.keyboard.press('Escape')
     await rowMenu.waitFor({ state: 'hidden' })
 
-    // Its 重命名 and 删除 ask in sheets of their own: close · the question · the action.
+    // Its 重命名 and 删除 ask in sheets of their own: the question, then 取消 and the action in the footer.
     for (const [surface, item, dialog, action, description] of [
       ['navigation-rename', '重命名', '重命名会话', '保存', 'renaming a session from its row'],
       ['navigation-delete', '删除', '删除会话', '删除', 'the confirmation before a session is deleted'],
@@ -737,12 +737,12 @@ describe('visual capture of the real product', () => {
       await rowMenu.getByRole('menuitem', { name: item, exact: true }).click()
       const ask = target.getByRole('dialog', { name: dialog, exact: true })
       await ask.waitFor()
-      await reachable(ask.getByRole('button', { name: '关闭', exact: true }))
+      await reachable(ask.getByRole('button', { name: '取消', exact: true }))
       await reachable(ask.getByRole('button', { name: action, exact: true }), { allowDisabled: true })
       await settleMotion(target)
       await scrollList('top')
       await recorder.capture(target, viewport, surface, description)
-      await ask.getByRole('button', { name: '关闭', exact: true }).click()
+      await ask.getByRole('button', { name: '取消', exact: true }).click()
       await ask.waitFor({ state: 'hidden' })
     }
     expect((await detail(sessions.unread)).summary.title).toBe(title)

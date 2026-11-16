@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState } from 'react'
-import { ICON_STROKE, IconButton, TerminalGlyph } from '@latch/ui'
+import { ICON_STROKE, IconButton, TerminalGlyph, Tooltip } from '@latch/ui'
 import { fillRefusal } from '../panel/terminal/fill.ts'
 import { DetachedPlace, terminalFills, useFillPlace } from '../panel/terminal/fills.ts'
 
@@ -66,16 +66,17 @@ export function TerminalFillButton({
   return (
     <span className="terminal-fill" data-look={look}>
       {look === 'code' ? (
-        <button
-          type="button"
-          className="message-code-copy message-code-fill"
-          aria-label={LABEL}
-          aria-disabled={disabled || undefined}
-          aria-description={refusal}
-          title={tooltip}
-          onClick={() => void fill()}>
-          <TerminalGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-        </button>
+        <Tooltip content={tooltip} describe={false}>
+          <button
+            type="button"
+            className="message-code-copy message-code-fill"
+            aria-label={LABEL}
+            aria-disabled={disabled || undefined}
+            aria-description={refusal}
+            onClick={() => void fill()}>
+            <TerminalGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+          </button>
+        </Tooltip>
       ) : (
         <IconButton size="xs" icon={TerminalGlyph} label={LABEL} tooltip={tooltip} disabled={disabled} onClick={() => void fill()} />
       )}

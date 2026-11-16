@@ -483,7 +483,7 @@ describe('the phone stack', () => {
       await page.locator('.info-page').waitFor({ state: 'detached' })
       await page.locator('.topbar[data-phone]').getByRole('button', { name: '返回会话列表', exact: true }).click()
       const confirm = page.getByRole('dialog', { name: '放弃你的修改？', exact: true })
-      await confirm.getByRole('button', { name: '关闭', exact: true }).click()
+      await confirm.getByRole('button', { name: '取消', exact: true }).click()
       await confirm.waitFor({ state: 'hidden' })
       const conversation = page.locator('main.workspace')
       await expect.poll(() => conversation.getAttribute('data-leaving')).toBeNull()

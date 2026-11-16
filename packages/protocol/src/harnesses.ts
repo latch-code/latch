@@ -101,6 +101,11 @@ export interface HarnessCapabilities {
     thinkingPerModel?: true
     /** This CLI encodes thinking variants in its model IDs, rather than a separate setting. */
     thinkingInModel?: true
+    /**
+     * Its own program reports its subscription's limits (`HarnessInfo.quota`) once a session runs. Absent: it never
+     * does, and a client says so rather than waiting for them.
+     */
+    quota?: true
   }
   permission: {
     /** Who decides whether a tool call runs. Only the built-in harness can be `latch`. */

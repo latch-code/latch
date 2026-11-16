@@ -17,8 +17,10 @@ describe('session workflow routes', () => {
       body: { prompt: '可搜索正文 abcDEF', requestId: randomUUID() },
     })
     await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status).toBe('idle')
-    expect((await viewer.json<{ days: number }>('usage', { method: 'POST', body: { days: 7 } })).days).toBe(7)
-    expect((await viewer.request('usage', { method: 'POST', body: { days: 8 } })).status).toBe(400)
+    expect((await viewer.json<{ period: string }>('usage', { method: 'POST', body: { period: '7' } })).period).toBe('7')
+    expect((await viewer.json<{ period: string }>('usage', { method: 'POST', body: { period: 'month' } })).period).toBe('month')
+    expect((await viewer.request('usage', { method: 'POST', body: { period: '8' } })).status).toBe(400)
+    expect((await viewer.request('usage', { method: 'POST', body: { days: 7 } })).status).toBe(400)
     const found = await viewer.json<SearchResults>('search', { method: 'POST', body: { q: 'abcdef' } })
     expect(found.hits.some(hit => hit.sessionId === created.sessionId)).toBe(true)
     expect((await viewer.request('tasks/batch', { method: 'POST', body: { action: 'archive', ids: [created.sessionId] } })).status).toBe(

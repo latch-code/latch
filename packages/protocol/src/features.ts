@@ -1,5 +1,6 @@
 import type { HarnessLoginStatus } from './harnesses.ts'
 import type { TokenUsage } from './types.ts'
+import type { UsagePeriod } from './model-usage.ts'
 
 /** Optional feature discovery; older Hosts omit these fields. */
 export interface HostFeatures {
@@ -91,8 +92,12 @@ export interface PromptTemplate {
   scope: { kind: 'all' } | { kind: 'project'; id: string } | { kind: 'agent'; id: string }
 }
 
+/**
+ * `POST /link/api/usage`: tokens the sessions' own messages carry, as each Harness or provider reported them, over a
+ * period of the gateway ledger's (`UsagePeriod`). Never priced.
+ */
 export interface UsageSummary {
-  days: 7 | 30
+  period: UsagePeriod
   from: string
   to: string
   rows: Array<{

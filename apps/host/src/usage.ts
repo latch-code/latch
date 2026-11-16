@@ -1,18 +1,22 @@
-import type { TaskDetail, TokenUsage, UsageSummary } from '@latch/protocol'
+import type { TaskDetail, TokenUsage, UsagePeriod, UsageSummary } from '@latch/protocol'
+import { monthBounds, monthOf } from './model-usage.ts'
 interface Source {
   list(): Promise<Array<{ id: string }>>
   detail(id: string): Promise<TaskDetail>
   now?: () => number
   budgetMs?: number
 }
-/** Counts only timestamped assistant usage the execution driver actually persisted. */
-export async function reportedUsage(source: Source, days: 7 | 30): Promise<UsageSummary> {
+/**
+ * Counts only timestamped assistant usage the execution driver actually persisted, over the same periods as the
+ * gateway's ledger: this month in the Host computer's own time, or the last 7, 30 or 90 days.
+ */
+export async function reportedUsage(source: Source, period: UsagePeriod): Promise<UsageSummary> {
   const now = source.now ?? Date.now,
     end = now(),
-    start = end - days * 86_400_000,
+    start = period === 'month' ? monthBounds(monthOf(end)).start : end - Number(period) * 86_400_000,
     deadline = performance.now() + (source.budgetMs ?? 5000)
   const result: UsageSummary = {
-    days,
+    period,
     from: new Date(start).toISOString(),
     to: new Date(end).toISOString(),
     rows: [],

@@ -7,8 +7,9 @@ import {
   type ModelUsageSummary,
   type UsageGroup,
   type UsagePeriod,
+  type UsageSummary,
 } from '@latch/protocol'
-import { Badge, Button, Dialog, InlineNotice, SegmentedControl, Skeleton, ValuePicker } from '@latch/ui'
+import { Badge, Button, InlineNotice, Modal, ModalHeader, SegmentedControl, Skeleton, ValuePicker } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { api, errorMessage } from '../core/api.ts'
@@ -54,28 +55,40 @@ function audienceOf(snapshot: AppSnapshot, access: DeviceAccess): string {
 
 /**
  * The Harnesses the 额度 view lists: those that run on their own login (a subscription can have limits), and any that
- * reported limits; the ones with limits first.
+ * reported limits; the ones with limits first, then those that can report them but have not yet. Those whose program
+ * never reports limits are named together in one line at the end.
  */
-function limitHarnesses(harnesses: readonly HarnessInfo[], now: number): Array<{ harness: HarnessInfo; limits?: HarnessLimits }> {
-  return harnesses
-    .filter(harness => harness.quota || (harness.capabilities.models.owner === 'harness' && harness.status === 'ready'))
+function limitHarnesses(harnesses: readonly HarnessInfo[], now: number) {
+  const own = harnesses.filter(harness => harness.quota || (harness.capabilities.models.owner === 'harness' && harness.status === 'ready'))
+  const listed = own
+    .filter(harness => harness.quota || harness.capabilities.models.quota)
     .map(harness => {
       const limits = harnessLimits(harness.quota, now)
       return limits ? { harness, limits } : { harness }
     })
     .toSorted((a, b) => Number(!a.limits) - Number(!b.limits))
+  const silent = own.filter(harness => !harness.quota && !harness.capabilities.models.quota)
+  return { listed, silent }
 }
 
 /**
- * 额度与用量: one surface for a Harness's subscription limits and for what model requests through Latch used. Opened by
- * click from the composer's chip (scoped to that Harness or service), from the global entry and by its shortcut; a
- * dialog of a fixed size on a wide window and a sheet on a phone. Mounted once by the shell.
+ * 额度与用量: one surface for a Harness's subscription limits and for what model requests used. Opened by click from the
+ * composer's chip (scoped to that Harness or service), from the global entry and by its shortcut. A dialog that fits its
+ * content under a fixed top edge on a wide window, so a switch of view grows or shrinks it downward only; the shared
+ * sheet on a phone. Mounted once by the shell.
  */
-export function UsageSurface({ snapshot, access, offline }: { snapshot: AppSnapshot; access: DeviceAccess; offline: boolean }) {
+export function UsageSurface({
+  snapshot,
+  access,
+  offline,
+  phone,
+}: {
+  snapshot: AppSnapshot
+  access: DeviceAccess
+  offline: boolean
+  phone: boolean
+}) {
   const request = useUsageRequest()
-  // What it last showed stays while it fades out, so a closing surface does not empty first.
-  const [shown, setShown] = useState(request)
-  if (request && request !== shown) setShown(request)
   // A new audience starts the body afresh: nothing read for the last one is shown while the new reads are on their way.
   const audience = audienceOf(snapshot, access)
   const viewing = access.scopes.has('view')
@@ -83,54 +96,77 @@ export function UsageSurface({ snapshot, access, offline }: { snapshot: AppSnaps
   useEffect(() => {
     if (!viewing) closeUsage()
   }, [viewing])
-  if (!viewing) return null
+  if (!viewing || !request) return null
   return (
-    <Dialog open={request !== null} onClose={closeUsage} title="额度与用量" size="lg" className="usage-surface">
-      {shown && <UsageBody key={audience} request={shown} snapshot={snapshot} offline={offline} />}
-    </Dialog>
+    <Modal label="额度与用量" variant={phone ? 'sheet' : 'dialog'} size="lg" className="usage-surface" onClose={closeUsage}>
+      <UsageBody key={audience} request={request} snapshot={snapshot} offline={offline} phone={phone} />
+    </Modal>
   )
 }
 
-function UsageBody({ request, snapshot, offline }: { request: UsageRequest; snapshot: AppSnapshot; offline: boolean }) {
+function UsageBody({
+  request,
+  snapshot,
+  offline,
+  phone,
+}: {
+  request: UsageRequest
+  snapshot: AppSnapshot
+  offline: boolean
+  phone: boolean
+}) {
   const usageOffered = snapshot.catalog?.features?.modelUsage === true
   const view: UsageView = usageOffered ? request.view : 'limits'
-  // Opened on one Harness or one service, the way back to all of them stands beside the views.
-  const back =
+  const views = usageOffered && (
+    <SegmentedControl
+      label="视图"
+      size="md"
+      className="usage-views"
+      value={view}
+      options={VIEWS}
+      onValueChange={next => {
+        openUsage({ view: next })
+      }}
+    />
+  )
+  // Opened on one Harness or one service: a row says which, with the way to all of them.
+  const scoped =
     view === 'limits' && request.harnessId
-      ? { label: '全部 Harness', request: { view: 'limits' } as const }
+      ? {
+          name: harnessName(
+            snapshot.catalog?.harnesses.find(harness => harness.id === request.harnessId)
+              ?? ({ capabilities: { display: { label: request.harnessId } } } as HarnessInfo),
+          ),
+          label: '全部 Harness',
+        }
       : view === 'usage' && request.providerId
-        ? { label: '全部服务', request: { view: 'usage' } as const }
+        ? { name: snapshot.catalog?.providers.find(item => item.id === request.providerId)?.name ?? request.providerId, label: '全部服务' }
         : undefined
   return (
-    <div className="usage-body" data-view={view}>
-      <div className="usage-views">
-        {usageOffered && (
-          <SegmentedControl
-            label="视图"
-            value={view}
-            options={VIEWS}
-            onValueChange={next => {
-              openUsage({ view: next })
-            }}
-          />
+    <>
+      <ModalHeader title="额度与用量" onClose={closeUsage} actions={phone ? undefined : views} />
+      <div className="ui-modal-body usage-body" data-view={view}>
+        {phone && views}
+        {scoped && (
+          <div className="usage-scope">
+            <span className="usage-scope-name">只看 {scoped.name}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                openUsage({ view })
+              }}>
+              {scoped.label}
+            </Button>
+          </div>
         )}
-        {back && (
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={() => {
-              openUsage(back.request)
-            }}>
-            {back.label}
-          </Button>
+        {view === 'limits' ? (
+          <LimitsView request={request} harnesses={snapshot.catalog?.harnesses ?? []} offline={offline} />
+        ) : (
+          <UsageView request={request} snapshot={snapshot} />
         )}
       </div>
-      {view === 'limits' ? (
-        <LimitsView request={request} harnesses={snapshot.catalog?.harnesses ?? []} offline={offline} />
-      ) : (
-        <UsageView request={request} snapshot={snapshot} />
-      )}
-    </div>
+    </>
   )
 }
 
@@ -153,18 +189,28 @@ function LimitsView({ request, harnesses, offline }: { request: UsageRequest; ha
     const timer = setTimeout(() => expire(version => version + 1), Math.max(0, nextReset - hostNow()) + 1)
     return () => clearTimeout(timer)
   }, [nextReset])
-  const all = limitHarnesses(harnesses, now)
-  const scoped = request.harnessId ? all.filter(item => item.harness.id === request.harnessId) : all
+  const { listed, silent } = limitHarnesses(harnesses, now)
+  const shown = request.harnessId ? listed.filter(item => item.harness.id === request.harnessId) : listed
+  const quiet = request.harnessId ? silent.filter(harness => harness.id === request.harnessId) : silent
   return (
     <div className="usage-limits">
       {offline && <p className="usage-muted">连接中断，显示上次收到的额度</p>}
-      {scoped.length === 0 && <p className="usage-muted">没有用自己登录的 Harness</p>}
-      {scoped.map(({ harness, limits }) => (
+      {shown.length === 0 && quiet.length === 0 && <p className="usage-muted">没有用自己登录的 Harness</p>}
+      {shown.map(({ harness, limits }) => (
         <section className="usage-harness" key={harness.id} aria-label={harnessName(harness)}>
           <header className="usage-harness-head">
             <HarnessTile harness={harness} size={20} />
             <h3>{harnessName(harness)}</h3>
-            {limits && limits.facts.length > 0 && <span className="usage-facts">{limits.facts.join(' · ')}</span>}
+            {limits && limits.facts.length > 0 && (
+              <span className="usage-facts">
+                {limits.facts.map((fact, index) => (
+                  <Fragment key={fact}>
+                    {index > 0 && <span aria-hidden="true">·</span>}
+                    <span className={fact === limits.who ? 'usage-fact-who' : 'usage-fact'}>{fact}</span>
+                  </Fragment>
+                ))}
+              </span>
+            )}
           </header>
           {limits ? (
             <div className="usage-windows">
@@ -185,6 +231,12 @@ function LimitsView({ request, harnesses, offline }: { request: UsageRequest; ha
           )}
         </section>
       ))}
+      {quiet.length > 0 && (
+        <p className="usage-silent">
+          <span>不报告额度</span>
+          <span>{quiet.map(harnessName).join('、')}</span>
+        </p>
+      )}
     </div>
   )
 }
@@ -274,17 +326,12 @@ function UsageView({ request, snapshot }: { request: UsageRequest; snapshot: App
   const unpriced = rows ? unpricedShare(rows) : 0
   const spend = spending.spend
   const budgets = (spend?.budgets ?? []).filter(budget => !scope || (budget.scope === 'service' && budget.id === scope))
-  const serviceName = scope ? (snapshot.catalog?.providers.find(item => item.id === scope)?.name ?? scope) : undefined
   const error = failure?.query === query ? failure.text : undefined
   return (
     <div className="usage-usage">
       <div className="usage-controls">
         <ValuePicker label="统计期间" value={period} options={PERIODS} onValueChange={setPeriod} menuChevron width="xs" />
-        {scope ? (
-          <span className="usage-scope-name">{serviceName}</span>
-        ) : (
-          <ValuePicker label="分组" value={group} options={GROUPS} onValueChange={setGroup} menuChevron width="xs" />
-        )}
+        {!scope && <ValuePicker label="分组" value={group} options={GROUPS} onValueChange={setGroup} menuChevron width="xs" />}
       </div>
       {error && (
         <InlineNotice
@@ -373,7 +420,92 @@ function UsageView({ request, snapshot }: { request: UsageRequest; snapshot: App
           {shown?.truncated && <p className="usage-muted">这个期间的请求太多，只算了读到的部分</p>}
         </>
       )}
-      <p className="usage-foot usage-muted">只算经 Latch 的模型请求</p>
+      {!scope && snapshot.catalog?.features?.usage === true && <ReportedUsage period={period} snapshot={snapshot} />}
     </div>
+  )
+}
+
+/**
+ * What the sessions' own messages say they used, outside the gateway's ledger: a Harness on its own login, and a plugin's
+ * or the demo's provider. Tokens only, as reported, never priced; the same period as above.
+ */
+function ReportedUsage({ period, snapshot }: { period: UsagePeriod; snapshot: AppSnapshot }) {
+  const [summaries, setSummaries] = useState(() => new Map<UsagePeriod, UsageSummary>())
+  const [failure, setFailure] = useState<{ period: UsagePeriod; text: string }>()
+  const [turn, setTurn] = useState(0)
+  useEffect(() => {
+    const controller = new AbortController()
+    void api<UsageSummary>('usage', { method: 'POST', body: { period }, signal: controller.signal }).then(
+      result => {
+        if (controller.signal.aborted) return
+        if (result.period !== period) return
+        setSummaries(previous => new Map(previous).set(period, result))
+        setFailure(undefined)
+      },
+      cause => {
+        if (!controller.signal.aborted) setFailure({ period, text: errorMessage(cause) })
+      },
+    )
+    return () => {
+      controller.abort()
+    }
+  }, [period, turn])
+  const shown = summaries.get(period)
+  const providers = snapshot.catalog?.providers ?? []
+  const harnesses = snapshot.catalog?.harnesses ?? []
+  // The gateway meters every request to a configured service; what it never sees is a Harness's own and a plugin's.
+  const rows = shown?.rows.filter(
+    row => row.source === 'agent' || ['plugin', 'demo'].includes(providers.find(item => item.id === row.providerId)?.kind ?? ''),
+  )
+  const error = failure?.period === period ? failure.text : undefined
+  if (!error && rows && rows.length === 0) return null
+  return (
+    <section className="usage-reported" aria-label="Harness 自己报告">
+      <h3>Harness 自己报告</h3>
+      {error && (
+        <InlineNotice
+          tone="error"
+          action={
+            <Button size="sm" onClick={() => setTurn(count => count + 1)}>
+              重试
+            </Button>
+          }>
+          {error}
+        </InlineNotice>
+      )}
+      {rows && rows.length > 0 && (
+        <table className="usage-rows" aria-label="Harness 自己报告的用量">
+          <thead>
+            <tr>
+              <th scope="col">Harness</th>
+              <th scope="col">消息</th>
+              <th scope="col">tokens</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => {
+              const harness = harnesses.find(item => item.id === row.harnessId)
+              const provider = providers.find(item => item.id === row.providerId)
+              const name = provider?.name ?? (harness ? harnessName(harness) : row.harnessId)
+              const tokens = row.usage.inputTokens + row.usage.outputTokens
+              return (
+                <tr key={index}>
+                  <th scope="row">
+                    <span>{name}</span>
+                    {row.model && <small>{row.model}</small>}
+                  </th>
+                  <td>{row.messages}</td>
+                  <td>{formatTokens(tokens)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+      {shown && shown.unattributedMessages > 0 && (
+        <p className="usage-muted">另有 {shown.unattributedMessages} 条记录缺少时间或用量，没有计入</p>
+      )}
+      {shown?.truncated && <p className="usage-muted">部分会话暂时读不到，只算了读到的部分</p>}
+    </section>
   )
 }

@@ -142,7 +142,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')(
         expect(await fill.getAttribute('aria-disabled')).toBeNull()
         // A block with a hidden character keeps copy; its action is turned down, with the reason on hover.
         expect(await refused.getAttribute('aria-disabled')).toBe('true')
-        expect(await refused.getAttribute('title')).toBe('含控制、不可见或改变方向的字符')
+        expect(await refused.getAttribute('aria-description')).toBe('含控制、不可见或改变方向的字符')
+        await refused.hover()
+        await page.getByRole('tooltip').getByText('含控制、不可见或改变方向的字符', { exact: true }).waitFor()
         await fill.hover()
         await capture(page, 'reply-action-1440')
 

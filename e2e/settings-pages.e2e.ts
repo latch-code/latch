@@ -115,7 +115,8 @@ describe('settings pages', () => {
 
         await openSection(settings, '模型')
         await settings.getByRole('heading', { name: '模型服务', exact: true }).waitFor()
-        await settings.getByText('检测中', { exact: true }).waitFor()
+        // Every service starts 检测中, and more than one may still be at it when the page is first drawn.
+        await settings.getByText('检测中', { exact: true }).first().waitFor()
         await settings.getByText('已连接', { exact: true }).waitFor()
         await settings.getByText('密钥无效', { exact: true }).waitFor()
         // A browser cannot take a key: the way out is drawn, disabled, and says where to go.

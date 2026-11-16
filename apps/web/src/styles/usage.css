@@ -23,6 +23,7 @@
 .limit-window-value {
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
+  text-align: end;
 }
 .limit-window[data-state='near'] .limit-window-value {
   color: var(--amber);
@@ -47,9 +48,6 @@
   overflow: hidden;
   border-radius: var(--r-full);
   background: var(--track);
-}
-.limit-bar[data-empty] {
-  visibility: hidden;
 }
 .limit-bar-fill {
   --used: 0%;
@@ -173,12 +171,26 @@
   justify-content: start;
 }
 
-/* The surface: a fixed size, so switching views or loading never resizes it. */
-.usage-surface .ui-dialog-surface {
-  height: min(560px, calc(100dvh - 2 * var(--sp-32)));
+/*
+ * The surface fits what it holds under a fixed top edge, so a switch of view or data arriving only moves its bottom; the
+ * views are its header's control, beside the close button (on a phone, the first row of the sheet).
+ */
+.usage-surface.ui-modal-dialog {
+  max-height: 80dvh;
+  margin: 10dvh auto auto;
 }
-.usage-surface.ui-sheet > .ui-sheet-surface {
-  height: 80dvh;
+.usage-surface .ui-modal-header > .usage-views {
+  flex: none;
+}
+.usage-body > .usage-views {
+  justify-self: stretch;
+}
+.usage-scope {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  min-width: 0;
 }
 .usage-body,
 .usage-limits,
@@ -191,7 +203,6 @@
 .usage-body {
   padding-top: var(--sp-4);
 }
-.usage-views,
 .usage-controls {
   display: flex;
   flex-wrap: wrap;
@@ -226,9 +237,12 @@
 }
 .usage-harness-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--sp-8);
   min-width: 0;
+}
+.usage-harness-head > :first-child {
+  align-self: center;
 }
 .usage-harness-head h3 {
   margin: 0;
@@ -239,14 +253,40 @@
   white-space: nowrap;
 }
 .usage-facts {
+  display: flex;
+  gap: var(--sp-4);
   min-width: 0;
   margin-left: auto;
-  overflow: hidden;
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The plan and a balance stay whole; the masked account gives way. */
+.usage-fact {
+  flex: none;
+}
+.usage-fact-who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The Harnesses whose program never reports limits, together in one quiet line at the end. */
+.usage-silent {
+  display: flex;
+  gap: var(--sp-8);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+.usage-silent > :first-child {
+  flex: none;
+  color: var(--ink-2);
+}
+.usage-harness ~ .usage-silent {
+  padding-top: var(--sp-16);
+  border-top: 1px solid var(--line);
 }
 .usage-windows,
 .usage-budgets {
@@ -259,7 +299,12 @@
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
-.usage-budgets h3 {
+.usage-reported {
+  display: grid;
+  gap: var(--sp-8);
+}
+.usage-budgets h3,
+.usage-reported h3 {
   margin: 0;
   color: var(--muted);
   font-size: var(--fs-caption);

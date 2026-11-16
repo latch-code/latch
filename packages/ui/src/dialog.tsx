@@ -336,11 +336,14 @@ export function ModalHeader({
   title,
   onClose,
   leading,
+  actions,
   closeLabel = '关闭',
 }: {
   title: ReactNode
   onClose?: () => void
   leading?: ReactNode
+  /** Controls of the whole modal (its views), after the title and before the close button. */
+  actions?: ReactNode
   closeLabel?: string
 }) {
   const sheet = useContext(InSheet)
@@ -351,7 +354,10 @@ export function ModalHeader({
         <header className="ui-sheet-header">
           {onClose ? <SheetClose label={closeLabel} onClose={onClose} /> : <span aria-hidden="true" />}
           <h2 className="ui-sheet-title">{title}</h2>
-          <div className="ui-sheet-action">{leading}</div>
+          <div className="ui-sheet-action">
+            {leading}
+            {actions}
+          </div>
         </header>
       </div>
     )
@@ -359,6 +365,7 @@ export function ModalHeader({
     <header className="ui-modal-header">
       {leading}
       <h2>{title}</h2>
+      {actions}
       {onClose && <IconButton label={closeLabel} icon={CloseGlyph} data-layer-close="" onClick={onClose} />}
     </header>
   )

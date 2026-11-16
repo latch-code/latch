@@ -17,7 +17,7 @@ export function FillTerminalDialog({ workspaceId, unavailable }: { workspaceId: 
   return (
     <Dialog
       open
-      size="wide"
+      size="xl"
       className="login-terminal-dialog fill-terminal-dialog"
       title="终端"
       closeLabel="关闭"

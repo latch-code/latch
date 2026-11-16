@@ -227,7 +227,7 @@ describe('model usage in 额度与用量, prices and budgets in settings', () =>
           await page.screenshot({ path: `${OUTPUT}/budget-chip--${theme}--${width}.png`, animations: 'disabled' })
           await chip.click()
           const surface = page.getByRole('dialog', { name: '额度与用量', exact: true })
-          await surface.locator('.usage-scope-name').getByText('主服务', { exact: true }).waitFor()
+          await surface.locator('.usage-scope-name').getByText('只看 主服务', { exact: true }).waitFor()
           await surface.getByRole('button', { name: '全部服务', exact: true }).waitFor()
           const rows = surface.getByRole('table', { name: '用量', exact: true })
           await rows.getByRole('rowheader', { name: MODEL, exact: true }).waitFor()

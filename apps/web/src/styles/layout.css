@@ -1163,8 +1163,9 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   max-width: calc(100% - 52px - var(--shell-inset));
   padding: 0;
   overflow: hidden;
-  /* Its right edge is the work panel's: only the corner it shares with it, and the two it floats by, are round. */
-  border-radius: var(--r-12) 0 var(--r-12) var(--r-12);
+  /* A docked layer of the popover kind (DESIGN「浮层」): its right edge is the work panel's, so only the corner it
+   * shares with it is square. */
+  border-radius: var(--layer-radius) 0 var(--layer-radius) var(--layer-radius);
   background: var(--canvas);
   box-shadow: var(--sh-pop);
   animation: fade-in var(--m-panel) var(--e-panel);

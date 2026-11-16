@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button } from './button.tsx'
 import { InlineNotice } from './notice.tsx'
-import { Modal, ModalHeader, Sheet } from './dialog.tsx'
+import { Modal, ModalHeader } from './dialog.tsx'
 import { PHONE_QUERY, useMediaQuery } from './internal.ts'
 import { TextField } from './field.tsx'
 
@@ -37,33 +37,10 @@ export function ConfirmDialog({
   const close = () => {
     if (!busy) onClose()
   }
-  // A phone asks in the design system's sheet: close · the question · the action, with what it does in the body.
-  if (phone)
-    return (
-      <Sheet
-        open
-        title={title}
-        className="confirm-dialog"
-        onClose={close}
-        action={
-          <Button
-            variant={danger ? 'destroy' : 'primary'}
-            disabled={busy}
-            loading={busy}
-            onClick={() => {
-              void confirm()
-            }}>
-            {confirmLabel}
-          </Button>
-        }>
-        <div className="ui-sheet-dialog-body">
-          <p className="ui-confirm-message">{message}</p>
-          {error && <InlineNotice tone="error">{error}</InlineNotice>}
-        </div>
-      </Sheet>
-    )
+  // On a phone the same modal is the shared sheet: the question in the body, and its two answers in the footer. The close
+  // button only dismisses, which is 取消, never the action.
   return (
-    <Modal label={title} variant="dialog" onClose={close} className="confirm-dialog">
+    <Modal label={title} variant={phone ? 'sheet' : 'dialog'} dismissible={!busy} onClose={close} className="confirm-dialog">
       <ModalHeader title={title} onClose={close} />
       <div className="ui-modal-body">
         <p className="ui-confirm-message">{message}</p>
@@ -110,7 +87,6 @@ export function PromptDialog({
   const [error, setError] = useState('')
   const phone = useMediaQuery(PHONE_QUERY)
   const input = useRef<HTMLInputElement>(null)
-  const formId = useId()
   useEffect(() => {
     input.current?.select()
   }, [])
@@ -141,35 +117,11 @@ export function PromptDialog({
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
     </>
   )
-  if (phone)
-    return (
-      <Sheet
-        open
-        title={title}
-        className="prompt-dialog"
-        onClose={() => {
-          if (!busy) onClose()
-        }}
-        action={
-          <Button type="submit" form={formId} variant="primary" disabled={busy || !value.trim()} loading={busy}>
-            {confirmLabel}
-          </Button>
-        }>
-        <form
-          id={formId}
-          className="ui-sheet-dialog-body"
-          onSubmit={event => {
-            event.preventDefault()
-            void submit()
-          }}>
-          {field}
-        </form>
-      </Sheet>
-    )
   return (
     <Modal
       label={title}
-      variant="dialog"
+      variant={phone ? 'sheet' : 'dialog'}
+      dismissible={!busy}
       onClose={() => {
         if (!busy) onClose()
       }}

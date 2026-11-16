@@ -745,7 +745,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 
 ## 用量汇总
 
-`catalog.features.usage` 声明 `POST /link/api/usage { days: 7 | 30 }`，需要 `view`，异步读取前后重新检查授权。用量账本、花费与预算（`features.modelUsage`）见 [MODEL-GATEWAY.md](./MODEL-GATEWAY.md#用量花费与预算)。
+`catalog.features.usage` 声明 `POST /link/api/usage { period }`（与用量账本相同的 `month`、`7`、`30`、`90`），需要 `view`，异步读取前后重新检查授权。用量账本、花费与预算（`features.modelUsage`）见 [MODEL-GATEWAY.md](./MODEL-GATEWAY.md#用量花费与预算)。
 
 - Host 只统计期间内带有效时间的助手消息实际记录的 `usage`，按 Harness、该消息记录的模型服务与模型分组，不用会话当前模型替代缺失的身份。
 - 输入包含缓存、输出包含推理；细分字段只有同组每条记录都完整报告时才返回，否则省略并标 `partial`。真实零值保留。

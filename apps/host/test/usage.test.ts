@@ -18,6 +18,21 @@ const detail = (messages: Message[]): TaskDetail => ({
   cursor: 1,
 })
 describe('reported period usage', () => {
+  it('counts this month from its first day in the Host computer’s time, and 90 days back', async () => {
+    const messages = [
+      message('today', 0, { inputTokens: 1, outputTokens: 1 }),
+      message('last-month', 30, { inputTokens: 5, outputTokens: 5 }),
+      message('quarter', 80, { inputTokens: 7, outputTokens: 7 }),
+    ]
+    const source = { list: async () => [{ id: 'a' }], detail: async () => detail(messages), now: () => now }
+    const month = await reportedUsage(source, 'month')
+    expect(month.period).toBe('month')
+    expect(Date.parse(month.from)).toBe(new Date(2026, 9, 1).getTime())
+    expect(month.rows[0]?.usage).toMatchObject({ inputTokens: 1, outputTokens: 1 })
+    const quarter = await reportedUsage(source, '90')
+    expect(quarter.rows[0]?.usage).toMatchObject({ inputTokens: 13, outputTokens: 13 })
+  })
+
   it('counts actual assistant records within the period without attributing missing fields to the latest session model', async () => {
     const messages = [
       message('a', 1, { inputTokens: 10, outputTokens: 5, cacheReadTokens: 3 }, { providerId: 'p', model: 'm' }),
@@ -27,7 +42,7 @@ describe('reported period usage', () => {
       message('unknown', 1, { inputTokens: 3, outputTokens: 4 }, { createdAt: undefined }),
     ]
     const source = { list: async () => [{ id: 'a' }], detail: async () => detail(messages), now: () => now }
-    const week = await reportedUsage(source, 7)
+    const week = await reportedUsage(source, '7')
     expect(week.rows).toHaveLength(1)
     expect(week.rows[0]).toMatchObject({
       providerId: 'p',
@@ -38,7 +53,7 @@ describe('reported period usage', () => {
     expect(week.rows[0]!.usage.reasoningTokens).toBeUndefined()
     expect(week.rows[0]!.usage.cacheReadTokens).toBeUndefined()
     expect(week.unattributedMessages).toBe(1)
-    const month = await reportedUsage(source, 30)
+    const month = await reportedUsage(source, '30')
     expect(month.rows).toHaveLength(2)
     expect(month.rows.some(row => row.providerId === undefined && row.model === undefined)).toBe(true)
   })
@@ -69,7 +84,7 @@ describe('reported period usage', () => {
         { providerId: 'p', model: 'partial' },
       ),
     ]
-    const result = await reportedUsage({ list: async () => [{ id: 's' }], detail: async () => detail(messages), now: () => now }, 7)
+    const result = await reportedUsage({ list: async () => [{ id: 's' }], detail: async () => detail(messages), now: () => now }, '7')
     expect(result.rows.find(row => row.model === 'complete')).toMatchObject({
       usage: { inputTokens: 12, outputTokens: 7, cacheReadTokens: 0, cacheWriteTokens: 3, reasoningTokens: 0 },
       partial: { cacheReadTokens: false, cacheWriteTokens: false, reasoningTokens: false },
@@ -88,7 +103,7 @@ describe('reported period usage', () => {
         now: () => now,
         budgetMs: 10,
       },
-      7,
+      '7',
     )
     expect(result.rows[0]!.source).toBe('agent')
     expect(result.truncated).toBe(true)

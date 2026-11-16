@@ -192,7 +192,10 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
       expect(rows[1]).toMatch(/^每周 ?已用 68% ?5 天 23 小时后重置$/u)
       expect(rows).toHaveLength(2)
       expect(await surface(page).getByRole('meter').count()).toBe(2)
-      await surface(page).getByText('Plus · p•••@e•••.com', { exact: true }).waitFor()
+      await surface(page)
+        .locator('.usage-facts')
+        .getByText(/^Plus ?· ?p•••@e•••\.com$/u)
+        .waitFor()
       expect(await page.content()).not.toContain('person@example.com')
       await page.keyboard.press('Escape')
       await surface(page).waitFor({ state: 'hidden' })
@@ -267,15 +270,17 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
     }
   })
 
-  it('draws no chip for a Harness that reports nothing, and says so in one muted line in the surface', async () => {
+  it('draws no chip for a Harness that never reports limits, and names it in one quiet line in the surface', async () => {
     expect(await quota('other')).toBeUndefined()
     await capture('none', sessions.other, undefined)
     const page = await open(1440, 'light', sessions.other)
     try {
       await page.keyboard.press('Alt+Shift+U')
-      const other = surface(page).getByRole('region', { name: 'Other', exact: true })
-      await other.getByText('尚未报告额度', { exact: true }).waitFor()
-      expect(await other.getByRole('meter').count()).toBe(0)
+      // A Harness whose program never reports limits is named in one quiet line at the end, not a section of its own.
+      const silent = surface(page).locator('.usage-silent')
+      await silent.getByText('不报告额度', { exact: true }).waitFor()
+      expect(await silent.textContent()).toContain('Other')
+      expect(await surface(page).getByRole('region', { name: 'Other', exact: true }).count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/none-panel--1440-light.png`, animations: 'disabled' })
     } finally {
       await page.context().close()
@@ -293,7 +298,8 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
       expect(await chip(page).textContent()).not.toContain('%')
       await chip(page).click()
       const claude = surface(page).getByRole('region', { name: 'Claude Agent', exact: true })
-      await claude.getByText('将用尽', { exact: true }).waitFor()
+      // One line: the window, then its state and when it resets; no bar.
+      await claude.getByText(/^将用尽 · 2 小时 2\d 分钟后重置$/u).waitFor()
       expect(await claude.getByRole('meter').count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/warning-panel--1440-light.png`, animations: 'disabled' })
     } finally {
@@ -329,9 +335,13 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
           const codex = surface(page).getByRole('region', { name: 'Codex', exact: true })
           const claude = surface(page).getByRole('region', { name: 'Claude Agent', exact: true })
           await codex.getByText('已用 68%', { exact: true }).waitFor()
-          await codex.getByText('Plus · p•••@e•••.com', { exact: true }).waitFor()
-          await claude.getByText('将用尽', { exact: true }).waitFor()
-          await surface(page).getByRole('region', { name: 'Other', exact: true }).getByText('尚未报告额度', { exact: true }).waitFor()
+          await codex
+            .locator('.usage-facts')
+            .getByText(/^Plus ?· ?p•••@e•••\.com$/u)
+            .waitFor()
+          // One line: the window, then its state and when it resets; no bar.
+          await claude.getByText(/^将用尽 · 2 小时 2\d 分钟后重置$/u).waitFor()
+          expect(await surface(page).locator('.usage-silent').textContent()).toBe('不报告额度Other')
           expect(await claude.getByRole('meter').count()).toBe(0)
           expect(await surface(page).getByRole('meter').count()).toBe(2)
           await noHorizontalOverflow(page)

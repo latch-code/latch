@@ -155,6 +155,8 @@ export interface HarnessLimits {
   account: boolean
   /** Plan, masked account and a prepaid balance above zero, each only when the Harness said it. */
   facts: string[]
+  /** Of `facts`, the masked account: the one that gives way when the line is short. */
+  who?: string
 }
 
 export function harnessLimits(quota: HarnessQuota | undefined, now: number): HarnessLimits | undefined {
@@ -166,6 +168,7 @@ export function harnessLimits(quota: HarnessQuota | undefined, now: number): Har
     windows: held.windows.map(window => windowView(window, now)),
     tightest: windowView(lead, now),
     account: held.state === 'limited' && quotaWindowState(lead) !== 'limited',
+    ...(held.account ? { who: held.account } : {}),
     facts: [
       ...(held.plan ? [PLANS[held.plan]] : []),
       ...(held.account ? [held.account] : []),

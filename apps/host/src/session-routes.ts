@@ -1,6 +1,6 @@
+import { USAGE_PERIODS, type DeviceScope, type SessionBatchResult, type TaskDetail, type TaskSummary } from '@latch/protocol'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
-import type { DeviceScope, SessionBatchResult, TaskDetail, TaskSummary } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { json, jsonBody } from './http-util.ts'
 import { templateSchema, type PromptTemplateStore } from './prompt-templates.ts'
@@ -37,14 +37,14 @@ export function createSessionRoutes<Caller>(options: Options<Caller>) {
     async handle(req: IncomingMessage, res: ServerResponse, caller: Caller, path: string, method: string): Promise<boolean> {
       if (path === '/link/api/usage' && method === 'POST') {
         options.authorize(caller, 'view')
-        const input = z.strictObject({ days: z.union([z.literal(7), z.literal(30)]) }).parse(await jsonBody(req))
+        const input = z.strictObject({ period: z.enum(USAGE_PERIODS) }).parse(await jsonBody(req))
         options.recheck(caller, 'view')
         if (usageBusy) throw new AppError(429, 'rate-limited', '正在读取用量，请稍后再试。', { retryAfter: 1 })
         usageBusy = true
         try {
           const result = await reportedUsage(
             { ...options, list: async () => (await options.list()).filter(summary => options.visible?.(caller, summary) !== false) },
-            input.days,
+            input.period,
           )
           options.recheck(caller, 'view')
           json(res, result)
