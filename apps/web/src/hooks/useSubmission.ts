@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { type AppSnapshot, type ModelRef, type FileMention, type WorktreeStart } from '@latch/protocol'
 import {
   api,
@@ -132,7 +132,12 @@ export function useSubmission({
   const mounted = useRef(true)
   const destination = useRef({ selectedId, epoch: 0 })
   if (destination.current.selectedId !== selectedId) destination.current = { selectedId, epoch: destination.current.epoch + 1 }
-  const requestOrigins = useRef(new Map<string, { epoch: number; consumedDraft: boolean }>())
+  const requestOrigins = useRef(new Map<string, { epoch: number; consumedDraft: boolean; stay: boolean }>())
+  /** A new session started now stays in the background: the person started it from the board's 新建. */
+  const stayRef = useRef(false)
+  const setStay = useCallback((on: boolean) => {
+    stayRef.current = on
+  }, [])
   useLayoutEffect(() => {
     mounted.current = true
     return () => {
@@ -386,6 +391,7 @@ export function useSubmission({
       epoch: destination.current.epoch,
       // After a reload only the stored submission says where it came from.
       consumedDraft: earlier?.consumedDraft ?? (resend === undefined && fromInput(submission)),
+      stay: earlier?.stay ?? (stayRef.current && submission.sessionId === undefined),
     }
     if (earlier && !storedOwnsInput(submission, destination.current.selectedId)) origin.epoch = earlier.epoch
     if (!retry) requestOrigins.current.clear()
@@ -435,10 +441,12 @@ export function useSubmission({
       setSendingMessage(submission.queue || submission.steer ? null : { submission, sessionId, state: 'accepted', startedAt: Date.now() })
       const foreground =
         mounted.current && destination.current.epoch === origin.epoch && destination.current.selectedId === (submission.sessionId ?? null)
-      if (foreground) select(sessionId)
+      // Started from the board: the draft is used up as from the home's input, but the session is not opened.
+      const shown = foreground && !origin.stay
+      if (shown) select(sessionId)
       if (mounted.current)
         onSent(sessionId, submission, {
-          foreground,
+          foreground: shown,
           consumedDraft: origin.consumedDraft,
           ...(result.memoryRefused ? { memoryRefused: result.memoryRefused } : {}),
         })
@@ -561,6 +569,8 @@ export function useSubmission({
       setDraftPick(null)
     },
     submit,
+    /** While on, a new session this page starts is not opened once the Host takes it (the board's 新建). */
+    setStay,
     resend: (prompt: string) => submit(undefined, prompt),
     /** The open session's next prompt starts a new context. */
     clearing: selectedId !== null && clearing.has(selectedId),

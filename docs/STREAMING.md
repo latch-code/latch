@@ -399,7 +399,7 @@ Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入
 
 源码：[useSubmission.ts](../apps/web/src/hooks/useSubmission.ts)、[sendingMessage.ts](../apps/web/src/core/sendingMessage.ts)。
 
-**临时气泡。** 提交后立即显示临时文字，500ms 后才显示「发送中…」；按相同的 `requestId`、文字与附件或文件引用匹配到 Host 的消息后隐藏。临时状态不写入 `TaskDetail`、快照或 Host 的存储；会话仍由 Host 维护。队列接收不生成临时气泡。
+**临时气泡。** 提交后立即显示临时文字，500ms 后才显示「发送中…」；按相同的 `requestId`、文字与附件或文件引用匹配到 Host 的消息后隐藏。临时状态不写入 `TaskDetail`、快照或 Host 的存储；会话仍由 Host 维护。队列接收不生成临时气泡。看板「新建」发起的新会话在 Host 接下后不打开：草稿照常用掉，页面留在看板，结果未知时同样以原请求重试（`setStay`）。
 
 **结果未知。**
 

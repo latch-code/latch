@@ -6,6 +6,7 @@ import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSection, openSettings, reachable, closeSettings, backToPhoneSessions } from './helpers/layout.ts'
+import { viewSwitch } from './helpers/workbench.ts'
 
 const OUTPUT = 'test-results/design'
 const VIEWPORTS = [
@@ -49,6 +50,8 @@ describe('responsive workspace controls', () => {
     try {
       const page = await context.newPage()
       await enrollBrowser(page, testHost, { name: `输入框 ${label}` })
+      // A phone's Code opens on its list; 新建会话 leads to the start screen's input, as the start screen is on wider ones.
+      if (touch) await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
       // The new session is the home's input on every width; a phone has no sheet for it.
       const input = page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
       const before = (await input.boundingBox())!.height
@@ -78,12 +81,9 @@ describe('responsive workspace controls', () => {
       await enrollBrowser(page, testHost, { name: `布局 ${label}`, scopes: ['view', 'run', 'approve:standard', 'admin'] })
       const phone = width < 768
       if (phone) {
-        await page.locator('.workbench-empty').getByText('还没有会话', { exact: true }).waitFor()
-        await reachable(page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
-        await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
-        // Code stays at Home; the explicit history entry keeps search and 新建会话, which leads back to Home's input.
-        await reachable(page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
-        await reachable(page.getByRole('button', { name: '全部会话', exact: true }))
+        // A phone's Code opens on its list, with the view switch over it; every session is on 看板, one switch away.
+        await page.locator('.phone-list:not([inert])').waitFor()
+        await reachable(viewSwitch(page).getByRole('radio', { name: /^看板/u }))
         await backToPhoneSessions(page)
         const head = page.locator('.phone-list-head')
         await reachable(page.locator('.phone-tabs').getByRole('button', { name: '设置', exact: true }))

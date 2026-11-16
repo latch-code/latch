@@ -336,6 +336,10 @@
   min-width: 0;
   max-width: 16em;
 }
+/* In a phone's chip row the row scrolls instead: no chip gives way under its neighbour. */
+.workbench-home-composer .composer-chips .home-composer-location > * {
+  flex-shrink: 0;
+}
 /*
  * The row is laid out by the composer's own width, not the window's: a side panel or the sidebar narrows the column at
  * any window size. Below what holds ＋, the place and the four controls on one line, the place takes its own line

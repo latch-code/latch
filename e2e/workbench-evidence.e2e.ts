@@ -11,21 +11,14 @@ import { installFakeGh } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
-
-// Stale: the 侧栏/顶栏 pair and the old home are gone; package C rewrites this file against 看板's groups.
-const switchLayout = async (...args: unknown[]): Promise<void> => {
-  void args
-}
-const returnFromHomeFocus = async (...args: unknown[]): Promise<void> => {
-  void args
-}
+import { switchView } from './helpers/workbench.ts'
 
 const OUT = 'test-results/workbench-evidence'
 const EDIT = '修正设置页的保存行为'
 const ASK = '确认这次发布的方式'
 const AFTER = 'export const keepKey = value => value === undefined ? "keep" : value\n'
 
-it('finds real evidence on the home, decides there, and continues the original sessions without inventing delivery readiness', async () => {
+it('shows real evidence on the board, decides there, and continues the original sessions without inventing delivery readiness', async () => {
   const plugin: HarnessPlugin = {
     id: 'workbench-evidence',
     name: '工作台证据夹具',
@@ -163,21 +156,19 @@ it('finds real evidence on the home, decides there, and continues the original s
     await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })
     await page.reload()
     await connected(page)
-    const home = page.locator('.workbench-home')
-    await switchLayout(page, 'triage')
-    const approval = home.locator(`[data-work-session="${sessions[1]}"]`)
-    const question = home.locator(`[data-work-session="${sessions[2]}"]`)
-    await approval.locator('.approval-panel').waitFor()
-    await home.locator(`[data-request-session="${sessions[2]}"]`).click()
-    await question.locator('.question-card').waitFor()
-    await home.locator(`[data-request-session="${sessions[1]}"]`).click()
-    await approval.locator('.approval-panel').waitFor()
-    // The row's second line is the evidence itself; the reason another session holds it back is behind 原因.
-    await expect.poll(() => home.locator('[data-group="delivery"]').textContent(), { timeout: 10_000 }).toContain('未提交 1 个文件')
-    expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain('目录未提交')
-    expect(await home.locator('[data-group="delivery"]').getByText('其他会话正在改动这个目录', { exact: true }).count()).toBe(0)
+    await switchView(page, 'board')
+    const board = page.locator('.work-board')
+    const card = (id: string) => board.locator(`.work-board-card[data-work-session="${id}"]`)
+    const column = (name: string) => board.getByRole('region', { name, exact: true })
+    const released = card(sessions[0]!)
+    const approval = card(sessions[1]!)
+    const question = card(sessions[2]!)
+    // The first plain request is decided on its card; the question is a card that leads to its session.
+    await column('等你处理').locator(`[data-work-session="${sessions[1]}"] .approval-panel`).waitFor()
+    await question.getByText('1 个问题', { exact: true }).waitFor()
+    expect(await question.locator('.question-card').count()).toBe(0)
     expect(await approval.textContent()).toContain('settings.ts')
-    // The card leads with the glyph of its kind, never a dot; the tool's ID waits behind the title's hover; and 收起
+    // The decision leads with the glyph of its kind, never a dot; the tool's ID waits behind the title's hover; and 收起
     // is one of 更多's choices, which leaves a small outlined 查看改动 in the folded card.
     expect(await approval.locator('.approval-dot').count()).toBe(0)
     expect(await approval.locator('.approval-title .approval-kind svg').count()).toBe(1)
@@ -185,115 +176,41 @@ it('finds real evidence on the home, decides there, and continues the original s
     await approval.locator('.approval-object').hover()
     await page.getByRole('tooltip').filter({ hasText: 'write_file' }).waitFor()
     await page.mouse.move(0, 0)
-    expect(await approval.locator('.approval-see').count()).toBe(0)
     await approval.getByRole('button', { name: '更多', exact: true }).click()
     await page.getByRole('menuitem', { name: '收起', exact: true }).click()
     const see = approval.locator('.ui-button.approval-see')
     expect(await see.innerText()).toBe('查看改动')
-    expect(await see.getAttribute('aria-expanded')).toBe('false')
     await see.click()
     await expect.poll(() => see.count()).toBe(0)
     expect(await approval.locator('.diff-line').count()).toBeGreaterThan(0)
-    expect(await approval.textContent()).toContain('keep')
-    expect(await home.locator('[data-group="delivery"] .work-delivery').count()).toBe(1)
-    await expect.poll(() => home.locator('[data-group="delivery"]').textContent(), { timeout: 10_000 }).toContain('检查通过 2/2')
-    const delivery = home.locator('[data-group="delivery"]')
-    const checks = delivery.getByRole('img', { name: '检查 2/2 通过' })
-    await checks.waitFor()
-    expect(await checks.locator('i[data-state="passed"]').count()).toBe(2)
+    // The pull request holds its session in 可交付 (a bound PR, from the Host), and its checks come from the read the
+    // board makes for its top 可交付 cards.
+    await column('可交付').locator(`[data-work-session="${sessions[0]}"]`).waitFor()
+    await expect.poll(() => released.locator('.work-board-card-state').textContent(), { timeout: 10_000 }).toBe('PR #1 · 检查通过 2/2')
     await mkdir(OUT, { recursive: true })
-    for (const theme of ['light', 'dark'] as const)
-      for (const layout of ['overview', 'triage'] as const) {
-        await page.emulateMedia({ colorScheme: theme })
-        await switchLayout(page, layout)
-        await settleShell(page)
-        await page.evaluate(() => document.fonts.ready)
-        if (layout === 'triage') {
-          await expect.poll(() => approval.getByRole('button', { name: '允许', exact: true }).isDisabled()).toBe(false)
-          await checks.waitFor()
-        } else {
-          await approval.getByRole('button', { name: '查看原请求', exact: true }).waitFor()
-          expect(await approval.getByRole('button', { name: '允许', exact: true }).count()).toBe(0)
-          await home.getByRole('button', { name: '查看交付', exact: true }).waitFor()
-        }
-        await noHorizontalOverflow(page)
-        await page.screenshot({ path: `${OUT}/${layout}-home--1440--${theme}.png`, animations: 'disabled' })
-      }
-    await approval.getByRole('button', { name: EDIT, exact: true }).click()
-    for (const theme of ['light', 'dark'] as const)
-      for (const layout of ['overview', 'triage'] as const) {
-        await page.emulateMedia({ colorScheme: theme })
-        await switchLayout(page, layout)
-        const frame = page.locator('.app-shell')
-        if ((layout === 'overview') !== ((await frame.getAttribute('data-inspector')) === 'open')) await page.keyboard.press('Alt+Shift+b')
-        await expect.poll(() => page.locator('.workspace .approval-panel[data-arming]').count()).toBe(0)
-        if (layout === 'triage') {
-          const queueRow = page.locator(`.triage-sidebar [data-work-session="${sessions[1]}"]`)
-          expect(await queueRow.locator('.session-row-glyph[data-tone="waiting"]').isVisible()).toBe(true)
-          expect(await queueRow.locator('time').isVisible()).toBe(true)
-          expect(await page.locator('.triage-sidebar [data-group="delivery"]').textContent()).toContain('#1 保留未填写的配置')
-        }
-        await settleShell(page)
-        await noHorizontalOverflow(page)
-        await page.screenshot({ path: `${OUT}/${layout}-session--1440--${theme}.png`, animations: 'disabled' })
-      }
-    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    // The full list is a page, keeps the same reading session, and retains each existing management menu.
-    await page.getByRole('button', { name: '全部会话', exact: true }).click()
-    const all = page.getByRole('region', { name: '全部会话', exact: true })
-    await all.waitFor()
-    expect(
-      await page.locator('.workspace .approval-panel').evaluate(element => ({
-        visible: element.checkVisibility({ opacityProperty: true, visibilityProperty: true }),
-        inert: !!element.closest('[inert]'),
-      })),
-    ).toEqual({ visible: false, inert: true })
-    expect(await all.locator('.workbench-session-row').count()).toBe(3)
-    expect(await all.getByRole('button', { name: `更多操作：${EDIT}`, exact: true }).isVisible()).toBe(true)
-    for (const theme of ['light', 'dark'] as const)
-      for (const width of [1440, 768]) {
-        await page.emulateMedia({ colorScheme: theme })
-        await page.setViewportSize({ width, height: 1000 })
-        await noHorizontalOverflow(page)
-        await page.screenshot({ path: `${OUT}/triage-sessions--${width}--${theme}.png`, animations: 'disabled' })
-      }
-    await page.setViewportSize({ width: 1440, height: 1000 })
-    await page.getByRole('button', { name: '总览', exact: true }).click()
-    await approval.locator('.approval-panel').waitFor()
-    await home.locator(`[data-request-session="${sessions[2]}"]`).click()
-    await question.locator('.question-card').waitFor()
-    // Digits typed in the new task must never answer a visible question in another session.
-    await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('1')
-    await page.keyboard.press('1')
-    expect((await owner.json<TaskDetail>(`tasks/${sessions[2]}`)).questions).toHaveLength(1)
-    await returnFromHomeFocus(page)
-    await expect.poll(() => question.getByRole('button', { name: /先做预览/u }).isDisabled()).toBe(false)
-    await reachable(question.getByRole('button', { name: /先做预览/u }))
-    await question.getByRole('button', { name: /先做预览/u }).focus()
-    await expect.poll(() => question.locator('.question-option kbd').count()).toBe(2)
-    expect(await approval.count()).toBe(0)
-    // A snapshot refresh can reorder document listeners while focus stays in the selected question.
-    await owner.json(`workspaces/${workspace.id}`, { method: 'PATCH', body: { name: '设置项目 · 已核对' } })
-    await expect.poll(() => question.textContent()).toContain('设置项目 · 已核对')
-    const focusedDecision = page.waitForRequest(
-      request => request.method() === 'POST' && /\/approvals\/|\/questions\/[^/]+\/answer$/u.test(new URL(request.url()).pathname),
-    )
-    await page.keyboard.press('1')
-    expect(new URL((await focusedDecision).url()).pathname).toContain(`/tasks/${sessions[2]}/questions/`)
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessions[2]}`)).summary.status).toBe('idle')
-    expect((await owner.json<TaskDetail>(`tasks/${sessions[1]}`)).approvals).toHaveLength(1)
-    await expect.poll(() => approval.getByRole('button', { name: '允许', exact: true }).isDisabled()).toBe(false)
+    for (const theme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme: theme })
+      await settleShell(page)
+      await page.evaluate(() => document.fonts.ready)
+      await expect.poll(() => approval.getByRole('button', { name: '允许', exact: true }).isDisabled()).toBe(false)
+      await noHorizontalOverflow(page)
+      await page.screenshot({ path: `${OUT}/board--1440--${theme}.png`, animations: 'disabled' })
+    }
+    await page.emulateMedia({ colorScheme: 'light' })
     await reachable(approval.getByRole('button', { name: '允许', exact: true }))
-    await approval.getByRole('button', { name: '允许', exact: true }).focus()
-    await page.keyboard.press('2')
+    await approval.getByRole('button', { name: '允许', exact: true }).click()
     await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessions[1]}`)).summary.status).toBe('idle')
     expect(await readFile(join(folder, 'settings.ts'), 'utf8')).toBe(AFTER)
+    expect((await owner.json<TaskDetail>(`tasks/${sessions[2]}`)).questions).toHaveLength(1)
     expect(await host.host.bridge.listTasks()).toHaveLength(3)
-    expect(await home.getByRole('textbox', { name: '新会话消息', exact: true }).inputValue()).toBe('11')
-    await home.locator('[data-group="delivery"] .work-delivery').getByRole('button').first().click()
-    await switchLayout(page, 'overview')
+
+    // In 对话, the session's 概要 reads the same evidence: the folder's two files and the PR's checks.
+    await released.locator('.work-board-card-main').click()
+    await expect.poll(() => page.locator('.app-shell').getAttribute('data-view')).toBe('chat')
+    await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
+    if ((await page.locator('.app-shell').getAttribute('data-inspector')) !== 'open') await page.keyboard.press('Alt+Shift+b')
     await page.getByRole('tab', { name: '概要', exact: true }).click()
-    await expect.poll(() => page.locator('.session-overview').textContent(), { timeout: 10_000 }).toContain('目录未提交 2 个文件')
+    await expect.poll(() => page.locator('.session-overview').textContent(), { timeout: 10_000 }).toContain('2 个文件未提交')
     expect(await page.locator('.session-overview').textContent()).toContain('检查通过 2/2')
     // The changes link must use the Host's turn identity, not the user message's unrelated identity.
     await page.locator(`[data-task-id="${sessions[1]}"]`).first().click()
@@ -304,48 +221,27 @@ it('finds real evidence on the home, decides there, and continues the original s
     const changesRequest = page.waitForRequest(request => request.url().includes('/changes') && request.url().includes(turnId!))
     await page.locator('.session-overview').getByRole('button', { name: 'settings.ts', exact: true }).click()
     await changesRequest
-    await page.getByRole('tab', { name: '概要', exact: true }).click()
-    await expect
-      .poll(
-        async () => {
-          const current = await owner.json<TaskDetail>(`tasks/${sessions[1]}`)
-          return current.messages
-            .filter(message => message.outputsPending)
-            .map(message => ({
-              role: message.role,
-              text: message.text,
-              pending: message.outputsPending,
-              files: message.outputs?.length,
-              trackingState: current.fileChanges?.state,
-            }))
-        },
-        { timeout: 10_000 },
-      )
-      .toEqual([])
-    await expect.poll(() => page.locator('.session-overview').textContent()).not.toContain('正在核对文件改动')
     for (const theme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme: theme })
-      await page.screenshot({ path: `${OUT}/overview-session-evidence--1440--${theme}.png`, animations: 'disabled' })
+      await settleShell(page)
+      await page.screenshot({ path: `${OUT}/session-evidence--1440--${theme}.png`, animations: 'disabled' })
     }
-    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    await home.getByRole('button', { name: '查看交付', exact: true }).click()
-    await page.locator('.delivery-panel').waitFor()
-    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    await switchLayout(page, 'triage')
-    await expect.poll(() => home.locator('[data-group="delivery"]').textContent(), { timeout: 10_000 }).toContain('检查通过 2/2')
-    await checks.waitFor()
+    await page.emulateMedia({ colorScheme: 'light' })
+
+    // A new head without checks: the card says the checks belong to the old commit, from the next read.
+    await switchView(page, 'board')
+    await expect.poll(() => released.locator('.work-board-card-state').textContent(), { timeout: 10_000 }).toBe('PR #1 · 检查通过 2/2')
     git('commit', '--allow-empty', '-m', 'Prepare a new head without checks')
     await expect
       .poll(
         async () => {
           await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-          return delivery.textContent()
+          return released.locator('.work-board-card-state').textContent()
         },
         { timeout: 10_000 },
       )
-      .toContain('检查对应旧提交')
-    expect(await checks.count()).toBe(0)
-    // A revoked read is authoritative even before the device snapshot has caught up.
+      .toBe('PR #1 · 检查对应旧提交')
+    // A revoked read is authoritative even before the device snapshot has caught up: the group stays, the facts go.
     let revokedReads = 0
     await page.route('**/link/api/workbench/delivery', route => {
       revokedReads++
@@ -364,10 +260,8 @@ it('finds real evidence on the home, decides there, and continues the original s
         { timeout: 10_000 },
       )
       .toBeGreaterThan(0)
-    await expect.poll(() => home.locator('[data-group="delivery"] .work-delivery').count()).toBe(0)
-    expect(await home.locator('[data-group="delivery"] .ui-count').count()).toBe(0)
-    expect(await home.locator('[data-group="delivery"]').textContent()).not.toContain('检查通过')
-    expect(await delivery.getByRole('img').count()).toBe(0)
+    await expect.poll(() => released.locator('.work-board-card-state').textContent()).toBe('可交付')
+    await column('可交付').locator(`[data-work-session="${sessions[0]}"]`).waitFor()
     expect(await gh.violations()).toEqual([])
   } finally {
     for (const id of sessions) await host.host.bridge.cancel(id).catch(() => {})

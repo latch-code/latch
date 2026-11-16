@@ -4,51 +4,30 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { expect, it } from 'vitest'
-import type { Device, TaskDetail, WorkbenchDelivery, WorkspaceInfo } from '@latch/protocol'
+import type { AppSnapshot, Device, TaskDetail, WorkbenchDelivery, WorkspaceInfo } from '@latch/protocol'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { noHorizontalOverflow, openSession, reachable, settleShell } from './helpers/layout.ts'
-
-// Stale: the 侧栏/顶栏 pair and the old home are gone; package C rewrites this file against 看板's groups.
-const LAYOUT_NAMES = { overview: '侧栏', triage: '顶栏' } as const
-const switchLayout = async (...args: unknown[]): Promise<void> => {
-  void args
-}
+import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
+import { switchView } from './helpers/workbench.ts'
 
 const OUT = 'test-results/workbench-git-eligibility'
 
-async function capture(page: Page, name: string, words: string, deliveryState: 'quiet' | 'refused' | 'observed') {
+/** The board at three widths, light and dark. */
+async function capture(page: Page, name: string) {
   for (const width of [390, 768, 1440]) {
     await page.setViewportSize({ width, height: 1000 })
-    for (const key of ['overview', 'triage'] as const) {
-      const layout = LAYOUT_NAMES[key]
-      await switchLayout(page, key)
-      const home = page.locator('.workbench-home')
-      const quiet = deliveryState === 'quiet'
-      if (key === 'triage' && !quiet) {
-        const lane = home.getByRole('button', { name: /^可交付/u })
-        if (await lane.isVisible()) await lane.click()
-        const delivery = home.locator('[data-group="delivery"]')
-        await reachable(delivery.getByText(words).first())
-      } else {
-        const action = home.getByRole('button', { name: '查看交付', exact: true })
-        if (deliveryState === 'observed') await reachable(action)
-        else {
-          await reachable(home.getByRole('button', { name: /记录普通项目目录/u }))
-          expect(await action.count()).toBe(0)
-        }
-      }
-      for (const theme of ['light', 'dark'] as const) {
-        await page.emulateMedia({ colorScheme: theme })
-        await settleShell(page)
-        await noHorizontalOverflow(page)
-        await page.screenshot({ path: `${OUT}/${name}-${layout}-${width}-${theme}.png`, animations: 'disabled' })
-      }
+    for (const theme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme: theme })
+      await settleShell(page)
+      await noHorizontalOverflow(page)
+      await page.screenshot({ path: `${OUT}/${name}-${width}-${theme}.png`, animations: 'disabled' })
     }
   }
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.emulateMedia({ colorScheme: 'light' })
 }
 
-it('distinguishes an ordinary folder from refused Git metadata and later reads a real repository through the home', async () => {
+it('keeps an ordinary folder, refused Git metadata and a change the session did not make out of 可交付', async () => {
   const host = await startTestHost({ demo: true, hostName: '交付验收电脑' })
   let browser: Browser | undefined
   let inspected: Page | undefined
@@ -71,6 +50,7 @@ it('distinguishes an ordinary folder from refused Git metadata and later reads a
       })
       .toBe(false)
     const read = () => owner.json<WorkbenchDelivery>('workbench/delivery', { method: 'POST', body: { ids: [sessionId] } })
+    const groupOf = async () => (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.id === sessionId)?.board?.group
     const ordinary = await read()
     await mkdir(join(folder, '.git'))
     await writeFile(join(folder, '.git', 'HEAD'), 'invalid-head\n')
@@ -84,6 +64,8 @@ it('distinguishes an ordinary folder from refused Git metadata and later reads a
     expect(ordinary.entries[0]?.error).toBeUndefined()
     expect(refused.entries[0]).toMatchObject({ sessionId, error: { code: 'git-not-repository' } })
     expect(refused.entries[0]).not.toHaveProperty('notApplicable')
+    // Neither is a delivery: the Host keeps the session in 已结束.
+    expect(await groupOf()).toBe('done')
 
     browser = await chromium.launch(browserLaunchOptions())
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
@@ -94,59 +76,59 @@ it('distinguishes an ordinary folder from refused Git metadata and later reads a
     await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })
     await page.reload()
     await connected(page)
-    const delivery = page.locator('.workbench-home [data-group="delivery"]')
-    // The ordinary folder can be resumed, but there is no pending work, delivery, or Git failure to retry.
-    const home = page.locator('.workbench-home')
-    await switchLayout(page, 'triage')
-    await reachable(home.getByRole('region', { name: '接着做', exact: true }).getByRole('button', { name: /记录普通项目目录/u }))
-    await expect.poll(() => home.locator('[data-group]').count(), { timeout: 10_000 }).toBe(0)
-    expect(await home.getByText(/不支持 Git 交付/u).count()).toBe(0)
-    expect(await home.getByRole('button', { name: /^(?:重试|刷新)$/u }).count()).toBe(0)
-    await capture(page, 'ordinary-folder', '记录普通项目目录', 'quiet')
-    await openSession(page, sessionId)
+    await switchView(page, 'board')
+    const board = page.locator('.work-board')
+    const column = (name: string) => board.getByRole('region', { name, exact: true })
+    const card = board.locator(`.work-board-card[data-work-session="${sessionId}"]`)
+    await column('已结束').locator(`[data-work-session="${sessionId}"]`).waitFor()
+    expect(await column('可交付').locator('.work-board-card').count()).toBe(0)
+    // The board says nothing of Git for a folder that has none, and offers no retry: there is nothing to retry.
+    expect(await board.getByText(/Git|无法读取/u).count()).toBe(0)
+    expect(await board.getByRole('button', { name: /^(?:重试|刷新)$/u }).count()).toBe(0)
+    await capture(page, 'ordinary-folder')
+
+    // In 对话 the session's 概要 has no 交付 section: with nothing else to show, one faint line.
+    await card.locator('.work-board-card-main').click()
     await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
     if ((await page.locator('.app-shell').getAttribute('data-inspector')) !== 'open') await page.keyboard.press('Alt+Shift+b')
     await expect.poll(() => page.locator('.app-shell').getAttribute('data-inspector')).toBe('open')
     const overview = page.locator('.session-overview')
-    // A folder Git cannot deliver has no 交付 section in the panel: with nothing else to show, one faint line.
     await overview.locator('.session-overview-empty').getByText('还没有改动', { exact: true }).waitFor()
     expect(await overview.getByText(/不支持 Git 交付|尚未观察到文件改动|本轮没有命令记录/u).count()).toBe(0)
     expect(await overview.getByRole('button', { name: '刷新', exact: true }).count()).toBe(0)
-    expect(await overview.getByRole('heading').count()).toBe(0)
     expect(await overview.locator('.ui-notice[data-tone="warn"]').count()).toBe(0)
     expect(await overview.getByRole('button', { name: '查看交付', exact: true }).count()).toBe(0)
-    await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
 
+    // Refused metadata read again: still no delivery, nothing invented on the card.
     await mkdir(join(folder, '.git'))
     await writeFile(join(folder, '.git', 'HEAD'), 'invalid-head\n')
-    // The quiet home has no 刷新: the next read (here a reload) finds the refused metadata, and the groups come back
-    // with the way to retry.
-    await page.reload()
-    await connected(page)
-    if (!(await home.isVisible())) await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
-    await expect.poll(() => delivery.textContent()).toContain('部分目录暂时无法读取')
-    expect(await delivery.locator('.ui-count').count()).toBe(0)
-    await reachable(delivery.getByRole('button', { name: '重试', exact: true }))
-    await capture(page, 'refused-metadata', '部分目录暂时无法读取', 'refused')
+    expect((await read()).entries[0]).toMatchObject({ error: { code: 'git-not-repository' } })
+    await switchView(page, 'board')
+    await column('已结束').locator(`[data-work-session="${sessionId}"]`).waitFor()
+    expect(await board.getByText(/Git|无法读取/u).count()).toBe(0)
+    await capture(page, 'refused-metadata')
 
+    // A real repository with a file the session never wrote: the read finds it, but only a session that changed files
+    // there itself holds a folder's work, so the card stays in 已结束 while 概要 still reads the folder.
     await rm(join(folder, '.git'), { recursive: true })
     execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'init', '--template=', '--initial-branch=main', folder], {
       env: { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
       stdio: 'pipe',
     })
     await writeFile(join(folder, 'release.md'), '# 本次发布\n')
-    await delivery.getByRole('button', { name: '重试', exact: true }).click()
-    await expect.poll(() => delivery.textContent(), { timeout: 10_000 }).toContain('未提交 1 个文件')
     const repository = (await read()).entries[0]
     expect(repository.state).toMatchObject({ branch: 'main', files: 1, untracked: 1 })
     expect(repository.error).toBeUndefined()
     expect(repository).not.toHaveProperty('notApplicable')
-    expect(await delivery.locator('.work-delivery').count()).toBe(1)
-    expect(await delivery.getByRole('button', { name: '重试', exact: true }).count()).toBe(0)
-    expect(await delivery.getByText('未提交 1 个文件', { exact: true }).count()).toBe(1)
-    await capture(page, 'real-git-change', '未提交 1 个文件', 'observed')
-    await delivery.getByRole('button', { name: '查看改动', exact: true }).click()
-    await page.locator('.delivery-panel').getByText('release.md', { exact: true }).waitFor()
+    expect(await groupOf()).toBe('done')
+    await page.reload()
+    await connected(page)
+    await column('已结束').locator(`[data-work-session="${sessionId}"]`).waitFor()
+    expect(await column('可交付').locator('.work-board-card').count()).toBe(0)
+    await capture(page, 'unattributed-git-change')
+    await card.locator('.work-board-card-main').click()
+    await page.getByRole('tab', { name: '概要', exact: true }).click()
+    await expect.poll(() => overview.textContent(), { timeout: 10_000 }).toContain('1 个文件未提交')
   } catch (error) {
     if (inspected && (await inspected.locator('.app-shell').count()) > 0)
       await inspected.screenshot({ path: `${OUT}/failure.png`, animations: 'disabled' }).catch(() => {})

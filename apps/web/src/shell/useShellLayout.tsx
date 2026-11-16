@@ -1,4 +1,5 @@
 import { requestLeave } from '../preview/editDrafts.ts'
+import { requestBoard } from '../board/requests.ts'
 import { readsProjectFiles, type AppSnapshot, type BoardGroup, type TerminalTarget } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import { mentionMarker } from '../fileMentions.ts'
@@ -166,12 +167,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   /** The start screen's count line: 看板, with that group in view. */
   const askBoardGroup = (group: BoardGroup) => {
     switchWorkView('board')
-    // TODO(board): requestBoard({ kind: 'group', group }) from '../board/requests.ts', which arrives with 看板.
-    void group
+    requestBoard({ kind: 'group', group })
   }
   /** ⌘N and 新会话 while 看板 is in front open its 新建, which holds the one new-session input then. */
   const askBoardNew = () => {
-    // TODO(board): requestBoard({ kind: 'new' }) from '../board/requests.ts', which arrives with 看板.
+    requestBoard({ kind: 'new' })
   }
   useEffect(() => {
     writeHomeShown(snapshot.device.id, homeShown)

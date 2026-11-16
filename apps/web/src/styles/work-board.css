@@ -1,0 +1,661 @@
+/*
+ * 看板: the full surface between the title row and the status bar. It reflows by its own width (a container), never the
+ * window's: n columns need n × 240 + (n − 1) × 12 + 32 px, so four from 1028px, two by two from 524px, and below that
+ * the narrow list (BoardSurface swaps it in by the same width). The phase-2 rules for five columns are written now:
+ * five from 1280px, 3 + 2 from 776px, 2 + 2 + 1 from 524px. Order never changes and no group is hidden.
+ */
+.work-board {
+  container: work-board / inline-size;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--canvas);
+  color: var(--ink);
+}
+.work-board-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ---- Head: filters, then 板 | 表 and 新建 ---------------------------------------------------------------------- */
+
+.work-board-head {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+  padding: var(--sp-12) var(--sp-16);
+}
+.work-board-filters {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.work-board-head-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-8);
+  margin-inline-start: auto;
+}
+.work-board-filter[data-active] {
+  color: var(--ink);
+  background: var(--hover);
+}
+.work-board-filter-count {
+  min-width: 16px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-full);
+  background: var(--tag);
+  color: var(--ink);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.work-board-filter-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.work-board-filter-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding-block: var(--sp-4);
+}
+.work-board-filter-sheet h4 {
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12) 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.work-board-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.work-board-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 200px;
+  height: 24px;
+  padding-inline: var(--sp-8) var(--sp-2);
+  border-radius: var(--r-6);
+  background: var(--tag);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-chip-remove,
+.work-board-tag-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-4);
+  background: transparent;
+  color: var(--muted);
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.work-board-chip-remove:hover,
+.work-board-tag-remove:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.work-board-chip-remove:focus-visible,
+.work-board-tag-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ---- Columns ------------------------------------------------------------------------------------------------- */
+
+.work-board-columns {
+  display: grid;
+  flex: 1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(180px, 1fr);
+  gap: var(--sp-12);
+  min-height: 0;
+  padding: 0 var(--sp-16) var(--sp-16);
+}
+/* Five groups between 524 and 776: two by two, the last cell a whole row. */
+.work-board-columns[data-columns='5'] > :last-child {
+  grid-column: span 2;
+}
+@container work-board (min-width: 776px) {
+  .work-board-columns[data-columns='5'] {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .work-board-columns[data-columns='5'] > * {
+    grid-column: span 2;
+  }
+  .work-board-columns[data-columns='5'] > :nth-child(n + 4) {
+    grid-column: span 3;
+  }
+}
+@container work-board (min-width: 1028px) {
+  .work-board-columns[data-columns='4'] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@container work-board (min-width: 1280px) {
+  .work-board-columns[data-columns='5'] {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .work-board-columns[data-columns='5'] > *,
+  .work-board-columns[data-columns='5'] > :nth-child(n + 4) {
+    grid-column: auto;
+  }
+}
+.work-board-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--r-12);
+  background: var(--sunken);
+}
+.work-board-column-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-8);
+  height: 40px;
+  padding-inline: var(--sp-12);
+  color: var(--muted);
+}
+.work-board-column-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--r-12);
+}
+.work-board-column-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 500;
+}
+.work-board-column[data-group='attention'] .work-board-column-head > svg {
+  color: var(--amber-icon);
+}
+.work-board-count {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+.work-board-count[data-tone='warn'] {
+  color: var(--amber);
+}
+.work-board-cards {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--sp-8);
+  min-height: 0;
+  margin: 0;
+  padding: 0 var(--sp-8) var(--sp-8);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+.work-board-cards > li {
+  flex: none;
+}
+.work-board-empty-line {
+  display: block;
+  height: 1px;
+  margin: var(--sp-16) var(--sp-12);
+  background: var(--line);
+}
+.work-board-schedules {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  list-style: none;
+}
+.work-board-schedules li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.work-board-schedule-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-schedules time {
+  font-family: var(--mono);
+  font-size: var(--fs-fact);
+  line-height: var(--lh-fact);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- A card --------------------------------------------------------------------------------------------------- */
+
+.work-board-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  border-radius: var(--r-8);
+  background: var(--card);
+  box-shadow: var(--work-card-shadow);
+  transition: box-shadow var(--m-micro) var(--e-micro);
+}
+/* The session last opened from the board, or just started from it. */
+.work-board-card[data-marked] {
+  box-shadow:
+    0 0 0 1.5px var(--accent),
+    var(--sh-1);
+}
+.work-board-card[data-decision] {
+  display: block;
+  background: transparent;
+  box-shadow: none;
+}
+.work-board-card-main {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-4);
+  min-width: 0;
+  padding: var(--sp-10) var(--sp-12);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--r-8);
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-card-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (hover: hover) {
+  .work-board-card-main:hover {
+    background: var(--hover);
+  }
+}
+.work-board-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.work-board-card-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-card-head time,
+.work-board-row-time {
+  flex: none;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--fs-fact);
+  line-height: var(--lh-fact);
+  font-variant-numeric: tabular-nums;
+}
+.work-board-priority {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+}
+.work-board-priority[data-priority='high'] {
+  background: var(--ink);
+}
+.work-board-priority[data-priority='low'] {
+  box-shadow: inset 0 0 0 1px var(--muted);
+}
+.work-board-card-place {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--muted);
+}
+.work-board-card-place > * {
+  flex: none;
+}
+.work-board-card-project,
+.work-board-card-branch,
+.work-board-who {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.work-board-card-project,
+.work-board-card-branch {
+  flex: 0 1 auto;
+}
+.work-board-card-project > span,
+.work-board-card-branch > span,
+.work-board-who > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-card-branch {
+  font-family: var(--mono);
+  font-size: var(--fs-fact);
+  line-height: var(--lh-fact);
+}
+.work-board-card-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.work-board-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 160px;
+  padding-inline: var(--sp-6);
+  border-radius: var(--r-4);
+  background: var(--tag);
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.work-board-tag > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.work-board-card-source {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  color: var(--faint);
+}
+.work-board-card-source > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-card-actions {
+  position: absolute;
+  top: var(--sp-6);
+  right: var(--sp-6);
+  opacity: 0;
+  transition: opacity var(--m-micro) var(--e-micro);
+}
+.work-board-card:hover .work-board-card-actions,
+.work-board-card:has(:focus-visible) .work-board-card-actions,
+.work-board-card-actions:has([aria-expanded='true']),
+.work-board-row:hover .work-board-card-actions,
+.work-board-row:has(:focus-visible) .work-board-card-actions {
+  opacity: 1;
+}
+/* A touch screen holds the card down for the same menu: the hidden ⋯ takes no taps there. */
+@media (hover: none) {
+  .work-board-card-actions:not(:has([aria-expanded='true'])) {
+    pointer-events: none;
+  }
+}
+/* Over a card's time, the ⋯ takes its place while shown. */
+.work-board-card:is(:hover, :has(:focus-visible), :has([aria-expanded='true'])) .work-board-card-head time {
+  opacity: 0;
+}
+.work-board-card[data-decision] .work-board-card-actions {
+  top: var(--sp-8);
+  right: var(--sp-8);
+}
+
+/* ---- The list ------------------------------------------------------------------------------------------------- */
+
+.work-board-table {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 var(--sp-16) var(--sp-16);
+}
+.work-board-states {
+  flex: none;
+  margin-bottom: var(--sp-8);
+}
+.work-board-table-head,
+.work-board-row-main {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: var(--sp-12);
+}
+.work-board-table-head {
+  flex: none;
+  height: 32px;
+  padding-inline: var(--sp-12) var(--sp-40);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-order {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.work-board-order[aria-pressed='true'] {
+  color: var(--ink);
+}
+.work-board-order:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-4);
+}
+.work-board-rows {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.work-board-row {
+  position: relative;
+  border-bottom: 1px solid var(--line);
+}
+.work-board-row .work-board-card-actions {
+  top: 50%;
+  translate: 0 -50%;
+}
+.work-board-row-main {
+  width: 100%;
+  min-height: 40px;
+  padding: var(--sp-6) var(--sp-40) var(--sp-6) var(--sp-12);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-row-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (hover: hover) {
+  .work-board-row-main:hover {
+    background: var(--hover);
+  }
+}
+.work-board-row[data-marked] .work-board-row-main {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.work-board-row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.work-board-row-title .work-board-tags-row {
+  flex-wrap: nowrap;
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+}
+.work-board-row-project,
+.work-board-row-harness,
+.work-board-row-who,
+.work-board-row-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-row-harness {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+.work-board-row-time {
+  justify-self: end;
+}
+@container work-board (max-width: 900px) {
+  .work-board-table-head,
+  .work-board-row-main {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 1.4fr) minmax(0, 1fr) 72px;
+  }
+  .work-board-table .work-board-row-harness,
+  .work-board-table .work-board-row-who {
+    display: none;
+  }
+}
+
+/* ---- Narrow: one list under a state filter --------------------------------------------------------------------- */
+
+.work-board-phone {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.work-board-phone-bar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding: var(--sp-12) var(--sp-16) var(--sp-8);
+}
+.work-board-phone-bar .work-board-states {
+  margin: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.work-board-phone-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+}
+.work-board-phone-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: var(--sp-4) var(--sp-16) var(--sp-16);
+  overflow-y: auto;
+  list-style: none;
+}
+
+/* ---- Tags and 新建 dialogs ------------------------------------------------------------------------------------- */
+
+.work-board-tags {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-12);
+  padding-bottom: var(--sp-16);
+}
+.work-board-tag-list,
+.work-board-tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.work-board-tag[data-editable] {
+  padding-inline-end: var(--sp-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-tag-suggestions .work-board-tag {
+  max-width: 200px;
+  font-size: var(--fs-caption);
+}
+.work-board-new .composer {
+  box-shadow: none;
+}
+.work-board-new .ui-dialog-body {
+  padding-bottom: var(--sp-16);
+}

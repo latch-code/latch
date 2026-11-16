@@ -154,4 +154,33 @@ describe('the composer control row at every width of its own', () => {
     await sweep(page, 'session')
     await page.context().close()
   })
+
+  it('keeps a phone’s chip row apart: the project never slides under the Harness, the row scrolls instead', async () => {
+    for (const width of [320, 390]) {
+      const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true, locale: 'zh-CN' })
+      const page = await context.newPage()
+      page.setDefaultTimeout(15_000)
+      await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+      await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
+      const chips = page.locator('.workbench-home').getByRole('group', { name: '会话选项', exact: true })
+      await chips.waitFor()
+      const wrong = await chips.evaluate(row => {
+        const items = [...row.querySelectorAll<HTMLElement>(':scope > *, .home-composer-location > *')]
+          .filter(element => !element.classList.contains('home-composer-location') && element.getClientRects().length > 0)
+          .map(element => ({ name: element.className || element.tagName, rect: element.getBoundingClientRect() }))
+          .filter(item => item.rect.width > 0)
+          .toSorted((a, b) => a.rect.left - b.rect.left)
+        const found: string[] = []
+        for (const [index, item] of items.entries()) {
+          const next = items[index + 1]
+          if (next && next.rect.left < item.rect.right - 0.5) found.push(`${item.name} × ${next.name}`)
+          if (item.rect.width < 24) found.push(`${item.name} squeezed to ${item.rect.width}px`)
+        }
+        return found
+      })
+      await page.screenshot({ path: `${OUTPUT}/phone-chips-${width}.png`, animations: 'disabled' })
+      expect(wrong, `phone at ${width}px`).toEqual([])
+      await context.close()
+    }
+  })
 })
