@@ -496,8 +496,10 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         await shots('revoked')
 
         // 移除: the record, the credential and B's page storage go, and B's window closes.
+        const computerName = await row.locator('.settings-row-title').innerText()
         await row.getByRole('button', { name: '移除', exact: true }).click()
-        await page.getByRole('dialog').getByRole('button', { name: '移除', exact: true }).click()
+        const confirmation = page.getByRole('dialog', { name: `移除 ${computerName}？`, exact: true })
+        await confirmation.getByRole('button', { name: '移除', exact: true }).click()
         await row.waitFor({ state: 'detached' })
         expect(JSON.parse(await readFile(join(userData, 'computers.json'), 'utf8'))).toEqual({ version: 1, computers: [] })
         expect(await exists(credentialFile)).toBe(false)
