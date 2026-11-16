@@ -12,6 +12,20 @@ export * from './glyphs/index.tsx'
 export { DemoMark, DevMark } from './marks.tsx'
 export { FoldHeader } from './fold.tsx'
 export { Meter, type MeterSize } from './meter.tsx'
+export {
+  BarChart,
+  BarRows,
+  ChartLegend,
+  HeatGrid,
+  LineChart,
+  ShareBar,
+  SourceSplit,
+  chartColour,
+  type BarColumn,
+  type BarRow,
+  type LinePoint,
+  type SharePart,
+} from './chart.tsx'
 export { Collapse, EASING, MOTION, Shimmer, Swap, usePresence } from './motion.tsx'
 export { crossFade, enter, exit, flip, moveLane, moving, resolveAndRise, sendLift, sheenOnce, stagger } from './moves.ts'
 export { markStreaming, onStreamingLayer, streamingInView, useStreamingLayer, watchStreaming } from './stream.ts'

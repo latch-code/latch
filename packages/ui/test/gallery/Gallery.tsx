@@ -22,6 +22,13 @@ import {
   InlineNotice,
   Kbd,
   Meter,
+  BarChart,
+  BarRows,
+  ChartLegend,
+  HeatGrid,
+  LineChart,
+  ShareBar,
+  SourceSplit,
   LiveChanges,
   Loading,
   MenuFooterLink,
@@ -519,6 +526,104 @@ function Meters() {
         </Cell>
         <Cell caption="18 格">
           <Meter label="上下文" value={84} max={272} cells={18} size="md" valueText="84k / 272k" />
+        </Cell>
+      </Row>
+    </Section>
+  )
+}
+
+const DAYS = Array.from({ length: 14 }, (_, index) => ({
+  key: String(index),
+  label: `11/${index + 3}`,
+  values: [((index * 37) % 50) * 1000, ((index * 13) % 20) * 1000 + 2000, ((index * 7) % 9) * 600],
+}))
+
+function Charts() {
+  const tokens = (value: number) => (value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value)))
+  return (
+    <Section title="图表">
+      <Row label="堆叠柱 · 可选一天">
+        <Cell caption="每日 tokens">
+          <div className="gallery-chart">
+            <ChartLegend series={['缓存读取', '输入', '输出']} />
+            <BarChart
+              label="每日 tokens"
+              series={['缓存读取', '输入', '输出']}
+              columns={DAYS}
+              format={tokens}
+              selected="9"
+              onSelect={() => {}}
+            />
+          </div>
+        </Cell>
+      </Row>
+      <Row label="折线 · 时段">
+        <Cell caption="缓存命中，空两天，停在一天">
+          <div className="gallery-chart">
+            <LineChart
+              label="缓存命中"
+              max={1}
+              format={value => `${Math.round(value * 100)}%`}
+              active="9"
+              points={DAYS.map((day, index) => ({
+                key: day.key,
+                label: day.label,
+                ...(index === 6 || index === 8 ? {} : { value: 0.4 + ((index * 17) % 50) / 100 }),
+              }))}
+            />
+          </div>
+        </Cell>
+        <Cell caption="一周的小时">
+          <div className="gallery-chart">
+            <HeatGrid
+              label="时段"
+              values={Array.from({ length: 168 }, (_, index) => (index % 24 > 8 && index % 24 < 20 && index < 120 ? (index * 7) % 11 : 0))}
+              format={value => `${value} 次`}
+            />
+          </div>
+        </Cell>
+      </Row>
+      <Row label="占比 · 行">
+        <Cell caption="来源">
+          <div className="gallery-chart">
+            <ShareBar
+              label="来源"
+              format={tokens}
+              parts={[
+                { key: 'a', name: '经 Latch 服务', label: '经 Latch 服务', value: 820_000 },
+                { key: 'b', name: '自己登录', label: '自己登录', value: 310_000 },
+                { key: 'c', name: '其他', label: '其他', value: 40_000, series: 'rest' },
+              ]}
+            />
+          </div>
+        </Cell>
+        <Cell caption="一行的来源">
+          <SourceSplit
+            format={tokens}
+            parts={[
+              { name: '经 Latch 服务', value: 2_700_000, series: 0 },
+              { name: '自己登录', value: 4_800_000, series: 1 },
+            ]}
+          />
+        </Cell>
+        <Cell caption="还没有">
+          <div className="gallery-chart">
+            <ShareBar label="项目" format={tokens} parts={[{ key: 'rest', name: '其他', label: '其他', value: 0, series: 'rest' }]} />
+          </div>
+        </Cell>
+        <Cell caption="每轮 tokens">
+          <div className="gallery-chart">
+            <BarRows
+              label="每轮"
+              series={['输入', '输出']}
+              from={1}
+              format={tokens}
+              rows={[
+                { key: 'x', name: 'Codex', label: 'Codex', values: [42_000, 3_000], figure: '45k / 轮' },
+                { key: 'y', name: 'OpenCode', label: 'OpenCode', values: [28_000, 2_400], figure: '30k / 轮' },
+              ]}
+            />
+          </div>
         </Cell>
       </Row>
     </Section>
@@ -2092,6 +2197,7 @@ export function Gallery() {
         <Buttons />
         <Pills />
         <Meters />
+        <Charts />
         <Pickers />
         <Inputs />
         <Section title="输入建议">

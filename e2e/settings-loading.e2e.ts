@@ -342,7 +342,7 @@ describe('model and usage settings reads', () => {
     }
   })
 
-  it('in 额度与用量, holds a skeleton of the final layout, keeps the visible query through a late result and retries only the failed read', async () => {
+  it('in 额度与用量, holds a skeleton of the final layout, keeps the last answer through a late result and retries only the failed read', async () => {
     const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: {
@@ -367,7 +367,7 @@ describe('model and usage settings reads', () => {
         await page.getByRole('menuitemradio', { name: option, exact: true }).click()
       }
       // While the first read is held the view is a skeleton of the boxes that replace it: the rows land where it stood.
-      const first = await holdRead(page, 'model-usage')
+      const first = await holdRead(page, 'usage')
       holds.push(first)
       await page.keyboard.press('Alt+Shift+U')
       await usage.getByRole('radio', { name: '用量', exact: true }).click()
@@ -377,36 +377,41 @@ describe('model and usage settings reads', () => {
       const held = (await skeleton.locator('.usage-total').boundingBox())!
       await page.screenshot({ path: resolve(output, 'usage-skeleton--1440--dark.png'), animations: 'disabled' })
       first.release()
-      const row = usage.getByRole('rowheader', { name: service, exact: true })
-      await row.waitFor()
+      await usage.locator('.usage-shown').waitFor()
       const landed = (await usage.locator('.usage-total').boundingBox())!
       expect([landed.x, landed.y]).toEqual([held.x, held.y])
       const top = (await usage.locator('.ui-modal-surface').boundingBox())!.y
+      await pick('分组', '按服务')
+      const row = usage.getByRole('rowheader', { name: service, exact: true })
+      await row.waitFor()
 
-      const pendingModel = await holdRead(page, 'model-usage')
+      // Another grouping: the last answer stays, marked busy, until the next lands; a late answer to an older
+      // question never replaces the one asked for.
+      const shown = usage.locator('.usage-shown')
+      const pendingModel = await holdRead(page, 'usage')
       holds.push(pendingModel)
       await pick('分组', '按模型')
       await pendingModel.wait()
-      expect(await row.count()).toBe(0)
-      await usage.locator('.usage-skeleton').waitFor()
+      expect(await row.isVisible()).toBe(true)
+      expect(await shown.getAttribute('aria-busy')).toBe('true')
       // The surface keeps its top edge whatever it shows: only its bottom moves.
       expect((await usage.locator('.ui-modal-surface').boundingBox())!.y).toBe(top)
 
-      const pendingService = await holdRead(page, 'model-usage')
+      const pendingService = await holdRead(page, 'usage')
       holds.push(pendingService)
       await pick('分组', '按服务')
       await pendingService.wait()
-      await row.waitFor()
       pendingModel.release()
       await pendingModel.delivered
       expect(await row.isVisible()).toBe(true)
       expect(await usage.getByRole('rowheader', { name: /fixture-model/u }).count()).toBe(0)
       pendingService.release()
       await pendingService.delivered
+      await expect.poll(() => shown.getAttribute('aria-busy')).toBe('false')
 
       const failure = '暂时无法读取这个期间的用量。'
       await page.route(
-        '**/link/api/model-usage',
+        '**/link/api/usage',
         route =>
           route.fulfill({
             status: 503,
@@ -414,14 +419,17 @@ describe('model and usage settings reads', () => {
           }),
         { times: 1 },
       )
-      await pick('统计期间', '30 天')
-      await usage.getByText(failure, { exact: true }).waitFor()
-      expect(await row.count()).toBe(0)
-      await usage.getByRole('button', { name: '统计期间：30 天', exact: true }).waitFor()
+      await usage.getByRole('radio', { name: '7 天', exact: true }).click()
+      await usage.getByText(failure).waitFor()
+      // The failure says the last answer is still what is shown, and only that read is tried again.
+      expect(await usage.locator('.ui-notice, [role="alert"], [role="status"]').filter({ hasText: failure }).textContent()).toContain(
+        '当前显示上次读取结果',
+      )
+      expect(await usage.getByRole('radio', { name: '7 天', exact: true }).getAttribute('aria-checked')).toBe('true')
       await page.screenshot({ path: resolve(output, 'usage-failure--1440--dark.png'), animations: 'disabled' })
       await usage.getByRole('button', { name: '重试', exact: true }).click()
+      await usage.getByText(failure).waitFor({ state: 'hidden' })
       await row.waitFor()
-      expect(await usage.getByText(failure, { exact: true }).count()).toBe(0)
     } finally {
       holds.forEach(item => item.release())
       await context.close()

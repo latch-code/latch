@@ -227,6 +227,12 @@
     --kind-run: #0f6e78;
     --kind-web: #3e7563;
     --kind-agent: #7d5f4b;
+    /* Chart: series of the usage charts, in this order and never cycled; none is the accent, amber or red, each is 3:1
+     * on the surfaces and the run passes colour-blind checks pair by pair. A series always has its label beside it. */
+    --chart-1: #00876a;
+    --chart-2: #6c55d4;
+    --chart-3: #c34a82;
+    --chart-4: #3f7fb0;
     --ansi-red: var(--red);
     --ansi-green: var(--green);
     --ansi-yellow: #7a5c00;
@@ -627,6 +633,10 @@
       --kind-run: #79d0d6;
       --kind-web: #8ccfb4;
       --kind-agent: #d0b49e;
+      --chart-1: #21a284;
+      --chart-2: #8a74e6;
+      --chart-3: #d9669a;
+      --chart-4: #5592d6;
       --ansi-yellow: #e6c45c;
       --ansi-blue: #7fa6f5;
       --ansi-magenta: #e09ade;
@@ -745,6 +755,10 @@
     --kind-run: #79d0d6;
     --kind-web: #8ccfb4;
     --kind-agent: #d0b49e;
+    --chart-1: #21a284;
+    --chart-2: #8a74e6;
+    --chart-3: #d9669a;
+    --chart-4: #5592d6;
     --ansi-yellow: #e6c45c;
     --ansi-blue: #7fa6f5;
     --ansi-magenta: #e09ade;
@@ -913,6 +927,10 @@
     --kind-run: #0f6e78 !important;
     --kind-web: #3e7563 !important;
     --kind-agent: #7d5f4b !important;
+    --chart-1: #00876a !important;
+    --chart-2: #6c55d4 !important;
+    --chart-3: #c34a82 !important;
+    --chart-4: #3f7fb0 !important;
     --ansi-red: var(--red) !important;
     --ansi-green: var(--green) !important;
     --ansi-yellow: #7a5c00 !important;
@@ -1110,6 +1128,10 @@
       --kind-run: #79d0d6 !important;
       --kind-web: #8ccfb4 !important;
       --kind-agent: #d0b49e !important;
+      --chart-1: #21a284 !important;
+      --chart-2: #8a74e6 !important;
+      --chart-3: #d9669a !important;
+      --chart-4: #5592d6 !important;
       --ansi-yellow: #e6c45c !important;
       --ansi-blue: #7fa6f5 !important;
       --ansi-magenta: #e09ade !important;
@@ -1228,6 +1250,10 @@
     --kind-run: #79d0d6 !important;
     --kind-web: #8ccfb4 !important;
     --kind-agent: #d0b49e !important;
+    --chart-1: #21a284 !important;
+    --chart-2: #8a74e6 !important;
+    --chart-3: #d9669a !important;
+    --chart-4: #5592d6 !important;
     --ansi-yellow: #e6c45c !important;
     --ansi-blue: #7fa6f5 !important;
     --ansi-magenta: #e09ade !important;

@@ -1,0 +1,236 @@
+/*
+ * Charts: inline SVG at their own pixel width. Series in the chart colours, in order; axes, grid and labels in the
+ * recessive inks; the hover card on the pop surface, so a series keeps the colour it was checked against. Nothing
+ * animates, and a chart's height is fixed before it has measured, so it never pushes what is around it.
+ */
+.ui-chart {
+  position: relative;
+  min-width: 0;
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+.ui-chart > svg {
+  display: block;
+  overflow: visible;
+}
+.ui-chart text {
+  fill: var(--faint);
+  font-size: var(--fs-caption);
+}
+.ui-chart-grid > line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.ui-chart-base {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+.ui-chart-band {
+  fill: transparent;
+}
+.ui-chart-column[data-active] > .ui-chart-band {
+  fill: var(--hover);
+}
+.ui-chart-column[role='button'] {
+  cursor: pointer;
+  outline: none;
+}
+.ui-chart-column[role='button']:focus-visible > .ui-chart-band {
+  fill: var(--hover);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.ui-chart-column[aria-pressed='true'] > .ui-chart-band {
+  fill: var(--press);
+}
+.ui-chart-line {
+  fill: none;
+  stroke: var(--chart-1);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.ui-chart-dot {
+  fill: var(--chart-1);
+}
+.ui-chart-dot[data-ring] {
+  stroke: var(--pop);
+  stroke-width: 2;
+}
+.ui-chart-cross {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+/* The week's hours: the track grey for none, then four depths of the first chart colour. */
+.ui-chart-cell {
+  fill: var(--track);
+}
+.ui-chart-cell[data-level='1'] {
+  fill: color-mix(in srgb, var(--chart-1) 36%, transparent);
+}
+.ui-chart-cell[data-level='2'] {
+  fill: color-mix(in srgb, var(--chart-1) 58%, transparent);
+}
+.ui-chart-cell[data-level='3'] {
+  fill: color-mix(in srgb, var(--chart-1) 80%, transparent);
+}
+.ui-chart-cell[data-level='4'] {
+  fill: var(--chart-1);
+}
+.ui-chart-cell[data-active] {
+  stroke: var(--ink);
+  stroke-width: 1;
+}
+
+.ui-chart-tip {
+  position: absolute;
+  top: 0;
+  z-index: var(--z-float);
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 120px;
+  max-width: 240px;
+  padding: var(--sp-6) var(--sp-8);
+  border: 1px solid var(--line);
+  border-radius: var(--r-6);
+  background: var(--pop);
+  color: var(--ink);
+  box-shadow: var(--sh-tip);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  pointer-events: none;
+}
+.ui-chart-tip > p {
+  margin: 0;
+}
+.ui-chart-tip-title {
+  color: var(--muted);
+}
+.ui-chart-tip-line {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: var(--sp-6);
+  align-items: center;
+}
+.ui-chart-tip-line > b {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.ui-chart-swatch {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-2);
+}
+.ui-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4) var(--sp-12);
+  margin: 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  list-style: none;
+}
+.ui-chart-legend > li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+
+/* A share of a whole: the cut bar, then one line a part. */
+.ui-share {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.ui-share-bar {
+  height: 8px;
+  min-width: 0;
+}
+.ui-share-bar > svg {
+  display: block;
+}
+.ui-share-empty {
+  fill: var(--track);
+}
+.ui-share-parts,
+.ui-bar-rows {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  list-style: none;
+}
+.ui-share-parts > li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto 40px;
+  gap: var(--sp-8);
+  align-items: center;
+  color: var(--ink-2);
+}
+.ui-share-name,
+.ui-bar-rows-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-share-value,
+.ui-share-percent,
+.ui-bar-rows-figure {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  white-space: nowrap;
+}
+.ui-bar-rows > li {
+  display: grid;
+  grid-template-columns: minmax(72px, 32%) minmax(0, 1fr) auto;
+  gap: var(--sp-8);
+  align-items: center;
+  color: var(--ink-2);
+}
+.ui-bar-rows-track {
+  display: block;
+  height: 8px;
+  min-width: 0;
+}
+.ui-bar-rows-track > svg {
+  display: block;
+}
+
+.ui-source-split {
+  display: block;
+  width: 64px;
+  height: 4px;
+}
+.ui-source-split > svg {
+  display: block;
+}
+
+@media (forced-colors: active) {
+  .ui-chart rect,
+  .ui-share rect,
+  .ui-bar-rows rect,
+  .ui-source-split rect,
+  .ui-chart-swatch {
+    forced-color-adjust: none;
+    fill: CanvasText;
+    background: CanvasText;
+  }
+  .ui-chart-cell[data-level='0'],
+  .ui-chart-band {
+    fill: Canvas;
+  }
+  .ui-chart-line {
+    stroke: CanvasText;
+  }
+}

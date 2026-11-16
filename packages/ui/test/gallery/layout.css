@@ -673,3 +673,10 @@ ol.gallery-sheet-card > li {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+/* A chart takes the cell's width, up to a dialog's. */
+.gallery-chart {
+  display: grid;
+  gap: var(--sp-8);
+  width: min(100%, 480px);
+  min-width: 240px;
+}

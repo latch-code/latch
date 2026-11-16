@@ -299,12 +299,8 @@
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
 }
-.usage-reported {
-  display: grid;
-  gap: var(--sp-8);
-}
 .usage-budgets h3,
-.usage-reported h3 {
+.usage-panel-head :is(h3, h4) {
   margin: 0;
   color: var(--muted);
   font-size: var(--fs-caption);
@@ -312,7 +308,110 @@
   font-weight: 500;
 }
 
-/* 用量: the period's total, its estimated cost, the budgets as limit windows, then a row per service or model. */
+/*
+ * 用量: the period's total with its facts, the charts in panels on hairlines (two a row where there is room), the
+ * budgets as limit windows, then the rows of the chosen grouping. While the next answer is read the last one stays,
+ * so nothing jumps.
+ */
+.usage-shown {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+}
+.usage-panel {
+  display: grid;
+  gap: var(--sp-8);
+  align-content: start;
+  min-width: 0;
+  padding-top: var(--sp-12);
+  border-top: 1px solid var(--line);
+}
+.usage-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4) var(--sp-12);
+  min-height: 28px;
+  min-width: 0;
+}
+.usage-panel-head h4 {
+  color: var(--ink-2);
+}
+.usage-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--sp-16) var(--sp-24);
+  min-width: 0;
+}
+.usage-empty {
+  display: grid;
+  place-items: center;
+  min-height: 176px;
+  margin: 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.usage-day {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12) var(--sp-12);
+  border-radius: var(--r-8);
+  background: var(--band);
+}
+.usage-compare {
+  display: grid;
+  gap: var(--sp-12);
+}
+.usage-compare-model {
+  display: grid;
+  gap: var(--sp-6);
+}
+.usage-compare-model h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.usage-row-split {
+  margin-top: var(--sp-4);
+}
+/* The estimate's basis, behind a tap on the estimate. */
+.usage-total-cost {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.usage-cost-basis {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  list-style: none;
+}
+.usage-row-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+.usage-total .usage-total-facts {
+  column-gap: var(--sp-16);
+  color: var(--muted);
+}
+.usage-total-cost {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-6);
+  color: var(--ink-2);
+}
 .usage-total {
   display: grid;
   gap: var(--sp-4);
@@ -323,6 +422,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--sp-4) var(--sp-8);
+  min-width: 0;
   margin: 0;
   color: var(--ink-2);
   font-size: var(--fs-ui);

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { AppSnapshot, BudgetProgress, ModelUsageRow } from '@latch/protocol'
 import { TurnFooter } from '../src/components/TurnFooter.tsx'
 import { BudgetProgressLine } from '../src/settings/ModelSpend.tsx'
-import { usageRowDetail, usageRowName, usageTotals } from '../src/usage/usage.ts'
+import { usageRowDetail, usageRowName, usageTotals, mergeSources } from '../src/usage/usage.ts'
 import { settingsSections } from '../src/settings/SettingsPage.tsx'
 import {
   budgetProgressText,
@@ -107,8 +107,45 @@ describe('what a cost and a budget read as', () => {
   it('totals what is shown: no token total when no row reported any', () => {
     expect(
       usageTotals([row({ cost: [{ currency: 'USD', micros: 5 }] }), row({ cost: [{ currency: 'USD', micros: 7, priced: true }] })]),
-    ).toEqual({ requests: 6, tokens: 31_000, cost: [{ currency: 'USD', micros: 12, priced: true }] })
-    expect(usageTotals([row({ usage: undefined })])).toEqual({ requests: 3, tokens: undefined, cost: [] })
+    ).toMatchObject({ turns: 0, requests: 6, tokens: 31_000, cost: [{ currency: 'USD', micros: 12, priced: true }] })
+    expect(usageTotals([row({ usage: undefined })])).toEqual({ turns: 0, requests: 3, inputTokens: 0, outputTokens: 0, cost: [] })
+    // Own-login turns count as turns, and cache reads only while every measured row reported them.
+    const own = {
+      ...row({ usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 80 } }),
+      by: 'own' as const,
+      turns: 2,
+      requests: 0,
+    }
+    expect(usageTotals([own])).toMatchObject({ turns: 2, requests: 0, tokens: 110, cacheReadTokens: 80 })
+    expect(usageTotals([own, row()]).cacheReadTokens).toBe(own.usage!.cacheReadTokens! + 400)
+    expect(usageTotals([own, row({ usage: { inputTokens: 1, outputTokens: 1 } })])).not.toHaveProperty('cacheReadTokens')
+  })
+
+  it('makes one row of a thing from every source, keeping each source’s tokens', () => {
+    const gateway = {
+      ...row({ providerId: undefined, harness: 'codex', cost: [{ currency: 'USD' as const, micros: 5, priced: true as const }] }),
+      by: 'gateway' as const,
+      turns: 0,
+    }
+    const own = {
+      ...row({ providerId: undefined, harness: 'codex', requests: 0, usage: { inputTokens: 100, outputTokens: 10 } }),
+      by: 'own' as const,
+      turns: 2,
+    }
+    const other = { ...row({ providerId: undefined, harness: 'pi' }), by: 'own' as const, turns: 1 }
+    const merged = mergeSources([gateway, own, other])
+    expect(merged).toHaveLength(2)
+    expect(merged[0]).toMatchObject({
+      harness: 'codex',
+      requests: 3,
+      turns: 2,
+      usage: { inputTokens: 12_500, outputTokens: 3110 },
+      split: { gateway: 15_500, own: 110 },
+      cost: [{ currency: 'USD', micros: 5, priced: true }],
+    })
+    // A part one source did not report is not summed from the other.
+    expect(merged[0]!.usage).not.toHaveProperty('cacheReadTokens')
+    expect(merged[1]).toMatchObject({ harness: 'pi', split: { own: 15_500 } })
   })
 
   it('names a row by what it is of, and says so when that is gone', () => {

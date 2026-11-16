@@ -315,6 +315,21 @@ describe('design tokens', () => {
     }
   })
 
+  it('gives the charts four series colours at 3:1 on the surfaces they sit on, none of them a state colour', () => {
+    const all = themes()
+    for (const name of ['light', 'dark'] as const) {
+      const theme = all[name]
+      const get = (token: string) => colour(theme.get(token))
+      const series = ['--chart-1', '--chart-2', '--chart-3', '--chart-4']
+      for (const token of series) {
+        for (const surface of ['--raised', '--pop', '--card'])
+          expect(contrast(get(token), get(surface)), `${name} ${token} on ${surface}`).toBeGreaterThanOrEqual(3)
+        for (const state of ['--accent', '--amber', '--amber-icon', '--red', '--green']) expect(theme.get(token)).not.toBe(theme.get(state))
+      }
+      expect(new Set(series.map(token => theme.get(token))).size).toBe(4)
+    }
+  })
+
   it('keeps the words of a high-risk card at 4.5:1 on its red tint over the canvas', () => {
     const all = themes()
     for (const name of ['light', 'dark'] as const) {

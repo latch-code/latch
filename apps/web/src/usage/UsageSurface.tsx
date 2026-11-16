@@ -1,46 +1,19 @@
 import { Fragment, useEffect, useState } from 'react'
-import {
-  GENERAL_AGENT_ID,
-  type AppSnapshot,
-  type BudgetProgress,
-  type HarnessInfo,
-  type ModelUsageSummary,
-  type UsageGroup,
-  type UsagePeriod,
-  type UsageSummary,
-} from '@latch/protocol'
-import { Badge, Button, InlineNotice, Modal, ModalHeader, SegmentedControl, Skeleton, ValuePicker } from '@latch/ui'
+import type { AppSnapshot, HarnessInfo } from '@latch/protocol'
+import { Button, Modal, ModalHeader, SegmentedControl } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
-import { api, errorMessage } from '../core/api.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { hostView, type DeviceAccess } from '../core/permissions.ts'
-import { exactTokens, formatTokens } from '../format.ts'
-import { useModelSpend } from '../settings/ModelSpend.tsx'
-import { budgetProgressText, costsText, NOT_REPORTED, pricedNote } from '../settings/modelSpend.ts'
 import { LimitWindow } from './LimitWindow.tsx'
-import { budgetLimit, harnessLimits, LIMIT_WORDS, type HarnessLimits } from './limits.ts'
-import { closeUsage, openUsage, useUsageRequest, type UsageRequest, type UsageView } from './surface.ts'
-import { unpricedShare, usageRowDetail, usageRowName, usageTotals } from './usage.ts'
+import { harnessLimits, LIMIT_WORDS } from './limits.ts'
+import { closeUsage, openUsage, useUsageRequest, type UsageRequest, type UsageView as View } from './surface.ts'
+import { UsageView } from './UsageView.tsx'
 
-const VIEWS: ReadonlyArray<{ value: UsageView; label: string }> = [
+const VIEWS: ReadonlyArray<{ value: View; label: string }> = [
   { value: 'limits', label: '额度' },
   { value: 'usage', label: '用量' },
 ]
-const PERIODS: Array<{ value: UsagePeriod; label: string }> = [
-  { value: 'month', label: '本月' },
-  { value: '7', label: '7 天' },
-  { value: '30', label: '30 天' },
-  { value: '90', label: '90 天' },
-]
-const GROUPS: Array<{ value: UsageGroup; label: string }> = [
-  { value: 'service', label: '按服务' },
-  { value: 'model', label: '按模型' },
-  { value: 'agent', label: '按 Agent' },
-  { value: 'session', label: '按会话' },
-]
-
-const chosen: { period: UsagePeriod; group: UsageGroup } = { period: 'month', group: 'service' }
 
 /** Who is asking: Host, device, data scope and scopes. */
 function audienceOf(snapshot: AppSnapshot, access: DeviceAccess): string {
@@ -98,7 +71,7 @@ export function UsageSurface({
   }, [viewing])
   if (!viewing || !request) return null
   return (
-    <Modal label="额度与用量" variant={phone ? 'sheet' : 'dialog'} size="lg" className="usage-surface" onClose={closeUsage}>
+    <Modal label="额度与用量" variant={phone ? 'sheet' : 'dialog'} size="xl" className="usage-surface" onClose={closeUsage}>
       <UsageBody key={audience} request={request} snapshot={snapshot} offline={offline} phone={phone} />
     </Modal>
   )
@@ -116,7 +89,7 @@ function UsageBody({
   phone: boolean
 }) {
   const usageOffered = snapshot.catalog?.features?.modelUsage === true
-  const view: UsageView = usageOffered ? request.view : 'limits'
+  const view: View = usageOffered ? request.view : 'limits'
   const views = usageOffered && (
     <SegmentedControl
       label="视图"
@@ -238,274 +211,5 @@ function LimitsView({ request, harnesses, offline }: { request: UsageRequest; ha
         </p>
       )}
     </div>
-  )
-}
-
-function budgetName(budget: BudgetProgress, snapshot: AppSnapshot): string {
-  if (budget.scope === 'service') return snapshot.catalog?.providers.find(item => item.id === budget.id)?.name ?? budget.id
-  if (budget.id === GENERAL_AGENT_ID) return '通用'
-  return snapshot.customAgents?.find(agent => agent.id === budget.id)?.name ?? budget.id
-}
-
-/** Rows of the skeleton: the same boxes as the total, the budgets and the rows that replace them, so nothing moves. */
-function UsageSkeleton() {
-  return (
-    <div className="usage-skeleton" aria-hidden="true">
-      <div className="usage-total">
-        <Skeleton width={120} height={28} />
-        <Skeleton width={200} height={16} />
-      </div>
-      <table className="usage-rows">
-        <tbody>
-          {[0, 1, 2].map(row => (
-            <tr key={row}>
-              <th scope="row">
-                <Skeleton width="60%" height={16} />
-              </th>
-              <td>
-                <Skeleton width={24} height={16} />
-              </td>
-              <td>
-                <Skeleton width={40} height={16} />
-              </td>
-              <td>
-                <Skeleton width={48} height={16} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function UsageView({ request, snapshot }: { request: UsageRequest; snapshot: AppSnapshot }) {
-  // The period and grouping last chosen stay chosen while the page lives, across a new audience or a reopening.
-  const [period, choosePeriod] = useState<UsagePeriod>(chosen.period)
-  const [chosenGroup, chooseGroup] = useState<UsageGroup>(chosen.group)
-  const setPeriod = (next: UsagePeriod) => {
-    chosen.period = next
-    choosePeriod(next)
-  }
-  const setGroup = (next: UsageGroup) => {
-    chosen.group = next
-    chooseGroup(next)
-  }
-  // One service's use (a session on it asked): its models, and its own budget.
-  const scope = request.providerId
-  const group: UsageGroup = scope ? 'model' : chosenGroup
-  const query = `${period}:${group}`
-  const [summaries, setSummaries] = useState(() => new Map<string, ModelUsageSummary>())
-  const [failure, setFailure] = useState<{ query: string; text: string }>()
-  const [turn, setTurn] = useState(0)
-  const spending = useModelSpend(true, snapshot.revision)
-  useEffect(() => {
-    const controller = new AbortController()
-    void api<ModelUsageSummary>('model-usage', { method: 'POST', body: { period, group }, signal: controller.signal }).then(
-      result => {
-        if (controller.signal.aborted) return
-        if (result.period !== period || result.group !== group) {
-          setFailure({ query, text: '收到的用量与所选期间不符。' })
-          return
-        }
-        setSummaries(previous => new Map(previous).set(query, result))
-        setFailure(undefined)
-      },
-      cause => {
-        if (!controller.signal.aborted) setFailure({ query, text: errorMessage(cause) })
-      },
-    )
-    return () => {
-      controller.abort()
-    }
-  }, [period, group, query, turn])
-  const shown = summaries.get(query)
-  const rows = shown ? (scope ? shown.rows.filter(row => row.providerId === scope) : shown.rows) : undefined
-  const totals = rows ? usageTotals(rows) : undefined
-  const cost = costsText(totals?.cost)
-  const unpriced = rows ? unpricedShare(rows) : 0
-  const spend = spending.spend
-  const budgets = (spend?.budgets ?? []).filter(budget => !scope || (budget.scope === 'service' && budget.id === scope))
-  const error = failure?.query === query ? failure.text : undefined
-  return (
-    <div className="usage-usage">
-      <div className="usage-controls">
-        <ValuePicker label="统计期间" value={period} options={PERIODS} onValueChange={setPeriod} menuChevron width="xs" />
-        {!scope && <ValuePicker label="分组" value={group} options={GROUPS} onValueChange={setGroup} menuChevron width="xs" />}
-      </div>
-      {error && (
-        <InlineNotice
-          tone="error"
-          action={
-            <Button
-              size="sm"
-              onClick={() => {
-                setTurn(count => count + 1)
-              }}>
-              重试
-            </Button>
-          }>
-          {error}
-          {shown && ' 当前显示上次读取结果。'}
-        </InlineNotice>
-      )}
-      {!rows && !error && <UsageSkeleton />}
-      {rows && totals && rows.length > 0 && (
-        <div className="usage-total">
-          <p className="usage-total-tokens">
-            <strong>{totals.tokens === undefined ? NOT_REPORTED : formatTokens(totals.tokens)}</strong>
-            {totals.tokens !== undefined && ' tokens'}
-            <span className="usage-muted"> · {totals.requests} 次请求</span>
-          </p>
-          <p className="usage-total-cost">
-            <Badge>估算</Badge>
-            <span>{cost ?? NOT_REPORTED}</span>
-            <span className="usage-muted">
-              {cost ? (pricedNote(totals.cost) ?? '按服务报告') : ''}
-              {unpriced > 0 ? `${cost ? ' · ' : ''}${unpriced}% 未计价` : ''}
-            </span>
-          </p>
-        </div>
-      )}
-      {budgets.length > 0 && spend && (
-        <section className="usage-budgets" aria-label="本月预算">
-          <h3>本月预算</h3>
-          {budgets.map(budget => (
-            <LimitWindow
-              key={`${budget.scope}:${budget.id}`}
-              view={budgetLimit(budget, budgetName(budget, snapshot), spend.month)}
-              detail={`${budgetProgressText(budget)}${budget.uncounted ? ` · 未计入 ${budget.uncounted} 次` : ''}`}
-            />
-          ))}
-        </section>
-      )}
-      {rows && rows.length === 0 && <p className="usage-muted">这个期间还没有经 Latch 的请求</p>}
-      {rows && rows.length > 0 && (
-        <>
-          <table className="usage-rows" aria-label="用量">
-            <thead>
-              <tr>
-                <th scope="col">{GROUPS.find(item => item.value === group)!.label.replace(/^按 ?/u, '')}</th>
-                <th scope="col">请求</th>
-                <th scope="col">tokens</th>
-                <th scope="col">估算</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, index) => {
-                const { name, detail } = usageRowName(row, group, snapshot)
-                const notes = [
-                  scope ? undefined : detail,
-                  row.failed ? `失败 ${row.failed}` : undefined,
-                  row.fallbacks ? `备选 ${row.fallbacks}` : undefined,
-                ].filter(Boolean)
-                const tokens = row.usage ? row.usage.inputTokens + row.usage.outputTokens : undefined
-                return (
-                  <tr key={index} title={usageRowDetail(row) || undefined}>
-                    <th scope="row">
-                      <span>{name}</span>
-                      {notes.length > 0 && <small>{notes.join(' · ')}</small>}
-                    </th>
-                    <td>{row.requests}</td>
-                    <td title={tokens === undefined ? undefined : exactTokens(tokens)}>
-                      {tokens === undefined ? NOT_REPORTED : formatTokens(tokens)}
-                    </td>
-                    <td>{costsText(row.cost) ?? '—'}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-          {shown && shown.skipped > 0 && <p className="usage-muted">有 {shown.skipped} 行记录读不出，没有计入</p>}
-          {shown?.truncated && <p className="usage-muted">这个期间的请求太多，只算了读到的部分</p>}
-        </>
-      )}
-      {!scope && snapshot.catalog?.features?.usage === true && <ReportedUsage period={period} snapshot={snapshot} />}
-    </div>
-  )
-}
-
-/**
- * What the sessions' own messages say they used, outside the gateway's ledger: a Harness on its own login, and a plugin's
- * or the demo's provider. Tokens only, as reported, never priced; the same period as above.
- */
-function ReportedUsage({ period, snapshot }: { period: UsagePeriod; snapshot: AppSnapshot }) {
-  const [summaries, setSummaries] = useState(() => new Map<UsagePeriod, UsageSummary>())
-  const [failure, setFailure] = useState<{ period: UsagePeriod; text: string }>()
-  const [turn, setTurn] = useState(0)
-  useEffect(() => {
-    const controller = new AbortController()
-    void api<UsageSummary>('usage', { method: 'POST', body: { period }, signal: controller.signal }).then(
-      result => {
-        if (controller.signal.aborted) return
-        if (result.period !== period) return
-        setSummaries(previous => new Map(previous).set(period, result))
-        setFailure(undefined)
-      },
-      cause => {
-        if (!controller.signal.aborted) setFailure({ period, text: errorMessage(cause) })
-      },
-    )
-    return () => {
-      controller.abort()
-    }
-  }, [period, turn])
-  const shown = summaries.get(period)
-  const providers = snapshot.catalog?.providers ?? []
-  const harnesses = snapshot.catalog?.harnesses ?? []
-  // The gateway meters every request to a configured service; what it never sees is a Harness's own and a plugin's.
-  const rows = shown?.rows.filter(
-    row => row.source === 'agent' || ['plugin', 'demo'].includes(providers.find(item => item.id === row.providerId)?.kind ?? ''),
-  )
-  const error = failure?.period === period ? failure.text : undefined
-  if (!error && rows && rows.length === 0) return null
-  return (
-    <section className="usage-reported" aria-label="Harness 自己报告">
-      <h3>Harness 自己报告</h3>
-      {error && (
-        <InlineNotice
-          tone="error"
-          action={
-            <Button size="sm" onClick={() => setTurn(count => count + 1)}>
-              重试
-            </Button>
-          }>
-          {error}
-        </InlineNotice>
-      )}
-      {rows && rows.length > 0 && (
-        <table className="usage-rows" aria-label="Harness 自己报告的用量">
-          <thead>
-            <tr>
-              <th scope="col">Harness</th>
-              <th scope="col">消息</th>
-              <th scope="col">tokens</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => {
-              const harness = harnesses.find(item => item.id === row.harnessId)
-              const provider = providers.find(item => item.id === row.providerId)
-              const name = provider?.name ?? (harness ? harnessName(harness) : row.harnessId)
-              const tokens = row.usage.inputTokens + row.usage.outputTokens
-              return (
-                <tr key={index}>
-                  <th scope="row">
-                    <span>{name}</span>
-                    {row.model && <small>{row.model}</small>}
-                  </th>
-                  <td>{row.messages}</td>
-                  <td>{formatTokens(tokens)}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      )}
-      {shown && shown.unattributedMessages > 0 && (
-        <p className="usage-muted">另有 {shown.unattributedMessages} 条记录缺少时间或用量，没有计入</p>
-      )}
-      {shown?.truncated && <p className="usage-muted">部分会话暂时读不到，只算了读到的部分</p>}
-    </section>
   )
 }

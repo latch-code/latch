@@ -181,15 +181,23 @@ describe('model usage in 额度与用量, prices and budgets in settings', () =>
     for (const width of [1440, 768, 390])
       for (const theme of ['light', 'dark'] as const) {
         const { page, surface, usage, budgets } = await open(width, theme)
+        await pick(page, '分组', '按服务')
         const rows = usage.getByRole('row')
         const primaryRow = rows.filter({ has: page.getByRole('rowheader', { name: '主服务', exact: true }) })
         const backupRow = rows.filter({ has: page.getByRole('rowheader', { name: /^备用服务/u }) })
-        await expect.poll(() => primaryRow.getByRole('cell').allTextContents()).toEqual(['1', '15', '$0.0150'])
-        await expect.poll(() => backupRow.getByRole('cell').allTextContents()).toEqual(['2', '30', '¥0.0300'])
+        await expect.poll(() => primaryRow.getByRole('cell').allTextContents()).toEqual(['1 次', '15', '$0.0150'])
+        await expect.poll(() => backupRow.getByRole('cell').allTextContents()).toEqual(['2 次', '30', '¥0.0300'])
         expect(await backupRow.getByRole('rowheader').textContent()).toBe('备用服务备选 2')
         // An estimate says it is one, and what it was worked out from; it is never called a bill.
         await surface.locator('.usage-total-cost').getByText('估算', { exact: true }).waitFor()
-        expect(await surface.locator('.usage-total-cost').textContent()).toContain('按你填的单价')
+        // What it was worked out from is a tap away, on a phone as on a desktop.
+        await surface.locator('.usage-total-cost').click()
+        await page.locator('.usage-cost-basis').getByText('按你填的单价', { exact: true }).waitFor()
+        await page.keyboard.press('Escape')
+        await page.locator('.usage-cost-basis').waitFor({ state: 'hidden' })
+        // The charts of the same period: one column a day, today's holding the three requests.
+        await surface.getByRole('region', { name: '每日 tokens', exact: true }).waitFor()
+        expect(await surface.locator('.ui-chart-column').count()).toBe(30)
         expect(await surface.textContent()).not.toContain('账单')
         // Both budgets are used up: the same window as a Harness's, red, with the word 已用.
         await budgets.locator('.limit-window').filter({ hasText: AGENT_NAME }).waitFor()
@@ -261,7 +269,7 @@ describe('model usage in 额度与用量, prices and budgets in settings', () =>
       const privateRow = usage.getByRole('rowheader', { name: new RegExp(`^${AGENT_NAME}`, 'u') })
       await privateRow.waitFor()
       await budgets.getByText(AGENT_NAME, { exact: true }).waitFor()
-      await page.route('**/link/api/model-usage', async route => {
+      await page.route('**/link/api/usage', async route => {
         const beforeChange = !narrowed
         if (beforeChange && route.request().postDataJSON().period === '7') {
           await route.abort()
@@ -289,8 +297,9 @@ describe('model usage in 额度与用量, prices and budgets in settings', () =>
         await newReady
         await route.fulfill({ response }).catch(() => {})
       })
-      await pick(page, '统计期间', '7 天')
-      await pick(page, '统计期间', '本月')
+      const dialog = page.getByRole('dialog', { name: '额度与用量', exact: true })
+      await dialog.getByRole('radio', { name: '7 天', exact: true }).click()
+      await dialog.getByRole('radio', { name: '30 天', exact: true }).click()
       await expect.poll(() => oldUsage).toBe(true)
       await privateRow.waitFor()
       narrowed = true
