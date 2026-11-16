@@ -13,6 +13,7 @@ import { Banner } from '../components/Banner.tsx'
 import { JumpLatest } from '../components/JumpLatest.tsx'
 import { ConversationRail } from '../components/ConversationRail.tsx'
 import { Transcript } from '../components/Transcript.tsx'
+import { FillPlace } from '../panel/terminal/fills.ts'
 import { isLive, liveMessageId, renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
@@ -257,108 +258,111 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
                     <SendingBubble shell={shell} />
                   </>
                 ) : (
-                  <ChangesLinkContext.Provider value={changesLink}>
-                    {/* A helper's frame already keeps this boundary reachable, including its permission warning. */}
-                    {current.summary.firstStart && harnessInfo && !helperBoundary && (
-                      <FirstStartNote harness={harnessInfo} {...(speaker ? { who: speaker.name } : {})} />
-                    )}
-                    {current.summary.worktree?.unfiltered !== undefined && (
-                      <div className="session-start-note" role="note">
-                        <Hint label={`${current.summary.worktree.unfiltered} 个文件的 filter 没有运行`}>
-                          新工作树里这些文件的 filter（例如 Git LFS）没有运行，留成了 Git 里存的样子；要用 Git LFS 文件时，在终端里运行 git
-                          lfs pull。
-                        </Hint>
-                      </div>
-                    )}
-                    <Transcript
-                      detail={current}
-                      observeStream={showTranscript && frozenAt === undefined}
-                      projection={projection}
-                      replyViewport={reading.containerRef}
-                      onSource={choose}
-                      failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
-                      onFailureStep={step => takeFailureStep(step, openSettings)}
-                      onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
-                      onFork={
-                        catalog?.features?.fork && access.scopes.has('run')
-                          ? (upToMessageId, draft = '请接着这个会话继续。') => {
-                              submission.setFork({
-                                taskId: current.summary.id,
-                                upToMessageId,
-                                title: current.summary.title,
-                                choice: forkChoice(),
-                                source: forkSource(current, harnessInfo),
-                              })
-                              choose(null)
-                              submission.setDraft(draft)
-                              shell.showHome()
-                            }
-                          : undefined
-                      }
-                      approvals={approvals}
-                      harnessName={harnessName}
-                      {...(speaker ? { speaker } : {})}
-                      login={
-                        harnessInfo?.login
-                          ? {
-                              harnessId: harnessInfo.id,
-                              login: harnessInfo.login,
-                              // In this session's 终端 tab, where it can have one.
-                              surface: loginSurface(
-                                catalog?.features,
-                                current.summary.archived || current.summary.personal ? undefined : current.summary.id,
-                              ),
-                            }
-                          : undefined
-                      }
-                      harness={topHarness}
-                      demo={demo}
-                      active={active}
-                      changes={{
-                        // The Host shows a session's files only to a device whose data scope covers them.
-                        enabled: catalog?.features?.changes === true && snapshot.device.dataScope === 'all',
-                        undo: sessionReadOnly(current.summary) || !access.scopes.has('run') ? 'read-only' : 'open',
-                        // As the 改动 tab reads it: nothing can be written until the connection is back.
-                        offline: connection === 'reconnecting' || connection === 'offline',
-                      }}
-                      {...(run ? { onStop: run.onCancel } : {})}
-                      {...(current.summary.personal
-                        ? {}
-                        : {
-                            onStopSubagent: async (subagentId: string) => {
-                              try {
-                                await api(`tasks/${encodeURIComponent(current.summary.id)}/stop-subagent`, {
-                                  method: 'POST',
-                                  body: { subagentId },
+                  <FillPlace.Provider
+                    value={shell.canTerminal && shell.terminalTarget?.sessionId === current.summary.id ? current.summary.id : undefined}>
+                    <ChangesLinkContext.Provider value={changesLink}>
+                      {/* A helper's frame already keeps this boundary reachable, including its permission warning. */}
+                      {current.summary.firstStart && harnessInfo && !helperBoundary && (
+                        <FirstStartNote harness={harnessInfo} {...(speaker ? { who: speaker.name } : {})} />
+                      )}
+                      {current.summary.worktree?.unfiltered !== undefined && (
+                        <div className="session-start-note" role="note">
+                          <Hint label={`${current.summary.worktree.unfiltered} 个文件的 filter 没有运行`}>
+                            新工作树里这些文件的 filter（例如 Git LFS）没有运行，留成了 Git 里存的样子；要用 Git LFS 文件时，在终端里运行
+                            git lfs pull。
+                          </Hint>
+                        </div>
+                      )}
+                      <Transcript
+                        detail={current}
+                        observeStream={showTranscript && frozenAt === undefined}
+                        projection={projection}
+                        replyViewport={reading.containerRef}
+                        onSource={choose}
+                        failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
+                        onFailureStep={step => takeFailureStep(step, openSettings)}
+                        onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
+                        onFork={
+                          catalog?.features?.fork && access.scopes.has('run')
+                            ? (upToMessageId, draft = '请接着这个会话继续。') => {
+                                submission.setFork({
+                                  taskId: current.summary.id,
+                                  upToMessageId,
+                                  title: current.summary.title,
+                                  choice: forkChoice(),
+                                  source: forkSource(current, harnessInfo),
                                 })
-                              } catch (cause) {
-                                setToast({ text: errorMessage(cause), tone: 'error' })
-                                throw cause
+                                choose(null)
+                                submission.setDraft(draft)
+                                shell.showHome()
                               }
-                            },
-                          })}
-                      onReveal={reading.reveal}
-                      {...(handing ? { onHandoff: handOff } : {})}
-                      {...(returned.length || placeProposals || placeResults
-                        ? {
-                            placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
-                              // After a turn, what it proposed comes first (想定时), then the results of what was
-                              // set up since, which can only come later.
-                              joinPlaced(
-                                joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
-                                placeResults?.(turns),
-                              ),
-                          }
-                        : {})}
-                      {...(frozenAt !== undefined ? { frozenAt } : {})}
-                      cancelling={cancelState === 'cancelling'}
-                      coarse={coarse}
-                      providerName={providerName}
-                      {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
-                      {...(retry ? { retry } : {})}
-                    />
-                    <SendingBubble shell={shell} />
-                  </ChangesLinkContext.Provider>
+                            : undefined
+                        }
+                        approvals={approvals}
+                        harnessName={harnessName}
+                        {...(speaker ? { speaker } : {})}
+                        login={
+                          harnessInfo?.login
+                            ? {
+                                harnessId: harnessInfo.id,
+                                login: harnessInfo.login,
+                                // In this session's 终端 tab, where it can have one.
+                                surface: loginSurface(
+                                  catalog?.features,
+                                  current.summary.archived || current.summary.personal ? undefined : current.summary.id,
+                                ),
+                              }
+                            : undefined
+                        }
+                        harness={topHarness}
+                        demo={demo}
+                        active={active}
+                        changes={{
+                          // The Host shows a session's files only to a device whose data scope covers them.
+                          enabled: catalog?.features?.changes === true && snapshot.device.dataScope === 'all',
+                          undo: sessionReadOnly(current.summary) || !access.scopes.has('run') ? 'read-only' : 'open',
+                          // As the 改动 tab reads it: nothing can be written until the connection is back.
+                          offline: connection === 'reconnecting' || connection === 'offline',
+                        }}
+                        {...(run ? { onStop: run.onCancel } : {})}
+                        {...(current.summary.personal
+                          ? {}
+                          : {
+                              onStopSubagent: async (subagentId: string) => {
+                                try {
+                                  await api(`tasks/${encodeURIComponent(current.summary.id)}/stop-subagent`, {
+                                    method: 'POST',
+                                    body: { subagentId },
+                                  })
+                                } catch (cause) {
+                                  setToast({ text: errorMessage(cause), tone: 'error' })
+                                  throw cause
+                                }
+                              },
+                            })}
+                        onReveal={reading.reveal}
+                        {...(handing ? { onHandoff: handOff } : {})}
+                        {...(returned.length || placeProposals || placeResults
+                          ? {
+                              placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
+                                // After a turn, what it proposed comes first (想定时), then the results of what was
+                                // set up since, which can only come later.
+                                joinPlaced(
+                                  joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
+                                  placeResults?.(turns),
+                                ),
+                            }
+                          : {})}
+                        {...(frozenAt !== undefined ? { frozenAt } : {})}
+                        cancelling={cancelState === 'cancelling'}
+                        coarse={coarse}
+                        providerName={providerName}
+                        {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
+                        {...(retry ? { retry } : {})}
+                      />
+                      <SendingBubble shell={shell} />
+                    </ChangesLinkContext.Provider>
+                  </FillPlace.Provider>
                 )}
               </div>
             </div>

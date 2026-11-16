@@ -41,6 +41,7 @@ import {
   ShieldAlertGlyph,
 } from '@latch/ui'
 import { MarkTile, ProviderTile } from './BrandTile.tsx'
+import { TerminalFillButton } from './TerminalFillButton.tsx'
 
 const ProviderAddForm = deferredComponent(
   async () => ({ default: (await import('../settings/ProvidersSettings.tsx')).ProviderAddForm }),
@@ -261,6 +262,7 @@ export function AgentSetupPanel({
           <span className="agent-install-command">
             <code>{command}</code>
             <CopyButton text={command} label={upgrade ? '复制升级命令' : '复制安装命令'} size="xs" />
+            <TerminalFillButton command={command} detached />
           </span>
           {onRecheck && (
             <Button

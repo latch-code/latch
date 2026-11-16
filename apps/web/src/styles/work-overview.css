@@ -781,6 +781,23 @@
   white-space: pre-wrap;
 }
 
+.work-feature-material-body table {
+  border-collapse: collapse;
+  margin: var(--sp-8) 0 0;
+}
+
+.work-feature-material-body :is(th, td) {
+  padding: var(--sp-4) var(--sp-8);
+  border: 1px solid var(--work-line);
+  text-align: start;
+  vertical-align: top;
+}
+
+.work-feature-material-body th {
+  color: var(--work-ink);
+  font-weight: 600;
+}
+
 .work-feature-excerpt-note {
   margin: 0;
   padding: var(--sp-8) var(--sp-20);

@@ -44,6 +44,7 @@ import { LoginGroup } from './LoginGroup.tsx'
 import { loginSurface, type LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { HarnessMcpGroup } from './HarnessMcp.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
+import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 
 interface AgentsResponse {
   agents: AgentSettings[]
@@ -112,7 +113,12 @@ function InstallRows({ preset }: { preset: AgentPreset }) {
         <SettingsRow
           title="安装命令"
           description={<code className="settings-mono">{preset.install}</code>}
-          trailing={<CopyButton text={preset.install} label="复制安装命令" />}
+          trailing={
+            <span className="command-actions">
+              <CopyButton text={preset.install} label="复制安装命令" />
+              <TerminalFillButton command={preset.install} detached />
+            </span>
+          }
         />
       )}
       <SettingsRow
@@ -656,7 +662,10 @@ function AgentPage({
           }
           trailing={
             missing ? undefined : agent.detected.outdated ? (
-              <CopyButton text={agent.detected.outdated.upgrade} label="复制升级命令" />
+              <span className="command-actions">
+                <CopyButton text={agent.detected.outdated.upgrade} label="复制升级命令" />
+                <TerminalFillButton command={agent.detected.outdated.upgrade} detached />
+              </span>
             ) : agent.detected.path ? (
               <CopyButton text={agent.detected.path} label="复制命令路径" />
             ) : undefined
@@ -931,6 +940,7 @@ function InstallRow({
             )}
             <span className="agent-how-actions">
               {preset.install && <CopyButton text={preset.install} label={`复制 ${preset.name} 的安装命令`} size="xs" />}
+              {preset.install && <TerminalFillButton command={preset.install} detached />}
               <Button size="xs" variant="ghost" icon={RefreshGlyph} loading={checking} onClick={onRecheck}>
                 重新检测
               </Button>

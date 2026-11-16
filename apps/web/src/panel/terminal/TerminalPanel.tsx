@@ -30,6 +30,7 @@ import { TerminalLink } from './link.ts'
 import { loginRuns, useRevealedLogin } from './loginRuns.ts'
 import { terminalTheme } from './theme.ts'
 import { useTerminals } from './useTerminals.ts'
+import { useTerminalFill, type ScreenHandle } from './useTerminalFill.ts'
 
 /** The line height of the terminal role (--lh-term over --fs-term), as xterm's multiple of the font's own height. */
 const LINE_HEIGHT = 1.2
@@ -50,6 +51,10 @@ export interface TerminalPanelProps {
   onCompose?: ((text: string) => void) | undefined
   /** Opens a local service in the 浏览器 tab (the desktop app); ⌘-click still goes to the system browser. */
   onOpenService?: ((origin: string) => void) | undefined
+  /** Takes the commands asked for this place (`fills.ts`) and types them in at a prompt. */
+  fillPlace?: string | undefined
+  /** A command was asked for: the surface comes into view. */
+  onFillReveal?: (() => void) | undefined
 }
 
 /** The size a new terminal opens at: what fits the screen area, by the terminal font's cell. */
@@ -83,6 +88,8 @@ export function TerminalPanel({
   onCollapse,
   onCompose,
   onOpenService,
+  fillPlace,
+  onFillReveal,
 }: TerminalPanelProps) {
   const id = useId()
   const screens = useRef<HTMLDivElement>(null)
@@ -95,6 +102,17 @@ export function TerminalPanel({
   }, [shown, onCompose])
   const terminals = useTerminals({ target, shown, autoOpen: requested && !unavailable, size: () => measuredSize(screens.current) })
   const { tabs, active, read, opening, failure, list, setActive } = terminals
+  const fill = useTerminalFill({
+    place: fillPlace,
+    tabs,
+    active,
+    read,
+    unavailable,
+    open: terminals.open,
+    close: terminals.close,
+    setActive,
+    onReveal: onFillReveal,
+  })
   const current = tabs.find(tab => tab.id === active)
   const [selection, setSelection] = useState<Record<string, string>>({})
   const [confirm, setConfirm] = useState<{ tab: TerminalTab; program?: string }>()
@@ -251,6 +269,7 @@ export function TerminalPanel({
             onSelection={text => setSelection(previous => ({ ...previous, [tab.id]: text }))}
             onConnection={state => setConnection(previous => ({ ...previous, [tab.id]: state }))}
             onInputFailed={text => setNotice({ tone: 'error', text })}
+            onHandle={handle => fill.screen(tab.id, handle)}
           />
         ))}
         {tabs.length === 0 && (
@@ -359,6 +378,7 @@ export function TerminalScreen({
   onSelection,
   onConnection,
   onInputFailed,
+  onHandle,
 }: {
   target: TerminalTarget
   tab: TerminalTab
@@ -369,12 +389,14 @@ export function TerminalScreen({
   onSelection(text: string): void
   onConnection(state: 'live' | 'reconnecting'): void
   onInputFailed(text: string): void
+  /** Typing in for the person, once xterm is ready; null when the screen goes. */
+  onHandle?: ((handle: ScreenHandle | null) => void) | undefined
 }) {
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<{ terminal: Terminal; fit: FitAddon; link: TerminalLink } | null>(null)
   const [ready, setReady] = useState(false)
-  const handlers = useRef({ onSummary, onClosed, onSelection, onConnection, onInputFailed })
-  handlers.current = { onSummary, onClosed, onSelection, onConnection, onInputFailed }
+  const handlers = useRef({ onSummary, onClosed, onSelection, onConnection, onInputFailed, onHandle })
+  handlers.current = { onSummary, onClosed, onSelection, onConnection, onInputFailed, onHandle }
   const summary = useRef(tab.summary)
   summary.current = tab.summary
   const visibleRef = useRef(visible)
@@ -461,6 +483,7 @@ export function TerminalScreen({
         terminal.options.cursorBlink = cursorBlink()
       })
       cleanup.push(() => {
+        handlers.current.onHandle?.(null)
         unwatchMotion()
         typed.dispose()
         binary.dispose()
@@ -473,6 +496,7 @@ export function TerminalScreen({
         terminal.dispose()
       })
       link.start()
+      handlers.current.onHandle?.({ paste: data => link.sendWhole(data), focus: () => terminal.focus() })
       setReady(true)
     })
     return () => {

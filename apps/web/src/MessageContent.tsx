@@ -33,6 +33,9 @@ import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
 import { codePathCandidate, linkTarget, namesPath, referenceText, urlScheme } from './fileReference.ts'
 import { exceedsMarkdownNesting, MAX_TREE_DEPTH, treeDepth } from './markdownNesting.ts'
 import { createStreamingMarkdown } from './markdown/renderBlocks.tsx'
+import { TerminalFillButton } from './components/TerminalFillButton.tsx'
+import { isShellLanguage } from './panel/terminal/fill.ts'
+import { FillPlace } from './panel/terminal/fills.ts'
 import { ICON_STROKE, CheckGlyph, ChevronDownGlyph, ChevronUpGlyph, CopyGlyph, writeClipboard } from '@latch/ui'
 
 export interface MarkdownFiles {
@@ -98,9 +101,10 @@ function literalHtml() {
 const REASONING_NODES = new Set(['root', 'paragraph', 'text', 'strong', 'emphasis', 'inlineCode', 'list', 'listItem', 'break'])
 
 /**
- * Reasoning is drawn with paragraphs, lists, emphasis and inline code only. Anything else Markdown would make of it (a
- * link, an image, a heading, a quote, a code block, HTML) reads as the characters it was written with: nothing in a
- * thought navigates, loads or runs. Runs after `limitDepth`, which bounds this walk.
+ * Reasoning is drawn with paragraphs, lists, emphasis and inline code, and a fenced shell block as a code block, so its
+ * command can be copied or typed in at a prompt (never run). Anything else Markdown would make of it (a link, an image,
+ * a heading, a quote, other code blocks, HTML) reads as the characters it was written with: nothing in a thought
+ * navigates, loads or runs. Runs after `limitDepth`, which bounds this walk.
  */
 function reasoningOnly() {
   return (tree: MarkdownNode, file: { value: unknown }) => {
@@ -112,6 +116,7 @@ function reasoningOnly() {
           walk(node)
           return node
         }
+        if (node.type === 'code' && BLOCK_PARENTS.has(parent.type) && isShellLanguage(node.lang ?? undefined)) return node
         const start = node.position?.start.offset
         const end = node.position?.end.offset
         const written: MarkdownNode = { type: 'text', value: start === undefined || end === undefined ? '' : source.slice(start, end) }
@@ -126,7 +131,7 @@ const markdownGuards = [restrictInlineMath, limitDepth]
 const remarkPlugins = [remarkGfm, remarkMath, ...markdownGuards]
 // No GFM and no math: a table, an address or a formula in a thought stays the text it is.
 const reasoningPlugins = [limitDepth, reasoningOnly]
-const REASONING_ELEMENTS = ['p', 'strong', 'em', 'code', 'ul', 'ol', 'li', 'br']
+const REASONING_ELEMENTS = ['p', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'br']
 const replyPlugins = [...remarkPlugins, literalHtml]
 const replyPluginsWithoutMath = [remarkGfm, ...markdownGuards, literalHtml]
 const MarkdownFileContext = createContext<MarkdownFiles>({})
@@ -215,6 +220,7 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
             含不可见字符
           </span>
         )}
+        {isShellLanguage(language) && <TerminalFillButton command={code} streaming={!closed} look="code" />}
         <button
           type="button"
           className="message-code-copy"
@@ -542,7 +548,7 @@ export const MessageContent = memo(function MessageContent({
     [path, effectiveOpenFile, effectiveImage],
   )
   const plain = <PlainText text={text} />
-  return (
+  const content = (
     <div className="message-content" aria-busy={streaming || undefined}>
       {rendered === null ? (
         plain
@@ -557,19 +563,26 @@ export const MessageContent = memo(function MessageContent({
       )}
     </div>
   )
+  // A file's preview is a document, not a reply: its code blocks are never typed into a terminal.
+  return path === undefined ? content : <FillPlace.Provider value={undefined}>{content}</FillPlace.Provider>
 })
 
+const reasoningComponents: Components = { pre: components.pre }
 const renderReasoning = (source: string) =>
   renderMarkdown({
     children: source,
     remarkPlugins: reasoningPlugins,
     allowedElements: REASONING_ELEMENTS,
+    components: reasoningComponents,
     unwrapDisallowed: true,
     urlTransform: safeUrl,
     skipHtml: true,
   })
-const reasoningChild = (_source: string, child: ReactNode, index: number) =>
-  isValidElement(child) ? cloneElement(child, { key: index }) : child
+const reasoningChild = (source: string, child: ReactNode, index: number) => (
+  <SourceText.Provider key={index} value={source}>
+    {isValidElement(child) ? cloneElement(child, { key: 'content' }) : child}
+  </SourceText.Provider>
+)
 
 /**
  * A stretch of reported reasoning: the reply's Markdown pipeline (the same parser, depth limit, URL rule and, while it
@@ -589,7 +602,11 @@ export const ReasoningContent = memo(function ReasoningContent({ text, streaming
         <VisibleText text={text} />
       </p>
     )
-  return <div className="reasoning-content">{rendered}</div>
+  return (
+    <div className="reasoning-content">
+      <ReplySettled.Provider value={!streaming}>{rendered}</ReplySettled.Provider>
+    </div>
+  )
 })
 
 export const PLAIN_TEXT_NOTE = '结构过深，按纯文本显示'

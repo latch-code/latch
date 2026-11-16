@@ -341,6 +341,41 @@ describe('terminal service', () => {
     expect((await rejection(() => terminals.input(ref, mac, Buffer.from('x')))).code).toBe('terminal-ended')
   })
 
+  it('says the shell waits at its prompt with bracketed paste on only while the output last turned it on, and counts each prompt', async () => {
+    const terminals = await service()
+    const { id, prompt } = await terminals.create('s1', mac, { cols: 80, rows: 24 })
+    expect(prompt).toBeUndefined()
+    const watcher = recorder()
+    terminals.stream({ sessionId: 's1', terminalId: id }, mac, watcher)
+    const helper = helperAt(0)
+    const shown = () => terminals.list('s1', mac)[0]?.prompt
+    // zsh at its prompt; the sequence cut across two chunks.
+    helper.print('\x1b[?1h\x1b=\x1b[?20')
+    expect(shown()).toBeUndefined()
+    helper.print('04h% ')
+    expect(shown()).toBe(1)
+    expect(watcher.last()).toMatchObject({ terminal: { prompt: 1 } })
+    // The line is accepted: the editor turns it off before the command runs.
+    helper.print('\x1b[?2004l\r\r\n')
+    expect(shown()).toBeUndefined()
+    helper.print('\x1b[?1;2004h')
+    expect(shown()).toBe(2)
+    // A quick command: off and on again in one chunk is still a new prompt.
+    helper.print('\x1b[?2004l\r\n\x1b[?2004h% ')
+    expect(shown()).toBe(3)
+    expect(watcher.last()).toMatchObject({ terminal: { prompt: 3 } })
+    // A reset of the terminal turns it off; a mode this does not read in full leaves it as it was.
+    helper.print('\x1bc')
+    expect(shown()).toBeUndefined()
+    helper.print(`\x1b[?${'1'.repeat(64)}`)
+    helper.print('2004h')
+    expect(shown()).toBeUndefined()
+    helper.print('\x1b[?2004h')
+    expect(shown()).toBe(4)
+    helper.emit({ type: 'exit', code: 0 })
+    expect(shown()).toBeUndefined()
+  })
+
   it('reports terminals running a command and their local services to the install gate', async () => {
     const terminals = await service()
     await terminals.create('s1', mac, { cols: 80, rows: 24 })

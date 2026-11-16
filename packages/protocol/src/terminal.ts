@@ -33,6 +33,12 @@ export type TerminalSummary = TerminalTarget & {
   exitSignal?: string
   /** A program other than the shell has the terminal: closing asks first. */
   busy: boolean
+  /**
+   * Present while the shell's line editor waits at its prompt with bracketed paste on (DECSET 2004, as the output last
+   * set it): how many times it got there. A command typed in for the person goes only here, as a paste, so a line break
+   * in it cannot run it, and only once per prompt, so two commands never join on one line.
+   */
+  prompt?: number
   /** That program's name, when the system reports one. */
   foreground?: string
   /** Development servers the output announced, newest first. */

@@ -1209,6 +1209,10 @@ export function useShellLayout({
     if (!terminalOpen) setPreference('dockOpen', true)
     else terminalDock.current?.querySelector<HTMLElement>('.terminal-screen:not([hidden]) .xterm-helper-textarea')?.focus()
   }
+  /** A command is to be typed into the session's terminal: the dock opens, and the fill focuses the screen itself. */
+  const revealTerminal = () => {
+    if (canTerminal && !terminalOpen) setPreference('dockOpen', true)
+  }
   const toggleTerminal = () => {
     if (terminalOpen) closeTerminal()
     else openTerminal()
@@ -1844,6 +1848,7 @@ export function useShellLayout({
     terminalToggle,
     closeTerminal,
     openTerminal,
+    revealTerminal,
     dockHeight,
     dockLimit,
     dockDrag,

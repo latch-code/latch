@@ -544,8 +544,11 @@ const legacyRejected = (message: Pick<Message, 'state' | 'tool' | 'text'>) =>
 /** A tool's output as shown: history recorded before decision records still carries the rejection's internal code. */
 export function shownToolOutput(message: Pick<Message, 'state' | 'tool' | 'text'>): string {
   const output = message.tool?.output ?? message.text
-  return legacyRejected(message) ? output.slice(LEGACY_REJECTED.length).trimStart() : output
+  return withoutToolCode(legacyRejected(message) ? output.slice(LEGACY_REJECTED.length).trimStart() : output)
 }
+
+/** The runtime's code in front of a tool's report (`TOOL_ERROR: …`) is for the model; a person reads what follows it. */
+export const withoutToolCode = (text: string) => text.replace(/^TOOL_[A-Z_]+:[^\S\n]*/u, '')
 
 /**
  * How an approval kept a call from running, as far as the reports go: the call settled failed or cancelled without
@@ -897,15 +900,15 @@ export function failureReason(message: Pick<Message, 'state' | 'tool' | 'text'>)
     .split('\n')
     .map(part => part.trim())
     .find(Boolean)
-  const reason = line?.replace(/^TOOL_[A-Z_]+:\s*/u, '') ?? ''
+  const reason = line ? withoutToolCode(line) : ''
   if (!reason) return '没有成功'
   return reason.length > 120 ? `${reason.slice(0, 120)}…` : reason
 }
 
-/** The answer's delivery under the person's latest bubble, until the agent starts answering. */
+/** The answer's delivery under the person's latest bubble, until anything of the answer shows (text, thought or tool row). */
 export function deliveryWords(detail: TaskDetail, turn: Turn): string | undefined {
   const activity = detail.summary.live?.activity
-  if (activity === undefined || detail.liveText || turnText(turn)) return undefined
+  if (activity === undefined || isLive(detail) || turn.replies.length > 0) return undefined
   return activity === 'starting' ? 'Mac 已收到' : 'Harness 已开始'
 }
 

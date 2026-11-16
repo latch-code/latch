@@ -1,5 +1,5 @@
 import type { TerminalStreamEvents, TerminalSummary, TerminalTarget } from '@latch/protocol'
-import { ApiError, api } from '../../core/api.ts'
+import { ApiError, MessageError, api } from '../../core/api.ts'
 import { backoffDelay, EventStreamParser } from '../../core/eventStream.ts'
 import { fromBase64, inputChunks, PARSE_HIGH_WATER, streamPath, terminalPath, toBase64 } from './model.ts'
 
@@ -44,7 +44,8 @@ export class TerminalLink {
   private closedByPage = false
   private request: AbortController | null = null
   private wake: (() => void) | null = null
-  private readonly queue: Uint8Array[] = []
+  /** Input in order; a paste typed in for the person hears whether the Host took it. */
+  private readonly queue: Array<{ bytes: Uint8Array; settle?: (error?: string) => void }> = []
   private sending = false
   private readonly fetchImpl: typeof fetch
 
@@ -68,7 +69,7 @@ export class TerminalLink {
   /** Stops reading and sending; the terminal itself keeps running on the Host. */
   close(): void {
     this.closedByPage = true
-    this.queue.length = 0
+    this.drop('终端已关闭')
     this.request?.abort()
     this.wake?.()
   }
@@ -179,8 +180,26 @@ export class TerminalLink {
   /** Queues what xterm handed over: a keystroke, or a whole paste with its brackets, split into calls the Host accepts. */
   send(data: string): void {
     if (this.closedByPage || data === '') return
-    this.queue.push(...inputChunks(data))
+    this.queue.push(...inputChunks(data).map(bytes => ({ bytes })))
     void this.pump()
+  }
+
+  /**
+   * Queues one call's worth (a command typed in for the person) behind what was typed before it; resolves once the Host
+   * took it, rejects with the reason it did not.
+   */
+  sendWhole(data: string): Promise<void> {
+    const [bytes, ...more] = inputChunks(data)
+    if (this.closedByPage || !bytes || more.length) return Promise.reject(new MessageError('终端没有接受输入'))
+    return new Promise((resolve, reject) => {
+      this.queue.push({ bytes, settle: error => (error === undefined ? resolve() : reject(new MessageError(error))) })
+      void this.pump()
+    })
+  }
+
+  /** What follows a failed call would arrive out of order, so all of it is dropped. */
+  private drop(reason: string): void {
+    for (const item of this.queue.splice(0)) item.settle?.(reason)
   }
 
   private async pump(): Promise<void> {
@@ -190,8 +209,9 @@ export class TerminalLink {
       while (this.queue.length && !this.closedByPage) {
         const chunk = this.queue[0]!
         try {
-          await api(`${this.base}/input`, { method: 'POST', body: { data: toBase64(chunk) } })
+          await api(`${this.base}/input`, { method: 'POST', body: { data: toBase64(chunk.bytes) } })
           this.queue.shift()
+          chunk.settle?.()
         } catch (error) {
           if (error instanceof ApiError && error.status === 429 && error.code === 'terminal-input-busy') {
             // Refused, so not written: the same bytes go again once the program has read some.
@@ -199,9 +219,9 @@ export class TerminalLink {
             continue
           }
           // Ended, refused, or unknown: what follows would arrive out of order, so it is dropped with this one.
-          this.queue.length = 0
-          if (!(error instanceof ApiError && error.code === 'terminal-ended'))
-            this.sink.inputFailed(error instanceof ApiError ? error.message : '输入可能没有送达终端')
+          const message = error instanceof ApiError ? error.message : '输入可能没有送达终端'
+          this.drop(message)
+          if (!(error instanceof ApiError && error.code === 'terminal-ended')) this.sink.inputFailed(message)
         }
       }
     } finally {

@@ -537,6 +537,8 @@ describe("a turn's blocks and its fold", () => {
 
   it("gives a failed row the first line of what it reported, without the runtime's code, cut", () => {
     expect(failureReason({ state: 'failed', text: 'TOOL_ERROR: 2 个测试没有通过\nFAIL a.ts' })).toBe('2 个测试没有通过')
+    // The runtime's code is for the model: the output as shown starts with what the tool said.
+    expect(shownToolOutput({ state: 'failed', text: 'TOOL_ERROR: 2 个测试没有通过\nFAIL a.ts' })).toBe('2 个测试没有通过\nFAIL a.ts')
     expect(failureReason({ state: 'failed', text: '' })).toBe('没有成功')
     // A call that reported nothing carries its arguments as its text; a line of JSON says nothing about why.
     expect(failureReason({ state: 'failed', text: '{\n  "command": "ls"\n}', tool: { input: '{\n  "command": "ls"\n}' } })).toBe('没有成功')
@@ -841,6 +843,10 @@ describe('the live run', () => {
     expect(deliveryWords(running('model', { liveText: '好' }), turn)).toBeUndefined()
     expect(deliveryWords(running(undefined), turn)).toBeUndefined()
     expect(deliveryWords(running('model'), firstTurn([user('u'), reply('a', '好')]))).toBeUndefined()
+    // A turn that only runs tools says nothing more under the prompt once its first row shows.
+    expect(
+      deliveryWords(running('model'), firstTurn([user('u'), tool('t', { state: 'running', tool: { kind: 'execute' } })])),
+    ).toBeUndefined()
   })
 })
 

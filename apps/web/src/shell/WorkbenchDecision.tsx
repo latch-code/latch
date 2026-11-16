@@ -31,6 +31,7 @@ import { toolHeading, toolRowId } from '../conversation.ts'
 import { basename } from '../format.ts'
 import { previousState } from '../diff.ts'
 import { renderMarkdown } from '../MessageContent.tsx'
+import remarkGfm from 'remark-gfm'
 
 function DraftExcerpt({ path, text, previous }: { path: string; text: string; previous: string | undefined }) {
   const excerpt = text.slice(0, 900).split(/\r?\n/u).slice(0, 7).join('\n').trimEnd()
@@ -38,7 +39,12 @@ function DraftExcerpt({ path, text, previous }: { path: string; text: string; pr
   const markdown = /\.(?:md|markdown)$/iu.test(path)
     ? renderMarkdown({
         children: excerpt,
-        allowedElements: ['h1', 'h2', 'h3', 'h4', 'p', 'ul', 'ol', 'li', 'strong', 'em', 'code', 'pre'],
+        // A table is drawn as one: its pipes would otherwise read as the text.
+        remarkPlugins: [remarkGfm],
+        allowedElements: [
+          ...['h1', 'h2', 'h3', 'h4', 'p', 'ul', 'ol', 'li', 'strong', 'em', 'code', 'pre'],
+          ...['table', 'thead', 'tbody', 'tr', 'th', 'td'],
+        ],
         skipHtml: true,
         unwrapDisallowed: true,
       })

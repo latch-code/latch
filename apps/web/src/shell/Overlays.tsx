@@ -8,6 +8,7 @@ import { Button, Toast } from '@latch/ui'
 import { settingsSections } from '../settings/SettingsPage.tsx'
 import { ShortcutsOverlay } from './ShortcutsOverlay.tsx'
 import { LoginTerminalDialog } from '../panel/terminal/LoginTerminalDialog.tsx'
+import { FillTerminalDialog } from '../panel/terminal/FillTerminalDialog.tsx'
 import { RemoveWorktreeDialog, removalWords } from '../components/RemoveWorktreeDialog.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { spaceOf } from '../sessions.ts'
@@ -130,6 +131,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
     <>
       {commandOpen && <ShellPalette shell={shell} />}
       {snapshot.catalog?.features?.terminal === true && <LoginTerminalDialog />}
+      {snapshot.catalog?.features?.terminal === true && <FillTerminalDialog {...detachedWorkspace(snapshot.catalog)} />}
       {shortcutsOpen && (
         <ShortcutsOverlay
           spaces={shell.entries.includes('agents')}
@@ -237,4 +239,12 @@ export function Overlays({ shell }: { shell: ShellState }) {
       )}
     </>
   )
+}
+
+/** The project a command typed in outside any session goes to: the Host's default one. */
+function detachedWorkspace(catalog: NonNullable<ShellState['snapshot']['catalog']>): { workspaceId: string; unavailable?: string } {
+  const workspaceId = catalog.defaults.workspaceId ?? 'default'
+  const workspace = catalog.workspaces.find(item => item.id === workspaceId)
+  const unavailable = workspace ? workspace.unavailable : '找不到默认项目的文件夹'
+  return { workspaceId, ...(unavailable ? { unavailable } : {}) }
 }

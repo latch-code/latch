@@ -176,3 +176,70 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+
+/*
+ * 「在终端里打开」 beside a command's copy button, and 已填入 after it, which fades. A refused one stays in place, dimmed,
+ * with its reason on hover.
+ */
+.terminal-fill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+}
+.message-code-toolbar > .terminal-fill {
+  margin-left: auto;
+}
+.message-code-hidden + .terminal-fill {
+  margin-left: 0;
+}
+.message-code-fill[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+.message-code-fill[aria-disabled='true']:hover {
+  color: inherit;
+  background: none;
+}
+.terminal-fill-state {
+  /* Before the button, so the button stays under the pointer while the word shows. */
+  order: -1;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.terminal-fill-state:empty {
+  display: none;
+}
+.terminal-fill-state[data-state='failed'] {
+  color: var(--red);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .terminal-fill-state[data-state='filled'] {
+    animation: terminal-fill-fade 1600ms var(--e-micro) forwards;
+  }
+}
+@keyframes terminal-fill-fade {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.command-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.tool-command-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+.fill-terminal-screen {
+  display: flex;
+  flex-direction: column;
+}

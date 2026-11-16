@@ -16,6 +16,9 @@ sources:
   - apps/host/test/terminal-cli.test.ts
   - apps/host/scripts/latch.ts
   - apps/web/src/panel/terminal
+  - apps/web/src/components/TerminalFillButton.tsx
+  - apps/web/test/terminal-fill.test.ts
+  - e2e/desktop-terminal-fill.e2e.ts
   - apps/web/test/terminal-model.test.ts
   - e2e/desktop-terminal.e2e.ts
   - apps/web/test/login-terminal.test.ts
@@ -178,6 +181,7 @@ shell 自行退出时，组件再读取最多 0.5 秒输出，然后报告退出
 - **按键。** 终端有焦点时按键都交给终端（Ctrl、⌥、Esc、Tab），只有 ⌘ 组合键仍是 Latch 与系统的。
 - **结束。** shell 退出后输出保留、不再接受输入，「重新打开」关闭旧终端、用同一编号开一个新的。
 - **本地服务。** 桌面端点按在浏览器页签里打开整个源，⌘ 点按与其他客户端在系统浏览器中打开（[PREVIEW-BROWSER.md](PREVIEW-BROWSER.md#界面)）。
+- **填入命令（「在终端里打开」）。** 只填入、不执行：页面把一行命令作为一次 bracketed paste（`ESC[200~…ESC[201~`）经同一条输入路由写入，从不带换行，由人按回车。多行、以反斜杠结尾、超过 1000 个字符、含控制、不可见或改变方向的字符（`escapeSecurityText` 检查），或仍在生成的命令不填入。只填进 shell 正在提示符处等待的终端：`TerminalSummary.prompt` 存在（Host 按输出里最后一次 DECSET 2004 开关判断，shell 运行命令前会关掉它；每回到提示符计数加一）、不忙、不是登录终端，且这次提示符还没填过（两条命令不会接在同一行）；当前页签不满足就开新页签并等到满足，等不到（例如不支持 bracketed paste 的 shell）就不填，并关闭为它新开的终端。会话的命令进会话的终端；没有会话（设置、首次设置）时进默认项目的终端，显示在对话框里。不审批、不审计，输入内容照常不记录。
 - **加入对话。** 有选区发选区，否则取最后 40 行；结果只进输入框草稿，不发送。截断时注明较早的输出未包含，`mayContainSecret` 时提示发送前检查草稿。
 - **登录。** 登录终端没有「加入对话」，结束后也没有「重新打开」。没有会话时在对话框里（`LoginTerminalDialog`）：以 0 退出自己关闭，失败时留着供阅读，运行中关闭先询问。同一个 Harness 的登录还在运行时，再按只把它带到眼前，不开第二个。页面每秒读一次终端列表来跟随运行中的登录（`loginRuns.ts`）。
 - **始终标明**「你的账户，不是沙箱」。

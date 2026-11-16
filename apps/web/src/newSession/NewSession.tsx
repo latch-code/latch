@@ -12,6 +12,7 @@ import { useComputerName } from '../components/Pickers.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { SETUP_COPY } from '../core/securityCopy.ts'
 import { middleEllipsis } from '../format.ts'
+import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 
 /**
  * Why a session cannot start and the one thing that fixes it, each said plainly. A missing model service is added right
@@ -108,6 +109,7 @@ function InstallRow({ preset, note }: { preset: AgentPresetSettings; note?: stri
       <span className="harness-install-command">
         <code>{command}</code>
         {command && <CopyButton text={command} label={`复制 ${preset.name} 的${upgrade ? '升级' : '安装'}命令`} size="xs" />}
+        {command && <TerminalFillButton command={command} detached />}
         {!upgrade && preset.installNote && <span className="harness-install-note">{preset.installNote}</span>}
       </span>
     </li>

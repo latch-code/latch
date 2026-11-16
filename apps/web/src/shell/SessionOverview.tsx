@@ -1,7 +1,7 @@
 import type { TaskSummary } from '@latch/protocol'
 import { Button, Count, DiffGlyph, Icon, InlineNotice, StatusWord, TerminalGlyph, BranchGlyph, PullRequestGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { toolHeading, turnsOf } from '../conversation.ts'
+import { toolLabel, turnsOf } from '../conversation.ts'
 import { deliveryChecks, useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
@@ -124,19 +124,24 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
             <h3>检查</h3>
           </header>
           <ul className="session-overview-checks">
-            {commands.map(message => (
-              <li key={message.id}>
-                <Icon icon={TerminalGlyph} size={14} />
-                <code>
-                  <VisibleText text={toolHeading(message.tool, message.toolName)} />
-                </code>
-                <StatusWord
-                  tone={message.state === 'failed' ? 'failed' : message.state === 'running' && connected ? 'running' : 'neutral'}
-                  data-lock={message.interrupted ? '' : undefined}>
-                  {message.interrupted ? '结果未知' : message.state ? commandWords[message.state] : '未报告结果'}
-                </StatusWord>
-              </li>
-            ))}
+            {commands.map(message => {
+              // The row's own words, as the transcript says them; the tool's ID only behind hover.
+              const label = toolLabel(message)
+              const words = label.mono || !label.verb ? label.object : `${label.verb} ${label.object}`
+              return (
+                <li key={message.id}>
+                  <Icon icon={TerminalGlyph} size={14} />
+                  <code title={message.toolName && message.toolName !== words ? message.toolName : undefined}>
+                    <VisibleText text={words} />
+                  </code>
+                  <StatusWord
+                    tone={message.state === 'failed' ? 'failed' : message.state === 'running' && connected ? 'running' : 'neutral'}
+                    data-lock={message.interrupted ? '' : undefined}>
+                    {message.interrupted ? '结果未知' : message.state ? commandWords[message.state] : '未报告结果'}
+                  </StatusWord>
+                </li>
+              )
+            })}
           </ul>
         </section>
       )}

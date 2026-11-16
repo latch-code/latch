@@ -47,8 +47,9 @@ export function useTerminals(input: { target: TerminalTarget; shown: boolean; au
   }, [apply, base])
 
   const open = useCallback(
-    async (number?: number) => {
-      if (openingNow.current) return
+    /** Resolves with the new terminal's ID, or undefined when none was opened (the failure says why). */
+    async (number?: number): Promise<string | undefined> => {
+      if (openingNow.current) return undefined
       openingNow.current = true
       autoOpened.current = true
       setOpening(true)
@@ -59,10 +60,12 @@ export function useTerminals(input: { target: TerminalTarget; shown: boolean; au
           nameTabs(previous, [...previous.map(tab => tab.summary), terminal], new Map(number ? [[terminal.id, number]] : [])),
         )
         setActive(terminal.id)
+        return terminal.id
       } catch (cause) {
         // A call that may have opened one leaves the list to say so: opening again could start a second shell.
         if (isUncertain(cause)) await list()
         else setFailure(errorMessage(cause))
+        return undefined
       } finally {
         openingNow.current = false
         setOpening(false)

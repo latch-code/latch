@@ -32,6 +32,7 @@ import {
   type TerminalSignal,
 } from './helper.ts'
 import { LocalServiceDetector } from './localhost.ts'
+import { PasteMode } from './paste-mode.ts'
 import { Scrollback } from './scrollback.ts'
 import { ATTACH_LINE_LIMIT, attachmentText, fromFirstWholeLine } from './text.ts'
 
@@ -153,6 +154,7 @@ interface Terminal {
   services: LocalService[]
   scrollback: Scrollback
   detector: LocalServiceDetector
+  paste: PasteMode
   process?: TerminalProcess
   helperGone: boolean
   streams: Set<StreamState>
@@ -340,6 +342,7 @@ export class TerminalService {
       services: [],
       scrollback: new Scrollback(SCROLLBACK_BYTES),
       detector: new LocalServiceDetector(),
+      paste: new PasteMode(),
       streams: new Set(),
       window: { start: 0, bytes: 0 },
       outputPaused: false,
@@ -594,6 +597,7 @@ export class TerminalService {
       ...(terminal.exitCode !== undefined ? { exitCode: terminal.exitCode } : {}),
       ...(terminal.exitSignal !== undefined ? { exitSignal: terminal.exitSignal } : {}),
       busy: occupied(terminal),
+      ...(terminal.status === 'running' && terminal.paste.on ? { prompt: terminal.paste.count } : {}),
       ...(terminal.foreground !== undefined ? { foreground: terminal.foreground } : {}),
       services: terminal.services.map(service => ({ ...service })),
       sizeOwner: requester.deviceId === terminal.owner,
@@ -660,16 +664,17 @@ export class TerminalService {
     terminal.busy = false
     terminal.foreground = undefined
     terminal.detector.clear()
+    terminal.paste.clear()
     terminal.services = []
     this.changed(terminal)
   }
 
   private output(terminal: Terminal, data: Buffer): void {
     terminal.scrollback.append(data)
-    if (terminal.detector.push(data)) {
-      terminal.services = terminal.detector.services()
-      this.changed(terminal)
-    }
+    const pasteChanged = terminal.paste.push(data)
+    const servicesChanged = terminal.detector.push(data)
+    if (servicesChanged) terminal.services = terminal.detector.services()
+    if (pasteChanged || servicesChanged) this.changed(terminal)
     this.meter(terminal, data.length)
     for (const state of terminal.streams) this.pump(terminal, state)
   }

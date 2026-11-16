@@ -14,6 +14,7 @@ import {
   ranDespite,
   rowKind,
   shownToolOutput,
+  withoutToolCode,
   shownToolState,
   toolDuration,
   toolHeading,
@@ -24,6 +25,7 @@ import {
 import { useChangesLink } from '../conversation/changesLink.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { argumentView, basename, formatDuration } from '../format.ts'
+import { TerminalFillButton } from './TerminalFillButton.tsx'
 import { ArgumentList } from './ArgumentList.tsx'
 import { DiffView, type DiffViewFile } from './DiffView.tsx'
 import { FileChip, FileRootContext, FileSession, type FileSessionInfo } from './FileChip.tsx'
@@ -375,7 +377,7 @@ export const ToolCard = memo(
     )
     const hasDetails = !panelEdit
     // Only what the tool itself reported is output: a command's plain-text form is not.
-    const tail = well && !open && tool?.output ? commandTail(tool.output) : ''
+    const tail = well && !open && tool?.output ? commandTail(withoutToolCode(tool.output)) : ''
     // The tail shows the last lines; the reason is the first one that says something, which a long output scrolls off.
     const reason = failed ? failureReason(message ?? { text: '' }) : ''
     const reasonInTail = tail !== '' && reason !== '' && tail.includes(reason)
@@ -458,6 +460,13 @@ export const ToolCard = memo(
                   setChoice(true)
                 }}>
                 <div className="tool-card-body">
+                  {/* The command itself, to run again by hand: copied, or typed in at a terminal's prompt. */}
+                  {line && !review && state !== 'awaiting-approval' && state !== 'queued' && (
+                    <div className="tool-command-actions">
+                      <CopyButton text={line.command} label="复制命令" size="xs" />
+                      <TerminalFillButton command={line.command} />
+                    </div>
+                  )}
                   {applied && link && (
                     <DiffView
                       diffs={diffs}
