@@ -224,7 +224,7 @@ export interface ShellComputers {
 }
 
 /** A tab's viewport: 适应面板 (`fit`) or a preset size, turned when rotated. */
-export type BrowserPreset = 'fit' | 'phone' | 'tablet' | 'desktop'
+export type BrowserPreset = 'fit' | 'phone-small' | 'phone' | 'phone-large' | 'android' | 'tablet' | 'desktop'
 export type BrowserColorScheme = 'system' | 'light' | 'dark'
 
 /** A preview tab as main reports it (apps/desktop/src/browser.cjs). */

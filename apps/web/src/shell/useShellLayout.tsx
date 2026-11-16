@@ -472,6 +472,8 @@ export function useShellLayout({
     && !summary.personal
     && projectOf(summary, catalog.workspaces) !== undefined
   const canBrowser = (browserShell !== null && browserProject !== undefined) || browserList
+  // This Mac's simulators: the Host offers them only on host.sock to a device allowed what the terminal is; not on a phone.
+  const canDevice = catalog?.features?.simulators === true && !phone && !!summary && !summary.archived
   /** The session's terminals may stand in the right panel instead of the dock (not on a phone, which has neither). */
   const panelTerminal = canTerminal && !!summary && terminalTarget?.sessionId === summary.id
   const offeredPanels = summary ? (catalog?.uiPanels ?? []).filter(panel => offersPluginPanel(panel, summary)) : []
@@ -484,13 +486,16 @@ export function useShellLayout({
           ? canDeliver
           : key === 'browser'
             ? canBrowser
-            : key === 'terminal'
-              ? panelTerminal
-              : key === 'files'
-                ? canBrowseFiles
-                : offeredPanels.some(panel => `plugin:${panel.id}` === key)
+            : key === 'device'
+              ? canDevice
+              : key === 'terminal'
+                ? panelTerminal
+                : key === 'files'
+                  ? canBrowseFiles
+                  : offeredPanels.some(panel => `plugin:${panel.id}` === key)
   const panelChoiceList = panelChoices({
     browser: canBrowser,
+    device: canDevice,
     terminal: panelTerminal,
     files: canBrowseFiles,
     changes: canViewChanges,

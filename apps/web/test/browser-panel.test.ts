@@ -17,6 +17,7 @@ import {
   placeView,
   presetCaption,
   redactText,
+  safeAreaHint,
   refusalText,
   tabTitle,
   troubleOf,
@@ -129,12 +130,17 @@ describe('browser panel state', () => {
     expect(placeView(canvas, 'fit', true)).toEqual({ rect: canvas, scale: 1, size: null })
     const phone = placeView(canvas, 'phone', false)
     expect(phone.size).toEqual({ width: 390, height: 844 })
-    // 16 around it and 24 for the caption: the height decides.
-    expect(phone.scale).toBeCloseTo(544 / 844, 5)
-    expect(phone.rect).toEqual({ x: 600 + Math.round((432 - 251) / 2), y: 116, width: 251, height: 544 })
+    // 16 around it, a 10 bezel and 24 for the caption: the height decides.
+    expect(phone.scale).toBeCloseTo(524 / 844, 5)
+    expect(phone.rect).toEqual({ x: 600 + Math.round((432 - 242) / 2), y: 126, width: 242, height: 524 })
+    expect(placeView(canvas, 'tablet', false).rect.y).toBeGreaterThanOrEqual(116)
     const turned = placeView({ x: 0, y: 0, width: 2000, height: 2000 }, 'phone', true)
     expect(turned).toMatchObject({ scale: 1, size: { width: 844, height: 390 }, rect: { width: 844, height: 390 } })
     expect(presetCaption({ width: 390, height: 844 }, 0.75)).toBe('390 × 844 · 75%')
+    expect(presetCaption({ width: 390, height: 844 }, 0.75, 3)).toBe('390 × 844 @3x · 75%')
+    expect(safeAreaHint('phone', false, 0.5)).toEqual({ side: 'vertical', start: 24, end: 17 })
+    expect(safeAreaHint('phone-large', true, 1)).toEqual({ side: 'horizontal', start: 62, end: 34 })
+    expect(safeAreaHint('tablet', false, 1)).toBeUndefined()
   })
 
   it('writes the bottom row in tones: red only for errors and failed requests, amber only for warnings', () => {

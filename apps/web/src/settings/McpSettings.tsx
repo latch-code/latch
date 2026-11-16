@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { Cable } from 'lucide-react'
+import { Cable, Hammer } from 'lucide-react'
 import {
   escapeSecurityText,
   isLoopbackHost,
@@ -10,6 +10,7 @@ import {
   isUnpinnedRunner,
   type AppSnapshot,
   type McpComputerCheck,
+  type McpXcodeCheck,
   type McpFailure,
   type McpHttpServerView,
   type McpOAuthFailure,
@@ -119,6 +120,12 @@ const COMPUTER_NOTE = {
   label: '以你的身份操作这台 Mac',
   detail:
     '它以你的身份点击、输入和读取这台 Mac 上的 App。这不是沙箱，Latch 不隔离它。先不要让它操作 Electron 应用（包括 Latch 与 VS Code）。Latch 的变量到不了它的后台服务：在终端运行 cua-driver telemetry disable 关掉它的遥测。',
+}
+
+const XCODE_NOTE = {
+  label: '经 Xcode 构建并操作模拟器',
+  detail:
+    '它是 Xcode 自带的 MCP 桥（xcrun mcpbridge），以你的身份构建、安装并操作模拟器上的 App，不是沙箱。要在 Xcode › 设置 › Intelligence 里允许外部 Agent，并在 Xcode 里打开项目；Latch 不替你改。改项目文件与运行代码的工具默认关闭。',
 }
 
 /** A command the person runs: copy, and typed in at the prompt of a Latch terminal on this Mac's desktop. */
@@ -236,6 +243,89 @@ function ComputerGroup({ revision, onAdded }: { revision: number; onAdded: (serv
           />
         )}
         {check.state === 'ok' && <TelemetryRow command={check.command} />}
+      </div>
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      <InlineConfirm active={busy} rank={1} />
+    </SettingsGroup>
+  )
+}
+
+/** 「Xcode」 in a word: not there, too old, or found with its version. */
+export function xcodeWord(check: McpXcodeCheck): { tone: StatusTone; text: string } {
+  if (check.state === 'absent') return { tone: 'neutral', text: '未安装 Xcode' }
+  if (check.state === 'old') return { tone: 'warn', text: `版本太旧 · ${check.version ?? ''}` }
+  return { tone: 'done', text: `已找到 · Xcode ${check.version ?? ''}` }
+}
+
+/** 「Xcode」, on this Mac's desktop app only: Xcode's bridge as Latch found it, and 添加 through the usual confirmation. */
+function XcodeGroup({ revision, onAdded }: { revision: number; onAdded: (server: McpServerView) => void }) {
+  const [check, setCheck] = useState<McpXcodeCheck | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const write = useWrite()
+  const read = useCallback(async () => {
+    setChecking(true)
+    try {
+      setCheck(await api<McpXcodeCheck>('mcp/xcode'))
+    } catch {
+      setCheck(null)
+    } finally {
+      setChecking(false)
+    }
+  }, [])
+  useEffect(() => {
+    void read()
+  }, [read, revision])
+  if (!check || check.added || check.state === 'absent') return null
+  const word = xcodeWord(check)
+  const add = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const result = await write('xcode', requestId =>
+        withConfirmation(confirmation =>
+          api<{ server: McpServerView }>('mcp/servers', {
+            method: 'POST',
+            body: { requestId, baseRevision: revision, preset: 'xcode', scope: { all: false, agents: [], projects: [] } },
+            ...(confirmation ? { confirmation } : {}),
+          }),
+        ),
+      )
+      onAdded(result.server)
+    } catch (cause) {
+      setError(inlineError(cause))
+      void read()
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <SettingsGroup
+      title="Xcode"
+      meta={
+        <Button variant="ghost" size="xs" icon={RefreshGlyph} loading={checking} onClick={() => void read()}>
+          重新检测
+        </Button>
+      }
+      note={<NoteLine brief={XCODE_NOTE} />}>
+      <div data-mcp-xcode={check.state}>
+        <SettingsRow
+          leading={<IconTile icon={Hammer} />}
+          title="Xcode 的 MCP 桥"
+          description={
+            <StatusWord tone={word.tone} title={check.state === 'old' ? `需要 Xcode ${check.minimum} 或更高` : undefined}>
+              {word.text}
+            </StatusWord>
+          }
+          trailing={
+            check.state === 'ok' ? (
+              <Button size="sm" loading={busy} onClick={() => void add()}>
+                添加…
+              </Button>
+            ) : undefined
+          }
+        />
       </div>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <InlineConfirm active={busy} rank={1} />
@@ -1692,6 +1782,15 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
           />
         ))}
       </SettingsGroup>
+      {local && (
+        <XcodeGroup
+          revision={data.revision}
+          onAdded={server => {
+            setEditing({ kind: 'server', id: server.id })
+            void load()
+          }}
+        />
+      )}
       {local && (
         <ComputerGroup
           revision={data.revision}

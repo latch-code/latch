@@ -10,6 +10,7 @@ import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
 import { FillPlace } from '../panel/terminal/fills.ts'
 import { BrowserPanel } from '../panel/browser/BrowserPanel.tsx'
 import { BrowserTabList } from '../panel/browser/BrowserTabList.tsx'
+import { DevicePanel } from '../panel/device/DevicePanel.tsx'
 import { errorMessage } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
 import { projectOf } from '../sessions.ts'
@@ -214,6 +215,23 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
               ),
             }
           : {})}
+      {...(summary && shell.panelAvailable('device')
+        ? {
+            device: (
+              <DevicePanel
+                shown={showing('device')}
+                onAttach={
+                  canCompose && catalog?.features?.attachments === true
+                    ? files => {
+                        attachmentDraft.add(files)
+                        composerRef.current?.focus()
+                      }
+                    : undefined
+                }
+              />
+            ),
+          }
+        : {})}
       {...(summary && shell.terminalInPanel
         ? { terminal: <SessionTerminal shell={shell} shown={showing('terminal')} place="panel" /> }
         : {})}

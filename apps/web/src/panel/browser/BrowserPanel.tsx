@@ -59,6 +59,8 @@ import {
   pageLabel,
   placeView,
   presetCaption,
+  PHONE_BEZEL,
+  safeAreaHint,
   readRecent,
   saveRecent,
   sizeLabel,
@@ -76,7 +78,13 @@ const LOGS_EVERY_MS = 1_000
 const LoadingGlyph = (({ className }: { className?: string }) => <Spinner size={12} className={className} />) as unknown as IconComponent
 
 const presetIcon = (preset: BrowserPreset): IconComponent =>
-  preset === 'phone' ? Smartphone : preset === 'tablet' ? Tablet : preset === 'desktop' ? Monitor : GlobeGlyph
+  preset === 'phone' || preset === 'phone-small' || preset === 'phone-large' || preset === 'android'
+    ? Smartphone
+    : preset === 'tablet'
+      ? Tablet
+      : preset === 'desktop'
+        ? Monitor
+        : GlobeGlyph
 const schemeIcon = (scheme: BrowserColorScheme): IconComponent => (scheme === 'light' ? Sun : scheme === 'dark' ? Moon : SunMoon)
 
 export interface BrowserPanelProps {
@@ -224,6 +232,56 @@ function useCanvasRect(canvas: React.RefObject<HTMLElement | null>, active: bool
 function pointOf(event: ReactMouseEvent<HTMLElement>) {
   const box = event.currentTarget.getBoundingClientRect()
   return { x: Math.max(0, event.clientX - box.left), y: Math.max(0, event.clientY - box.top) }
+}
+
+/**
+ * The frame Latch draws around a preset's page, outside it: a plain line, and for a phone a rounded bezel whose inner
+ * edge marks how far the top and bottom safe area reach into the page. The page itself is not told (no
+ * `env(safe-area-inset-*)`); the native view covers anything drawn over it, so nothing is.
+ */
+function PresetFrame({
+  rect,
+  hint,
+}: {
+  rect: BrowserRect
+  hint: { side: 'vertical' | 'horizontal'; start: number; end: number } | undefined
+}) {
+  if (!hint)
+    return (
+      <span
+        className="browser-preset-frame"
+        style={{ left: rect.x - 1, top: rect.y - 1, width: rect.width + 2, height: rect.height + 2 }}
+      />
+    )
+  const vertical = hint.side === 'vertical'
+  const mark = (at: 'start' | 'end', size: number) =>
+    size > 0 ? (
+      <span
+        key={at}
+        className="browser-safe-area"
+        data-side={hint.side}
+        data-at={at}
+        style={
+          vertical
+            ? { height: size, [at === 'start' ? 'top' : 'bottom']: PHONE_BEZEL }
+            : { width: size, [at === 'start' ? 'left' : 'right']: PHONE_BEZEL }
+        }
+      />
+    ) : null
+  return (
+    <span
+      className="browser-phone-frame"
+      title="安全区示意"
+      style={{
+        left: rect.x - PHONE_BEZEL,
+        top: rect.y - PHONE_BEZEL,
+        width: rect.width + PHONE_BEZEL * 2,
+        height: rect.height + PHONE_BEZEL * 2,
+      }}>
+      {mark('start', hint.start)}
+      {mark('end', hint.end)}
+    </span>
+  )
 }
 
 async function imageFile(image: BrowserImage, name: string): Promise<File> {
@@ -538,7 +596,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
       ...PRESETS.map(item => ({
         id: item.id,
         label: item.label,
-        meta: narrow && preset === item.id ? '当前' : `${item.width} × ${item.height}`,
+        meta: narrow && preset === item.id ? '当前' : `${item.width} × ${item.height}${item.ratio !== 1 ? ` @${item.ratio}x` : ''}`,
         checked: preset === item.id,
         onSelect: () => void setViewport(item.id, rotated),
       })),
@@ -841,15 +899,12 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
           </div>
         ) : (
           <>
+            {viewRect && placed?.size && <PresetFrame rect={viewRect} hint={safeAreaHint(preset, rotated, placed.scale)} />}
             {viewRect && placed?.size && (
               <span
-                className="browser-preset-frame"
-                style={{ left: viewRect.x - 1, top: viewRect.y - 1, width: viewRect.width + 2, height: viewRect.height + 2 }}
-              />
-            )}
-            {viewRect && placed?.size && (
-              <span className="browser-caption" style={{ top: viewRect.y + viewRect.height + 4 }}>
-                {presetCaption(placed.size, placed.scale)}
+                className="browser-caption"
+                style={{ top: viewRect.y + viewRect.height + 4 + (safeAreaHint(preset, rotated, 1) ? PHONE_BEZEL : 0) }}>
+                {presetCaption(placed.size, placed.scale, PRESETS.find(item => item.id === preset)?.ratio)}
               </span>
             )}
             {viewRect && frameUrl && (

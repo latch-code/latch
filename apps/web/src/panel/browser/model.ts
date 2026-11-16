@@ -24,11 +24,27 @@ const PRESET_GAP = 16
 const RECENT_LIMIT = 5
 const DRAFT_ERRORS = 20
 
-export const PRESETS: ReadonlyArray<{ id: Exclude<BrowserPreset, 'fit'>; label: string; width: number; height: number }> = [
-  { id: 'phone', label: '手机', width: 390, height: 844 },
-  { id: 'tablet', label: '平板', width: 820, height: 1180 },
-  { id: 'desktop', label: '桌面', width: 1280, height: 800 },
+/**
+ * As main lays them out (browser.cjs `VIEWPORTS`): size in CSS pixels upright, pixel ratio, and for a phone the safe
+ * area Latch hints at on its frame (top and bottom insets upright), which the page itself is not told.
+ */
+export const PRESETS: ReadonlyArray<{
+  id: Exclude<BrowserPreset, 'fit'>
+  label: string
+  width: number
+  height: number
+  ratio: number
+  phone?: { top: number; bottom: number }
+}> = [
+  { id: 'phone-small', label: '小屏手机', width: 375, height: 667, ratio: 2, phone: { top: 20, bottom: 0 } },
+  { id: 'phone', label: '手机', width: 390, height: 844, ratio: 3, phone: { top: 47, bottom: 34 } },
+  { id: 'phone-large', label: '大屏手机', width: 440, height: 956, ratio: 3, phone: { top: 62, bottom: 34 } },
+  { id: 'android', label: 'Android 手机', width: 412, height: 915, ratio: 2.625, phone: { top: 24, bottom: 24 } },
+  { id: 'tablet', label: '平板', width: 820, height: 1180, ratio: 2 },
+  { id: 'desktop', label: '桌面', width: 1280, height: 800, ratio: 1 },
 ]
+/** The plain frame Latch draws around a phone preset's page, outside the view (a native view covers what is under it). */
+export const PHONE_BEZEL = 10
 
 export const SCHEMES: ReadonlyArray<{ id: BrowserColorScheme; label: string }> = [
   { id: 'system', label: '跟随系统' },
@@ -54,19 +70,35 @@ export function placeView(
 ): { rect: BrowserRect; scale: number; size: { width: number; height: number } | null } {
   const size = presetSize(preset, rotated)
   if (!size) return { rect: canvas, scale: 1, size: null }
-  const roomWidth = Math.max(0, canvas.width - PRESET_GAP * 2)
-  const roomHeight = Math.max(0, canvas.height - PRESET_GAP * 2 - CAPTION_HEIGHT)
+  // A phone's frame stands outside its page, so its room is taken first.
+  const bezel = PRESETS.find(item => item.id === preset)?.phone ? PHONE_BEZEL : 0
+  const roomWidth = Math.max(0, canvas.width - PRESET_GAP * 2 - bezel * 2)
+  const roomHeight = Math.max(0, canvas.height - PRESET_GAP * 2 - CAPTION_HEIGHT - bezel * 2)
   const scale = Math.max(0, Math.min(1, roomWidth / size.width, roomHeight / size.height))
   const width = Math.floor(size.width * scale)
   const height = Math.floor(size.height * scale)
   const x = canvas.x + Math.round((canvas.width - width) / 2)
-  const y = canvas.y + Math.max(PRESET_GAP, Math.round((canvas.height - CAPTION_HEIGHT - height) / 2))
+  const y = canvas.y + Math.max(PRESET_GAP + bezel, Math.round((canvas.height - CAPTION_HEIGHT - height) / 2))
   return { rect: { x, y, width, height }, scale, size }
 }
 
-/** 「390 × 844 · 75%」 */
-export function presetCaption(size: { width: number; height: number }, scale: number): string {
-  return `${size.width} × ${size.height} · ${Math.round(scale * 100)}%`
+/** 「390 × 844 @3x · 75%」 */
+export function presetCaption(size: { width: number; height: number }, scale: number, ratio?: number): string {
+  return `${size.width} × ${size.height}${ratio && ratio !== 1 ? ` @${ratio}x` : ''} · ${Math.round(scale * 100)}%`
+}
+
+/**
+ * The safe-area hint of a phone preset, in CSS pixels of the panel: how far the top and bottom (or, turned, the left and
+ * right) insets reach into the scaled page. Undefined for other presets.
+ */
+export function safeAreaHint(
+  preset: BrowserPreset,
+  rotated: boolean,
+  scale: number,
+): { side: 'vertical' | 'horizontal'; start: number; end: number } | undefined {
+  const phone = PRESETS.find(item => item.id === preset)?.phone
+  if (!phone) return undefined
+  return { side: rotated ? 'horizontal' : 'vertical', start: Math.round(phone.top * scale), end: Math.round(phone.bottom * scale) }
 }
 
 function parsed(url: string): URL | undefined {

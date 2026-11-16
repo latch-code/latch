@@ -32,6 +32,7 @@ export type PanelSurface =
   | { kind: 'changes' }
   | { kind: 'delivery' }
   | { kind: 'browser' }
+  | { kind: 'device' }
   | { kind: 'terminal' }
   | { kind: 'files' }
   | { kind: 'file'; id: string }
@@ -104,6 +105,7 @@ export function SessionPanels({
   changesTotals,
   delivery,
   browser,
+  device,
   terminal,
   launcherNote,
   emptyTakesFocus,
@@ -128,6 +130,8 @@ export function SessionPanels({
   delivery?: ReactNode
   /** The desktop app's own window on this Mac: the browser; elsewhere a read-only list of its tabs. */
   browser?: ReactNode
+  /** This Mac's simulators (设备), only on the desktop app with what the terminal needs. */
+  device?: ReactNode
   /** The session's terminals, when they live here rather than in the dock. */
   terminal?: ReactNode
   /** The number on the tab, only while another tab is showing. */
@@ -170,17 +174,20 @@ export function SessionPanels({
           ? !!delivery
           : key === 'browser'
             ? !!browser
-            : key === 'terminal'
-              ? !!terminal
-              : key === 'files'
-                ? !!fileContext
-                : offered.some(panel => `plugin:${panel.id}` === key)
+            : key === 'device'
+              ? !!device
+              : key === 'terminal'
+                ? !!terminal
+                : key === 'files'
+                  ? !!fileContext
+                  : offered.some(panel => `plugin:${panel.id}` === key)
   const tabsOpen = open.filter(content)
   const selected = activeFile ? undefined : active !== undefined && tabsOpen.includes(active) ? active : tabsOpen[0]
   const showing = (key: PanelKey) => selected === key
   const changesStarted = useStarted(showing('changes'))
   const deliveryStarted = useStarted(showing('delivery'))
   const browserStarted = useStarted(showing('browser'))
+  const deviceStarted = useStarted(showing('device'))
   const terminalStarted = useStarted(showing('terminal'))
   const treeStarted = useStarted(showing('files'))
   const histories = detail ? fileHistories(detail) : []
@@ -228,7 +235,8 @@ export function SessionPanels({
   ]
   const value = activeFile ? `file:${activeFile.id}` : (selected ?? '')
   const choose = (key: PanelKey) => onChoose?.(key)
-  const inBody = !showing('changes') && !showing('delivery') && !showing('browser') && !showing('terminal') && !showing('files')
+  const inBody =
+    !showing('changes') && !showing('delivery') && !showing('browser') && !showing('device') && !showing('terminal') && !showing('files')
   return (
     <div className="session-panels">
       <PanelTabs
@@ -263,6 +271,11 @@ export function SessionPanels({
       {browser && browserStarted && (
         <div className="session-panel-changes" hidden={!showing('browser')}>
           {browser}
+        </div>
+      )}
+      {device && deviceStarted && (
+        <div className="session-panel-changes" hidden={!showing('device')}>
+          {device}
         </div>
       )}
       {terminal && terminalStarted && (

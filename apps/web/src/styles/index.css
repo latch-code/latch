@@ -39,6 +39,7 @@
 @import './history.css' layer(app);
 @import './terminal.css' layer(app);
 @import './browser.css' layer(app);
+@import './device.css' layer(app);
 @import './layout-choice.css' layer(app);
 @import './appearance-choice.css' layer(app);
 @import './work-overview.css' layer(app);

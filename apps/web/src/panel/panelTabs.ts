@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Smartphone } from 'lucide-react'
 import { CommitGlyph, DiffGlyph, FolderGlyph, GlobeGlyph, OverviewGlyph, PluginsGlyph, TerminalGlyph, type IconComponent } from '@latch/ui'
 import { storageGet, storageSet } from '../preferences.ts'
 
@@ -7,7 +8,7 @@ import { storageGet, storageSet } from '../preferences.ts'
  * terminal are one tab each whose own strip holds several pages or terminals. Opened files are tabs of their own
  * (`useFileTabs`), after these.
  */
-export type PanelKey = 'overview' | 'changes' | 'files' | 'browser' | 'terminal' | 'delivery' | `plugin:${string}`
+export type PanelKey = 'overview' | 'changes' | 'files' | 'browser' | 'device' | 'terminal' | 'delivery' | `plugin:${string}`
 
 /** The open tabs in order and the one selected; absent from storage until the person first opens or closes one. */
 export interface PanelMemory {
@@ -15,7 +16,7 @@ export interface PanelMemory {
   active?: PanelKey
 }
 
-const FIXED: ReadonlySet<string> = new Set(['overview', 'changes', 'files', 'browser', 'terminal', 'delivery'])
+const FIXED: ReadonlySet<string> = new Set(['overview', 'changes', 'files', 'browser', 'device', 'terminal', 'delivery'])
 const MAX_TABS = 24
 const MAX_CONTEXTS = 40
 
@@ -116,6 +117,7 @@ export interface PanelChoice {
 
 const FACES: Record<Exclude<PanelKey, `plugin:${string}`>, Omit<PanelChoice, 'key'>> = {
   browser: { label: '浏览器', icon: GlobeGlyph, letter: 'B' },
+  device: { label: '设备', icon: Smartphone, letter: 'V' },
   terminal: { label: '终端', icon: TerminalGlyph, letter: 'T' },
   files: { label: '文件', icon: FolderGlyph, letter: 'F' },
   changes: { label: '改动', icon: DiffGlyph, letter: 'D' },
@@ -131,6 +133,7 @@ export function panelFace(key: PanelKey, title = ''): Omit<PanelChoice, 'key'> {
 /** Everything this session can open in the panel here, in one order for the 「+」 menu and the empty panel. */
 export function panelChoices(input: {
   browser?: boolean
+  device?: boolean
   terminal?: boolean
   files?: boolean
   changes?: boolean
@@ -138,7 +141,7 @@ export function panelChoices(input: {
   overview?: boolean
   plugins?: ReadonlyArray<{ id: string; title: string }>
 }): PanelChoice[] {
-  const order = ['browser', 'terminal', 'files', 'changes', 'delivery', 'overview'] as const
+  const order = ['browser', 'device', 'terminal', 'files', 'changes', 'delivery', 'overview'] as const
   return [
     ...order.filter(key => input[key]).map(key => ({ key, ...FACES[key] })),
     ...(input.plugins ?? []).map(plugin => ({ key: `plugin:${plugin.id}` as const, ...panelFace(`plugin:${plugin.id}`, plugin.title) })),
