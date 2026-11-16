@@ -58,9 +58,13 @@
   display: flex;
   align-items: center;
   border-top: 1px solid var(--line);
+  /* The hover stops under the hairline instead of tinting it. */
+  background-clip: padding-box;
 }
-.workbench-session-entry:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .workbench-session-entry:hover {
+    background: var(--hover);
+  }
 }
 .workbench-session-row {
   display: grid;

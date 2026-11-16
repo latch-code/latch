@@ -168,9 +168,11 @@
 .ui-button[data-variant='ghost'] {
   color: var(--ink-2);
 }
-.ui-button[data-variant='ghost']:hover:not([aria-disabled='true'], [aria-busy='true']) {
-  background: var(--hover);
-  color: var(--ink);
+@media (hover: hover) {
+  .ui-button[data-variant='ghost']:hover:not([aria-disabled='true'], [aria-busy='true']) {
+    background: var(--hover);
+    color: var(--ink);
+  }
 }
 .ui-button[data-variant='ghost']:active:not([aria-disabled='true'], [aria-busy='true']) {
   background: var(--press);

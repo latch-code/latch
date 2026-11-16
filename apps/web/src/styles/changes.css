@@ -313,8 +313,10 @@
   text-align: left;
   transition: background-color var(--m-micro) var(--e-micro);
 }
-.changes-tree-row:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .changes-tree-row:hover {
+    background: var(--hover);
+  }
 }
 .changes-tree-row:focus-visible {
   outline: 2px solid var(--accent);
@@ -330,7 +332,9 @@
   position: relative;
 }
 .changes-tree-file[data-selected] > .changes-tree-row {
-  background: var(--hover);
+  background: var(--selected);
+  /* Inside the row's own box: a selected row never draws over its neighbour or a hairline. */
+  box-shadow: inset 0 0 0 1px var(--line);
   color: var(--ink);
 }
 .changes-tree-file > .changes-tree-row {

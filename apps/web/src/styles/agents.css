@@ -68,8 +68,10 @@
   transition: background-color var(--m-micro) var(--e-micro);
 }
 
-.space-agent:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .space-agent:hover {
+    background: var(--hover);
+  }
 }
 .space-agent:active {
   background: var(--press);
@@ -295,8 +297,10 @@
 .agent-recent-row {
   transition: background-color var(--m-micro) var(--e-micro);
 }
-.agent-recent-row:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .agent-recent-row:hover {
+    background: var(--hover);
+  }
 }
 .agent-recent-row:focus-visible {
   outline: 2px solid var(--accent);
@@ -1606,9 +1610,11 @@ button.helper-card:focus-visible {
 .agent-mark[data-tone='failed'] {
   color: var(--red);
 }
-.agent-person:hover,
-.agent-queue-new:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .agent-person:hover,
+  .agent-queue-new:hover {
+    background: var(--hover);
+  }
 }
 .agent-person:active,
 .agent-queue-new:active {

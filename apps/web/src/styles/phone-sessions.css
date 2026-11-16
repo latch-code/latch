@@ -203,9 +203,13 @@
   transition: background-color var(--m-micro) var(--e-micro);
 }
 .phone-row:active,
-.phone-row.is-selected,
 .phone-row.is-held {
-  background: var(--hover);
+  background: var(--press);
+}
+.phone-row.is-selected {
+  background: var(--selected);
+  /* Inside the row's own box: a selected row never draws over its neighbour or a hairline. */
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 .phone-row.is-strong {
   color: var(--ink);

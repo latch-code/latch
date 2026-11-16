@@ -550,6 +550,7 @@
   --surface: var(--sunken);
   display: grid;
   min-width: 0;
+  overflow: clip;
   padding-inline: var(--sp-16);
   border-radius: var(--r-12);
   background: var(--sunken);
@@ -590,8 +591,7 @@
   content: '';
   position: absolute;
   top: 0;
-  right: 0;
-  left: 0;
+  inset-inline: var(--row-rule-inset, 0);
   height: 1px;
   background: var(--line);
 }
@@ -599,8 +599,7 @@
   content: '';
   position: absolute;
   top: 0;
-  right: 0;
-  left: 0;
+  inset-inline: var(--row-rule-inset, 0);
   height: 1px;
   background: var(--line);
 }
@@ -728,9 +727,10 @@
     grid-template-rows var(--m-panel) var(--e-panel),
     opacity var(--m-panel) var(--e-panel);
 }
+/* Clipped only in height, so a row that reaches the card's edge is not cut at the fold's. */
 .settings-fold-inner {
   min-height: 0;
-  overflow: hidden;
+  overflow: visible clip;
 }
 .settings-fold[data-leaving] {
   grid-template-rows: 0fr;
@@ -749,8 +749,7 @@
   content: '';
   position: absolute;
   top: 0;
-  right: 0;
-  left: 0;
+  inset-inline: var(--row-rule-inset, 0);
   height: 1px;
   background: var(--line);
 }
@@ -760,21 +759,38 @@
   }
 }
 
-/* Nav rows: the whole row is the button, hover fills it edge to edge; the value is quiet and the chevron in icon ink. */
+/*
+ * Rows that open something (a nav row, a row with an open button and a control at its end) reach the card's inner edge:
+ * the row's box is the card's width, its words stay on the 16 inset, and so does the hairline above it. Hover, press and
+ * focus paint only that box; the card clips its corners (DESIGN「行的状态」).
+ */
+.settings-row:is([data-nav], :has(> .settings-row-main)) {
+  --row-rule-inset: var(--sp-16);
+  /* A button does not stretch to its block: its width is set, the card's inset on each side added. */
+  width: calc(100% + 2 * var(--sp-16));
+  margin-inline: calc(-1 * var(--sp-16));
+  padding-inline: var(--sp-16);
+}
 .settings-row[data-nav] {
   cursor: pointer;
-  transition: background-color var(--m-micro) var(--e-micro);
 }
-.settings-row[data-nav]:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .settings-row[data-nav]:hover,
+  .settings-row:has(> .settings-row-main:hover) {
+    background: var(--hover);
+  }
 }
-.settings-row[data-nav]:active {
+.settings-row[data-nav]:active,
+.settings-row:has(> .settings-row-main:active) {
   background: var(--press);
 }
 .settings-row[data-nav]:focus-visible,
-.settings-row-main:focus-visible {
+.settings-row:has(> .settings-row-main:focus-visible) {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+.settings-row-main:focus-visible {
+  outline: none;
 }
 .settings-row-chevron {
   color: var(--muted);
@@ -793,19 +809,6 @@
   background: transparent;
   color: inherit;
   text-align: start;
-}
-/* A row that opens keeps its words on the group's edge; its hover reaches past the edge as a ring of the same fill. */
-.settings-row[data-nav]:hover,
-.settings-row[data-nav]:active,
-.settings-row:has(> .settings-row-main:hover) {
-  border-radius: var(--r-2);
-  box-shadow: 0 0 0 var(--sp-6) var(--hover);
-}
-.settings-row:has(> .settings-row-main) {
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-.settings-row:has(> .settings-row-main:hover) {
-  background: var(--hover);
 }
 /* A row whose lead is a checkbox: the whole row is its label. */
 .settings-row[data-check] {
@@ -918,8 +921,7 @@
   content: '';
   position: absolute;
   top: 0;
-  right: 0;
-  left: 0;
+  inset-inline: var(--row-rule-inset, 0);
   height: 1px;
   background: var(--line);
 }
@@ -984,8 +986,7 @@
   content: '';
   position: absolute;
   top: 0;
-  right: 0;
-  left: 0;
+  inset-inline: var(--row-rule-inset, 0);
   height: 1px;
   background: var(--line);
 }
@@ -1019,8 +1020,7 @@
   content: '';
   position: absolute;
   top: 0;
-  right: 0;
-  left: 0;
+  inset-inline: var(--row-rule-inset, 0);
   height: 1px;
   background: var(--line);
 }

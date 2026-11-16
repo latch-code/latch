@@ -73,9 +73,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.panel-launcher-row:hover {
-  background: var(--hover);
-  color: var(--ink);
+@media (hover: hover) {
+  .panel-launcher-row:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
 }
 .panel-launcher-facts {
   margin-top: var(--sp-16);

@@ -389,7 +389,15 @@
 }
 
 .work-overview-row[aria-current='page'] {
-  background: var(--hover);
+  background: var(--selected);
+  /* Inside the row's own box: a selected row never draws over its neighbour or a hairline. */
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+/* Rows drawn with Button keep their size when pressed: the press is the fill, not a scale. */
+.work-overview-row.ui-button:active,
+.work-overview-recent-row.ui-button:active,
+.work-overview-review-row.ui-button:active {
+  transform: none;
 }
 
 .work-overview-row-head {

@@ -142,8 +142,10 @@
   flex-shrink: 0;
   color: var(--muted);
 }
-.sidebar-nav-row:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .sidebar-nav-row:hover {
+    background: var(--hover);
+  }
 }
 .sidebar-nav-row:active {
   background: var(--press);
@@ -190,10 +192,12 @@
     background-color var(--m-micro) var(--e-micro),
     color var(--m-micro) var(--e-micro);
 }
-.archived-row:hover,
-.archived-back:hover {
-  background: var(--hover);
-  color: var(--ink-2);
+@media (hover: hover) {
+  .archived-row:hover,
+  .archived-back:hover {
+    background: var(--hover);
+    color: var(--ink-2);
+  }
 }
 .archived-row:active,
 .archived-back:active {
@@ -367,8 +371,10 @@
   border-radius: var(--r-6);
   transition: background-color var(--m-micro) var(--e-micro);
 }
-.session-item:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .session-item:hover {
+    background: var(--hover);
+  }
 }
 /* The row whose menu is open stays marked while the pointer is in the menu. */
 .session-item:not(.is-selected):has(.session-item-more[aria-expanded='true']) {
