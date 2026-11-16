@@ -212,26 +212,6 @@ export function hasDelivery(entry: WorkbenchDeliveryEntry | undefined): boolean 
   return !!entry && (entry.pr?.pr?.state === 'open' || (!!entry.state && (entry.state.files > 0 || entry.state.ahead > 0)))
 }
 
-/** Repository facts may belong to several sessions. Only an authorized, identical cwd proves one working tree. */
-export function deliverySessions(tasks: readonly TaskSummary[], entries: ReadonlyMap<string, WorkbenchDeliveryEntry>): ReadonlySet<string> {
-  const trees = new Set<string>()
-  const result = new Set<string>()
-  const bound = (task: TaskSummary) => {
-    const entry = entries.get(task.id)
-    return entry?.pr?.pr?.state === 'open' ? 2 : entry?.prError ? 1 : 0
-  }
-  for (const task of tasks
-    .filter(task => !task.archived && spaceOf(task) === 'code' && task.status !== 'running' && task.status !== 'waiting-approval')
-    .toSorted((a, b) => bound(b) - bound(a) || b.updatedAt.localeCompare(a.updatedAt))) {
-    if (!hasDelivery(entries.get(task.id))) continue
-    const identity = task.cwd && !task.worktree?.removed ? task.cwd : undefined
-    if (identity && trees.has(identity)) continue
-    if (identity) trees.add(identity)
-    result.add(task.id)
-  }
-  return result
-}
-
 /** Zero checks, a stale head and skipped checks are never described as a successful check run. */
 export function deliveryCheckSummary(
   entry: WorkbenchDeliveryEntry,

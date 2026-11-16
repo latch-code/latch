@@ -14,16 +14,16 @@ export function currentSpace({
   selectedId,
   selected,
   remembered,
-  overview = false,
+  start = false,
 }: {
   agents: boolean
   entry: ShellEntry
   selectedId: string | null
   selected: Pick<TaskSummary, 'agent' | 'generalChat'> | undefined
   remembered: Space
-  overview?: boolean | undefined
+  start?: boolean | undefined
 }): Space {
-  if (overview) return 'code'
+  if (start) return 'code'
   if (!agents) return 'code'
   if (entry === 'agents') return 'agents'
   if (entry === 'sessions') {
@@ -48,11 +48,7 @@ export function placeWaits(snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>, a
 }
 
 /** Where a place was left: a session, or (for 我的 Agent) one of its pages. */
-export type Left =
-  | { kind: 'session'; id: string }
-  | { kind: 'page'; myAgent?: MyAgentTarget | undefined }
-  | { kind: 'overview' }
-  | { kind: 'all-sessions' }
+export type Left = { kind: 'session'; id: string } | { kind: 'page'; myAgent?: MyAgentTarget | undefined } | { kind: 'start' }
 
 /**
  * Going to a place: back to the session it was left on while that session is still its own and not archived (Code also
@@ -76,8 +72,7 @@ export function spaceMove({
     left?.kind === 'session' ? tasks.find(task => task.id === left.id && spaceOf(task) === target && !task.archived) : undefined
   const opening = (id: string | null) => (id === selectedId ? {} : { choose: id })
   if (target === 'code') {
-    if (left?.kind === 'overview') return { route: { entry: 'sessions', overview: true } }
-    if (left?.kind === 'all-sessions') return { route: { entry: 'sessions', allSessions: true } }
+    if (left?.kind === 'start') return { route: { entry: 'sessions', start: true } }
     const here = selected && spaceOf(selected) === 'code' ? selected.id : undefined
     return { route: { entry: 'sessions' }, ...opening(here ?? session?.id ?? null) }
   }
@@ -106,13 +101,14 @@ export function writeHomeShown(deviceId: string, shown: boolean): void {
 }
 
 /**
- * On a cold start a wide window opens the place this device was last in; 我的 Agent opens on its list. A reload restores
- * the open session, and the home over it when that is what was showing: the home is a place, not a way to a session.
+ * On a cold start a wide window opens the place this device was last in (Code's start screen, or 我的 Agent's list); a
+ * phone opens on its session list. A reload restores the open session, and the start screen over it when that is what
+ * was showing: it is a place, not a way to a session.
  */
 export function initialRoute(deviceId: string, agents: boolean, wide: boolean, restoring: boolean, home = false): ShellRoute {
   return agents && wide && !restoring && readSpace(spaceKey(deviceId)) === 'agents'
     ? { entry: 'agents' }
-    : { entry: 'sessions', ...(!restoring || home ? { overview: true } : {}) }
+    : { entry: 'sessions', ...((wide && !restoring) || home ? { start: true } : {}) }
 }
 
 /**
@@ -148,7 +144,7 @@ export function useSpaces({
     selectedId,
     selected,
     remembered,
-    overview: route.overview || route.allSessions,
+    start: route.start,
   })
   // The place shown is the one to keep while a shared page or an unlisted session is open.
   if (agents && space !== remembered) setRemembered(space)
@@ -158,14 +154,14 @@ export function useSpaces({
   const left = useRef<Record<Space, Left | undefined>>({ code: undefined, agents: undefined })
   useEffect(() => {
     if (!agents) return
-    if (route.overview || route.allSessions) {
-      left.current.code = { kind: route.overview ? 'overview' : 'all-sessions' }
+    if (route.start) {
+      left.current.code = { kind: 'start' }
       return
     }
     if (route.entry === 'sessions' && selectedId !== null) left.current[space] = { kind: 'session', id: selectedId }
     else if (route.entry === 'sessions' && space === 'code') left.current.code = undefined
     else if (route.entry === 'agents') left.current.agents = { kind: 'page', myAgent: route.myAgent }
-  }, [agents, space, route.entry, route.myAgent, route.overview, route.allSessions, selectedId])
+  }, [agents, space, route.entry, route.myAgent, route.start, selectedId])
   const goSpace = (target: Space) => {
     if (target === 'agents' && !agents) return
     leave()

@@ -118,18 +118,13 @@ describe('the composer control row at every width of its own', () => {
     }
   }
 
-  it('keeps every control apart on the home, in both layouts, and in a running session', async () => {
+  it('keeps every control apart on the start screen and in a running session', async () => {
     const page = await open()
     const home = page.locator('.workbench-home-composer')
     await home.waitFor()
     await expect.poll(() => home.innerText()).toContain(LONG_PROJECT)
     await expect.poll(() => home.innerText()).toContain(LONG_MODEL)
     await sweep(page, 'home-sidebar')
-    const layout = page.getByRole('radiogroup', { name: '布局', exact: true }).filter({ visible: true }).first()
-    await layout.getByRole('radio', { name: '顶栏', exact: true }).click()
-    await expect.poll(() => page.locator('.app-shell').getAttribute('data-workbench-layout')).toBe('triage')
-    await sweep(page, 'home-triage')
-    await layout.getByRole('radio', { name: '侧栏', exact: true }).click()
 
     const project = (await owner.json<{ workspaces: Array<{ id: string; name: string }> }>('workspaces')).workspaces.find(
       item => item.name === LONG_PROJECT,

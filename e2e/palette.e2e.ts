@@ -9,7 +9,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { closeSettings, noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
-import { homeInput, returnFromHomeFocus } from './helpers/workbench.ts'
+import { homeInput } from './helpers/workbench.ts'
 
 const OUTPUT = 'test-results/palette'
 const LONG = Array.from({ length: 40 }, (_, line) => `第 ${line} 段说明，这里有一句普通的话用来撑开页面的高度。`).join('\n\n')
@@ -41,7 +41,6 @@ it('applies appearance commands locally and reads the same choices back in setti
     phase = 'commands'
     await codeCanvas.waitFor()
     await input.fill('切换外观前保留的草稿')
-    await returnFromHomeFocus(page)
     const attribute = (name: string) => page.locator('html').getAttribute(name)
     for (const [query, label] of [
       ['背景效果', '背景效果：关'],

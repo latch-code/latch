@@ -1,6 +1,5 @@
 import { ArrowLeft } from 'lucide-react'
 import {
-  OverviewGlyph,
   Count,
   Icon,
   IconButton,
@@ -17,17 +16,19 @@ import { computerName } from '../core/securityCopy.ts'
 import { waitingCount } from '../sessions.ts'
 import { BrandMark } from '../components/ui.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { ShellNewAgent, SpaceButtons, shellOverview, shellSpaces } from './SpaceNav.tsx'
+import { ShellNewAgent, SpaceButtons, shellSpaces } from './SpaceNav.tsx'
 import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
 import { ShellUpdateCheck } from './UpdateCheck.tsx'
 import { WorkbenchPanes, workbenchPanes } from './WorkbenchPanes.tsx'
+import { WorkbenchComputer } from './WorkbenchNav.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /**
  * The 52px row spanning the window. Its left zone holds the traffic lights' inset and ◧, with 新建会话 once the panel is
- * shut; its end is kept free for the shell's layout switch; the rest of the row is the conversation's header, or the title of a page. On the desktop app the row
- * moves the window, except over its controls.
+ * shut; its end is kept free for the shell's 对话 | 看板 switch; the rest of the row is the conversation's header, or the
+ * title of a page. Over 看板 it holds the computer and the sidebar foot's 设置, 额度与用量 and 检查更新. On the desktop
+ * app the row moves the window, except over its controls.
  */
 export function TitleBar({ shell }: { shell: ShellState }) {
   const {
@@ -46,7 +47,6 @@ export function TitleBar({ shell }: { shell: ShellState }) {
     setTitleSlot,
   } = shell
   const spaces = shellSpaces(shell)
-  const home = shellOverview(shell)
   const desktop = currentShell()
   const lights = useTrafficLights()
   const approvals = waitingCount(snapshot)
@@ -57,13 +57,13 @@ export function TitleBar({ shell }: { shell: ShellState }) {
   const shut = sidebarColumn ? sidebarCollapsed : drawerMode && sessions
   // With two places, the shut lead holds the way between them, and the place's own primary.
   const placed = spaces !== undefined && (sessions || route.entry === 'agents')
-  const overviewContext = sessions && route.overview && shell.preferences.workbenchLayout === 'overview'
-  const project = overviewContext && shell.catalog?.workspaces.find(item => item.id !== 'default' && item.id === shell.choice.workspaceId)
+  const startContext = sessions && route.start && !shell.board
+  const project = startContext && shell.catalog?.workspaces.find(item => item.id !== 'default' && item.id === shell.choice.workspaceId)
+  if (shell.board) return <BoardTitleBar shell={shell} />
   return (
     <div
       ref={titlebar}
       className="titlebar"
-      inert={shell.homeFocused || undefined}
       data-lights={lights ? '' : undefined}
       style={lightsStyle(desktop)}
       data-shut={shut ? '' : undefined}
@@ -107,13 +107,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
             {placed && shell.space === 'agents' ? (
               <ShellNewAgent shell={shell} compact />
             ) : sessions ? (
-              <IconButton
-                label="新建会话"
-                data-space-primary=""
-                icon={NewSessionGlyph}
-                pressed={route.overview === true}
-                onClick={startNew}
-              />
+              <IconButton label="新建会话" data-space-primary="" icon={NewSessionGlyph} pressed={route.start === true} onClick={startNew} />
             ) : (
               <IconButton
                 label="返回会话"
@@ -134,9 +128,9 @@ export function TitleBar({ shell }: { shell: ShellState }) {
           </>
         )}
       </div>
-      {(!sessions || route.overview) && (
+      {(!sessions || route.start) && (
         <header ref={setTitleSlot} className="topbar titlebar-page">
-          {overviewContext && (
+          {startContext && (
             <div className="work-landing-context">
               <span>
                 <Icon icon={LaptopGlyph} size={12} />
@@ -164,10 +158,44 @@ export function TitleBar({ shell }: { shell: ShellState }) {
         )}
         {sidebarColumn && sidebarCollapsed && shell.access.scopes.has('view') && <UsageEntry />}
         {sidebarColumn && sidebarCollapsed && <ShellUpdateCheck shell={shell} />}
-        {/* A tablet's rail already holds 总览; the layout switch itself is the shell's, drawn over this reserved end. */}
-        {sidebarColumn && shut && !home.active && <IconButton label="总览" icon={OverviewGlyph} onClick={home.open} />}
         <WorkbenchPanes shell={shell} />
-        <span className="layout-switch-space" aria-hidden="true" />
+        {/* The 对话 | 看板 switch is the shell's, drawn over this reserved end in both views. */}
+        <span className="view-switch-space" aria-hidden="true" />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The title row over 看板: the traffic lights' inset, the computer, then the sidebar foot's 设置, 额度与用量 and 检查更新
+ * as the same icons, before the shell's switch. 看板 has no session list or panels to toggle.
+ */
+function BoardTitleBar({ shell }: { shell: ShellState }) {
+  const desktop = currentShell()
+  const lights = useTrafficLights()
+  return (
+    <div ref={shell.titlebar} className="titlebar" data-board="" data-lights={lights ? '' : undefined} style={lightsStyle(desktop)}>
+      <div className="titlebar-lead">
+        <span className="titlebar-wordmark">
+          <BrandMark size={20} />
+          Latch
+        </span>
+      </div>
+      <div className="titlebar-board-computer">
+        <WorkbenchComputer shell={shell} />
+      </div>
+      <div className="titlebar-views">
+        {shell.entries.includes('settings') && (
+          <IconButton
+            label="设置"
+            icon={SettingsGlyph}
+            shortcut={shortcutKeys('settings', desktop !== null) ?? undefined}
+            onClick={() => shell.goEntry('settings')}
+          />
+        )}
+        {shell.access.scopes.has('view') && <UsageEntry />}
+        <ShellUpdateCheck shell={shell} />
+        <span className="view-switch-space" aria-hidden="true" />
       </div>
     </div>
   )

@@ -70,8 +70,8 @@ export function TerminalDock({ shell }: { shell: ShellState }) {
       id="terminal-dock"
       className="terminal-dock"
       aria-label="底部终端"
-      hidden={!terminalOpen}
-      inert={shell.homeFocused || undefined}>
+      hidden={!terminalOpen || shell.board}
+      inert={shell.board || undefined}>
       {terminalOpen && dockLimit >= DOCK_MIN && (
         <ResizeHandle
           className="terminal-resize"
@@ -85,7 +85,8 @@ export function TerminalDock({ shell }: { shell: ShellState }) {
           onReset={resetTerminal}
         />
       )}
-      <SessionTerminal shell={shell} shown={terminalOpen} place="dock" />
+      {/* Under 看板 the terminal is kept as when the dock is shut: its processes and screen stay. */}
+      <SessionTerminal shell={shell} shown={terminalOpen && !shell.board} place="dock" />
     </aside>
   )
 }

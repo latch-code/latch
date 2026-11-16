@@ -41,6 +41,7 @@ import {
   markUnread,
   pruneSeen,
   readSeen,
+  inAttention,
   waitingCount,
   waitsOnYou,
   writeSeen,
@@ -698,7 +699,10 @@ export function useSessionController({
     const quiet = snapshot.tasks
       .filter(waitsOnYou)
       .toSorted((a, b) => (a.live?.lastEventAt ?? '').localeCompare(b.live?.lastEventAt ?? ''))[0]
-    if (quiet) choose(quiet.id)
+    // Else the newest session the Host keeps in 等你处理: a failure not yet opened, results not yet checked.
+    const settled = snapshot.tasks.filter(inAttention).toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+    const next = quiet ?? settled
+    if (next) choose(next.id)
   }
 
   const previousApprovals = useRef(new Set(snapshot.approvals.map(item => item.id)))

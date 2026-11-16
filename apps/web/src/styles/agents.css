@@ -1576,8 +1576,7 @@ button.helper-card:focus-visible {
  * 56px row per person (a 32px face, the name, and the state in a person's words on the second line). The icon and the
  * second line take the state's colour: amber waits for you, blue works, red failed; frozen or at rest they are muted.
  */
-.agent-roster,
-.agent-queue {
+.agent-roster {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 1px;
@@ -1610,120 +1609,8 @@ button.helper-card:focus-visible {
 .agent-mark[data-tone='failed'] {
   color: var(--red);
 }
-@media (hover: hover) {
-  .agent-person:hover,
-  .agent-queue-new:hover {
-    background: var(--hover);
-  }
-}
-.agent-person:active,
-.agent-queue-new:active {
-  background: var(--press);
-}
-.agent-person[aria-current='page'],
-.agent-queue-new[aria-current='page'] {
-  background: var(--selected);
-  box-shadow: var(--selected-ring);
-  color: var(--ink);
-}
-.agent-person {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-12);
-  width: 100%;
-  min-width: 0;
-  height: 56px;
-  padding: 0 var(--sp-10);
-  border: 0;
-  border-radius: var(--r-8);
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-.agent-person > .agent-avatar {
-  flex-shrink: 0;
-}
-.agent-person-text {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-}
-.agent-person-name {
-  overflow: hidden;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agent-person[data-gone] .agent-person-name {
-  color: var(--muted);
-  font-weight: 500;
-}
-.agent-person-state {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.agent-person-state > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.agent-person-state[data-tone='waiting'] {
-  color: var(--amber);
-}
-.agent-person-state[data-tone='running'] {
-  color: var(--work-running);
-}
-.agent-person-state[data-tone='failed'] {
-  color: var(--red);
-}
-/* The queue's own column leads with 新建 Agent, where the 侧栏 layout has a nav row for it. */
-.agent-queue-new {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-10);
-  flex-shrink: 0;
-  width: 100%;
-  height: 36px;
-  margin-bottom: var(--sp-12);
-  padding: 0 var(--sp-10);
-  border: 0;
-  border-radius: var(--r-8);
-  background: transparent;
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  text-align: left;
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-.agent-queue-new[aria-disabled='true'] {
-  opacity: 0.45;
-}
-.agents-rail {
-  padding: var(--sp-16) var(--sp-12);
-}
-.agents-rail > .space-list {
-  margin: 0;
-  padding: 0;
-}
-.agents-rail .space-group {
-  margin-top: 0;
-}
-.agents-rail .archived-row {
-  margin-top: var(--sp-8);
-}
 @media (hover: none), (pointer: coarse) {
-  .space-list[data-people='roster'] .space-agent,
-  .agent-queue-new {
+  .space-list[data-people='roster'] .space-agent {
     height: 44px;
   }
 }
@@ -1736,20 +1623,12 @@ button.helper-card:focus-visible {
 .agents-page .settings-nav-pane[hidden] {
   display: none;
 }
-.agents-page[data-wide] .settings-layout {
-  grid-template-columns: minmax(0, 1fr);
-}
 .agents-page .settings-panel > :is(.workbench-home, .workbench-sessions) {
   position: relative;
   inset: auto;
   flex: 1;
   min-height: 0;
   margin: 0;
-}
-@media (min-width: 768px) {
-  .app-shell[data-workbench-layout='triage'] .agents-page .settings-nav-pane {
-    border-right: 1px solid var(--line);
-  }
 }
 .agents-home-to {
   display: flex;
@@ -1855,7 +1734,6 @@ button.helper-card:focus-visible {
   .agents-page .settings-panel > .workbench-sessions {
     padding: calc(var(--sp-16) + env(safe-area-inset-top)) var(--sp-16) calc(var(--sp-16) + env(safe-area-inset-bottom));
   }
-  .agents-root .agent-person,
   .agents-root .space-agent {
     min-height: 44px;
   }
@@ -1885,22 +1763,10 @@ button.helper-card:focus-visible {
 
 /* 顶栏 layout on a phone: the root page's own top holds the places and 设置, so the tab bar gives way, as on Code's home. */
 @media (max-width: 767.98px) {
-  .app-shell[data-workbench-layout='triage']:has(.agents-page[data-view='home']) .phone-tabs {
-    display: none;
-  }
   .agents-page .settings-bar.workbench-phone-heading {
     min-height: 52px;
     padding-bottom: var(--sp-4);
   }
-}
-
-/*
- * The face, name and role take what the chips leave, but never less than the face and a short name: with a safety note, a
- * schedule chip and a long topic it is the topic's title that gives way, further on a tablet's narrower header.
- */
-.agent-frame:not([data-phone], [data-layout='triage']) .agent-frame-who {
-  flex: 0 1 auto;
-  min-width: 104px;
 }
 .agent-frame:not([data-phone]) .agent-frame-actions {
   flex-shrink: 0;
@@ -1933,21 +1799,11 @@ button.helper-card:focus-visible {
     flex: none;
     max-width: none;
   }
-  .agent-frame:not([data-phone], [data-layout='triage']) {
-    flex-wrap: wrap;
-    row-gap: var(--sp-4);
-  }
-  .agent-frame:not([data-phone], [data-layout='triage']) .agent-frame-who {
-    flex: 1 1 200px;
-  }
   .agent-frame:not([data-phone]) .agent-frame-actions {
     flex: 0 0 auto;
     flex-wrap: wrap;
     max-width: 100%;
     margin-inline-start: 0;
-  }
-  .agent-frame[data-layout='triage']:not([data-phone]) .agent-frame-actions {
-    justify-content: center;
   }
 }
 .agent-unavailable .ui-hint,
@@ -2044,7 +1900,7 @@ button.helper-card:focus-visible {
 .agent-row {
   position: relative;
 }
-.agent-row:has(.agent-row-more) :is(.space-agent, .agent-person) {
+.agent-row:has(.agent-row-more) .space-agent {
   padding-inline-end: var(--sp-32);
 }
 .agent-row-more {
@@ -2054,7 +1910,7 @@ button.helper-card:focus-visible {
   transform: translateY(-50%);
 }
 @media (pointer: coarse) {
-  .agent-row:has(.agent-row-more) :is(.space-agent, .agent-person) {
+  .agent-row:has(.agent-row-more) .space-agent {
     padding-inline-end: var(--sp-48);
   }
   .agent-row-more.ui-icon-button {

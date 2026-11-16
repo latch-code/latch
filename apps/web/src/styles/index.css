@@ -40,14 +40,12 @@
 @import './terminal.css' layer(app);
 @import './browser.css' layer(app);
 @import './device.css' layer(app);
-@import './layout-choice.css' layer(app);
 @import './appearance-choice.css' layer(app);
 @import './work-overview.css' layer(app);
 @import './workbench.css' layer(app);
 @import './workbench-v8.css' layer(app);
 @import './workbench-sessions.css' layer(app);
 @import './work-surface.css' layer(app);
-@import './home-focus.css' layer(app);
 @import './usage.css' layer(app);
 @import './auth.css' layer(security);
 @import './confirm.css' layer(security);

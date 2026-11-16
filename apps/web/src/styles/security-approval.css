@@ -110,21 +110,6 @@
 .approval-panel[data-presentation] :is(.approval-uncertain, .approval-failure) {
   order: 4;
 }
-
-.code-home-queue .approval-panel[data-document-review] {
-  column-gap: var(--sp-20);
-  padding-inline: var(--sp-12) !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-.code-home-queue .approval-panel[data-document-review] .approval-preview {
-  padding: 0;
-  border-radius: var(--r-12);
-  background: var(--work-raised) !important;
-}
-.code-home-queue .approval-panel[data-document-review] .approval-preview-inner {
-  padding: 0;
-}
 .approval-document-header {
   display: flex !important;
   flex-wrap: wrap;
@@ -141,37 +126,6 @@
   overflow-wrap: anywhere;
   font-family: var(--mono) !important;
   font-size: var(--fs-mono) !important;
-}
-.code-home-queue .approval-panel[data-document-review] .approval-preview :is(.diff-file, .diff-file-header, .diff-hunk-header) {
-  background: var(--work-raised) !important;
-}
-@container work-decision (min-width: 500px) {
-  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] {
-    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-    grid-template-areas:
-      'request material'
-      'notes material'
-      'buttons material';
-    align-items: start;
-  }
-  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] .approval-what {
-    grid-area: request;
-  }
-  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] .approval-meta {
-    padding-inline-start: 0;
-  }
-  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] .approval-notes {
-    grid-area: notes;
-    padding-inline-start: 0;
-  }
-  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] .approval-preview {
-    grid-area: material;
-  }
-  .code-home-queue .work-overview-review:not([data-multiple]) .approval-panel[data-document-review] .approval-buttons {
-    grid-area: buttons;
-    flex-wrap: wrap;
-    justify-content: start;
-  }
 }
 .approval-row {
   display: flex !important;

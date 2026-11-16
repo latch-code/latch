@@ -6,10 +6,8 @@ import { AgentAvatar } from './AgentAvatar.tsx'
 import type { AvatarState } from './avatarFace.ts'
 
 /**
- * The conversation's frame. 侧栏 layout: a 40px face, the name and the role line on the left, which open the profile; at
- * the right the one state word, the schedule chip and what the place adds (⋯). 顶栏 layout: a presence
- * block at the top of the conversation, a 52px face over the name and role with the same chips under them. The same on a
- * topic and on a new one.
+ * The conversation's frame: a 40px face, the name and the role line on the left, which open the profile; at the right
+ * the one state word, the schedule chip and what the place adds (⋯). The same on a topic and on a new one.
  */
 export function AgentFrame({
   name,
@@ -23,10 +21,8 @@ export function AgentFrame({
   actions,
   phone = false,
   duty,
-  layout = 'overview',
 }: {
   duty?: string
-  layout?: 'overview' | 'triage'
   name: string
   avatar: AgentAvatarValue | 'general'
   state: AvatarState
@@ -42,9 +38,9 @@ export function AgentFrame({
   phone?: boolean
 }) {
   return (
-    <div className="agent-frame" data-phone={phone ? '' : undefined} data-layout={layout}>
+    <div className="agent-frame" data-phone={phone ? '' : undefined}>
       <button type="button" className="agent-frame-who" aria-label={`${name} 的资料`} aria-expanded={profileOpen} onClick={onProfile}>
-        <AgentAvatar avatar={avatar} size={phone ? 28 : layout === 'triage' ? 52 : 40} state={state} />
+        <AgentAvatar avatar={avatar} size={phone ? 28 : 40} state={state} />
         <span className="agent-frame-text">
           <span className="agent-frame-name">
             <VisibleText text={name} />

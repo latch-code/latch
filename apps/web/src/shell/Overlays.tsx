@@ -126,8 +126,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
     && agentsOverview(snapshot.tasks, shell.stopping)
       .attention.slice(0, OVERVIEW_ROWS)
       .some(task => task.id === approvalToast.sessionId)
-  const shownApprovalToast =
-    approvalToast && !(route.overview && toastSpace === 'code') && !(onAgentsHome && toastSpace === 'agents') ? approvalToast : null
+  const shownApprovalToast = approvalToast && !shell.board && !(onAgentsHome && toastSpace === 'agents') ? approvalToast : null
   return (
     <>
       {commandOpen && <ShellPalette shell={shell} />}

@@ -7,8 +7,7 @@ import type { TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { backToPhoneSessions, settleShell } from './helpers/layout.ts'
-import { openHomeDecision } from './helpers/workbench.ts'
+import { backToPhoneSessions, openSession, settleShell } from './helpers/layout.ts'
 
 it.each([
   [390, 'light'],
@@ -68,7 +67,7 @@ it.each([
       await page.reload()
       await connected(page)
       expect(await page.getByRole('button', { name: '终端', exact: true }).count()).toBe(0)
-      const openOld = () => openHomeDecision(page, sessionId)
+      const openOld = () => openSession(page, sessionId)
       await openOld()
       await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
       const header = page.locator('.topbar[data-phone]')
@@ -79,8 +78,9 @@ it.each([
       await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()
       await page.locator('.info-page').waitFor({ state: 'detached' })
       await page.getByRole('textbox', { name: '继续对话', exact: true }).fill('旧会话草稿')
-      await header.getByRole('button', { name: '返回总览', exact: true }).click()
-      // The project is the first chip of the row over the home's input.
+      // Back on the list, 新建会话 opens the start screen; the project is the first chip of the row over its input.
+      await header.getByRole('button', { name: '返回会话列表', exact: true }).click()
+      await page.locator('.phone-list').getByRole('button', { name: '新建会话', exact: true }).click()
       await page.locator('.workbench-home .composer-chips .home-composer-location').getByRole('button').first().click()
       await page
         .getByRole('dialog', { name: '项目', exact: true })
@@ -153,7 +153,7 @@ it.each([
         await page.setViewportSize({ width: 390, height: 844 })
         await settleShell(page)
       }
-      await header.getByRole('button', { name: '返回总览', exact: true }).click()
+      await header.getByRole('button', { name: '返回会话列表', exact: true }).click()
       await openOld()
       expect(await page.getByRole('textbox', { name: '继续对话', exact: true }).inputValue()).toBe('旧会话草稿')
       await header.getByRole('button', { name: '侧边面板', exact: true }).click()
@@ -253,9 +253,8 @@ it('browses a saved project before creating a session, previews and quotes real 
         await page.screenshot({ path: `test-results/file-tree/quoted-draft-${width}-${theme}.png`, animations: 'disabled' })
         await input.fill('保留我的草稿')
         if (width === 390) {
-          // Leaving the home for the list and coming back through 新建会话 keeps the draft.
+          // Leaving the start screen for the list and coming back through 新建会话 keeps the draft.
           await backToPhoneSessions(page)
-          expect(await page.locator('.phone-list').getByRole('button', { name: '返回总览', exact: true }).isVisible()).toBe(true)
           await page.locator('.phone-list').getByRole('button', { name: '新建会话', exact: true }).click()
           expect(await input.inputValue()).toBe('保留我的草稿')
         }

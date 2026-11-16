@@ -880,7 +880,7 @@
 }
 /* A phone narrower than 375px has no room for 检查更新 in its heading; the old-Host notice still says what matters. */
 @media (max-width: 374.98px) {
-  :is(.workbench-phone-heading, .workbench-phone-utilities) .update-check {
+  .workbench-phone-heading .update-check {
     display: none;
   }
 }

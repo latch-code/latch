@@ -9,7 +9,6 @@ import type { HarnessPlugin, ModelDelta } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openEntry, openSessions, settleShell } from './helpers/layout.ts'
-import { switchLayout } from './helpers/workbench.ts'
 
 const OUT = 'test-results/work-panel'
 
@@ -90,13 +89,7 @@ async function canvas(page: Page): Promise<Rect> {
   expect(panel.left).toBeGreaterThanOrEqual(0)
   expect(panel.right).toBeLessThanOrEqual(window.width)
   expect(panel.right - panel.left).toBeGreaterThanOrEqual(480)
-  expect(panel.top).toBe(
-    (await shell.getAttribute('data-workbench-layout')) === 'triage'
-      ? 56
-      : (await shell.getAttribute('data-sidebar')) === 'collapsed'
-        ? 52
-        : 0,
-  )
+  expect(panel.top).toBe((await shell.getAttribute('data-sidebar')) === 'collapsed' ? 52 : 0)
   await noHorizontalOverflow(page)
   return panel
 }
@@ -115,7 +108,7 @@ async function titleRowInside(page: Page, panel: Rect): Promise<void> {
   }
 }
 
-describe('the v8 work canvas in both layouts', () => {
+describe('the v8 work canvas', () => {
   let host: TestHost
   let browser: Browser
   const sessions = {} as Record<keyof typeof PROMPTS, string>
@@ -189,19 +182,13 @@ describe('the v8 work canvas in both layouts', () => {
   }
 
   async function choose(page: Page, id: string): Promise<void> {
-    const triage = (await page.locator('.app-shell').getAttribute('data-workbench-layout')) === 'triage'
-    if (triage) {
-      await page.getByRole('button', { name: '全部会话', exact: true }).click()
-      const title = PROMPTS[(Object.keys(sessions) as Array<keyof typeof PROMPTS>).find(key => sessions[key] === id)!]
-      await page.locator('.workbench-session-row').filter({ hasText: title }).click()
-    }
     // Under 1024 the list is a sheet over the ground: open it each time, and click once it has slid in.
-    if (!triage && (page.viewportSize()?.width ?? 0) < 1024) {
+    if ((page.viewportSize()?.width ?? 0) < 1024) {
       await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
       await page.getByRole('dialog', { name: '会话导航', exact: true }).waitFor()
       await settleShell(page)
     }
-    if (!triage) await page.locator(`[data-task-id="${id}"]`).first().click()
+    await page.locator(`[data-task-id="${id}"]`).first().click()
     await page.locator('.drawer-backdrop').waitFor({ state: 'detached' })
     await page.locator('.transcript-content').waitFor()
     await page.locator('.transcript .ui-loading').waitFor({ state: 'detached' })
@@ -212,28 +199,25 @@ describe('the v8 work canvas in both layouts', () => {
   const shot = (page: Page, name: string, width: number, theme: string) =>
     page.screenshot({ path: `${OUT}/${name}--${width}--${theme}.png`, animations: 'disabled', caret: 'hide' })
 
-  for (const layout of ['overview', 'triage'] as const)
+  for (const layout of ['chat'] as const)
     for (const theme of ['light', 'dark'] as const)
       for (const [width, height] of [
         [768, 1024],
         [1024, 768],
         [1440, 900],
       ] as const)
-        it(`${layout} at ${width} in ${theme}: Home, live states, sidebar resizing and the right panel`, async () => {
+        it(`${layout} at ${width} in ${theme}: the start screen, live states, sidebar resizing and the right panel`, async () => {
           const page = await open(width, height, theme)
           const desktop = width >= 1024
-          if (layout === 'triage') {
-            await switchLayout(page, 'triage')
-          }
           const capture = (name: string) => shot(page, `${layout}-${name}`, width, theme)
 
           // The new session: the panel holds the page under the title row.
           let panel = await canvas(page)
-          if (desktop && layout === 'overview') {
+          if (desktop) {
             const sidebar = await page.locator('#session-navigation').evaluate(element => element.getBoundingClientRect().right)
             expect(panel.left).toBe(Math.round(sidebar))
           }
-          expect(panel.left).toBe(layout === 'triage' ? 0 : desktop ? 264 : 60)
+          expect(panel.left).toBe(desktop ? 264 : 60)
           await capture('home')
 
           // Each state of a session, its title row in the panel.
@@ -268,7 +252,7 @@ describe('the v8 work canvas in both layouts', () => {
           const window = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
           expect(Math.round(inspector.right)).toBe(window.width)
           expect(Math.round(inspector.bottom)).toBe(window.height)
-          expect(Math.round(inspector.top)).toBe(placement === 'sheet' ? (layout === 'triage' ? 108 : 52) : layout === 'triage' ? 56 : 0)
+          expect(Math.round(inspector.top)).toBe(placement === 'sheet' ? 52 : 0)
           if (placement === 'open') expect(Math.round(inspector.left)).toBe(panel.right)
           const close = page.locator('.inspector-column').getByRole('button', { name: '关闭', exact: true })
           await close.click({ trial: true })
@@ -360,12 +344,10 @@ describe('the v8 work canvas in both layouts', () => {
     }
   })
 
-  it('keeps phone Home reachable without a desktop title row or decorative panel', async () => {
+  it('keeps the phone list reachable without a desktop title row or decorative panel', async () => {
     const page = await open(390, 844, 'light')
     expect(await page.locator('.titlebar').count()).toBe(0)
     expect(await page.locator('.app-shell').evaluate(shell => getComputedStyle(shell, '::before').content)).toBe('none')
-    await page.locator('.workbench-home').waitFor()
-    await page.getByRole('button', { name: '全部会话', exact: true }).click()
     await page.locator('.phone-list:not([inert])').waitFor()
     await noHorizontalOverflow(page)
     await shot(page, 'phone-history', 390, 'light')

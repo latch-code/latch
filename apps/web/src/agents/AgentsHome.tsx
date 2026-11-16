@@ -178,8 +178,8 @@ function Addressee({
 }
 
 /**
- * 我的 Agent's own 总览, the same in both layouts as Code's is: the input, which starts a new topic with the Agent in its
- * chip; what waits for you across Agents, as the decision cards Code's 总览 uses, titled with the Agent's name; who is
+ * 我的 Agent's own 总览: the input, which starts a new topic with the Agent in its chip; what waits for you across
+ * Agents, as decision cards titled with the Agent's name; who is
  * working; and the latest results. Every row is a topic's summary as the Host gives it. With no topic yet only the input
  * and one quiet line show; offline the last rows stay, still and labelled, and nothing can be decided or sent.
  */
@@ -188,7 +188,6 @@ export function AgentsHome({ shell }: { shell: ShellState }) {
   const offline = connection === 'offline'
   const locked = !readsAgents(snapshot)
   const canRun = shell.access.scopes.has('run')
-  const layout = shell.preferences.workbenchLayout
   const rows = locked ? [] : shellRoster(shell)
   const own = rows.filter(row => addressable(row) && row.id !== GENERAL_AGENT_ID)
   const work = agentsOverview(snapshot.tasks, shell.stopping)
@@ -198,7 +197,7 @@ export function AgentsHome({ shell }: { shell: ShellState }) {
   const [picked, setPicked] = useState(() => defaultAddressee(rows))
   const draftState = useState('')
   const [opened, setOpened] = useState<string>()
-  // Narrow, the 顶栏 layout's three lanes are one at a time, picked by these pills, as on Code's 总览.
+  // Narrow, the three lanes are one at a time, picked by these pills.
   const [lane, setLane] = useState<'attention' | 'running' | 'results'>('attention')
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const toggle = (id: string) => {
@@ -227,7 +226,7 @@ export function AgentsHome({ shell }: { shell: ShellState }) {
   const empty = work.attention.length + work.running.length + work.results.length === 0
   const shown = (id: 'attention' | 'running' | 'results') => (expanded.has(id) ? work[id] : work[id].slice(0, OVERVIEW_ROWS))
   return (
-    <div className="workbench-home agents-home" data-layout={layout}>
+    <div className="workbench-home agents-home">
       <ConnectionBanners shell={shell} />
       <div className="workbench-home-composer">
         {!canRun ? (
@@ -281,7 +280,7 @@ export function AgentsHome({ shell }: { shell: ShellState }) {
         </section>
       ) : null}
       {(!empty || (!loading && own.length > 0)) && (
-        <section className="work-overview" data-layout={layout} aria-label="我的 Agent 总览">
+        <section className="work-overview" aria-label="我的 Agent 总览">
           {empty ? (
             <p className="work-overview-empty">没有要你处理的</p>
           ) : (
@@ -319,12 +318,11 @@ export function AgentsHome({ shell }: { shell: ShellState }) {
                           task={task}
                           shell={shell}
                           person={personOf(rows, task)}
-                          emphasis={layout === 'overview' ? task.id === activeDecision : index === 0}
-                          expanded={layout === 'triage' || task.id === activeDecision}
+                          emphasis={task.id === activeDecision}
+                          expanded={task.id === activeDecision}
                           onExpand={() => {
                             setOpened(task.id)
                           }}
-                          firstKeys={layout === 'triage' && index === 0}
                         />
                       </li>
                     ))}
@@ -415,7 +413,7 @@ export function WaitingCards({ shell }: { shell: ShellState }) {
   const [all, setAll] = useState(false)
   if (attention.length === 0) return null
   return (
-    <section className="work-overview agents-phone-waiting" data-layout="triage" aria-label="等你处理">
+    <section className="work-overview agents-phone-waiting" aria-label="等你处理">
       <ul className="work-overview-list">
         {(all ? attention : attention.slice(0, OVERVIEW_ROWS)).map((task, index) => (
           <li key={task.id}>

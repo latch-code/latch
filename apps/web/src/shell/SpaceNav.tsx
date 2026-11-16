@@ -51,7 +51,7 @@ const WAITS_TITLE: Record<Space, string> = { code: 'Code 里有等你处理的�
  * Code | 我的 Agent across the top of the sidebar: two places, not a filter. Choosing one changes the primary action, the
  * list and the home page with it. The place you are not in carries an amber dot while something waits there.
  */
-export function SpaceSwitch({ space, onSpace, waits }: SpacesProps) {
+function SpaceSwitch({ space, onSpace, waits }: SpacesProps) {
   const option = (value: Space) => {
     const dot = waits[value] && value !== space
     return {
@@ -201,7 +201,7 @@ export function NavTop({
   /** The computer popover with its trigger (`SidebarComputer`), given what the desktop app lists. */
   computer?: ((computers: ComputersView | undefined) => ReactNode) | undefined
   className?: string
-  overview?: { active: boolean; open: () => void }
+  overview?: { active: boolean; open: () => void } | undefined
   onSchedules?: () => void
   computerAtFoot?: boolean
 }) {
@@ -312,7 +312,7 @@ export function shellSpaces(shell: Pick<ShellState, 'entries' | 'space' | 'goSpa
   if (!shell.entries.includes('agents')) return undefined
   // 应用 belongs to both places: either segment goes back to its own place.
   const shared = shell.route.entry === 'apps'
-  return { space: shared ? null : shell.route.overview ? 'code' : shell.space, onSpace: shell.goSpace, waits: shell.waits }
+  return { space: shared ? null : shell.route.start ? 'code' : shell.space, onSpace: shell.goSpace, waits: shell.waits }
 }
 
 /** 新建 Agent as the shell draws it: the sidebar's row, or an icon button where there is no room for one. */
@@ -330,20 +330,18 @@ export function ShellNewAgent({ shell, compact = false }: { shell: ShellState; c
   )
 }
 
-/** 总览 in the sidebar's top rows: Code's home, or in 我的 Agent the space's own. */
-export function shellOverview(shell: Pick<ShellState, 'space' | 'route' | 'entries' | 'openOverview' | 'openMyAgent'>): {
-  active: boolean
-  open: () => void
-} {
+/** 总览 in the sidebar's top rows: 我的 Agent's own; Code has none (新会话 is its start screen). */
+export function shellOverview(
+  shell: Pick<ShellState, 'space' | 'route' | 'entries' | 'openMyAgent'>,
+): { active: boolean; open: () => void } | undefined {
   const { route } = shell
-  if (shell.entries.includes('agents') && shell.space === 'agents' && !route.overview)
-    return {
-      active: route.entry === 'agents' && route.myAgent === undefined && !route.topics,
-      open: () => {
-        shell.openMyAgent()
-      },
-    }
-  return { active: route.entry === 'sessions' && route.overview === true, open: shell.openOverview }
+  if (!shell.entries.includes('agents') || shell.space !== 'agents' || route.start) return undefined
+  return {
+    active: route.entry === 'agents' && route.myAgent === undefined && !route.topics,
+    open: () => {
+      shell.openMyAgent()
+    },
+  }
 }
 
 /** The foot as the shell draws it, from any of the sidebar's places. */

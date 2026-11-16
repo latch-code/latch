@@ -6,7 +6,6 @@ import { expect, it } from 'vitest'
 import type { Device, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
 import { startTestHost } from './helpers/host.ts'
 
 async function choose(page: Page, title: string) {
@@ -113,7 +112,7 @@ it.each([
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
       const position = await transcript.evaluate(element => element.scrollTop)
       const mounted = await transcript.elementHandle()
-      await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
+      await page.locator('.sidebar [data-space-primary]').click()
       const home = page.locator('.workbench-home')
       const draft = home.getByRole('textbox', { name: '新会话消息', exact: true })
       expect(await draft.inputValue()).toBe('')
@@ -123,7 +122,6 @@ it.each([
         .setInputFiles({ name: 'home.txt', mimeType: 'text/plain', buffer: Buffer.from('home attachment') })
       await expect.poll(() => home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       expect(await home.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
-      await returnFromHomeFocus(page)
       // 新建会话 is the home with its input focused: the reading session stays open under it, so its unsaved edit is
       // not asked about, and the home keeps its route, draft and attachment target.
       await home.getByRole('button', { name: 'home.txt', exact: true }).focus()
@@ -155,7 +153,6 @@ it.each([
       expect(await home.locator('.composer-line .send-button').getAttribute('aria-label')).toBe('发送')
       expect(await home.isVisible()).toBe(true)
       await page.setViewportSize({ width: 1440, height: 1000 })
-      await returnFromHomeFocus(page)
       // The session under the home is still the current row; it leads back.
       await page.locator(`.sidebar [data-task-id="${sessionId}"]`).filter({ visible: true }).click()
       expect(await input.inputValue()).toBe('只属于原会话的草稿')
@@ -166,13 +163,13 @@ it.each([
       await edit.fill('文件预览在总览背后保留。')
       expect(await page.locator('.workspace').getByRole('button', { name: 'session.txt', exact: true }).isEnabled()).toBe(true)
       expect(await page.locator('.workspace').getByRole('button', { name: 'home.txt', exact: true }).count()).toBe(0)
-      await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
+      await page.locator('.sidebar [data-space-primary]').click()
       expect(await draft.inputValue()).toBe('只属于首页的新任务')
       for (const width of [320, 390]) {
         await page.setViewportSize({ width, height: 844 })
-        await switchLayout(page, 'triage')
-        const navigation = home.getByRole('navigation', { name: '会话导航', exact: true })
-        for (const label of ['全部会话', '搜索'])
+        // A phone's start screen is pushed over its list: its heading holds the way back and 搜索.
+        const navigation = home.locator('.workbench-phone-heading')
+        for (const label of ['返回会话列表', '搜索'])
           expect((await navigation.getByRole('button', { name: label, exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
         await navigation.getByRole('button', { name: '搜索', exact: true }).click()
         const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
@@ -182,11 +179,11 @@ it.each([
         await page.keyboard.press('Escape')
         await palette.waitFor({ state: 'hidden' })
         expect(await draft.inputValue()).toBe('只属于首页的新任务')
-        await navigation.getByRole('button', { name: '全部会话', exact: true }).click()
+        await navigation.getByRole('button', { name: '返回会话列表', exact: true }).click()
         const history = page.locator('.phone-list:not([inert])')
         await history.locator(`[data-task-id="${sessionId}"]`).click()
         await page.locator('.workspace .topbar').getByRole('button', { name: '返回会话列表', exact: true }).click()
-        await history.getByRole('button', { name: '返回总览', exact: true }).click()
+        await history.getByRole('button', { name: '新建会话', exact: true }).click()
         expect(await draft.inputValue()).toBe('只属于首页的新任务')
         expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       }
@@ -236,126 +233,3 @@ it.each([
     }
   },
 )
-
-it('retries a failed session through the one sender while preserving the home draft and attachment', async () => {
-  let calls = 0
-  let failNext = false
-  let holdNext = false
-  let releaseRun: (() => void) | undefined
-  const plugin: HarnessPlugin = {
-    id: 'home-retry',
-    name: '首页重试验收',
-    version: '1',
-    description: 'Local fixture only.',
-    activate(context) {
-      context.registerProvider({
-        id: 'retry-model',
-        name: '本地验收模型',
-        model: 'fixture',
-        async *stream() {
-          calls++
-          if (calls === 1 || failNext) {
-            failNext = false
-            throw new Error('测试临时失败')
-          }
-          if (holdNext) {
-            holdNext = false
-            await new Promise<void>(resolve => {
-              releaseRun = resolve
-            })
-          }
-          yield { type: 'text', text: '原会话已完成重试。' }
-          yield { type: 'finish', reason: 'stop' }
-        },
-      })
-    },
-  }
-  const host = await startTestHost({ demo: false, plugins: [plugin], providerId: 'retry-model' })
-  const browser = await chromium.launch(browserLaunchOptions())
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN', reducedMotion: 'reduce' })
-  const page = await context.newPage()
-  try {
-    const owner = await host.enroll({ listener: 'unix' })
-    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
-      method: 'POST',
-      body: { requestId: randomUUID(), prompt: '请重试原来的工作', model: { providerId: 'retry-model', model: 'fixture' } },
-    })
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('failed')
-    await enrollBrowser(page, host, { name: '首页重试设备', scopes: ['admin'] })
-    await connected(page)
-    const home = page.locator('.workbench-home')
-    const failure = home.locator(`.work-feature[data-work-session="${sessionId}"]`)
-    await failure.getByRole('button', { name: '查看失败', exact: true }).click()
-    await page
-      .locator('main.workspace:not([inert]) .transcript')
-      .getByText(/测试临时失败/u)
-      .waitFor()
-    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    await switchLayout(page, 'triage')
-    const draft = home.getByRole('textbox', { name: '新会话消息', exact: true })
-    await draft.fill('首页草稿继续保留')
-    await home
-      .getByLabel('选择附件', { exact: true })
-      .setInputFiles({ name: 'keep-home.txt', mimeType: 'text/plain', buffer: Buffer.from('home only') })
-    await expect.poll(() => home.getByRole('button', { name: 'keep-home.txt', exact: true }).isEnabled()).toBe(true)
-    await returnFromHomeFocus(page)
-    const retry = home.locator(`[data-work-session="${sessionId}"]`).getByRole('button', { name: '重试', exact: true })
-    await retry.waitFor()
-    await retry.click()
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
-    expect(await host.host.bridge.listTasks()).toHaveLength(1)
-    const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
-    const prompts = detail.messages.filter(message => message.role === 'user')
-    expect(prompts.map(message => message.text)).toEqual(['请重试原来的工作', '请重试原来的工作'])
-    expect(prompts[1]?.attachments).toBeUndefined()
-    expect(prompts[0]?.requestId).not.toBe(prompts[1]?.requestId)
-    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    expect(await draft.inputValue()).toBe('首页草稿继续保留')
-    expect(await home.getByRole('button', { name: 'keep-home.txt', exact: true }).isEnabled()).toBe(true)
-    expect(calls).toBe(2)
-    // A different reader opens the same failed session meanwhile. The delayed target detail must not start another turn.
-    const peer = await owner.json<{ sessionId: string }>('tasks', {
-      method: 'POST',
-      body: { requestId: randomUUID(), prompt: '另一条会话', model: { providerId: 'retry-model', model: 'fixture' } },
-    })
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${peer.sessionId}`)).summary.status).toBe('idle')
-    await owner.json(`tasks/${peer.sessionId}`, { method: 'PATCH', body: { title: '另一条会话' } })
-    await choose(page, '另一条会话')
-    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    failNext = true
-    await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { requestId: randomUUID(), prompt: '再次出现失败' } })
-    await retry.waitFor()
-    let reading = false
-    let releaseRead!: () => void
-    const readGate = new Promise<void>(resolve => {
-      releaseRead = resolve
-    })
-    await page.route(`**/link/api/tasks/${sessionId}`, async route => {
-      if (route.request().method() !== 'GET' || reading) return route.continue()
-      reading = true
-      await readGate
-      return route.continue()
-    })
-    await retry.click()
-    await expect.poll(() => reading).toBe(true)
-    holdNext = true
-    await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { requestId: randomUUID(), prompt: '另一个设备已经继续' } })
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('running')
-    releaseRead()
-    await page.getByText('会话状态已变化，请查看最新状态后重试。', { exact: true }).waitFor()
-    await expect.poll(() => calls).toBe(5)
-    expect(
-      (await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.filter(message => message.role === 'user').map(message => message.text),
-    ).toEqual(['请重试原来的工作', '请重试原来的工作', '再次出现失败', '另一个设备已经继续'])
-    await page.getByRole('button', { name: '总览', exact: true }).locator('visible=true').first().click()
-    expect(await draft.inputValue()).toBe('首页草稿继续保留')
-    expect(await home.getByRole('button', { name: 'keep-home.txt', exact: true }).isEnabled()).toBe(true)
-    releaseRun?.()
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
-  } finally {
-    releaseRun?.()
-    await context.close()
-    await browser.close()
-    await host.close()
-  }
-})

@@ -1,3 +1,19 @@
+/* The title over each of 外观's choices, with 仅此设备 after it. */
+.layout-choice-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-8);
+  margin-top: var(--sp-24);
+  margin-bottom: var(--sp-8);
+  color: var(--ink-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.layout-choice-head > :last-child {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
 /*
  * 设置 › 通用: 背景效果, 密度 and 动效, this device only. The tiles are real renders: the background layer itself at each
  * strength, rows at each density, and one live sample of what moves.

@@ -18,8 +18,8 @@ export type WorkbenchAction =
   | 'settings'
   /** ⇧⌘U: 额度与用量. */
   | 'usage'
-  /** ⌥⌘L: the other workbench layout. */
-  | 'layout'
+  /** ⌥⌘L: 对话 or 看板. */
+  | 'view'
   /** ⇧⌘1 and ⇧⌘2: Code and 我的 Agent. */
   | { kind: 'space'; space: 'code' | 'agents' }
   /** ⌘1 to ⌘9: the Nth session as the sidebar draws it. */
@@ -77,7 +77,7 @@ const SHORTCUTS = [
   { id: 'sidebar', label: '收起或展开侧栏', desktop: '⌘B', browser: 'Alt B' },
   { id: 'side-panel', label: '侧边面板', desktop: '⌥⌘B', browser: 'Alt Shift B' },
   { id: 'panel-add', label: '在侧边面板打开…', desktop: '⌥⌘T', browser: 'Alt Shift T' },
-  { id: 'layout', label: '切换侧栏、顶栏布局', desktop: '⌥⌘L', browser: 'Alt Shift L' },
+  { id: 'view', label: '切换对话、看板', desktop: '⌥⌘L', browser: 'Alt Shift L' },
   { id: 'changes', label: '改动', desktop: '⌘D', browser: 'Alt D' },
   { id: 'terminal', label: '终端', desktop: '⌘J', browser: 'Alt J' },
   { id: 'terminal-split', label: '终端左右分屏', desktop: '⌘\\', browser: null },
@@ -97,7 +97,6 @@ const SHORTCUTS = [
   { id: 'session', label: '跳到第 N 个会话 · 模型面板里选第 N 个模型', desktop: '⌘1 … ⌘9', browser: 'Alt 1 … Alt 9' },
   { id: 'next-approval', label: '下一个等你处理的请求', desktop: '⌥⌘A', browser: 'Alt Shift A' },
   { id: 'decide', label: '允许、拒绝选中的请求', desktop: '⌘⏎ · esc', browser: 'Mod Enter · Esc' },
-  { id: 'triage-decide', label: '顶栏布局：拒绝、允许聚焦的请求', desktop: '1 · 2', browser: '1 · 2' },
   { id: 'compose', label: '聚焦输入框', desktop: '⌘L', browser: 'Alt L' },
   { id: 'controls', label: 'Harness · 模型 · 思考 · 权限', desktop: '⌥⌘1 … ⌥⌘4', browser: 'Alt Shift 1 … Alt Shift 4' },
   { id: 'recall', label: '空输入框取回上一条消息', desktop: '↑', browser: '↑' },
@@ -169,7 +168,7 @@ export function shortcutWorksOnPage(action: WorkbenchAction): boolean {
     || action === 'shortcuts'
     || action === 'settings'
     || action === 'usage'
-    || action === 'layout'
+    || action === 'view'
     || (typeof action === 'object' && action.kind === 'space')
   )
 }
@@ -190,7 +189,7 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
     return index <= COMPOSER_CONTROLS.length ? { kind: 'control', control: COMPOSER_CONTROLS[index - 1]! } : null
   }
   if (desktop && event.code === 'KeyB' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'side-panel'
-  if (desktop && event.code === 'KeyL' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'layout'
+  if (desktop && event.code === 'KeyL' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'view'
   if (desktop && event.code === 'KeyT' && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) return 'panel-add'
   // The terminal's panes: the desktop app only, as the terminal itself. ⌘ chords are the only keys that leave it.
   if (desktop && (event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) {
@@ -202,7 +201,7 @@ export function workbenchShortcut(event: KeyStroke, desktop: boolean): Workbench
   const modifier = desktop ? (event.metaKey || event.ctrlKey) && !event.altKey : event.altKey && !event.metaKey && !event.ctrlKey
   if (!modifier) return null
   if (!desktop && event.code === 'KeyB' && event.shiftKey) return 'side-panel'
-  if (!desktop && event.code === 'KeyL' && event.shiftKey) return 'layout'
+  if (!desktop && event.code === 'KeyL' && event.shiftKey) return 'view'
   if (!desktop && event.code === 'KeyT' && event.shiftKey) return 'panel-add'
   if (desktop && event.code === 'KeyB' && event.shiftKey) return 'browser'
   if (event.code === 'KeyE' && event.shiftKey) return 'files'

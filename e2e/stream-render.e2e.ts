@@ -9,7 +9,6 @@ import { FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { closeSettings, noHorizontalOverflow, openSection, openSession, openSettings, reachable, settleShell } from './helpers/layout.ts'
-import { switchLayout } from './helpers/workbench.ts'
 
 const OUTPUT = 'test-results/stream-render'
 const SIZES = [
@@ -313,7 +312,7 @@ describe('how a turn of work is drawn', () => {
     page.screenshot({ path: `${OUTPUT}/${name}--${width}--${theme}.png`, animations: 'disabled' })
   const command = (page: Page, words: string) => page.locator('.tool-card.is-command').filter({ hasText: words })
 
-  it('locates history in both workbench layouts and with the side panel and find open', async ({ onTestFinished }) => {
+  it('locates history in the workbench and with the side panel and find open', async ({ onTestFinished }) => {
     await rm(railExit, { force: true })
     const id = await start('定位 第 1 轮\n核对上次本地检查结果。\n确认内容后继续往下读。', '长会话回看')
     onTestFinished(async () => {
@@ -373,22 +372,19 @@ describe('how a turn of work is drawn', () => {
     await page.mouse.move(anchor.x + anchor.width / 2 + 2, anchor.y + anchor.height / 2)
     await preview.waitFor()
 
-    for (const layout of ['triage', 'overview'] as const) {
-      await switchLayout(page, layout)
-      const content = page.locator('.transcript')
-      await target.hover()
-      await expect.poll(() => preview.textContent()).toContain('复核输出里的文件记录。')
-      await page.screenshot({ path: `test-results/conversation-rail/app-${layout}-1440-dark.png`, animations: 'disabled' })
-      await target.click()
-      await expect.poll(() => target.getAttribute('aria-current')).toBe('true')
-      const row = content.locator('.message-user').filter({ hasText: '定位 第 2 轮' })
-      await expect
-        .poll(() =>
-          row.evaluate(element => element.getBoundingClientRect().top - element.closest('.transcript')!.getBoundingClientRect().top),
-        )
-        .toBeCloseTo(24, 0)
-      await preview.waitFor({ state: 'detached' })
-    }
+    const content = page.locator('.transcript')
+    await target.hover()
+    await expect.poll(() => preview.textContent()).toContain('复核输出里的文件记录。')
+    await page.screenshot({ path: `test-results/conversation-rail/app-1440-dark.png`, animations: 'disabled' })
+    await target.click()
+    await expect.poll(() => target.getAttribute('aria-current')).toBe('true')
+    const row = content.locator('.message-user').filter({ hasText: '定位 第 2 轮' })
+    await expect
+      .poll(() =>
+        row.evaluate(element => element.getBoundingClientRect().top - element.closest('.transcript')!.getBoundingClientRect().top),
+      )
+      .toBeCloseTo(24, 0)
+    await preview.waitFor({ state: 'detached' })
 
     await page.setViewportSize({ width: 1280, height: 900 })
     const panel = page.getByRole('button', { name: '侧边面板', exact: true })

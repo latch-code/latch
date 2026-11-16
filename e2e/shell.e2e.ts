@@ -7,7 +7,7 @@ import type { DeviceScope, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { homeInput, switchLayout } from './helpers/workbench.ts'
+import { homeInput, switchView } from './helpers/workbench.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, noHorizontalOverflow, openEntry, openSession, openSessions, settleShell } from './helpers/layout.ts'
 
@@ -49,7 +49,7 @@ describe('the shell', () => {
       return { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) }
     })
 
-  it('lays out the 52px title row and the sidebar from the window edge, and lands a cold start on Home with its new-session input', async () => {
+  it('lays out the 52px title row and the sidebar from the window edge, and lands a cold start on the start screen with its input', async () => {
     const page = await open(1440, 900, '壳层桌面')
     expect(await box(page, '.titlebar')).toMatchObject({ left: 0, top: 0, width: 1440, height: 52 })
     expect(await box(page, '#session-navigation')).toMatchObject({ left: 0, top: 52, width: 264 })
@@ -78,17 +78,28 @@ describe('the shell', () => {
     expect(await page.getByRole('textbox', { name: '新会话消息', exact: true }).count()).toBe(1)
     await mkdir(CONNECTION_SHOTS, { recursive: true })
     await page.emulateMedia({ colorScheme: 'light' })
-    await page.screenshot({ path: `${CONNECTION_SHOTS}/overview-1440-light.png`, animations: 'disabled' })
-    await switchLayout(page, 'triage')
+    await page.screenshot({ path: `${CONNECTION_SHOTS}/start-1440-light.png`, animations: 'disabled' })
+    // The start screen: the input in the middle, the count line under it keeping its height while it is empty.
+    const composer = page.locator('.workbench-home-composer .composer')
+    const before = (await composer.boundingBox())!
+    const page1440 = (await page.locator('.workbench-home').boundingBox())!
+    expect(Math.abs(before.x + before.width / 2 - (page1440.x + page1440.width / 2))).toBeLessThanOrEqual(2)
+    expect((await page.locator('.start-counts').boundingBox())!.height).toBeGreaterThan(0)
+    expect(await page.locator('.start-count').count()).toBe(0)
+    // 看板 covers 对话 under the title row; the status bar stays, and so does the one switch.
+    await switchView(page, 'board')
+    await page.locator('.board-surface').waitFor()
+    expect(await page.getByRole('textbox', { name: '新会话消息', exact: true }).count()).toBe(0)
+    expect(await page.locator('#session-navigation').evaluate(element => (element as HTMLElement).inert)).toBe(true)
+    const title = page.locator('.titlebar')
+    for (const name of ['设置', '额度与用量', '检查更新'])
+      await title.getByRole('button', { name, exact: true }).filter({ visible: true }).first().waitFor()
     await computer.waitFor()
-    expect(await page.getByRole('button', { name: '验收电脑', exact: true }).count()).toBe(1)
     await page.emulateMedia({ colorScheme: 'dark' })
-    await page.screenshot({ path: `${CONNECTION_SHOTS}/triage-1440-dark.png`, animations: 'disabled' })
-    await homeInput(page).click()
-    await page.locator('.home-focus-frame[data-active]').waitFor()
-    await connection.waitFor({ state: 'hidden' })
-    await page.keyboard.press('Escape')
-    await connection.waitFor()
+    await page.screenshot({ path: `${CONNECTION_SHOTS}/board-1440-dark.png`, animations: 'disabled' })
+    await switchView(page, 'chat')
+    // Back in 对话 the input stands exactly where it stood.
+    expect(await composer.boundingBox()).toEqual(before)
     await page.context().setOffline(true)
     await expect.poll(() => page.locator('.app-shell').getAttribute('data-connection')).toMatch(/^(reconnecting|offline)$/u)
     await expect.poll(() => connection.locator('.ui-status-strip-fact').first().textContent()).toMatch(/(正在重连|离线)$/u)
@@ -99,6 +110,29 @@ describe('the shell', () => {
     await connection.getByText('回环 HTTP', { exact: true }).waitFor()
     await noHorizontalOverflow(page)
     await page.context().close()
+  })
+
+  it('opens on 看板 a device that had chosen the old 顶栏 layout, and remembers 对话 once chosen', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+    context.setDefaultTimeout(15_000)
+    // The key and value an earlier build stored for 顶栏; written once, before the page first reads its preferences.
+    await context.addInitScript(() => {
+      if (localStorage.getItem('latch.preferences') === null)
+        localStorage.setItem('latch.preferences', JSON.stringify({ workbenchLayout: 'triage', theme: 'dark' }))
+    })
+    const page = await context.newPage()
+    await enrollBrowser(page, host, { name: '旧顶栏设备' })
+    await connected(page)
+    await expect.poll(() => page.locator('.app-shell').getAttribute('data-view')).toBe('board')
+    await page.locator('.board-surface').waitFor()
+    await switchView(page, 'chat')
+    await page.reload()
+    await connected(page)
+    await expect.poll(() => page.locator('.app-shell').getAttribute('data-view')).toBe('chat')
+    const stored = JSON.parse((await page.evaluate(() => localStorage.getItem('latch.preferences')))!) as Record<string, unknown>
+    expect(stored).toMatchObject({ workView: 'chat', theme: 'dark' })
+    expect(stored).not.toHaveProperty('workbenchLayout')
+    await context.close()
   })
 
   it('keeps the same Home and draft under the settings modal, and returns focus with Escape', async () => {
@@ -343,7 +377,7 @@ describe('the shell', () => {
       const { sessionId } = await host.host.bridge.createTask({ prompt: '保留阅读的会话', requestId: randomUUID(), mode: 'agent' })
       await page.locator(`[data-task-id="${sessionId}"]`).first().click()
       await page.locator('.transcript-content').waitFor()
-      await page.getByRole('button', { name: '总览', exact: true }).click()
+      await page.locator('#session-navigation [data-space-primary]').click()
       let release: () => void = () => {}
       const held = new Promise<void>(done => {
         release = done
@@ -393,7 +427,6 @@ describe('the shell', () => {
       await page.getByRole('button', { name: '发送', exact: true }).click()
       await openEntry(page, '设置')
       await openSessions(page)
-      await page.getByRole('button', { name: '总览', exact: true }).click()
       await page.locator('.workbench-home').waitFor()
       expect(await input.isDisabled()).toBe(true)
       const created = page.waitForResponse(response => response.url().endsWith('/tasks') && response.request().method() === 'POST')
@@ -401,16 +434,13 @@ describe('the shell', () => {
       await created
       await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
       await page.locator('main.workspace .topbar-title-button', { hasText: '回到原输入后接收结果' }).waitFor()
-      await page.getByRole('button', { name: '总览', exact: true }).click()
+      await page.locator('#session-navigation [data-space-primary]').click()
       expect(await input.inputValue()).toBe('')
       await page.context().close()
     })
 
-    it.each(['settings', 'all-sessions'] as const)('stays on %s when a send settles after the person moved there', async destination => {
+    it.each(['settings', 'board'] as const)('stays on %s when a send settles after the person moved there', async destination => {
       const page = await open(1440, 900, `壳层发送 ${destination}`)
-      if (destination === 'all-sessions') {
-        await switchLayout(page, 'triage')
-      }
       let release: () => void = () => {}
       const held = new Promise<void>(done => {
         release = done
@@ -426,21 +456,25 @@ describe('the shell', () => {
       await page.getByRole('textbox', { name: '新会话消息', exact: true }).fill(prompt)
       await page.getByRole('button', { name: '发送', exact: true }).click()
       if (destination === 'settings') await openEntry(page, '设置')
-      else await page.getByRole('button', { name: '全部会话', exact: true }).click()
-      const destinationPage = page.locator(destination === 'settings' ? '.settings-page' : '.workbench-sessions')
+      else await switchView(page, 'board')
+      const destinationPage = page.locator(destination === 'settings' ? '.settings-page' : '.board-surface')
       await destinationPage.waitFor()
       const created = page.waitForResponse(response => response.url().endsWith('/tasks') && response.request().method() === 'POST')
       release()
       await created
-      if (destination === 'settings') await page.locator('[data-task-id]').first().waitFor({ state: 'attached' })
-      else await page.locator('.workbench-session-row').filter({ hasText: prompt }).waitFor()
+      await page.locator('[data-task-id]').first().waitFor({ state: 'attached' })
       await settleShell(page)
       await destinationPage.waitFor()
       if (destination === 'settings') {
         await page.locator('.settings-overlay:modal').waitFor()
         await openSessions(page)
         await page.locator('main.workspace .user-bubble').getByText(prompt, { exact: true }).waitFor()
-      } else expect(await page.locator('.app-shell').getAttribute('data-all-sessions')).not.toBeNull()
+      } else {
+        // The accepted session is the one 对话 comes back to.
+        expect(await page.locator('.app-shell').getAttribute('data-view')).toBe('board')
+        await switchView(page, 'chat')
+        await page.locator('main.workspace .user-bubble').getByText(prompt, { exact: true }).waitFor()
+      }
       await page.context().close()
     })
   })
@@ -504,13 +538,10 @@ describe('the shell', () => {
     const output = 'test-results/session-title-icon'
     await mkdir(output, { recursive: true })
     await page.mouse.move(0, 0)
-    for (const layout of ['overview', 'triage'] as const) {
-      await switchLayout(page, layout)
-      for (const colorScheme of ['light', 'dark'] as const) {
-        await page.emulateMedia({ colorScheme })
-        expect(await divider()).toBe('1px')
-        await page.screenshot({ path: `${output}/pane-${layout}-${colorScheme}.png`, animations: 'disabled' })
-      }
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme })
+      expect(await divider()).toBe('1px')
+      await page.screenshot({ path: `${output}/pane-${colorScheme}.png`, animations: 'disabled' })
     }
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.getByRole('tab', { name: '文件', exact: true }).click()
@@ -527,7 +558,7 @@ describe('the shell', () => {
     await page.context().close()
   })
 
-  it('keeps the rename pencil beside the Code title in both layouts', async () => {
+  it('keeps the rename pencil beside the Code title', async () => {
     const output = 'test-results/session-title-icon'
     await mkdir(output, { recursive: true })
     const owner = await host.enroll({ listener: 'unix' })
@@ -623,14 +654,8 @@ describe('the shell', () => {
           return rects
         }
 
-        for (const layout of ['overview', 'triage'] as const) {
+        for (const layout of ['chat'] as const) {
           await owner.json(`tasks/${sessionId}`, { method: 'PATCH', body: { title: short } })
-          if (phone) {
-            await backToPhoneSessions(page)
-            await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
-            await page.locator('.workbench-home').waitFor()
-          }
-          await switchLayout(page, layout)
           if (phone) await openSession(page, sessionId)
           await heading(short).waitFor()
           if (phone) {
@@ -930,7 +955,7 @@ describe('the session menu', () => {
       }
 
       if (phone) {
-        await page.getByRole('button', { name: '全部会话', exact: true }).click()
+        await backToPhoneSessions(page)
         await page.locator(`.phone-row[data-task-id="${shownId}"]`).click()
       } else await (await list()).locator(`[data-task-id="${shownId}"]`).click()
       await page.locator('.transcript').getByText(`echo: echo ${shown}`).waitFor()

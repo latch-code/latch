@@ -7,20 +7,11 @@ import { deviceAccess } from '../core/permissions.ts'
 import { computerLabel } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { keepAwakeLine, loginItemNote, useShellLifecycle } from '../core/shellLifecycle.ts'
-import {
-  backdropLevel,
-  setPreference,
-  switchWorkbenchLayout,
-  usePreferences,
-  type SendKey,
-  type ThemePreference,
-  type WorkDisplay,
-} from '../preferences.ts'
+import { backdropLevel, setPreference, usePreferences, type SendKey, type ThemePreference, type WorkDisplay } from '../preferences.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
 import { NotificationSettings } from './NotificationSettings.tsx'
 import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
-import { LayoutTiles } from './LayoutTiles.tsx'
 import { CustomizationSettings } from './CustomizationSettings.tsx'
 import { BackdropTiles, DensityTiles, MotionChoice } from './AppearanceTiles.tsx'
 
@@ -174,11 +165,6 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
             setPreference('theme', value)
           }}
         />
-        <div className="layout-choice-head">
-          <span>布局</span>
-          <span>仅此设备</span>
-        </div>
-        <LayoutTiles value={preferences.workbenchLayout} onValueChange={switchWorkbenchLayout} />
         <div className="layout-choice-head">
           <span>背景效果</span>
           <span>仅此设备</span>

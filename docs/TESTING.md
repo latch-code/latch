@@ -286,7 +286,7 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 | `link-v1.json` | `@latch/link-wire`、`@latch/link-client`、`@latch/relay` |
 | `task-delta-v1.json`、`slash-match-v1.json` | TypeScript 与 Swift 核心（`native-swift.test.ts`） |
 | `shell-unwrap-v1.json` | 命令外壳还原 |
-| `board-v1.json` | 等你处理的判定：Host 的 `waitKindOf`（`board.test.ts`）、网页的 `waitsOnYou`（`wait-vectors.test.ts`）、桌面端的 `attentionOf`（`notifications.test.ts`） |
+| `board-v1.json` | 正在等你的判定：Host 的 `waitKindOf`（`board.test.ts`）、网页的 `waitsOnYou`（`wait-vectors.test.ts`）、桌面端的 `attentionOf`（`notifications.test.ts`）；网页的等你处理计数读 Host 的组，向量只核对其中的审批 |
 
 ### 文件内的约定
 

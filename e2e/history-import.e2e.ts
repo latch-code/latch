@@ -132,7 +132,9 @@ describe('接入已有会话 from the home', () => {
       await page.reload()
       await connected(page)
     }
+    // A phone's Code opens on its list; 新建会话 pushes the start screen, where the entry is.
     if (width >= 768) await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).click()
+    else await page.locator('.phone-list').getByRole('button', { name: '新建会话', exact: true }).click()
     return page
   }
   const shot = (page: Page, name: string) => page.screenshot({ path: `${OUTPUT}/${name}.png`, animations: 'disabled' })
@@ -195,9 +197,9 @@ describe('接入已有会话 from the home', () => {
     await shot(page, 'imported-1440-light')
 
     const composer = page.getByRole('textbox', { name: '继续对话', exact: true })
-    await composer.fill('echo 接着做')
+    await composer.fill('echo 继续往下')
     await composer.press('Enter')
-    await page.locator('.transcript').getByText('echo: echo 接着做', { exact: true }).waitFor()
+    await page.locator('.transcript').getByText('echo: echo 继续往下', { exact: true }).waitFor()
     const resumed = (await readLog(codexLog)).filter(entry => entry.event === 'recv' && entry.method === 'session/resume')
     expect(resumed.some(entry => entry.params?.sessionId === 'ext-login')).toBe(true)
     // Never prompted while previewing: the one prompt is the person's.

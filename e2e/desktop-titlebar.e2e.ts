@@ -9,7 +9,7 @@ import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
-import { switchLayout } from './helpers/workbench.ts'
+import { switchView } from './helpers/workbench.ts'
 
 const OUT = 'test-results/desktop-titlebar'
 const run = promisify(execFile)
@@ -92,9 +92,7 @@ async function rowLine(page: Page): Promise<{ centreY: number; start: number; dr
     const shown = (selector: string) =>
       [...document.querySelectorAll<HTMLElement>(selector)].find(element => element.checkVisibility({ visibilityProperty: true }))
     const bar = shown('.titlebar')!
-    const things = [
-      ...bar.querySelectorAll<HTMLElement>('.titlebar-wordmark, .workbench-brand, .titlebar-lead .ui-icon-button, .space-buttons'),
-    ]
+    const things = [...bar.querySelectorAll<HTMLElement>('.titlebar-wordmark, .titlebar-lead .ui-icon-button, .space-buttons')]
       .filter(element => element.checkVisibility({ visibilityProperty: true }))
       .map(element => element.getBoundingClientRect())
       .toSorted((a, b) => a.left - b.left)
@@ -104,7 +102,7 @@ async function rowLine(page: Page): Promise<{ centreY: number; start: number; dr
       centreY: first.top + first.height / 2,
       start: first.left,
       drag: region(bar),
-      noDrag: [...document.querySelectorAll('.titlebar button, .shell-layout-switch')]
+      noDrag: [...document.querySelectorAll('.titlebar button, .shell-view-switch')]
         .filter(element => (element as HTMLElement).checkVisibility({ visibilityProperty: true }))
         .map(region),
     }
@@ -112,7 +110,7 @@ async function rowLine(page: Page): Promise<{ centreY: number; start: number; dr
 }
 
 it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
-  'draws the traffic lights on the top row’s own line in both layouts, clear of what follows them',
+  'draws the traffic lights on the top row’s own line in both views, clear of what follows them',
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-titlebar-'))
     const host = await startTestHost({ demo: true, hostName: '验收电脑' })
@@ -150,10 +148,10 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       const measured: Array<Record<string, unknown>> = []
       for (const theme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: theme })
-        for (const layout of ['overview', 'triage'] as const) {
-          await switchLayout(page, layout)
-          await expect.poll(async () => (await page.evaluate(() => document.documentElement.dataset.layoutSwitch)) ?? null).toBeNull()
-          const name = `${layout === 'overview' ? 'sidebar' : 'topbar'}--${theme}`
+        for (const view of ['chat', 'board'] as const) {
+          await switchView(page, view)
+          await expect.poll(async () => (await page.evaluate(() => document.documentElement.dataset.viewSwitch)) ?? null).toBeNull()
+          const name = `${view}--${theme}`
           // A tooltip over the row (the switch keeps the focus) stops it moving the window while it shows.
           await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
           await page.mouse.move(600, 400)
@@ -165,7 +163,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
           const lights = await nativeLights(app, join(root, `${name}.png`), resolve(OUT, `${name}@2x.png`), line.start - 2)
           measured.push({ name, row: line.centreY, start: line.start, position, lights })
           await writeFile(`${OUT}/measured.json`, JSON.stringify(measured, null, 2))
-          // The row moves the window; its controls and the layout switch do not.
+          // The row moves the window; its controls and the view switch do not.
           expect(line.drag).toBe('drag')
           expect(new Set(line.noDrag)).toEqual(new Set(['no-drag']))
           if (lights) {
@@ -183,7 +181,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
         measured.push({ name: state, row: line.centreY, start: line.start })
         expect(line.start - lightsEnd, state).toBeGreaterThanOrEqual(11)
       }
-      await switchLayout(page, 'overview')
+      await switchView(page, 'chat')
       await page.keyboard.press('Meta+b')
       await expect.poll(() => page.locator('.app-shell').getAttribute('data-sidebar')).toBe('collapsed')
       await clear('sidebar-shut')
@@ -192,13 +190,14 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       await page.keyboard.press('Meta+,')
       await page.locator('.settings-page').waitFor({ state: 'visible' })
       await clear('settings-sidebar')
-      // 设置 is a modal over the window: the layout changes under it once it is shut, and it opens again over that.
+      // 设置 is a modal over the window: from 看板 it opens over 对话, which it comes back to.
       await page.keyboard.press('Escape')
       await page.locator('.settings-page').waitFor({ state: 'hidden' })
-      await switchLayout(page, 'triage')
+      await switchView(page, 'board')
       await page.keyboard.press('Meta+,')
       await page.locator('.settings-page').waitFor({ state: 'visible' })
-      await clear('settings-topbar')
+      await clear('settings-from-board')
+      expect(await page.locator('.app-shell').getAttribute('data-view')).toBe('chat')
       // Full screen hides the lights, and the row starts where it does without them; back out of it, it makes room again.
       // macOS carries a window to full screen only on a display that is awake and unlocked: the page is resized when it
       // does. On a locked screen the window never changes size, and this part has nothing to measure.

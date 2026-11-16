@@ -3,9 +3,10 @@ import { currentShell } from '../core/shell.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
 export function workbenchPanes(shell: ShellState) {
-  const code = shell.route.entry === 'sessions' && !shell.route.allSessions
-  const left = code && shell.sidebarColumn && (!shell.route.overview || shell.preferences.workbenchLayout === 'overview')
-  const right = code && !shell.phone && (shell.route.overview ? shell.homeInspector : Boolean(shell.summary || shell.canBrowseFiles))
+  // 看板 has no session list, panel or terminal of its own.
+  const code = shell.route.entry === 'sessions' && !shell.board
+  const left = code && shell.sidebarColumn
+  const right = code && !shell.phone && (shell.route.start ? shell.homeInspector : Boolean(shell.summary || shell.canBrowseFiles))
   return { left, terminal: shell.canTerminal, right }
 }
 
@@ -13,7 +14,7 @@ export function WorkbenchPanes({ shell }: { shell: ShellState }) {
   const panes = workbenchPanes(shell)
   if (!panes.left && !panes.terminal && !panes.right) return null
   const desktop = currentShell() !== null
-  const panelOpen = (shell.columnOpen && !shell.profileColumn) || (shell.pageMode && shell.infoPage && !shell.route.overview)
+  const panelOpen = (shell.columnOpen && !shell.profileColumn) || (shell.pageMode && shell.infoPage && !shell.route.start)
   return (
     <div className="workbench-pane-controls" role="group" aria-label="工作台面板">
       {panes.left && (

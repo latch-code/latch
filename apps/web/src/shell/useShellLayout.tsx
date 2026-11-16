@@ -1,5 +1,5 @@
 import { requestLeave } from '../preview/editDrafts.ts'
-import { readsProjectFiles, type AppSnapshot, type TerminalTarget } from '@latch/protocol'
+import { readsProjectFiles, type AppSnapshot, type BoardGroup, type TerminalTarget } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import { mentionMarker } from '../fileMentions.ts'
 import type { ChangeTotals, FileMention } from '@latch/protocol'
@@ -28,7 +28,7 @@ import { findHarness, projectFor, usesDemoModel } from '../composerChoice.ts'
 import { setSessionOpener } from '../core/blocking.ts'
 import { ArchiveUndo } from '../components/ArchiveUndo.tsx'
 import { basename } from '../format.ts'
-import { setPreference, toggleWorkbenchLayout, usePreferences } from '../preferences.ts'
+import { readPreferences, setPreference, switchWorkView, toggleWorkView, usePreferences } from '../preferences.ts'
 import { shortcutWorksOnPage, workbenchShortcut, type TerminalPaneAction } from '../workbenchShortcuts.ts'
 import { frameShortcutAllowed } from '../plugin-pages/model.ts'
 import { conversationShown } from '../composer/useArmed.ts'
@@ -57,7 +57,7 @@ import { openAgent, topicOwner, type ProfileSection } from '../agents/chat.ts'
 import type { SchedulePrefill } from '../agents/activity.ts'
 import { askDelegateFocus } from '../agents/delegateFocus.ts'
 import { readsAgents } from '../agents/model.ts'
-import { queueOrder, rosterRows, rosterTopics } from '../agents/roster.ts'
+import { rosterRows, rosterTopics } from '../agents/roster.ts'
 import { useSessionHandoffs } from '../handoffs/useHandoffs.ts'
 import { writeFailure } from '../handoffs/model.ts'
 import { api, newRequestId, setErrorComputer } from '../core/api.ts'
@@ -127,19 +127,7 @@ function focusNextFrame(target: RefObject<HTMLElement | null>) {
 }
 
 /** Everything the signed-in shell holds beside the open session: its columns, its pages, its keys and its lists. */
-export function useShellLayout({
-  harness,
-  snapshot,
-  homeFocus = false,
-  onHomeShortcut,
-  onOpenHomeFiles,
-}: {
-  harness: Harness
-  snapshot: AppSnapshot
-  homeFocus?: boolean
-  onHomeShortcut?: () => void
-  onOpenHomeFiles?: () => void
-}) {
+export function useShellLayout({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const { selectedId, refresh, resync, connection } = harness
   const viewport = useViewport()
   const phone = viewport === 'phone'
@@ -152,45 +140,58 @@ export function useShellLayout({
       readHomeShown(snapshot.device.id),
     ),
   )
-  // Code without an open session is its home: 新会话 is the home's input, not a page of its own. A phone keeps its list.
+  // Code without an open session is its start screen: 新会话 is its input, not a page of its own. A phone keeps its list.
   const route = useMemo<ShellRoute>(
     () =>
-      !phone && storedRoute.entry === 'sessions' && !storedRoute.overview && !storedRoute.allSessions && selectedId === null
-        ? { ...storedRoute, overview: true }
+      !phone && storedRoute.entry === 'sessions' && !storedRoute.start && selectedId === null
+        ? { ...storedRoute, start: true }
         : storedRoute,
     [phone, storedRoute, selectedId],
   )
   const routeRef = useRef(route)
   const [settings, setSettings] = useState<Pick<ShellRoute, 'section' | 'projectId' | 'agent'> | null>(null)
   const closeSettings = useCallback(() => setSettings(null), [])
-  const fromAllSessions = useRef(false)
-  const fromOverview = useRef(false)
   routeRef.current = route
-  // Where Code was left: its home, the whole list or the open session. A page over it (设置, 应用) returns there, and a
-  // reload of this tab finds the home again when the home was what showed.
-  const codePlace = useRef<Pick<ShellRoute, 'overview' | 'allSessions'>>({})
-  if (route.entry === 'sessions')
-    codePlace.current = { ...(route.overview ? { overview: true } : {}), ...(route.allSessions ? { allSessions: true } : {}) }
-  const homeShown = route.entry === 'sessions' ? route.overview === true : codePlace.current.overview === true
+  // Where Code was left: its start screen or the open session. A page over it (设置, 应用) returns there, and a reload of
+  // this tab finds the start screen again when that was what showed.
+  const codePlace = useRef<Pick<ShellRoute, 'start'>>({})
+  if (route.entry === 'sessions') codePlace.current = route.start ? { start: true } : {}
+  const homeShown = route.entry === 'sessions' ? route.start === true : codePlace.current.start === true
+  const preferences = usePreferences()
+  /** 看板 covers 对话, which stays mounted under it; a page, a session or 设置 opened from anywhere comes back to 对话. */
+  const board = preferences.workView === 'board'
+  const leaveBoard = () => {
+    if (readPreferences().workView === 'board') setPreference('workView', 'chat')
+  }
+  /** The start screen's count line: 看板, with that group in view. */
+  const askBoardGroup = (group: BoardGroup) => {
+    switchWorkView('board')
+    // TODO(board): requestBoard({ kind: 'group', group }) from '../board/requests.ts', which arrives with 看板.
+    void group
+  }
+  /** ⌘N and 新会话 while 看板 is in front open its 新建, which holds the one new-session input then. */
+  const askBoardNew = () => {
+    // TODO(board): requestBoard({ kind: 'new' }) from '../board/requests.ts', which arrives with 看板.
+  }
   useEffect(() => {
     writeHomeShown(snapshot.device.id, homeShown)
   }, [snapshot.device.id, homeShown])
   const parkInput = useRef<() => boolean>(() => true)
   const setRoute: Dispatch<SetStateAction<ShellRoute>> = useCallback(next => {
     const target = typeof next === 'function' ? next(routeRef.current) : next
-    if (!!target.overview !== !!routeRef.current.overview && !parkInput.current()) return
+    if (!!target.start !== !!routeRef.current.start && !parkInput.current()) return
+    // 我的 Agent and 应用 are pages of 对话.
+    if (target.entry !== 'sessions') leaveBoard()
     routeRef.current = target
     updateRoute(target)
   }, [])
   const session = useSessionController({
     harness,
     snapshot,
-    inputTarget: route.overview ? 'new' : 'session',
+    inputTarget: route.start ? 'new' : 'session',
     onBeforeSelect: id => {
-      if (id !== null) {
-        fromAllSessions.current = routeRef.current.allSessions === true
-        fromOverview.current = routeRef.current.overview === true
-      }
+      // A session opens in 对话, from a card, a notification, the palette or a key alike.
+      if (id !== null) leaveBoard()
       clearTimeout(popTimer.current)
       setPopping(false)
       setPushed(id !== null)
@@ -201,9 +202,7 @@ export function useShellLayout({
     },
     onForegroundSent: () => {
       // A late receipt may settle the input, but must not undo an explicit navigation away from it.
-      if (routeRef.current.entry !== 'sessions' || routeRef.current.allSessions) return
-      fromAllSessions.current = false
-      fromOverview.current = routeRef.current.overview === true
+      if (routeRef.current.entry !== 'sessions') return
       updateRoute({ entry: 'sessions' })
       setFilter('all')
       setSearch('')
@@ -212,7 +211,6 @@ export function useShellLayout({
     },
   })
   parkInput.current = session.parkInputDraft
-  const homeFocused = homeFocus && route.entry === 'sessions' && route.overview === true && session.homeComposerState.gate.kind === 'open'
   const {
     openNotified,
     archivedLast,
@@ -247,7 +245,6 @@ export function useShellLayout({
 
   const conversationEpoch = `${harness.resyncs}:${selectedId ?? ''}`
   const coarse = useCoarsePointer()
-  const preferences = usePreferences()
   const drawerMode = usesDrawer(viewport)
   // From 1024px the sidebar can be dragged wider or narrower, or shut.
   const sidebarColumn = viewport === 'laptop' || viewport === 'desktop'
@@ -308,8 +305,8 @@ export function useShellLayout({
   /** The home with its input focused, for what has already let go of the open session (a fork, a pending start). */
   const showHome = useStableCallback(() => {
     drawer.setOpen(false)
-    if (!routeRef.current.overview || routeRef.current.entry !== 'sessions') {
-      routeRef.current = { entry: 'sessions', overview: true }
+    if (!routeRef.current.start || routeRef.current.entry !== 'sessions') {
+      routeRef.current = { entry: 'sessions', start: true }
       updateRoute(routeRef.current)
     }
     focusNextFrame(homeComposerRef)
@@ -319,11 +316,11 @@ export function useShellLayout({
     if (seenProjectRequest.current === session.projectAsk.request) return
     seenProjectRequest.current = session.projectAsk.request
     // The project list opens from the home's input, so a phone on its session list goes there first.
-    if (phone && session.inputId === null && !routeRef.current.overview) showHome()
+    if (phone && session.inputId === null && !routeRef.current.start) showHome()
   }, [phone, session.inputId, session.projectAsk.request])
   useEffect(() => {
-    if (route.overview) focusNextFrame(homeComposerRef)
-  }, [route.overview])
+    if (route.start) focusNextFrame(homeComposerRef)
+  }, [route.start])
   const searchRef = useRef<HTMLInputElement>(null)
   const [commandMode, setCommandMode] = useState<PaletteLevel>('root')
   const [commandOpen, setCommandOpen] = useState(false)
@@ -352,7 +349,7 @@ export function useShellLayout({
   })
   const agentRemovals = useAgentRemoval(snapshot, readsAgents(snapshot) && access.scopes.has('view') && access.scopes.has('run'), refresh)
   // Back on the conversation (from a page, or a tab shown again): its approval cards arm again before they take a press.
-  const conversationVisible = route.entry === 'sessions' && !route.overview && !route.allSessions
+  const conversationVisible = route.entry === 'sessions' && !route.start && !board
   const wasConversationVisible = useRef(conversationVisible)
   const settingsOpen = settings !== null && entries.includes('settings')
   const wereSettingsOpen = useRef(settingsOpen)
@@ -406,7 +403,7 @@ export function useShellLayout({
   const draftFileKey = draftFileContext ? fileContextKey(draftFileContext) : ''
   useEffect(() => {
     setDraftFilesOpen(false)
-  }, [draftFileKey, fileAuthority, route.overview])
+  }, [draftFileKey, fileAuthority, route.start])
   const previewAllowed =
     catalog?.features?.filePreview
     && access.scopes.has('view')
@@ -440,7 +437,7 @@ export function useShellLayout({
   const terminalWorkspace = catalog?.workspaces.find(item => item.id === workspaceId)
   const terminalTarget: TerminalTarget | undefined = !hasTerminal
     ? undefined
-    : route.overview || selectedId === null
+    : route.start || selectedId === null
       ? { workspaceId }
       : sessionTerminal && summary.id === selectedId
         ? { sessionId: summary.id }
@@ -451,7 +448,7 @@ export function useShellLayout({
       ? undefined
       : (terminalWorkspace?.unavailable ?? (terminalWorkspace ? undefined : '找不到所选项目的文件夹'))
   const terminalLocation = terminalTarget?.workspaceId !== undefined ? terminalWorkspace?.name : summary?.cwd && basename(summary.cwd)
-  const canTerminal = terminalTarget !== undefined && !phone && route.entry === 'sessions' && !route.allSessions
+  const canTerminal = terminalTarget !== undefined && !phone && route.entry === 'sessions'
   const dockWanted = canTerminal && preferences.dockOpen
   const [terminalIntent, setTerminalIntent] = useState<string>()
   useLayoutEffect(() => {
@@ -566,17 +563,12 @@ export function useShellLayout({
     setChangesTarget(undefined)
     setChangesTotals(undefined)
   }, [contextKey, fileAuthority])
-  const storedSidebar = preferences.sidebar.width ?? (preferences.workbenchLayout === 'triage' ? 300 : 264)
+  const storedSidebar = preferences.sidebar.width ?? 264
   const sidebarWidth = clampSidebar(storedSidebar, windowWidth)
   const sidebarCollapsed = sidebarShut
-  // What stands left of the conversation: the open sidebar, or a tablet's rail in the 侧栏 layout.
-  const panelLeft =
-    sidebarColumn && !sidebarCollapsed
-      ? sidebarWidth
-      : viewport === 'tablet' && preferences.workbenchLayout === 'overview'
-        ? TABLET_RAIL
-        : 0
-  const homeInspector = route.overview === true && !phone && canBrowseDraftFiles
+  // What stands left of the conversation: the open sidebar, or a tablet's rail.
+  const panelLeft = sidebarColumn && !sidebarCollapsed ? sidebarWidth : viewport === 'tablet' ? TABLET_RAIL : 0
+  const homeInspector = route.start === true && !phone && canBrowseDraftFiles
   const homeInspectorOpen = homeInspector && draftFilesOpen
   const showingChanges = panelSelected === 'changes'
   const panelWidth =
@@ -591,7 +583,7 @@ export function useShellLayout({
   const placed = placeRightPanel({
     windowWidth,
     ...(panelWidth !== undefined ? { width: panelWidth } : {}),
-    left: homeInspector && preferences.workbenchLayout === 'triage' ? 0 : panelLeft,
+    left: panelLeft,
   })
   const placement = homeInspector
     ? placed
@@ -616,7 +608,7 @@ export function useShellLayout({
     placement !== null
     && placement.kind !== 'page'
     && !(findOpen && placement.kind === 'sheet')
-    && (route.overview === true
+    && (route.start === true
       ? homeInspectorOpen
       : profileColumn
         || filesVisible
@@ -632,14 +624,14 @@ export function useShellLayout({
       ? Math.max(RIGHT_PANEL_MIN, Math.min(rightPanelMax(windowWidth), windowWidth - panelLeft - CONVERSATION_MIN))
       : rightPanelMax(windowWidth)
   const drawer = useDrawer({
-    enabled: drawerMode && !homeFocused,
+    enabled: drawerMode && !board,
     navigation,
     inertWhenOpen: [
-      { ref: main, base: route.entry !== 'sessions' || route.overview === true || route.allSessions === true },
-      { ref: titlebar, base: homeFocused },
-      { ref: terminalDock, base: !terminalOpen || homeFocused },
+      { ref: main, base: route.entry !== 'sessions' || route.start === true || board },
+      { ref: titlebar, base: false },
+      { ref: terminalDock, base: !terminalOpen || board },
     ],
-    shut: sidebarCollapsed || homeFocused,
+    shut: sidebarCollapsed || board,
   })
   /** Where focus goes once the sidebar has opened or shut: after the drawer hook made the column usable or inert. */
   const focusAfterToggle = useRef<{ target: RefObject<HTMLElement | null>; shut: boolean } | null>(null)
@@ -668,7 +660,7 @@ export function useShellLayout({
     )
       return
     if (!('sessionId' in target)) {
-      if (route.overview) {
+      if (route.start) {
         if (
           !canBrowseDraftFiles
           || !draftFileContext
@@ -677,7 +669,6 @@ export function useShellLayout({
           || target.harnessId !== draftFileContext.harnessId
         )
           return
-        onOpenHomeFiles?.()
         draftFileTabs.open(target)
         setDraftFilesOpen(true)
         return
@@ -752,13 +743,14 @@ export function useShellLayout({
       return
     }
     drawer.setOpen(false)
-    if (!routeRef.current.overview || routeRef.current.entry !== 'sessions') {
-      setRoute({ entry: 'sessions', overview: true })
+    if (!routeRef.current.start || routeRef.current.entry !== 'sessions') {
+      setRoute({ entry: 'sessions', start: true })
       // A draft too large to park keeps the person where they are.
-      if (!routeRef.current.overview) return
+      if (!routeRef.current.start) return
     }
     arrived()
   }
+  /** 新会话: the start screen's input. Under 看板 it moves 对话 there without showing it (看板's 新建 hosts that input). */
   const startNew = () => startNewDraft()
   /**
    * Phones: the open session slides back to the list (180ms), then is let go, and focus lands on its row; at once without
@@ -768,28 +760,6 @@ export function useShellLayout({
     const id = selectedId
     // Keep the page in place while its unsaved editor asks; only an accepted leave starts the exit animation.
     if (id !== null && requestLeave(id, () => back(instant))) return
-    if (fromAllSessions.current) {
-      const arrive = () =>
-        choose(null, () => {
-          fromAllSessions.current = false
-          updateRoute({ entry: 'sessions', allSessions: true })
-          requestAnimationFrame(() => {
-            if (id !== null) document.querySelector<HTMLElement>(`#session-navigation [data-task-id="${CSS.escape(id)}"]`)?.focus()
-          })
-        })
-      const wait = popWait(instant)
-      if (wait === 0) arrive()
-      else {
-        setPopping(true)
-        clearTimeout(popTimer.current)
-        popTimer.current = setTimeout(arrive, wait)
-      }
-      return
-    }
-    if (fromOverview.current) {
-      setRoute({ entry: 'sessions', overview: true })
-      return
-    }
     // A conversation in 我的 Agent goes back to its list, not to Code's list it is not on.
     const away = backRoute(summary, entries.includes('agents'))
     const arrive = () => {
@@ -821,6 +791,7 @@ export function useShellLayout({
     [choose, closeSettings],
   )
   const openSettings = (section?: SettingsSection) => {
+    leaveBoard()
     setSettings(section ? { section } : {})
   }
   /** 会话 returns to the last open session. 设置 covers the current route without changing it. */
@@ -831,14 +802,6 @@ export function useShellLayout({
     }
     drawer.setOpen(false)
     setRoute(entry === 'sessions' && routeRef.current.entry !== 'sessions' ? { entry, ...codePlace.current } : { entry })
-  }
-  const openOverview = () => {
-    drawer.setOpen(false)
-    setRoute({ entry: 'sessions', overview: true })
-  }
-  const openAllSessions = () => {
-    drawer.setOpen(false)
-    setRoute({ entry: 'sessions', allSessions: true })
   }
   /** Code and 我的 Agent: which one the shell is in, and the way to the other. */
   const {
@@ -872,8 +835,8 @@ export function useShellLayout({
       control?.focus({ preventScroll: true })
     })
   }
-  // Moving between Code and 我的 Agent fades the arriving page in; a layout change cross-fades the whole window
-  // (`switchWorkbenchLayout`) and replaces nothing but the navigation around the page.
+  // Moving between Code and 我的 Agent fades the arriving page in; 对话 ⇄ 看板 cross-fades the whole window
+  // (`switchWorkView`) and unmounts nothing of 对话.
   const shownSpace = useRef(space)
   useLayoutEffect(() => {
     if (shownSpace.current === space) return
@@ -881,13 +844,7 @@ export function useShellLayout({
     const frame = appShell.current
     if (!frame || !motionAllowed()) return
     const target = frame.querySelector<HTMLElement>(
-      route.entry === 'agents'
-        ? '.agents-page'
-        : route.overview
-          ? '.workbench-home'
-          : route.allSessions
-            ? '.workbench-sessions'
-            : '.workspace-view',
+      route.entry === 'agents' ? '.agents-page' : route.start ? '.workbench-home' : '.workspace-view',
     )
     if (!target) return
     frame.dataset.layoutChanging = ''
@@ -897,10 +854,10 @@ export function useShellLayout({
       .then(() => {
         if (shownSpace.current === space) delete frame.dataset.layoutChanging
       })
-  }, [space, route.entry, route.overview, route.allSessions])
-  // A layout change keeps the page and the focus. Only focus that stood on navigation the other layout does not draw
-  // (a sidebar row, a top-bar tab) has nowhere to stay: it lands on the page itself, never on the document.
-  const shownLayout = useRef(preferences.workbenchLayout)
+  }, [space, route.entry, route.start])
+  // 对话 ⇄ 看板 keeps the focus where it can stay. Focus that stood on what the other view hides (a sidebar row, a card)
+  // has nowhere to stay: it lands on the view itself, never on the document.
+  const shownView = useRef(preferences.workView)
   const layoutFocus = useRef<Element | null>(null)
   useEffect(() => {
     const focused = (event: FocusEvent) => {
@@ -918,8 +875,8 @@ export function useShellLayout({
     }
   }, [])
   useLayoutEffect(() => {
-    if (shownLayout.current === preferences.workbenchLayout) return
-    shownLayout.current = preferences.workbenchLayout
+    if (shownView.current === preferences.workView) return
+    shownView.current = preferences.workView
     const before = layoutFocus.current
     const frame = appShell.current
     if (!frame || !(before instanceof HTMLElement) || before === document.body || document.querySelector('dialog[open]')) return
@@ -929,14 +886,14 @@ export function useShellLayout({
       return
     }
     const page = frame.querySelector<HTMLElement>(
-      route.entry === 'agents'
-        ? '.agents-page'
-        : route.entry === 'apps'
-          ? '.apps-page'
-          : route.overview
-            ? '.workbench-home'
-            : route.allSessions
-              ? '.workbench-sessions'
+      preferences.workView === 'board'
+        ? '.board-surface'
+        : route.entry === 'agents'
+          ? '.agents-page'
+          : route.entry === 'apps'
+            ? '.apps-page'
+            : route.start
+              ? '.workbench-home'
               : 'main.workspace',
     )
     if (!page) return
@@ -944,7 +901,7 @@ export function useShellLayout({
     if (!page.hasAttribute('tabindex')) page.tabIndex = -1
     page.dataset.layoutFocus = ''
     page.focus({ preventScroll: true })
-  }, [preferences.workbenchLayout, route.entry, route.overview, route.allSessions])
+  }, [preferences.workView, route.entry, route.start])
   /**
    * A place chosen by its key or the menu bar: once it is drawn, focus lands on its primary (新会话 or 委托…) where that is
    * in sight, else on the place's own button, so it never drops to the page.
@@ -972,19 +929,17 @@ export function useShellLayout({
       : { space }
     : {}
   /**
-   * The rows the keys step through. In 我的 Agent they are the roster's: each Agent's topics in turn, in the queue's order
-   * where the 顶栏 layout draws a queue; under 已归档, the archived ones.
+   * The rows the keys step through. In 我的 Agent they are the roster's: each Agent's topics in turn; under 已归档, the
+   * archived ones.
    */
   const steppedRows = () => {
-    if (entries.includes('agents') && space === 'agents' && agentsFilter !== 'archived') {
-      const rows = rosterRows(snapshot, { general: readsAgents(snapshot) })
-      return rosterTopics(preferences.workbenchLayout === 'triage' ? queueOrder(rows) : rows)
-    }
+    if (entries.includes('agents') && space === 'agents' && agentsFilter !== 'archived')
+      return rosterTopics(rosterRows(snapshot, { general: readsAgents(snapshot) }))
     return listedSessions(snapshot.tasks, catalog?.workspaces, {
       filter,
       search,
       folded: readFolded(shelvesKey(snapshot.device.id)),
-      projectTree: !phone && preferences.workbenchLayout === 'overview',
+      projectTree: !phone,
       ...listSpace,
     })
   }
@@ -1050,9 +1005,9 @@ export function useShellLayout({
   const openAgentPage = (target: AgentPageTarget) => {
     setSettings({ section: 'engines', agent: target })
   }
-  /** Home and the full-history page keep their inputs underneath search; the phone's old list has its own field. */
+  /** The start screen keeps its input underneath search; the phone's list has its own field. */
   const openSearch = () => {
-    if (!phone || route.overview || route.allSessions) {
+    if (!phone || route.start || board) {
       setCommandMode('root')
       setCommandOpen(true)
       return
@@ -1071,8 +1026,8 @@ export function useShellLayout({
       && (event.metaKey || event.ctrlKey)
       && selectedId !== null
       && route.entry === 'sessions'
-      && !route.overview
-      && !route.allSessions
+      && !route.start
+      && !board
       && !document.querySelector('dialog[open]')
     ) {
       event.preventDefault()
@@ -1138,7 +1093,7 @@ export function useShellLayout({
   /** A project or 不选项目 from the list: the person was on their way to sending, so the input takes the keys again. */
   const chooseProject = (workspaceId: string) => {
     submission.updateChoice({ workspaceId, projectSkipped: workspaceId === 'default' })
-    requestAnimationFrame(() => (route.overview ? homeComposerRef : composerRef).current?.focus())
+    requestAnimationFrame(() => (route.start ? homeComposerRef : composerRef).current?.focus())
   }
   const folders = shellFolders()
   const pickProject =
@@ -1180,7 +1135,7 @@ export function useShellLayout({
     submission.pending !== null
     || submission.sending
     || attachmentDraft.preparing
-    || (route.overview ? session.homeComposerState.gate : gate).kind !== 'open'
+    || (route.start ? session.homeComposerState.gate : gate).kind !== 'open'
   // The open column stands beside the conversation, which keeps its minimum width between the two.
   const inspectorBeside = columnOpen && placement?.kind === 'column' ? inspectorWidth : 0
   const sidebarLimit = sidebarMax(windowWidth, inspectorBeside)
@@ -1189,11 +1144,7 @@ export function useShellLayout({
   }
   /** A tablet's drawer is the session list, which a page entry does not show. */
   const toggleSidebar = () => {
-    if (route.overview && preferences.workbenchLayout === 'triage') {
-      // 顶栏 draws no session list over its home, and without an open session there is no page under the home to show one.
-      if (!phone && selectedId === null) return
-      setRoute({ entry: 'sessions' })
-    }
+    if (board) return
     if (!drawerMode) setSidebarShut(!sidebarCollapsed)
     else if (route.entry === 'sessions') drawer.setOpen(!drawer.open)
   }
@@ -1404,7 +1355,23 @@ export function useShellLayout({
     const action = workbenchShortcut({ ...stroke(event), typing }, currentShell() !== null)
     if (!action) return
     const paneKey = typeof action === 'object' && (action.kind === 'terminal-split' || action.kind === 'terminal-pane')
-    if (homeFocused && (action === 'layout' || action === 'sidebar' || action === 'side-panel' || action === 'terminal' || paneKey)) return
+    // 看板 has no session list, panel, terminal or input of its own: their keys wait for 对话.
+    if (
+      board
+      && (action === 'sidebar'
+        || action === 'side-panel'
+        || action === 'panel-add'
+        || action === 'terminal'
+        || action === 'changes'
+        || action === 'browser'
+        || action === 'files'
+        || action === 'close-file'
+        || action === 'compose'
+        || action === 'file-search'
+        || paneKey
+        || (typeof action === 'object' && action.kind === 'control'))
+    )
+      return
     const dialogs = document.querySelectorAll('dialog[open]')
     const only = dialogs.length === 1 ? dialogs[0]! : null
     // An open dialog keeps the keys, but for the one key of what it is: ⌘/ closes the shortcuts it opened.
@@ -1415,13 +1382,13 @@ export function useShellLayout({
     // The home's input is the new session's: its four controls and its project's files keep their keys there.
     const homeInputKey =
       route.entry === 'sessions'
-      && route.overview === true
+      && route.start === true
       && ((typeof action === 'object' && action.kind === 'control')
         || action === 'files'
         || action === 'terminal'
         || paneKey
         || action === 'side-panel')
-    if ((route.entry !== 'sessions' || route.overview || route.allSessions) && !shortcutWorksOnPage(action) && !homeInputKey) return
+    if ((route.entry !== 'sessions' || route.start || board) && !shortcutWorksOnPage(action) && !homeInputKey) return
     if (typeof action === 'object') {
       // Held outside a field, or where the layout makes no character of it, the key is the app's even where it finds nothing.
       event.preventDefault()
@@ -1454,7 +1421,7 @@ export function useShellLayout({
       return
     }
     if (action === 'files') {
-      if (route.overview) {
+      if (route.start) {
         if (canBrowseDraftFiles) {
           event.preventDefault()
           browseFiles()
@@ -1474,7 +1441,7 @@ export function useShellLayout({
     }
     if (action === 'compose') {
       event.preventDefault()
-      if (route.overview) homeComposerRef.current?.focus()
+      if (route.start) homeComposerRef.current?.focus()
       else if (phone && selectedId === null) showHome()
       else if (pageMode && infoPage) {
         setInfoPage(false)
@@ -1491,18 +1458,19 @@ export function useShellLayout({
       return
     }
     event.preventDefault()
-    if (action === 'layout') {
-      toggleWorkbenchLayout()
+    if (action === 'view') {
+      toggleWorkView()
       return
     }
     if (action === 'new') {
-      if (space === 'agents') delegate()
-      else if (routeRef.current.entry === 'sessions' && routeRef.current.overview) {
+      // 看板 starts a session from its own 新建, which holds the one new-session input while it is open.
+      if (board) askBoardNew()
+      else if (space === 'agents') delegate()
+      else if (routeRef.current.entry === 'sessions' && routeRef.current.start) {
         drawer.setOpen(false)
-        onHomeShortcut?.()
         if (!homeComposerRef.current?.closest('.composer')?.querySelector(':popover-open:not([role="tooltip"])'))
           focusNextFrame(homeComposerRef)
-      } else startNewDraft(undefined, onHomeShortcut)
+      } else startNewDraft()
       return
     }
     if (action === 'sidebar') {
@@ -1743,9 +1711,8 @@ export function useShellLayout({
   const level = current?.permission?.level ?? summary?.level
 
   const browseFiles = () => {
-    if (route.overview) {
+    if (route.start) {
       if (canBrowseDraftFiles) {
-        onOpenHomeFiles?.()
         draftFileTabs.select(undefined)
         setDraftFilesOpen(true)
       }
@@ -1773,7 +1740,7 @@ export function useShellLayout({
     })
   })
   const returnToFileInput = () => {
-    if (draftFilesOpen && route.overview) {
+    if (draftFilesOpen && route.start) {
       setDraftFilesOpen(false)
       requestAnimationFrame(() => homeComposerRef.current?.focus())
       return
@@ -1789,7 +1756,7 @@ export function useShellLayout({
     returnToFileInput()
   }
   const quoteFile = (quote: FileQuote) => {
-    const fromDraft = draftFilesOpen && route.overview
+    const fromDraft = draftFilesOpen && route.start
     const context = fromDraft ? draftFileContext : fileContext
     if (
       !context
@@ -1847,7 +1814,6 @@ export function useShellLayout({
     back(instant)
   })
   useBackLayer(pageMode && infoPage, closeInfoPage)
-  useBackLayer(phone && (route.allSessions === true || (conversationVisible && fromAllSessions.current)), openOverview)
   // Phones: the list a session is pushed over can no longer hold focus (nor the sheet a new one started from, sliding
   // away), so the page takes it at its way back, as a settings page does; focus already on the page, or in a dialog
   // still open, stays where it is.
@@ -1862,13 +1828,14 @@ export function useShellLayout({
     ...session,
     folding,
     route,
-    homeFocused,
     setRoute,
+    board,
+    showChat: leaveBoard,
+    askBoardGroup,
+    askBoardNew,
     entries,
     goEntry,
-    phoneBackLabel: fromOverview.current ? '返回总览' : '返回会话列表',
-    openOverview,
-    openAllSessions,
+    phoneBackLabel: '返回会话列表',
     space,
     goSpace,
     waits,
@@ -1951,7 +1918,7 @@ export function useShellLayout({
     savedFileTabs,
     draftFileContext,
     draftFileTabs,
-    draftFilesOpen: draftFilesOpen && route.overview === true && canBrowseDraftFiles,
+    draftFilesOpen: draftFilesOpen && route.start === true && canBrowseDraftFiles,
     setDraftFilesOpen,
     canBrowseDraftFiles,
     previewAllowed,

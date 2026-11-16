@@ -36,7 +36,7 @@ afterEach(() => {
 })
 
 describe('the two places', () => {
-  it('uses Code actions in the overview while preserving a covered Agent session', () => {
+  it('uses Code actions on the start screen while preserving a covered Agent session', () => {
     expect(
       currentSpace({
         agents: true,
@@ -44,7 +44,7 @@ describe('the two places', () => {
         selectedId: 'agent-topic',
         selected: delegated('agent-topic'),
         remembered: 'agents',
-        overview: true,
+        start: true,
       }),
     ).toBe('code')
   })
@@ -66,7 +66,7 @@ describe('the two places', () => {
 
   it('steps through the list the place draws: Code without delegations, 我的 Agent through 最近委托', () => {
     const folded = new Set<string>()
-    const waiting = delegated('a5', { status: 'waiting-approval' })
+    const waiting = delegated('a5', { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } })
     const all = [...tasks, waiting]
     expect(listedSessions(all, [], { filter: 'all', search: '', folded, space: 'code' }).map(item => item.id)).toEqual(['c1'])
     expect(listedSessions(all, [], { filter: 'all', search: '', folded, space: 'agents' }).map(item => item.id)).toEqual(['a5', 'a2'])
@@ -83,7 +83,11 @@ describe('the two places', () => {
 
   it('counts what waits in each place, only what that place can list', () => {
     const snapshot = {
-      tasks: [task('c1', { status: 'waiting-approval' }), delegated('a2', { status: 'running', pendingQuestions: 1 }), task('c3')],
+      tasks: [
+        task('c1', { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } }),
+        delegated('a2', { status: 'running', pendingQuestions: 1 }),
+        task('c3'),
+      ],
       approvals: [approval('a2'), approval('outside')],
     }
     // An approval for a session no list holds counts in the total (the Dock), in neither place.
@@ -91,8 +95,18 @@ describe('the two places', () => {
     expect(waitingCount(snapshot, 'code')).toBe(1)
     expect(waitingCount(snapshot, 'agents')).toBe(1)
     // The dot goes on the other place, never on the one shown.
-    expect(waitsElsewhere({ tasks: [delegated('a', { status: 'waiting-approval' })], approvals: [] }, 'code')).toBe(true)
-    expect(waitsElsewhere({ tasks: [delegated('a', { status: 'waiting-approval' })], approvals: [] }, 'agents')).toBe(false)
+    expect(
+      waitsElsewhere(
+        { tasks: [delegated('a', { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } })], approvals: [] },
+        'code',
+      ),
+    ).toBe(true)
+    expect(
+      waitsElsewhere(
+        { tasks: [delegated('a', { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } })], approvals: [] },
+        'agents',
+      ),
+    ).toBe(false)
     expect(otherSpace('code')).toBe('agents')
   })
 
@@ -125,10 +139,11 @@ describe('the two places', () => {
     expect(initialRoute('device-1', true, true, false)).toEqual({ entry: 'agents' })
     // A restored session keeps its own place; a phone starts on its list; without 我的 Agent there is only Code.
     expect(initialRoute('device-1', true, true, true)).toEqual({ entry: 'sessions' })
-    // A reload while the home covered the session finds the home again; the session stays open under it.
-    expect(initialRoute('device-1', true, true, true, true)).toEqual({ entry: 'sessions', overview: true })
-    expect(initialRoute('device-1', true, false, false)).toEqual({ entry: 'sessions', overview: true })
-    expect(initialRoute('device-1', false, true, false)).toEqual({ entry: 'sessions', overview: true })
+    // A reload while the start screen covered the session finds it again; the session stays open under it.
+    expect(initialRoute('device-1', true, true, true, true)).toEqual({ entry: 'sessions', start: true })
+    expect(initialRoute('device-1', true, false, false)).toEqual({ entry: 'sessions' })
+    expect(initialRoute('device-1', true, false, false, true)).toEqual({ entry: 'sessions', start: true })
+    expect(initialRoute('device-1', false, true, false)).toEqual({ entry: 'sessions', start: true })
     stored.set(key, 'something else')
     expect(readSpace(key)).toBe('code')
   })
@@ -149,16 +164,28 @@ describe("every delegation in exactly one of 我的 Agent's lists", () => {
 
   it('lifts what waits to the top of 最近委托, archived or not, and never cuts it with 全部', () => {
     const quiet = Array.from({ length: 8 }, (_, index) => delegated(`a${index + 20}`))
-    const old = delegated('a1', { status: 'waiting-approval' })
-    const shelved = delegated('a2', { status: 'waiting-approval', archived: true })
+    const old = delegated('a1', { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } })
+    const shelved = delegated('a2', { status: 'waiting-approval', archived: true, board: { group: 'attention', reason: 'approval' } })
     const { rows, total } = delegationRows([...quiet, old, shelved])
     expect(rows.slice(0, 2).map(item => item.id)).toEqual(['a2', 'a1'])
     expect(rows).toHaveLength(6)
     expect(total).toBe(10)
     // Archived and waiting, as in Code's 等你处理: in 最近委托, and counted for the dot.
     expect(waitingCount({ tasks: [shelved], approvals: [] }, 'agents')).toBe(1)
-    const crowd = Array.from({ length: 8 }, (_, index) => delegated(`a${index + 30}`, { status: 'waiting-approval' }))
+    const crowd = Array.from({ length: 8 }, (_, index) =>
+      delegated(`a${index + 30}`, { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } }),
+    )
     expect(delegationRows(crowd).rows).toHaveLength(8)
+  })
+
+  it('lifts a failure the person has not opened, by the Host group, and lets it go once the Host moves it', () => {
+    const failed = delegated('a1', { status: 'failed', board: { group: 'attention', reason: 'failed' } })
+    const opened = delegated('a2', { status: 'failed', board: { group: 'done' } })
+    const quiet = Array.from({ length: 6 }, (_, index) => delegated(`a${index + 40}`, { updatedAt: '2026-11-14T00:00:00Z' }))
+    expect(delegationRows([...quiet, opened, failed]).rows[0]!.id).toBe('a1')
+    expect(waitingCount({ tasks: [failed, opened], approvals: [] })).toBe(1)
+    // A live wait the Host has not grouped yet is not guessed here.
+    expect(waitingCount({ tasks: [delegated('a3', { status: 'waiting-approval' })], approvals: [] })).toBe(0)
   })
 
   it('keeps the delegations of a deleted Agent, under the name it can still give', () => {
@@ -200,8 +227,7 @@ describe('going between the places', () => {
     // Code keeps an open session of its own under a page.
     expect(move('code', undefined, 'c1')).toEqual({ route: { entry: 'sessions' } })
     // A Code page covers its reading session; returning to the place restores that page without changing the sender's target.
-    expect(move('code', { kind: 'overview' }, 'c1')).toEqual({ route: { entry: 'sessions', overview: true } })
-    expect(move('code', { kind: 'all-sessions' }, 'c1')).toEqual({ route: { entry: 'sessions', allSessions: true } })
+    expect(move('code', { kind: 'start' }, 'c1')).toEqual({ route: { entry: 'sessions', start: true } })
     // Archived since, or never left: home, the new-session page or the list (or the page it was left on).
     expect(move('agents', { kind: 'session', id: 'a3' }, 'c1')).toEqual({ route: { entry: 'agents' } })
     expect(move('code', undefined, 'a2')).toEqual({ route: { entry: 'sessions' }, choose: null })
@@ -226,11 +252,21 @@ describe('going between the places', () => {
 
   it('draws no dot while nothing waits, and one only where something does', () => {
     expect(placeWaits({ tasks: [task('c1'), delegated('a2')], approvals: [] }, true)).toEqual({ code: false, agents: false })
-    expect(placeWaits({ tasks: [delegated('a2', { status: 'waiting-approval' })], approvals: [] }, true)).toEqual({
+    expect(
+      placeWaits(
+        { tasks: [delegated('a2', { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } })], approvals: [] },
+        true,
+      ),
+    ).toEqual({
       code: false,
       agents: true,
     })
-    expect(placeWaits({ tasks: [delegated('a2', { status: 'waiting-approval' })], approvals: [] }, false)).toEqual({
+    expect(
+      placeWaits(
+        { tasks: [delegated('a2', { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } })], approvals: [] },
+        false,
+      ),
+    ).toEqual({
       code: false,
       agents: false,
     })

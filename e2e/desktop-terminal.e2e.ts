@@ -12,7 +12,7 @@ import { latchEnv } from '@latch/host/env'
 import type { AppSnapshot, TerminalListResponse, WorkspaceInfo } from '@latch/protocol'
 import { startTestHost } from './helpers/host.ts'
 import { closeSettings, openSettings } from './helpers/layout.ts'
-import { homeInput, switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
+import { homeInput, switchView } from './helpers/workbench.ts'
 
 type Launch = NonNullable<NonNullable<ServerOptions['terminal']>['launch']>
 type Spec = Parameters<Launch>[0]
@@ -362,17 +362,20 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await terminalToggle.click()
       await screen.locator('.xterm[data-test-mounted="retained"]').waitFor()
       await expect.poll(() => rows.innerText()).toContain('ran echo hi')
-      await switchLayout(page, 'triage')
+      // 看板 covers the dock without unmounting it; back in 对话 the same terminal takes the keys again (below).
+      await switchView(page, 'board')
+      await screen.locator('.xterm[data-test-mounted="retained"]').waitFor({ state: 'attached' })
+      expect(await page.locator('.terminal-dock').isVisible()).toBe(false)
+      await switchView(page, 'chat')
       await screen.locator('.xterm[data-test-mounted="retained"]').waitFor()
       await capture(page, 'independent-panes-1440')
-      await switchLayout(page, 'overview')
       await panes.getByRole('button', { name: '展开侧栏', exact: true }).click()
       await rightToggle.click()
       await rightPanel.waitFor({ state: 'hidden' })
       await panel.waitFor()
       const settings = await openSettings(page, '设置')
       expect(await page.locator('.terminal-dock .xterm[data-test-mounted="retained"]').count()).toBe(1)
-      await settings.getByRole('radiogroup', { name: '工作台布局', exact: true }).waitFor()
+      await settings.getByRole('radiogroup', { name: '背景效果', exact: true }).waitFor()
       await capture(page, 'settings-over-dock-1440')
       await closeSettings(settings)
       await screen.locator('.xterm[data-test-mounted="retained"]').waitFor()
@@ -521,7 +524,6 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const input = homeInput(page)
       await input.waitFor()
       await input.fill('项目草稿仍在')
-      await returnFromHomeFocus(page)
       const chatIds = (await owner.json<AppSnapshot>('snapshot')).tasks.map(task => task.id)
       await terminalToggle.click()
       await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
@@ -556,8 +558,12 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await page.locator(`[data-task-id="${sessionId}"]`).click()
       await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
       await expect.poll(() => screen.getAttribute('data-terminal-id')).not.toBe(projectTerminal!.id)
-      // 总览 returns to the saved draft choice. 新会话 deliberately starts in the just-read session's project.
-      await page.getByRole('button', { name: '总览', exact: true }).click()
+      // 新会话 returns to the start screen with its draft; it starts in the just-read session's project, so the project is
+      // chosen again, and its terminal is the one already running there.
+      await page.locator('#session-navigation [data-space-primary]').click()
+      expect(await input.inputValue()).toBe('项目草稿仍在')
+      await projectPicker.click()
+      await page.getByRole('menu', { name: '项目', exact: true }).getByText('终端验收项目', { exact: true }).click()
       await expect.poll(() => screen.getAttribute('data-terminal-id')).toBe(projectTerminal!.id)
       await expect.poll(() => rows.innerText()).toContain('ran echo dock')
       expect(await input.inputValue()).toBe('项目草稿仍在')
@@ -571,24 +577,19 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await rightPanel.getByRole('treeitem', { name: 'README.md', exact: true }).waitFor()
       const panelNode = await rightPanel.elementHandle()
       const inputNode = await input.elementHandle()
+      // Typing on the start screen leaves the panel, the dock and the navigation where they are, all usable.
       await input.click({ position: { x: 12, y: 12 } })
-      await page.locator('.app-shell[data-home-focus]').waitFor()
-      for (const selector of ['.titlebar', '#session-navigation', '#terminal-dock', '.inspector-column'])
-        await expect.poll(() => page.locator(selector).evaluate(element => (element as HTMLElement).inert)).toBe(true)
-      await capture(page, 'home-focus-768')
-      await returnFromHomeFocus(page)
-      await expect.poll(() => terminalDock.evaluate(element => (element as HTMLElement).inert)).toBe(false)
+      for (const selector of ['.titlebar', '#terminal-dock', '.inspector-column'])
+        await expect.poll(() => page.locator(selector).evaluate(element => (element as HTMLElement).inert)).toBe(false)
+      await capture(page, 'start-768')
       expect(await panelNode!.evaluate(element => element.isConnected && !(element as HTMLElement).inert)).toBe(true)
       expect(await inputNode!.evaluate(element => element === document.activeElement)).toBe(true)
       expect(await input.inputValue()).toBe('项目草稿仍在')
       await expect.poll(() => rows.innerText()).toContain('ran echo dock')
-      await capture(page, 'home-focus-returned-768')
       await rightToggle.click()
       await rightPanel.waitFor({ state: 'hidden' })
       await input.click()
-      await page.locator('.app-shell[data-home-focus]').waitFor()
       await page.keyboard.press('Meta+Shift+e')
-      await page.locator('.app-shell[data-home-focus]').waitFor({ state: 'detached' })
       await rightPanel.getByRole('treeitem', { name: 'README.md', exact: true }).waitFor()
 
       // Split panes, in the session's tab: each pane is its own Host terminal and fits its own rows and columns.

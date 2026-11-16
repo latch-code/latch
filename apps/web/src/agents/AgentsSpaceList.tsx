@@ -13,7 +13,6 @@ import {
   MoreGlyph,
   SettingsGlyph,
   TrashGlyph,
-  PlusGlyph,
   RunningGlyph,
   WaitingGlyph,
 } from '@latch/ui'
@@ -22,7 +21,6 @@ import { Menu, rowOf } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { startBlock } from '../composerChoice.ts'
 import { MessageError } from '../core/api.ts'
-import { relativeTime } from '../format.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { WriteNotice } from './AgentForm.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
@@ -30,8 +28,7 @@ import type { AvatarState } from './avatarFace.ts'
 import { ownerName, topicOwner } from './chat.ts'
 import { generalChoice, readsAgents } from './model.ts'
 import { LockedAgents } from './parts.tsx'
-import { queueOrder, rosterRows, type RosterRow, type RosterState } from './roster.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { rosterRows, type RosterRow, type RosterState } from './roster.ts'
 
 /** The roster as the shell's snapshot gives it: your Agents, 通用 where this device reads Agents, and deleted ones with topics. */
 export function shellRoster(shell: Pick<ShellState, 'snapshot' | 'catalog'>): RosterRow[] {
@@ -44,7 +41,7 @@ export function shellRoster(shell: Pick<ShellState, 'snapshot' | 'catalog'>): Ro
 export function currentAgent(shell: Pick<ShellState, 'route' | 'snapshot' | 'selectedId'>): string | undefined {
   const { route, snapshot, selectedId } = shell
   if (route.entry === 'agents') return route.myAgent && route.myAgent.id !== 'new' ? route.myAgent.id : undefined
-  if (route.entry !== 'sessions' || route.overview || route.allSessions) return undefined
+  if (route.entry !== 'sessions' || route.start) return undefined
   return topicOwner(snapshot.tasks.find(task => task.id === selectedId))
 }
 
@@ -130,86 +127,14 @@ function Roster({ shell, rows, frozen, menu }: { shell: ShellState; rows: Roster
   )
 }
 
-/** A person's second line in the queue: 等你点头 in amber, what it is doing in blue, else a quiet word or when it was last heard from. */
-function PersonLine({ row, frozen, now }: { row: RosterRow; frozen: boolean; now: number }) {
-  if ((row.state === 'waiting' || row.state === 'running') && row.word) {
-    return (
-      <span className="agent-person-state" data-tone={frozen ? 'neutral' : row.state}>
-        <StatusGlyph running={row.state === 'running' && !frozen} state={frozen ? `frozen:${row.state}` : row.state}>
-          <Icon icon={row.state === 'waiting' ? WaitingGlyph : RunningGlyph} size={12} />
-        </StatusGlyph>
-        <span>{frozen ? `上次状态：${row.word.words}` : row.word.words}</span>
-      </span>
-    )
-  }
-  if (row.state === 'failed')
-    return (
-      <span className="agent-person-state" data-tone="failed">
-        <Icon icon={AlertGlyph} size={12} />
-        <span>失败</span>
-      </span>
-    )
-  if (row.gone) return <span className="agent-person-state">已删除</span>
-  if (row.unavailable)
-    return (
-      <span className="agent-person-state" title={row.unavailable}>
-        <Icon icon={BlockedGlyph} size={12} />
-        <span>不可用</span>
-      </span>
-    )
-  if (!row.updatedAt) return null
-  return (
-    <time className="agent-person-state" dateTime={row.updatedAt}>
-      {relativeTime(row.updatedAt, new Date(now))}
-    </time>
-  )
-}
-
 /**
- * The 顶栏 layout's queue of people: who waits for you first, then who works, then whoever was last heard from. Each row
- * is a 32px face, the name, and on the second line the state in a person's words.
+ * 我的 Agent's people, wherever the shell draws them (the sidebar, 我的 Agent's own pane, a phone's root page): the
+ * roster. Drawn from the snapshot's summaries, so it is the same wherever it stands.
  */
-function Queue({ shell, rows, frozen, menu }: { shell: ShellState; rows: RosterRow[]; frozen: boolean; menu: AgentRowMenu }) {
-  const current = currentAgent(shell)
-  return (
-    <ul className="agent-queue" aria-label="我的 Agent">
-      {queueOrder(rows).map(row => (
-        <li key={row.id} className="agent-row">
-          <button
-            type="button"
-            className="agent-person"
-            data-agent-id={row.id}
-            data-gone={row.gone ? '' : undefined}
-            aria-current={row.id === current ? 'page' : undefined}
-            onClick={() => {
-              openRow(shell, row)
-            }}>
-            <AgentAvatar avatar={row.avatar} size={32} state={faceState(row, frozen)} />
-            <span className="agent-person-text">
-              <span className="agent-person-name">
-                <VisibleText text={row.name} />
-              </span>
-              <PersonLine row={row} frozen={frozen} now={shell.now} />
-            </span>
-          </button>
-          {menu(row)}
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-/**
- * 我的 Agent's people, wherever the shell draws them (the sidebar, 我的 Agent's own pane, a phone's root page): the 侧栏
- * layout's roster or the 顶栏 layout's queue. `rail` is the 顶栏
- * layout's own column, which has no nav rows above it and so leads with 新建 Agent. Drawn from the snapshot's summaries,
- * so it is the same wherever it stands.
- */
-export function AgentsSpaceList({ shell, rail = false }: { shell: ShellState; rail?: boolean }) {
-  const { snapshot, connection, route } = shell
+export function AgentsSpaceList({ shell }: { shell: ShellState }) {
+  const { snapshot, connection } = shell
   const frozen = useLastConfirmed(connection, snapshot) !== null
   const locked = !readsAgents(snapshot)
-  const queue = shell.preferences.workbenchLayout === 'triage'
   const rows = locked ? [] : shellRoster(shell)
   const own = rows.filter(row => !row.gone && !row.confirming && row.avatar !== 'general')
   const canRun = shell.access.scopes.has('run') && !locked
@@ -259,36 +184,16 @@ export function AgentsSpaceList({ shell, rail = false }: { shell: ShellState; ra
     )
   }
   return (
-    <nav className="space-list" aria-label="我的 Agent" data-people={queue ? 'queue' : 'roster'}>
-      {rail && canRun && (
-        <button
-          type="button"
-          className="agent-queue-new"
-          aria-current={route.entry === 'agents' && route.myAgent?.id === 'new' ? 'page' : undefined}
-          aria-disabled={offline || undefined}
-          title={offline ? DEVICE_OFFLINE : undefined}
-          onClick={() => {
-            if (!offline) shell.openMyAgent({ id: 'new' })
-          }}>
-          <PlusGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-          <span>新建 Agent</span>
-        </button>
-      )}
+    <nav className="space-list" aria-label="我的 Agent" data-people="roster">
       <section className="space-group" aria-label="Agent">
-        {!queue && (
-          <h2 className="space-head">
-            <span>我的 Agent</span>
-          </h2>
-        )}
+        <h2 className="space-head">
+          <span>我的 Agent</span>
+        </h2>
         {locked ? (
           <LockedAgents />
         ) : (
           <>
-            {queue ? (
-              <Queue shell={shell} rows={rows} frozen={frozen} menu={menu} />
-            ) : (
-              <Roster shell={shell} rows={rows} frozen={frozen} menu={menu} />
-            )}
+            <Roster shell={shell} rows={rows} frozen={frozen} menu={menu} />
             {snapshot.customAgents === undefined ? (
               <p className="space-quiet" role="status">
                 正在确认上一项修改

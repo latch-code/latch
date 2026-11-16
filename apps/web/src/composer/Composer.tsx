@@ -24,7 +24,6 @@ import {
   Tooltip,
   useLiveChange,
   LockGlyph,
-  CloseGlyph,
   SendGlyph,
   DrawerStack,
 } from '@latch/ui'
@@ -99,8 +98,6 @@ export function Composer({
   placeholder,
   draft,
   onDraft,
-  onEngage,
-  closeFocus,
   pending,
   onOpenPending,
   sending,
@@ -164,8 +161,6 @@ export function Composer({
   /** The optional insertion shortcut; typing slash commands uses the same sender either way. */
   showSlashButton?: boolean
   textareaRef: RefObject<HTMLTextAreaElement | null>
-  onEngage?: (() => void) | undefined
-  closeFocus?: (() => void) | undefined
   variant: 'new' | 'session'
   label: string
   placeholder: string
@@ -450,17 +445,10 @@ export function Composer({
       value={draft}
       rows={1}
       disabled={textLocked}
-      onClick={event => {
-        if (event.isTrusted) onEngage?.()
-      }}
-      onCompositionStart={event => {
-        if (event.isTrusted) onEngage?.()
-      }}
       onChange={event => {
         mentions.setCaret(event.target.selectionStart)
         setSlashCaret({ draft: event.target.value, at: event.target.selectionStart })
         onDraft(event.target.value)
-        if (event.isTrusted && event.target.value) onEngage?.()
       }}
       onKeyDown={keydown}
       onSelect={event => {
@@ -470,14 +458,7 @@ export function Composer({
       onScroll={event => {
         if (commandMirror.current) commandMirror.current.scrollTop = event.currentTarget.scrollTop
       }}
-      onPaste={
-        attachments
-          ? event => {
-              pasteAttachments(event, attachments)
-              if (event.isTrusted && event.defaultPrevented) onEngage?.()
-            }
-          : undefined
-      }
+      onPaste={attachments ? event => pasteAttachments(event, attachments) : undefined}
     />
   )
   // The prompt glyph says where to tell it what to do; the phone's sheet is a page of its own and has none.
@@ -513,7 +494,7 @@ export function Composer({
       label="插入命令"
       icon={Slash}
       disabled={locked || answer !== undefined}
-      onClick={event => {
+      onClick={() => {
         const input = textareaRef.current
         const start = input?.selectionStart ?? draft.length
         const end = input?.selectionEnd ?? start
@@ -524,7 +505,6 @@ export function Composer({
         slash.reopen()
         onDraft(value)
         input?.focus({ preventScroll: true })
-        if (event.isTrusted) onEngage?.()
       }}
     />
   )
@@ -679,9 +659,6 @@ export function Composer({
           event.preventDefault()
           if (sendable) submit()
         }}>
-        {closeFocus && (
-          <IconButton className="home-focus-close" size={inline ? 'lg' : 'sm'} label="退出专注" icon={CloseGlyph} onClick={closeFocus} />
-        )}
         {desktopLocation ? (
           <>
             {addLeads && add && <div className="composer-add">{add}</div>}

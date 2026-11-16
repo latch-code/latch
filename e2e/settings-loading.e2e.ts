@@ -9,7 +9,6 @@ import { startFakeModels, type FakeModels, type TestDevice } from '@latch/testki
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { closeSettings, noHorizontalOverflow, openEntry, openSection, openSettings, reachable } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { returnFromHomeFocus } from './helpers/workbench.ts'
 
 describe('optional settings chunk lifecycle', () => {
   let host: TestHost
@@ -31,7 +30,6 @@ describe('optional settings chunk lifecycle', () => {
       await enrollBrowser(page, host, { name: '设置模块失败', scopes: ['view', 'run', 'admin'] })
       const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
       await draft.fill('Keep the draft through a settings module failure')
-      await returnFromHomeFocus(page)
       await page.route('**/assets/PluginsSettings-*.js', route => route.abort('failed'))
       await openEntry(page, '插件')
       const settings = page.locator('.settings-page')
@@ -115,7 +113,6 @@ describe('optional settings chunk lifecycle', () => {
       const device = host.host.security.devices.list().find(item => item.name === `加载设置 ${width}`)!
       const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
       await draft.fill('Retain this unsent draft while settings loads')
-      await returnFromHomeFocus(page)
       const resources = () =>
         page.evaluate(() =>
           performance

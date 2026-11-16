@@ -6,7 +6,7 @@ import type { TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { backToPhoneSessions, leaveHomeFocus } from './helpers/layout.ts'
+import { backToPhoneSessions } from './helpers/layout.ts'
 
 test('keeps text written before a question arrived as the next message, until 其他… makes it the answer', async () => {
   let release!: () => void
@@ -75,11 +75,10 @@ test('keeps text written before a question arrived as the next message, until �
       if (request.method() === 'POST' && request.url().includes('/questions/')) answersWhileCovered++
     }
     page.on('request', observeAnswer)
-    await page.getByRole('button', { name: '总览', exact: true }).click()
+    await page.locator('#session-navigation [data-space-primary]').click()
     await page.keyboard.press('1')
-    // The 1 went into Home's input, which put it in focus over the sidebar; leaving focus keeps it as Home's draft.
-    await leaveHomeFocus(page)
-    // The session under the home is still the sidebar's current row; it leads back.
+    // The 1 went into the start screen's input, as its draft. The session under it is still the sidebar's current row;
+    // it leads back.
     await page.locator('.sidebar [data-task-id][aria-current]').filter({ visible: true }).first().click()
     await page.locator('.question-card:not([data-arming])').waitFor()
     expect(answersWhileCovered).toBe(0)

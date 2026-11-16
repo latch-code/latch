@@ -5,7 +5,6 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { leaveHomeFocus } from './helpers/layout.ts'
 import { homeInput } from './helpers/workbench.ts'
 
 let host: TestHost
@@ -105,14 +104,13 @@ it('says the device is offline on an unconfirmed send, and checks it with the Ho
     await input.press('Enter')
     await page.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
     // Another input can be written meanwhile; nothing else is sent until this one ends.
-    await page.getByRole('button', { name: '总览', exact: true }).click()
+    await page.locator('#session-navigation [data-space-primary]').click()
     const home = homeInput(page)
     expect(await home.isEditable()).toBe(true)
     await home.fill('等上一条确认时写的')
     expect(await page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }).getAttribute('aria-disabled')).toBe(
       'true',
     )
-    await leaveHomeFocus(page)
     await page.getByRole('button', { name: '打开', exact: true }).first().click()
     await page.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
     await page.context().setOffline(true)

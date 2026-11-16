@@ -2,22 +2,11 @@ import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 
 import { GENERAL_AGENT_ID } from '@latch/protocol'
-import {
-  Button,
-  ICON_STROKE,
-  IconButton,
-  InlineNotice,
-  ChevronLeftGlyph,
-  HistoryGlyph,
-  PlusGlyph,
-  OfflineGlyph,
-  SettingsGlyph,
-} from '@latch/ui'
+import { Button, ICON_STROKE, IconButton, InlineNotice, ChevronLeftGlyph, HistoryGlyph, PlusGlyph, OfflineGlyph } from '@latch/ui'
 import { useBackLayer } from '../hooks/backStack.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
-import { NavTop, shellOverview, shellSpaces, ShellNewAgent, ShellNavFoot, SpaceSwitch } from '../shell/SpaceNav.tsx'
+import { NavTop, shellOverview, shellSpaces, ShellNewAgent, ShellNavFoot } from '../shell/SpaceNav.tsx'
 import { WorkbenchComputer } from '../shell/WorkbenchNav.tsx'
-import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { AgentsSpaceList } from './AgentsSpaceList.tsx'
 import { askDelegateFocus } from './delegateFocus.ts'
 import { HelperCreate } from './HelperCreate.tsx'
@@ -31,16 +20,10 @@ import { useAgentWrites } from './useAgentWrites.ts'
 import { DEVICE_OFFLINE } from '../core/hostState.ts'
 
 /**
- * The left of 我的 Agent on wide windows. 侧栏 layout: the sidebar's own top (the switch, 总览, 新建 Agent, 搜索, 定时任务),
- * the roster and the shared foot. 顶栏 layout: the top bar holds the navigation, so this is the queue's rail alone.
+ * The left of 我的 Agent on wide windows: the sidebar's own top (the switch, 总览, 新建 Agent, 搜索, 定时任务), the roster
+ * and the shared foot.
  */
 function AgentsNav({ shell }: { shell: ShellState }) {
-  if (shell.preferences.workbenchLayout === 'triage')
-    return (
-      <div className="triage-sidebar agents-rail agents-nav-body" data-space="agents">
-        <AgentsSpaceList shell={shell} rail />
-      </div>
-    )
   return (
     <div className="sidebar-body agents-nav-body agents-sidebar" data-space="agents">
       <NavTop
@@ -67,10 +50,8 @@ function AgentsNav({ shell }: { shell: ShellState }) {
 
 /**
  * 我的 Agent. Like 设置, it covers the session's columns without unmounting them. On wide windows the people stand at the
- * left (the 侧栏 layout's roster, or the 顶栏 layout's queue) and the work panel shows the space's 总览, 全部话题, the
- * creation page or a new topic with an Agent; in the 顶栏 layout 全部话题 takes the whole width, as Code's 全部会话 does.
- * On phones the roster or queue is the root page, and a topic, the creation page and 全部话题 are pushed over it. The panel
- * is the same element in both layouts, so a layout change keeps the Agent, the page and what was typed.
+ * left and the work panel shows the space's 总览, 全部话题, the creation page or a new topic with an Agent. On phones the
+ * roster is the root page, and a topic, the creation page and 全部话题 are pushed over it.
  */
 export function AgentsPage({ shell }: { shell: ShellState }) {
   const { snapshot, route, phone, connection, titleSlot } = shell
@@ -109,19 +90,13 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
     if (event.target instanceof Element && event.target.closest('dialog, [popover]')) return
     back()
   }
-  // 顶栏 layout: 全部话题 takes the whole width, as Code's 全部会话 does. The 总览 keeps the queue beside it: an Agent with no
-  // topic yet is on no lane, and the queue is the way to it.
-  const wide = !phone && shell.preferences.workbenchLayout === 'triage' && topics
   const canCreate = shell.access.scopes.has('run') && !locked
-  const triage = shell.preferences.workbenchLayout === 'triage'
-  const spaces = shellSpaces(shell)
   return (
     <section
       aria-label="我的 Agent"
       className="settings-page agents-page"
       data-entry="agents"
       data-view={home ? 'home' : topics ? 'topics' : chat ? 'chat' : 'new'}
-      data-wide={wide ? '' : undefined}
       data-chat={chat ? '' : undefined}
       onKeyDown={escape}>
       {!locked && id !== 'new' && writes.held && writes.state?.write.key === 'agent:new' && (
@@ -148,23 +123,12 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
           titleSlot,
         )}
       <div className="settings-layout" data-level={phone ? (pushed ? 'section' : 'root') : undefined}>
-        <div className="settings-nav-pane" inert={pushed || wide || undefined} hidden={wide || undefined}>
+        <div className="settings-nav-pane" inert={pushed || undefined}>
           {phone ? (
             <>
-              {/* 顶栏 layout: the top of a phone holds the switch between the places and 设置, as Code's home does there. */}
-              <header className={spaces && triage ? 'settings-bar workbench-phone-heading' : 'settings-bar'}>
-                {spaces && triage ? (
-                  <SpaceSwitch {...spaces} />
-                ) : (
-                  <>
-                    <span />
-                    <h2>我的 Agent</h2>
-                  </>
-                )}
-                {triage && shell.access.scopes.has('view') && <UsageEntry />}
-                {triage && shell.entries.includes('settings') && (
-                  <IconButton size="lg" label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />
-                )}
+              <header className="settings-bar">
+                <span />
+                <h2>我的 Agent</h2>
                 {offline ? (
                   <span className="agents-offline">
                     <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
@@ -202,7 +166,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
               </div>
             </>
           ) : (
-            !wide && <AgentsNav shell={shell} />
+            <AgentsNav shell={shell} />
           )}
         </div>
         <section
@@ -221,7 +185,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
           aria-hidden={(phone && !pushed) || undefined}
           inert={(phone && !pushed) || undefined}>
           {chat && (!phone || pushed) && <AgentChat key={id} shell={shell} owner={id} onBack={back} />}
-          {/* A phone's root page is the roster or the queue; the 总览 is a wide window's. */}
+          {/* A phone's root page is the roster; the 总览 is a wide window's. */}
           {home && !phone && <AgentsHome shell={shell} />}
           {topics && <AgentTopics shell={shell} onBack={back} />}
           {id === 'new' && (

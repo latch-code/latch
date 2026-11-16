@@ -10,7 +10,7 @@ import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSession, reachable } from './helpers/layout.ts'
 import { motions, tokens } from './helpers/motion.ts'
-import { homeInput, openHomeDecision, switchLayout, returnFromHomeFocus } from './helpers/workbench.ts'
+import { homeInput, switchView } from './helpers/workbench.ts'
 
 /**
  * A phone stacks its pages: the session list is the root, a session's page is pushed over it and slides back, and a new
@@ -68,59 +68,54 @@ describe('the phone stack', () => {
     context.setDefaultTimeout(15_000)
     const page = await context.newPage()
     await enrollBrowser(page, fixture, { name, ...(admin ? { scopes: ['admin'] } : {}) })
-    await page.locator('.workbench-home').waitFor()
-    await page.getByRole('button', { name: '全部会话', exact: true }).click()
+    // A phone's Code opens on its session list; 新建会话 pushes the start screen over it.
     await page.locator('.phone-list:not([inert])').waitFor()
     return { context, page }
   }
 
-  for (const layout of ['overview', 'triage'] as const)
-    for (const width of [320, 390])
-      it(`${layout} ${width}: Code returns Home and history stays an explicit entry, preserving its draft`, async () => {
-        const { context, page } = await phone('reduce', `首页返回 ${layout} ${width}`)
-        try {
-          await page.setViewportSize({ width, height: 844 })
-          if (layout === 'triage') await switchLayout(page, 'triage')
-          await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
-          const home = page.locator('.workbench-home')
-          await home.waitFor()
-          const input = home.getByRole('textbox', { name: '新会话消息', exact: true })
-          await input.fill('首页尚未发送的草稿')
-          await returnFromHomeFocus(page)
-          const before = (await local.json<{ tasks: unknown[] }>('snapshot')).tasks.length
-          await openHomeDecision(page, sessions[1]!)
-          await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
-          await settled(page)
-          await expect
-            .poll(() =>
-              page.locator('.phone-list').evaluate(element => ({
-                inert: element instanceof HTMLElement && element.inert,
-                overview: document.querySelector('.app-shell')?.hasAttribute('data-overview'),
-                leaving: document.querySelector('main.workspace')?.hasAttribute('data-leaving'),
-              })),
-            )
-            .toEqual({ inert: true, overview: false, leaving: false })
-          await page.locator('.topbar[data-phone]').getByRole('button', { name: '返回总览', exact: true }).click()
-          await home.waitFor()
-          expect(await input.inputValue()).toBe('首页尚未发送的草稿')
-          expect(await page.locator('main.workspace').getAttribute('inert')).not.toBeNull()
-          await home.getByRole('button', { name: '全部会话', exact: true }).click()
-          const list = page.locator('.phone-list:not([inert])')
-          await list.locator(`[data-task-id="${sessions[0]}"]`).click()
-          await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
-          await page.getByRole('button', { name: '返回会话列表', exact: true }).click()
-          await list.waitFor()
-          await reachable(list.getByRole('searchbox', { name: '搜索会话', exact: true }))
-          await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
-          await home.waitFor()
-          expect(await input.inputValue()).toBe('首页尚未发送的草稿')
-          expect((await local.json<{ tasks: unknown[] }>('snapshot')).tasks.length).toBe(before)
-          await noHorizontalOverflow(page)
-          await page.screenshot({ path: `test-results/phone-home-${layout}-${width}.png`, animations: 'disabled' })
-        } finally {
-          await context.close()
-        }
-      })
+  for (const width of [320, 390])
+    it(`${width}: Code opens on its list, 新建会话 keeps its draft, and the view switch leads to 看板 and back`, async () => {
+      const { context, page } = await phone('reduce', `起始页 ${width}`)
+      try {
+        await page.setViewportSize({ width, height: 844 })
+        const list = page.locator('.phone-list:not([inert])')
+        await list.getByRole('button', { name: '新建会话', exact: true }).click()
+        const home = page.locator('.workbench-home')
+        await home.waitFor()
+        const input = home.getByRole('textbox', { name: '新会话消息', exact: true })
+        await input.fill('首页尚未发送的草稿')
+        // The count line stands over the input, which keeps to the foot.
+        const counts = (await home.locator('.start-counts').boundingBox())!
+        const composer = (await home.locator('.workbench-home-composer .composer').boundingBox())!
+        expect(counts.y + counts.height).toBeLessThanOrEqual(composer.y + 1)
+        await noHorizontalOverflow(page)
+        await page.screenshot({ path: `test-results/phone-start-${width}.png`, animations: 'disabled' })
+        const before = (await local.json<{ tasks: unknown[] }>('snapshot')).tasks.length
+        await home.locator('.workbench-phone-heading').getByRole('button', { name: '返回会话列表', exact: true }).click()
+        await list.locator(`[data-task-id="${sessions[1]}"]`).click()
+        await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
+        await settled(page)
+        await page.getByRole('button', { name: '返回会话列表', exact: true }).click()
+        await list.waitFor()
+        await reachable(list.getByRole('searchbox', { name: '搜索会话', exact: true }))
+        await list.getByRole('button', { name: '新建会话', exact: true }).click()
+        await home.waitFor()
+        expect(await input.inputValue()).toBe('首页尚未发送的草稿')
+        // Code's tab leads to its list, not to the start screen.
+        await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
+        await list.waitFor()
+        expect((await local.json<{ tasks: unknown[] }>('snapshot')).tasks.length).toBe(before)
+        // 看板 covers the list; 对话 brings the same list back.
+        await switchView(page, 'board')
+        await page.locator('.board-surface').waitFor()
+        expect(await page.locator('.phone-list').evaluate(element => (element as HTMLElement).inert)).toBe(true)
+        await switchView(page, 'chat')
+        await list.waitFor()
+        await noHorizontalOverflow(page)
+      } finally {
+        await context.close()
+      }
+    })
 
   it('opens the session list from Home and pushes a session over it, then slides back to it', async () => {
     const { context, page } = await phone('no-preference', '动效手机')
@@ -309,9 +304,8 @@ describe('the phone stack', () => {
       expect(await send.getAttribute('aria-disabled')).toBe('true')
       await input.fill('展示流式输出')
       await expect.poll(() => send.getAttribute('aria-disabled')).toBeNull()
-      // Leaving for the list keeps what was typed for the next time 新建会话 leads here; typing put Home in focus first.
-      await returnFromHomeFocus(page)
-      await home.getByRole('button', { name: '全部会话', exact: true }).click()
+      // Leaving for the list keeps what was typed for the next time 新建会话 leads here.
+      await home.locator('.workbench-phone-heading').getByRole('button', { name: '返回会话列表', exact: true }).click()
       await page.locator('.phone-list:not([inert])').waitFor()
       await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
       await home.waitFor()
@@ -322,7 +316,7 @@ describe('the phone stack', () => {
       await page.locator('main.workspace[data-pushed]').waitFor()
       await page.locator('.topbar[data-phone] .topbar-title-text', { hasText: '展示流式输出' }).waitFor()
       // The home is covered, so focus goes to the new page's way back.
-      await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toMatch(/^返回(?:总览|会话列表)$/u)
+      await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('返回会话列表')
     } finally {
       await context.close()
     }

@@ -2,23 +2,13 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { testHarness } from '@latch/testkit'
 import { describe, expect, it } from 'vitest'
-import type { AppSnapshot, CustomAgentSummary, HostCatalog, TaskSummary } from '@latch/protocol'
+import { waitKindOf, type AppSnapshot, type BoardPlace, type CustomAgentSummary, type HostCatalog, type TaskSummary } from '@latch/protocol'
 import { AgentsSpaceList, currentAgent, faceState, RosterMark } from '../src/agents/AgentsSpaceList.tsx'
 import { AgentsHome } from '../src/agents/AgentsHome.tsx'
-import {
-  addressee,
-  agentsOverview,
-  defaultAddressee,
-  queueOrder,
-  rosterRows,
-  rosterTopics,
-  topicState,
-  waitingTopic,
-} from '../src/agents/roster.ts'
+import { addressee, agentsOverview, defaultAddressee, rosterRows, rosterTopics, topicState, waitingTopic } from '../src/agents/roster.ts'
 import { TopicFrame } from '../src/agents/TopicFrame.tsx'
 import { shellOverview } from '../src/shell/SpaceNav.tsx'
 import type { ShellState } from '../src/shell/useShellLayout.tsx'
-import { workGroups } from '../src/shell/workOverview.ts'
 
 const at = (minute: number) => new Date(Date.UTC(2026, 10, 14, 9, minute)).toISOString()
 
@@ -38,15 +28,27 @@ const agent = (id: string, name: string, extra: Partial<CustomAgentSummary> = {}
   ...extra,
 })
 
-const topic = (id: string, owner: string, minute: number, extra: Partial<TaskSummary> = {}): TaskSummary => ({
-  harnessId: 'standard',
-  id,
-  title: `话题 ${id}`,
-  status: 'idle',
-  updatedAt: at(minute),
-  ...(owner === 'general' ? { generalChat: true } : { agent: { customAgentId: owner } }),
-  ...extra,
-})
+/** The group the Host gives a topic with no markers: what a live run waits on, a live run, an unopened failure, or done. */
+const placed = (task: TaskSummary): BoardPlace => {
+  const wait = waitKindOf(task)
+  if (wait) return { group: 'attention', reason: wait }
+  if (task.status === 'running' || task.status === 'waiting-approval') return { group: 'running' }
+  if (task.status === 'failed' || task.runOutcome === 'failed') return { group: 'attention', reason: 'failed' }
+  return { group: 'done' }
+}
+
+const topic = (id: string, owner: string, minute: number, extra: Partial<TaskSummary> = {}): TaskSummary => {
+  const task: TaskSummary = {
+    harnessId: 'standard',
+    id,
+    title: `话题 ${id}`,
+    status: 'idle',
+    updatedAt: at(minute),
+    ...(owner === 'general' ? { generalChat: true } : { agent: { customAgentId: owner } }),
+    ...extra,
+  }
+  return extra.board ? task : { ...task, board: placed(task) }
+}
 
 const live = (activity: NonNullable<TaskSummary['live']>['activity']) => ({ activity, since: at(0) }) as NonNullable<TaskSummary['live']>
 
@@ -158,7 +160,6 @@ describe('the roster of 我的 Agent', () => {
         .map(task => task.id)
         .toSorted(),
     ).toEqual(['g1', 'm1', 'm2', 'z1'])
-    expect(queueOrder(rows)[0].id).toBe('man')
     // A row nobody can name yet is not somebody to address.
     expect(defaultAddressee(rows)).toBe('general')
     // Once the list is back the same topics belong to their Agents again.
@@ -182,36 +183,6 @@ describe('the roster of 我的 Agent', () => {
     expect(waitingTopic({ topics: [asks, idle] })?.id).toBe('ask-new')
     expect(waitingTopic({ topics: [approvalNew, asks] }, new Set(['approve-new']))?.id).toBe('ask-new')
     expect(waitingTopic({ topics: [topic('failed', 'man', 1, { status: 'failed' }), idle] })).toBeUndefined()
-  })
-})
-
-describe('the queue of people', () => {
-  it('puts who waits for you first, then who works, then whoever was last heard from', () => {
-    const agents = [agent('a', '甲'), agent('b', '乙'), agent('c', '丙'), agent('d', '丁'), agent('e', '戊')]
-    const rows = rosterRows(
-      snapshot(
-        [
-          topic('a1', 'a', 50),
-          topic('b1', 'b', 10, { status: 'running', live: live('tool') }),
-          topic('c1', 'c', 5, { status: 'waiting-approval', live: live('approval') }),
-          topic('d1', 'd', 20, { status: 'failed' }),
-          topic('g1', 'general', 30),
-        ],
-        agents,
-      ),
-    )
-    // 戊 has no topic: last, in the roster's order. A failure does not jump the queue; it sorts by recency.
-    expect(queueOrder(rows).map(row => row.name)).toEqual(['丙', '乙', '甲', '通用', '丁', '戊'])
-  })
-
-  it('orders several who wait, and several who work, by recency, and leaves the roster itself as it was', () => {
-    const agents = [agent('a', '甲'), agent('b', '乙'), agent('c', '丙')]
-    const waiting = { status: 'waiting-approval' as const, live: live('approval') }
-    const rows = rosterRows(snapshot([topic('a1', 'a', 1, waiting), topic('b1', 'b', 9, waiting), topic('c1', 'c', 5, waiting)], agents), {
-      general: false,
-    })
-    expect(queueOrder(rows).map(row => row.name)).toEqual(['乙', '丙', '甲'])
-    expect(rows.map(row => row.name)).toEqual(['甲', '乙', '丙'])
   })
 })
 
@@ -245,8 +216,9 @@ describe('the space’s own 总览', () => {
     expect(new Set(all).size).toBe(all.length)
   })
 
-  it('leaves Code’s 总览 to Code’s sessions', () => {
-    expect(workGroups(tasks).flatMap(group => group.tasks.map(task => task.id))).toEqual(['code'])
+  it('groups by the Host: a failure the person has opened is no longer waiting', () => {
+    const opened = topic('opened', 'man', 12, { status: 'failed', board: { group: 'done' } })
+    expect(agentsOverview([...tasks, opened]).attention.map(task => task.id)).toEqual(['wait', 'ask', 'fail'])
   })
 
   it('keeps the chip where it was put: activity elsewhere never changes who the input addresses', () => {
@@ -330,7 +302,7 @@ describe('what the rows draw', () => {
     defaults: { harnessId: 'standard', mode: 'agent', workspaceId: 'default', model: { providerId: 'deepseek', model: 'deepseek-chat' } },
   }
   const ENGINE_WORDS = /standard|codex|Codex|Latch 内置|DeepSeek|deepseek|Harness|模型/u
-  const shell = (layout: 'overview' | 'triage', extra: Partial<ShellState> = {}) =>
+  const shell = (extra: Partial<ShellState> = {}) =>
     ({
       snapshot: {
         ...snapshot([...tasks, topic('r1', 'review', 30)], people),
@@ -343,16 +315,14 @@ describe('what the rows draw', () => {
       selectedId: 'm1',
       stopping: new Set<string>(),
       now: Date.UTC(2026, 10, 14, 10, 0),
-      preferences: { workbenchLayout: layout },
       access: { scopes: new Set(['run', 'view']) },
       agentRemovals: { state: null, held: false, saving: false },
       ...extra,
     }) as unknown as ShellState
-  const list = (layout: 'overview' | 'triage', extra: Partial<ShellState> = {}, rail = false) =>
-    renderToStaticMarkup(createElement(AgentsSpaceList, { shell: shell(layout, extra), rail }))
+  const list = (extra: Partial<ShellState> = {}) => renderToStaticMarkup(createElement(AgentsSpaceList, { shell: shell(extra) }))
 
-  it('侧栏: selects one Agent row, and leaves its history out of the roster', () => {
-    const html = list('overview')
+  it('selects one Agent row, and leaves its history out of the roster', () => {
+    const html = list()
     expect(html).toContain('data-people="roster"')
     expect(html).toMatch(/data-agent-id="man" aria-current="page"/u)
     expect(html).not.toContain('agent-tree')
@@ -360,57 +330,40 @@ describe('what the rows draw', () => {
     // The row says its state by icon alone: the word is the header's, written once.
     expect(html).not.toMatch(/>等你点头</u)
     expect(html).not.toMatch(ENGINE_WORDS)
-    expect(list('overview', { route: { entry: 'agents' } } as never)).not.toContain('aria-current="page"')
+    expect(list({ route: { entry: 'agents' } } as never)).not.toContain('aria-current="page"')
   })
 
   it('offers row settings for every visible Agent and leaves General and view-only menus without deletion', () => {
-    const html = list('overview')
+    const html = list()
     expect(html).toContain('aria-label="更多操作：通用"')
     const generalMenu = html.slice(html.indexOf('role="menu" aria-label="通用 的操作"'))
     expect(generalMenu).toContain('data-label="设置"')
     expect(generalMenu).not.toContain('data-label="删除 Agent"')
     expect(html).toContain('data-label="删除 Agent"')
-    expect(list('overview', { access: { scopes: new Set(['view']) } } as never)).not.toContain('data-label="删除 Agent"')
-  })
-
-  it('顶栏: a queue sorted by who waits, with the person-words on the second line and 新建 Agent leading its rail', () => {
-    const html = list('triage', {}, true)
-    expect(html).toContain('data-people="queue"')
-    const order = (markup: string) => [...markup.matchAll(/data-agent-id="([^"]+)"/gu)].map(match => match[1])
-    // The roster keeps the Host's order; the queue puts who waits first, then who works, then the newest.
-    expect(order(list('overview'))).toEqual(['review', 'zhou', 'man', 'long', 'general'])
-    expect(order(html)).toEqual(['man', 'zhou', 'review', 'long', 'general'])
-    expect(html).not.toMatch(ENGINE_WORDS)
-    expect(html).toMatch(/data-tone="waiting"[^]*等你点头/u)
-    expect(html).toMatch(/data-tone="running"[^]*在跑命令/u)
-    expect(html).toContain('新建 Agent')
-    expect(html).not.toContain('agent-tree')
-    // Under the drawer's own nav rows the queue does not repeat 新建 Agent; a device that cannot run has none.
-    expect(list('triage')).not.toContain('agent-queue-new')
-    expect(list('triage', { access: { scopes: new Set(['view']) } } as never, true)).not.toContain('agent-queue-new')
+    expect(list({ access: { scopes: new Set(['view']) } } as never)).not.toContain('data-label="删除 Agent"')
   })
 
   it('shows a device without the full data scope that Agents are locked, and no people', () => {
-    const locked = { ...shell('overview').snapshot, device: { id: 'd1', dataScope: 'conversation' } }
-    const html = list('overview', { snapshot: locked } as never)
+    const locked = { ...shell().snapshot, device: { id: 'd1', dataScope: 'conversation' } }
+    const html = list({ snapshot: locked } as never)
     expect(html).toContain('这台设备看不到 Agent')
     expect(html).not.toContain('小满')
   })
 
   it('says there are no Agents yet beside 通用, which is always there', () => {
     const none = { ...snapshot([], []), device: { id: 'd1', dataScope: 'all' } }
-    const html = list('overview', { snapshot: none, selectedId: null } as never)
+    const html = list({ snapshot: none, selectedId: null } as never)
     expect(html).toContain('还没有自己的 Agent')
     expect(html).toContain('通用')
   })
 
-  it('finds the Agent in view from the open topic or the new topic, and none on the 总览 or under Code’s home', () => {
-    const base = shell('overview')
+  it('finds the Agent in view from the open topic or the new topic, and none on the 总览 or under Code’s start screen', () => {
+    const base = shell()
     expect(currentAgent(base)).toBe('man')
     expect(currentAgent({ ...base, route: { entry: 'agents', myAgent: { id: 'zhou', topic: 'new' } } })).toBe('zhou')
     expect(currentAgent({ ...base, route: { entry: 'agents' } })).toBeUndefined()
     expect(currentAgent({ ...base, route: { entry: 'agents', myAgent: { id: 'new' } } })).toBeUndefined()
-    expect(currentAgent({ ...base, route: { entry: 'sessions', overview: true } })).toBeUndefined()
+    expect(currentAgent({ ...base, route: { entry: 'sessions', start: true } })).toBeUndefined()
   })
 })
 
@@ -420,27 +373,24 @@ describe('总览 in the navigation', () => {
     space,
     route,
     entries: (agents ? ['sessions', 'agents'] : ['sessions']) as ShellState['entries'],
-    openOverview: () => calls.push('code'),
     openMyAgent: () => calls.push('agents'),
   })
 
-  it('leads to the space’s own 总览 in 我的 Agent and to Code’s home in Code', () => {
+  it('leads to the space’s own 总览 in 我的 Agent, and Code has none: 新会话 is its start screen', () => {
     const inTopic = shellOverview(shell('agents', { entry: 'sessions' }))
-    expect(inTopic.active).toBe(false)
-    inTopic.open()
-    expect(shellOverview(shell('agents', { entry: 'agents' })).active).toBe(true)
-    expect(shellOverview(shell('agents', { entry: 'agents', topics: true })).active).toBe(false)
-    expect(shellOverview(shell('agents', { entry: 'agents', myAgent: { id: 'new' } })).active).toBe(false)
-    const code = shellOverview(shell('code', { entry: 'sessions', overview: true }))
-    expect(code.active).toBe(true)
-    code.open()
-    shellOverview(shell('agents', { entry: 'sessions' }, false)).open()
-    expect(calls).toEqual(['agents', 'code', 'code'])
+    expect(inTopic?.active).toBe(false)
+    inTopic?.open()
+    expect(shellOverview(shell('agents', { entry: 'agents' }))?.active).toBe(true)
+    expect(shellOverview(shell('agents', { entry: 'agents', topics: true }))?.active).toBe(false)
+    expect(shellOverview(shell('agents', { entry: 'agents', myAgent: { id: 'new' } }))?.active).toBe(false)
+    expect(shellOverview(shell('code', { entry: 'sessions', start: true }))).toBeUndefined()
+    expect(shellOverview(shell('agents', { entry: 'sessions' }, false))).toBeUndefined()
+    expect(calls).toEqual(['agents'])
   })
 })
 
 describe('the topic header', () => {
-  const frame = (layout: 'overview' | 'triage', extra: Partial<ShellState> = {}, agents = [agent('man', '小满')]) => {
+  const frame = (extra: Partial<ShellState> = {}, agents = [agent('man', '小满')]) => {
     const tasks = [topic('m1', 'man', 9, { title: '今天的晨报', status: 'running', live: live('command') })]
     const shell = {
       snapshot: { ...snapshot(tasks, agents), automations: [] },
@@ -449,7 +399,6 @@ describe('the topic header', () => {
       phone: false,
       drawerMode: false,
       sidebarCollapsed: false,
-      preferences: { workbenchLayout: layout },
       access: { scopes: new Set(['run']) },
       current: null,
       profileShown: null,
@@ -463,8 +412,8 @@ describe('the topic header', () => {
   // The header's own state word.
   const said = (html: string) => html.match(/class="ui-status-word agent-activity"[^>]*>(?:<[^>]*>)*在跑命令/gu) ?? []
 
-  it('侧栏: the role line, one state word and one identity entry', () => {
-    const html = frame('overview')
+  it('the role line, one state word and one identity entry', () => {
+    const html = frame()
     expect(html).toContain('小满的职责')
     expect(said(html)).toHaveLength(1)
     expect(html).toContain('aria-label="小满 的资料"')
@@ -472,25 +421,19 @@ describe('the topic header', () => {
     expect(html).not.toMatch(/standard|Harness|模型/u)
   })
 
-  it('顶栏: leaves the state to the queue beside it, and says it itself once the queue is out of sight', () => {
-    expect(said(frame('triage'))).toHaveLength(0)
-    expect(said(frame('triage', { drawerMode: true } as never))).toHaveLength(1)
-    expect(said(frame('triage', { sidebarCollapsed: true } as never))).toHaveLength(1)
-  })
-
   it('says 不可用 with the reason and a way to repair for an Agent whose Harness is missing or too old', () => {
     const old = [agent('man', '小满', { available: false, unavailableReason: 'OpenCode 需要 1.2 或更高版本' })]
     const idle = { snapshot: { ...snapshot([topic('m1', 'man', 9)], old), automations: [] } }
-    const html = frame('overview', idle as never, old)
+    const html = frame(idle as never, old)
     expect(html).toContain('不可用')
     expect(html).toContain('为什么不可用')
     expect(html).toContain('去修复')
     // A device that cannot change 设置 is told where, without a button it could not use.
-    expect(frame('overview', { ...idle, owner: false } as never, old)).not.toContain('去修复')
+    expect(frame({ ...idle, owner: false } as never, old)).not.toContain('去修复')
   })
 
   it('keeps the topic of a deleted Agent readable under 已删除的 Agent, and lets no new topic start', () => {
-    const html = frame('overview', {}, [])
+    const html = frame({}, [])
     expect(html).toContain('已删除的 Agent')
     expect(html).toContain('data-tone="neutral">已删除')
     expect(said(html)).toHaveLength(0)
@@ -512,7 +455,7 @@ describe('the 总览 while the Host withholds the list of Agents', () => {
           stopping: new Set<string>(),
           statuses: new Map(),
           now: Date.UTC(2026, 10, 14, 10, 0),
-          preferences: { workbenchLayout: 'overview' },
+          preferences: {},
           access: { scopes: new Set(['view']) },
           submission: { pending: null, sending: false },
           delegation: { sending: false, pending: null },

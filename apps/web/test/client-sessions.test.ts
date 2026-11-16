@@ -314,39 +314,47 @@ describe('等你处理', () => {
     expect(waitKind(task('a', at(21), { status: 'waiting-approval', live: stopping }))).toBeUndefined()
   })
 
-  it('gathers what waits on the person ahead of the projects, and leaves it there when nothing else asks', () => {
+  it('gathers what the Host puts in 等你处理 ahead of the projects, and leaves it there when nothing else asks', () => {
     const tasks = [
-      task('approval', at(21), { status: 'waiting-approval' }),
-      task('silent', at(22), { status: 'running', live: quiet }),
-      task('running', at(23), { status: 'running' }),
-      task('done', at(19), {}),
+      task('approval', at(21), { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } }),
+      task('silent', at(22), { status: 'running', live: quiet, board: { group: 'attention', reason: 'silent' } }),
+      task('running', at(23), { status: 'running', board: { group: 'running' } }),
+      task('failed', at(20), { status: 'failed', board: { group: 'attention', reason: 'failed' } }),
+      task('opened', at(18), { status: 'failed', board: { group: 'done' } }),
+      task('done', at(19), { board: { group: 'done' } }),
     ]
     const groups = groupSessions(tasks, [], { waitingFrom: tasks })
+    // A failure stays in 等你处理 until it is opened; then the Host moves it, and the row follows.
     expect(groups.map(group => [group.id, group.tasks.map(item => item.id)])).toEqual([
-      ['waiting', ['silent', 'approval']],
-      ['other', ['running', 'done']],
+      ['waiting', ['silent', 'approval', 'failed']],
+      ['other', ['running', 'done', 'opened']],
     ])
     // A search shows every match where it belongs.
     expect(groupSessions(tasks, []).map(group => group.id)).toEqual(['other'])
   })
 
   it('keeps an archived session that still waits, since nobody else would show it', () => {
-    const archived = task('archived', at(21), { status: 'waiting-approval', archived: true })
+    const archived = task('archived', at(21), {
+      status: 'waiting-approval',
+      archived: true,
+      board: { group: 'attention', reason: 'approval' },
+    })
     expect(groupSessions(filterSessions([archived], 'all', ''), [], { waitingFrom: [archived] }).map(group => group.id)).toEqual([
       'waiting',
     ])
   })
 
-  it('counts sessions, not requests, and only what waits', () => {
+  it('counts sessions, not requests, and only what the Host puts in 等你处理', () => {
     const approval = (sessionId: string) => ({ sessionId }) as AppSnapshot['approvals'][number]
     const tasks = [
-      task('a', at(21), { status: 'waiting-approval' }),
-      task('b', at(21), { status: 'running', live: quiet }),
-      task('c', at(21), { status: 'running' }),
-      task('d', at(21), { status: 'idle' }),
-      task('e', at(21), { status: 'running', pendingQuestions: 2 }),
+      task('a', at(21), { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } }),
+      task('b', at(21), { status: 'running', live: quiet, board: { group: 'attention', reason: 'silent' } }),
+      task('c', at(21), { status: 'running', board: { group: 'running' } }),
+      task('d', at(21), { status: 'idle', board: { group: 'done' } }),
+      task('e', at(21), { status: 'running', pendingQuestions: 2, board: { group: 'attention', reason: 'question' } }),
+      task('f', at(21), { status: 'failed', board: { group: 'attention', reason: 'failed' } }),
     ]
-    expect(waitingCount({ tasks, approvals: [approval('a'), approval('a')] })).toBe(3)
+    expect(waitingCount({ tasks, approvals: [approval('a'), approval('a')] })).toBe(4)
     expect(waitingCount({ tasks: [], approvals: [approval('outside')] })).toBe(1)
     expect(waitingCount({ tasks: tasks.slice(2, 4), approvals: [] })).toBe(0)
     // A stop already asked for answers it: the row says 正在停止 and has left the shelf.
@@ -360,8 +368,12 @@ describe('stepping through the list', () => {
   const workspaces = [{ id: 'site', name: 'site', path: '/code/site' }]
   const site = task('site', at(23), { cwd: '/code/site' })
   const chat = task('chat', at(22))
-  const asks = task('asks', at(20), { status: 'waiting-approval', cwd: '/code/site' })
-  const asksArchived = task('asks-archived', at(19), { status: 'waiting-approval', archived: true })
+  const asks = task('asks', at(20), { status: 'waiting-approval', cwd: '/code/site', board: { group: 'attention', reason: 'approval' } })
+  const asksArchived = task('asks-archived', at(19), {
+    status: 'waiting-approval',
+    archived: true,
+    board: { group: 'attention', reason: 'approval' },
+  })
   const tasks = [site, chat, asks, asksArchived]
   const ids = (folded: string[] = [], filter: SessionFilter = 'all', search = '') =>
     listedSessions(tasks, workspaces, { filter, search, folded: new Set(folded) }).map(item => item.id)

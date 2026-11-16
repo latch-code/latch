@@ -5,17 +5,17 @@ import type { QuestionSubmission, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { switchLayout } from './helpers/workbench.ts'
+import { switchView } from './helpers/workbench.ts'
 
 it.each([
   { name: 'chromium', engine: chromium },
   { name: 'webkit', engine: webkit },
 ])(
-  '$name shares an uncertain multi-step answer between Home and the retained conversation and retries its original request',
+  '$name keeps an uncertain multi-step answer in the retained conversation across the start screen and retries its original request',
   async ({ engine }) => {
     const plugin: HarnessPlugin = {
       id: 'workbench-question',
-      name: '首页问题验收',
+      name: '问题恢复验收',
       version: '1',
       description: 'Local fixture only.',
       activate(context) {
@@ -77,20 +77,27 @@ it.each([
       }))
       await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).questions?.length).toBe(1)
       await enrollBrowser(page, host, { name: '问题恢复验收', scopes: ['admin'] })
-      const home = page.locator('.workbench-home')
-      const card = home.locator(`[data-work-session="${sessionId}"]`)
-      await card.getByRole('button', { name: '查看问题', exact: true }).click()
+      // The session is in 等你处理 on the start screen's count line and in the sidebar; its question is answered in the
+      // conversation, which keeps the steps chosen and an uncertain answer across leaving it.
+      const waiting = page.locator('.start-count[data-group="attention"]')
+      await expect.poll(() => waiting.innerText()).toMatch(/^1\s*等你处理$/u)
+      // A count opens 看板 on its group; 对话 comes back to the same start screen.
+      await waiting.click()
+      await expect.poll(() => page.locator('.app-shell').getAttribute('data-view')).toBe('board')
+      await page.locator('.board-surface').waitFor()
+      await switchView(page, 'chat')
+      await page.locator('.workbench-home').waitFor()
+      const row = page.locator(`#session-navigation [data-task-id="${sessionId}"]`)
+      await row.click()
       const conversation = page.locator('.workspace .question-card')
       await expect.poll(() => conversation.getAttribute('data-arming')).toBe(null)
       await conversation.getByRole('button', { name: /预览环境/ }).click()
       await conversation.getByText('如何发布？', { exact: true }).filter({ visible: true }).waitFor()
-      await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
-      const viewQuestion = card.getByRole('button', { name: '查看问题', exact: true })
-      await viewQuestion.waitFor()
-      expect(await card.locator('.question-card').count()).toBe(0)
-      await viewQuestion.click()
+      const toStart = () => page.locator('#session-navigation [data-space-primary]').click()
+      await toStart()
+      await page.locator('.workbench-home').waitFor()
+      await row.click()
       await conversation.getByText('如何发布？', { exact: true }).filter({ visible: true }).waitFor()
-      await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
       const requests: QuestionSubmission[] = []
       const answerGate = new Promise<void>(resolve => {
         releaseAnswer = resolve
@@ -102,48 +109,25 @@ it.each([
           await route.fulfill({ status: 503, json: { error: 'question-unknown', message: '回答回执暂不可用' } })
         } else await route.continue()
       })
-      await switchLayout(page, 'triage')
-      await page.setViewportSize({ width: 390, height: 844 })
-      await home.locator('.workbench-phone-heading').waitFor()
-      // A phone has no new-session sheet any more: its options are the chips over the home's input, and a chip's own
-      // sheet is the modal that keeps the number keys from answering the card behind it.
-      expect(await home.getByRole('button', { name: '新会话选项', exact: true }).count()).toBe(0)
-      expect(await page.getByRole('textbox', { name: '新会话消息', exact: true }).count()).toBe(1)
-      const opener = home.locator('.composer-chips .home-composer-location').getByRole('button').first()
-      await opener.click()
-      const sheet = page.getByRole('dialog', { name: '项目', exact: true })
-      await sheet.waitFor()
-      expect(await sheet.evaluate(element => element.matches(':modal'))).toBe(true)
-      await expect.poll(() => card.locator('.question-card').getAttribute('data-arming')).toBe(null)
-      await page.keyboard.press('1')
-      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
-      expect(requests).toHaveLength(0)
-      await home.locator('textarea').evaluate(element => element.focus())
-      expect(await sheet.evaluate(element => element.contains(document.activeElement))).toBe(true)
-      await page.keyboard.press('Escape')
-      await sheet.waitFor({ state: 'hidden' })
-      expect(requests).toHaveLength(0)
-      await page.setViewportSize({ width: 1440, height: 1000 })
-      await expect.poll(() => card.locator('.question-card').getAttribute('data-arming')).toBe(null)
-      await card.getByRole('button', { name: /先做预览/ }).click()
-      await card.getByRole('button', { name: '重试这次回答', exact: true }).waitFor()
+      await expect.poll(() => conversation.getAttribute('data-arming')).toBe(null)
+      // The last step is a single choice: choosing it sends the answer.
+      await conversation.getByRole('button', { name: /先做预览/ }).click()
       await expect.poll(() => requests.length).toBe(1)
-      await card.getByRole('button', { name: '确认发布', exact: true }).click()
-      await conversation.getByRole('button', { name: '重试这次回答', exact: true }).waitFor()
       const retry = conversation.getByRole('button', { name: '重试这次回答', exact: true })
+      await retry.waitFor()
       expect(await retry.getAttribute('aria-busy')).toBe('true')
       await retry.click()
       expect(requests).toHaveLength(1)
       expect(await conversation.getByRole('button', { name: /直接发布/ }).isDisabled()).toBe(true)
-      await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
+      // Away on the start screen while the answer is still unknown; back, the same request is kept for a retry.
+      await toStart()
+      await page.locator('.workbench-home').waitFor()
       releaseAnswer()
-      await expect.poll(() => card.getByRole('button', { name: '重试这次回答', exact: true }).getAttribute('aria-busy')).toBe(null)
-      await switchLayout(page, 'triage')
+      await row.click()
+      await expect.poll(() => retry.getAttribute('aria-busy')).toBe(null)
       expect(requests).toHaveLength(1)
-      await card.getByRole('button', { name: '确认发布', exact: true }).click()
-      await conversation.getByRole('button', { name: '重试这次回答', exact: true }).waitFor()
       expect(await conversation.getByRole('button', { name: /直接发布/ }).isDisabled()).toBe(true)
-      await conversation.getByRole('button', { name: '重试这次回答', exact: true }).click()
+      await retry.click()
       await expect.poll(() => requests.length).toBe(2)
       expect(requests[1]).toEqual(requests[0])
       expect(requests[0]!.answers).toEqual([

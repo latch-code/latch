@@ -18,7 +18,7 @@ const TABS: Partial<Record<ShellEntry, { label: string; icon: IconComponent }>> 
 export function PhoneTabBar({ shell }: { shell: ShellState }) {
   const { entries, route, goEntry, snapshot } = shell
   return (
-    <nav className="phone-tabs" aria-label="主导航" inert={shell.homeFocused || undefined}>
+    <nav className="phone-tabs" aria-label="主导航">
       {entries.flatMap(entry => {
         const tab = TABS[entry]
         if (!tab) return []
@@ -35,8 +35,12 @@ export function PhoneTabBar({ shell }: { shell: ShellState }) {
             className="phone-tab"
             aria-current={route.entry === entry ? 'page' : undefined}
             onClick={() => {
-              if (entry === 'sessions') shell.openOverview()
-              else goEntry(entry)
+              // Code's root page is its session list; 新会话 there opens the start screen.
+              if (entry !== 'sessions') goEntry(entry)
+              else {
+                shell.setRoute({ entry: 'sessions' })
+                if (shell.selectedId !== null) shell.choose(null)
+              }
             }}>
             <Icon icon={tab.icon} size={20} solid={route.entry === entry} />
             <span>{tab.label}</span>

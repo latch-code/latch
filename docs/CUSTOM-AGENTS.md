@@ -424,10 +424,10 @@ Host 在 `custom.json` 的 `chats` 里为每个 Agent 与「通用」保留一�
 
 **名册、总览与聊天**
 
-- 侧栏布局的名册与顶栏布局的队列读同一份名册（`roster.ts`），全部由快照的摘要算出。队列按等你、在工作、最近活动排序。切换布局不改变所在的 Agent、阅读位置和草稿。
+- 名册（`roster.ts`）全部由快照的摘要算出。切换对话与看板不改变所在的 Agent、阅读位置和草稿。
 - 仍有会话的已删除 Agent 写「已删除的 Agent」；摘要因写入结果未知暂缺时不推断谁被删除。断线时保留最后的状态并标「上次状态」。
 - 点 Agent、旧深链或命令面板总是打开 Host 指定的聊天（`chat.ts`）。还没有聊天时首条消息开始它；另一台设备已经开始时，草稿可以带入已有聊天。
-- 总览（`AgentsHome.tsx`）与 Code 的总览用同一个 `workGroups`：「等你处理」「在工作」「最近结果」。Agent 的会话没有交付，所以没有「可交付」。
+- 总览（`AgentsHome.tsx`）按 Host 的组（`board.group`）分「等你处理」「在工作」，另有「最近结果」。Agent 的会话没有交付，所以没有「可交付」。
 - 删除 Agent 用原删除接口；已发送但结果未知的删除留在当前页面内存，用原 `requestId` 重试，「放弃等待」只清本页的记录。
 
 **像一个人**（`personWords.ts`）
@@ -512,4 +512,4 @@ Host 在 `custom.json` 的 `chats` 里为每个 Agent 与「通用」保留一�
 | 审批与提问 | 等你点头（琥珀） |
 | 停止中 | 在停下 |
 
-工具行没有种类时由 `toolKind` 按工具名猜。名册、队列与总览只有摘要的 `RunLive.activity`，写粗词（`personActivity`）：`starting` 在准备、`model` 在想、`command` 在跑命令、`tool` 在动手、`approval` 等你点头、`cancelling` 在停下。失败写「失败」，长时间没有事件写「没有动静」。
+工具行没有种类时由 `toolKind` 按工具名猜。名册与总览只有摘要的 `RunLive.activity`，写粗词（`personActivity`）：`starting` 在准备、`model` 在想、`command` 在跑命令、`tool` 在动手、`approval` 等你点头、`cancelling` 在停下。失败写「失败」，长时间没有事件写「没有动静」。

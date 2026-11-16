@@ -310,7 +310,7 @@ describe('conversation forks', () => {
       expect(await label(/^权限：/u)).toContain('先问你')
       await page.screenshot({ path: 'test-results/fork-carry-1280.png', fullPage: true })
       const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
-      await input.fill('在 goose 里接着做')
+      await input.fill('在 goose 里继续')
       await input.press('Enter')
       await page.locator('.fork-context summary').waitFor({ timeout: 30_000 })
       const forked = (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.forkOf?.taskId === source.sessionId)!

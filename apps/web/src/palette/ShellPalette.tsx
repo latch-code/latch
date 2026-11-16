@@ -10,8 +10,9 @@ import {
   Eraser,
   GitFork,
   MessageCircle,
-  PanelTop,
+  MessagesSquare,
   Shield,
+  SquareKanban,
 } from 'lucide-react'
 import {
   Icon,
@@ -35,7 +36,7 @@ import { HARNESS_MARKS, presetOf } from '../brands.ts'
 import { harnessName } from '../composerChoice.ts'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { currentShell } from '../core/shell.ts'
-import { BACKDROP_CHOICES, DENSITY_CHOICES, MOTION_CHOICES, setPreference, toggleWorkbenchLayout } from '../preferences.ts'
+import { BACKDROP_CHOICES, DENSITY_CHOICES, MOTION_CHOICES, setPreference, toggleWorkView } from '../preferences.ts'
 import { projectOf } from '../sessions.ts'
 import { sectionLabel, settingsSections } from '../settings/SettingsPage.tsx'
 import { settingsSectionsAt, type SettingsSection } from '../shell/routes.ts'
@@ -95,16 +96,17 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     commandMode,
     closePalette,
   } = shell
-  const fileContext = route.overview ? shell.draftFileContext : readingFileContext
-  const fileTabs = route.overview ? shell.draftFileTabs : readingFileTabs
-  const canBrowseFiles = route.overview ? shell.canBrowseDraftFiles : canBrowseReadingFiles
+  const fileContext = route.start ? shell.draftFileContext : readingFileContext
+  const fileTabs = route.start ? shell.draftFileTabs : readingFileTabs
+  const canBrowseFiles = route.start ? shell.canBrowseDraftFiles : canBrowseReadingFiles
   const desktop = currentShell() !== null
   const keys = (id: ShortcutId) => {
     const value = shortcutKeys(id, desktop)
     return value ? { shortcut: value } : {}
   }
-  /** A command for the open session, whose columns a page entry hides: it goes back to them to show its result. */
+  /** A command for the open session, whose columns a page entry or 看板 hides: it goes back to them to show its result. */
   const inSession = (run: () => void) => () => {
+    shell.showChat()
     setRoute({ entry: 'sessions' })
     run()
   }
@@ -114,7 +116,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     catalog?.features?.fileSearch === true && catalog.features.filePreview === true && readsProjectFiles(snapshot.device.dataScope)
   const canDefineAgents = allowed.includes('engines')
 
-  const folders = route.overview ? catalog?.workspaces.find(item => item.id === shell.choice.workspaceId)?.folders : summary?.folders
+  const folders = route.start ? catalog?.workspaces.find(item => item.id === shell.choice.workspaceId)?.folders : summary?.folders
   const fileRootName = useCallback(
     (root: string) =>
       folders
@@ -361,7 +363,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
             label: '浏览项目文件',
             icon: glyph(FolderTree),
             ...keys('files'),
-            run: route.overview ? browseFiles : inSession(browseFiles),
+            run: route.start ? browseFiles : inSession(browseFiles),
           },
           ...(canSearchFiles
             ? [
@@ -381,7 +383,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       id: `file:${tab.id}`,
       label: `切换文件：${tab.file?.name ?? tab.target.reference}`,
       icon: glyph(FileGlyph),
-      run: route.overview
+      run: route.start
         ? () => {
             fileTabs.select(tab.id)
             shell.setDraftFilesOpen(true)
@@ -393,12 +395,12 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
           }),
     })),
     {
-      id: 'layout',
-      label: shell.preferences.workbenchLayout === 'triage' ? '切换到侧栏布局' : '切换到顶栏布局',
-      icon: glyph(shell.preferences.workbenchLayout === 'triage' ? PanelLeftGlyph : PanelTop),
+      id: 'view',
+      label: shell.board ? '切换到对话' : '切换到看板',
+      icon: glyph(shell.board ? MessagesSquare : SquareKanban),
       root: true,
-      ...keys('layout'),
-      run: toggleWorkbenchLayout,
+      ...keys('view'),
+      run: toggleWorkView,
     },
     ...(['system', 'light', 'dark'] as const).map(theme => ({
       id: `theme:${theme}`,

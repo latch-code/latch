@@ -14,14 +14,11 @@ import {
 /** Per-viewer conveniences. Browser storage can be missing or throw; every read has a default. */
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type SendKey = 'enter' | 'mod-enter'
-/**
- * The two workbench layouts. The stored keys predate their names: `overview` is 侧栏 (by project), `triage` is 顶栏 (by
- * state). The keys stay, so a choice saved under either name is still read.
- */
-export type WorkbenchLayout = 'overview' | 'triage'
+/** 对话 (the sessions, the composer and the panels) or 看板 (every session as a card in its group). */
+export type WorkView = 'chat' | 'board'
 /** How much of a turn's work the conversation shows: every row, only what went wrong, or one folded row. */
 export type WorkDisplay = 'all' | 'failures' | 'folded'
-export const LAYOUT_NAMES: Record<WorkbenchLayout, string> = { overview: '侧栏', triage: '顶栏' }
+export const VIEW_NAMES: Record<WorkView, string> = { chat: '对话', board: '看板' }
 /** 背景效果: 关, 轻 or 标准. */
 export type BackdropPreference = 'off' | 'light' | 'standard'
 /**
@@ -56,7 +53,8 @@ export interface Preferences {
   /** 文件树 in the 改动 tab; absent until the person chooses, so it opens by itself where it fits. */
   diffTree?: boolean
   theme: ThemePreference
-  workbenchLayout: WorkbenchLayout
+  /** 对话 or 看板 on this device. */
+  workView: WorkView
   /** 工作过程: this device only. Approvals, questions, failures and unknown results show at every level. */
   workDisplay: WorkDisplay
   /** 背景效果 on this device; absent until the person chooses, so a phone starts lighter than a desktop (`backdropLevel`). */
@@ -86,7 +84,7 @@ const defaults: Preferences = {
   diffMode: 'auto',
   diffWrap: false,
   theme: 'system',
-  workbenchLayout: 'overview',
+  workView: 'chat',
   workDisplay: 'all',
   motion: 'system',
   density: 'standard',
@@ -111,6 +109,15 @@ export function storageSet(key: string, value: string | null): void {
   }
 }
 
+/**
+ * The view a device opens on: its own choice, else 看板 where it had chosen the old 顶栏 layout (stored as
+ * `workbenchLayout: 'triage'`), else 对话. The old key is dropped by the next write of the preferences.
+ */
+function storedView(item: Record<string, unknown>): WorkView {
+  if (item.workView === 'chat' || item.workView === 'board') return item.workView
+  return item.workbenchLayout === 'triage' ? 'board' : 'chat'
+}
+
 export function parsePreferences(raw: string | null): Preferences {
   try {
     const value: unknown = JSON.parse(raw ?? 'null')
@@ -124,7 +131,7 @@ export function parsePreferences(raw: string | null): Preferences {
       diffWrap: item.diffWrap === true,
       ...(typeof item.diffTree === 'boolean' ? { diffTree: item.diffTree } : {}),
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
-      workbenchLayout: item.workbenchLayout === 'triage' ? 'triage' : 'overview',
+      workView: storedView(item),
       workDisplay: item.workDisplay === 'failures' || item.workDisplay === 'folded' ? item.workDisplay : 'all',
       ...(item.backdrop === 'off' || item.backdrop === 'light' || item.backdrop === 'standard' ? { backdrop: item.backdrop } : {}),
       motion: item.motion === 'reduce' ? 'reduce' : 'system',
@@ -156,6 +163,11 @@ function snapshot(): Preferences {
   return current
 }
 
+/** The preferences as they stand now, outside a render. */
+export function readPreferences(): Preferences {
+  return snapshot()
+}
+
 export function setPreference<K extends keyof Preferences>(key: K, value: Preferences[K]): void {
   current = { ...snapshot(), [key]: value }
   storageSet(KEY, JSON.stringify(current))
@@ -163,18 +175,18 @@ export function setPreference<K extends keyof Preferences>(key: K, value: Prefer
 }
 
 /**
- * Changes the workbench layout on this device; nothing is sent to the Host. The page under the navigation stays mounted,
- * so the window cross-fades as a whole (160ms) where the browser can do that. Reduced motion or an open security surface
- * skips the cross-fade.
+ * Changes between 对话 and 看板 on this device; nothing is sent to the Host. 对话 stays mounted under 看板, so the window
+ * cross-fades as a whole (160ms) where the browser can do that. Reduced motion or an open security surface skips the
+ * cross-fade.
  */
-export function switchWorkbenchLayout(layout: WorkbenchLayout): void {
-  if (snapshot().workbenchLayout === layout) return
+export function switchWorkView(view: WorkView): void {
+  if (snapshot().workView === view) return
   const apply = () => {
-    setPreference('workbenchLayout', layout)
+    setPreference('workView', view)
   }
   void crossFade(() => {
     flushSync(apply)
-  }, 'layoutSwitch')
+  }, 'viewSwitch')
 }
 
 /** 背景效果 as it applies here: the person's choice, else 标准 on a desktop or tablet and 轻 on a phone. */
@@ -194,8 +206,8 @@ export function applyAppearance(motion: MotionPreference, density: DensityPrefer
   else delete root.dataset.density
 }
 
-export function toggleWorkbenchLayout(): void {
-  switchWorkbenchLayout(snapshot().workbenchLayout === 'triage' ? 'overview' : 'triage')
+export function toggleWorkView(): void {
+  switchWorkView(snapshot().workView === 'board' ? 'chat' : 'board')
 }
 
 export function usePreferences(): Preferences {

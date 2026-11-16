@@ -1,4 +1,4 @@
-import { escapeSecurityText, type AppSnapshot, type RunLive, type TaskSummary, type WorkspaceInfo } from '@latch/protocol'
+import { escapeSecurityText, type AppSnapshot, type BoardGroup, type RunLive, type TaskSummary, type WorkspaceInfo } from '@latch/protocol'
 import { DEFAULT_MODEL } from './composer/modelReasoning.ts'
 import { runClock, runElapsed } from './conversation.ts'
 import { parseTime } from './core/hostClock.ts'
@@ -59,9 +59,23 @@ export function waitsOnYou(task: TaskSummary): boolean {
   return task.status === 'running' && (Boolean(task.pendingQuestions) || live?.silent === true || stuckOnRequest(live))
 }
 
+/** The Host puts the session in 等你处理: something waits on the person, a failure not yet opened, or results not yet checked. */
+export const inAttention = (task: Pick<TaskSummary, 'board'>): boolean => task.board?.group === 'attention'
+
 /**
- * How many sessions wait on the person; what 等你处理 counts, here and on the Dock. An approval's session may be outside
- * the list; with a place given, only that place's listed sessions count, so its dot always has a row to point at.
+ * How many cards 看板 holds in each group: every session the Host makes a card (`board.card`), whatever its place. The
+ * start screen's count line and the 看板 segment of the switch say these.
+ */
+export function boardCounts(tasks: readonly Pick<TaskSummary, 'board'>[]): Record<BoardGroup, number> {
+  const counts: Record<BoardGroup, number> = { attention: 0, running: 0, deliver: 0, done: 0 }
+  for (const task of tasks) if (task.board?.card) counts[task.board.group] += 1
+  return counts
+}
+
+/**
+ * How many sessions are in 等你处理, by the Host's group; what the window title, the title row and the place dots count.
+ * An approval's session may be outside the list; with a place given, only that place's listed sessions count, so its dot
+ * always has a row to point at. The desktop app's Dock badge counts only live waits (`attentionOf`).
  */
 export function waitingCount(snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>, space?: Space): number {
   const stopping = new Set(snapshot.tasks.filter(task => liveNow(task)?.activity === 'cancelling').map(task => task.id))
@@ -69,7 +83,7 @@ export function waitingCount(snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>,
   // A place counts only what its own lists can show: an approval of a session no list holds counts in the total alone.
   const here = (id: string) => space === undefined || placed.get(id) === space
   const asking = snapshot.approvals.map(approval => approval.sessionId).filter(id => !stopping.has(id) && here(id))
-  return new Set([...asking, ...snapshot.tasks.filter(task => waitsOnYou(task) && here(task.id)).map(task => task.id)]).size
+  return new Set([...asking, ...snapshot.tasks.filter(task => inAttention(task) && here(task.id)).map(task => task.id)]).size
 }
 
 export function rowStatus(task: TaskSummary, { unread = false, stopping = false, frozen = false } = {}): RowStatus {
@@ -165,6 +179,42 @@ export function waitKind(task: TaskSummary): WaitKind | undefined {
   return live?.silent ? { kind: 'silent' } : undefined
 }
 
+export interface WorkStatus {
+  tone: 'neutral' | 'waiting' | 'running' | 'failed' | 'warn'
+  words: string
+}
+
+/**
+ * A session's state in words and a tone, as a card or a decision says it. While disconnected the last known work stays
+ * in sight, without advancing a timer or drawing a live spinner.
+ */
+export function workStatus(
+  task: TaskSummary,
+  { connected, now, stopping = false, unread = false }: { connected: boolean; now: number; stopping?: boolean; unread?: boolean },
+): WorkStatus {
+  const status = rowStatus(task, { stopping, unread })
+  const live = task.status === 'running' || task.status === 'waiting-approval'
+  const unknown = live ? 0 : (task.runEnd?.unknownResultCount ?? 0)
+  if (!connected && live) {
+    const words = status.kind === 'stopping' ? '正在停止' : waitsOnYou(task) ? '等你处理' : activityWords(task.live)
+    return { tone: 'neutral', words: `上次状态：${words}` }
+  }
+  if (status.kind === 'stopping') return { tone: 'running', words: '正在停止' }
+  if (status.kind === 'waiting' || status.kind === 'silent') {
+    const wait = waitKind(task)
+    return {
+      tone: 'waiting',
+      words: wait?.kind === 'asks' ? wait.words : wait?.kind === 'silent' ? silentWords(task.live, now) : '等你处理',
+    }
+  }
+  if (status.kind === 'running') return { tone: 'running', words: runningWords(task.live, now) }
+  if (status.kind === 'failed') return { tone: 'failed', words: unknown > 0 ? `失败 · ${unknown} 条结果未知` : '失败' }
+  if (unknown > 0) return { tone: 'warn', words: `${unknown} 条结果未知` }
+  if (status.kind === 'ended') return { tone: 'neutral', words: status.word }
+  if (status.kind === 'unread') return { tone: 'neutral', words: '有新内容' }
+  return { tone: 'neutral', words: task.runOutcome === 'completed' ? '本轮已结束' : '会话记录' }
+}
+
 /** Archived sessions appear only under their own filter; search matches titles; a place keeps only its own sessions. */
 export function filterSessions(tasks: TaskSummary[], filter: SessionFilter, query: string, space?: Space): TaskSummary[] {
   const needle = query.trim().toLocaleLowerCase()
@@ -220,7 +270,7 @@ export function recentProjectSessions(
 }
 
 /**
- * 等你处理 while something waits, saved projects by their latest session, then conversations outside a project. Pinned
+ * 等你处理 while the Host puts something there (`board`), saved projects by their latest session, then conversations outside a project. Pinned
  * sessions lead their own shelf. Only `waitingFrom` moves a session to 等你处理: a search or the archive keeps it in place.
  */
 export function groupSessions(
@@ -231,7 +281,7 @@ export function groupSessions(
   const waiting: SessionGroup = {
     id: 'waiting',
     label: '等你处理',
-    tasks: (options.waitingFrom ?? []).filter(waitsOnYou).toSorted(byRecency),
+    tasks: (options.waitingFrom ?? []).filter(inAttention).toSorted(byRecency),
   }
   const shelved = new Set(waiting.tasks.map(task => task.id))
   const other: SessionGroup = { id: 'other', label: workspaces === undefined ? '会话' : '无项目', tasks: [] }
@@ -326,7 +376,7 @@ export function delegationRows(
   const own = inSpace(tasks, 'agents').toSorted(byRecency)
   const archived = own.filter(task => task.archived)
   if (filter === 'archived') return { rows: archived, total: archived.length, archived: archived.length }
-  const waiting = own.filter(waitsOnYou)
+  const waiting = own.filter(inAttention)
   const lifted = new Set(waiting.map(task => task.id))
   const listed = [...waiting, ...own.filter(task => !task.archived && !lifted.has(task.id))]
   const cut = expanded ? listed.length : Math.max(limit, waiting.length)

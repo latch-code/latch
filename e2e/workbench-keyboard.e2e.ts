@@ -333,13 +333,10 @@ it.each([
           expect(await overlay.locator('[data-keys="Alt 1 … Alt 9"] kbd').allTextContents()).toEqual(['Alt 1', 'Alt 9'])
           expect(await overlay.locator('[data-keys="Alt Shift 1 … Alt Shift 4"]').count()).toBe(1)
           expect(await overlay.locator('[data-keys="⌘1 … ⌘9"]').count()).toBe(0)
-          expect(await overlay.locator('.shortcuts-overlay-row').count()).toBe(27)
-          // The layouts are named as the switch names them, and the switch has its own key.
-          expect(await overlay.innerText()).not.toContain('分拣台')
-          const layoutKey = overlay.locator('.shortcuts-overlay-row', { hasText: '切换侧栏、顶栏布局' })
-          expect(await layoutKey.locator('kbd').allTextContents()).toEqual(['Alt Shift L'])
-          const triage = overlay.locator('.shortcuts-overlay-row', { hasText: '顶栏布局：拒绝、允许聚焦的请求' })
-          expect(await triage.locator('kbd').allTextContents()).toEqual(['1', '2'])
+          expect(await overlay.locator('.shortcuts-overlay-row').count()).toBe(28)
+          // The views are named as the switch names them, and the switch has its own key.
+          const viewKey = overlay.locator('.shortcuts-overlay-row', { hasText: '切换对话、看板' })
+          expect(await viewKey.locator('kbd').allTextContents()).toEqual(['Alt Shift L'])
           expect(await overlay.locator('.shortcuts-overlay-row', { hasText: '终端' }).count()).toBe(1)
           await noHorizontalOverflow(page, overlay.locator('.ui-dialog-surface'))
           await shoot('keys-overlay')

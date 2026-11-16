@@ -193,15 +193,7 @@ function useDraftHarnessCommands(shell: ShellState, enabled: boolean) {
 }
 
 /** The input of the open session, or the home's, which starts one. */
-export function SessionComposer({
-  shell: base,
-  home = false,
-  homeFocus,
-}: {
-  shell: ShellState
-  home?: boolean
-  homeFocus?: { engage: () => void; close?: (() => void) | undefined; onSend?: (() => void) | undefined }
-}) {
+export function SessionComposer({ shell: base, home = false }: { shell: ShellState; home?: boolean }) {
   const shell = home
     ? { ...base, ...base.homeComposerState, composerRef: base.homeComposerRef }
     : base.inputTarget === 'new'
@@ -271,7 +263,7 @@ export function SessionComposer({
     cancelling,
     choose,
   } = shell
-  const cachedCommands = useDraftHarnessCommands(shell, selectedId === null && (!home || shell.route.overview === true))
+  const cachedCommands = useDraftHarnessCommands(shell, selectedId === null && (!home || shell.route.start === true))
   const commandHarness = selectedId === null ? chosenHarness : harnessInfo
   const manageEngines = owner ? () => openSettings('engines') : undefined
   // A refusal the new session's own block already says (a Harness found too old once sent) is said there once.
@@ -541,8 +533,6 @@ export function SessionComposer({
     <Composer
       showSlashButton={speaker === undefined}
       textareaRef={composerRef}
-      onEngage={homeFocus?.engage}
-      closeFocus={homeFocus?.close}
       lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
       fileMentions={mentionChoice}
@@ -634,7 +624,7 @@ export function SessionComposer({
           <SessionVitalsLine summary={summary} detail={current} harness={harnessInfo} phone={phone} />
         ) : undefined
       }
-      locationPosition={!homeFocus?.close && (home || base.preferences.workbenchLayout === 'triage') ? 'toolbar' : 'top'}
+      locationPosition={home && phone ? 'toolbar' : 'top'}
       location={
         home ? (
           <div className="home-composer-location">
@@ -649,7 +639,7 @@ export function SessionComposer({
                 starts
               />
             )}
-            {(phone || homeFocus?.close || base.preferences.workbenchLayout === 'triage') && (
+            {phone && (
               <span className="home-composer-computer">
                 <Icon icon={LaptopGlyph} size={14} />
                 {computerName(base.snapshot.hostName)}
@@ -713,7 +703,6 @@ export function SessionComposer({
         <InlineConfirm active={submission.sending || (selectedId !== null && configBusy.has(selectedId))} className="composer-confirm" />
       }
       onSubmit={() => {
-        homeFocus?.onSend?.()
         void sendDraft()
       }}
       sendKey={preferences.sendKey}

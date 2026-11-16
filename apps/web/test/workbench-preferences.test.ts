@@ -10,62 +10,69 @@ it('restores only a valid dock height and an explicit open flag', () => {
   expect(parsePreferences('{"dockOpen":true,"dockHeight":139}').dockHeight).toBeUndefined()
 })
 import { BackdropTiles, DensityTiles, MotionChoice } from '../src/settings/AppearanceTiles.tsx'
-import { LayoutTiles } from '../src/settings/LayoutTiles.tsx'
 
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('the workbench layout on this device', () => {
-  it('starts at the overview with old, missing or invalid preferences', () => {
-    for (const raw of [null, '', '{', '{}', '{"theme":"dark"}', '{"workbenchLayout":null}', '{"workbenchLayout":"other"}']) {
-      expect(parsePreferences(raw).workbenchLayout).toBe('overview')
+describe('对话 or 看板 on this device', () => {
+  it('opens on 对话 with missing, invalid or old 侧栏 preferences', () => {
+    for (const raw of [
+      null,
+      '',
+      '{',
+      '{}',
+      '{"theme":"dark"}',
+      '{"workView":null}',
+      '{"workView":"other"}',
+      '{"workbenchLayout":"overview"}',
+      '{"workbenchLayout":"other"}',
+    ]) {
+      expect(parsePreferences(raw).workView).toBe('chat')
     }
   })
 
-  it('reads either saved layout without changing the other preferences', () => {
-    for (const workbenchLayout of ['overview', 'triage']) {
-      expect(parsePreferences(JSON.stringify({ workbenchLayout, theme: 'dark', sendKey: 'mod-enter' }))).toMatchObject({
-        workbenchLayout,
+  it('opens on 看板 where the device had chosen the old 顶栏 layout, until it chooses a view', () => {
+    expect(parsePreferences('{"workbenchLayout":"triage"}').workView).toBe('board')
+    expect(parsePreferences('{"workbenchLayout":"triage","workView":"chat"}').workView).toBe('chat')
+    expect(parsePreferences('{"workbenchLayout":"overview","workView":"board"}').workView).toBe('board')
+  })
+
+  it('keeps the right panel shut by default where the old 顶栏 layout kept it so, and open elsewhere', () => {
+    expect(parsePreferences('{"workbenchLayout":"triage"}').rightPanel.open).toBe(false)
+    expect(parsePreferences('{"workbenchLayout":"overview"}').rightPanel.open).toBe(true)
+    expect(parsePreferences('{}').rightPanel.open).toBe(true)
+    expect(parsePreferences('{"workView":"board"}').rightPanel.open).toBe(true)
+  })
+
+  it('reads either saved view without changing the other preferences', () => {
+    for (const workView of ['chat', 'board']) {
+      expect(parsePreferences(JSON.stringify({ workView, theme: 'dark', sendKey: 'mod-enter' }))).toMatchObject({
+        workView,
         theme: 'dark',
         sendKey: 'mod-enter',
       })
     }
   })
 
-  it('saves a layout with the existing local preferences and reads it after reloading the module', async () => {
-    const entries = new Map([['latch.preferences', JSON.stringify({ theme: 'dark', sendKey: 'mod-enter' })]])
+  it('saves a view with the existing local preferences, drops the old layout key and reads it after reloading the module', async () => {
+    const entries = new Map([['latch.preferences', JSON.stringify({ theme: 'dark', sendKey: 'mod-enter', workbenchLayout: 'triage' })]])
     vi.stubGlobal('localStorage', {
       getItem: (key: string) => entries.get(key) ?? null,
       setItem: (key: string, value: string) => entries.set(key, value),
     })
     vi.resetModules()
     const preferences = await import('../src/preferences.ts')
-    preferences.setPreference('workbenchLayout', 'triage')
+    preferences.setPreference('workView', 'chat')
     vi.resetModules()
     const reloaded = await import('../src/preferences.ts')
     expect(reloaded.parsePreferences(reloaded.storageGet('latch.preferences'))).toMatchObject({
-      workbenchLayout: 'triage',
+      workView: 'chat',
       theme: 'dark',
       sendKey: 'mod-enter',
     })
+    expect(JSON.parse(entries.get('latch.preferences')!)).not.toHaveProperty('workbenchLayout')
     expect([...entries.keys()]).toEqual(['latch.preferences'])
-  })
-
-  it('renders two named choices with one selected keyboard stop', () => {
-    for (const value of ['overview', 'triage'] as const) {
-      const html = renderToStaticMarkup(createElement(LayoutTiles, { value, onValueChange: () => {} }))
-      expect(html).toContain('aria-label="工作台布局"')
-      expect(html.match(/role="radio"/gu)).toHaveLength(2)
-      expect(html.match(/aria-checked="true"/gu)).toHaveLength(1)
-      expect(html.match(/tabindex="0"/gu)).toHaveLength(1)
-      // The layouts are named for their shape; 总览 is the home's name in both, never a layout's.
-      expect(html).toContain('>侧栏<')
-      expect(html).toContain('>顶栏<')
-      expect(html).toContain('按项目')
-      expect(html).toContain('按状态')
-      expect(html).not.toContain('分拣台')
-    }
   })
 
   it('reads 背景效果, 动效 and 密度 from this device, with their defaults for old or invalid values', () => {
@@ -119,12 +126,6 @@ describe('the workbench layout on this device', () => {
     expect(motion.match(/aria-checked="true"/gu)).toHaveLength(1)
   })
 
-  it('keeps a choice saved before the layouts were renamed', () => {
-    // The stored keys did not change with the names, so nobody's choice is lost.
-    expect(parsePreferences('{"workbenchLayout":"triage"}').workbenchLayout).toBe('triage')
-    expect(parsePreferences('{"workbenchLayout":"overview"}').workbenchLayout).toBe('overview')
-  })
-
   it('switches at once where the window cannot cross-fade, and toggles between the two', async () => {
     const entries = new Map<string, string>()
     vi.stubGlobal('localStorage', {
@@ -133,11 +134,11 @@ describe('the workbench layout on this device', () => {
     })
     vi.resetModules()
     const preferences = await import('../src/preferences.ts')
-    preferences.switchWorkbenchLayout('triage')
-    expect(JSON.parse(entries.get('latch.preferences')!).workbenchLayout).toBe('triage')
-    preferences.toggleWorkbenchLayout()
-    expect(JSON.parse(entries.get('latch.preferences')!).workbenchLayout).toBe('overview')
-    preferences.toggleWorkbenchLayout()
-    expect(JSON.parse(entries.get('latch.preferences')!).workbenchLayout).toBe('triage')
+    preferences.switchWorkView('board')
+    expect(JSON.parse(entries.get('latch.preferences')!).workView).toBe('board')
+    preferences.toggleWorkView()
+    expect(JSON.parse(entries.get('latch.preferences')!).workView).toBe('chat')
+    preferences.toggleWorkView()
+    expect(JSON.parse(entries.get('latch.preferences')!).workView).toBe('board')
   })
 })

@@ -92,10 +92,7 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
   const evidence = useWorkbenchDelivery(
     shell.snapshot,
     shell.connection,
-    shell.route.entry === 'sessions'
-      && !shell.route.overview
-      && !shell.route.allSessions
-      && (shell.pageMode ? shell.infoPage : shell.columnOpen),
+    shell.route.entry === 'sessions' && !shell.route.start && !shell.board && (shell.pageMode ? shell.infoPage : shell.columnOpen),
     [summary.id],
   )
   const entry = evidence.entries.get(summary.id)

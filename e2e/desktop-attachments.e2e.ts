@@ -73,7 +73,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       expect(fixture.presence.requests).toHaveLength(0)
       const image = Buffer.concat([await page.screenshot({ animations: 'disabled' }), Buffer.alloc(2 * 1024 * 1024)])
-      const composer = page.getByRole('region', { name: '总览', exact: true }).locator('form')
+      const composer = page.getByRole('region', { name: '新会话', exact: true }).locator('form')
       await composer.getByLabel('选择附件').setInputFiles({ name: 'large.png', mimeType: 'image/png', buffer: image })
       await expect.poll(() => composer.getByRole('button', { name: 'large.png', exact: true }).isEnabled(), { timeout: 15000 }).toBe(true)
       await expect

@@ -26,7 +26,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - 本机按 `@latch/protocol` 的 `isLocalListener`；回环浏览器是远程。缺邀请指引领取，用掉后须新邀请（`e2e/enrollment.e2e.ts`）。
 - 回复里的文件引用渲染成路径标记，从不生成 `<a href>`；只有 http(s) 与 mailto 是链接（message-content.test）。
 - 确认走 `withConfirmation`；未知结果保留原请求，设置确认后解锁。草稿只存文字，按设备与会话存于浏览器，14 天过期；像凭据的只在内存，含摘录的要 `all`；删会话、撤权或退出即清。失效项目保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
-- 用 `@latch/ui` 的令牌、层和原语，页面只调布局。总览两布局同底色、只滚队列，专注保留输入（DESIGN、`packages/ui/AGENTS.md`、`test/styles.test.ts`）。
+- 用 `@latch/ui` 的令牌、层和原语，页面只调布局。对话与看板同底色，看板只滚各列（DESIGN、`packages/ui/AGENTS.md`、`test/styles.test.ts`）。
 - Harness 与模型图标只用 `src/assets/brands/` 原文件（来源与许可见 `public/licenses/brands/`），经 `?no-inline` 用于 `<img>` 或 CSS 遮罩。各预设有图标，缺图标用中性图形，禁用字母（`test/brands.test.ts`）。
 - 只读 `HarnessInfo.capabilities` 与 `level`，不判断 Driver 种类；共享编码与 Host、测试向量一致（`test/client-security.test.ts`）。
 - 项目按会话记录的身份分组，普通会话归「无项目」；只有旧会话按主目录回退，不从附加文件夹推断归属（`test/client-sessions.test.ts`）。

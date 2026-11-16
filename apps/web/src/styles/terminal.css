@@ -12,9 +12,6 @@
 .terminal-dock[hidden] {
   display: none;
 }
-.app-shell[data-workbench-layout='triage'][data-overview] .terminal-dock {
-  grid-column-start: 1;
-}
 .terminal-resize {
   inset: -3px 0 auto;
 }

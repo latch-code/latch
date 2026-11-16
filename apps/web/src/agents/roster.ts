@@ -1,14 +1,12 @@
 import { GENERAL_AGENT_ID, type AgentAvatar, type AppSnapshot, type CustomAgentSummary, type TaskSummary } from '@latch/protocol'
-import { rowStatus, waitsOnYou } from '../sessions.ts'
-import { workGroups } from '../shell/workOverview.ts'
+import { rowStatus, spaceOf, waitsOnYou } from '../sessions.ts'
 import { topicOwner } from './chat.ts'
 import { dutyLine, GENERAL_NAME } from './model.ts'
 import { personActivity, WAITS_ON_YOU, type PersonWord } from './personWords.ts'
 
 /**
- * 我的 Agent as people: the roster the 侧栏 layout draws (one row per Agent, its topics on tree lines under the one in
- * view), the queue the 顶栏 layout draws (who waits for you first, then who works, then by recency) and the space's own
- * 总览. All of it is a projection of the snapshot's summaries; nothing here is kept or invented.
+ * 我的 Agent as people: the roster (one row per Agent, its topics on tree lines under the one in view) and the space's
+ * own 总览. All of it is a projection of the snapshot's summaries; nothing here is kept or invented.
  */
 
 /** What a person or one of its topics is doing: it waits for you, it works, its latest run failed, or nothing. */
@@ -136,18 +134,6 @@ export function rosterRows(
   return rows
 }
 
-const RANK: Record<RosterState, number> = { waiting: 0, running: 1, failed: 2, idle: 2 }
-
-/** The queue: who waits for you first, then who is working, then whoever was last heard from; ties keep the roster's order. */
-export function queueOrder(rows: readonly RosterRow[]): RosterRow[] {
-  return rows
-    .map((row, index) => ({ row, index }))
-    .toSorted(
-      (a, b) => RANK[a.row.state] - RANK[b.row.state] || (b.row.updatedAt ?? '').localeCompare(a.row.updatedAt ?? '') || a.index - b.index,
-    )
-    .map(item => item.row)
-}
-
 /** The rows the keys step through in 我的 Agent, as the roster draws them: each Agent's topics in turn. */
 export function rosterTopics(rows: readonly RosterRow[]): TaskSummary[] {
   return rows.flatMap(row => row.topics)
@@ -170,12 +156,29 @@ export interface AgentsOverview {
  * of 可交付: a topic has no delivery, and what the Host does report is that its latest run completed.
  */
 export function agentsOverview(tasks: readonly TaskSummary[], cancelling: ReadonlySet<string> = new Set()): AgentsOverview {
-  const [attention, running] = workGroups(tasks, cancelling, new Set(), 'agents')
-  const taken = new Set([...attention.tasks, ...running.tasks].map(task => task.id))
+  const { attention, running } = topicGroups(tasks, cancelling)
+  const taken = new Set([...attention, ...running].map(task => task.id))
   const results = tasks
     .filter(task => topicOwner(task) && !task.archived && !taken.has(task.id) && task.status === 'idle' && task.runOutcome === 'completed')
     .toSorted(newestFirst)
-  return { attention: attention.tasks, running: running.tasks, results }
+  return { attention, running, results }
+}
+
+/**
+ * 我的 Agent's unarchived topics that wait for you and that work, by the Host's group (`board`), newest first; approvals
+ * lead 等你处理, then what else a live run waits on. A stop this device asked for moves a live topic to the working ones.
+ */
+function topicGroups(tasks: readonly TaskSummary[], cancelling: ReadonlySet<string>): { attention: TaskSummary[]; running: TaskSummary[] } {
+  const attention: TaskSummary[] = []
+  const running: TaskSummary[] = []
+  const live = (task: TaskSummary) => task.status === 'running' || task.status === 'waiting-approval'
+  for (const task of tasks.filter(task => !task.archived && spaceOf(task) === 'agents').toSorted(newestFirst)) {
+    if (cancelling.has(task.id) && live(task)) running.push(task)
+    else if (task.board?.group === 'attention') attention.push(task)
+    else if (task.board?.group === 'running') running.push(task)
+  }
+  const rank = (task: TaskSummary) => (task.board?.reason === 'approval' ? 0 : waitsOnYou(task) ? 1 : 2)
+  return { attention: attention.toSorted((a, b) => rank(a) - rank(b)), running }
 }
 
 /**
@@ -206,7 +209,7 @@ export function addressee(rows: readonly RosterRow[], picked: string): RosterRow
  * first, then questions and silence, newest first within each).
  */
 export function waitingTopic(row: Pick<RosterRow, 'topics'>, cancelling: ReadonlySet<string> = new Set()): TaskSummary | undefined {
-  return workGroups(row.topics, cancelling, new Set(), 'agents')[0].tasks.find(task => waitsOnYou(task))
+  return topicGroups(row.topics, cancelling).attention.find(task => waitsOnYou(task))
 }
 
 /** The Agent a topic's row is signed with: its roster row, found by the topic's owner. */

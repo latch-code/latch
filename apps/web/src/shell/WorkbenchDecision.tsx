@@ -21,8 +21,7 @@ import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { composerGate } from '../core/permissions.ts'
 import { APPROVAL_COPY } from '../core/securityCopy.ts'
-import { projectOf } from '../sessions.ts'
-import { workStatus } from './workOverview.ts'
+import { projectOf, workStatus } from '../sessions.ts'
 import { hostNow } from '../core/hostClock.ts'
 import { useWorkbenchSession } from './useWorkbenchEvidence.ts'
 import type { ShellState } from './useShellLayout.tsx'
@@ -86,7 +85,6 @@ export function WorkbenchDecision({
   emphasis = false,
   expanded = true,
   onExpand,
-  firstKeys = false,
   featured = false,
   navigation,
   person,
@@ -101,7 +99,6 @@ export function WorkbenchDecision({
   emphasis?: boolean
   expanded?: boolean
   onExpand?: () => void
-  firstKeys?: boolean
   featured?: boolean
   navigation?: ReactNode
 }) {
@@ -349,7 +346,6 @@ export function WorkbenchDecision({
           presentation="workbench"
           emphasis={emphasis}
           context={context}
-          numberKeys={firstKeys}
           {...(person ? { requester: person.name } : {})}
           approvals={detail.approvals}
           messages={detail.messages}
@@ -367,7 +363,6 @@ export function WorkbenchDecision({
         <QuestionDrawer
           presentation="workbench"
           context={context}
-          firstKeys={firstKeys}
           state={asked}
           asker={asker}
           canAnswer={canAnswer}

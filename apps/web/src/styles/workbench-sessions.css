@@ -6,7 +6,7 @@
   padding: var(--sp-28) max(var(--sp-40), calc((100% - 1040px) / 2));
   background: var(--canvas);
 }
-.app-shell[data-workbench-layout='overview'] .workbench-sessions {
+.app-shell .workbench-sessions {
   grid-column: 2 / -1;
 }
 .workbench-sessions-head,

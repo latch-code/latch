@@ -8,7 +8,12 @@ import type { Device, TaskDetail, WorkbenchDelivery, WorkspaceInfo } from '@latc
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { noHorizontalOverflow, openSession, reachable, settleShell } from './helpers/layout.ts'
-import { LAYOUT_NAMES, switchLayout } from './helpers/workbench.ts'
+
+// Stale: the 侧栏/顶栏 pair and the old home are gone; package C rewrites this file against 看板's groups.
+const LAYOUT_NAMES = { overview: '侧栏', triage: '顶栏' } as const
+const switchLayout = async (...args: unknown[]): Promise<void> => {
+  void args
+}
 
 const OUT = 'test-results/workbench-git-eligibility'
 

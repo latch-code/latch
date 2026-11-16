@@ -3,23 +3,19 @@ import {
   Button,
   OverviewGlyph,
   ScheduleGlyph,
-  Icon,
   IconButton,
   NewSessionGlyph,
   SearchGlyph,
   SettingsGlyph,
-  PluginsGlyph,
   PanelLeftGlyph,
-  HistoryGlyph,
   LaptopGlyph,
   ICON_STROKE,
-  Kbd,
   LiveDot,
   StatusStrip,
   type StripFact,
 } from '@latch/ui'
-import { currentShell, lightsStyle, useTrafficLights, type ComputersView } from '../core/shell.ts'
-import { ShellNewAgent, SpaceButtons, SpaceSwitch, shellOverview, shellSpaces } from './SpaceNav.tsx'
+import { currentShell, type ComputersView } from '../core/shell.ts'
+import { ShellNewAgent, SpaceButtons, shellOverview, shellSpaces } from './SpaceNav.tsx'
 import { BrandMark } from '../components/ui.tsx'
 import { ComputerChip, SidebarComputerTrigger } from '../components/Computers.tsx'
 import { CONNECTION_WORDS, connectionTransport, useComputers } from '../core/computers.ts'
@@ -29,7 +25,6 @@ import { hostView } from '../core/permissions.ts'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
 import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { ShellUpdateCheck } from './UpdateCheck.tsx'
-import { WorkbenchPanes } from './WorkbenchPanes.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 
 /** On tablets the project tree is a drawer beside a persistent 60px navigation rail. */
@@ -39,15 +34,12 @@ export function TabletRail({ shell }: { shell: ShellState }) {
   const inAgents = spaces?.space === 'agents'
   return (
     // Under a page the rail's column is the page's own list: nothing here is in the focus order then.
-    <nav
-      className="workbench-tablet-rail"
-      aria-label="工作台导航"
-      inert={shell.route.entry !== 'sessions' || shell.homeFocused || undefined}>
+    <nav className="workbench-tablet-rail" aria-label="工作台导航" inert={shell.route.entry !== 'sessions' || shell.board || undefined}>
       <span className="workbench-rail-brand">
         <BrandMark size={24} />
       </span>
       {spaces && <SpaceButtons {...spaces} />}
-      <IconButton label="总览" icon={OverviewGlyph} pressed={home.active} onClick={home.open} />
+      {home && <IconButton label="总览" icon={OverviewGlyph} pressed={home.active} onClick={home.open} />}
       {inAgents ? <ShellNewAgent shell={shell} compact /> : <IconButton label="新建会话" icon={NewSessionGlyph} onClick={shell.startNew} />}
       <IconButton label="搜索" icon={SearchGlyph} onClick={shell.openSearch} />
       {shell.catalog?.features?.automations && (
@@ -69,14 +61,14 @@ export function TabletRail({ shell }: { shell: ShellState }) {
   )
 }
 
-/** The computer's name as a quiet button: in the status bar, the 顶栏 layout and 我的 Agent's foot. */
+/** The computer's name as a quiet button: in 看板's title row and 我的 Agent's foot. */
 const chipTrigger: ComponentProps<typeof ComputerChip>['trigger'] = (props, here) => (
   <Button {...props} variant="ghost" className="workbench-computer-button" icon={LaptopGlyph} title={here.name}>
     <span className="sidebar-host-name">{here.name}</span>
   </Button>
 )
 
-/** The computer's name where the 顶栏 layout and 我的 Agent stand it: the trigger of the computer popover. */
+/** The computer's name where 看板 and 我的 Agent stand it: the trigger of the computer popover. */
 export function WorkbenchComputer({ shell }: { shell: ShellState }) {
   return <ShellComputer shell={shell} computers={useComputers()} trigger={chipTrigger} />
 }
@@ -181,75 +173,5 @@ export function WorkbenchConnection({ shell, inert }: { shell: ShellState; inert
     <footer className="workbench-connection" inert={inert || undefined}>
       <StatusStrip facts={facts} label="连接状态" />
     </footer>
-  )
-}
-
-/** The 顶栏 layout's navigation is above the work, leaving its home the whole width. */
-export function WorkbenchNav({ shell }: { shell: ShellState }) {
-  const spaces = shellSpaces(shell)
-  const lights = useTrafficLights()
-  const home = shellOverview(shell)
-  // In 我的 Agent the same three ways lead to the space's own pages: its 总览, 全部话题 and 定时任务.
-  const inAgents = spaces?.space === 'agents'
-  const allActive = inAgents ? shell.route.entry === 'agents' && shell.route.topics === true : shell.route.allSessions === true
-  return (
-    <div
-      ref={shell.titlebar}
-      className="titlebar workbench-nav"
-      inert={shell.homeFocused || undefined}
-      data-lights={lights ? '' : undefined}
-      style={lightsStyle(currentShell())}>
-      <span className="workbench-brand" aria-label="Latch">
-        <BrandMark size={24} />
-      </span>
-      {spaces && <SpaceSwitch {...spaces} />}
-      {!shell.sidebarColumn && !shell.route.overview && !shell.route.allSessions && shell.route.entry === 'sessions' && (
-        <IconButton
-          ref={shell.sidebarToggle}
-          label={shell.sidebarColumn ? (shell.sidebarCollapsed ? '展开侧栏' : '收起侧栏') : '打开会话列表'}
-          icon={PanelLeftGlyph}
-          aria-controls="session-navigation"
-          aria-expanded={shell.sidebarColumn ? !shell.sidebarCollapsed : shell.drawer.open}
-          onClick={() => (shell.sidebarColumn ? shell.setSidebarShut(!shell.sidebarCollapsed) : shell.drawer.show())}
-        />
-      )}
-      <nav className="workbench-primary-nav" aria-label="工作台">
-        <Button variant="ghost" icon={OverviewGlyph} aria-label="总览" aria-current={home.active ? 'page' : undefined} onClick={home.open}>
-          <span className="workbench-nav-label">总览</span>
-        </Button>
-        <Button
-          variant="ghost"
-          icon={HistoryGlyph}
-          aria-label={inAgents ? '全部话题' : '全部会话'}
-          aria-current={allActive ? 'page' : undefined}
-          onClick={inAgents ? () => shell.openAgentTopics() : shell.openAllSessions}>
-          <span className="workbench-nav-label">{inAgents ? '全部话题' : '全部会话'}</span>
-        </Button>
-        {shell.catalog?.features?.automations && (
-          <Button
-            variant="ghost"
-            icon={ScheduleGlyph}
-            aria-label="定时任务"
-            onClick={() => shell.openMyAgent({ id: 'general', tab: 'schedules' })}>
-            <span className="workbench-nav-label">定时任务</span>
-          </Button>
-        )}
-      </nav>
-      <span className="workbench-nav-spacer" />
-      {/* The queue's rail leads with 新建 Agent; 全部话题 has no rail, so the way stays here. */}
-      {inAgents && shell.route.entry === 'agents' && shell.route.topics === true && <ShellNewAgent shell={shell} compact />}
-      <Button variant="ghost" className="workbench-search" aria-label="搜索" icon={SearchGlyph} onClick={shell.openSearch}>
-        <span className="workbench-nav-label">搜索</span>
-        <Kbd>⌘K</Kbd>
-      </Button>
-      {shell.route.entry !== 'sessions' && <WorkbenchComputer shell={shell} />}
-      {shell.access.scopes.has('view') && <UsageEntry />}
-      {shell.entries.includes('apps') && <IconButton label="应用" icon={PluginsGlyph} onClick={() => shell.openApp()} />}
-      {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}
-      <ShellUpdateCheck shell={shell} />
-      <WorkbenchPanes shell={shell} />
-      {/* The layout switch is the shell's, drawn over this reserved end in both layouts. */}
-      <span className="layout-switch-space" aria-hidden="true" />
-    </div>
   )
 }
