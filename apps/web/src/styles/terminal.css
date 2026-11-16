@@ -82,18 +82,19 @@
   --canvas: var(--work-sunken);
   background: var(--canvas);
 }
+/*
+ * The inset is the box's position, not padding: the fit addon reads this element's height to count rows, and padding
+ * would be counted as room for one more row, which then sits under the foot.
+ */
 .terminal-screen {
   position: absolute;
-  inset: 0;
+  inset: var(--sp-8) var(--sp-12);
 }
 .terminal-screen[hidden] {
   display: none;
 }
-/* The inset sits on xterm's own element: the fit addon subtracts that padding, not its parent's, when it counts rows. */
 .terminal-screen .xterm {
-  box-sizing: border-box;
   height: 100%;
-  padding: var(--sp-8) var(--sp-12);
 }
 .terminal-screen .xterm:focus-within,
 .terminal-screen .xterm-helper-textarea:focus-visible {
