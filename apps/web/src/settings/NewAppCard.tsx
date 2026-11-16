@@ -9,7 +9,7 @@ import type {
   PluginPackageDetail,
   PluginPackageSummary,
 } from '@latch/protocol'
-import { Button, Dialog, Hint, Icon, InlineNotice, SegmentedControl, Switch, TextAreaField, CheckGlyph, RefreshGlyph } from '@latch/ui'
+import { Button, Dialog, Hint, Icon, InlineNotice, Switch, TextAreaField, ValuePicker, CheckGlyph, RefreshGlyph } from '@latch/ui'
 import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { handDraft } from '../core/draftHandoff.ts'
@@ -89,7 +89,8 @@ function AppDraftCard({
   const [diagnostics, setDiagnostics] = useState<{ revision: string; items: PluginBuildDiagnostic[] } | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [notice, setNotice] = useState('')
-  const covered = useSecureCover()
+  const previewSurface = useRef<HTMLDivElement>(null)
+  const covered = useSecureCover(previewSurface)
   const theme = useShellTheme()
   const alive = useRef(true)
   useEffect(
@@ -251,7 +252,7 @@ function AppDraftCard({
             <span className="new-app-tag">预览</span>
             <Hint label="无凭据">预览不连接 Latch、不读密钥、不开会话；数据只在这一页里。</Hint>
           </div>
-          <div className="new-app-preview-frame">
+          <div ref={previewSurface} className="new-app-preview-frame">
             <AppFrame
               key={`${pagePreview.revision}:${pagePreview.bundleHash}`}
               page={pagePreview}
@@ -404,6 +405,7 @@ function AgentDraftDialog({
       open
       title="让 Agent 做"
       size="sheet"
+      className="agent-draft-dialog"
       onClose={() => {
         if (!busy) onClose()
       }}
@@ -419,12 +421,16 @@ function AgentDraftDialog({
       <div className="settings-form">
         <TextAreaField label="想要的页面" rows={4} value={prompt} maxLength={4000} onChange={event => setPrompt(event.target.value)} />
         {usable.length > 1 && (
-          <SegmentedControl
-            label="Harness"
-            value={harnessId}
-            options={usable.map(harness => ({ value: harness.id, label: harnessName(harness) }))}
-            onValueChange={setHarnessId}
-          />
+          <div className="agent-draft-harness">
+            <span className="ui-field-label">Harness</span>
+            <ValuePicker
+              label="Harness"
+              value={harnessId}
+              options={usable.map(harness => ({ value: harness.id, label: harnessName(harness) }))}
+              onValueChange={setHarnessId}
+              disabled={busy}
+            />
+          </div>
         )}
         {usable.length === 0 && <InlineNotice tone="warn">没有可以用 Agent 模式开始的 Harness。</InlineNotice>}
         {error && <InlineNotice tone="error">{error}</InlineNotice>}

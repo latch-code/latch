@@ -180,6 +180,21 @@ describe('the page frame element', () => {
     expect(asked[0]).toContain('dialog[open]')
     expect(asked[0]).toContain('.ui-toast')
   })
+
+  it('lets a preview use its settings dialog while other covers still block it', () => {
+    const settings = { closest: () => null, getClientRects: () => ({ length: 1 }) }
+    const cover = { ...settings }
+    const preview = {
+      ...settings,
+      closest: (selector: string) => (selector.startsWith('dialog.settings-overlay') ? settings : null),
+    }
+    expect(secureSurfaceOpen({ querySelectorAll: () => [settings] }, preview)).toBe(false)
+    expect(secureSurfaceOpen({ querySelectorAll: () => [settings, cover] }, preview)).toBe(true)
+    expect(secureSurfaceOpen({ querySelectorAll: () => [settings] })).toBe(true)
+
+    const hiddenPreview = { ...preview, closest: () => ({}) }
+    expect(secureSurfaceOpen({ querySelectorAll: () => [] }, hiddenPreview)).toBe(true)
+  })
 })
 
 describe('the runtime build', () => {

@@ -11,7 +11,7 @@ import { writeHostState } from '@latch/host/host-state'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings, settleShell } from './helpers/layout.ts'
+import { closeSettings, noHorizontalOverflow, openSection, openSettings, reachable, settleShell } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/app-build'
 const TITLE = '计数页'
@@ -76,12 +76,12 @@ const count: number = 'one'
 export default defineApp({ page: () => null })
 `
 
-async function fakeAgent(host: TestHost, owner: TestDevice, queue: string): Promise<void> {
+async function fakeAgent(host: TestHost, owner: TestDevice, queue: string, id = 'fake', name = 'Fake'): Promise<void> {
   const saved = await owner.confirmed('agents', {
     method: 'POST',
     body: {
-      id: 'fake',
-      name: 'Fake',
+      id,
+      name,
       command: process.execPath,
       args: [FAKE_ACP_AGENT],
       env: { FAKE_ACP_LOG: join(host.root, 'agent.log'), FAKE_ACP_EDIT_QUEUE: queue },
@@ -202,7 +202,14 @@ describe('page drafts from a session, built by the Host (browser)', () => {
 const electronE2E = latchEnv(process.env, 'ELECTRON_E2E') === '1'
 
 describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on this Mac (desktop)', () => {
-  it('goes 让 Agent 做 › 作为应用草稿 › 构建 › 预览 › 应用, hands a failed build back, and rebuilds while 开发中', async () => {
+  const scenarios = [
+    {
+      name: 'goes 让 Agent 做 › 作为应用草稿 › 构建 › 预览 › 应用, hands a failed build back, and rebuilds while 开发中',
+      responsive: false,
+    },
+    { name: 'offers every Harness at 1440, 768 and 390, and starts an app draft at 390', responsive: true },
+  ]
+  it.each(scenarios)('$name', async ({ responsive }) => {
     await mkdir(OUTPUT, { recursive: true })
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-app-build-'))
     const testHost = await startTestHost({ uiDir: resolve('dist/web'), hostName: '工作电脑', sessionFolders: true })
@@ -212,6 +219,10 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
       const owner = await testHost.enroll({ listener: 'unix' })
       const queue = join(testHost.root, 'edits.json')
       await fakeAgent(testHost, owner, queue)
+      const harnessNames = responsive
+        ? ['项目规范与文档检查', 'DeepSeek Harness Preview', '跨设备交互与回归检查', 'Release Review Assistant']
+        : []
+      for (const [index, name] of harnessNames.entries()) await fakeAgent(testHost, owner, queue, `fake-${index}`, name)
       await writeHostState(testHost.dataDir, {
         version: 2,
         pid: process.pid,
@@ -245,24 +256,69 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
       await connected.waitFor()
 
       // 让 Agent 做: a session of its own with the skeleton; the agent's first turn writes the page.
-      let settings = await openSettings(window)
-      await openSection(settings, '插件')
-      await settings.getByRole('button', { name: '让 Agent 做' }).click()
       const ask = window.getByRole('dialog', { name: '让 Agent 做' })
-      await ask.getByRole('textbox', { name: '想要的页面' }).fill('做一个计数页：列出最近的会话')
-      const fake = ask.getByRole('radio', { name: 'Fake' })
-      if (await fake.count()) await fake.click()
+      if (responsive) await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setMinimumSize(320, 560))
+      const resizeContent = (width: number, height: number) =>
+        application!.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setContentSize(size.width, size.height), {
+          width,
+          height,
+        })
+      const prompt = ask.getByRole('textbox', { name: '想要的页面' })
+      const harness = ask.getByRole('button', { name: /^Harness：/u })
+      const start = ask.getByRole('button', { name: '开始', exact: true })
+      const views = [
+        [1440, 'dark'],
+        [768, 'light'],
+        [390, 'dark'],
+      ] as const
+      for (const [width, theme] of responsive ? views : ([[1440, 'light']] as const)) {
+        await resizeContent(width, responsive ? 844 : 960)
+        await expect.poll(() => window.evaluate(() => innerWidth)).toBe(width)
+        await window.emulateMedia({ colorScheme: theme })
+        const settings = await openSettings(window)
+        await openSection(settings, '插件')
+        await settings.getByRole('button', { name: '让 Agent 做' }).click()
+        const body = ask.locator('.ui-dialog-body')
+        await body.waitFor()
+        if (responsive) await window.screenshot({ path: `${OUTPUT}/desktop-ask-${width}-${theme}.png`, animations: 'disabled' })
+        await noHorizontalOverflow(window, body)
+        await reachable(prompt)
+        await reachable(harness)
+        expect(await start.isEnabled()).toBe(false)
+
+        if (width >= 768) await harness.press('ArrowDown')
+        else await harness.click()
+        const choices = width >= 768 ? ask.getByRole('menu', { name: 'Harness' }) : window.getByRole('dialog', { name: 'Harness' })
+        const role = width >= 768 ? 'menuitemradio' : 'radio'
+        const choice = (name: string) => choices.getByRole(role, { name, exact: true })
+        for (const name of ['Latch 内置', 'Fake', ...harnessNames]) await reachable(choice(name))
+        if (responsive) await window.screenshot({ path: `${OUTPUT}/desktop-ask-harness-${width}-${theme}.png`, animations: 'disabled' })
+        const selected = !responsive || width === 390 ? 'Fake' : harnessNames[width === 1440 ? 1 : 3]!
+        await choice(selected).click()
+        await expect.poll(() => harness.getAttribute('aria-label')).toBe(`Harness：${selected}`)
+        await noHorizontalOverflow(window, body)
+        if (responsive && width !== 390) {
+          await ask.getByRole('button', { name: '关闭', exact: true }).click()
+          await ask.waitFor({ state: 'hidden' })
+          await closeSettings(settings)
+        }
+      }
+      await prompt.fill('做一个计数页：列出最近的会话')
       // The agent's first turn finds the skeleton; the manifest it would write is set before it runs.
       const cwdBefore = new Set((await owner.json<AppSnapshot>('snapshot')).tasks.map(task => task.id))
       await writeFile(queue, JSON.stringify([{ path: 'latch-app/index.tsx', content: page('第一版') }]))
-      await ask.getByRole('button', { name: '开始' }).click()
+      await start.click()
       await expect
         .poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => !cwdBefore.has(task.id))?.id, SLOW)
         .toBeTruthy()
       const sessionId = (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => !cwdBefore.has(task.id))!.id
       await idle(owner, sessionId)
-      const cwd = (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.cwd!
+      const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+      expect(detail.summary.harnessId).toBe('fake')
+      const cwd = detail.summary.cwd!
       const id = (JSON.parse(await readFile(join(cwd, 'latch-app', 'latch-app.json'), 'utf8')) as { id: string }).id
+      expect(await readFile(join(cwd, 'latch-app', 'index.tsx'), 'utf8')).toBe(page('第一版'))
+      if (responsive) return
       await writeFile(join(cwd, 'latch-app', 'latch-app.json'), manifest(id))
 
       // 改动 › 作为应用草稿, which opens 设置 › 插件 with the draft's card.
@@ -272,7 +328,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
         .first()
         .click()
       await window.getByRole('button', { name: '作为应用草稿' }).click()
-      settings = window.locator('.settings-page')
+      let settings = window.locator('.settings-page')
       const card = settings.locator('.new-app-card').filter({ hasText: id })
       await card.waitFor()
       await expect.poll(() => card.getAttribute('data-phase')).toBe('draft')
@@ -280,8 +336,26 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
       await card.getByRole('button', { name: '构建' }).click()
       await expect.poll(() => card.getAttribute('data-phase'), SLOW).toBe('preview')
       // The preview: the same frame and bundle, samples instead of sessions, and starting does nothing.
-      const preview = await frameIn(card.locator('iframe.app-frame'), '#label')
+      const previewFrame = card.locator('iframe.app-frame')
+      const preview = await frameIn(previewFrame, '#label')
       expect(await preview.locator('#tasks').textContent()).toBe('样例会话')
+      await window.locator('.ui-toast').getByText('已作为应用草稿导入', { exact: true }).waitFor({ state: 'hidden' })
+      await expect
+        .poll(() =>
+          previewFrame.evaluate(frame => {
+            const settingsDialog = frame.closest('dialog.settings-overlay[open]:not([data-secure])')
+            const covers = [...document.querySelectorAll('[data-secure], dialog[open], .ui-toast')]
+              .filter(surface => surface !== settingsDialog && !surface.closest('[inert]') && surface.getClientRects().length > 0)
+              .map(surface => Array.from(surface.classList).join(' ') || surface.tagName)
+            return { inert: frame.hasAttribute('inert'), covers }
+          }),
+        )
+        .toEqual({ inert: false, covers: [] })
+      await settings.getByRole('button', { name: '让 Agent 做', exact: true }).click()
+      await ask.waitFor()
+      await expect.poll(() => previewFrame.getAttribute('inert')).toBe('')
+      await ask.getByRole('button', { name: '关闭', exact: true }).click()
+      await expect.poll(() => previewFrame.getAttribute('inert')).toBeNull()
       await preview.getByRole('button', { name: '开始' }).click()
       await expect.poll(() => preview.locator('#result').textContent()).toBe('preview')
       await card.getByText('预览里不会开会话').waitFor()
@@ -313,13 +387,23 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
       await window.screenshot({ path: `${OUTPUT}/desktop-preview-focus-1440.png` })
       const sessionsBefore = (await owner.json<AppSnapshot>('snapshot')).tasks.length
 
+      const requests = testHost.presence.requests.length
+      testHost.presence.mode = 'manual'
       await card.getByRole('button', { name: '应用', exact: true }).click()
+      await expect.poll(() => testHost.presence.requests.length).toBe(requests + 1)
+      await card.locator('.new-app-confirm .inline-confirm[data-secure]').waitFor()
+      await expect.poll(() => previewFrame.getAttribute('inert')).toBe('')
+      await expect(preview.getByRole('button', { name: '开始' }).click({ trial: true, timeout: 600 })).rejects.toThrow()
+      testHost.presence.approveNext()
+      testHost.presence.mode = 'approve'
       await expect.poll(() => card.getAttribute('data-phase'), SLOW).toBe('applied')
       expect((await owner.json<AppSnapshot>('snapshot')).tasks.length).toBe(sessionsBefore)
       // 打开 goes to the page, in the sidebar's 应用 group.
       await card.getByRole('button', { name: '打开' }).click()
       await window.locator('.sidebar-apps').getByRole('button', { name: TITLE }).waitFor()
-      const first = await frameIn(window.locator('iframe.app-frame'), '#label')
+      const liveFrame = window.locator('.apps-page iframe.app-frame')
+      const first = await frameIn(liveFrame, '#label')
+      await expect.poll(() => liveFrame.getAttribute('inert')).toBeNull()
       expect(await first.locator('#label').textContent()).toBe('第一版')
       await window.locator('.apps-page').getByRole('button', { name: '新建会话' }).click()
       await window.locator('.apps-page').waitFor({ state: 'detached' })

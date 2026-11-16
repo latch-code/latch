@@ -1913,6 +1913,14 @@
   line-height: var(--lh-ui);
   font-weight: 600;
 }
+.agent-draft-dialog .settings-form {
+  grid-template-columns: minmax(0, 1fr);
+}
+.agent-draft-harness {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
 .new-app-card {
   display: grid;
   gap: var(--sp-12);
