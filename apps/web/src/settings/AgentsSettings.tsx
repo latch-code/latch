@@ -349,7 +349,7 @@ function DefinitionDialog({
   return (
     <Dialog
       open={open}
-      size="form"
+      size="lg"
       title="编辑启动方式"
       subtitle={SETUP_COPY.externalNote.label}
       onClose={() => {
@@ -431,7 +431,7 @@ function EnvDialog({
   return (
     <Dialog
       open={open}
-      size="form"
+      size="lg"
       title="添加环境变量"
       subtitle={ENV_HELD}
       onClose={() => {

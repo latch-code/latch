@@ -1,8 +1,9 @@
 /*
- * Native <dialog> variants whose content owns its layout: a centred dialog, a phone bottom sheet and a full page. A
- * dialog and a sheet are the pop face with 16px corners and the dialog shadow over the blurred scrim; a dialog fades in from
- * a scale of .985 and a sheet rises from below, both over --m-sheet; a page covers the window without a shadow. A dialog
- * and a sheet go the way they came in 70% of the time, through a still picture of them (useLeaveBehind in dialog.tsx).
+ * Native <dialog> variants whose content owns its layout: a centred dialog and a full page. A dialog is the pop face
+ * with the modal radius and the dialog shadow over the blurred scrim; it fades in from a scale of .985 over --m-sheet;
+ * a page covers the window without a shadow. On a phone a modal is the same bottom sheet as Sheet (dialog.css). A
+ * dialog and a sheet go the way they came in 70% of the time, through a still picture of them (useLeaveBehind in
+ * dialog.tsx).
  */
 .ui-modal {
   padding: 0;
@@ -15,8 +16,8 @@
 }
 .ui-modal::backdrop {
   background: var(--scrim);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(var(--scrim-blur));
+  backdrop-filter: blur(var(--scrim-blur));
   animation: ui-fade-in var(--m-sheet) var(--e-sheet);
 }
 .ui-modal-surface {
@@ -30,46 +31,19 @@
 }
 
 .ui-modal-dialog {
-  width: min(480px, calc(100vw - 32px));
+  width: min(var(--layer-md), calc(100vw - 32px));
   max-height: calc(100dvh - 64px);
   margin: auto;
 }
+.ui-modal-dialog[data-size='lg'] {
+  width: min(var(--layer-lg), calc(100vw - 32px));
+}
+.ui-modal-dialog[data-size='xl'] {
+  width: min(var(--layer-xl), calc(100vw - 32px));
+}
 .ui-modal-dialog > .ui-modal-surface {
-  border-radius: var(--r-16);
+  border-radius: var(--modal-radius);
   animation: ui-sheet-in var(--m-sheet) var(--e-sheet);
-}
-
-.ui-modal-sheet {
-  width: 100%;
-  max-width: 100%;
-  max-height: min(88dvh, calc(100dvh - 32px));
-  margin: auto 0 0;
-}
-.ui-modal-sheet > .ui-modal-surface {
-  padding-bottom: env(safe-area-inset-bottom);
-  border-radius: var(--r-16) var(--r-16) 0 0;
-  animation: ui-sheet-up var(--m-sheet) var(--e-sheet);
-}
-@keyframes ui-sheet-up {
-  from {
-    translate: 0 100%;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  @keyframes ui-sheet-up {
-    from {
-      opacity: 0;
-    }
-  }
-}
-.ui-modal-grabber {
-  align-self: center;
-  flex-shrink: 0;
-  width: 36px;
-  height: 4px;
-  margin: var(--sp-8) 0 0;
-  border-radius: var(--r-2);
-  background: var(--line-strong);
 }
 
 .ui-modal-page {
@@ -106,8 +80,7 @@
   line-height: var(--lh-heading);
   font-weight: 600;
 }
-.ui-modal-body,
-.ui-modal-sheet-body {
+.ui-modal-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -133,16 +106,16 @@
   background: var(--band);
   box-shadow: inset 0 1px 0 var(--line);
 }
-.ui-modal-sheet .ui-modal-body {
-  padding: var(--sp-16) var(--sp-20);
+.ui-sheet .ui-modal-body {
+  padding: var(--sp-4) var(--sp-16) var(--sp-16);
 }
-.ui-modal-sheet .ui-modal-footer {
+.ui-sheet .ui-modal-footer {
   min-height: 0;
-  padding: var(--sp-12) var(--sp-20) var(--sp-16);
+  padding: var(--sp-12) var(--sp-16) var(--sp-16);
   background: transparent;
   box-shadow: none;
 }
-.ui-modal-sheet .ui-modal-footer .ui-button {
+.ui-sheet .ui-modal-footer .ui-button {
   flex: 1;
   min-height: 44px;
 }

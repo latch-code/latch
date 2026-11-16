@@ -26,6 +26,7 @@ import {
   LockGlyph,
   CloseGlyph,
   SendGlyph,
+  DrawerStack,
 } from '@latch/ui'
 
 /**
@@ -645,7 +646,7 @@ export function Composer({
           </div>
         </div>
       )}
-      {drawers && <div className="composer-drawers">{drawers}</div>}
+      <DrawerStack className="composer-drawers">{drawers}</DrawerStack>
       <form
         ref={commandAnchor}
         className={`composer ${run ? 'is-running' : ''}`}

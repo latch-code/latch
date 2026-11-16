@@ -10,12 +10,10 @@ import {
   MenuFooterLink,
   MenuFooterNote,
   MenuPanel,
-  PermissionMenu,
   Popover,
   Tile,
   ValuePicker,
   useLayerClose,
-  type PermissionLevel,
   AlertGlyph,
   CopyGlyph,
   MoreGlyph,
@@ -26,7 +24,41 @@ import {
   ShieldGlyph,
   TrashGlyph,
   UndoGlyph,
+  Badge,
+  type ValuePickerProps,
 } from '../src/index.ts'
+
+/** Ordered permission levels as a value picker, the way a page lists them: a consequence a line, 默认 on the default. */
+interface PermissionLevel<T extends string> {
+  value: T
+  title: string
+  description: string
+  risk?: boolean
+  disabledReason?: string
+}
+function PermissionMenu<T extends string>({
+  levels,
+  defaultValue,
+  reserve,
+  ...props
+}: Omit<ValuePickerProps<T>, 'options' | 'groups' | 'searchable' | 'width'> & { levels: Array<PermissionLevel<T>>; defaultValue?: T }) {
+  const start = (props.align ?? (props.size === 'xs' || props.bleed !== undefined ? 'end' : 'start')) === 'start'
+  return (
+    <ValuePicker
+      {...props}
+      reserve={reserve ?? start}
+      width="sm"
+      options={levels.map(level => ({
+        value: level.value,
+        label: level.title,
+        description: level.description,
+        ...(level.risk ? { risk: true } : {}),
+        ...(level.disabledReason ? { disabledReason: level.disabledReason } : {}),
+        ...(level.value === defaultValue ? { tag: <Badge>默认</Badge> } : {}),
+      }))}
+    />
+  )
+}
 
 const MODELS = [
   { value: 'alpha', label: 'alpha-large' },
@@ -685,8 +717,48 @@ describe('action menu', () => {
   })
 })
 
+describe('a popover', () => {
+  it('hands focus to its first meaningful control on opening, never to a close button, and back to its trigger', async () => {
+    const screen = await render(
+      <Popover
+        label="额度"
+        trigger={props => (
+          <button {...props} type="button">
+            额度
+          </button>
+        )}>
+        <button type="button" data-layer-close="">
+          关闭
+        </button>
+        <button type="button">用量</button>
+      </Popover>,
+    )
+    await userEvent.click(screen.getByRole('button', { name: '额度' }))
+    await expect.element(screen.getByRole('button', { name: '用量' })).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    await expect.element(screen.getByRole('button', { name: '额度' })).toHaveFocus()
+  })
+
+  it('takes a width from the layer scale only', async () => {
+    const screen = await render(
+      <Popover
+        label="宽度"
+        size="md"
+        trigger={props => (
+          <button {...props} type="button">
+            宽度
+          </button>
+        )}>
+        <p>内容</p>
+      </Popover>,
+    )
+    await userEvent.click(screen.getByRole('button', { name: '宽度' }))
+    await expect.poll(() => document.querySelector('.ui-popover:popover-open')?.getBoundingClientRect().width).toBe(400)
+  })
+})
+
 describe('on phones', () => {
-  it('shows a popover as a sheet titled with its title that only shows, so it closes with 完成 and has no 取消', async () => {
+  it('shows a popover as a sheet titled with its title, closed by the one close button every sheet has', async () => {
     await page.viewport(390, 844)
     try {
       const screen = await render(
@@ -704,8 +776,8 @@ describe('on phones', () => {
       await userEvent.click(screen.getByRole('button', { name: '计划' }))
       const sheet = screen.getByRole('dialog', { name: '计划 1/2' })
       await expect.element(sheet).toBeVisible()
-      expect(sheet.element().querySelector('.ui-sheet-cancel')).toBeNull()
-      await userEvent.click(screen.getByRole('button', { name: '完成' }))
+      expect(sheet.element().querySelectorAll('.ui-sheet-header button')).toHaveLength(1)
+      await userEvent.click(screen.getByRole('button', { name: '关闭' }))
       await expect.element(screen.getByRole('dialog', { name: '计划 1/2' })).not.toBeInTheDocument()
     } finally {
       await page.viewport(1280, 800)
@@ -753,9 +825,9 @@ describe('on phones', () => {
       const current = screen.getByRole('radio', { name: '逐项询问 默认' })
       await expect.element(current).toHaveFocus()
       await expect.element(current).toHaveAttribute('tabindex', '0')
-      // The sheet's Tab order is its 取消 and the list's one tab stop; Tab wraps between them.
+      // The sheet's Tab order is its close button and the list's one tab stop; Tab wraps between them.
       await userEvent.keyboard('{Tab}')
-      await expect.element(screen.getByRole('button', { name: '取消' })).toHaveFocus()
+      await expect.element(screen.getByRole('button', { name: '关闭' })).toHaveFocus()
       await userEvent.keyboard('{Shift>}{Tab}{/Shift}')
       await expect.element(current).toHaveFocus()
     } finally {
@@ -962,7 +1034,7 @@ function Reshaping({ tall }: { tall: number }) {
         value="alpha"
         options={MODELS}
         onValueChange={() => {}}
-        width={adding ? 360 : undefined}
+        width={adding ? 'md' : undefined}
         onOpenChange={open => {
           if (!open) setAdding(false)
         }}
@@ -1003,7 +1075,7 @@ describe('a layer whose content changes', () => {
     await expect.poll(() => layer.dataset.side).toBe('top')
     expect(layerBox().top).toBeGreaterThanOrEqual(8)
     expect(layerBox().bottom).toBeLessThanOrEqual(480 - 6 + 0.5)
-    expect(layerBox().width).toBe(360)
+    expect(layerBox().width).toBe(400)
   })
 
   it('keeps a panel taller than either side inside the window, scrolling within, so its last control can be reached', async () => {

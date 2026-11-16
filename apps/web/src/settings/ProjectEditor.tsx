@@ -211,7 +211,7 @@ export function ProjectEditor({
                   value={project.defaultModel ? modelKey(project.defaultModel) : NO_MODEL}
                   disabled={busy}
                   searchable={snapshot.catalog.providers.reduce((sum, provider) => sum + provider.models.length, 0) >= 8}
-                  width={320}
+                  width="sm"
                   header={{ title: '这个项目的新会话用' }}
                   groups={[
                     { id: '~none', options: [{ value: NO_MODEL, label: '不设' }] },

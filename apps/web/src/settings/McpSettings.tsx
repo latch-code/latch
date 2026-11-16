@@ -792,7 +792,7 @@ function EnvDialog({
   return (
     <Dialog
       open={open}
-      size="form"
+      size="lg"
       title={fixed ? `更换 ${fixed} 的值` : header ? '添加请求头' : '添加环境变量'}
       onClose={() => {
         if (!busy) close()
@@ -872,7 +872,7 @@ function CommandDialog({
   return (
     <Dialog
       open={open}
-      size="form"
+      size="lg"
       title="编辑命令"
       onClose={() => {
         if (!busy) onClose()
@@ -946,7 +946,7 @@ function UrlDialog({
   return (
     <Dialog
       open
-      size="form"
+      size="lg"
       title="编辑地址"
       onClose={() => {
         if (!busy) onClose()
@@ -1010,7 +1010,7 @@ function ClientDialog({
   return (
     <Dialog
       open
-      size="form"
+      size="lg"
       title="Client ID"
       onClose={() => {
         if (!busy) onClose()

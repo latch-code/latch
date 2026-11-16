@@ -404,7 +404,7 @@ function AgentDraftDialog({
     <Dialog
       open
       title="让 Agent 做"
-      size="sheet"
+      size="lg"
       className="agent-draft-dialog"
       onClose={() => {
         if (!busy) onClose()

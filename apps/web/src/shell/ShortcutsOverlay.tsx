@@ -32,7 +32,7 @@ export function ShortcutsOverlay({
   return (
     <Dialog
       open
-      size="wide"
+      size="xl"
       className="shortcuts-overlay"
       title="快捷键"
       onClose={onClose}

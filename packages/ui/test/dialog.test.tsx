@@ -22,7 +22,7 @@ function Project({ onClose }: { onClose?: () => void }) {
         open={open}
         onClose={close}
         title="添加项目"
-        size="form"
+        size="lg"
         footer={
           <>
             <Button size="md" onClick={close}>
@@ -198,28 +198,27 @@ function Nested({ large = false }: { large?: boolean } = {}) {
 }
 
 describe('bottom sheet', () => {
-  it('is a modal titled by its header, with 取消 on the left that closes it', async () => {
+  it('is a modal titled by its header, with the one close button on the left that closes it, and focus on its content', async () => {
     const screen = await render(<Settings />)
     const sheet = screen.getByRole('dialog', { name: '运行设置' })
     await expect.element(sheet).toBeVisible()
-    await expect.element(screen.getByRole('button', { name: '完成' })).toBeVisible()
-    await userEvent.click(screen.getByRole('button', { name: '取消' }))
+    await expect.element(screen.getByRole('button', { name: '完成' })).toHaveFocus()
+    const close = screen.getByRole('button', { name: '关闭' }).element()
+    expect(
+      close.getBoundingClientRect().left - sheet.element().querySelector('.ui-sheet-surface')!.getBoundingClientRect().left,
+    ).toBeLessThan(24)
+    await userEvent.click(close)
     await expect.element(screen.getByRole('dialog', { name: '运行设置' })).not.toBeInTheDocument()
   })
 
-  it("starts 取消's text and ends the action on the 16px column of the sheet's body, with 取消 at the regular weight", async () => {
+  it("ends the action on the 16px column of the sheet's body", async () => {
     const screen = await render(<Settings />)
     const sheet = screen.getByRole('dialog', { name: '运行设置' }).element()
     const surface = sheet.querySelector('.ui-sheet-surface')!.getBoundingClientRect()
-    const cancel = screen.getByRole('button', { name: '取消' }).element()
-    const words = document.createRange()
-    words.selectNodeContents(cancel)
-    expect(Math.round(words.getBoundingClientRect().left - surface.left)).toBe(16)
     expect(Math.round(surface.right - screen.getByRole('button', { name: '完成' }).element().getBoundingClientRect().right)).toBe(16)
-    expect(getComputedStyle(cancel).fontWeight).toBe('400')
   })
 
-  it('ends a long title in an ellipsis between 取消 and the action, which keep their whole width', async () => {
+  it('ends a long title in an ellipsis between the close button and the action, which keep their whole width', async () => {
     const title = '修复设置页保存模型服务之后 API Key 会被清空，并且补上回归测试与说明'
     const screen = await render(
       <div style={{ width: 390 }}>
@@ -234,7 +233,7 @@ describe('bottom sheet', () => {
         />
       </div>,
     )
-    const cancel = screen.getByRole('button', { name: '取消' }).element().getBoundingClientRect()
+    const cancel = screen.getByRole('button', { name: '关闭' }).element().getBoundingClientRect()
     const start = screen.getByRole('button', { name: '开始' }).element().getBoundingClientRect()
     const heading = screen.getByRole('heading', { name: title }).element()
     const box = heading.getBoundingClientRect()
@@ -242,7 +241,7 @@ describe('bottom sheet', () => {
     expect(box.right).toBeLessThanOrEqual(start.left)
     // The words are cut, not squeezed: each button keeps the width of its own text.
     expect(heading.scrollWidth).toBeGreaterThan(heading.clientWidth)
-    for (const name of ['取消', '开始']) {
+    for (const name of ['关闭', '开始']) {
       const button = screen.getByRole('button', { name }).element()
       expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth)
     }
@@ -327,14 +326,14 @@ describe('bottom sheet', () => {
     await userEvent.click(screen.getByRole('button', { name: '打开' }))
     await expect.element(screen.getByRole('dialog', { name: '会话操作' })).toBeVisible()
     expect(open).toHaveBeenCalledTimes(1)
-    // Going back closes it as 取消 would.
+    // Going back closes it as its close button would.
     back?.()
     await expect.element(screen.getByRole('dialog', { name: '会话操作' })).not.toBeInTheDocument()
     expect(release).toHaveBeenCalledTimes(1)
     // Closed from the sheet itself, it gives its place back.
     await userEvent.click(screen.getByRole('button', { name: '打开' }))
     await expect.element(screen.getByRole('dialog', { name: '会话操作' })).toBeVisible()
-    await userEvent.click(screen.getByRole('button', { name: '取消' }))
+    await userEvent.click(screen.getByRole('button', { name: '关闭' }))
     await expect.element(screen.getByRole('dialog', { name: '会话操作' })).not.toBeInTheDocument()
     expect(open).toHaveBeenCalledTimes(2)
     expect(release).toHaveBeenCalledTimes(2)
@@ -348,6 +347,17 @@ describe('bottom sheet', () => {
     await userEvent.keyboard('{Escape}')
     await expect.element(screen.getByRole('dialog', { name: '模型' })).not.toBeInTheDocument()
     await expect.element(screen.getByRole('dialog', { name: '新会话' })).toBeVisible()
+  })
+
+  it('lets only the outermost modal dim and blur the page: one opened over it brings no scrim of its own', async () => {
+    const screen = await render(<Nested />)
+    await userEvent.click(screen.getByRole('button', { name: '模型' }))
+    const inner = screen.getByRole('dialog', { name: '模型' }).element()
+    const outer = screen.getByRole('dialog', { name: '新会话' }).element()
+    await expect.element(inner).toBeVisible()
+    expect([outer.hasAttribute('data-stacked'), inner.hasAttribute('data-stacked')]).toEqual([false, true])
+    expect(getComputedStyle(inner, '::backdrop').backdropFilter).toBe('none')
+    expect(getComputedStyle(outer, '::backdrop').backdropFilter).toBe('blur(4px)')
   })
 
   it('closes when its top is dragged down past a third of its height', async () => {

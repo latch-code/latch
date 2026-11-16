@@ -183,7 +183,7 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
           <MenuFooterNote icon={TONE_ICON[note.tone]}>{note.text}</MenuFooterNote>
         ) : undefined
       }
-      width={260}
+      size="sm"
       trigger={menu => {
         if (triggerRef) triggerRef.current = menu
         const open = () => {

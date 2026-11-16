@@ -90,7 +90,7 @@ export function ImportDialog({
   return (
     <Dialog
       open={open}
-      size="form"
+      size="lg"
       title={chosen ? `从 ${chosen.name} 导入` : '从项目导入'}
       onClose={close}
       footer={

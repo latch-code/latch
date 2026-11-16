@@ -16,7 +16,6 @@ export function SplitButton({
   size = 'sm',
   menuLabel,
   sections,
-  menuWidth,
   menuDisabled = false,
   className,
   children,
@@ -27,7 +26,6 @@ export function SplitButton({
   /** The chevron's accessible name, its tooltip and the menu's name: 更多 Git 操作. */
   menuLabel: string
   sections: MenuSection[]
-  menuWidth?: number
   menuDisabled?: boolean
 }) {
   return (
@@ -38,7 +36,6 @@ export function SplitButton({
       <Menu
         label={menuLabel}
         sections={sections}
-        width={menuWidth}
         align="end"
         trigger={menu => (
           <Tooltip content={menuLabel} describe={false}>

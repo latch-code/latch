@@ -57,7 +57,7 @@ const LOCKED_SOURCES: ReadonlyArray<[file: string, what: string, needle: RegExp]
     '只读输入框的原因（权限没确认）',
     /className="composer-readonly" role="note" data-lock=""[\s\S]+className="composer-readonly" role="note" data-lock=""/u,
   ],
-  ['composer/QuestionDrawer.tsx', '提问卡', /className="composer-drawer question-card"[\s\S]{0,160}data-lock=""/u],
+  ['composer/QuestionDrawer.tsx', '提问卡', /<Drawer\s+ref=\{card\}\s+className="question-card"[\s\S]{0,160}data-lock=""/u],
   [
     'components/ToolCard.tsx',
     '工具卡的状态（结果未知）',
@@ -75,7 +75,7 @@ const LOCKED_SOURCES: ReadonlyArray<[file: string, what: string, needle: RegExp]
   ['panel/delivery/PullRequestSection.tsx', 'PR 结果未知', /<Line\s+locked\s[\s\S]+?PR 结果未知/u],
   ['phone-review/PhoneReview.tsx', '发送结果未知', /className="phone-review-foot-text" data-lock="">[\s\S]{0,160}发送结果未知/u],
   ['shell/ConversationView.tsx', '权限漂移与权限没确认的停止行', /className="composer-stop"\s+data-secure=""/u],
-  ['composer/ApprovalDrawer.tsx', '审批卡', /className="composer-drawer approval-panel"\s+data-secure=""/u],
+  ['composer/ApprovalDrawer.tsx', '审批卡（Drawer 的 secure 渲染 data-secure）', /<Drawer\s+className="approval-panel"\s+secure\s/u],
   ['agents/parts.tsx', '不先问你、权限没确认', /data-lock=\{tone === 'warn' \? '' : undefined\}[\s\S]+locked=\{amber\}/u],
   [
     'settings/SettingsPage.tsx',

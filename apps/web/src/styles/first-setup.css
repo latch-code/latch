@@ -119,8 +119,8 @@
   }
 
   .first-setup.ui-modal-page > .ui-modal-surface {
-    border-radius: var(--r-16);
-    box-shadow: var(--work-card-shadow);
+    border-radius: var(--modal-radius);
+    box-shadow: var(--sh-dialog);
   }
 }
 

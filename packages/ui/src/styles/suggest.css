@@ -1,10 +1,15 @@
+/*
+ * Suggestions under the input's caret: a pinned layer like a menu (the layer radius, sh-pop, in and out over --m-enter
+ * like every popover, fading out in place). On a phone (data-sheet) the same list is a sheet docked above the input:
+ * edge to edge, the modal radius on top, the dialog shadow.
+ */
 .ui-suggest {
   position: fixed;
   inset: auto;
   margin: 0;
   padding: var(--sp-4);
   border: 0;
-  border-radius: var(--r-8);
+  border-radius: var(--layer-radius);
   background: var(--raised);
   color: var(--ink);
   box-shadow: var(--sh-pop);
@@ -12,14 +17,26 @@
   opacity: 0;
   transform: translateY(4px);
   transition:
-    opacity var(--m-micro) var(--e-micro),
-    transform var(--m-micro) var(--e-micro);
+    opacity calc(var(--m-enter) * 0.7) var(--e-exit),
+    transform calc(var(--m-enter) * 0.7) var(--e-exit),
+    display calc(var(--m-enter) * 0.7) allow-discrete,
+    overlay calc(var(--m-enter) * 0.7) allow-discrete;
+}
+.ui-suggest[data-sheet] {
+  padding: var(--sp-8) var(--sp-8) var(--sp-4);
+  border-radius: var(--modal-radius) var(--modal-radius) 0 0;
+  box-shadow: var(--sh-dialog);
 }
 .ui-suggest:popover-open {
   display: flex;
   flex-direction: column;
   opacity: 1;
   transform: none;
+  transition:
+    opacity var(--m-enter) var(--e-enter),
+    transform var(--m-enter) var(--e-enter),
+    display var(--m-enter) allow-discrete,
+    overlay var(--m-enter) allow-discrete;
 }
 .ui-suggest:not([popover]) {
   position: relative;
@@ -142,7 +159,7 @@
 @media (prefers-reduced-motion: reduce) {
   .ui-suggest {
     transform: none;
-    transition-property: opacity;
+    transition-property: opacity, display, overlay;
   }
   @starting-style {
     .ui-suggest:popover-open {

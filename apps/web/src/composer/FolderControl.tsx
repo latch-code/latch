@@ -127,7 +127,7 @@ export function FolderControl({
       leading={picked ? FolderGit2 : FolderGlyph}
       value={value}
       disabled={disabled}
-      width={360}
+      width="md"
       align="start"
       onOpenChange={open => {
         if (open) read()

@@ -727,7 +727,7 @@ describe('visual capture of the real product', () => {
     await target.keyboard.press('Escape')
     await rowMenu.waitFor({ state: 'hidden' })
 
-    // Its 重命名 and 删除 ask in sheets of their own: 取消 · the question · the action.
+    // Its 重命名 and 删除 ask in sheets of their own: close · the question · the action.
     for (const [surface, item, dialog, action, description] of [
       ['navigation-rename', '重命名', '重命名会话', '保存', 'renaming a session from its row'],
       ['navigation-delete', '删除', '删除会话', '删除', 'the confirmation before a session is deleted'],
@@ -737,17 +737,17 @@ describe('visual capture of the real product', () => {
       await rowMenu.getByRole('menuitem', { name: item, exact: true }).click()
       const ask = target.getByRole('dialog', { name: dialog, exact: true })
       await ask.waitFor()
-      await reachable(ask.getByRole('button', { name: '取消', exact: true }))
+      await reachable(ask.getByRole('button', { name: '关闭', exact: true }))
       await reachable(ask.getByRole('button', { name: action, exact: true }), { allowDisabled: true })
       await settleMotion(target)
       await scrollList('top')
       await recorder.capture(target, viewport, surface, description)
-      await ask.getByRole('button', { name: '取消', exact: true }).click()
+      await ask.getByRole('button', { name: '关闭', exact: true }).click()
       await ask.waitFor({ state: 'hidden' })
     }
     expect((await detail(sessions.unread)).summary.title).toBe(title)
 
-    // A long title ends in an ellipsis between 取消 and the edge; neither covers the other.
+    // A long title ends in an ellipsis between the close button and the edge; neither covers the other.
     const longTitle = '修复设置页保存模型服务之后 API Key 会被清空的问题，并补上回归测试与说明'
     await local.json(`tasks/${sessions.unread}`, { method: 'PATCH', body: { title: longTitle } })
     await row(sessions.unread).getByText(longTitle).waitFor()
@@ -755,7 +755,7 @@ describe('visual capture of the real product', () => {
     const longMenu = target.getByRole('dialog', { name: longTitle, exact: true })
     await longMenu.waitFor()
     const header = await longMenu.locator('.ui-sheet-header').evaluate(bar => {
-      const cancel = bar.querySelector('.ui-sheet-cancel')!.getBoundingClientRect()
+      const cancel = bar.querySelector('.ui-sheet-close')!.getBoundingClientRect()
       const heading = bar.querySelector('.ui-sheet-title')!
       return { apart: cancel.right <= heading.getBoundingClientRect().left, cut: heading.scrollWidth > heading.clientWidth }
     })

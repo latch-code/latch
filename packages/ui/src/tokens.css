@@ -60,8 +60,6 @@
     --fs-work-card: 16px;
     --lh-work-card: 23px;
     --ls-work-title: -0.02em;
-    --r-9: 9px;
-    --r-14: 14px;
     --sp-14: 14px;
     --sp-28: 28px;
 
@@ -163,7 +161,6 @@
     --tip-bg: #17171a;
     --tip-ink: #fafafa;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.3);
-    --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.18);
     /* A key cap looks like a key: its own face, an edge and a 2px lower lip. A tag is not a key: a quiet fill, no edge. */
     --key: #fbfbfc;
     --sh-key: inset 0 0 0 1px rgba(18, 18, 28, 0.16), inset 0 -2px 0 rgba(18, 18, 28, 0.13);
@@ -277,9 +274,10 @@
     --sp-64: 64px;
     --bleed: 6px;
 
-    /* Radii: 4 kbd and badge; 6 rows, tabs, small buttons and tooltips; 8 buttons, inputs, menus, code and toasts; 12
-     * cards, groups and popovers; 16 the composer, dialogs, the palette and the user's bubble; full for send and stop,
-     * dots and pills. 2 only for bars and small glyphs. A brand tile rounds by size × 0.225. */
+    /* Radii: 4 kbd and badge; 6 rows, tabs, small buttons and tooltips; 8 buttons, inputs and code; 12 cards, groups,
+     * popovers, menus, suggestions and toasts; 16 the composer, its drawers, dialogs, sheets, the palette and the user's
+     * bubble; full for send and stop, dots and pills. 2 only for bars and small glyphs. A brand tile rounds by
+     * size × 0.225. */
     --r-2: 2px;
     --r-4: 4px;
     --r-6: 6px;
@@ -287,6 +285,30 @@
     --r-12: 12px;
     --r-16: 16px;
     --r-full: 999px;
+
+    /* Overlays: one table for every layer over the page (DESIGN「浮层」). Widths step through five sizes only: xs a
+     * short value list, sm menus, pickers and popovers, md the permission and usage panels and the confirmations, lg
+     * forms and the palette, xl two columns. One radius per kind: tooltips 6, popovers, menus and suggestions 12,
+     * dialogs, sheets and the drawers on the composer 16. Shadows by layer: sh-tip, sh-pop (popovers, menus,
+     * suggestions, toasts), sh-lift (the composer and its drawers), sh-dialog (dialogs and sheets over the scrim).
+     * Stacking outside the top layer, lowest first: a card floating over its column, the scrim of a slide-over, the
+     * slide-over, the focused input over the page, a phone's full-window page, toasts. Popovers, menus, dialogs and
+     * sheets are in the browser's top layer above all of these. Only the outermost modal blurs. */
+    --layer-xs: 240px;
+    --layer-sm: 320px;
+    --layer-md: 400px;
+    --layer-lg: 560px;
+    --layer-xl: 720px;
+    --tip-radius: var(--r-6);
+    --layer-radius: var(--r-12);
+    --modal-radius: var(--r-16);
+    --scrim-blur: 4px;
+    --z-float: 20;
+    --z-scrim: 30;
+    --z-slide: 40;
+    --z-focus: 45;
+    --z-page: 50;
+    --z-toast: 60;
 
     /* Motion: short, calm and physical; it confirms a cause and its effect, and never idles, with two exceptions: the
      * faces of 我的 Agent (--agent-*), which blink and
@@ -539,7 +561,6 @@
       --tip-bg: #2e2e34;
       --tip-ink: #ececef;
       --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-      --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       --key: #2e2e34;
       --sh-key: inset 0 0 0 1px rgba(255, 255, 255, 0.13), inset 0 -2px 0 rgba(0, 0, 0, 0.5);
       --tag: rgba(255, 255, 255, 0.08);
@@ -643,7 +664,6 @@
     --tip-bg: #2e2e34;
     --tip-ink: #ececef;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     --key: #2e2e34;
     --sh-key: inset 0 0 0 1px rgba(255, 255, 255, 0.13), inset 0 -2px 0 rgba(0, 0, 0, 0.5);
     --tag: rgba(255, 255, 255, 0.08);
@@ -730,8 +750,6 @@
     --fs-work-card: 16px !important;
     --lh-work-card: 23px !important;
     --ls-work-title: -0.02em !important;
-    --r-9: 9px !important;
-    --r-14: 14px !important;
     --sp-14: 14px !important;
     --sp-28: 28px !important;
     --hairline: var(--line) !important;
@@ -797,7 +815,6 @@
     --tip-bg: #17171a !important;
     --tip-ink: #fafafa !important;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.3) !important;
-    --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.18) !important;
     --key: #fbfbfc !important;
     --sh-key: inset 0 0 0 1px rgba(18, 18, 28, 0.16), inset 0 -2px 0 rgba(18, 18, 28, 0.13) !important;
     --tag: rgba(18, 18, 28, 0.065) !important;
@@ -892,6 +909,9 @@
     --r-12: 12px !important;
     --r-16: 16px !important;
     --r-full: 999px !important;
+    --tip-radius: var(--r-6) !important;
+    --layer-radius: var(--r-12) !important;
+    --modal-radius: var(--r-16) !important;
   }
 
   @media (max-width: 767.98px) {
@@ -976,7 +996,6 @@
       --tip-bg: #2e2e34 !important;
       --tip-ink: #ececef !important;
       --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
-      --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
       --key: #2e2e34 !important;
       --sh-key: inset 0 0 0 1px rgba(255, 255, 255, 0.13), inset 0 -2px 0 rgba(0, 0, 0, 0.5) !important;
       --tag: rgba(255, 255, 255, 0.08) !important;
@@ -1080,7 +1099,6 @@
     --tip-bg: #2e2e34 !important;
     --tip-ink: #ececef !important;
     --sh-tip: 0 6px 16px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
-    --sh-drawer: 0 -8px 24px -18px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
     --key: #2e2e34 !important;
     --sh-key: inset 0 0 0 1px rgba(255, 255, 255, 0.13), inset 0 -2px 0 rgba(0, 0, 0, 0.5) !important;
     --tag: rgba(255, 255, 255, 0.08) !important;

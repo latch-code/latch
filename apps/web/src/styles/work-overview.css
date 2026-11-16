@@ -717,7 +717,7 @@
   grid-area: material;
   min-width: 0;
   align-self: start;
-  border-radius: var(--r-14);
+  border-radius: var(--r-12);
   background: var(--work-sunken);
   background: light-dark(var(--work-sunken), var(--work-raised));
 }

@@ -201,7 +201,7 @@ export function CarryResults({
         <Dialog
           open={open}
           onClose={close}
-          size="form"
+          size="lg"
           title="带入上次成果"
           subtitle="作为引用文字放进输入框"
           footer={

@@ -471,7 +471,7 @@ describe('design tokens', () => {
     const [lockChosen] = blocks(`:root[data-theme='dark'] ${scope}`)
     // Layout, motion and the surface under an element stay free; every other token is locked.
     const free =
-      /^--(?:sidebar-width|sidebar-open-width|inspector-width|inspector-open-width|content-width|gutter|topbar-height|shell-inset|touch|m-[a-z]+|e-[a-z]+|surface)$/u
+      /^--(?:sidebar-width|sidebar-open-width|inspector-width|inspector-open-width|content-width|gutter|topbar-height|shell-inset|touch|layer-(?:xs|sm|md|lg|xl)|z-[a-z]+|scrim-blur|m-[a-z]+|e-[a-z]+|surface)$/u
     const expected = (theme: Map<string, string>) => [...theme].filter(([name]) => !free.test(name))
     expect([...(lockLight ?? [])]).toEqual(expected(block(':root')))
     expect([...(lockSystem ?? [])]).toEqual(expected(block(":root[data-theme='dark']")))
@@ -539,6 +539,24 @@ describe('design tokens', () => {
     }
   })
 
+  it('keeps one table for every overlay: five widths, a radius per kind on the scale, a stacking order, one blur', () => {
+    const light = block(':root')
+    const widths = [...light].filter(([name]) => /^--layer-(?!radius)/u.test(name))
+    expect(widths.map(([name]) => name)).toEqual(['--layer-xs', '--layer-sm', '--layer-md', '--layer-lg', '--layer-xl'])
+    const px = widths.map(([, value]) => parseFloat(value))
+    expect(px.every((value, index) => index === 0 || value > px[index - 1]!)).toBe(true)
+    expect(Object.fromEntries(['--tip-radius', '--layer-radius', '--modal-radius'].map(name => [name, light.get(name)]))).toEqual({
+      '--tip-radius': 'var(--r-6)',
+      '--layer-radius': 'var(--r-12)',
+      '--modal-radius': 'var(--r-16)',
+    })
+    const order = [...light].filter(([name]) => name.startsWith('--z-'))
+    expect(order.map(([name]) => name)).toEqual(['--z-float', '--z-scrim', '--z-slide', '--z-focus', '--z-page', '--z-toast'])
+    const levels = order.map(([, value]) => Number(value))
+    expect(levels.every((value, index) => index === 0 || value > levels[index - 1]!)).toBe(true)
+    expect(light.get('--scrim-blur')).toBe('4px')
+  })
+
   it('draws no corner shape: rounded rectangles take their radius from the scale alone', () => {
     expect(tokens).not.toMatch(/corner-shape/u)
     expect(Object.fromEntries([...block(':root')].filter(([name]) => name.startsWith('--r-')))).toEqual({
@@ -546,9 +564,7 @@ describe('design tokens', () => {
       '--r-4': '4px',
       '--r-6': '6px',
       '--r-8': '8px',
-      '--r-9': '9px',
       '--r-12': '12px',
-      '--r-14': '14px',
       '--r-16': '16px',
       '--r-full': '999px',
     })

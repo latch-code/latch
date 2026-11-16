@@ -1123,61 +1123,9 @@
   }
 }
 
-/*
- * Drawers attach above the card as one object with it: as wide as the card, with a single 3px joint between each and
- * what is under it. The front drawer's lower corners and the card's upper ones are small, so they read as one piece cut
- * in two. The next item is said by a pager; nothing peeks behind.
- */
+/* The drawers (DrawerStack): 8px above the card whatever the dock's own gap. */
 .composer-drawers {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  margin-bottom: calc(-1 * var(--stack-gap));
-  padding-bottom: 3px;
-}
-.composer-drawers:empty {
-  display: none;
-}
-.composer-drawers + .composer {
-  z-index: 1;
-}
-.composer-drawers:not(:empty) + .composer,
-.composer-drawers:not(:empty) + .composer .run-bar-collapse,
-.composer-drawers:not(:empty) + .composer .run-bar {
-  border-start-start-radius: var(--r-4);
-  border-start-end-radius: var(--r-4);
-}
-.composer-drawer {
-  position: relative;
-  min-width: 0;
-  padding: var(--sp-12);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-16) var(--r-16) var(--r-4) var(--r-4);
-  background: var(--card);
-}
-.composer-drawer + .composer-drawer {
-  border-radius: var(--r-4);
-}
-/* The joint: a 3px groove under each drawer, a pixel in from each side, in the gap to what is under it. */
-.composer-drawer::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  bottom: -4px;
-  left: 0;
-  height: 3px;
-  background: var(--joint);
-  pointer-events: none;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .composer-drawer {
-    animation: drawer-in var(--m-push) var(--e-enter);
-  }
-}
-@keyframes drawer-in {
-  from {
-    transform: translateY(var(--sp-12));
-  }
+  margin-bottom: calc(var(--sp-8) - var(--stack-gap));
 }
 .clearing-drawer {
   display: flex;

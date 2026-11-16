@@ -216,7 +216,7 @@ export function PricesDialog({
   return (
     <Dialog
       open
-      size="form"
+      size="lg"
       title="单价"
       subtitle={<code className="settings-mono">{model}</code>}
       onClose={() => {
@@ -323,7 +323,7 @@ function BudgetDialog({
   return (
     <Dialog
       open
-      size="form"
+      size="lg"
       title="本月预算"
       note={
         <Hint label={timeZone ? `按这台 Mac 的时间算月（${timeZone}）` : '按这台 Mac 的时间算月'}>

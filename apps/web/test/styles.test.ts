@@ -193,10 +193,11 @@ describe('page stylesheets', () => {
 
   it('rounds corners only on the radius scale, without a corner shape', () => {
     // The scale (4, 6, 8, 12, 16, full and 2 for bars), circles, and what follows from it: a tile's size × 0.225, a
-    // nested radius, a primitive's own radius property and the app icon's ring, which follows its own artwork's corner.
+    // nested radius, a primitive's or an overlay kind's own radius property (--layer-radius) and the app icon's ring,
+    // which follows its own artwork's corner.
     const allowed = (value: string) => {
       // A value per corner, each a step of the scale or 0, or one value that follows from the scale.
-      const steps = value.replace(/var\(--r-(?:2|4|6|8|9|12|14|16|full)\)/gu, 'R')
+      const steps = value.replace(/var\(--(?:r-(?:2|4|6|8|12|16|full)|(?:tip|layer|modal)-radius)\)/gu, 'R')
       return (
         /^(?:(?:R|0)(?: |$))+$/u.test(steps)
         || /^(?:inherit|50%|20%|var\(--[\w-]+-radius\)|round\(calc\(.*\* 0\.225\), 1px\)|calc\(.*\))$/u.test(value)
@@ -205,6 +206,84 @@ describe('page stylesheets', () => {
     const wrong = declarations().filter(
       item => (/^border(?:-[a-z]+)*-radius$/u.test(item.property) && !allowed(item.value)) || item.property === 'corner-shape',
     )
+    expect(wrong.map(where)).toEqual([])
+  })
+
+  /*
+   * The overlays, by kind: each surface a layer is drawn on, as the class that names it. A rule styles the surface when
+   * the class is its selector's subject (what the last compound selects), with or without attributes and states.
+   */
+  const OVERLAYS = {
+    tooltip: ['ui-tooltip'],
+    popover: ['ui-popover', 'ui-suggest', 'ui-toast', 'side-question', 'conversation-rail-preview'],
+    drawer: ['ui-drawer'],
+    modal: [
+      'ui-dialog-surface',
+      'ui-modal-surface',
+      'ui-modal-dialog',
+      'ui-sheet-surface',
+      'command-palette',
+      'shortcuts-overlay',
+      'history-dialog',
+      'pair-sheet',
+    ],
+  } as const
+  const RULES: Record<keyof typeof OVERLAYS, { radius: string; shadow: string }> = {
+    tooltip: { radius: '--tip-radius', shadow: '--sh-tip|--sh-pop' },
+    popover: { radius: '--layer-radius', shadow: '--sh-pop' },
+    drawer: { radius: '--modal-radius', shadow: '--sh-lift' },
+    modal: { radius: '--modal-radius', shadow: '--sh-dialog' },
+  }
+  const kindOf = (selector: string): keyof typeof OVERLAYS | undefined => {
+    // A popover drawn as a phone sheet is a sheet.
+    if (/\[data-sheet\]$/u.test(selector)) return 'modal'
+    const subject = selector.split(',').map(part => part.trim().split(/\s+|>/u).at(-1) ?? '')
+    return (Object.keys(OVERLAYS) as Array<keyof typeof OVERLAYS>).find(kind =>
+      subject.some(compound => OVERLAYS[kind].some(name => new RegExp(`\\.${name}(?![\\w-])`, 'u').test(compound))),
+    )
+  }
+
+  it('sizes every overlay from the five steps of the layer scale, never a width of its own', () => {
+    const wrong = declarations().filter(
+      item =>
+        kindOf(item.selector)
+        && /^(?:min-|max-)?width$/u.test(item.property)
+        && /\b\d{3,}px/u.test(item.value)
+        && !item.value.includes('var(--layer-'),
+    )
+    expect(wrong.map(where)).toEqual([])
+  })
+
+  it('gives each kind of overlay its one radius and one shadow', () => {
+    const wrong = declarations().filter(item => {
+      const kind = kindOf(item.selector)
+      if (!kind) return false
+      if (/^border(?:-[a-z]+)*-radius$/u.test(item.property))
+        return !item.value.split(' ').every(part => part === '0' || part === `var(${RULES[kind].radius})`)
+      if (item.property === 'box-shadow') return !new RegExp(`^(?:none|var\\((?:${RULES[kind].shadow})\\))$`, 'u').test(item.value)
+      return false
+    })
+    expect(wrong.map(where)).toEqual([])
+  })
+
+  it('stacks what is not in the top layer by the z-order table: no high z-index of its own', () => {
+    const wrong = declarations().filter(item => item.property === 'z-index' && /^\d{2,}$/u.test(item.value))
+    expect(wrong.map(where)).toEqual([])
+  })
+
+  it('opens popovers and menus on --m-enter, drawers on --m-panel, and dialogs and sheets on --m-sheet', () => {
+    const timing: Record<keyof typeof OVERLAYS, string> = {
+      tooltip: '--m-enter',
+      popover: '--m-enter',
+      drawer: '--m-panel',
+      modal: '--m-sheet',
+    }
+    const wrong = declarations().filter(item => {
+      const kind = kindOf(item.selector)
+      if (!kind || !/^(?:animation|transition)$/u.test(item.property)) return false
+      const durations = [...item.value.matchAll(/var\((--m-[\w-]+)\)/gu)].map(match => match[1])
+      return durations.some(duration => duration !== timing[kind] && duration !== '--m-micro')
+    })
     expect(wrong.map(where)).toEqual([])
   })
 })

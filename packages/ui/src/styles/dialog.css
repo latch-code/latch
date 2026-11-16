@@ -1,8 +1,9 @@
 /*
- * Dialogs: native modal <dialog> elements over the scrim, which blurs what is behind it by 4px. The element itself is
- * only a transparent frame; the surface inside carries the pop colour, the 16px corners and the dialog shadow, so a
- * design sheet can show it in place. A dialog fades in from a scale of .985 over --m-sheet and the scrim with it;
- * closing plays it backwards in 70% of the time on the exit curve.
+ * Dialogs: native modal <dialog> elements over the scrim, which blurs what is behind it by --scrim-blur. The element
+ * itself is only a transparent frame; the surface inside carries the pop colour, the modal radius and the dialog shadow,
+ * so a design sheet can show it in place. A dialog fades in from a scale of .985 over --m-sheet and the scrim with it;
+ * closing plays it backwards in 70% of the time on the exit curve. A modal opened over another (data-stacked) brings no
+ * scrim of its own: the one under it already dims and blurs the page.
  */
 .ui-dialog,
 .ui-sheet {
@@ -72,8 +73,8 @@
 .ui-dialog::backdrop,
 .ui-sheet::backdrop {
   background: var(--scrim);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(var(--scrim-blur));
+  backdrop-filter: blur(var(--scrim-blur));
   opacity: 0;
   transition:
     opacity calc(var(--m-sheet) * 0.7) var(--e-exit),
@@ -94,34 +95,36 @@
     opacity: 0;
   }
 }
+:is(.ui-dialog, .ui-sheet, .ui-modal)[data-stacked]::backdrop {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
 .ui-dialog:focus-visible,
 .ui-sheet:focus-visible {
   outline: none;
 }
 
 /*
- * 480 for a confirmation, 560 for a form, 720 for two columns; never wider than the window less 16px a side. A dialog
- * is the highest surface (pop) over the scrim, with the dialog shadow.
+ * md for a confirmation, lg for a form, xl for two columns; never wider than the window less 16px a side. A dialog is
+ * the highest surface (pop) over the scrim, with the dialog shadow.
  */
 .ui-dialog-surface {
   --surface: var(--pop);
   display: flex;
   flex-direction: column;
-  width: min(480px, calc(100vw - 2 * var(--sp-16)));
+  width: min(var(--layer-md), calc(100vw - 2 * var(--sp-16)));
   max-height: calc(100dvh - 2 * var(--sp-32));
   overflow: hidden;
-  border-radius: var(--r-16);
+  border-radius: var(--modal-radius);
   background: var(--pop);
   box-shadow: var(--sh-dialog);
 }
-.ui-dialog-surface[data-size='sheet'] {
-  width: min(480px, calc(100vw - 2 * var(--sp-16)));
+.ui-dialog-surface[data-size='lg'] {
+  width: min(var(--layer-lg), calc(100vw - 2 * var(--sp-16)));
 }
-.ui-dialog-surface[data-size='form'] {
-  width: min(560px, calc(100vw - 2 * var(--sp-16)));
-}
-.ui-dialog-surface[data-size='wide'] {
-  width: min(720px, calc(100vw - 2 * var(--sp-16)));
+.ui-dialog-surface[data-size='xl'] {
+  width: min(var(--layer-xl), calc(100vw - 2 * var(--sp-16)));
 }
 /* A 56px header (title 15/22·600, an optional subtitle, close) without a rule under it; the body follows 4px below. */
 .ui-dialog-header {
@@ -164,7 +167,7 @@
   padding: var(--sp-24);
 }
 .ui-dialog-surface[data-placement='dock'] {
-  width: min(400px, calc(100vw - 2 * var(--sp-16)));
+  width: min(var(--layer-md), calc(100vw - 2 * var(--sp-16)));
 }
 .ui-dialog-surface[data-placement='dock'][data-bare] .ui-dialog-body {
   padding: var(--sp-20) var(--sp-24);
@@ -214,8 +217,8 @@
 }
 
 /*
- * Bottom sheets (phones): the sidebar's grey with 16px top corners, so the raised cards inside stand out; a grabber, a
- * 52px header (取消 · title · action) and the body. They slide up over --m-sheet and down in 70% of it. A tall sheet
+ * Bottom sheets (phones): the sidebar's grey with the modal radius on top, so the raised cards inside stand out; a
+ * grabber, a 52px header (close · title · action) and the body. They slide up over --m-sheet and down in 70% of it. A tall sheet
  * opens at 65% of the window and reaches 92% when dragged up; a form that needs the room stands at 92% from the
  * start. Reduced motion only fades them.
  */
@@ -272,7 +275,7 @@
   max-height: 65dvh;
   padding-bottom: env(safe-area-inset-bottom);
   overflow: hidden;
-  border-radius: var(--r-16) var(--r-16) 0 0;
+  border-radius: var(--modal-radius) var(--modal-radius) 0 0;
   background: var(--sidebar);
   box-shadow: var(--sh-dialog);
   transition: max-height var(--m-sheet) var(--e-sheet);
@@ -306,7 +309,7 @@
   align-items: center;
   gap: var(--sp-8);
   min-height: 52px;
-  /* 取消's text and the action's right edge land on the 16px column of the cards below. */
+  /* The close button's glyph and the action's right edge land on the 16px column of the cards below. */
   padding: 0 var(--sp-16) 0 var(--sp-8);
 }
 .ui-sheet-title {
@@ -320,11 +323,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 取消 only closes: quiet text at the regular weight, with 8px of padding so its words start 16 from the edge. */
-.ui-sheet-header .ui-sheet-cancel {
+/* The one way out of every sheet: an X on the left, a 44px tap target around its face. */
+.ui-sheet-header .ui-sheet-close {
   justify-self: start;
-  padding-inline: var(--sp-8);
-  font-weight: 400;
 }
 .ui-sheet-action {
   display: flex;
@@ -368,4 +369,19 @@
   .ui-sheet-surface {
     transition: none;
   }
+}
+
+/* A dialog drawn as a phone sheet: its body on the sheet's insets and its buttons sharing the bottom row, 44px tall. */
+.ui-sheet .ui-sheet-body.ui-dialog-body {
+  padding: var(--sp-4) var(--sp-16) var(--sp-16);
+}
+.ui-sheet .ui-dialog-footer {
+  min-height: 0;
+  padding: var(--sp-12) var(--sp-16) var(--sp-16);
+  background: transparent;
+  box-shadow: none;
+}
+.ui-sheet .ui-dialog-footer > .ui-button {
+  flex: 1;
+  min-height: 44px;
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { AgentQuestion, QuestionAnswer, QuestionReceipt, QuestionResult, QuestionSubmission } from '@latch/protocol'
-import { Button, Icon, InlineNotice, Kbd, MessageGlyph, Tooltip } from '@latch/ui'
+import { Button, Drawer, Icon, InlineNotice, Kbd, MessageGlyph, Tooltip } from '@latch/ui'
 import { api, inlineError, MessageError } from '../core/api.ts'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { cardTakesKeys, useArmed } from './useArmed.ts'
@@ -291,15 +291,15 @@ export function QuestionDrawer({
   }, [locked, armed, canAnswer, options, state, pageKeys])
   const last = draft.step === question.questions.length - 1
   return (
-    <section
+    <Drawer
       ref={card}
-      className="composer-drawer question-card"
+      className="question-card"
       // A question waits for the person: it keeps the product's own tokens under every customisation (tokens.css).
       data-lock=""
       data-presentation={presentation}
       data-compact={compact ? '' : undefined}
       data-arming={armed ? undefined : ''}
-      aria-label="Harness 提问">
+      label="Harness 提问">
       <div className="question-heading">
         <span className="question-kind" aria-hidden="true">
           <Icon icon={MessageGlyph} size={16} />
@@ -365,7 +365,7 @@ export function QuestionDrawer({
           ) : null}
         </div>
       )}
-    </section>
+    </Drawer>
   )
 }
 

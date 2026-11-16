@@ -264,7 +264,7 @@ export function DraftHarnessControl({
         ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
       }))}
       header={{ title: 'Harness' }}
-      width={adding ? 360 : 340}
+      width={adding ? 'md' : 'sm'}
       leading={harness ? <HarnessTile harness={harness} size={16} /> : HarnessGlyph}
       className="harness-picker"
       menuChevron
@@ -344,7 +344,7 @@ export function SessionHarnessControl({
   return (
     <Popover
       label="Harness"
-      width={320}
+      size="sm"
       side="top"
       trigger={props => (
         <button {...props} type="button" className="chip chip-harness" aria-label={`Harness：${name}`}>
@@ -795,7 +795,7 @@ export function DraftModelControl({
       groups={groups}
       searchable={count >= 8 && !adding}
       searchMatch={(option, query) => fuzzyModelMatch(option.label, query)}
-      width={adding ? 360 : 320}
+      width={adding ? 'md' : 'sm'}
       {...(provider ? { leading: <ProviderTile provider={provider} size={14} /> } : {})}
       className={choice.model ? 'model-picker is-id' : 'model-picker'}
       header={modelHeader()}
@@ -915,7 +915,7 @@ export function SessionModelControl({
         groups={groups}
         searchable={count >= 8}
         searchMatch={(option, query) => fuzzyModelMatch(option.label, query)}
-        width={320}
+        width="sm"
         {...(provider ? { leading: <ProviderTile provider={provider} size={14} /> } : {})}
         className={model ? 'model-picker is-id' : 'model-picker'}
         header={modelHeader()}
@@ -1076,7 +1076,7 @@ function HarnessModelPicker({
       header={modelHeader()}
       menuChevron
       searchable={groups.reduce((sum, group) => sum + group.options.length, 0) >= 8}
-      width={360}
+      width="md"
       pending={writing || reading}
       pendingLabel={reading ? '正在读取…' : slow ? `等 ${name} 回应…` : '正在切换…'}
       disabled={locked !== undefined || disabled === true}

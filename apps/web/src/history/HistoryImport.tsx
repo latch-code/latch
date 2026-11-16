@@ -193,6 +193,7 @@ function HistoryImportDialog({
     <Modal
       label={HISTORY_COPY.entry}
       variant={phone ? 'page' : 'dialog'}
+      size="xl"
       className="history-dialog"
       onClose={() => {
         if (level.kind === 'preview') back()

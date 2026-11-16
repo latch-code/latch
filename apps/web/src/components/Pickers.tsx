@@ -154,7 +154,7 @@ export function ModelPicker({
       groups={groups}
       searchable={(count > 8 || showHidden) && !adding}
       searchMatch={(option, query) => fuzzyModelMatch(`${option.label} ${option.description ?? ''}`, query)}
-      width={adding ? 360 : undefined}
+      width={adding ? 'md' : undefined}
       leading={provider ? <ProviderTile provider={provider} size={16} /> : ModelGlyph}
       className={`${variant === 'row' ? 'new-sheet-row ' : ''}model-picker`}
       disabled={disabled}
@@ -359,7 +359,7 @@ export function ProjectPicker({
       }
       placeholder={NO_PROJECT}
       header={{ title: '项目' }}
-      width={320}
+      width="sm"
       value={value}
       groups={groups}
       disabled={disabled}

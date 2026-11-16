@@ -47,7 +47,7 @@ export function MoreMenu({
     <span className="composer-more">
       <Popover
         label="更多选项"
-        width={272}
+        size="sm"
         side="top"
         align="end"
         trigger={props => <IconButton {...props} size="sm" icon={MoreGlyph} label="更多选项" />}>

@@ -279,7 +279,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
       <Dialog
         open={adding}
         title="添加插件"
-        size="sheet"
+        size="lg"
         onClose={() => setAdding(false)}
         footer={
           <>
@@ -301,7 +301,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
       <Dialog
         open={editor !== null}
         title={record ? record.name : '新建插件'}
-        size="wide"
+        size="xl"
         subtitle="应用前不会运行编辑中的代码"
         onClose={() => {
           if (!locked) {

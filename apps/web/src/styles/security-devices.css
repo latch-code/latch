@@ -151,20 +151,20 @@
 }
 
 /*
- * 连接手机: a 420 by 540 sheet. The code stays dark on white in both themes so scanners read it; while a device is being
- * confirmed it dims and blurs, and the device's name rises over it.
+ * 连接手机: an md dialog (a sheet on a phone). The code stays dark on white in both themes so scanners read it; while a
+ * device is being confirmed it dims and blurs, and the device's name rises over it.
  */
-.pair-sheet.ui-modal-dialog {
-  width: min(420px, calc(100vw - 32px));
-}
-.pair-sheet .ui-modal-surface {
+.pair-sheet :is(.ui-modal-surface, .ui-sheet-surface) {
   display: flex !important;
   background-color: var(--pop) !important;
 }
 .pair-sheet .ui-modal-header {
   display: flex !important;
 }
-.pair-sheet .ui-modal-header h2 {
+.pair-sheet .ui-sheet-header {
+  display: grid !important;
+}
+.pair-sheet :is(.ui-modal-header h2, .ui-sheet-title) {
   display: block !important;
   color: var(--ink) !important;
   font-size: var(--fs-heading) !important;

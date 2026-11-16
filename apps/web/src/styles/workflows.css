@@ -120,18 +120,13 @@
   background-color: color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
-.command-palette {
-  width: min(576px, calc(100vw - var(--sp-32)));
+/* The palette is a dialog like any other (the scrim, the blur, --m-sheet), standing near the top of the window. */
+.command-palette.ui-modal-dialog {
+  width: min(var(--layer-lg), calc(100vw - var(--sp-32)));
   max-height: min(420px, calc(100dvh - 12vh - var(--sp-16)));
   margin: 12vh auto auto;
 }
-.command-palette::backdrop {
-  background: color-mix(in srgb, var(--scrim) 50%, transparent);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
 .command-palette > .ui-modal-surface {
-  animation: ui-sheet-in var(--m-enter) var(--e-enter);
   transform-origin: top center;
 }
 .command-palette .ui-search,
@@ -297,8 +292,8 @@
 }
 
 /*
- * The shortcuts over the session (⌘/): 880 wide, the search in the title row beside the close button, the rows in two
- * columns, the footer's hint and the way to 设置 › 快捷键.
+ * The shortcuts over the session (⌘/): an xl dialog, the search in the title row beside the close button, the rows in
+ * two columns, the footer's hint and the way to 设置 › 快捷键.
  */
 /* Near the top of the window, so the session's input stays in view below it. */
 .shortcuts-overlay.ui-dialog {
@@ -306,7 +301,6 @@
 }
 .shortcuts-overlay .ui-dialog-surface {
   position: relative;
-  width: min(880px, calc(100vw - 2 * var(--sp-16)));
   max-height: calc(100dvh - 52px - var(--sp-32));
 }
 .shortcuts-overlay-search {
@@ -441,20 +435,19 @@
   position: absolute;
   inset-block-end: calc(100% + var(--sp-8));
   inset-inline-end: var(--gutter);
-  z-index: 20;
+  z-index: var(--z-float);
   display: flex;
   flex-direction: column;
-  width: min(420px, calc(100% - 2 * var(--gutter)));
+  width: min(var(--layer-md), calc(100% - 2 * var(--gutter)));
   max-height: min(60vh, 560px);
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
+  border-radius: var(--layer-radius);
   background: var(--card);
   box-shadow: var(--sh-pop);
 }
 .side-question[data-phone] {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-page);
   width: auto;
   max-height: none;
   border: 0;

@@ -214,11 +214,11 @@ describe('PanelTabs', () => {
 })
 
 describe('DrawerStack', () => {
-  const stack = (keys: string[], arming = false) => (
+  const stack = (keys: string[], secure: string[] = []) => (
     <LiveChanges.Provider value="live">
       <DrawerStack>
         {keys.map(key => (
-          <Drawer key={key} arming={arming} label={key}>
+          <Drawer key={key} label={key} secure={secure.includes(key)}>
             <button type="button">{`答 ${key}`}</button>
           </Drawer>
         ))}
@@ -226,24 +226,17 @@ describe('DrawerStack', () => {
     </LiveChanges.Provider>
   )
 
-  it('has inset 20, overlap 14 and top radius 16, and caps what is behind the front drawer', async () => {
+  it('shows every drawer whole as a card with the modal radius, 8px apart, and opens nothing on hover', async () => {
     const screen = await render(<div style={{ width: 500 }}>{stack(['a', 'b'])}</div>)
     const [back, front] = Array.from(screen.container.querySelectorAll<HTMLElement>('.ui-drawer'))
     const style = getComputedStyle(front!)
-    expect([style.marginLeft, style.marginRight, style.marginBottom, style.borderTopLeftRadius]).toEqual(['20px', '20px', '-14px', '16px'])
-    expect(back!.dataset.capped).toBe('')
-    expect(front!.dataset.capped).toBeUndefined()
-    expect(back!.getBoundingClientRect().height).toBe(24)
-    expect(back!.getBoundingClientRect().width / front!.getBoundingClientRect().width).toBeLessThan(1)
-    expect(back!.querySelector('.ui-drawer-body')!.hasAttribute('inert')).toBe(true)
-  })
-
-  it('opens the stack on hover and on a tap', async () => {
-    const screen = await render(stack(['a', 'b']))
-    const back = () => screen.container.querySelector<HTMLElement>('.ui-drawer')!
-    await page.getByRole('group', { name: 'b' }).hover()
-    await expect.poll(() => back().dataset.capped).toBeUndefined()
-    await expect.poll(() => back().getBoundingClientRect().height).toBeGreaterThan(24)
+    expect([style.borderTopLeftRadius, style.borderBottomRightRadius]).toEqual(['16px', '16px'])
+    expect(front!.getBoundingClientRect().top - back!.getBoundingClientRect().bottom).toBe(8)
+    expect(back!.getBoundingClientRect().width).toBe(front!.getBoundingClientRect().width)
+    const before = back!.getBoundingClientRect().height
+    await page.getByRole('region', { name: 'b' }).hover()
+    expect(back!.getBoundingClientRect().height).toBe(before)
+    expect(back!.hasAttribute('inert')).toBe(false)
   })
 
   it('slides what appears and keeps what goes until it has left, when the page saw it', async () => {
@@ -254,8 +247,18 @@ describe('DrawerStack', () => {
     await expect.poll(() => screen.container.querySelectorAll('.ui-drawer[data-entering]').length).toBe(1)
     await screen.rerender(stack(['a']))
     expect(screen.container.querySelectorAll('.ui-drawer[data-leaving]').length).toBe(1)
-    expect(screen.container.querySelector('.ui-drawer[data-leaving] .ui-drawer-body')!.hasAttribute('inert')).toBe(true)
+    expect(screen.container.querySelector('.ui-drawer[data-leaving]')!.hasAttribute('inert')).toBe(true)
     await expect.poll(() => screen.container.querySelectorAll('.ui-drawer').length).toBe(1)
+  })
+
+  it('never moves a security surface: it appears and is taken away at once', async () => {
+    const screen = await render(stack(['a'], ['b']))
+    await screen.rerender(stack(['a', 'b'], ['b']))
+    const secure = screen.container.querySelector<HTMLElement>('.ui-drawer[data-secure]')!
+    expect(secure.dataset.entering).toBeUndefined()
+    await screen.rerender(stack(['a'], ['b']))
+    expect(screen.container.querySelectorAll('.ui-drawer')).toHaveLength(1)
+    expect(screen.container.querySelector('.ui-drawer[data-secure]')).toBeNull()
   })
 
   it('shows and removes at once when the state was established again', async () => {
@@ -263,7 +266,9 @@ describe('DrawerStack', () => {
       <LiveChanges.Provider value={epoch}>
         <DrawerStack>
           {keys.map(key => (
-            <Drawer key={key}>{key}</Drawer>
+            <Drawer key={key} label={key}>
+              {key}
+            </Drawer>
           ))}
         </DrawerStack>
       </LiveChanges.Provider>
@@ -272,49 +277,6 @@ describe('DrawerStack', () => {
     await screen.rerender(swap('two', ['b']))
     expect(Array.from(screen.container.querySelectorAll('.ui-drawer'), item => item.textContent)).toEqual(['b'])
     expect(screen.container.querySelector('.ui-drawer[data-entering]')).toBeNull()
-  })
-
-  it('keeps an arming drawer inert for 320ms after it appears', async () => {
-    const screen = await render(stack(['a'], true))
-    const body = screen.container.querySelector('.ui-drawer-body')!
-    expect(body.hasAttribute('inert')).toBe(true)
-    await wait(200)
-    expect(body.hasAttribute('inert')).toBe(true)
-    await expect.poll(() => body.hasAttribute('inert')).toBe(false)
-  })
-
-  it('arms a drawer again when it comes to the front', async () => {
-    const screen = await render(
-      <>
-        <p>别处</p>
-        {stack(['a', 'b'], true)}
-      </>,
-    )
-    await screen.getByText('别处').hover()
-    await wait(400)
-    const first = screen.container.querySelector<HTMLElement>('.ui-drawer')!
-    expect(first.querySelector('.ui-drawer-body')!.hasAttribute('inert')).toBe(true)
-    await screen.rerender(
-      <>
-        <p>别处</p>
-        {stack(['a'], true)}
-      </>,
-    )
-    await expect.poll(() => first.dataset.capped).toBeUndefined()
-    expect(first.querySelector('.ui-drawer-body')!.hasAttribute('inert')).toBe(true)
-    await expect.poll(() => first.querySelector('.ui-drawer-body')!.hasAttribute('inert')).toBe(false)
-  })
-
-  it('arms a drawer again when it reaches the front of a stack that is already open', async () => {
-    const screen = await render(stack(['a', 'b'], true))
-    await page.getByRole('group', { name: 'b' }).hover()
-    const body = () => screen.container.querySelector('.ui-drawer-body')!
-    await expect.poll(() => body().hasAttribute('inert')).toBe(false)
-    await screen.rerender(stack(['a'], true))
-    expect(body().hasAttribute('inert')).toBe(true)
-    await wait(200)
-    expect(body().hasAttribute('inert')).toBe(true)
-    await expect.poll(() => body().hasAttribute('inert')).toBe(false)
   })
 })
 

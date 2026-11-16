@@ -22,7 +22,6 @@
 }
 
 .history-dialog.ui-modal-dialog {
-  width: min(640px, calc(100vw - 32px));
   height: min(720px, calc(100dvh - 64px));
 }
 .history-dialog > .ui-modal-surface {

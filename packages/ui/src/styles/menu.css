@@ -1,27 +1,28 @@
 /*
  * Layers pinned to a trigger: a menu, a picker, a popover with content of its own (role=dialog) and a form shown in a
- * picker's place. Each is the highest surface (pop, solid) with 12px corners, lifted by sh-lift: no rules, but a hair
- * between groups. A menu keeps 6px inside. They are at least 220 wide and sit 6px from the trigger, in the top layer,
- * so no scrolling list or dialog clips them. Opening fades them in from a scale of .98 toward the trigger over
- * --m-enter; closing plays it backwards in 70% of the time. A dot or count inside is cut out in the pop colour. On the
- * pop face the faintest grey falls short of 4.5:1 in the dark theme, so a layer reads faint words in muted ink.
+ * picker's place. Each is the highest surface (pop, solid) with the layer radius, lifted by sh-pop: no rules, but a
+ * hair between groups. A menu keeps 6px inside. Their width is a step of the layer scale (data-size, sm by default) and
+ * they sit 6px from the trigger, in the top layer, so no scrolling list or dialog clips them. Opening fades them in
+ * from a scale of .98 toward the trigger over --m-enter; closing plays it backwards in 70% of the time, in place. A dot
+ * or count inside is cut out in the pop colour. On the pop face the faintest grey falls short of 4.5:1 in the dark
+ * theme, so a layer reads faint words in muted ink.
  */
 .ui-popover {
   --surface: var(--pop);
   --faint: var(--muted);
   position: fixed;
   inset: auto;
-  min-width: 220px;
+  width: var(--layer-sm);
   max-width: calc(100vw - 16px);
   margin: 0;
   padding: var(--sp-6);
   overflow: auto;
   overscroll-behavior: contain;
   border: 0;
-  border-radius: var(--r-12);
+  border-radius: var(--layer-radius);
   background: var(--pop);
   color: var(--ink);
-  box-shadow: var(--sh-lift);
+  box-shadow: var(--sh-pop);
   opacity: 0;
   transform: scale(0.98);
   transform-origin: top left;
@@ -30,6 +31,18 @@
     transform calc(var(--m-enter) * 0.7) var(--e-exit),
     display calc(var(--m-enter) * 0.7) allow-discrete,
     overlay calc(var(--m-enter) * 0.7) allow-discrete;
+}
+.ui-popover[data-size='xs'] {
+  width: var(--layer-xs);
+}
+.ui-popover[data-size='md'] {
+  width: var(--layer-md);
+}
+.ui-popover[data-size='lg'] {
+  width: var(--layer-lg);
+}
+.ui-popover[data-size='xl'] {
+  width: var(--layer-xl);
 }
 /* It grows out of the trigger's corner: the side it opens from, and the edge it lines up with. */
 .ui-popover[data-align='end'] {

@@ -483,7 +483,7 @@ describe('the phone stack', () => {
       await page.locator('.info-page').waitFor({ state: 'detached' })
       await page.locator('.topbar[data-phone]').getByRole('button', { name: '返回会话列表', exact: true }).click()
       const confirm = page.getByRole('dialog', { name: '放弃你的修改？', exact: true })
-      await confirm.getByRole('button', { name: '取消', exact: true }).click()
+      await confirm.getByRole('button', { name: '关闭', exact: true }).click()
       await confirm.waitFor({ state: 'hidden' })
       const conversation = page.locator('main.workspace')
       await expect.poll(() => conversation.getAttribute('data-leaving')).toBeNull()
@@ -552,8 +552,8 @@ describe('the phone stack', () => {
       const first = menu.getByRole('menuitem', { name: '重命名', exact: true })
       await expect.poll(() => first.evaluate(item => item === document.activeElement)).toBe(true)
       expect(await first.evaluate(item => getComputedStyle(item).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
-      // The menu is the design system's sheet, on the ground with 取消.
-      await page.getByRole('dialog', { name: title, exact: true }).getByRole('button', { name: '取消', exact: true }).click()
+      // The menu is the design system's sheet, on the ground, closed by its one close button.
+      await page.getByRole('dialog', { name: title, exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
       await menu.waitFor({ state: 'hidden' })
       await expect.poll(() => row.getAttribute('class')).not.toMatch(/\bis-held\b/)
       // 取消 shows while the search is in use, clears it and leaves the field.

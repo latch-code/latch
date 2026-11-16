@@ -115,7 +115,7 @@
 }
 .sidebar-nav-row {
   height: 34px;
-  border-radius: var(--r-9);
+  border-radius: var(--r-8);
 }
 .sidebar-work-computer {
   display: flex;
@@ -234,7 +234,7 @@
   color: var(--red);
 }
 .sidebar .session-item {
-  border-radius: var(--r-9);
+  border-radius: var(--r-8);
 }
 .sidebar .session-title {
   font-weight: 400;
@@ -281,7 +281,7 @@
   width: 180px;
   justify-content: start;
   background: var(--sunken);
-  border-radius: var(--r-9);
+  border-radius: var(--r-8);
   color: var(--muted);
 }
 .workbench-search .ui-kbd {
@@ -348,7 +348,7 @@
   margin-bottom: var(--sp-8);
 }
 .workbench-home-composer .composer {
-  border-radius: var(--r-14);
+  border-radius: var(--r-16);
   box-shadow: var(--work-card-shadow);
   padding-top: var(--sp-12);
 }
@@ -415,7 +415,7 @@
   margin-left: auto;
 }
 .workbench-home-composer .send-button {
-  border-radius: var(--r-9);
+  border-radius: var(--r-8);
 }
 .workbench-computer {
   display: inline-flex;
@@ -517,7 +517,7 @@
   align-items: start;
   gap: var(--sp-8);
   padding: var(--sp-10) var(--sp-12);
-  border-radius: var(--r-9);
+  border-radius: var(--r-8);
   background: var(--sunken);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
@@ -884,11 +884,7 @@
   line-height: var(--lh-work-wide-title);
 }
 .workspace .composer {
-  border-radius: var(--r-14);
-}
-.workspace .composer-drawers:not(:empty) + .composer {
-  border-start-start-radius: var(--r-14);
-  border-start-end-radius: var(--r-14);
+  border-radius: var(--r-16);
 }
 .workspace .composer-toolbar:not([data-rows='two']) > .composer-end {
   display: contents;
@@ -1054,7 +1050,7 @@
 .work-decision-result,
 .work-decision > .question-card {
   padding: var(--sp-16);
-  border-radius: var(--r-14);
+  border-radius: var(--r-16);
   background: var(--raised);
   box-shadow: var(--work-card-shadow);
 }
@@ -1144,7 +1140,7 @@
 .question-card[data-presentation]:not([data-compact]) .question-option {
   width: 100%;
   min-height: 38px;
-  border-radius: var(--r-9);
+  border-radius: var(--r-8);
 }
 @media (max-width: 767.98px) {
   .question-card[data-presentation]:not([data-compact]) .question-option {
@@ -1559,15 +1555,6 @@
   }
 }
 
-.work-decision > .composer-drawer::after {
-  display: none;
-}
-.composer-drawer[data-presentation]::after {
-  display: none;
-}
-.composer-drawer[data-presentation='conversation'] {
-  margin-bottom: var(--sp-8);
-}
 .question-card[data-compact] {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

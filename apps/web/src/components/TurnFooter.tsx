@@ -114,7 +114,7 @@ function SettledFacts({
       {incomplete && (
         <Popover
           label="用量不完整"
-          width={320}
+          size="sm"
           trigger={props => (
             <Button {...props} size="xs" variant="ghost" icon={InfoGlyph}>
               用量不完整
@@ -124,7 +124,7 @@ function SettledFacts({
         </Popover>
       )}
       {routedUsage && !incomplete && (
-        <Popover label="请求记录" width={320} trigger={props => <IconButton {...props} icon={InfoGlyph} label="请求记录" size="xs" />}>
+        <Popover label="请求记录" size="sm" trigger={props => <IconButton {...props} icon={InfoGlyph} label="请求记录" size="xs" />}>
           <Lines lines={requests} />
         </Popover>
       )}

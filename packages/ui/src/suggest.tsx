@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react'
-import { PHONE_QUERY, setPopover, useMediaQuery } from './internal.ts'
+import { PHONE_QUERY, pinLayer, setPopover, useMediaQuery } from './internal.ts'
 
 export interface SuggestItem {
   id: string
@@ -33,7 +33,12 @@ export interface SuggestProps {
   footer?: ReactNode
 }
 
-/** Suggestions keep focus in their input; the top-layer list prefers above, with a fallback for cards near the top. */
+/**
+ * Suggestions (slash commands, @ files) keep focus in their input: the list is a combobox's popup, the one layer that
+ * does not take focus on opening. It is placed by the same routine as every pinned layer, preferring above the input and
+ * as wide as it; on a phone it is drawn as a sheet across the visible window, docked above the input and the keyboard,
+ * and stays non-modal so typing goes on.
+ */
 export function Suggest({
   id,
   label,
@@ -60,51 +65,38 @@ export function Suggest({
     const anchor = anchorRef.current
     setPopover(element, open)
     if (!open || !element || !anchor) return undefined
-    const place = () => {
-      const target = anchor.getBoundingClientRect()
-      if (!target.width || !target.height || anchor.closest('[inert], [hidden], [aria-hidden="true"]')) {
-        setPopover(element, false)
-        dismiss.current()
-        return
-      }
-      const viewport = window.visualViewport
-      const top = viewport?.offsetTop ?? 0
-      const left = viewport?.offsetLeft ?? 0
-      const width = viewport?.width ?? innerWidth
-      const height = viewport?.height ?? innerHeight
-      const preferred = phone ? 206 : 304
-      const above = Math.max(0, target.top - top - 14)
-      const below = Math.max(0, top + height - target.bottom - 14)
-      const down = above < preferred && below > above
-      const room = down ? below : above
-      element.style.width = `${Math.min(target.width, Math.max(0, width - 16))}px`
-      element.style.maxHeight = `${Math.min(room, preferred)}px`
-      element.style.left = `${Math.max(left + 8, Math.min(target.left, left + width - element.offsetWidth - 8))}px`
-      const y = down ? target.bottom + 6 : target.top - 6 - element.offsetHeight
-      element.style.top = `${Math.max(top + 8, Math.min(y, top + height - element.offsetHeight - 8))}px`
+    // An input that is hidden or covered has nothing to suggest for.
+    const gone = () => {
+      const box = anchor.getBoundingClientRect()
+      return !box.width || !box.height || anchor.closest('[inert], [hidden], [aria-hidden="true"]') !== null
     }
-    place()
-    const resize = new ResizeObserver(place)
-    resize.observe(anchor)
-    resize.observe(element)
-    const ancestors = new MutationObserver(place)
+    const leave = () => {
+      setPopover(element, false)
+      dismiss.current()
+    }
+    if (gone()) {
+      leave()
+      return undefined
+    }
+    const unpin = pinLayer(anchor, element, {
+      align: 'start',
+      side: 'top',
+      gap: phone ? 0 : 6,
+      maxHeight: phone ? 260 : 304,
+      width: phone ? 'window' : 'anchor',
+    })
+    const ancestors = new MutationObserver(() => {
+      if (gone()) leave()
+    })
     for (let parent: HTMLElement | null = anchor; parent; parent = parent.parentElement)
       ancestors.observe(parent, { attributes: true, attributeFilter: ['hidden', 'inert', 'aria-hidden', 'class'] })
-    window.addEventListener('resize', place)
-    window.addEventListener('scroll', place, true)
-    window.visualViewport?.addEventListener('resize', place)
-    window.visualViewport?.addEventListener('scroll', place)
     const outside = (event: PointerEvent) => {
       if (event.target instanceof Node && !element.contains(event.target) && !anchor.contains(event.target)) dismiss.current()
     }
     document.addEventListener('pointerdown', outside, true)
     return () => {
-      resize.disconnect()
+      unpin()
       ancestors.disconnect()
-      window.removeEventListener('resize', place)
-      window.removeEventListener('scroll', place, true)
-      window.visualViewport?.removeEventListener('resize', place)
-      window.visualViewport?.removeEventListener('scroll', place)
       document.removeEventListener('pointerdown', outside, true)
       setPopover(element, false)
     }
@@ -134,6 +126,7 @@ export function Suggest({
       layerRef={layer}
       listRef={list}
       popover="manual"
+      sheet={phone}
     />
   )
 }
@@ -145,6 +138,8 @@ export interface SuggestPanelProps extends Pick<
   layerRef?: RefObject<HTMLDivElement | null>
   listRef?: RefObject<HTMLDivElement | null>
   popover?: 'manual'
+  /** Drawn as a phone sheet: edge to edge, the modal radius on top. */
+  sheet?: boolean
 }
 
 /** The suggestion surface on its own, for an embedded list or a design sheet. */
@@ -160,10 +155,11 @@ export function SuggestPanel({
   layerRef,
   listRef,
   popover,
+  sheet = false,
 }: SuggestPanelProps) {
   const visible = groups.filter(group => group.items.length || group.empty)
   return (
-    <div ref={layerRef} popover={popover} className="ui-suggest">
+    <div ref={layerRef} popover={popover} className="ui-suggest" data-sheet={sheet ? '' : undefined}>
       <div ref={listRef} id={id} role="listbox" aria-label={label} className="ui-suggest-list">
         {visible.map(group => (
           <div key={group.id} role="group" aria-label={group.label}>

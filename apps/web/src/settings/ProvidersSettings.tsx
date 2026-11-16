@@ -1114,7 +1114,7 @@ function ThinkingPicker({
       valueText={current === NO_THINKING ? '思考：默认' : `思考：${thinkingSetText(levels!)}`}
       options={[{ value: NO_THINKING, label: '默认' }, ...offered.map(set => ({ value: set.join(' '), label: thinkingSetText(set) }))]}
       header={{ title: '这个模型接受的思考' }}
-      width={300}
+      width="sm"
       disabled={disabled}
       onValueChange={value => {
         onChange(value === NO_THINKING ? undefined : value.split(' '))

@@ -396,7 +396,7 @@ export function SourceHandoffDock({
                     placeholder="选择会话"
                     value={sessionId}
                     disabled={locked}
-                    width={320}
+                    width="sm"
                     menuChevron
                     options={targets.slice(0, 50).map(task => ({ value: task.id, label: messageLine(task.title || '未命名会话', 48) }))}
                     onValueChange={setSessionId}

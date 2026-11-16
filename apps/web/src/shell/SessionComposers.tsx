@@ -1,7 +1,7 @@
 import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
 import { Eraser, GitFork } from 'lucide-react'
 import { NOT_ACCEPTED_5XX, type ModelRef, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
-import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph, LaptopGlyph } from '@latch/ui'
+import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph, LaptopGlyph, Drawer } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import {
   draftConfig,
@@ -395,91 +395,93 @@ export function SessionComposer({
     if (!summary || (!speaker && summary.personal)) return null
     return summary.modelRoute && catalog ? <RouteWarning catalog={catalog} route={summary.modelRoute} /> : null
   })()
-  const drawers = (
-    <>
-      {current && workspaceChanged.has(current.summary.id) && (
-        <WorkspaceRecovery
-          source={current}
-          workspaces={catalog?.workspaces ?? []}
-          workspaceId={recoveryProjects.get(current.summary.id)}
-          onWorkspaceChange={workspaceId => setRecoveryProjects(previous => new Map(previous).set(current.summary.id, workspaceId))}
-          forkSupported={catalog?.features?.fork === true}
-          harness={harnessInfo}
-          runGate={
-            access.scopes.has('run') && harnessInfo?.status === 'ready'
-              ? { allowed: true }
-              : { allowed: false, reason: '请先恢复发起会话权限和可用的 Harness。' }
-          }
-          phase={submission.pending ? 'unknown' : submission.sending || cancelling.has(current.summary.id) ? 'busy' : 'idle'}
-          onFork={(taskId, upToMessageId, workspaceId) => {
-            const draft = submission.draft
-            shell.startNewDraft({ draft }, () => {
-              submission.setFork({
-                taskId,
-                upToMessageId,
-                title: current.summary.title,
-                choice: { harnessId: current.summary.harnessId, workspaceId, mode: current.summary.mode ?? 'agent' },
-                source: forkSource(current, harnessInfo),
-              })
+  // Keyed, in order: the stack slides each one in and out as it comes and goes.
+  const drawers = [
+    current && workspaceChanged.has(current.summary.id) && (
+      <WorkspaceRecovery
+        key="recovery"
+        source={current}
+        workspaces={catalog?.workspaces ?? []}
+        workspaceId={recoveryProjects.get(current.summary.id)}
+        onWorkspaceChange={workspaceId => setRecoveryProjects(previous => new Map(previous).set(current.summary.id, workspaceId))}
+        forkSupported={catalog?.features?.fork === true}
+        harness={harnessInfo}
+        runGate={
+          access.scopes.has('run') && harnessInfo?.status === 'ready'
+            ? { allowed: true }
+            : { allowed: false, reason: '请先恢复发起会话权限和可用的 Harness。' }
+        }
+        phase={submission.pending ? 'unknown' : submission.sending || cancelling.has(current.summary.id) ? 'busy' : 'idle'}
+        onFork={(taskId, upToMessageId, workspaceId) => {
+          const draft = submission.draft
+          shell.startNewDraft({ draft }, () => {
+            submission.setFork({
+              taskId,
+              upToMessageId,
+              title: current.summary.title,
+              choice: { harnessId: current.summary.harnessId, workspaceId, mode: current.summary.mode ?? 'agent' },
+              source: forkSource(current, harnessInfo),
             })
-          }}
-        />
-      )}
-      {asked && (
-        <QuestionDrawer
-          presentation="conversation"
-          state={asked}
-          asker={speaker?.name ?? (harnessInfo ? harnessName(harnessInfo) : 'Harness')}
-          canAnswer={questionActions.canAnswer}
-          onOther={() => {
-            earlierDraft.release()
-            composerRef.current?.focus()
-          }}
-        />
-      )}
-      {approvals.length > 0 && (
-        <ApprovalDrawer
-          presentation="conversation"
-          {...(speaker ? { requester: speaker.name } : {})}
-          approvals={approvals}
-          messages={current?.messages ?? []}
-          index={approvalIndex}
-          onIndex={setApprovalIndex}
-          gateFor={gateFor}
-          busy={approvalBusy}
-          statuses={statuses}
-          onDecide={onDecide}
-          canRetry={shell.canRetryApproval}
-          rejectLabel={noteComposer?.rejectLabel}
-          {...(run ? { onStop: run.onCancel } : {})}
-        />
-      )}
-      {selectedId !== null && (submission.clearing || hostCleared) && (
-        <section className="composer-drawer clearing-drawer" aria-label="清空上下文">
-          <Icon icon={Eraser} size={14} />
-          <p role="status">
-            <strong>下一条消息开始新的上下文</strong>
-            {hostCleared && <span>上下文已经清空</span>}
-          </p>
-          {!hostCleared && (
-            <Button size="xs" onClick={() => shell.armClear(false)}>
-              保留上下文
-            </Button>
-          )}
-        </section>
-      )}
-      {selectedId !== null && current?.queue && current.queue.length > 0 && (
-        <QueueDrawer
-          key={selectedId}
-          sessionId={selectedId}
-          items={current.queue}
-          canSend={gate.kind === 'open' && sessionBlock === undefined && !submission.pending}
-          canRemove={access.scopes.has('run')}
-          onChanged={refresh}
-        />
-      )}
-    </>
-  )
+          })
+        }}
+      />
+    ),
+    asked && (
+      <QuestionDrawer
+        key="question"
+        presentation="conversation"
+        state={asked}
+        asker={speaker?.name ?? (harnessInfo ? harnessName(harnessInfo) : 'Harness')}
+        canAnswer={questionActions.canAnswer}
+        onOther={() => {
+          earlierDraft.release()
+          composerRef.current?.focus()
+        }}
+      />
+    ),
+    approvals.length > 0 && (
+      <ApprovalDrawer
+        key="approval"
+        presentation="conversation"
+        {...(speaker ? { requester: speaker.name } : {})}
+        approvals={approvals}
+        messages={current?.messages ?? []}
+        index={approvalIndex}
+        onIndex={setApprovalIndex}
+        gateFor={gateFor}
+        busy={approvalBusy}
+        statuses={statuses}
+        onDecide={onDecide}
+        canRetry={shell.canRetryApproval}
+        rejectLabel={noteComposer?.rejectLabel}
+        {...(run ? { onStop: run.onCancel } : {})}
+      />
+    ),
+    selectedId !== null && (submission.clearing || hostCleared) && (
+      <Drawer key="clearing" className="clearing-drawer" label="清空上下文">
+        <Icon icon={Eraser} size={14} />
+        <p role="status">
+          <strong>下一条消息开始新的上下文</strong>
+          {hostCleared && <span>上下文已经清空</span>}
+        </p>
+        {!hostCleared && (
+          <Button size="xs" onClick={() => shell.armClear(false)}>
+            保留上下文
+          </Button>
+        )}
+      </Drawer>
+    ),
+    selectedId !== null && current?.queue && current.queue.length > 0 && (
+      <QueueDrawer
+        key={`queue:${selectedId}`}
+        sessionId={selectedId}
+        items={current.queue}
+        canSend={gate.kind === 'open' && sessionBlock === undefined && !submission.pending}
+        canRemove={access.scopes.has('run')}
+        onChanged={refresh}
+      />
+    ),
+  ]
   const words = submission.pending === null ? (noteComposer?.placeholder ?? placeholder) : placeholder
   // A session no longer listed cannot be opened, so its retry stays here and gets the Host's definitive answer.
   const held = submission.pending

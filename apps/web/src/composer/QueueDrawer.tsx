@@ -1,7 +1,7 @@
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { PromptQueueItem } from '@latch/protocol'
-import { Button, Collapse, Dialog, InlineNotice, MOTION, TextAreaField } from '@latch/ui'
+import { Button, Collapse, Dialog, Drawer, InlineNotice, MOTION, TextAreaField } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
 import { VisibleText, escapeHiddenCharacters } from '../components/VisibleText.tsx'
 
@@ -72,7 +72,7 @@ function QueueEditor({ item, save, close }: { item: PromptQueueItem; save(text: 
     <Dialog
       open
       title="编辑排队内容"
-      size="form"
+      size="lg"
       onClose={() => {
         if (!busy) close()
       }}
@@ -157,7 +157,7 @@ export function QueueDrawer({
     <>
       {/* Rows enter after the ancestor is open; reopening a skipped until-found subtree can freeze its transitions. */}
       <Collapse key={opening} open={items.length > 0}>
-        <section className="composer-drawer prompt-queue" aria-label="排队发送" data-paused={paused ? '' : undefined}>
+        <Drawer className="prompt-queue" label="排队发送" data-paused={paused ? '' : undefined}>
           <p className="prompt-queue-title" role="status">
             {heading}
           </p>
@@ -215,7 +215,7 @@ export function QueueDrawer({
             )}
           />
           {error && <InlineNotice tone="warn">{error}</InlineNotice>}
-        </section>
+        </Drawer>
       </Collapse>
       {editing
         && createPortal(

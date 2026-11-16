@@ -116,20 +116,13 @@ it.each([
         .toBe(true)
       if (width === 390) {
         const files = page.getByRole('dialog', { name: '项目文件', exact: true })
-        const done = files.getByRole('button', { name: '完成', exact: true })
+        // The sheet closes the one way every sheet does: the 44px close button on the left of its header.
+        const done = files.locator('.ui-sheet-header').getByRole('button', { name: '关闭', exact: true })
         const hit = await done.evaluate(button => {
           const box = button.getBoundingClientRect()
-          const before = getComputedStyle(button, '::before')
-          return {
-            x: box.x + box.width / 2,
-            y: box.y - 5,
-            height: box.height - parseFloat(before.top) - parseFloat(before.bottom),
-            reachesTop: button.contains(document.elementFromPoint(box.x + box.width / 2, box.y - 5)),
-            reachesBottom: button.contains(document.elementFromPoint(box.x + box.width / 2, box.bottom + 5)),
-          }
+          return { x: box.x + box.width / 2, y: box.y + 4, height: box.height }
         })
         expect(hit.height).toBeGreaterThanOrEqual(44)
-        expect(hit.reachesTop && hit.reachesBottom).toBe(true)
         await page.mouse.click(hit.x, hit.y)
         await files.waitFor({ state: 'hidden' })
         expect(await input.inputValue()).toBe('给新项目的草稿')

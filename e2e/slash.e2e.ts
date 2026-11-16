@@ -81,7 +81,8 @@ describe('slash suggestions in the real composer', () => {
               expect(await list.getByRole('option', reportedPrompt).count()).toBe(1)
               const card = await input.locator('xpath=ancestor::form').boundingBox()
               const popup = await page.locator('.ui-suggest:popover-open').boundingBox()
-              expect(popup!.y + popup!.height).toBeLessThanOrEqual(card!.y - 5)
+              // Above the card; a phone docks it on the card as a sheet.
+              expect(popup!.y + popup!.height).toBeLessThanOrEqual(card!.y - (width < 768 ? -1 : 5))
               const before = (await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.length
               await input.press('ArrowDown')
               await input.press('Tab')

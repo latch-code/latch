@@ -84,7 +84,7 @@ function ThinkingPicker({
       header={{ title: '思考' }}
       menuChevron
       align="end"
-      width={240}
+      width="xs"
       // Never undefined: the picker would draw a single value as plain text that does not open.
       footer={content}
       pending={pending}

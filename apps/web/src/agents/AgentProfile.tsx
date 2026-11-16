@@ -488,12 +488,6 @@ export function ProfileLayer({ shell }: { shell: ShellState }) {
         open={shell.phone && shown !== null && readable}
         title={name}
         detent="large"
-        cancelLabel={null}
-        action={
-          <Button variant="ghost" onClick={shell.closeProfile}>
-            完成
-          </Button>
-        }
         className="agent-profile-sheet"
         onClose={() => {
           if (shell.phone) shell.closeProfile()

@@ -185,7 +185,7 @@ function ProjectCrumb({
     <span className="topbar-crumb">
       <Popover
         label="项目"
-        width={320}
+        size="sm"
         side="bottom"
         align="start"
         trigger={props => (

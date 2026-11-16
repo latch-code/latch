@@ -337,13 +337,7 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
 
   return (
     <Modal label={COPY.title} secure variant={phone ? 'sheet' : 'dialog'} className="pair-sheet" dismissible={!answering} onClose={onClose}>
-      {answering ? (
-        <header className="ui-modal-header">
-          <h2>{COPY.title}</h2>
-        </header>
-      ) : (
-        <ModalHeader title={COPY.title} onClose={onClose} />
-      )}
+      <ModalHeader title={COPY.title} {...(answering ? {} : { onClose })} />
       <div className="pair-body">{body}</div>
     </Modal>
   )

@@ -81,7 +81,7 @@ export function ModelFallbacksDialog({
   return (
     <Dialog
       open={open}
-      size="form"
+      size="lg"
       title="出错时改用"
       subtitle={<code className="settings-mono">{model}</code>}
       note={<Hint label="只在回复开始前">按顺序改发给下一个，每次都写进记录。Latch 内置从下一轮起用；其他 Harness 从新开的会话起用。</Hint>}
@@ -165,7 +165,7 @@ export function ModelFallbacksDialog({
           value={undefined}
           groups={groups}
           searchable={groups.reduce((sum, group) => sum + group.options.length, 0) >= 8}
-          width={320}
+          width="sm"
           disabled={busy || full || groups.length === 0}
           disabledReason={full ? `最多 ${MAX_MODEL_FALLBACKS} 个` : groups.length === 0 ? '没有其他已保存的模型' : undefined}
           onValueChange={key => {

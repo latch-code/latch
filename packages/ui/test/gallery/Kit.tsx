@@ -195,7 +195,7 @@ function Drawers() {
         <Cell caption="等你处理">
           <div className="gallery-drawers">
             <DrawerStack>
-              <Drawer key="a" tone="waiting" label="等你处理">
+              <Drawer key="a" label="等你处理">
                 <Waiting text="写入 Sidebar.tsx" count="1/2" />
               </Drawer>
             </DrawerStack>
@@ -216,7 +216,7 @@ function Drawers() {
         </Cell>
       </Row>
       <Row label="叠放">
-        <Cell caption="10px 的边与 96% 宽">
+        <Cell caption="每张都完整，间隔 8px">
           <div className="gallery-drawers">
             <DrawerStack>
               <Drawer key="q" label="接下来">
@@ -224,19 +224,19 @@ function Drawers() {
                   <span>接下来 · 2</span>
                 </div>
               </Drawer>
-              <Drawer key="a" tone="waiting" label="等你处理">
+              <Drawer key="a" label="等你处理">
                 <Waiting text="运行 git push" />
               </Drawer>
             </DrawerStack>
             <Card />
           </div>
         </Cell>
-        <Cell caption="点按钮看滑入、按钮 320ms 后才可点">
+        <Cell caption="点按钮看滑入与滑出">
           <LiveChanges.Provider value="gallery">
             <div className="gallery-drawers">
               <DrawerStack>
                 {Array.from({ length: count }, (_, index) => (
-                  <Drawer key={index} tone="waiting" arming label="等你处理">
+                  <Drawer key={index} label="等你处理">
                     <Waiting text={`第 ${index + 1} 项`} />
                   </Drawer>
                 ))}

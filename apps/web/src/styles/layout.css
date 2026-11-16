@@ -280,7 +280,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 }
 
 .drawer-backdrop {
-  z-index: 30;
+  z-index: var(--z-scrim);
 }
 
 /*
@@ -300,7 +300,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   }
   .sidebar {
     position: fixed;
-    z-index: 40;
+    z-index: var(--z-slide);
     top: var(--shell-inset);
     bottom: var(--shell-inset);
     left: var(--shell-inset);
@@ -725,11 +725,11 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
 .conversation-rail-preview {
   position: absolute;
   inset-inline-start: 100%;
-  width: min(320px, calc(100cqw - var(--conversation-rail-width) - var(--sp-8)));
+  width: min(var(--layer-sm), calc(100cqw - var(--conversation-rail-width) - var(--sp-8)));
   max-height: 100%;
   overflow: clip;
   padding: var(--sp-8) var(--sp-12);
-  border-radius: var(--r-8);
+  border-radius: var(--layer-radius);
   background: var(--pop);
   box-shadow: var(--sh-pop);
   color: var(--ink);
@@ -1300,7 +1300,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .inspector-column .sessi
   position: fixed;
   left: var(--toast-center);
   bottom: var(--toast-clearance);
-  z-index: 60;
+  z-index: var(--z-toast);
   /* Left at the centre leaves it half the window to fit into, so it would wrap long before the window's edge. */
   width: max-content;
   max-width: min(560px, calc(100vw - 32px));

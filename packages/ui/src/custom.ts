@@ -19,9 +19,7 @@ export const CUSTOM_TOKENS = [
   '--r-4',
   '--r-6',
   '--r-8',
-  '--r-9',
   '--r-12',
-  '--r-14',
   '--r-16',
   // 字号: the reading roles and their line heights.
   '--fs-meta',

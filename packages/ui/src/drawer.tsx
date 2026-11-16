@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ComponentProps,
   type ReactElement,
   type ReactNode,
 } from 'react'
@@ -14,12 +15,7 @@ import { LiveChanges, motionAllowed } from './changes.ts'
 import { cx } from './internal.ts'
 import { MOTION } from './motion.tsx'
 
-/** Buttons of an arming drawer take nothing for this long after it appears (they arm after its arrival). */
-const ARMING = 320
-
 interface Place {
-  capped: boolean
-  front: boolean
   entering: boolean
   leaving: boolean
   onLeft: () => void
@@ -27,75 +23,45 @@ interface Place {
 const StackPlace = createContext<Place | null>(null)
 
 /**
- * Something that waits on the composer (an approval, a question, the queue), attached above its card inside a
- * `DrawerStack`. `arming` keeps what it holds inert for 320ms each time it comes to the front, so a click or a key meant
- * for what was there before cannot answer it; a capped drawer is inert too, until the stack opens.
+ * Something that waits on the composer (an approval, a question, the queue, a note about the next message): a card
+ * docked above the composer's card, in a `DrawerStack`. It has the modal radius and the composer's own lift. It slides
+ * up when the page saw it arrive and back down as it goes; a security surface (`secure`) only appears and goes, never
+ * moving or fading, and what waits keeps its own words and glyph in amber. Whether its buttons take a press yet (they
+ * arm after it arrives) is the page's to say. The rest of the props go on the card itself.
  */
 export function Drawer({
-  tone = 'neutral',
-  arming = false,
   secure = false,
   label,
   className,
   children,
-}: {
-  /** waiting: for what needs the person; the surface stays neutral and its contents say so in amber. */
-  tone?: 'neutral' | 'waiting'
-  arming?: boolean
-  /** A security surface: the tokens are locked inside it (tokens.css). */
+  ...props
+}: Omit<ComponentProps<'section'>, 'aria-label'> & {
+  /** A security surface: the tokens are locked inside it (tokens.css) and its look is pinned (the page's security layer). */
   secure?: boolean
-  label?: string
-  className?: string
+  label: string
   children: ReactNode
 }) {
   const place = useContext(StackPlace)
-  const capped = place?.capped ?? false
   const leaving = place?.leaving ?? false
-  const front = place?.front ?? true
-  const [armed, setArmed] = useState(!arming)
-  const [arrival, setArrival] = useState(0)
-  // The render before this effect runs must not take a press: an arrival lowers `armed` during render. In an open stack
-  // a drawer behind the front one is not capped, so reaching the front is an arrival of its own.
-  const [was, setWas] = useState({ capped, front })
-  if (was.capped !== capped || was.front !== front) {
-    setWas({ capped, front })
-    if (arming && (was.capped !== capped || front)) {
-      setArmed(false)
-      setArrival(arrival + 1)
-    }
-  }
-  useEffect(() => {
-    if (!arming) {
-      setArmed(true)
-      return undefined
-    }
-    if (capped) return undefined
-    const timer = setTimeout(() => {
-      setArmed(true)
-    }, ARMING)
-    return () => {
-      clearTimeout(timer)
-    }
-  }, [arming, capped, arrival])
-  const inert = leaving || capped || !armed
+  // A security surface is taken away at once: nothing of it stays behind to fade.
+  useLayoutEffect(() => {
+    if (secure && leaving) place?.onLeft()
+  }, [secure, leaving, place])
   return (
-    <div
+    <section
+      {...props}
       className={cx('ui-drawer', className)}
-      role="group"
       aria-label={label}
-      data-tone={tone}
-      data-tint={tone === 'waiting' ? 'warn' : undefined}
       data-secure={secure ? '' : undefined}
-      data-capped={capped ? '' : undefined}
-      data-entering={place?.entering ? '' : undefined}
-      data-leaving={leaving ? '' : undefined}
+      data-entering={place?.entering && !secure ? '' : undefined}
+      data-leaving={leaving && !secure ? '' : undefined}
+      inert={leaving || props.inert}
       onAnimationEnd={event => {
+        props.onAnimationEnd?.(event)
         if (event.target === event.currentTarget && leaving) place?.onLeft()
       }}>
-      <div className="ui-drawer-body" inert={inert} data-arming={!armed ? '' : undefined}>
-        {children}
-      </div>
-    </div>
+      {children}
+    </section>
   )
 }
 
@@ -115,14 +81,11 @@ function reconcile(shown: Shown[], keys: string[], live: boolean): Shown[] {
 }
 
 /**
- * The drawers attached to the composer: inset 20 and overlapping its card by 14 with a top radius of 16. Render it just
- * above the card and give the card a higher stacking order, so that drawers slide from behind it. The last child is the
- * front drawer; the others peek above it as 10px caps at 96% width, and the stack opens while the pointer or the focus
- * is inside it, or after a tap on a touch screen.
- *
- * A child that appears slides up over --m-panel and one that goes slides back over 70% of that, each only when the page
- * saw it happen (`LiveChanges`): a restore or a switch of session shows the stack at once, and reduced motion only
- * fades. Each child needs a stable key.
+ * The drawers docked above the composer, in order, the last nearest the card, 8px apart and 8px above it. Render it
+ * just above the card. Every drawer is shown whole: nothing peeks, and nothing opens on hover. A child that appears
+ * slides up over --m-panel and one that goes slides back over 70% of that, each only when the page saw it happen
+ * (`LiveChanges`): a restore or a switch of session shows the stack at once, and reduced motion only fades. Each child
+ * needs a stable key.
  */
 export function DrawerStack({ className, children }: { className?: string; children: ReactNode }) {
   const epoch = useContext(LiveChanges)
@@ -130,8 +93,6 @@ export function DrawerStack({ className, children }: { className?: string; child
   const keys = elements.map(element => String(element.key))
   const [shown, setShown] = useState<Shown[]>(() => keys.map(key => ({ key, leaving: false, entering: false })))
   const [seenEpoch, setSeenEpoch] = useState(epoch)
-  const [open, setOpen] = useState(false)
-  const stack = useRef<HTMLDivElement>(null)
   // The last element of each child, which is what a child that has gone still shows while it leaves.
   const last = useRef(new Map<string, ReactElement>())
   useLayoutEffect(() => {
@@ -159,45 +120,12 @@ export function DrawerStack({ className, children }: { className?: string; child
     }
   }, [leaving])
 
-  // Tapped open on a touch screen, it closes on the next press outside.
-  useEffect(() => {
-    if (!open) return undefined
-    const press = (event: PointerEvent) => {
-      if (event.pointerType === 'touch' && !(event.target instanceof Node && stack.current?.contains(event.target))) setOpen(false)
-    }
-    addEventListener('pointerdown', press)
-    return () => {
-      removeEventListener('pointerdown', press)
-    }
-  }, [open])
-
-  const front = items.findLastIndex(item => !item.leaving)
   return (
-    <div
-      ref={stack}
-      className={cx('ui-drawer-stack', className)}
-      data-open={open ? '' : undefined}
-      onPointerEnter={event => {
-        if (event.pointerType !== 'touch') setOpen(true)
-      }}
-      onPointerLeave={event => {
-        if (event.pointerType !== 'touch') setOpen(false)
-      }}
-      onPointerUp={event => {
-        if (event.pointerType === 'touch') setOpen(true)
-      }}
-      onFocus={() => {
-        setOpen(true)
-      }}
-      onBlur={event => {
-        if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setOpen(false)
-      }}>
-      {items.map((item, index) => (
+    <div className={cx('ui-drawer-stack', className)} data-empty={items.length === 0 ? '' : undefined}>
+      {items.map(item => (
         <StackPlace.Provider
           key={item.key}
           value={{
-            capped: index !== front && !item.leaving && !open,
-            front: index === front,
             entering: item.entering,
             leaving: item.leaving,
             onLeft: () => {

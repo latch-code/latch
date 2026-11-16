@@ -204,8 +204,8 @@ export const MIN_PHONE_INPUT_PX = 16
 
 /** Radii move one step along the product's own steps (2, 4, 6, 8, 12, 16): no value off the scale. */
 const RADII: Record<Exclude<AppearanceRadius, 'default'>, Record<string, number>> = {
-  sharp: { '--r-4': 2, '--r-6': 4, '--r-8': 6, '--r-9': 6, '--r-12': 8, '--r-14': 12, '--r-16': 12 },
-  round: { '--r-4': 6, '--r-6': 8, '--r-8': 12, '--r-9': 12, '--r-12': 16, '--r-14': 16, '--r-16': 16 },
+  sharp: { '--r-4': 2, '--r-6': 4, '--r-8': 6, '--r-12': 8, '--r-16': 12 },
+  round: { '--r-4': 6, '--r-6': 8, '--r-8': 12, '--r-12': 16, '--r-16': 16 },
 }
 
 /** The type roles a text size moves: [size token, line-height tokens, size, line heights], wide windows then phones. */

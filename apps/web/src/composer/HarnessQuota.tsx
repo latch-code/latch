@@ -75,7 +75,7 @@ export function HarnessQuotaMark({ quota, harness }: { quota: HarnessQuota | und
     <span className="composer-control composer-quota">
       <Popover
         label={`${harness} 额度`}
-        width={296}
+        size="sm"
         side="top"
         align="start"
         trigger={props => (

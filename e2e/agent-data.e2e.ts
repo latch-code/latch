@@ -171,7 +171,7 @@ it('an Agent is exported to a file after a look at what it holds, and imported f
         // 导入: from the creation page; the preview first, with a Harness this computer does not have.
         if (phone) {
           const sheet = page.getByRole('dialog', { name: agent.name, exact: true })
-          await sheet.getByRole('banner').getByRole('button', { name: '完成', exact: true }).click()
+          await sheet.getByRole('banner').getByRole('button', { name: '关闭', exact: true }).click()
           await sheet.waitFor({ state: 'hidden' })
           await page.locator('.topbar').getByRole('button', { name: '返回', exact: true }).click()
         }

@@ -69,7 +69,7 @@ export function FieldDialog({
   return (
     <Dialog
       open={open}
-      size="form"
+      size="lg"
       title={title}
       subtitle={subtitle}
       note={note}

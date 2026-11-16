@@ -22,7 +22,7 @@ export function mergeRefs<T>(...refs: Array<Ref<T> | undefined>): RefCallback<T>
   }
 }
 
-/** Phones (below 768px): menus and pickers become bottom sheets there. */
+/** Phones (below 768px): popovers, menus, pickers and suggestions become bottom sheets there. */
 export const PHONE_QUERY = '(max-width: 767.98px)'
 
 export function useMediaQuery(query: string): boolean {
@@ -106,8 +106,13 @@ export interface AnchorOptions {
   /** Preferred side; the layer flips when the other side has more room. `auto` opens toward the side with more room. */
   side: 'bottom' | 'top' | 'auto'
   gap: number
-  /** Scrolls within past this height, however much room the window has. */
+  /** Scrolls within past this height. */
   maxHeight?: number
+  /**
+   * The layer's own width (the default), the trigger's (a suggestion list under its input), or the whole visible
+   * window's, edge to edge (the same list drawn as a sheet on a phone).
+   */
+  width?: 'own' | 'anchor' | 'window'
 }
 
 /** Keeps a layer 8px inside the window. */
@@ -126,31 +131,55 @@ export function layerSide(height: number, above: number, below: number, side: 'b
   return preferred < Math.min(height, 240) && other > preferred ? flip : side
 }
 
+/** The part of the window the person sees: on a phone with the keyboard up, the visual viewport above it. */
+function visibleWindow(): { top: number; left: number; width: number; height: number } {
+  const viewport = window.visualViewport
+  return viewport
+    ? { top: viewport.offsetTop, left: viewport.offsetLeft, width: viewport.width, height: viewport.height }
+    : { top: 0, left: 0, width: innerWidth, height: innerHeight }
+}
+
 /**
- * Places `layer` (a fixed-position element, usually in the top layer) next to `anchor` now, on every resize of the
- * window and whenever the layer itself changes size (its content turns into a taller panel, or it widens), until the
- * returned function is called. It writes the position straight onto the element and sets `data-side` to the side it
- * chose and `data-align` to the edge it lines up with, which the entrance reads to grow out of the trigger's corner.
- * A layer taller than the room on its side keeps inside the window with a max-height and scrolls within. Call it once
- * the layer is shown: a hidden layer has no size.
+ * The one placement routine of every layer pinned to a trigger (menus, pickers, popovers, suggestions, tooltips).
+ * Places `layer` (a fixed-position element, usually in the top layer) next to `anchor` now, on every resize or scroll
+ * of the window or its visible part, and whenever the layer itself changes size (its content turns into a taller panel,
+ * or it widens), until the returned function is called. It writes the position straight onto the element and sets
+ * `data-side` to the side it chose and `data-align` to the edge it lines up with, which the entrance reads to grow out
+ * of the trigger's corner. Collisions: it flips to the side with room, slides along the edge to stay 8px inside the
+ * window, and a layer taller than the room on its side keeps inside with a max-height and scrolls within. Call it once
+ * the layer is shown: a hidden layer has no size. When it is no longer called the layer stays where it was, so a
+ * closing layer fades out in place.
  */
-export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap, maxHeight = Infinity }: AnchorOptions): () => void {
+export function pinLayer(
+  anchor: Element,
+  layer: HTMLElement,
+  { align, side, gap, maxHeight = Infinity, width: sizing = 'own' }: AnchorOptions,
+): () => void {
   // Once placed, the layer prefers the side it is on, so content that changes height does not make it jump across.
   const box = anchor.getBoundingClientRect()
-  let chosen: 'bottom' | 'top' = side !== 'auto' ? side : box.top > innerHeight - box.bottom ? 'top' : 'bottom'
+  const start = visibleWindow()
+  let chosen: 'bottom' | 'top' = side !== 'auto' ? side : box.top - start.top > start.top + start.height - box.bottom ? 'top' : 'bottom'
   const place = () => {
     const target = anchor.getBoundingClientRect()
-    // The whole height, past any max-height it has now (the layer scrolls).
+    const view = visibleWindow()
+    const margin = sizing === 'window' ? 0 : WINDOW_MARGIN
+    if (sizing === 'anchor') layer.style.width = `${Math.min(target.width, Math.max(0, view.width - 2 * WINDOW_MARGIN))}px`
+    else if (sizing === 'window') layer.style.width = `${view.width}px`
+    // The whole height, past any max-height it has now: a layer that scrolls in a list of its own reports only the
+    // clamped height while clamped, so the clamp comes off for the measurement.
+    const clamp = layer.style.maxHeight
+    if (clamp) layer.style.maxHeight = ''
     const height = layer.scrollHeight
+    layer.style.maxHeight = clamp
     const width = layer.offsetWidth
-    const below = innerHeight - target.bottom - gap - WINDOW_MARGIN
-    const above = target.top - gap - WINDOW_MARGIN
+    const below = view.top + view.height - target.bottom - gap - WINDOW_MARGIN
+    const above = target.top - view.top - gap - WINDOW_MARGIN
     chosen = layerSide(height, above, below, chosen)
     const up = chosen === 'top'
     const room = Math.min(maxHeight, Math.max(120, up ? above : below))
     const top = up ? target.top - gap - Math.min(height, room) : target.bottom + gap
     const preferred = align === 'end' ? target.right - width : align === 'center' ? target.left + (target.width - width) / 2 : target.left
-    const left = Math.min(Math.max(WINDOW_MARGIN, preferred), Math.max(WINDOW_MARGIN, innerWidth - width - WINDOW_MARGIN))
+    const left = Math.min(Math.max(view.left + margin, preferred), Math.max(view.left + margin, view.left + view.width - width - margin))
     layer.style.top = `${Math.round(top)}px`
     layer.style.left = `${Math.round(left)}px`
     layer.style.maxHeight = height > room ? `${Math.floor(room)}px` : ''
@@ -160,9 +189,22 @@ export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap
   place()
   pinnedLayers.set(layer, place)
   addEventListener('resize', place)
+  // A scroll that moves the trigger moves the layer with it; one elsewhere (inside the layer) leaves both in place.
+  const scrolled = (event: Event) => {
+    if (event.target instanceof Node && event.target.contains(anchor)) place()
+  }
+  addEventListener('scroll', scrolled, true)
+  window.visualViewport?.addEventListener('resize', place)
+  window.visualViewport?.addEventListener('scroll', place)
   // What the layer holds, not the layer: placing changes only the layer's own box (its max-height), which is not
   // watched, so a placement never reports itself back. Content swapped in is watched from its first report.
-  const resized = new ResizeObserver(place)
+  // A frame later: placing can resize what is watched (a list as wide as its input), which must not loop back at once.
+  let frame = 0
+  const resized = new ResizeObserver(() => {
+    cancelAnimationFrame(frame)
+    frame = requestAnimationFrame(place)
+  })
+  if (sizing === 'anchor') resized.observe(anchor)
   const watch = () => {
     for (const child of layer.children) resized.observe(child)
   }
@@ -172,6 +214,10 @@ export function pinLayer(anchor: Element, layer: HTMLElement, { align, side, gap
   return () => {
     if (pinnedLayers.get(layer) === place) pinnedLayers.delete(layer)
     removeEventListener('resize', place)
+    removeEventListener('scroll', scrolled, true)
+    window.visualViewport?.removeEventListener('resize', place)
+    window.visualViewport?.removeEventListener('scroll', place)
+    cancelAnimationFrame(frame)
     resized.disconnect()
     swapped.disconnect()
   }
@@ -222,4 +268,12 @@ export function focusables(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(selector)).filter(
     element => element.tabIndex >= 0 && element.getClientRects().length > 0,
   )
+}
+
+/** The first control a layer should hand focus to on opening: never its close button, which only ends it. */
+export function firstMeaningful(container: HTMLElement): HTMLElement | null {
+  const controls = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-autofocus], a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+  ).filter(element => !element.closest('[data-layer-close]') && !element.matches(':disabled') && element.getClientRects().length > 0)
+  return controls.find(element => element.hasAttribute('data-autofocus')) ?? controls[0] ?? null
 }

@@ -143,7 +143,7 @@ export function AvatarPicker({
     <>
       <Popover
         label="头像"
-        width={360}
+        size="md"
         side="auto"
         align="start"
         onOpenChange={setOpen}
@@ -198,7 +198,7 @@ export function DraftAvatarPicker({ avatar, name, onPick }: { avatar: Avatar; na
   return (
     <Popover
       label="头像"
-      width={360}
+      size="md"
       side="auto"
       align="start"
       trigger={props => (

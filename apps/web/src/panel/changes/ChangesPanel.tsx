@@ -230,7 +230,7 @@ function UndoTurn({ list, onUndo, busy }: { list: ChangeList; onUndo: () => void
   return (
     <Popover
       label="撤销本轮"
-      width={360}
+      size="md"
       align="start"
       trigger={props => (
         <Button {...props} size="xs" variant="ghost" icon={UndoGlyph} loading={busy} loadingLabel="撤销中…">
@@ -887,7 +887,7 @@ function ReadableChanges({
       <div className="changes-scope-row">
         <Menu
           label="改动范围"
-          width={288}
+          size="sm"
           selection
           align="start"
           sections={[...(turns.length ? [keptTurns] : []), others, ...(gitHunks ? [gitViews] : [])]}

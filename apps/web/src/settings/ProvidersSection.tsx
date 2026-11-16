@@ -471,7 +471,7 @@ export function ProvidersSection({
       {snapshot.catalog?.features?.usage && <UsageSettings catalog={snapshot.catalog} reads={reads} />}
       <Dialog
         open={adding !== null && !!data}
-        size="sheet"
+        size="lg"
         title={SERVICE_FORM.title}
         onClose={closeAdd}
         footer={

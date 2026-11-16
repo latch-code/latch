@@ -116,6 +116,25 @@ describe('input suggestions', () => {
     expect(anchor.getBoundingClientRect().top).toBe(rectangle.top)
   })
 
+  it('is a sheet across the visible window on a phone, docked on the input, and leaves focus in it', async () => {
+    await page.viewport(390, 844)
+    try {
+      await render(<Fixture />)
+      await page.getByRole('textbox', { name: '消息' }).click()
+      const anchor = document.querySelector('textarea')!.parentElement!.getBoundingClientRect()
+      const layer = document.querySelector<HTMLElement>('.ui-suggest')!
+      await expect.poll(() => layer.matches(':popover-open')).toBe(true)
+      expect(layer.dataset.sheet).toBe('')
+      const box = layer.getBoundingClientRect()
+      expect([box.left, box.width]).toEqual([0, 390])
+      expect(Math.abs(box.bottom - anchor.top)).toBeLessThanOrEqual(1)
+      expect(getComputedStyle(layer).borderBottomLeftRadius).toBe('0px')
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('消息')
+    } finally {
+      await page.viewport(1280, 800)
+    }
+  })
+
   it('withdraws a top-layer list when its preserved conversation becomes inert', async () => {
     await render(<Fixture />)
     await page.getByRole('textbox', { name: '消息' }).click()

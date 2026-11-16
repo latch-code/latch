@@ -37,7 +37,7 @@ export function ConfirmDialog({
   const close = () => {
     if (!busy) onClose()
   }
-  // A phone asks in the design system's sheet: 取消 · the question · the action, with what it does in the body.
+  // A phone asks in the design system's sheet: close · the question · the action, with what it does in the body.
   if (phone)
     return (
       <Sheet

@@ -89,7 +89,7 @@ export function PermissionNote({ words, detail, tone }: { words: string; detail:
     <Popover
       label={`${words}：说明`}
       title={words}
-      width={320}
+      size="sm"
       trigger={props => (
         <Button
           {...props}

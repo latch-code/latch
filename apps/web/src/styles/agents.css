@@ -1583,7 +1583,7 @@ button.helper-card:focus-visible {
 }
 .space-list[data-people='roster'] .space-agent {
   height: 34px;
-  border-radius: var(--r-9);
+  border-radius: var(--r-8);
 }
 .space-agent:is([data-unavailable], [data-gone]) .space-agent-name {
   color: var(--muted);
@@ -1629,7 +1629,7 @@ button.helper-card:focus-visible {
   height: 56px;
   padding: 0 var(--sp-10);
   border: 0;
-  border-radius: var(--r-9);
+  border-radius: var(--r-8);
   background: transparent;
   color: var(--ink);
   text-align: left;
@@ -1691,7 +1691,7 @@ button.helper-card:focus-visible {
   margin-bottom: var(--sp-12);
   padding: 0 var(--sp-10);
   border: 0;
-  border-radius: var(--r-9);
+  border-radius: var(--r-8);
   background: transparent;
   color: var(--ink-2);
   font-size: var(--fs-ui);
@@ -1760,7 +1760,7 @@ button.helper-card:focus-visible {
   margin: 0;
   padding: var(--sp-16);
   border: 1px solid var(--line);
-  border-radius: var(--r-14);
+  border-radius: var(--r-12);
   color: var(--muted);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);

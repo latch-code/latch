@@ -28,7 +28,6 @@ import {
   MenuFooterNote,
   MenuPanel,
   MenuSearch,
-  PermissionMenu,
   PickerSheetBody,
   Radio,
   ResizeHandle,
@@ -64,7 +63,6 @@ import {
   type TileMark,
   type ButtonVariant,
   type IconSize,
-  type PermissionLevel,
   type SlotStatus,
   CheckGlyph,
   ChevronDownGlyph,
@@ -95,10 +93,43 @@ import {
   defineGlyph,
   LATCH_GLYPHS,
   BranchGlyph,
+  type ValuePickerProps,
 } from '../../src/index.ts'
 import { Cell, Row, Section } from './parts.tsx'
 import { Kit } from './Kit.tsx'
 import { V9 } from './V9.tsx'
+
+/** Ordered permission levels as a value picker, the way a page lists them: a consequence a line, 默认 on the default. */
+interface PermissionLevel<T extends string> {
+  value: T
+  title: string
+  description: string
+  risk?: boolean
+  disabledReason?: string
+}
+function PermissionMenu<T extends string>({
+  levels,
+  defaultValue,
+  reserve,
+  ...props
+}: Omit<ValuePickerProps<T>, 'options' | 'groups' | 'searchable' | 'width'> & { levels: Array<PermissionLevel<T>>; defaultValue?: T }) {
+  const start = (props.align ?? (props.size === 'xs' || props.bleed !== undefined ? 'end' : 'start')) === 'start'
+  return (
+    <ValuePicker
+      {...props}
+      reserve={reserve ?? start}
+      width="sm"
+      options={levels.map(level => ({
+        value: level.value,
+        label: level.title,
+        description: level.description,
+        ...(level.risk ? { risk: true } : {}),
+        ...(level.disabledReason ? { disabledReason: level.disabledReason } : {}),
+        ...(level.value === defaultValue ? { tag: <Badge>默认</Badge> } : {}),
+      }))}
+    />
+  )
+}
 
 /**
  * Every primitive of @latch/ui in every state, on one page, for the design review and the visual capture (surface
@@ -1291,7 +1322,7 @@ function Layers() {
         <Cell caption="表单 · 主按钮不可用">
           <DialogSurface
             title="添加项目"
-            size="form"
+            size="lg"
             onClose={() => {}}
             footer={
               <>
@@ -1431,7 +1462,7 @@ function Layers() {
           </SheetSurface>
         </div>
         <div className="gallery-phone">
-          <SheetSurface title="计划 1/2" cancelLabel={null} action={<Button variant="secondary">完成</Button>}>
+          <SheetSurface title="计划 1/2" onClose={() => {}}>
             <ol className="gallery-sheet-card">
               <li>读取设置页的保存逻辑</li>
               <li>修复空密钥被清除的问题</li>
@@ -1439,7 +1470,7 @@ function Layers() {
           </SheetSurface>
         </div>
         <div className="gallery-phone">
-          <SheetSurface title="运行设置" action={<Button variant="secondary">完成</Button>} onClose={() => {}}>
+          <SheetSurface title="运行设置" onClose={() => {}}>
             <div className="gallery-sheet-card">
               <ValuePicker variant="row" label="模型" value="fixture-large" options={MODELS} onValueChange={() => {}} />
               <ValuePicker

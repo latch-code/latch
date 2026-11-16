@@ -3,20 +3,21 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent
 import type { Approval, ApprovalOption, FileDiff, Message } from '@latch/protocol'
 import {
   Button,
-  Hint,
-  ICON_STROKE,
-  Icon,
-  IconButton,
-  InlineNotice,
-  Menu,
-  type MenuItem,
-  type MenuTriggerProps,
   ChevronLeftGlyph,
   ChevronRightGlyph,
+  Drawer,
   EditGlyph,
+  Hint,
+  Icon,
+  ICON_STROKE,
+  IconButton,
+  InlineNotice,
   LockGlyph,
+  Menu,
   TerminalGlyph,
   Tooltip,
+  type MenuItem,
+  type MenuTriggerProps,
   WaitingGlyph,
   WarningGlyph,
 } from '@latch/ui'
@@ -546,9 +547,9 @@ function ApprovalPanel({
     )
   }
   return (
-    <section
-      className="composer-drawer approval-panel"
-      data-secure=""
+    <Drawer
+      className="approval-panel"
+      secure
       data-presentation={presentation}
       data-document-review={documentReview && open ? '' : undefined}
       data-single-file={fileInHeading ? '' : undefined}
@@ -556,7 +557,7 @@ function ApprovalPanel({
       data-approval-id={approval.id}
       data-risk={approval.advisory ? 'advisory' : approval.risk}
       data-arming={armed ? undefined : ''}
-      aria-label="待批准操作"
+      label="待批准操作"
       ref={card}
       onKeyDown={keys}>
       <div className="approval-row">
@@ -749,6 +750,6 @@ function ApprovalPanel({
           }
         />
       )}
-    </section>
+    </Drawer>
   )
 }

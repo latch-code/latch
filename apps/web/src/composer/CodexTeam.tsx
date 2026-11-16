@@ -87,7 +87,7 @@ export function CodexTeam({
       <Dialog
         open={open}
         onClose={() => setOpen(false)}
-        size="form"
+        size="lg"
         title="Agent 团队"
         subtitle="当前会话中的 Codex 委派"
         className="codex-team-dialog"

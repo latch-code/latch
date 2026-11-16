@@ -1,47 +1,26 @@
 /*
- * Drawers attached to the composer: inset 20 from its card and overlapping it by 14, with a top radius of 16, on the
- * raised surface under a 1px line, waiting or not: what waits says so in amber words and an amber glyph. Extra drawers
- * peek as a cap: 10px in view above the one in front, at 96% width. The stack opens through the grid row, so nothing laid out
- * under it moves. A drawer slides up from behind the card over --m-panel and leaves at 70% of that on the exit curve;
- * reduced motion only fades.
+ * Drawers docked above the composer: whole cards on the raised surface with the modal radius and the composer's own
+ * lift (sh-lift), 8px apart and 8px above the card, as wide as it. What waits says so in amber words and an amber
+ * glyph; the surface stays neutral. A drawer slides up 12px and fades in over --m-panel and leaves the same way in 70%
+ * of that on the exit curve; reduced motion only fades. A security surface never moves (security.css).
  */
 .ui-drawer-stack {
-  position: relative;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  gap: var(--sp-8);
   min-width: 0;
+  margin-bottom: var(--sp-8);
+}
+.ui-drawer-stack[data-empty] {
+  display: none;
 }
 .ui-drawer {
   --surface: var(--raised);
-  --drawer-overlap: 14px;
   position: relative;
-  display: grid;
-  grid-template-rows: minmax(24px, 1fr);
   min-width: 0;
-  margin: 0 var(--sp-20) calc(-1 * var(--drawer-overlap));
-  border-radius: var(--r-16) var(--r-16) 0 0;
+  padding: var(--sp-12) var(--sp-12) var(--sp-12) var(--sp-16);
+  border-radius: var(--modal-radius);
   background: var(--raised);
-  box-shadow:
-    inset 0 0 0 1px var(--line),
-    var(--sh-drawer);
-  transition: grid-template-rows var(--m-panel) var(--e-panel);
-}
-.ui-drawer-body {
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  padding: var(--sp-10) var(--sp-12) var(--sp-24) var(--sp-16);
-  transition: opacity var(--m-micro) var(--e-micro);
-}
-.ui-drawer-body[data-arming] .ui-button {
-  opacity: 0.45;
-}
-.ui-drawer[data-capped] {
-  grid-template-rows: minmax(24px, 0fr);
-  margin-inline: calc(var(--sp-20) + 2%);
-}
-.ui-drawer[data-capped] > .ui-drawer-body {
-  opacity: 0;
+  box-shadow: var(--sh-lift);
 }
 .ui-drawer[data-entering] {
   animation: ui-drawer-in var(--m-panel) var(--e-panel);
@@ -53,19 +32,16 @@
 @keyframes ui-drawer-in {
   from {
     opacity: 0;
-    transform: translateY(100%);
+    transform: translateY(var(--sp-12));
   }
 }
 @keyframes ui-drawer-out {
   to {
     opacity: 0;
-    transform: translateY(100%);
+    transform: translateY(var(--sp-12));
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ui-drawer {
-    transition: none;
-  }
   .ui-drawer[data-entering],
   .ui-drawer[data-leaving] {
     animation-duration: var(--m-micro);
@@ -80,4 +56,11 @@
       opacity: 0;
     }
   }
+}
+:root[data-motion='reduce'] .ui-drawer:is([data-entering], [data-leaving]) {
+  animation-name: ui-fade-in;
+  animation-duration: var(--m-micro);
+}
+:root[data-motion='reduce'] .ui-drawer[data-leaving] {
+  animation-name: ui-fade-out;
 }

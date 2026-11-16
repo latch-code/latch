@@ -32,40 +32,12 @@
     min-height: 44px;
   }
 }
-.host-quota-popover {
-  position: fixed;
-  inset: auto;
-  width: min(360px, calc(100vw - 24px));
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  background: var(--pop);
-  color: var(--ink);
-  box-shadow: var(--sh-dialog);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.host-quota-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 48px;
-  padding: var(--sp-4) var(--sp-12);
-  border-bottom: 1px solid var(--line);
-}
-.host-quota-heading h2,
-.host-quota-harness h3 {
-  margin: 0;
-  font-size: var(--fs-ui);
-  font-weight: 600;
-}
 .host-quota-content {
   display: grid;
   gap: var(--sp-12);
 }
-.host-quota-popover .host-quota-content {
-  padding: var(--sp-12);
+.ui-popover > .host-quota-content {
+  padding: var(--sp-6);
 }
 .host-quota-harness + .host-quota-harness {
   padding-top: var(--sp-12);

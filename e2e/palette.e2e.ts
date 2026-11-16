@@ -229,7 +229,7 @@ it.each([
       // A request waits, so the way to it is a command at hand.
       await palette.getByRole('option', { name: '下一个等你处理的请求', exact: true }).waitFor()
       const frame = await palette.locator('.ui-modal-surface').boundingBox()
-      expect(frame!.width).toBe(Math.min(576, width - 32))
+      expect(frame!.width).toBe(Math.min(560, width - 32))
       expect(frame!.height).toBeLessThanOrEqual(420)
       expect(frame!.y).toBeCloseTo(height * 0.12, 0)
       await noHorizontalOverflow(page, palette)

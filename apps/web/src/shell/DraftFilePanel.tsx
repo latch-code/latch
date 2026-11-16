@@ -1,4 +1,4 @@
-import { Button, Sheet } from '@latch/ui'
+import { Sheet } from '@latch/ui'
 import { SessionPanels } from '../components/SessionPanels.tsx'
 import { fileContextKey } from '../preview/fileContext.ts'
 import { errorMessage } from '../core/api.ts'
@@ -67,18 +67,7 @@ export function DraftFilePanel({ shell, inline = false }: { shell: ShellState; i
   ) : null
   if (inline) return content
   return (
-    <Sheet
-      open={open}
-      onClose={onClose}
-      title="项目文件"
-      cancelLabel={null}
-      action={
-        <Button variant="ghost" onClick={onClose}>
-          完成
-        </Button>
-      }
-      detent="large"
-      className="draft-file-panel">
+    <Sheet open={open} onClose={onClose} title="项目文件" detent="large" className="draft-file-panel">
       {content}
     </Sheet>
   )

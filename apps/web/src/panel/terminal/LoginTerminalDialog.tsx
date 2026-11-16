@@ -48,7 +48,7 @@ function DetachedLogin({ run }: { run: LoginRun }) {
     <>
       <Dialog
         open
-        size="wide"
+        size="xl"
         className="login-terminal-dialog"
         title={<VisibleText text={name} />}
         closeLabel="关闭终端"

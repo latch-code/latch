@@ -12,16 +12,27 @@ import {
   type RefObject,
 } from 'react'
 import { CheckGlyph, ChevronDownGlyph, ChevronRightGlyph, UpDownGlyph, BlockedGlyph, LockGlyph, ShieldAlertGlyph } from './glyphs/index.tsx'
-import { Button } from './button.tsx'
 import { motionAllowed } from './changes.ts'
 import { ChoiceList } from './choice.tsx'
 import { Sheet } from './dialog.tsx'
 import { Icon, Spinner, type IconComponent } from './icon.tsx'
-import { cx, nextIndex, onAnchorScrolled, PHONE_QUERY, pinLayer, setPopover, useMediaQuery, useTypeahead } from './internal.ts'
-import { Badge } from './pill.tsx'
+import {
+  cx,
+  firstMeaningful,
+  nextIndex,
+  onAnchorScrolled,
+  PHONE_QUERY,
+  pinLayer,
+  setPopover,
+  useMediaQuery,
+  useTypeahead,
+} from './internal.ts'
 import { Tooltip } from './tooltip.tsx'
 
 // ---- The layer ----------------------------------------------------------------------------------------------------
+
+/** The five widths of a layer (tokens.css --layer-*): a short value list, menus, panels, forms, two columns. */
+export type LayerSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 
 export interface LayerPlacement {
   /** Settings rows and the inspector line the layer's right edge up with the trigger; the composer its left edge. */
@@ -426,15 +437,15 @@ export function Menu({
   sections,
   header,
   footer,
-  width,
+  size = 'xs',
   selection = false,
   className,
   ...placement
 }: Omit<PanelProps, 'onChoose' | 'onDismiss' | 'panelRef'>
   & LayerPlacement & {
     trigger: (props: MenuTriggerProps) => ReactNode
-    /** The layer's outer width; at least 220. */
-    width?: number
+    /** The layer's width, a step of the scale. */
+    size?: LayerSize
     title?: string
   }) {
   const phone = useMediaQuery(PHONE_QUERY)
@@ -494,7 +505,7 @@ export function Menu({
           {content}
         </Sheet>
       ) : (
-        <div ref={layer} popover="manual" className="ui-popover" style={width ? { width } : undefined}>
+        <div ref={layer} popover="manual" className="ui-popover" data-size={size}>
           {content}
         </div>
       )}
@@ -551,7 +562,7 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   pending?: boolean
   pendingLabel?: string
   /**
-   * For a start-aligned toolbar picker that can wait for verification (PermissionMenu turns it on there): it keeps
+   * For a start-aligned toolbar picker that can wait for verification: it keeps
    * room for the wider of the value and the pending label, so the arrow and what follows do not shift. The value still
    * starts right after the leading slot. The inspector's xs size and the phone row never reserve.
    */
@@ -574,8 +585,8 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
    * model switch that applies from the next message, 「下一条：…」). Read after the label as well.
    */
   valueText?: string
-  /** The menu layer's outer width (320 for permissions, 360 when searchable); at least 220. */
-  width?: number
+  /** The menu layer's width, a step of the scale: sm by default, md for the permission levels. */
+  width?: LayerSize
   /** A search row on top of the menu, for long lists such as models. */
   searchable?: boolean
   /** A new request opens this picker with an initial search; subsequent typing stays local to the picker. */
@@ -871,7 +882,7 @@ export function ValuePicker<T extends string>({
         popover="manual"
         className="ui-popover"
         data-panel={form === undefined ? undefined : ''}
-        style={{ width: width ?? (searchable ? 360 : undefined) }}
+        data-size={width ?? 'sm'}
         onFocusCapture={event => {
           if (event.target instanceof HTMLElement) lastMenuFocus.current = event.target
         }}
@@ -991,63 +1002,19 @@ export function PickerSheetBody<T extends string>({
   )
 }
 
-// ---- Permission menu ----------------------------------------------------------------------------------------------
-
-export interface PermissionLevel<T extends string> {
-  value: T
-  title: string
-  /** One line: what the level lets the agent do. */
-  description: string
-  /** The level with real risk (完全访问): amber only once it is chosen, and only on the trigger. */
-  risk?: boolean
-  /** Why this level cannot be chosen here (unsupported by the agent, the device may not touch this session). */
-  disabledReason?: string
-}
-
-/**
- * The one menu for ordered permission levels, lowest first, in place of a row of segments. Each level is a two-line
- * item with its consequence; the default carries a neutral 默认 badge; levels that cannot be chosen stay readable with
- * their reason. 完全访问 shows no amber in the menu: only once chosen, as the trigger's shield-alert. Lowering applies at
- * once; a raise that needs verification returns a promise, and the trigger shows 「等待验证…」 in place until it settles
- * (a cancelled verification leaves the value as it was). In a start-aligned toolbar it keeps room for that text, so
- * nothing after it moves; at the end of a settings row it grows to the left instead.
- */
-export function PermissionMenu<T extends string>({
-  levels,
-  defaultValue,
-  reserve,
-  ...props
-}: Omit<ValuePickerProps<T>, 'options' | 'groups' | 'searchable' | 'width'> & { levels: Array<PermissionLevel<T>>; defaultValue?: T }) {
-  return (
-    <ValuePicker
-      {...props}
-      reserve={reserve ?? (props.align ?? pickerAlign(props.size, props.bleed)) === 'start'}
-      width={320}
-      options={levels.map(level => ({
-        value: level.value,
-        label: level.title,
-        description: level.description,
-        risk: level.risk,
-        disabledReason: level.disabledReason,
-        tag: level.value === defaultValue ? <Badge>默认</Badge> : undefined,
-      }))}
-    />
-  )
-}
-
 // ---- Popover ------------------------------------------------------------------------------------------------------
 
 /**
  * A layer of content (a plan, details) pinned to a trigger the caller draws: same surface, placement and dismissal as
- * a menu, with focus moved to its first control. On phones it is a bottom sheet titled `title` (the label by default)
- * that only shows its content, so its one control is 完成 on the right.
+ * a menu, with focus moved to its first meaningful control. On phones it is a bottom sheet titled `title` (the label by
+ * default), closed like every sheet.
  */
 export function Popover({
   label,
   title,
   trigger,
   children,
-  width = 320,
+  size = 'sm',
   onOpenChange,
   ...placement
 }: LayerPlacement & {
@@ -1057,7 +1024,8 @@ export function Popover({
   trigger: (props: MenuTriggerProps) => ReactNode
   /** The content; a control in it that is done closes the layer with useLayerClose. */
   children: ReactNode
-  width?: number
+  /** The layer's width, a step of the scale. */
+  size?: LayerSize
   onOpenChange?: (open: boolean) => void
 }) {
   const phone = useMediaQuery(PHONE_QUERY)
@@ -1072,8 +1040,7 @@ export function Popover({
   )
   useEffect(() => {
     if (!open || phone || !layer.current) return
-    const first = layer.current.querySelector<HTMLElement>('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])')
-    ;(first ?? layer.current).focus({ preventScroll: true })
+    ;(firstMeaningful(layer.current) ?? layer.current).focus({ preventScroll: true })
   }, [open, phone, layer])
   return (
     <>
@@ -1095,16 +1062,6 @@ export function Popover({
         <Sheet
           open={open}
           title={title ?? label}
-          cancelLabel={null}
-          action={
-            <Button
-              variant="secondary"
-              onClick={() => {
-                close(true)
-              }}>
-              完成
-            </Button>
-          }
           onClose={() => {
             close(true)
           }}>
@@ -1118,7 +1075,7 @@ export function Popover({
           role="dialog"
           aria-label={label}
           tabIndex={-1}
-          style={{ width }}
+          data-size={size}
           onKeyDown={event => {
             if (event.key === 'Escape') {
               event.preventDefault()

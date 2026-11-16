@@ -24,7 +24,7 @@
   margin: 0 !important;
   border: 0 !important;
   background: var(--work-raised) !important;
-  border-radius: var(--r-14) !important;
+  border-radius: var(--modal-radius) !important;
   padding: var(--sp-16) var(--sp-20) !important;
   box-shadow:
     var(--work-card-shadow),
@@ -76,7 +76,7 @@
   margin-left: auto;
 }
 .approval-panel[data-presentation] .approval-buttons > .ui-button {
-  border-radius: var(--r-9) !important;
+  border-radius: var(--r-8) !important;
 }
 .approval-panel[data-presentation] .approval-meta > .work-decision-context {
   flex: 1;

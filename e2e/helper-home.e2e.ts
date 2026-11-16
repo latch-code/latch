@@ -333,7 +333,7 @@ it('keeps one profile, unsaved defaults, focus and an unknown write across deskt
     await page.getByRole('button', { name: '尚未保存 的资料', exact: true }).filter({ visible: true }).click()
     await page.setViewportSize({ width: 390, height: 844 })
     await page.locator('.agent-profile-sheet').waitFor({ state: 'visible' })
-    await page.locator('.agent-profile-sheet').getByRole('button', { name: '完成', exact: true }).click()
+    await page.locator('.agent-profile-sheet .ui-sheet-close').click()
     await page.locator('.agent-profile-sheet').waitFor({ state: 'hidden' })
     await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains('agent-frame-who'))).toBe(true)
     expect(await page.locator('.agent-profile').count()).toBe(0)

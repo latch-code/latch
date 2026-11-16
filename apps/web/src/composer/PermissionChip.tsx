@@ -28,7 +28,7 @@ export function PermissionChip({
   return (
     <Popover
       label="权限"
-      width={400}
+      size="md"
       side="top"
       onOpenChange={open => {
         if (!open) setClosings(count => count + 1)

@@ -147,7 +147,7 @@ function StatusNote({ label, children }: { label: string; children: ReactNode })
       <Popover
         label="用量说明"
         side="top"
-        width={280}
+        size="sm"
         trigger={props => <IconButton {...props} size="xs" label="用量说明" icon={InfoGlyph} />}>
         <p className="composer-status-note-body">{children}</p>
       </Popover>
