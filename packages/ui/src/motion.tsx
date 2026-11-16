@@ -220,25 +220,33 @@ export function usePresence(show: boolean, exit: number = MOTION.microExit): { p
 
 /** The loops on the page that are out of view, paused by their stylesheets through `data-offscreen`. */
 let offscreen: IntersectionObserver | undefined
+const offscreenResumes = new WeakMap<Element, (element: Element) => void>()
 
 /**
  * Pauses a loop (a spinner, the thinking shimmer, a skeleton, a tile's arc) while it is out of the window, so nothing loops where nobody sees it.
- * A loop keeps its phase while paused.
+ * A paused loop keeps its phase. A shared-clock loop may align when the observer removes its pause.
  */
-export function usePausedOffscreen(ref: RefObject<Element | null>): void {
+export function usePausedOffscreen(ref: RefObject<Element | null>, onResume?: (element: Element) => void): void {
   useLayoutEffect(() => {
     const element = ref.current
     if (!element || typeof IntersectionObserver !== 'function') return undefined
     offscreen ??= new IntersectionObserver(entries => {
-      for (const entry of entries) entry.target.toggleAttribute('data-offscreen', !entry.isIntersecting)
+      for (const { target, isIntersecting } of entries) {
+        const resume = isIntersecting ? offscreenResumes.get(target) : undefined
+        const wasPaused = resume && target.hasAttribute('data-offscreen')
+        target.toggleAttribute('data-offscreen', !isIntersecting)
+        if (wasPaused) resume(target)
+      }
     })
     const observer = offscreen
+    if (onResume) offscreenResumes.set(element, onResume)
     observer.observe(element)
     return () => {
       observer.unobserve(element)
+      offscreenResumes.delete(element)
       element.removeAttribute('data-offscreen')
     }
-  }, [ref])
+  }, [ref, onResume])
 }
 
 /**
