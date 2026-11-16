@@ -6,11 +6,19 @@ import { chromium, type Browser, type Page } from '@playwright/test'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { strToU8, unzipSync, zipSync } from 'fflate'
 import { browserLaunchOptions } from './helpers/browser.ts'
+import { recordClipboardWrites } from './helpers/clipboard.ts'
 const { word, workbook, presentation, pdf } = documentFixtures(files =>
   Array.from(zipSync(Object.fromEntries(Object.entries(files).map(([key, value]) => [key, strToU8(value)])))),
 )
 describe('isolated document renderers', () => {
   let server: ViteDevServer, browser: Browser, page: Page, origin: string
+  async function openPage() {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 900 }, reducedMotion: 'reduce' })
+    page.setDefaultTimeout(15_000)
+    await page.goto(`${origin}/test/preview-harness.html`)
+    await page.waitForFunction(() => typeof window.startPreview === 'function')
+    return page
+  }
   beforeAll(async () => {
     const office = await readFile(resolve('dist/web/preview-frame/office.html')),
       diagram = await readFile(resolve('dist/web/preview-frame/diagram.html')),
@@ -59,10 +67,7 @@ describe('isolated document renderers', () => {
     await server.listen()
     origin = server.resolvedUrls!.local[0]!.replace(/\/$/u, '')
     browser = await chromium.launch(browserLaunchOptions())
-    page = await browser.newPage({ viewport: { width: 1000, height: 900 }, reducedMotion: 'reduce' })
-    page.setDefaultTimeout(15_000)
-    await page.goto(`${origin}/test/preview-harness.html`)
-    await page.waitForFunction(() => typeof window.startPreview === 'function')
+    page = await openPage()
   })
   afterAll(async () => {
     await browser?.close()
@@ -263,7 +268,11 @@ describe('isolated document renderers', () => {
         .evaluateAll(nodes => nodes.every(node => !node.querySelector('a,img,script,iframe,foreignObject'))),
     ).toBe(true)
   })
-  it('keeps expanded code, focus and existing table rows while streaming and when the original document settles', async () => {
+  it('keeps expanded code, focus and existing table rows while streaming and when the original document settles', async ({
+    onTestFinished,
+  }) => {
+    const page = await openPage()
+    onTestFinished(() => page.close())
     const code = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n')
     const prefix = `\`\`\`text\n${code}\n\`\`\`\n\n`
     await page.evaluate(text => window.startRichPreview(text, true), `${prefix}**尾部`)
@@ -276,18 +285,17 @@ describe('isolated document renderers', () => {
     expect(await page.getByRole('button', { name: '收起代码', exact: true }).getAttribute('aria-expanded')).toBe('true')
     expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('收起代码')
 
-    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+    const copied = await recordClipboardWrites(page)
     await page.getByRole('button', { name: '复制代码', exact: true }).click()
     await page.getByText('代码已复制到剪贴板', { exact: true }).waitFor()
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${code}\n`)
+    expect(await copied()).toEqual([`${code}\n`])
     await page.getByRole('button', { name: '收起代码', exact: true }).focus()
     await page.evaluate(text => window.startRichPreview(text, false), `${prefix}**尾部续写**\n\n下一段`)
     expect(await page.locator('[data-owned-node="prefix-code"]').count()).toBe(1)
     expect(await page.getByRole('button', { name: '收起代码', exact: true }).getAttribute('aria-expanded')).toBe('true')
     expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('收起代码')
-    await page.evaluate(() => navigator.clipboard.writeText('stream-copy-sentinel'))
     await page.getByRole('button', { name: '复制代码', exact: true }).click()
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${code}\n`)
+    await expect.poll(copied).toEqual([`${code}\n`, `${code}\n`])
 
     const table = '| 名称 | 结果 |\n| --- | --- |\n| 第一行 | 完成 |'
     await page.evaluate(text => window.startRichPreview(text, true), table)

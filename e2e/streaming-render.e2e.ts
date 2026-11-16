@@ -5,6 +5,7 @@ import { createServer, type ViteDevServer } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Message, TaskDetail } from '@latch/protocol'
 import { browserLaunchOptions } from './helpers/browser.ts'
+import { recordClipboardWrites } from './helpers/clipboard.ts'
 
 /**
  * The transcript under a long session and a stream, on the real worker and the real reading position, with no Host: a
@@ -574,20 +575,20 @@ describe('streaming render', () => {
     const reply = page.locator('[data-message-id="reply-copy"]')
     await reply.locator('strong').waitFor()
     await reply.evaluate(element => element.setAttribute('data-owned-node', 'reply'))
-    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+    const copied = await recordClipboardWrites(page)
     const copy = page.locator('.turn-footer').getByRole('button', { name: '复制', exact: true })
     expect(await copy.count()).toBe(1)
     expect(await page.locator('.turn-footer .turn-facts').count()).toBe(0)
     expect(await page.locator('.turn-footer button:not(.ui-copy-button)').count()).toBe(0)
     await reply.click()
     await copy.click()
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(text)
+    await expect.poll(copied).toEqual([text])
     await copy.evaluate(element => element.setAttribute('data-owned-node', 'copy'))
     const next = text + '继续到达'
     await show(detail([user], { running: true, liveText: next, liveId: 'reply-copy', cursor: 2 }))
     await reply.getByText('未闭合重点继续到达', { exact: true }).waitFor()
     await copy.click()
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(next)
+    await expect.poll(copied).toEqual([text, next])
     expect(await copy.getAttribute('data-owned-node')).toBe('copy')
     await mkdir('test-results/stream-copy', { recursive: true })
     for (const width of [320, 768, 1440]) {
@@ -607,7 +608,7 @@ describe('streaming render', () => {
     expect(await copy.getAttribute('data-owned-node')).toBe('copy')
     await reply.click()
     await copy.click()
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(next)
+    await expect.poll(copied).toEqual([text, next, next])
   })
 
   it('does not rerender completed Markdown blocks while only the live tail changes', async () => {

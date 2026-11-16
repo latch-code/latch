@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { splitChangeNote, type ChangeList } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { recordClipboardWrites } from './helpers/clipboard.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { closeActiveFile, openSession, settleShell } from './helpers/layout.ts'
 
@@ -68,7 +69,6 @@ describe('editing a file from its preview', () => {
 
   async function open(width: number, height: number, theme: 'light' | 'dark' = 'light') {
     const context = await browser.newContext({ viewport: { width, height }, colorScheme: theme, locale: 'zh-CN' })
-    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     const name = `Edit ${randomUUID()}`
@@ -111,8 +111,9 @@ describe('editing a file from its preview', () => {
       await editor.locator('.file-editor-version-text', { hasText: 'mine' }).waitFor()
       expect(await readFile(notes(), 'utf8')).toBe('theirs\n')
       await editor.getByText('文件已在别处修改', { exact: true }).waitFor()
+      const copied = await recordClipboardWrites(page)
       await editor.getByRole('button', { name: '复制我的修改', exact: true }).click()
-      await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('mine\n')
+      await expect.poll(copied).toEqual(['mine\n'])
       await page.screenshot({ path: `${OUT}/conflict-1440-light.png`, animations: 'disabled' })
       // Another tab and back: the conflict and the person's text are still there.
       await page.getByRole('tab', { name: '文件', exact: true }).click()

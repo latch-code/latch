@@ -60,7 +60,6 @@ describe('/btw', () => {
 
       async function open(width: number, theme: 'light' | 'dark'): Promise<Page> {
         const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, locale: 'zh-CN' })
-        await context.grantPermissions(['clipboard-read', 'clipboard-write'])
         const page = await context.newPage()
         page.setDefaultTimeout(15_000)
         await enrollBrowser(page, host, { name: `旁支 ${width}`, scopes: ['admin'] })

@@ -100,7 +100,6 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     const sessionId = await session(host)
 
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN' })
-    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     await openBrowser(page, host, sessionId)

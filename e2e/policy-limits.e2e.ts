@@ -9,6 +9,7 @@ import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
+import { recordClipboardWrites } from './helpers/clipboard.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSection, openSession, openSettings } from './helpers/layout.ts'
 
@@ -335,9 +336,11 @@ describe('what this computer can take back', () => {
       const composer = page.locator('.composer-stack:visible').first()
       await composer.waitFor()
       if (viewport.name === 'phone') {
-        // The model menu lives elsewhere on a phone: the session menu's export draws a toast in the same place.
+        // The model menu lives elsewhere on a phone: copying from the session menu draws a toast in the same place.
+        const copied = await recordClipboardWrites(page)
         await page.locator('.topbar-title-button').click()
         await page.getByRole('menuitem', { name: /复制.*Markdown/u }).click()
+        await expect.poll(copied).toEqual([expect.stringContaining('说一句话')])
       } else {
         await composer.locator('.model-picker').click()
         await page.getByRole('menuitemradio', { name: /model-b/u }).click()
