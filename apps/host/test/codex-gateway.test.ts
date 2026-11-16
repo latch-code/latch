@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import type { HarnessInfo, ProviderSettings, TaskDetail } from '@latch/protocol'
+import { ownChoice, serviceChoice, type HarnessInfo, type ProviderSettings, type TaskDetail } from '@latch/protocol'
 import { FAKE_CODEX_APP_SERVER, startFakeModels } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 
@@ -431,3 +431,136 @@ it.each([
     }
   },
 )
+
+it('moves a Codex session between services by resuming it, and onto its own login and back by carrying the thread', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-codex-move-'))
+  const bin = join(root, 'bin')
+  await mkdir(bin)
+  const command = join(bin, 'codex')
+  const log = join(root, 'agent.jsonl')
+  await writeFile(
+    command,
+    `#!/bin/sh\nexport FAKE_ACP_LOG='${log}' FAKE_CODEX_STATE='${join(root, 'threads.json')}'\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`,
+  )
+  await chmod(command, 0o755)
+  const first = await startFakeModels({ replies: [{ text: 'from the first service' }] })
+  const second = await startFakeModels({ replies: [{ text: 'from the second service' }] })
+  const dataDir = join(root, 'data')
+  const host = await startTestHost({
+    demo: false,
+    dataDir,
+    workspaceRoot: join(root, 'project'),
+    commandDirectories: () => [bin],
+    loginPrograms: (name: string) => (name === 'codex' ? command : undefined),
+    detectPreset: (preset: { id: string }) => (preset.id === 'codex' ? { found: true, path: command } : { found: false }),
+  })
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const service = async (name: string, origin: string, apiKey: string, model: string) => {
+      const created = await owner.confirmed('providers', {
+        method: 'POST',
+        body: {
+          name,
+          kind: 'openai-responses',
+          baseURL: `${origin}/v1`,
+          apiKey,
+          models: [model],
+          defaultModel: model,
+          confirmOrigin: true,
+        },
+      })
+      expect(created.status).toBe(201)
+      return ((await created.json()) as { provider: ProviderSettings }).provider
+    }
+    const a = await service('First', first.origin, 'sk-test-first-service-0123456789', 'first-model')
+    const b = await service('Second', second.origin, 'sk-test-second-service-0123456789', 'second-model')
+    expect(
+      (
+        await owner.confirmed('agents', {
+          method: 'POST',
+          body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex', args: [], env: {} },
+        })
+      ).status,
+    ).toBe(201)
+    const snapshot = await owner.json<{ catalog: { harnesses: HarnessInfo[] } }>('snapshot')
+    expect(snapshot.catalog.harnesses.find(item => item.id === 'codex')?.capabilities.models).toMatchObject({ routeSwitch: 'any' })
+    const start = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { harnessId: 'codex', prompt: 'first', requestId: randomUUID(), model: { providerId: a.id, model: 'first-model' } },
+    })
+    const detail = () => owner.json<TaskDetail>(`tasks/${start.sessionId}`)
+    await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'), { timeout: 10_000 })
+    const modelId = (await detail()).config!.find(option => option.category === 'model')!.id
+
+    const value = serviceChoice({ providerId: b.id, model: 'second-model' })
+    const requestId = randomUUID()
+    await owner.json(`tasks/${start.sessionId}/config`, { method: 'POST', body: { configId: modelId, value, requestId } })
+    const moved = await detail()
+    expect(moved.summary.modelRoute).toMatchObject({ providerId: b.id, model: 'second-model', name: 'Second' })
+    expect(moved.messages.map(message => message.text)).toContain('模型改为 second-model · 经 Latch · Second')
+    expect(await owner.json(`tasks/${start.sessionId}/config-requests/${requestId}`)).toEqual({ state: 'applied' })
+    const audit = (await readFile(join(dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line) as { action: string; stepup: string; detail: Record<string, unknown> })
+    expect(audit.find(record => record.action === 'task.model.route-changed')).toMatchObject({
+      stepup: 'none',
+      detail: { sessionId: start.sessionId, providerId: b.id, routeHash: expect.stringMatching(/^[0-9a-f]{64}$/u) },
+    })
+
+    await owner.json(`tasks/${start.sessionId}/prompt`, { method: 'POST', body: { prompt: 'second', requestId: randomUUID() } })
+    await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'), { timeout: 10_000 })
+    expect((await detail()).messages.filter(message => message.role === 'assistant').map(message => message.text)).toEqual([
+      'from the first service',
+      'from the second service',
+    ])
+    expect(first.requests.map(request => request.model)).toEqual(['first-model'])
+    expect(second.requests).toMatchObject([{ model: 'second-model', key: 'sk-test-second-service-0123456789' }])
+    // One thread throughout, resumed on the new route.
+    const frames = (await readFile(log, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line) as { event: string; method?: string })
+      .filter(frame => frame.event === 'recv')
+    expect(frames.filter(frame => frame.method === 'thread/start')).toHaveLength(1)
+    expect(frames.filter(frame => frame.method === 'thread/resume')).toHaveLength(1)
+
+    // Codex resumes a thread only on its provider, so a move to its own login carries the thread as a fork onto it.
+    const own = randomUUID()
+    await owner.json(`tasks/${start.sessionId}/config`, {
+      method: 'POST',
+      body: { configId: modelId, value: ownChoice(''), requestId: own },
+    })
+    expect(await owner.json(`tasks/${start.sessionId}/config-requests/${own}`)).toEqual({ state: 'applied' })
+    expect((await detail()).summary.modelRoute).toBeUndefined()
+    await owner.json(`tasks/${start.sessionId}/prompt`, { method: 'POST', body: { prompt: 'own', requestId: randomUUID() } })
+    await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'), { timeout: 10_000 })
+    expect(first.requests).toHaveLength(1)
+    expect(second.requests).toHaveLength(1)
+    // And back onto a service, the same way; the history stays the session's throughout.
+    await owner.json(`tasks/${start.sessionId}/config`, {
+      method: 'POST',
+      body: { configId: modelId, value: serviceChoice({ providerId: a.id, model: 'first-model' }), requestId: randomUUID() },
+    })
+    await owner.json(`tasks/${start.sessionId}/prompt`, { method: 'POST', body: { prompt: 'first again', requestId: randomUUID() } })
+    await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'), { timeout: 10_000 })
+    expect(first.requests).toHaveLength(2)
+    expect((await detail()).messages.filter(message => message.role === 'user').map(message => message.text)).toEqual([
+      'first',
+      'second',
+      'own',
+      'first again',
+    ])
+    const after = (await readFile(log, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line) as { event: string; method?: string })
+      .filter(frame => frame.event === 'recv')
+    expect(after.filter(frame => frame.method === 'thread/fork')).toHaveLength(2)
+  } finally {
+    await host.close()
+    await first.close()
+    await second.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})

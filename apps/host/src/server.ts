@@ -18,7 +18,16 @@ import { AgentPlans, canPropose } from './agent-plans.ts'
 import { resultContent } from './agent-activity.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
-import { GENERAL_AGENT_ID, isMcpToolOn, refusedBeforeAccepting, type AgentExecutionContext, type AutomationConfig } from '@latch/protocol'
+import {
+  GENERAL_AGENT_ID,
+  isMcpToolOn,
+  onModelChoice,
+  parseModelChoice,
+  refusedBeforeAccepting,
+  type AgentExecutionContext,
+  type AutomationConfig,
+  type ModelChoice,
+} from '@latch/protocol'
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
 import { readAppFrame } from './app-frame.ts'
 import { readUiBuild } from './ui-build.ts'
@@ -8720,8 +8729,66 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             throw notSentConfig(error)
           }
         }
+        /**
+         * A model of another service, or one of the harness's own while on a service: the session moves to that route. The
+         * Host builds the route from its own records and checks it as a start with that model does, and audits it as one.
+         */
+        const moveRoute = async (choice: ModelChoice, before: (context?: ConfigBegin) => Promise<void>) => {
+          const detail = await hub!.detail(id)
+          const option = detail.config?.find(row => row.id === input.configId)
+          if (option?.category !== 'model') throw new AppError(404, 'config-not-found', '该会话没有这个设置项。')
+          const harness = hub!.info(detail.summary.harnessId)
+          const switching = harness?.capabilities.models.routeSwitch
+          const from = detail.summary.modelRoute
+          if (!harness || !switching) throw new AppError(409, 'model-route-locked', '这个会话不能换到别的模型来源，新开一个会话。')
+          if (choice.kind === 'own' && !from) throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内。')
+          if (switching === 'services' && (choice.kind === 'own' || !from))
+            throw new AppError(
+              409,
+              'model-route-locked',
+              `${harness.capabilities.display.label} 的会话不能在它自己的登录和经 Latch 之间换，新开一个会话。`,
+            )
+          let route: ModelRoute | undefined
+          if (choice.kind === 'service') {
+            const ref = { providerId: choice.providerId, model: choice.model }
+            assertModel(ref)
+            route = modelRouteFor(harness, ref)
+          }
+          const seq = await audited({
+            action: 'task.model.route-changed',
+            actor: actorOf(caller),
+            target: id,
+            stepup: 'none',
+            detail: {
+              sessionId: id,
+              toHash: sha256Hex(input.value),
+              ...(route ? { providerId: route.providerId, routeHash: sha256Hex(canonicalJson(route)) } : {}),
+            },
+          })
+          try {
+            await before({ prior: option.currentValue, auditSeq: seq })
+            stillAllowed()
+            const routeName = route ? effectiveProvider(route.providerId)?.name : undefined
+            await hub!.setConfig(id, input.configId, input.value, {
+              authorize: authority,
+              ...(route ? { route } : {}),
+              ...(routeName ? { routeName } : {}),
+            })
+            authority()
+            const actual = await hub!.detail(id)
+            authority()
+            const now = actual.config?.find(row => row.id === input.configId)
+            if (!onModelChoice(choice, actual.summary.modelRoute, now?.currentValue))
+              throw new AppError(503, 'config-outcome-unknown', 'Agent 尚未确认采用所选模型，请查询原请求。')
+          } catch (error) {
+            auditFailed(seq, caller)
+            throw error
+          }
+        }
         const execute = async (before: (context?: ConfigBegin) => Promise<void>) => {
           await authorize()
+          const choice = parseModelChoice(input.value)
+          if (choice) return moveRoute(choice, before)
           const change = await hub!.classifyConfigChange(id, input.configId, input.value)
           // The value before the change: what 核对 reads back when the change did not apply.
           let prior: string | undefined

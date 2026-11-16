@@ -154,6 +154,13 @@ export interface CancelOptions {
 export interface SetConfigOptions {
   /** Host authority, checked after async preparation and immediately before an external configuration request. */
   authorize?: () => void
+  /**
+   * With a model option's `serviceChoice` value: the route the Host built for that service from its own records, as it
+   * builds one for a start. Set by the Host only; absent for `ownChoice`, which leaves every service.
+   */
+  route?: ModelRoute
+  /** With `route`: the service's name as the Host's settings give it, for the session's record of the move. */
+  routeName?: string
 }
 
 /**

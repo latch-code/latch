@@ -155,6 +155,10 @@ export const codexProfile: HarnessProfile = {
   gateway: {
     wires: ['responses'],
     via: 'launch',
+    // Codex 0.169 resumes a thread only on the provider it began on: 「Cannot change this thread's model provider from
+    // `openai` to `latch` on resume」, and a thread of Latch's provider will not open where that provider is not set. It
+    // forks one onto another provider, so a move between its login and a service carries the thread.
+    carriesAcrossLogin: true,
     tokenEnv: 'LMG_TOKEN',
     envNames: [],
     templates: { args: 1 },

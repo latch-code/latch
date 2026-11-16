@@ -26,9 +26,10 @@ import {
   type CodexModels,
 } from '../codex-models.ts'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
-import { CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
+import { CODEX_GATEWAY_PROVIDER, CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
 import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
 import {
+  CARRY_METHOD,
   MCP_STATUS_METHOD,
   QUOTA_READ_METHOD,
   MCP_STATUS_UPDATE,
@@ -417,6 +418,7 @@ interface McpCall {
 export class CodexWire implements AgentWire {
   readonly exited: Promise<ExitInfo>
   readonly idleCommands = new Set([COMPACT.name])
+  readonly carries = true
   readonly commandsWithoutContext = new Set([COMPACT.name, 'review'])
   private listedFor?: string
   private readonly skillPaths = new Map<string, { name: string; path: string }>()
@@ -519,6 +521,8 @@ export class CodexWire implements AgentWire {
         return this.open('resume', params, timeoutMs, signal)
       case 'session/load':
         return this.open('load', params, timeoutMs, signal)
+      case CARRY_METHOD:
+        return this.open('carry', params, timeoutMs, signal)
       case 'session/list':
         return this.list(params, timeoutMs, signal)
       case 'session/prompt':
@@ -646,7 +650,12 @@ export class CodexWire implements AgentWire {
    * A new thread (`kind` undefined), the session's thread resumed, or loaded: its turns replayed as updates, then resumed.
    * One process runs one thread.
    */
-  private async open(kind: 'resume' | 'load' | undefined, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+  private async open(
+    kind: 'resume' | 'load' | 'carry' | undefined,
+    params: unknown,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     const parsed = sessionParams.safeParse(params)
     if (!parsed.success || !parsed.data.cwd) throw new RpcError(RPC.invalidParams, 'Invalid params')
     if (this.threadId && (kind === undefined || parsed.data.sessionId !== this.threadId))
@@ -688,7 +697,17 @@ export class CodexWire implements AgentWire {
     let answer: unknown
     // A new thread on a route starts on the route's model; every turn names its model after that.
     if (kind === undefined) answer = await this.send('thread/start', settings, timeoutMs, signal)
-    else {
+    else if (kind === 'carry') {
+      // Codex 0.169 resumes a thread only on the provider it began on, but forks one onto another: a new thread with the
+      // same turns, on this process's provider (Latch's on a route, else the one the person configured).
+      const threadId = parsed.data.sessionId ?? ''
+      answer = await this.send(
+        'thread/fork',
+        { threadId, ...settings, ...(this.route ? { modelProvider: CODEX_GATEWAY_PROVIDER } : {}), excludeTurns: true },
+        timeoutMs,
+        signal,
+      ).catch(notFound)
+    } else {
       const threadId = parsed.data.sessionId ?? ''
       // Loaded first: Codex reads only a thread it has loaded. Its replay then comes before the answer, as ACP's does.
       answer = await this.send('thread/resume', { threadId, ...settings, excludeTurns: true }, timeoutMs, signal).catch(notFound)
@@ -696,7 +715,9 @@ export class CodexWire implements AgentWire {
     }
     const read = opened.safeParse(answer)
     if (!read.success) throw new RpcError(RPC.internal, 'Codex answered a thread request in a shape Latch does not read')
-    if (kind !== undefined && read.data.thread.id !== parsed.data.sessionId)
+    if (
+      kind === 'carry' ? read.data.thread.id === parsed.data.sessionId : kind !== undefined && read.data.thread.id !== parsed.data.sessionId
+    )
       throw new RpcError(RPC.internal, 'Codex 恢复的线程与所选会话不一致。')
     this.threadId = read.data.thread.id
     if (this.team?.rootId !== this.threadId) {

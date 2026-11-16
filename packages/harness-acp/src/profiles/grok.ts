@@ -83,6 +83,8 @@ export const grokProfile: HarnessProfile = {
     tokenEnv: 'LMG_TOKEN',
     // No documented switch keeps its environment from the commands it runs outside its sandbox.
     credentialInherited: true,
+    // A routed session's record lives in its private home, which the person's own Grok never reads.
+    sessionBoundToRoute: true,
     envNames: ['GROK_HOME'],
     templates: { files: 1 },
     deliver(place, route) {

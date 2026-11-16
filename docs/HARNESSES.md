@@ -352,7 +352,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 
 - 选了服务的模型时不显示「还没登录」，Codex 直连在这样的会话里也不查自己的账户。
 - Host 按实际协议能力与自己的服务记录重新核对每次开始；客户端不能决定转发地址或密钥。
-- 经网关的会话不能换服务，同服务内的模型可选。服务停用、删除、密钥或地址不可用时明确失败，不回退到 Harness 自己的登录或演示模型。
+- 会话里可以换到别的服务的模型，或在服务与 Harness 自己的登录之间换：Latch 在空闲时结束进程，按新路线启动并恢复同一会话（[会话中换路线](MODEL-GATEWAY.md#会话中换路线)）。Codex 直连在自己的登录与服务之间换时用 `thread/fork` 把线程带过去（新线程、同样的历史）；Grok Build 与 goose 只能在服务之间换（`routeSwitch: 'services'`）。服务停用、删除、密钥或地址不可用时明确失败，不回退到 Harness 自己的登录或演示模型。
 - 订阅仍由各 Harness 自己使用，不借给网关。
 - 整轮没有经过网关时如实提示并审计；这不证明每个辅助请求都经过它。
 - 首次准备里为 Harness 选的模型来源，以及默认模型的选取顺序，见 [MODEL-CONFIGURATION.md](MODEL-CONFIGURATION.md#默认模型)。
@@ -397,7 +397,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 - **事件。** 回答与推理增量流式显示；`commandExecution`、`fileChange`、`mcpToolCall`、`webSearch` 是工具调用；`turn/plan/updated` 是计划，`thread/tokenUsage/updated` 是用量；`willRetry` 的 `error` 是一条重试提示。推理摘要分段到达而段间没有分隔，Latch 在换段时补一个空行。
 - **命令的解析（`commandActions`）。** 全部动作都是读取、列出或搜索时，作为工具条目的可选字段 `actions` 带给客户端；有一项 `unknown` 或不认得的形状就不带，命令原文照旧保存。这个字段只从 Codex 线接受（[STREAMING.md](STREAMING.md#工作过程的行)）。
 - **模型。** `model/list`（最多 5 页）给出模型与各自的思考深度；开始前的读取用同一个程序的 `codex app-server`，不开 thread。
-- **模型服务与分叉。** 见上节；分叉仍用文字记录，尚未使用 `thread/fork`。
+- **模型服务与分叉。** 见上节；会话的分叉仍用文字记录。`thread/fork` 只用于会话在自己的登录与服务之间换路线（`CARRY_METHOD`）。
 
 **权限模式。** 四档与 ACP 路线同名同说明，对照在 `profiles/codex.ts`；模式由线保存，thread 开始、恢复与每一轮 `turn/start` 都带上。
 

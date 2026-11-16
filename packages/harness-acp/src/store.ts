@@ -98,6 +98,12 @@ export interface AcpRecord {
   routeModelSet?: true
   /** A route's thinking value requiring continuity; an unsupported report cannot silently replace it with a default. */
   routeThinking?: string
+  /**
+   * A move to another route under way: the route it left, written in the same step as the new one and dropped once the
+   * move is done (or, for a session carried onto another provider, once the agent's new session is on record). Found on
+   * start, the move did not finish, and the session goes back to this route.
+   */
+  routeMove?: { route?: ModelRoute; launchHash: string; routeModelSet?: true; model?: string; serviceModel?: string }
   /** A prompt asked for a new context and no user message has been recorded on the agent's new session yet. */
   contextCleared?: true
   /** Outside content reached this context by a way no tool row shows (`Bridge.markOutsideContent`); gone when it starts over. */
@@ -390,6 +396,30 @@ const startChoice = z.object({
  * reads back, so the file opens and nothing in it is lost; continuing it is refused where a route is opened.
  */
 const storedWire = z.enum([...MODEL_WIRES, 'gemini'])
+
+const storedRoute = z.object({
+  providerId: z.string().min(1).max(128),
+  model: z.string().min(1).max(200),
+  wire: storedWire,
+  upstream: storedWire.optional(),
+  origin: z.string().min(1).max(300),
+  fallbacks: z
+    .record(
+      z.string().min(1).max(200),
+      z
+        .array(
+          z.object({
+            providerId: z.string().min(1).max(128),
+            model: z.string().min(1).max(200),
+            upstream: storedWire,
+            origin: z.string().min(1).max(300),
+          }),
+        )
+        .min(1)
+        .max(MAX_MODEL_FALLBACKS),
+    )
+    .optional(),
+})
 const stateSchema = z.object({
   version: z.literal(1),
   tasks: z.record(
@@ -493,33 +523,18 @@ const stateSchema = z.object({
         proposalsCleared: z.number().int().min(0).max(1000).optional(),
         unattended: z.literal(true).optional(),
         startConfig: z.array(startChoice).optional(),
-        route: z
-          .object({
-            providerId: z.string().min(1).max(128),
-            model: z.string().min(1).max(200),
-            wire: storedWire,
-            upstream: storedWire.optional(),
-            origin: z.string().min(1).max(300),
-            fallbacks: z
-              .record(
-                z.string().min(1).max(200),
-                z
-                  .array(
-                    z.object({
-                      providerId: z.string().min(1).max(128),
-                      model: z.string().min(1).max(200),
-                      upstream: storedWire,
-                      origin: z.string().min(1).max(300),
-                    }),
-                  )
-                  .min(1)
-                  .max(MAX_MODEL_FALLBACKS),
-              )
-              .optional(),
-          })
-          .optional(),
+        route: storedRoute.optional(),
         routeModelSet: z.literal(true).optional(),
         routeThinking: z.string().max(200).optional(),
+        routeMove: z
+          .object({
+            route: storedRoute.optional(),
+            launchHash: z.string().regex(/^[0-9a-f]{64}$/),
+            routeModelSet: z.literal(true).optional(),
+            model: z.string().max(1024).optional(),
+            serviceModel: z.string().max(200).optional(),
+          })
+          .optional(),
         contextCleared: z.literal(true).optional(),
         outsideRead: z.literal(true).optional(),
         earlierSessionIds: z.array(z.string()).optional(),

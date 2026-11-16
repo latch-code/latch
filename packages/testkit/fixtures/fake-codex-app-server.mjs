@@ -1110,6 +1110,17 @@ async function handle(method, params) {
       const found = threads()[params.threadId]
       if (!found) throw Object.assign(new Error(`no rollout found for thread id ${params.threadId}`), { code: -32600 })
       if (env.FAKE_CODEX_RESUME_ERROR) throw Object.assign(new Error(env.FAKE_CODEX_RESUME_ERROR), { code: -32600 })
+      // As Codex 0.169: a thread resumes only on the provider it began on, and only where that provider is configured.
+      const began = found.provider ?? 'openai'
+      if (params.modelProvider && params.modelProvider !== began)
+        throw Object.assign(
+          new Error(
+            `failed to load configuration: Cannot change this thread's model provider from \`${began}\` to \`${params.modelProvider}\` on resume.`,
+          ),
+          { code: -32600 },
+        )
+      if (began !== 'openai' && began !== providerId && overrides[`model_providers.${began}.base_url`] === undefined)
+        throw Object.assign(new Error(`This chat uses model provider “${began}”, which is no longer configured.`), { code: -32600 })
       thread = found
       if (params.model) {
         thread.model = params.model
@@ -1119,6 +1130,26 @@ async function handle(method, params) {
       threadWindow = params.config?.model_context_window
       announceMcp(found.id)
       return opened(found)
+    }
+    // As Codex 0.169: a fork may name another provider; it is a new thread with the source's turns.
+    case 'thread/fork': {
+      const found = threads()[params.threadId]
+      if (!found) throw Object.assign(new Error(`no rollout found for thread id ${params.threadId}`), { code: -32600 })
+      // Onto another provider without a model named, the fork takes the process's configured model, as Codex 0.169 does.
+      const onto = params.modelProvider ?? providerId ?? 'openai'
+      thread = {
+        ...structuredClone(found),
+        id: `thread-${randomUUID()}`,
+        provider: onto,
+        model: params.model ?? (onto === (found.provider ?? 'openai') ? found.model : (env.FAKE_CODEX_MODEL ?? 'gpt-fake')),
+        createdAt: now(),
+        updatedAt: now(),
+      }
+      save(thread)
+      threadMcp = Object.keys(params.config?.mcp_servers ?? {})
+      threadWindow = params.config?.model_context_window
+      announceMcp(thread.id)
+      return opened(thread)
     }
     case 'thread/read': {
       const found = threads()[params.threadId]

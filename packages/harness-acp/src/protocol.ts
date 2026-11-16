@@ -288,6 +288,12 @@ export const STEER_METHOD = '_session/steering'
  */
 export const FORK_METHOD = '_latch/session/fork'
 /**
+ * Latch's own request to a wire whose harness binds a session to the model provider it began on (Codex's app-server): the
+ * session carried onto this process's provider as a new session with the same history. Params as `session/resume`'s,
+ * answered like `session/new` with the new session's ID. Only while the session moves to another route.
+ */
+export const CARRY_METHOD = '_latch/session/carry'
+/**
  * Latch's own request to a wire whose harness reports its own MCP servers (Codex's app-server): params `{ sessionId? }`,
  * answered `{ servers, truncated?, namesOnly? }` as `HarnessMcpServer`s. With the session's ID it reads that session's
  * servers as they are, starting nothing; without one, in a process with no session, what the harness has configured,

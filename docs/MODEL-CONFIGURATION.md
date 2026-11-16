@@ -86,7 +86,7 @@ sources:
 自己带模型的 Harness 的模型菜单先列它原生报告的模型，未报告时保留「默认模型」；之后按 Host 的 `models.wires` 与 `pairRoute` 列出可转发的已保存服务，分组写「<服务> · 经 Latch」。
 
 - Host 从实际命令所选的 profile 投影能力；客户端不维护另一份协议表。
-- 路线声明 `experimental` 时显示实验性：已实现的转换是 Responses→Chat、Responses→Anthropic、Anthropic→Chat、Anthropic→Responses，菜单末尾的「协议转换」说明可能略去的能力。其他方向不可选。
+- 路线声明 `experimental` 时组名写「实验性」：已实现的转换是 Responses→Chat、Responses→Anthropic、Anthropic→Chat、Anthropic→Responses，可能略去的能力在组名的悬停说明里（`PickerGroup.hint`），菜单里没有说明行。其他方向不可选。
 - 用不了的服务收在「N 个服务用不了」，展开显示原因。`models.wires` 为空的 Harness 只用自己的模型。
 - `models.knownOnly`（codex-acp）：只有适配器认识的服务模型可选。Codex 直连可选服务声明但原生 `model/list` 没有的模型。
 - 服务选择按 Harness 分别保存，换 Harness 不带过去。控件显示模型 ID 与服务标记，避免同名模型混淆。
@@ -105,11 +105,13 @@ sources:
 
 **会话开始之后**
 
-- 不能换服务，只在原服务内换模型；模型选项受网关凭据的模型列表约束。
-- 已确认的新模型在进程或 Host 重启后继续使用；服务清单删了旧模型而保留当前模型时仍可恢复。
-- 服务名经 `modelRoute.name` 展示。停用、删除、缺密钥或地址未确认时给出原因并阻止继续。服务的协议或地址变了不自动迁移会话。
-- 整轮回复却没有请求经过网关时显示 bypassed；这不证明其他辅助调用都经过网关。
-- 模型菜单下方写「经 Latch 用「X」」，有备选时写「出错时改用「Y」」，都是会话开始时定下的。由备选回答的一轮，作者行写回答的服务与模型加「备选」标签。内置 Harness 的这种轮次只记由备选回答的步骤（`routed.direct`）。
+- 会话的模型菜单与新会话的一样分组：Harness 自己的模型（会话在服务上时取 `HarnessInfo.catalogue`，没有列表时只有「默认模型」），再是每个能用的服务，当前的打勾。会话所在服务的组列会话报告的值，选它原地换；其他组的值是 `serviceChoice`／`ownChoice`，选它让会话换路线（[MODEL-GATEWAY.md](MODEL-GATEWAY.md#会话中换路线)），控件照常显示切换中、失败与结果未知。
+- `models.routeSwitch` 为 `services` 的 Harness（Grok Build、goose）在服务与自己的登录之间的选项不可选，悬停写原因；没有 `routeSwitch` 的写「开始后不能换服务」。
+- 已确认的新模型在进程或 Host 重启后继续使用；服务清单删了旧模型而保留当前模型时仍可恢复。`modelRoute.model` 跟随会话当前的服务模型。
+- 服务名经 `modelRoute.name` 展示。停用、删除、缺密钥或地址未确认时组名写状态，菜单写一行原因并阻止继续。服务的协议或地址变了不自动迁移会话。
+- 整轮回复却没有请求经过网关时显示 bypassed，菜单写一行琥珀色提示；这不证明其他辅助调用都经过网关。
+- 手机的选择表没有悬停：点按服务的组名显示这段说明，再点收起。
+- 菜单只有选项：请求经 Latch 转发、用谁的密钥、协议转换略去什么、凭据被继承、会话开始时定下的「出错时改用」都在服务组名的悬停说明里。由备选回答的一轮，作者行写回答的服务与模型加「备选」标签。内置 Harness 的这种轮次只记由备选回答的步骤（`routed.direct`）。
 
 **Codex 的思考。** 用网关模型时菜单只列「默认」与该服务声明的档位；「默认」遵循模型服务，不继承 Codex 本机配置的档位。规则见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#harness-交付)。
 

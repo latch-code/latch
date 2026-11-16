@@ -194,6 +194,16 @@ type ProfileGateway = {
    */
   readonly credentialInherited?: true
   /**
+   * A session stays with where it began: on a service, it can move only to another service; on the harness's own login,
+   * never onto one (`HarnessCapabilities.models.routeSwitch: 'services'`). Absent: a session can move either way.
+   */
+  readonly sessionBoundToRoute?: true
+  /**
+   * A session moves between the harness's own login and a service only as a new session of the agent's with the same
+   * history (`CARRY_METHOD`), since it resumes one only on the provider it began on (Codex).
+   */
+  readonly carriesAcrossLogin?: true
+  /**
    * The oldest version of the preset's own command that works through the gateway, read the way `minimumVersion` is; a
    * session on a route refuses to start with an older one.
    */

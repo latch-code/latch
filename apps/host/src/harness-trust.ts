@@ -62,6 +62,10 @@ export function harnessFacts(declared: HarnessDeclaration | undefined, name: str
       ...(models?.serviceThinking === true && Array.isArray(models.wires) && models.wires.length > 0
         ? { serviceThinking: true as const }
         : {}),
+      // Only of a harness Latch forwards for: there is no other route to move to.
+      ...((models?.routeSwitch === 'any' || models?.routeSwitch === 'services') && Array.isArray(models.wires) && models.wires.length > 0
+        ? { routeSwitch: models.routeSwitch }
+        : {}),
       ...(models?.quota === true ? { quota: true as const } : {}),
     },
     permission: {

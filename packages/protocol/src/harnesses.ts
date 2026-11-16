@@ -107,6 +107,15 @@ export interface HarnessCapabilities {
      */
     serviceThinking?: true
     /**
+     * A running session can move to a model of another service, or between a service and the harness's own login, by
+     * choosing it in its model menu (`ownChoice`, `serviceChoice`): Latch restarts the idle agent on the new route and
+     * resumes the same session (Codex: carries its thread onto the new provider as a fork with the same history).
+     * `services`: only between services, since the harness keeps a session where it began (Grok keeps a routed session
+     * in a private home).
+     * Absent: a session stays on the route it started on.
+     */
+    routeSwitch?: 'any' | 'services'
+    /**
      * Its own program reports its subscription's limits (`HarnessInfo.quota`): asked when someone looks, or as its turns
      * run (`HarnessInfo.quotaRead`). Absent: it never does, and a client says so rather than waiting for them.
      */

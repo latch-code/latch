@@ -4,7 +4,7 @@ import { createServer, request as httpRequest } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AgentRecord, AppSnapshot, ProviderSettings, TaskDetail } from '@latch/protocol'
+import { ownChoice, serviceChoice, type AgentRecord, type AppSnapshot, type ProviderSettings, type TaskDetail } from '@latch/protocol'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { createAcpAgentPlugin } from '@latch/harness-acp'
 import { FAKE_ACP_AGENT, startFakeModels, type FakeModels, type TestDevice } from '@latch/testkit'
@@ -824,7 +824,7 @@ describe('model gateway', () => {
 })
 
 describe('sessions of a harness with its own models on a saved service', () => {
-  async function host() {
+  async function host(env: Record<string, string> = {}) {
     const fake = await models({ replies: [{ text: 'via the gateway' }] })
     const t = await startTestHost({
       demo: false,
@@ -859,6 +859,7 @@ describe('sessions of a harness with its own models on a saved service', () => {
           FAKE_ACP_INITIAL_MODE: 'build',
           FAKE_ACP_GATEWAY: 'opencode',
           FAKE_ACP_VERSION: '2.2.6',
+          ...env,
         },
       },
     })
@@ -950,6 +951,110 @@ describe('sessions of a harness with its own models on a saved service', () => {
     const gone = (await phone.json<TaskDetail>(`tasks/${sessionId}`)).summary.modelRoute
     expect(gone).not.toHaveProperty('name')
     expect(gone).not.toHaveProperty('off')
+  })
+
+  it('refuses a move as it refuses any change: a read-only device, a private session, a service whose address is not confirmed', async () => {
+    const { t, fake, desktop, phone, chat } = await host({ FAKE_ACP_CAPS: 'resume' })
+    // 通用 has something private, so a session of a device that may read it is as private as an Agent's.
+    const list = await desktop.json<{ general: { revision: number } }>('custom-agents')
+    await desktop.json('custom-agents/general', {
+      method: 'PATCH',
+      body: { requestId: randomUUID(), baseRevision: list.general.revision, instructions: 'PRIVATE RULES' },
+    })
+    const started = await desktop.request('tasks', {
+      method: 'POST',
+      body: { prompt: 'echo own', requestId: randomUUID(), mode: 'agent', harnessId: 'opencode', ownModel: true },
+    })
+    expect(started.status).toBe(201)
+    const sessionId = ((await started.json()) as { sessionId: string }).sessionId
+    const detail = () => desktop.json<TaskDetail>(`tasks/${sessionId}`)
+    await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'), { timeout: 10_000 })
+    expect((await detail()).summary).toMatchObject({ agentPrivate: true })
+    const modelId = (await detail()).config!.find(option => option.category === 'model')!.id
+    const move = (device: TestDevice, value: string) =>
+      device.request(`tasks/${sessionId}/config`, { method: 'POST', body: { configId: modelId, value, requestId: randomUUID() } })
+    const value = serviceChoice({ providerId: chat.id, model: 'fake-model' })
+
+    const viewer = await t.enroll({ scopes: ['view'] })
+    expect((await move(viewer, value)).status).toBe(403)
+    const work = await t.enroll({ scopes: ['view', 'run'] })
+    await desktop.json(`devices/${work.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
+    expect((await move(work, value)).status).toBe(403)
+
+    // Saved without its address confirmed: refused as a start on it would be.
+    await phone.json('providers', {
+      method: 'POST',
+      body: {
+        id: 'ollama',
+        name: 'Ollama',
+        kind: 'openai-compatible',
+        presetId: 'ollama',
+        baseURL: 'http://127.0.0.1:9/v1',
+        models: ['alpha'],
+        defaultModel: 'alpha',
+      },
+    })
+    const elsewhere = { id: 'ollama' }
+    const refused = await move(desktop, serviceChoice({ providerId: elsewhere.id, model: 'alpha' }))
+    expect(refused.status).toBe(403)
+    expect(((await refused.json()) as { error: string }).error).toBe('origin-unconfirmed')
+    expect((await detail()).summary.modelRoute).toBeUndefined()
+    expect(fake.requests).toHaveLength(0)
+  })
+
+  it('moves a running session from the Harness login to a service and back, audited and settled like any change', async () => {
+    const { t, fake, phone, chat } = await host({ FAKE_ACP_CAPS: 'resume' })
+    const response = await phone.request('tasks', {
+      method: 'POST',
+      body: { prompt: 'echo own', requestId: randomUUID(), mode: 'agent', harnessId: 'opencode', ownModel: true },
+    })
+    expect(response.status).toBe(201)
+    const sessionId = ((await response.json()) as { sessionId: string }).sessionId
+    const detail = () => phone.json<TaskDetail>(`tasks/${sessionId}`)
+    await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'), { timeout: 10_000 })
+    const modelId = (await detail()).config!.find(option => option.category === 'model')!.id
+    const prompts = t.presence.requests.length
+
+    // A phone with `run` moves it as it would start one there: no confirmation, the route built from the Host's records.
+    const there = randomUUID()
+    const value = serviceChoice({ providerId: chat.id, model: 'fake-model' })
+    await phone.json(`tasks/${sessionId}/config`, { method: 'POST', body: { configId: modelId, value, requestId: there } })
+    expect(t.presence.requests).toHaveLength(prompts)
+    expect((await detail()).summary.modelRoute).toMatchObject({ providerId: chat.id, model: 'fake-model', name: 'Chat' })
+    // Where the whole history goes from now on, by the service's name.
+    expect((await detail()).messages.map(message => message.text)).toContain('模型改为 fake-model · 经 Latch · Chat')
+    expect(await phone.json(`tasks/${sessionId}/config-requests/${there}`)).toEqual({ state: 'applied' })
+    const recorded = { providerId: chat.id, model: 'fake-model', wire: 'chat-completions', origin: fake.origin }
+    expect((await audit(t.dataDir)).findLast(record => record.action === 'task.model.route-changed')).toMatchObject({
+      target: sessionId,
+      detail: { sessionId, providerId: chat.id, routeHash: sha256Hex(canonicalJson(recorded)), toHash: sha256Hex(value) },
+    })
+    await phone.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'model on the service', requestId: randomUUID() } })
+    await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'), { timeout: 10_000 })
+    expect((await detail()).messages.findLast(message => message.role === 'assistant')?.text).toBe('model: via the gateway')
+    expect(fake.requests).toMatchObject([{ model: 'fake-model', key: KEY }])
+
+    // Back to its own model, then a service it cannot use now: refused before anything is sent, so it failed.
+    const back = randomUUID()
+    await phone.json(`tasks/${sessionId}/config`, {
+      method: 'POST',
+      body: { configId: modelId, value: ownChoice('small'), requestId: back },
+    })
+    expect((await detail()).summary.modelRoute).toBeUndefined()
+    expect((await detail()).config!.find(option => option.id === modelId)?.currentValue).toBe('small')
+    expect((await audit(t.dataDir)).findLast(record => record.action === 'task.model.route-changed')?.detail).toEqual({
+      sessionId,
+      toHash: sha256Hex(ownChoice('small')),
+    })
+    expect((await phone.request(`providers/${chat.id}`, { method: 'PUT', body: { enabled: false } })).status).toBe(200)
+    const off = randomUUID()
+    const refused = await phone.request(`tasks/${sessionId}/config`, {
+      method: 'POST',
+      body: { configId: modelId, value, requestId: off },
+    })
+    expect(refused.status).toBe(400)
+    expect(await phone.json(`tasks/${sessionId}/config-requests/${off}`)).toEqual({ state: 'failed' })
+    expect((await detail()).summary.modelRoute).toBeUndefined()
   })
 
   it('refuses a model the service does not list and a service it cannot use, before anything starts', async () => {

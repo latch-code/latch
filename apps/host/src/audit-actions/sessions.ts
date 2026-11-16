@@ -104,6 +104,13 @@ export const SESSION_ACTIONS = {
   'task.cancelled': z.strictObject({ sessionId: opaqueId, runId: opaqueId.optional() }),
   'task.config.changed': z.strictObject({ sessionId: opaqueId, configIdHash: hex64, toHash: hex64 }),
   'task.mode.widened': z.strictObject({ sessionId: opaqueId, toHash: hex64 }),
+  /** The session moves to another route: a service's model (with the route as a start records it) or the harness's own. */
+  'task.model.route-changed': z.strictObject({
+    sessionId: opaqueId,
+    toHash: hex64,
+    providerId: opaqueId.optional(),
+    routeHash: hex64.optional(),
+  }),
   /** 核对 settled a config change whose outcome was unknown; \`refSeq\` is the change's own entry. */
   'task.config.checked': z.strictObject({
     sessionId: opaqueId,

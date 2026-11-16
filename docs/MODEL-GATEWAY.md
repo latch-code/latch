@@ -29,8 +29,8 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 - 每个 Agent 进程一个 `lmg1.` 凭据。Host 内存只存它的哈希。
 - 凭据绑定会话、服务、入口协议、模型列表，以及每个候选签发时的服务指纹；只开放自己协议的路径。
 - 凭据只由 runtime 注入 profile 允许的环境变量（`tokenEnv`，或按协议的 `tokenEnvByWire`），codex-acp 经 ACP 头字段。它不进参数、私有文件、URL、日志、审计、SSE、启动预览与持久化会话。
-- 作废：进程退出、Host 关闭，或服务的协议、地址、密钥、可用性、模型清单、声明能力变化。下一轮重新准备进程与凭据；服务不能用了就明确失败。
-- 会话不能换服务，同服务内只提供凭据允许的模型。
+- 作废：进程退出、Host 关闭，会话换到另一条路线，或服务的协议、地址、密钥、可用性、模型清单、声明能力变化。下一轮重新准备进程与凭据；服务不能用了就明确失败。
+- 一个进程只有一条路线，只提供凭据允许的模型。换到别的服务或 Harness 自己的登录见[会话中换路线](#会话中换路线)。
 - Host 保存的 vision/thinking/上下文长度声明随租约（`ModelGatewayLease.modelCapabilities`）交给 profile，不从模型名猜图片、思考、价格或容量。
 
 **上下文长度。** 设置 › 模型 给每个模型一个可选的数字（`modelCapabilities[model].contextTokens`，1024–16777216，超出 400）。服务的 `/models` 在 `context_length`、`context_window` 或 `max_model_len` 里报了长度时，从列表加入的模型预填它，人可以改；Anthropic 的列表不报。各 Harness 怎样收到见下表的「上下文」。Harness 自己不报窗口大小时，会话的上下文占用以这个数为分母（`TaskDetail.usageReport.contextSize`）。
@@ -159,6 +159,26 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 - **版本门。** 网关声明最低版本时，初始化后核对 Agent 报告的版本；没有协议版本报告时取官方命令的版本读数；两者都无法确认就拒绝开始。dsh 的 ACP 固定报告内部版本 0.0.1，所以它只认官方命令的版本读数。自定义包装命令不能靠跳过版本查询绕过。用 Harness 自己的模型时不受这条门槛影响。
 
 不带登录的真实核对（`gateway-no-login.live.test.ts`）怎样运行见 [TESTING.md](TESTING.md#需要显式开启的用例)。
+
+### 会话中换路线
+
+路线（凭据、变量、参数、私有文件或 `providers/set`）在进程启动时定下，所以同一会话里换到另一个服务的模型，或在服务与 Harness 自己的登录之间换，都是重启加恢复，没有原地切换的 Harness。同一服务内的模型照旧原地换。
+
+- **请求。** 模型选项的值写成 `serviceChoice`（服务 ID 与模型）或 `ownChoice`（Harness 自己的值，空为它的默认），经同一个 `POST /link/api/tasks/:id/config` 与回执。Host 用 `assertModel` 与 `modelRouteFor` 从自己的记录造路线，与以这个模型开始会话相同：`run` scope，地址没确认的服务 403，不弹本机确认；先写 `task.model.route-changed`（`toHash`，服务时另有 `providerId` 与 `routeHash`），写不进就不做。路线经 `SetConfigOptions.route` 交给 Driver，客户端给不了地址或协议。
+- **Driver（`writeRoute`）。** 只在空闲时：运行中、等你处理、后台子 Agent 或别的修改未结束时 409 `task-running`，没发出。结束旧进程并关闭它的凭据，按新路线重算启动指纹，启动新进程（新凭据）并 `session/resume` 或 `session/load` 同一会话，再按开始前的选项设好并读回模型。权限模式与项目不变；思考回到新模型的默认。
+- **结果。** 读回所选模型才算成，会话里写一行「模型改为 X」（服务的再加「 · 经 Latch · <服务名>」：之后整段历史发给它）；X 与服务名经 Host 的秘密脱敏。换回 Harness 自己的默认模型时，读回的仍是离开的服务的模型就不算成。没成时结束新进程，退回原路线、原指纹与原模型（下一轮前重设），回答带 `configOutcome: refused`，回执记失败。Host 读不到所选路线时是结果未知；核对（`readConfig`）按 Latch 记的路线与 Agent 报告的模型结算，换的过程中答 busy。
+- **Host 中途停下。** 换路线时，离开的路线（`routeMove`）与新路线在同一次写入里记下，换完才删去；Codex 带到新 provider 时与新线程 ID 在同一次写入里删去。启动时还留着它的会话回到离开的路线与原指纹，下一轮前重设原模型。
+- **删除。** 删除会话先等进行中的换路线结算（换成或退回），再删，不在已删的会话上写，进程与凭据随之结束。
+- **用量。** 每轮按结束时的路线记：有路线的进账本，没有的写 `usage/turns-*.jsonl`，从不两处都记。
+- **各 Harness**（profile 的 `gateway.sessionBoundToRoute`，`HarnessCapabilities.models.routeSwitch`）：
+
+  | Harness | 服务 ↔ 服务 | 自己的登录 ↔ 服务 | 依据 |
+  | --- | --- | --- | --- |
+  | Codex 直连 | 重启加 `thread/resume` | 重启加 `thread/fork`（`CARRY_METHOD`）：新线程、同样的历史，旧线程随会话删除 | 0.169 对换 provider 的恢复答「Cannot change this thread's model provider from `openai` to `latch` on resume」，没配 `latch` 的进程打不开它的线程；`thread/fork` 接受另一个 provider。各服务都走 provider `latch`，所以服务之间恢复即可 |
+  | Grok Build | 重启加 `session/load` | 不能 | 经 Latch 的会话记录在会话私有的 `GROK_HOME`，它自己的登录读不到 |
+  | goose | 重启加 `session/load` | 不能 | 1.57 去掉变量后恢复的会话仍报告服务的模型，下一轮发给它自己配置的 provider（没登录也发）：读不出它自己的登录是否接手 |
+  | codex-acp、OpenCode、DeepSeek Harness、Claude Agent、pi、Qwen Code | 重启加恢复 | 重启加恢复 | 会话存在 Harness 自己的位置，路线只在进程的环境、参数或私有文件里。Qwen Code 没登录时恢复就拒绝，换不过去、留在原服务 |
+  | Antigravity、Cursor | — | — | 只用自己的模型 |
 
 ### Codex 直连
 
@@ -432,6 +452,7 @@ Latch 没有内置价格表，也不从 token 猜费用。网关请求的花费�
 ## 尚未实现与没有核对的
 
 - Chat Completions 入口到其他协议的转换尚未实现。
+- 会话中换路线对真实程序核对过（自己的登录 → 服务 → 另一服务 → 自己的登录，每次一轮，回到自己的登录后它仍记得第一轮的内容）：Codex 0.169、Claude Agent、OpenCode 2.2.6、pi；Grok Build 1.0.77、Qwen Code 与 goose 1.57 核对了服务之间（没有登录；Qwen 换回自己的登录被拒绝并留在服务上）。codex-acp 与 DeepSeek Harness 只用假程序核对过。历史里另一服务或厂商签名、加密的推理（Codex 的 `encrypted_content`、Claude 的 thinking 签名）换到别的服务后是否被接受没有核对。
 - codex-acp、Claude Agent、Qwen Code、goose 与 Grok Build 不收声明的上下文长度：尚未核对它们给自定义模型定窗口的字段。OpenCode、pi 与 DeepSeek Harness 只按配置字段交付，没有对真实程序看它们是否按这个窗口压缩。
 - Responses 的 `tool_search` 尚未转换（见「转换的共同规则」）。
 - 预算拒绝（402 `budget-exceeded`）没有对着真实的 Harness 看它是否停下而不是重试。

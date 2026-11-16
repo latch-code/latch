@@ -9,7 +9,15 @@ import { chmod, link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, s
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { isReservedAgentEnvName, LADDER_MODE, type DriverTaskDetail, type Message, type SessionConfigOption } from '@latch/protocol'
+import {
+  isReservedAgentEnvName,
+  LADDER_MODE,
+  ownChoice,
+  serviceChoice,
+  type DriverTaskDetail,
+  type Message,
+  type SessionConfigOption,
+} from '@latch/protocol'
 import type {
   HarnessHostOptions,
   HarnessDriver,
@@ -6822,6 +6830,238 @@ describe('sessions on a model service through the gateway', () => {
       }
     },
   )
+
+  describe('moving a session to another route', () => {
+    /** A gateway whose services each have their own models; `broken` refuses every token, as a service gone since. */
+    function services(models: FakeModels) {
+      const leases: Array<{ providerId: string; token: string; closed: boolean }> = []
+      const lists: Record<string, string[]> = { svc: ['fake-model', 'fake-model-large'], other: ['other-model'] }
+      const access: ModelGateway = {
+        open({ sessionId: _session, route }) {
+          if (route.providerId === 'broken') throw new AppError(409, 'model-route-unavailable', '这个模型服务现在不能用。')
+          const lease = { providerId: route.providerId, token: `lmg1.${randomUUID().replaceAll('-', '')}${'t'.repeat(11)}`, closed: false }
+          leases.push(lease)
+          const mine = () => models.requests.filter(request => request.key === lease.token)
+          let taken = 0
+          return {
+            baseURL: `${models.origin}/v1`,
+            token: lease.token,
+            requests: () => mine().length,
+            takeTurn: () => {
+              const fresh = mine().slice(taken)
+              taken += fresh.length
+              return { requests: fresh.length, models: fresh.length ? [{ model: fresh[0]!.model ?? '', requests: fresh.length }] : [] }
+            },
+            models: lists[route.providerId] ?? [],
+            active: () => !lease.closed,
+            close: () => {
+              lease.closed = true
+            },
+          }
+        },
+      }
+      return { access, leases }
+    }
+
+    async function moving(env: Record<string, string> = {}) {
+      const models = await startFakeModels({ replies: [{ text: 'from the service' }] })
+      cleanups.push(() => models.close())
+      const stub = services(models)
+      const turns: Array<{ model?: string }> = []
+      const fixture = await setup(
+        { ...LAUNCHED, FAKE_ACP_CAPS: 'resume', ...env },
+        { idleMs: 60_000 },
+        { presetId: 'opencode' },
+        { modelGateway: stub.access, turnEnded: turn => void turns.push(turn) },
+      )
+      const routeTo = (providerId: string, model: string): ModelRoute => ({
+        providerId,
+        model,
+        wire: 'chat-completions',
+        origin: models.origin,
+      })
+      return { models, stub, turns, fixture, routeTo }
+    }
+
+    it('moves between its own login and services, each turn on the route it ran on', async () => {
+      const { models, stub, turns, fixture, routeTo } = await moving()
+      const bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({ prompt: 'own first', requestId: rid() })
+      let detail = await settled(bridge, sessionId)
+      const modelId = detail.config!.find(option => option.category === 'model')!.id
+      expect(detail.summary.modelRoute).toBeUndefined()
+      expect(turns).toHaveLength(1)
+
+      // Own → service: the process restarts on the route, the session resumes, the model is set and read back.
+      await bridge.setConfig!(sessionId, modelId, serviceChoice({ providerId: 'svc', model: 'fake-model-large' }), {
+        route: routeTo('svc', 'fake-model-large'),
+      })
+      detail = await bridge.detail(sessionId)
+      expect(detail.summary.modelRoute).toMatchObject({ providerId: 'svc', model: 'fake-model-large' })
+      expect(detail.config!.find(option => option.category === 'model')?.currentValue).toBe('latch/fake-model-large')
+      expect(systemText(detail)).toContain('模型改为 fake-model-large · 经 Latch')
+      await expect(
+        bridge.readConfig!(sessionId, modelId, serviceChoice({ providerId: 'svc', model: 'fake-model-large' })),
+      ).resolves.toEqual({
+        kind: 'read',
+        currentValue: 'latch/fake-model-large',
+        asked: true,
+      })
+      await bridge.prompt(sessionId, 'model on the service', rid())
+      detail = await settled(bridge, sessionId)
+      expect(assistants(detail).at(-1)?.text).toBe('model: from the service')
+      expect(models.requests.map(request => ({ model: request.model, key: request.key }))).toEqual([
+        { model: 'fake-model-large', key: stub.leases[0]!.token },
+      ])
+      // Its turn is in the gateway's ledger, not the record of turns on the Harness's own login.
+      expect(turns).toHaveLength(1)
+
+      // Service → service: the first service's token ends with its process.
+      await bridge.setConfig!(sessionId, modelId, serviceChoice({ providerId: 'other', model: 'other-model' }), {
+        route: routeTo('other', 'other-model'),
+      })
+      expect(stub.leases.map(lease => ({ providerId: lease.providerId, closed: lease.closed }))).toEqual([
+        { providerId: 'svc', closed: true },
+        { providerId: 'other', closed: false },
+      ])
+      await bridge.prompt(sessionId, 'model on the other', rid())
+      detail = await settled(bridge, sessionId)
+      expect(models.requests.at(-1)).toMatchObject({ model: 'other-model', key: stub.leases[1]!.token })
+      expect(detail.summary.modelRoute).toMatchObject({ providerId: 'other', model: 'other-model' })
+
+      // Service → own: every token is gone, and the next turn is the Harness's own again.
+      await bridge.setConfig!(sessionId, modelId, ownChoice('large'))
+      detail = await bridge.detail(sessionId)
+      expect(stub.leases.every(lease => lease.closed)).toBe(true)
+      expect(detail.summary.modelRoute).toBeUndefined()
+      expect(detail.config!.find(option => option.category === 'model')?.currentValue).toBe('large')
+      expect(systemText(detail)).toContain('模型改为 Large')
+      const served = models.requests.length
+      await bridge.prompt(sessionId, 'model own again', rid())
+      detail = await settled(bridge, sessionId)
+      expect(models.requests).toHaveLength(served)
+      expect(turns).toHaveLength(2)
+    })
+
+    it('answers 核对 only once a move has settled, from the route on record', async () => {
+      const { fixture, routeTo } = await moving({ FAKE_ACP_RESUME_DELAY: '400' })
+      const bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({ prompt: 'own first', requestId: rid() })
+      await settled(bridge, sessionId)
+      const modelId = (await bridge.detail(sessionId)).config!.find(option => option.category === 'model')!.id
+      const choice = serviceChoice({ providerId: 'svc', model: 'fake-model' })
+      const move = bridge.setConfig!(sessionId, modelId, choice, { route: routeTo('svc', 'fake-model') })
+      await vi.waitFor(async () =>
+        expect(await bridge.readConfig!(sessionId, modelId, choice)).toEqual({ kind: 'busy', reason: 'running' }),
+      )
+      await expect(bridge.prompt(sessionId, 'model too soon', rid())).rejects.toMatchObject({ status: 409 })
+      await move
+      await expect(bridge.readConfig!(sessionId, modelId, choice)).resolves.toMatchObject({ kind: 'read', asked: true })
+    })
+
+    it('lets a move settle before the session is deleted, with its process and token gone', async () => {
+      const { stub, fixture, routeTo } = await moving({ FAKE_ACP_RESUME_DELAY: '400' })
+      const bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({ prompt: 'own first', requestId: rid() })
+      await settled(bridge, sessionId)
+      const modelId = (await bridge.detail(sessionId)).config!.find(option => option.category === 'model')!.id
+      const move = bridge.setConfig!(sessionId, modelId, serviceChoice({ providerId: 'svc', model: 'fake-model' }), {
+        route: routeTo('svc', 'fake-model'),
+      })
+      await vi.waitFor(() => expect(stub.leases).toHaveLength(1))
+      await bridge.remove!(sessionId)
+      await expect(move).resolves.toBeUndefined()
+      await expect(bridge.detail(sessionId)).rejects.toMatchObject({ status: 404 })
+      await vi.waitFor(() => expect(stub.leases.every(lease => lease.closed)).toBe(true))
+      expect(fixture.diagnostics.join('\n')).not.toContain('没能退回')
+    })
+
+    it('goes back to the route it left when the Host stopped in the middle of a move', async () => {
+      const { models, stub, fixture, routeTo } = await moving({ FAKE_ACP_RESUME_DELAY: '600' })
+      let bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({ prompt: 'own first', requestId: rid() })
+      await settled(bridge, sessionId)
+      const before = (await bridge.detail(sessionId)).config!.find(option => option.category === 'model')!
+      const store = join(fixture.dataDir, 'acp.json')
+      const move = bridge.setConfig!(sessionId, before.id, serviceChoice({ providerId: 'svc', model: 'fake-model' }), {
+        route: routeTo('svc', 'fake-model'),
+      })
+      // What the record held at the moment the new route was written, before the agent's session was open on it.
+      let halfway = ''
+      await vi.waitFor(async () => {
+        halfway = await readFile(store, 'utf8')
+        expect(halfway).toContain('"routeMove"')
+      })
+      await move
+      await bridge.close()
+      await writeFile(store, halfway)
+      bridge = await fixture.open()
+      const detail = await bridge.detail(sessionId)
+      expect(detail.summary.modelRoute).toBeUndefined()
+      expect(JSON.stringify(detail)).not.toContain('routeMove')
+      await bridge.prompt(sessionId, 'model back on its own', rid())
+      const after = await settled(bridge, sessionId)
+      expect(after.summary.status).toBe('idle')
+      expect(after.config!.find(option => option.category === 'model')?.currentValue).toBe(before.currentValue)
+      expect(models.requests).toHaveLength(0)
+      expect(stub.leases.every(lease => lease.closed)).toBe(true)
+    })
+
+    it('refuses while a turn runs, and stays on the previous route when the new one cannot start', async () => {
+      const { stub, fixture, routeTo } = await moving()
+      const bridge = await fixture.open()
+      const { sessionId } = await bridge.createTask({ prompt: 'hang', requestId: rid() })
+      await vi.waitFor(async () => expect(promptPid(await fixture.log(), 'hang')).toBeGreaterThan(0))
+      const modelId = (await bridge.detail(sessionId)).config!.find(option => option.category === 'model')!.id
+      await expect(
+        bridge.setConfig!(sessionId, modelId, serviceChoice({ providerId: 'svc', model: 'fake-model' }), {
+          route: routeTo('svc', 'fake-model'),
+        }),
+      ).rejects.toMatchObject({ status: 409, code: 'task-running', details: { configOutcome: 'not-sent' } })
+      await bridge.cancel(sessionId)
+      let detail = await settled(bridge, sessionId)
+      const before = detail.config!.find(option => option.category === 'model')!.currentValue
+
+      // The service refuses its token: the move fails as refused, and the session is on its own login as before.
+      const choice = serviceChoice({ providerId: 'broken', model: 'fake-model' })
+      await expect(bridge.setConfig!(sessionId, modelId, choice, { route: routeTo('broken', 'fake-model') })).rejects.toMatchObject({
+        details: { configOutcome: 'refused' },
+      })
+      detail = await bridge.detail(sessionId)
+      expect(detail.summary.modelRoute).toBeUndefined()
+      expect(detail.config!.find(option => option.category === 'model')?.currentValue).toBe(before)
+      await expect(bridge.readConfig!(sessionId, modelId, choice)).resolves.toEqual({ kind: 'read', currentValue: before, asked: false })
+      expect(stub.leases).toHaveLength(0)
+      await bridge.prompt(sessionId, 'still own', rid())
+      expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+
+      // Without a route the Host built, a service choice is not taken.
+      await expect(bridge.setConfig!(sessionId, modelId, serviceChoice({ providerId: 'svc', model: 'fake-model' }))).rejects.toMatchObject({
+        status: 400,
+        details: { configOutcome: 'not-sent' },
+      })
+    })
+  })
+
+  it('says which Harnesses move a session between their own login and services, and which only between services', async () => {
+    const moves = async (presetId: string, command: string) =>
+      (await activate(createAcpAgentPlugin({ id: presetId, name: presetId, presetId, command, args: [], env: {}, enabled: true })))
+        .capabilities?.models?.routeSwitch
+    // Grok keeps a routed session in its private home; Codex carries its thread across by a fork.
+    expect(await moves('grok', 'grok')).toBe('services')
+    // goose, resumed off its service, keeps reporting that model and cannot say whether its own login took over.
+    expect(await moves('goose', 'goose')).toBe('services')
+    expect(await moves('codex', 'codex')).toBe('any')
+    for (const [presetId, command] of [
+      ['opencode', 'opencode'],
+      ['codex', 'codex-acp'],
+      ['claude-agent', 'claude-agent-acp'],
+      ['pi', 'pi'],
+    ] as const)
+      expect(await moves(presetId, command)).toBe('any')
+    // One that never reaches a service has nowhere to move.
+    expect(await moves('cursor', 'cursor-agent')).toBeUndefined()
+  })
 
   it('revokes a newly prepared gateway credential exactly once when all process slots are busy', async () => {
     const { fixture, stub, route } = await routed(

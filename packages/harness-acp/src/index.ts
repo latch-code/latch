@@ -191,6 +191,8 @@ function agentFacts(
       ...(profile?.thinkingPerModel ? { thinkingPerModel: true as const } : {}),
       ...(profile?.thinkingInModel ? { thinkingInModel: true as const } : {}),
       ...(profile?.wire === 'codex' && gateway ? { serviceThinking: true as const } : {}),
+      // A session moves by restarting the idle agent on the new route and resuming it; see `routeSwitch`.
+      ...(gateway ? { routeSwitch: gateway.sessionBoundToRoute ? ('services' as const) : ('any' as const) } : {}),
       // Codex's app-server reports its limits on its own wire; another profile through its own quota source, or the Host
       // reads them for it (`readQuota`).
       ...(profile?.quota || profile?.wire === 'codex' || hostQuota ? { quota: true as const } : {}),

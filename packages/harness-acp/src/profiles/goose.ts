@@ -25,6 +25,9 @@ export const gooseProfile: HarnessProfile = {
     tokenEnvByWire: { 'anthropic-messages': 'ANTHROPIC_API_KEY' },
     // No documented switch keeps a provider's key from the commands goose runs.
     credentialInherited: true,
+    // Resumed without its variables, goose 1.57 keeps reporting the service's model and sends the next turn to its own
+    // provider, logged in or not: nothing Latch can read says whether its own login took over.
+    sessionBoundToRoute: true,
     envNames: [
       'GOOSE_PROVIDER',
       'GOOSE_MODEL',

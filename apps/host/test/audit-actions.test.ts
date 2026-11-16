@@ -181,6 +181,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'task.cancelled': { sessionId, runId: 'run-1' },
   'task.config.changed': { sessionId, configIdHash: hex, toHash: hex },
   'task.mode.widened': { sessionId, toHash: hex },
+  'task.model.route-changed': { sessionId, toHash: hex, providerId: 'deepseek', routeHash: hex },
   'task.permission-drift': { sessionId, observedHash: hex },
   'task.model.bypassed': { sessionId },
   'task.model.fallback': { sessionId, providerId: 'deepseek', candidate: 1, errorClass: 'server' },

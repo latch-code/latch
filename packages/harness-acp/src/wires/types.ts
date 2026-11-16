@@ -50,6 +50,8 @@ export interface AgentWire {
   readonly commandsWithoutContext?: ReadonlySet<string>
   /** It answers `FORK_METHOD`. */
   readonly forks?: true
+  /** It answers `CARRY_METHOD`. */
+  readonly carries?: true
   readonly codexTeam?: 'available' | 'disabled' | undefined
   hasActiveCodexMember?(threadId?: string): boolean
   reconcileCodexTeam?(savedMember?: (rootThreadId: string, childThreadId: string, childTurnId?: string) => boolean): void

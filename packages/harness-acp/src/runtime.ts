@@ -6,7 +6,10 @@ import {
   MODEL_WIRES,
   isRetiredAgentPreset,
   modelIdKey,
+  onModelChoice,
+  parseModelChoice,
   promptTitle,
+  type ModelChoice,
   readSessionSkills,
   boundSessionSkills,
   type FileMention,
@@ -194,6 +197,7 @@ import {
   RPC,
   RpcError,
   sessionState,
+  CARRY_METHOD,
   FORK_METHOD,
   MCP_STATUS_METHOD,
   QUOTA_READ_METHOD,
@@ -930,6 +934,8 @@ export class AgentRuntime implements Bridge {
   /** A mode change owns this session through stop, resume and service read-back. */
   private readonly processModeChanges = new Map<string, { value: string; authorize?: () => void }>()
   private readonly launchThinkingChanges = new Map<string, { selected: { model: string; value: string }; authorize?: () => void }>()
+  /** A move to another route owns this session through stop, the new route's start, resume and the model's read-back. */
+  private readonly routeChanges = new Map<string, { authorize?: () => void; carry?: true; done: Promise<void> }>()
   /** How many times each session's agent has reported its options, from a response or a notification. */
   private readonly configReports = new Map<string, number>()
   /** Tasks whose ACP session is being set up and first checked; mode reports then are its starting point, not drift. */
@@ -1082,6 +1088,10 @@ export class AgentRuntime implements Bridge {
       this.loaded = true
       let changed = false
       for (const task of Object.values(this.state.tasks)) {
+        if (task.acp.routeMove) {
+          this.unfinishedMove(task)
+          changed = true
+        }
         for (const message of task.messages)
           if (message.outputsPending) {
             delete message.outputsPending
@@ -3111,6 +3121,8 @@ export class AgentRuntime implements Bridge {
 
   async remove(sessionId: string): Promise<void> {
     await this.ready()
+    // A move to another route settles first (done or put back), so that nothing writes to a removed session.
+    for (let move = this.routeChanges.get(sessionId); move; move = this.routeChanges.get(sessionId)) await move.done
     const task = this.task(sessionId)
     if (
       this.runs.has(sessionId)
@@ -3178,6 +3190,8 @@ export class AgentRuntime implements Bridge {
     const task = this.task(sessionId)
     const option = task.config?.find(item => item.id === configId)
     if (!option) throw new AppError(404, 'config-not-found', '该会话没有这个设置项')
+    const choice = option.category === 'model' && typeof value === 'string' ? parseModelChoice(value) : undefined
+    if (choice) return this.writeRoute(task, option, choice, options, reach)
     if (typeof value !== 'string' || !(option.options.some(item => item.value === value) || this.isCustomModel(task, option, value)))
       throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
     this.assertUsable(task)
@@ -3290,6 +3304,9 @@ export class AgentRuntime implements Bridge {
   async readConfig(sessionId: string, configId: string, value: string): Promise<ConfigReading> {
     await this.ready()
     const task = this.task(sessionId)
+    const choice = parseModelChoice(value)
+    const chosen = choice && task.config?.find(option => option.id === configId && option.category === 'model')
+    if (choice && chosen) return this.readRoute(task, chosen, choice)
     // The private file records what Latch configured. It cannot prove the effective value of the agent's own overrides.
     if (task.config?.find(option => option.id === configId)?.source === 'launch') return { kind: 'unread' }
     // Opened again, the session would report the agent's defaults: neither the value asked for nor the one before it.
@@ -3368,7 +3385,12 @@ export class AgentRuntime implements Bridge {
   }
 
   private assertNotChecking(sessionId: string): void {
-    if (this.checking.has(sessionId) || this.processModeChanges.has(sessionId) || this.launchThinkingChanges.has(sessionId))
+    if (
+      this.checking.has(sessionId)
+      || this.processModeChanges.has(sessionId)
+      || this.launchThinkingChanges.has(sessionId)
+      || this.routeChanges.has(sessionId)
+    )
       throw new AppError(409, 'config-check-running', '正在确认设置，结束后再试。')
   }
 
@@ -3486,6 +3508,305 @@ export class AgentRuntime implements Bridge {
       this.leave(this.holds, id)
       this.scheduleIdle(id)
     }
+  }
+
+  /**
+   * Moves an idle session to a model of another service, or between a service and the harness's own login. The route is
+   * fixed for a process (its token, variables, arguments and files), so the process ends, its token with it, and a new
+   * one starts on the new route and resumes the same session; its model is then set and read back as a draft's is. A
+   * move that does not complete leaves the session on its previous route: the new process ends, and the next one starts
+   * on the old route with the old model set again.
+   */
+  private async writeRoute(
+    task: AcpTask,
+    option: SessionConfigOption,
+    choice: ModelChoice,
+    options: SetConfigOptions,
+    reach: { sent: boolean },
+  ): Promise<void> {
+    const id = task.summary.id
+    const name = this.agent.name
+    const gateway = this.selection.profile?.gateway
+    if (!gateway) throw new AppError(409, 'model-route-locked', `${name} 只用它自己的模型。`)
+    const from = task.acp.route
+    const target = choice.kind === 'service' ? checkedRoute(options.route) : undefined
+    if (choice.kind === 'service' && (target?.providerId !== choice.providerId || target.model !== choice.model))
+      throw new AppError(400, 'model-route-invalid', '模型服务的转发设置无效')
+    if (choice.kind === 'own' && !from) throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
+    if (gateway.sessionBoundToRoute && (from === undefined) !== (target === undefined))
+      throw new AppError(
+        409,
+        'model-route-locked',
+        from
+          ? `${name} 的会话开始时经 Latch，不能换到它自己的登录。新开一个会话用它自己的模型。`
+          : `${name} 的会话开始时用它自己的登录，不能换到经 Latch 的模型服务。新开一个会话用这个服务。`,
+      )
+    this.assertUsable(task)
+    if (onModelChoice(choice, task.summary.modelRoute, option.currentValue)) return
+    await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
+    await this.assertWorkspace(task)
+    // What the next process launches, the new route in its fingerprint; refused here when the harness cannot take it.
+    const folders = storedFolders(task.acp)
+    const launch = this.currentLaunch(await this.projectConfig(task.acp.cwd, folders), folders, target, task.acp.launchMode)
+    // From here to the reservation below nothing awaits: a turn that began meanwhile is seen, and none can begin after.
+    this.assertNotChecking(id)
+    const live = this.lives.get(id)
+    if (
+      this.busy(id)
+      || task.summary.status === 'running'
+      || task.summary.status === 'waiting-approval'
+      || [...(live?.children.values() ?? [])].some(child => child.taskId === id && !child.ended)
+    )
+      throw new AppError(409, 'task-running', '会话空闲后才能换到这个模型。')
+    if (live?.initialized && !live.capabilities.resume && !live.capabilities.load)
+      throw new AppError(409, 'harness-session-lost', `${name} 不能恢复会话，在新会话中选这个模型。`)
+    const own = choice.kind === 'own' ? (this.state.catalogue?.options.find(item => item.category === 'model') ?? option) : undefined
+    if (own && choice.kind === 'own' && choice.value && !own.options.some(item => item.value === choice.value))
+      if (!this.isCustomModel(task, own, choice.value)) throw new AppError(400, 'config-value-invalid', '设置值不在可选范围内')
+    const before = {
+      route: task.acp.route,
+      launchHash: task.acp.launchHash,
+      definitionHash: task.acp.definitionHash,
+      routeModelSet: task.acp.routeModelSet,
+      routeThinking: task.acp.routeThinking,
+      launchThinking: task.acp.launchThinking,
+      startConfig: task.acp.startConfig,
+      modelRoute: task.summary.modelRoute,
+      model: task.summary.model,
+      config: task.config,
+      acpSessionId: task.acp.acpSessionId,
+      earlierSessionIds: task.acp.earlierSessionIds,
+    }
+    // Between the harness's login and a service, one that resumes a session only where it began carries it instead.
+    const carry = gateway.carriesAcrossLogin === true && (from === undefined) !== (target === undefined)
+    let settled!: () => void
+    const done = new Promise<void>(resolve => {
+      settled = resolve
+    })
+    this.routeChanges.set(id, {
+      ...(options.authorize ? { authorize: options.authorize } : {}),
+      ...(carry ? { carry: true as const } : {}),
+      done,
+    })
+    this.enter(this.holds, id)
+    let moved = false
+    try {
+      options.authorize?.()
+      if (live) {
+        await live.wire.stop('stop', this.limits.stopGraceMs)
+        // The token of the route being left ends with its process, and certainly before the next one is issued.
+        live.gateway?.close()
+      }
+      options.authorize?.()
+      moved = true
+      const acp = task.acp
+      // The route left, in the same write as the new one: a Host that stops before the move is done goes back to it.
+      const leftModel = before.config?.find(item => item.category === 'model')?.currentValue
+      acp.routeMove = {
+        ...(before.route ? { route: before.route } : {}),
+        launchHash: before.launchHash!,
+        ...(before.routeModelSet ? { routeModelSet: true as const } : {}),
+        ...(leftModel !== undefined ? { model: leftModel.slice(0, 1024) } : {}),
+        ...(before.modelRoute ? { serviceModel: before.modelRoute.model } : {}),
+      }
+      if (target) acp.route = target
+      else delete acp.route
+      acp.definitionHash ??= launch.definitionHash
+      acp.launchHash = launch.hash
+      delete acp.routeModelSet
+      delete acp.routeThinking
+      delete acp.launchThinking
+      // A choice left from before is for the route being left; thinking follows the new model's own default.
+      const kept = (acp.startConfig ?? []).filter(
+        item => item.category !== 'model' && item.category !== 'thought_level' && item.configId !== option.id,
+      )
+      const ownChoice =
+        own && choice.kind === 'own' && choice.value
+          ? [
+              {
+                configId: own.id,
+                value: choice.value,
+                category: 'model' as const,
+                label: own.options.find(item => item.value === choice.value)?.name ?? choice.value,
+              },
+            ]
+          : []
+      if (kept.length + ownChoice.length) acp.startConfig = [...kept, ...ownChoice]
+      else delete acp.startConfig
+      if (target) task.summary.modelRoute = routeSummary(target)
+      else delete task.summary.modelRoute
+      this.touch(task)
+      this.mark()
+      reach.sent = true
+      await this.attach(id)
+      options.authorize?.()
+      const current = this.task(id)
+      const now = current.config?.find(item => item.category === 'model')
+      // On its own default, a session that still reports the service's model did not reach the harness's own login.
+      const leftValue = before.config?.find(item => item.category === 'model')?.currentValue
+      const landed = target
+        ? now === undefined || this.serviceModelOf(current, now.currentValue) === target.model
+        : choice.kind !== 'own' || (choice.value ? now?.currentValue === choice.value : now === undefined || now.currentValue !== leftValue)
+      if (!landed) throw new AppError(409, 'model-unverified', `${name} 没有换到所选模型。`)
+      const shown = target ? target.model : (now?.options.find(item => item.value === now.currentValue)?.name ?? now?.currentValue)
+      const service = target && options.routeName ? ` · ${clip(this.redact(options.routeName), 64)}` : ''
+      current.messages.push({
+        id: randomUUID(),
+        role: 'system',
+        text: `模型改为 ${clip(this.redact(shown ?? '默认模型'), 200)}${target ? ` · 经 Latch${service}` : ''}`,
+        createdAt: this.now(),
+      })
+      delete current.acp.routeMove
+      this.touch(current)
+      this.mark()
+      await this.flush()
+      this.notify(id)
+    } catch (error) {
+      if (!moved) throw error
+      const restored = await this.restoreRoute(id, before, option.id).then(
+        () => true,
+        (failure: unknown) => {
+          this.limits.log(`${name} 会话 ${id} 没能退回原来的模型：${clip(this.redact(message(failure)), 200)}`)
+          return false
+        },
+      )
+      // Back on the previous route, the move certainly did not apply; not back, what the session runs on is unknown.
+      if (!restored) throw new AppError(503, 'config-outcome-unknown', `${name} 换模型没有完成，也没能退回原来的模型，请核对。`)
+      throw refusedConfig(error instanceof AppError ? error : this.publicError(error, this.lives.get(id)), 'refused')
+    } finally {
+      this.routeChanges.delete(id)
+      this.leave(this.holds, id)
+      this.scheduleIdle(id)
+      settled()
+    }
+  }
+
+  /**
+   * A move that did not complete: the process on the new route ends, and the session's record is the old route's again,
+   * with its model set again before the next prompt, since the new process may have changed what the agent keeps.
+   */
+  private async restoreRoute(
+    id: string,
+    before: {
+      route: AcpRecord['route']
+      launchHash: AcpRecord['launchHash']
+      definitionHash: AcpRecord['definitionHash']
+      routeModelSet: AcpRecord['routeModelSet']
+      routeThinking: AcpRecord['routeThinking']
+      launchThinking: AcpRecord['launchThinking']
+      startConfig: AcpRecord['startConfig']
+      modelRoute: AcpTask['summary']['modelRoute']
+      model: AcpTask['summary']['model']
+      config: AcpTask['config']
+      acpSessionId: AcpRecord['acpSessionId']
+      earlierSessionIds: AcpRecord['earlierSessionIds']
+    },
+    modelId: string,
+  ): Promise<void> {
+    const live = this.lives.get(id)
+    if (live) {
+      await live.wire.stop('stop', this.limits.stopGraceMs)
+      live.gateway?.close()
+    }
+    const task = this.state.tasks[id]
+    if (!task) return
+    const acp = task.acp
+    const put = <K extends keyof AcpRecord>(key: K, value: AcpRecord[K] | undefined) => {
+      if (value === undefined) delete acp[key]
+      else acp[key] = value
+    }
+    put('route', before.route)
+    put('launchHash', before.launchHash)
+    put('definitionHash', before.definitionHash)
+    put('routeModelSet', before.routeModelSet)
+    put('routeThinking', before.routeThinking)
+    put('launchThinking', before.launchThinking)
+    delete acp.routeMove
+    // A session carried onto the new route is the agent's new one: the old one is the session's again, the new one goes
+    // with the session's earlier ones.
+    if (acp.acpSessionId !== before.acpSessionId) {
+      const carried = acp.acpSessionId
+      put('acpSessionId', before.acpSessionId)
+      const earlier = (before.earlierSessionIds ?? []).concat(carried ? [carried] : [])
+      put('earlierSessionIds', earlier.length ? earlier : undefined)
+    }
+    if (before.modelRoute) task.summary.modelRoute = before.modelRoute
+    else delete task.summary.modelRoute
+    if (before.model !== undefined) task.summary.model = before.model
+    if (before.config) task.config = before.config
+    const previous = before.config?.find(item => item.category === 'model')
+    const others = (before.startConfig ?? []).filter(item => item.configId !== modelId)
+    acp.startConfig = previous
+      ? [
+          ...others,
+          {
+            configId: previous.id,
+            value: previous.currentValue,
+            category: 'model',
+            label: previous.options.find(item => item.value === previous.currentValue)?.name ?? previous.currentValue,
+          },
+        ]
+      : others
+    if (!acp.startConfig.length) delete acp.startConfig
+    this.touch(task)
+    this.mark()
+    await this.flush()
+    this.notify(id)
+  }
+
+  /**
+   * A move the Host stopped in: the session is on the route it left, with that route's fingerprint, and its model is set
+   * again before the next prompt. A session carried onto another provider has no such record (`routeMove` went with it).
+   */
+  private unfinishedMove(task: AcpTask): void {
+    const move = task.acp.routeMove
+    if (!move) return
+    const acp = task.acp
+    if (move.route) acp.route = move.route
+    else delete acp.route
+    acp.launchHash = move.launchHash
+    if (move.routeModelSet) acp.routeModelSet = true
+    else delete acp.routeModelSet
+    delete acp.routeThinking
+    if (move.route) task.summary.modelRoute = routeSummary({ ...move.route, model: move.serviceModel ?? move.route.model })
+    else delete task.summary.modelRoute
+    const option = task.config?.find(item => item.category === 'model')
+    const others = (acp.startConfig ?? []).filter(item => item.category !== 'model')
+    acp.startConfig =
+      option && move.model !== undefined ? [...others, { configId: option.id, value: move.model, category: 'model' }] : others
+    if (!acp.startConfig.length) delete acp.startConfig
+    delete acp.routeMove
+    this.touch(task)
+  }
+
+  /** What the session runs on now, from Latch's record of its route and the model the agent last reported. */
+  private readRoute(task: AcpTask, option: SessionConfigOption, choice: ModelChoice): ConfigReading {
+    const id = task.summary.id
+    if (this.routeChanges.has(id)) return { kind: 'busy', reason: 'running' }
+    // A move recorded but not read back yet (the Host stopped during it): the next turn sets and reads the model first.
+    if (
+      (task.acp.route && !task.acp.routeModelSet)
+      || (choice.kind === 'own'
+        && !task.acp.route
+        && task.acp.startConfig?.some(item => item.category === 'model' && item.value === choice.value))
+    )
+      return { kind: 'unread' }
+    const asked = onModelChoice(choice, task.summary.modelRoute, option.currentValue)
+    return { kind: 'read', currentValue: option.currentValue, asked }
+  }
+
+  /** The service's ID of the session's model `value` on its route: the profile's encoding read back, else the value. */
+  private serviceModelOf(task: AcpTask, value: string): string | undefined {
+    const route = task.acp.route
+    if (!route) return undefined
+    const gateway = this.selection.profile?.gateway
+    if (gateway?.via === 'launch' && gateway.models) return gateway.models.id(value, route.wire)
+    if (gateway?.via === 'providers') {
+      const lease = this.lives.get(task.summary.id)?.gateway
+      const key = modelIdKey(value)
+      return lease?.models.find(model => modelIdKey(model) === key)
+    }
+    return value
   }
 
   private async rememberProcessMode(task: AcpTask, mode: string): Promise<void> {
@@ -5061,7 +5382,9 @@ export class AgentRuntime implements Bridge {
     if (wait) await sleep(wait, undefined, { signal: this.lifetime.signal, ref: false }).catch(() => {})
     this.assertOpen()
     const sessionTmpDir = await this.prepareTmpDir(key)
-    const savedValue = this.state.tasks[key]?.config?.find(option => option.category === 'model')?.currentValue
+    // A move to another route starts on the new route's model: the saved one belongs to the route being left.
+    const moving = this.routeChanges.has(key)
+    const savedValue = moving ? undefined : this.state.tasks[key]?.config?.find(option => option.category === 'model')?.currentValue
     const gatewayProfile = this.selection.profile?.gateway
     const savedModel =
       confirmed.route && gatewayProfile?.via === 'launch' && gatewayProfile.models && savedValue
@@ -5107,6 +5430,7 @@ export class AgentRuntime implements Bridge {
       this.assertOpen()
       this.processModeChanges.get(key)?.authorize?.()
       this.launchThinkingChanges.get(key)?.authorize?.()
+      this.routeChanges.get(key)?.authorize?.()
       this.makeRoom()
     } catch (error) {
       gateway?.close()
@@ -5115,7 +5439,9 @@ export class AgentRuntime implements Bridge {
     let live!: Live
     let wire: AgentWire
     const selectedModel = savedModel && gateway?.models.includes(savedModel) ? savedModel : route?.model
-    const savedEffort = this.state.tasks[key]?.config?.find(option => option.category === 'thought_level')?.currentValue
+    const savedEffort = moving
+      ? undefined
+      : this.state.tasks[key]?.config?.find(option => option.category === 'thought_level')?.currentValue
     try {
       wire = openWire(
         this.selection.profile?.wire,
@@ -5523,6 +5849,7 @@ export class AgentRuntime implements Bridge {
     const setup = (method: string, params: unknown): Promise<unknown> => {
       this.processModeChanges.get(taskId)?.authorize?.()
       this.launchThinkingChanges.get(taskId)?.authorize?.()
+      this.routeChanges.get(taskId)?.authorize?.()
       const request = live.gatewayMeta && params && typeof params === 'object' ? { ...params, _meta: live.gatewayMeta } : params
       return wire.request(method, request, setupMs, signal).catch(async (error: unknown) => {
         if (!(error instanceof RequestTimeout)) throw error
@@ -5552,11 +5879,20 @@ export class AgentRuntime implements Bridge {
     }
     let acpSessionId: string
     let result: unknown
+    let carried: string | undefined
     if (!current) {
       result = (await this.ownFork(taskId, live, setup, mcpServers)) ?? (await setup('session/new', { cwd, mcpServers, ...directories }))
       const id = sessionState.safeParse(result)
       if (!id.success || !id.data.sessionId) throw new AppError(502, 'agent-protocol', `${this.agent.name} 未返回有效的会话标识`)
       acpSessionId = id.data.sessionId
+    } else if (this.routeChanges.get(taskId)?.carry) {
+      if (!live.wire.carries) throw new AppError(409, 'harness-session-lost', `${this.agent.name} 不能把会话带到另一个模型来源。`)
+      result = await setup(CARRY_METHOD, { sessionId: current, cwd, mcpServers, ...directories })
+      const id = sessionState.safeParse(result)
+      if (!id.success || !id.data.sessionId || id.data.sessionId === current)
+        throw new AppError(502, 'agent-protocol', `${this.agent.name} 未返回有效的会话标识`)
+      acpSessionId = id.data.sessionId
+      carried = current
     } else if (live.capabilities.resume) {
       result = await setup('session/resume', { sessionId: current, cwd, mcpServers, ...directories })
       acpSessionId = current
@@ -5588,6 +5924,11 @@ export class AgentRuntime implements Bridge {
     for (const note of live.heldNotes?.splice(0) ?? [])
       target.messages.push({ id: randomUUID(), role: 'system', text: clip(this.redact(note), 4000), createdAt: this.now() })
     target.acp.acpSessionId = acpSessionId
+    if (carried) {
+      target.acp.earlierSessionIds = [...(target.acp.earlierSessionIds ?? []), carried]
+      // The old route cannot open the agent's new session: from here the move stands, with this write.
+      delete target.acp.routeMove
+    }
     target.acp.deletable = live.capabilities.delete
     if (live.agentVersion) target.acp.agentVersion = live.agentVersion
     const parsed = sessionState.safeParse(result)
@@ -5613,7 +5954,7 @@ export class AgentRuntime implements Bridge {
     this.touch(target)
     this.mark()
     this.notify(taskId)
-    if (!current) {
+    if (!current || carried) {
       // A prompt follows at once. Were the Host to crash before this is durable, the task could not find the agent
       // session that received it, and the next prompt would quietly start a fresh one.
       await this.flush()
@@ -5962,6 +6303,7 @@ export class AgentRuntime implements Bridge {
       || this.checking.has(key)
       || this.processModeChanges.has(key)
       || this.launchThinkingChanges.has(key)
+      || this.routeChanges.has(key)
       || this.lives.get(key)?.wire.hasActiveCodexMember?.()
     )
       return true
@@ -7427,6 +7769,15 @@ export class AgentRuntime implements Bridge {
   private applyModel(task: AcpTask): void {
     const model = modelName(task.config)
     if (model) task.summary.model = clip(model, 200)
+    // The route's summary names the model the session runs on now, which a change within the service moves.
+    const route = task.acp.route
+    const value = task.config?.find(option => option.category === 'model')?.currentValue
+    const lease = this.lives.get(task.summary.id)?.gateway
+    const id = route && value !== undefined && lease ? this.serviceModelOf(task, value) : undefined
+    if (route && id !== undefined && lease?.models.includes(id) && task.summary.modelRoute?.model !== id) {
+      const bypassed = task.summary.modelRoute?.bypassed
+      task.summary.modelRoute = { ...routeSummary({ ...route, model: id }), ...(bypassed ? { bypassed } : {}) }
+    }
   }
 }
 
