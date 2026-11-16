@@ -22,6 +22,11 @@ const { closeSync, constants, fstatSync, openSync, readFileSync, writeSync } = r
 const { join } = require('node:path')
 const directory = process.argv[1]
 const skills = JSON.parse(readFileSync(join(directory, 'skills.json'), 'utf8'))
+// Latch's own guides to the MCP servers this session was given, after the agent's skills; written at each start.
+try {
+  for (const skill of JSON.parse(readFileSync(join(directory, 'guides.json'), 'utf8')))
+    if (skill && typeof skill.id === 'string' && !skills.some(item => item.id === skill.id)) skills.push(skill)
+} catch {}
 const proposing = process.argv[2] === 'propose'
 // Lines the Host already took from earlier copies of the file count toward the session's limit.
 const earlier = Math.max(0, Math.min(Number(process.argv[3]) || 0, 1000))
@@ -190,6 +195,16 @@ export async function writeSessionSkills(directory: string, skills: readonly Age
   await mkdir(directory, { recursive: true, mode: 0o700 })
   await chmod(directory, 0o700)
   await writeFileAtomic(join(directory, 'skills.json'), JSON.stringify(skills))
+}
+
+/**
+ * Latch's own guides for the MCP servers this start of the session was given (「操控这台 Mac」), which the skills server
+ * lists after the agent's skills. In the session's private directory only; never in an agent CLI's own skills folders.
+ */
+export async function writeSessionGuides(directory: string, guides: readonly AgentSkillBody[]): Promise<void> {
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  await chmod(directory, 0o700)
+  await writeFileAtomic(join(directory, 'guides.json'), JSON.stringify(guides))
 }
 
 export async function removeSessionSkills(directory: string): Promise<void> {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile, chmod } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -16,7 +16,15 @@ import { createAcpAgentPlugin } from '@latch/harness-acp'
 import type { HarnessDriver, HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, writeFakeCuaDriver, type TestDevice } from '@latch/testkit'
 import { widens, type McpStdioState } from '../src/mcp.ts'
-import { checkComputerDriver, COMPUTER_ENV, COMPUTER_KNOWN_TOOLS, COMPUTER_MINIMUM, COMPUTER_TOOLS_OFF } from '../src/mcp-computer.ts'
+import {
+  checkComputerDriver,
+  computerGuide,
+  COMPUTER_ENV,
+  COMPUTER_GUIDE_SKILL,
+  COMPUTER_KNOWN_TOOLS,
+  COMPUTER_MINIMUM,
+  COMPUTER_TOOLS_OFF,
+} from '../src/mcp-computer.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
@@ -129,9 +137,13 @@ describe('「操控这台 Mac」: a server that keeps new tools off', () => {
   })
 })
 
-async function computerHost(options: { tools?: string[]; version?: string } = {}) {
+async function computerHost(options: { tools?: string[]; version?: string; instructions?: string } = {}) {
   const root = await folder()
-  const app = await writeFakeCuaDriver(root, { tools: options.tools ?? [], ...(options.version ? { version: options.version } : {}) })
+  const app = await writeFakeCuaDriver(root, {
+    tools: options.tools ?? [],
+    ...(options.version ? { version: options.version } : {}),
+    ...(options.instructions ? { instructions: options.instructions } : {}),
+  })
   const t = await startTestHost({ demo: false, computerDriver: { app, verify: signed } })
   cleanups.push(() => t.close())
   const desktop = await t.enroll({ listener: 'unix' })
@@ -405,5 +417,73 @@ describe('「操控这台 Mac」 in sessions', () => {
       body: { customAgentId: agent.id, prompt: 'mcp-list computer', requestId: randomUUID() },
     })
     expect(lastText(await settled(desktop, chat.sessionId))).toBe('computer tools: click')
+  })
+})
+
+describe('「操控这台 Mac」: Latch’s guide for the agent', () => {
+  it('names only the tools switched off now, and what to do instead', () => {
+    const guide = computerGuide(COMPUTER_TOOLS_OFF)
+    expect(guide.length).toBeLessThan(2048)
+    expect(guide.split('\n').length).toBeLessThan(60)
+    expect(guide).toContain('Switched off now: clipboard_read, clipboard_write, run_script, run_steps')
+    expect(guide).toContain('Make one call per step')
+    expect(guide).toContain('ask the person to open it')
+    // The person switched batches and launching back on: the guide no longer calls them off.
+    const opened = computerGuide(COMPUTER_TOOLS_OFF.filter(tool => !['run_steps', 'run_script', 'launch_app'].includes(tool)))
+    expect(opened).not.toMatch(/\brun_steps\b|\brun_script\b|launch_app|one call per step|ask the person to open it/u)
+  })
+
+  it('reaches the agent in place of the driver’s own instructions, in the refusal of a tool that is off, and in latch-skills', async () => {
+    const { t, root, desktop } = await computerHost({
+      tools: ['click', 'run_steps', 'launch_app'],
+      instructions: 'Act through run_steps, even for a single step.',
+    })
+    await desktop.confirmedJson('agents', {
+      body: {
+        id: 'mcp-agent',
+        name: 'MCP Agent',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_MCP: 'dsh', FAKE_ACP_STATE: join(root, 'state.json') },
+      },
+    })
+    const added = await desktop.confirmedJson<{ server: McpServerView }>('mcp/servers', { body: addBody() })
+    await desktop.json(`mcp/servers/${added.server.id}`, {
+      method: 'PATCH',
+      body: { requestId: randomUUID(), baseRevision: added.server.revision, scope: { all: true, agents: [], projects: [] } },
+    })
+    const { sessionId } = await desktop.confirmedJson<{ sessionId: string }>('tasks', {
+      body: { prompt: 'mcp-instructions computer', requestId: randomUUID(), harnessId: 'mcp-agent' },
+    })
+    const said = lastText(await settled(desktop, sessionId))
+    expect(said).toBe(computerGuide(COMPUTER_TOOLS_OFF))
+    expect(said).not.toContain('even for a single step')
+    for (const [tool, hint] of [
+      ['run_steps', 'Make one call per step instead.'],
+      ['launch_app', 'Ask the person to open the app.'],
+    ]) {
+      await desktop.json(`tasks/${sessionId}/prompt`, { body: { requestId: randomUUID(), prompt: `mcp computer ${tool}` } })
+      expect(lastText(await settled(desktop, sessionId))).toBe(`computer.${tool}: error: This tool is switched off in Latch. ${hint}`)
+    }
+
+    // A session with latch-skills (a conversation with one of 我的 Agent) lists the guide after the agent's skills.
+    const agent = await desktop.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: { requestId: randomUUID(), name: '桌面', description: '', harnessId: 'mcp-agent', mode: 'agent', instructions: '', skills: [] },
+    })
+    const chat = await desktop.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { customAgentId: agent.id, prompt: 'skills', requestId: randomUUID() },
+    })
+    const listed = lastText(await settled(desktop, chat.sessionId))
+    expect(listed.startsWith('latch-skills: ')).toBe(true)
+    expect(JSON.parse(listed.slice('latch-skills: '.length))).toEqual([
+      { id: COMPUTER_GUIDE_SKILL.id, name: COMPUTER_GUIDE_SKILL.name, description: COMPUTER_GUIDE_SKILL.description },
+    ])
+    // Written only in the Host's own data directory, never into a CLI's skills folder or the project.
+    const found = (await readdir(t.dataDir, { recursive: true })).filter(path => path.endsWith('guides.json'))
+    expect(found).toHaveLength(1)
+    expect(JSON.parse(await readFile(join(t.dataDir, found[0]!), 'utf8'))[0].content).toBe(computerGuide(COMPUTER_TOOLS_OFF))
+    expect((await readdir(t.workspaceRoot, { recursive: true })).filter(path => /skill|guide/iu.test(path))).toEqual([])
   })
 })

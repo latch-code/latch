@@ -548,6 +548,7 @@ async function mountMcp(sessionId, servers, cwd) {
       })
       if (!MCP_LEGACY_VERSIONS.includes(started.result?.protocolVersion))
         throw rpcError(-32602, `${server.name}: Server's protocol version is not supported`)
+      mounted.at(-1).instructions = started.result.instructions
       peer.tell('notifications/initialized')
       const listed = await peer.ask('tools/list')
       if (!Array.isArray(listed.result?.tools)) throw rpcError(-32602, `${server.name}: tools/list failed`)
@@ -1439,6 +1440,13 @@ const scenarios = {
       'tool_call_update',
     )
     say(`${name}.${toolName}: ${reply.result?.isError ? 'error' : 'ok'}: ${text}`)
+    return END
+  },
+  // `mcp-instructions <server>` says the `instructions` that server gave at `initialize`, or `none`.
+  'mcp-instructions': ({ sessionId, input, say }) => {
+    const [, name = ''] = input.trim().split(/\s+/u)
+    const server = mcpServers.get(sessionId)?.find(item => item.name === name)
+    say(server ? (typeof server.instructions === 'string' ? server.instructions : 'none') : `no MCP server ${name}`)
     return END
   },
   'mcp-list': async ({ sessionId, input, say }) => {

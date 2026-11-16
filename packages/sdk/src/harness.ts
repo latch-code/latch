@@ -153,6 +153,8 @@ export interface McpServerLease {
   socketPath: string
   tokenFile: string
   token: string
+  /** Latch's guide to this server as a skill, which the driver adds to `latch-skills` where the session has it. */
+  skill?: { id: string; name: string; description: string; content: string }
   /** Revokes the token, which ends the bridge's server. Idempotent. */
   close(): void
 }

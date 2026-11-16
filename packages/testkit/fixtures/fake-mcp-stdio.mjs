@@ -7,6 +7,7 @@
 // FAKE_MCP_MODE: `crash` exits at once; `silent` never answers `initialize`; `noisy` writes a line longer than any limit;
 // `ask` sends a sampling request of its own after `initialize`; `changed` sends `notifications/tools/list_changed`.
 // FAKE_MCP_EXTRA_TOOLS: more tools by name, comma separated, each answering `<name>: ok`.
+// FAKE_MCP_INSTRUCTIONS: the `instructions` it gives at `initialize`.
 import { appendFileSync } from 'node:fs'
 
 const env = process.env
@@ -86,6 +87,7 @@ function handle(message) {
         protocolVersion: params?.protocolVersion ?? '2025-06-18',
         capabilities: { tools: { listChanged: true }, resources: {}, prompts: {} },
         serverInfo: { name: 'fake-mcp', version: '1' },
+        ...(env.FAKE_MCP_INSTRUCTIONS ? { instructions: env.FAKE_MCP_INSTRUCTIONS } : {}),
       },
     })
     if (mode === 'ask') send({ id: 'server-1', method: 'sampling/createMessage', params: {} })

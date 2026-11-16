@@ -7,7 +7,7 @@ import { closeSync, constants, openSync, rmSync, writeSync } from 'node:fs'
 import { chmod, lstat, mkdir, rm, unlink } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { dirname, join } from 'node:path'
-import type { TaskSummary } from '@latch/protocol'
+import type { AgentSkillBody, TaskSummary } from '@latch/protocol'
 import {
   AppError,
   type McpServerLease,
@@ -102,6 +102,10 @@ export type McpLaunchReply =
       disabledTools: string[]
       /** A server that keeps new tools off: the tools that are not new. */
       knownTools?: string[]
+      /** Latch's own text for the agent, given at `initialize` in place of the server's `instructions`. */
+      instructions?: string
+      /** Per tool switched off: a few words after the refusal, saying what to do instead. */
+      offHints?: Record<string, string>
     }
   | { remote: true; disabledTools: string[] }
 
@@ -128,7 +132,7 @@ export interface McpGatewayHandlers {
     sessionId: string
     agentId?: string
     projectId?: string
-  }): Promise<Array<{ serverId: string; name: string; specHash: string }>>
+  }): Promise<Array<{ serverId: string; name: string; specHash: string; skill?: AgentSkillBody }>>
   /** The launch, with the server's secrets in `env`; rejects when the server is gone, off or changed. */
   launch(binding: McpBinding): Promise<McpLaunchReply>
   /** What the bridge saw when it started the server. */
@@ -302,6 +306,7 @@ export class ToolGatewayServer implements ToolGateway {
         socketPath: this.options.socketPath,
         tokenFile: binding.tokenFile,
         token,
+        ...(server.skill ? { skill: server.skill } : {}),
         close: () => this.release(hash, binding),
       }
     })

@@ -16,7 +16,9 @@ import type { McpServerLease } from '@latch/sdk'
  * - a local command's prompts pass so a harness that reads MCP prompts lists them as its own commands; every
  *   `prompts/get` is recorded through the gateway before it is sent, and not sent when that fails. A remote server's
  *   prompts are not offered (尚未实现): the Host is not a client for them;
- * - tools switched off in Latch are left out of `tools/list` and refused;
+ * - tools switched off in Latch are left out of `tools/list` and refused, with the launch's few words on what to do
+ *   instead where it has them;
+ * - where the launch carries Latch's own `instructions` (「操控这台 Mac」), they replace the server's at `initialize`;
  * - every `tools/call` is recorded through the gateway before it is sent, and not sent when that fails; its outcome after;
  * - a server that does not start, or does not answer `initialize` within 30 s, is reported, and the agent gets a server
  *   with no tools, so a session is never refused over it (DeepSeek Harness refuses one when any server fails).
@@ -121,6 +123,11 @@ let disabled = new Set()
 // A server that keeps new tools off: only these are not new.
 let known
 const off = name => disabled.has(name) || (known !== undefined && !known.has(name))
+// Latch's text in place of the server's instructions, and per tool switched off what to do instead.
+let instructions
+let hints = {}
+const offText = name =>
+  'This tool is switched off in Latch.' + (typeof name === 'string' && Object.hasOwn(hints, name) ? ' ' + hints[name] : '')
 let childBuffer = ''
 // Request ID (as JSON) → what the agent asked, for its reply.
 const pending = new Map()
@@ -186,7 +193,7 @@ function fromChild(message) {
     const offered = message.result.capabilities || {}
     // Tools as the server offers them; prompts only as a plain capability (their change notice is not forwarded).
     const capabilities = { tools: offered.tools || {}, ...(offered.prompts ? { prompts: {} } : {}) }
-    return write({ id: entry.id, result: { ...message.result, capabilities } })
+    return write({ id: entry.id, result: { ...message.result, capabilities, ...(instructions !== undefined ? { instructions } : {}) } })
   }
   if (entry.method === 'tools/list') {
     if (message.result && Array.isArray(message.result.tools)) {
@@ -220,6 +227,9 @@ async function start(request) {
   const launch = reply.result
   disabled = new Set(Array.isArray(launch.disabledTools) ? launch.disabledTools : [])
   known = Array.isArray(launch.knownTools) ? new Set(launch.knownTools) : undefined
+  if (typeof launch.instructions === 'string') instructions = launch.instructions
+  if (launch.offHints && typeof launch.offHints === 'object')
+    hints = Object.fromEntries(Object.entries(launch.offHints).filter(([, text]) => typeof text === 'string'))
   if (launch.remote === true) {
     remote = true
     const answer = await ask('mcp/remote', { method: 'initialize', params: request.params && typeof request.params === 'object' ? request.params : {} })
@@ -229,7 +239,10 @@ async function start(request) {
       return answerBroken(entry)
     }
     // Two sessions: the agent's with this bridge speaks the version the agent asked for; the Host's with the server, its own.
-    return write({ id: request.id, result: { ...answer.result, ...ownInitialize(request.params) } })
+    return write({
+      id: request.id,
+      result: { ...answer.result, ...ownInitialize(request.params), ...(instructions !== undefined ? { instructions } : {}) },
+    })
   }
   try {
     child = spawn(launch.command, launch.args, { cwd: launch.cwd, env: launch.env, stdio: ['pipe', 'pipe', 'ignore'], detached: true })
@@ -275,7 +288,7 @@ async function start(request) {
 async function relay(id, method, params) {
   const args = params && typeof params === 'object' ? params : {}
   if (method === 'tools/call' && (typeof args.name !== 'string' || off(args.name)))
-    return write({ id, result: { content: [{ type: 'text', text: 'This tool is switched off in Latch.' }], isError: true } })
+    return write({ id, result: { content: [{ type: 'text', text: offText(args.name) }], isError: true } })
   const entry = { id, method, remote: true }
   pending.set(JSON.stringify(id), entry)
   const answer = await ask('mcp/remote', { method, params: args }, askId => {
@@ -347,7 +360,7 @@ async function handle(request) {
   }
   const name = params && params.name
   if (typeof name !== 'string' || off(name))
-    return write({ id, result: { content: [{ type: 'text', text: 'This tool is switched off in Latch.' }], isError: true } })
+    return write({ id, result: { content: [{ type: 'text', text: offText(name) }], isError: true } })
   const entry = { id, method, at: Date.now() }
   pending.set(JSON.stringify(id), entry)
   // Recorded before it is sent; a record that cannot be written stops the call.

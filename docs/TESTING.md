@@ -164,6 +164,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | `LATCH_CODEX_ACTIONS_LIVE=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `packages/harness-acp/test/codex-actions.live.test.ts` |
 | `LATCH_DSH_BINARY` | `packages/harness-acp/test/dsh-mode.test.ts` 的真实部分，无模型调用 |
 | `LATCH_AGY_BINARY` | `antigravity.live.test.ts` |
+| `LATCH_COMPUTER_GUIDE_LIVE=codex=<路径>,claude-agent=<claude-agent-acp 路径>,opencode=<路径>` | `computer-guide.live.test.ts`：CLI 用自己的登录与模型，假 Driver，不碰桌面；`LATCH_COMPUTER_GUIDE_ARMS=guide` 或 `plain` 只跑一组，`LATCH_COMPUTER_GUIDE_EVIDENCE_DIR` 写下工具行 |
 | `LATCH_CODEX_QUOTA_BINARY` | `harness-quota.live.test.ts`，结果写到 `LATCH_CODEX_QUOTA_OUT` |
 
 最后两行是例外：它们使用 CLI 自己已有的登录并调用真实模型（没有可指向的本地假服务），所以只发一条或几条极短的提示，在临时 Host 与临时项目里运行，仍不读取 CLI 自己的任何文件。

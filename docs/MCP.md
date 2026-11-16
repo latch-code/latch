@@ -347,7 +347,8 @@ detail 只有服务器 ID 与类别。令牌、code、state、verifier、Client 
 - **工作目录**默认是 Host 运行目录里为这个桥新建的空文件夹，桥结束时删除：`npx` 不会先用项目 `node_modules` 里的同名包。打开「在项目文件夹里启动」时是会话的主文件夹。
 - 桥转发 `initialize`、`ping`、`tools/list`、`tools/call`、取消、`notifications/tools/list_changed` 与[提示](#提示)请求。服务器自己的请求（sampling、elicitation、roots）一律回答 method not found。
 - 每次 `tools/call` 先经网关写 `mcp.tool.called`（服务器 ID、会话 ID、调用 ID、工具名与服务器 ID 的哈希），结束时补 `mcp.tool.settled`（`ok`、`error`、`cancelled`、`failed` 与耗时）。参数与结果从不经过网关。
-- 关掉的工具不在 `tools/list` 里，调用直接回答错误，不经过服务器。
+- 关掉的工具不在 `tools/list` 里，调用直接回答「This tool is switched off in Latch.」，不经过服务器；启动清单给了 `offHints` 时后面接一句该怎么做（见[给 Agent 的指引](#给-agent-的指引)）。
+- 启动清单带 `instructions` 时，桥在 `initialize` 的结果里用它替换服务器自己的 `instructions`；不带时原样转出。
 
 **远程地址**
 
@@ -392,7 +393,7 @@ detail 只有服务器 ID 与类别。令牌、code、state、verifier、Client 
 - 设了「可以使用」的 Agent 只拿到名单里写作 `mcp:<服务器 ID>` 的服务器。名单尚未提供这一项，所以这样的 Agent 在内置 Harness 上没有 MCP 工具。
 - 本机命令尚未实现：要由 Host 自己运行这个命令，而内置 Harness 是 L1。
 
-真实的 Agent 是否真的启动并调用桥，只在假 Agent 与回放上验证过。
+真实的 Codex（直连）、Claude Agent 与 OpenCode 启动并调用桥，由 `computer-guide.live.test.ts` 用假 Driver 核对（[给 Agent 的指引](#给-agent-的指引)）；其他 Harness 只在假 Agent 与回放上验证过。
 
 ## Harness 自己的 MCP
 
@@ -466,6 +467,18 @@ detail 只有服务器 ID 与类别。令牌、code、state、verifier、Client 
 - 不要让它操作 Electron 与 Chromium 应用（含 Latch 与 VS Code）：上游 #7292（像素点击让渲染进程崩溃）、#6258（后台拖动或悬停发 SIGUSR1，没有调试开关的应用退出）还开着。所有版本都标为预发布。
 - 谁能用它按「用在」与[各 Harness](#各-harness)：ACP 预设与 Codex 直连可以，pi 与内置 Harness 不能用本机命令。
 - 辅助功能与屏幕录制由人在系统设置里授予 CuaDriver.app；「测试」会启动 Driver 的守护进程，只由人按。
+
+### 给 Agent 的指引
+
+Latch 自己写一段短指引（`computerGuide`，`mcp-computer.ts`，英文，同其他给 Agent 的文字），只讲 Latch 实际给出的工具与 Latch 的规则：何时用；先选一个窗口窄读；按元素令牌操作，坐标最后；在检查点验证；关掉的工具与替代；不操作 Latch 与其他 Electron、Chromium 应用，网页用 `latch-browser`；登录、密码、付款与系统权限对话框交还给人。不写进任何 CLI 的配置或技能目录，走三条路：
+
+- **`instructions`。** 启动清单带上它，桥在 `initialize` 时**替换** Driver 自己的 `instructions`，不拼接：上游文字要 Agent 一律用 `run_steps`、需要逻辑时用 `run_script`、用 `launch_app` 开 App，而这些在 Latch 默认关闭；它随 Driver 版本变，按段删改会过时。指引列出这个服务器**此刻**关掉的工具（人打开的不再列），并说明 `get_guide` 仍返回上游指引、假定所有工具都开着，两者不同时以这段为准。
+- **拒绝的话。** 关掉的工具被拒时，桥（与 Host 的复查）在「This tool is switched off in Latch.」后接几个词：`run_steps`、`run_script`、`replay_trajectory` 是一步一个调用；`launch_app`、`kill_app` 是请人打开或退出；剪贴板是从窗口读或用 `type_text`；`page`、`browser_*` 是用 `latch-browser`（`COMPUTER_OFF_HINTS`）。
+- **`latch-skills` 的技能。** 会话有 `latch-skills` 时（带技能或能提议，见 [HARNESSES.md](HARNESSES.md)），同一段文字作为技能 `latch-operate-this-mac` 排在 Agent 自己的技能之后，`read_skill` 可读。每次打开、恢复、载入或分叉会话时写进会话私有目录的 `guides.json`（`writeSessionGuides`），只在 Latch 的数据目录里。会话中途才「用在」的服务器要等下次启动进程才进清单。
+
+谁收得到：能用这个预设的只有收 `mcpServers` 的 Harness（ACP 预设、自定义 Harness 与 Codex 直连），它们都经桥拿到 `initialize`。pi 不收 MCP，内置 Harness 不跑本机命令，两者都用不了这个预设，也就不需要指引。因此设置里不提供「安装技能到某个 Harness」：没有 Harness 要靠自己技能目录里的文件才能看到它。
+
+真实 CLI 的核对（`apps/host/test/computer-guide.live.test.ts`，只在设了 `LATCH_COMPUTER_GUIDE_LIVE` 时运行）：同一个假 Driver 分别作为这个预设与作为关掉同样工具的普通服务器，各跑同样两轮（改 TextEdit 并保存；最小化 Latch 窗口），记下 Agent 的工具行与到达假 Driver 的调用；不碰桌面。关掉的工具本来就不在 `tools/list` 里，两组都没有调用；指引的作用在于拒绝操作 Latch 窗口。
 
 ## 界面
 

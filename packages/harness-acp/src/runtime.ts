@@ -21,6 +21,7 @@ import {
   removeSessionSkills,
   skillsDirectory,
   skillsServer,
+  writeSessionGuides,
   writeSessionSkills,
 } from './skills-server.ts'
 import { browserServer } from './browser-server.ts'
@@ -5866,13 +5867,22 @@ export class AgentRuntime implements Bridge {
     const passed = storedFolders(task.acp)
     const directories = passed?.via === 'acp' ? { additionalDirectories: [...passed.paths] } : {}
     if (task.acp.proposals) await this.clearProposals(taskId)
-    const mcpServers: unknown[] =
-      task.acp.skills || task.acp.proposals
-        ? [skillsServer(skillsDirectory(this.options.dataDir, taskId), task.acp.proposals === true, task.acp.proposalsCleared ?? 0)]
-        : []
+    const skilled = task.acp.skills === true || task.acp.proposals === true
+    const mcpServers: unknown[] = skilled
+      ? [skillsServer(skillsDirectory(this.options.dataDir, taskId), task.acp.proposals === true, task.acp.proposalsCleared ?? 0)]
+      : []
     const tools = this.openTools(taskId, live)
     if (tools) mcpServers.push(browserServer(tools))
-    for (const lease of await this.openMcp(taskId, live)) mcpServers.push(mcpBridgeServer(lease))
+    const leases = await this.openMcp(taskId, live)
+    for (const lease of leases) mcpServers.push(mcpBridgeServer(lease))
+    // The guides of the servers given this time, before the agent starts its skills server.
+    if (skilled)
+      await writeSessionGuides(
+        skillsDirectory(this.options.dataDir, taskId),
+        leases.flatMap(lease => (lease.skill ? [lease.skill] : [])),
+      ).catch((error: unknown) =>
+        this.limits.log(`${this.agent.name} 会话 ${taskId} 的内置技能没有写入：${clip(this.redact(message(error)), 200)}`),
+      )
     if (passed?.via === 'acp' && !live.capabilities.additionalDirectories) {
       void live.wire.stop('stop', this.limits.stopGraceMs)
       throw this.foldersUnsupported(false)

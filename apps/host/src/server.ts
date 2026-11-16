@@ -228,7 +228,7 @@ import {
   type McpServerRecord,
 } from './mcp.ts'
 import { McpOAuth } from './mcp-oauth.ts'
-import type { ComputerDriverOptions } from './mcp-computer.ts'
+import { COMPUTER_GUIDE_SKILL, COMPUTER_OFF_HINTS, computerGuide, type ComputerDriverOptions } from './mcp-computer.ts'
 import { McpRemotePool, McpRemoteSession, builtinToolName, maskStrings, remoteFailure, type RemoteAnswer } from './mcp-remote.ts'
 import {
   authFailure,
@@ -5000,7 +5000,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         async select(input) {
           const chosen = mcpStore.usedIn(input).filter(record => mcpConfirmed(record) && mcpGiven(record, input.sessionId))
           mcpSets.set(input.sessionId, setHash(chosen))
-          return chosen.map(record => ({ serverId: record.id, name: record.name, specHash: record.specHash }))
+          return chosen.map(record => ({
+            serverId: record.id,
+            name: record.name,
+            specHash: record.specHash,
+            ...(record.transport === 'stdio' && record.preset === 'computer'
+              ? { skill: { ...COMPUTER_GUIDE_SKILL, content: computerGuide(record.disabledTools) } }
+              : {}),
+          }))
         },
         async launch(binding) {
           const record = current(binding)
@@ -5034,6 +5041,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             cwd,
             disabledTools: [...record.disabledTools],
             ...(record.knownTools ? { knownTools: [...record.knownTools] } : {}),
+            ...(record.preset === 'computer'
+              ? { instructions: computerGuide(record.disabledTools), offHints: { ...COMPUTER_OFF_HINTS } }
+              : {}),
           }
         },
         report(binding, report) {
@@ -5071,7 +5081,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         async callStarted(binding, tool) {
           const record = current(binding)
           if (!record || !mcpUsedIn(record.scope, binding) || !mcpGiven(record, binding.sessionId)) throw gone()
-          if (!isMcpToolOn(record, tool)) throw new AppError(403, 'mcp-tool-off', 'This tool is switched off in Latch.')
+          if (!isMcpToolOn(record, tool)) {
+            const hint = record.transport === 'stdio' && record.preset === 'computer' ? COMPUTER_OFF_HINTS[tool] : undefined
+            throw new AppError(403, 'mcp-tool-off', `This tool is switched off in Latch.${hint ? ` ${hint}` : ''}`)
+          }
           return recordCall(record, binding.sessionId, tool)
         },
         callEnded(binding, callId, result, ms) {

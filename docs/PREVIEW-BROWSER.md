@@ -150,6 +150,8 @@ sources:
 
 没有执行任意脚本、读 Cookie、开发者工具或清除数据的工具。
 
+外部 Harness 经 `latch-browser` 拿到同样的工具，`initialize` 另带几条 `instructions`（`BROWSER_INSTRUCTIONS`，见 [HARNESSES.md](HARNESSES.md)）。
+
 ### 通道
 
 主窗口存在时，主进程向自己的 Host 登记为浏览器提供者。这组路由只收 `host.sock` 上、在 `host.sock` 登记的设备；主进程的代理对页面发往 `/link/api/browser-provider/*` 的请求回答 403 `shell-managed`。

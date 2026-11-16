@@ -4,7 +4,7 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { browserServer } from '../src/browser-server.ts'
+import { BROWSER_INSTRUCTIONS, browserServer } from '../src/browser-server.ts'
 
 const cleanups: Array<() => Promise<unknown> | unknown> = []
 afterEach(async () => {
@@ -106,6 +106,9 @@ describe('the latch-browser MCP server', () => {
     const server = start(gateway.socketPath, gateway.tokenFile)
     const init = await server.ask('initialize', { protocolVersion: '2025-11-25', capabilities: {} }).reply
     expect(init.result).toMatchObject({ protocolVersion: '2025-11-25', serverInfo: { name: 'latch-browser' } })
+    // The few rules the tools need, as the server's instructions.
+    expect(init.result.instructions).toBe(BROWSER_INSTRUCTIONS)
+    expect(BROWSER_INSTRUCTIONS).toMatch(/browser_viewport[^\n]*then browser_read/u)
     expect(gateway.requests).toEqual([])
     const listed = await server.ask('tools/list').reply
     expect(listed.result.tools.map((tool: { name: string }) => tool.name)).toEqual(['browser_tabs'])

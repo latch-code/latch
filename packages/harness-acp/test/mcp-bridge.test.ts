@@ -36,6 +36,9 @@ async function fakeGateway(
     prompt?: (request: any, answer: (reply: unknown) => void) => unknown
     /** The launch says the server is a remote address. */
     remote?: true
+    /** Latch's own instructions and per-tool hints in the launch. */
+    instructions?: string
+    offHints?: Record<string, string>
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'lmcp-'))
@@ -66,6 +69,8 @@ async function fakeGateway(
               env: { PATH: process.env.PATH ?? '', FAKE_MCP_LOG: log, ...input.env },
               cwd: directory,
               disabledTools: input.disabledTools ?? [],
+              ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
+              ...(input.offHints ? { offHints: input.offHints } : {}),
             },
           })
         else if (request.method === 'mcp/call') {
@@ -185,6 +190,33 @@ describe('the latch-mcp bridge', () => {
     const off = await bridge.ask('tools/call', { name: 'slow', arguments: { ms: 1 } })
     expect(off.result).toMatchObject({ isError: true })
     expect((await gateway.lines()).filter(line => line.tool === 'slow')).toEqual([])
+  })
+
+  it('gives Latch’s instructions in place of the server’s, and says what to do instead of a tool that is off', async () => {
+    const own = await fakeGateway({ env: { FAKE_MCP_INSTRUCTIONS: 'Use run_steps.' }, disabledTools: ['slow'] })
+    const plain = start(own.socketPath, own.tokenFile)
+    // Without Latch's text, the server's own passes through, and a refusal says only that the tool is off.
+    expect((await plain.initialize()).result.instructions).toBe('Use run_steps.')
+    expect((await plain.ask('tools/call', { name: 'slow', arguments: {} })).result.content[0].text).toBe(
+      'This tool is switched off in Latch.',
+    )
+
+    const gateway = await fakeGateway({
+      env: { FAKE_MCP_INSTRUCTIONS: 'Use run_steps.' },
+      disabledTools: ['slow', 'where'],
+      instructions: 'Latch: one call per step.',
+      offHints: { slow: 'Make one call per step instead.' },
+    })
+    const bridge = start(gateway.socketPath, gateway.tokenFile)
+    expect((await bridge.initialize()).result.instructions).toBe('Latch: one call per step.')
+    expect((await bridge.ask('tools/call', { name: 'slow', arguments: {} })).result).toEqual({
+      content: [{ type: 'text', text: 'This tool is switched off in Latch. Make one call per step instead.' }],
+      isError: true,
+    })
+    // A tool that is off with no hint: the refusal alone.
+    expect((await bridge.ask('tools/call', { name: 'where', arguments: {} })).result.content[0].text).toBe(
+      'This tool is switched off in Latch.',
+    )
   })
 
   it('records each call before sending it, sends nothing when the record fails, and reports the outcome', async () => {
