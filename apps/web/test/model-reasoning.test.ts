@@ -868,7 +868,8 @@ describe('the service a session started on through Latch', () => {
   const info = testHarness('codex', { label: 'Codex' })
   const own = [{ value: 'gpt-5', label: 'gpt-5' }]
   const route = { providerId: 'openai', model: 'gpt-5', name: 'OpenAI' }
-  const header = (on: HostCatalog, at: typeof route & { off?: true }) => ownModelGroups(on, info, own, { route: at })[0]!
+  const header = (on: HostCatalog, at: typeof route & { off?: true }) =>
+    ownModelGroups(on, info, own, { route: at }).find(group => group.id === `~service-${at.providerId}`)!
 
   it('names the service and where requests go while the catalog offers it', () => {
     const on = { ...catalog, harnesses: [info], providers: [openai] }

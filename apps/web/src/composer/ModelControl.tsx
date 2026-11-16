@@ -2,7 +2,10 @@ import { useState, type ReactNode } from 'react'
 import { GitFork } from 'lucide-react'
 import {
   modelIdKey,
+  ownChoice,
   pairRoute,
+  parseModelChoice,
+  serviceChoice,
   WIRE_NAMES,
   GATEWAY_LOSS_NAMES,
   type AgentPresetSettings,
@@ -72,7 +75,6 @@ import {
   unreportedModelNote,
   type AgentConfigState,
 } from './modelReasoning.ts'
-import { BriefHint } from './BriefHint.tsx'
 import { ValuePicker } from './ComposerControl.tsx'
 import { ConfigFeedback, useSlowWrite } from './ThinkingControl.tsx'
 import { CatalogueRows, readOnSelect, readsOnSelect, TypedModelsPanel, useReading } from './harnessCatalogue.tsx'
@@ -453,13 +455,14 @@ export function UnusableServices({ services }: { services: readonly UnusableServ
   )
 }
 
-/** A model of a service as the picker's value: never an agent's own option value, which has no NUL in it. */
-const SERVICE_VALUE = '~service\u0000'
-export const serviceValue = (model: ModelRef) => `${SERVICE_VALUE}${model.providerId}\u0000${model.model}`
+/**
+ * A model of a service as the picker's value, the same a session's model option takes to move there
+ * (`serviceChoice`): never an agent's own option value, which has no NUL in it.
+ */
+export const serviceValue = (model: ModelRef) => serviceChoice(model)
 export function serviceRef(value: string): ModelRef | undefined {
-  if (!value.startsWith(SERVICE_VALUE)) return undefined
-  const [providerId = '', model = ''] = value.slice(SERVICE_VALUE.length).split('\u0000')
-  return providerId && model ? { providerId, model } : undefined
+  const choice = parseModelChoice(value)
+  return choice?.kind === 'service' ? { providerId: choice.providerId, model: choice.model } : undefined
 }
 
 /** Whether a session on `harness` can be started on `provider` through Latch, as a draft states it. */
@@ -476,23 +479,6 @@ function serviceReason(harness: HarnessInfo, provider: ProviderSummary): string 
   return MODEL_MENU_COPY.notRouted(name)
 }
 
-/** Shared by the composer menu and the phone's new-session sheet; unsupported pairs never appear as usable. */
-export function translationBrief(catalog: HostCatalog, harness: HarnessInfo | undefined, providerId?: string): Brief | undefined {
-  const translated = harness
-    ? catalog.providers.flatMap(provider => {
-        if (providerId && providerId !== provider.id) return []
-        const route = pairRoute(harness.capabilities, provider)
-        return route.kind === 'translate' ? [{ name: provider.name, losses: route.losses }] : []
-      })
-    : []
-  return translated.length
-    ? {
-        label: '协议转换 · 实验性',
-        detail: `${translated.map(item => item.name).join('、')} 使用协议转换。略去或受限：${[...new Set(translated.flatMap(item => item.losses))].map(loss => GATEWAY_LOSS_NAMES[loss]).join('、')}。文件与服务端会话状态不能转换。`,
-      }
-    : undefined
-}
-
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
 export const ROUTE_NOTE = (name: string, computer?: string, inherited?: boolean): Brief & { detail: string } => ({
   label: '经 Latch 转发',
@@ -504,6 +490,8 @@ export const ROUTE_NOTE = (name: string, computer?: string, inherited?: boolean)
 /** For a Harness with no switch that keeps its environment from the commands it runs: what those commands can read. */
 const credentialInherited = (name: string) => `${name} 运行的命令读得到这个会话的转发凭据，不是密钥。`
 const ROUTE_LOCKED = '开始后不能换服务'
+/** Why a session of a Harness that keeps it where it began cannot cross between its own login and a service. */
+const routeBound = (name: string) => `${name} 的会话不能在它自己的登录和经 Latch 之间换，新开一个会话`
 
 /**
  * The service a session's route goes to, as its menu names it, and why its next turn cannot go through Latch when the
@@ -536,36 +524,37 @@ export function routeService(
   return { name, unusable: { words, note: `这个会话开始时用的「${name}」${words}，下一轮会失败。${fix}，或新开一个会话。` } }
 }
 
-/** What a session on a route says of it in its model menu: a failure in full, else a few words with the rest behind ⓘ. */
-function routeNote(
-  catalog: HostCatalog,
+/**
+ * What a group of a service's models says on hover of its heading: where its requests go and with which key, what a
+ * protocol translation leaves out, that the Harness's commands read the credential, and for the session's own service
+ * what it falls back to. Not a row of the menu.
+ */
+function serviceHint(
+  harness: HarnessInfo | undefined,
   name: string,
-  route: NonNullable<TaskSummary['modelRoute']>,
-  computer?: string,
-  inherited?: boolean,
-): { failure: string } | { brief: Brief; tone?: 'warn'; fallback?: string } {
-  const service = routeService(catalog, route, computer)
-  if (service.unusable) return { failure: service.unusable.note }
-  // What the session fixed when it started; a service deleted since has no name left to show.
-  const others = (route.fallbacks ?? []).flatMap(item => (item.name ? [item.name] : []))
-  const fallback = others.length ? { fallback: `出错时改用「${[...new Set(others)].join('」「')}」` } : {}
-  return route.bypassed
-    ? { brief: { label: '有一轮没经过 Latch', detail: `那一轮可能用了 ${name} 自己的登录或配置。` }, tone: 'warn', ...fallback }
-    : {
-        brief: {
-          label: `经 Latch 用「${service.name}」`,
-          detail: `${onComputer('请求由 Latch 在这台 Mac 上转发，用设置里的密钥。', computer)}${inherited ? credentialInherited(name) : ''}`,
-        },
-        ...fallback,
-      }
+  provider: ProviderSummary | undefined,
+  computer: string | undefined,
+  route?: NonNullable<TaskSummary['modelRoute']>,
+): string {
+  const pair = harness && provider ? pairRoute(harness.capabilities, provider) : undefined
+  const others = (route?.fallbacks ?? []).flatMap(item => (item.name ? [item.name] : []))
+  return [
+    onComputer('请求由 Latch 在这台 Mac 上转发，用设置里的密钥。', computer),
+    pair?.kind === 'translate'
+      ? `协议转换，实验性：略去或受限的有${[...new Set(pair.losses)].map(loss => GATEWAY_LOSS_NAMES[loss]).join('、')}；文件与服务端会话状态不能转换。`
+      : '',
+    harness?.capabilities.models.credentialInherited ? credentialInherited(name) : '',
+    others.length ? `出错时改用「${[...new Set(others)].join('」「')}」。` : '',
+  ].join('')
 }
 
 /**
- * A Harness with its own models lists them first, then each saved service it can use. In a draft, a service Latch can
- * forward the Harness's requests to lists its models under 「经 Latch」; the ones it cannot use are not groups here but
- * `unusableServices`, folded into one row. A Harness that uses only models it knows is offered only those its own list
- * names, once read. In a session the service is the one it started with, so every other service it could use is listed
- * without a choice, with the rule that keeps it: a session's service is fixed when it starts.
+ * A Harness with its own models lists them first, then each saved service it can use, each service's models under
+ * 「经 Latch」; the ones it cannot use are not groups here but `unusableServices`, folded into one row. A Harness that uses
+ * only models it knows is offered only those its own list names, once read. A session lists the same: on a service, its
+ * service's models are what the session reports and the Harness's own are those its list names (`ownChoice`); another
+ * service's models move the session there (`serviceChoice`). A Harness that cannot move a session that way has those
+ * choices shown with the reason.
  */
 export function ownModelGroups(
   catalog: HostCatalog,
@@ -576,56 +565,76 @@ export function ownModelGroups(
 ): Array<PickerGroup<string>> {
   const name = harness ? harnessName(harness) : 'Harness'
   // What it read of its own models, without the IDs a person typed for it.
-  const known = harness?.catalogue?.options.find(option => option.category === 'model')?.options
+  const listed = harness?.catalogue?.options.find(option => option.category === 'model')
+  const known = listed?.options
   const knows =
     harness?.capabilities.models.knownOnly && known?.length
       ? new Set(known.flatMap(item => [modelIdKey(item.value), modelIdKey(item.name)]))
       : undefined
-  const routed = session?.route ? routeService(catalog, session.route, computer) : undefined
-  const services = catalog.providers.filter(provider => provider.kind !== 'demo' && provider.id !== session?.route?.providerId)
-  // On a route, the Host offers only the service's models, the ones the gateway forwards.
-  const routedHealth = routed && !routed.unusable ? menuHealth(findProvider(catalog, session?.route?.providerId)) : undefined
-  const ownLabel = routed ? `${nameWithHealth(routed.name, routedHealth)} · ${routed.unusable?.words ?? '经 Latch'}` : name
-  const ownOptions = routed?.unusable
-    ? own.map(option => ({ ...option, disabledReason: `下一轮会失败：服务${routed.unusable!.words}` }))
-    : own
-  const ownMedia =
-    !routed && harness
-      ? { media: <HarnessTile harness={harness} size={16} /> }
-      : routedHealth
-        ? { media: <HealthDot words={routedHealth} /> }
-        : {}
-  const groups: Array<PickerGroup<string>> = [{ id: '~own', label: ownLabel, ...ownMedia, options: ownOptions }]
-  const disabled: Array<PickerGroup<string>['options'][number]> = []
-  for (const provider of services) {
-    // Without a Harness nothing can be forwarded; `unusableServices` says so.
-    if (!harness || serviceReason(harness, provider) !== undefined) continue
-    const media = <ProviderTile provider={provider} size={16} />
-    if (session) {
-      disabled.push({
-        value: `~service-${provider.id}`,
-        label: provider.name,
-        media,
-        disabledReason: session.route ? ROUTE_LOCKED : '新开会话才能经 Latch 用',
+  const route = session?.route
+  const routed = route ? routeService(catalog, route, computer) : undefined
+  const switching = harness?.capabilities.models.routeSwitch
+  // In a session: why a choice that leaves its route cannot be made, `crossing` between the Harness's login and a service.
+  const locked = (crossing: boolean) =>
+    !session ? undefined : !switching ? ROUTE_LOCKED : crossing && switching === 'services' ? routeBound(name) : undefined
+  const media = harness ? { media: <HarnessTile harness={harness} size={16} /> } : {}
+  const ownOptions: Array<PickerGroup<string>['options'][number]> = route
+    ? (listed ? agentConfigValues(listed) : [{ value: '', name: DEFAULT_MODEL }]).map(item => {
+        const reason = locked(true)
+        return {
+          value: ownChoice(item.value),
+          label: escapeHiddenCharacters(item.name),
+          ...(reason ? { disabledReason: reason } : {}),
+        }
       })
+    : own
+  const groups: Array<PickerGroup<string>> = [{ id: '~own', label: name, ...media, options: ownOptions }]
+  // The session's own service: what it reports, as it always did; failing, every choice says the next turn fails.
+  const routeGroup = (provider: ProviderSummary | undefined): PickerGroup<string> => {
+    const health = routed && !routed.unusable ? menuHealth(provider) : undefined
+    const pair = harness && provider ? pairRoute(harness.capabilities, provider) : undefined
+    const experimental = pair?.kind === 'translate' || harness?.capabilities.models.experimental ? '实验性 · ' : ''
+    return {
+      id: `~service-${route!.providerId}`,
+      label: `${nameWithHealth(routed!.name, health)} · ${routed!.unusable?.words ?? `${experimental}经 Latch`}`,
+      ...(health ? { media: <HealthDot words={health} /> } : {}),
+      hint: serviceHint(harness, name, provider, computer, route),
+      options: routed!.unusable ? own.map(option => ({ ...option, disabledReason: `下一轮会失败：服务${routed!.unusable!.words}` })) : own,
+    }
+  }
+  let placed = false
+  for (const provider of catalog.providers) {
+    if (provider.kind === 'demo') continue
+    if (route && provider.id === route.providerId) {
+      groups.push(routeGroup(provider))
+      placed = true
       continue
     }
-    const route = pairRoute(harness.capabilities, provider)
-    const experimental = route.kind === 'translate' || harness.capabilities.models.experimental ? '实验性 · ' : ''
+    // Without a Harness nothing can be forwarded; `unusableServices` says so.
+    if (!harness || serviceReason(harness, provider) !== undefined) continue
+    const pair = pairRoute(harness.capabilities, provider)
+    const experimental = pair.kind === 'translate' || harness.capabilities.models.experimental ? '实验性 · ' : ''
     const health = menuHealth(provider)
+    const tile = <ProviderTile provider={provider} size={16} />
+    const reason = locked(!route)
     groups.push({
       id: `~service-${provider.id}`,
       label: `${nameWithHealth(provider.name, health)} · ${experimental}经 Latch`,
       ...(health ? { media: <HealthDot words={health} /> } : {}),
-      options: serviceModels(provider).map(model => ({
-        value: serviceValue({ providerId: provider.id, model }),
-        label: model,
-        media,
-        ...(knows && !knows.has(modelIdKey(model)) ? { disabledReason: `${name} 不认识这个模型` } : {}),
-      })),
+      hint: serviceHint(harness, name, provider, computer),
+      options: serviceModels(provider).map(model => {
+        const why = knows && !knows.has(modelIdKey(model)) ? `${name} 不认识这个模型` : reason
+        return {
+          value: serviceValue({ providerId: provider.id, model }),
+          label: model,
+          media: tile,
+          ...(why ? { disabledReason: why } : {}),
+        }
+      }),
     })
   }
-  if (disabled.length) groups.push({ id: '~services', label: '模型服务', options: disabled })
+  // A service the catalog no longer offers stays the session's, with why its next turn fails.
+  if (route && !placed) groups.push(routeGroup(undefined))
   return groups
 }
 
@@ -1035,12 +1044,9 @@ function HarnessModelPicker({
     computer,
   )
   const unusable = unusableServices(catalog, harness, computer, session)
-  const translationNote = translationBrief(catalog, harness, picked?.providerId ?? session?.route?.providerId)
-  const routeLine = session?.route
-    ? routeNote(catalog, name, session.route, computer, harness?.capabilities.models.credentialInherited)
-    : groups.some(group => group.id.startsWith('~service-'))
-      ? { brief: ROUTE_NOTE(name, computer, harness?.capabilities.models.credentialInherited) }
-      : undefined
+  // The menu holds choices; where a service's requests go is on its heading. Only a state that needs acting on is a line.
+  const failure = session?.route ? routeService(catalog, session.route, computer).unusable?.note : undefined
+  const bypassed = session?.route?.bypassed && !failure
   return (
     <ValuePicker
       label="模型"
@@ -1060,6 +1066,8 @@ function HarnessModelPicker({
       {...(panel ? { panel } : {})}
       {...(onOpenChange ? { onOpenChange } : {})}
       onValueChange={value => {
+        // In a session, another service's model or the Harness's own while on a service moves the session there.
+        if (session && parseModelChoice(value)) return modelOption && !blocked ? onConfig(modelOption.id, value) : undefined
         const ref = serviceRef(value)
         if (ref || picked) {
           // Leaving a service for one of the Harness's own models, its current one included.
@@ -1073,7 +1081,6 @@ function HarnessModelPicker({
       footer={
         <div className="model-footer">
           <UnusableServices services={unusable} />
-          {translationNote && <BriefHint brief={translationNote} className="model-note" />}
           {note && <p className="model-note">{note}</p>}
           {others.map(option => (
             <ConfigRow
@@ -1086,17 +1093,16 @@ function HarnessModelPicker({
             />
           ))}
           {rows}
-          {routeLine
-            && ('failure' in routeLine ? (
-              <p className="model-note" data-tone="error">
-                {routeLine.failure}
-              </p>
-            ) : (
-              <>
-                <BriefHint brief={routeLine.brief} className="model-note" {...(routeLine.tone ? { tone: routeLine.tone } : {})} />
-                {'fallback' in routeLine && routeLine.fallback && <p className="model-note">{routeLine.fallback}</p>}
-              </>
-            ))}
+          {failure && (
+            <p className="model-note" data-tone="error">
+              {failure}
+            </p>
+          )}
+          {bypassed && (
+            <p className="model-note" data-tone="warn">
+              有一轮没经过 Latch，可能用了 {name} 自己的登录或配置
+            </p>
+          )}
           {feedback && ownFeedback && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />}
           {manage}
         </div>

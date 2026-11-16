@@ -2,7 +2,15 @@ import { createElement } from 'react'
 import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { HarnessInfo, HostCatalog, ProviderSummary, SessionConfigOption, TaskDetail } from '@latch/protocol'
+import {
+  ownChoice,
+  serviceChoice,
+  type HarnessInfo,
+  type HostCatalog,
+  type ProviderSummary,
+  type SessionConfigOption,
+  type TaskDetail,
+} from '@latch/protocol'
 import {
   DraftModelControl,
   FORK_BUSY,
@@ -150,20 +158,53 @@ describe('the services a Harness cannot use, folded into one row', () => {
     }
   })
 
-  it('keeps the rule that a session stays on the service it started with, with its reason', () => {
+  it('lists in a session what a new one lists, and says why a choice that leaves its route cannot be made', () => {
     const info = codex()
     const route = { providerId: 'openai', model: 'openai-model', name: 'OpenAI' }
     const other = service('relay', 'Relay', 'openai-responses')
     const catalog = catalogOf(info, { providers: [openai, other, deepseek, anthropic] })
-    const groups = ownModelGroups(catalog, info, [{ value: 'openai-model', label: 'openai-model' }], { route })
-    expect(groups.at(-1)).toMatchObject({
-      label: '模型服务',
-      options: [
-        { label: 'Relay', disabledReason: '开始后不能换服务' },
-        { label: 'DeepSeek', disabledReason: '开始后不能换服务' },
-        { label: 'Anthropic', disabledReason: '开始后不能换服务' },
-      ],
-    })
+    const own = [{ value: 'openai-model', label: 'openai-model' }]
+    // A Harness that cannot move a session keeps the rule a session started with.
+    const fixed = ownModelGroups(catalog, info, own, { route })
+    expect(fixed.map(group => group.label)).toEqual([
+      'Codex',
+      'OpenAI · 实验性 · 经 Latch',
+      'Relay · 实验性 · 经 Latch',
+      'DeepSeek · 实验性 · 经 Latch',
+      'Anthropic · 实验性 · 经 Latch',
+    ])
+    expect(fixed.find(group => group.id === '~service-relay')?.options).toMatchObject([
+      { value: serviceChoice({ providerId: 'relay', model: 'relay-model' }), disabledReason: '开始后不能换服务' },
+    ])
+    // Codex moves a session between services only: its own login is shown, not offered.
+    info.capabilities.models = { ...info.capabilities.models, routeSwitch: 'services' }
+    const moving = ownModelGroups(catalog, info, own, { route })
+    expect(moving[0]!.options).toMatchObject([
+      { value: ownChoice(''), label: '默认模型', disabledReason: 'Codex 的会话不能在它自己的登录和经 Latch 之间换，新开一个会话' },
+    ])
+    expect(moving.find(group => group.id === '~service-relay')?.options[0]).not.toHaveProperty('disabledReason')
+    // The session's own service lists what the session reports, as its own values.
+    expect(moving.find(group => group.id === '~service-openai')?.options).toEqual(own)
+    // Where the requests go is on the heading, not a row: the protocol's losses for a translated pair too.
+    expect(moving.find(group => group.id === '~service-deepseek')?.hint).toContain('协议转换，实验性')
+    expect(moving.find(group => group.id === '~service-openai')?.hint).toContain('请求由 Latch 在这台 Mac 上转发')
+    // On its own login, a Harness that moves either way offers every service's models and its own list's.
+    info.capabilities.models = { ...info.capabilities.models, routeSwitch: 'any' }
+    const listed: HarnessInfo = {
+      ...info,
+      catalogue: {
+        options: [{ id: 'model', name: 'Model', category: 'model', currentValue: 'gpt-5', options: [{ value: 'gpt-5', name: 'GPT-5' }] }],
+        perModel: [],
+        reportedAt: '2026-11-16T00:00:00Z',
+        source: 'session',
+      },
+    }
+    expect(ownModelGroups(catalog, listed, own, { route })[0]!.options).toEqual([{ value: ownChoice('gpt-5'), label: 'GPT-5' }])
+    const unrouted = ownModelGroups(catalog, listed, own, {})
+    expect(unrouted[0]!.options).toEqual(own)
+    expect(unrouted.find(group => group.id === '~service-openai')?.options).toMatchObject([
+      { value: serviceChoice({ providerId: 'openai', model: 'openai-model' }) },
+    ])
     // The session's own service is never among the ones it cannot use.
     const chat = chatOnly()
     const started = { route: { providerId: 'deepseek', model: 'deepseek-model', name: 'DeepSeek' } }
@@ -213,8 +254,8 @@ describe('the services a Harness cannot use, folded into one row', () => {
     expect(html).toContain('DeepSeek · 经 Latch')
     expect(html).toContain('2 个服务用不了')
     expect(html.indexOf('2 个服务用不了')).toBeGreaterThan(html.indexOf('Ollama 本地 · 经 Latch'))
-    // What 「经 Latch」 means, and whose key it uses, stays one press away under a short label.
-    expect(html).toMatch(/<span class="ui-hint-label">经 Latch 转发<\/span><button[^>]*aria-label="说明"/u)
+    // Options only: what 「经 Latch」 means is on the heading, with no row of its own.
+    expect(html).not.toContain('经 Latch 转发')
   })
 })
 

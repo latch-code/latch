@@ -1,6 +1,6 @@
 import { isPersonalChat, personalChatModel, topicOwner } from '../agents/chat.ts'
 import { sessionAgent } from '../agents/model.ts'
-import { readsProjectFiles, type AppSnapshot } from '@latch/protocol'
+import { parseModelChoice, readsProjectFiles, type AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import { hasFileMention } from '../fileMentions.ts'
 import type { FileMention } from '@latch/protocol'
@@ -895,7 +895,16 @@ export function useSessionController({
   const valueName = (configId: string, value: string) => {
     const option = current?.config?.find(item => item.id === configId)
     const word = option?.category === 'thought_level' ? '思考' : option?.category === 'model' ? '模型' : (option?.name ?? configId)
-    const name = option?.options.find(item => item.value === value)?.name ?? value
+    // A move to another route names the model the way the menu does: a service's ID, else the Harness's own name for it.
+    const choice = option?.category === 'model' ? parseModelChoice(value) : undefined
+    const name =
+      choice?.kind === 'service'
+        ? choice.model
+        : choice?.kind === 'own'
+          ? (harnessInfo?.catalogue?.options.find(item => item.category === 'model')?.options.find(item => item.value === choice.value)
+              ?.name
+            ?? (choice.value || '默认模型'))
+          : (option?.options.find(item => item.value === value)?.name ?? value)
     return `${word} ${name}`
   }
   const unknownFeedback = (request: ConfigRequest, at: number): SessionConfigFeedback => ({

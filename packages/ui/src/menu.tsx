@@ -266,6 +266,8 @@ export interface MenuSection {
   label?: string
   /** A 16px tile before the heading, for example the model service a group of models comes from. */
   media?: ReactNode
+  /** More about the heading, on hover and read out with the group: where its choices go, not a row of its own. */
+  hint?: string
   items: MenuItem[]
 }
 
@@ -368,10 +370,15 @@ export function MenuPanel({ label, header, sections, selection = false, footer, 
         </div>
       )}
       {ordered.map((section, index) => (
-        <div key={section.id} className="ui-menu-section" role="group" aria-label={section.label}>
+        <div
+          key={section.id}
+          className="ui-menu-section"
+          role="group"
+          aria-label={section.label}
+          {...(section.hint ? { 'aria-description': section.hint } : {})}>
           {index > 0 && <div className="ui-menu-separator" role="separator" />}
           {section.label && (
-            <div className="ui-menu-section-label" aria-hidden="true">
+            <div className="ui-menu-section-label" aria-hidden="true" {...(section.hint ? { title: section.hint } : {})}>
               {section.media}
               {section.label}
             </div>
@@ -673,6 +680,8 @@ export interface PickerGroup<T extends string> {
   label?: string
   /** A 16px tile before the group's heading. */
   media?: ReactNode
+  /** More about the heading, on hover (`MenuSection.hint`). */
+  hint?: string
   options: Array<PickerOption<T>>
 }
 
@@ -950,6 +959,7 @@ export function ValuePicker<T extends string>({
       },
     })),
     media: group.media,
+    ...(group.hint ? { hint: group.hint } : {}),
   }))
 
   const button = (
@@ -1105,6 +1115,8 @@ export function PickerSheetBody<T extends string>({
   onValueChange: (value: T) => void
 }) {
   const chosen = groups.some(group => group.options.some(option => option.value === value))
+  // Touch has no hover: a heading with more to say shows it while tapped open.
+  const [shown, setShown] = useState<string | undefined>(undefined)
   return (
     <>
       {groups.map((group, index) => {
@@ -1115,10 +1127,23 @@ export function PickerSheetBody<T extends string>({
           <div key={group.id} className="ui-sheet-group">
             {(title || meta) && (
               <h3 className="ui-sheet-group-label">
-                {title && <span>{title}</span>}
+                {title && group.hint ? (
+                  <button
+                    type="button"
+                    className="ui-sheet-group-toggle"
+                    aria-expanded={shown === group.id}
+                    onClick={() => {
+                      setShown(shown === group.id ? undefined : group.id)
+                    }}>
+                    {title}
+                  </button>
+                ) : (
+                  title && <span>{title}</span>
+                )}
                 {meta && <span className="ui-sheet-group-meta">{meta}</span>}
               </h3>
             )}
+            {group.hint && shown === group.id && <p className="ui-sheet-group-hint">{group.hint}</p>}
             <ChoiceList
               label={[title, meta].filter(Boolean).join(' · ') || label}
               // The sheet opens on the current value, its list's one tab stop (with nothing chosen, the first list's).

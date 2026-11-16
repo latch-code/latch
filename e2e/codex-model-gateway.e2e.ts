@@ -108,7 +108,7 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
       await chip().click()
       await modelRow(names[0]!).waitFor()
       if (wire !== 'responses') {
-        await modelSurface.getByText('协议转换 · 实验性', { exact: true }).waitFor()
+        await modelSurface.locator('[title*="协议转换，实验性"]').first().waitFor()
         await page.keyboard.press('Escape')
         for (const width of [320, 390, 768, 1440]) {
           for (const colorScheme of ['light', 'dark'] as const) {
@@ -118,17 +118,10 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
             await chip().click()
             await modelRow(names[0]!).waitFor()
             await modelRow(names[0]!).scrollIntoViewIfNeeded()
-            const conversionNote = modelSurface.locator('.ui-hint').filter({ has: page.getByText('协议转换 · 实验性', { exact: true }) })
-            await conversionNote.scrollIntoViewIfNeeded()
+            // The translation is said on the group's heading, with no row of its own.
+            await modelSurface.locator('[title*="协议转换，实验性"]').first().waitFor()
             await noHorizontalOverflow(page)
             await page.screenshot({ path: `${output}/menu-${width}-${colorScheme}.png`, animations: 'disabled' })
-            if (width === 320 && colorScheme === 'dark') {
-              await conversionNote.getByRole('button', { name: '说明', exact: true }).click()
-              await conversionNote.locator('.ui-hint-detail').waitFor()
-              await noHorizontalOverflow(page)
-              await page.screenshot({ path: `${output}/conversion-detail-320-dark.png`, animations: 'disabled' })
-              await conversionNote.getByRole('button', { name: '说明', exact: true }).click()
-            }
             await page.keyboard.press('Escape')
           }
         }

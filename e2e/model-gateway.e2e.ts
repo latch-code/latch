@@ -193,14 +193,10 @@ describe('a Harness with its own models on a saved service', () => {
     await shownText(page, 'Relay · 实验性 · 经 Latch', { exact: true }).waitFor()
     await expect.poll(() => row(page, 'deepseek-v3').getAttribute('aria-disabled')).toBe('true')
     await shownText(page, 'Codex 不认识这个模型', { exact: true }).waitFor()
-    // What it promises is what the Host checks: a whole turn that did not reach Latch.
-    // A browser names the computer where the Latch app on it says 这台 Mac.
-    // A short label; what it means and whose key it uses stays behind its ⓘ.
-    const forwarded = page.locator('.ui-hint', { hasText: '经 Latch 转发' }).filter({ visible: true })
-    await forwarded.getByRole('button', { name: '说明', exact: true }).click()
-    await page
-      .getByText(/^「经 Latch」表示请求由 Latch 在 \S+ 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。$/u)
-      .waitFor()
+    // Options only: where a service's requests go and with whose key is on its heading, on hover; a browser names the
+    // computer where the Latch app on it says 这台 Mac.
+    expect(await shownText(page, /经 Latch 转发|协议转换 · 实验性/u).count()).toBe(0)
+    expect(await chatGroup.getAttribute('aria-description')).toMatch(/^请求由 Latch 在 \S+ 上转发，用设置里的密钥。协议转换，实验性：/u)
     await shot(page, 'draft-menu-1440-light')
     await row(page, 'fake-model-large').click()
     await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model-large')
@@ -234,19 +230,20 @@ describe('a Harness with its own models on a saved service', () => {
     expect(await readFile(log, 'utf8')).not.toContain(KEY)
     expect(JSON.stringify(detail)).not.toMatch(/lmg1\./u)
 
-    // In the session the service is fixed; the menu says where its requests go.
+    // In the session the menu lists what a new one does: Codex's own models and every service's, its own checked.
     await chip(page, '模型').click()
-    const routed = page.locator('.ui-hint', { hasText: '经 Latch 用「OpenAI」' }).filter({ visible: true })
-    await routed.getByRole('button', { name: '说明', exact: true }).click()
-    await routed.getByText(/^请求由 Latch 在 \S+ 上转发，用设置里的密钥。$/u).waitFor()
-    // What Codex lists now is that service's; another service it speaks needs a new session.
-    await menuText(page, 'OpenAI · 经 Latch').waitFor()
-    for (const name of ['DeepSeek', 'Relay']) {
-      const service = page.getByRole('menuitemradio', { name, exact: true })
-      expect(await service.getAttribute('aria-disabled')).toBe('true')
-      await service.getByText('开始后不能换服务', { exact: true }).waitFor()
-    }
-    expect(await menuText(page, 'Codex 自己的模型').count()).toBe(0)
+    const session = page.getByRole('group', { name: 'OpenAI · 实验性 · 经 Latch', exact: true })
+    expect(await session.getByRole('menuitemradio', { name: 'Fake-model-large', exact: true }).getAttribute('aria-checked')).toBe('true')
+    expect(await session.getAttribute('aria-description')).toMatch(/^请求由 Latch 在 \S+ 上转发，用设置里的密钥。$/u)
+    for (const name of ['DeepSeek', 'Relay'])
+      expect(
+        await page
+          .getByRole('group', { name: `${name} · 实验性 · 经 Latch`, exact: true })
+          .getByRole('menuitemradio', { name: 'fake-model', exact: true })
+          .getAttribute('aria-disabled'),
+      ).toBeNull()
+    await row(page, /GPT Own/u).waitFor()
+    expect(await shownText(page, /经 Latch 用「|开始后不能换服务/u).count()).toBe(0)
     // A route that works is said in the menu alone: a session's input has no line under it.
     expect(await page.locator('form.composer .composer-status, form.composer .composer-notice[data-tint="warn"]').count()).toBe(0)
     await shot(page, 'session-menu-1440-light')
@@ -262,7 +259,14 @@ describe('a Harness with its own models on a saved service', () => {
       .poll(() => page.locator('form.composer .composer-notice[data-tint="warn"]').filter({ visible: true }).first().innerText())
       .toContain('下一轮会失败：模型服务')
     await menuText(page, '这个会话开始时用的「OpenAI」已停用，下一轮会失败。在设置 › 模型里重新打开它，或新开一个会话。').waitFor()
-    await expect.poll(() => row(page, 'fake-model-large').getAttribute('aria-disabled')).toBe('true')
+    await expect
+      .poll(() =>
+        page
+          .getByRole('group', { name: 'OpenAI · 已停用', exact: true })
+          .getByRole('menuitemradio', { name: /^Fake-model-large/u })
+          .getAttribute('aria-disabled'),
+      )
+      .toBe('true')
     expect(await shownText(page, /经 Latch 用|openai · /u).count()).toBe(0)
     await shot(page, 'service-off-menu-1440-light')
     await page.keyboard.press('Escape')
@@ -284,6 +288,21 @@ describe('a Harness with its own models on a saved service', () => {
     await page.locator('.transcript').getByText('model: 经过 Latch 的回复', { exact: true }).nth(1).waitFor()
     const tokens = (await readFile(log, 'utf8')).match(/lmg1\.[A-Za-z0-9_-]{43}/gu) ?? []
     expect(new Set(tokens).size).toBe(2)
+
+    // Another service, picked in the same menu: the idle agent restarts on its route and resumes the same session.
+    await chip(page, '模型').click()
+    await page
+      .getByRole('group', { name: 'Relay · 实验性 · 经 Latch', exact: true })
+      .getByRole('menuitemradio', { name: 'fake-model', exact: true })
+      .click()
+    await page.locator('.transcript').getByText('模型改为 fake-model · 经 Latch · Relay', { exact: true }).waitFor({ timeout: 20_000 })
+    await expect.poll(() => chip(page, '模型').innerText()).toBe('Fake-model')
+    await shot(page, 'moved-service-1440-light')
+    await composer.fill('model 第四轮')
+    await composer.press('Meta+Enter')
+    await expect.poll(() => models.requests.length, { timeout: 20_000 }).toBe(3)
+    expect(models.requests.at(-1)).toMatchObject({ wire: 'responses', model: 'fake-model', key: KEY })
+    expect((await latest()).summary.modelRoute).toMatchObject({ model: 'fake-model', name: 'Relay' })
     await page.context().close()
   })
 })
