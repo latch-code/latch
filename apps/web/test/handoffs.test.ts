@@ -12,6 +12,7 @@ import {
   materialsOf,
   namedChips,
   placeByTime,
+  replyGroup,
   quotedSummary,
   retryBody,
   returnBody,
@@ -98,6 +99,29 @@ describe('handoff materials', () => {
     expect(materialsOf([unreadable])).toEqual({ problem: '「big.bin」超过 4 MB' })
   })
 
+  it('reads many Agent replies as one row, kept open while one of them blocks sending', () => {
+    const reply = (id: string, patch: object = {}): MaterialChip =>
+      ({
+        key: `message:${id}`,
+        kind: 'message',
+        messageId: id,
+        role: 'assistant',
+        line: id,
+        hash: 'a'.repeat(64),
+        ...patch,
+      }) as MaterialChip
+    const few = [reply('a1'), reply('a2'), reply('a3')]
+    expect(replyGroup(few)).toBeUndefined()
+    const file: MaterialChip = { key: 'file:x', kind: 'file', file: { root: 'default', path: 'x.ts' } }
+    const many = [reply('a1'), file, reply('a2'), reply('a3'), reply('a4', { hash: undefined })]
+    expect(replyGroup(many)).toEqual({
+      keys: new Set(['message:a1', 'message:a2', 'message:a3', 'message:a4']),
+      open: false,
+      pinning: true,
+    })
+    expect(replyGroup(many, ['message:a2'])?.open).toBe(true)
+    expect(replyGroup([...many.slice(0, 4), reply('a4', { hash: undefined, problem: '读不到' })])?.open).toBe(true)
+  })
   it('hashes text as the Host names a version: SHA-256 of its UTF-8, in hex', async () => {
     const text = '建议：用 ECB。\n每天缓存一次。'
     expect(await sha256Hex(text)).toBe(createHash('sha256').update(text).digest('hex'))

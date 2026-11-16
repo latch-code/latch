@@ -1,6 +1,6 @@
 /*
- * 交接: the card above the composer that hands chosen material to a code session (and, in the target, the one that hands
- * the result back), the state line of a handoff on its way, and 交回的结果 in the source's timeline. Raised like the
+ * 交接: the dialog that hands chosen material to a code session, the card above the composer that hands the result
+ * back, the state line of a handoff on its way, and 交回的结果 in the source's timeline. Cards are raised like the
  * composer, at its width; amber only where something waits for the person.
  */
 
@@ -45,7 +45,8 @@
 .handoff-fields {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
+  /* A label sits on the first line of its field, however many lines the field takes. */
+  align-items: baseline;
   gap: var(--sp-8) var(--sp-16);
   margin: 0;
 }
@@ -105,6 +106,61 @@
   flex-shrink: 0;
   color: var(--red);
   font-weight: 500;
+}
+
+/* 交给代码任务 is a dialog: header and footer stay, the body between them scrolls. */
+.handoff-dialog .handoff-body {
+  gap: var(--sp-16);
+}
+.handoff-dialog .handoff-requirements textarea {
+  field-sizing: content;
+  min-block-size: calc(3lh + var(--sp-16));
+  max-block-size: calc(10lh + var(--sp-16));
+  resize: none;
+}
+/* Many Agent replies: one row with their count, opened in place into a list that scrolls on its own. */
+.handoff-replies {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-6);
+  flex-basis: 100%;
+  min-width: 0;
+}
+.handoff-replies-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.handoff-replies-toggle > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.handoff-replies-toggle[aria-expanded='true'] > .ui-icon {
+  transform: rotate(90deg);
+}
+.handoff-replies-toggle:disabled {
+  cursor: default;
+}
+.handoff-replies-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  max-block-size: 160px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-width: 0;
+  max-width: 100%;
+  padding-inline-start: var(--sp-12);
+}
+.handoff-replies-list > .handoff-chip {
+  max-width: 100%;
 }
 
 .handoff-muted {
@@ -336,14 +392,6 @@ span.topbar-handoff:hover {
   }
   .handoff-card-foot {
     padding-bottom: var(--sp-12);
-  }
-  /* 新会话 / 已有会话 takes its own line under the title, so ✕ stays in reach. */
-  .handoff-card-head {
-    flex-wrap: wrap;
-  }
-  .handoff-card-head > .ui-segmented {
-    order: 3;
-    flex-basis: 100%;
   }
   .handoff-fields {
     grid-template-columns: minmax(0, 1fr);

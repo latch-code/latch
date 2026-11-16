@@ -91,7 +91,7 @@ async function handOffReply(page: Page) {
   await turn.hover()
   await turn.getByRole('button', { name: '这一轮的更多操作', exact: true }).click()
   await page.getByRole('menuitem', { name: '交给代码任务…', exact: true }).click()
-  return page.getByRole('group', { name: '交给代码任务', exact: true })
+  return page.getByRole('dialog', { name: '交给代码任务', exact: true })
 }
 
 const chip = (card: Locator, name: string) => card.locator('.handoff-chip', { hasText: name })
@@ -147,7 +147,7 @@ it('hands a reply and a file to a new code session, takes its result back, and c
     const action = page.locator('.message-user').first().getByRole('button', { name: '交给代码任务…', exact: true })
     await action.focus()
     await page.keyboard.press('Enter')
-    const keyed = page.getByRole('group', { name: '交给代码任务', exact: true })
+    const keyed = page.getByRole('dialog', { name: '交给代码任务', exact: true })
     await chip(keyed, '你的消息').waitFor()
     await expect.poll(() => keyed.getByLabel('要求', { exact: true }).evaluate(element => element === document.activeElement)).toBe(true)
     expect(
@@ -159,7 +159,7 @@ it('hands a reply and a file to a new code session, takes its result back, and c
       walked.push(
         await page.evaluate(() => {
           const focused = document.activeElement as HTMLElement | null
-          if (!focused?.closest('.handoff-card')) return 'outside'
+          if (!focused?.closest('.handoff-dialog')) return 'outside'
           return `${focused.tagName.toLowerCase()}:${focused.getAttribute('aria-label') ?? focused.textContent?.trim() ?? ''}`
         }),
       )
@@ -294,7 +294,7 @@ it('hands a reply and a file to a new code session, takes its result back, and c
     const prompt = page.locator('.message-user').first()
     await prompt.click()
     await prompt.getByRole('button', { name: '交给代码任务…', exact: true }).click()
-    const phoneCard = page.getByRole('group', { name: '交给代码任务', exact: true })
+    const phoneCard = page.getByRole('dialog', { name: '交给代码任务', exact: true })
     await chip(phoneCard, '你的消息').waitFor()
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${OUT}/card-390.png` })

@@ -5,8 +5,11 @@ import {
   Button,
   Hint,
   ICON_STROKE,
+  Icon,
   IconButton,
   InlineNotice,
+  Modal,
+  ModalHeader,
   SegmentedControl,
   StatusWord,
   TextAreaField,
@@ -15,6 +18,7 @@ import {
   FileGlyph,
   PlusGlyph,
   CloseGlyph,
+  ChevronRightGlyph,
 } from '@latch/ui'
 import { api, newRequestId } from '../core/api.ts'
 import { DraftHarnessControl } from '../composer/ModelControl.tsx'
@@ -39,6 +43,7 @@ import {
   materialsOf,
   messageLine,
   namedChips,
+  replyGroup,
   retryBody,
   sessionFiles,
   sessionTargets,
@@ -102,10 +107,10 @@ export function SourceHandoffDock({
   const [failure, setFailure] = useState<(WriteFailure & { chips?: string[] }) | null>(null)
   const [unknown, setUnknown] = useState<HandoffCreate | undefined>(() => (sourceId ? unansweredCreate.get(sourceId) : undefined))
   const [shownId, setShownId] = useState<string>()
+  const [repliesOpen, setRepliesOpen] = useState(false)
   const busy = useRef(false)
   /** The messages the card was opened from: closing it puts the keys back on their action. */
   const from = useRef<string[]>([])
-  const card = useRef<HTMLElement>(null)
   const pins = useRef(new AbortController())
   useEffect(() => () => pins.current.abort(), [])
 
@@ -154,11 +159,14 @@ export function SourceHandoffDock({
       setDecisions([])
       setScope('summary-and-evidence')
       setFailure(null)
+      setRepliesOpen(false)
     }
     setOpen(true)
     from.current = request.messageIds
-    // The keys go to 要求, the one field every handoff reads.
-    requestAnimationFrame(() => card.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus({ preventScroll: true }))
+    // The keys go to 要求, the one field every handoff reads; a phone sheet settles its own focus first.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.handoff-dialog textarea')?.focus({ preventScroll: true })),
+    )
     onTaken()
     // Only a new request opens or adds; the rest is read at that moment.
   }, [request?.nonce])
@@ -276,6 +284,7 @@ export function SourceHandoffDock({
       && (item.status === 'starting' || item.status === 'start-unknown' || item.status === 'start-failed' || item.id === shownId)
       && item.status !== 'withdrawn',
   )
+  const replies = replyGroup(chips, failure?.chips)
   const addable = files ? sessionFiles(current.messages).filter(file => !chips.some(chip => chip.key === chipKey.file(file))) : []
 
   return (
@@ -294,214 +303,255 @@ export function SourceHandoffDock({
         />
       ))}
       {open && (
-        <section
-          ref={card}
-          className="handoff-card"
-          role="group"
-          aria-label="交给代码任务"
-          onKeyDown={event => {
-            // A menu or picker inside takes its own Escape first.
-            if (event.key !== 'Escape' || event.defaultPrevented || sending) return
-            event.stopPropagation()
-            close()
-          }}>
-          <header className="handoff-card-head">
-            <EnterGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            <h3>交给代码任务</h3>
-            <span className="handoff-spacer" />
-            <SegmentedControl<Target>
-              label="交给"
-              size="xs"
-              value={target}
-              disabled={locked}
-              onValueChange={setTarget}
-              options={[
-                { value: 'new-session', label: '新会话' },
-                { value: 'session', label: '已有会话', ...(targets.length ? {} : { disabled: true, title: '没有可以交给的会话' }) },
-              ]}
-            />
-            <IconButton
-              label="关闭"
-              icon={CloseGlyph}
-              size="xs"
-              disabled={sending}
-              onClick={() => {
-                close()
-              }}
-            />
-          </header>
-          <dl className="handoff-fields">
-            {target === 'new-session' ? (
-              <>
-                <dt>项目</dt>
-                <dd>
-                  <ProjectPicker
-                    catalog={catalog}
-                    harness={harness}
-                    access={access}
-                    value={choice.workspaceId}
-                    disabled={locked}
-                    onChange={workspaceId => {
-                      setChoice(previous => ({ ...previous, workspaceId }))
-                      setWorktree(false)
-                    }}
-                  />
-                  {!canRun && <StatusWord tone="failed">只读</StatusWord>}
-                </dd>
-                {worktreeOffer && (
-                  <>
-                    <dt>位置</dt>
-                    <dd>
-                      <FolderControl
-                        project={worktreeOffer}
-                        worktree={worktree ? HEAD_START : undefined}
-                        onWorktree={start => {
-                          setWorktree(start !== undefined)
-                        }}
-                        disabled={locked}
-                      />
-                    </dd>
-                  </>
-                )}
-                <dt>Harness</dt>
-                <dd>
-                  <DraftHarnessControl
-                    catalog={catalog}
-                    choice={choice}
-                    access={access}
-                    disabled={locked}
-                    onChoice={patch => {
-                      setChoice(previous => ({ ...previous, ...patch }))
-                    }}
-                    onRead={shell.refresh}
-                  />
-                  {usesHostModels(harness) && (
-                    <ModelPicker
+        <Modal
+          label="交给代码任务"
+          variant={shell.phone ? 'sheet' : 'dialog'}
+          size="lg"
+          dismissible={!sending}
+          onClose={close}
+          className="handoff-dialog">
+          <ModalHeader
+            title="交给代码任务"
+            {...(shell.phone
+              ? {}
+              : { leading: <EnterGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" /> })}
+            actions={
+              <SegmentedControl<Target>
+                label="交给"
+                size="xs"
+                value={target}
+                disabled={locked}
+                onValueChange={setTarget}
+                options={[
+                  { value: 'new-session', label: '新会话' },
+                  { value: 'session', label: '已有会话', ...(targets.length ? {} : { disabled: true, title: '没有可以交给的会话' }) },
+                ]}
+              />
+            }
+            {...(sending ? {} : { onClose: close })}
+          />
+          <div className="ui-modal-body handoff-body">
+            <dl className="handoff-fields">
+              {target === 'new-session' ? (
+                <>
+                  <dt>项目</dt>
+                  <dd>
+                    <ProjectPicker
                       catalog={catalog}
-                      value={choice.model}
+                      harness={harness}
                       access={access}
+                      value={choice.workspaceId}
                       disabled={locked}
-                      onChange={model => {
-                        setChoice(previous => ({ ...previous, model: { providerId: model.providerId, model: model.model } }))
+                      onChange={workspaceId => {
+                        setChoice(previous => ({ ...previous, workspaceId }))
+                        setWorktree(false)
                       }}
                     />
+                    {!canRun && <StatusWord tone="failed">只读</StatusWord>}
+                  </dd>
+                  {worktreeOffer && (
+                    <>
+                      <dt>位置</dt>
+                      <dd>
+                        <FolderControl
+                          project={worktreeOffer}
+                          worktree={worktree ? HEAD_START : undefined}
+                          onWorktree={start => {
+                            setWorktree(start !== undefined)
+                          }}
+                          disabled={locked}
+                        />
+                      </dd>
+                    </>
                   )}
-                </dd>
-              </>
-            ) : (
-              <>
-                <dt>会话</dt>
-                <dd>
-                  <ValuePicker
-                    label="已有会话"
-                    placeholder="选择会话"
-                    value={sessionId}
-                    disabled={locked}
-                    width="sm"
-                    menuChevron
-                    options={targets.slice(0, 50).map(task => ({ value: task.id, label: messageLine(task.title || '未命名会话', 48) }))}
-                    onValueChange={setSessionId}
-                  />
-                </dd>
-              </>
-            )}
-            <dt>材料</dt>
-            <dd className="handoff-chips">
-              {chips.map(chip => (
-                <Chip
-                  key={chip.key}
-                  chip={chip}
-                  changed={failure?.chips?.includes(chip.key) === true}
-                  disabled={locked}
-                  onRemove={() => {
-                    setChips(list => list.filter(item => item.key !== chip.key))
-                  }}
-                />
-              ))}
-              {addable.length > 0 && (
-                <Menu
-                  label="添加文件"
-                  sections={[
-                    {
-                      id: 'files',
-                      items: addable.slice(0, 50).map(file => ({
-                        id: chipKey.file(file),
-                        label: fileName(file),
-                        description: file.path,
-                        onSelect: () => {
-                          const chip: MaterialChip = { key: chipKey.file(file), kind: 'file', file }
-                          setChips(list => [...list, chip])
-                          pin([chip], current.messages)
-                        },
-                      })),
-                    },
-                  ]}
-                  trigger={props => <IconButton {...props} label="添加文件" icon={PlusGlyph} size="xs" disabled={locked} />}
-                />
+                  <dt>Harness</dt>
+                  <dd>
+                    <DraftHarnessControl
+                      catalog={catalog}
+                      choice={choice}
+                      access={access}
+                      disabled={locked}
+                      onChoice={patch => {
+                        setChoice(previous => ({ ...previous, ...patch }))
+                      }}
+                      onRead={shell.refresh}
+                    />
+                    {usesHostModels(harness) && (
+                      <ModelPicker
+                        catalog={catalog}
+                        value={choice.model}
+                        access={access}
+                        disabled={locked}
+                        onChange={model => {
+                          setChoice(previous => ({ ...previous, model: { providerId: model.providerId, model: model.model } }))
+                        }}
+                      />
+                    )}
+                  </dd>
+                </>
+              ) : (
+                <>
+                  <dt>会话</dt>
+                  <dd>
+                    <ValuePicker
+                      label="已有会话"
+                      placeholder="选择会话"
+                      value={sessionId}
+                      disabled={locked}
+                      width="sm"
+                      menuChevron
+                      options={targets.slice(0, 50).map(task => ({ value: task.id, label: messageLine(task.title || '未命名会话', 48) }))}
+                      onValueChange={setSessionId}
+                    />
+                  </dd>
+                </>
               )}
-              {chips.length === 0 && addable.length === 0 && <span className="handoff-muted">没有选中的材料</span>}
-            </dd>
-          </dl>
-          <TextAreaField
-            className="handoff-requirements"
-            label="要求"
-            rows={3}
-            value={requirements}
-            disabled={locked}
-            onChange={event => {
-              setRequirements(event.target.value)
-            }}
-          />
-          <Decisions decisions={decisions} disabled={locked} onChange={setDecisions} />
-          <div className="handoff-scope">
-            <span className="handoff-label">回传</span>
-            <SegmentedControl
-              label="回传范围"
-              size="xs"
-              value={scope}
+              <dt>材料</dt>
+              <dd className="handoff-chips">
+                {chips.map(chip => {
+                  const single = (
+                    <Chip
+                      key={chip.key}
+                      chip={chip}
+                      changed={failure?.chips?.includes(chip.key) === true}
+                      disabled={locked}
+                      onRemove={() => {
+                        setChips(list => list.filter(item => item.key !== chip.key))
+                      }}
+                    />
+                  )
+                  if (!replies?.keys.has(chip.key)) return single
+                  if (chips.find(item => replies.keys.has(item.key)) !== chip) return null
+                  const expanded = repliesOpen || replies.open
+                  return (
+                    <div key="replies" className="handoff-replies">
+                      <span className="handoff-chip" data-state={replies.pinning ? 'pinning' : undefined}>
+                        <button
+                          type="button"
+                          className="handoff-replies-toggle"
+                          aria-expanded={expanded}
+                          disabled={replies.open}
+                          onClick={() => setRepliesOpen(!repliesOpen)}>
+                          <MessageSquareQuote size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                          <span className="handoff-chip-text">Agent 的回复 {replies.keys.size} 条</span>
+                          <Icon icon={ChevronRightGlyph} size={12} />
+                        </button>
+                        <IconButton
+                          label="去掉 Agent 的回复"
+                          icon={CloseGlyph}
+                          size="xs"
+                          disabled={locked}
+                          onClick={() => {
+                            setChips(list => list.filter(item => !replies.keys.has(item.key)))
+                          }}
+                        />
+                      </span>
+                      {expanded && (
+                        <div className="handoff-replies-list">
+                          {chips
+                            .filter(item => replies.keys.has(item.key))
+                            .map(item => (
+                              <Chip
+                                key={item.key}
+                                chip={item}
+                                changed={failure?.chips?.includes(item.key) === true}
+                                disabled={locked}
+                                onRemove={() => {
+                                  setChips(list => list.filter(entry => entry.key !== item.key))
+                                }}
+                              />
+                            ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+                {addable.length > 0 && (
+                  <Menu
+                    label="添加文件"
+                    sections={[
+                      {
+                        id: 'files',
+                        items: addable.slice(0, 50).map(file => ({
+                          id: chipKey.file(file),
+                          label: fileName(file),
+                          description: file.path,
+                          onSelect: () => {
+                            const chip: MaterialChip = { key: chipKey.file(file), kind: 'file', file }
+                            setChips(list => [...list, chip])
+                            pin([chip], current.messages)
+                          },
+                        })),
+                      },
+                    ]}
+                    trigger={props => <IconButton {...props} label="添加文件" icon={PlusGlyph} size="xs" disabled={locked} />}
+                  />
+                )}
+                {chips.length === 0 && addable.length === 0 && <span className="handoff-muted">没有选中的材料</span>}
+              </dd>
+            </dl>
+            <TextAreaField
+              className="handoff-requirements"
+              label="要求"
+              rows={3}
+              data-autofocus=""
+              value={requirements}
               disabled={locked}
-              onValueChange={setScope}
-              options={RETURN_SCOPES.map(item => ({ value: item.value, label: item.label }))}
+              onChange={event => {
+                setRequirements(event.target.value)
+              }}
             />
-            <Hint lead={<EnterGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />} label={SCOPE_LINES[scope]}>
-              {SCOPE_FACTS[scope]}
-            </Hint>
+            <Decisions decisions={decisions} disabled={locked} onChange={setDecisions} />
+            <div className="handoff-scope">
+              <span className="handoff-label">回传</span>
+              <SegmentedControl
+                label="回传范围"
+                size="xs"
+                value={scope}
+                disabled={locked}
+                onValueChange={setScope}
+                options={RETURN_SCOPES.map(item => ({ value: item.value, label: item.label }))}
+              />
+              <Hint lead={<EnterGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />} label={SCOPE_LINES[scope]}>
+                {SCOPE_FACTS[scope]}
+              </Hint>
+            </div>
+            {!canRun && (
+              <InlineNotice tone="error" title="没有交接">
+                这台设备只能查看，不能开始会话
+              </InlineNotice>
+            )}
+            {failure?.kind === 'denied' && (
+              <InlineNotice tone="error" title="没有交接">
+                {failure.message}
+              </InlineNotice>
+            )}
+            {failure?.kind === 'refused' && (
+              <InlineNotice
+                tone="error"
+                title="没有交接"
+                action={
+                  failure.chips?.length ? (
+                    <Button size="xs" onClick={repin}>
+                      用现在的版本
+                    </Button>
+                  ) : undefined
+                }>
+                {failure.chips?.length
+                  ? `${namedChips(chips, failure.items)
+                      .map(chip => `「${chipLabel(chip)}」`)
+                      .join('')}在选定之后变化了`
+                  : failure.message}
+              </InlineNotice>
+            )}
+            {unknown && (
+              <InlineNotice tone="warn" title="交接结果未知">
+                {failure?.message ?? '已发出，Mac 没有回答；重试不会多建一个会话。'}
+              </InlineNotice>
+            )}
+            {offline && <p className="handoff-offline">{connection === 'offline' ? DEVICE_OFFLINE : 'Mac 不在线'} · 恢复后再交</p>}
           </div>
-          {!canRun && (
-            <InlineNotice tone="error" title="没有交接">
-              这台设备只能查看，不能开始会话
-            </InlineNotice>
-          )}
-          {failure?.kind === 'denied' && (
-            <InlineNotice tone="error" title="没有交接">
-              {failure.message}
-            </InlineNotice>
-          )}
-          {failure?.kind === 'refused' && (
-            <InlineNotice
-              tone="error"
-              title="没有交接"
-              action={
-                failure.chips?.length ? (
-                  <Button size="xs" onClick={repin}>
-                    用现在的版本
-                  </Button>
-                ) : undefined
-              }>
-              {failure.chips?.length
-                ? `${namedChips(chips, failure.items)
-                    .map(chip => `「${chipLabel(chip)}」`)
-                    .join('')}在选定之后变化了`
-                : failure.message}
-            </InlineNotice>
-          )}
-          {unknown && (
-            <InlineNotice tone="warn" title="交接结果未知">
-              {failure?.message ?? '已发出，Mac 没有回答；重试不会多建一个会话。'}
-            </InlineNotice>
-          )}
-          {offline && <p className="handoff-offline">{connection === 'offline' ? DEVICE_OFFLINE : 'Mac 不在线'} · 恢复后再交</p>}
-          <footer className="handoff-card-foot">
+          <footer className="ui-modal-footer handoff-foot">
             {problem && !unknown && <span className="handoff-muted">{problem}</span>}
             <span className="handoff-spacer" />
             {unknown ? (
@@ -534,7 +584,7 @@ export function SourceHandoffDock({
               </>
             )}
           </footer>
-        </section>
+        </Modal>
       )}
     </>
   )

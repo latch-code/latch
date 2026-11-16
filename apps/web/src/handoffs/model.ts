@@ -85,6 +85,26 @@ export function chipLabel(chip: MaterialChip): string {
   return fileName(chip.file)
 }
 
+/** More Agent replies than this read as one row with their count; the materials themselves are unchanged. */
+export const REPLY_ROWS = 3
+
+/**
+ * The Agent replies among the chips when there are enough to read as one row, with whether that row must stay open
+ * because one of them blocks sending (could not be read, or changed since it was chosen). Undefined: show every chip.
+ */
+export function replyGroup(
+  chips: readonly MaterialChip[],
+  changed: readonly string[] = [],
+): { keys: Set<string>; open: boolean; pinning: boolean } | undefined {
+  const replies = chips.filter(chip => chip.kind === 'message' && chip.role === 'assistant')
+  if (replies.length <= REPLY_ROWS) return undefined
+  return {
+    keys: new Set(replies.map(chip => chip.key)),
+    open: replies.some(chip => changed.includes(chip.key) || (chip.kind !== 'text' && chip.problem !== undefined)),
+    pinning: replies.some(chip => chip.kind !== 'text' && !chip.hash && !chip.problem),
+  }
+}
+
 /** The materials as the Host takes them, or why not yet: a chip still pinning or one that could not be read. */
 export function materialsOf(chips: readonly MaterialChip[]): { materials: HandoffMaterial[] } | { problem: string } {
   const materials: HandoffMaterial[] = []
