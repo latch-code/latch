@@ -239,7 +239,11 @@ it('keeps the real request, its material and the work to resume on the same over
     expect(await home.getByRole('list', { name: '待处理会话' }).count()).toBe(0)
     await queueToggle.click()
     const queue = home.getByRole('list', { name: '待处理会话' })
+    expect(await queue.getByRole('listitem').count()).toBe(5)
+    await home.getByRole('button', { name: '还有 2 件', exact: true }).click()
     expect(await queue.getByRole('listitem').count()).toBe(7)
+    // The list grows in place; it never scrolls on its own.
+    expect(await queue.evaluate(node => node.scrollHeight <= node.clientHeight + 1)).toBe(true)
     const listBox = await queue.boundingBox()
     const workScroll = () =>
       home.evaluate(node => ({ workspace: node.closest('.code-home-queue')!.scrollTop, document: document.scrollingElement!.scrollTop }))
@@ -250,8 +254,6 @@ it('keeps the real request, its material and the work to resume on the same over
     await material.getByText(/窄屏的候补按钮不能完整显示/u).waitFor()
     await capture(page, 'failure', 1440, 'dark')
     const long = earlier[0]!
-    const listScroll = await queue.evaluate(node => node.scrollTop)
-    expect(listScroll).toBeGreaterThan(0)
     await queue.locator(`[data-request-session="${long.sessionId}"]`).click()
     await material.getByText('拟写内容 · 摘录').waitFor()
     const title = current.getByRole('heading').first()
@@ -275,9 +277,11 @@ it('keeps the real request, its material and the work to resume on the same over
       node.scrollTop = 0
     })
     expect(await queueToggle.getAttribute('aria-expanded')).toBe('true')
-    expect(await queue.boundingBox()).toEqual(listBox)
-    expect(await queue.evaluate(node => node.scrollTop)).toBe(listScroll)
-    expect(await workScroll()).toEqual(initialScroll)
+    // Choosing rows does not move the list within the page; only the page itself may have scrolled.
+    const listNow = (await queue.boundingBox())!
+    const scrolled = (await workScroll()).workspace - initialScroll.workspace
+    expect({ ...listNow, y: listNow.y + scrolled }).toEqual(listBox)
+    expect((await workScroll()).document).toBe(initialScroll.document)
     expect(await anchor()).toEqual(composerBox)
     expect(longBox.y + longBox.height).toBeLessThan(composerBox.y)
     await capture(page, 'queue', 1440, 'light')
@@ -285,6 +289,8 @@ it('keeps the real request, its material and the work to resume on the same over
     await page.locator('.workbench-home .work-overview-group[data-group="attention"] .approval-panel').waitFor()
     await switchLayout(page, 'overview')
     if ((await queueToggle.getAttribute('aria-expanded')) !== 'true') await queueToggle.click()
+    const rest = home.getByRole('button', { name: '还有 2 件', exact: true })
+    if (await rest.isVisible()) await rest.click()
     await queue.locator(`[data-request-session="${waiting.sessionId}"]`).click()
     await current.getByRole('button', { name: '查看原请求' }).click()
     const exact = page.locator(`main.workspace [data-approval-id="${approval.id}"]`)

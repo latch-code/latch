@@ -88,130 +88,131 @@ it.each(
       [1440, 420],
     ] as const
   ).flatMap(([width, height]) => (['overview', 'triage'] as const).map(layout => ({ width, height, layout }))),
-)('scrolls the queue while the composer and navigation stay put at $width x $height in $layout', async ({ width, height, layout }) => {
-  const featured = layout === 'overview'
-  const independent = !featured && width >= 1024 && height >= 480
-  const shot = `${OUT}/${layout}-${width}${height === 420 ? 'x420' : ''}`
-  const context = await browser.newContext({
-    viewport: { width, height },
-    colorScheme: 'dark',
-    reducedMotion: 'reduce',
-    hasTouch: width === 390,
-  })
-  try {
-    const page = await context.newPage()
-    page.setDefaultTimeout(8_000)
-    await enrollBrowser(page, host, { name: '队列滚动验收', scopes: ['admin'] })
-    await switchLayout(page, layout)
-    const home = page.getByRole('region', { name: '总览', exact: true })
-    const attention = home.getByRole('region', { name: featured ? '当前请求' : '等你处理', exact: true })
-    const heading = attention.getByRole('heading')
-    await heading.waitFor()
-    const approval = featured ? attention.getByRole('button', { name: '查看原请求', exact: true }) : attention.locator('.approval-panel')
-    await approval.waitFor()
-    if (!featured) await expect.poll(() => approval.getAttribute('data-arming')).toBeNull()
-    await settleShell(page)
-    if (width === 390 && !featured) {
-      const box = await approval.boundingBox()
-      expect(box!.x).toBeGreaterThanOrEqual(8)
-      expect(box!.x + box!.width).toBeLessThanOrEqual(width - 8)
-      expect(box!.width).toBeGreaterThan(width * 0.8)
-    }
-
-    const outer = () => home.evaluate(element => ({ home: element.scrollTop, document: document.scrollingElement?.scrollTop }))
-    const workScroll = () => home.locator('.code-home-queue').evaluate(node => node.scrollTop)
-    const list = attention.getByRole('list', { name: '待处理会话', exact: true })
-    const more = attention.getByRole('button', { name: featured ? '9 项待处理' : '还有 4 件', exact: true })
-    if (featured) {
-      await more.click()
-      await list.scrollIntoViewIfNeeded()
-    }
-    const inner = () =>
-      featured
-        ? list.evaluate(node => node.scrollTop)
-        : attention.evaluate((element, desktop) => {
-            if (desktop) return element.scrollTop
-            let offset = 0
-            for (let node: Element | null = element; node && !node.matches('.workbench-home'); node = node.parentElement)
-              offset += node.scrollTop
-            return offset
-          }, independent)
-    const frame = async () => ({
-      composer: await home.locator('.workbench-home-composer').boundingBox(),
-      switch: await layoutSwitch(page).boundingBox(),
-      otherLanes: independent
-        ? await home
-            .locator('.work-overview-group:not([data-group="attention"])')
-            .evaluateAll(elements => elements.map(element => ({ top: element.getBoundingClientRect().top, scroll: element.scrollTop })))
-        : [],
+)(
+  'scrolls the queue as one page while the composer and navigation stay put at $width x $height in $layout',
+  async ({ width, height, layout }) => {
+    const featured = layout === 'overview'
+    const shot = `${OUT}/${layout}-${width}${height === 420 ? 'x420' : ''}`
+    const context = await browser.newContext({
+      viewport: { width, height },
+      colorScheme: 'dark',
+      reducedMotion: 'reduce',
+      hasTouch: width === 390,
     })
-    const wheelAtHeading = async (delta: number) => {
-      const box = await (featured ? list : heading).boundingBox()
-      expect(box).not.toBeNull()
-      await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
-      await page.mouse.wheel(0, delta)
-    }
+    try {
+      const page = await context.newPage()
+      page.setDefaultTimeout(8_000)
+      await enrollBrowser(page, host, { name: '队列滚动验收', scopes: ['admin'] })
+      await switchLayout(page, layout)
+      const home = page.getByRole('region', { name: '总览', exact: true })
+      const attention = home.getByRole('region', { name: featured ? '当前请求' : '等你处理', exact: true })
+      const heading = attention.getByRole('heading')
+      await heading.waitFor()
+      const approval = featured ? attention.getByRole('button', { name: '查看原请求', exact: true }) : attention.locator('.approval-panel')
+      await approval.waitFor()
+      if (!featured) await expect.poll(() => approval.getAttribute('data-arming')).toBeNull()
+      await settleShell(page)
+      if (width === 390 && !featured) {
+        const box = await approval.boundingBox()
+        expect(box!.x).toBeGreaterThanOrEqual(8)
+        expect(box!.x + box!.width).toBeLessThanOrEqual(width - 8)
+        expect(box!.width).toBeGreaterThan(width * 0.8)
+      }
 
-    const contentScroll = await workScroll()
-    const before = await frame()
-    expect(before.composer).not.toBeNull()
-    expect(before.switch).not.toBeNull()
-    await page.screenshot({ path: `${shot}-start.png`, animations: 'disabled' })
-    await wheelAtHeading(300)
-    await expect.poll(async () => ({ moved: (await inner()) > 0, ...(await outer()) })).toEqual({ moved: true, home: 0, document: 0 })
-    expect(await frame()).toEqual(before)
+      const outer = () => home.evaluate(element => ({ home: element.scrollTop, document: document.scrollingElement?.scrollTop }))
+      const queue = home.locator('.code-home-queue')
+      // No lane or list scrolls on its own; only a card's own long content (a preview, an excerpt) may.
+      const innerScrollers = () =>
+        queue.evaluate(node =>
+          [...node.querySelectorAll<HTMLElement>('*')]
+            .filter(
+              element =>
+                element.scrollHeight > element.clientHeight + 1
+                && /auto|scroll/u.test(getComputedStyle(element).overflowY)
+                && !element.matches(
+                  '.work-feature-material-body, .work-feature-summary, .approval-preview-inner, [role="region"][aria-label="拟写内容"]',
+                ),
+            )
+            .map(element => element.className),
+        )
+      const list = attention.getByRole('list', { name: '待处理会话', exact: true })
+      if (featured) await attention.getByRole('button', { name: '9 项待处理', exact: true }).click()
+      const more = attention.getByRole('button', { name: '还有 4 件', exact: true })
+      const frame = async () => ({
+        composer: await home.locator('.workbench-home-composer').boundingBox(),
+        switch: await layoutSwitch(page).boundingBox(),
+      })
 
-    if (featured) expect(await workScroll()).toBe(contentScroll)
-    else {
+      const before = await frame()
+      expect(before.composer).not.toBeNull()
+      expect(before.switch).not.toBeNull()
+      expect(await list.locator(':scope > li').count()).toBe(5)
+      await page.screenshot({ path: `${shot}-start.png`, animations: 'disabled' })
+      await queue.evaluate(node => node.scrollTo({ top: 0 }))
+      const start = await queue.evaluate(node => node.scrollTop)
+      const queueBox = await queue.boundingBox()
+      await page.mouse.move(queueBox!.x + queueBox!.width / 2, queueBox!.y + Math.min(queueBox!.height / 2, 120))
+      await page.mouse.wheel(0, 300)
+      await settleShell(page)
+      const queueScrolls = await queue.evaluate(node => node.scrollHeight > node.clientHeight + 1)
+      if (queueScrolls) await expect.poll(() => queue.evaluate(node => node.scrollTop)).toBeGreaterThan(start)
+      expect(await outer()).toEqual({ home: 0, document: 0 })
+      expect(await frame()).toEqual(before)
+
       await reachable(more)
       await more.click()
-    }
-    const last = list.locator(':scope > li').last().getByRole('button').first()
-    await reachable(last)
-    const tailContentScroll = await workScroll()
-    expect(await list.locator(':scope > li').count()).toBe(9)
-    // Continue wheeling at the end; the scroll must not chain to the composer.
-    const lastBox = await last.boundingBox()
-    await page.mouse.move(lastBox!.x + lastBox!.width / 2, lastBox!.y + lastBox!.height / 2)
-    await page.mouse.wheel(0, 700)
-    await settleShell(page)
-    expect(await outer()).toEqual({ home: 0, document: 0 })
-    expect(await frame()).toEqual(before)
-    if (featured) expect(await workScroll()).toBe(tailContentScroll)
-    await page.screenshot({ path: `${shot}-end.png`, animations: 'disabled' })
+      expect(await more.isVisible()).toBe(false)
+      await attention.getByRole('button', { name: '收起', exact: true }).waitFor()
+      const last = list.locator(':scope > li').last().getByRole('button').first()
+      await reachable(last)
+      expect(await list.locator(':scope > li').count()).toBe(9)
+      expect(await innerScrollers()).toEqual([])
+      // Arrow keys reach the last expanded row and bring it into view.
+      await list.locator(':scope > li').first().getByRole('button').first().focus()
+      for (let step = 0; step < 8; step++) await page.keyboard.press('ArrowDown')
+      expect(await last.evaluate(element => element === document.activeElement)).toBe(true)
+      // Wheeling on at the end does not chain to the composer or the document.
+      const lastBox = await last.boundingBox()
+      await page.mouse.move(lastBox!.x + lastBox!.width / 2, lastBox!.y + lastBox!.height / 2)
+      await page.mouse.wheel(0, 700)
+      await settleShell(page)
+      expect(await outer()).toEqual({ home: 0, document: 0 })
+      expect(await frame()).toEqual(before)
+      await page.screenshot({ path: `${shot}-end.png`, animations: 'disabled' })
 
-    const input = homeInput(page)
-    const draft = '发布说明仍可继续输入。\n'.repeat(24)
-    await input.fill(draft)
-    await home.getByLabel('选择附件', { exact: true }).setInputFiles({
-      name: 'queue-notes.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('fixture notes'),
-    })
-    await reachable(home.getByRole('button', { name: 'queue-notes.txt', exact: true }))
-    await reachable(home.getByRole('button', { name: '发送', exact: true }))
-    await home.getByRole('button', { name: /^Harness：/u }).click()
-    await reachable(page.getByRole(width === 390 ? 'radio' : 'menuitemradio', { name: /Latch.*内置/u }))
-    await page.keyboard.press('Escape')
-    expect(await input.inputValue()).toBe(draft)
-    await returnFromHomeFocus(page)
-    const drafted = await frame()
-    await reachable(last)
-    expect(await outer()).toEqual({ home: 0, document: 0 })
-    expect(await frame()).toEqual(drafted)
-    await noHorizontalOverflow(page, attention)
-    await page.screenshot({ path: `${shot}-draft.png`, animations: 'disabled' })
-    if (width === 390) {
-      await last.tap()
-      expect(await last.getAttribute('aria-current')).toBe('true')
-      if (featured) await attention.getByRole('button', { name: '查看失败', exact: true }).waitFor()
-      else await attention.locator('.work-overview-review-detail .work-decision-result').waitFor()
+      const input = homeInput(page)
+      const draft = '发布说明仍可继续输入。\n'.repeat(24)
+      await input.fill(draft)
+      await home.getByLabel('选择附件', { exact: true }).setInputFiles({
+        name: 'queue-notes.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from('fixture notes'),
+      })
+      await reachable(home.getByRole('button', { name: 'queue-notes.txt', exact: true }))
+      await reachable(home.getByRole('button', { name: '发送', exact: true }))
+      await home.getByRole('button', { name: /^Harness：/u }).click()
+      await reachable(page.getByRole(width === 390 ? 'radio' : 'menuitemradio', { name: /Latch.*内置/u }))
+      await page.keyboard.press('Escape')
       expect(await input.inputValue()).toBe(draft)
+      await returnFromHomeFocus(page)
+      const drafted = await frame()
+      await reachable(last)
+      expect(await outer()).toEqual({ home: 0, document: 0 })
+      expect(await frame()).toEqual(drafted)
+      await noHorizontalOverflow(page, attention)
+      await page.screenshot({ path: `${shot}-draft.png`, animations: 'disabled' })
+      if (width === 390) {
+        await last.tap()
+        expect(await last.getAttribute('aria-current')).toBe('true')
+        if (featured) await attention.getByRole('button', { name: '查看失败', exact: true }).waitFor()
+        else await attention.locator('.work-overview-review-detail .work-decision-result').waitFor()
+        expect(await input.inputValue()).toBe(draft)
+      }
+    } finally {
+      await context.close()
     }
-  } finally {
-    await context.close()
-  }
-})
+  },
+)
 
 it.each(['light', 'dark'] as const)(
   'shows the start of a long source title and moves the file tool ID into 更多 on a %s phone',

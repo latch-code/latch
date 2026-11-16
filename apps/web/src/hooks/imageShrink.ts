@@ -113,11 +113,11 @@ function surface(width: number, height: number): Surface | undefined {
   return context ? { context, encode: (type, quality) => new Promise(resolve => canvas.toBlob(resolve, type, quality)) } : undefined
 }
 
-/** Whether any sampled pixel is not fully opaque. */
+/** Whether any pixel is not fully opaque. */
 function hasAlpha(context: Surface['context'], width: number, height: number): boolean {
+  // Every pixel: a small transparent corner missed by sampling would turn black in a JPEG.
   const data = context.getImageData(0, 0, width, height).data
-  const step = Math.max(1, Math.floor((width * height) / 250_000)) * 4
-  for (let index = 3; index < data.length; index += step) if (data[index]! < 255) return true
+  for (let index = 3; index < data.length; index += 4) if (data[index]! < 255) return true
   return false
 }
 

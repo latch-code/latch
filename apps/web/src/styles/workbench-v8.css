@@ -723,7 +723,7 @@
     padding-bottom: var(--sp-8);
   }
 }
-/* 顶栏: the three lanes reach the window's foot and each scrolls by itself, so their dividing lines never stop short. */
+/* 顶栏: the three lanes reach the window's foot and grow with what they hold; the home is the one scroller. */
 @media (min-width: 1024px) {
   .app-shell[data-workbench-layout='triage'] .agents-home:has(> .work-overview) {
     display: flex;
@@ -736,21 +736,15 @@
   }
   .app-shell[data-workbench-layout='triage'] .agents-home > .work-overview {
     display: flex;
-    flex: 1 0 320px;
+    flex: 1 0 auto;
     flex-direction: column;
     width: 100%;
-    min-height: 0;
   }
   .app-shell[data-workbench-layout='triage'] .agents-home > .work-overview > .work-overview-groups {
-    flex: 1 1 0;
-    grid-template-rows: minmax(0, 1fr);
-    min-height: 0;
+    flex: 1 0 auto;
   }
   .app-shell[data-workbench-layout='triage'] .agents-home > .work-overview .work-overview-group {
-    min-height: 0;
-    overflow-y: auto;
     padding-bottom: var(--sp-32);
-    scrollbar-width: thin;
   }
 }
 .triage-sidebar .work-overview-heading {
