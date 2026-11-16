@@ -1,23 +1,30 @@
 import {
   GENERAL_AGENT_ID,
   type AppSnapshot,
-  type BoardGroup,
   type BoardPriority,
   type BoardReason,
   type TaskSummary,
+  type WorkItemPlace,
+  type WorkItemSummary,
   type WorkspaceInfo,
 } from '@latch/protocol'
 import { projectOf } from '../sessions.ts'
 
 /**
- * The board: every session the Host marks as a card (`board.card`), in the group the Host gave it (`board.group`). The
- * page never decides a group, never counts from anything but those summaries, and never adds a session the snapshot
- * does not list (a private one stays out of every count on a device that may not read it).
+ * The board: every card the Host gives, in the group the Host gave it. A card is one thing: a 待办 with its sessions
+ * (`items`, placed by `items[].board`), or a session the Host marks as a card (`board.card`) that belongs to no 待办. A
+ * 待办's sessions are read from `items[].sessionIds`, never from a session's `itemId` (absent where the device may not
+ * learn of the 待办). The page never decides a group, never counts from anything but those, and never adds a session
+ * or 待办 the snapshot does not list (a private one stays out of every count on a device that may not read it).
  */
 
-/** The columns, left to right then top to bottom. Phase 2 puts 未开始 first. */
-export const BOARD_GROUPS: readonly BoardGroup[] = ['attention', 'running', 'deliver', 'done']
-export const GROUP_LABELS: Record<BoardGroup, string> = {
+/** A column of the board: 未开始 (a 待办 without a session yet) and the Host's four session groups. */
+export type BoardColumnGroup = WorkItemPlace['group']
+
+/** The columns, left to right then top to bottom. */
+export const BOARD_GROUPS: readonly BoardColumnGroup[] = ['todo', 'attention', 'running', 'deliver', 'done']
+export const GROUP_LABELS: Record<BoardColumnGroup, string> = {
+  todo: '未开始',
   attention: '等你处理',
   running: '进行中',
   deliver: '可交付',
@@ -46,12 +53,17 @@ export type FilterKey = keyof BoardFilters
 
 export type BoardView = 'board' | 'list'
 /** The list's and the phone's state filter; `archived` only in the list. */
-export type ListState = 'all' | BoardGroup | 'archived'
+export type ListState = 'all' | BoardColumnGroup | 'archived'
 
 export interface BoardMemory {
   view: BoardView
   filters: BoardFilters
 }
+
+/** One card: a session of no 待办, or a 待办 with the sessions of it this device lists, in the order they joined. */
+export type BoardCard =
+  | { kind: 'session'; id: string; task: TaskSummary }
+  | { kind: 'item'; id: string; item: WorkItemSummary; sessions: TaskSummary[] }
 
 const isCard = (task: TaskSummary): boolean => task.board?.card === true
 
@@ -62,39 +74,111 @@ export const whoOf = (task: Pick<TaskSummary, 'agent' | 'generalChat'>): string 
   task.agent?.customAgentId ?? (task.generalChat ? GENERAL_AGENT_ID : WHO_CODE)
 
 const projectKey = (task: TaskSummary, workspaces: readonly WorkspaceInfo[]): string => projectOf(task, workspaces)?.id ?? NO_PROJECT
+/** A 待办's suggested project, read as a session's: the Host's default folder is 无项目. */
+const itemProjectKey = (item: WorkItemSummary): string => (item.projectId && item.projectId !== 'default' ? item.projectId : NO_PROJECT)
 
-function matchesFilters(task: TaskSummary, filters: BoardFilters, workspaces: readonly WorkspaceInfo[]): boolean {
-  // Or within a dimension, and between them.
-  if (filters.projects.length && !filters.projects.includes(projectKey(task, workspaces))) return false
-  if (filters.harnesses.length && !filters.harnesses.includes(task.harnessId ?? '')) return false
-  if (filters.who.length && !filters.who.includes(whoOf(task))) return false
-  if (filters.tags.length && !(task.tags ?? []).some(tag => filters.tags.includes(tag))) return false
-  return true
+/** The card's column. An archived session has no place from the Host; the list's 已归档 reads it as ended. */
+export const groupOf = (card: BoardCard): BoardColumnGroup =>
+  card.kind === 'item' ? card.item.board.group : (card.task.board?.group ?? 'done')
+
+const sessionCard = (task: TaskSummary): BoardCard => ({ kind: 'session', id: task.id, task })
+
+interface CardFacets {
+  projects: string[]
+  harnesses: string[]
+  who: string[]
+  tags: string[]
+}
+
+/** What a card is filtered by: a 待办 by its own project and tags and by its sessions, or (before it has one) its suggestions. */
+function facetsOf(card: BoardCard, workspaces: readonly WorkspaceInfo[]): CardFacets {
+  if (card.kind === 'session') {
+    const { task } = card
+    return { projects: [projectKey(task, workspaces)], harnesses: [task.harnessId ?? ''], who: [whoOf(task)], tags: task.tags ?? [] }
+  }
+  const { item, sessions } = card
+  const started = item.sessionIds.length > 0
+  return {
+    projects: [
+      ...new Set([...(item.projectId || !started ? [itemProjectKey(item)] : []), ...sessions.map(task => projectKey(task, workspaces))]),
+    ],
+    harnesses: started ? sessions.map(task => task.harnessId ?? '') : item.harnessId ? [item.harnessId] : [],
+    // A 待办's sessions are Code sessions, and so is the one it would start.
+    who: started ? sessions.map(whoOf) : [WHO_CODE],
+    tags: item.tags ?? [],
+  }
 }
 
 export const filtering = (filters: BoardFilters): boolean => Object.values(filters).some(values => values.length > 0)
 
-const updated = (task: TaskSummary) => Date.parse(task.updatedAt) || 0
+function matchesFilters(card: BoardCard, filters: BoardFilters, workspaces: readonly WorkspaceInfo[]): boolean {
+  if (!filtering(filters)) return true
+  const facets = facetsOf(card, workspaces)
+  // Or within a dimension, and between them.
+  for (const key of ['projects', 'harnesses', 'who', 'tags'] as const)
+    if (filters[key].length && !facets[key].some(value => filters[key].includes(value))) return false
+  return true
+}
+
+const updated = (task: Pick<TaskSummary, 'updatedAt'>) => Date.parse(task.updatedAt) || 0
+/** A 待办 changes when it or any of its sessions does. */
+export const cardUpdated = (card: BoardCard): number =>
+  card.kind === 'session' ? updated(card.task) : Math.max(updated(card.item), ...card.sessions.map(updated))
+/** When the card last changed, as the Host wrote it. */
+export const cardUpdatedAt = (card: BoardCard): string => new Date(cardUpdated(card)).toISOString()
+const cardPriority = (card: BoardCard) => priorityOf(card.kind === 'item' ? card.item : card.task)
+const cardReason = (card: BoardCard): BoardReason | undefined => {
+  const reason = card.kind === 'item' ? card.item.board.reason : card.task.board?.reason
+  return reason === 'settled' ? undefined : reason
+}
 
 /** Priority first (高, 中, 低), then within 等你处理 the Host's reason in rule order, then the newest change first. */
-function compareCards(a: TaskSummary, b: TaskSummary): number {
+function compareCards(a: BoardCard, b: BoardCard): number {
   return (
-    PRIORITY_RANK[priorityOf(a)] - PRIORITY_RANK[priorityOf(b)]
-    || (a.board?.group === 'attention' && b.board?.group === 'attention'
-      ? REASON_RANK[a.board.reason ?? 'silent'] - REASON_RANK[b.board.reason ?? 'silent']
+    PRIORITY_RANK[cardPriority(a)] - PRIORITY_RANK[cardPriority(b)]
+    || (groupOf(a) === 'attention' && groupOf(b) === 'attention'
+      ? REASON_RANK[cardReason(a) ?? 'silent'] - REASON_RANK[cardReason(b) ?? 'silent']
       : 0)
-    || updated(b) - updated(a)
+    || cardUpdated(b) - cardUpdated(a)
     || a.id.localeCompare(b.id)
   )
 }
 
 /** On the board 已结束 keeps the last seven days by the Host's clock. */
-const onBoard = (task: TaskSummary, now: number): boolean => task.board?.group !== 'done' || now - updated(task) <= DONE_DAYS * DAY
+const onBoard = (card: BoardCard, now: number): boolean => groupOf(card) !== 'done' || now - cardUpdated(card) <= DONE_DAYS * DAY
+
+/**
+ * Sessions no listed 待办 holds, by the rule `items.ts`'s `itemOfSession` reads (`items[].sessionIds` only; that module
+ * imports this one, so the rule is repeated rather than imported). A held session is a row of its card, never a card,
+ * row or count of its own.
+ */
+const outsideItems = (items: readonly WorkItemSummary[]) => {
+  const held = new Set(items.flatMap(item => item.sessionIds))
+  return (task: TaskSummary) => !held.has(task.id)
+}
+
+/** Every card the snapshot holds, unfiltered and in no order: its 待办 and the sessions of none. */
+export function boardCards(tasks: readonly TaskSummary[], items: readonly WorkItemSummary[] = []): BoardCard[] {
+  const byId = new Map(tasks.map(task => [task.id, task]))
+  const outside = outsideItems(items)
+  return [
+    ...items.map((item): BoardCard => ({
+      kind: 'item',
+      id: item.id,
+      item,
+      sessions: item.sessionIds.flatMap(id => {
+        const task = byId.get(id)
+        return task ? [task] : []
+      }),
+    })),
+    ...tasks.filter(task => isCard(task) && outside(task)).map(sessionCard),
+  ]
+}
 
 export interface BoardColumn {
-  group: BoardGroup
+  group: BoardColumnGroup
   /** The cards the filters let through, sorted. */
-  cards: TaskSummary[]
+  cards: BoardCard[]
   /** How many cards the column holds without any filter. */
   total: number
 }
@@ -104,52 +188,69 @@ export function boardColumns(
   filters: BoardFilters,
   workspaces: readonly WorkspaceInfo[],
   now: number,
+  items: readonly WorkItemSummary[] = [],
 ): BoardColumn[] {
-  const cards = tasks.filter(task => isCard(task) && onBoard(task, now))
+  const cards = boardCards(tasks, items).filter(card => onBoard(card, now))
   return BOARD_GROUPS.map(group => {
-    const own = cards.filter(task => task.board!.group === group)
+    const own = cards.filter(card => groupOf(card) === group)
     return {
       group,
-      cards: own.filter(task => matchesFilters(task, filters, workspaces)).toSorted(compareCards),
+      cards: own.filter(card => matchesFilters(card, filters, workspaces)).toSorted(compareCards),
       total: own.length,
     }
   })
 }
 
 /** How many cards each group holds, unfiltered: what the column heads and the phone's state filter say. */
-export function groupCounts(tasks: readonly TaskSummary[], now: number): Record<BoardGroup, number> {
-  const counts: Record<BoardGroup, number> = { attention: 0, running: 0, deliver: 0, done: 0 }
-  for (const task of tasks) if (isCard(task) && onBoard(task, now)) counts[task.board!.group]++
+export function groupCounts(
+  tasks: readonly TaskSummary[],
+  now: number,
+  items: readonly WorkItemSummary[] = [],
+): Record<BoardColumnGroup, number> {
+  const counts: Record<BoardColumnGroup, number> = { todo: 0, attention: 0, running: 0, deliver: 0, done: 0 }
+  for (const card of boardCards(tasks, items)) if (onBoard(card, now)) counts[groupOf(card)]++
   return counts
 }
 
 /**
  * An archived session that would be a card: one of Code's, or a scheduled run of 我的 Agent. The Host gives an archived
- * session no card, so the list's 已归档 reads this instead.
+ * session no card, so the list's 已归档 reads this instead. A 待办's archived session stays under its 待办.
  */
 const archivedCard = (task: TaskSummary): boolean =>
   task.archived === true && !task.personal && (whoOf(task) === WHO_CODE || task.automationId !== undefined)
 
-const groupRank = (task: TaskSummary) => (task.board ? BOARD_GROUPS.indexOf(task.board.group) : BOARD_GROUPS.length)
+const groupRank = (card: BoardCard) => BOARD_GROUPS.indexOf(groupOf(card))
 
-/** The list: every card (已结束 in full), or the archived ones; by group, priority and time, or by time alone. */
+const archivedCards = (tasks: readonly TaskSummary[], items: readonly WorkItemSummary[]): BoardCard[] => {
+  const outside = outsideItems(items)
+  return tasks.filter(task => archivedCard(task) && outside(task)).map(sessionCard)
+}
+
+/** The list: every card (已结束 in full), or the archived sessions; by group, priority and time, or by time alone. */
 export function listRows(
   tasks: readonly TaskSummary[],
   state: ListState,
   filters: BoardFilters,
   workspaces: readonly WorkspaceInfo[],
   order: 'group' | 'time',
-): TaskSummary[] {
-  return tasks
-    .filter(task => (state === 'archived' ? archivedCard(task) : isCard(task) && (state === 'all' || task.board!.group === state)))
-    .filter(task => matchesFilters(task, filters, workspaces))
+  items: readonly WorkItemSummary[] = [],
+): BoardCard[] {
+  const cards =
+    state === 'archived' ? archivedCards(tasks, items) : boardCards(tasks, items).filter(card => state === 'all' || groupOf(card) === state)
+  return cards
+    .filter(card => matchesFilters(card, filters, workspaces))
     .toSorted((a, b) =>
-      order === 'time' ? updated(b) - updated(a) || a.id.localeCompare(b.id) : groupRank(a) - groupRank(b) || compareCards(a, b),
+      order === 'time'
+        ? cardUpdated(b) - cardUpdated(a) || a.id.localeCompare(b.id)
+        : state === 'archived'
+          ? compareCards(a, b)
+          : groupRank(a) - groupRank(b) || compareCards(a, b),
     )
 }
 
 /** The phone's first state: 等你处理, or 进行中 when nothing waits. */
-export const firstPhoneState = (counts: Record<BoardGroup, number>): BoardGroup => (counts.attention > 0 ? 'attention' : 'running')
+export const firstPhoneState = (counts: Record<BoardColumnGroup, number>): BoardColumnGroup =>
+  counts.attention > 0 ? 'attention' : 'running'
 
 export interface FilterOption {
   value: string
@@ -162,16 +263,17 @@ const unique = <T>(values: T[]): T[] => [...new Set(values)]
 export function filterOptions(
   tasks: readonly TaskSummary[],
   snapshot: Pick<AppSnapshot, 'catalog' | 'customAgents'>,
+  items: readonly WorkItemSummary[] = [],
 ): Record<FilterKey, FilterOption[]> {
-  const cards = tasks.filter(task => isCard(task) || archivedCard(task))
   const workspaces = snapshot.catalog?.workspaces ?? []
   const harnesses = snapshot.catalog?.harnesses ?? []
-  const projects = unique(cards.map(task => projectKey(task, workspaces))).map(id => ({
+  const facets = [...boardCards(tasks, items), ...archivedCards(tasks, items)].map(card => facetsOf(card, workspaces))
+  const projects = unique(facets.flatMap(facet => facet.projects)).map(id => ({
     value: id,
     label: id === NO_PROJECT ? '无项目' : (workspaces.find(item => item.id === id)?.name ?? id),
   }))
-  const harnessIds = unique(cards.map(task => task.harnessId).filter((id): id is string => !!id))
-  const who = unique(cards.map(whoOf)).flatMap(id => {
+  const harnessIds = unique(facets.flatMap(facet => facet.harnesses).filter(id => !!id))
+  const who = unique(facets.flatMap(facet => facet.who)).flatMap(id => {
     if (id === WHO_CODE) return [{ value: id, label: 'Code' }]
     if (id === GENERAL_AGENT_ID) return [{ value: id, label: '通用' }]
     // An Agent this device is not told about has no name to show; its sessions stay under no 谁在做 choice.
@@ -187,7 +289,7 @@ export function filterOptions(
       return { value: id, label: harness?.capabilities.display.label ?? id }
     }),
     who: who.toSorted((a, b) => Number(b.value === WHO_CODE) - Number(a.value === WHO_CODE)),
-    tags: unique(cards.flatMap(task => task.tags ?? []))
+    tags: unique(facets.flatMap(facet => facet.tags))
       .toSorted((a, b) => a.localeCompare(b))
       .map(tag => ({ value: tag, label: tag })),
   }

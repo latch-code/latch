@@ -1,4 +1,12 @@
-import { escapeSecurityText, type AppSnapshot, type BoardGroup, type RunLive, type TaskSummary, type WorkspaceInfo } from '@latch/protocol'
+import {
+  escapeSecurityText,
+  type AppSnapshot,
+  type BoardGroup,
+  type RunLive,
+  type TaskSummary,
+  type WorkItemSummary,
+  type WorkspaceInfo,
+} from '@latch/protocol'
 import { DEFAULT_MODEL } from './composer/modelReasoning.ts'
 import { runClock, runElapsed } from './conversation.ts'
 import { parseTime } from './core/hostClock.ts'
@@ -63,12 +71,18 @@ export function waitsOnYou(task: TaskSummary): boolean {
 export const inAttention = (task: Pick<TaskSummary, 'board'>): boolean => task.board?.group === 'attention'
 
 /**
- * How many cards 看板 holds in each group: every session the Host makes a card (`board.card`), whatever its place. The
- * start screen's count line and the 看板 segment of the switch say these.
+ * How many cards 看板 holds in each group: every session the Host makes a card (`board.card`) that belongs to no 待办,
+ * and each 待办 that has started, by its own place. The start screen's count line and the 看板 segment of the switch
+ * say these.
  */
-export function boardCounts(tasks: readonly Pick<TaskSummary, 'board'>[]): Record<BoardGroup, number> {
+export function boardCounts(
+  tasks: readonly Pick<TaskSummary, 'id' | 'board'>[],
+  items: readonly Pick<WorkItemSummary, 'sessionIds' | 'board'>[] = [],
+): Record<BoardGroup, number> {
   const counts: Record<BoardGroup, number> = { attention: 0, running: 0, deliver: 0, done: 0 }
-  for (const task of tasks) if (task.board?.card) counts[task.board.group] += 1
+  const members = new Set(items.flatMap(item => item.sessionIds))
+  for (const task of tasks) if (task.board?.card && !members.has(task.id)) counts[task.board.group] += 1
+  for (const item of items) if (item.board.group !== 'todo') counts[item.board.group] += 1
   return counts
 }
 

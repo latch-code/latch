@@ -161,7 +161,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const start = route.entry === 'sessions' && route.start === true && !board
   const homeShell = { ...shell, ...shell.homeComposerState }
   const panes = workbenchPanes(shell)
-  const counts = useMemo(() => boardCounts(listed.tasks), [listed.tasks])
+  const counts = useMemo(() => boardCounts(listed.tasks, listed.items), [listed.tasks, listed.items])
   const hasConnectionStrip = !phone && route.entry === 'sessions'
   // The right panel's strip starts where the session's head ends, so the head's foot runs on as one line.
   useLayoutEffect(() => {

@@ -55,7 +55,7 @@ export function cardState(
 }
 
 /** 高 a filled dot, 低 a hollow one; 中 draws nothing. */
-export function PriorityMark({ task }: { task: TaskSummary }) {
+export function PriorityMark({ task }: { task: Pick<TaskSummary, 'priority'> }) {
   const priority = priorityOf(task)
   if (priority === 'mid') return null
   return <span className="work-board-priority" data-priority={priority} role="img" aria-label={`优先级${PRIORITY_LABELS[priority]}`} />

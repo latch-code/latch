@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import type { BoardGroup, TaskSummary } from '@latch/protocol'
-import { Button, FilterPills, MessageGlyph, NewSessionGlyph, SegmentedControl } from '@latch/ui'
+import { escapeSecurityText, type TaskSummary, type WorkItemSummary } from '@latch/protocol'
+import { Button, EditGlyph, FilterPills, MessageGlyph, NewSessionGlyph, SegmentedControl, TrashGlyph } from '@latch/ui'
+import { ListTodo } from 'lucide-react'
 import type { SendingMessage } from '../core/sendingMessage.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
-import type { MenuSection } from '../components/overlays.tsx'
+import { ConfirmDialog, type MenuSection } from '../components/overlays.tsx'
+import { knownTags, SessionTagsDialog } from '../components/SessionTagsDialog.tsx'
+import { MessageError } from '../core/api.ts'
 import { WorkbenchDecision } from '../shell/WorkbenchDecision.tsx'
 import { useWorkbenchDelivery } from '../shell/useWorkbenchEvidence.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
@@ -20,6 +23,8 @@ import {
   NO_FILTERS,
   readBoardMemory,
   writeBoardMemory,
+  type BoardCard,
+  type BoardColumnGroup,
   type BoardFilters,
   type BoardMemory,
   type BoardView,
@@ -28,12 +33,15 @@ import {
 import { switchWorkView } from '../preferences.ts'
 import { boardMarkSections } from '../sessionMenu.ts'
 import { useBoardRequests } from './requests.ts'
-import { ItemPage } from './ItemPage.tsx'
-import { useItemPage } from './itemPage.ts'
 import { WorkBoard } from './WorkBoard.tsx'
 import { WorkBoardCard } from './WorkBoardCard.tsx'
 import { AllFilters, FilterChips, FilterMenus } from './WorkBoardFilters.tsx'
-import { WorkBoardNew } from './WorkBoardNew.tsx'
+import { useItemWrites } from './itemWrites.ts'
+import { WorkBoardItemCard, type ItemCard } from './WorkBoardItemCard.tsx'
+import { WorkBoardItemEdit } from './WorkBoardItemEdit.tsx'
+import { ItemPage } from './ItemPage.tsx'
+import { closeItemPage, openItemPage, useItemPage } from './itemPage.ts'
+import { WorkBoardNew, type NewMode } from './WorkBoardNew.tsx'
 import { WorkBoardTable } from './WorkBoardTable.tsx'
 
 /** Below this width the board is one list with a state filter (two 240px columns, their gap and the sides). */
@@ -62,9 +70,10 @@ function useNarrow(element: RefObject<HTMLElement | null>): boolean {
 }
 
 /**
- * 看板: every session the Host marks as a card, in the Host's group, as four equal columns or a list, filtered by
- * project, Harness, who works on it and tags. A card opens its session in 对话; coming back finds it marked. The board
- * starts sessions through 新建 without leaving.
+ * 看板: every card the Host gives (a 待办 with its sessions, or a session of none), in the Host's group, as five equal
+ * columns or a list, filtered by project, Harness, who works on it and tags. A session's card opens it in 对话; a 待办's
+ * opens its page on the board; coming back finds the card marked. The board starts sessions and keeps 待办 through 新建
+ * without leaving, and starts a 待办 with 开始 or the whole 未开始 column with 全部开始.
  */
 export function BoardSurface({ shell }: { shell: ShellState }) {
   const { snapshot, connection } = shell
@@ -82,26 +91,44 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   }
   const [listState, setListState] = useState<ListState>('all')
   const [order, setOrder] = useState<'group' | 'time'>('group')
-  const [phoneState, setPhoneState] = useState<BoardGroup | null>(null)
+  const [phoneState, setPhoneState] = useState<BoardColumnGroup | null>(null)
   const [started, setStarted] = useState<string | null>(null)
   const [newSince, setNewSince] = useState<SendingMessage | null | undefined>(undefined)
-  const root = useRef<HTMLElement>(null)
-  const narrow = useNarrow(root)
-  // A 待办's page stands in the board's place while it is open (package G).
+  const [newMode, setNewMode] = useState<NewMode>({ kind: 'new' })
+  // A 待办's page stands in the board's place while it is open.
   const itemPage = useItemPage(snapshot.device.id)
   const showItem = itemPage !== null && shell.catalog?.features?.workItems === true
+  const [tagging, setTagging] = useState<WorkItemSummary | null>(null)
+  const [editing, setEditing] = useState<WorkItemSummary | null>(null)
+  const [deleting, setDeleting] = useState<WorkItemSummary | null>(null)
+  const writes = useItemWrites(shell.refresh)
+  /** Sessions this page started from a 待办: one the snapshot lists outside it was not added (the 待办 was full). */
+  const [startedFrom, setStartedFrom] = useState<ReadonlyArray<{ itemId: string; sessionId: string }>>([])
+  const noteStarted = useCallback((itemId: string, sessionId: string) => {
+    setStartedFrom(previous => [...previous, { itemId, sessionId }])
+  }, [])
+  const root = useRef<HTMLElement>(null)
+  const narrow = useNarrow(root)
   useTicker(connection === 'connected' ? 'minute' : false)
   const now = hostNow()
   const tasks = snapshot.tasks
+  const items = useMemo(() => snapshot.items ?? [], [snapshot.items])
   const workspaces = shell.catalog?.workspaces ?? []
   const filters = memory.filters
   const filtered = filtering(filters)
-  const columns = boardColumns(tasks, filters, workspaces, now)
-  const counts = groupCounts(tasks, now)
-  const options = useMemo(() => filterOptions(tasks, snapshot), [tasks, snapshot])
+  const columns = boardColumns(tasks, filters, workspaces, now, items)
+  const column = (group: BoardColumnGroup) => columns.find(item => item.group === group)!
+  const counts = groupCounts(tasks, now, items)
+  const options = useMemo(() => filterOptions(tasks, snapshot, items), [tasks, snapshot, items])
   const marked = started ?? shell.selectedId
-  const deliverable = columns.find(column => column.group === 'deliver')!.cards
-  const deliveryIds = useMemo(() => deliverable.slice(0, DELIVERY_READS).map(task => task.id), [deliverable])
+  /** A 待办's card is marked for itself, or for its session that was last opened or just started. */
+  const markedCard = (card: BoardCard) =>
+    marked !== null && (card.id === marked || (card.kind === 'item' && card.item.sessionIds.includes(marked)))
+  const deliverable = column('deliver').cards
+  const deliveryIds = useMemo(
+    () => deliverable.flatMap(card => (card.kind === 'session' ? [card.id] : [])).slice(0, DELIVERY_READS),
+    [deliverable],
+  )
   const delivery = useDeliveryFor(shell, deliveryIds, !narrow && memory.view === 'board')
 
   const open = useCallback(
@@ -112,12 +139,21 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     },
     [shell],
   )
-  // Back on the board, the session last opened (or just started) is in view, its card marked.
+  // Back on the board, the card last opened (or just started or kept) is in view, marked.
   useEffect(() => {
-    if (!marked) return
-    const card = root.current?.querySelector<HTMLElement>(`[data-work-session="${CSS.escape(marked)}"]`)
+    if (!marked || showItem) return
+    const id = CSS.escape(marked)
+    const card = root.current?.querySelector<HTMLElement>(`[data-work-session="${id}"], [data-work-item="${id}"]`)
     card?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }, [marked, memory.view, narrow])
+  }, [marked, memory.view, narrow, showItem])
+  const deviceId = snapshot.device.id
+  const openItem = useCallback(
+    (item: WorkItemSummary) => {
+      setStarted(item.id)
+      openItemPage(deviceId, item.id)
+    },
+    [deviceId],
+  )
 
   const menuFor = (task: TaskSummary): MenuSection[] => {
     const marks = shell.boardMarks(task)
@@ -144,14 +180,88 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     ]
   }
   const canStart = shell.homeComposerState.gate.kind === 'open'
+  const canMark = shell.catalog !== undefined && shell.access.scopes.has('run')
+  /** 优先级, 标签…, 编辑… while it has no session, 打开, 删除待办: the same on a card, a row and a phone row. */
+  const itemMenu = ({ item }: ItemCard): MenuSection[] => [
+    ...(canMark
+      ? boardMarkSections(item, {
+          setPriority: priority => {
+            void writes.patch(item, { priority: priority ?? 'mid' })
+          },
+          editTags: () => {
+            setTagging(item)
+          },
+        })
+      : []),
+    {
+      id: 'item',
+      items: [
+        ...(canMark && item.sessionIds.length === 0
+          ? [
+              {
+                id: 'edit',
+                label: '编辑…',
+                icon: EditGlyph,
+                onSelect: () => {
+                  setEditing(item)
+                },
+              },
+            ]
+          : []),
+        {
+          id: 'open',
+          label: '打开待办',
+          icon: ListTodo,
+          onSelect: () => {
+            openItem(item)
+          },
+        },
+      ],
+    },
+    ...(canMark
+      ? [
+          {
+            id: 'danger',
+            items: [
+              {
+                id: 'delete',
+                label: '删除待办…',
+                icon: TrashGlyph,
+                danger: true,
+                onSelect: () => {
+                  setDeleting(item)
+                },
+              },
+            ],
+          },
+        ]
+      : []),
+  ]
   // Where 对话 stood before 新建: the new-session input targets a new session only on the start screen, so the dialog
   // moves 对话 there and puts it back once it closes.
   const beforeNew = useRef<ShellState['route'] | null>(null)
-  const startNew = () => {
+  const startNew = (mode: NewMode = { kind: 'new' }) => {
     beforeNew.current = shell.route
     shell.startNew()
+    setNewMode(mode)
     setNewSince(shell.submission.sendingMessage)
   }
+  const onNewStarted = useCallback(
+    (sessionId: string) => {
+      setStarted(sessionId)
+      if (newMode.kind === 'start') noteStarted(newMode.item.id, sessionId)
+    },
+    [newMode, noteStarted],
+  )
+  const startItem = useCallback(
+    (item: WorkItemSummary) => {
+      beforeNew.current = shell.route
+      shell.startNew()
+      setNewMode({ kind: 'start', item })
+      setNewSince(shell.submission.sendingMessage)
+    },
+    [shell],
+  )
   const closeNew = useCallback(() => {
     setNewSince(undefined)
     const before = beforeNew.current
@@ -163,6 +273,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       if (canStart) startNew()
       return
     }
+    closeItemPage()
     setListState(request.group)
     setPhoneState(request.group)
     requestAnimationFrame(() => {
@@ -188,19 +299,80 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     }),
     [shell],
   )
-  const decisionId = columns[0].cards.find(task => answerable(task, snapshot.approvals))?.id
-  const renderCard = (task: TaskSummary, decide = false) => (
-    <WorkBoardCard
-      task={task}
-      shell={shell}
-      marked={marked === task.id}
-      delivery={delivery.get(task.id)}
-      sharedFolder={!!task.cwd && !task.worktree && tasks.some(other => other.id !== task.id && !other.archived && other.cwd === task.cwd)}
-      menu={menuFor(task)}
-      onOpen={open}
-      decision={decide ? <WorkbenchDecision task={task} shell={decisionShell} /> : undefined}
-    />
-  )
+  // The first card in 等你处理 whose waiting session (its own, or a 待办's) takes an ordinary request answers it in place.
+  const waitingOf = (card: BoardCard): TaskSummary | undefined =>
+    card.kind === 'session'
+      ? card.task
+      : card.sessions.find(task => task.board?.group === 'attention' && answerable(task, snapshot.approvals))
+  const decisionCard = column('attention').cards.find(card => {
+    const task = waitingOf(card)
+    return task !== undefined && answerable(task, snapshot.approvals)
+  })
+  const renderCard = (card: BoardCard, decide = false) => {
+    if (card.kind === 'item') {
+      const waiting = decide ? waitingOf(card) : undefined
+      return (
+        <WorkBoardItemCard
+          card={card}
+          shell={shell}
+          marked={markedCard(card)}
+          menu={itemMenu(card)}
+          write={writes.states.get(card.id)}
+          onOpenItem={openItem}
+          onOpenSession={open}
+          onStart={canStart ? startItem : undefined}
+          onDone={
+            canMark
+              ? item => {
+                  void writes.patch(item, { closed: true })
+                }
+              : undefined
+          }
+          onRetry={id => {
+            void writes.retry(id)
+          }}
+          onDismiss={writes.dismiss}
+          decision={waiting ? <WorkbenchDecision task={waiting} shell={decisionShell} /> : undefined}
+          outside={
+            startedFrom.filter(
+              entry =>
+                entry.itemId === card.id
+                && !items.some(other => other.sessionIds.includes(entry.sessionId))
+                && tasks.some(task => task.id === entry.sessionId),
+            ).length
+          }
+        />
+      )
+    }
+    const { task } = card
+    return (
+      <WorkBoardCard
+        task={task}
+        shell={shell}
+        marked={marked === task.id}
+        delivery={delivery.get(task.id)}
+        sharedFolder={
+          !!task.cwd && !task.worktree && tasks.some(other => other.id !== task.id && !other.archived && other.cwd === task.cwd)
+        }
+        menu={menuFor(task)}
+        onOpen={open}
+        decision={decide ? <WorkbenchDecision task={task} shell={decisionShell} /> : undefined}
+      />
+    )
+  }
+  const unstarted = column('todo').cards.flatMap(card => (card.kind === 'item' ? [card.item] : []))
+  const startAll =
+    canStart && unstarted.length > 1 ? (
+      <Button
+        variant="ghost"
+        size="xs"
+        loading={writes.startingAll}
+        onClick={() => {
+          void writes.startAll(unstarted, noteStarted)
+        }}>
+        全部开始
+      </Button>
+    ) : undefined
   const header = (
     <header className="work-board-head">
       <div className="work-board-filters">
@@ -217,7 +389,14 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           ]}
           onValueChange={setView}
         />
-        <Button variant="outline" size="sm" icon={NewSessionGlyph} disabled={!canStart} onClick={startNew}>
+        <Button
+          variant="outline"
+          size="sm"
+          icon={NewSessionGlyph}
+          disabled={!canStart}
+          onClick={() => {
+            startNew()
+          }}>
           新建
         </Button>
       </div>
@@ -226,8 +405,9 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const phoneGroup = phoneState ?? firstPhoneState(counts)
   let body
   if (narrow) {
-    const rows = listRows(tasks, phoneGroup, filters, workspaces, 'group').filter(
-      task => phoneGroup !== 'done' || columns[3].cards.includes(task),
+    const shownDone = new Set(column('done').cards.map(card => card.id))
+    const rows = listRows(tasks, phoneGroup, filters, workspaces, 'group', items).filter(
+      card => phoneGroup !== 'done' || shownDone.has(card.id),
     )
     body = (
       <div className="work-board-phone">
@@ -241,15 +421,25 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           />
           <div className="work-board-phone-actions">
             <AllFilters options={options} filters={filters} onFilters={setFilters} />
-            <Button variant="outline" size="sm" icon={NewSessionGlyph} disabled={!canStart} onClick={startNew}>
-              新建
-            </Button>
+            <span className="work-board-phone-todo">
+              {phoneGroup === 'todo' && startAll}
+              <Button
+                variant="outline"
+                size="sm"
+                icon={NewSessionGlyph}
+                disabled={!canStart}
+                onClick={() => {
+                  startNew()
+                }}>
+                新建
+              </Button>
+            </span>
           </div>
         </div>
         {rows.length ? (
           <ul className="work-board-phone-list" aria-label={GROUP_LABELS[phoneGroup]}>
-            {rows.map(task => (
-              <li key={task.id}>{renderCard(task)}</li>
+            {rows.map(card => (
+              <li key={card.id}>{renderCard(card)}</li>
             ))}
           </ul>
         ) : (
@@ -261,11 +451,11 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     )
   } else if (memory.view === 'list') {
     const listCounts = Object.fromEntries(
-      (['all', ...BOARD_GROUPS] as const).map(state => [state, listRows(tasks, state, NO_FILTERS, workspaces, 'group').length]),
+      (['all', ...BOARD_GROUPS] as const).map(state => [state, listRows(tasks, state, NO_FILTERS, workspaces, 'group', items).length]),
     )
     body = (
       <WorkBoardTable
-        rows={listRows(tasks, listState, filters, workspaces, order)}
+        rows={listRows(tasks, listState, filters, workspaces, order, items)}
         shell={shell}
         state={listState}
         onState={setListState}
@@ -274,6 +464,13 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         onOrder={setOrder}
         marked={marked}
         menuFor={menuFor}
+        itemMenu={itemMenu}
+        writes={writes.states}
+        onOpenItem={openItem}
+        onRetry={id => {
+          void writes.retry(id)
+        }}
+        onDismiss={writes.dismiss}
         onOpen={open}
       />
     )
@@ -284,7 +481,8 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         filtered={filtered}
         schedules={snapshot.automations ?? []}
         now={now}
-        renderCard={task => renderCard(task, task.id === decisionId)}
+        renderCard={card => renderCard(card, card === decisionCard)}
+        todoAction={startAll}
       />
     )
   }
@@ -303,7 +501,64 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           <div className="work-board-body">{body}</div>
         </>
       )}
-      <WorkBoardNew shell={shell} open={newSince !== undefined} since={newSince ?? null} onClose={closeNew} onStarted={setStarted} />
+      <WorkBoardNew
+        shell={shell}
+        open={newSince !== undefined}
+        mode={newMode}
+        since={newSince ?? null}
+        onClose={closeNew}
+        onStarted={onNewStarted}
+        onKept={setStarted}
+      />
+      {tagging && (
+        <SessionTagsDialog
+          task={tagging}
+          known={knownTags([...tasks, ...items])}
+          phone={shell.phone}
+          onClose={() => {
+            setTagging(null)
+          }}
+          onSave={async tags => {
+            const result = await writes.patch(tagging, { tags })
+            if (!result.ok && !result.unknown) {
+              writes.dismiss(tagging.id)
+              throw new MessageError(result.reason ?? '没有保存')
+            }
+          }}
+        />
+      )}
+      {editing && (
+        <WorkBoardItemEdit
+          item={editing}
+          writes={writes}
+          phone={shell.phone}
+          onClose={() => {
+            setEditing(null)
+          }}
+        />
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title="删除待办"
+          danger
+          confirmLabel="删除"
+          message={
+            deleting.sessionIds.length
+              ? `删除待办「${escapeSecurityText(deleting.title)}」？它的 ${deleting.sessionIds.length} 个会话保留。`
+              : `删除待办「${escapeSecurityText(deleting.title)}」？`
+          }
+          onClose={() => {
+            setDeleting(null)
+          }}
+          onConfirm={async () => {
+            const result = await writes.remove(deleting)
+            if (!result.ok && !result.unknown) {
+              writes.dismiss(deleting.id)
+              throw new MessageError(result.reason ?? '没有删除')
+            }
+          }}
+        />
+      )}
     </section>
   )
 }

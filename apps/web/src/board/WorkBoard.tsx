@@ -1,11 +1,12 @@
-import type { AutomationSummary, BoardGroup, TaskSummary } from '@latch/protocol'
+import type { AutomationSummary } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
 import { Count, Icon, PullRequestGlyph, RunningGlyph, ScheduleGlyph, StatusWord, WaitingGlyph, type IconComponent } from '@latch/ui'
-import { CircleCheck } from 'lucide-react'
+import { CircleCheck, ListTodo } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { GROUP_LABELS, type BoardColumn } from './model.ts'
+import { GROUP_LABELS, type BoardCard, type BoardColumn, type BoardColumnGroup } from './model.ts'
 
-const GROUP_ICONS: Record<BoardGroup, IconComponent> = {
+const GROUP_ICONS: Record<BoardColumnGroup, IconComponent> = {
+  todo: ListTodo,
   attention: WaitingGlyph,
   running: RunningGlyph,
   deliver: PullRequestGlyph,
@@ -52,8 +53,9 @@ function Schedules({ schedules, now }: { schedules: readonly AutomationSummary[]
 }
 
 /**
- * The columns, as equal cells that reflow by the board's own width (work-board.css): four in a row from 1028px, two by
- * two below. Every cell scrolls its own cards under a fixed head; an empty one is its head and a quiet line.
+ * The five columns, as equal cells that reflow by the board's own width (work-board.css): five in a row from 1280px,
+ * 3 + 2 from 776px, 2 + 2 + 1 below. Every cell scrolls its own cards under a fixed head; an empty one is its head and
+ * a quiet line, so the layout never depends on what a column holds. 未开始's head carries 全部开始.
  */
 export function WorkBoard({
   columns,
@@ -61,12 +63,15 @@ export function WorkBoard({
   schedules,
   now,
   renderCard,
+  todoAction,
 }: {
   columns: readonly BoardColumn[]
   filtered: boolean
   schedules: readonly AutomationSummary[]
   now: number
-  renderCard: (task: TaskSummary, column: BoardColumn, index: number) => ReactNode
+  renderCard: (card: BoardCard, column: BoardColumn, index: number) => ReactNode
+  /** In 未开始's head: 全部开始, while it has cards this device may start. */
+  todoAction?: ReactNode
 }) {
   return (
     <div className="work-board-columns" data-columns={columns.length}>
@@ -76,11 +81,12 @@ export function WorkBoard({
             <Icon icon={GROUP_ICONS[column.group]} size={14} />
             <h3>{GROUP_LABELS[column.group]}</h3>
             <ColumnCount column={column} filtered={filtered} />
+            {column.group === 'todo' && todoAction && <span className="work-board-column-action">{todoAction}</span>}
           </header>
           {column.cards.length ? (
             <ul className="work-board-cards">
-              {column.cards.map((task, index) => (
-                <li key={task.id}>{renderCard(task, column, index)}</li>
+              {column.cards.map((card, index) => (
+                <li key={card.id}>{renderCard(card, column, index)}</li>
               ))}
             </ul>
           ) : (

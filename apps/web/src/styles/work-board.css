@@ -1,8 +1,8 @@
 /*
  * 看板: the full surface between the title row and the status bar. It reflows by its own width (a container), never the
- * window's: n columns need n × 240 + (n − 1) × 12 + 32 px, so four from 1028px, two by two from 524px, and below that
- * the narrow list (BoardSurface swaps it in by the same width). The phase-2 rules for five columns are written now:
- * five from 1280px, 3 + 2 from 776px, 2 + 2 + 1 from 524px. Order never changes and no group is hidden.
+ * window's: n columns need n × 240 + (n − 1) × 12 + 32 px, so five from 1280px, 3 + 2 from 776px, 2 + 2 + 1 from 524px,
+ * and below that the narrow list (BoardSurface swaps it in by the same width). Rows share the height equally, each at
+ * least 180px; order never changes, no group is hidden, and an empty 未开始 keeps its cell.
  */
 .work-board {
   container: work-board / inline-size;
@@ -161,11 +161,6 @@
     grid-column: span 3;
   }
 }
-@container work-board (min-width: 1028px) {
-  .work-board-columns[data-columns='4'] {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
 @container work-board (min-width: 1280px) {
   .work-board-columns[data-columns='5'] {
     grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -216,6 +211,10 @@
 }
 .work-board-count[data-tone='warn'] {
   color: var(--amber);
+}
+.work-board-column-action {
+  margin-inline-start: auto;
+  margin-inline-end: calc(-1 * var(--sp-4));
 }
 .work-board-cards {
   display: flex;
@@ -462,6 +461,154 @@
   right: var(--sp-8);
 }
 
+/* ---- A 待办's card: the card's own button, then its sessions, the request it waits on, and 开始 or 完成 ------------ */
+
+.work-board-card[data-kind='item'] {
+  flex-direction: column;
+}
+.work-board-item-glyph {
+  flex: none;
+  color: var(--muted);
+}
+.work-board-item-hint {
+  color: var(--faint);
+}
+.work-board-item-prompt-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-inline-end: auto;
+  padding: var(--sp-2) var(--sp-4);
+  border: 0;
+  border-radius: var(--r-4);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-item-prompt-toggle:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+.work-board-item-prompt-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.work-board-item-prompt {
+  max-height: 160px;
+  margin: 0 var(--sp-8) var(--sp-8);
+  padding: var(--sp-6) var(--sp-8);
+  overflow-y: auto;
+  border-radius: var(--r-6);
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.work-board-item-prompt-wait {
+  display: block;
+  height: var(--lh-caption);
+}
+.work-board-item-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: var(--sp-6) var(--sp-6) var(--sp-8);
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.work-board-item-session {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--sp-6);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-item-session > * {
+  flex: none;
+}
+.work-board-item-session-state {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-item-session-branch {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--fs-fact);
+  line-height: var(--lh-fact);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-item-session:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (hover: hover) {
+  .work-board-item-session:hover {
+    background: var(--hover);
+  }
+}
+.work-board-item-unlisted {
+  padding-inline: var(--sp-6);
+  color: var(--faint);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-item-decision {
+  padding: 0 var(--sp-4) var(--sp-4);
+}
+.work-board-item-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-6);
+  min-height: 32px;
+  padding: 0 var(--sp-8) var(--sp-8) var(--sp-8);
+}
+.work-board-item-prompt + .work-board-item-foot,
+.work-board-item-sessions + .work-board-item-foot {
+  padding-top: var(--sp-2);
+}
+.work-board-item-write {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-item-write > :first-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-item-write > :first-child + * {
+  margin-inline-start: auto;
+}
+
 /* ---- The list ------------------------------------------------------------------------------------------------- */
 
 .work-board-table {
@@ -525,6 +672,40 @@
 .work-board-row .work-board-card-actions {
   top: 50%;
   translate: 0 -50%;
+}
+/* A 待办's sessions sit under it, indented past its fold button. */
+.work-board-row[data-kind='item'] > .work-board-row-main,
+.work-board-row[data-nested] > .work-board-row-main {
+  padding-inline-start: var(--sp-32);
+}
+.work-board-row[data-nested] .work-board-row-title {
+  padding-inline-start: var(--sp-16);
+}
+.work-board-row[data-nested] {
+  border-bottom-style: dashed;
+}
+.work-board-row-fold {
+  position: absolute;
+  top: 50%;
+  left: var(--sp-6);
+  z-index: 1;
+  translate: 0 -50%;
+}
+.work-board-row-count {
+  flex: none;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--fs-fact);
+  line-height: var(--lh-fact);
+}
+.work-board-row-write {
+  position: absolute;
+  top: 50%;
+  right: var(--sp-40);
+  translate: 0 -50%;
+  max-width: 50%;
+  padding-inline-start: var(--sp-8);
+  background: var(--canvas);
 }
 .work-board-row-main {
   width: 100%;
@@ -616,6 +797,11 @@
   justify-content: space-between;
   gap: var(--sp-8);
 }
+.work-board-phone-todo {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
 .work-board-phone-list {
   display: flex;
   flex: 1;
@@ -658,4 +844,66 @@
 }
 .work-board-new .ui-dialog-body {
   padding-bottom: var(--sp-16);
+}
+/* 先不开始, and the priority and tags a kept 待办 takes: always drawn, dimmed while off, so nothing moves. */
+.work-board-new-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-16);
+  margin-top: var(--sp-12);
+}
+.work-board-new-later {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.work-board-new-marks {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+/* Off, the controls draw themselves disabled; the tag field's frame goes quiet with them. */
+.work-board-new-item:not([data-later]) .work-board-new-tags {
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--faint);
+}
+.work-board-new-tags {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 160px;
+  min-height: 28px;
+  padding: var(--sp-2) var(--sp-6);
+  border-radius: var(--r-6);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.work-board-new-tags:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.work-board-new-tags[data-invalid] {
+  box-shadow: inset 0 0 0 1.5px var(--red);
+}
+.work-board-new-tag-field {
+  flex: 1;
+  min-width: 64px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-caption);
+}
+.work-board-new-tag-field::placeholder {
+  color: var(--faint);
 }

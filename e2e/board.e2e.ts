@@ -15,8 +15,9 @@ import { stillMotion } from './helpers/visual.ts'
 import { switchView } from './helpers/workbench.ts'
 
 const OUT = 'test-results/board'
-const GROUPS: readonly BoardGroup[] = ['attention', 'running', 'deliver', 'done']
-const LABELS: Record<BoardGroup, string> = { attention: '等你处理', running: '进行中', deliver: '可交付', done: '已结束' }
+type Column = 'todo' | BoardGroup
+const GROUPS: readonly Column[] = ['todo', 'attention', 'running', 'deliver', 'done']
+const LABELS: Record<Column, string> = { todo: '未开始', attention: '等你处理', running: '进行中', deliver: '可交付', done: '已结束' }
 
 /** The 「对话 | 看板」 switch in the title row (or the phone's heading): the one way onto the board. */
 async function openBoard(page: Page): Promise<void> {
@@ -25,7 +26,7 @@ async function openBoard(page: Page): Promise<void> {
 }
 
 const board = (page: Page) => page.locator('.work-board')
-const column = (page: Page, group: BoardGroup) => board(page).getByRole('region', { name: LABELS[group], exact: true })
+const column = (page: Page, group: Column) => board(page).getByRole('region', { name: LABELS[group], exact: true })
 const card = (page: Page, id: string) => board(page).locator(`.work-board-card[data-work-session="${id}"]`)
 
 async function shot(page: Page, name: string, width: number, theme: 'light' | 'dark') {
@@ -234,20 +235,21 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
     await shot(page, 'board', 1440, 'light')
     await shot(page, 'board', 1440, 'dark')
 
-    // Reflow by the board's own width: four in a row, then two by two, then the narrow list. Order never changes.
+    // Reflow by the board's own width: five in a row, 3 + 2, 2 + 2 + 1, then the narrow list. Order never changes, and
+    // an empty 未开始 keeps its cell.
     for (const [width, expected] of [
-      [1440, [4]],
-      [1100, [4]],
-      [900, [2, 2]],
-      [600, [2, 2]],
+      [1440, [5]],
+      [1100, [3, 2]],
+      [900, [3, 2]],
+      [600, [2, 2, 1]],
     ] as const) {
       await page.setViewportSize({ width, height: 900 })
       await expect.poll(() => rows(page)).toEqual(expected)
       expect((await cells(page)).map(item => item.name)).toEqual(GROUPS.map(group => LABELS[group]))
       for (const item of await cells(page)) expect(item.width).toBeGreaterThanOrEqual(240)
     }
-    await shot(page, 'board-2x2', 900, 'light')
-    await shot(page, 'board-2x2', 900, 'dark')
+    await shot(page, 'board-3x2', 900, 'light')
+    await shot(page, 'board-3x2', 900, 'dark')
     await page.setViewportSize({ width: 400, height: 844 })
     await board(page).locator('.work-board-phone').waitFor()
     // A short board keeps every cell at least 180px tall and scrolls as a whole; each cell still scrolls its own cards.
@@ -262,22 +264,6 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
     ).toBe(true)
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.locator('.work-board-columns').waitFor()
-    // Phase 2's fifth column: the same rules already lay five out as 5, 3 + 2 and 2 + 2 + 1.
-    await page.evaluate(() => {
-      const grid = document.querySelector<HTMLElement>('.work-board-columns')!
-      const first = grid.firstElementChild!.cloneNode(true) as HTMLElement
-      first.setAttribute('aria-label', '未开始')
-      grid.prepend(first)
-      grid.dataset.columns = '5'
-    })
-    for (const [width, expected] of [
-      [1440, [5]],
-      [1100, [3, 2]],
-      [700, [2, 2, 1]],
-    ] as const) {
-      await page.setViewportSize({ width, height: 900 })
-      await expect.poll(() => rows(page)).toEqual(expected)
-    }
     await page.reload()
     await connected(page)
     await page.setViewportSize({ width: 1440, height: 900 })
