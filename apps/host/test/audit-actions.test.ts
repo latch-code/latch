@@ -181,6 +181,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'work.item.changed': { itemId: `itm_${'A'.repeat(22)}`, revision: 3, op: 'joined', sessionId, titleHash: hex },
   'work.item.started': { itemId: `itm_${'A'.repeat(22)}`, requestHash: hex },
   'work.item.closed': { itemId: `itm_${'A'.repeat(22)}`, closed: true },
+  'work.item.posted': { itemId: `itm_${'A'.repeat(22)}`, postId: `pst_${'B'.repeat(22)}`, target: 'agent', sessionId },
   'task.prompt.queued': { sessionId, itemId: 'item-1' },
   'task.prompt.sent': { sessionId, itemId: 'item-1' },
   'task.prompt.edited': { sessionId, itemId: 'item-1' },

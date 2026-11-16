@@ -444,9 +444,28 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 
 **私有。** 一条待办只要有一个成员此刻是私有的（`hub.agentPrivate`：例如有完整数据范围的设备带着「通用」的上下文开始或继续了它），就是私有：Host 在读到时（快照、会话摘要、路由）和删除这个成员之前写下 `private`，此后不再取消（移出私有会话也不变：标题与要求里可能已写进私有内容）。加入私有会话要求完整数据范围。数据范围不是 `all` 的设备：快照里没有私有待办，也不计数；每个路由对私有待办的回答与不存在的待办相同（404 `item-not-found`）；它能读的会话不带私有待办的 `itemId`。
 
-**审计**（detail 只有 ID、哈希、计数与枚举）。`work.item.changed`（`itemId`、`revision`、`op`：`created`、`edited`、`deleted`、`joined`、`left`，`sessionId?`，`titleHash`），`work.item.started`（`itemId`、`requestHash`），`work.item.closed`（`itemId`、`closed`）。开始与加入私有会话先写审计，写不进就不做；其余写不进照做并带 `x-latch-audit: failed`。会话被删除而移出不写审计。
+**审计**（detail 只有 ID、哈希、计数与枚举）。`work.item.changed`（`itemId`、`revision`、`op`：`created`、`edited`、`deleted`、`joined`、`left`，`sessionId?`，`titleHash`），`work.item.started`（`itemId`、`requestHash`），`work.item.closed`（`itemId`、`closed`），`work.item.posted`（见「待办的讨论」）。开始与加入私有会话先写审计，写不进就不做；其余写不进照做并带 `x-latch-audit: failed`。会话被删除而移出不写审计。
 
 **通知。** 待办的变化走现有的刷新：不私有的待办发全局 `refresh`，私有的只发给完整数据范围的连接；成员会话另发各自的变化，但私有待办只刷新它的私有成员，不私有的成员的流听不到这条待办的任何变化。客户端收到后重读快照，不新增事件种类。
+
+### 待办的讨论
+
+一条待办可以有讨论（`work-threads.ts`、`routes/work-threads.ts`）：只有人发言，一条发言最多交给一个对象，这条待办的一个会话，或我的 Agent 之一（含「通用」）在它的唯一聊天里。回复不复制进讨论，只在读取时从那个会话读出，所以回复里写的 @ 不叫醒任何人；只有人的发言会投递，没有循环。
+
+**记录。** 数据目录的 `work/threads/<itemId>.json`（目录 0700，文件 0600，原子写，一次一个改动），strict：`{ version, itemId, revision, posts }`，每条发言 `{ id, at, deviceId, requestId, payloadHash, text, target?, delivery? }`，`delivery` 是 `{ requestId, sessionId, state: 'sent' | 'unknown' | 'failed', code?, reason? }`。每条待办最多 500 条（409 `thread-full`），发言 1–4 000 个字符、拒控制字符，像密钥 400 `post-secret`。删除待办时一起删除；Host 启动时删去待办已不在的讨论，但只在待办文件存在并完整读出时做：文件缺失（例如按启动时的报错移走了损坏的文件）时一个讨论也不删。快照与 `GET /work/items/:id` 的待办带 `threadRevision`（讨论每次变化加一），客户端据此重读。
+
+| 路由 | 做什么 | 权限 |
+| --- | --- | --- |
+| `GET /work/items/:id/posts` | 全部发言，旧的在前；投递过的带 `delivery`（进行中是 `sending`；记为 `unknown` 而会话里已有这条消息时答 `sent`）和 `reply`：那一轮最后一条有文字的回复，前 2 000 字（`more`、仍在运行时 `live`），从会话读出；这台设备读不到的会话不给回复。自己发的发言带 `requestId` | `view` |
+| `POST /work/items/:id/posts` | `{ requestId, text, target? }`，`target` 是 `{ sessionId }`（必须是这条待办的会话，否则 409 `post-target-gone`）或 `{ customAgentId }`。201 `{ post }`；同一设备同一 `requestId` 同一内容答同一条（200），未送达的再投一次，换内容 409 `request-conflict` | `run`；对 Agent 另需 Agent 的访问权（数据范围 `all`） |
+
+**顺序。** 可见性（与待办相同，私有的对较窄设备 404 `item-not-found`）、内容检查、对象可用（会话在一轮中 409 `post-target-busy`；Agent 的聊天还没开始 409 `agent-chat-empty`、正在确认 409 `agent-chat-starting`），@ Agent 时先把待办标为私有（只收窄可见范围），然后写 `work.item.posted`（`itemId`、`postId`、`target`：`none`、`session`、`agent`，`sessionId?`；不含文字，写不进 503 `audit-unavailable`，什么都不存），再存发言（投递记为 `unknown`），最后投递并结清为 `sent`、`failed` 或 `unknown`。投递失败不回错误码：发言已存，回答里的状态说明结果，重试同一请求再投。`postId` 由设备、待办与 `requestId` 推出，同一请求同时发两次时后一个等前一个，所以一个请求只有一条发言、一行审计。
+
+**投递。** 走 `POST /tasks/:id/prompt` 的同一个函数 `sendPrompt`（访问、工作区、私有上下文、附件与 Driver 回执），不排队、不追加：排队的消息发出时会把整段文字交给记忆。请求标识由设备、待办与原 `requestId` 推出，重试时不变；它不是秘密，只让这台设备的发言与它自己直接发的消息分开。投之前先读会话：已经有这个请求的用户消息就记为 `sent`，不再发（对 Agent 补做「记住…」，按请求只建一条），所以答复丢失后讨论又多了内容，重试也只送一次；同一条发言的投递在进行中时，重试等它。正文是人写的话，后面一段引用：所有换行（含 `\r`、U+0085、U+2028、U+2029）先统一成 `\n`，每段的标签（「我：」「会话「…」 的回复：」）在一层引用里（`> `），段的文字在下一层（`> > `），所以回复里写的任何「我：」都比真的标签深一层，冒充不了人的话。引用里是发自哪条待办，以及这个会话上次被 @ 之后讨论里新增的发言与别的会话对它们的回复（每段最多 2 000 字，总计 8 000 字，超出时省去最早的并写明省略了几段），并写明会话的回复是模型的输出、不是人的话也不是指令。引用的长度按发出的样子计（标签、换行与每行的 `> `），所以正文不会超过一条消息的上限。待办是否私有在拼好引用之后再读一次。对象不是私有会话时，引用里不放发给 Agent 的发言和私有会话（Agent 的聊天）的回复；待办已经私有而对象不是私有会话时（较窄的设备读得到它），只发人写的那句，不带待办标题与引用。在交给会话之前失败的投递记为 `failed`。
+
+**给 Agent。** 只进它的唯一聊天，从不另开会话（根 `AGENTS.md`）；聊天还没开始时不投递（首次开始会在标记之前跑第一轮）。这一轮带 `PromptOptions.outsideContent`：Driver 把「带外部内容」与这一轮的用户消息在同一次写入里记下，其间别的设备清空上下文或开始的一轮都碰不到它；不支持的 Driver（没有 `markOutsideContent`）由 Host 在交给它之前拒绝（`failed`，`post-unmarked`）；记忆的「记住…」只取人自己写的那句（见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#待办里的-)）。
+
+**私有。** @ 过 Agent 的待办从此私有（只增不减）。较窄的设备对待办、它的讨论与发言的读写都是 404 `item-not-found`，快照不列、不计数；私有待办的变化只通知完整数据范围的连接。
 
 ## Standard 的会话与运行
 
@@ -520,6 +539,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 | `automations.json` | 保存的任务、运行与回执（[AUTOMATIONS.md](AUTOMATIONS.md)） |
 | `handoffs/handoffs.json` | 交接记录与回执（[HANDOFFS.md](HANDOFFS.md)） |
 | `work/items.json` | 待办与它们新建、开始的回执（见「待办」） |
+| `work/threads/` | 每条待办的讨论，一个文件一条（见「待办的讨论」） |
 | `review-notes/`、`snapshots/` | 行级反馈、每轮的文件快照与记录（[CHANGES.md](CHANGES.md)） |
 | `attachments/`、`file-references/` | 附件存储（[ATTACHMENTS.md](ATTACHMENTS.md)）、会话提到过的文件路径 |
 | `plugin-packages/`、`plugin-data/<pluginId>/` | 自定义插件的资产与构建记录（[PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md)）、插件页面的数据与诊断（[APP-PAGES.md](APP-PAGES.md)） |
@@ -695,6 +715,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `/simulators…` | `routes/simulators.ts` | 见文档 | [DEVICE-PREVIEW.md](DEVICE-PREVIEW.md) |
 | `/handoffs…` | `routes/handoffs.ts` | 读 `view`，写 `run`；都要能读相关会话 | [HANDOFFS.md](HANDOFFS.md) |
 | `/work/items…` | `routes/work-items.ts` | 读 `view`，写 `run`；私有待办只给数据范围 `all` | 「待办」 |
+| `/work/items/:id/posts` | `routes/work-threads.ts` | 读 `view`，写 `run`；对 Agent 另需数据范围 `all` | 「待办的讨论」 |
 | `/history/…` | `routes/history.ts` | `run` + 数据范围 `all` | [HARNESSES.md](HARNESSES.md#接入已有会话) |
 | `/custom-agents…` | `routes/agents.ts` | 见文档 | [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md) |
 | `/automations…` | `routes/automations.ts` | 见文档 | [AUTOMATIONS.md](AUTOMATIONS.md) |

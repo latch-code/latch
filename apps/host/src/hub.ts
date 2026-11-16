@@ -1022,6 +1022,9 @@ export class HarnessHub implements Bridge {
 
   async prompt(sessionId: string, prompt: string, requestId: string, options?: PromptOptions): Promise<void> {
     const member = await this.route(sessionId)
+    // A driver that cannot record outside content would drop the mark: refused before anything is sent.
+    if (options?.outsideContent && !member.bridge.markOutsideContent)
+      throw new AppError(503, 'post-unmarked', '这个 Harness 不能把这次发送标为外部内容，没有发出。')
     // Before the turn is accepted, so the session is never readable as ordinary while the context is on its way.
     if (options?.agentContext && !options.agentContext.agent) await this.recordPrivate(sessionId)
     // Not a step of its own without a watched run: `accept` follows the route directly.

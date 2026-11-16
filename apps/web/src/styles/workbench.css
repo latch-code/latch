@@ -216,6 +216,10 @@
     inset: 52px 0 var(--phone-tabs-height);
     z-index: 2;
   }
+  /* The board's own `height: 100%` would carry it under the tabs: the inset sets it here. */
+  .board-surface.work-board {
+    height: auto;
+  }
   /* A phone's start screen: its heading at the top, the input at the foot. */
   .workbench-home.code-home {
     justify-content: flex-start;

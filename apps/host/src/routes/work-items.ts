@@ -47,6 +47,10 @@ export interface WorkItemRouteDeps {
   projectExists: (projectId: string) => boolean
   /** The 待办 changed: clients read again; a private one only tells devices with the full data scope. */
   changed: (item: WorkItemRecord, sessionIds: readonly string[]) => void
+  /** Its thread's revision, while it has one. */
+  threadRevision?: (itemId: string) => number | undefined
+  /** The 待办 was deleted: what belongs to it goes too (its thread). */
+  deleted?: (itemId: string) => Promise<void>
 }
 
 const ROOT = '/link/api/work/items'
@@ -169,7 +173,15 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     )
     const priv = isPrivate(item)
     if (priv) store.notePrivate(item.id, context.log)
-    return fullItem(item, { summary: id => summaries.get(id), prState: id => context.board.prState(id) }, priv)
+    return fullItem(
+      item,
+      {
+        summary: id => summaries.get(id),
+        prState: id => context.board.prState(id),
+        ...(deps.threadRevision ? { thread: deps.threadRevision } : {}),
+      },
+      priv,
+    )
   }
 
   /** Re-checks the caller after an await, and that it may still read the 待办. */
@@ -349,6 +361,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       draft.items.delete(id)
       return { result: record, changed: true }
     })
+    await deps.deleted?.(id).catch(error => context.log(`待办的讨论没有删除：${error instanceof Error ? error.message : String(error)}`))
     deps.changed(removed, removed.sessionIds)
     json(res, { deleted: true })
   }

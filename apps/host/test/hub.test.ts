@@ -330,6 +330,18 @@ describe('harness hub routing', () => {
     await expect(value.markOutsideContent('without-marker')).rejects.toMatchObject({ code: 'mcp-prompt-unmarked' })
   })
 
+  it('refuses a turn that carries outside content when the session’s driver cannot record it, before the driver sees it', async () => {
+    const { bridge } = external([summary('without-marker')])
+    const prompt = vi.spyOn(bridge, 'prompt')
+    const { hub: value } = await hub(undefined, 'ext')
+    await value.attach(driver('ext'), mount(bridge))
+    await expect(value.prompt('without-marker', 'hi', 'r-1', { outsideContent: true })).rejects.toMatchObject({
+      status: 503,
+      code: 'post-unmarked',
+    })
+    expect(prompt).not.toHaveBeenCalled()
+  })
+
   it('projects only bounded public native skill metadata, never private path or source fields', async () => {
     const { bridge } = external([summary('skills', 'idle')])
     const detail = await bridge.detail('skills')

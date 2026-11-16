@@ -41,6 +41,8 @@ export interface WorkItemSummary {
   revision: number
   /** Derived by the Host each time it is read, never stored. */
   board: WorkItemPlace
+  /** Grows with every change of its thread (a post, a delivery settled); absent while it has none. Clients read it again. */
+  threadRevision?: number
 }
 
 export interface WorkItem extends WorkItemSummary {
@@ -124,6 +126,76 @@ export interface WorkItemSessionInput {
 /** Every write but delete answers with the 待办 as it now stands. */
 export interface WorkItemAnswer {
   item: WorkItem
+}
+
+export const WORK_THREAD_LIMITS = {
+  posts: 500,
+  postChars: 4000,
+  /** What a delivered post's answer shows of the reply, and what an increment quotes of each part. */
+  replyChars: 2000,
+  /** All the quoted parts of one delivery together. */
+  quotedChars: 8000,
+} as const
+
+/** Who a post is for: one session of the 待办, or one of 我的 Agent (`general` for 通用) in its one chat. */
+export type WorkPostTarget = { sessionId: string } | { customAgentId: string }
+
+/**
+ * A delivered post: `sending` while the Host has not heard back; `sent` once the session holds it; `unknown` when that
+ * could not be told (重试 sends the same request, and is never delivered twice); `failed` when it certainly was not.
+ */
+export interface WorkPostDelivery {
+  /** The session it went to: for an Agent, its chat at the time. */
+  sessionId: string
+  state: 'sending' | 'sent' | 'unknown' | 'failed'
+  /** Why it failed or is unknown, in the Host's words; never the text. */
+  reason?: string
+  code?: string
+}
+
+/** The session's answer to a delivered post: that turn's reply, cut to `replyChars`. Read from the session, never stored. */
+export interface WorkPostReply {
+  messageId: string
+  text: string
+  /** The reply goes on beyond `text`. */
+  more?: true
+  /** The turn is still running: `text` may grow. */
+  live?: true
+}
+
+/** One post of a 待办's thread: only a person writes one. A reply is shown under it, never copied into the thread. */
+export interface WorkPost {
+  /** `pst_` and 22 base64url characters. */
+  id: string
+  at: string
+  /** 1–4,000 characters, as the person wrote them. */
+  text: string
+  target?: WorkPostTarget
+  delivery?: WorkPostDelivery
+  reply?: WorkPostReply
+  /** Only on the reading device's own posts: the request that made it, so 重试 can send it again. */
+  requestId?: string
+}
+
+/** `GET /link/api/work/items/:id/posts`: oldest first. */
+export interface WorkThreadAnswer {
+  posts: WorkPost[]
+  revision: number
+}
+
+/**
+ * `POST /link/api/work/items/:id/posts`: one post, delivered to `target` when it names one. A retry with the same
+ * `requestId` and body answers the same post and delivers it at most once.
+ */
+export interface WorkPostInput {
+  /** 8–128 of `A–Z a–z 0–9 _ -`. */
+  requestId: string
+  text: string
+  target?: WorkPostTarget
+}
+
+export interface WorkPostAnswer {
+  post: WorkPost
 }
 
 /**

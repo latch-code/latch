@@ -2849,6 +2849,8 @@ export class AgentRuntime implements Bridge {
         const freshContext = current.acp.contextCleared === true
         delete current.acp.contextCleared
         delete current.acp.seed
+        // With the turn's own record: nothing between can clear it, and it marks no other turn.
+        if (options.outsideContent) current.acp.outsideRead = true
         current.messages.push({
           id: run.userMessageId,
           role: 'user',

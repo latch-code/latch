@@ -40,6 +40,7 @@ import { useItemWrites } from './itemWrites.ts'
 import { WorkBoardItemCard, type ItemCard } from './WorkBoardItemCard.tsx'
 import { WorkBoardItemEdit } from './WorkBoardItemEdit.tsx'
 import { ItemPage } from './ItemPage.tsx'
+import { ItemThreadFor } from './ItemThread.tsx'
 import { closeItemPage, openItemPage, useItemPage } from './itemPage.ts'
 import { WorkBoardNew, type NewMode } from './WorkBoardNew.tsx'
 import { WorkBoardTable } from './WorkBoardTable.tsx'
@@ -494,7 +495,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       data-narrow={narrow ? '' : undefined}
       data-view={memory.view}>
       {showItem ? (
-        <ItemPage shell={shell} itemId={itemPage} />
+        <ItemPage shell={shell} itemId={itemPage} thread={<ItemThreadFor shell={shell} itemId={itemPage} />} />
       ) : (
         <>
           {!narrow && header}

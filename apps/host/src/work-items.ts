@@ -154,6 +154,8 @@ export function itemIsPrivate(item: Pick<WorkItemRecord, 'private' | 'sessionIds
 export interface MemberFacts {
   summary: (sessionId: string) => TaskSummary | undefined
   prState: (sessionId: string) => GitPrStatus | undefined
+  /** Its thread's revision, while it has one (`work-threads.ts`). */
+  thread?: (itemId: string) => number | undefined
 }
 
 export function itemSummary(record: WorkItemRecord, facts: MemberFacts, isPrivate: boolean): WorkItemSummary {
@@ -162,12 +164,14 @@ export function itemSummary(record: WorkItemRecord, facts: MemberFacts, isPrivat
     const place = facts.summary(id)?.board
     return place ? [{ place, prMerged: facts.prState(id) === 'merged' }] : []
   })
+  const thread = facts.thread?.(record.id)
   return {
     ...structuredClone(rest),
     sessionIds: [...record.sessionIds],
     ...(prompt ? { hasPrompt: true as const } : {}),
     ...(isPrivate ? { private: true as const } : {}),
     board: workItemPlace(record, record.sessionIds.length, members),
+    ...(thread !== undefined ? { threadRevision: thread } : {}),
   }
 }
 
@@ -196,6 +200,8 @@ export class WorkItemStore {
     private readonly dir: string,
     private state: State,
     private readonly now: () => number,
+    /** The file was there and read whole; false when it was missing (never written, or moved away by the person). */
+    readonly fromFile: boolean,
   ) {
     this.index()
   }
@@ -219,7 +225,7 @@ export class WorkItemStore {
       for (const item of parsed.items) state.items.set(item.id, item)
       state.receipts = parsed.receipts.toSorted((a, b) => a.at.localeCompare(b.at))
     }
-    return new WorkItemStore(path, join(dataDir, 'work'), state, options.now ?? Date.now)
+    return new WorkItemStore(path, join(dataDir, 'work'), state, options.now ?? Date.now, text !== undefined)
   }
 
   list(): WorkItemRecord[] {

@@ -46,6 +46,17 @@ export const SESSION_ACTIONS = {
   }),
   /** Written before a session is started from the 待办; nothing starts without it. The session is in `joined` and `task.l3.started`. */
   'work.item.started': z.strictObject({ itemId: prefixed('itm'), requestHash: hex64 }),
+  /**
+   * A person posted in the 待办's thread, written before the post is kept or delivered; never its text. `target`: nobody,
+   * one of its sessions (`sessionId`), or one of 我的 Agent (`sessionId` is its chat). The delivery itself is on record as
+   * any message to that session.
+   */
+  'work.item.posted': z.strictObject({
+    itemId: prefixed('itm'),
+    postId: prefixed('pst'),
+    target: z.enum(['none', 'session', 'agent']),
+    sessionId: opaqueId.optional(),
+  }),
   /** A person marked the 待办 done (`closed`) or reopened it. */
   'work.item.closed': z.strictObject({ itemId: prefixed('itm'), closed: z.boolean() }),
   'task.question.answered': z.strictObject({ sessionId: opaqueId, questionId: opaqueId }),

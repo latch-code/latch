@@ -399,7 +399,7 @@ Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入
 
 源码：[useSubmission.ts](../apps/web/src/hooks/useSubmission.ts)、[sendingMessage.ts](../apps/web/src/core/sendingMessage.ts)。
 
-**临时气泡。** 提交后立即显示临时文字，500ms 后才显示「发送中…」；按相同的 `requestId`、文字与附件或文件引用匹配到 Host 的消息后隐藏。临时状态不写入 `TaskDetail`、快照或 Host 的存储；会话仍由 Host 维护。队列接收不生成临时气泡。看板「新建」发起的新会话在 Host 接下后不打开：草稿照常用掉，页面留在看板，结果未知时同样以原请求重试（`setStay`）。待办卡的「开始」走同一个提交：待发送的提交多带 `itemId` 与读出要求时的修订，发往 `POST /work/items/:id/start`（`baseRevision`），重试与放弃不变（`setItem`）。
+**临时气泡。** 提交后立即显示临时文字，500ms 后才显示「发送中…」；按相同的 `requestId`、文字与附件或文件引用匹配到 Host 的消息后隐藏。临时状态不写入 `TaskDetail`、快照或 Host 的存储；会话仍由 Host 维护。队列接收不生成临时气泡。看板「新建」发起的新会话在 Host 接下后不打开：草稿照常用掉，页面留在看板，结果未知时同样以原请求重试（`setStay`）。待办卡的「开始」走同一个提交：待发送的提交多带 `itemId` 与读出要求时的修订，发往 `POST /work/items/:id/start`（`baseRevision`），重试与放弃不变（`setItem`）。待办讨论的发言不走这个提交：它在讨论里自己显示发送中与结果未知，重试用同一个 `requestId`；讨论的变化不新增事件种类，快照里待办的 `threadRevision` 变了、或某条回复所在的会话变了，页面重读讨论。
 
 **结果未知。**
 

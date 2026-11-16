@@ -1044,6 +1044,8 @@ class HarnessRuntime implements Bridge {
           // What the model read before is gone from its context, so its later proposals are not marked for it.
           delete task.outsideRead
         }
+        // With the turn's own record: nothing between can clear it, and it marks no other turn.
+        if (options.outsideContent) task.outsideRead = true
         this.assertAttachments(run, [...attachments, ...task.history.flatMap(message => message.attachmentRefs ?? [])])
         dropTurnSignatures(task.history)
         const at = isoTime(run.clock.startedAt)

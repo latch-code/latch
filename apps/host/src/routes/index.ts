@@ -16,6 +16,7 @@ import { createReviewNoteRoutes, type ReviewNoteRouteDeps } from './review-notes
 import { createSimulatorRoutes } from './simulators.ts'
 import type { Simulators } from '../simulators.ts'
 import { createWorkItemRoutes, type WorkItemRouteDeps } from './work-items.ts'
+import { createWorkThreadRoutes, type WorkThreadRouteDeps } from './work-threads.ts'
 import { createTerminalRoutes, type TerminalRoutes, type TerminalWorkspaceOperation } from './terminal.ts'
 import type { TerminalService } from '../terminal/service.ts'
 
@@ -29,6 +30,7 @@ export interface RouteDeps {
   automations: AutomationRouteDeps
   handoffs: HandoffRouteDeps
   workItems: WorkItemRouteDeps
+  workThreads: WorkThreadRouteDeps
   history: HistoryRouteDeps
   reviewNotes: ReviewNoteRouteDeps
   git?: GitRouteOptions
@@ -82,6 +84,8 @@ export function createRoutes(
       agentLogin,
       createAutomationRoutes(context, deps.automations),
       createHandoffRoutes(context, deps.handoffs),
+      // Before the 待办's own routes, which answer every other path under them.
+      createWorkThreadRoutes(context, deps.workThreads),
       createWorkItemRoutes(context, deps.workItems),
       createHistoryRoutes(context, deps.history),
       customization,

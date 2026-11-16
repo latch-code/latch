@@ -313,6 +313,7 @@ import type { HarnessKind } from './harness-trust.ts'
 import { HarnessHub, listSignature, runEndOutline, type HubCreateInput } from './hub.ts'
 import { BoardDelivery, boardPlace, type DeliveryTarget } from './board.ts'
 import { itemIsPrivate, itemSummary, WorkItemStore, type WorkItemRecord } from './work-items.ts'
+import { WorkThreadStore } from './work-threads.ts'
 import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleListeners } from './session-lifecycle.ts'
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
@@ -2153,6 +2154,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const boardDelivery = new BoardDelivery({ log, changed: sessionId => refresh(sessionId), target: deliveryTarget })
     const workItems = await WorkItemStore.open(dataDir, { now })
     startupCleanup.push(() => workItems.flush())
+    const workThreads = await WorkThreadStore.open(dataDir, { now })
+    // Only against a 待办 file read whole: a missing one (moved away after a refusal to start) says nothing of which
+    // threads lost their 待办, and pruning then would delete every thread.
+    if (workItems.fromFile) await workThreads.prune(itemId => workItems.get(itemId) !== undefined)
+    startupCleanup.push(() => workThreads.flush())
     const harnessHub = await HarnessHub.open({
       dataDir,
       defaultId: defaultHarnessId,
@@ -2944,6 +2950,36 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           startPersonSession(req, caller, createTaskSchema.parse(body), res, withoutPrivateContext),
         projectExists: id => id === 'default' || savedProject(id) !== undefined,
         changed: itemChanged,
+        threadRevision: id => workThreads.revisionOf(id),
+        deleted: id => workThreads.remove(id),
+      },
+      workThreads: {
+        threads: workThreads,
+        items: workItems,
+        // Never queued or steered: a queued message proposes from its whole text when it is sent.
+        async deliver(caller, sessionId, input, agent) {
+          const parsed = queuedPromptSchema.safeParse(input)
+          if (!parsed.success) throw new AppError(400, 'post-invalid', '这条发言连同引用太长，没有发出。')
+          const sent = await sendPrompt(caller, sessionId, parsed.data, false, agent !== undefined)
+          if (agent && typeof sent !== 'object' && sent !== 'replayed')
+            await rememberFromPerson({ deviceId: caller.device.id, actor: actorOf(caller) }, sessionId, agent.remember, input.requestId)
+        },
+        // Keyed by device and request, so a proposal already made for it is not made again.
+        async remember(caller, sessionId, text, requestId) {
+          await rememberFromPerson({ deviceId: caller.device.id, actor: actorOf(caller) }, sessionId, text, requestId)
+        },
+        async agentChat(caller, customAgentId) {
+          if (customAgentId !== GENERAL_AGENT_ID && !customAgents.list().some(agent => agent.id === customAgentId)) return undefined
+          await migrateAgentChats(caller)
+          const chat = customAgents.chats()[customAgentId]
+          if (!chat) throw new AppError(503, 'agent-chat-history-unknown', '旧会话尚未核对完成，请稍后再试。')
+          return chat.state === 'ready' ? { state: 'ready', sessionId: chat.sessionId } : { state: chat.state }
+        },
+        agentName: id => (id === GENERAL_AGENT_ID ? '通用' : (customAgents.list().find(agent => agent.id === id)?.name ?? 'Agent')),
+        agentAccess: caller => {
+          agentAccess(caller, true)
+        },
+        changed: item => itemChanged(item, []),
       },
       history: { history: () => historyImports },
       reviewNotes: {
@@ -8767,6 +8803,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       id: string,
       input: z.infer<typeof queuedPromptSchema>,
       withoutPrivateContext = false,
+      /** A 待办 thread's delivery: the turn carries outside content, recorded with it (`PromptOptions.outsideContent`). */
+      outsideContent = false,
     ): Promise<'steered' | 'accepted' | 'replayed' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       // The install window: a retry of a turn this Host has on record gets its original answer; a new plain message, and a
       // queued or steered one on a session that is not running (it would start a turn at once), are refused.
@@ -8776,13 +8814,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return result
       }
       if (turnRequests.has(turnKey) || promptQueues.knows(id, caller.device.id, input.requestId))
-        return sendPromptChecked(caller, id, input, withoutPrivateContext).then(sent)
+        return sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent).then(sent)
       if (updateWindow.isOpen()) {
         if (!(input.queue || input.steer)) refuseWhileUpdating('turn')
         const status = (await hub!.summary(id)).status
         if (status !== 'running' && status !== 'waiting-approval') refuseWhileUpdating('turn')
       }
-      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input, withoutPrivateContext)).then(sent)
+      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent)).then(sent)
     }
 
     async function sendPromptChecked(
@@ -8790,6 +8828,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       id: string,
       input: z.infer<typeof queuedPromptSchema>,
       withoutPrivateContext: boolean,
+      outsideContent = false,
     ): Promise<'steered' | 'accepted' | 'replayed' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       recheck(caller, 'run')
       await assertSessionAccess(caller, id)
@@ -8897,6 +8936,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(input.model ? { model: input.model } : {}),
           ...(attachments.length ? { attachments } : {}),
           ...(input.freshContext ? { freshContext: true as const } : {}),
+          ...(outsideContent ? { outsideContent: true as const } : {}),
         })
       } catch (cause) {
         if (cause instanceof AppError && refusedBeforeAccepting(cause.status, cause.code) && attachments.length)
@@ -10605,7 +10645,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const isPrivate = itemIsPrivate(record, id => hub!.agentPrivate(id))
           if (isPrivate) workItems.notePrivate(record.id, log)
           if (isPrivate && scope !== 'all') return []
-          return [itemSummary(record, { summary: id => listedById.get(id), prState: id => boardDelivery.prState(id) }, isPrivate)]
+          return [
+            itemSummary(
+              record,
+              { summary: id => listedById.get(id), prState: id => boardDelivery.prState(id), thread: id => workThreads.revisionOf(id) },
+              isPrivate,
+            ),
+          ]
         })
         if (items.length) snapshot.items = items
         traffic.response('snapshot', json(res, snapshot))

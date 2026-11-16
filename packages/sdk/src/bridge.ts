@@ -129,6 +129,12 @@ export interface PromptOptions {
    * session's earlier messages. They stay in the history, and the turn's user message carries `freshContext`.
    */
   freshContext?: true
+  /**
+   * The turn carries outside content the Host put in it (a 待办 thread's quotes): written with the turn's own record, as
+   * `markOutsideContent` writes it, so what the context proposes from now until it starts over is external. Only drivers
+   * with `markOutsideContent` take it; the Host refuses it for the others.
+   */
+  outsideContent?: true
 }
 
 export interface DecideOptions {

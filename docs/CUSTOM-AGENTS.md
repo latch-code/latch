@@ -364,6 +364,15 @@ Host 在 `custom.json` 的 `chats` 里为每个 Agent 与「通用」保留一�
 
 直连 Codex 的 Agent 可在同一条聊天里委派成员，见 [HARNESSES.md](HARNESSES.md#codex-的-agent-团队)。
 
+### 待办里的 @
+
+人在一条待办的讨论里 @ 某个 Agent（或「通用」）时，那条发言进它的唯一聊天，与人在聊天里发的消息走同一个函数（`sendPrompt`），不另开会话，也不排队（[ARCHITECTURE.md](ARCHITECTURE.md#待办的讨论)）。
+
+- **只进已有的聊天。** 槽是 `ready` 才投递；`empty` 是 409 `agent-chat-empty`（首条消息会在标记之前开始第一轮，所以不经讨论开始聊天），`starting` 是 409 `agent-chat-starting`，没有槽 503 `agent-chat-history-unknown`。聊天在一轮中时 409 `post-target-busy`。这些都在存下发言之前拒绝。
+- **记忆只取人的话。** 投递的正文是人写的那句加上引用的讨论（别的会话的回复是模型的输出）。「记住…」只看人写的那句（`rememberFromPerson` 收到的就是它），引用的内容与回复从不成为「你说的」提议。
+- **外部标记。** 投递的这一轮带 `PromptOptions.outsideContent`，Driver 在记下这一轮用户消息的同一次写入里把聊天标为带外部内容（与 MCP 提示同一个持久标记：内置 Harness 的 `outsideRead`，ACP 的 `acp.outsideRead`），所以这一轮和之后各轮提出的记忆与定时都标「来自外部内容」，直到清空上下文。不能记这个标记的 Driver，Host 在交给它之前拒绝，发言记为没有送达（`post-unmarked`）。引用里每段的文字比段的标签深一层引用，回复冒充不了人的话。没有工具行会显示这一点，所以标记不看这一轮读了什么。
+- **私有。** 待办在第一条 @ Agent 的发言存下之前标为私有，此后只有完整数据范围的设备能看到它和它的讨论。此后投给它的 Code 会话（较窄的设备读得到）的只有人写的那句，不带待办标题与引用。
+
 ## 家与工具
 
 家是 Agent 的默认工作位置，不是 OS 隔离：外部 Agent 仍是可信本机程序。
