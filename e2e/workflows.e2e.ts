@@ -191,8 +191,8 @@ describe('session search and workbench navigation', () => {
       await page.locator('.model-picker:visible').click()
       // The one just used stays in the list, first.
       expect(await page.getByRole('menuitemradio').first().textContent()).toContain('gpt-5.1-mini')
-      await page.getByRole('menuitem', { name: /显示隐藏的模型/u }).click()
-      await page.getByRole('menuitemradio', { name: /gpt-5.0-mini/u }).waitFor()
+      // A model hidden in 设置 stays out of the menu: there is no disclosure for it here.
+      expect(await page.getByRole('menuitemradio', { name: /gpt-5.0-mini/u }).count()).toBe(0)
       await context.close()
     } finally {
       await browser.close()

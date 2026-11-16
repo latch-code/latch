@@ -109,8 +109,12 @@
   background: var(--tip-bg);
   color: var(--tip-ink);
   box-shadow: var(--sh-tip);
+  /* Its own type, whatever its trigger sits in (a monospace foot that does not wrap). */
+  font-family: var(--font);
   font-size: var(--fs-caption);
+  font-weight: 400;
   line-height: var(--lh-caption);
+  white-space: normal;
   pointer-events: none;
 }
 .ui-tooltip[popover] {

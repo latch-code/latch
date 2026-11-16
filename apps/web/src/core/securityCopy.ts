@@ -821,8 +821,6 @@ export const MODE_COPY = {
   forkNoRow: (was: string, agent: string) => `权限「${was}」→ ${agent} 的默认项`,
   forkDrifted: (agent: string) => `来源权限被改过，用 ${agent} 的默认项`,
   forkFromChat: (agent: string) => `来源不读写文件，用 ${agent} 的默认项`,
-  more: '更多',
-  fewer: '收起',
 } as const
 
 /**

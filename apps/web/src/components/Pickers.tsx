@@ -64,12 +64,14 @@ export function useComputerName(needed: boolean): string {
   return computerName(hostName)
 }
 
-/** The models of every service, grouped under the service's tile and name; the demo model carries its mark. */
+/**
+ * The models of every service, grouped under the service's tile and name; the demo model carries its mark. Models hidden
+ * in 设置 are not listed (the chosen one stays); they come back from there, not from a disclosure in the menu.
+ */
 export function modelGroups(
   catalog: HostCatalog,
   preferences?: ModelPreferences,
   current?: ModelRef,
-  showHidden = false,
   access?: Pick<DeviceAccess, 'legacy' | 'local'>,
 ): Array<PickerGroup<string>> {
   const hidden = new Set(preferences?.hidden),
@@ -101,7 +103,7 @@ export function modelGroups(
             <Badge>默认</Badge>
           ) : undefined,
       }))
-      .filter(option => showHidden || !hidden.has(option.value) || selected === option.value),
+      .filter(option => !hidden.has(option.value) || selected === option.value),
   }))
   const recent = (preferences?.recent ?? []).flatMap(key => groups.flatMap(group => group.options).filter(option => option.value === key))
   const keys = new Set(recent.map(option => option.value))
@@ -138,10 +140,9 @@ export function ModelPicker({
   disabled?: boolean
 }) {
   const [adding, setAdding] = useState(false)
-  const [showHidden, setShowHidden] = useState(false)
   const [open, setOpen] = useState(false)
   const modelPreferences = useModelPreferences()
-  const groups = modelGroups(catalog, modelPreferences, value, showHidden, access)
+  const groups = modelGroups(catalog, modelPreferences, value, access)
   const count = groups.reduce((sum, group) => sum + group.options.length, 0)
   const computer = useComputerName(open && !access.admin && count === 0)
   const provider = value ? findProvider(catalog, value.providerId) : undefined
@@ -152,7 +153,7 @@ export function ModelPicker({
       placeholder="选择模型"
       value={value ? modelKey(value) : undefined}
       groups={groups}
-      searchable={(count > 8 || showHidden) && !adding}
+      searchable={count > 8 && !adding}
       searchMatch={(option, query) => fuzzyModelMatch(`${option.label} ${option.description ?? ''}`, query)}
       width={adding ? 'md' : undefined}
       leading={provider ? <ProviderTile provider={provider} size={16} /> : ModelGlyph}
@@ -168,11 +169,6 @@ export function ModelPicker({
       }}
       footer={
         <>
-          {modelPreferences.hidden.length > 0 && (
-            <MenuFooterLink onClick={() => setShowHidden(!showHidden)}>
-              {showHidden ? '收起隐藏的模型' : `显示隐藏的模型（${modelPreferences.hidden.length}）`}
-            </MenuFooterLink>
-          )}
           {access.admin ? (
             <MenuFooterLink
               icon={PlusGlyph}

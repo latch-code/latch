@@ -31,7 +31,8 @@
 
 /*
  * The terminal strip: 终端 1, 2… with the local services, 「加入对话」 and +, the screen on the canvas, and a 28 foot
- * with the shell and folder (or how it ended and 「重新打开」) and the 「你的账户，不是沙箱」 hint. Blue only for 重新打开.
+ * with the shell and folder (its tooltip says it is your account, not a sandbox), or how it ended and 「重新打开」. Blue only
+ * for 重新打开.
  */
 .terminal-panel {
   display: flex;
@@ -151,8 +152,15 @@
 .terminal-space {
   flex: 1;
 }
-.terminal-hint {
-  flex: none;
+.terminal-where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: var(--r-4);
+}
+.terminal-where:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /*

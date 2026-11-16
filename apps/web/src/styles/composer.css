@@ -601,13 +601,7 @@
   color: var(--muted);
 }
 .harness-fork-text {
-  display: grid;
   min-width: 0;
-}
-.harness-fork-line {
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
 }
 .harness-fork[aria-disabled='true'] {
   cursor: default;
@@ -615,7 +609,7 @@
 .harness-fork[aria-disabled='true']:is(:hover, :active) {
   background: transparent;
 }
-.harness-fork[aria-disabled='true'] > :is(.ui-menu-item-lead, .harness-fork-text > span:first-child) {
+.harness-fork[aria-disabled='true'] > :is(.ui-menu-item-lead, .harness-fork-text) {
   color: var(--faint);
 }
 .model-setting {
@@ -678,10 +672,6 @@
 .menu-title-keys {
   display: inline-flex;
   gap: var(--sp-2);
-}
-.permission-list-more {
-  justify-self: start;
-  margin-left: var(--sp-4);
 }
 /* 不再询问: its title and line in amber too, as on the chip, in the menu and in the phone's sheet. */
 .ui-choice:has(.permission-never) :is(.ui-choice-title, .ui-choice-description),

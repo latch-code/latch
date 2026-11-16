@@ -391,21 +391,48 @@ describe('the keys on the menu titles', () => {
   })
 })
 
+describe('the 权限 menu', () => {
+  it('lists every row with no 收起, no notes and no ⓘ', () => {
+    const rows = ['只看不改', '先问你', '按规则放行', '由模型判断', '不再询问']
+    const html = renderToStaticMarkup(
+      createElement(PermissionList, {
+        view: {
+          label: '先问你',
+          line: '改文件前问你',
+          icon: 'shield',
+          amber: false,
+          note: { label: 'Codex 自己的设置', detail: 'Latch 不隔离它。' },
+          rows: rows.map((name, index) => ({
+            value: String(index),
+            name,
+            line: `${name}的说明`,
+            icon: 'shield' as const,
+            neverAsks: false,
+            current: index === 1,
+          })),
+        },
+        onChoose() {},
+      }),
+    )
+    for (const name of rows) expect(html).toContain(name)
+    for (const gone of ['收起', '更多', '权限说明', '自己的设置', '的说明', 'ui-hint']) expect(html).not.toContain(gone)
+  })
+})
+
 describe('分叉 in the session Harness popover', () => {
   const render = (fork?: Parameters<typeof SessionHarnessControl>[0]['fork']) =>
     renderToStaticMarkup(createElement(SessionHarnessControl, { harness: codex(), onNewSession() {}, fork }))
 
-  it('offers a fork of the latest turn that may change Harness, under the lock that keeps this one', () => {
+  it('offers a fork of the latest turn, with the lock on the chip as its tooltip and no line under the row', () => {
     const html = render({ onFork() {} })
-    expect(html).toContain('开始后不能换 Harness')
-    // That files are not copied or rolled back is on the fork notice that follows, behind its ⓘ.
-    expect(html).toContain('从最后一轮，可以换 Harness')
+    expect(html).toMatch(/role="tooltip"[^>]*>.*开始后不能换 Harness/su)
+    expect(html).not.toContain('从最后一轮')
     expect(html).not.toContain('aria-disabled')
   })
 
-  it('stays readable but off while the latest turn runs, with the reason', () => {
+  it('stays focusable but off while the latest turn runs, with the reason as its tooltip', () => {
     const html = render({ onFork() {}, blocked: FORK_BUSY })
-    expect(html).toMatch(/aria-disabled="true"[^>]*>.*这一轮结束后才能分叉/su)
+    expect(html).toMatch(/aria-disabled="true"[^>]*>.*分叉.*role="tooltip"[^>]*>.*这一轮结束后才能分叉/su)
   })
 
   it('has no fork row where the Host cannot fork or the device may not start a session', () => {

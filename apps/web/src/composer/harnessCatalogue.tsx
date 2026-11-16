@@ -3,7 +3,7 @@ import { TextCursorInput } from 'lucide-react'
 import type { CatalogueRead, HarnessInfo } from '@latch/protocol'
 import {
   Button,
-  Hint,
+  Tooltip,
   Icon,
   IconButton,
   MenuFooterLink,
@@ -179,19 +179,20 @@ export function CatalogueRows({
         </p>
       )}
       {((read && canRun) || (harness.offer && ready)) && !running && (
-        <MenuFooterLink
-          icon={RefreshGlyph}
-          chevron={false}
-          onClick={() => {
-            void run()
-          }}>
-          {label}
-        </MenuFooterLink>
-      )}
-      {read?.when === 'request' && !catalogue && !running && (
-        <Hint label="点了才读" className="model-note">
-          读取要启动 {name}，它会加载你的扩展或插件、运行会话钩子，所以 Latch 不自动读。
-        </Hint>
+        // Why a read waits for the press is the row's tooltip: it starts the Harness, which loads the person's own code.
+        <Tooltip
+          content={
+            read?.when === 'request' && !catalogue ? `读取要启动 ${name}，会加载你的扩展或插件、运行会话钩子，所以点了才读` : undefined
+          }>
+          <MenuFooterLink
+            icon={RefreshGlyph}
+            chevron={false}
+            onClick={() => {
+              void run()
+            }}>
+            {label}
+          </MenuFooterLink>
+        </Tooltip>
       )}
       {hasModels && canRun && (
         <MenuFooterLink icon={TextCursorInput} chevron={false} onClick={onTypeModel}>

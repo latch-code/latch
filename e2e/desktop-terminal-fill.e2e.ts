@@ -212,7 +212,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')(
         await settings.locator('.agent-how-command').first().getByRole('button', { name: '在终端里打开', exact: true }).click()
         const dialog = page.getByRole('dialog', { name: '终端', exact: true })
         await expect.poll(() => screenText(dialog.locator('.terminal-screen:not([hidden]) .xterm-rows'))).toContain(install)
-        await dialog.getByText('你的账户，不是沙箱', { exact: true }).waitFor()
+        expect(await dialog.getByRole('tooltip', { includeHidden: true }).filter({ hasText: '不是沙箱' }).count()).toBe(1)
         await capture(page, 'settings-install-filled-1440')
         await dialog.getByRole('button', { name: '关闭', exact: true }).click()
         await dialog.waitFor({ state: 'detached' })

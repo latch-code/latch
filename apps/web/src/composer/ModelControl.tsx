@@ -22,6 +22,7 @@ import {
   MenuFooterLink,
   MenuFooterNote,
   Popover,
+  Tooltip,
   useLayerClose,
   type PickerGroup,
   ChevronDownGlyph,
@@ -89,17 +90,6 @@ export function onComputer(text: string, computer: string | undefined): string {
   if (computer === undefined) return text
   return text.replace(/(\S)?这台 Mac/gu, (_, before: string | undefined) =>
     before === undefined ? computer : /\p{Script=Han}/u.test(before) ? `${before} ${computer}` : `${before}${computer}`,
-  )
-}
-
-/** Models hidden in settings stay one press away, here where they are chosen. */
-function HiddenModelsLink({ shown, onToggle }: { shown: boolean; onToggle: () => void }) {
-  const { hidden } = useModelPreferences()
-  if (hidden.length === 0) return null
-  return (
-    <MenuFooterLink chevron={false} onClick={onToggle}>
-      {shown ? '收起隐藏的模型' : `显示隐藏的模型（${hidden.length}）`}
-    </MenuFooterLink>
   )
 }
 
@@ -328,8 +318,8 @@ export interface SessionFork {
 }
 
 /**
- * The Harness of a running session: its mark and name, locked, and why. The chip still opens, since a tooltip never
- * reaches touch. It offers a fork of the latest turn, where the Host can make one, and a new session.
+ * The Harness of a running session: its mark and name, locked (the chip's tooltip says so). It opens to a fork of the
+ * latest turn, where the Host can make one, and a new session.
  */
 export function SessionHarnessControl({
   harness,
@@ -347,13 +337,14 @@ export function SessionHarnessControl({
       size="sm"
       side="top"
       trigger={props => (
-        <button {...props} type="button" className="chip chip-harness" aria-label={`Harness：${name}`}>
-          <HarnessTile harness={harness} size={16} />
-          <span className="chip-text">{name}</span>
-        </button>
+        <Tooltip content="开始后不能换 Harness">
+          <button {...props} type="button" className="chip chip-harness" aria-label={`Harness：${name}`}>
+            <HarnessTile harness={harness} size={16} />
+            <span className="chip-text">{name}</span>
+          </button>
+        </Tooltip>
       )}>
       <div className="model-footer">
-        <MenuFooterNote>开始后不能换 Harness</MenuFooterNote>
         {fork && <ForkRow fork={fork} />}
         <MenuFooterLink icon={PlusGlyph} chevron={false} closes onClick={onNewSession}>
           新会话
@@ -363,28 +354,27 @@ export function SessionHarnessControl({
   )
 }
 
-/** A row of the popover rather than a menu item, so it stays readable while it is off. */
+/** A row of the popover rather than a menu item, so it stays focusable while it is off; why it is off is its tooltip. */
 function ForkRow({ fork }: { fork: SessionFork }) {
   const close = useLayerClose()
   const off = fork.blocked !== undefined
   return (
-    <button
-      type="button"
-      className="ui-menu-footer-link harness-fork"
-      aria-disabled={off || undefined}
-      onClick={() => {
-        if (off) return
-        close()
-        fork.onFork()
-      }}>
-      <span className="ui-menu-item-lead">
-        <Icon icon={GitFork} size={14} />
-      </span>
-      <span className="harness-fork-text">
-        <span>分叉</span>
-        <span className="harness-fork-line">{fork.blocked ?? '从最后一轮，可以换 Harness'}</span>
-      </span>
-    </button>
+    <Tooltip content={fork.blocked}>
+      <button
+        type="button"
+        className="ui-menu-footer-link harness-fork"
+        aria-disabled={off || undefined}
+        onClick={() => {
+          if (off) return
+          close()
+          fork.onFork()
+        }}>
+        <span className="ui-menu-item-lead">
+          <Icon icon={GitFork} size={14} />
+        </span>
+        <span className="harness-fork-text">分叉</span>
+      </button>
+    </Tooltip>
   )
 }
 
@@ -680,7 +670,6 @@ export function DraftModelControl({
 }) {
   const [adding, setAdding] = useState(false)
   const [typing, setTyping] = useState(false)
-  const [showHidden, setShowHidden] = useState(false)
   const preferences = useModelPreferences()
   const entries = engineEntries(catalog, choice.workspaceId)
   const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
@@ -780,7 +769,7 @@ export function DraftModelControl({
     )
   }
   const noService = !choice.model
-  const groups = modelGroups(catalog, preferences, choice.model, showHidden, access).map(group => ({
+  const groups = modelGroups(catalog, preferences, choice.model, access).map(group => ({
     ...group,
     options: group.options.map(option => ({ ...option, description: undefined })),
   }))
@@ -812,12 +801,6 @@ export function DraftModelControl({
       footer={
         <div className="model-footer">
           <UnusableServices services={unusableServices(catalog, harness, computer)} />
-          <HiddenModelsLink
-            shown={showHidden}
-            onToggle={() => {
-              setShowHidden(!showHidden)
-            }}
-          />
           {access.admin ? (
             <MenuFooterLink
               icon={PlusGlyph}
@@ -892,7 +875,6 @@ export function SessionModelControl({
   onConfig: (configId: string, value: string) => void | Promise<void>
   onManageModels?: (() => void) | undefined
 }) {
-  const [showHidden, setShowHidden] = useState(false)
   const preferences = useModelPreferences()
   const manage = onManageModels && (
     <MenuFooterLink icon={ModelGlyph} chevron={false} closes onClick={onManageModels}>
@@ -900,7 +882,7 @@ export function SessionModelControl({
     </MenuFooterLink>
   )
   if (harness?.capabilities.models.owner === 'latch' && catalog.providers.length > 0) {
-    const groups = modelGroups(catalog, preferences, model, showHidden).map(group => ({
+    const groups = modelGroups(catalog, preferences, model).map(group => ({
       ...group,
       options: group.options.map(option => ({ ...option, description: undefined })),
     }))
@@ -940,12 +922,6 @@ export function SessionModelControl({
                 {resetModelLabel(current)}
               </MenuFooterLink>
             )}
-            <HiddenModelsLink
-              shown={showHidden}
-              onToggle={() => {
-                setShowHidden(!showHidden)
-              }}
-            />
             {manage}
           </div>
         }

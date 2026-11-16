@@ -17,7 +17,7 @@ import {
   withLadderMode,
 } from '../src/composerChoice.ts'
 import { forkedChoice } from '../src/forkChoice.ts'
-import { contextWords, draftPermission, draftRead, permissionView } from '../src/composer/permission.ts'
+import { contextWords, draftPermission, draftRead, permissionTip, permissionView } from '../src/composer/permission.ts'
 import {
   agentConfigChoice,
   agentConfigValues,
@@ -251,36 +251,32 @@ describe('the 权限 chip', () => {
     // The model reviewing requests itself is said so, not as asking the person, and is not amber.
     expect(view('agent')).toMatchObject({ amber: false, label: '由模型判断', icon: 'scale', line: modeTiers.agent.line })
     expect(view('agent-full-access')).toMatchObject({ amber: true, label: '不再询问', icon: 'shield-alert' })
-    // Whose setting it is, with its mark; that Latch does not isolate it stays findable behind the ⓘ.
+    // Whose setting it is, with its mark; that Latch does not isolate it stays findable on the chip's tooltip.
     expect(view('read-only').note?.detail).toContain('也不隔离它')
   })
 
-  it('shows at most three main rows, the rest under 更多, and never hides the current one', () => {
-    const rows = (current: string) => view(current).rows!.map(row => [row.value, row.more])
-    expect(rows('read-only')).toEqual([
-      ['read-only', false],
-      ['workspace-write', true],
-      ['agent', false],
-      ['agent-full-access', false],
-      ['permission-profile:x', true],
-    ])
-    // Unclassified native modes remain selectable under 更多 without acquiring a permission rank.
+  it('lists every row, in tier order, with unclassified native modes last and unranked', () => {
+    const rows = (current: string) => view(current).rows!.map(row => row.value)
+    expect(rows('read-only')).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access', 'permission-profile:x'])
+    expect(rows('permission-profile:x')).toEqual(rows('read-only'))
     const own = view('read-only').rows!.find(row => row.value === 'permission-profile:x')!
-    expect(own).toMatchObject({ name: 'Profile X', icon: 'shield', more: true })
+    expect(own).toMatchObject({ name: 'Profile X', icon: 'shield' })
     expect(own.tier).toBeUndefined()
-    expect(rows('workspace-write')).toContainEqual(['workspace-write', false])
     expect(view('permission-profile:x')).toMatchObject({ label: 'Profile X', amber: false })
-    expect(rows('permission-profile:x').at(-1)).toEqual(['permission-profile:x', false])
-    // Three rows or fewer need no 更多.
-    const two = { ...modes, currentValue: 'read-only', options: modes.options.slice(0, 2) }
-    expect(permissionView({ harness, permission, config: [two], access: local })!.rows!.every(row => !row.more)).toBe(true)
+  })
+
+  it("puts the current row's line and whose setting it is in the chip's tooltip, not in the menu", () => {
+    const tip = permissionTip(view('read-only'))!
+    expect(tip).toContain(modeTiers['read-only'].line)
+    expect(tip).toContain('也不隔离它')
+    expect(permissionTip({ label: '先问你', line: '', icon: 'shield', amber: false })).toBeUndefined()
   })
 
   it("keeps an unknown Harness's own names and lines, all of them main rows", () => {
     const { modeTiers: _tiers, ...plain } = permission
     const own = permissionView({ harness, permission: plain, config: [{ ...modes, currentValue: 'agent' }], access: local })!
     expect(own).toMatchObject({ label: 'Auto review', amber: false, line: 'Only ask for actions detected as potentially unsafe' })
-    expect(own.rows!.every(row => !row.more && row.tier === undefined)).toBe(true)
+    expect(own.rows!.every(row => row.tier === undefined)).toBe(true)
   })
 
   it('makes the widest and the unconfirmable case the visible ones', () => {

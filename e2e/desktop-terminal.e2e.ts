@@ -226,7 +226,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const screen = panel.locator('.terminal-screen:not([hidden])')
       const rows = screen.locator('.xterm-rows')
       await expect.poll(() => rows.innerText()).toContain('$')
-      await panel.getByText('你的账户，不是沙箱', { exact: true }).waitFor()
+      // That it is the person's account and not a sandbox is the foot label's tooltip, not a line of its own.
+      await panel.locator('.terminal-where').waitFor()
+      expect(await panel.getByRole('tooltip', { includeHidden: true }).filter({ hasText: '不是沙箱' }).count()).toBe(1)
       expect(host.security.audit.lastOf('terminal.open')).toMatchObject({ detail: { sessionId } })
 
       // Device motion changes stop only the cursor blink, without taking focus or changing the shell.
@@ -291,12 +293,12 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
 
       // The terminal renderer owns its pixels while the surrounding safety text stays covered by the secure layer.
       expect(await panel.getAttribute('data-secure')).toBe('')
-      const warning = panel.getByText('你的账户，不是沙箱', { exact: true })
+      const warning = panel.locator('.terminal-where')
       const measureWarning = () =>
         warning.evaluate(element => [getComputedStyle(element).opacity, getComputedStyle(element).backgroundColor])
       const originalWarning = await measureWarning()
       const injected = await page.addStyleTag({
-        content: '.terminal-foot .ui-hint * { opacity: 0 !important; background-color: red !important }',
+        content: '.terminal-foot .terminal-where * { opacity: 0 !important; background-color: red !important }',
       })
       expect(await measureWarning()).toEqual(originalWarning)
       await injected.evaluate(element => {

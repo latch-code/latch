@@ -6,7 +6,6 @@ import { TERMINALS_PER_SESSION, type TerminalSize, type TerminalSummary, type Te
 import {
   Button,
   ConfirmDialog,
-  Hint,
   Icon,
   IconButton,
   InlineNotice,
@@ -18,7 +17,6 @@ import {
   watchMotion,
   type PanelTab,
   GlobeGlyph,
-  ShieldGlyph,
   PlusGlyph,
   TerminalGlyph,
   ChevronDownGlyph,
@@ -31,6 +29,9 @@ import { loginRuns, useRevealedLogin } from './loginRuns.ts'
 import { terminalTheme } from './theme.ts'
 import { useTerminals } from './useTerminals.ts'
 import { useTerminalFill, type ScreenHandle } from './useTerminalFill.ts'
+
+/** The terminal's one fine print, on the foot's label: what the shell is, and that Latch's checks do not apply in it. */
+const ACCOUNT_NOTE = '以你的账户运行的登录 shell，和「终端」App 相同，不是沙箱：Latch 的审批、路径检查与出站策略都不适用于其中的命令。'
 
 /** The line height of the terminal role (--lh-term over --fs-term), as xterm's multiple of the font's own height. */
 const LINE_HEIGHT = 1.2
@@ -341,7 +342,12 @@ export function TerminalPanel({
             </>
           ) : (
             <span className="terminal-facts">
-              <VisibleText text={`${current.summary.shell} · ${current.summary.folder}`} />
+              {/* Whose account it runs as is the label's tooltip, on hover and focus; it takes no room in the foot. */}
+              <Tooltip content={ACCOUNT_NOTE}>
+                <span className="terminal-where" tabIndex={0}>
+                  <VisibleText text={`${current.summary.shell} · ${current.summary.folder}`} />
+                </span>
+              </Tooltip>
               {current.summary.busy && (
                 <span className="terminal-running">
                   <Spinner size={12} />
@@ -352,9 +358,6 @@ export function TerminalPanel({
             </span>
           )}
           <span className="terminal-space" />
-          <Hint className="terminal-hint" lead={<Icon icon={ShieldGlyph} size={12} />} label="你的账户，不是沙箱">
-            终端是这台 Mac 上以你的账户运行的登录 shell，和「终端」App 相同。Latch 的审批、路径检查与出站策略都不适用于其中的命令。
-          </Hint>
         </footer>
       )}
       {confirm && (

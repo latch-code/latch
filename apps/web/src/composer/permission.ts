@@ -12,8 +12,6 @@ export interface PermissionRow extends ModeRow {
   /** The agent never asks in this mode. */
   neverAsks: boolean
   line: string
-  /** Shown under 更多: the menu's main rows are at most three. */
-  more: boolean
 }
 
 export const TIER_ORDER: Record<PermissionTier, number> = { plan: 0, ask: 1, rule: 2, model: 3, never: 4 }
@@ -23,17 +21,6 @@ const TIER_ICONS: Record<PermissionTier, ModeIcon> = {
   rule: 'list-checks',
   model: 'scale',
   never: 'shield-alert',
-}
-
-/**
- * The menu's main rows, at most three: asking first, one middle row (the model's when there is one, else the rules'),
- * and never asking. Only reading and the other middle row go under 更多, and only when there are more than three.
- */
-function mainValues(rows: ReadonlyArray<{ value: string; tier?: PermissionTier }>): Set<string> {
-  if (rows.length <= 3 || !rows.some(row => row.tier)) return new Set(rows.map(row => row.value))
-  const first = (tier: PermissionTier) => rows.find(row => row.tier === tier)
-  const main = [first('ask'), first('model') ?? first('rule'), first('never')].flatMap(row => (row ? [row.value] : []))
-  return new Set(main.length ? main : [rows[0]!.value])
 }
 
 /**
@@ -56,13 +43,11 @@ function tierRows(
         icon,
         neverAsks: tier?.tier === 'never',
         line: tier?.line ?? row.description ?? '',
-        more: false,
       },
     ]
   })
   if (known) rows.sort((a, b) => (a.tier ? TIER_ORDER[a.tier] : 5) - (b.tier ? TIER_ORDER[b.tier] : 5))
-  const main = mainValues(rows)
-  return rows.map(row => ({ ...row, more: !row.current && !main.has(row.value) }))
+  return rows
 }
 
 /** What the composer says about who decides, and the rows when the engine has modes to choose from. */
@@ -116,6 +101,16 @@ function modesNote(harness: PermissionHarness, read: DraftRead | undefined): { n
   if (readsModes && read === 'readable' && harness.catalogueRead?.last?.ok === false) return { note: MODE_COPY.modesUnread(name) }
   // Nothing more to say before they are known: the one row is what the session starts in.
   return {}
+}
+
+/**
+ * The 权限 chip's tooltip: the current row's line, then the note (whose setting it is, that Latch does not isolate the
+ * agent, when the rows can change), each as one short sentence.
+ */
+export function permissionTip(view: PermissionView): string | undefined {
+  const note = view.note && [view.note.label, view.note.detail].filter(Boolean).join('：')
+  const parts = [view.line, note].filter(Boolean)
+  return parts.length ? parts.join('。') : undefined
 }
 
 /** The harness's own facts, which need no session: for a draft, and for a session whose detail has not arrived. */

@@ -130,8 +130,9 @@ describe('conversation forks', () => {
       const popover = page.getByRole('dialog', { name: 'Harness', exact: true })
       const forkRow = popover.locator('.harness-fork')
       await page.getByRole('button', { name: 'Harness：Qwen Code', exact: true }).click()
-      await popover.getByText('开始后不能换 Harness', { exact: true }).waitFor()
-      await forkRow.getByText('从最后一轮，可以换 Harness', { exact: true }).waitFor()
+      // The lock is the chip's tooltip; the fork row is its word alone.
+      expect(await page.getByRole('tooltip', { includeHidden: true }).filter({ hasText: '开始后不能换 Harness' }).count()).toBe(1)
+      await forkRow.getByText('分叉', { exact: true }).waitFor()
       expect(await forkRow.getAttribute('aria-disabled')).toBeNull()
       await forkRow.click()
 
