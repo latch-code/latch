@@ -987,6 +987,10 @@ export class AgentRuntime implements Bridge {
     if (this.closed) return Promise.reject(new AppError(503, 'runtime-closed', '运行节点已关闭'))
     return (this.started ??= (async () => {
       this.state = await this.store.load()
+      if (this.state.quota) {
+        this.quotaDefinition = this.state.quota.definitionHash
+        this.quotaFacts.restore(this.state.quota.value)
+      }
       await this.commandCache.load()
       this.loaded = true
       let changed = false
@@ -1512,7 +1516,12 @@ export class AgentRuntime implements Bridge {
     const now = this.clock()
     const before = shown(this.quotaFacts.snapshot(now))
     this.quotaFacts.note(source, report, now)
-    if (shown(this.quotaFacts.snapshot(now)) !== before) this.notify()
+    const after = this.quotaFacts.snapshot(now)
+    // Kept with the sessions, so the last word and its time are there after a restart.
+    if (after) this.state.quota = { definitionHash, value: after }
+    else delete this.state.quota
+    this.mark()
+    if (shown(after) !== before) this.notify()
   }
 
   /**
@@ -1651,6 +1660,8 @@ export class AgentRuntime implements Bridge {
     }
     this.auth.forgetReports()
     this.quotaFacts.clear()
+    delete this.state.quota
+    this.mark()
     // Only processes whose sessions can be restored; another keeps its session, with the login it read when it started.
     for (const live of [...this.lives.values()])
       if (live.initialized && (live.capabilities.resume || live.capabilities.load) && !this.busy(live.key) && !live.wire.stopping)

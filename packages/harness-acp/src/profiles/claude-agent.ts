@@ -186,6 +186,6 @@ export const claudeAgentProfile: HarnessProfile = {
     read: ({ output }) => readClaudeStatus(output),
   },
   readDenial: readClaudeDenial,
-  // A window's status as each turn reports it; Claude gives no steady figure, and Latch never sends `/usage` for one.
+  // Each window's share used and status as each turn reports them; Latch never sends `/usage` for them.
   quota: { update: claudeUsageQuota, error: claudeErrorQuota },
 }

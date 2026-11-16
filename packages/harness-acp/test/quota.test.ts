@@ -181,7 +181,32 @@ describe('Claude Agent', () => {
   // `SDKRateLimitInfo` as @anthropic-ai/claude-agent-sdk 0.3.318 types it; the adapter forwards it whole.
   const warning = { status: 'allowed_warning', resetsAt: seconds(NOW + 2 * HOUR), rateLimitType: 'five_hour', utilization: 0.91 }
 
-  it('reads a status and a reset time for one window, and never a figure', () => {
+  it('reads the share used of each window the adapter lists, as a real one sent it', () => {
+    // claude-agent-acp 2026-11-16, an account well within its week (sanitised).
+    const real = {
+      status: 'allowed',
+      resetsAt: seconds(NOW + 60 * HOUR),
+      rateLimitType: 'seven_day',
+      overageStatus: 'rejected',
+      isUsingOverage: false,
+      unifiedWindows: {
+        seven_day: { utilization: 0.3, resetsAt: seconds(NOW + 60 * HOUR), status: 'allowed' },
+        five_hour: { utilization: 0.912, resetsAt: seconds(NOW + HOUR), status: 'allowed_warning' },
+        overage: { utilization: 0.5, status: 'allowed' },
+        seven_day_opus: { utilization: 7, status: 'allowed' },
+      },
+    }
+    expect(claudeRateLimit(real, NOW)).toEqual({
+      windows: [
+        { kind: 'weekly', usedPercent: 30, resetsAt: iso(NOW + 60 * HOUR) },
+        { kind: 'five-hour', usedPercent: 91.2, resetsAt: iso(NOW + HOUR), state: 'near' },
+        // A fraction outside 0 to 1 is not one: only its status is kept.
+        { kind: 'weekly-opus' },
+      ],
+    })
+  })
+
+  it('reads a status and a reset time for one window when no window lists a figure', () => {
     expect(claudeRateLimit(warning, NOW)).toEqual({ windows: [{ kind: 'five-hour', resetsAt: iso(NOW + 2 * HOUR), state: 'near' }] })
     expect(claudeRateLimit({ ...warning, status: 'rejected', rateLimitType: 'seven_day_opus', resetsAt: NOW + 30 * HOUR }, NOW)).toEqual({
       windows: [{ kind: 'weekly-opus', resetsAt: iso(NOW + 30 * HOUR), state: 'limited' }],
@@ -605,6 +630,28 @@ async function everything(directory: string): Promise<string> {
   return text
 }
 
+describe('what a restart restores', () => {
+  it('keeps a window at its limit only until it resets, and the account’s own limit as it was said', () => {
+    const at = '2026-11-16T10:00:00.000Z'
+    const now = Date.parse(at)
+    const resets = (hours: number) => new Date(now + hours * HOUR).toISOString()
+    const facts = new QuotaFacts()
+    facts.restore({
+      windows: [
+        { kind: 'five-hour', usedPercent: 100, resetsAt: resets(1) },
+        { kind: 'weekly', usedPercent: 40, resetsAt: resets(100) },
+      ],
+      state: 'limited',
+      observedAt: at,
+    })
+    expect(facts.snapshot(now + 30 * 60_000)?.state).toBe('limited')
+    expect(facts.snapshot(now + 2 * HOUR)).toMatchObject({ windows: [{ kind: 'weekly', usedPercent: 40 }], state: 'ok', observedAt: at })
+    const account = new QuotaFacts()
+    account.restore({ windows: [{ kind: 'weekly', usedPercent: 40, resetsAt: resets(100) }], state: 'limited', observedAt: at })
+    expect(account.snapshot(now + 2 * HOUR)?.state).toBe('limited')
+  })
+})
+
 describe('Codex over its app-server', () => {
   it('asks nothing before a session; with one, reads the limits once on that process, then merges what each turn pushes', async () => {
     const now = Date.now()
@@ -644,11 +691,16 @@ describe('Codex over its app-server', () => {
     t.later(3 * HOUR)
     expect(t.bridge.quota!()?.windows).toEqual([{ kind: 'weekly', usedPercent: 68, resetsAt: iso(now + 143 * HOUR) }])
 
-    // Memory only: nothing of it is in the data directory, and a runtime started over that directory knows nothing.
+    // Kept with the sessions as numbers and the masked address: a runtime started over the directory shows the last
+    // word, with the time it was said, until each window resets.
+    const said = t.bridge.quota!()
     const stored = await everything(t.dataDir)
-    for (const word of ['usedPercent', 'five-hour', 'weekly', 'p•••', 'person@example.com', 'resetsAt']) expect(stored).not.toContain(word)
+    expect(stored).toContain('usedPercent')
+    for (const word of ['person@example.com', 'acct_']) expect(stored).not.toContain(word)
     await t.bridge.close()
-    expect((await t.open()).quota?.()).toBeUndefined()
+    const reopened = await t.open()
+    expect(reopened.quota?.()).toEqual({ ...said, observedAt: expect.any(String) })
+    expect(Date.parse(reopened.quota?.()?.observedAt ?? '')).toBeLessThan(Date.now())
   })
 
   it('shows nothing for a Codex that has no such request', async () => {

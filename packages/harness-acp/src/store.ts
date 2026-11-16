@@ -25,6 +25,7 @@ import type {
   SessionConfigOption,
   DriverTaskSummary,
   HarnessCatalogue,
+  HarnessQuota,
   UsageReport,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
@@ -32,6 +33,7 @@ import { writeFileAtomic } from '@latch/core/node-kit'
 import { ERROR_CODE, runEndSchema } from '@latch/core/run-end'
 import type { ConfigSource } from './mapping.ts'
 import { MAX_STEPS } from './subagents.ts'
+import { harnessQuota } from './quota.ts'
 
 export interface AcpRecord {
   /** Absent until session/new succeeds. */
@@ -199,6 +201,13 @@ export interface AcpState {
   promptCapabilities?: AcpPromptCapabilities
   /** Model IDs a person typed, for every definition of this harness. */
   customModels?: string[]
+  /** The subscription's limits as the program last said them, for the definition that said them: shown after a restart. */
+  quota?: AcpQuota
+}
+
+export interface AcpQuota {
+  definitionHash: string
+  value: HarnessQuota
 }
 
 const usage = z.object({
@@ -541,6 +550,7 @@ const stateSchema = z.object({
   catalogueRead: catalogueRead.optional().catch(undefined),
   promptCapabilities: promptCapabilities.optional().catch(undefined),
   customModels: z.array(z.string()).optional(),
+  quota: z.object({ definitionHash: hash, value: harnessQuota }).optional().catch(undefined),
 })
 
 export function emptyAcpState(): AcpState {

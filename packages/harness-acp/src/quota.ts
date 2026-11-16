@@ -233,23 +233,49 @@ const CLAUDE_KINDS: Readonly<Record<string, QuotaWindowKind>> = {
   seven_day_opus: 'weekly-opus',
   seven_day_sonnet: 'weekly-sonnet',
 }
-const claudeInfo = z.object({
-  status: z.enum(['allowed', 'allowed_warning', 'rejected']),
-  rateLimitType: z.string().max(64).optional().catch(undefined),
+const claudeStatus = z.enum(['allowed', 'allowed_warning', 'rejected'])
+const claudeWindow = z.object({
+  status: claudeStatus.optional().catch(undefined),
+  utilization: finite.min(0).max(1).optional().catch(undefined),
   resetsAt: finite.optional().catch(undefined),
 })
+const claudeInfo = z.object({
+  status: claudeStatus,
+  rateLimitType: z.string().max(64).optional().catch(undefined),
+  resetsAt: finite.optional().catch(undefined),
+  unifiedWindows: z.record(z.string().max(64), z.unknown()).optional().catch(undefined),
+})
+
+const claudeState = (status: z.infer<typeof claudeStatus> | undefined) =>
+  status === 'rejected' ? ('limited' as const) : status === 'allowed_warning' ? ('near' as const) : undefined
 
 /**
- * One `SDKRateLimitInfo`: one window's status, with no figure Latch shows (its `utilization` is only sometimes there and
- * its scale is not documented). `allowed` clears what was said of that window before.
+ * One `SDKRateLimitInfo`. Its `unifiedWindows` give each window's share used as a fraction (`utilization`, 0 to 1:
+ * claude-agent-acp 0.x, checked 2026-11-16 against Claude Code's own `/usage` for the same account) and its reset;
+ * without them, only the named window's status. `allowed` with no figure clears what was said of that window before.
  */
 export function claudeRateLimit(info: unknown, now: number): QuotaReport | undefined {
   const parsed = claudeInfo.safeParse(info)
   if (!parsed.success) return undefined
+  const windows: QuotaWindow[] = []
+  for (const [name, value] of Object.entries(parsed.data.unifiedWindows ?? {})) {
+    const kind = Object.hasOwn(CLAUDE_KINDS, name) ? CLAUDE_KINDS[name] : undefined
+    const window = claudeWindow.safeParse(value)
+    if (!kind || !window.success) continue
+    const resetsAt = resetTime(window.data.resetsAt, now, 62)
+    const state = claudeState(window.data.status)
+    windows.push({
+      kind,
+      ...(window.data.utilization !== undefined ? { usedPercent: percent(window.data.utilization * 100) } : {}),
+      ...(resetsAt ? { resetsAt } : {}),
+      ...(state ? { state } : {}),
+    })
+  }
+  if (windows.length) return { windows: windows.slice(0, MAX_WINDOWS) }
   const kind = Object.hasOwn(CLAUDE_KINDS, parsed.data.rateLimitType ?? '') ? CLAUDE_KINDS[parsed.data.rateLimitType!] : undefined
   if (!kind) return undefined
   const resetsAt = resetTime(parsed.data.resetsAt, now, 62)
-  const state = parsed.data.status === 'rejected' ? 'limited' : parsed.data.status === 'allowed_warning' ? 'near' : undefined
+  const state = claudeState(parsed.data.status)
   return { windows: [{ kind, ...(state && resetsAt ? { resetsAt } : {}), ...(state ? { state } : {}) }] }
 }
 
@@ -341,6 +367,28 @@ export class QuotaFacts {
     this.said.delete(source)
     this.said.set(source, entry)
     if (this.said.size > MAX_SOURCES) this.said.delete(this.said.keys().next().value!)
+  }
+
+  /**
+   * What was known before a restart, as a process that has gone away: each window holds until it resets, with the time
+   * it was said.
+   */
+  restore(quota: HarnessQuota): void {
+    const source = {}
+    const { windows, plan, account, balanceCents, state } = quota
+    this.note(
+      source,
+      {
+        windows,
+        ...(plan ? { plan } : {}),
+        ...(account ? { account } : {}),
+        ...(balanceCents !== undefined ? { balanceCents } : {}),
+        // Only the account's own word stays: a window at its limit says so itself, and stops once it resets.
+        limited: state === 'limited' && !windows.some(window => quotaWindowState(window) === 'limited'),
+      },
+      Date.parse(quota.observedAt),
+    )
+    this.gone(source)
   }
 
   /** The process went away: what it said of a window holds until that window resets. */

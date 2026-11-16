@@ -520,13 +520,13 @@ Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额
 | --- | --- | --- |
 | Codex 直连 | 线程打开后在同一进程上发一次 `account/rateLimits/read` 与 `account/read`，之后并入每轮的 `account/rateLimits/updated`（稀疏更新不清除已知值） | 套餐自己的桶（`rateLimitsByLimitId.codex`，没有时用 `rateLimits`）的窗口：300 分钟是「5 小时」，10080 是「每周」；`planType`；遮住的邮箱。按模型的桶不显示 |
 | Codex 经 codex-acp | 适配器不转发 | 不显示 |
-| Claude Agent | `usage_update._meta["_claude/rateLimit"]` 的限额事件，与一轮因限额失败时错误 `data` 里的 `rateLimit` | 没有常驻百分比：只在窗口 `allowed_warning` 或 `rejected` 时显示警告与重置时间，同一窗口再报 `allowed` 就消失。只认 `five_hour`、`seven_day`、`seven_day_opus`、`seven_day_sonnet`；不用 `utilization`。不发 `/usage` |
+| Claude Agent | `usage_update._meta["_claude/rateLimit"]` 的限额事件，与一轮因限额失败时错误 `data` 里的 `rateLimit` | `unifiedWindows` 里每个窗口的 `utilization`（0 到 1，已与 Claude Code 自己的 `/usage` 对过）乘 100 是已用比例，带重置时间与 `allowed_warning`/`rejected` 状态；没有 `unifiedWindows` 时只显示所报窗口的状态。只认 `five_hour`、`seven_day`、`seven_day_opus`、`seven_day_sonnet`。不发 `/usage` |
 | Grok Build | ACP 扩展请求 `_x.ai/billing`，在会话接上进程时与每轮结束时发，两次至少隔 5 分钟 | 本计费周期一行（`creditUsagePercent`、`currentPeriod.end`）；已知的 `subscriptionTier`；`prepaidBalance` 大于零时显示为余额 |
 | Antigravity | 它自己的命令 `agy -p /usage --output-format json`（`profiles/antigravity-quota.ts`，不起模型轮次），在会话接上进程时与每轮结束时在旁边运行，至少隔 5 分钟，不等它；按登录状态命令的规则运行，加 `AGY_CLI_DISABLE_AUTO_UPDATE=true`，20 秒后连进程组结束，失败不说话 | `remaining_fraction` 是剩余比例；`window` 只认 `5h` 与 `weekly`。只显示 `Gemini Models` 与 `Claude and GPT models` 两个组，其余整个丢掉；`num_turns` 不为 0 或形状不同的输出不用 |
-| Cursor、OpenCode、Qwen Code、goose、pi、DeepSeek Harness | 程序不报告订阅额度 | 输入框不显示；「额度与用量」里写一行「尚未报告额度」 |
+| Cursor、OpenCode、Qwen Code、goose、pi、DeepSeek Harness | 程序不报告订阅额度 | 输入框不显示；「额度与用量」末尾一行「不报告额度」 |
 
 - **形状。** `HarnessInfo.quota`（`packages/protocol/src/quota.ts`）全部是数字与固定集合里的值，没有厂商写的文字：不认识的窗口种类整个丢掉，不在集合里的套餐名不显示（`packages/harness-acp/src/quota.ts` 的 `harnessQuota`）。Codex 的 `rateLimitUpsell`、`limitName`、`accountId` 与完整邮箱不离开读它的进程；邮箱读到时就遮住。
-- **只在内存。** 按 Agent 定义保存在驱动里，不写磁盘、日志与审计。窗口过了重置时间不再显示；报告它的进程退出后，有重置时间的窗口留到重置为止（额度属于账号），没有的随进程消失。退出登录或定义变化后全部清除。
+- **随会话保存。** 按 Agent 定义保存在驱动的 `acp.json`（`AcpState.quota`，只有数字、固定集合的值与遮住的邮箱），不进日志与审计；Host 重启后照旧显示上次的数字与时间。窗口过了重置时间不再显示；报告它的进程退出后，有重置时间的窗口留到重置为止（额度属于账号），没有的随进程消失。退出登录或定义变化后全部清除。
 - **谁能看到。** 随 Harness 目录（`catalog.harnesses`）发给能看到这个 Harness 的设备，没有单独的接口与权限；内容变了才推送。
 - **经 Latch 使用模型服务的会话**不读、不问、不显示：订阅的额度不是它的。
 - **到上限**（百分比到 100、Claude 报 `rejected`、Codex 的 `rateLimitReachedType` 不为空）是 `limited`。Latch 不因此拦截发送，被拒的一轮照常显示 Harness 的错误。
@@ -959,7 +959,7 @@ Harness 报告的命令透传，是否报告与执行由 Harness 决定。
 | Antigravity、Cursor 经 Latch 使用模型服务 | 做不了：两者都不接受别人的模型服务地址 |
 | Antigravity、Grok Build 接入已有会话 | 没有核对它们的列出与加载 |
 | Cursor 的真实验收 | 权限档位只按文档接线 |
-| Claude Agent 常驻的额度百分比 | 适配器只转发每轮的限额事件，Latch 不自动发 `/usage` |
+| Claude Agent 开会话前的额度 | 适配器只在每轮的限额事件里报告，Latch 不自动发 `/usage` |
 | Codex 按模型的额度桶、开会话前的额度 | 只显示套餐自己的桶，并且要等第一个会话的线程打开后才读 |
 | Cursor、OpenCode、Qwen Code、goose、pi、DeepSeek Harness 的额度 | 程序不报告，Latch 不读它们的令牌去问厂商 |
 

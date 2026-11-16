@@ -95,8 +95,9 @@ it('sends the limits with the Harness to every device that is sent the Harness, 
     expect(sent).not.toContain(raw)
     expect(kept).not.toContain(raw)
   }
-  // Memory only.
-  for (const word of ['usedPercent', 'p•••@e•••']) expect(kept).not.toContain(word)
+  // Numbers and the masked address are kept with the Harness's sessions for a restart; the log has none of them.
+  expect(await everything(t.dataDir)).toContain('usedPercent')
+  for (const word of ['usedPercent', 'p•••@e•••']) expect(lines.join('\n')).not.toContain(word)
 })
 
 it('asks a Codex session on a model service nothing about the plan, logged in or not, and shows no limits for it', async () => {
