@@ -140,3 +140,33 @@ describe('Grok Build on a model service', () => {
       expect(JSON.stringify(gateway.deliver(place(wire), route(wire)))).not.toMatch(/lmg1\.|service\.example/u)
   })
 })
+
+describe('Grok Build token counts', () => {
+  it('reads this turn’s count from the prompt answer’s _meta, as a real one sent it', () => {
+    // Grok 1.0.x, 2026-11-16, a turn of two model calls (sanitised).
+    const answer = {
+      stopReason: 'end_turn',
+      _meta: {
+        totalTokens: 29_908,
+        usage: {
+          inputTokens: 59_537,
+          outputTokens: 123,
+          totalTokens: 59_660,
+          cachedReadTokens: 59_264,
+          cacheCreationTokens: 0,
+          reasoningTokens: 40,
+          modelCalls: 2,
+        },
+      },
+    }
+    expect(grokProfile.usageScope).toBe('turn')
+    expect(grokProfile.turnUsage?.(answer)).toEqual({
+      inputTokens: 59_537,
+      outputTokens: 123,
+      cachedReadTokens: 59_264,
+      cachedWriteTokens: 0,
+      thoughtTokens: 40,
+    })
+    expect(grokProfile.turnUsage?.({ stopReason: 'end_turn' })).toBeUndefined()
+  })
+})

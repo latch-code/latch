@@ -1,7 +1,36 @@
 import { dirname } from 'node:path'
 import type { ModelWire } from '@latch/protocol'
 import { GROK_BILLING_METHOD, grokQuota } from '../quota.ts'
+import { z } from 'zod'
+import type { TurnTokens } from '../protocol.ts'
 import type { HarnessProfile } from './types.ts'
+
+const count = z.number().nonnegative().finite()
+/** The prompt answer's `_meta.usage` (Grok 1.0.x, checked 2026-11-16): this turn's model calls, cached input inside input. */
+const turnMeta = z.object({
+  _meta: z.object({
+    usage: z.object({
+      inputTokens: count,
+      outputTokens: count,
+      cachedReadTokens: count.optional().catch(undefined),
+      cacheCreationTokens: count.optional().catch(undefined),
+      reasoningTokens: count.optional().catch(undefined),
+    }),
+  }),
+})
+
+function grokTurnUsage(result: unknown): TurnTokens | undefined {
+  const parsed = turnMeta.safeParse(result)
+  if (!parsed.success) return undefined
+  const { inputTokens, outputTokens, cachedReadTokens, cacheCreationTokens, reasoningTokens } = parsed.data._meta.usage
+  return {
+    inputTokens,
+    outputTokens,
+    ...(cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
+    ...(cacheCreationTokens !== undefined ? { cachedWriteTokens: cacheCreationTokens } : {}),
+    ...(reasoningTokens !== undefined ? { thoughtTokens: reasoningTokens } : {}),
+  }
+}
 
 const GATEWAY_CONFIG = 'config.toml'
 /** Grok Build's `api_backend` for each protocol (docs.x.ai/build/settings, "Example config.toml"). */
@@ -85,6 +114,8 @@ export const grokProfile: HarnessProfile = {
   projectConfigPaths: ['.grok'],
   // The request Grok's own `/usage` makes; it needs no turn.
   quota: { request: { method: GROK_BILLING_METHOD, read: grokQuota } },
+  usageScope: 'turn',
+  turnUsage: grokTurnUsage,
   minimumVersion: {
     args: ['--version'],
     read: output => /^grok (\d+\.\d+\.\d+)(?:\s|$)/u.exec(output.trim())?.[1],

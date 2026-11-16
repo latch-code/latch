@@ -680,6 +680,23 @@ describe('Codex over its app-server', () => {
       expect(JSON.parse(message.tool!.input!)).toMatchObject({ command: message.tool!.title })
   })
 
+  it('takes the thread’s token count as the session’s, with its cached input, and this turn’s as the difference', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo one')
+    const first = await settled(bridge, id)
+    expect(first.summary.usage).toEqual({ inputTokens: 20, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 })
+    await bridge.prompt(id, 'echo two', rid())
+    const second = await settled(bridge, id)
+    expect(second.summary.usage).toMatchObject({ inputTokens: 40, outputTokens: 20, cacheReadTokens: 16 })
+    // Codex's own times for its messages, for the turn's speed.
+    expect(second.messages.filter(message => message.role === 'user').every(message => (message.turn?.stream?.ms ?? 0) >= 400)).toBe(true)
+    expect(second.messages.filter(message => message.role === 'user').map(message => message.turn?.usage)).toEqual([
+      { inputTokens: 20, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      { inputTokens: 20, outputTokens: 10, cacheReadTokens: 16, cacheWriteTokens: 0, reasoningTokens: 0 },
+    ])
+  })
+
   it('keeps the parts of a streamed reasoning summary apart as sections', async () => {
     const t = await computer()
     const bridge = await t.open()

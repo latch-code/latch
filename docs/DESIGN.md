@@ -491,7 +491,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 - 桌面默认 Enter 发送、Shift+Enter 换行（「设置 › 通用」可改）；触屏 Enter 换行；⌘/Ctrl+Enter 总是发送；输入法组字时不发送。
 - 只有新会话的草稿有状态行（[ComposerStatus.tsx](../apps/web/src/composer/ComposerStatus.tsx)）：项目名（不写路径）、分支与模型走哪条路。
 
-**会话用量。** 上下文、输入输出、费用与用时由页头与项目弹层显示，读同一个函数（[sessionTotals.ts](../apps/web/src/composer/sessionTotals.ts)）。只写报告了的数；外部 Harness 的数注明由谁报告，Harness 报告的费用总带「不是账单」。
+**会话用量。** 打开的会话在输入框下有一行固定高度的用量（[VitalsStrip.tsx](../apps/web/src/composer/VitalsStrip.tsx)、[vitals.ts](../apps/web/src/composer/vitals.ts)）：轮数与工具步数、运行中一轮的 tok/s（`TurnStats.stream`：只写文字与推理的模型调用的输出 tokens ÷ Harness 自己计的流出时间；目前只有 Codex 报告）、会话 tokens 与缓存命中（缓存读取 ÷ 输入）、上下文环与百分比（80% 起琥珀）。每项只在有来源时出现，没有任何一项时也占住高度；悬停给分项，点 tokens 打开「额度与用量」。手机上留 tokens 与上下文，轮数收进点按。费用与用时在项目弹层，注明由谁报告（[sessionTotals.ts](../apps/web/src/composer/sessionTotals.ts)）。
 
 **额度与用量。** 一个界面、一套组件、一套词（[apps/web/src/usage/](../apps/web/src/usage)）。来源见 [HARNESSES.md](HARNESSES.md#额度) 与 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#用量花费与预算)。
 

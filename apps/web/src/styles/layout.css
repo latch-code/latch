@@ -1229,15 +1229,6 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-/* What the session used, the last quiet row of its ⋯ menu. */
-.session-usage-line {
-  margin: 0;
-  padding: var(--sp-6) var(--sp-10);
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-variant-numeric: tabular-nums;
-}
 .topbar-crumb:not(:has(.topbar-crumb-text)) {
   margin-inline-end: calc(var(--sp-8) * -1);
 }

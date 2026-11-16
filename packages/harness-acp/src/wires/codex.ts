@@ -28,7 +28,17 @@ import {
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
 import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
-import { MCP_STATUS_METHOD, MCP_STATUS_UPDATE, RPC, RpcError, STEER_METHOD, SESSION_SKILLS_UPDATE, type RpcId } from '../protocol.ts'
+import {
+  MCP_STATUS_METHOD,
+  MCP_STATUS_UPDATE,
+  RPC,
+  RpcError,
+  STEER_METHOD,
+  SESSION_SKILLS_UPDATE,
+  TOKENS_UPDATE,
+  type RpcId,
+  type TurnTokens,
+} from '../protocol.ts'
 import { QUOTA_UPDATE, codexQuota, codexQuotaUpdate } from '../quota.ts'
 import {
   AgentProcess,
@@ -79,6 +89,8 @@ export const CODEX_MODE_ID = 'mode'
 const MAX_MODEL_PAGES = 5
 const MAX_THREADS = 50
 const COMPACT = { name: 'compact', description: '把之前的对话总结成摘要，腾出上下文' }
+/** Items that are what a model call wrote, rather than a tool it called. */
+const TEXT_ITEMS = new Set(['agentMessage', 'reasoning', 'userMessage', 'contextCompaction'])
 /** Context blocks are not command invocations, even when their instructions begin with a slash. */
 function nativeCommand(blocks: z.infer<typeof promptParams>['prompt']): string | undefined {
   const texts = blocks.filter(block => block.type === 'text')
@@ -367,7 +379,14 @@ interface Turn {
   /** `turn/interrupt` went out: the turn's ID can arrive twice (the `turn/start` answer and `turn/started`) after a stop. */
   interrupted?: true
   error?: string
-  usage?: { inputTokens: number; outputTokens: number }
+  usage?: TurnTokens
+  /** The current model call's message and reasoning time by Codex's own item times, and whether it also called a tool. */
+  call?: { ms: number; tool?: true }
+  /**
+   * The output of this turn's model calls that only wrote (no tool call, whose arguments stream outside any item's time)
+   * and how long it streamed: the turn's speed.
+   */
+  stream?: { outputTokens: number; ms: number }
   /** Commands Codex has not reported ended, keyed by native thread and item. */
   commands: Set<string>
   /** The subagents' threads that reported calls in this turn: their commands are listed with the session's. */
@@ -1458,6 +1477,8 @@ export class CodexWire implements AgentWire {
     const done = phase === 'completed'
     const call = commandKey(child ?? sessionId, id)
     const emit = (update: Record<string, unknown> & { sessionUpdate: string }) => this.emit(sessionId, this.marked(update, child))
+    if (!child && this.turn && !done && !TEXT_ITEMS.has(String(item.type)))
+      this.turn.call = { ...this.turn.call, ms: this.turn.call?.ms ?? 0, tool: true }
     switch (item.type) {
       case 'contextCompaction': {
         if (child || !this.turn) return
@@ -1472,6 +1493,11 @@ export class CodexWire implements AgentWire {
       }
       case 'agentMessage':
       case 'reasoning': {
+        // Codex's own times for the item: how long its output streamed, for the turn's speed.
+        if (done && !child && this.turn && typeof item.startedAtMs === 'number' && typeof item.completedAtMs === 'number') {
+          const ms = item.completedAtMs - item.startedAtMs
+          if (Number.isFinite(ms) && ms > 0 && ms < 86_400_000) this.turn.call = { ...this.turn.call, ms: (this.turn.call?.ms ?? 0) + ms }
+        }
         if (child || !done || this.streamed.has(id)) return
         const text =
           item.type === 'agentMessage'
@@ -1817,8 +1843,30 @@ export class CodexWire implements AgentWire {
         const last = isRecord(usage.last) ? usage.last : {}
         const total = isRecord(usage.total) ? usage.total : {}
         const count = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined)
-        if (turn && count(total.inputTokens) !== undefined && count(total.outputTokens) !== undefined)
-          turn.usage = { inputTokens: count(total.inputTokens)!, outputTokens: count(total.outputTokens)! }
+        const input = count(total.inputTokens)
+        const output = count(total.outputTokens)
+        // The thread's whole count, cached input included in the input: what the session used so far, said as it grows.
+        if (input !== undefined && output !== undefined && !this.route) {
+          const cached = count(total.cachedInputTokens)
+          const written = count(total.cacheWriteInputTokens)
+          const thought = count(total.reasoningOutputTokens)
+          const usage: TurnTokens = {
+            inputTokens: input,
+            outputTokens: output,
+            ...(cached !== undefined ? { cachedReadTokens: cached } : {}),
+            ...(written !== undefined ? { cachedWriteTokens: written } : {}),
+            ...(thought !== undefined ? { thoughtTokens: thought } : {}),
+          }
+          if (turn) {
+            turn.usage = usage
+            // One model call ended: its output counts toward the speed only when nothing but text and reasoning streamed.
+            const written = count(last.outputTokens)
+            if (turn.call && !turn.call.tool && turn.call.ms > 0 && written)
+              turn.stream = { outputTokens: (turn.stream?.outputTokens ?? 0) + written, ms: (turn.stream?.ms ?? 0) + turn.call.ms }
+            turn.call = undefined
+          }
+          this.update({ sessionUpdate: TOKENS_UPDATE, scope: 'session', ...usage, ...(turn?.stream ? { stream: turn.stream } : {}) })
+        } else if (turn && input !== undefined && output !== undefined) turn.usage = { inputTokens: input, outputTokens: output }
         const used = count(last.totalTokens)
         const size = count(usage.modelContextWindow)
         if (used !== undefined || size)

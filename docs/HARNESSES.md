@@ -475,7 +475,16 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 - **压缩（`compaction_update`、`compaction_summary_chunk`）。** 一次压缩一行，按 `compactionId` 就地更新（正在、已压缩、失败、已取消），Agent 给的摘要接在后面。行的位置是第一次报告到达时，之前的回复先结束。压缩失败不让本轮失败。Codex 压缩后留下的上下文仍超过它的自动压缩上限时会在每一轮开始再压缩一次，每次一个新 ID；相邻几轮里同样的「已压缩上下文」只留最后一行并写上次数，带摘要、失败或由 /compact 发起的行照旧（`collapseCompactions`）。
 - **重试（`readRetry`）。** 把 Agent 标明的重试读成一行系统消息，不进思考；回复中途断开重新生成时，已收到的文字丢掉，新文字接在同一条消息里（消息 ID 不变），已收到的思考保留。原因先脱敏，最多 300 字。目前没有预设声明它。
 - **各家说法不同的地方（`normalizeUpdate`）。** 只换不添：Qwen Code 只在 `_meta.toolName` 给工具名，填进 `name`；OpenCode 把回复的思考放在推理片段的 ID 下，去掉这个 ID 后思考归入它所属的回复。调用的 `kind` 只是 `other` 时用标题命名。
-- **用量。** `session/prompt` 的 `usage` 只取 `inputTokens` 与 `outputTokens`；缓存与思考的令牌数各家含义不同，不映射。
+- **用量。** `session/prompt` 的 `usage`（含 `cachedReadTokens`、`cachedWriteTokens`、`thoughtTokens`）按 profile 的 `usageScope` 读：`turn` 是这一轮的，会话总数是轮前总数加它；默认 `session` 是整个会话的，这一轮是差。输入不含缓存的（`inputExcludesCache`）把缓存加回输入。这一轮的写在用户消息的 `TurnStats.usage` 上。各家实测（2026-11-16）：
+
+| Harness | 来源 | 范围 | 缓存 |
+| --- | --- | --- | --- |
+| Codex 直连 | `thread/tokenUsage/updated` 的 `total`，每次模型调用后经 `_latch_tokens` 推送，带只写了文字与推理（没有调用工具）的那些模型调用的输出 tokens 与这些条目自己的 `startedAtMs`–`completedAtMs` 之和（`stream`） | 会话 | `cachedInputTokens` 已含在输入里 |
+| pi | 每轮后 `get_session_stats` 的 `tokens` | 会话 | 输入不含 `cacheRead`/`cacheWrite`，加回 |
+| Claude Agent、OpenCode | `PromptResponse.usage` | 一轮 | 输入不含缓存，加回 |
+| Grok Build | `PromptResponse._meta.usage`（`turnUsage`） | 一轮 | 已含 |
+| Antigravity | `PromptResponse.usage` | 未核实，按会话 | 报 0 |
+| DeepSeek Harness | 不报告 tokens，只有 `usage_update` 的上下文 | — | — |
 
 ## 登录
 
@@ -596,7 +605,7 @@ Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额
 | `configOptions`，或旧式 `models` / `modes` | `TaskDetail.config`（只保留下拉选项）；`setConfig` 调用 `session/set_config_option`、`set_model` 或 `set_mode` |
 | `current_mode_update` / `config_option_update` | 更新记录的模式；被放宽时见「权限模式」 |
 | `session_info_update.title` | 会话标题（用户重命名优先） |
-| `PromptResponse.usage` | 会话用量（整体替换），只取输入与输出两个总数 |
+| `PromptResponse.usage` | 会话与这一轮的用量，按 profile 的 `usageScope`（见「通知与压缩」的用量） |
 | `usage_update` | `TaskDetail.usageReport`：上下文已用、窗口大小与费用，整体替换；不算可见输出，不计入 tokens |
 
 - 未知的更新类型被忽略。

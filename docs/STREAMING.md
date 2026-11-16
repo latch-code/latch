@@ -513,7 +513,7 @@ Codex 的原生委派在同一会话的详情里沿用 `Message.subagent`。
 | 摘要与消息的 `createdAt` | 用户消息被接受、助手一步开始、工具调用被记录、说明写入的时刻 |
 | 工具的 `startedAt`、`completedAt` | 审批之后真正开始运行；结算 |
 | 助手一步的 `completedAt`、`reasoningMs`、`model` | `reasoningMs` 从第一段推理到第一段正文或这一步结束；内置 Harness 另有 `providerId` |
-| 用户消息的 `turn` | 这一轮结算时写入：`endedAt`、`activeMs`（提示到结束，减去等审批的时间）、`waitMs`（至少有一个审批在等人的时间，重叠时按并集）。经 Latch 转发到模型服务时另有 `routed`（[HARNESSES.md](./HARNESSES.md)「每轮的模型与用量」）。Host 重启中断的一轮没有 `turn` |
+| 用户消息的 `turn` | 这一轮结算时写入：`endedAt`、`activeMs`（提示到结束，减去等审批的时间）、`waitMs`（至少有一个审批在等人的时间，重叠时按并集）。经 Latch 转发到模型服务时另有 `routed`（[HARNESSES.md](./HARNESSES.md)「每轮的模型与用量」）；外部 Harness 报告了 tokens 时另有 `usage`，报告一次更新一次，所以运行中就有。Host 重启中断的一轮没有 `turn` |
 
 **运行中的投影。** detail 带 `runStartedAt`、`runWaitMs`（已结束的审批等待）与 `runWaitingSince`（有审批正在等时），客户端据此算出不含等待的已运行时间，等待时停住。`lastOutputAt` 是可见输出（正文、推理、工具、计划、新消息）最后一次变化。`liveReasoningStartedAt` 与正文开始后的 `liveReasoningMs` 给出正在流出的思考用时。
 

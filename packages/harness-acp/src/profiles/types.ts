@@ -1,6 +1,7 @@
 import type { ModeTier, ModelCapabilities, ModelWire, SessionConfigOption } from '@latch/protocol'
 import type { ModelRoute } from '@latch/sdk'
 import type { QuotaReport } from '../quota.ts'
+import type { TurnTokens } from '../protocol.ts'
 import type { WireKind } from '../wires/index.ts'
 
 /**
@@ -395,6 +396,15 @@ export interface HarnessProfile {
    * to a process it already runs for a session; it changes nothing that runs, so the version stays.
    */
   readonly quota?: ProfileQuota
+  /**
+   * What the token counts the harness reports cover: the whole session (the default) or the turn they end. Checked
+   * against the real program; it changes nothing that runs, so the version stays.
+   */
+  readonly usageScope?: 'session' | 'turn'
+  /** Its `inputTokens` leave out the cached input it reports beside them (ACP counts it in): Latch adds it back. */
+  readonly inputExcludesCache?: true
+  /** Token counts its prompt answer carries outside ACP's `usage`, read from the whole answer. */
+  turnUsage?(result: unknown): TurnTokens | undefined
   /**
    * Latch never points this harness at the gateway: it reaches its vendor's models through its own login only. Shown
    * to clients as `HarnessCapabilities.models.ownOnly`; it changes nothing that runs, so the version stays.

@@ -149,6 +149,9 @@ export const opencodeProfile: HarnessProfile = {
   thinkingPerModel: true,
   // An empty session runs no turn and calls no model.
   catalogueRead: { when: 'select' },
+  // Checked 2026-11-16: each prompt answer counts its own turn, cached input beside the input rather than in it.
+  usageScope: 'turn',
+  inputExcludesCache: true,
   // 2.x lists its sessions page by page and replays one on `session/load` (2.2.6 `acp/service.ts`, `acp/replay.ts`); 1.x
   // has no `session/list`. Its load and resume store the folders they are given as the session's grants
   // (`acp/directories.ts`), and Latch gives OpenCode none, so a session that holds some is left alone.

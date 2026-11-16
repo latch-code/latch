@@ -2008,7 +2008,10 @@ const scenarios = {
     })
     update(sessionId, { sessionUpdate: 'some_future_kind', anything: true })
     say('planned')
-    return { stopReason: 'end_turn', usage: { totalTokens: 30, inputTokens: 10, outputTokens: 20 } }
+    return {
+      stopReason: 'end_turn',
+      usage: env.FAKE_ACP_USAGE ? JSON.parse(env.FAKE_ACP_USAGE) : { totalTokens: 30, inputTokens: 10, outputTokens: 20 },
+    }
   },
   noise: ({ say }) => {
     process.stdout.write('this line is not json\n')

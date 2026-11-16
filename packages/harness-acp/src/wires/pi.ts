@@ -9,7 +9,7 @@ import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { readSessionSkills, boundSessionSkills, type SessionSkill } from '@latch/protocol'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
-import { commandsUpdate, FORK_METHOD, RPC, RpcError, STEER_METHOD, SESSION_SKILLS_UPDATE } from '../protocol.ts'
+import { commandsUpdate, FORK_METHOD, RPC, RpcError, STEER_METHOD, SESSION_SKILLS_UPDATE, type TurnTokens } from '../protocol.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
 import { GATE_COMMAND, GATE_LEVELS, GATE_MARK, writeGate } from './pi-gate.ts'
 import { PI_GATEWAY_PROVIDER } from '../profiles/pi-gateway.ts'
@@ -96,7 +96,10 @@ const levels = z.object({ levels: z.array(text.max(64)).max(32) })
 const disposition = z.object({ disposition: text.optional() }).nullish().catch(undefined)
 const count = z.number().nonnegative().finite()
 const stats = z.object({
-  tokens: z.object({ input: count, output: count }).optional().catch(undefined),
+  tokens: z
+    .object({ input: count, output: count, cacheRead: count.optional().catch(undefined), cacheWrite: count.optional().catch(undefined) })
+    .optional()
+    .catch(undefined),
   cost: count.optional().catch(undefined),
   contextUsage: z.object({ tokens: count.nullish(), contextWindow: count.nullish() }).nullish().catch(undefined),
 })
@@ -790,10 +793,19 @@ export class PiWire implements AgentWire {
     this.turn = undefined
     this.reply = undefined
     this.running = false
-    let usage: { inputTokens: number; outputTokens: number } | undefined
+    let usage: TurnTokens | undefined
     try {
       const read = readAs(stats, await this.send({ type: 'get_session_stats' }, STATS_TIMEOUT_MS), 'get_session_stats')
-      if (read.tokens) usage = { inputTokens: read.tokens.input, outputTokens: read.tokens.output }
+      // The session's whole count; pi's input leaves out the cached input it counts beside it (pi 0.x, 2026-11-16).
+      if (read.tokens) {
+        const { input, output, cacheRead, cacheWrite } = read.tokens
+        usage = {
+          inputTokens: input + (cacheRead ?? 0) + (cacheWrite ?? 0),
+          outputTokens: output,
+          ...(cacheRead !== undefined ? { cachedReadTokens: cacheRead } : {}),
+          ...(cacheWrite !== undefined ? { cachedWriteTokens: cacheWrite } : {}),
+        }
+      }
       const used = read.contextUsage?.tokens ?? undefined
       const size = this.routed ? undefined : (read.contextUsage?.contextWindow ?? undefined)
       const cost = this.routed ? undefined : read.cost

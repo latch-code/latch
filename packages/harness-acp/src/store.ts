@@ -205,7 +205,7 @@ export interface AcpState {
   quota?: AcpQuota
 }
 
-export interface AcpQuota {
+interface AcpQuota {
   definitionHash: string
   value: HarnessQuota
 }
@@ -337,6 +337,8 @@ const message = z.object({
       activeMs: z.number().nonnegative().optional(),
       waitMs: z.number().nonnegative().optional(),
       routed: routedTurn.optional(),
+      usage: usage.optional(),
+      stream: z.object({ outputTokens: z.number().positive(), ms: z.number().positive() }).optional(),
     })
     .optional(),
   turnId: z.string().max(128).optional(),

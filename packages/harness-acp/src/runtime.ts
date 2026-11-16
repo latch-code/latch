@@ -60,6 +60,7 @@ import type {
   ServiceModelOptions,
   HarnessOwnMcp,
   HarnessQuota,
+  TokenUsage,
   CatalogueRead,
   ToolDecision,
   UnknownResult,
@@ -181,6 +182,9 @@ import {
   permissionRequest,
   planUpdate,
   promptResult,
+  TOKENS_UPDATE,
+  tokensUpdate,
+  type TurnTokens,
   providersList,
   PROTOCOL_VERSION,
   sessionList,
@@ -388,6 +392,8 @@ interface Run {
    * live: the row goes after that reply, once the agent drops it to generate it again or it settles.
    */
   retry?: { id: string; interrupted: boolean; pending?: boolean; reason?: string; attempt?: { attempt: number; of: number } }
+  /** The session's tokens before this turn, and this turn's as the Harness reported them (`TurnStats.usage`). */
+  tokens?: { base?: TokenUsage; turn?: TokenUsage; stream?: { outputTokens: number; ms: number } }
   done: Promise<void>
   resolveDone(): void
 }
@@ -483,6 +489,34 @@ const UNREPORTED_MODE = '未报告'
  * missing one or one Latch does not know may change something, so it is refused as edits and commands are.
  */
 const LOOKING_KINDS = new Set(['read', 'search', 'think', 'fetch'])
+
+/** ACP's names for the parts as `TokenUsage` names them; a part that was not reported stays out. */
+function tokenUsage(reported: TurnTokens): TokenUsage {
+  return {
+    inputTokens: reported.inputTokens,
+    outputTokens: reported.outputTokens,
+    ...(typeof reported.cachedReadTokens === 'number' ? { cacheReadTokens: reported.cachedReadTokens } : {}),
+    ...(typeof reported.cachedWriteTokens === 'number' ? { cacheWriteTokens: reported.cachedWriteTokens } : {}),
+    ...(typeof reported.thoughtTokens === 'number' ? { reasoningTokens: reported.thoughtTokens } : {}),
+  }
+}
+
+const TOKEN_PARTS = ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
+
+function combineTokens(a: TokenUsage, b: TokenUsage | undefined, sign: 1 | -1): TokenUsage {
+  const at = (value: number) => Math.max(0, value)
+  const usage: TokenUsage = {
+    inputTokens: at(a.inputTokens + sign * (b?.inputTokens ?? 0)),
+    outputTokens: at(a.outputTokens + sign * (b?.outputTokens ?? 0)),
+  }
+  // A part is known only when both sides reported it (or there is no other side).
+  for (const part of TOKEN_PARTS)
+    if (a[part] !== undefined && (!b || b[part] !== undefined)) usage[part] = at(a[part] + sign * (b?.[part] ?? 0))
+  return usage
+}
+
+const addTokens = (base: TokenUsage | undefined, turn: TokenUsage) => combineTokens(turn, base, 1)
+const subtractTokens = (total: TokenUsage, base: TokenUsage | undefined) => combineTokens(total, base, -1)
 
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -4177,8 +4211,37 @@ export class AgentRuntime implements Bridge {
       done,
       resolveDone,
     }
+    const before = this.state.tasks[taskId]?.summary.usage
+    if (before) run.tokens = { base: structuredClone(before) }
     this.runs.set(taskId, run)
     return run
+  }
+
+  /**
+   * Tokens the Harness reported, for the whole session or for this turn (`scope`): the session's total and this turn's
+   * part, each derived from the other with the count from before the turn. Never estimated: what was not reported stays
+   * out.
+   */
+  private noteTokens(
+    task: AcpTask,
+    run: Run | undefined,
+    reported: TurnTokens,
+    scope: 'session' | 'turn',
+    stream?: { outputTokens: number; ms: number },
+  ): void {
+    const usage = tokenUsage(reported)
+    const base = run?.tokens?.base
+    if (scope === 'session') {
+      task.summary.usage = usage
+      if (run) run.tokens = { ...run.tokens, turn: subtractTokens(usage, base) }
+    } else {
+      task.summary.usage = addTokens(base, usage)
+      if (run) run.tokens = { ...run.tokens, turn: usage }
+    }
+    if (run && stream) run.tokens = { ...run.tokens, stream }
+    const prompt = run?.userMessageId === undefined ? undefined : task.messages.find(item => item.id === run.userMessageId)
+    if (prompt?.role === 'user' && run?.tokens?.turn)
+      prompt.turn = { ...prompt.turn, usage: run.tokens.turn, ...(run.tokens.stream ? { stream: run.tokens.stream } : {}) }
   }
 
   private release(run: Run): void {
@@ -4284,10 +4347,13 @@ export class AgentRuntime implements Bridge {
     this.askQuota(run.live)
     const parsed = promptResult.safeParse(result)
     const task = this.state.tasks[run.taskId]
-    if (parsed.success && parsed.data.usage && task) {
-      // Agents disagree on whether this is per turn or per session, so it replaces rather than adds.
-      task.summary.usage = { inputTokens: parsed.data.usage.inputTokens, outputTokens: parsed.data.usage.outputTokens }
-    }
+    const said = parsed.success ? (parsed.data.usage ?? this.selection.profile?.turnUsage?.(result)) : undefined
+    const reported =
+      said && this.selection.profile?.inputExcludesCache
+        ? { ...said, inputTokens: said.inputTokens + (said.cachedReadTokens ?? 0) + (said.cachedWriteTokens ?? 0) }
+        : said
+    // Agents disagree on whether this counts the turn or the session; the profile says which, and the session otherwise.
+    if (reported && task) this.noteTokens(task, run, reported, this.selection.profile?.usageScope ?? 'session')
     const stopReason = parsed.success ? parsed.data.stopReason : undefined
     // The Host's own stop is no cancel by anyone: the turn was interrupted, whatever the agent answered.
     if (run.cancelRequested && this.closed && run.sent) {
@@ -4527,7 +4593,12 @@ export class AgentRuntime implements Bridge {
       const prompt = run.userMessageId === undefined ? undefined : task.messages.find(item => item.id === run.userMessageId)
       if (prompt) {
         const routed = this.routedTurn(run, task)
-        prompt.turn = { ...run.clock.turn(), ...(routed ? { routed } : {}) }
+        prompt.turn = {
+          ...run.clock.turn(),
+          ...(routed ? { routed } : {}),
+          ...(run.tokens?.turn ? { usage: run.tokens.turn } : {}),
+          ...(run.tokens?.stream ? { stream: run.tokens.stream } : {}),
+        }
       }
       const result = this.fileTracking.capture(run.id)
       if (result) {
@@ -6021,7 +6092,19 @@ export class AgentRuntime implements Bridge {
       if (this.reportsOwnMcp()) this.noteOwnMcp(update, 'session')
       return
     }
-    // The plan's limits as Codex's app-server read them: Latch's own wire sends this, so no ACP agent's word is taken for it.
+    // Token counts and the plan's limits as Codex's app-server read them: Latch's own wire sends these, so no ACP agent's
+    // word is taken for them.
+    if (update.sessionUpdate === TOKENS_UPDATE) {
+      const tokens = this.selection.profile?.wire === 'codex' ? tokensUpdate.safeParse(update) : undefined
+      if (!tokens?.success) return
+      const { scope, stream, ...reported } = tokens.data
+      const current = this.runs.get(taskId)
+      this.noteTokens(task, current?.live === live ? current : undefined, reported, scope, stream)
+      this.touch(task)
+      this.mark()
+      this.notify(taskId)
+      return
+    }
     if (update.sessionUpdate === QUOTA_UPDATE) {
       const report = this.selection.profile?.wire === 'codex' ? quotaReport.safeParse(update) : undefined
       if (report?.success) this.noteQuota(live, report.data as QuotaReport)

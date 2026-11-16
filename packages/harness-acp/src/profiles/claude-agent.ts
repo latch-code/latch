@@ -188,4 +188,7 @@ export const claudeAgentProfile: HarnessProfile = {
   readDenial: readClaudeDenial,
   // Each window's share used and status as each turn reports them; Latch never sends `/usage` for them.
   quota: { update: claudeUsageQuota, error: claudeErrorQuota },
+  // Checked on the adapter 2026-11-16: each answer counts its own turn, with cache reads and writes outside the input.
+  usageScope: 'turn',
+  inputExcludesCache: true,
 }

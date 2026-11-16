@@ -1,7 +1,6 @@
 import type { HarnessInfo, ModeTier, PermissionTier, SessionConfigOption, SessionPermission, TaskMode } from '@latch/protocol'
 import { modeRows, type DeviceAccess, type ModeRow } from '../core/permissions.ts'
 import { MODE_COPY, type Brief } from '../core/securityCopy.ts'
-import { contextTotals } from './sessionTotals.ts'
 
 export type ModeIcon = 'eye' | 'shield' | 'list-checks' | 'scale' | 'shield-alert'
 
@@ -226,16 +225,4 @@ export function draftPermission(
     config,
     access: { legacy: false, local: true },
   })
-}
-
-const thousands = (value: number) => (value >= 1000 ? `${Math.round(value / 1000)}K` : String(value))
-
-type ContextReport = { contextUsed?: number; contextSize?: number } | undefined
-
-/** How full the context is, only from what the engine itself reported: the same share as the composer's status line. */
-export function contextWords(report: ContextReport): { percent: number; words: string } | undefined {
-  const context = contextTotals(report)
-  if (context?.size === undefined || context.percent === undefined) return undefined
-  const { used, size, percent } = context
-  return { percent, words: `上下文已用 ${percent}% · ${thousands(used)} / ${thousands(size)}` }
 }

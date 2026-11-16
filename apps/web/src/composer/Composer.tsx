@@ -129,6 +129,7 @@ export function Composer({
   drawers,
   stepBack = false,
   below,
+  vitals,
   status,
   location,
   locationPosition = 'top',
@@ -222,7 +223,9 @@ export function Composer({
   stepBack?: boolean
   /** Under the input, outside its frame: the captions of a new session. */
   below?: ReactNode
-  /** The frame's last row: where the session works, which way its model goes and what it has used (`ComposerStatus`). */
+  /** The last line, under everything: what an open session has done and used (`VitalsStrip`). */
+  vitals?: ReactNode
+  /** The frame's last row: where a new session will work and which way its model goes (`ComposerStatus`). */
   status?: ReactNode
   /** The workbench's project and execution location, inside the same input frame. */
   location?: ReactNode
@@ -732,6 +735,7 @@ export function Composer({
         {status}
       </form>
       {below}
+      {vitals}
     </div>
   )
 }

@@ -31,7 +31,6 @@ import { importedMark } from '../history/model.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { rowStatus, runningWords, silentWords } from '../sessions.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { contextWords } from '../composer/permission.ts'
 import { currentShell } from '../core/shell.ts'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
 import type { ConversationHeaderSlots, HeaderToggle } from './slots.ts'
@@ -41,25 +40,6 @@ import { topicOwner } from '../agents/chat.ts'
 import { TopicFrame } from '../agents/TopicFrame.tsx'
 import { sourceCrumb } from '../handoffs/model.ts'
 import { computerName } from '../core/securityCopy.ts'
-import { sessionTotals, type SessionTotals } from '../composer/sessionTotals.ts'
-import { formatTokens } from '../format.ts'
-
-/**
- * What the whole session used, on one line: 「上下文 12k / 200k · 输入 15.6k · 输出 3.1k · 10 秒 · 1 轮」, each part only
- * when it was reported. A cost needs who reported it, so it stays in the project's popover with that clause.
- */
-export function usageWords(totals: SessionTotals): string | undefined {
-  const { context, tokens, time } = totals
-  const parts = [
-    context
-      && (context.size === undefined
-        ? `上下文 ${formatTokens(context.used)}`
-        : `上下文 ${formatTokens(context.used)} / ${formatTokens(context.size)}`),
-    tokens && `输入 ${formatTokens(tokens.usage.inputTokens)} · 输出 ${formatTokens(tokens.usage.outputTokens)}`,
-    time?.text,
-  ].filter(Boolean)
-  return parts.length ? parts.join(' · ') : undefined
-}
 
 /** The clock's leaf: only these words re-render each second, and the shared ticker stops while the page is hidden. */
 function RunningWords({ live }: { live: RunLive | undefined }) {
@@ -161,24 +141,21 @@ function TitleMenu({ title, sections }: { title: string; sections: MenuSection[]
 
 /** One line of the breadcrumb's popover. */
 /**
- * The project in the breadcrumb, which opens where the session really runs: its branch as the Host read it, its folders
- * and how full the context is. A branch that could not be verified says so; it does not mean there is no repository.
+ * The project in the breadcrumb, which opens where the session really runs: its branch as the Host read it and its
+ * folders. A branch that could not be verified says so; it does not mean there is no repository.
  */
 function ProjectCrumb({
   project,
   summary,
-  usage,
   children,
   after,
 }: {
   /** Absent for a session in a folder of its own: 「不选项目」 keeps the way to its path. */
   project?: string | undefined
   summary: TaskSummary
-  usage?: { contextUsed?: number; contextSize?: number } | undefined
   children?: ReactNode
   after?: ReactNode
 }) {
-  const context = contextWords(usage)
   const worktree = summary.worktree && (summary.branch ?? summary.worktree.branch)
   const lead = summary.worktree?.removed ? '工作树已移除' : '工作树'
   return (
@@ -218,7 +195,6 @@ function ProjectCrumb({
         <div className="crumb-body">
           <CrumbRow label="分支">{summary.branch ? <VisibleText text={summary.branch} /> : '读不到分支'}</CrumbRow>
           {children}
-          {context && <CrumbRow label="上下文">{context.words.replace(/^上下文已用 /u, '')}</CrumbRow>}
           {after}
         </div>
       </Popover>
@@ -400,7 +376,6 @@ export function SessionHeader({
   harness,
   project,
   computer,
-  usage,
   cancelling,
   demo,
   phone,
@@ -421,10 +396,7 @@ export function SessionHeader({
   frame,
   from,
   imported,
-  usageLine,
 }: {
-  /** What the whole session used, as the one quiet row at the end of ⋯. */
-  usageLine?: string | undefined
   /** The session was brought in from a harness's own earlier session. */
   imported?: HeaderImported | undefined
   /** The session is a topic of a conversation in 我的 Agent: its Agent's frame stands in the title's place. */
@@ -440,8 +412,6 @@ export function SessionHeader({
   /** The basename of the session's working directory. */
   project?: string
   computer?: string
-  /** What the engine last reported about its context. */
-  usage?: { contextUsed?: number; contextSize?: number } | undefined
   cancelling: boolean
   demo: boolean
   phone: boolean
@@ -502,7 +472,6 @@ export function SessionHeader({
           label="会话操作"
           placement="bottom-end"
           sections={menu}
-          {...(usageLine ? { footer: () => <p className="session-usage-line">{usageLine}</p> } : {})}
           trigger={props => <IconButton {...props} label="会话操作" icon={MoreGlyph} />}
         />
       )}
@@ -524,7 +493,7 @@ export function SessionHeader({
             </div>
             <div className="topbar-session-meta">
               {(project || (summary.mode !== 'chat' && summary.cwd)) && (
-                <ProjectCrumb project={project} summary={summary} usage={usage} after={crumb?.after}>
+                <ProjectCrumb project={project} summary={summary} after={crumb?.after}>
                   {crumb?.folders}
                 </ProjectCrumb>
               )}
@@ -634,8 +603,6 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     && !!current?.messages
       .slice(current.messages.findLastIndex(message => message.role === 'user'))
       .some(message => message.outputs?.length)
-  // A helper's tokens are its model's, kept to 额度与用量: a topic's menu has no usage row.
-  const usageLine = summary && !topicOf ? usageWords(sessionTotals({ summary, detail: current, harness: topHarness })) : undefined
   return (
     <SessionHeader
       panelRef={panelToggle}
@@ -645,7 +612,6 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
       harness={topHarness}
       project={project}
       computer={computerName(snapshot.hostName)}
-      usage={current?.usageReport}
       cancelling={selectedId !== null && stopping.has(selectedId)}
       demo={demo}
       phone={phone}
@@ -662,7 +628,6 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
         : {})}
       panelOpen={panelShown}
       changesTotals={shell.changesTotals}
-      usageLine={usageLine}
       {...(topicOf && summary
         ? {
             frame: (
@@ -687,7 +652,6 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
                           label="会话操作"
                           placement="bottom-end"
                           sections={topMenu}
-                          {...(usageLine ? { footer: () => <p className="session-usage-line">{usageLine}</p> } : {})}
                           trigger={props => <IconButton {...props} size="lg" label="会话操作" icon={MoreGlyph} />}
                         />
                       )}

@@ -60,6 +60,13 @@ export interface TurnStats {
   routed?: RoutedTurn
   /** The built-in harness: what the turn's model requests cost, when known, and a budget that is nearly used. */
   spend?: TurnSpend
+  /** What the Harness reported this turn used, updated while it runs when the Harness reports as it goes. */
+  usage?: TokenUsage
+  /**
+   * The output of the turn's model calls that only wrote text and reasoning, and how long it streamed by the Harness's
+   * own times: the turn's speed. Absent when the Harness reports no such times.
+   */
+  stream?: { outputTokens: number; ms: number }
 }
 
 /**

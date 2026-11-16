@@ -224,7 +224,15 @@ function finishMember(member, text, status, error) {
 
 async function reply(text) {
   const id = `msg-${randomUUID()}`
-  const end = item({ type: 'agentMessage', id, text: '' }, () => ({ type: 'agentMessage', id, text }))
+  // Codex times its items itself: when the message began and ended.
+  const startedAtMs = Date.now()
+  const end = item({ type: 'agentMessage', id, text: '', startedAtMs }, () => ({
+    type: 'agentMessage',
+    id,
+    text,
+    startedAtMs,
+    completedAtMs: startedAtMs + 400,
+  }))
   for (const piece of text.match(/.{1,4}/gsu) ?? []) {
     notify('item/agentMessage/delta', { threadId: thread.id, turnId: turn.id, itemId: id, delta: piece })
     await sleep(5)
@@ -891,16 +899,18 @@ async function runTurn(input) {
     outcome = { status: 'failed', error: { message: String(error) } }
   }
   if (turn.cancelled && outcome === undefined) outcome = 'interrupted'
+  // The thread's whole count grows by one model call a turn; each call after the first reads 16 of its 20 from the cache.
+  const calls = thread.turns.length + 1
   notify('thread/tokenUsage/updated', {
     threadId: thread.id,
     turnId: turn.id,
     tokenUsage: {
       total: {
-        totalTokens: 30,
-        inputTokens: 20,
-        cachedInputTokens: 0,
+        totalTokens: 30 * calls,
+        inputTokens: 20 * calls,
+        cachedInputTokens: 16 * (calls - 1),
         cacheWriteInputTokens: 0,
-        outputTokens: 10,
+        outputTokens: 10 * calls,
         reasoningOutputTokens: 0,
       },
       last: {

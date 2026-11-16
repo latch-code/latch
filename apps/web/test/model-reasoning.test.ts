@@ -17,7 +17,7 @@ import {
   withLadderMode,
 } from '../src/composerChoice.ts'
 import { forkedChoice } from '../src/forkChoice.ts'
-import { contextWords, draftPermission, draftRead, permissionTip, permissionView } from '../src/composer/permission.ts'
+import { draftPermission, draftRead, permissionTip, permissionView } from '../src/composer/permission.ts'
 import {
   agentConfigChoice,
   agentConfigValues,
@@ -404,15 +404,6 @@ describe('the 权限 chip', () => {
       ['never', undefined],
       [undefined, undefined],
     ])
-  })
-})
-
-describe('the context words of the title row', () => {
-  it('say the share only when the engine reported both numbers', () => {
-    expect(contextWords(undefined)).toBeUndefined()
-    expect(contextWords({ contextUsed: 100 })).toBeUndefined()
-    expect(contextWords({ contextUsed: 100_000, contextSize: 400_000 })?.percent).toBe(25)
-    expect(contextWords({ contextUsed: 248_000, contextSize: 400_000 })).toEqual({ percent: 62, words: '上下文已用 62% · 248K / 400K' })
   })
 })
 

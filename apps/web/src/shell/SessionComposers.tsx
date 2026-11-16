@@ -33,6 +33,7 @@ import { composerActions } from './composerActions.ts'
 import { MoreMenu } from '../composer/Footer.tsx'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { BranchSegment, ComposerStatus, FolderSegment, statusRoute } from '../composer/ComposerStatus.tsx'
+import { SessionVitalsLine } from '../composer/VitalsStrip.tsx'
 import {
   DraftHarnessControl,
   DraftModelControl,
@@ -635,6 +636,11 @@ export function SessionComposer({
       drawers={drawers}
       stepBack={approvals.length > 0 || answersQuestion}
       status={home ? undefined : status}
+      vitals={
+        !home && selectedId !== null && summary && !speaker && !summary.personal ? (
+          <SessionVitalsLine summary={summary} detail={current} harness={harnessInfo} phone={phone} />
+        ) : undefined
+      }
       locationPosition={!homeFocus?.close && (home || base.preferences.workbenchLayout === 'triage') ? 'toolbar' : 'top'}
       location={
         home ? (

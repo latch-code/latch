@@ -4,7 +4,6 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { HostCatalog, TaskDetail, TaskSummary } from '@latch/protocol'
 import { BranchSegment, ComposerStatus, FolderSegment, statusRoute } from '../src/composer/ComposerStatus.tsx'
-import { contextWords } from '../src/composer/permission.ts'
 import { sessionTotals } from '../src/composer/sessionTotals.ts'
 import { SessionFacts } from '../src/shell/SessionEnvironment.tsx'
 
@@ -162,7 +161,7 @@ describe('the composer status line', () => {
     expect(line({ place, totals: sizeless, phone: true })).toBe('')
   })
 
-  it('reads the same totals as the title row’s popover, and the same share as its context words', () => {
+  it('reads the same totals as the title row’s popover', () => {
     const owner = summary({ usage, harnessId: 'opencode' })
     const report = { contextUsed: 41_000, contextSize: 256_000, cost: { amount: 0.21, currency: 'USD' }, at: at(8) }
     const open = detail({ usageReport: report }, owner)
@@ -172,7 +171,6 @@ describe('the composer status line', () => {
     const totals = sessionTotals({ summary: owner, detail: open, harness: opencode })
     expect(popover).toContain(`${totals.cost!.text} · 由 OpenCode 报告，不是账单`)
     expect(popover).toContain(totals.time!.text)
-    expect(contextWords(report)?.percent).toBe(totals.context?.percent)
     // Another session's detail is never read as this one's.
     expect(sessionTotals({ summary: summary({ id: 'other', usage }), detail: open, harness: opencode })).not.toHaveProperty('cost')
   })

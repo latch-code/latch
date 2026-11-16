@@ -15,8 +15,8 @@ const BRANCH = 'feat/enroll-check-and-a-branch-name-long-enough-to-be-cut'
 const OPENAI = { id: 'openai', name: 'OpenAI', kind: 'openai-responses', models: ['gpt-5.5'], defaultModel: 'gpt-5.5' }
 
 /**
- * A session's input has no status line: where it works is the title row's, what it used is the last row of ⋯, a cost
- * stays with who reported it, and only a route that needs saying is said under the input. A draft still shows where it
+ * A session's input has no status row: where it works is the title row's, what it used is the line under the input, a
+ * cost stays with who reported it, and only a route that needs saying is said under the input. A draft still shows where it
  * would work. A fake ACP agent reports the context window and the tokens; what no fake reports (a cost, a branch, a
  * route through a service) is written onto the session on its way to the page.
  */
@@ -134,15 +134,14 @@ describe('the composer without a status line', () => {
     await page.getByRole('textbox', { name: '继续对话', exact: true }).waitFor()
   }
 
-  /** Opens the session's ⋯ menu and returns its last quiet row: what the whole session used. */
+  /** The line under the session's input: what the whole session did and used. */
   async function usageLine(page: Page): Promise<string> {
-    await page.getByRole('button', { name: '会话操作', exact: true }).locator('visible=true').first().click()
-    const line = page.locator('p.session-usage-line')
-    await line.waitFor()
+    const line = page.locator('.vitals-strip').locator('visible=true').first()
+    await line.getByText('tok', { exact: false }).first().waitFor()
     return (await line.innerText()).replace(/\s+/gu, ' ').trim()
   }
 
-  it('draws no line under a session’s input, and says what the fake agent reported once, at the end of ⋯', async () => {
+  it('draws no status row in a session’s input, and says what the fake agent reported once, on the line under it', async () => {
     for (const [width, theme] of [
       [1440, 'light'],
       [1440, 'dark'],
@@ -159,7 +158,7 @@ describe('the composer without a status line', () => {
         expect(await form.evaluate(item => item.lastElementChild?.classList.contains('composer-toolbar'))).toBe(true)
         await shot(page, `a-session-input--${width}--${theme}`)
         const words = await usageLine(page)
-        expect(words).toMatch(/^上下文 10 \/ 100 · 输入 10 · 输出 20 · .*1 轮$/u)
+        expect(words).toMatch(/^1 轮 30 tok 10%$/u)
         await noHorizontalOverflow(page)
         await shot(page, `a-usage-menu--${width}--${theme}`)
         await page.keyboard.press('Escape')
@@ -186,8 +185,8 @@ describe('the composer without a status line', () => {
       // A route that works says nothing under the input.
       expect(await page.locator('form.composer .composer-notice').count()).toBe(0)
       const words = await usageLine(page)
-      expect(words).toContain('上下文 84k / 272k')
-      expect(words).toMatch(/输入 212(?:\.0)?k · 输出 9\.4k/u)
+      expect(words).toContain('221k tok')
+      expect(words).toMatch(/31%$/u)
       // The line never carries a cost: a cost needs who reported it.
       expect(words).not.toContain('US$')
       await shot(page, 'a-usage-menu-cost--1440--light')
@@ -343,8 +342,8 @@ describe('the composer without a status line', () => {
         // The card keeps its own edge, rather than the retired drawer/composer joint.
         expect(Math.round(drawer.width)).toBe(Math.round(form.width))
         expect(Math.round(form.top - drawer.bottom)).toBeGreaterThanOrEqual(7)
-        expect(await page.locator('form.composer').evaluate(item => getComputedStyle(item).borderTopLeftRadius)).toBe('14px')
-        expect(await card.evaluate(item => getComputedStyle(item).borderBottomLeftRadius)).toBe('14px')
+        expect(await page.locator('form.composer').evaluate(item => getComputedStyle(item).borderTopLeftRadius)).toBe('16px')
+        expect(await card.evaluate(item => getComputedStyle(item).borderBottomLeftRadius)).toBe('16px')
         // A session's input has no line under it, on any width.
         expect(await status(page).count()).toBe(0)
         await shot(page, `a-approval--${width}--${theme}`)

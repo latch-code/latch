@@ -2538,6 +2538,22 @@ describe('ACP turn mapping', () => {
     expect(tool(await reopened.detail(sessionId), 'tool:1:call_1')?.tool?.diffs).toEqual(expected)
   })
 
+  it('adds up the turns of a Harness that counts each turn, with its cached input put back in the input', async () => {
+    // OpenCode's answer as a real one sent it (2026-11-16): this turn only, cache reads beside the input.
+    const usage = { inputTokens: 429, outputTokens: 124, totalTokens: 39_721, cachedReadTokens: 39_168 }
+    const fixture = await preset('opencode', { FAKE_ACP_CONFIG: 'legacy', FAKE_ACP_USAGE: JSON.stringify(usage) })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'plan', rid())
+    const detail = await settled(bridge, sessionId)
+    const turn = { inputTokens: 39_597, outputTokens: 124, cacheReadTokens: 39_168 }
+    expect(detail.summary.usage).toEqual({ inputTokens: 79_194, outputTokens: 248, cacheReadTokens: 78_336 })
+    expect(detail.messages.filter(message => message.role === 'user').map(message => message.turn?.usage)).toEqual([turn, turn])
+    await bridge.close()
+    expect((await (await fixture.open()).detail(sessionId)).summary.usage).toEqual(detail.summary.usage)
+  })
+
   it('applies plan, title, commands and usage updates, persists commands and ignores unknown update kinds', async () => {
     const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy' })
     const bridge = await fixture.open()

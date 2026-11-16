@@ -253,9 +253,30 @@ export const permissionRequest = z.object({
 })
 export type PermissionOption = z.infer<typeof permissionRequest>['options'][number]
 
+const tokenCount = z.number().nonnegative().finite()
+/** Tokens as ACP's prompt answer names them: input counts cached input, output counts thinking. */
+const turnTokens = z.object({
+  inputTokens: tokenCount,
+  outputTokens: tokenCount,
+  cachedReadTokens: tokenCount.nullish().catch(undefined),
+  cachedWriteTokens: tokenCount.nullish().catch(undefined),
+  thoughtTokens: tokenCount.nullish().catch(undefined),
+})
+export type TurnTokens = z.infer<typeof turnTokens>
+/**
+ * The session update a wire that reads token counts itself sends while a turn runs (Codex's app-server): `TurnTokens`
+ * beside `sessionUpdate`, with `scope` saying whether it counts the whole session or this turn.
+ */
+export const TOKENS_UPDATE = '_latch_tokens'
+export const tokensUpdate = turnTokens.extend({
+  scope: z.enum(['session', 'turn']),
+  /** This turn's output that streamed as text and reasoning, and for how long by the Harness's own times. */
+  stream: z.object({ outputTokens: z.number().positive().finite(), ms: z.number().positive().finite() }).optional().catch(undefined),
+})
+
 export const promptResult = z.object({
   stopReason: z.string(),
-  usage: z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative() }).nullish().catch(undefined),
+  usage: turnTokens.nullish().catch(undefined),
 })
 /** The answer to `_session/steering`. `outcome` is an open set: anything but `injected` and `promptRequired` is a failure. */
 export const steerResult = z.object({ outcome: z.string().max(64) })

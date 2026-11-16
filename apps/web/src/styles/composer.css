@@ -1284,3 +1284,68 @@
   font-family: var(--mono);
   font-size: var(--fs-caption);
 }
+/*
+ * The vitals line under an open session's input: one quiet row of small glyphs and tabular figures in the secondary
+ * ink, its height reserved even while nothing is reported, so the input above never moves when the first number comes.
+ */
+.vitals-strip {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-16);
+  height: var(--sp-24);
+  padding: 0 var(--sp-12);
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.vitals-item {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--r-4);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+button.vitals-item {
+  cursor: pointer;
+}
+.vitals-item:hover {
+  color: var(--ink-2);
+}
+.vitals-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.vitals-dot {
+  color: var(--faint);
+}
+.vitals-item[data-near] {
+  color: var(--amber-icon);
+}
+.vitals-ring {
+  flex: none;
+  fill: none;
+  stroke-width: 2;
+}
+.vitals-ring-track {
+  stroke: var(--line-strong);
+}
+.vitals-ring-used {
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+.vitals-tip {
+  display: grid;
+  gap: var(--sp-2);
+  font-variant-numeric: tabular-nums;
+}
