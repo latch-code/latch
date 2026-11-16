@@ -60,7 +60,7 @@ Provider 负责模型协议转换；Tool 执行一种操作；HarnessDriver 提�
 | 用 Harness CLI 自己的密钥读厂商余额（只有 DeepSeek Harness，见 [HARNESSES](HARNESSES.md#deepseek-harness-的余额)） | `apps/host/src/cli-quota.ts` |
 | 路径、项目文件夹、会话文件夹与工作树 | `apps/host/src/paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`data-entries.ts` |
 | 风险分级、会话文件裁决 | `apps/host/src/risk.ts`、`files/` |
-| 模型网关、用量与预算、工具网关 | `apps/host/src/model-gateway.ts`、`model-gateway/`、`model-usage.ts`、`model-budgets.ts`、`tool-gateway.ts` |
+| 模型网关、用量与预算、工具网关 | `apps/host/src/model-gateway.ts`、`model-gateway/`、`model-usage.ts`、`turn-usage.ts`、`usage-stats.ts`、`model-budgets.ts`、`tool-gateway.ts` |
 | `host.json`、数据目录锁、经 `host.sock` 核对 Host | `apps/host/src/host-state.ts` |
 | 多 Harness 路由、会话元数据与回执、权限级别、生命周期事件 | `apps/host/src/hub.ts`、`session-meta.ts`、`harness-trust.ts`、`session-lifecycle.ts` |
 | 内置插件 | `apps/host/src/plugins/`：`providers/{openai-compatible,openai-responses,anthropic,demo}`（共用 `http.ts`、`service.ts` 与三个 `*-wire.ts`）、`tools/{workspace-files,safe-tools,questions,browser}`、`standard` |
@@ -438,6 +438,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义与环境变量、首次准备状态（0600） |
 | `providers.json` | 模型服务、密钥及其绑定的源与路径、「出错时改用」与「同时请求」上限（0600）；`provider.json` 是只在首次启动时迁移、不被修改的单一配置 |
 | `gateway/` | 用量账本、汇总与预算（[MODEL-GATEWAY.md](./MODEL-GATEWAY.md#用量账本)） |
+| `usage/` | 网关以外的轮次：自己登录与插件服务（[MODEL-GATEWAY.md](./MODEL-GATEWAY.md#网关以外的轮次)） |
 | `mcp/servers.json`、`mcp/secrets.json`、`mcp-ended.json` | MCP 服务器定义与秘密值（目录 0700、文件 0600）、登录已结束但令牌未删净的服务器 ID（[MCP.md](./MCP.md)） |
 | `customization.json` | 外观的修订与写入回执（[CUSTOMIZATION.md](CUSTOMIZATION.md)） |
 | `sessions-meta.json` | Host 为每个会话保存的元数据：标题覆盖、置顶、归档、所属项目、会话文件夹或工作树、分叉来源、接入来源、Agent 归属、绑定的 PR，以及审批、取消、交付与配置修改的回执 |
@@ -607,7 +608,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /tasks/:id/config`、`GET /tasks/:id/config-requests/:requestId`、`POST …/check` | 修改与核对 `run`；查询为原设备的 `view` | 见「会话配置修改回执」 |
 | `PATCH`/`DELETE /tasks/:id/queue/:itemId`、`POST …/send` | `run` | 见「排队输入」 |
 | `POST /tasks/:id/questions/:questionId/answer` | `run` | 见「Agent 提问」 |
-| `POST /search`、`POST /usage` | `view` | 见「会话搜索与批处理」「用量汇总」 |
+| `POST /search` | `view` | 见「会话搜索与批处理」 |
 | `GET /prompts`；`PUT`/`DELETE /prompts/:id` | 读 `view`；写 `admin` | 见「提示模板」 |
 | `GET /tasks/:id/worktree`、`POST …/remove`、`GET /workspaces/:id/worktree`、`/workspaces/:id/worktrees…` | `run` | 工作树（[BRANCHES.md](BRANCHES.md)） |
 
@@ -629,7 +630,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `/ui-modules/:panelId/:sha256.mjs`、`/tasks/:id/ui-panels/:panelId` | `server.ts` | `view` | [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md) |
 | `/plugin-packages…` | `plugin-package-routes.ts` | 见文档 | [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md#应用内的自定义插件资产) |
 | `/mcp/servers…`、`/mcp/import` | `routes/mcp.ts` | 读 `view`；其余本机 `admin`，新增与放宽经本机确认 | [MCP.md](./MCP.md) |
-| `/model-usage`、`/model-spend`、`/model-prices`、`/model-budgets` | `model-usage-routes.ts` | 读 `view`，写 `admin`；Agent 预算另需 `all` | [MODEL-GATEWAY.md](./MODEL-GATEWAY.md#用量花费与预算) |
+| `/usage`、`/model-usage`、`/model-spend`、`/model-prices`、`/model-budgets` | `model-usage-routes.ts` | 读 `view`，写 `admin`；Agent 预算另需 `all` | [MODEL-GATEWAY.md](./MODEL-GATEWAY.md#汇总) |
 | `/customization…` | `routes/customization.ts` | 读 `view` 或匿名；写 `admin`；重置 `admin` 或匿名 | [CUSTOMIZATION.md](CUSTOMIZATION.md) |
 | `/harnesses/:id/(login-status\|login-terminal\|logout)` | `routes/agent-login.ts` | `run`；打开终端只在本机 | [HARNESSES.md](./HARNESSES.md#登录) |
 | `/host/update-window…` | `server.ts`、`update-window.ts` | 本机 `run` | [UPDATES.md](./UPDATES.md) |
@@ -738,15 +739,6 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 - `GET /link/api/prompts` 需要 `view`；`PUT`、`DELETE /prompts/:id` 需要 `admin`，写入前再次检查设备授权。
 - 稳定 ID 的 PUT 是完整替换，同一内容重试不新增记录；重复 DELETE 也成功，所以写超时可复用原 ID 与请求体。
 - 模板不修改权限、不执行工具、不自动发送；选择后只替换输入框里的词项，发送仍走正常的权限流程。
-
-## 用量汇总
-
-`catalog.features.usage` 声明 `POST /link/api/usage { period }`（与用量账本相同的 `month`、`7`、`30`、`90`），需要 `view`，异步读取前后重新检查授权。用量账本、花费与预算（`features.modelUsage`）见 [MODEL-GATEWAY.md](./MODEL-GATEWAY.md#用量花费与预算)。
-
-- Host 只统计期间内带有效时间的助手消息实际记录的 `usage`，按 Harness、该消息记录的模型服务与模型分组，不用会话当前模型替代缺失的身份。
-- 输入包含缓存、输出包含推理；细分字段只有同组每条记录都完整报告时才返回，否则省略并标 `partial`。真实零值保留。
-- 不推算价格，不把 Agent 的报告当账单。没有有效时间或计数的消息单独计数。
-- 读取预算五秒；Driver 不应答或部分会话不可用时返回部分结果与 `truncated`，不估计未读取的部分。
 
 ## 会话分叉
 

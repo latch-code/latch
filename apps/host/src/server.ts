@@ -111,6 +111,7 @@ import {
   type FileTrackingInput,
   type HarnessDriver,
   type HarnessSecurityEvent,
+  type HarnessTurnRecord,
   type MemoryProposalInput,
   type MemoryRecallInput,
   type MemoryRecallResult,
@@ -166,6 +167,7 @@ import { ModelRequestQueue } from './model-request-queue.ts'
 import { ModelScheduler } from './model-scheduler.ts'
 import { createModelMeter, ModelSpendStore } from './model-budgets.ts'
 import { UsageLedger } from './model-usage.ts'
+import { TurnLog, turnLine } from './turn-usage.ts'
 import { createModelUsageRoutes } from './model-usage-routes.ts'
 import { scheduledProvider, scheduledRequest, type ProviderCandidate } from './scheduled-provider.ts'
 import { readSessionSkills, type SessionSkill } from '@latch/protocol'
@@ -1705,6 +1707,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     })
     // One ledger and one set of budgets for the gateway and the built-in harness: usage metadata, never audit.
     const usageLedger = await UsageLedger.open(dataDir, { now, log })
+    const turnLog = await TurnLog.open(dataDir, { now, log })
     const modelSpend = await ModelSpendStore.open(dataDir)
     const modelMeter = createModelMeter({
       ledger: usageLedger,
@@ -1712,7 +1715,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       session: sessionId => {
         const agentId = sessionOwner(sessionId) ?? hub?.startingAgentId()
         const harness = hub?.ownerOf(sessionId)
-        return { ...(agentId ? { agentId } : {}), ...(harness ? { harness } : {}) }
+        const projectId = hub?.projectOf(sessionId)
+        return { ...(agentId ? { agentId } : {}), ...(harness ? { harness } : {}), ...(projectId ? { projectId } : {}) }
       },
       builtIn: STANDARD,
     })
@@ -2277,6 +2281,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const customization = await CustomizationStore.open(dataDir, { now, log })
     const modelUsageRoutes = createModelUsageRoutes<Caller>({
       ledger: usageLedger,
+      turns: turnLog,
       store: modelSpend,
       meter: modelMeter,
       now,
@@ -2285,6 +2290,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       seesAgents: caller => !!caller.device && devices.get(caller.device.id)?.dataScope === 'all',
       requireAgentData,
       sessions: () => harnessHub.listTasks(),
+      projects: () => new Set(['default', ...config.settings().workspaces.map(record => record.id)]),
       sessionVisible: (summary, seesAgents) =>
         harnessHub.ownerOf(summary.id) !== undefined && (seesAgents || (!privateSession(summary) && !harnessHub.agentPrivate(summary.id))),
       models: providerId => effectiveProvider(providerId)?.models,
@@ -2303,7 +2309,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       auditFailed,
     })
     const sessionRoutes = createSessionRoutes<Caller>({
-      now,
       templates: templateStore,
       changed: () => refresh(),
       list: async () => (await harnessHub.listTasks()).map(questionSummary),
@@ -5060,6 +5065,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             tmpRoot: runtime.tmpRoot,
             securityEvent,
             clock,
+            // Turns the gateway does not meter, for 额度与用量: an ACP Harness on its own login, and the built-in harness on
+            // a plugin's own provider. Saved services are in the ledger already; the demo model is counted nowhere.
+            turnEnded: (turn: HarnessTurnRecord) => {
+              const plugin = driver.id === STANDARD
+              if (plugin && (!turn.providerId || providerKindOf(turn.providerId) !== 'plugin')) return
+              if (!plugin && kindOf(driver) !== 'acp') return
+              const agentId = sessionOwner(turn.sessionId)
+              const projectId = turn.projectId ?? hub?.projectOf(turn.sessionId)
+              const line = turnLine(turn, {
+                harness: driver.id,
+                ...(agentId ? { agentId } : {}),
+                ...(projectId ? { projectId } : {}),
+                ...(plugin ? { via: 'plugin' as const } : {}),
+              })
+              if (line) turnLog.append(line)
+            },
             proposeMemory: input => proposeFromAgent(driver, input),
             proposeSchedule: input => proposeScheduleFromAgent(driver, input),
             // Only Latch 内置 searches memories: other Harnesses get them in their first-turn block, as before.
@@ -10458,6 +10479,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             () => modelGateway.close(),
             // Lines of requests that ended as the Host stops are written before it is gone.
             () => usageLedger.flushed(),
+            () => turnLog.flushed(),
             () => toolGateway?.close(),
             () => questions.close(),
             () => clearInterval(purgeTimer),

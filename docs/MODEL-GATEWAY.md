@@ -10,6 +10,9 @@ sources:
   - apps/host/src/model-usage.ts
   - apps/host/src/model-budgets.ts
   - apps/host/src/model-usage-routes.ts
+  - apps/host/src/turn-usage.ts
+  - apps/host/src/usage-stats.ts
+  - apps/host/src/usage-log.ts
   - packages/harness-acp/src/profiles
   - packages/harness-acp/src/runtime.ts
 ---
@@ -346,7 +349,7 @@ Host 每发出或拒绝一个模型请求，就在数据目录的 `gateway/usage
 | 字段 | 含义 |
 | --- | --- |
 | `at` | 请求到达的时间；跨月的请求算在到达的那个月 |
-| `sessionId`、`agentId`、`harness` | 会话、所属的 Agent（没有就不写）、运行它的 Harness；都来自 Host 自己的记录 |
+| `sessionId`、`agentId`、`projectId`、`harness` | 会话、所属的 Agent 与项目（没有就不写）、运行它的 Harness；都来自 Host 自己的记录 |
 | `providerId`、`model`、`used` | 回答的服务（没有回答时是最后问的那个，一个都没问时是会话自己的服务）、问它时用的模型名、它在回复里说的模型名 |
 | `outcome`、`attempts`、`fallback` | 结果（`USAGE_OUTCOMES`）、真正发给服务的次数、是否由备选回答 |
 | `firstByteMs`、`totalMs` | 到回复开始与到结束的时长 |
@@ -365,19 +368,32 @@ Host 每发出或拒绝一个模型请求，就在数据目录的 `gateway/usage
 
 **整轮绕过。** 一轮有回复而没有任何请求到网关时，会话标 bypassed 并写 `task.model.bypassed`。这只能发现整轮绕过，不能证明每个辅助调用都经过网关。
 
+### 网关以外的轮次
+
+会话不经模型路由（Harness 用自己的登录）时，每轮结束追加一行到 `usage/turns-YYYY-MM.jsonl`（`turn-usage.ts`，`turnLineSchema` strict）：`at`、`startedAt`、`sessionId`、`agentId`、`projectId`、`harness`、`model`（Harness 报的名字）、`steps`（工具调用数）、`activeMs`、Harness 报告的各类 tokens，与 `cost`（`source: agent`，Harness 自己按标价估的会话花费的本轮差值，只收美元与人民币，0 到 100 之间）。
+
+- 值就是这一轮的 `TurnStats.usage`（ACP 驱动的 `turnEnded`）：一次计算，会话与记录两处用。没有 tokens 的轮也写一行，轮数、步数与用时照算。
+- 有模型路由的会话一行都不写：它的请求已在账本里，不重复计。
+- 内置 Harness 用插件自己的模型服务（不经网关、不进账本）的轮次也写一行，带 `via: plugin` 与 `providerId`，tokens 是这一轮各步报告的和（`turnTokens`）；用已保存的模型服务的轮次在账本里，演示模型的轮次哪里都不记。汇总里它的来源是 `plugin`。
+- Harness 报的是会话累计而这一轮之前没有报过（接入的会话、晚开始报告的 Harness）时，除会话首轮外不写 tokens 与花费：差值里有 Latch 之前的用量。
+- 只算 Latch 自己跑的轮，从不读 CLI 自己的日志或存储。文件的写法、轮转、90 天删除与读取上限与账本相同（`usage-log.ts`）；删会话不删行。
+
 ### 汇总
 
-`POST /link/api/model-usage`（`view`）按 `period`（`month`、`7`、`30`、`90`）与 `group`（`session`、`agent`、`service`、`model`）汇总：请求数、失败数（放弃的不算）、备选次数、报告了用量的请求数与它们的和、花费。
+`POST /link/api/model-usage`（`view`）只读账本；`POST /link/api/usage`（`view`）读账本与网关以外的轮次，`by` 为 `gateway`、`own`、`plugin` 或 `all`，每行带 `by`，另给 `turns`、按项目的 tokens（`projects`）与同一模型在各 Harness 上每轮的 tokens（`compare`，只用网关以外的轮次，模型名去掉厂商前缀、大小写与日期后缀后比较）。两者的参数：
 
-- 只加服务真实报告的数。一行里没有任何请求报告用量时没有 `usage`（界面写「未报告」而不是 0）；有的请求没报告某一项（缓存读写、推理）时，这一项整行不给。
+- `period`：`1`（最近 24 个整点小时，按小时分桶）、`7`、`30`、`90`（按 Host 时区的日历日分桶，跨夏令时的一天仍是一天）。`day`：期间内某个桶的起点，把答复收窄到那一桶。
+- `group`：`harness`、`service`、`model`、`project`、`agent`、`session`。自己登录的轮次没有服务，按服务与按模型时归在它的 Harness 下。
+- 答复带 `buckets`、`series`（每桶按来源、Harness 与服务的请求数、轮数、tokens 与缓存读取；缓存命中只算报告了缓存读取的输入）与 `hours`（一周 168 小时的次数，周一 0 点起）。序列不含会话 ID。
+- 只加真实报告的数。一行里没有任何请求报告用量时没有 `usage`（界面写「未报告」而不是 0）；有的请求没报告某一项（缓存读写、推理）时，这一项整行不给。
 - 一次最多读 40 万行，超过时结果带 `truncated`。预算用的合计没有这个上限。
-- **会话按允许名单给。** 只有这台设备现在读得到的会话保留会话 ID；其余请求（读不了的、已删除的、没有会话的）照常计入合计，但并成一行、不带会话 ID。
+- **会话按允许名单给。** 只有这台设备现在读得到的会话保留会话 ID；其余（读不了的、已删除的、没有会话的）照常计入合计，但并成一行、不带会话 ID。项目只在仍在 Host 的项目列表中时给 ID。
 - 数据范围不是 `all` 的设备拿不到任何请求的 Agent ID，也看不到 Agent 的预算。
-- Host 读完账本才取当前会话名单，答复前复核设备权限、会话归属与私有状态。Web 收到权限变化的快照时立即撤下旧汇总与预算，取消在读的请求，再按当前权限重读。
+- Host 读完记录才取当前会话名单，答复前复核设备权限、会话归属与私有状态。Web 收到权限变化的快照时立即撤下旧汇总与预算，取消在读的请求，再按当前权限重读。
 
 ### 花费
 
-Latch 没有内置价格表，也不从 token 猜费用。花费只在两种情况下存在：
+Latch 没有内置价格表，也不从 token 猜费用。网关请求的花费只在下面两种情况下存在；自己登录的轮次只有 Harness 自己报告的估算（见上）：
 
 - **你给这个模型填了单价**（`source: prices`）：输入、缓存输入、缓存写入、输出四项，每百万 tokens，币种美元或人民币；缓存两项留空时按输入单价算。
 - **服务在回复里报告**（`source: reported`）：Chat Completions 与 Responses 回复的 `usage.cost`，按美元记。内置 Harness 的同两种连接器读同一个字段。

@@ -497,6 +497,16 @@ export class HarnessHub implements Bridge {
     return this.routes.get(sessionId)
   }
 
+  /**
+   * The project a session belongs to, from the Host's records; no driver is asked. A first turn may run before its
+   * start is recorded: the project being started then.
+   */
+  projectOf(sessionId: string): string | undefined {
+    const workspaceId = this.meta.get(sessionId)?.workspaceId ?? this.creatingTask.getStore()?.workspaceId
+    if (workspaceId !== undefined) return workspaceId
+    return this.routes.has(sessionId) ? projectIdOf({}) : undefined
+  }
+
   /** The harness that owns a session. */
   async harnessOf(sessionId: string): Promise<string> {
     return (await this.route(sessionId)).driver.id

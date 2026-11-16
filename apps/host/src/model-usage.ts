@@ -2,30 +2,24 @@
 // harness alike. A line says who asked, which service was asked for which model, how it ended, how long it took, the
 // tokens the service reported and what it cost when that is known. It never holds a request, a reply, a header or a key.
 // It is usage metadata, not audit: nothing here grants or records a permission.
-import { createReadStream } from 'node:fs'
-import { mkdir, open, readdir, readFile, stat, unlink } from 'node:fs/promises'
+import { mkdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { createInterface } from 'node:readline'
 import { z } from 'zod'
 import {
   COST_CURRENCIES,
   USAGE_OUTCOMES,
-  type CostAmount,
   type CostCurrency,
   type ModelPrices,
   type ModelUsageRow,
   type TokenUsage,
   type UsageGroup,
-  type UsageOutcome,
 } from '@latch/protocol'
 import { redactKnownSecrets, writeFileAtomic } from '@latch/core/node-kit'
+import { ledgerEntry, summarizeEntries } from './usage-stats.ts'
+import { appendLine, closeLastLine, DAY_MS, monthOf, pruneMonths, readMonths, scanLines } from './usage-log.ts'
 
-const DAY_MS = 86_400_000
-/** How long a request stays in the ledger. */
-const USAGE_KEEP_DAYS = 90
-/** Lines read for one summary; a period with more says so. The month's sums for budgets have no such limit. */
-const MAX_READ_LINES = 400_000
-const MAX_LINE_CHARS = 4096
+export { hostTimeZone, monthOf } from './usage-log.ts'
+
 const FILE = /^(?:usage-(\d{4})-(\d{2})\.jsonl|totals-(\d{4})-(\d{2})\.json)$/u
 
 const tokens = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
@@ -42,6 +36,8 @@ export const usageLineSchema = z.strictObject({
   at: z.string().datetime(),
   sessionId: z.string().min(1).max(256).optional(),
   agentId: z.string().min(1).max(128).optional(),
+  /** The session's project, from the Host's records when the request was made. */
+  projectId: z.string().min(1).max(128).optional(),
   harness: z.string().min(1).max(128),
   providerId: z.string().min(1).max(128),
   model: z.string().min(1).max(200),
@@ -59,20 +55,6 @@ export const usageLineSchema = z.strictObject({
   cost: z.strictObject({ micros: tokens, currency: z.enum(COST_CURRENCIES), source: z.enum(['reported', 'prices']) }).optional(),
 })
 export type UsageLine = z.infer<typeof usageLineSchema>
-
-/** `YYYY-MM` of a time, in the Host computer's own time: where a month begins and ends for the ledger and for budgets. */
-export function monthOf(at: number): string {
-  const date = new Date(at)
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-}
-
-/** The first instant of a month, and of the month after it, in the Host computer's own time. */
-export function monthBounds(month: string): { start: number; end: number } {
-  const [year, index] = month.split('-').map(Number) as [number, number]
-  return { start: new Date(year, index - 1, 1).getTime(), end: new Date(year, index, 1).getTime() }
-}
-
-export const hostTimeZone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 
 /**
  * What a month used so far under one key: a service or an Agent. Cost by currency, in millionths. `sent` counts the
@@ -155,8 +137,6 @@ const totalsSchema = z.strictObject({
   bytes: tokens,
   use: z.record(z.string().min(1).max(160), z.strictObject({ tokens, cost: perCurrency, sent: tokens, costed: perCurrency })),
 })
-
-const missing = (error: unknown): boolean => !!error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
 
 /** Adds one line to a month's sums. */
 function countLine(use: Map<string, MonthUse>, line: UsageLine): void {
@@ -276,29 +256,8 @@ export class UsageLedger {
     await writeFileAtomic(this.totalsPath(month), JSON.stringify({ version: TOTALS_VERSION, month, bytes, use: Object.fromEntries(use) }))
   }
 
-  /** A file whose last line a crash cut short gets its newline, so the next line is a line of its own. */
-  private async closeLastLine(path: string): Promise<void> {
-    if (this.ended.has(path)) return
-    let handle
-    try {
-      handle = await open(path, 'r+')
-    } catch (error) {
-      if (missing(error)) this.ended.add(path)
-      return
-    }
-    try {
-      // A file from before, or one somebody copied in: the ledger's own mode again before it is read or added to.
-      await handle.chmod(0o600)
-      const { size } = await handle.stat()
-      if (size > 0) {
-        const last = Buffer.alloc(1)
-        await handle.read(last, 0, 1, size - 1)
-        if (last[0] !== 0x0a) await handle.write('\n', size)
-      }
-      this.ended.add(path)
-    } finally {
-      await handle.close()
-    }
+  private closeLastLine(path: string): Promise<void> {
+    return closeLastLine(path, this.ended)
   }
 
   /** Moves on once the Host computer's own time is in another month: that month's own sums, read from its files. */
@@ -338,14 +297,7 @@ export class UsageLedger {
       .then(async () => {
         const persisted = this.persistedMonths.get(month) ?? (await this.stored(month))
         await this.closeLastLine(path)
-        const handle = await open(path, 'a', 0o600)
-        let size: number
-        try {
-          await handle.appendFile(`${JSON.stringify(line)}\n`)
-          size = (await handle.stat()).size
-        } finally {
-          await handle.close()
-        }
+        const size = await appendLine(path, line)
         this.ended.add(path)
         countLine(persisted, line)
         await this.writeTotals(month, persisted, size)
@@ -366,136 +318,38 @@ export class UsageLedger {
 
   /** Removes the files of months that ended more than 90 days ago; a file that is not the ledger's is left alone. */
   async prune(): Promise<void> {
-    const oldest = this.now() - USAGE_KEEP_DAYS * DAY_MS
-    for (const name of await readdir(this.directory).catch(() => [])) {
-      const match = FILE.exec(name)
-      if (!match) continue
-      const month = `${match[1] ?? match[3]}-${match[2] ?? match[4]}`
-      if (monthBounds(month).end > oldest) continue
-      await unlink(join(this.directory, name)).catch(() => {})
+    const removed = await pruneMonths(
+      this.directory,
+      name => {
+        const match = FILE.exec(name)
+        return match ? `${match[1] ?? match[3]}-${match[2] ?? match[4]}` : undefined
+      },
+      this.now(),
+    )
+    for (const month of removed) {
       this.months.delete(month)
       this.persistedMonths.delete(month)
     }
   }
 
   /** Every readable line of a month's file, one at a time; resolves with how many could not be read. */
-  private async scan(month: string, each: (line: UsageLine) => boolean | void): Promise<number> {
-    let skipped = 0
-    const stream = createReadStream(this.path(month), { encoding: 'utf8' })
-    try {
-      for await (const text of createInterface({ input: stream, crlfDelay: Infinity })) {
-        if (!text) continue
-        let parsed: unknown
-        try {
-          parsed = text.length > MAX_LINE_CHARS ? undefined : JSON.parse(text)
-        } catch {
-          parsed = undefined
-        }
-        const line = usageLineSchema.safeParse(parsed)
-        if (!line.success) skipped++
-        else if (each(line.data) === false) break
-      }
-    } catch (error) {
-      if (!missing(error)) skipped++
-    } finally {
-      stream.destroy()
-    }
-    return skipped
+  private scan(month: string, each: (line: UsageLine) => boolean | void): Promise<number> {
+    return scanLines(this.path(month), usageLineSchema, each)
   }
 
   /** The lines of requests that arrived in `[from, to]`, never older than 90 days, with how many could not be read. */
   async read(from: number, to: number): Promise<{ lines: UsageLine[]; skipped: number; truncated: boolean }> {
     await this.tail
-    const start = Math.max(from, this.now() - USAGE_KEEP_DAYS * DAY_MS)
-    const months: string[] = []
-    for (let month = monthOf(start); month <= monthOf(to);) {
-      months.push(month)
-      month = monthOf(monthBounds(month).end)
-    }
-    const result = { lines: [] as UsageLine[], skipped: 0, truncated: false }
-    for (const month of months) {
-      result.skipped += await this.scan(month, line => {
-        const at = Date.parse(line.at)
-        if (at < start || at > to) return true
-        if (result.lines.length >= MAX_READ_LINES) {
-          result.truncated = true
-          return false
-        }
-        result.lines.push(line)
-        return true
-      })
-    }
-    return result
+    return readMonths(month => this.path(month), usageLineSchema, from, to, this.now())
   }
 }
-
-const PARTS = ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
-
-function keyOf(line: UsageLine, group: UsageGroup): Pick<ModelUsageRow, 'sessionId' | 'agentId' | 'providerId' | 'model'> {
-  if (group === 'session') return line.sessionId ? { sessionId: line.sessionId } : {}
-  if (group === 'agent') return line.agentId ? { agentId: line.agentId } : {}
-  if (group === 'service') return { providerId: line.providerId }
-  return { providerId: line.providerId, model: line.model }
-}
-
-const FAILED: ReadonlySet<UsageOutcome> = new Set(USAGE_OUTCOMES.filter(outcome => outcome !== 'ok' && outcome !== 'aborted'))
 
 /**
  * Groups ledger lines. Only what the services reported is summed: a row none of whose requests reported tokens has no
  * `usage` at all, and a part some measured request left out is dropped from the row instead of being shown short.
  */
 export function summarizeUsage(lines: readonly UsageLine[], group: UsageGroup): ModelUsageRow[] {
-  const rows = new Map<string, ModelUsageRow & { costs: Map<CostCurrency, CostAmount> }>()
-  for (const line of lines) {
-    const key = keyOf(line, group)
-    const id = JSON.stringify([key.sessionId ?? null, key.agentId ?? null, key.providerId ?? null, key.model ?? null])
-    let row = rows.get(id)
-    if (!row) {
-      row = {
-        ...key,
-        requests: 0,
-        failed: 0,
-        fallbacks: 0,
-        measured: 0,
-        partial: { cacheReadTokens: false, cacheWriteTokens: false, reasoningTokens: false },
-        cost: [],
-        uncosted: 0,
-        costs: new Map(),
-      }
-      rows.set(id, row)
-    }
-    row.requests++
-    if (FAILED.has(line.outcome)) row.failed++
-    if (line.fallback) row.fallbacks++
-    if (line.inputTokens !== undefined && line.outputTokens !== undefined) {
-      const first = row.usage === undefined
-      const usage = (row.usage ??= { inputTokens: 0, outputTokens: 0 })
-      row.measured++
-      usage.inputTokens += line.inputTokens
-      usage.outputTokens += line.outputTokens
-      for (const part of PARTS) {
-        const value = line[part]
-        if (value === undefined || row.partial[part]) {
-          row.partial[part] = true
-          delete usage[part]
-        } else if (first || usage[part] !== undefined) usage[part] = (usage[part] ?? 0) + value
-      }
-      if (!line.cost) row.uncosted++
-    }
-    if (line.cost) {
-      let amount = row.costs.get(line.cost.currency)
-      if (!amount) row.costs.set(line.cost.currency, (amount = { currency: line.cost.currency, micros: 0 }))
-      amount.micros += line.cost.micros
-      if (line.cost.source === 'prices') amount.priced = true
-    }
-  }
-  return [...rows.values()]
-    .map(({ costs, ...row }) => ({ ...row, cost: [...costs.values()] }))
-    .toSorted(
-      (a, b) =>
-        (b.usage ? b.usage.inputTokens + b.usage.outputTokens : -1) - (a.usage ? a.usage.inputTokens + a.usage.outputTokens : -1)
-        || b.requests - a.requests,
-    )
+  return summarizeEntries(lines.map(ledgerEntry), group).map(({ by: _by, turns: _turns, ...row }) => row)
 }
 
 /** A model's name as a line keeps it: without anything that looks like a secret, cut to length. */

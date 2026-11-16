@@ -1,6 +1,5 @@
 import type { HarnessLoginStatus } from './harnesses.ts'
 import type { TokenUsage } from './types.ts'
-import type { UsagePeriod } from './model-usage.ts'
 
 /** Optional feature discovery; older Hosts omit these fields. */
 export interface HostFeatures {
@@ -90,28 +89,6 @@ export interface PromptTemplate {
   name: string
   content: string
   scope: { kind: 'all' } | { kind: 'project'; id: string } | { kind: 'agent'; id: string }
-}
-
-/**
- * `POST /link/api/usage`: tokens the sessions' own messages carry, as each Harness or provider reported them, over a
- * period of the gateway ledger's (`UsagePeriod`). Never priced.
- */
-export interface UsageSummary {
-  period: UsagePeriod
-  from: string
-  to: string
-  rows: Array<{
-    harnessId: string
-    providerId?: string
-    model?: string
-    source: 'provider' | 'agent'
-    messages: number
-    usage: TokenUsage
-    /** A missing/invalid/overflowing contribution omits this split from usage instead of publishing a partial sum. */
-    partial: Record<'cacheReadTokens' | 'cacheWriteTokens' | 'reasoningTokens', boolean>
-  }>
-  unattributedMessages: number
-  truncated: boolean
 }
 
 /** The longest a test start runs on the Host: the handshake, then the login and version reads in the time left. */

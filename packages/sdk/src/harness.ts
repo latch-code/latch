@@ -9,6 +9,7 @@ import type {
   ModelCapabilities,
   RiskLevel,
   RoutedTurn,
+  TokenUsage,
   ToolKind,
 } from '@latch/protocol/types'
 
@@ -227,6 +228,14 @@ export interface HarnessHostOptions {
    * not go unrecorded.
    */
   securityEvent?(event: HarnessSecurityEvent): void | Promise<void>
+  /**
+   * A turn settled whose model calls the gateway's ledger does not hold: an ACP session on the Harness's own login (no
+   * model route), or a built-in turn on a provider (`providerId`) the Host does not meter. `usage` is the turn's own
+   * (`TurnStats.usage` for ACP), left out when it cannot be told apart from what the session used before Latch ran it.
+   * `cost` is the turn's part of what the Harness said its login cost. A turn on a route is never reported here: the
+   * gateway counted its requests. The Host decides what to keep and only appends it to its record.
+   */
+  turnEnded?(turn: HarnessTurnRecord): void
   /** Milliseconds since the epoch for the times a driver records on messages and runs. Default `Date.now`. */
   clock?: () => number
   /** Drivers that declare `models.wires`: the Host's forwarding to its model services. */
@@ -266,6 +275,24 @@ export interface HarnessHostOptions {
   askUser?(input: AskUserInput): Promise<{ text: string }>
   /** `unknown`: the row's result could not be written; the device that answered is told so, not that it is done. */
   questionSettled?(context: { sessionId: string; callId: string; state: 'completed' | 'failed' | 'cancelled' | 'unknown' }): Promise<void>
+}
+
+/** One settled own-login turn, for the Host's usage record. Times are ISO strings. */
+export interface HarnessTurnRecord {
+  sessionId: string
+  startedAt: string
+  endedAt: string
+  activeMs?: number
+  /** Tool calls the agent made in the turn. */
+  steps: number
+  /** The model as the Harness named it. */
+  model?: string
+  /** The session's project, as the session records it. */
+  projectId?: string
+  /** The built-in harness: the provider the turn ran on. */
+  providerId?: string
+  usage?: TokenUsage
+  cost?: { amount: number; currency: string }
 }
 
 /** A schedule an agent proposed through `propose_schedule`. Only `name`, `plan` and `prompt` come from the agent. */

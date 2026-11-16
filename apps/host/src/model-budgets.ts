@@ -276,8 +276,8 @@ export interface ModelMeter {
 interface ModelMeterDeps {
   ledger: UsageLedger
   store: ModelSpendStore
-  /** The Agent a session belongs to, when it has one, and the Harness that runs it, from the Host's own records. */
-  session(sessionId: string): { agentId?: string; harness?: string }
+  /** The Agent a session belongs to, when it has one, its project and the Harness that runs it, from the Host's own records. */
+  session(sessionId: string): { agentId?: string; harness?: string; projectId?: string }
   /** The Harness a request without a session is counted under. */
   builtIn: string
 }
@@ -314,6 +314,7 @@ export function createModelMeter(deps: ModelMeterDeps): ModelMeter & { progress(
         at: new Date(record.at).toISOString(),
         ...(record.sessionId ? { sessionId: record.sessionId.slice(0, 256) } : {}),
         ...(owner.agentId ? { agentId: owner.agentId.slice(0, 128) } : {}),
+        ...(owner.projectId ? { projectId: owner.projectId.slice(0, 128) } : {}),
         harness: (owner.harness ?? deps.builtIn).slice(0, 128),
         providerId: record.providerId.slice(0, 128),
         model,

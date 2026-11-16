@@ -48,6 +48,7 @@ import {
   type MemoryRecallInput,
   type MemoryRecallResult,
   type ScheduleProposalInput,
+  type HarnessTurnRecord,
 } from '@latch/sdk'
 import { errorCodeOf, HOST_STOPPED, interruptedNote, runEndRecord } from './run-end.ts'
 import { isoTime, ReasoningTimer, RunClock } from './node-kit/timing.ts'
@@ -136,6 +137,8 @@ export interface RuntimeOptions {
   store?: RuntimeStore
   /** Milliseconds since the epoch for every recorded time. Default `Date.now`. */
   clock?: () => number
+  /** A settled turn, with its provider, for the Host's usage record of what its gateway did not meter. */
+  turnEnded?(turn: HarnessTurnRecord): void
   /**
    * Where `propose_memory` sends what it proposes, for runs whose context has `proposals`. Without it no run offers the
    * tool. The Host keeps a proposal pending; it never becomes a memory without the person.
@@ -530,6 +533,29 @@ function capped(text: string, limit = 1000): string {
 
 function workspaceChanged(): AppError {
   return new AppError(409, 'workspace-changed', '这个会话使用的文件夹已不在项目中或找不到了，不能继续。请新建会话。')
+}
+
+/**
+ * The tokens of a turn's model steps, as their providers reported them: a part only when every measured step reported
+ * it. Undefined when no step reported any.
+ */
+export function turnTokens(messages: readonly Message[]): TokenUsage | undefined {
+  let total: TokenUsage | undefined
+  for (const message of messages) {
+    if (message.role !== 'assistant' || !message.usage) continue
+    const usage = message.usage
+    if (!total) {
+      total = { ...usage }
+      continue
+    }
+    total.inputTokens += usage.inputTokens
+    total.outputTokens += usage.outputTokens
+    for (const part of ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const) {
+      if (total[part] !== undefined && usage[part] !== undefined) total[part] += usage[part]
+      else delete total[part]
+    }
+  }
+  return total
 }
 
 export function createRuntime(options: RuntimeOptions): Bridge {
@@ -1536,6 +1562,29 @@ class HarnessRuntime implements Bridge {
   }
 
   /** The times and model of an assistant step's message. */
+  /** A settled turn for the Host's usage record: its provider, times, tool calls and the tokens its steps reported. */
+  private reportTurn(task: StoredTask, run: Run, prompt: Message): void {
+    if (!this.options.turnEnded || !prompt.turn?.endedAt) return
+    const index = task.messages.indexOf(prompt)
+    const turn = index >= 0 ? task.messages.slice(index + 1) : []
+    const usage = turnTokens(turn)
+    try {
+      this.options.turnEnded({
+        sessionId: task.summary.id,
+        startedAt: isoTime(run.clock.startedAt),
+        endedAt: prompt.turn.endedAt,
+        ...(prompt.turn.activeMs !== undefined ? { activeMs: prompt.turn.activeMs } : {}),
+        steps: turn.filter(message => message.role === 'tool').length,
+        model: run.model,
+        providerId: run.providerId,
+        ...(task.summary.workspaceId ? { projectId: task.summary.workspaceId } : {}),
+        ...(usage ? { usage } : {}),
+      })
+    } catch {
+      // The record is the Host's; a failure there never touches the session.
+    }
+  }
+
   private stepTimes(run: Run, step: LiveStep, completedAt: string, reasoningMs: number | undefined): Partial<Message> {
     return {
       createdAt: isoTime(step.createdAt),
@@ -1752,8 +1801,10 @@ class HarnessRuntime implements Bridge {
               createdAt: at,
             })
           const prompt = task.messages.find(message => message.id === run.userMessageId)
-          if (prompt)
+          if (prompt) {
             prompt.turn = { ...run.clock.turn(), ...(run.routed ? { routed: run.routed } : {}), ...(run.spend ? { spend: run.spend } : {}) }
+            this.reportTurn(task, run, prompt)
+          }
           const result = this.fileTracking.capture(run.id)
           if (result) {
             const turn = task.messages.slice(

@@ -79,6 +79,8 @@ const caps = new Set((capsFile ?? env.FAKE_ACP_CAPS ?? '').split(',').filter(Boo
 const stateFile = env.FAKE_ACP_STATE
 const logFile = env.FAKE_ACP_LOG
 const END = { stopReason: 'end_turn' }
+/** 「plan」 turns this process answered, for a session cost that grows turn by turn. */
+let planned = 0
 /** Delay before exiting on stdin end, like an agent flushing its state. */
 const exitDelay = Number(env.FAKE_ACP_EXIT_DELAY ?? 0)
 /** Delay for session/load, and for session/new once FAKE_ACP_STATE already holds a session (of any process). */
@@ -1997,7 +1999,14 @@ const scenarios = {
       ],
     })
     update(sessionId, { sessionUpdate: 'session_info_update', title: 'Fake title' })
-    update(sessionId, { sessionUpdate: 'usage_update', used: 10, size: 100 })
+    // FAKE_ACP_COST: what the session has cost so far grows by this much each 「plan」, as an agent's own estimate does.
+    planned++
+    update(sessionId, {
+      sessionUpdate: 'usage_update',
+      used: 10,
+      size: 100,
+      ...(env.FAKE_ACP_COST ? { cost: { amount: Number(env.FAKE_ACP_COST) * planned, currency: 'USD' } } : {}),
+    })
     update(sessionId, {
       sessionUpdate: 'available_commands_update',
       availableCommands: env.FAKE_ACP_COMMANDS_FILE

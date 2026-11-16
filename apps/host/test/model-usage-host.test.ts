@@ -14,11 +14,13 @@ import type {
   ModelUsageSummary,
   ProviderSettings,
   TaskDetail,
+  UsageSummary,
+  WorkspaceInfo,
 } from '@latch/protocol'
-import { AppError } from '@latch/sdk'
+import { AppError, type ModelProvider } from '@latch/sdk'
 import { sha256Hex } from '@latch/core/node-kit'
 import { createAcpAgentPlugin } from '@latch/harness-acp'
-import { startFakeModels, type FakeModels, type FakeReply, type TestDevice } from '@latch/testkit'
+import { FAKE_ACP_AGENT, startFakeModels, type FakeModels, type FakeReply, type TestDevice } from '@latch/testkit'
 import { HarnessHub } from '../src/hub.ts'
 import { ModelSpendStore } from '../src/model-budgets.ts'
 import { UsageLedger } from '../src/model-usage.ts'
@@ -122,8 +124,16 @@ const put = async (device: TestDevice, path: string, body: unknown) => {
   return { status: response.status, body: (await response.json()) as { error?: string } }
 }
 
-const usage = (device: TestDevice, group: string, period = 'month') =>
+const usage = (device: TestDevice, group: string, period = '30') =>
   device.json<ModelUsageSummary>('model-usage', { method: 'POST', body: { period, group } })
+const allUsage = (device: TestDevice, group: string, by = 'all') =>
+  device.json<UsageSummary>('usage', { method: 'POST', body: { period: '7', group, by } })
+
+const turnsText = async (t: TestHost): Promise<string> => {
+  const dir = join(t.dataDir, 'usage')
+  const names = await readdir(dir).catch(() => [] as string[])
+  return (await Promise.all(names.map(name => readFile(join(dir, name), 'utf8')))).join('')
+}
 
 describe('usage, prices and budgets in the Host', () => {
   it('writes a built-in turn into the ledger, sums it four ways for any device, and keeps it out of audit', async () => {
@@ -448,9 +458,10 @@ describe('usage, prices and budgets in the Host', () => {
     expect((await desktop.request(`tasks/${gone}`, { method: 'DELETE' })).status).toBeLessThan(300)
     await desktop.json(`devices/${admin.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
     const limited = admin
-    for (const group of ['session', 'agent', 'service', 'model']) {
-      const text = JSON.stringify(await usage(limited, group))
-      for (const hidden of [topic, gone, agent.id, left.id]) expect(text, group).not.toContain(hidden)
+    for (const group of ['session', 'agent', 'service', 'model', 'harness', 'project']) {
+      // Both routes take the same path: the ledger alone, and the ledger with the own-login turns.
+      for (const text of [JSON.stringify(await usage(limited, group)), JSON.stringify(await allUsage(limited, group))])
+        for (const hidden of [topic, gone, agent.id, left.id]) expect(text, group).not.toContain(hidden)
     }
     // Its own session by name; the two private ones, the deleted one among them, in one row without a name.
     const sessions = (await usage(limited, 'session')).rows
@@ -470,6 +481,145 @@ describe('usage, prices and budgets in the Host', () => {
     const agents = (await usage(desktop, 'agent')).rows
     expect(agents.find(row => row.agentId === agent.id)).toMatchObject({ requests: 1 })
     expect(agents.find(row => row.agentId === left.id)).toMatchObject({ requests: 1 })
+  })
+
+  it('records an own-login turn once beside the gateway’s requests, and names its session and project only while they may be read', async () => {
+    const fake = await models([{ text: 'one' }])
+    const { t, desktop, admin, service } = await host()
+    const first = await service('First', `${fake.origin}/v1`)
+    await desktop.confirmedJson('agents', {
+      method: 'POST',
+      body: {
+        id: 'fake-agent',
+        name: 'Fake Agent',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_LOG: join(t.root, 'acp.log'), FAKE_ACP_CONFIG: 'legacy' },
+      },
+    })
+    const folder = join(t.root, 'site')
+    await mkdir(folder, { recursive: true })
+    expect((await desktop.addFolders({ paths: [folder], name: 'site' })).status).toBeLessThan(300)
+    const project = (await desktop.json<{ workspaces: WorkspaceInfo[] }>('workspaces')).workspaces.find(item => item.name === 'site')!
+    const begun = await admin.request('tasks', {
+      method: 'POST',
+      body: {
+        prompt: PROMPT,
+        requestId: randomUUID(),
+        mode: 'chat',
+        harnessId: 'standard',
+        model: { providerId: first.id, model: 'fake-model' },
+        workspaceId: project.id,
+      },
+    })
+    const plain = ((await begun.json()) as { sessionId: string }).sessionId
+    await settled(admin, plain)
+    // The gateway's line carries the session's project too.
+    await vi.waitFor(async () => expect(JSON.parse(await ledgerText(t))).toMatchObject({ sessionId: plain, projectId: project.id }))
+    const started = await admin.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      // The fake answers 「plan」 with its usage.
+      body: { prompt: 'plan', requestId: randomUUID(), mode: 'agent', harnessId: 'fake-agent', workspaceId: project.id },
+    })
+    const own = started.sessionId
+    await settled(admin, own)
+    await vi.waitFor(async () => expect((await turnsText(t)).trim().split('\n')).toHaveLength(1))
+    const line = JSON.parse(await turnsText(t))
+    expect(line).toMatchObject({ sessionId: own, harness: 'fake-agent', projectId: project.id, inputTokens: 10, outputTokens: 20 })
+    expect(Object.keys(line).toSorted()).toEqual(
+      ['activeMs', 'at', 'harness', 'inputTokens', 'model', 'outputTokens', 'projectId', 'sessionId', 'startedAt', 'steps'].toSorted(),
+    )
+    // The built-in turn went through the gateway: it is in the ledger alone, the ACP turn in the turn record alone.
+    expect((await ledgerText(t)).trim().split('\n')).toHaveLength(1)
+    const harnesses = (await allUsage(admin, 'harness')).rows
+    expect(harnesses).toEqual([
+      expect.objectContaining({ by: 'own', harness: 'fake-agent', turns: 1, requests: 0, usage: { inputTokens: 10, outputTokens: 20 } }),
+      expect.objectContaining({ by: 'gateway', harness: 'standard', turns: 0, requests: 1 }),
+    ])
+    expect((await allUsage(admin, 'harness', 'own')).rows.map(row => row.by)).toEqual(['own'])
+    expect((await allUsage(admin, 'harness', 'gateway')).rows.map(row => row.by)).toEqual(['gateway'])
+    const summary = await allUsage(admin, 'project')
+    expect(summary.rows.find(row => row.by === 'own')).toMatchObject({ projectId: project.id, turns: 1 })
+    expect(summary.series.reduce((sum, point) => sum + point.turns + point.requests, 0)).toBe(2)
+    expect(summary.hours.reduce((sum, count) => sum + count, 0)).toBe(2)
+    // One day of the period: the same answer narrowed to it, by session.
+    const today = await admin.json<UsageSummary>('usage', {
+      method: 'POST',
+      body: { period: '7', group: 'session', by: 'all', day: summary.buckets.at(-1) },
+    })
+    expect(today.rows.map(row => row.sessionId).toSorted()).toEqual([own, plain].toSorted())
+    const refused = await admin.request('usage', {
+      method: 'POST',
+      body: { period: '7', group: 'session', by: 'all', day: '2020-01-01T00:00:00.000Z' },
+    })
+    expect(refused.status).toBe(400)
+    // Deleted, the session is still counted, without its name; a project removed is no longer named.
+    expect((await desktop.request(`tasks/${own}`, { method: 'DELETE' })).status).toBeLessThan(300)
+    expect((await desktop.request(`workspaces/${project.id}`, { method: 'DELETE' })).status).toBeLessThan(300)
+    const sessions = (await allUsage(admin, 'session')).rows
+    expect(sessions.find(row => row.by === 'own')).toMatchObject({ turns: 1 })
+    expect(sessions.find(row => row.by === 'own')).not.toHaveProperty('sessionId')
+    const text = JSON.stringify(await allUsage(admin, 'project'))
+    expect(text).not.toContain(project.id)
+    expect(text).not.toContain(own)
+  })
+
+  it('records a built-in turn on a plugin’s own provider as a turn of its own source, and nothing of the demo model', async () => {
+    const plugged: ModelProvider = {
+      id: 'plugged',
+      name: 'Plugged fixture',
+      model: 'plugged-model',
+      async *stream() {
+        yield { type: 'text', text: '好' }
+        yield { type: 'usage', inputTokens: 40, outputTokens: 4, cacheReadTokens: 30 }
+        yield { type: 'finish', reason: 'stop' }
+      },
+    }
+    const t = await startTestHost({
+      demo: false,
+      providerId: 'plugged',
+      plugins: [
+        { id: 'plugged', name: 'Plugged fixture', version: '1', description: 'fixture', activate: ctx => ctx.registerProvider(plugged) },
+      ],
+    })
+    cleanups.push(() => t.close())
+    const device = await t.enroll({ scopes: ['view', 'run'] })
+    const { sessionId } = await device.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: PROMPT, requestId: randomUUID(), mode: 'chat', harnessId: 'standard' },
+    })
+    await settled(device, sessionId)
+    await vi.waitFor(async () => expect((await turnsText(t)).trim().split('\n')).toHaveLength(1))
+    expect(JSON.parse(await turnsText(t))).toMatchObject({
+      sessionId,
+      harness: 'standard',
+      via: 'plugin',
+      providerId: 'plugged',
+      model: 'plugged-model',
+      inputTokens: 40,
+      outputTokens: 4,
+      cacheReadTokens: 30,
+    })
+    expect((await allUsage(device, 'harness', 'plugin')).rows).toEqual([
+      expect.objectContaining({
+        by: 'plugin',
+        harness: 'standard',
+        turns: 1,
+        usage: { inputTokens: 40, outputTokens: 4, cacheReadTokens: 30 },
+      }),
+    ])
+    expect((await allUsage(device, 'harness', 'own')).rows).toEqual([])
+
+    const demo = await startTestHost({ demo: true })
+    cleanups.push(() => demo.close())
+    const viewer = await demo.enroll({ scopes: ['view', 'run'] })
+    const started = await viewer.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: PROMPT, requestId: randomUUID(), mode: 'chat', harnessId: 'standard' },
+    })
+    await settled(viewer, started.sessionId)
+    expect(await turnsText(demo)).toBe('')
+    expect((await allUsage(viewer, 'harness')).rows).toEqual([])
   })
 
   it.each(['narrow', 'delete'] as const)(

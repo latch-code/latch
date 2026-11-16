@@ -15,16 +15,26 @@ import {
   type ModelSpendWrite,
   type ModelUsageSummary,
   type TaskSummary,
+  type UsagePeriod,
+  type UsageSummary,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { AuditActor, AuditLog } from './audit.ts'
 import { json, jsonBody } from './http-util.ts'
 import { budgetSchema, pricesSchema, type ModelSpendStore, type createModelMeter } from './model-budgets.ts'
-import { hostTimeZone, monthBounds, summarizeUsage, type UsageLedger } from './model-usage.ts'
+import { hostTimeZone, type UsageLedger } from './model-usage.ts'
+import type { TurnLog } from './turn-usage.ts'
+import { compareOf, ledgerEntry, periodBuckets, projectsOf, seriesOf, summarizeEntries, turnEntry, type UsageEntry } from './usage-stats.ts'
 
-const DAY_MS = 86_400_000
-const usageSchema = z.strictObject({ period: z.enum(USAGE_PERIODS), group: z.enum(USAGE_GROUPS) })
+const daySchema = z.string().datetime().optional()
+const usageSchema = z.strictObject({ period: z.enum(USAGE_PERIODS), group: z.enum(USAGE_GROUPS), day: daySchema })
+const allUsageSchema = z.strictObject({
+  period: z.enum(USAGE_PERIODS),
+  group: z.enum(USAGE_GROUPS),
+  by: z.enum(['gateway', 'own', 'plugin', 'all']),
+  day: daySchema,
+})
 const opaque = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$/u)
 const writeRequest = { requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u), baseRevision: z.number().int().nonnegative() }
 const priceInput = z.strictObject({
@@ -44,6 +54,7 @@ const budgetInput = z.strictObject({
 
 interface Options<Caller> {
   ledger: UsageLedger
+  turns: TurnLog
   store: ModelSpendStore
   meter: Pick<ReturnType<typeof createModelMeter>, 'progress'>
   now: () => number
@@ -58,6 +69,8 @@ interface Options<Caller> {
    */
   sessions(): Promise<TaskSummary[]>
   sessionVisible(summary: TaskSummary, seesAgents: boolean): boolean
+  /** The projects every device may see now, by ID; a use of any other project is counted without saying which. */
+  projects(): ReadonlySet<string>
   /** A saved service's models; undefined when there is no such service. */
   models(providerId: string): readonly string[] | undefined
   /** The configured primary and fallbacks when this Agent uses a saved service model. */
@@ -94,6 +107,48 @@ function widens(before: ModelBudget | undefined, after: Omit<ModelBudget, 'scope
 export function createModelUsageRoutes<Caller>(options: Options<Caller>) {
   const { ledger, store, meter } = options
   let busy = false
+  /** One read of the records at a time: a second is told to come back. */
+  async function exclusive(work: () => Promise<void>): Promise<void> {
+    if (busy) throw new AppError(429, 'rate-limited', '正在读取用量，请稍后再试。', { retryAfter: 1 })
+    busy = true
+    try {
+      await work()
+    } finally {
+      busy = false
+    }
+  }
+  /** The period's buckets and the instants it spans; narrowed to one bucket of it when `day` names one. */
+  function windowOf(period: UsagePeriod, day: string | undefined): { from: number; to: number; buckets: number[] } {
+    const to = options.now()
+    const buckets = periodBuckets(period, to)
+    if (day === undefined) return { from: buckets[0]!, to, buckets }
+    const index = buckets.indexOf(Date.parse(day))
+    if (index < 0) throw new AppError(400, 'usage-day-unknown', '这一天不在所选期间里。')
+    return { from: buckets[index]!, to: index + 1 < buckets.length ? buckets[index + 1]! - 1 : to, buckets }
+  }
+  /**
+   * What the caller may be told of each use. Only a session the caller may read now keeps its name; every other use is
+   * still counted, in sums that say neither which session nor, to a device that may not read Agents, which Agent. A
+   * project no longer listed is not named. Asked again right before the answer, so a device whose access just narrowed
+   * gets the narrower answer.
+   */
+  async function visible(caller: Caller, entries: UsageEntry[]): Promise<UsageEntry[]> {
+    const sessions = await options.sessions()
+    options.recheck(caller, 'view')
+    const agents = options.seesAgents(caller)
+    const shown = new Set(sessions.filter(summary => options.sessionVisible(summary, agents)).map(summary => summary.id))
+    const projects = options.projects()
+    return entries.map(entry => {
+      const { sessionId, agentId, projectId, ...rest } = entry
+      const known = sessionId !== undefined && shown.has(sessionId)
+      return {
+        ...rest,
+        ...(known && (agents || !agentId) ? { sessionId } : {}),
+        ...(agents && agentId ? { agentId } : {}),
+        ...(projectId && projects.has(projectId) ? { projectId } : {}),
+      }
+    })
+  }
   function requestIdentity<T extends ModelSpendWrite>(caller: Caller, path: string, input: T) {
     const { requestId, ...value } = input
     return {
@@ -121,38 +176,54 @@ export function createModelUsageRoutes<Caller>(options: Options<Caller>) {
         options.authorize(caller, 'view')
         const input = usageSchema.parse(await jsonBody(req))
         options.recheck(caller, 'view')
-        if (busy) throw new AppError(429, 'rate-limited', '正在读取用量，请稍后再试。', { retryAfter: 1 })
-        busy = true
-        try {
-          const to = options.now()
-          const from = input.period === 'month' ? monthBounds(ledger.currentMonth()).start : to - Number(input.period) * DAY_MS
-          const read = await ledger.read(from, to)
-          const sessions = await options.sessions()
-          options.recheck(caller, 'view')
-          const agents = options.seesAgents(caller)
-          const visible = new Set(sessions.filter(summary => options.sessionVisible(summary, agents)).map(summary => summary.id))
-          // Only a session the caller may read now keeps its name; every other request is still counted, in sums that
-          // say neither which session nor, to a device that may not read Agents, which Agent.
-          const lines = read.lines.map(line => {
-            const known = line.sessionId !== undefined && visible.has(line.sessionId)
-            if (known && (agents || !line.agentId)) return line
-            const { sessionId: _sessionId, agentId, ...rest } = line
-            return agents && agentId ? { ...rest, agentId } : rest
-          })
+        await exclusive(async () => {
+          const window = windowOf(input.period, input.day)
+          const read = await ledger.read(window.from, window.to)
+          const entries = await visible(caller, read.lines.map(ledgerEntry))
           const result: ModelUsageSummary = {
             period: input.period,
             group: input.group,
-            from: new Date(from).toISOString(),
-            to: new Date(to).toISOString(),
+            ...(input.day ? { day: input.day } : {}),
+            from: new Date(window.from).toISOString(),
+            to: new Date(window.to).toISOString(),
             timeZone: hostTimeZone(),
-            rows: summarizeUsage(lines, input.group),
+            rows: summarizeEntries(entries, input.group).map(({ by: _by, turns: _turns, ...row }) => row),
+            ...seriesOf(entries, window.buckets),
             skipped: read.skipped,
             truncated: read.truncated,
           }
           json(res, result)
-        } finally {
-          busy = false
-        }
+        })
+        return true
+      }
+      if (path === '/link/api/usage' && method === 'POST') {
+        options.authorize(caller, 'view')
+        const input = allUsageSchema.parse(await jsonBody(req))
+        options.recheck(caller, 'view')
+        await exclusive(async () => {
+          const window = windowOf(input.period, input.day)
+          const none = { lines: [], skipped: 0, truncated: false }
+          const requests = input.by === 'own' ? none : await ledger.read(window.from, window.to)
+          const turns = input.by === 'gateway' ? none : await options.turns.read(window.from, window.to)
+          const kept = turns.lines.map(turnEntry).filter(entry => input.by === 'all' || entry.by === input.by)
+          const entries = await visible(caller, [...requests.lines.map(ledgerEntry), ...kept])
+          const result: UsageSummary = {
+            period: input.period,
+            group: input.group,
+            by: input.by,
+            ...(input.day ? { day: input.day } : {}),
+            from: new Date(window.from).toISOString(),
+            to: new Date(window.to).toISOString(),
+            timeZone: hostTimeZone(),
+            rows: summarizeEntries(entries, input.group),
+            ...seriesOf(entries, window.buckets),
+            projects: projectsOf(entries),
+            compare: compareOf(entries),
+            skipped: requests.skipped + turns.skipped,
+            truncated: requests.truncated || turns.truncated,
+          }
+          json(res, result)
+        })
         return true
       }
       if (path === '/link/api/model-spend' && method === 'GET') {

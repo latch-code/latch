@@ -84,11 +84,15 @@ export function budgetState(used: number, limit: number): BudgetState | undefine
   return used >= limit ? 'over' : used >= limit * BUDGET_NEAR ? 'near' : undefined
 }
 
-/** An amount in millionths of `currency`. `priced`: some of it was worked out from prices the person entered. */
+/**
+ * An amount in millionths of `currency`. `priced`: some of it was worked out from prices the person entered.
+ * `estimated`: some of it is what a Harness said its own login cost, at list prices of its own.
+ */
 export interface CostAmount {
   currency: CostCurrency
   micros: number
   priced?: true
+  estimated?: true
 }
 
 /** What a turn's model requests cost, when known, and where a budget that covers them stood when the turn ended. */
@@ -119,23 +123,32 @@ export interface ModelSpendReceipt {
   replayed?: true
 }
 
-export const USAGE_PERIODS = ['month', '7', '30', '90'] as const
+/** The last 24 hours (by the hour), or the last 7, 30 or 90 days (by the day, in the Host computer's own time). */
+export const USAGE_PERIODS = ['1', '7', '30', '90'] as const
 export type UsagePeriod = (typeof USAGE_PERIODS)[number]
-export const USAGE_GROUPS = ['session', 'agent', 'service', 'model'] as const
+export const USAGE_GROUPS = ['harness', 'service', 'model', 'project', 'agent', 'session'] as const
 export type UsageGroup = (typeof USAGE_GROUPS)[number]
+/**
+ * Where a use was counted: a model service's request through Latch (`gateway`), a turn on a Harness's own login
+ * (`own`), or a built-in turn on a plugin's own provider (`plugin`), which the gateway does not meter.
+ */
+export const USAGE_SOURCES = ['gateway', 'own', 'plugin'] as const
+export type UsageSource = (typeof USAGE_SOURCES)[number]
 
 export interface ModelUsageRow {
-  /** What the row is of, by the grouping: a session, an Agent, a service, or a service's model. */
+  /** What the row is of, by the grouping: a Harness, a service, a service's model, a project, an Agent or a session. */
+  harness?: string
   sessionId?: string
   agentId?: string
   providerId?: string
   model?: string
+  projectId?: string
   requests: number
   /** Of `requests`, those that did not get a whole reply, the ones somebody gave up on aside. */
   failed: number
   /** Of `requests`, those a 「出错时改用」 service answered. */
   fallbacks: number
-  /** Of `requests`, those whose reply reported tokens; `usage` sums those. Absent `usage`: none did. */
+  /** Of `requests` (and of `turns`), those that reported tokens; `usage` sums those. Absent `usage`: none did. */
   measured: number
   usage?: TokenUsage
   /** A part some measured reply did not report: left out of `usage` rather than shown as a partial sum. */
@@ -146,10 +159,41 @@ export interface ModelUsageRow {
   uncosted: number
 }
 
-/** `POST /link/api/model-usage`: the ledger's requests of a period, grouped. */
-export interface ModelUsageSummary {
+/**
+ * One bucket's use by one Harness from one source (and, through the gateway, one service). Sessions are never named
+ * here. `cacheBase` is the input of the measured uses that reported cache reads: the cache-hit share is
+ * `cacheReadTokens / cacheBase`, never a guess over uses that did not say.
+ */
+export interface UsagePoint {
+  /** Index into `buckets`. */
+  bucket: number
+  by: UsageSource
+  harness: string
+  providerId?: string
+  requests: number
+  turns: number
+  measured: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheBase: number
+}
+
+/** Days (or, for `1`, hours) of a period with their uses, and the uses by hour of the week, all in the Host's time. */
+export interface UsageSeries {
+  /** Each bucket's first instant, oldest first, every bucket of the period present. */
+  buckets: string[]
+  series: UsagePoint[]
+  /** 168 counts, Monday 00:00 first: requests that arrived and turns that ended in each hour of the week. */
+  hours: number[]
+}
+
+/** `POST /link/api/model-usage`: the ledger's requests of a period (or of one of its buckets, `day`), grouped. */
+export interface ModelUsageSummary extends UsageSeries {
   period: UsagePeriod
   group: UsageGroup
+  /** The bucket the answer is narrowed to, when one was asked for. */
+  day?: string
   from: string
   to: string
   timeZone: string
@@ -157,5 +201,44 @@ export interface ModelUsageSummary {
   /** Ledger lines that could not be read and were left out. */
   skipped: number
   /** The period held more lines than are read at once. */
+  truncated: boolean
+}
+
+/** A row of `POST /link/api/usage`: one group's use from one source. */
+export interface UsageRow extends ModelUsageRow {
+  by: UsageSource
+  /** Turns of the own-login and plugin records; gateway requests are counted in `requests`. */
+  turns: number
+}
+
+/** Tokens a turn took on a Harness's own login, by model and Harness: what the same model costs in tokens on each. */
+export interface UsageCompare {
+  model: string
+  harness: string
+  turns: number
+  /** Of `turns`, those that reported tokens; the sums below are of those. */
+  measured: number
+  inputTokens: number
+  outputTokens: number
+}
+
+/**
+ * `POST /link/api/usage`: every use Latch ran over a period, from the gateway's ledger and the record of own-login turns
+ * (`by` says which; `all` both), grouped, with the series the charts draw, the share by project and the per-turn
+ * comparison of models across Harnesses.
+ */
+export interface UsageSummary extends UsageSeries {
+  period: UsagePeriod
+  group: UsageGroup
+  by: UsageSource | 'all'
+  day?: string
+  from: string
+  to: string
+  timeZone: string
+  rows: UsageRow[]
+  /** Tokens by project, largest first; a use of no project this device sees has no `projectId`. */
+  projects: Array<{ projectId?: string; turns: number; requests: number; tokens: number }>
+  compare: UsageCompare[]
+  skipped: number
   truncated: boolean
 }

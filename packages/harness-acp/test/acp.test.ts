@@ -14,6 +14,7 @@ import type {
   HarnessHostOptions,
   HarnessDriver,
   HarnessSecurityEvent,
+  HarnessTurnRecord,
   MemoryProposalInput,
   ScheduleProposalInput,
   HarnessPlugin,
@@ -147,6 +148,7 @@ async function setup(
     | 'proposeMemory'
     | 'proposeSchedule'
     | 'toolGateway'
+    | 'turnEnded'
   > = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'latch-acp-'))
@@ -2536,6 +2538,62 @@ describe('ACP turn mapping', () => {
     await bridge.close()
     const reopened = await fixture.open()
     expect(tool(await reopened.detail(sessionId), 'tool:1:call_1')?.tool?.diffs).toEqual(expected)
+  })
+
+  it('reports each own-login turn to the Host with the usage its prompt carries, a session total as the turn’s part', async () => {
+    const turns: HarnessTurnRecord[] = []
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy' }, {}, {}, { turnEnded: turn => void turns.push(turn) })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'plan', rid())
+    const detail = await settled(bridge, sessionId)
+    const prompts = detail.messages.filter(message => message.role === 'user')
+    expect(turns).toHaveLength(2)
+    expect(turns.map(turn => turn.usage)).toEqual(prompts.map(prompt => prompt.turn?.usage))
+    // The fake reports the session's total each time: the first turn is all of it, the second nothing more.
+    expect(turns.map(turn => turn.usage)).toEqual([
+      { inputTokens: 10, outputTokens: 20 },
+      { inputTokens: 0, outputTokens: 0 },
+    ])
+    for (const [index, turn] of turns.entries()) {
+      expect(turn).toMatchObject({ sessionId, endedAt: prompts[index]!.turn!.endedAt, activeMs: prompts[index]!.turn!.activeMs })
+      expect(Date.parse(turn.startedAt)).toBeLessThanOrEqual(Date.parse(turn.endedAt))
+      expect(turn.steps).toBe(0)
+    }
+  })
+
+  it('reports the turn’s part of the cost the Harness says its session has cost so far', async () => {
+    const turns: HarnessTurnRecord[] = []
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy', FAKE_ACP_COST: '0.25' }, {}, {}, { turnEnded: turn => void turns.push(turn) })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'plan', rid())
+    await settled(bridge, sessionId)
+    // The session's cost went 0.25, then 0.5: each turn is a quarter.
+    expect(turns.map(turn => turn.cost)).toEqual([
+      { amount: 0.25, currency: 'USD' },
+      { amount: 0.25, currency: 'USD' },
+    ])
+  })
+
+  it('leaves out a session total that has nothing before it to subtract, unless the turn is the session’s first', async () => {
+    const turns: HarnessTurnRecord[] = []
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy', FAKE_ACP_COST: '0.25' }, {}, {}, { turnEnded: turn => void turns.push(turn) })
+    const bridge = await fixture.open()
+    // The first turn reports nothing; the second reports the session's totals, which may hold more than this turn.
+    const { sessionId } = await bridge.createTask({ prompt: 'echo first', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'plan', rid())
+    const detail = await settled(bridge, sessionId)
+    expect(turns).toHaveLength(2)
+    expect(turns[0]).not.toHaveProperty('usage')
+    // The session shows what it was told; the record keeps only what is surely this turn's: its time and steps.
+    expect(detail.summary.usage).toEqual({ inputTokens: 10, outputTokens: 20 })
+    expect(turns[1]).not.toHaveProperty('usage')
+    expect(turns[1]).not.toHaveProperty('cost')
+    expect(turns[1]).toMatchObject({ sessionId, steps: 0 })
   })
 
   it('adds up the turns of a Harness that counts each turn, with its cached input put back in the input', async () => {
@@ -6335,7 +6393,13 @@ describe('sessions on a model service through the gateway', () => {
     }
   }
 
-  async function routed(presetId: string, env: Record<string, string>, route: Omit<ModelRoute, 'origin'>, options: AcpAgentOptions = {}) {
+  async function routed(
+    presetId: string,
+    env: Record<string, string>,
+    route: Omit<ModelRoute, 'origin'>,
+    options: AcpAgentOptions = {},
+    host: Pick<HarnessHostOptions, 'turnEnded'> = {},
+  ) {
     const models = await startFakeModels({ replies: [{ text: 'from the service' }] })
     cleanups.push(() => models.close())
     const stub = gateway(models)
@@ -6344,7 +6408,7 @@ describe('sessions on a model service through the gateway', () => {
       { ...env, FAKE_ACP_DUMP_ENV: '1' },
       { idleMs: 60_000, ...options },
       { presetId, ...(presetId === 'dsh' ? await dshCommand() : {}) },
-      { modelGateway: stub.access, securityEvent: event => void events.push(event) },
+      { modelGateway: stub.access, securityEvent: event => void events.push(event), ...host },
     )
     return { fixture, models, stub, events, route: { ...route, origin: models.origin } satisfies ModelRoute }
   }
@@ -6809,6 +6873,26 @@ describe('sessions on a model service through the gateway', () => {
     expect(models.requests).toHaveLength(0)
     await bridge.close()
     expect(stub.leases.every(lease => lease.closed)).toBe(true)
+  })
+
+  it('leaves a turn on a route out of the own-login record: the gateway counted its requests', async () => {
+    const turns: HarnessTurnRecord[] = []
+    const { fixture, route } = await routed(
+      'qwen',
+      QWEN,
+      { providerId: 'svc', model: 'fake-model', wire: 'responses' },
+      {},
+      {
+        turnEnded: turn => void turns.push(turn),
+      },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    // The gateway's ledger has its requests: the turn's own count is shown, never recorded a second time.
+    expect(detail.summary.status).toBe('idle')
+    expect(detail.messages.find(message => message.role === 'user')?.turn?.routed?.requests).toBe(1)
+    expect(turns).toEqual([])
   })
 
   it('says so when a Qwen Code turn on a route answered without the gateway', async () => {

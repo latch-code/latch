@@ -1,10 +1,9 @@
-import { USAGE_PERIODS, type DeviceScope, type SessionBatchResult, type TaskDetail, type TaskSummary } from '@latch/protocol'
+import { type DeviceScope, type SessionBatchResult, type TaskDetail, type TaskSummary } from '@latch/protocol'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { json, jsonBody } from './http-util.ts'
 import { templateSchema, type PromptTemplateStore } from './prompt-templates.ts'
-import { reportedUsage } from './usage.ts'
 import { SessionSearch } from './search.ts'
 
 const searchSchema = z.strictObject({ q: z.string().trim().min(1).max(200), limit: z.number().int().min(1).max(30).default(30) })
@@ -15,7 +14,6 @@ const batchSchema = z.strictObject({
 interface Options<Caller> {
   visible?(caller: Caller, summary: TaskSummary): boolean
   checkRead?(caller: Caller, id: string, write?: boolean): Promise<unknown>
-  now?: () => number
   templates: PromptTemplateStore
   changed(): void
   list(): Promise<TaskSummary[]>
@@ -31,28 +29,9 @@ interface Options<Caller> {
 
 export function createSessionRoutes<Caller>(options: Options<Caller>) {
   const search = new SessionSearch({ list: options.list, detail: options.detail })
-  let usageBusy = false
   let searchBusy = false
   return {
     async handle(req: IncomingMessage, res: ServerResponse, caller: Caller, path: string, method: string): Promise<boolean> {
-      if (path === '/link/api/usage' && method === 'POST') {
-        options.authorize(caller, 'view')
-        const input = z.strictObject({ period: z.enum(USAGE_PERIODS) }).parse(await jsonBody(req))
-        options.recheck(caller, 'view')
-        if (usageBusy) throw new AppError(429, 'rate-limited', '正在读取用量，请稍后再试。', { retryAfter: 1 })
-        usageBusy = true
-        try {
-          const result = await reportedUsage(
-            { ...options, list: async () => (await options.list()).filter(summary => options.visible?.(caller, summary) !== false) },
-            input.period,
-          )
-          options.recheck(caller, 'view')
-          json(res, result)
-        } finally {
-          usageBusy = false
-        }
-        return true
-      }
       if (path === '/link/api/prompts' && method === 'GET') {
         options.authorize(caller, 'view')
         json(res, { templates: options.templates.list() })

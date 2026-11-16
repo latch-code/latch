@@ -393,7 +393,9 @@ interface Run {
    */
   retry?: { id: string; interrupted: boolean; pending?: boolean; reason?: string; attempt?: { attempt: number; of: number } }
   /** The session's tokens before this turn, and this turn's as the Harness reported them (`TurnStats.usage`). */
-  tokens?: { base?: TokenUsage; turn?: TokenUsage; stream?: { outputTokens: number; ms: number } }
+  tokens?: { base?: TokenUsage; turn?: TokenUsage; stream?: { outputTokens: number; ms: number }; scope?: 'session' | 'turn' }
+  /** What the Harness said the session's login had cost when the turn began, for the turn's own part. */
+  costBase?: { amount: number; currency: string }
   done: Promise<void>
   resolveDone(): void
 }
@@ -4252,6 +4254,8 @@ export class AgentRuntime implements Bridge {
     }
     const before = this.state.tasks[taskId]?.summary.usage
     if (before) run.tokens = { base: structuredClone(before) }
+    const cost = this.state.tasks[taskId]?.usageReport?.cost
+    if (cost) run.costBase = { ...cost }
     this.runs.set(taskId, run)
     return run
   }
@@ -4272,15 +4276,53 @@ export class AgentRuntime implements Bridge {
     const base = run?.tokens?.base
     if (scope === 'session') {
       task.summary.usage = usage
-      if (run) run.tokens = { ...run.tokens, turn: subtractTokens(usage, base) }
+      if (run) run.tokens = { ...run.tokens, turn: subtractTokens(usage, base), scope }
     } else {
       task.summary.usage = addTokens(base, usage)
-      if (run) run.tokens = { ...run.tokens, turn: usage }
+      if (run) run.tokens = { ...run.tokens, turn: usage, scope }
     }
     if (run && stream) run.tokens = { ...run.tokens, stream }
     const prompt = run?.userMessageId === undefined ? undefined : task.messages.find(item => item.id === run.userMessageId)
     if (prompt?.role === 'user' && run?.tokens?.turn)
       prompt.turn = { ...prompt.turn, usage: run.tokens.turn, ...(run.tokens.stream ? { stream: run.tokens.stream } : {}) }
+  }
+
+  /**
+   * A settled turn on the Harness's own login, for the Host's usage record: the same turn usage the prompt now carries.
+   * A session total with nothing reported before this turn includes what the session used before Latch ran it (a
+   * session brought in, or a Harness that began reporting late): unless this is the session's first turn, its tokens and
+   * cost are left out rather than counted as this turn's.
+   */
+  private reportTurn(task: AcpTask, run: Run, prompt: Message): void {
+    if (!this.options.turnEnded || !prompt.turn?.endedAt) return
+    const index = task.messages.indexOf(prompt)
+    const first = index >= 0 && !task.messages.slice(0, index).some(message => message.role === 'user')
+    const turn = index >= 0 ? task.messages.slice(index + 1) : []
+    const usage = run.tokens?.turn && (run.tokens.scope !== 'session' || run.tokens.base || first) ? run.tokens.turn : undefined
+    const now = task.usageReport?.cost
+    const base = run.costBase
+    const cost =
+      now && (base ? base.currency === now.currency : first) && now.amount - (base?.amount ?? 0) >= 0
+        ? { amount: now.amount - (base?.amount ?? 0), currency: now.currency }
+        : undefined
+    const model =
+      turn.findLast(message => message.role === 'assistant' && message.model)?.model
+      ?? task.config?.find(option => option.category === 'model')?.currentValue
+    try {
+      this.options.turnEnded({
+        sessionId: task.summary.id,
+        startedAt: isoTime(run.clock.startedAt),
+        endedAt: prompt.turn.endedAt,
+        ...(prompt.turn.activeMs !== undefined ? { activeMs: prompt.turn.activeMs } : {}),
+        steps: turn.filter(message => message.role === 'tool' && !message.subagent).length,
+        ...(model ? { model } : {}),
+        ...(task.summary.workspaceId ? { projectId: task.summary.workspaceId } : {}),
+        ...(usage ? { usage } : {}),
+        ...(cost && cost.amount > 0 ? { cost } : {}),
+      })
+    } catch {
+      // The record is the Host's; a failure there never touches the session.
+    }
   }
 
   private release(run: Run): void {
@@ -4638,6 +4680,7 @@ export class AgentRuntime implements Bridge {
           ...(run.tokens?.turn ? { usage: run.tokens.turn } : {}),
           ...(run.tokens?.stream ? { stream: run.tokens.stream } : {}),
         }
+        if (!task.acp.route && run.sent) this.reportTurn(task, run, prompt)
       }
       const result = this.fileTracking.capture(run.id)
       if (result) {
