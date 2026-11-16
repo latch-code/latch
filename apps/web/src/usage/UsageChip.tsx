@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import type { HarnessInfo, QuotaState } from '@latch/protocol'
 import { AlertGlyph, Icon, Tooltip } from '@latch/ui'
 import { harnessName } from '../composerChoice.ts'
@@ -6,7 +7,7 @@ import { currentShell } from '../core/shell.ts'
 import { useModelSpend } from '../settings/ModelSpend.tsx'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
 import { budgetLimit, chipParts, harnessLimits, usedWords } from './limits.ts'
-import { openUsage, type UsageRequest } from './surface.ts'
+import { openUsage, refreshLimits, type UsageRequest } from './surface.ts'
 
 /**
  * The composer's one word on a limit, last before send: the tightest window by name and how much of it is used, a short
@@ -66,6 +67,11 @@ function LimitChip({
 /** A Harness on its own login: what its own program last said about its subscription; nothing when it said nothing. */
 export function HarnessLimitChip({ harness }: { harness: HarnessInfo }) {
   const now = useTicker(harness.quota ? 'minute' : false)
+  // Choosing a Harness is looking at it: its limits are asked for when missing or old.
+  const reports = harness.capabilities.models.quota === true && harness.offer === undefined
+  useEffect(() => {
+    if (reports) void refreshLimits([harness.id])
+  }, [reports, harness.id])
   const limits = harnessLimits(harness.quota, now)
   // A balance alone is not a limit: the composer says something only once the account cannot be used.
   if (!limits || (!limits.tightest && !limits.account)) return null

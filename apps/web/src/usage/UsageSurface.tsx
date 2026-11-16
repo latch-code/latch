@@ -1,13 +1,14 @@
 import { Fragment, useEffect, useState } from 'react'
 import type { AppSnapshot, HarnessInfo } from '@latch/protocol'
-import { Button, Modal, ModalHeader, SegmentedControl } from '@latch/ui'
+import { Button, Modal, ModalHeader, SegmentedControl, Spinner } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
+import { dateTime } from '../format.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { hostView, type DeviceAccess } from '../core/permissions.ts'
 import { LimitWindow } from './LimitWindow.tsx'
 import { harnessLimits, LIMIT_WORDS } from './limits.ts'
-import { closeUsage, openUsage, useUsageRequest, type UsageRequest, type UsageView as View } from './surface.ts'
+import { closeUsage, openUsage, refreshLimits, useUsageRequest, type UsageRequest, type UsageView as View } from './surface.ts'
 import { UsageView } from './UsageView.tsx'
 
 const VIEWS: ReadonlyArray<{ value: View; label: string }> = [
@@ -72,7 +73,7 @@ export function UsageSurface({
   if (!viewing || !request) return null
   return (
     <Modal label="额度与用量" variant={phone ? 'sheet' : 'dialog'} size="xl" className="usage-surface" onClose={closeUsage}>
-      <UsageBody key={audience} request={request} snapshot={snapshot} offline={offline} phone={phone} />
+      <UsageBody key={audience} request={request} snapshot={snapshot} offline={offline} phone={phone} asks={access.scopes.has('run')} />
     </Modal>
   )
 }
@@ -82,11 +83,14 @@ function UsageBody({
   snapshot,
   offline,
   phone,
+  asks,
 }: {
   request: UsageRequest
   snapshot: AppSnapshot
   offline: boolean
   phone: boolean
+  /** The device may have the limits asked for: the same right as starting a session. */
+  asks: boolean
 }) {
   const usageOffered = snapshot.catalog?.features?.modelUsage === true
   const view: View = usageOffered ? request.view : 'limits'
@@ -134,7 +138,7 @@ function UsageBody({
           </div>
         )}
         {view === 'limits' ? (
-          <LimitsView request={request} harnesses={snapshot.catalog?.harnesses ?? []} offline={offline} />
+          <LimitsView request={request} harnesses={snapshot.catalog?.harnesses ?? []} offline={offline} asks={asks} />
         ) : (
           <UsageView request={request} snapshot={snapshot} />
         )}
@@ -143,8 +147,84 @@ function UsageBody({
   )
 }
 
-function LimitsView({ request, harnesses, offline }: { request: UsageRequest; harnesses: readonly HarnessInfo[]; offline: boolean }) {
+/** How long a row waits on a read this view asked for: the Host bounds one at 30 seconds. */
+const READ_WAIT_MS = 35_000
+
+/**
+ * What a Harness's row says while it has no figure: reading, why there is none, or that it reports only in a turn.
+ * `reading`: this view asked the Host to read it and has not heard the end of that yet.
+ */
+export function NoLimits({ harness, asks, reading }: { harness: HarnessInfo; asks: boolean; reading: boolean }) {
+  const read = harness.quotaRead
+  if (read?.running)
+    return (
+      <p className="usage-muted usage-reading">
+        <Spinner size={12} label="正在读取额度" />
+      </p>
+    )
+  if (read?.failed?.reason === 'login') return <p className="usage-muted">未登录</p>
+  if (read?.failed?.reason === 'no-key') return <p className="usage-muted">无 API 密钥</p>
+  if (read?.failed)
+    return (
+      <p className="usage-muted usage-retry">
+        <span>读取失败</span>
+        {asks && (
+          <>
+            <span aria-hidden="true">·</span>
+            <Button
+              size="xs"
+              variant="link"
+              onClick={() => {
+                void refreshLimits([harness.id], true)
+              }}>
+              重试
+            </Button>
+          </>
+        )}
+      </p>
+    )
+  if (read?.afterTurn) return <p className="usage-muted">只在对话中报告</p>
+  if (reading)
+    return (
+      <p className="usage-muted usage-reading">
+        <Spinner size={12} label="正在读取额度" />
+      </p>
+    )
+  // A preset not added yet is never read.
+  if (harness.offer) return <p className="usage-muted">未添加</p>
+  return <p className="usage-muted">尚未报告额度</p>
+}
+
+function LimitsView({
+  request,
+  harnesses,
+  offline,
+  asks,
+}: {
+  request: UsageRequest
+  harnesses: readonly HarnessInfo[]
+  offline: boolean
+  asks: boolean
+}) {
   useTicker('minute')
+  // Looking is what asks: each time the view opens, or is narrowed to one Harness, while connected. Until the Host
+  // answers, every row it may read waits; then only those it said it asked, until the read's bound has passed.
+  const [pending, setPending] = useState<ReadonlySet<string> | 'all'>(() => new Set())
+  useEffect(() => {
+    if (offline || !asks) return undefined
+    let live = true
+    setPending('all')
+    void refreshLimits(request.harnessId ? [request.harnessId] : undefined).then(asked => {
+      if (live) setPending(new Set(asked))
+    })
+    const timer = setTimeout(() => {
+      if (live) setPending(new Set())
+    }, READ_WAIT_MS)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [offline, asks, request.harnessId])
   // A window past its reset is gone at once, not at the next minute.
   const [, expire] = useState(0)
   const now = hostNow()
@@ -174,6 +254,7 @@ function LimitsView({ request, harnesses, offline }: { request: UsageRequest; ha
           <header className="usage-harness-head">
             <HarnessTile harness={harness} size={20} />
             <h3>{harnessName(harness)}</h3>
+            {limits && harness.quotaRead?.running && <Spinner size={12} label="正在读取额度" />}
             {limits && limits.facts.length > 0 && (
               <span className="usage-facts">
                 {limits.facts.map((fact, index) => (
@@ -186,7 +267,7 @@ function LimitsView({ request, harnesses, offline }: { request: UsageRequest; ha
             )}
           </header>
           {limits ? (
-            <div className="usage-windows">
+            <div className="usage-windows" title={harness.quota ? `${dateTime(harness.quota.observedAt)} 读到` : undefined}>
               {limits.account && (
                 <p className="usage-account" data-state="limited">
                   额度{LIMIT_WORDS.limited}
@@ -200,7 +281,11 @@ function LimitsView({ request, harnesses, offline }: { request: UsageRequest; ha
               ))}
             </div>
           ) : (
-            <p className="usage-muted">尚未报告额度</p>
+            <NoLimits
+              harness={harness}
+              asks={asks && !offline}
+              reading={!offline && (pending === 'all' ? harness.offer === undefined : pending.has(harness.id))}
+            />
           )}
         </section>
       ))}

@@ -266,6 +266,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A row with no figure yet: the reading mark, or why there is none with 重试. */
+.usage-reading,
+.usage-retry {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
 /* The Harnesses whose program never reports limits, together in one quiet line at the end. */
 .usage-silent {
   display: flex;

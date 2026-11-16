@@ -3,9 +3,10 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { leadingQuotaWindow, type BudgetProgress, type HarnessQuota } from '@latch/protocol'
+import { leadingQuotaWindow, type BudgetProgress, type HarnessInfo, type HarnessQuota } from '@latch/protocol'
 import { LimitWindow } from '../src/usage/LimitWindow.tsx'
 import { HarnessLimitChip } from '../src/usage/UsageChip.tsx'
+import { NoLimits } from '../src/usage/UsageSurface.tsx'
 import { budgetLimit, chipWords, harnessLimits, resetWords, usedWords, type LimitView } from '../src/usage/limits.ts'
 import { unpricedShare } from '../src/usage/usage.ts'
 
@@ -141,7 +142,7 @@ describe('the tightest window, which the composer stands for', () => {
   it('draws nothing for a Harness that said nothing, or whose windows have all reset', () => {
     expect(harnessLimits(undefined, NOW)).toBeUndefined()
     expect(harnessLimits(ok, NOW + 200 * HOUR)).toBeUndefined()
-    const harness = { id: 'codex', capabilities: { display: { label: 'Codex' } } } as never
+    const harness = { id: 'codex', capabilities: { display: { label: 'Codex' }, models: {} } } as never
     expect(renderToStaticMarkup(createElement(HarnessLimitChip, { harness }))).toBe('')
   })
 
@@ -179,7 +180,7 @@ describe('what a Harness reports beside its windows', () => {
     const chip = (quota: HarnessQuota) =>
       renderToStaticMarkup(
         createElement(HarnessLimitChip, {
-          harness: { id: 'dsh', capabilities: { display: { label: 'DeepSeek Harness' } }, quota } as never,
+          harness: { id: 'dsh', capabilities: { display: { label: 'DeepSeek Harness' }, models: {} }, quota } as never,
         }),
       )
     expect(chip(balance)).toBe('')
@@ -220,5 +221,39 @@ describe('the estimate', () => {
     expect(unpricedShare([row(3, 1), row(1, 0)])).toBe(25)
     expect(unpricedShare([row(2, 0)])).toBe(0)
     expect(unpricedShare([])).toBe(0)
+  })
+})
+
+describe('a Harness with no figure in 额度', () => {
+  const harness = (quotaRead?: HarnessInfo['quotaRead'], offer = false) =>
+    ({
+      id: 'codex',
+      capabilities: { display: { label: 'Codex' }, models: { quota: true } },
+      ...(quotaRead ? { quotaRead } : {}),
+      ...(offer ? { offer: { presetId: 'codex' } } : {}),
+    }) as HarnessInfo
+  const row = (quotaRead: HarnessInfo['quotaRead'], { asks = true, reading = false, offer = false } = {}) =>
+    renderToStaticMarkup(createElement(NoLimits, { harness: harness(quotaRead, offer), asks, reading }))
+
+  it('shows a quiet reading mark while the Host reads or this view waits on a read it asked for', () => {
+    for (const markup of [row({ running: true }), row(undefined, { reading: true })]) {
+      expect(markup).toContain('正在读取额度')
+      expect(text(markup)).toBe('')
+    }
+  })
+
+  it('says why there is none in a word, with 重试 only where the device may ask', () => {
+    expect(text(row({ failed: { at: observedAt, reason: 'login' } }))).toBe('未登录')
+    expect(text(row({ failed: { at: observedAt, reason: 'no-key' } }))).toBe('无 API 密钥')
+    expect(text(row({ failed: { at: observedAt, reason: 'failed' } }))).toBe('读取失败 · 重试')
+    expect(text(row({ failed: { at: observedAt, reason: 'failed' } }, { asks: false }))).toBe('读取失败')
+    // True before a turn and after one that reported nothing.
+    expect(text(row({ afterTurn: true }))).toBe('只在对话中报告')
+  })
+
+  it('never spins on a row nothing reads: a preset not added, or a read nobody asked for', () => {
+    expect(text(row(undefined, { offer: true }))).toBe('未添加')
+    expect(text(row(undefined))).toBe('尚未报告额度')
+    expect(text(row(undefined, { asks: false }))).toBe('尚未报告额度')
   })
 })

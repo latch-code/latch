@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { api } from '../core/api.ts'
 
 export type UsageView = 'limits' | 'usage'
 
@@ -10,6 +11,23 @@ export interface UsageRequest {
   view: UsageView
   harnessId?: string
   providerId?: string
+}
+
+/**
+ * Someone looks at limits: asks the Host to read those that are missing or old, in the background, for every Harness or
+ * for `ids`; what arrives comes with the catalog. The Host keeps the limits on how often; a refusal says nothing here.
+ * Resolves with the Harnesses the Host asked.
+ */
+export async function refreshLimits(ids?: readonly string[], retry = false): Promise<string[]> {
+  try {
+    const answer = await api<{ asked?: unknown }>('quota/refresh', {
+      method: 'POST',
+      body: { ...(ids ? { ids: [...ids] } : {}), ...(retry ? { retry } : {}) },
+    })
+    return Array.isArray(answer.asked) ? answer.asked.filter((id): id is string => typeof id === 'string') : []
+  } catch {
+    return []
+  }
 }
 
 let current: UsageRequest | null = null
