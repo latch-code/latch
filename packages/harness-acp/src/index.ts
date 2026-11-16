@@ -29,11 +29,12 @@ import { AgentHealth, resolveOptions, type AcpAgentOptions, type AgentRecord } f
 
 export { agentProbePreview, probeAgent } from './probe.ts'
 export { checkLogin, harnessLogin, loginCheckAddsDate, loginTerminalScript, presetRecord, setLoginPrograms } from './login.ts'
-export { loadLoginShell } from './login-shell.ts'
+export { loadLoginShell, loginShellValues } from './login-shell.ts'
 export { compareVersions, onVersionChange } from './version.ts'
 export { personCommandDirectories, personPathDirectories, resolveCommand, setCommandSearch } from './command.ts'
 export { commandName, launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 export type { AcpAgentOptions, AgentRecord } from './types.ts'
+export type { QuotaReport } from './quota.ts'
 export { withHarnessPromptSource, harnessPromptSource } from './prompt-source.ts'
 
 /** PATH lookups touch the file system; status() is polled with every catalog. */
@@ -170,7 +171,12 @@ const ACP_CAPABILITIES = {
  * it at the Host's gateway names the protocols Latch can forward for it. Without a profile whether it asks is unknown,
  * which counts as not asking.
  */
-function agentFacts(name: string, presetId: string | undefined, profile: HarnessProfile | undefined): HarnessCapabilities {
+function agentFacts(
+  name: string,
+  presetId: string | undefined,
+  profile: HarnessProfile | undefined,
+  hostQuota = false,
+): HarnessCapabilities {
   const gateway = profile?.gateway
   return {
     models: {
@@ -185,8 +191,9 @@ function agentFacts(name: string, presetId: string | undefined, profile: Harness
       ...(profile?.thinkingPerModel ? { thinkingPerModel: true as const } : {}),
       ...(profile?.thinkingInModel ? { thinkingInModel: true as const } : {}),
       ...(profile?.wire === 'codex' && gateway ? { serviceThinking: true as const } : {}),
-      // Codex's app-server reports its limits on its own wire; another profile through its own quota source.
-      ...(profile?.quota || profile?.wire === 'codex' ? { quota: true as const } : {}),
+      // Codex's app-server reports its limits on its own wire; another profile through its own quota source, or the Host
+      // reads them for it (`readQuota`).
+      ...(profile?.quota || profile?.wire === 'codex' || hostQuota ? { quota: true as const } : {}),
     },
     permission: { enforcement: profile?.permission.approvals === 'prompts' ? 'harness' : 'none', rejectionNote: false },
     tools: { shell: true, fileMentions: true },
@@ -260,7 +267,10 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
         name: record.name,
         version: CLIENT_VERSION,
         description,
-        capabilities: { ...ACP_CAPABILITIES, ...agentFacts(record.name, record.presetId, selectProfile(record).profile) },
+        capabilities: {
+          ...ACP_CAPABILITIES,
+          ...agentFacts(record.name, record.presetId, selectProfile(record).profile, limits.readQuota !== undefined),
+        },
         agentContext: 'first-turn',
         ...skillsOf(record.presetId),
         ...folderDeclaration(selectProfile(record).profile),

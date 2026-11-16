@@ -67,14 +67,15 @@ function LimitChip({
 export function HarnessLimitChip({ harness }: { harness: HarnessInfo }) {
   const now = useTicker(harness.quota ? 'minute' : false)
   const limits = harnessLimits(harness.quota, now)
-  if (!limits) return null
+  // A balance alone is not a limit: the composer says something only once the account cannot be used.
+  if (!limits || (!limits.tightest && !limits.account)) return null
   return (
     <LimitChip
       label={`${harnessName(harness)} 额度`}
       {...chipParts(limits)}
-      state={limits.account ? 'limited' : limits.tightest.state}
-      percent={limits.account ? undefined : limits.tightest.percent}
-      reset={limits.tightest.reset}
+      state={limits.account || !limits.tightest ? 'limited' : limits.tightest.state}
+      percent={limits.account ? undefined : limits.tightest?.percent}
+      reset={limits.tightest?.reset}
       request={{ view: 'limits', harnessId: harness.id }}
     />
   )

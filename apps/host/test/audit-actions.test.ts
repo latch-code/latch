@@ -231,6 +231,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'agent.login.checked': { agentId: 'codex', status: 'unauthenticated' },
   'agent.login.opened': { agentId: 'codex', source: 'harness' },
   'agent.logout': { agentId: 'codex' },
+  'agent.quota.read': { agentId: 'dsh', presetId: 'dsh' },
   'agent.defined': { agentId: 'codex', definitionHash: hex, created: true },
   'agent.deleted': { agentId: 'codex' },
   'agent.changed': { kind: 'agent', operation: 'update', before: hex, after: hex, customAgentId: 'agt_1' },

@@ -1,15 +1,18 @@
 /**
- * What a harness's own program says about the limits of the subscription it is logged in to. Latch only listens to the
- * program it already runs: it reads no credential or file of the program and calls no vendor itself. Everything kept is
- * a number or a value of the protocol's fixed sets; an account's address is masked the moment it is read.
+ * What a harness's own program says about the limits of the subscription it is logged in to. Latch listens to the
+ * program it already runs; the one exception, a vendor balance the Host reads with a preset CLI's own key, is the Host's
+ * (`apps/host/src/cli-quota.ts`) and arrives here as an ordinary report. Everything kept is a number or a value of the
+ * protocol's fixed sets; an account's address is masked the moment it is read.
  */
 import { z } from 'zod'
 import {
+  QUOTA_CURRENCIES,
   QUOTA_GROUPS,
   QUOTA_PLANS,
   QUOTA_WINDOW_KINDS,
   quotaWindowState,
   type HarnessQuota,
+  type QuotaCurrency,
   type QuotaPlan,
   type QuotaState,
   type QuotaWindow,
@@ -29,6 +32,8 @@ export interface QuotaReport {
   /** Already masked. */
   account?: string
   balanceCents?: number
+  /** Of `balanceCents`; absent: US dollars. */
+  currency?: QuotaCurrency
   /** The program said the account is, or is not, at a limit. Absent: it said neither. */
   limited?: boolean
 }
@@ -76,15 +81,18 @@ const facts = {
   plan: z.enum(QUOTA_PLANS).optional().catch(undefined),
   account: z.string().max(64).regex(MASKED_ACCOUNT).optional().catch(undefined),
   balanceCents: z.number().int().min(0).max(1_000_000_000).optional().catch(undefined),
+  currency: z.enum(QUOTA_CURRENCIES).optional().catch(undefined),
 }
 
 /** What a client may be sent. Anything else a driver put beside these fields is dropped. */
-export const harnessQuota = z.object({
-  windows: windowList.refine(windows => windows.length > 0),
-  ...facts,
-  state: z.enum(['ok', 'near', 'limited']),
-  observedAt: instant,
-})
+export const harnessQuota = z
+  .object({
+    windows: windowList,
+    ...facts,
+    state: z.enum(['ok', 'near', 'limited']),
+    observedAt: instant,
+  })
+  .refine(quota => quota.windows.length > 0 || quota.balanceCents !== undefined)
 
 /** A wire's report as the runtime takes it. */
 export const quotaReport = z.object({
@@ -335,7 +343,10 @@ interface Said {
   plan?: QuotaPlan
   account?: string
   balanceCents?: number
+  currency?: QuotaCurrency
   limited?: boolean
+  /** A whole report of a balance and no windows (the Host's own read): kept after it is gone, having no reset. */
+  balanceOnly?: true
   at: number
   gone?: true
 }
@@ -357,10 +368,16 @@ export class QuotaFacts {
   note(source: object, report: QuotaReport, now: number): void {
     const entry: Said = this.said.get(source) ?? { windows: new Map(), at: now }
     if (report.whole) entry.windows.clear()
+    if (report.whole && !report.windows.length && report.balanceCents !== undefined) entry.balanceOnly = true
+    else delete entry.balanceOnly
     for (const window of report.windows.slice(0, MAX_WINDOWS)) entry.windows.set(keyOf(window), { window, at: now })
     if (report.plan) entry.plan = report.plan
     if (report.account) entry.account = report.account
-    if (report.balanceCents !== undefined) entry.balanceCents = report.balanceCents
+    if (report.balanceCents !== undefined) {
+      entry.balanceCents = report.balanceCents
+      if (report.currency) entry.currency = report.currency
+      else delete entry.currency
+    }
     if (report.limited !== undefined) entry.limited = report.limited
     entry.at = now
     delete entry.gone
@@ -375,14 +392,15 @@ export class QuotaFacts {
    */
   restore(quota: HarnessQuota): void {
     const source = {}
-    const { windows, plan, account, balanceCents, state } = quota
+    const { windows, plan, account, balanceCents, currency, state } = quota
     this.note(
       source,
       {
         windows,
         ...(plan ? { plan } : {}),
         ...(account ? { account } : {}),
-        ...(balanceCents !== undefined ? { balanceCents } : {}),
+        ...(balanceCents !== undefined ? { balanceCents, ...(currency ? { currency } : {}) } : {}),
+        ...(!windows.length && balanceCents !== undefined ? { whole: true as const } : {}),
         // Only the account's own word stays: a window at its limit says so itself, and stops once it resets.
         limited: state === 'limited' && !windows.some(window => quotaWindowState(window) === 'limited'),
       },
@@ -418,7 +436,8 @@ export class QuotaFacts {
         const known = newest.get(key)
         if (!known || item.at >= known.at) newest.set(key, item)
       }
-      if (!held && entry.gone) this.said.delete(source)
+      // A balance reported alone belongs to the account and has no reset: it stays with its time until a newer word.
+      if (!held && entry.gone && !entry.balanceOnly) this.said.delete(source)
       else if (!latest || entry.at >= latest.at) latest = entry
     }
     // A window with neither a figure nor a status only records that the program said it is fine.
@@ -431,7 +450,7 @@ export class QuotaFacts {
           || QUOTA_WINDOW_KINDS.indexOf(a.kind) - QUOTA_WINDOW_KINDS.indexOf(b.kind)
           || (a.windowMinutes ?? 0) - (b.windowMinutes ?? 0),
       )
-    if (!windows.length || !latest) return undefined
+    if (!latest || (!windows.length && latest.balanceCents === undefined)) return undefined
     const worst = windows.reduce<QuotaState>((state, window) => {
       const own = quotaWindowState(window)
       return RANK[own] > RANK[state] ? own : state
@@ -441,16 +460,17 @@ export class QuotaFacts {
       plan: latest.plan,
       account: latest.account,
       balanceCents: latest.balanceCents,
+      currency: latest.currency,
       state: latest.limited ? 'limited' : worst,
-      observedAt: isoTime(Math.max(...[...newest.values()].map(item => item.at))),
+      observedAt: isoTime(Math.max(latest.at, ...[...newest.values()].map(item => item.at))),
     })
     if (!parsed.success) return undefined
-    const { plan, account, balanceCents, ...rest } = parsed.data
+    const { plan, account, balanceCents, currency, ...rest } = parsed.data
     return {
       ...rest,
       ...(plan ? { plan } : {}),
       ...(account ? { account } : {}),
-      ...(balanceCents !== undefined ? { balanceCents } : {}),
+      ...(balanceCents !== undefined ? { balanceCents, ...(currency ? { currency } : {}) } : {}),
     }
   }
 }

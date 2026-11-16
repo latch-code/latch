@@ -35,7 +35,7 @@ export const CREDENTIAL_KEYS: readonly RegExp[] = [
   // The armour line of a private key: PEM (RSA, EC, PKCS#8, encrypted, OpenSSH) and OpenPGP.
   /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/gu,
   // Model-service and platform keys by their documented prefixes.
-  /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}/gu,
+  /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}/gu,
   /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})/gu,
   /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/gu,
   /\bxox[abprs]-[A-Za-z0-9-]{10,}/gu,

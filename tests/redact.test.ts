@@ -105,6 +105,8 @@ describe('redactSecrets', () => {
     ['an RSA private key', `x ${pem('RSA PRIVATE')} y`, 'x [redacted] y'],
     ['an OpenSSH private key', pem('OPENSSH PRIVATE'), '[redacted]'],
     ['a model service key', `key=${modelKey}`, 'key=[redacted]'],
+    // The shortest key the Host reads for a DeepSeek balance (apps/host/src/cli-quota.ts): `sk-` and 16 characters.
+    ['a short model service key', `key=${['sk', 'a1B2'.repeat(4)].join('-')} end`, 'key=[redacted] end'],
     ['an AWS access key', `id ${awsKey} end`, 'id [redacted] end'],
     ['a GitHub token', `token ${githubToken}`, 'token [redacted]'],
   ])('redacts %s', (_name, input, expected) => {

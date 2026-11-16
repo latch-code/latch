@@ -41,6 +41,11 @@ export const AGENT_ACTIONS = {
   'agent.login.checked': z.strictObject({ agentId: opaqueId, status: z.enum(['authenticated', 'unauthenticated', 'unknown']) }),
   /** A login opened in this computer's terminal: `harness`, one the harness advertised; otherwise the preset's command. */
   'agent.login.opened': z.strictObject({ agentId: opaqueId, source: z.literal('harness').optional() }),
+  /**
+   * The Host read a preset CLI's own key and is about to ask the vendor's official endpoint for its balance
+   * (`cli-quota.ts`). Which Harness only: never the key, the balance or the account.
+   */
+  'agent.quota.read': z.strictObject({ agentId: opaqueId, presetId: z.literal('dsh') }),
   /** The harness is about to be asked to log out. */
   'agent.logout': z.strictObject({ agentId: opaqueId }),
   'agent.defined': z.strictObject({ agentId: opaqueId, definitionHash: hex64, created: z.boolean() }),

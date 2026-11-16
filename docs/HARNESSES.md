@@ -519,11 +519,11 @@ Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥�
 
 其他设备只看到命令。macOS 以外的 Host 上这两条路径尚未实现。Claude Agent 没有登录命令，也就没有按钮。
 
-**测试 Host。** `startServer` 没有 `loginPrograms` 时不运行任何登录命令；没有 `commandDirectories` 时只认绝对路径，按名字找命令一律找不到。只有启动脚本传 `resolveCommand` 与 `personCommandDirectories`，所以带预设定义的测试 Host 碰不到这台电脑上真实安装的程序。
+**测试 Host。** `startServer` 没有 `loginPrograms` 时不运行任何登录命令，没有 `cliQuota` 时不读任何 CLI 的凭据、不问厂商余额；没有 `commandDirectories` 时只认绝对路径，按名字找命令一律找不到。只有启动脚本传 `resolveCommand` 与 `personCommandDirectories`，所以带预设定义的测试 Host 碰不到这台电脑上真实安装的程序。
 
 ## 额度
 
-Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额度（界面见 [DESIGN.md](DESIGN.md)「额度与用量」）。Latch 只听它已经为会话运行的那个进程：不读任何 CLI 的令牌或存储，不自己调用厂商接口，不为额度启动会话或模型轮次，不定时轮询。
+Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额度（界面见 [DESIGN.md](DESIGN.md)「额度与用量」）。Latch 只听它已经为会话运行的那个进程，不为额度启动会话或模型轮次，不定时轮询。唯一的例外是 DeepSeek Harness 的余额：Host 用它自己保存的 DeepSeek API 密钥问 DeepSeek 文档里的余额接口（见下面「DeepSeek Harness 的余额」）；其他 CLI 的令牌与存储不读，其他厂商接口不调。
 
 | Harness | 来源 | 显示 |
 | --- | --- | --- |
@@ -532,13 +532,36 @@ Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额
 | Claude Agent | `usage_update._meta["_claude/rateLimit"]` 的限额事件，与一轮因限额失败时错误 `data` 里的 `rateLimit` | `unifiedWindows` 里每个窗口的 `utilization`（0 到 1，已与 Claude Code 自己的 `/usage` 对过）乘 100 是已用比例，带重置时间与 `allowed_warning`/`rejected` 状态；没有 `unifiedWindows` 时只显示所报窗口的状态。只认 `five_hour`、`seven_day`、`seven_day_opus`、`seven_day_sonnet`。不发 `/usage` |
 | Grok Build | ACP 扩展请求 `_x.ai/billing`，在会话接上进程时与每轮结束时发，两次至少隔 5 分钟 | 本计费周期一行（`creditUsagePercent`、`currentPeriod.end`）；已知的 `subscriptionTier`；`prepaidBalance` 大于零时显示为余额 |
 | Antigravity | 它自己的命令 `agy -p /usage --output-format json`（`profiles/antigravity-quota.ts`，不起模型轮次），在会话接上进程时与每轮结束时在旁边运行，至少隔 5 分钟，不等它；按登录状态命令的规则运行，加 `AGY_CLI_DISABLE_AUTO_UPDATE=true`，20 秒后连进程组结束，失败不说话 | `remaining_fraction` 是剩余比例；`window` 只认 `5h` 与 `weekly`。只显示 `Gemini Models` 与 `Claude and GPT models` 两个组，其余整个丢掉；`num_turns` 不为 0 或形状不同的输出不用 |
-| Cursor、OpenCode、Qwen Code、goose、pi、DeepSeek Harness | 程序不报告订阅额度 | 输入框不显示；「额度与用量」末尾一行「不报告额度」 |
+| DeepSeek Harness | Host 自己读（`apps/host/src/cli-quota.ts`）：一轮结束时，至少隔 5 分钟，15 秒超时 | DeepSeek 账户余额与币种（`balanceCents`、`currency`，没有窗口）；`is_available` 为假时是 `limited`。只有余额时输入框不显示，账户不能用时显示「额度已用尽」。没有可用的密钥时「额度与用量」写「尚未报告额度」 |
+| Cursor、OpenCode、Qwen Code、goose、pi | 程序不报告订阅额度 | 输入框不显示；「额度与用量」末尾一行「不报告额度」 |
 
 - **形状。** `HarnessInfo.quota`（`packages/protocol/src/quota.ts`）全部是数字与固定集合里的值，没有厂商写的文字：不认识的窗口种类整个丢掉，不在集合里的套餐名不显示（`packages/harness-acp/src/quota.ts` 的 `harnessQuota`）。Codex 的 `rateLimitUpsell`、`limitName`、`accountId` 与完整邮箱不离开读它的进程；邮箱读到时就遮住。
 - **随会话保存。** 按 Agent 定义保存在驱动的 `acp.json`（`AcpState.quota`，只有数字、固定集合的值与遮住的邮箱），不进日志与审计；Host 重启后照旧显示上次的数字与时间。窗口过了重置时间不再显示；报告它的进程退出后，有重置时间的窗口留到重置为止（额度属于账号），没有的随进程消失。退出登录或定义变化后全部清除。
 - **谁能看到。** 随 Harness 目录（`catalog.harnesses`）发给能看到这个 Harness 的设备，没有单独的接口与权限；内容变了才推送。
 - **经 Latch 使用模型服务的会话**不读、不问、不显示：订阅的额度不是它的。
 - **到上限**（百分比到 100、Claude 报 `rejected`、Codex 的 `rateLimitReachedType` 不为空）是 `limited`。Latch 不因此拦截发送，被拒的一轮照常显示 Harness 的错误。
+
+### DeepSeek Harness 的余额
+
+DeepSeek Harness 用 API 密钥时，密钥是 DeepSeek 发给这个人的，DeepSeek 文档化了用它查余额：`GET https://api.deepseek.com/user/balance`，`Authorization: Bearer <key>`（[api-docs.deepseek.com](https://api-docs.deepseek.com/api/get-user-balance)）。它用 DeepSeek 账号登录（Platform 授权）时没有文档化的余额接口，不报告。
+
+**只在这些条件下读**：定义是预设自己的命令（`dsh --profile acp`，无变量，这台 Mac 确认过的程序）；Host 由启动脚本带 `cliQuota` 启动（测试 Host 不带，碰不到真实文件与厂商）；会话不经 Latch 的模型服务；一轮结束，距上次至少 5 分钟。
+
+**密钥经过的每一处**（`cli-quota.ts`）：
+
+1. `readDshKey` 先排除可能把密钥发去别处的设置：DeepSeek Harness 会继承的环境（Host 的环境与登录 shell 读出的值）里有 `DSH_HOME` 或 `DEEPSEEK_BASE_URL`；`~/.dsh/cordis.patch.yml`、`~/.dsh/profiles/acp/cordis.patch.yml`、`~/.dsh/.env` 或 `~/.dsh/profiles/acp/.env` 写了 `baseURL`、`DEEPSEEK_BASE_URL` 或 `apiKeyEnv`，或读不了、是链接。有一项就不读密钥，已显示的余额也清掉。会话文件夹的 `.env` 这样时只跳过这一次，已显示的余额不动。
+2. 再读固定路径 `~/.dsh/.credentials.yaml`：`~/.dsh` 必须是本人的目录而不是链接；文件以 `O_NOFOLLOW` 打开，打开后核对是普通文件、属于本人、其他人不可读、不超过 64 KiB。只认 DeepSeek Harness 写的版本 1 布局里 `refs.DEEPSEEK_API_KEY`，值必须像 DeepSeek 密钥（`sk-…`）；引用里有 `DEEPSEEK_BASE_URL` 也不读。
+3. 审计先写 `agent.quota.read`（只有 Harness 与预设 ID），写不进就不发。
+4. `fetchDeepSeekBalance` 把密钥放进这一次请求的头，地址写死，经 Host 出站策略（不加任何放行）、TLS、不跟随重定向。失败不记日志、不抛出、不重试；401、403 或形状不对就清掉已显示的余额。
+5. 离开这个模块的只有余额（百分之一单位）、币种与能不能用；随会话存进 `acp.json` 的也只有这些。
+
+密钥只在这次请求的内存里，不进日志、磁盘、参数、其他进程的环境、SSE、错误与审计，Latch 不刷新、不改写它。`redactKnownSecrets` 的 `sk-` 规则从 16 个字符起，覆盖这里接受的最短密钥。响应体按块读，超过 16 KiB 就停。
+
+**真实核对。** 读取只在一轮结束时发生，测试 Host 里没有别的触发办法，所以真实核对要让 DeepSeek Harness 跑一轮：每次都是一次付费的 DeepSeek 模型调用，提示要极短。
+
+**出站与确认。** `https://api.deepseek.com` 是模型服务预设 `deepseek` 的 HTTPS 地址（`PRESET_KEY_ORIGINS`），Host 启动时核对它仍是预设地址，否则不提供这项读取（DeepSeek Harness 不再声明能报告额度）；它是公网地址，出站策略不需要放行，也不加放行。这不新增、不放宽 `PRESENCE_ACTIONS` 的任何一项：没有新地址可以确认，预设地址本来就不需要确认。
+
+**没有做的。** pi 与 OpenCode 不读：pi 的订阅登录（Claude、ChatGPT、Copilot、Gemini 等）没有给第三方的用量接口；它保存的 API 密钥可以被扩展或 `models.json` 指去别处，Latch 无法排除。OpenCode 2.x 把凭据存在它自己的 SQLite 数据库里（`auth.json` 只是旧版导入来源），它的 Zen/Go 也没有文档化的用量接口。经 Latch 的模型服务用同一个密钥时，不需要读 CLI 的凭据，但网关现在不查服务余额，尚未实现。
 
 ## 权限菜单
 
@@ -870,7 +893,7 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 
 - 接入后又在终端里继续了同一会话时 Latch 不察觉。
 - 项目其他文件夹里的会话只给数量。
-- pi：它的 RPC 没有列出会话的命令，发现会话只能读它的存储，违反「外部会话只经适配器」。
+- pi：它的 RPC 没有列出会话的命令，发现会话只能读它的存储，违反「CLI 存储与凭据」。
 - OpenCode 1.x：ACP 没有 `session/list`。
 - Qwen Code、goose：源码声明了列出与加载，但加载对原会话的影响（恢复旧模式、写回设置等）没有读完，也没有用真实程序核对。
 - Claude Agent、Grok Build、Antigravity：没有核对；Claude 的会话记录不碰。Cursor 不开放。
@@ -970,7 +993,9 @@ Harness 报告的命令透传，是否报告与执行由 Harness 决定。
 | Cursor 的真实验收 | 权限档位只按文档接线 |
 | Claude Agent 开会话前的额度 | 适配器只在每轮的限额事件里报告，Latch 不自动发 `/usage` |
 | Codex 按模型的额度桶、开会话前的额度 | 只显示套餐自己的桶，并且要等第一个会话的线程打开后才读 |
-| Cursor、OpenCode、Qwen Code、goose、pi、DeepSeek Harness 的额度 | 程序不报告，Latch 不读它们的令牌去问厂商 |
+| Cursor、OpenCode、Qwen Code、goose、pi 的额度 | 程序不报告；没有可用的官方接口与凭据，见「DeepSeek Harness 的余额」 |
+| DeepSeek Harness 用 DeepSeek 账号登录时的余额 | 没有文档化的余额接口 |
+| DeepSeek Harness 余额读取没有核对的设置 | 只核对上面列的文件与这次会话文件夹的 `.env`；profile 清单 `dsh.profile.bundles` 里各 bundle 自带的 patch 与其他扩展名的 patch 文件没有核对 |
 
 ## 测试
 

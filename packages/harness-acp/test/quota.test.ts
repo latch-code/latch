@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Bridge, HarnessDriver, HarnessPlugin } from '@latch/sdk'
-import type { DriverTaskDetail } from '@latch/protocol'
+import { currentQuota, type DriverTaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER } from '@latch/testkit'
 import {
   createAcpAgentPlugin,
@@ -484,6 +484,35 @@ describe('what is kept', () => {
     expect(facts.snapshot(NOW + 4)).toMatchObject({ state: 'limited', account: 'n•••@f•••.com' })
     facts.clear()
     expect(facts.snapshot(NOW + 5)).toBeUndefined()
+  })
+
+  it('keeps a balance reported alone, with its currency and time, after its source and a restart; one beside windows goes with them', () => {
+    const facts = new QuotaFacts()
+    facts.note(live, { windows: [], whole: true, balanceCents: 11_000, currency: 'CNY', limited: false }, NOW)
+    const alone = facts.snapshot(NOW)
+    expect(alone).toEqual({ windows: [], balanceCents: 11_000, currency: 'CNY', state: 'ok', observedAt: new Date(NOW).toISOString() })
+    facts.gone(live)
+    expect(facts.snapshot(NOW + 1000 * HOUR)).toEqual(alone)
+    const restored = new QuotaFacts()
+    restored.restore(alone!)
+    expect(restored.snapshot(NOW + 1000 * HOUR)).toEqual(alone)
+    expect(currentQuota(alone!, NOW + 1000 * HOUR)).toEqual(alone)
+
+    // Grok's prepaid balance belongs to its billing period: once that resets and the process is gone, nothing is left.
+    const grok = new QuotaFacts()
+    grok.note(
+      live,
+      { windows: [{ kind: 'billing-period', usedPercent: 40, resetsAt: iso(NOW + HOUR) }], whole: true, balanceCents: 500 },
+      NOW,
+    )
+    grok.gone(live)
+    const shown = grok.snapshot(NOW)!
+    expect(shown).toMatchObject({ balanceCents: 500 })
+    expect(grok.snapshot(NOW + 2 * HOUR)).toBeUndefined()
+    expect(currentQuota(shown, NOW + 2 * HOUR)).toBeUndefined()
+    const again = new QuotaFacts()
+    again.restore(shown)
+    expect(again.snapshot(NOW + 2 * HOUR)).toBeUndefined()
   })
 })
 

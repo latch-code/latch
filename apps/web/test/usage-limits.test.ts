@@ -99,7 +99,7 @@ describe('one limit window', () => {
   })
 
   it('never reads 100 before the limit', () => {
-    expect(harnessLimits({ ...ok, windows: [{ kind: 'weekly', usedPercent: 99.6 }] }, NOW)?.tightest.percent).toBe(99)
+    expect(harnessLimits({ ...ok, windows: [{ kind: 'weekly', usedPercent: 99.6 }] }, NOW)?.tightest?.percent).toBe(99)
   })
 })
 
@@ -120,7 +120,7 @@ describe('the tightest window, which the composer stands for', () => {
     ]
     for (const quota of cases) {
       const lead = leadingQuotaWindow(quota.windows)!
-      expect(harnessLimits(quota, NOW)!.tightest.key).toBe(`:${lead.kind}:`)
+      expect(harnessLimits(quota, NOW)!.tightest?.key).toBe(`:${lead.kind}:`)
     }
   })
 
@@ -167,6 +167,25 @@ describe('what a Harness reports beside its windows', () => {
       who: 'n•••@f•••.com',
     })
     expect(harnessLimits({ ...ok, plan: 'supergrok', balanceCents: 0 }, NOW)!.facts).toEqual(['SuperGrok', 'n•••@f•••.com'])
+  })
+
+  it('shows a balance reported alone in its currency, and the composer says nothing until the account cannot be used', () => {
+    const balance: HarnessQuota = { windows: [], balanceCents: 11_000, currency: 'CNY', state: 'ok', observedAt }
+    expect(harnessLimits(balance, NOW)).toMatchObject({ windows: [], account: false, facts: ['余额 ¥110.00'] })
+    expect(harnessLimits(balance, NOW)).not.toHaveProperty('tightest')
+    expect(harnessLimits({ ...balance, balanceCents: 0 }, NOW)!.facts).toEqual(['余额 ¥0.00'])
+    // Still there a day later: a balance has no reset.
+    expect(harnessLimits(balance, NOW + 24 * HOUR)).toBeDefined()
+    const chip = (quota: HarnessQuota) =>
+      renderToStaticMarkup(
+        createElement(HarnessLimitChip, {
+          harness: { id: 'dsh', capabilities: { display: { label: 'DeepSeek Harness' } }, quota } as never,
+        }),
+      )
+    expect(chip(balance)).toBe('')
+    const spent = { ...balance, balanceCents: 0, state: 'limited' as const }
+    expect(harnessLimits(spent, NOW)).toMatchObject({ account: true })
+    expect(chip(spent)).toContain('额度已用尽')
   })
 })
 

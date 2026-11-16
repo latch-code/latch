@@ -917,6 +917,8 @@ export class AgentRuntime implements Bridge {
   private quotaDefinition?: string
   /** When the harness was last asked for its limits, by a request or by its command; one floor for both. */
   private quotaAskedAt?: number
+  /** Who said what the Host's own read reported: not a process, so it never goes away with one. */
+  private readonly hostQuotaSource = {}
   private started?: Promise<void>
   private closing?: Promise<void>
   private closed = false
@@ -1575,16 +1577,32 @@ export class AgentRuntime implements Bridge {
    * already runs a session, or the program's own command. At most once in `QUOTA_ASK_FLOOR_MS`, and never on a timer:
    * only as a session opens and as a turn ends. A failure says nothing and is not reported.
    */
-  private askQuota(live: Live | undefined): void {
+  private askQuota(live: Live | undefined, turnEnded = false): void {
     const quota = this.selection.profile?.quota
-    if (!quota?.request && !quota?.command) return
+    // The Host's own read (`readQuota`) is asked only as a turn ends, never as a session opens.
+    const hostRead = !quota?.request && !quota?.command && turnEnded ? this.limits.readQuota : undefined
+    if (!quota?.request && !quota?.command && !hostRead) return
     if (!live?.initialized || live.wire.stopping || this.lives.get(live.key) !== live || this.closed) return
     // A session on a model service runs without the harness's own login: there is no subscription to ask about.
-    if (this.state.tasks[live.key]?.acp.route) return
+    const task = this.state.tasks[live.key]
+    if (task?.acp.route) return
     const now = Date.now()
     if (this.quotaAskedAt !== undefined && now - this.quotaAskedAt < QUOTA_ASK_FLOOR_MS) return
     this.quotaAskedAt = now
-    const { request, command } = quota
+    if (hostRead) {
+      if (!task) return
+      const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(QUOTA_ASK_TIMEOUT_MS)])
+      void hostRead({ cwd: task.acp.cwd, signal }).then(
+        report => {
+          if (this.closed) return
+          if (report === null) this.forgetQuota()
+          else this.noteQuota(this.hostQuotaSource, report)
+        },
+        () => {},
+      )
+      return
+    }
+    const { request, command } = quota!
     const asked = request
       ? live.wire.request(request.method, {}, QUOTA_ASK_TIMEOUT_MS, this.lifetime.signal).then(result => request.read(result, this.clock()))
       : readQuotaCommand(this.agent, command!, this.clock(), { signal: this.lifetime.signal })
@@ -1594,6 +1612,15 @@ export class AgentRuntime implements Bridge {
       },
       () => {},
     )
+  }
+
+  /** Nothing more to report from the Host's own read: what was shown of it (and kept from before a restart) goes. */
+  private forgetQuota(): void {
+    if (!this.state.quota && !this.quotaFacts.snapshot(this.clock())) return
+    this.quotaFacts.clear()
+    delete this.state.quota
+    this.mark()
+    this.notify()
   }
 
   private noteOwnMcp(reported: unknown, via: HarnessMcpReport['via']): void {
@@ -4356,7 +4383,7 @@ export class AgentRuntime implements Bridge {
   }
 
   private outcome(run: Run, result: unknown, notes: string[]): TaskStatus {
-    this.askQuota(run.live)
+    this.askQuota(run.live, true)
     const parsed = promptResult.safeParse(result)
     const task = this.state.tasks[run.taskId]
     const said = parsed.success ? (parsed.data.usage ?? this.selection.profile?.turnUsage?.(result)) : undefined

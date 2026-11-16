@@ -129,6 +129,7 @@ import { canonicalJson, sha256Hex, redactKnownSecrets, syncDirectory } from '@la
 import {
   assertCommandVersion,
   createAcpAgentPlugin,
+  loginShellValues,
   forgetCommandLookups,
   onVersionChange,
   outdatedCommand,
@@ -158,6 +159,7 @@ import { RelayProfiles, secretBytes } from './relay/profiles.ts'
 import { HostAddressBooks } from './relay/address-book.ts'
 import { HostRelayDirectory } from './relay/directory.ts'
 import { createEgressFetch, createEgressInspector, type EgressReason, type FetchLike, type LookupFunction } from './egress.ts'
+import { DEEPSEEK_ORIGIN, fetchDeepSeekBalance, readDshKey } from './cli-quota.ts'
 import { loadOrCreateHostIdentity } from './identity.ts'
 import { ModelGatewayServer, type GatewayService } from './model-gateway.ts'
 import { ModelRequestQueue } from './model-request-queue.ts'
@@ -719,6 +721,12 @@ export interface ServerOptions {
    */
   loginPrograms?: (command: string) => string | undefined
   /**
+   * The home directory whose DeepSeek Harness key the Host may read for that Harness's DeepSeek balance
+   * (`cli-quota.ts`). The start script passes the person's home; left out, as in tests, no CLI credential on this
+   * computer is read and no vendor is asked. `cliQuotaFetch` replaces the outbound fetch, for tests only.
+   */
+  cliQuota?: { home: string; fetch?: FetchLike }
+  /**
    * Where a bare command name is looked for: an agent's command, its adapter, the programs a preset points it at. The
    * start script passes `personCommandDirectories`; left out, as in tests, only absolute commands are found, so no real
    * agent on this computer can be described, offered or started. Tests name their own directories.
@@ -1106,6 +1114,14 @@ function programOf(agent: Pick<AgentRecord, 'presetId' | 'command'>): string | u
 }
 
 /**
+ * Whether the Host may read this definition's CLI credential for its quota (`cli-quota.ts`): DeepSeek Harness's own
+ * preset command, exactly as the preset table names it with no variables, bound to a program this Mac confirmed.
+ */
+function readsCliQuota(agent: AgentRecord): boolean {
+  return agent.presetId === 'dsh' && agent.confirmedCommand !== undefined && runsPresetCommand(agent)
+}
+
+/**
  * Whether a definition runs exactly what one of the Host's own presets names: its command or its adapter, with exactly
  * those arguments and no variables. Decided from the Host's table, never from what a client says; `presetId` only picks
  * the entry to compare with.
@@ -1328,8 +1344,52 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const lifecycle = new HostLifecycle(instanceId, now)
     const registry = new PluginRegistry()
     startupCleanup.push(() => registry.close())
+    /**
+     * The Host's read of DeepSeek Harness's DeepSeek balance with that CLI's own key (`cli-quota.ts`), for a definition
+     * that still is the preset's own when asked. On record before the key leaves; a failed audit sends nothing.
+     */
+    const cliQuotaReader = (cliQuota: NonNullable<ServerOptions['cliQuota']>) => {
+      const fetch =
+        cliQuota.fetch
+        ?? createEgressFetch({ allow: () => [], ...(options.egressLookup ? { lookup: options.egressLookup } : {}), connectTimeoutMs: 5000 })
+      const uid = process.getuid?.()
+      return async (agentId: string, input: { cwd: string; signal: AbortSignal }) => {
+        const current = config.settings().agents.find(agent => agent.id === agentId)
+        if (!current || !readsCliQuota(current) || uid === undefined) return null
+        // What DeepSeek Harness inherits (`agentEnvironment`): `DSH_HOME` from the Host or the login shell.
+        const env = {
+          DSH_HOME: process.env.DSH_HOME || loginShellValues().DSH_HOME,
+          DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? loginShellValues().DEEPSEEK_BASE_URL,
+        }
+        const read = await readDshKey({ home: cliQuota.home, env, cwd: input.cwd, uid })
+        // A folder that could send the key elsewhere skips this read and keeps what the others showed.
+        if (read === 'skip') return undefined
+        if (read === 'none') return null
+        const { key } = read
+        try {
+          await audit.append({
+            action: 'agent.quota.read',
+            actor: { listener: 'host' },
+            target: agentId,
+            detail: { agentId, presetId: 'dsh' },
+          })
+        } catch {
+          return undefined
+        }
+        return fetchDeepSeekBalance(key, fetch, input.signal)
+      }
+    }
+    // The balance goes only to the DeepSeek preset's own HTTPS origin, a named destination that needs no confirmation;
+    // were it no longer a preset's, the read is not offered at all.
+    const readCliQuota = options.cliQuota && isPresetKeyOrigin(originOf(DEEPSEEK_ORIGIN)) ? cliQuotaReader(options.cliQuota) : undefined
     const buildAgentPlugin =
-      options.agentPlugin ?? ((agent: AgentRecord) => createAcpAgentPlugin(agent, { log, requireConfirmedCommand: true }))
+      options.agentPlugin
+      ?? ((agent: AgentRecord) =>
+        createAcpAgentPlugin(agent, {
+          log,
+          requireConfirmedCommand: true,
+          ...(readCliQuota && readsCliQuota(agent) ? { readQuota: input => readCliQuota(agent.id, input) } : {}),
+        }))
     const egressExtra = [...(options.egressAllow ?? [])]
     const egressFetch = createEgressFetch({
       allow: () => [...policy.get().hostEgressAllow, ...egressExtra],

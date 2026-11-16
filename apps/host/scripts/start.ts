@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { isIP } from 'node:net'
-import { networkInterfaces } from 'node:os'
+import { homedir, networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { HarnessPlugin } from '@latch/sdk'
 import { redactKnownSecrets } from '@latch/core/node-kit'
@@ -219,6 +219,8 @@ async function main(): Promise<void> {
     sessionFolders,
     detectPreset: detectPresetCommands,
     loginPrograms: resolveCommand,
+    // DeepSeek Harness's DeepSeek balance, read with its own key from this home (cli-quota.ts).
+    cliQuota: { home: homedir() },
     // 「操控这台 Mac」 looks for Cua Driver at its one place, on macOS only.
     ...(process.platform === 'darwin' ? { computerDriver: { app: COMPUTER_APP } } : {}),
     commandDirectories: personCommandDirectories,

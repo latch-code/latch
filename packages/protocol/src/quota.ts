@@ -51,14 +51,20 @@ export interface QuotaWindow {
   state?: 'near' | 'limited'
 }
 
+/** The currencies a prepaid balance is shown in. */
+export const QUOTA_CURRENCIES = ['USD', 'CNY'] as const
+export type QuotaCurrency = (typeof QUOTA_CURRENCIES)[number]
+
 export interface HarnessQuota {
-  /** At least one, in the order of `QUOTA_WINDOW_KINDS`. */
+  /** In the order of `QUOTA_WINDOW_KINDS`; at least one, unless there is a `balanceCents`. */
   windows: QuotaWindow[]
   plan?: QuotaPlan
   /** The account's address with all but three characters and the last label hidden (`n•••@f•••.com`), masked on the Host. */
   account?: string
-  /** Prepaid credit left, in cents of a US dollar. */
+  /** Prepaid credit left, in hundredths of `currency`. */
   balanceCents?: number
+  /** The balance's currency. Absent: US dollars. */
+  currency?: QuotaCurrency
   /** The worst of the windows, or `limited` when the harness said the account is. */
   state: QuotaState
   /** When the harness last said any of it. */
@@ -91,11 +97,13 @@ export function leadingQuotaWindow(windows: readonly QuotaWindow[]): QuotaWindow
 
 /**
  * What still holds of a snapshot at `now`: a window past its reset says nothing about the window that began then, so it
- * goes, and the state is that of the windows left. Undefined once none is left.
+ * goes, and the state is that of the windows left. A balance reported alone has no reset and stays. Undefined once
+ * nothing is left.
  */
 export function currentQuota(quota: HarnessQuota, now: number): HarnessQuota | undefined {
   const windows = quota.windows.filter(window => window.resetsAt === undefined || Date.parse(window.resetsAt) > now)
-  if (!windows.length) return undefined
+  // A balance reported with windows goes with them; one reported alone stays.
+  if (!windows.length && (quota.windows.length > 0 || quota.balanceCents === undefined)) return undefined
   if (windows.length === quota.windows.length) return quota
   // A limit the harness reported for the account, which no window showed, does not end with one of the windows.
   const account = quota.state === 'limited' && !quota.windows.some(window => quotaWindowState(window) === 'limited')

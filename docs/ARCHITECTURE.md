@@ -57,6 +57,7 @@ Provider 负责模型协议转换；Tool 执行一种操作；HarnessDriver 提�
 | 本机确认 | `apps/host/src/presence.ts`、`presence-reason.ts`；组件 `native/macos/LatchPresence.swift` |
 | 审计与动作表 | `apps/host/src/audit.ts`、`audit-actions/` |
 | 安全策略、出站策略 | `apps/host/src/policy.ts`、`egress.ts` |
+| 用 Harness CLI 自己的密钥读厂商余额（只有 DeepSeek Harness，见 [HARNESSES](HARNESSES.md#deepseek-harness-的余额)） | `apps/host/src/cli-quota.ts` |
 | 路径、项目文件夹、会话文件夹与工作树 | `apps/host/src/paths.ts`、`projects.ts`、`session-folders.ts`、`worktrees.ts`、`data-entries.ts` |
 | 风险分级、会话文件裁决 | `apps/host/src/risk.ts`、`files/` |
 | 模型网关、用量与预算、工具网关 | `apps/host/src/model-gateway.ts`、`model-gateway/`、`model-usage.ts`、`model-budgets.ts`、`tool-gateway.ts` |

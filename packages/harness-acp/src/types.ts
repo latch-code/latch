@@ -1,4 +1,5 @@
 export type { AgentRecord } from '@latch/protocol'
+import type { QuotaReport } from './quota.ts'
 
 /** Timing and size limits and the diagnostics sink. The defaults suit production; tests shorten them. */
 export interface AcpAgentOptions {
@@ -35,6 +36,13 @@ export interface AcpAgentOptions {
    * refused (409 `harness-unconfirmed`) until it is confirmed once. The Host sets it; drivers built in tests may not.
    */
   requireConfirmedCommand?: boolean
+  /**
+   * The Host's own read of this definition's limits, outside the agent's process: for a preset whose CLI holds an API
+   * key for a vendor with an official balance endpoint (`apps/host/src/cli-quota.ts`). Asked only as a turn ends, at
+   * most once in five minutes, with the session's folder. `null`: there is nothing to report (no key, a refusal, a
+   * setting that sends the key elsewhere), and what was shown goes; `undefined`: this read did not finish.
+   */
+  readQuota?: (input: { cwd: string; signal: AbortSignal }) => Promise<QuotaReport | null | undefined>
 }
 
 export interface ResolvedOptions {
@@ -50,6 +58,7 @@ export interface ResolvedOptions {
   maxProcesses: number
   log(text: string): void
   requireConfirmedCommand: boolean
+  readQuota?: AcpAgentOptions['readQuota']
 }
 
 export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
@@ -75,6 +84,7 @@ export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
       return value
     })(),
     log: options.log ?? (text => console.error(`[Latch] ${text}`)),
+    ...(options.readQuota ? { readQuota: options.readQuota } : {}),
   }
 }
 

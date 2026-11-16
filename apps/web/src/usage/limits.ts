@@ -149,8 +149,8 @@ function windowView(window: QuotaWindow, now: number): LimitView {
 export interface HarnessLimits {
   state: QuotaState
   windows: LimitView[]
-  /** The window the composer stands for: the worst, then the fullest (`leadingQuotaWindow`). */
-  tightest: LimitView
+  /** The window the composer stands for: the worst, then the fullest (`leadingQuotaWindow`). Absent: only a balance. */
+  tightest?: LimitView
   /** The Harness said the account is at a limit that none of its windows shows. */
   account: boolean
   /** Plan, masked account and a prepaid balance above zero, each only when the Harness said it. */
@@ -162,17 +162,20 @@ export interface HarnessLimits {
 export function harnessLimits(quota: HarnessQuota | undefined, now: number): HarnessLimits | undefined {
   const held = quota && currentQuota(quota, now)
   const lead = held && leadingQuotaWindow(held.windows)
-  if (!held || !lead) return undefined
+  if (!held || (!lead && held.balanceCents === undefined)) return undefined
   return {
     state: held.state,
     windows: held.windows.map(window => windowView(window, now)),
-    tightest: windowView(lead, now),
-    account: held.state === 'limited' && quotaWindowState(lead) !== 'limited',
+    ...(lead ? { tightest: windowView(lead, now) } : {}),
+    account: held.state === 'limited' && (!lead || quotaWindowState(lead) !== 'limited'),
     ...(held.account ? { who: held.account } : {}),
     facts: [
       ...(held.plan ? [PLANS[held.plan]] : []),
       ...(held.account ? [held.account] : []),
-      ...(held.balanceCents !== undefined && held.balanceCents > 0 ? [`余额 $${(held.balanceCents / 100).toFixed(2)}`] : []),
+      // A balance beside windows shows only with money in it; a balance reported alone always shows.
+      ...(held.balanceCents !== undefined && (held.balanceCents > 0 || !lead)
+        ? [`余额 ${held.currency === 'CNY' ? '¥' : '$'}${(held.balanceCents / 100).toFixed(2)}`]
+        : []),
     ],
   }
 }
@@ -188,8 +191,8 @@ export function usedWords(view: Pick<LimitView, 'percent' | 'status'>): string {
  * an account at a limit no window shows reads 「额度已用尽」 alone.
  */
 export function chipParts(limits: Pick<HarnessLimits, 'tightest' | 'account'>): { name: string; figure: string } {
-  if (limits.account) return { name: '', figure: `额度${LIMIT_WORDS.limited}` }
   const { tightest } = limits
+  if (limits.account || !tightest) return { name: '', figure: `额度${LIMIT_WORDS.limited}` }
   return { name: tightest.name, figure: tightest.percent !== undefined ? usedWords(tightest) : `额度${tightest.status ?? ''}` }
 }
 
