@@ -483,7 +483,8 @@ async function startLifecycle({ supervisor, hooks }) {
   }
   const loginItem = createLoginItem({ app, platform: process.platform, packaged: app.isPackaged })
   // The Host shows in 「电脑」 what this app keeps awake, and that it runs at all.
-  const reports = createDesktopReports({ send: body => supervisor.announce(body) })
+  // With this process's pid: 「操控这台 Mac」 refuses calls aimed at it (an accident guard, docs/MCP.md).
+  const reports = createDesktopReports({ send: body => supervisor.announce({ ...body, pid: process.pid }) })
   const keepAwake = createKeepAwake({
     blocker: powerSaveBlocker,
     onBattery: () => powerMonitor.isOnBatteryPower(),

@@ -256,7 +256,18 @@ import {
   type McpServerRecord,
 } from './mcp.ts'
 import { McpOAuth } from './mcp-oauth.ts'
-import { COMPUTER_GUIDE_SKILL, COMPUTER_OFF_HINTS, computerGuide, type ComputerDriverOptions } from './mcp-computer.ts'
+import {
+  COMPUTER_DEFAULTS,
+  COMPUTER_GUIDE_MODE,
+  COMPUTER_GUIDE_SKILL,
+  COMPUTER_OFF_HINTS,
+  COMPUTER_REFUSAL_TEXT,
+  computerDefaultsUpgrade,
+  computerGuide,
+  computerRefusal,
+  computerRules,
+  type ComputerDriverOptions,
+} from './mcp-computer.ts'
 import { McpRemotePool, McpRemoteSession, builtinToolName, maskStrings, remoteFailure, type RemoteAnswer } from './mcp-remote.ts'
 import {
   authFailure,
@@ -559,6 +570,8 @@ const cancelSchema = z.strictObject({
 })
 /** A subagent row's message ID. */
 const stopSubagentSchema = z.strictObject({ subagentId: opaqueId })
+/** 停 on 「操控这台 Mac」 in one session: nothing to say. */
+const computerStopSchema = z.strictObject({}).optional()
 /** Names the threshold the person saw, so a retry or a second device cannot double it again. */
 const keepWaitingSchema = z.strictObject({
   runId: z.string().regex(RUN_ID),
@@ -1393,6 +1406,38 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       [authDir, join(dataDir, 'identity'), join(dataDir, MCP_DIRECTORY), ...BACKUP_EXCLUDED_CONFIG_FILES.map(file => join(dataDir, file))],
       { log },
     )
+    // 「操控这台 Mac」 from before the current defaults: the switches the person did not move follow them, on record first.
+    for (const record of mcpStore.records()) {
+      if (record.transport !== 'stdio' || record.preset !== 'computer' || (record.defaults ?? 1) >= COMPUTER_DEFAULTS) continue
+      const disabledTools = computerDefaultsUpgrade(record.disabledTools)
+      try {
+        if (disabledTools)
+          await audit.append({
+            action: 'mcp.server.changed',
+            actor: { listener: 'host' },
+            target: record.id,
+            detail: { serverId: record.id, kinds: ['tools'], specHash: record.specHash, enabled: record.enabled },
+          })
+        await mcpStore.change(undefined, ({ servers, stamp }) => {
+          const draft = servers.servers.find(item => item.id === record.id)
+          if (!draft || draft.transport !== 'stdio') return record.id
+          if (disabledTools) {
+            draft.disabledTools = disabledTools
+            // Shown once in settings: which switches moved.
+            const moved = (['run_steps', 'launch_app', 'get_desktop_state'] as const).filter(
+              tool => record.disabledTools.includes(tool) !== disabledTools.includes(tool),
+            )
+            if (moved.length) draft.defaultsMoved = moved
+            draft.revision += 1
+            draft.updatedAt = stamp
+          }
+          draft.defaults = COMPUTER_DEFAULTS
+          return record.id
+        })
+      } catch (error) {
+        log(`「操控这台 Mac」的默认开关没有更新，下次启动再试：${errorText(error)}`)
+      }
+    }
     // A policy.json from before confirmed origins: record the origins the owner had already confirmed, once.
     if (policy.needsAddressMigration) {
       await policy
@@ -5100,8 +5145,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
-    /** `mcp.tool.called` before a call goes, or a refusal: no record, no call. 「Xcode」's also name their class and device. */
-    async function recordCall(record: McpServerRecord, sessionId: string, tool: string, device?: string): Promise<string> {
+    /**
+     * `mcp.tool.called` before a call goes, or a refusal: no record, no call. 「Xcode」's also name their class and device;
+     * 「操控这台 Mac」's `run_steps` its step count.
+     */
+    async function recordCall(record: McpServerRecord, sessionId: string, tool: string, device?: string, steps?: number): Promise<string> {
       const callId = randomUUID()
       const xcode = record.transport === 'stdio' && record.preset === 'xcode'
       try {
@@ -5115,6 +5163,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             callId,
             toolHash: toolHash(record.id, tool),
             ...(xcode ? { risk: xcodeToolRisk(tool), ...(device ? { udid: device } : {}) } : {}),
+            ...(steps !== undefined ? { steps } : {}),
           },
         })
       } catch {
@@ -5244,6 +5293,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       )
     }
 
+    /** How Latch's text meets the driver's own: tests run the A/B through `computerDriver.guide`. */
+    const guideMode = options.computerDriver?.guide ?? COMPUTER_GUIDE_MODE
+    /** 「操控这台 Mac」 bridges that took their launch and have not ended, by session: binding → server. */
+    const computerLive = new Map<string, Map<string, string>>()
+    /** Its calls sent and not yet settled, by session: call ID → when it went. */
+    const computerCalls = new Map<string, Map<string, number>>()
+    /**
+     * Sessions where 停 ended the bridge while a call was in flight: the driver's daemon does not cancel a call when its
+     * `mcp` client goes (cua-driver-rs v0.52.3, `serve.rs`), and a batch may run up to 60 s (`MAX_BATCH_MS`). Shown as
+     * 「正在停止」 until that long after the last call went.
+     */
+    const computerStopping = new Map<string, { serverId: string; timer: ReturnType<typeof setTimeout> }>()
+    const COMPUTER_CALL_LIMIT_MS = 65_000
+    /**
+     * Latch's own processes, for the accident guard on 「操控这台 Mac」 calls: the Host, and the desktop app as it last
+     * reported itself. Not a boundary (docs/MCP.md).
+     */
+    const latchPids = () => [process.pid, ...(computer.desktopPid() !== undefined ? [computer.desktopPid()!] : [])]
+
     function mcpGateway(): McpGatewayHandlers {
       /** Each bridge's empty working folder, removed when its binding ends. */
       const folders = new Map<string, string>()
@@ -5300,7 +5368,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             name: record.name,
             specHash: record.specHash,
             ...(record.transport === 'stdio' && record.preset === 'computer'
-              ? { skill: { ...COMPUTER_GUIDE_SKILL, content: computerGuide(record.disabledTools) } }
+              ? { skill: { ...COMPUTER_GUIDE_SKILL, content: computerRules(record.disabledTools) } }
               : record.transport === 'stdio' && record.preset === 'xcode'
                 ? { skill: { ...XCODE_GUIDE_SKILL, content: XCODE_INSTRUCTIONS } }
                 : {}),
@@ -5322,6 +5390,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             throw new AppError(503, 'audit-failed', 'Latch could not record this start, so the server was not started.')
           }
           if (record.transport === 'http') return { remote: true, disabledTools: [...record.disabledTools] }
+          if (record.preset === 'computer') {
+            const live = computerLive.get(binding.sessionId) ?? new Map<string, string>()
+            live.set(binding.id, record.id)
+            computerLive.set(binding.sessionId, live)
+            refresh(binding.sessionId)
+          }
           let cwd = binding.cwd
           if (!record.projectCwd) {
             cwd = await mkdtemp(join(runtime.tmpRoot, 'mcp-'))
@@ -5339,7 +5413,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             disabledTools: [...record.disabledTools],
             ...(record.knownTools ? { knownTools: [...record.knownTools] } : {}),
             ...(record.preset === 'computer'
-              ? { instructions: computerGuide(record.disabledTools), offHints: { ...COMPUTER_OFF_HINTS } }
+              ? {
+                  instructions: computerGuide(record.disabledTools, guideMode),
+                  instructionsMode: guideMode,
+                  offHints: { ...COMPUTER_OFF_HINTS },
+                  shapes: true as const,
+                }
               : record.preset === 'xcode'
                 ? { instructions: XCODE_INSTRUCTIONS }
                 : {}),
@@ -5377,12 +5456,32 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             throw new AppError(503, 'mcp-prompt-unmarked', 'Latch could not mark this session, so the prompt was not fetched.')
           }
         },
-        async callStarted(binding, tool, device) {
+        async callStarted(binding, tool, device, shape) {
           const record = current(binding)
           if (!record || !mcpUsedIn(record.scope, binding) || !mcpGiven(record, binding.sessionId)) throw gone()
           if (!isMcpToolOn(record, tool)) {
             const hint = record.transport === 'stdio' && record.preset === 'computer' ? COMPUTER_OFF_HINTS[tool] : undefined
             throw new AppError(403, 'mcp-tool-off', `This tool is switched off in Latch.${hint ? ` ${hint}` : ''}`)
+          }
+          if (record.transport === 'stdio' && record.preset === 'computer') {
+            // 「操控这台 Mac」: what the call has the driver do, as its bridge read it, checked before anything is sent.
+            const refused = computerRefusal(record, tool, shape, latchPids())
+            if (refused) {
+              await audit
+                .append({
+                  action: 'mcp.tool.refused',
+                  actor: { listener: 'host' },
+                  target: binding.sessionId,
+                  detail: { serverId: record.id, sessionId: binding.sessionId, toolHash: toolHash(record.id, tool), reason: refused },
+                })
+                .catch(() => {})
+              throw new AppError(403, 'mcp-tool-refused', COMPUTER_REFUSAL_TEXT[refused])
+            }
+            const callId = await recordCall(record, binding.sessionId, tool, undefined, tool === 'run_steps' ? shape?.stepCount : undefined)
+            const calls = computerCalls.get(binding.sessionId) ?? new Map<string, number>()
+            calls.set(callId, Date.now())
+            computerCalls.set(binding.sessionId, calls)
+            return callId
           }
           const callId = await recordCall(record, binding.sessionId, tool, device)
           if (record.transport === 'stdio' && record.preset === 'xcode')
@@ -5394,6 +5493,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           return callId
         },
         callEnded(binding, callId, result, ms) {
+          const calls = computerCalls.get(binding.sessionId)
+          if (calls?.delete(callId) && !calls.size) computerCalls.delete(binding.sessionId)
           void audit
             .append({
               action: 'mcp.tool.settled',
@@ -5406,6 +5507,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         closed(binding) {
           const closing = mcpStore.get(binding.serverId)
           if (closing?.transport === 'stdio' && closing.preset === 'xcode') simulators.agentEnded(binding.sessionId)
+          const live = computerLive.get(binding.sessionId)
+          if (live?.delete(binding.id)) {
+            if (!live.size) computerLive.delete(binding.sessionId)
+            refresh(binding.sessionId)
+          }
           mcpRemote.close(binding.id)
           const folder = folders.get(binding.id)
           folders.delete(binding.id)
@@ -7012,6 +7118,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // Cards go only into topics of 我的 Agent, which are private: only a device with the full data scope reads them.
         ...(hub!.agentPrivate(sessionId) && automations.resultsIn(sessionId).length ? { results: automations.resultsIn(sessionId) } : {}),
         approvals: await Promise.all(detail.approvals.map(approval => decorate(approval, level, detail.summary))),
+        ...(computerStopping.has(sessionId)
+          ? { computer: { serverId: computerStopping.get(sessionId)!.serverId, stopping: true as const } }
+          : computerLive.get(sessionId)?.size
+            ? { computer: { serverId: [...computerLive.get(sessionId)!.values()][0]! } }
+            : {}),
       }
     }
 
@@ -9058,6 +9169,34 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { accepted: true })
         return true
       }
+      if (method === 'POST' && action === 'computer-stop') {
+        // 停 on 「操控这台 Mac」 narrows like a cancel: it takes what a cancel takes, and it is on record before the
+        // session's bridge ends. The agent keeps running without the server until its process starts again.
+        requireScope(caller, 'view')
+        limits.classC.take(caller.device.id)
+        computerStopSchema.parse(await optionalJsonBody(req))
+        privateAccess(caller, (await hub!.detail(id)).summary)
+        const serverId = [...(computerLive.get(id)?.values() ?? [])][0]
+        if (!serverId) throw new AppError(409, 'computer-not-in-use', '这个会话没有在使用「操控这台 Mac」。')
+        await audited({ action: 'mcp.server.stopped', actor: actorOf(caller), target: id, detail: { serverId, sessionId: id } }, res)
+        // A call already sent may run on in the daemon: 「正在停止」 until it must have ended.
+        const sent = [...(computerCalls.get(id)?.values() ?? [])]
+        computerCalls.delete(id)
+        const left = sent.length ? Math.max(...sent) + COMPUTER_CALL_LIMIT_MS - Date.now() : 0
+        if (left > 0) {
+          clearTimeout(computerStopping.get(id)?.timer)
+          const timer = setTimeout(() => {
+            computerStopping.delete(id)
+            refresh(id)
+          }, left)
+          timer.unref()
+          computerStopping.set(id, { serverId, timer })
+        }
+        toolGateway?.revokeMcpIn(id, serverId)
+        refresh(id)
+        json(res, { accepted: true })
+        return true
+      }
       if (method === 'POST' && action === 'keep-waiting') {
         requireScope(caller, 'view')
         limits.classC.take(caller.device.id)
@@ -10620,7 +10759,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { state: configRequests.state(id, caller.device.id, configRequest[2]!) })
         return
       }
-      const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|keep-waiting|config|stop-subagent|attend))?$/)
+      const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|keep-waiting|config|stop-subagent|attend|computer-stop))?$/)
       if (task && (await handleTask(req, res, caller, safeDecode(task[1]!), task[2], method))) return
       const approval = path.match(/^\/link\/api\/approvals\/([^/]+)$/)
       if (approval && method === 'POST') {

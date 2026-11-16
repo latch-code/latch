@@ -214,6 +214,13 @@ const stdioRecord = z.strictObject({
   preset: z.enum(['computer', 'xcode']).optional(),
   /** The tools its switches have listed; any other is new and off (`isMcpToolOn`). Absent: new tools are on. */
   knownTools: z.array(toolName).max(256).optional(),
+  /** 「操控这台 Mac」: the revision of its default switches it was given or brought to (`COMPUTER_DEFAULTS`). Absent: 1. */
+  defaults: z.number().int().min(1).max(1000).optional(),
+  /** 「操控这台 Mac」: the switches the last defaults upgrade moved, shown once in settings until dismissed. */
+  defaultsMoved: z
+    .array(z.enum(['run_steps', 'launch_app', 'get_desktop_state']))
+    .max(3)
+    .optional(),
 })
 /** An OAuth scope token (RFC 6749 §3.3). */
 export const oauthScope = z.string().regex(/^[\x21\x23-\x5B\x5D-\x7E]{1,128}$/u)
@@ -774,6 +781,7 @@ export function serverView(
     ...(isUnpinnedRunner(record.command, record.args) ? { unpinned: true as const } : {}),
     ...(record.preset ? { preset: record.preset } : {}),
     ...(record.knownTools ? { knownTools: [...record.knownTools] } : {}),
+    ...(record.transport === 'stdio' && record.defaultsMoved?.length ? { defaultsMoved: [...record.defaultsMoved] } : {}),
   }
 }
 

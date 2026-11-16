@@ -68,7 +68,12 @@ describe('设置 › MCP', () => {
   })
 
   it('says how 「操控这台 Mac」 stands in a word: not installed, too old, refused or found', () => {
-    const check = { minimum: '0.10.0', command: '/Applications/CuaDriver.app/Contents/MacOS/cua-driver', install: 'install' }
+    const check = {
+      minimum: '0.37.0',
+      pinned: '0.45.4',
+      command: '/Applications/CuaDriver.app/Contents/MacOS/cua-driver',
+      install: 'install',
+    }
     expect(computerWord({ ...check, state: 'absent' })).toEqual({ tone: 'neutral', text: '未安装' })
     expect(computerWord({ ...check, state: 'old', version: '0.7.1' })).toEqual({ tone: 'warn', text: '版本太旧 · 0.7.1' })
     expect(computerWord({ ...check, state: 'refused', reason: 'signature' })).toEqual({ tone: 'failed', text: '不是签名的 Cua Driver' })

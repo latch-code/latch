@@ -7,7 +7,7 @@ import { closeSync, constants, openSync, rmSync, writeSync } from 'node:fs'
 import { chmod, lstat, mkdir, rm, unlink } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { dirname, join } from 'node:path'
-import type { AgentSkillBody, TaskSummary } from '@latch/protocol'
+import type { AgentSkillBody, ComputerCallShape, TaskSummary } from '@latch/protocol'
 import {
   AppError,
   type McpServerLease,
@@ -104,6 +104,10 @@ export type McpLaunchReply =
       knownTools?: string[]
       /** Latch's own text for the agent, given at `initialize` in place of the server's `instructions`. */
       instructions?: string
+      /** `prepend`: Latch's text comes before the server's own, unchanged, instead of replacing it. */
+      instructionsMode?: 'replace' | 'prepend'
+      /** 「操控这台 Mac」: each `mcp/call` carries the call's shape (`ComputerCallShape`) for the Host to check. */
+      shapes?: true
       /** Per tool switched off: a few words after the refusal, saying what to do instead. */
       offHints?: Record<string, string>
     }
@@ -137,8 +141,12 @@ export interface McpGatewayHandlers {
   launch(binding: McpBinding): Promise<McpLaunchReply>
   /** What the bridge saw when it started the server. */
   report(binding: McpBinding, report: { ok: true; tools: string[] } | { ok: false; reason: McpStartFailure }): void
-  /** Before a call is sent to the server: its audit record. Rejects, with words for the agent, when it must not go. */
-  callStarted(binding: McpBinding, tool: string, device?: string): Promise<string>
+  /**
+   * Before a call is sent to the server: its audit record. Rejects, with words for the agent, when it must not go. `device`:
+   * a simulator's UDID the call names (「Xcode」). A launch that asked for shapes sends each call's (`ComputerCallShape`,
+   * 「操控这台 Mac」); a malformed one arrives as `{ form: 'unknown' }`.
+   */
+  callStarted(binding: McpBinding, tool: string, device?: string, shape?: ComputerCallShape): Promise<string>
   /**
    * Before a local command's bridge forwards `prompts/get`: its audit record (`mcp.prompt.got`). Rejects, with words for
    * the agent, when it must not go. The bridge forwards it itself; the gateway never sees arguments or the text.
@@ -194,6 +202,52 @@ interface Binding {
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype
+
+const SHAPE_KEYS = new Set(['form', 'steps', 'stepCount', 'launch', 'screenshotFile', 'latchName', 'pids'])
+const SHAPE_TOOL = /^[a-z_]{1,40}$/u
+
+/**
+ * A call's shape as a bridge sent it, checked field by field; anything else in it, or of another type, reads as a form
+ * not understood, which the Host refuses.
+ */
+function readShape(value: unknown): ComputerCallShape {
+  const unknown: ComputerCallShape = { form: 'unknown' }
+  if (!isPlainObject(value) || Object.keys(value).some(key => !SHAPE_KEYS.has(key))) return unknown
+  const shape: ComputerCallShape = {}
+  // A form not read still says what it named (pids, Latch), so the Host can give the agent the right reason.
+  if (value.form !== undefined) {
+    if (value.form !== 'unknown') return unknown
+    shape.form = 'unknown'
+  }
+  if (value.steps !== undefined) {
+    if (
+      !Array.isArray(value.steps)
+      || value.steps.length > 32
+      || !value.steps.every(tool => typeof tool === 'string' && SHAPE_TOOL.test(tool))
+    )
+      return unknown
+    shape.steps = value.steps as string[]
+  }
+  if (value.stepCount !== undefined) {
+    if (typeof value.stepCount !== 'number' || !Number.isInteger(value.stepCount) || value.stepCount < 1 || value.stepCount > 64)
+      return unknown
+    shape.stepCount = value.stepCount
+  }
+  if (value.launch !== undefined) {
+    if (value.launch !== 'ok' && value.launch !== 'refused') return unknown
+    shape.launch = value.launch
+  }
+  for (const flag of ['screenshotFile', 'latchName'] as const) {
+    if (value[flag] === undefined) continue
+    if (value[flag] !== true) return unknown
+    shape[flag] = true
+  }
+  if (value.pids !== undefined) {
+    if (!Array.isArray(value.pids) || value.pids.length > 64 || !value.pids.every(pid => Number.isSafeInteger(pid))) return unknown
+    shape.pids = value.pids as number[]
+  }
+  return shape
+}
 
 export class ToolGatewayServer implements ToolGateway {
   private server: Server | undefined
@@ -310,6 +364,20 @@ export class ToolGatewayServer implements ToolGateway {
         close: () => this.release(hash, binding),
       }
     })
+  }
+
+  /**
+   * Ends one session's bridges to a server (停 in the session): their server's process group stops and the agent keeps
+   * running without it. Returns how many ended.
+   */
+  revokeMcpIn(sessionId: string, serverId: string): number {
+    let ended = 0
+    for (const [hash, binding] of this.bindings)
+      if (binding.sessionId === sessionId && binding.mcp?.serverId === serverId) {
+        this.release(hash, binding)
+        ended++
+      }
+    return ended
   }
 
   /** Ends every bridge of a server: it was removed, switched off or changed. Their agents keep running without it. */
@@ -438,7 +506,8 @@ export class ToolGatewayServer implements ToolGateway {
         typeof args.device === 'string' && /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u.test(args.device)
           ? args.device
           : undefined
-      void handlers.callStarted(mcp, args.tool, device).then(
+      const shape = args.shape === undefined ? undefined : readShape(args.shape)
+      void handlers.callStarted(mcp, args.tool, device, shape).then(
         callId => (binding.closed ? refuse(id, -32001, REFUSED) : reply({ id, result: { callId } })),
         error => refuse(id, -32000, error instanceof AppError ? error.message : 'The call cannot be made now.'),
       )

@@ -36,6 +36,8 @@ const FILE = 'computer.json'
 export const desktopReportSchema = z.strictObject({
   state: z.literal('desktop'),
   keepAwake: z.enum(['busy', 'schedule']).nullable(),
+  /** The desktop app's main process, for 「操控这台 Mac」's guard against calls aimed at Latch. */
+  pid: z.number().int().positive().optional(),
 })
 export type DesktopReport = z.infer<typeof desktopReportSchema>
 
@@ -62,7 +64,7 @@ const push = (rows: Array<{ from: string; to: string }>, row: { from: string; to
  */
 export class HostComputer {
   private state: State
-  private desktop: { at: number; keepAwake: DesktopReport['keepAwake'] } | undefined
+  private desktop: { at: number; keepAwake: DesktopReport['keepAwake']; pid?: number } | undefined
   private stale?: ReturnType<typeof setTimeout>
   private constructor(
     private readonly options: Options,
@@ -137,12 +139,17 @@ export class HostComputer {
   /** The desktop app's report of what it keeps awake; it comes on every change and at least every half minute. */
   report(input: DesktopReport): void {
     const before = JSON.stringify(this.view())
-    this.desktop = { at: this.now(), keepAwake: input.keepAwake }
+    this.desktop = { at: this.now(), keepAwake: input.keepAwake, ...(input.pid !== undefined ? { pid: input.pid } : {}) }
     clearTimeout(this.stale)
     // Once reports stop, the page hears that the desktop app no longer runs.
     this.stale = setTimeout(() => this.options.changed?.(), DESKTOP_STALE_MS + 1000)
     this.stale.unref()
     if (JSON.stringify(this.view()) !== before) this.options.changed?.()
+  }
+
+  /** The desktop app's process as it last reported it, kept after reports stop: a pid named after it went is no loss. */
+  desktopPid(): number | undefined {
+    return this.desktop?.pid
   }
 
   view(): HostComputerState {

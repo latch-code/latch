@@ -699,6 +699,11 @@ export interface TaskDetail {
    * start: the next prompt starts a new context whether or not it asks.
    */
   contextCleared?: true
+  /**
+   * 「操控这台 Mac」 is in use: this session's agent holds a bridge to that server now; 停 ends it. `stopping`: 停 ended
+   * the bridge while a call it sent may still be running in the driver's daemon, which closing the bridge does not cancel.
+   */
+  computer?: { serverId: string; stopping?: true }
 }
 
 /**

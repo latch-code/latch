@@ -196,7 +196,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 **分工。** Host 自己宣布运行状态并重新加载证书。让它常驻、重启和保持唤醒的是桌面端主进程（`apps/desktop/src/lifecycle.cjs`），因为登录项、电源断言与系统睡眠通知只在 Electron 中可用。
 
 - **运行状态通告。** Host 在事件流上发送 `host-state`（帧与客户端处理见 [STREAMING.md](./STREAMING.md)「Host 的状态流」）。`sleeping` 与 `awake` 在收到报告时立即发出，`awake` 之后另发一次 `refresh`；`stopping` 是 Host 关闭时每条流的最后一帧，原因取此前 60 秒内报告的 `restart`、`update` 或 `shutdown`，没有报告时为 `shutdown`。`retryAfter`（秒）默认 `restart` 2、`update` 10、`sleep` 10、`shutdown` 15，报告可给 1–3600。
-- **报告。** `POST /link/api/host/state` 只在 `host.sock` 上接受（不带设备凭据，只用于通告与展示），其他入口 404；桌面端页面经主进程转发的这类请求由主进程返回 403 `shell-managed`。桌面端另报 `{ state: 'desktop', keepAwake }`（[AUTOMATIONS.md](AUTOMATIONS.md#到点前后保持唤醒)）。
+- **报告。** `POST /link/api/host/state` 只在 `host.sock` 上接受（不带设备凭据，只用于通告与展示），其他入口 404；桌面端页面经主进程转发的这类请求由主进程返回 403 `shell-managed`。桌面端另报 `{ state: 'desktop', keepAwake, pid }`（[AUTOMATIONS.md](AUTOMATIONS.md#到点前后保持唤醒)；`pid` 是它的主进程，「操控这台 Mac」据此拒绝指向 Latch 的调用，见 [MCP.md](MCP.md#逐次核对)）。
 - **谁报告。** 主进程在 `powerMonitor` 的 `suspend` 与 `resume` 时报告睡眠与唤醒。系统宣布注销、重启或关机时只报告 `shutdown`，不停止 Host（注销可能被取消）；随后 30 秒内系统要求桌面端退出时，主进程推迟退出，停止 Host（核对后 SIGTERM，最多等 3 秒）再退出。所有者自己退出桌面端（⌘Q）不停止 Host。睡眠前的最后一帧不保证送达。
 - **启动记录。** 桌面启动器启动 Host 后写入 `<数据目录>/desktop-launch.json`（0600，原子写入）：版本、Host 的 PID 与 hostId、启动方式 `launch`。环境中有数据目录以外的 Host 设置（`HOST_ENV_NAMES`）时 `launch` 为 null，因为桌面端无法按原样启动它。写入失败时照常返回已启动的 Host，并提示它不会被自动重启。主进程严格解析它，不符合的内容视为没有记录。
 - **崩溃后重启。** 主进程每 5 秒读 `host.json` 并经 `host.sock` 核对。有序停止会删除 `host.json`，所以它仍记录一个已退出的进程就是崩溃。只有 PID 与 hostId 都和启动记录一致、且 `launch` 不为 null 的 Host 会被重启：等待 1、2、4、8……秒（最长 30 秒），60 秒内没有核对通过或启动后立即退出都算一次崩溃，10 分钟内第 5 次崩溃时停止自动重启。其他 Host 崩溃时只报告。
@@ -627,7 +627,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /tasks/:id/prompt` | `run` | L3 会话也可以从任何设备输入；`queue: true` 见「排队输入」 |
 | `PATCH`/`DELETE /tasks/:id`、`POST /tasks/batch` | `run` | 重命名、置顶、归档、标签、优先级（`high`、`mid`、`low`）、删除；私有会话另需 `all`；批处理见「会话搜索与批处理」 |
 | `POST /tasks/:id/attend` | `opened`：`view`；`checked`：`run`；私有会话另需 `all` | 看板记号，见「看板的组」 |
-| `POST /tasks/:id/cancel`、`…/stop-subagent`、`…/keep-waiting` | `view` | 取消；停止一个子 Agent（[HARNESSES.md](./HARNESSES.md#子-agent)）；推迟沉默提示（[STREAMING.md](./STREAMING.md#运行的真实状态)） |
+| `POST /tasks/:id/cancel`、`…/stop-subagent`、`…/keep-waiting`、`…/computer-stop` | `view` | 取消；停止一个子 Agent（[HARNESSES.md](./HARNESSES.md#子-agent)）；推迟沉默提示（[STREAMING.md](./STREAMING.md#运行的真实状态)）；结束这个会话的「操控这台 Mac」（[MCP.md](./MCP.md#操控这台-mac)） |
 | `POST /approvals/:id` | 拒绝 `view`；允许 R1 `approve:standard`；允许 R2 `approve:elevated`；允许 L3 询问 `run` | 见「审批与取消」 |
 | `POST /tasks/:id/config`、`GET /tasks/:id/config-requests/:requestId`、`POST …/check` | 修改与核对 `run`；查询为原设备的 `view` | 见「会话配置修改回执」 |
 | `PATCH`/`DELETE /tasks/:id/queue/:itemId`、`POST …/send` | `run` | 见「排队输入」 |

@@ -1,4 +1,5 @@
 import { z, type ZodType } from 'zod'
+import { COMPUTER_REFUSALS } from '@latch/protocol'
 import { count, hex64, opaqueId, prefixed } from './fields.ts'
 
 const serverId = prefixed('mcp')
@@ -37,18 +38,26 @@ export const MCP_ACTIONS = {
   'mcp.server.test': z.strictObject({ serverId, specHash: hex64 }),
   /** A session's `latch-mcp` bridge took the launch: the person's program starts in that agent's process. */
   'mcp.server.started': z.strictObject({ serverId, sessionId: opaqueId, specHash: hex64 }),
+  /**
+   * 「Xcode」: Latch's class of the tool, and the simulator a device tool names (its UDID), never a picture. 「操控这台
+   * Mac」: `steps`, how many steps a `run_steps` carries, each checked by the Host before the call went.
+   */
   'mcp.tool.called': z.strictObject({
     serverId,
     sessionId: opaqueId,
     callId,
     toolHash: hex64,
-    /** 「Xcode」: Latch's class of the tool, and the simulator a device tool names (its UDID), never a picture. */
     risk: z.enum(['R0', 'R1', 'R2']).optional(),
     udid: z
       .string()
       .regex(/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u)
       .optional(),
+    steps: count.optional(),
   }),
+  /** A 「操控这台 Mac」 call the Host refused by its arguments, before anything was sent; why, never the arguments. */
+  'mcp.tool.refused': z.strictObject({ serverId, sessionId: opaqueId, toolHash: hex64, reason: z.enum(COMPUTER_REFUSALS) }),
+  /** 停 in a session: the person ended that session's bridge to a server; written before it ends. */
+  'mcp.server.stopped': z.strictObject({ serverId, sessionId: opaqueId }),
   'mcp.tool.settled': z.strictObject({
     serverId,
     sessionId: opaqueId,

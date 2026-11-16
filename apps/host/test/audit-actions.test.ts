@@ -71,6 +71,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
     risk: 'R1',
     udid: '3767D0E9-F4D5-49E4-8023-F85C6FB82B13',
   },
+  'mcp.tool.refused': { serverId: `mcp_${'F'.repeat(22)}`, sessionId, toolHash: hex, reason: 'step-off' },
+  'mcp.server.stopped': { serverId: `mcp_${'F'.repeat(22)}`, sessionId },
   'mcp.oauth.started': { serverId: `mcp_${'F'.repeat(22)}` },
   'mcp.oauth.authorized': { serverId: `mcp_${'F'.repeat(22)}`, registered: true, renewable: true },
   'mcp.oauth.failed': { serverId: `mcp_${'F'.repeat(22)}`, reason: 'state' },

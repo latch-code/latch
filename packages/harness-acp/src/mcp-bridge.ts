@@ -1,4 +1,5 @@
 import type { McpServerLease } from '@latch/sdk'
+import { COMPUTER_SHAPE_SOURCE } from './computer-call.ts'
 
 /**
  * `latch-mcp`: MCP over stdio for one of Latch's own servers in one agent process. For a remote address it starts
@@ -18,7 +19,10 @@ import type { McpServerLease } from '@latch/sdk'
  *   prompts are not offered (尚未实现): the Host is not a client for them;
  * - tools switched off in Latch are left out of `tools/list` and refused, with the launch's few words on what to do
  *   instead where it has them;
- * - where the launch carries Latch's own `instructions` (「操控这台 Mac」), they replace the server's at `initialize`;
+ * - where the launch carries Latch's own `instructions` (「操控这台 Mac」), they replace the server's at `initialize`, or
+ *   (`instructionsMode: 'prepend'`) come before the server's own, unchanged;
+ * - where the launch asks for it (`shapes`, 「操控这台 Mac」), each `tools/call` tells the Host what the call has the
+ *   driver do (`computerCallShape`: the tools a batch runs, the shape of `launch_app`, pids and names), never a value;
  * - every `tools/call` is recorded through the gateway before it is sent, and not sent when that fails; its outcome after;
  * - a server that does not start, or does not answer `initialize` within 30 s, is reported, and the agent gets a server
  *   with no tools, so a session is never refused over it (DeepSeek Harness refuses one when any server fails).
@@ -125,7 +129,10 @@ let known
 const off = name => disabled.has(name) || (known !== undefined && !known.has(name))
 // Latch's text in place of the server's instructions, and per tool switched off what to do instead.
 let instructions
+let instructionsMode = 'replace'
 let hints = {}
+// 「操控这台 Mac」: each call's shape goes to the Host with its record.
+let shapes = false
 const offText = name =>
   'This tool is switched off in Latch.' + (typeof name === 'string' && Object.hasOwn(hints, name) ? ' ' + hints[name] : '')
 let childBuffer = ''
@@ -165,6 +172,19 @@ function answerBroken(entry) {
   }
   write({ id: entry.id, result: {} })
 }
+// Latch's text, alone or before the server's own (unchanged, as a string at most 16 KiB).
+// A reader that throws reads nothing: the Host refuses a call it cannot read.
+function shapeOf(name, args) {
+  try {
+    return computerCallShape(name, args)
+  } catch {
+    return { form: 'unknown' }
+  }
+}
+function ownInstructions(theirs) {
+  if (instructionsMode !== 'prepend' || typeof theirs !== 'string' || !theirs.trim()) return instructions
+  return instructions + '\n\n---\n\n' + theirs.slice(0, 16384)
+}
 const ownInitialize = params => ({
   protocolVersion: (params && params.protocolVersion) || '2025-06-18',
   capabilities: { tools: {} },
@@ -193,7 +213,7 @@ function fromChild(message) {
     const offered = message.result.capabilities || {}
     // Tools as the server offers them; prompts only as a plain capability (their change notice is not forwarded).
     const capabilities = { tools: offered.tools || {}, ...(offered.prompts ? { prompts: {} } : {}) }
-    return write({ id: entry.id, result: { ...message.result, capabilities, ...(instructions !== undefined ? { instructions } : {}) } })
+    return write({ id: entry.id, result: { ...message.result, capabilities, ...(instructions !== undefined ? { instructions: ownInstructions(message.result.instructions) } : {}) } })
   }
   if (entry.method === 'tools/list') {
     if (message.result && Array.isArray(message.result.tools)) {
@@ -228,6 +248,8 @@ async function start(request) {
   disabled = new Set(Array.isArray(launch.disabledTools) ? launch.disabledTools : [])
   known = Array.isArray(launch.knownTools) ? new Set(launch.knownTools) : undefined
   if (typeof launch.instructions === 'string') instructions = launch.instructions
+  if (launch.instructionsMode === 'prepend') instructionsMode = 'prepend'
+  shapes = launch.shapes === true
   if (launch.offHints && typeof launch.offHints === 'object')
     hints = Object.fromEntries(Object.entries(launch.offHints).filter(([, text]) => typeof text === 'string'))
   if (launch.remote === true) {
@@ -377,7 +399,11 @@ async function handle(request) {
       }
     }
   }
-  const recorded = await ask('mcp/call', device ? { tool: name, device } : { tool: name })
+  const recorded = await ask('mcp/call', {
+    tool: name,
+    ...(device ? { device } : {}),
+    ...(shapes ? { shape: shapeOf(name, params.arguments) } : {}),
+  })
   if (recorded.error || !recorded.result || typeof recorded.result.callId !== 'string') {
     pending.delete(JSON.stringify(id))
     const text = recorded.error && recorded.error.message ? String(recorded.error.message) : 'The call was not recorded, so it was not made.'
@@ -414,6 +440,7 @@ const quit = () => {
 }
 process.stdin.on('end', quit)
 process.on('SIGTERM', quit)
+${COMPUTER_SHAPE_SOURCE}
 `
 
 /**

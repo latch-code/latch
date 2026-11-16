@@ -73,6 +73,11 @@ export interface McpStdioServerView extends McpServerCommon {
    * until switched on. Absent: every tool not in `disabledTools` is on.
    */
   knownTools?: string[]
+  /**
+   * 「操控这台 Mac」: the switches the Host moved when it brought the server to new defaults (`run_steps`, `launch_app` on;
+   * `get_desktop_state` off), until a device dismisses the note (`PATCH` with `defaultsSeen: true`).
+   */
+  defaultsMoved?: Array<'run_steps' | 'launch_app' | 'get_desktop_state'>
 }
 
 /**
@@ -90,6 +95,131 @@ export function isMcpToolOn(
 }
 
 /**
+ * What a call to 「操控这台 Mac」 (Cua Driver) has the driver do, as the `latch-mcp` bridge reads it before the call is
+ * sent (`COMPUTER_SHAPE_SOURCE` in `@latch/harness-acp`): enumerations only, never a value the agent typed. The Host
+ * decides from it. Anything not read the way the driver reads it is `form: 'unknown'`, and refused.
+ *
+ * This guards against an agent's mistakes, not against the agent: an agent with a shell can run `cua-driver` itself,
+ * past every switch. See docs/MCP.md (操控这台 Mac).
+ */
+export interface ComputerCallShape {
+  form?: 'unknown'
+  /** `run_steps`: every tool a step, a trailing read or `observe` can run, by the driver's own names. */
+  steps?: string[]
+  /** `run_steps`: how many steps it carries. */
+  stepCount?: number
+  /** `launch_app`: only `bundle_id`, or a `name` with no `/`, and nothing else. */
+  launch?: 'ok' | 'refused'
+  /** Some argument asks the driver to write a screenshot to a file (`screenshot_out_file`). */
+  screenshotFile?: true
+  /** Some `app`, `window` or `bundle_id`, or `launch_app`'s `name`, names Latch. */
+  latchName?: true
+  /** Every `pid` the arguments name, for the Host to compare with Latch's own processes. */
+  pids?: number[]
+}
+
+/**
+ * 「操控这台 Mac」's tools as settings group them, by what they let an agent do; a tool in none (a new one) is listed
+ * apart. Display only: each tool keeps its own switch.
+ */
+export const COMPUTER_TOOL_GROUPS: ReadonlyArray<{ id: string; label: string; tools: readonly string[] }> = [
+  {
+    id: 'look',
+    label: '看',
+    tools: [
+      'list_apps',
+      'list_windows',
+      'get_window_state',
+      'get_accessibility_tree',
+      'verify_state',
+      'parse_visual_regions',
+      'zoom',
+      'get_screen_size',
+      'get_cursor_position',
+      'debug_window_info',
+      'get_desktop_state',
+    ],
+  },
+  {
+    id: 'act',
+    label: '操作',
+    tools: [
+      'click',
+      'double_click',
+      'right_click',
+      'type_text',
+      'press_key',
+      'hotkey',
+      'set_value',
+      'scroll',
+      'drag',
+      'move_cursor',
+      'mouse_button_down',
+      'mouse_button_up',
+      'mouse_drag',
+      'parallel_mouse_drag',
+      'invoke_menu',
+      'bring_to_front',
+      'set_window_frame',
+    ],
+  },
+  { id: 'launch', label: '启动 App', tools: ['launch_app', 'kill_app'] },
+  { id: 'batch', label: '批量', tools: ['run_steps'] },
+  { id: 'script', label: '脚本', tools: ['run_script', 'replay_trajectory'] },
+  {
+    id: 'browser',
+    label: '浏览器',
+    tools: [
+      'page',
+      'get_browser_state',
+      'browser_prepare',
+      'browser_navigate',
+      'browser_click',
+      'browser_type',
+      'browser_select',
+      'browser_pointer',
+      'browser_dialog',
+      'browser_set_input_files',
+      'browser_download',
+      'browser_motion_policy',
+    ],
+  },
+  { id: 'clipboard', label: '剪贴板', tools: ['clipboard_read', 'clipboard_write'] },
+  { id: 'record', label: '录屏', tools: ['start_recording', 'stop_recording', 'get_recording_state', 'install_ffmpeg'] },
+  {
+    id: 'manage',
+    label: '管理',
+    tools: [
+      'start_session',
+      'escalate_session',
+      'get_session',
+      'list_sessions',
+      'get_session_state',
+      'end_session',
+      'set_agent_cursor_enabled',
+      'set_agent_cursor_motion',
+      'set_agent_cursor_theme',
+      'get_agent_cursor_state',
+      'get_config',
+      'set_config',
+      'check_permissions',
+      'health_report',
+      'check_for_update',
+      'install_extension',
+      'get_guide',
+    ],
+  },
+]
+
+/**
+ * Why the Host refused a call to 「操控这台 Mac」 by its arguments (`mcp.tool.refused`): a form it does not read (`form`),
+ * a batch step whose tool is off (`step-off`), `launch_app` with more than a bundle ID or a name (`launch-args`), a
+ * screenshot written to a file (`screenshot-file`), or a call aimed at Latch's own window or processes (`latch`).
+ */
+export const COMPUTER_REFUSALS = ['form', 'step-off', 'launch-args', 'screenshot-file', 'latch'] as const
+export type ComputerRefusal = (typeof COMPUTER_REFUSALS)[number]
+
+/**
  * 「操控这台 Mac」 on this Mac's desktop app: whether Cua Driver is at its expected place, as Latch found it by its code
  * signature and its `--version`. `absent`: not installed. `old`: older than `minimum`. `refused`: something else is
  * there (`bundle`: not a regular app with that program; `signature`: not signed as Cua Driver; `version`: no version
@@ -100,6 +230,8 @@ export interface McpComputerCheck {
   reason?: 'bundle' | 'signature' | 'version'
   version?: string
   minimum: string
+  /** The release the install line names. */
+  pinned: string
   /** The program the server runs. */
   command: string
   /** Installs or upgrades it, as the person runs it in their terminal; Latch never runs it. */

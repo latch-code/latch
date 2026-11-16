@@ -39,6 +39,9 @@ async function fakeGateway(
     /** Latch's own instructions and per-tool hints in the launch. */
     instructions?: string
     offHints?: Record<string, string>
+    /** 「操控这台 Mac」: Latch's text before the server's own, and each call's shape with its record. */
+    instructionsMode?: 'prepend'
+    shapes?: true
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'lmcp-'))
@@ -71,6 +74,8 @@ async function fakeGateway(
               disabledTools: input.disabledTools ?? [],
               ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
               ...(input.offHints ? { offHints: input.offHints } : {}),
+              ...(input.instructionsMode ? { instructionsMode: input.instructionsMode } : {}),
+              ...(input.shapes ? { shapes: input.shapes } : {}),
             },
           })
         else if (request.method === 'mcp/call') {
@@ -232,6 +237,44 @@ describe('the latch-mcp bridge', () => {
     const calls = gateway.requests.filter(request => request.method === 'mcp/call').map(request => request.params)
     expect(calls).toEqual([{ tool: 'echo', device: 'C63FA884-1A6C-40C7-947B-54CD0819CAA9' }, { tool: 'echo' }])
     expect(JSON.stringify(calls)).not.toContain('secret')
+  })
+
+  it('puts Latch’s text before the server’s own when the launch says prepend', async () => {
+    const gateway = await fakeGateway({
+      env: { FAKE_MCP_INSTRUCTIONS: 'Use run_steps.' },
+      instructions: 'Latch rules.',
+      instructionsMode: 'prepend',
+    })
+    const bridge = start(gateway.socketPath, gateway.tokenFile)
+    expect((await bridge.initialize()).result.instructions).toBe('Latch rules.\n\n---\n\nUse run_steps.')
+  })
+
+  it('sends each call’s shape with its record when the launch asks, and no value the agent typed', async () => {
+    const gateway = await fakeGateway({ shapes: true, env: { FAKE_MCP_EXTRA_TOOLS: 'run_steps' } })
+    const bridge = start(gateway.socketPath, gateway.tokenFile)
+    await bridge.initialize()
+    await bridge.ask('tools/call', {
+      name: 'run_steps',
+      arguments: { steps: [{ tool: 'hotkey', keys: ['cmd', 's'] }, { type: { text: 'secret words' } }], observe: {} },
+    })
+    await bridge.ask('tools/call', { name: 'echo', arguments: { text: 'hi', pid: 42 } })
+    await bridge.ask('tools/call', { name: 'echo', arguments: 'not an object' })
+    const calls = gateway.requests.filter(request => request.method === 'mcp/call')
+    expect(calls.map(request => request.params)).toEqual([
+      {
+        tool: 'run_steps',
+        shape: { steps: ['get_window_state', 'hotkey', 'list_apps', 'list_windows', 'press_key', 'type_text'], stepCount: 2 },
+      },
+      { tool: 'echo', shape: { pids: [42] } },
+      { tool: 'echo', shape: { form: 'unknown' } },
+    ])
+    expect(JSON.stringify(calls)).not.toContain('secret words')
+    // Without it, a call carries its tool alone.
+    const plain = await fakeGateway()
+    const other = start(plain.socketPath, plain.tokenFile)
+    await other.initialize()
+    await other.ask('tools/call', { name: 'echo', arguments: { text: 'hi' } })
+    expect(plain.requests.find(request => request.method === 'mcp/call')?.params).toEqual({ tool: 'echo' })
   })
 
   it('records each call before sending it, sends nothing when the record fails, and reports the outcome', async () => {

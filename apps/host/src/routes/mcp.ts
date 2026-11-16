@@ -26,6 +26,7 @@ import { json, jsonBody, safeDecode } from '../http-util.ts'
 import {
   checkComputerDriver,
   COMPUTER_ARGS,
+  COMPUTER_DEFAULTS,
   COMPUTER_ENV,
   COMPUTER_KNOWN_TOOLS,
   COMPUTER_NAME,
@@ -137,6 +138,8 @@ const patchSchema = z.strictObject({
   knownTools: z.array(toolName).max(256).optional(),
   url: remoteUrl.optional(),
   headers: headersPatch.optional(),
+  /** 「操控这台 Mac」: the note on the switches the defaults upgrade moved was seen. */
+  defaultsSeen: z.literal(true).optional(),
 })
 const testSchema = z.strictObject({ requestId })
 /** 登录: a client ID (and its secret) typed on this Mac for a server that registers no client itself; `null` forgets it. */
@@ -863,6 +866,7 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
           enabled: true,
           disabledTools: [...COMPUTER_TOOLS_OFF],
           knownTools: [...COMPUTER_KNOWN_TOOLS],
+          defaults: COMPUTER_DEFAULTS,
           revision: 1,
           specHash: hash,
           confirmed: { hash, secretNames: [] },
@@ -1300,7 +1304,10 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         const { requestId: _, baseRevision: __, ...change } = input
         // 停用 narrows what agents get: any device that may manage this Host may do it, wherever it is.
         const disableOnly = canonicalJson(change) === canonicalJson({ enabled: false })
-        if (!disableOnly) context.requireLocal(caller)
+        // Dismissing a note changes nothing an agent gets.
+        const seenOnly = canonicalJson(change) === canonicalJson({ defaultsSeen: true })
+        if (!disableOnly && !seenOnly) context.requireLocal(caller)
+        if (input.defaultsSeen && !seenOnly) throw new AppError(400, 'mcp-defaults-seen', '这一项只能单独提交')
         context.recheck(caller, 'admin')
         const done = store.receipt(caller.device.id, input.requestId, input)
         if (done) {
@@ -1310,6 +1317,26 @@ export function createMcpRoutes(context: RouteContext, deps: McpRouteDeps): Rout
         const current = store.get(id)
         if (!current) throw missing()
         if (current.revision !== input.baseRevision) throw changed()
+        if (seenOnly) {
+          if (current.transport !== 'stdio' || !current.defaultsMoved) {
+            answer(res, id)
+            return true
+          }
+          await context.serial(caller, 'admin', () =>
+            store.change({ deviceId: caller.device.id, requestId: input.requestId, payload: input }, ({ servers, stamp }) => {
+              const record = servers.servers.find(item => item.id === id)
+              if (record?.transport === 'stdio') {
+                delete record.defaultsMoved
+                record.revision += 1
+                record.updatedAt = stamp
+              }
+              return id
+            }),
+          )
+          context.refresh()
+          answer(res, id)
+          return true
+        }
         if (current.transport === 'http') {
           await patchRemote(req, res, caller, current, input)
           return true
