@@ -472,7 +472,7 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 ## 通知与压缩
 
 - **通知（`notice`）。** Agent 不属于对话历史的提示。每条在时间线上一行系统消息，按 `severity` 写「报告错误」或「提示」。它不改变本轮状态。
-- **压缩（`compaction_update`、`compaction_summary_chunk`）。** 一次压缩一行，按 `compactionId` 就地更新（正在、已压缩、失败、已取消），Agent 给的摘要接在后面。行的位置是第一次报告到达时，之前的回复先结束。压缩失败不让本轮失败。
+- **压缩（`compaction_update`、`compaction_summary_chunk`）。** 一次压缩一行，按 `compactionId` 就地更新（正在、已压缩、失败、已取消），Agent 给的摘要接在后面。行的位置是第一次报告到达时，之前的回复先结束。压缩失败不让本轮失败。Codex 压缩后留下的上下文仍超过它的自动压缩上限时会在每一轮开始再压缩一次，每次一个新 ID；相邻几轮里同样的「已压缩上下文」只留最后一行并写上次数，带摘要、失败或由 /compact 发起的行照旧（`collapseCompactions`）。
 - **重试（`readRetry`）。** 把 Agent 标明的重试读成一行系统消息，不进思考；回复中途断开重新生成时，已收到的文字丢掉，新文字接在同一条消息里（消息 ID 不变），已收到的思考保留。原因先脱敏，最多 300 字。目前没有预设声明它。
 - **各家说法不同的地方（`normalizeUpdate`）。** 只换不添：Qwen Code 只在 `_meta.toolName` 给工具名，填进 `name`；OpenCode 把回复的思考放在推理片段的 ID 下，去掉这个 ID 后思考归入它所属的回复。调用的 `kind` 只是 `other` 时用标题命名。
 - **用量。** `session/prompt` 的 `usage` 只取 `inputTokens` 与 `outputTokens`；缓存与思考的令牌数各家含义不同，不映射。

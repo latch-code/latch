@@ -89,9 +89,49 @@ export function stableTurns(previous: readonly Turn[], next: readonly Turn[]): T
   })
 }
 
+const COMPACTED = /^\S.* 已压缩上下文$/u
+
+/**
+ * A Harness that compacts at the start of every turn (its context is still over its limit after a compaction) leaves the
+ * same row in turn after turn. A run of such rows in consecutive turns keeps its last, with how many there were; a row
+ * with a summary or another outcome, and one in a turn the person opened with /compact, stays as it is.
+ */
+export function collapseCompactions(messages: Message[]): Message[] {
+  const runs: Message[][] = []
+  let turn = 0
+  let opener: Message | undefined
+  let last: { text: string; turn: number } | undefined
+  for (const message of messages) {
+    if (message.role === 'user' && !message.steered) {
+      turn += 1
+      opener = message
+      continue
+    }
+    if (message.role !== 'system' || !message.id.startsWith('compaction:') || !COMPACTED.test(message.text)) continue
+    if (opener?.text.trim().startsWith('/compact')) {
+      last = undefined
+      continue
+    }
+    if (last && last.text === message.text && turn === last.turn + 1) runs.at(-1)!.push(message)
+    else runs.push([message])
+    last = { text: message.text, turn }
+  }
+  const dropped = new Set<Message>()
+  const counted = new Map<Message, number>()
+  for (const run of runs) {
+    if (run.length < 2) continue
+    for (const message of run.slice(0, -1)) dropped.add(message)
+    counted.set(run.at(-1)!, run.length)
+  }
+  if (!dropped.size) return messages
+  return messages.flatMap(message =>
+    dropped.has(message) ? [] : counted.has(message) ? [{ ...message, text: `${message.text} · ${counted.get(message)} 次` }] : [message],
+  )
+}
+
 /** The immutable committed history. A body-only frame can reuse this whole projection. */
 export function projectTurns(messages: Message[], previous: readonly Turn[] = []) {
-  const turns = stableTurns(previous, turnsOf(messages))
+  const turns = stableTurns(previous, turnsOf(collapseCompactions(messages)))
   return {
     turns,
     history: turns.slice(0, -1),
