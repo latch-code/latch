@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
-import { MessageSquarePlus, RotateCcw, SquareActivity, SquareX } from 'lucide-react'
+import { MessageSquarePlus, RotateCcw, SquareActivity } from 'lucide-react'
 import { TERMINALS_PER_SESSION, type TerminalSize, type TerminalSummary, type TerminalTarget } from '@latch/protocol'
 import {
   Button,
@@ -42,8 +42,13 @@ export interface TerminalPanelProps {
   target: TerminalTarget
   /** The dock is on screen. */
   shown: boolean
-  /** The person explicitly opened the dock for this target. */
+  /** The person explicitly opened the dock for this target: the screen takes focus. */
   requested: boolean
+  /**
+   * The dock: while it is on screen a terminal runs, so an empty list starts one, and closing the last one closes the
+   * dock. A dialog that types a command in opens its own.
+   */
+  openWhenShown?: boolean
   unavailable?: string
   location?: string
   onCollapse(): void
@@ -74,7 +79,8 @@ function measuredSize(element: HTMLElement | null): TerminalSize {
   }
 }
 
-const tabIcon = (summary: TerminalSummary) => (summary.status !== 'running' ? SquareX : summary.busy ? SquareActivity : TerminalGlyph)
+/** The terminal glyph, or the running mark while a program runs in it; an ended terminal says so in its foot. */
+const tabIcon = (summary: TerminalSummary) => (summary.status === 'running' && summary.busy ? SquareActivity : TerminalGlyph)
 
 /**
  * The target's terminals, each a shell in the folder the Host chose. Hiding the dock keeps its screens and streams.
@@ -83,6 +89,7 @@ export function TerminalPanel({
   target,
   shown,
   requested,
+  openWhenShown = false,
   unavailable,
   location,
   onCollapse,
@@ -100,7 +107,12 @@ export function TerminalPanel({
       usableCompose.current = undefined
     }
   }, [shown, onCompose])
-  const terminals = useTerminals({ target, shown, autoOpen: requested && !unavailable, size: () => measuredSize(screens.current) })
+  const terminals = useTerminals({
+    target,
+    shown,
+    autoOpen: (requested || openWhenShown) && !unavailable,
+    size: () => measuredSize(screens.current),
+  })
   const { tabs, active, read, opening, failure, list, setActive } = terminals
   const fill = useTerminalFill({
     place: fillPlace,
@@ -135,14 +147,19 @@ export function TerminalPanel({
     terminals.updated(summary)
     if (summary.login) loginRuns.report(summary)
   }
+  /** The dock with nothing left in it closes, rather than showing an empty screen. */
+  const left = (id: string) => {
+    loginRuns.gone(id)
+    if (openWhenShown && tabs.length === 1 && tabs[0]!.id === id) onCollapse()
+  }
   const gone = (id: string) => {
     terminals.gone(id)
-    loginRuns.gone(id)
+    left(id)
   }
 
   const close = async (tab: TerminalTab) => {
     const result = await terminals.close(tab.id)
-    if (result.kind === 'closed') loginRuns.gone(tab.id)
+    if (result.kind === 'closed') left(tab.id)
     if (result.kind === 'busy') setConfirm({ tab, ...(result.program ? { program: result.program } : {}) })
     else if (result.kind === 'failed') terminals.setFailure(result.text)
   }
@@ -251,7 +268,7 @@ export function TerminalPanel({
           {notice.text}
         </InlineNotice>
       )}
-      {failure && (
+      {failure && tabs.length > 0 && (
         <InlineNotice tone="error" className="terminal-notice" onClose={() => terminals.setFailure(undefined)}>
           {failure}
         </InlineNotice>
@@ -274,10 +291,9 @@ export function TerminalPanel({
         ))}
         {tabs.length === 0 && (
           <div className="terminal-empty">
+            {/* Only a reason a terminal cannot start, with its one action; never a bare button to start one. */}
             {unavailable ? (
               <InlineNotice tone="warn">{unavailable}</InlineNotice>
-            ) : read.kind === 'loading' || opening ? (
-              <Loading label="正在打开终端…" />
             ) : read.kind === 'failed' ? (
               <InlineNotice
                 tone="error"
@@ -288,16 +304,23 @@ export function TerminalPanel({
                 }>
                 {read.text}
               </InlineNotice>
+            ) : failure && !opening ? (
+              <InlineNotice
+                tone="error"
+                action={
+                  <Button
+                    size="xs"
+                    onClick={() => {
+                      setFocusScreen(true)
+                      void terminals.open()
+                    }}>
+                    重试
+                  </Button>
+                }>
+                {failure}
+              </InlineNotice>
             ) : (
-              <Button
-                size="sm"
-                icon={TerminalGlyph}
-                onClick={() => {
-                  setFocusScreen(true)
-                  void terminals.open()
-                }}>
-                打开终端
-              </Button>
+              <Loading label="正在打开终端…" />
             )}
           </div>
         )}
@@ -343,7 +366,7 @@ export function TerminalPanel({
           onConfirm={async () => {
             const result = await terminals.close(confirm.tab.id, true)
             if (result.kind === 'failed') throw new MessageError(result.text)
-            loginRuns.gone(confirm.tab.id)
+            left(confirm.tab.id)
           }}
           onClose={() => setConfirm(undefined)}
         />

@@ -56,6 +56,20 @@ export function keepActive(tabs: readonly TerminalTab[], active: string | undefi
   return neighbour?.id
 }
 
+/**
+ * Whether the surface starts a terminal now: it is on screen and wants one, the Host listed none, and this showing has
+ * not tried yet (a failed try leaves its reason and 重试 instead of trying again by itself).
+ */
+export function opensFirstTerminal(state: {
+  shown: boolean
+  wanted: boolean
+  read: 'loading' | 'ready' | 'failed'
+  tabs: number
+  tried: boolean
+}): boolean {
+  return state.shown && state.wanted && state.read === 'ready' && state.tabs === 0 && !state.tried
+}
+
 /** How a terminal ended, for the line under its output; undefined while it runs. */
 export function endedText(summary: TerminalSummary): string | undefined {
   if (summary.status === 'running') return undefined

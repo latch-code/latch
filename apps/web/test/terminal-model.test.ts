@@ -10,6 +10,7 @@ import {
   keepActive,
   keyLeavesTerminal,
   nameTabs,
+  opensFirstTerminal,
   serviceLabel,
   streamPath,
   toBase64,
@@ -81,6 +82,17 @@ describe('terminal tabs', () => {
     expect(endedText(summary('a', '1', { status: 'exited', exitCode: 127 }))).toBe('已退出 · 代码 127')
     expect(endedText(summary('a', '1', { status: 'exited', exitSignal: 'SIGHUP' }))).toBe('已结束 · SIGHUP')
     expect(endedText(summary('a', '1', { status: 'failed' }))).toBe('终端意外结束')
+  })
+
+  it('starts the first terminal when the dock shows with none, once per showing, and never over a reason', () => {
+    const shown = { shown: true, wanted: true, read: 'ready', tabs: 0, tried: false } as const
+    expect(opensFirstTerminal(shown)).toBe(true)
+    expect(opensFirstTerminal({ ...shown, tried: true })).toBe(false)
+    expect(opensFirstTerminal({ ...shown, tabs: 1 })).toBe(false)
+    expect(opensFirstTerminal({ ...shown, read: 'loading' })).toBe(false)
+    expect(opensFirstTerminal({ ...shown, read: 'failed' })).toBe(false)
+    expect(opensFirstTerminal({ ...shown, shown: false })).toBe(false)
+    expect(opensFirstTerminal({ ...shown, wanted: false })).toBe(false)
   })
 
   it('names a local service by its host and port', () => {

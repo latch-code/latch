@@ -533,10 +533,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const projectPicker = page.locator('.workbench-home .home-composer-location').getByRole('button').first()
       await projectPicker.click()
       await page.getByRole('menu', { name: '项目', exact: true }).getByText('终端验收项目', { exact: true }).click()
-      await panel.getByRole('button', { name: '打开终端', exact: true }).waitFor()
-      expect(shells).toHaveLength(4)
-      await panel.getByRole('button', { name: '打开终端', exact: true }).click()
+      // The dock stays open on the new target, so its first terminal starts at once; no button in between.
       await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
+      expect(shells).toHaveLength(5)
       expect(shells[4]!.spec.cwd).toBe(await realpath(projectPath))
       await rows.waitFor()
       await screen.locator('.xterm').click()

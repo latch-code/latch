@@ -162,7 +162,7 @@ describe('PanelTabs', () => {
     )
   }
 
-  it('keeps a closable tab without a glyph clear of its ×', async () => {
+  it('puts the × after the label, clear of it, in a closable tab without a glyph', async () => {
     const screen = await render(
       <PanelTabs
         label="面板"
@@ -174,7 +174,7 @@ describe('PanelTabs', () => {
     )
     const label = screen.container.querySelector('.ui-panel-tab-label')!.getBoundingClientRect()
     const close = screen.container.querySelector('.ui-panel-tab-close')!.getBoundingClientRect()
-    expect(close.right).toBeLessThanOrEqual(label.left)
+    expect(close.left).toBeGreaterThanOrEqual(label.right)
   })
 
   it('shows the stat and the new-content dot, and is one tab stop moved by arrows', async () => {
@@ -188,17 +188,24 @@ describe('PanelTabs', () => {
     await expect.element(screen.getByRole('tab', { name: /notes/u })).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('turns the glyph into × on hover, over the same place, and closes with it or Delete', async () => {
+  it('keeps the glyph and shows × in its own slot at the end on hover, and closes with it, Delete or a middle click', async () => {
     const closed = vi.fn()
     const screen = await render(<Sample onClose={closed} />)
     const tab = screen.getByRole('tab', { name: /notes/u })
     const close = screen.getByRole('button', { name: '关闭 notes.md' })
+    const glyph = tab.element().querySelector('.ui-panel-tab-glyph')!
     expect(getComputedStyle(close.element()).opacity).toBe('0')
+    const before = tab.element().getBoundingClientRect()
     await tab.hover()
     await expect.poll(() => getComputedStyle(close.element()).opacity).toBe('1')
-    const glyph = tab.element().querySelector('.ui-panel-tab-glyph')!.getBoundingClientRect()
-    const box = close.element().getBoundingClientRect()
-    expect([box.left, box.top]).toEqual([glyph.left, glyph.top])
+    expect(getComputedStyle(glyph).opacity).toBe('1')
+    expect(tab.element().getBoundingClientRect().width).toBe(before.width)
+    expect(close.element().getBoundingClientRect().left).toBeGreaterThanOrEqual(
+      tab.element().querySelector('.ui-panel-tab-label')!.getBoundingClientRect().right,
+    )
+    tab.element().dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }))
+    expect(closed).toHaveBeenCalledWith('b')
+    closed.mockClear()
     await close.click()
     expect(closed).toHaveBeenCalledWith('b')
     tab.element().focus()

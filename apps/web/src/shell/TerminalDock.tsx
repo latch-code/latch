@@ -60,6 +60,7 @@ export function TerminalDock({ shell }: { shell: ShellState }) {
         target={terminalTarget}
         shown={terminalOpen}
         requested={terminalRequested}
+        openWhenShown
         {...(terminalUnavailable ? { unavailable: terminalUnavailable } : {})}
         {...(terminalLocation ? { location: terminalLocation } : {})}
         onCollapse={closeTerminal}

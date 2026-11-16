@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TerminalSize, TerminalSummary, TerminalTarget, TerminalText } from '@latch/protocol'
 import { api, ApiError, errorMessage, isUncertain } from '../../core/api.ts'
-import { ATTACH_LAST_LINES, keepActive, nameTabs, terminalPath, type TerminalTab } from './model.ts'
+import { ATTACH_LAST_LINES, keepActive, nameTabs, opensFirstTerminal, terminalPath, type TerminalTab } from './model.ts'
 
 export type TerminalsRead = { kind: 'loading' } | { kind: 'ready' } | { kind: 'failed'; text: string }
 
@@ -9,8 +9,8 @@ export type TerminalsRead = { kind: 'loading' } | { kind: 'ready' } | { kind: 'f
 export type CloseResult = { kind: 'closed' } | { kind: 'busy'; program?: string } | { kind: 'failed'; text: string }
 
 /**
- * The target's terminals as the Host lists them. A first explicit reveal may open one after a successful empty list.
- * Restoring the dock or changing the target only reads, so a layout change never starts another shell.
+ * The target's terminals as the Host lists them. While the surface is shown and wants one (`autoOpen`), an empty list
+ * opens the first terminal, once per showing: hiding the surface lets the next showing open one again.
  */
 export function useTerminals(input: { target: TerminalTarget; shown: boolean; autoOpen: boolean; size: () => TerminalSize }) {
   const { target, shown, autoOpen } = input
@@ -23,7 +23,7 @@ export function useTerminals(input: { target: TerminalTarget; shown: boolean; au
   const [failure, setFailure] = useState<string>()
   const started = useRef(false)
   const autoOpened = useRef(false)
-  const openingNow = useRef(false)
+  const inFlight = useRef<Promise<string | undefined> | undefined>(undefined)
   const base = terminalPath(target)
 
   const apply = useCallback((next: (previous: TerminalTab[]) => TerminalTab[]) => {
@@ -48,28 +48,36 @@ export function useTerminals(input: { target: TerminalTarget; shown: boolean; au
 
   const open = useCallback(
     /** Resolves with the new terminal's ID, or undefined when none was opened (the failure says why). */
-    async (number?: number): Promise<string | undefined> => {
-      if (openingNow.current) return undefined
-      openingNow.current = true
+    (number?: number): Promise<string | undefined> => {
+      // A second caller while one opens (the first-terminal start and a command waiting to be filled in) shares it.
+      if (inFlight.current) return inFlight.current
       autoOpened.current = true
       setOpening(true)
       setFailure(undefined)
-      try {
-        const { terminal } = await api<{ terminal: TerminalSummary }>(base, { method: 'POST', body: sizeRef.current(), timeoutMs: 20_000 })
-        apply(previous =>
-          nameTabs(previous, [...previous.map(tab => tab.summary), terminal], new Map(number ? [[terminal.id, number]] : [])),
-        )
-        setActive(terminal.id)
-        return terminal.id
-      } catch (cause) {
-        // A call that may have opened one leaves the list to say so: opening again could start a second shell.
-        if (isUncertain(cause)) await list()
-        else setFailure(errorMessage(cause))
-        return undefined
-      } finally {
-        openingNow.current = false
-        setOpening(false)
+      const run = async () => {
+        try {
+          const { terminal } = await api<{ terminal: TerminalSummary }>(base, {
+            method: 'POST',
+            body: sizeRef.current(),
+            timeoutMs: 20_000,
+          })
+          apply(previous =>
+            nameTabs(previous, [...previous.map(tab => tab.summary), terminal], new Map(number ? [[terminal.id, number]] : [])),
+          )
+          setActive(terminal.id)
+          return terminal.id
+        } catch (cause) {
+          // A call that may have opened one leaves the list to say so: opening again could start a second shell.
+          if (!isUncertain(cause)) setFailure(errorMessage(cause))
+          else if ((await list())?.length === 0) setFailure(errorMessage(cause))
+          return undefined
+        } finally {
+          inFlight.current = undefined
+          setOpening(false)
+        }
       }
+      inFlight.current = run()
+      return inFlight.current
     },
     [apply, base, list],
   )
@@ -80,7 +88,8 @@ export function useTerminals(input: { target: TerminalTarget; shown: boolean; au
     void list()
   }, [shown, list])
   useEffect(() => {
-    if (shown && autoOpen && read.kind === 'ready' && tabs.length === 0 && !autoOpened.current) void open()
+    if (!shown) autoOpened.current = false
+    else if (opensFirstTerminal({ shown, wanted: autoOpen, read: read.kind, tabs: tabs.length, tried: autoOpened.current })) void open()
   }, [shown, autoOpen, read.kind, tabs.length, open])
 
   const updated = useCallback(

@@ -126,12 +126,12 @@
 .ui-panel-tab-face:focus-visible {
   outline-offset: -2px;
 }
-.ui-panel-tab-slot {
-  flex-shrink: 0;
-  width: 12px;
-}
 .ui-panel-tab-glyph {
-  transition: opacity var(--m-micro) var(--e-micro);
+  flex-shrink: 0;
+}
+/* The × keeps its slot at the end of a closable tab whether it shows or not. */
+.ui-panel-tab[data-closable] > .ui-panel-tab-face {
+  padding-inline-end: calc(var(--sp-6) + 12px + var(--sp-4));
 }
 .ui-panel-tab-label {
   min-width: 0;
@@ -160,7 +160,7 @@
 .ui-panel-tab-close {
   position: absolute;
   inset-block: 0;
-  inset-inline-start: var(--sp-8);
+  inset-inline-end: var(--sp-6);
   display: inline-grid;
   place-items: center;
   width: 12px;
@@ -169,29 +169,29 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--ink);
+  color: var(--muted);
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--m-micro) var(--e-micro);
+}
+.ui-panel-tab-close:hover {
+  color: var(--ink);
 }
 .ui-panel-tab-close::before {
   content: '';
   position: absolute;
   inset: calc((100% - 24px) / 2);
 }
+.ui-panel-tab[data-closable]:focus-within .ui-panel-tab-close {
+  opacity: 1;
+  pointer-events: auto;
+}
 @media (hover: hover) and (pointer: fine) {
-  .ui-panel-tab[data-closable]:hover .ui-panel-tab-glyph {
-    opacity: 0;
-  }
   .ui-panel-tab[data-closable]:hover .ui-panel-tab-close {
     opacity: 1;
     pointer-events: auto;
   }
 }
 @media not ((hover: hover) and (pointer: fine)) {
-  .ui-panel-tab[data-closable]:has([aria-selected='true']) .ui-panel-tab-glyph {
-    opacity: 0;
-  }
   .ui-panel-tab[data-closable]:has([aria-selected='true']) .ui-panel-tab-close {
     opacity: 1;
     pointer-events: auto;

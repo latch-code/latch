@@ -129,7 +129,7 @@ export interface PanelTab<T extends string> {
   label: string
   /** The id of the panel this tab shows. */
   controls?: string
-  /** A 12px glyph; on a closable tab it gives way to × on hover. A closable tab without one keeps its place for the ×. */
+  /** A 12px glyph before the label: what the tab holds (a terminal, a file's kind), never the close control. */
   icon?: IconComponent
   /** A line count after the label, 「+60 −6」, in the diff's tones. */
   stat?: { added: number; removed: number }
@@ -141,8 +141,9 @@ export interface PanelTab<T extends string> {
 
 /**
  * The strip of a side panel: 24px tabs with 6px corners and 12/16·500 words, at most 160 wide. The selection moves at
- * once and never slides. A closable tab's glyph becomes × on hover, and stays × on a touch screen's selected tab;
- * Delete closes the focused tab and moves focus to its neighbour. One tab stop; ←/→ move and select, Home and End go to
+ * once and never slides. A closable tab is `glyph · label · ×`: the × has its own slot at the end, shown on hover, while
+ * focus is in the tab, and always on a touch screen's selected tab, so nothing moves when it appears. Delete and a
+ * middle click close the tab; Delete moves focus to its neighbour. One tab stop; ←/→ move and select, Home and End go to
  * the ends. The list scrolls sideways when it overflows, and keeps the selected tab in view. `actions` ends the row.
  */
 export function PanelTabs<T extends string>({
@@ -204,12 +205,13 @@ export function PanelTabs<T extends string>({
               tabIndex={index === Math.max(0, selected) ? 0 : -1}
               onClick={() => {
                 if (tab.value !== value) onValueChange(tab.value)
+              }}
+              onAuxClick={event => {
+                if (event.button !== 1 || tab.closeLabel === undefined) return
+                event.preventDefault()
+                onClose?.(tab.value)
               }}>
-              {tab.icon ? (
-                <Icon icon={tab.icon} size={12} className="ui-panel-tab-glyph" />
-              ) : (
-                tab.closeLabel !== undefined && <span className="ui-panel-tab-slot" />
-              )}
+              {tab.icon && <Icon icon={tab.icon} size={12} className="ui-panel-tab-glyph" />}
               <span className="ui-panel-tab-label">{tab.label}</span>
               {tab.stat && (
                 <span className="ui-panel-tab-stat">
