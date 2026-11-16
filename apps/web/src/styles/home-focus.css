@@ -12,11 +12,13 @@
     .workbench-tablet-rail,
     .phone-tabs,
     .terminal-dock,
+    .workbench-connection,
     .inspector-column,
     .inspector-resize
   ),
 .app-shell[data-home-focus] .code-home > :is(.workbench-phone-heading, .workbench-phone-code-nav) {
   visibility: hidden;
+  pointer-events: none;
 }
 
 /* Hide the retained queue as a whole. Protected approval surfaces set their own visibility. */
@@ -28,8 +30,14 @@
   -webkit-app-region: no-drag;
 }
 
-.app-shell[data-home-focus] .code-home-input {
+.app-shell[data-home-focus] .code-home-input,
+.code-home:has(> .code-home-input[data-focus-moving]),
+.code-home-input[data-focus-moving] {
   overflow: visible;
+}
+
+.code-home-input[data-focus-moving] {
+  z-index: 1;
 }
 
 .home-focus-frame[data-active] {
@@ -123,6 +131,43 @@
   font-size: var(--fs-work-ui);
   line-height: var(--lh-work-ui);
   white-space: nowrap;
+}
+
+@media (min-width: 768px) and (min-height: 480px) {
+  .app-shell[data-home-focus] {
+    background: var(--canvas);
+  }
+
+  .app-shell[data-home-focus]::before {
+    opacity: 0;
+  }
+
+  /* The retained shell fades behind the moving card. The frame still owns all background clicks. */
+  .home-focus-frame[data-active] {
+    background: transparent;
+  }
+
+  .app-shell[data-home-focus] > :is(.titlebar, .sidebar, .shell-layout-switch, .workbench-tablet-rail, .workbench-connection) {
+    opacity: 0;
+  }
+}
+
+@media (min-width: 768px) and (min-height: 480px) and (prefers-reduced-motion: no-preference) {
+  :root:not([data-motion='reduce'], [data-capture='still'])
+    .app-shell[data-overview]
+    > :is(.titlebar, .shell-layout-switch, .workbench-tablet-rail, .workbench-connection):not(:has([data-secure])),
+  :root:not([data-motion='reduce'], [data-capture='still'])
+    .app-shell[data-overview][data-sidebar='open']:not(:has(.sidebar.is-open))
+    > .sidebar:not(:has([data-secure])) {
+    transition:
+      opacity var(--m-sheet) var(--e-sheet),
+      visibility var(--m-sheet) var(--e-sheet);
+  }
+
+  /* Protected decisions change visibility and rearm together. */
+  :root:not([data-motion='reduce'], [data-capture='still']) .code-home > .code-home-queue:not(:has([data-secure])) {
+    transition: opacity var(--m-sheet) var(--e-sheet);
+  }
 }
 
 @media (max-height: 700px) {

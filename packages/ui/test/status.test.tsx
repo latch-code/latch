@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { StrictMode, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-react'
 import { Circle, CircleDot } from 'lucide-react'
@@ -26,6 +26,22 @@ const pause = (ms: number) => new Promise(done => setTimeout(done, ms))
 /** The CSS animation running on `element`, if any. */
 function animation(element: Element): CSSAnimation | undefined {
   return element.getAnimations().find((item): item is CSSAnimation => item instanceof CSSAnimation)
+}
+async function expectSpinnersInPhase(elements: Element[]): Promise<void> {
+  const turns = () => elements.map(animation)
+  await expect
+    .poll(() =>
+      turns().map(turn => {
+        const start = turn?.startTime
+        return typeof start === 'number' ? start % 800 : null
+      }),
+    )
+    .toEqual(elements.map(() => 0))
+  const running = turns()
+  expect(running.map(turn => turn?.playState)).toEqual(elements.map(() => 'running'))
+  const [first, ...peers] = running.map(turn => turn!.effect!.getComputedTiming().progress)
+  expect(first).not.toBeNull()
+  for (const peer of peers) expect(peer).toBeCloseTo(first!, 6)
 }
 /** The duration and curve an element animates with. */
 function timing(element: Element): { duration: string; easing: string } {
@@ -208,18 +224,95 @@ describe('the spinner', () => {
     await expect.poll(() => animation(spinner!)?.playState).toBe('running')
   })
 
+  it.each(['system', 'device'] as const)('restores a common phase after %s motion was reduced', async preference => {
+    const mount = async () => (await render(<Spinner />)).container.querySelector('.ui-spinner')!
+    const first = await mount()
+    await expectSpinnersInPhase([first])
+    const original = animation(first)!
+    const reduced: Element[] = []
+    const mountWhileReduced = async () => {
+      reduced.push(await mount())
+      await pause(130)
+      reduced.push(await mount())
+      await frames()
+      if (preference === 'system') expect(animation(first)).toBeUndefined()
+      else expect(original.playState).toBe('finished')
+    }
+    if (preference === 'system') await reducedMotion(mountWhileReduced)
+    else {
+      setReducedMotion(true)
+      try {
+        await mountWhileReduced()
+      } finally {
+        setReducedMotion(false)
+      }
+    }
+    const reference = await mount()
+    await expectSpinnersInPhase([first, ...reduced, reference])
+    expect(animation(first) === original).toBe(preference === 'device')
+  })
+
+  it('keeps a single motion observer for mounted spinners and releases it after Strict Mode cleanup', async () => {
+    const observers = new Set<MutationObserver>()
+    const observe = MutationObserver.prototype.observe
+    const disconnect = MutationObserver.prototype.disconnect
+    const observes = vi.spyOn(MutationObserver.prototype, 'observe').mockImplementation(function (this: MutationObserver, root, options) {
+      if (root === document.documentElement && options?.attributeFilter?.includes('data-motion')) observers.add(this)
+      observe.call(this, root, options)
+    })
+    const disconnects = vi.spyOn(MutationObserver.prototype, 'disconnect').mockImplementation(function (this: MutationObserver) {
+      observers.delete(this)
+      disconnect.call(this)
+    })
+    const mount = () =>
+      render(
+        <StrictMode>
+          <Spinner />
+        </StrictMode>,
+      )
+    try {
+      const first = await mount()
+      const second = await mount()
+      expect(observers.size).toBe(1)
+      await first.unmount()
+      expect(observers.size).toBe(1)
+      await second.unmount()
+      expect(observers.size).toBe(0)
+    } finally {
+      disconnects.mockRestore()
+      observes.mockRestore()
+    }
+  })
+
   it('pauses out of view and stops on its still frame under reduced motion', async () => {
     const screen = await render(
-      <div style={{ height: 80, overflow: 'auto' }} data-testid="scroller">
-        <div style={{ height: 400 }} />
-        <Spinner size={12} />
-      </div>,
+      <>
+        <Spinner label="可见" />
+        <div style={{ height: 80, overflow: 'auto' }} data-testid="scroller">
+          <div style={{ height: 400 }} />
+          <Spinner size={12} />
+        </div>
+      </>,
     )
-    const spinner = screen.container.querySelector<HTMLElement>('.ui-spinner')!
+    const reference = screen.getByRole('img', { name: '可见' }).element()
+    const scroller = screen.getByTestId('scroller').element()
+    const spinner = scroller.querySelector<HTMLElement>('.ui-spinner')!
     await expect.poll(() => spinner.hasAttribute('data-offscreen')).toBe(true)
     await expect.poll(() => animation(spinner)?.playState).toBe('paused')
-    screen.getByTestId('scroller').element().scrollTop = 400
-    await expect.poll(() => animation(spinner)?.playState).toBe('running')
+    const lookups = vi.spyOn(Element.prototype, 'getAnimations')
+    try {
+      setReducedMotion(true)
+      await frames()
+      setReducedMotion(false)
+      await frames()
+      expect(lookups.mock.contexts).not.toContain(spinner)
+    } finally {
+      setReducedMotion(false)
+      lookups.mockRestore()
+    }
+    expect(animation(spinner)?.playState).toBe('paused')
+    scroller.scrollTop = 400
+    await expectSpinnersInPhase([reference, spinner])
     await reducedMotion(async () => {
       await pause(50)
       expect(spinner.getAnimations()).toHaveLength(0)

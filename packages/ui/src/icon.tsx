@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from 'react'
 import { ICON_STROKE, type IconComponent, type IconSize } from './glyphs/glyph.tsx'
-import { motionAllowed } from './changes.ts'
+import { motionAllowed, watchMotion } from './changes.ts'
 import { cx } from './internal.ts'
 import { usePausedOffscreen } from './motion.tsx'
 
@@ -40,6 +40,56 @@ export function Icon({
 /** One turn of the spinner, in milliseconds (icon.css turns it in the same time). */
 const TURN = 800
 
+const spinnerPhases = new Map<Element, () => void>()
+let stopWatchingSpinnerMotion: (() => void) | undefined
+
+function alignVisibleSpinner(element: Element): void {
+  spinnerPhases.get(element)?.()
+}
+
+function registerSpinner(element: Element): () => void {
+  const align = () => {
+    if (!element.isConnected || !motionAllowed() || element.hasAttribute('data-offscreen')) return
+    const turn = element
+      .getAnimations()
+      .find((item): item is CSSAnimation => item instanceof CSSAnimation && item.animationName === 'ui-spin')
+    if (!turn) return
+    // Giving a paused animation a start time starts it. Check again once the browser provides the actual timeline start.
+    void turn.ready.then(
+      started => {
+        if (
+          spinnerPhases.get(element) !== align
+          || !element.isConnected
+          || !motionAllowed()
+          || element.hasAttribute('data-offscreen')
+          || started.playState !== 'running'
+        )
+          return
+        const start = started.startTime
+        if (typeof start === 'number' && start % TURN !== 0) started.startTime = Math.floor(start / TURN) * TURN
+      },
+      () => undefined,
+    )
+  }
+  spinnerPhases.set(element, align)
+  if (!stopWatchingSpinnerMotion) {
+    let allowed = motionAllowed()
+    stopWatchingSpinnerMotion = watchMotion(() => {
+      const before = allowed
+      allowed = motionAllowed()
+      if (!before && allowed) for (const align of spinnerPhases.values()) align()
+    })
+  }
+  align()
+  return () => {
+    spinnerPhases.delete(element)
+    if (spinnerPhases.size === 0) {
+      stopWatchingSpinnerMotion?.()
+      stopWatchingSpinnerMotion = undefined
+    }
+  }
+}
+
 /** The spinner's sizes: 12 beside status words and in rows, 14 in buttons and loading lines, 16 and 20 on a page. */
 export type SpinnerSize = Exclude<IconSize, 24>
 
@@ -52,27 +102,8 @@ export type SpinnerSize = Exclude<IconSize, 24>
  */
 export function Spinner({ size = 14, label, className }: { size?: SpinnerSize; label?: string; className?: string }) {
   const ref = useRef<HTMLSpanElement>(null)
-  useLayoutEffect(() => {
-    if (!motionAllowed()) return undefined
-    const turn = ref.current
-      ?.getAnimations()
-      .find((item): item is CSSAnimation => item instanceof CSSAnimation && item.animationName === 'ui-spin')
-    if (!turn) return undefined
-    let mounted = true
-    // The start time is only known once the turn is ready, a frame or more after mount (more on a busy page); a turn
-    // already paused out of view is left alone, since giving it a start time would set it running.
-    turn.ready.then(
-      started => {
-        const start = started.startTime
-        if (mounted && started.playState === 'running' && typeof start === 'number') started.startTime = Math.floor(start / TURN) * TURN
-      },
-      () => undefined,
-    )
-    return () => {
-      mounted = false
-    }
-  }, [])
-  usePausedOffscreen(ref)
+  useLayoutEffect(() => (ref.current ? registerSpinner(ref.current) : undefined), [])
+  usePausedOffscreen(ref, alignVisibleSpinner)
   return (
     <span
       ref={ref}

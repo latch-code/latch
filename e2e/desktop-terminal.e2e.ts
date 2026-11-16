@@ -34,7 +34,7 @@ class FakeShell {
     readonly spec: Spec,
     private readonly emit: Emit,
   ) {
-    setTimeout(() => this.print(`\u001b[?2004h~/${spec.cwd.split('/').at(-1)} $ `), 10)
+    setTimeout(() => this.print(`\u001b[?2004h\u001b[44;37m 本地验收 \u001b[0m\r\n~/${spec.cwd.split('/').at(-1)} $ `), 10)
   }
   get text() {
     return Buffer.concat(this.received).toString()
@@ -151,7 +151,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
     const testHost = await startTestHost({
       demo: true,
       hostName: '验收电脑',
-      uiDir: resolve('dist/web'),
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
       presenceMode: 'manual',
       plugins: [plugin],
       terminal: { launch, shell: { file: '/bin/sh', argv: ['sh'] } },
@@ -240,6 +240,73 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       })
       await blinking.waitFor({ state: 'detached' })
       expect(await editorFocused.count()).toBe(1)
+      await page.emulateMedia({ colorScheme: 'dark' })
+      const cursor = rows.locator('.xterm-cursor-block')
+      await cursor.waitFor({ state: 'attached' })
+      await page.screenshot({ path: 'test-results/desktop-terminal/active-prompt-dark.png' })
+      const terminalPaint = await editorFocused.evaluate(editor => {
+        const style = getComputedStyle(editor)
+        const viewport = editor.closest('.terminal-screens')!
+        const cell = viewport.querySelector('.xterm-cursor')!
+        return {
+          inputOutline: style.outlineStyle,
+          inputOpacity: style.opacity,
+          screenShadow: getComputedStyle(viewport).boxShadow,
+          cursorBackground: getComputedStyle(cell).backgroundColor,
+          textColor: getComputedStyle(viewport.querySelector('.xterm-rows')!).color,
+        }
+      })
+      expect(terminalPaint).toEqual({
+        inputOutline: 'none',
+        inputOpacity: '0',
+        screenShadow: 'none',
+        cursorBackground: terminalPaint.textColor,
+        textColor: terminalPaint.textColor,
+      })
+      const ansiBackground = rows.locator('.xterm-bg-4').first()
+      expect(await ansiBackground.evaluate(cell => getComputedStyle(cell).backgroundColor)).toMatch(/^rgb\(/u)
+      const ansiContrast = () =>
+        ansiBackground.evaluate(cell => {
+          const luminance = (color: string) => {
+            const [r, g, b] = color
+              .match(/[\d.]+/gu)!
+              .slice(0, 3)
+              .map(channel => {
+                const srgb = Number(channel) / 255
+                return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4
+              })
+            return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
+          }
+          const style = getComputedStyle(cell)
+          const ink = luminance(style.color)
+          const paper = luminance(style.backgroundColor)
+          return (Math.max(ink, paper) + 0.05) / (Math.min(ink, paper) + 0.05)
+        })
+      await expect.poll(ansiContrast).toBeGreaterThanOrEqual(4.5)
+      await tabs.getByRole('tab', { name: '终端 1', exact: true }).focus()
+      const inactiveCursor = rows.locator('.xterm-cursor-outline')
+      await inactiveCursor.waitFor({ state: 'attached' })
+      expect(await inactiveCursor.evaluate(cell => getComputedStyle(cell).outlineColor)).toBe(terminalPaint.textColor)
+      await page.screenshot({ path: 'test-results/desktop-terminal/inactive-prompt-dark.png' })
+
+      // The terminal renderer owns its pixels while the surrounding safety text stays covered by the secure layer.
+      expect(await panel.getAttribute('data-secure')).toBe('')
+      const warning = panel.getByText('你的账户，不是沙箱', { exact: true })
+      const measureWarning = () =>
+        warning.evaluate(element => [getComputedStyle(element).opacity, getComputedStyle(element).backgroundColor])
+      const originalWarning = await measureWarning()
+      const injected = await page.addStyleTag({
+        content: '.terminal-foot .ui-hint * { opacity: 0 !important; background-color: red !important }',
+      })
+      expect(await measureWarning()).toEqual(originalWarning)
+      await injected.evaluate(element => {
+        element.parentNode?.removeChild(element)
+      })
+      await page.emulateMedia({ colorScheme: 'light' })
+      await screen.locator('.xterm').click()
+      await editorFocused.waitFor({ state: 'attached' })
+      await expect.poll(ansiContrast).toBeGreaterThanOrEqual(4.5)
+      await page.screenshot({ path: 'test-results/desktop-terminal/active-prompt-light.png' })
 
       // Typing reaches the shell in order and its output shows; the focus is in the terminal.
       await page.keyboard.type('echo hi')

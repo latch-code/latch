@@ -416,6 +416,7 @@ export function TerminalScreen({
         fontSize,
         lineHeight: LINE_HEIGHT,
         cursorBlink: cursorBlink(),
+        minimumContrastRatio: 4.5,
         scrollback: 5000,
         cols: summary.current.cols,
         rows: summary.current.rows,
