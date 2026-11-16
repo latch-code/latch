@@ -483,6 +483,7 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 | pi | 每轮后 `get_session_stats` 的 `tokens` | 会话 | 输入不含 `cacheRead`/`cacheWrite`，加回 |
 | Claude Agent、OpenCode | `PromptResponse.usage` | 一轮 | 输入不含缓存，加回 |
 | Grok Build | `PromptResponse._meta.usage`（`turnUsage`） | 一轮 | 已含 |
+| Qwen Code | 每次模型调用（含子 Agent 的）后一条空文字的 `agent_message_chunk` 的 `_meta.usage`（`callUsage`，0.26.8），只在已发出的一轮里收，相加；载入历史时重放的不收 | 一轮 | 已含；有一次没报缓存，这一轮就不记缓存 |
 | Antigravity | `PromptResponse.usage` | 未核实，按会话 | 报 0 |
 | DeepSeek Harness | 不报告 tokens，只有 `usage_update` 的上下文 | — | — |
 

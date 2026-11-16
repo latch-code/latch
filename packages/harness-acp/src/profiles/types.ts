@@ -406,6 +406,11 @@ export interface HarnessProfile {
   /** Token counts its prompt answer carries outside ACP's `usage`, read from the whole answer. */
   turnUsage?(result: unknown): TurnTokens | undefined
   /**
+   * Token counts of one model call that a session update carries while a turn runs, summed over the turn when its
+   * answer carries none. Read only from updates of a sent turn, never from a replayed history.
+   */
+  callUsage?(update: SessionUpdate): TurnTokens | undefined
+  /**
    * Latch never points this harness at the gateway: it reaches its vendor's models through its own login only. Shown
    * to clients as `HarnessCapabilities.models.ownOnly`; it changes nothing that runs, so the version stays.
    */

@@ -2612,6 +2612,55 @@ describe('ACP turn mapping', () => {
     expect((await (await fixture.open()).detail(sessionId)).summary.usage).toEqual(detail.summary.usage)
   })
 
+  it('sums the model calls a Harness reports one by one into the turn, when its answer carries none', async () => {
+    const turns: HarnessTurnRecord[] = []
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy' }, {}, { presetId: 'qwen' }, { turnEnded: turn => void turns.push(turn) })
+    const bridge = await fixture.open()
+    // Qwen Code's per-call usage (0.26.8): cached input inside the input; the second call reports no cache, so none is kept.
+    const calls = [
+      { inputTokens: 1200, outputTokens: 40, totalTokens: 1240, cachedReadTokens: 1000, thoughtTokens: 5 },
+      { inputTokens: 1300, outputTokens: 60, totalTokens: 1360, thoughtTokens: 7 },
+    ]
+    const { sessionId } = await bridge.createTask({ prompt: `calls ${JSON.stringify(calls)}`, requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'echo nothing reported', rid())
+    const detail = await settled(bridge, sessionId)
+    const turn = { inputTokens: 2500, outputTokens: 100, reasoningTokens: 12 }
+    expect(detail.messages.filter(message => message.role === 'user').map(message => message.turn?.usage)).toEqual([turn, undefined])
+    expect(detail.summary.usage).toEqual(turn)
+    expect(turns.map(item => item.usage)).toEqual([turn, undefined])
+  })
+
+  it('takes no call count that is not a whole safe number, and no sum that stops being exact', async () => {
+    const turns: HarnessTurnRecord[] = []
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy' }, {}, { presetId: 'qwen' }, { turnEnded: turn => void turns.push(turn) })
+    const bridge = await fixture.open()
+    const big = Number.MAX_SAFE_INTEGER - 1
+    // A fractional or oversized count is not a count: that call is left out, the others stand.
+    const odd = [
+      { inputTokens: 10.5, outputTokens: 1 },
+      { inputTokens: 1e300, outputTokens: 1 },
+      { inputTokens: 100, outputTokens: 20 },
+    ]
+    const { sessionId } = await bridge.createTask({ prompt: `calls ${JSON.stringify(odd)}`, requestId: rid() })
+    await settled(bridge, sessionId)
+    // Two counts each in range whose sum is not: the turn's tokens are not known.
+    await bridge.prompt(
+      sessionId,
+      `calls ${JSON.stringify([
+        { inputTokens: big, outputTokens: 1 },
+        { inputTokens: big, outputTokens: 1 },
+      ])}`,
+      rid(),
+    )
+    const detail = await settled(bridge, sessionId)
+    expect(turns.map(turn => turn.usage)).toEqual([{ inputTokens: 100, outputTokens: 20 }, undefined])
+    expect(detail.summary.usage).toEqual({ inputTokens: 100, outputTokens: 20 })
+    // Whatever was said, the session still opens after a restart.
+    await bridge.close()
+    expect((await (await fixture.open()).detail(sessionId)).summary.usage).toEqual({ inputTokens: 100, outputTokens: 20 })
+  })
+
   it('applies plan, title, commands and usage updates, persists commands and ignores unknown update kinds', async () => {
     const fixture = await setup({ FAKE_ACP_CONFIG: 'legacy' })
     const bridge = await fixture.open()

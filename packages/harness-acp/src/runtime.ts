@@ -394,6 +394,8 @@ interface Run {
   retry?: { id: string; interrupted: boolean; pending?: boolean; reason?: string; attempt?: { attempt: number; of: number } }
   /** The session's tokens before this turn, and this turn's as the Harness reported them (`TurnStats.usage`). */
   tokens?: { base?: TokenUsage; turn?: TokenUsage; stream?: { outputTokens: number; ms: number }; scope?: 'session' | 'turn' }
+  /** The model calls of this turn that the agent reported one by one (`HarnessProfile.callUsage`), summed; `unknown` once a sum is not exact. */
+  calls?: TurnTokens | 'unknown'
   /** What the Harness said the session's login had cost when the turn began, for the turn's own part. */
   costBase?: { amount: number; currency: string }
   done: Promise<void>
@@ -503,10 +505,36 @@ function tokenUsage(reported: TurnTokens): TokenUsage {
   }
 }
 
+/** Two model calls' counts as one: a part is kept only when both reported it. Undefined when a sum is not exact. */
+function addCallTokens(a: TurnTokens | undefined, b: TurnTokens): TurnTokens | undefined {
+  if (!a) return exactTokens(b) ? b : undefined
+  const both = (x: number | null | undefined, y: number | null | undefined) =>
+    typeof x === 'number' && typeof y === 'number' ? { value: x + y } : undefined
+  const read = both(a.cachedReadTokens, b.cachedReadTokens)
+  const write = both(a.cachedWriteTokens, b.cachedWriteTokens)
+  const thought = both(a.thoughtTokens, b.thoughtTokens)
+  const sum: TurnTokens = {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    ...(read ? { cachedReadTokens: read.value } : {}),
+    ...(write ? { cachedWriteTokens: write.value } : {}),
+    ...(thought ? { thoughtTokens: thought.value } : {}),
+  }
+  return exactTokens(sum) ? sum : undefined
+}
+
+/** Every count whole and within what a number holds exactly, so a sum of them survives the store's schema. */
+function exactTokens(tokens: TurnTokens): boolean {
+  const parts = [tokens.inputTokens, tokens.outputTokens, tokens.cachedReadTokens, tokens.cachedWriteTokens, tokens.thoughtTokens]
+  return parts.every(value => value == null || (Number.isSafeInteger(value) && value >= 0))
+}
+
 const TOKEN_PARTS = ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
 
 function combineTokens(a: TokenUsage, b: TokenUsage | undefined, sign: 1 | -1): TokenUsage {
-  const at = (value: number) => Math.max(0, value)
+  // Counts stay whole and finite whatever an agent said: a session total of Infinity would be stored as null, which the
+  // store's schema then refuses, and the Harness's sessions would no longer open.
+  const at = (value: number) => (Number.isFinite(value) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.round(value))) : 0)
   const usage: TokenUsage = {
     inputTokens: at(a.inputTokens + sign * (b?.inputTokens ?? 0)),
     outputTokens: at(a.outputTokens + sign * (b?.outputTokens ?? 0)),
@@ -4428,7 +4456,9 @@ export class AgentRuntime implements Bridge {
     this.askQuota(run.live, true)
     const parsed = promptResult.safeParse(result)
     const task = this.state.tasks[run.taskId]
-    const said = parsed.success ? (parsed.data.usage ?? this.selection.profile?.turnUsage?.(result)) : undefined
+    const said = parsed.success
+      ? (parsed.data.usage ?? this.selection.profile?.turnUsage?.(result) ?? (run.calls === 'unknown' ? undefined : run.calls))
+      : undefined
     const reported =
       said && this.selection.profile?.inputExcludesCache
         ? { ...said, inputTokens: said.inputTokens + (said.cachedReadTokens ?? 0) + (said.cachedWriteTokens ?? 0) }
@@ -6195,6 +6225,8 @@ export class AgentRuntime implements Bridge {
     const candidate = this.runs.get(taskId)
     const run = candidate?.sent && candidate.live === live ? candidate : undefined
     if (run) run.lastEventAt = this.clock()
+    const call = run ? this.selection.profile?.callUsage?.(update) : undefined
+    if (run && call && run.calls !== 'unknown') run.calls = addCallTokens(run.calls, call) ?? 'unknown'
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
       case 'agent_thought_chunk': {

@@ -1990,6 +1990,14 @@ const scenarios = {
     say('limit')
     return END
   },
+  // `calls <json array>`: each model call's usage as Qwen Code sends it, on an empty `agent_message_chunk`; the answer
+  // carries none.
+  calls: ({ sessionId, input, say }) => {
+    for (const usage of JSON.parse(input.slice('calls'.length).trim()))
+      update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '' }, _meta: { usage, durationMs: 5 } })
+    say('called')
+    return END
+  },
   plan: ({ sessionId, say }) => {
     update(sessionId, {
       sessionUpdate: 'plan',

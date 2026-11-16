@@ -1,6 +1,39 @@
 import type { ModelWire } from '@latch/protocol'
+import { z } from 'zod'
+import type { TurnTokens } from '../protocol.ts'
 import { bareVersion } from '../version-line.ts'
-import type { GatewayModelValues, HarnessProfile } from './types.ts'
+import type { GatewayModelValues, HarnessProfile, SessionUpdate } from './types.ts'
+
+/** A whole count a sum of them can still hold exactly; anything else is not a count. */
+const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+/**
+ * The `_meta.usage` of the empty `agent_message_chunk` Qwen Code sends after each model call, its own and its subagents'
+ * (0.26.8 `createTranscriptUsageUpdate`, from `emitUsageMetadata`): input with the cached part inside it, as every one
+ * of its content generators counts `promptTokenCount`.
+ */
+const callMeta = z.object({
+  _meta: z.object({
+    usage: z.object({
+      inputTokens: count,
+      outputTokens: count,
+      cachedReadTokens: count.optional().catch(undefined),
+      thoughtTokens: count.optional().catch(undefined),
+    }),
+  }),
+})
+
+function qwenCallUsage(update: SessionUpdate): TurnTokens | undefined {
+  if (update.sessionUpdate !== 'agent_message_chunk') return undefined
+  const parsed = callMeta.safeParse(update)
+  if (!parsed.success) return undefined
+  const { inputTokens, outputTokens, cachedReadTokens, thoughtTokens } = parsed.data._meta.usage
+  return {
+    inputTokens,
+    outputTokens,
+    ...(cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
+    ...(thoughtTokens !== undefined ? { thoughtTokens } : {}),
+  }
+}
 
 const GATEWAY_SETTINGS = 'qwen-system-settings.json'
 
@@ -143,6 +176,9 @@ export const qwenProfile: HarnessProfile = {
   folders: { via: 'args', flag: '--include-directories', maxExtra: 4 },
   // Workspace settings, commands, agents and extensions.
   projectConfigPaths: ['.qwen'],
+  // Its prompt answer carries no usage; each model call's arrives as an update, summed into the turn.
+  usageScope: 'turn',
+  callUsage: qwenCallUsage,
   // Qwen Code names the tool a call runs only in `_meta.toolName`, where ACP has `name`.
   normalizeUpdate(update) {
     if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return update
