@@ -38,6 +38,25 @@ export interface CodexModels {
 
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
 
+/** The gateway thinking value that sends no level: the model service's own default. Never a level a service declares. */
+export const GATEWAY_DEFAULT_EFFORT = '~default'
+
+/**
+ * Codex's thinking on a model of a service, as the levels that service declared for it: 默认, then each level. The wire
+ * offers exactly this and the Host projects it to drafts, so a pick before start is a value the session accepts. No
+ * declared level: no option, and the service's default applies.
+ */
+export function gatewayEffortOption(levels: readonly string[] | undefined, current?: string): SessionConfigOption | undefined {
+  if (!levels?.length) return undefined
+  return {
+    id: CODEX_EFFORT_ID,
+    name: '思考',
+    category: 'thought_level',
+    currentValue: current ?? GATEWAY_DEFAULT_EFFORT,
+    options: [{ value: GATEWAY_DEFAULT_EFFORT, name: '默认' }, ...levels.map(value => ({ value, name: capitalize(value) }))],
+  }
+}
+
 function effortOption(entry: CodexModel, current: string | undefined): SessionConfigOption | undefined {
   const efforts = entry.supportedReasoningEfforts ?? []
   if (!efforts.length) return undefined

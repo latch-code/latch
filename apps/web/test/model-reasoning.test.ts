@@ -311,10 +311,10 @@ describe('the 权限 chip', () => {
     const draft = (declared?: { approvals: 'prompts' | 'none'; readback: 'mode' | 'none' }) =>
       draftPermission({ ...harness, ...(declared ? { permission: declared } : {}) }, 'agent')
     expect(draft({ approvals: 'prompts', readback: 'mode' })).toMatchObject({ label: '先问你', amber: false })
-    expect(draft({ approvals: 'prompts', readback: 'mode' })?.note?.label).toBe('发第一条消息后可以换')
+    expect(draft({ approvals: 'prompts', readback: 'mode' })?.note).toBeUndefined()
     expect(draft({ approvals: 'none', readback: 'none' })).toMatchObject({ label: '不询问 · 由 Fake Agent 决定', amber: true })
     expect(draft({ approvals: 'prompts', readback: 'none' })).toMatchObject({ label: '权限无法确认', amber: true })
-    expect(draft()).toMatchObject({ label: '开始后可以选', amber: false })
+    expect(draft()).toMatchObject({ label: '默认', amber: false })
   })
 
   it("gives a draft's 先问你 the line Latch knows for that mode, the same one a session shows", () => {
@@ -336,31 +336,29 @@ describe('the 权限 chip', () => {
     )
   })
 
-  it("says when a declared Harness's modes can be changed, from whether its read reports them", () => {
+  it("says only that a declared Harness's modes are being read or could not be, never when they can be changed", () => {
     const declared = { approvals: 'prompts' as const, readback: 'mode' as const }
     const run = { scopes: new Set(['view', 'run'] as const) }
     const reads = { ...harness, permission: declared, catalogueRead: { when: 'select' as const, modes: true } }
     const note = (target: Parameters<typeof draftPermission>[0], read?: 'reading' | 'readable') =>
       draftPermission(target, 'agent', undefined, read)?.note
-    const later = { label: '发第一条消息后可以换', detail: 'Fake Agent 开始会话时才给出其他几项。' }
     // Its read opens a session, which reports the modes: the menu reads it, and the rows come once it is read.
     expect(readsOnPermission(reads, run)).toBe(true)
     expect(note(reads, 'reading')).toEqual({ label: '正在读取 Fake Agent 的权限…' })
-    expect(note(reads, 'readable')).toEqual({ label: '读取 Fake Agent 的权限后可以换' })
+    expect(note(reads, 'readable')).toBeUndefined()
     expect(note({ ...reads, catalogueRead: { ...reads.catalogueRead, last: { at: 'x', ok: false } } }, 'readable')).toEqual({
       label: '没有读到 Fake Agent 的权限',
-      detail: '发第一条消息后可以换。',
     })
     // Its read lists models only, as Codex's own model list does: the modes come with the session.
     const models = { ...reads, catalogueRead: { when: 'select' as const, modes: false } }
     expect(readsOnPermission(models, run)).toBe(false)
-    for (const read of ['reading', 'readable', undefined] as const) expect(note(models, read)).toEqual(later)
-    expect(note({ ...reads, catalogueRead: undefined }, undefined)).toEqual(later)
+    for (const read of ['reading', 'readable', undefined] as const) expect(note(models, read)).toBeUndefined()
+    expect(note({ ...reads, catalogueRead: undefined }, undefined)).toBeUndefined()
     // What it reported had no modes: nothing to change to, so no promise of it.
     const none = { options: [], perModel: [], reportedAt: 'x' }
     expect(note({ ...reads, catalogue: { ...none, source: 'check' } })).toBeUndefined()
     expect(note({ ...models, catalogue: { ...none, source: 'session' } })).toBeUndefined()
-    expect(note({ ...models, catalogue: { ...none, source: 'check' } })).toEqual(later)
+    expect(note({ ...models, catalogue: { ...none, source: 'check' } })).toBeUndefined()
   })
 
   it('says an undeclared Harness that can be read tells its modes when read, not only once started', () => {
@@ -382,12 +380,12 @@ describe('the 权限 chip', () => {
     expect(draftRead(harness, { scopes: new Set(['view'] as const) }, true)).toBe('reading')
 
     const before = draftPermission(readable, 'agent', undefined, 'readable')
-    expect(before).toMatchObject({ label: '读取后可以选', amber: false })
+    expect(before).toMatchObject({ label: '默认', amber: false })
     // The title says when the rows come; no line repeats it.
     expect(before?.line).toBe('')
     expect(draftPermission(readable, 'agent', undefined, 'reading')).toMatchObject({ label: '正在读取…', line: '', amber: false })
     // Without a read the agent tells only once started.
-    expect(draftPermission(harness, 'agent')).toMatchObject({ label: '开始后可以选', line: '' })
+    expect(draftPermission(harness, 'agent')).toMatchObject({ label: '默认', line: '' })
     // What a Harness declares, and a chat, need no read.
     expect(
       draftPermission({ ...readable, permission: { approvals: 'none', readback: 'none' } }, 'agent', undefined, 'reading'),
@@ -449,8 +447,9 @@ describe('what a Harness has not reported', () => {
     options: [{ value: 'a', name: 'A' }],
   })
   it('gives each control a few words on its own fact', () => {
-    expect(unreportedModelNote('pi', false, [])).toBe('发第一条消息后可以换')
-    expect(unreportedThinkingNote('pi', false, [])).toBe('发第一条消息后可以换')
+    // Before a start nothing is said: the control shows what will be used.
+    expect(unreportedModelNote('pi', false, [])).toBeUndefined()
+    expect(unreportedThinkingNote('pi', false, [])).toBeUndefined()
     expect(unreportedModelNote('pi', true, [])).toBe('由 pi 决定')
     expect(unreportedThinkingNote('pi', true, [])).toBe('用 pi 的默认值')
     expect(unreportedModelNote('pi', true, [option('model')])).toBeUndefined()
@@ -556,10 +555,8 @@ describe("a draft's list of a Harness's own options", () => {
     expect(view).toMatchObject({ amber: true, label: '不再询问', line: '直接运行', icon: 'shield-alert' })
     // Nothing picked: the mode a session starts in, never a wider one.
     expect(draftPermission(listed, 'agent', draftConfig(listed, undefined)!.config)!.label).toBe('先问你')
-    // Without a list: what the Harness declares, and that it can be changed after the start.
-    expect(draftPermission(testHarness('codex', { permission: { approvals: 'prompts', readback: 'mode' } }), 'agent')?.note?.label).toBe(
-      '发第一条消息后可以换',
-    )
+    // Without a list: what the Harness declares, and no promise about later.
+    expect(draftPermission(testHarness('codex', { permission: { approvals: 'prompts', readback: 'mode' } }), 'agent')?.note).toBeUndefined()
   })
 
   it('drops picks made for another Harness', () => {
@@ -614,20 +611,23 @@ describe("a draft's list of a Harness's own options", () => {
     expect(named(thinking, '思考')).toBe('LOW')
     for (const level of ['LOW', 'HIGH', 'MAX']) expect(thinking).toContain(level)
     expect(thinking).not.toContain('发第一条消息后可以换')
-    // A model no session ran on: its levels are not known yet, so 默认 and why.
+    // A model no session ran on: its levels are not known yet, so 默认, and no sentence about the start.
     const huge = renderToStaticMarkup(
       createElement(DraftThinkingControl, { ...draft, choice: { ...draft.choice, config: { model: 'huge' } } }),
     )
     expect(named(huge, '思考')).toBe('默认')
-    expect(huge).toContain('开始后才知道')
-    // Nothing read yet: each control says it comes with the start.
+    expect(huge).not.toContain('开始后')
+    // Nothing read yet: each control shows what will be used, and nothing more.
     const unread = {
       ...draft,
       catalog: { ...catalog, harnesses: [testHarness('pi')] },
       choice: { mode: 'agent' as const, harnessId: 'pi' },
     }
-    expect(renderToStaticMarkup(createElement(DraftModelControl, unread))).toContain('发第一条消息后可以换')
-    expect(renderToStaticMarkup(createElement(DraftThinkingControl, unread))).toContain('发第一条消息后可以换')
+    for (const control of [DraftModelControl, DraftThinkingControl]) {
+      const markup = renderToStaticMarkup(createElement(control, unread))
+      for (const words of ['发第一条消息后可以换', '开始后', '读取后可以选']) expect(markup).not.toContain(words)
+    }
+    expect(named(renderToStaticMarkup(createElement(DraftThinkingControl, unread)), '思考')).toBe('默认')
   })
 })
 
@@ -756,6 +756,123 @@ describe('the services a draft offers through Latch', () => {
     // Its own list not read yet, or a Harness that takes any model: every model of the service.
     for (const list of [options(codex(true, false)), options(codex(false))])
       expect(list?.map(option => option.disabledReason)).toEqual([undefined, undefined])
+  })
+})
+
+describe('thinking on a service model before the session starts', () => {
+  const relay = {
+    id: 'relay',
+    name: 'Relay',
+    kind: 'openai-responses' as const,
+    models: ['deepseek-flash', 'plain'],
+    defaultModel: 'deepseek-flash',
+    modelCapabilities: { 'deepseek-flash': { thinking: ['low', 'high'] } },
+  }
+  // What the Host projects for Codex's own wire: the option the session will offer, with the same ID and values.
+  const projected: SessionConfigOption = {
+    id: 'reasoning_effort',
+    name: '思考',
+    category: 'thought_level',
+    currentValue: '~default',
+    options: [
+      { value: '~default', name: '默认' },
+      { value: 'low', name: 'Low' },
+      { value: 'high', name: 'High' },
+    ],
+  }
+  const codex = (serviceOptions?: HarnessInfo['serviceOptions'], serviceThinking = true): HarnessInfo => {
+    const info = testHarness('codex', { label: 'Codex' })
+    info.capabilities.models = {
+      ...info.capabilities.models,
+      wires: ['responses'],
+      ...(serviceThinking ? { serviceThinking: true as const } : {}),
+    }
+    info.catalogue = {
+      options: [
+        { ...model, id: 'model', currentValue: 'gpt-5', options: [{ value: 'gpt-5', name: 'GPT-5' }] },
+        { ...reasoning, id: 'reasoning_effort', currentValue: 'medium', options: [{ value: 'medium', name: 'Medium' }] },
+      ],
+      perModel: [],
+      reportedAt: '2026-11-07T00:00:00.000Z',
+      source: 'session',
+    }
+    if (serviceOptions) info.serviceOptions = serviceOptions
+    return info
+  }
+  const draftOf = (info: HarnessInfo, service: string, extra: Record<string, string> = {}) => ({
+    catalog: { ...catalog, harnesses: [info], providers: [relay] },
+    choice: { mode: 'agent' as const, harnessId: 'codex', config: { '~service': `relay\u0000${service}`, ...extra } },
+    onChoice() {},
+    access: { local: true, legacy: false, admin: true, scopes: new Set(['view', 'run'] as const) },
+    disabled: false,
+  })
+  const declared = [{ providerId: 'relay', model: 'deepseek-flash', options: [projected], source: 'declared' as const }]
+
+  it('lists 默认 and the levels the service declared, never the Harness’s own thinking', () => {
+    const draft = draftOf(codex(declared), 'deepseek-flash')
+    const thinking = renderToStaticMarkup(createElement(DraftThinkingControl, draft))
+    expect(named(thinking, '思考')).toBe('默认')
+    for (const level of ['Low', 'High']) expect(thinking).toContain(level)
+    expect(thinking).not.toContain('Medium')
+    expect(thinking).not.toContain('开始后')
+    const known = draftConfig(draft.catalog.harnesses[0], draft.choice.config)!
+    expect(known.config.filter(option => option.category === 'thought_level')).toEqual([projected])
+    expect(known.thinkingUnknown).toBe(false)
+  })
+
+  it('carries the level picked before the start, and only one the pair offers', () => {
+    const info = codex(declared)
+    expect(startConfig(info, { '~service': 'relay\u0000deepseek-flash', reasoning_effort: 'high' })).toEqual([
+      { configId: 'reasoning_effort', value: 'high' },
+    ])
+    // A level the service did not declare, or a model it declared none for, carries nothing: the session's default.
+    expect(startConfig(info, { '~service': 'relay\u0000deepseek-flash', reasoning_effort: 'xhigh' })).toEqual([])
+    expect(startConfig(info, { '~service': 'relay\u0000plain', reasoning_effort: 'high' })).toEqual([])
+    // The Harness's own level is not the service model's.
+    expect(startConfig(info, { '~service': 'relay\u0000plain', reasoning_effort: 'medium' })).toEqual([])
+  })
+
+  it('shows only 默认 for a model with no declaration, with what it means on hover only', () => {
+    const draft = draftOf(codex(declared), 'plain')
+    const thinking = renderToStaticMarkup(createElement(DraftThinkingControl, draft))
+    expect(named(thinking, '思考')).toBe('默认')
+    expect(thinking).not.toContain('Medium')
+    expect(thinking).not.toContain('model-note')
+    for (const words of ['开始后', '发第一条消息后可以换']) expect(thinking).not.toContain(words)
+  })
+
+  it('shows what a session on the pair reported, once one ran', () => {
+    const effort: SessionConfigOption = { ...reasoning, id: 'effort', currentValue: 'balanced' }
+    const cached = [{ providerId: 'relay', model: 'plain', options: [effort], source: 'session' as const }]
+    const draft = draftOf(codex(cached), 'plain')
+    const thinking = renderToStaticMarkup(createElement(DraftThinkingControl, draft))
+    expect(named(thinking, '思考')).toBe('均衡')
+    for (const level of ['由模型决定', '更详细']) expect(thinking).toContain(level)
+    expect(startConfig(draft.catalog.harnesses[0], { ...draft.choice.config, effort: 'detailed' })).toEqual([
+      { configId: 'effort', value: 'detailed' },
+    ])
+  })
+
+  it('in a session on a service, says 默认 is the service’s only where it sends no level', () => {
+    const session = (info: HarnessInfo) =>
+      renderToStaticMarkup(
+        createElement(SessionThinkingControl, {
+          catalog: { ...catalog, harnesses: [info], providers: [relay] },
+          harness: info,
+          model: undefined,
+          current: undefined,
+          onModel() {},
+          config: [],
+          busy: null,
+          onConfig() {},
+          route: { providerId: 'relay', model: 'plain', name: 'Relay' },
+        }),
+      )
+    const markup = session(codex())
+    expect(named(markup, '思考')).toBe('默认')
+    expect(markup).not.toContain('用 Codex 的默认值')
+    // Another Harness's 默认 is its own: the note it had stays.
+    expect(session(codex(undefined, false))).toContain('用 Codex 的默认值')
   })
 })
 

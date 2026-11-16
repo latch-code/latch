@@ -146,7 +146,7 @@ export function CurrentAgentOptions({ shell, owner }: { shell: ShellState; owner
       {config.length > 0 && (
         <div className="agent-current-options">
           <SessionModelControl {...options} reported={current.summary.model} route={current.summary.modelRoute} />
-          <SessionThinkingControl {...options} />
+          <SessionThinkingControl {...options} route={current.summary.modelRoute} />
           {permission?.option && (
             <PermissionChip
               view={permission}

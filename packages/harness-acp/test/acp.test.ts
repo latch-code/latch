@@ -6649,6 +6649,52 @@ describe('sessions on a model service through the gateway', () => {
     ])
   })
 
+  it('remembers what a session on a service model reported, for drafts on that pair while its declaration holds', async () => {
+    const models = await startFakeModels({ replies: [{ text: 'from the service' }] })
+    cleanups.push(() => models.close())
+    const stub = gateway(models)
+    const capabilities = { 'fake-model': { thinking: ['low', 'high'] } }
+    const fixture = await setup(
+      LAUNCHED,
+      { idleMs: 60_000 },
+      { presetId: 'opencode' },
+      { modelGateway: { open: input => ({ ...stub.access.open(input), modelCapabilities: capabilities }) } },
+    )
+    const route: ModelRoute = { providerId: 'svc', model: 'fake-model', wire: 'chat-completions', origin: models.origin }
+    const service = {
+      providerId: 'svc',
+      entry: 'chat-completions' as const,
+      upstream: 'chat-completions' as const,
+      models: ['fake-model', 'fake-model-large'],
+      modelCapabilities: capabilities,
+    }
+    let bridge = await fixture.open()
+    // Nothing ran on it yet: nothing to show, and nothing derived for a Harness Latch has not checked.
+    expect(bridge.serviceOptions!([service])).toEqual([])
+    const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('idle')
+    const reported = detail.config!.find(option => option.category === 'thought_level')!
+    const kept = [{ providerId: 'svc', model: 'fake-model', options: [reported], source: 'session' }]
+    expect(bridge.serviceOptions!([service])).toEqual(kept)
+    // Kept on disk with the rest of the Harness's state.
+    await bridge.close()
+    bridge = await fixture.open()
+    expect(bridge.serviceOptions!([service])).toEqual(kept)
+    // Another declaration of the same pair, another protocol, or another service: not what that session ran with.
+    expect(bridge.serviceOptions!([{ ...service, modelCapabilities: { 'fake-model': { thinking: ['high'] } } }])).toEqual([])
+    expect(bridge.serviceOptions!([{ ...service, upstream: 'responses' }])).toEqual([])
+    expect(bridge.serviceOptions!([{ ...service, providerId: 'other' }])).toEqual([])
+    // A session that opens on another model and is switched to the route's: kept under the route's model, from the
+    // report on that model, never the one it opened on.
+    const large = await bridge.createTask({ prompt: 'model large', requestId: rid(), modelRoute: { ...route, model: 'fake-model-large' } })
+    const switched = await settled(bridge, large.sessionId)
+    expect(switched.summary.status).toBe('idle')
+    expect(switched.config?.find(option => option.category === 'model')?.currentValue).toBe('latch/fake-model-large')
+    expect(bridge.serviceOptions!([service]).map(entry => entry.model)).toEqual(['fake-model', 'fake-model-large'])
+    await bridge.close()
+  })
+
   const QWEN = {
     FAKE_ACP_CONFIG: 'options',
     FAKE_ACP_MODES: 'plan,default,auto-edit,auto,yolo',

@@ -16,7 +16,15 @@ import {
 } from '@latch/protocol'
 import { isAbsolute } from 'node:path'
 import { redactKnownSecrets } from '@latch/core/node-kit'
-import { CODEX_EFFORT_ID, CODEX_MODEL_ID, codexModel, codexOptions, type CodexModels } from '../codex-models.ts'
+import {
+  CODEX_EFFORT_ID,
+  CODEX_MODEL_ID,
+  codexModel,
+  codexOptions,
+  GATEWAY_DEFAULT_EFFORT,
+  gatewayEffortOption,
+  type CodexModels,
+} from '../codex-models.ts'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
 import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
@@ -70,7 +78,6 @@ const RESERVED = new Set([
 export const CODEX_MODE_ID = 'mode'
 const MAX_MODEL_PAGES = 5
 const MAX_THREADS = 50
-const DEFAULT_GATEWAY_EFFORT = '~default'
 const COMPACT = { name: 'compact', description: '把之前的对话总结成摘要，腾出上下文' }
 /** Context blocks are not command invocations, even when their instructions begin with a slash. */
 function nativeCommand(blocks: z.infer<typeof promptParams>['prompt']): string | undefined {
@@ -1084,18 +1091,8 @@ export class CodexWire implements AgentWire {
       ...(this.effort ? { effort: this.effort } : {}),
     }).options
     if (this.route?.setThinking && this.model) {
-      const efforts = this.route.modelCapabilities?.[this.model]?.thinking ?? []
-      if (efforts.length)
-        listed.push({
-          id: CODEX_EFFORT_ID,
-          name: '思考',
-          category: 'thought_level',
-          currentValue: this.routeEffort ?? DEFAULT_GATEWAY_EFFORT,
-          options: [
-            { value: DEFAULT_GATEWAY_EFFORT, name: '默认' },
-            ...efforts.map(value => ({ value, name: value.charAt(0).toUpperCase() + value.slice(1) })),
-          ],
-        })
+      const thinking = gatewayEffortOption(this.route.modelCapabilities?.[this.model]?.thinking, this.routeEffort)
+      if (thinking) listed.push(thinking)
     }
     return [
       {
@@ -1132,7 +1129,7 @@ export class CodexWire implements AgentWire {
     } else if (configId === CODEX_EFFORT_ID) {
       if (this.route?.setThinking) {
         if (!this.model) throw new RpcError(RPC.invalidParams, 'No selected gateway model')
-        const effort = value === DEFAULT_GATEWAY_EFFORT ? null : value
+        const effort = value === GATEWAY_DEFAULT_EFFORT ? null : value
         if (effort !== null && !this.route.modelCapabilities?.[this.model]?.thinking?.includes(effort))
           throw new RpcError(RPC.invalidParams, '这个模型服务没有声明所请求的思考档位')
         this.routeEffort = effort ?? undefined

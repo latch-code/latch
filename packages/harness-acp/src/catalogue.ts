@@ -1,8 +1,17 @@
 /** What an agent offered at the start of its sessions, kept per definition so a draft can choose before it starts one. */
-import { LADDER_MODE, type CatalogueRead, type HarnessCatalogue, type SessionConfigOption } from '@latch/protocol'
+import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
+import {
+  LADDER_MODE,
+  type CatalogueRead,
+  type HarnessCatalogue,
+  type ModelCapabilities,
+  type ModelWire,
+  type ServiceModelOptions,
+  type SessionConfigOption,
+} from '@latch/protocol'
 import { clip } from './mapping.ts'
 import type { HarnessProfile } from './profiles/index.ts'
-import type { AcpCatalogue, StartChoice } from './store.ts'
+import type { AcpCatalogue, AcpServiceOptions, StartChoice } from './store.ts'
 
 /** Every catalog the Host sends carries it, and a phone reads that catalog whole, so it stays small. */
 const MAX_OPTIONS = 16
@@ -127,11 +136,53 @@ export function shownCatalogue(stored: AcpCatalogue): HarnessCatalogue | undefin
   return shown
 }
 
+/** Pairs of a service and a model whose reported options are kept; the oldest go first. */
+const MAX_SERVICE_OPTIONS = 32
+
+/**
+ * What a service declared that the options of a session on one of its models can follow: the protocols on both sides
+ * of the gateway and what the owner declared for that model. Computed the same way when a session reports and when a
+ * draft reads, from settings only; never a key, and never sent to a client.
+ */
+export function serviceDeclarationHash(input: { entry: ModelWire; upstream?: ModelWire; capabilities?: ModelCapabilities }): string {
+  const { entry, upstream, capabilities } = input
+  return sha256Hex(
+    canonicalJson({
+      entry,
+      upstream: upstream ?? entry,
+      vision: capabilities?.vision === true,
+      thinking: capabilities?.thinking ?? [],
+    }),
+  )
+}
+
+/** The kept options after a session on `entry`'s pair reported its own; the newest first. */
+export function withServiceOptions(prior: readonly AcpServiceOptions[] | undefined, entry: AcpServiceOptions): AcpServiceOptions[] {
+  const same = (other: AcpServiceOptions) =>
+    other.definitionHash === entry.definitionHash && other.providerId === entry.providerId && other.model === entry.model
+  const options = bounded(entry.options.filter(followsModel))
+  return [{ ...entry, options }, ...(prior ?? []).filter(other => !same(other))].slice(0, MAX_SERVICE_OPTIONS)
+}
+
+/** Only pairs that offer a choice go to a draft: one with nothing kept shows 默认 as it would without an entry. */
+export function shownServiceOptions(entries: readonly ServiceModelOptions[]): ServiceModelOptions[] | undefined {
+  const shown = entries.filter(entry => entry.options.some(option => option.options.length > 1)).slice(0, MAX_SERVICE_OPTIONS)
+  if (!shown.length) return undefined
+  // Every catalog goes whole to a phone: drop the last pairs until the list fits beside the catalogue.
+  while (shown.length && new TextEncoder().encode(JSON.stringify(shown)).length > MAX_BYTES) shown.pop()
+  return shown.length ? structuredClone(shown) : undefined
+}
+
 /** A draft's choices as a session keeps them until they are set, with what the catalogue calls each. */
-export function startChoices(config: ReadonlyArray<{ configId: string; value: string }>, stored: AcpCatalogue | undefined): StartChoice[] {
+export function startChoices(
+  config: ReadonlyArray<{ configId: string; value: string }>,
+  stored: AcpCatalogue | undefined,
+  /** On a model of a service: what a draft was offered for it, which names the choice before the harness's own list does. */
+  routed?: readonly SessionConfigOption[],
+): StartChoice[] {
   return config.map(({ configId, value }) => {
     if (configId === LADDER_MODE) return { configId, value, category: 'mode' }
-    const option = stored?.options.find(item => item.id === configId)
+    const option = routed?.find(item => item.id === configId) ?? stored?.options.find(item => item.id === configId)
     const named =
       option?.options.find(item => item.value === value)
       ?? stored?.perModel

@@ -15,6 +15,8 @@ import type {
   HarnessOwnMcp,
   HarnessQuota,
   CatalogueRead,
+  ModelCapabilities,
+  ServiceModelOptions,
 } from '@latch/protocol/types'
 
 /** One folder of a project: its ID inside the project (stable across reorders) and its absolute path. */
@@ -39,6 +41,18 @@ export interface ModelRoute {
    * the first service fails before its reply begins goes to these; one that is gone or changed since is passed over.
    */
   fallbacks?: Record<string, ModelRouteFallback[]>
+}
+
+/**
+ * A saved service as a harness would reach it through the Host's gateway: the protocol the harness speaks to the gateway
+ * (`entry`), the one the service speaks (`upstream`), its models and what the owner declared for them. Never a key.
+ */
+export interface ServiceDeclaration {
+  providerId: string
+  entry: ModelWire
+  upstream: ModelWire
+  models: readonly string[]
+  modelCapabilities?: Readonly<Record<string, ModelCapabilities>>
 }
 
 /** One 「出错时改用」 candidate: another service's model, the protocol that service speaks and its `scheme://host:port`. */
@@ -319,6 +333,12 @@ export interface Bridge {
   }): Promise<{ sourceSessionId: string; catalogue: HarnessCommandCatalogue } | undefined>
   /** Optional. What the harness offered when a session of its current definition last started; see `HarnessCatalogue`. */
   catalogue?(): HarnessCatalogue | undefined
+  /**
+   * Optional. What a draft on a model of each service offers before it starts (`ServiceModelOptions`), from the Host's
+   * saved service settings as they are now: derived from a declaration where the harness's options follow it exactly,
+   * else what a session of the current definition on that model reported under the same declaration.
+   */
+  serviceOptions?(services: readonly ServiceDeclaration[]): ServiceModelOptions[]
   /**
    * Optional. What the harness said it takes in a prompt when it last started for its current definition (images; text
    * as embedded context). Undefined until it has started once since that definition was saved.

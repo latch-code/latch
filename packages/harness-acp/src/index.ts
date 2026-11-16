@@ -184,6 +184,7 @@ function agentFacts(name: string, presetId: string | undefined, profile: Harness
       ...(!gateway && (!profile || profile.ownModelsOnly) ? { ownOnly: true as const } : {}),
       ...(profile?.thinkingPerModel ? { thinkingPerModel: true as const } : {}),
       ...(profile?.thinkingInModel ? { thinkingInModel: true as const } : {}),
+      ...(profile?.wire === 'codex' && gateway ? { serviceThinking: true as const } : {}),
       // Codex's app-server reports its limits on its own wire; another profile through its own quota source.
       ...(profile?.quota || profile?.wire === 'codex' ? { quota: true as const } : {}),
     },

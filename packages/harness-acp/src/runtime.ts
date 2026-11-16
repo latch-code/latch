@@ -57,6 +57,7 @@ import type {
   HarnessCatalogue,
   HarnessCommandCatalogue,
   HarnessMcpReport,
+  ServiceModelOptions,
   HarnessOwnMcp,
   HarnessQuota,
   CatalogueRead,
@@ -88,6 +89,7 @@ import {
   type ModelRoute,
   type ProjectFolder,
   type PromptOptions,
+  type ServiceDeclaration,
   type SetConfigOptions,
   type SteerOutcome,
 } from '@latch/sdk'
@@ -106,15 +108,18 @@ import {
   catalogueReadOf,
   MAX_START_CHOICES,
   modelListCatalogue,
+  serviceDeclarationHash,
   shownCatalogue,
+  shownServiceOptions,
   START_ORDER,
   startCatalogue,
   startChoices,
   withModelOptions,
+  withServiceOptions,
 } from './catalogue.ts'
 import { authFacts, reportedLogin, terminalLogins, type AuthFacts } from './auth.ts'
 import { QUOTA_UPDATE, QuotaFacts, quotaReport, type QuotaReport } from './quota.ts'
-import { codexOptions, readCodexModels } from './codex-models.ts'
+import { CODEX_EFFORT_ID, codexOptions, GATEWAY_DEFAULT_EFFORT, gatewayEffortOption, readCodexModels } from './codex-models.ts'
 import { readQuotaCommand } from './login.ts'
 import { commandMoved, commandUnconfirmed, harnessRetired, redactor, resolveCommand } from './command.ts'
 import { openWire, wireArgs } from './wires/index.ts'
@@ -805,6 +810,8 @@ function notAccepted(error: unknown): unknown {
 }
 
 export class AgentRuntime implements Bridge {
+  /** Sessions whose options on a service model were kept already (`noteServiceOptions`). */
+  private readonly servicesNoted = new WeakSet<AcpTask>()
   private state: AcpState = emptyAcpState()
   private readonly fileTracking: RunFileTracking
   private readonly store: AcpStore
@@ -1236,6 +1243,96 @@ export class AgentRuntime implements Bridge {
     const stored = this.state.catalogue
     if (!this.loaded || !stored || this.definitionNow() !== stored.definitionHash) return undefined
     return shownCatalogue(stored)
+  }
+
+  serviceOptions(services: readonly ServiceDeclaration[]): ServiceModelOptions[] {
+    if (!this.loaded) return []
+    const definitionHash = this.definitionNow()
+    const kept = definitionHash ? (this.state.serviceOptions ?? []).filter(entry => entry.definitionHash === definitionHash) : []
+    return (
+      shownServiceOptions(
+        services.flatMap(service =>
+          service.models.flatMap((model): ServiceModelOptions[] => {
+            const capabilities = service.modelCapabilities?.[model]
+            const declared = this.declaredServiceOptions(service, model)
+            if (declared) return [{ providerId: service.providerId, model, options: declared, source: 'declared' }]
+            const declarationHash = serviceDeclarationHash({
+              entry: service.entry,
+              upstream: service.upstream,
+              ...(capabilities ? { capabilities } : {}),
+            })
+            const found = kept.find(
+              entry => entry.providerId === service.providerId && entry.model === model && entry.declarationHash === declarationHash,
+            )
+            return found ? [{ providerId: service.providerId, model, options: structuredClone(found.options), source: 'session' }] : []
+          }),
+        ),
+      ) ?? []
+    )
+  }
+
+  /**
+   * What a session on this model of the service offers that follows from the declaration alone: Codex's own wire offers
+   * thinking as the service's declared levels (`gatewayEffortOption`) on the Responses entry, where the gateway sets it.
+   */
+  private declaredServiceOptions(service: ServiceDeclaration, model: string): SessionConfigOption[] | undefined {
+    if (this.selection.profile?.wire !== 'codex' || service.entry !== 'responses') return undefined
+    const thinking = gatewayEffortOption(service.modelCapabilities?.[model]?.thinking)
+    return thinking ? [thinking] : undefined
+  }
+
+  /**
+   * What a start on a route names its choices by: what a session on that pair last reported, and on Codex's own wire its
+   * thinking, whose levels only the lease knows yet. Naming only: the session's own answer decides what applies.
+   */
+  private routedOptions(route: ModelRoute): SessionConfigOption[] {
+    const definitionHash = this.definitionNow()
+    const kept =
+      this.state.serviceOptions?.find(
+        entry => entry.definitionHash === definitionHash && entry.providerId === route.providerId && entry.model === route.model,
+      )?.options ?? []
+    const thinking =
+      this.selection.profile?.wire === 'codex' && route.wire === 'responses'
+        ? [{ id: CODEX_EFFORT_ID, name: '思考', category: 'thought_level', currentValue: GATEWAY_DEFAULT_EFFORT, options: [] }]
+        : []
+    return [...thinking, ...kept]
+  }
+
+  /**
+   * What a new session on a model of a service reported that follows the model, for drafts on the same pair: once per
+   * session, from the first report on the route's own model, before the draft's other choices or the person's change it.
+   */
+  private noteServiceOptions(task: AcpTask, options: SessionConfigOption[], lease: ModelGatewayLease | undefined): void {
+    const route = task.acp.route
+    const definitionHash = task.acp.definitionHash ?? task.acp.launchHash
+    if (!route || !lease || !definitionHash || this.servicesNoted.has(task)) return
+    // Only what it reported on the route's own model: an agent that opens on another and is switched after
+    // (`routeModel`) reported that one's options.
+    const option = options.find(item => item.category === 'model')
+    const gateway = this.selection.profile?.gateway
+    const expected =
+      option === undefined
+        ? undefined
+        : gateway?.via === 'providers'
+          ? listedModel(option, route.model)
+          : gateway?.via === 'launch' && gateway.models
+            ? gateway.models.value(route.model, route.wire)
+            : route.model
+    if (option && option.currentValue !== expected) return
+    this.servicesNoted.add(task)
+    const capabilities = lease.modelCapabilities?.[route.model]
+    this.state.serviceOptions = withServiceOptions(this.state.serviceOptions, {
+      definitionHash,
+      providerId: route.providerId,
+      model: route.model,
+      declarationHash: serviceDeclarationHash({
+        entry: route.wire,
+        ...(route.upstream ? { upstream: route.upstream } : {}),
+        ...(capabilities ? { capabilities } : {}),
+      }),
+      options,
+      reportedAt: this.now(),
+    })
   }
 
   promptCapabilities(): { images: boolean; text: boolean } | undefined {
@@ -2196,7 +2293,11 @@ export class AgentRuntime implements Bridge {
       ...(commandContext ? { commandContext } : {}),
       ...(scope ? { scope } : {}),
       ...(input.agentContext ? { agentContext: input.agentContext } : {}),
-      ...(config.length ? { startConfig: startChoices(config, this.state.catalogue) } : {}),
+      ...(config.length
+        ? {
+            startConfig: startChoices(config, this.state.catalogue, route ? this.routedOptions(route) : undefined),
+          }
+        : {}),
       ...(route ? { route } : {}),
       ...(fork ? { fork } : {}),
       ...(input.seed ? { seed: input.seed } : {}),
@@ -3874,6 +3975,8 @@ export class AgentRuntime implements Bridge {
     task.config = this.offered(task, configFromOptions(items))
     task.acp.configSource = 'options'
     this.noteModelOptions(task, task.config)
+    // An agent that opened on another model reports the route's once the start switches to it.
+    if (task.acp.route && task.acp.startConfig) this.noteServiceOptions(task, task.config, this.lives.get(task.summary.id)?.gateway)
     // ACP makes the category optional, so an option once known as the mode keeps that role under its id.
     if (prior && !this.modeOption(task)) {
       const same = task.config.find(item => item.id === prior.id)
@@ -4677,7 +4780,7 @@ export class AgentRuntime implements Bridge {
                 modelCapabilities: gateway.modelCapabilities,
                 setThinking: gateway.setThinking,
                 ...(this.selection.profile?.wire === 'codex' && savedEffort
-                  ? { effort: savedEffort === '~default' ? null : savedEffort }
+                  ? { effort: savedEffort === GATEWAY_DEFAULT_EFFORT ? null : savedEffort }
                   : {}),
               },
             }
@@ -5133,7 +5236,7 @@ export class AgentRuntime implements Bridge {
       if (!target.acp.route) {
         if (!current) this.noteStartCatalogue(target, target.config)
         else this.noteModelOptions(target, target.config)
-      }
+      } else if (!current) this.noteServiceOptions(target, target.config, live.gateway)
     }
     // A restored session can come back in another mode than the previous process last reported, so the recorded
     // mode is no evidence; unless this response reports one, the mode is set and read back before the next prompt.
@@ -5277,6 +5380,12 @@ export class AgentRuntime implements Bridge {
       return category === 'model' || category === 'mode' ? category : 'other'
     }
     const named = (choice: StartChoice) => clip(choice.label ?? choice.value, 64)
+    // Which option it was, so the refusal says more than a value: thinking by name, any other as the agent calls it.
+    const what = (choice: StartChoice) => {
+      const option = live(choice.configId)
+      if ((option?.category ?? choice.category) === 'thought_level') return '思考档位'
+      return option ? `设置「${clip(option.name, 64)}」的值` : '设置'
+    }
     // The first refusal is the one the turn reports.
     let refused: AppError | undefined
     for (const choice of chosen.toSorted((a, b) => START_ORDER[role(a)] - START_ORDER[role(b)])) {
@@ -5300,7 +5409,7 @@ export class AgentRuntime implements Bridge {
           refused ??= new AppError(
             409,
             'config-option-unavailable',
-            `${name} 现在没有设置「${named(choice)}」，这条消息没有发出。${this.nowUsing(taskId, option, '设置')}`,
+            `${name} 现在没有${what(choice)}「${named(choice)}」，这条消息没有发出。${this.nowUsing(taskId, option, '设置')}`,
           )
         continue
       }
@@ -5334,7 +5443,7 @@ export class AgentRuntime implements Bridge {
       refused ??= new AppError(
         409,
         'config-option-unverified',
-        `${name} 没有采用设置「${named(choice)}」，这条消息没有发出。${this.nowUsing(taskId, now, '设置')}`,
+        `${name} 没有采用${what(choice)}「${named(choice)}」，这条消息没有发出。${this.nowUsing(taskId, now, '设置')}`,
       )
     }
     const current = this.task(taskId)

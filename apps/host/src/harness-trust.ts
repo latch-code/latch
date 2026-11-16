@@ -58,6 +58,10 @@ export function harnessFacts(declared: HarnessDeclaration | undefined, name: str
       ...(models?.ownOnly === true && !(Array.isArray(models.wires) && models.wires.length > 0) ? { ownOnly: true as const } : {}),
       ...(models?.thinkingPerModel === true ? { thinkingPerModel: true as const } : {}),
       ...(models?.thinkingInModel === true ? { thinkingInModel: true as const } : {}),
+      // Only of a harness Latch forwards for, as `credentialInherited`.
+      ...(models?.serviceThinking === true && Array.isArray(models.wires) && models.wires.length > 0
+        ? { serviceThinking: true as const }
+        : {}),
       ...(models?.quota === true ? { quota: true as const } : {}),
     },
     permission: {

@@ -49,7 +49,7 @@ sources:
 
 **新会话。** 用 Harness 上次会话报告或不开会话读到的选项列表，和会话里是同一个组件。
 
-- 还没有列表时不虚构能力：`DraftModelControl` 写「默认模型」、`DraftThinkingControl` 写「默认」，模型菜单里是读取的入口；不能读取时说明发第一条消息后可以换。
+- 还没有列表时不虚构能力：`DraftModelControl` 写「默认模型」、`DraftThinkingControl` 写「默认」，即将使用的值；能读取时菜单里是一行读取动作，不加说明文字。
 - 草稿换模型时按 Harness 的读取策略取这个模型的思考选项，不沿用另一个模型的档位。
 - 人选择的每一项在发送前必须成功应用，否则拒绝本轮。
 - 已知权限预设的完整梯度在草稿即可选，列表读回不能覆盖先前的选择。
@@ -90,7 +90,7 @@ sources:
 - 用不了的服务收在「N 个服务用不了」，展开显示原因。`models.wires` 为空的 Harness 只用自己的模型。
 - `models.knownOnly`（codex-acp）：只有适配器认识的服务模型可选。Codex 直连可选服务声明但原生 `model/list` 没有的模型。
 - 服务选择按 Harness 分别保存，换 Harness 不带过去。控件显示模型 ID 与服务标记，避免同名模型混淆。
-- 草稿的思考选项以该 Harness 对所选模型实际能提供的列表为准；服务的声明不当作原生会话读回。
+- 草稿选了服务模型时，思考选项来自 Host 下发的 `HarnessInfo.serviceOptions`（按服务与模型，[HARNESSES.md](HARNESSES.md#开始前的选项)），不用 Harness 自己模型的档位：Codex 直连由 Host 按服务声明的档位投影（`declared`，与会话提供的选项 ID、取值相同）；其他 Harness 用经网关的会话报告过的（`session`）。两者都没有时只有「默认」。Codex 直连（`models.serviceThinking`）的「默认」不发档位，悬停说明它是模型服务的默认，会话里也一样，不写「用 Codex 的默认值」；其他 Harness 的「默认」是它自己的默认。
 
 **模型值的编码。** 显示总取服务的模型 ID；Agent 的配置值按 profile 的精确编码应用、读回和恢复，不用去前缀或模糊匹配把另一个 provider 的同名模型当成当前服务。
 

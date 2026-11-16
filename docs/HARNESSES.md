@@ -614,6 +614,13 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 - 模式的当前值写成预设每次开始前设好的模式，不是 Agent 碰巧报告的那个。
 - 有上限（总大小 64 KiB，超出时先丢最早见过的模型，再整份不下发）：每份目录都带着它。
 
+**服务模型。** 经网关的会话不记进 `catalogue`；草稿选服务模型时看 `HarnessInfo.serviceOptions`（`providerId`、`model`、跟着模型变的 `options`、`source`），由 Host 每次下发目录时用当前保存的服务设置算出（`Bridge.serviceOptions`，只传协议、模型与声明，不带密钥）：
+
+- `declared`：Codex 直连在 Responses 入口上的思考，按服务为这个模型声明的档位给出「默认」（`~default`）加各档，与 wire 提供、`set_config_option` 接受的完全相同（`gatewayEffortOption`）。没有声明就没有这一项。
+- `session`：其他 Harness 经网关的新会话在 `session/new` 回答里报告的、跟着模型变的选项，按定义 × 服务 × 模型 × 声明摘要（两侧协议与该模型的声明，`serviceDeclarationHash`）存进 `acp.json` 的 `serviceOptions`（最多 32 对，读坏时丢弃）。定义或声明变了就不再下发。
+- OpenCode、DeepSeek Harness 与 pi 经网关时由 Latch 写入私有配置，但现有录制没有它们经网关时报告的选项 ID 与取值，所以不在 profile 里推导，只用 `session`。
+- 只下发至少有两个取值的项，整份受同样的 64 KiB 上限。开始时所选的值按「不再提供时」处理：拒绝时说出是哪一项（如「思考档位「xhigh」」）。
+
 **读取。** 还没有列表时可以不开始会话读一次：`POST /link/api/agents/:id/catalogue { auto?, model? }`（`HarnessInfo.catalogueRead`）。
 
 - 在 Host 临时目录的新空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多 20 秒。

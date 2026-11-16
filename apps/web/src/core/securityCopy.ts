@@ -798,16 +798,13 @@ export const MODE_COPY = {
   agentDecidesNote: (agent: string): Brief => ({ label: `${agent} 自己决定`, detail: 'Latch 不限制它，也不隔离它。' }),
   unverifiable: '权限无法确认',
   unverifiableLine: '设为只读，但读不回来',
-  afterStart: '开始后可以选',
-  /** A Harness whose lists can be read before a session: the read reports its modes too. */
-  afterRead: '读取后可以选',
+  /** A draft on a Harness whose modes nothing has reported yet: it starts in its own default, which is all there is to show. */
+  afterStart: '默认',
+  /** The same for a Harness whose lists can be read before a session: opening the menu reads them, modes included. */
+  afterRead: '默认',
   reading: '正在读取…',
-  /** Under the current row before start: the rows Latch can set are the ones the agent's session offers. */
-  changeAfterStart: (agent: string): Brief => ({ label: '发第一条消息后可以换', detail: `${agent} 开始会话时才给出其他几项。` }),
-  /** The same, for a Harness whose read reports them before any session. */
-  changeAfterRead: (agent: string): Brief => ({ label: `读取 ${agent} 的权限后可以换` }),
   modesReading: (agent: string): Brief => ({ label: `正在读取 ${agent} 的权限…` }),
-  modesUnread: (agent: string): Brief => ({ label: `没有读到 ${agent} 的权限`, detail: '发第一条消息后可以换。' }),
+  modesUnread: (agent: string): Brief => ({ label: `没有读到 ${agent} 的权限` }),
   /**
    * Under the rows of a running agent: whose setting it is, with the mark; that Latch checks only which row it picked
    * and does not isolate it stays one press away (no isolation may be implied).

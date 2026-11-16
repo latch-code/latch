@@ -754,7 +754,7 @@ export function DraftModelControl({
       <HarnessModelPicker
         catalog={catalog}
         harness={harness}
-        // The model's other settings are offered for the Harness's own models; on a service's model it reports them once started.
+        // The model's other settings are offered for the Harness's own models; on a service's model only the model is chosen here.
         config={service ? (known?.config.filter(option => option.category === 'model') ?? []) : (known?.config ?? [])}
         busy={null}
         disabled={disabled}

@@ -81,12 +81,12 @@ export const DEFAULT_MODEL = '默认模型'
 /** The thinking control's value when no level is chosen or none was reported: the model's own default. */
 export const DEFAULT_LEVEL = '默认'
 
-/** Before the first send, a list the Harness reports only once started: the words the 权限 menu uses too. */
-const AFTER_FIRST_SEND = '发第一条消息后可以换'
-
-/** The model menu's few words on a model the Harness has not told Latch of. Nothing when it reported one. */
+/**
+ * The model menu's few words on a model the Harness has not told Latch of. Nothing when it reported one, and nothing
+ * before a start: the menu then shows what will be used, 默认模型.
+ */
 export function unreportedModelNote(harness: string, started: boolean, config: readonly SessionConfigOption[]): string | undefined {
-  if (!started) return AFTER_FIRST_SEND
+  if (!started) return undefined
   return config.some(option => option.category === 'model') ? undefined : `由 ${harness} 决定`
 }
 
@@ -94,8 +94,9 @@ export function unreportedModelNote(harness: string, started: boolean, config: r
 export const NO_THINKING_LEVELS = '这个模型没有思考档位'
 
 /**
- * The thinking menu's few words on levels the Harness has not told Latch of. Nothing when it reported them. `perModel`:
- * the Harness reports them for every model that has them (`models.thinkingPerModel`), so none means the model has none.
+ * The thinking menu's few words on levels the Harness has not told Latch of. Nothing when it reported them, and nothing
+ * before a start: the menu then shows what will be used, 默认. `perModel`: the Harness reports them for every model that
+ * has them (`models.thinkingPerModel`), so none means the model has none.
  */
 export function unreportedThinkingNote(
   harness: string,
@@ -103,13 +104,13 @@ export function unreportedThinkingNote(
   config: readonly SessionConfigOption[],
   perModel = false,
 ): string | undefined {
-  if (!started) return AFTER_FIRST_SEND
+  if (!started) return undefined
   if (config.some(option => option.category === 'thought_level')) return undefined
   return perModel && config.some(option => option.category === 'model') ? NO_THINKING_LEVELS : `用 ${harness} 的默认值`
 }
 
-/** A draft picked a model no session has run on yet, so what thinking it offers is not known. */
-export const THINKING_AFTER_START = '开始后才知道'
+/** On a model of a service with no level declared or reported: 默认 is the service's own, as the trigger's hover says. */
+export const SERVICE_DEFAULT_HINT = '用模型服务的默认值'
 
 /** On the built-in Harness, for a model with no thinking levels declared in settings. */
 export const BUILTIN_THINKING_NOTE: Brief = { label: '用模型默认值', detail: '可以在 设置 › 模型 里为它选择。' }

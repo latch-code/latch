@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import type { ProviderSettings, TaskDetail } from '@latch/protocol'
+import type { HarnessInfo, ProviderSettings, TaskDetail } from '@latch/protocol'
 import { FAKE_CODEX_APP_SERVER, startFakeModels } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 
@@ -266,6 +266,92 @@ it.each([
         await otherHost.close()
       }
     }
+  } finally {
+    await host.close()
+    await models.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('offers a new session the thinking levels the service declared, before it starts, and sends the one picked', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-codex-pre-start-'))
+  const bin = join(root, 'bin')
+  await mkdir(bin)
+  const command = join(bin, 'codex')
+  await writeFile(
+    command,
+    `#!/bin/sh\nexport FAKE_ACP_LOG='${join(root, 'agent.jsonl')}' FAKE_CODEX_STATE='${join(root, 'threads.json')}'\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`,
+  )
+  await chmod(command, 0o755)
+  const models = await startFakeModels({ replies: [{ text: 'thought hard' }] })
+  const host = await startTestHost({
+    demo: false,
+    dataDir: join(root, 'data'),
+    workspaceRoot: join(root, 'project'),
+    commandDirectories: () => [bin],
+    loginPrograms: (name: string) => (name === 'codex' ? command : undefined),
+    detectPreset: (preset: { id: string }) => (preset.id === 'codex' ? { found: true, path: command } : { found: false }),
+  })
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const created = await owner.confirmed('providers', {
+      method: 'POST',
+      body: {
+        name: 'Flash service',
+        kind: 'openai-responses',
+        baseURL: `${models.origin}/v1`,
+        apiKey: 'sk-test-pre-start-service-0123456789',
+        models: ['flash', 'plain'],
+        modelCapabilities: { flash: { thinking: ['low', 'high'] } },
+        defaultModel: 'flash',
+        confirmOrigin: true,
+      },
+    })
+    const provider = ((await created.json()) as { provider: ProviderSettings }).provider
+    await owner.confirmed('agents', {
+      method: 'POST',
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: 'codex', args: [], env: {} },
+    })
+    const codex = (await owner.json<{ catalog: { harnesses: HarnessInfo[] } }>('snapshot')).catalog.harnesses.find(
+      item => item.id === 'codex',
+    )!
+    // Only the model with declared levels has a choice; the other is 默认 alone.
+    expect(codex.serviceOptions).toEqual([
+      {
+        providerId: provider.id,
+        model: 'flash',
+        source: 'declared',
+        options: [
+          {
+            id: 'reasoning_effort',
+            name: '思考',
+            category: 'thought_level',
+            currentValue: '~default',
+            options: [
+              { value: '~default', name: '默认' },
+              { value: 'low', name: 'Low' },
+              { value: 'high', name: 'High' },
+            ],
+          },
+        ],
+      },
+    ])
+    expect(JSON.stringify(codex)).not.toContain('sk-test-pre-start')
+    const start = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: {
+        harnessId: 'codex',
+        prompt: 'think',
+        requestId: randomUUID(),
+        model: { providerId: provider.id, model: 'flash' },
+        config: [{ configId: 'reasoning_effort', value: 'high' }],
+      },
+    })
+    const detail = () => owner.json<TaskDetail>(`tasks/${start.sessionId}`)
+    await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'), { timeout: 10_000 })
+    expect((await detail()).config?.find(option => option.id === 'reasoning_effort')?.currentValue).toBe('high')
+    expect(models.requests).toHaveLength(1)
+    expect(models.requests[0]!.body).toHaveProperty('reasoning.effort', 'high')
   } finally {
     await host.close()
     await models.close()

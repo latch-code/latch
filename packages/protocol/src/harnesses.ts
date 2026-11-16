@@ -102,6 +102,11 @@ export interface HarnessCapabilities {
     /** This CLI encodes thinking variants in its model IDs, rather than a separate setting. */
     thinkingInModel?: true
     /**
+     * On a model of a service, its thinking is the service's declared levels and 默认 sends none, so the service's own
+     * default applies (Codex's own wire, through the gateway's `setThinking`). Absent: what 默认 sends is the harness's.
+     */
+    serviceThinking?: true
+    /**
      * Its own program reports its subscription's limits (`HarnessInfo.quota`) once a session runs. Absent: it never
      * does, and a client says so rather than waiting for them.
      */
@@ -160,6 +165,19 @@ export interface HarnessCatalogue {
   reportedAt: string
   /** `session`: a real session started with them. `check`: Latch read them without running a turn; see `CatalogueRead`. */
   source: 'session' | 'check'
+}
+
+/**
+ * What a draft that picks one model of a saved service offers before it starts: the options that follow the model, such
+ * as thinking, in the shape a session on that model reports them, with the same IDs and values. `declared`: Latch derives
+ * them from the levels the service declared, exactly as the session will offer them. `session`: a session on that model
+ * through Latch reported them, while the service's declaration is still the one it ran with.
+ */
+export interface ServiceModelOptions {
+  providerId: string
+  model: string
+  options: SessionConfigOption[]
+  source: 'declared' | 'session'
 }
 
 /**
@@ -240,6 +258,8 @@ export interface HarnessInfo {
   }
   /** Absent: no session or read has told Latch what it offers, or its definition changed since. */
   catalogue?: HarnessCatalogue
+  /** For models of saved services this harness can use through Latch; see `ServiceModelOptions`. Absent: none known. */
+  serviceOptions?: ServiceModelOptions[]
   /** Absent: what it offers is known only once a session starts. */
   catalogueRead?: CatalogueRead
   /** A read-only previous-session command cache exists. Generation changes when its Host driver is replaced. */

@@ -104,8 +104,8 @@ export function draftRead(
 }
 
 /**
- * Under a draft's one declared row: when the other modes can be chosen. A read reports them where it opens a session;
- * Codex's own model list does not, so its modes come with the first session.
+ * Under a draft's one declared row: a read of the modes under way, or one that failed. A read reports them where it opens
+ * a session; Codex's own model list does not, so its modes come with the first session.
  */
 function modesNote(harness: PermissionHarness, read: DraftRead | undefined): { note?: Brief } {
   const name = harness.capabilities.display.label
@@ -113,9 +113,9 @@ function modesNote(harness: PermissionHarness, read: DraftRead | undefined): { n
   // What a session or such a read reported had no modes: there is nothing to change to.
   if (harness.catalogue && (harness.catalogue.source === 'session' || readsModes)) return {}
   if (readsModes && read === 'reading') return { note: MODE_COPY.modesReading(name) }
-  if (readsModes && read === 'readable')
-    return { note: harness.catalogueRead?.last?.ok === false ? MODE_COPY.modesUnread(name) : MODE_COPY.changeAfterRead(name) }
-  return { note: MODE_COPY.changeAfterStart(name) }
+  if (readsModes && read === 'readable' && harness.catalogueRead?.last?.ok === false) return { note: MODE_COPY.modesUnread(name) }
+  // Nothing more to say before they are known: the one row is what the session starts in.
+  return {}
 }
 
 /** The harness's own facts, which need no session: for a draft, and for a session whose detail has not arrived. */

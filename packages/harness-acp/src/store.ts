@@ -174,11 +174,27 @@ export interface AcpCatalogueRead {
   code?: string
 }
 
+/**
+ * What a session on a model of a service through the gateway reported of the options that follow the model, kept for
+ * drafts on the same pair: only under the definition it ran and the service's declaration it ran with
+ * (`declarationHash`, see `serviceDeclarationHash`), so a change to either leaves it unused.
+ */
+export interface AcpServiceOptions {
+  definitionHash: string
+  providerId: string
+  model: string
+  declarationHash: string
+  options: SessionConfigOption[]
+  reportedAt: string
+}
+
 export interface AcpState {
   version: 1
   tasks: Record<string, AcpTask>
   receipts: Record<string, AcpReceipt>
   catalogue?: AcpCatalogue
+  /** Newest first, bounded (`MAX_SERVICE_OPTIONS`). */
+  serviceOptions?: AcpServiceOptions[]
   catalogueRead?: AcpCatalogueRead
   promptCapabilities?: AcpPromptCapabilities
   /** Model IDs a person typed, for every definition of this harness. */
@@ -335,6 +351,14 @@ const catalogue = z.object({
   perModel: z.array(z.object({ model: z.string(), options: z.array(configOption) })),
   reportedAt: z.string(),
   source: z.enum(['session', 'check']),
+})
+const serviceOptions = z.object({
+  definitionHash: hash,
+  providerId: z.string().min(1).max(256),
+  model: z.string().min(1).max(256),
+  declarationHash: hash,
+  options: z.array(configOption),
+  reportedAt: z.string(),
 })
 const catalogueRead = z.object({
   definitionHash: hash,
@@ -513,6 +537,7 @@ const stateSchema = z.object({
   ),
   // Only a cache: one that does not read back is dropped rather than keeping the sessions from opening.
   catalogue: catalogue.optional().catch(undefined),
+  serviceOptions: z.array(serviceOptions).optional().catch(undefined),
   catalogueRead: catalogueRead.optional().catch(undefined),
   promptCapabilities: promptCapabilities.optional().catch(undefined),
   customModels: z.array(z.string()).optional(),

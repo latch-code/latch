@@ -160,7 +160,7 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 - 开线程与恢复线程前，以相同 cwd 调用官方 `config/read`，只投影有效的命令环境过滤规则：旧的 exclude/include_only 与新的 filters 保持原表示，只额外排除 `LMG_TOKEN`。大小写冲突、混合表示、畸形或读取失败都拒绝开线程。规则经线程 config 覆盖，既有规则不被启动参数的数组替换。不复制其他配置值，不读写 Codex 私有文件。
 - 导入历史仍经 `thread/list` 与 `thread/read`，包含自定义 provider 的线程。
 - 模型列表取服务声明，允许 Codex 原生目录之外的模型。目录外模型用 Codex 自己的后备描述；Latch 不改模型 ID 去套另一个型号的能力，也不把后备描述里的容量当作服务声明。
-- **思考。** 「默认」指模型服务的默认。wire 用租约的 `setThinking(model, effort)` 登记当前模型的意图：`null` 时出站只删这个模型请求的 `reasoning.effort`（Codex 自己的 `model_reasoning_effort` 可能补上一个值），其余字段不动；显式选择只允许服务声明的档位，实际请求必须相符。没登记意图的模型按原规则校验。
+- **思考。** 「默认」指模型服务的默认。wire 提供的思考选项由 `gatewayEffortOption` 按服务声明生成，Host 用同一个函数给新会话草稿投影（[HARNESSES.md](HARNESSES.md#开始前的选项)），所以开始前就能选。wire 用租约的 `setThinking(model, effort)` 登记当前模型的意图：`null` 时出站只删这个模型请求的 `reasoning.effort`（Codex 自己的 `model_reasoning_effort` 可能补上一个值），其余字段不动；显式选择只允许服务声明的档位，实际请求必须相符。没登记意图的模型按原规则校验。
 - 显式选择随会话 config 持久化，恢复后优先于 Codex 的旧配置。运行中的选择只保存下一轮意图；换模型清掉原选择。尚未应用的改档不能用 compact 绕过上下文核对。
 - 原生委派的成员继承父轮的 provider 与进程内凭据；角色改用的模型超出会话的服务模型名单时网关拒绝。成员请求与父轮共享会话用量，账本没有成员 ID（[Codex 的 Agent 团队](HARNESSES.md#codex-的-agent-团队)）。
 

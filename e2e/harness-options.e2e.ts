@@ -612,7 +612,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
       await sheet.waitFor()
       expect(await sheet.getByRole('button', { name: /^Harness：/u }).getAttribute('aria-label')).toBe('Harness：Generic')
       const permission = sheet.getByRole('button', { name: /^权限：/u })
-      await expect.poll(() => permission.getAttribute('aria-label')).toBe('权限：读取后可以选')
+      await expect.poll(() => permission.getAttribute('aria-label')).toBe('权限：默认')
       expect(await page.getByText('开始后才知道', { exact: false }).count()).toBe(0)
       await shot(page, 'permission-before-read-390-dark')
       // Only 权限 is opened: the model row never is.
@@ -643,7 +643,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
           .getAttribute('aria-label'),
       ).toBe('Harness：Generic')
       const chip = page.getByRole('button', { name: /^权限：/u }).first()
-      await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：读取后可以选')
+      await expect.poll(() => chip.getAttribute('aria-label')).toBe('权限：默认')
       await chip.click()
       await expect.poll(async () => (await generic())?.catalogue, { timeout: 20_000 }).toMatchObject({ source: 'check' })
       await mode(page, 'auto').waitFor()

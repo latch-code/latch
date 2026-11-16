@@ -5,8 +5,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_SESSION_SKILLS_BYTES, readSessionSkills, type DriverTaskDetail } from '@latch/protocol'
-import type { Bridge, HarnessDriver, HarnessHostOptions, HarnessPlugin, HarnessSecurityEvent, HostProject, ToolGateway } from '@latch/sdk'
-import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER } from '@latch/testkit'
+import type {
+  Bridge,
+  HarnessDriver,
+  HarnessHostOptions,
+  HarnessPlugin,
+  HarnessSecurityEvent,
+  HostProject,
+  ModelGateway,
+  ServiceDeclaration,
+  ToolGateway,
+} from '@latch/sdk'
+import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, startFakeModels } from '@latch/testkit'
 import {
   createAcpAgentPlugin,
   forgetCommandLookups,
@@ -20,6 +30,7 @@ import {
   type AgentRecord,
 } from '../src/index.ts'
 import { CodexWire, codexMcpServer, codexVersion, setCodexStopLimits } from '../src/wires/codex.ts'
+import { gatewayEffortOption } from '../src/codex-models.ts'
 import { MCP_STATUS_METHOD } from '../src/protocol.ts'
 import { RequestTimeout, setProcessLister } from '../src/wires/process.ts'
 import { cliTree, seedCliFiles } from './helpers/cli-config.ts'
@@ -70,7 +81,7 @@ async function computer(
   env: Record<string, string> = {},
   extra: string[] = [],
   options: AcpAgentOptions = {},
-  host: Pick<HarnessHostOptions, 'toolGateway'> = {},
+  host: Pick<HarnessHostOptions, 'toolGateway' | 'modelGateway'> = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-codex-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -527,6 +538,92 @@ describe('Codex over its app-server', () => {
     await expect(prompt('echo third')).resolves.toMatchObject({ stopReason: 'end_turn' })
     expect(setThinking).toHaveBeenLastCalledWith('service-model', null)
     expect(setThinking).toHaveBeenCalledTimes(beforeDefault + 1)
+  })
+
+  describe('thinking on a service model, known before the start', () => {
+    const capabilities = { 'fake-model': { thinking: ['low', 'high'] } }
+    /** The Host's gateway, standing in: the fake service itself, with the levels the service declared. */
+    async function onService() {
+      const models = await startFakeModels({ replies: [{ text: 'from the service' }] })
+      cleanups.push(() => models.close())
+      const thinking: Array<[string, string | null]> = []
+      const gateway: ModelGateway = {
+        open() {
+          let closed = false
+          return {
+            baseURL: `${models.origin}/v1`,
+            token: `lmg1.${'t'.repeat(43)}`,
+            requests: () => models.requests.length,
+            takeTurn: () => ({ requests: 0, models: [] }),
+            models: ['fake-model'],
+            modelCapabilities: capabilities,
+            setThinking: (model, effort) => void thinking.push([model, effort]),
+            active: () => !closed,
+            close: () => {
+              closed = true
+            },
+          }
+        },
+      }
+      const t = await computer({}, [], {}, { modelGateway: gateway })
+      const route = { providerId: 'svc', model: 'fake-model', wire: 'responses' as const, origin: models.origin }
+      const service: ServiceDeclaration = {
+        providerId: 'svc',
+        entry: 'responses',
+        upstream: 'responses',
+        models: ['fake-model', 'plain'],
+        modelCapabilities: capabilities,
+      }
+      return { t, models, thinking, route, service }
+    }
+
+    it('projects to a draft the option the session then offers, and the picked level reaches the service', async () => {
+      const { t, models, thinking, route, service } = await onService()
+      const bridge = await t.open()
+      // Declared levels: 默认 and each; a model with none declared has nothing to project.
+      const projected = bridge.serviceOptions!([service])
+      expect(projected).toEqual([
+        { providerId: 'svc', model: 'fake-model', options: [gatewayEffortOption(['low', 'high'])], source: 'declared' },
+      ])
+      // Not over a protocol on which the gateway does not set Codex's thinking.
+      expect(bridge.serviceOptions!([{ ...service, entry: 'chat-completions' }])).toEqual([])
+      const { sessionId } = await bridge.createTask({
+        prompt: 'echo hi',
+        requestId: rid(),
+        cwd: t.main,
+        modelRoute: route,
+        expectedLaunchHash: (await bridge.launchPreview!({ cwd: t.main, modelRoute: route })).launchHash,
+        config: [{ configId: 'reasoning_effort', value: 'high' }],
+      })
+      const detail = await settled(bridge, sessionId)
+      expect(detail.summary.status).toBe('idle')
+      // The same option, ID and values, as the session reports it.
+      const { currentValue, ...offered } = detail.config!.find(option => option.id === 'reasoning_effort')!
+      const { currentValue: _default, ...draft } = projected[0]!.options[0]!
+      expect(offered).toEqual(draft)
+      expect(currentValue).toBe('high')
+      expect(thinking.at(-1)).toEqual(['fake-model', 'high'])
+      expect(models.requests.at(-1)?.body).toMatchObject({ reasoning: { effort: 'high' } })
+    })
+
+    it('refuses a level the service no longer declares, naming it, and sends no prompt', async () => {
+      const { t, models, route } = await onService()
+      const bridge = await t.open()
+      const { sessionId } = await bridge.createTask({
+        prompt: 'echo hi',
+        requestId: rid(),
+        cwd: t.main,
+        modelRoute: route,
+        expectedLaunchHash: (await bridge.launchPreview!({ cwd: t.main, modelRoute: route })).launchHash,
+        config: [{ configId: 'reasoning_effort', value: 'xhigh' }],
+      })
+      const detail = await settled(bridge, sessionId)
+      expect(detail.summary.status).toBe('failed')
+      expect(said(detail, 'system')).toContain('Codex 现在没有思考档位「xhigh」，这条消息没有发出。')
+      expect(detail.messages.find(message => message.role === 'user')?.text).toBe('echo hi')
+      expect(sent(await t.log(), 'turn/start')).toEqual([])
+      expect(models.requests).toEqual([])
+    })
   })
 
   it('is the preset’s route for `codex`, and the adapter only for any other command', () => {

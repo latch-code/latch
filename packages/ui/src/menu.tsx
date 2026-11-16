@@ -598,6 +598,8 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   disabled?: boolean
   /** The tooltip of a disabled picker (also read as its description): why it cannot change. */
   disabledReason?: string
+  /** The tooltip of an enabled one: a fact about its value that the menu does not spell out. */
+  hint?: string
   /** row: the phone row of a settings sheet (label, value, arrow) that opens a single-choice sheet. */
   variant?: 'inline' | 'row'
   className?: string
@@ -648,6 +650,7 @@ export function ValuePicker<T extends string>({
   searchMatch,
   disabled = false,
   disabledReason,
+  hint,
   variant = 'inline',
   align,
   side = 'bottom',
@@ -842,7 +845,7 @@ export function ValuePicker<T extends string>({
       <Icon icon={menuChevron ? ChevronDownGlyph : UpDownGlyph} size={variant === 'row' ? 16 : 12} className="ui-value-picker-chevron" />
     </button>
   )
-  const trigger = <Tooltip content={disabled ? disabledReason : undefined}>{button}</Tooltip>
+  const trigger = <Tooltip content={disabled ? disabledReason : hint}>{button}</Tooltip>
 
   if (sheet) {
     return (

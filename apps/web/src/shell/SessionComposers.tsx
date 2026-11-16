@@ -840,6 +840,7 @@ export function SessionComposer({
                   onRefresh={refreshConfig}
                   onConfig={setConfig}
                   locked={gate.kind === 'read-only' ? gate.text : undefined}
+                  route={summary?.modelRoute}
                 />
               )}
             </ComposerControl>

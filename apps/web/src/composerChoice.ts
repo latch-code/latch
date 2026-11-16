@@ -10,6 +10,7 @@ import {
   type HostCatalog,
   type ModelRef,
   type ProviderSummary,
+  type ServiceModelOptions,
   type SessionConfigOption,
   type TaskMode,
   type TaskSummary,
@@ -55,7 +56,7 @@ export interface DraftConfig {
   /** The picked model is not the one thinking was reported for, so its levels are known only once it starts. */
   thinkingUnknown: boolean
   reportedAt: string
-  source: HarnessCatalogue['source']
+  source: HarnessCatalogue['source'] | ServiceModelOptions['source']
 }
 
 /** Words beside a model ID a person typed, in every list that shows one. */
@@ -77,35 +78,47 @@ const followsModel = (option: SessionConfigOption) => option.category === 'thoug
 export const offers = (option: SessionConfigOption | undefined, value: string | undefined) =>
   value !== undefined && option?.options.some(item => item.value === value) === true
 
+/** With the picks applied: each one the option still offers. */
+const picked = (options: readonly SessionConfigOption[], picks: Record<string, string> | undefined) =>
+  options.map(option => (offers(option, picks?.[option.id]) ? { ...option, currentValue: picks![option.id]! } : structuredClone(option)))
+
 /**
  * The draft's options as a session lists them. The model goes first, since what else is offered can follow it: for a
  * model other than the default, the options a session on that model reported, or none when no session ran on it yet.
+ * On a model of a service, what follows the model is what the Host knows of that pair (`HarnessInfo.serviceOptions`),
+ * or nothing: its default.
  */
 export function draftConfig(
-  harness: Pick<HarnessInfo, 'catalogue' | 'customModels'> | undefined,
+  harness: Pick<HarnessInfo, 'catalogue' | 'customModels' | 'serviceOptions'> | undefined,
   picks: Record<string, string> | undefined,
 ): DraftConfig | undefined {
   const catalogue = harness?.catalogue
-  if (!catalogue?.options.length) return undefined
-  const listed = withTypedModels(catalogue.options, harness?.customModels)
+  const service = pickedService(picks)
+  const known = service && harness?.serviceOptions?.find(entry => entry.providerId === service.providerId && entry.model === service.model)
+  if (!catalogue?.options.length && !known) return undefined
+  const listed = withTypedModels(catalogue?.options ?? [], harness?.customModels)
+  if (service)
+    return {
+      config: picked([...listed.filter(option => !followsModel(option)), ...(known?.options ?? [])], picks),
+      thinkingUnknown: false,
+      reportedAt: catalogue?.reportedAt ?? '',
+      source: known?.source ?? catalogue!.source,
+    }
   const modelOption = listed.find(option => option.category === 'model')
   const model = modelOption && offers(modelOption, picks?.[modelOption.id]) ? picks![modelOption.id]! : modelOption?.currentValue
   const other = modelOption !== undefined && model !== modelOption.currentValue
-  const reported = other ? catalogue.perModel.find(entry => entry.model === model)?.options : undefined
+  const reported = other ? catalogue!.perModel.find(entry => entry.model === model)?.options : undefined
   const options = listed.flatMap(option => {
     if (option === modelOption) return [{ ...option, currentValue: model! }]
     if (other && followsModel(option)) return []
     return [option]
   })
-  const config = [...options, ...(reported ?? [])].map(option =>
-    offers(option, picks?.[option.id]) ? { ...option, currentValue: picks![option.id]! } : structuredClone(option),
-  )
   return {
-    config,
+    config: picked([...options, ...(reported ?? [])], picks),
     // A session or read on that model said what it offers, thinking or none.
     thinkingUnknown: other && reported === undefined,
-    reportedAt: catalogue.reportedAt,
-    source: catalogue.source,
+    reportedAt: catalogue!.reportedAt,
+    source: catalogue!.source,
   }
 }
 
@@ -178,6 +191,14 @@ export const harnessName = (harness: Pick<HarnessInfo, 'capabilities'>): string 
 const SERVICE_PICK = '~service'
 /** In the same place: the person chose the Harness's own default model, which no service model, a project's 默认模型 included, replaces. */
 const OWN_DEFAULT = '~own'
+
+/** The service model the picks name, as picked: whether Latch can still forward it is `servicePick`'s to say. */
+function pickedService(picks: Record<string, string> | undefined): { providerId: string; model: string } | undefined {
+  const value = picks?.[SERVICE_PICK]
+  if (!value || value === OWN_DEFAULT) return undefined
+  const [providerId = '', model = ''] = value.split('\u0000')
+  return providerId && model ? { providerId, model } : undefined
+}
 
 /** Whether the picks say the Harness's own default model was chosen. */
 export const pickedOwnDefault = (picks: Record<string, string> | undefined): boolean => picks?.[SERVICE_PICK] === OWN_DEFAULT

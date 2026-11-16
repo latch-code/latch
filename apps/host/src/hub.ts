@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { withHarnessPromptSource } from '@latch/harness-acp'
-import { readSessionSkills } from '@latch/protocol'
+import { pairRoute, PROVIDER_WIRES, readSessionSkills } from '@latch/protocol'
 import { setTimeout as delay } from 'node:timers/promises'
 import type {
   Approval,
@@ -9,6 +9,8 @@ import type {
   HarnessCapabilities,
   HarnessCommandCatalogue,
   KeepWaitingResult,
+  ModelCapabilities,
+  ProviderKind,
   RunEnd,
   SessionPermission,
   TaskDetail,
@@ -31,6 +33,7 @@ import {
   type ModelRoute,
   type ProjectFolder,
   type PromptOptions,
+  type ServiceDeclaration,
   type SetConfigOptions,
   type SteerOutcome,
 } from '@latch/sdk'
@@ -96,6 +99,16 @@ export interface HubOptions {
   silenceThresholds?: typeof SILENCE_THRESHOLDS
   /** A saved model service as 设置 › 模型 has it, turned on or off; undefined once it is deleted. */
   service?: (providerId: string) => { name: string; enabled: boolean } | undefined
+  /**
+   * The saved services sessions may use now, as settings declare them: their protocol, models and declared capabilities,
+   * never a key. Each Harness's options for a draft on one of their models follow from these.
+   */
+  services?: () => ReadonlyArray<{
+    providerId: string
+    kind: ProviderKind
+    models: readonly string[]
+    modelCapabilities?: Readonly<Record<string, ModelCapabilities>>
+  }>
   /** What a model request of the session waits for: `service`, by name, for that service's place; neither for the Host's own limit. */
   queueOf?: (sessionId: string) => { service?: string } | undefined
 }
@@ -1414,6 +1427,7 @@ export class HarnessHub implements Bridge {
     }
     const login = driver.login?.()
     let catalogue: HarnessInfo['catalogue']
+    let serviceOptions: HarnessInfo['serviceOptions']
     let catalogueRead: HarnessInfo['catalogueRead']
     let customModels: string[] | undefined
     let reported: HarnessInfo['attachmentsReported']
@@ -1424,6 +1438,8 @@ export class HarnessHub implements Bridge {
       quota = entry.bridge?.quota?.()
       reported = entry.bridge?.promptCapabilities?.()
       catalogue = entry.bridge?.catalogue?.()
+      const declarations = entry.bridge?.serviceOptions ? this.serviceDeclarations(capabilities) : []
+      if (declarations.length) serviceOptions = entry.bridge!.serviceOptions!(declarations)
       catalogueRead = entry.bridge?.readCatalogue ? entry.bridge.catalogueRead?.() : undefined
       customModels = entry.bridge?.customModels?.()
     } catch (error) {
@@ -1447,6 +1463,7 @@ export class HarnessHub implements Bridge {
       ...(driver.permission ? { permission: { ...driver.permission } } : {}),
       ...(login ? { login } : {}),
       ...(catalogue ? { catalogue: structuredClone(catalogue) } : {}),
+      ...(serviceOptions?.length ? { serviceOptions: structuredClone(serviceOptions) } : {}),
       ...(catalogueRead ? { catalogueRead: structuredClone(catalogueRead) } : {}),
       ...(entry.bridge?.commandCatalogue ? { commandCatalogue: { generation: entry.generation } } : {}),
       ...(customModels?.length ? { customModels: [...customModels] } : {}),
@@ -1461,6 +1478,24 @@ export class HarnessHub implements Bridge {
           }
         : {}),
     }
+  }
+
+  /** The saved services this harness can reach through the gateway, with the protocols on both sides as a route has them. */
+  private serviceDeclarations(capabilities: HarnessCapabilities): ServiceDeclaration[] {
+    if (capabilities.models.owner === 'latch') return []
+    return (this.options.services?.() ?? []).flatMap(service => {
+      const route = pairRoute(capabilities, { kind: service.kind })
+      if (route.kind !== 'passthrough' && route.kind !== 'translate') return []
+      return [
+        {
+          providerId: service.providerId,
+          entry: route.wire,
+          upstream: route.kind === 'translate' ? route.upstream : PROVIDER_WIRES[service.kind],
+          models: service.models,
+          ...(service.modelCapabilities ? { modelCapabilities: service.modelCapabilities } : {}),
+        },
+      ]
+    })
   }
 
   /** Reads what a harness offers before a session; see `Bridge.readCatalogue`. */

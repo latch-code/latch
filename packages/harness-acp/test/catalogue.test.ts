@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionConfigOption } from '@latch/protocol'
-import { catalogueReadOf, shownCatalogue, startCatalogue, withModelOptions } from '../src/catalogue.ts'
+import {
+  catalogueReadOf,
+  serviceDeclarationHash,
+  shownCatalogue,
+  shownServiceOptions,
+  startCatalogue,
+  withModelOptions,
+  withServiceOptions,
+} from '../src/catalogue.ts'
 import { FALLBACK_PROFILES, HARNESS_PROFILES } from '../src/profiles/index.ts'
 
 const hash = 'a'.repeat(64)
@@ -77,5 +85,37 @@ describe("when a draft reads a Harness's lists by itself", () => {
       'pi',
       'qwen',
     ])
+  })
+})
+
+describe('options remembered for a model of a service', () => {
+  const entry = (model: string, options: SessionConfigOption[]) => ({
+    definitionHash: hash,
+    providerId: 'svc',
+    model,
+    declarationHash: hash,
+    options,
+    reportedAt: 'x',
+  })
+
+  it('keys the declaration the same whether a field is absent or empty, and on what it declares only', () => {
+    const plain = serviceDeclarationHash({ entry: 'responses' })
+    expect(serviceDeclarationHash({ entry: 'responses', upstream: 'responses', capabilities: { thinking: [] } })).toBe(plain)
+    expect(serviceDeclarationHash({ entry: 'responses', upstream: 'chat-completions' })).not.toBe(plain)
+    expect(serviceDeclarationHash({ entry: 'responses', capabilities: { thinking: ['high'] } })).not.toBe(plain)
+    expect(serviceDeclarationHash({ entry: 'responses', capabilities: { vision: true } })).not.toBe(plain)
+  })
+
+  it('keeps only what follows the model, newest first, one entry per pair, and shows only pairs with a choice', () => {
+    const effort = select('effort', 'thought_level', ['low', 'high'])
+    const one = withServiceOptions(undefined, entry('a', [select('model', 'model', ['a']), select('mode', 'mode', ['x']), effort]))
+    expect(one[0]!.options).toEqual([effort])
+    const two = withServiceOptions(one, entry('b', [select('effort', 'thought_level', ['default'])]))
+    expect(withServiceOptions(two, entry('a', [effort])).map(item => item.model)).toEqual(['a', 'b'])
+    const shown = shownServiceOptions(
+      two.map(item => ({ providerId: item.providerId, model: item.model, options: item.options, source: 'session' })),
+    )
+    expect(shown?.map(item => item.model)).toEqual(['a'])
+    expect(shownServiceOptions([])).toBeUndefined()
   })
 })

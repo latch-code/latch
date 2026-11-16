@@ -1879,6 +1879,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const record = effectiveProvider(id)
         return record && { name: record.name, enabled: record.enabled }
       },
+      // Settings only, never a key: a draft's options for a service's model follow from what was declared for it.
+      services: () =>
+        usableProviders().flatMap(provider => {
+          const service = gatewayService(provider.id)
+          return service
+            ? [
+                {
+                  providerId: provider.id,
+                  kind: service.kind,
+                  models: service.models,
+                  ...(service.modelCapabilities ? { modelCapabilities: service.modelCapabilities } : {}),
+                },
+              ]
+            : []
+        }),
       queueOf: sessionId => {
         const waiting = modelScheduler.queueOf(sessionId)
         if (!waiting) return undefined
