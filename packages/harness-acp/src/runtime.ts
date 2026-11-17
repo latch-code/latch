@@ -3184,6 +3184,15 @@ export class AgentRuntime implements Bridge {
    * An answer that switches the harness's mode is the person choosing that mode: it becomes the session's expected mode
    * before the answer reaches the harness, so the switch it reports next is not taken as the agent widening its own.
    */
+  /** Whether `optionId` may answer a plan with 「按计划执行」 (`HarnessProfile.planAnswers`). */
+  private planAnswer(optionId: string, kind: string | undefined): boolean {
+    if (!this.selection.profile?.planAnswers?.includes(optionId)) return false
+    const mode = this.profile?.modeAnswers?.find(
+      entry => entry.optionId === optionId && (entry.toolKind === undefined || entry.toolKind === kind),
+    )?.mode
+    return mode === undefined || classifyMode(this.profile, this.profile?.expectedMode, mode) !== 'wider'
+  }
+
   private answerMovesMode(permission: Permission, optionId: string): void {
     const kind = permission.tool.kind
     const mode = this.profile?.modeAnswers?.find(
@@ -7817,6 +7826,14 @@ export class AgentRuntime implements Bridge {
     toolCall = this.ownFields(toolCall)
     const state = child ? childCall(child, row, toolCall, now) : this.toolState(task, toolCall.toolCallId)
     if (!child) mergeTool(state, toolCall, now)
+    // A plan the harness asks to go on with is shown as a plan, answered with the harness's own options.
+    const plan = this.selection.profile?.readPlan?.(toolCall, parsed.data.options)
+    if (plan?.trim()) {
+      state.plan = plan
+      // A plan's allowing answer only from the profile's own list, never by kind: an option the list does not name, or
+      // one that would leave the plan for a wider mode, is not offered at all.
+      filtered.visible = filtered.visible.filter(option => option.kind !== 'allow_once' || this.planAnswer(option.optionId, state.kind))
+    }
     const record = (item: Message) => {
       if (!child) this.upsert(task, item)
       else if (row) upsertStep(row, item)
@@ -7874,6 +7891,7 @@ export class AgentRuntime implements Bridge {
         kind: option.kind as ApprovalOptionKind,
       })),
       tool: toolDetail(state),
+      ...(state.plan ? { plan: clip(state.plan, TOOL_TEXT_LIMIT) } : {}),
       // The harness asks on its own terms in a full-access session: a prompt, not a security boundary.
       risk: 'R2',
       advisory: true,

@@ -426,6 +426,11 @@ export interface ToolDetail {
   judged?: ToolJudgement
   /** The harness refused the call itself before it ran, without asking the person. */
   blocked?: ToolBlock
+  /**
+   * The plan this call asked the person to approve before the harness went on (Claude's ExitPlanMode, Cursor's plan),
+   * in full, as the harness wrote it (Markdown). `decision` says how it was answered.
+   */
+  plan?: string
 }
 
 /**
@@ -615,6 +620,11 @@ export interface Approval {
   subagent?: string
   /** The member row of this Latch session, when linked to Codex team evidence. */
   subagentId?: string
+  /**
+   * The harness asks to go on with this plan (Markdown, in full); its own options answer it: allow is going on with
+   * the plan, reject is planning on. Only from harnesses that present plans for approval.
+   */
+  plan?: string
 }
 
 export interface PlanEntry {

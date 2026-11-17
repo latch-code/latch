@@ -721,6 +721,21 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 - 不请求审批的 Agent 没有审批卡片。Latch 的审批不是操作系统沙箱。
 - 文件编辑的展示按设备数据范围投影，见 [STREAMING.md](STREAMING.md#文件差异的设备投影)：Codex 的 fileChange 与 pi 明确的 diff 提供不含正文的输出摘要，普通 ACP 的编辑输出对 `work` 设备省略内容段。
 
+### 计划审批
+
+Harness 先给出计划、等人同意再动手时，profile 的 `readPlan` 认出这次询问，Latch 把它作为计划显示（`Approval.plan`、工具行的 `ToolDetail.plan`，两种存储都保留）。Latch 没有自己的计划模式；答复仍是 Harness 自己的选项，审批的规则、审计与决定记录不变。
+
+| Harness | 认出的询问 | 「按计划执行」 | 「继续规划」 |
+| --- | --- | --- | --- |
+| Claude Agent | ExitPlanMode：选项是 `exit-plan-*`，计划在调用输入的 `plan` | `exit-plan-default`（回到 `default`，之后每次改文件先问） | `reject`：适配器中断这一轮，这一轮按取消结束，人在下一条消息里说怎么改 |
+| Cursor | `cursor/create_plan` | `accepted` | `rejected` |
+
+- **「按计划执行」只来自允许名单。** profile 的 `planAnswers` 列出能回答计划的选项 ID（Claude 是 `exit-plan-default`，Cursor 是 `accept`）；它若同时换模式（`modeAnswers`），换到的模式不能比 profile 的默认模式宽。名单之外的允许选项，或换到更宽模式的，一律不提供，从不改名显示；没有可用的就只能「继续规划」。
+- 计划按 Markdown 显示全文，不渲染链接、图片与 HTML；回答按钮写「按计划执行」「继续规划」，Harness 自己的选项文字在悬停提示里。
+- Claude 的其他选项（清空上下文后执行、自动接受编辑、自动模式、绕过权限）照「预设的权限配置」隐藏：前者让适配器在 Latch 不知道时换掉上下文，后几个会放宽模式。
+- 「编辑计划」两边的 ACP 都没有提供（Claude 的允许原样回传输入），所以不提供；要改计划就选「继续规划」再写。
+- Codex 的 app-server 没有计划审批的请求，`turn/start` 也没有协作模式字段：Codex 没有新的计划界面。Qwen Code、OpenCode、pi 的计划模式只限制工具，没有经 ACP 发来的计划审批；未经真实核对的 Harness 不认作计划。
+
 ## 取消
 
 任何有 `view` 的设备都可以取消。每一轮有持久化的 `runId`；取消带着它时，Driver 只在它仍是当前这一轮时取消，否则什么也不做（Host 回答 `ended`，见 [STREAMING.md](./STREAMING.md#取消的请求-id-与回执)）。

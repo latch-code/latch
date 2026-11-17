@@ -51,7 +51,7 @@ function merged(sessionKey: string, items: Todo[], merge: boolean): Todo[] {
 
 export const cursorProfile: HarnessProfile = {
   presetId: 'cursor',
-  version: 2,
+  version: 3,
   processMode: {
     prepare(_directory, mode) {
       const args = mode === 'agent-force' ? ['--force'] : mode === 'ask' || mode === 'plan' ? ['--mode', mode] : []
@@ -99,6 +99,12 @@ export const cursorProfile: HarnessProfile = {
     readback: 'mode',
     notes: ['Cursor 的 --sandbox 与权限规则在 ACP 模式下的边界没有官方说明，Latch 不把它当作隔离'],
   },
+  // `cursor/create_plan` arrives as an ask of its own (below), its plan the call's input.
+  planAnswers: ['accept'],
+  readPlan: (toolCall, options) =>
+    toolCall.name === 'create_plan' && typeof toolCall.rawInput === 'string' && options.some(option => option.optionId === 'accept')
+      ? toolCall.rawInput
+      : undefined,
   // Project rules, CLI permissions and MCP servers.
   projectConfigPaths: ['.cursor', '.cursorrules'],
   extensions: {

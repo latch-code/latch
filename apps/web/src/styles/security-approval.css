@@ -368,6 +368,35 @@
   grid-template-rows: 1fr !important;
   transition: grid-template-rows var(--m-panel) var(--e-panel);
 }
+/* A plan is read whole before it is answered: more room than a call's arguments, its Markdown as plain prose. */
+.approval-panel:has(.approval-plan) .approval-preview-inner {
+  max-height: 60vh;
+}
+.approval-plan {
+  display: block !important;
+  color: var(--ink) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: var(--lh-ui-para) !important;
+  overflow-wrap: anywhere;
+}
+.approval-plan :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--sp-8) 0 var(--sp-4);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+}
+.approval-plan :is(p, ul, ol, pre, blockquote, table) {
+  margin: 0 0 var(--sp-6);
+}
+.approval-plan :is(ul, ol) {
+  padding-inline-start: var(--sp-16);
+}
+.approval-plan :is(code, pre) {
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+}
+.approval-plan pre {
+  white-space: pre-wrap;
+}
 .approval-preview-inner {
   max-height: 40vh;
   display: grid !important;

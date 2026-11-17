@@ -391,6 +391,20 @@ export interface HarnessProfile {
   /** Reads a tool call update that reports the harness refusing the call itself. Absent, or undefined: it says no such thing. */
   readDenial?(update: SessionUpdate): ToolDenial | undefined
   /**
+   * Reads a permission request that asks the person to approve a plan before the harness goes on, as the harness asks
+   * it: the plan's text (Markdown). Its own options answer it. Absent, or undefined: it is no plan.
+   */
+  /**
+   * The only options that may answer a plan with 「按计划执行」, by ID. An option that also switches the mode
+   * (`permission.modeAnswers`) is offered only when that mode is not wider than the profile's `expectedMode`; every other
+   * allowing option of a plan's ask is hidden. Absent or empty: a plan has no allowing answer.
+   */
+  planAnswers?: readonly string[]
+  readPlan?(
+    toolCall: { name?: string | null | undefined; kind?: string | null | undefined; rawInput?: unknown },
+    options: ReadonlyArray<{ optionId: string }>,
+  ): string | undefined
+  /**
    * For a harness that sends a subagent's updates and requests on the session that started it, each marked as the
    * subagent's, instead of on the subagent's own session: the subagent, and the update or asked call as it would arrive
    * on the subagent's own session. Absent, or undefined: it is the session's own.

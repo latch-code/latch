@@ -92,7 +92,7 @@ function readClaudeDenial(update: SessionUpdate): ToolDenial | undefined {
 
 export const claudeAgentProfile: HarnessProfile = {
   presetId: 'claude-agent',
-  version: 3,
+  version: 4,
   gateway: {
     via: 'launch',
     wires: ['anthropic-messages'],
@@ -188,6 +188,16 @@ export const claudeAgentProfile: HarnessProfile = {
     read: ({ output }) => readClaudeStatus(output),
   },
   readDenial: readClaudeDenial,
+  // ExitPlanMode: the adapter asks with its `exit-plan-*` options and the plan in the call's input.
+  // Leaving the plan to ask before each edit; the other exits widen the mode or swap the context, so they are never offered.
+  planAnswers: ['exit-plan-default'],
+  readPlan(toolCall, options) {
+    const input = toolCall.rawInput
+    if (!options.some(option => option.optionId.startsWith('exit-plan-'))) return undefined
+    return input && typeof input === 'object' && typeof (input as { plan?: unknown }).plan === 'string'
+      ? (input as { plan: string }).plan
+      : undefined
+  },
   // Each window's share used and status as each turn reports them; Latch never sends `/usage` for them.
   quota: { update: claudeUsageQuota, error: claudeErrorQuota },
   // Checked on the adapter 2026-11-16: each answer counts its own turn, with cache reads and writes outside the input.

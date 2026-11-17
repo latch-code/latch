@@ -6547,12 +6547,42 @@ describe('Claude Agent and Cursor presets', () => {
     const [exit] = (await until(bridge, sessionId, item => item.approvals.length === 1)).approvals
     // The choices that would store a mode for good are not offered; leaving with a question before each edit is.
     expect(exit.options?.map(option => option.id)).toEqual(['exit-plan-default', 'reject'])
+    // Shown as a plan, in full, and the plan stays on its row with how it was answered.
+    expect(exit.plan).toBe('1. Do it')
     expect(await bridge.decide(exit.id, 'allow')).toBe(true)
     detail = await settled(bridge, sessionId)
+    expect(detail.messages.find(message => message.tool?.plan)?.tool).toMatchObject({
+      plan: '1. Do it',
+      decision: { outcome: 'allowed' },
+    })
     expect(detail.summary.permissionDrift).toBeFalsy()
     expect(assistants(detail).at(-1)?.text).toBe('mode=default')
     expect(detail.permission?.expectedMode).toBe('default')
     expect(modeSets(await fixture.log())).toEqual(['default'])
+    // The plan and its answer are the session's record: they come back after a restart.
+    await bridge.close()
+    const reopened = await fixture.open()
+    expect((await reopened.detail(sessionId)).messages.find(message => message.tool?.plan)?.tool).toMatchObject({
+      plan: '1. Do it',
+      decision: { outcome: 'allowed' },
+    })
+  })
+
+  it('answers a plan only with the exit its profile names: a widening or unknown one-time allow is never offered', async () => {
+    const fixture = await preset('claude-agent', CLAUDE)
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'exit-plan wide', requestId: rid() })
+    const [wide] = (await until(bridge, sessionId, detail => detail.approvals.length === 1)).approvals
+    expect(wide.plan).toBe('1. Do it')
+    expect(wide.options?.map(option => option.id)).toEqual(['exit-plan-default', 'reject'])
+    expect(await bridge.decide(wide.id, 'reject')).toBe(true)
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'exit-plan unknown', rid())
+    const [unknown] = (await until(bridge, sessionId, detail => detail.approvals.length === 1)).approvals
+    // Nothing allows: the plan can only be planned on.
+    expect(unknown.options?.map(option => option.id)).toEqual(['reject'])
+    expect(await bridge.decide(unknown.id, 'reject')).toBe(true)
+    await settled(bridge, sessionId)
   })
 
   it('still stops a Claude session that leaves plan mode without the person', async () => {
@@ -6587,7 +6617,11 @@ describe('Claude Agent and Cursor presets', () => {
     const bridge = await fixture.open()
     const accepted = await bridge.createTask({ prompt: 'cursor-plan', requestId: rid() })
     const [plan] = (await until(bridge, accepted.sessionId, detail => detail.approvals.length === 1)).approvals
-    expect(plan).toMatchObject({ reason: '计划：Tidy up', arguments: 'Two steps\n\n1. Read the code\n2. Change it' })
+    expect(plan).toMatchObject({
+      reason: '计划：Tidy up',
+      arguments: 'Two steps\n\n1. Read the code\n2. Change it',
+      plan: 'Two steps\n\n1. Read the code\n2. Change it',
+    })
     expect(plan.options?.map(option => [option.id, option.label])).toEqual([
       ['accept', '接受计划'],
       ['reject', '不接受'],
@@ -6598,7 +6632,12 @@ describe('Claude Agent and Cursor presets', () => {
     await bridge.prompt(accepted.sessionId, 'cursor-plan', rid())
     const [again] = (await until(bridge, accepted.sessionId, detail => detail.approvals.length === 1)).approvals
     expect(await bridge.decide(again.id, 'reject')).toBe(true)
-    expect(assistants(await settled(bridge, accepted.sessionId)).at(-1)?.text).toBe('plan=rejected')
+    const kept = await settled(bridge, accepted.sessionId)
+    expect(assistants(kept).at(-1)?.text).toBe('plan=rejected')
+    expect(kept.messages.filter(message => message.tool?.plan).map(message => message.tool?.decision?.outcome)).toEqual([
+      'allowed',
+      'rejected',
+    ])
 
     await bridge.prompt(accepted.sessionId, 'cursor-plan', rid())
     await until(bridge, accepted.sessionId, detail => detail.approvals.length === 1)

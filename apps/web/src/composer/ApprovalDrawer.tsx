@@ -21,7 +21,10 @@ import {
   WaitingGlyph,
   WarningGlyph,
 } from '@latch/ui'
+import { ClipboardList } from 'lucide-react'
+import remarkGfm from 'remark-gfm'
 import { useViewport } from '../breakpoints.ts'
+import { renderMarkdown } from '../MessageContent.tsx'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { previousState } from '../diff.ts'
 import { argumentView } from '../format.ts'
@@ -100,6 +103,35 @@ function optionLabel(option: ApprovalOption, gate: ApprovalGate): string {
   if (option.kind === 'allow_once') return APPROVAL_COPY.allow
   if (option.kind === 'allow_always') return APPROVAL_COPY.allowSession
   return gate.kind === 'advisory' && Object.hasOwn(APPROVAL_OPTION_LABELS, option.kind) ? APPROVAL_OPTION_LABELS[option.kind] : option.label
+}
+
+/** The words on a plan's two answers; the harness's own words for them are in the button's tooltip. */
+export const PLAN_COPY = { go: '按计划执行', keepPlanning: '继续规划', heading: '计划' } as const
+
+/**
+ * A plan the harness asks to go on with, read in full: its Markdown as text, with no links, pictures or markup of its
+ * own (the plan is the harness's untrusted words).
+ */
+export function PlanText({ text }: { text: string }) {
+  const rendered = renderMarkdown({
+    children: text,
+    remarkPlugins: [remarkGfm],
+    allowedElements: [
+      ...['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'strong', 'em', 'del', 'code', 'pre', 'blockquote', 'hr', 'br'],
+      ...['table', 'thead', 'tbody', 'tr', 'th', 'td'],
+    ],
+    skipHtml: true,
+    unwrapDisallowed: true,
+  })
+  return (
+    <div className="approval-plan" role="region" aria-label={PLAN_COPY.heading} tabIndex={0}>
+      {rendered ?? (
+        <pre>
+          <VisibleText text={text} />
+        </pre>
+      )}
+    </div>
+  )
 }
 
 /** A phone's preview starts folded; a longer one would push the input off the screen. */
@@ -379,9 +411,14 @@ function ApprovalPanel({
     && (headingPath === path
       || (!tool?.toolTitle
         && (tool?.title === path || (toolName === 'write_file' && (tool?.title === `写入 ${path}` || tool?.title === `写入文件 ${path}`)))))
-  const heading = requester
-    ? `${requester} ${tool?.kind === 'execute' ? '想运行一条命令' : tool?.kind === 'edit' && file ? `想改 ${file}` : `想执行：${action}`}`
-    : what
+  const plan = approval.plan
+  const heading = plan
+    ? approval.reason.startsWith(`${PLAN_COPY.heading}：`)
+      ? approval.reason
+      : PLAN_COPY.heading
+    : requester
+      ? `${requester} ${tool?.kind === 'execute' ? '想运行一条命令' : tool?.kind === 'edit' && file ? `想改 ${file}` : `想执行：${action}`}`
+      : what
   const hidden = approvalHidesText(approval, action, diffs)
   const quietReason =
     presentation
@@ -509,7 +546,13 @@ function ApprovalPanel({
     && action === `写入文件 ${headingPath}`
     && menuItems.length > 0
   // The glyph says what kind of decision this is; any other tool's request takes the mark of waiting.
-  const kindIcon = tool?.kind === 'execute' ? TerminalGlyph : tool?.kind === 'edit' || diffs.length > 0 ? EditGlyph : WaitingGlyph
+  const kindIcon = plan
+    ? ClipboardList
+    : tool?.kind === 'execute'
+      ? TerminalGlyph
+      : tool?.kind === 'edit' || diffs.length > 0
+        ? EditGlyph
+        : WaitingGlyph
   // One name at every width: a button with its chevron on a desk, a full row that opens a sheet on a phone.
   const moreTrigger = (props: MenuTriggerProps) => (
     <Button {...props} variant="ghost" size={phone ? 'lg' : 'md'} menu block={phone} className="approval-more" disabled={running}>
@@ -653,14 +696,14 @@ function ApprovalPanel({
             && button(
               reject,
               'outline',
-              rejectLabel ?? optionLabel(reject, gate),
+              plan ? PLAN_COPY.keepPlanning : (rejectLabel ?? optionLabel(reject, gate)),
               numbered ? (!phone && places.numeric ? ['1'] : undefined) : caps.reject,
             )}
           {allow
             && button(
               allow,
               primary ? 'primary' : 'outline',
-              optionLabel(allow, gate),
+              plan ? PLAN_COPY.go : optionLabel(allow, gate),
               numbered ? (!phone && places.numeric ? ['2'] : undefined) : caps.allow,
             )}
         </div>
@@ -716,12 +759,22 @@ function ApprovalPanel({
                 <span>拟议改动</span>
               </div>
             )}
-            {!quietReason && approval.reason && approval.reason !== action && approval.reason !== riskSentence && (
-              <p className="approval-reason">
-                <VisibleText text={approval.reason} />
-              </p>
+            {plan ? (
+              <>
+                <PlanText text={plan} />
+                {/* Whatever else the call carries is still shown: the answer covers all of it. */}
+                <ArgumentList text={approval.tool?.input ?? approval.arguments} covered={[plan]} quiet />
+              </>
+            ) : (
+              <>
+                {!quietReason && approval.reason && approval.reason !== action && approval.reason !== riskSentence && (
+                  <p className="approval-reason">
+                    <VisibleText text={approval.reason} />
+                  </p>
+                )}
+                <ArgumentList text={approval.tool?.input ?? approval.arguments} covered={covered} quiet={diffs.length > 0} />
+              </>
             )}
-            <ArgumentList text={approval.tool?.input ?? approval.arguments} covered={covered} quiet={diffs.length > 0} />
             <DiffView diffs={diffs} fold={phone ? FOLD_ROWS_PHONE : FOLD_ROWS} />
           </div>
         </div>

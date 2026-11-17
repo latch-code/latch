@@ -1999,7 +1999,9 @@ const scenarios = {
     say(`mode=${session.mode}`)
     return END
   },
-  'exit-plan': async ({ sessionId, session, say, tool, permission }) => {
+  // `exit-plan wide`: a widening exit offered as a one-time allow ahead of the plain one; `exit-plan unknown`: only an exit
+  // Latch has no word for.
+  'exit-plan': async ({ sessionId, session, say, tool, permission, argument }) => {
     const call = {
       toolCallId: 'call_exit',
       title: 'Ready to code?',
@@ -2008,11 +2010,25 @@ const scenarios = {
       rawInput: { plan: '1. Do it' },
     }
     tool(call)
-    const { result } = await permission(call, [
-      { optionId: 'exit-plan-auto', name: 'Yes, and use auto mode', kind: 'allow_always' },
-      { optionId: 'exit-plan-default', name: 'Yes, manually approve edits', kind: 'allow_once' },
-      { optionId: 'reject', name: 'No, keep planning', kind: 'reject_once' },
-    ])
+    const { result } = await permission(
+      call,
+      argument === 'wide'
+        ? [
+            { optionId: 'exit-plan-bypass', name: 'Yes, and bypass permissions', kind: 'allow_once' },
+            { optionId: 'exit-plan-default', name: 'Yes, manually approve edits', kind: 'allow_once' },
+            { optionId: 'reject', name: 'No, keep planning', kind: 'reject_once' },
+          ]
+        : argument === 'unknown'
+          ? [
+              { optionId: 'exit-plan-new', name: 'Yes, in a new way', kind: 'allow_once' },
+              { optionId: 'reject', name: 'No, keep planning', kind: 'reject_once' },
+            ]
+          : [
+              { optionId: 'exit-plan-auto', name: 'Yes, and use auto mode', kind: 'allow_always' },
+              { optionId: 'exit-plan-default', name: 'Yes, manually approve edits', kind: 'allow_once' },
+              { optionId: 'reject', name: 'No, keep planning', kind: 'reject_once' },
+            ],
+    )
     if (result.outcome.optionId === 'exit-plan-default') {
       session.mode = 'default'
       reportMode(sessionId, session)

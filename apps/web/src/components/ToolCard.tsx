@@ -28,6 +28,7 @@ import { useChangesLink } from '../conversation/changesLink.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { argumentView, basename, formatDuration } from '../format.ts'
 import { TerminalFillButton } from './TerminalFillButton.tsx'
+import { PlanText } from '../composer/ApprovalDrawer.tsx'
 import { ArgumentList } from './ArgumentList.tsx'
 import { DiffView, type DiffViewFile } from './DiffView.tsx'
 import { FileChip, FileRootContext, FileSession, type FileSessionInfo } from './FileChip.tsx'
@@ -658,10 +659,14 @@ export const ToolCard = memo(
                   {/* A review's input is the agent's whole event, its status still the one it began with: its own words say it. */}
                   {/* A command shown without its wrapper keeps the reported line here, whole. */}
                   {/* What else a call was given; a command's line and folder are shown above. */}
+                  {tool?.plan && <PlanText text={tool.plan} />}
                   {!review && !applied && (
                     <ArgumentList
                       text={tool?.input}
-                      covered={evidence ? [evidence.reported, reportedFolder(tool?.input) ?? ''] : [label.object]}
+                      covered={[
+                        ...(evidence ? [evidence.reported, reportedFolder(tool?.input) ?? ''] : [label.object]),
+                        ...(tool?.plan ? [tool.plan] : []),
+                      ]}
                       quiet
                     />
                   )}

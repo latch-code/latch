@@ -8,6 +8,7 @@ import { VisibleText } from './VisibleText.tsx'
 export function ArgumentList({ text, covered = [], quiet = false }: { text?: string; covered?: string[]; quiet?: boolean }) {
   const view = argumentView(text)
   if (view.kind === 'empty') return <p className="muted-line">无参数</p>
+  if (view.kind === 'text' && covered.includes(view.text)) return quiet ? null : <p className="muted-line">内容见改动</p>
   if (view.kind === 'text')
     return (
       <pre className="tool-pre">

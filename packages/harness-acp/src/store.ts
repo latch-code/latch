@@ -291,6 +291,10 @@ const toolDetail = z.object({
     .optional(),
   judged: z.object({ by: z.string(), outcome: z.enum(['approved', 'denied', 'none', 'unasked']) }).optional(),
   blocked: z.object({ by: z.string(), source: z.enum(['model', 'rule']), reason: z.string().optional() }).optional(),
+  plan: z
+    .string()
+    .max(64 * 1024)
+    .optional(),
 })
 const agentBrief = z.object({ segments: z.array(z.object({ source: z.enum(['latch', 'user', 'material']), text: z.string() })) })
 // Its steps are messages, and may hold its own subagents.

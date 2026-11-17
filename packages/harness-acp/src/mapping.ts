@@ -90,6 +90,8 @@ export interface ToolState {
   judged?: ToolJudgement & { recorded?: true }
   /** The harness refused the call itself before it ran; kept once reported, since later reports leave it out. */
   blocked?: ToolBlock
+  /** The plan the call asked the person to approve (`HarnessProfile.readPlan`). */
+  plan?: string
   /** When Latch first saw the call, when the agent reported it in progress, and when it settled (ISO). */
   createdAt?: string
   startedAt?: string
@@ -253,6 +255,7 @@ export function toolDetail(state: ToolState): ToolDetail {
           },
         }
       : {}),
+    ...(state.plan ? { plan: clip(state.plan, TOOL_TEXT_LIMIT) } : {}),
   }
 }
 
