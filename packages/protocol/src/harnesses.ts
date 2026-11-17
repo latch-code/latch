@@ -2,7 +2,7 @@ import type { AgentPreset, HelperCard } from './agent-presets.ts'
 import type { AgentProbeResult } from './features.ts'
 import type { HarnessOwnMcp } from './mcp.ts'
 import type { HarnessQuota, HarnessQuotaRead } from './quota.ts'
-import type { ModeTier, SessionCommand, SessionConfigOption, SessionSkill, TaskMode } from './sessions.ts'
+import type { ModeGlyph, ModeTier, SessionCommand, SessionConfigOption, SessionSkill, TaskMode } from './sessions.ts'
 
 /** How a person logs in to a harness: its own program, in a terminal on the computer that runs it. */
 export interface HarnessLogin {
@@ -258,6 +258,8 @@ export interface HarnessInfo {
     approvals: 'prompts' | 'none'
     readback: 'mode' | 'none'
     modeTiers?: Record<string, ModeTier>
+    /** Display only: a glyph for a mode from what the harness documents it does, as `SessionPermission.modeGlyphs`. */
+    modeGlyphs?: Record<string, ModeGlyph>
     /**
      * The modes Latch knows this harness has, strictest first, and the one a session starts in: a draft may choose one
      * before anything is read, as `LADDER_MODE`. A start the agent then does not offer it to fails before sending.

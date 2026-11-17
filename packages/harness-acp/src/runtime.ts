@@ -4536,6 +4536,7 @@ export class AgentRuntime implements Bridge {
       ...(expected !== undefined ? { expectedMode: expected } : {}),
       ...(this.profile?.expectedMode !== undefined ? { defaultMode: this.profile.expectedMode } : {}),
       ...(this.profile?.modeTiers ? { modeTiers: structuredClone(this.profile.modeTiers) } : {}),
+      ...(this.profile?.modeGlyphs ? { modeGlyphs: structuredClone(this.profile.modeGlyphs) } : {}),
       ...(task.acp.drift ? { drift: task.acp.drift } : {}),
       notes: this.permissionNotes(),
     }

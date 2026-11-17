@@ -1,8 +1,28 @@
-import type { HarnessInfo, ModeTier, PermissionTier, SessionConfigOption, SessionPermission, TaskMode } from '@latch/protocol'
+import type { HarnessInfo, ModeGlyph, ModeTier, PermissionTier, SessionConfigOption, SessionPermission, TaskMode } from '@latch/protocol'
 import { modeRows, type DeviceAccess, type ModeRow } from '../core/permissions.ts'
 import { MODE_COPY, type Brief } from '../core/securityCopy.ts'
 
-export type ModeIcon = 'eye' | 'shield' | 'list-checks' | 'scale' | 'shield-alert'
+/**
+ * A mode's glyph. The first five are the tiers'; `plan` and `question` are what a harness documents a mode does where two
+ * share a tier (`ModeTier.glyph`); the shapes are for modes Latch knows nothing of, so each segment stays its own and
+ * the name under the strip says which it is.
+ */
+export type ModeIcon =
+  | 'eye'
+  | 'shield'
+  | 'list-checks'
+  | 'scale'
+  | 'shield-alert'
+  | 'plan'
+  | 'question'
+  | 'circle'
+  | 'square'
+  | 'triangle'
+  | 'diamond'
+  | 'hexagon'
+  | 'pentagon'
+  | 'octagon'
+const UNKNOWN_ICONS: readonly ModeIcon[] = ['circle', 'square', 'triangle', 'diamond', 'hexagon', 'pentagon', 'octagon']
 
 export interface PermissionRow extends ModeRow {
   icon: ModeIcon
@@ -29,12 +49,23 @@ const TIER_ICONS: Record<PermissionTier, ModeIcon> = {
 function tierRows(
   option: SessionConfigOption,
   tiers: Readonly<Record<string, ModeTier>> | undefined,
+  glyphs: Readonly<Record<string, ModeGlyph>> | undefined,
   locked: string | undefined,
 ): PermissionRow[] {
   const known = tiers !== undefined && Object.keys(tiers).length > 0
-  const rows = modeRows(option, locked).flatMap((row, index) => {
+  // Every row draws a glyph of its own: the one the Harness's profile documents for it, else its tier's; the first mode
+  // with neither the plain shield of a Harness's own setting, unless a tier took it; any other a plain shape. Nothing is
+  // guessed from a mode's name.
+  const taken = new Set<ModeIcon>()
+  const unknown = [...UNKNOWN_ICONS]
+  const all = modeRows(option, locked)
+  const ranked = new Set(all.flatMap(row => (tiers?.[row.value] ? [TIER_ICONS[tiers[row.value]!.tier]] : [])))
+  const rows = all.flatMap(row => {
     const tier = tiers?.[row.value]
-    const icon: ModeIcon = tier ? TIER_ICONS[tier.tier] : !known && index === 0 && option.options.length > 1 ? 'eye' : 'shield'
+    const glyph = glyphs?.[row.value]
+    const wanted: ModeIcon | undefined = glyph ?? (tier ? TIER_ICONS[tier.tier] : ranked.has('shield') ? undefined : 'shield')
+    const icon: ModeIcon = wanted && !taken.has(wanted) ? wanted : (unknown.shift() ?? 'circle')
+    taken.add(icon)
     return [
       {
         ...row,
@@ -164,7 +195,7 @@ const chatPermission: PermissionView = {
 export function permissionView(input: {
   harness: PermissionHarness | undefined
   mode?: TaskMode | undefined
-  permission?: Partial<Pick<SessionPermission, 'approvals' | 'readback' | 'modeTiers'>>
+  permission?: Partial<Pick<SessionPermission, 'approvals' | 'readback' | 'modeTiers' | 'modeGlyphs'>>
   config: readonly SessionConfigOption[]
   access: Pick<DeviceAccess, 'legacy' | 'local'>
   locked?: string
@@ -186,12 +217,13 @@ export function permissionView(input: {
     const { note: _beforeStart, ...started } = declared
     return started
   }
-  const rows = tierRows(option, permission?.modeTiers, locked)
+  const rows = tierRows(option, permission?.modeTiers, permission?.modeGlyphs, locked)
   const current = rows.find(row => row.current)
   return {
     label: current?.name ?? option.currentValue,
     line: current?.line ?? '',
-    icon: current?.icon ?? 'shield',
+    // A mode Latch knows nothing of is still the Harness's setting: the chip keeps the shield; its shape is the strip's.
+    icon: current?.tier ? current.icon : 'shield',
     amber: current?.neverAsks === true,
     note:
       option.source === 'launch'

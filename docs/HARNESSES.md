@@ -579,7 +579,7 @@ DeepSeek Harness 用 API 密钥时，密钥是 DeepSeek 发给这个人的，Dee
 
 ## 权限菜单
 
-有 profile 的预设给每个模式一个档位与一句话（`modeTiers`），随 `HarnessInfo.permission` 与 `TaskDetail.permission` 发给页面与 iPhone。档位从严到宽：「只看不改」（`plan`）、「先问你」（`ask`）、「按规则放行」（`rule`）、「由模型判断」（`model`）、「不再询问」（`never`）。
+有 profile 的预设给每个模式一个档位与一句话（`modeTiers`），随 `HarnessInfo.permission` 与 `TaskDetail.permission` 发给页面与 iPhone。档位从严到宽：「只看不改」（`plan`）、「先问你」（`ask`）、「按规则放行」（`rule`）、「由模型判断」（`model`）、「不再询问」（`never`）。另有只管图形的 `modeGlyphs`：文档写明某个模式做什么（写计划 `plan`、只问答 `question`）而档位画不出区别时用它，不改档位与排序（Antigravity 的 Plan 没有档位，Cursor 的 Ask 与 Plan 同为只读）。
 
 | 预设 | 只看不改 | 先问你 | 按规则放行 | 由模型判断 | 不再询问 |
 | --- | --- | --- | --- | --- | --- |

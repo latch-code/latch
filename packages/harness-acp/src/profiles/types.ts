@@ -1,4 +1,4 @@
-import type { ModeTier, ModelCapabilities, ModelWire, SessionConfigOption } from '@latch/protocol'
+import type { ModeGlyph, ModeTier, ModelCapabilities, ModelWire, SessionConfigOption } from '@latch/protocol'
 import type { ModelRoute } from '@latch/sdk'
 import type { QuotaReport } from '../quota.ts'
 import type { TurnTokens } from '../protocol.ts'
@@ -23,6 +23,8 @@ export interface AcpPermissionProfile {
    * tier. Display only: clients order and title the menu by it, and a mode left out shows under the harness's own name.
    */
   modeTiers?: Readonly<Record<string, ModeTier>>
+  /** Display only: what the harness documents a mode does, for its glyph (`SessionPermission.modeGlyphs`). */
+  modeGlyphs?: Readonly<Record<string, ModeGlyph>>
   /**
    * The harness reports its own model reviewing a request as a tool call whose ID starts with this. Each verdict is
    * recorded on its own, so its other calls in a `model` tier mode are not recorded as run unasked.

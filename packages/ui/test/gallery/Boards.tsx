@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ListChecks, Scale } from 'lucide-react'
+import { Circle, ListChecks, Scale, Square } from 'lucide-react'
 import {
   EyeGlyph,
   HistoryGlyph,
@@ -135,6 +135,20 @@ export function Boards() {
               label="什么时候问你？"
               value="never"
               options={[{ ...GALLERY_MODES[1]!, disabledReason: '这台设备不能发送消息' }, GALLERY_MODES[4]!]}
+              onChoose={() => {}}
+            />
+          </div>
+        </Cell>
+        <Cell caption="七档 · 第二行">
+          <div className="ui-popover" data-size="sm">
+            <ModeStrip
+              label="什么时候问你？"
+              value="extra-1"
+              options={[
+                ...GALLERY_MODES,
+                { value: 'extra-1', label: 'Profile A', icon: Circle },
+                { value: 'extra-2', label: 'Profile B', icon: Square },
+              ]}
               onChoose={() => {}}
             />
           </div>

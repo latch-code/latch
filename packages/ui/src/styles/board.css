@@ -22,9 +22,9 @@
   font-weight: 500;
 }
 .ui-mode-strip-track {
+  --mode-columns: 5;
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
+  grid-template-columns: repeat(var(--mode-columns), minmax(0, 1fr));
   gap: var(--sp-2);
   padding: var(--sp-2);
   border-radius: var(--r-8);

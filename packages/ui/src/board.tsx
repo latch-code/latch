@@ -1,4 +1,14 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FocusEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { CheckGlyph, BlockedGlyph, SearchGlyph } from './glyphs/index.tsx'
 import { FoldHeader } from './fold.tsx'
 import { Icon, Spinner, type IconComponent } from './icon.tsx'
@@ -23,11 +33,14 @@ export interface ModeStripOption<T extends string> {
   disabledReason?: string
 }
 
+/** The most segments in one row of a mode strip. */
+const STRIP_ROW = 5
+
 /**
- * An ordered set of modes as one row of icon segments, tightest first, with the chosen (or previewed) mode's name and
+ * An ordered set of modes as one row of icon segments (five to a row, more wrapping onto the next), tightest first, with the chosen (or previewed) mode's name and
  * its one line under it in a block of fixed height, so the layer never changes size. ←/→, Home and End move without
- * choosing, and hover or focus previews; Enter, Space or a click chooses. A radio group with one tab stop. For two to
- * five modes with distinct icons; more, or modes without a known icon, take a single-choice list.
+ * choosing, and hover or focus previews; Enter, Space or a click chooses. A radio group with one tab stop. Every mode
+ * needs an icon of its own: the name under the strip says which one is shown.
  */
 export function ModeStrip<T extends string>({
   label,
@@ -96,6 +109,8 @@ export function ModeStrip<T extends string>({
       </p>
       <div
         className="ui-mode-strip-track"
+        // Five to a row: more modes wrap onto a second row of the same segments.
+        style={{ '--mode-columns': Math.min(options.length, STRIP_ROW) } as CSSProperties}
         role="radiogroup"
         aria-labelledby={`${id}-label`}
         onKeyDown={keydown}

@@ -92,6 +92,8 @@ export const cursorProfile: HarnessProfile = {
       agent: { tier: 'ask', name: 'Agent', line: '完整工具能力，按 Cursor 权限规则询问。' },
       'agent-force': { tier: 'never', name: 'Agent --force', line: '启动时 --force；直接允许未被明确拒绝的命令。' },
     },
+    // Both read only: Ask answers questions, Plan writes a plan.
+    modeGlyphs: { ask: 'question', plan: 'plan' },
     // Cursor's documented option IDs; the one that stores a rule is hidden whatever kind it reports.
     hiddenOptionIds: ['allow-always'],
     readback: 'mode',

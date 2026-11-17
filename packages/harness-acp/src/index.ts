@@ -148,7 +148,7 @@ function folderDeclaration(profile: HarnessProfile | undefined): Pick<HarnessDri
 /** What a draft may say before the agent has started: the profile's facts, for an agent Latch has a profile for. */
 function permissionDeclaration(profile: HarnessProfile | undefined): Pick<HarnessDriver, 'permission'> {
   if (!profile) return {}
-  const { approvals, readback, modeTiers, modeLadder, expectedMode } = profile.permission
+  const { approvals, readback, modeTiers, modeGlyphs, modeLadder, expectedMode } = profile.permission
   // Only modes Latch has a word for are offered before a read: a ladder mode without one is the harness's own.
   const modes = modeLadder?.filter(mode => modeTiers?.[mode])
   return {
@@ -156,6 +156,7 @@ function permissionDeclaration(profile: HarnessProfile | undefined): Pick<Harnes
       approvals,
       readback,
       ...(modeTiers ? { modeTiers: structuredClone(modeTiers) } : {}),
+      ...(modeGlyphs ? { modeGlyphs: structuredClone(modeGlyphs) } : {}),
       ...(readback === 'mode' && expectedMode && modes?.includes(expectedMode) ? { modes, startMode: expectedMode } : {}),
     },
   }

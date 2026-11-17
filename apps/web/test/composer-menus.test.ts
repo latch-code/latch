@@ -1,5 +1,6 @@
 import { createElement } from 'react'
 import { testHarness } from '@latch/testkit'
+import type { ModeGlyph, ModeTier } from '@latch/protocol'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -22,9 +23,9 @@ import {
   UnusableServices,
 } from '../src/composer/ModelControl.tsx'
 import { DraftModelControl, SessionModelControl } from '../src/composer/ModelPanel.tsx'
-import { PermissionList, PermissionPanel, stripRows } from '../src/composer/PermissionList.tsx'
+import { MODE_ICONS, PermissionPanel, stripRows } from '../src/composer/PermissionList.tsx'
 import { pickCaps, pickIndex } from '../src/composer/ModelPanel.tsx'
-import type { PermissionRow, PermissionView } from '../src/composer/permission.ts'
+import { permissionView, type PermissionRow, type PermissionView } from '../src/composer/permission.ts'
 import { controlKeyCaps } from '../src/composer/modelReasoning.ts'
 import { forkedChoice, forkSource } from '../src/forkChoice.ts'
 import { draftConfig } from '../src/composerChoice.ts'
@@ -425,40 +426,12 @@ describe('the keys on the menu titles', () => {
     vi.stubGlobal('window', { latchShell: { kind: 'electron', platform: 'darwin' } })
     expect(controlKeyCaps('harness')).toEqual(['⌥', '⌘', '1'])
     const html = renderToStaticMarkup(
-      createElement(PermissionList, {
+      createElement(PermissionPanel, {
         view: { label: '先问你', line: '', icon: 'shield', amber: false },
         onChoose() {},
       }),
     )
-    expect(html).toMatch(/什么时候问你？<\/span><span class="menu-title-keys"[^>]*><kbd class="ui-kbd">⌥⌘4<\/kbd>/u)
-  })
-})
-
-describe('the 权限 menu', () => {
-  it('lists every row with no 收起, no notes and no ⓘ', () => {
-    const rows = ['只看不改', '先问你', '按规则放行', '由模型判断', '不再询问']
-    const html = renderToStaticMarkup(
-      createElement(PermissionList, {
-        view: {
-          label: '先问你',
-          line: '改文件前问你',
-          icon: 'shield',
-          amber: false,
-          note: { label: 'Codex 自己的设置', detail: 'Latch 不隔离它。' },
-          rows: rows.map((name, index) => ({
-            value: String(index),
-            name,
-            line: `${name}的说明`,
-            icon: 'shield' as const,
-            neverAsks: false,
-            current: index === 1,
-          })),
-        },
-        onChoose() {},
-      }),
-    )
-    for (const name of rows) expect(html).toContain(name)
-    for (const gone of ['收起', '更多', '权限说明', '自己的设置', '的说明', 'ui-hint']) expect(html).not.toContain(gone)
+    expect(html).toMatch(/什么时候问你？<\/span><kbd class="ui-kbd"[^>]*>⌥⌘4<\/kbd>/u)
   })
 })
 
@@ -540,8 +513,8 @@ describe('the 权限 panel', () => {
   const view = (list: PermissionRow[]): PermissionView => ({ label: '先问你', line: '', icon: 'shield', amber: false, rows: list })
 
   it('draws two to five modes Latch knows as one row of segments, with the chosen one’s name and its one line', () => {
-    expect(stripRows(view(rows(2)))?.length).toBe(2)
-    expect(stripRows(view(rows(5)))?.length).toBe(5)
+    expect(stripRows(view(rows(2)))).toHaveLength(2)
+    expect(stripRows(view(rows(5)))).toHaveLength(5)
     const html = renderToStaticMarkup(createElement(PermissionPanel, { view: view(rows(5)), onChoose() {} }))
     expect(html.match(/role="radio"/gu)).toHaveLength(5)
     expect(html).toContain('class="ui-mode-strip-name">模式1<')
@@ -552,14 +525,76 @@ describe('the 权限 panel', () => {
     for (const gone of ['ui-hint', '收起', '更多']) expect(html).not.toContain(gone)
   })
 
-  it('falls back to the list for one mode, more than five, or modes whose meaning Latch does not know', () => {
-    for (const list of [rows(1), rows(6), rows(4, false)]) {
-      expect(stripRows(view(list))).toBeUndefined()
-      const html = renderToStaticMarkup(createElement(PermissionPanel, { view: view(list), onChoose() {} }))
-      expect(html).not.toContain('ui-mode-strip')
-      expect(html).toContain('permission-list')
-    }
-    expect(stripRows({ label: '开始后可选', line: '', icon: 'shield', amber: false })).toBeUndefined()
+  it('draws every Harness’s modes as segments: one mode, more than a row holds, and a mode this device cannot choose', () => {
+    // One mode, and before any are reported the one that is true now: a strip of one segment, never a list.
+    expect(stripRows(view(rows(1)))).toHaveLength(1)
+    const before = stripRows({ label: '开始后可选', line: '', icon: 'shield', amber: false })
+    expect(before.map(row => [row.value, row.name, row.current])).toEqual([['current', '开始后可选', true]])
+    // More than five wrap onto a second row of the same segments.
+    const seven = renderToStaticMarkup(createElement(PermissionPanel, { view: view(rows(7, false)), onChoose() {} }))
+    expect(seven.match(/role="radio"/gu)).toHaveLength(7)
+    expect(seven).toContain('--mode-columns:5')
+    expect(seven).not.toContain('ui-choice')
+    // A mode this device cannot choose stays a segment, with why as its tooltip.
+    const locked = rows(3).map((row, index) => (index === 2 ? { ...row, disabledReason: '这台设备不能改' } : row))
+    const html = renderToStaticMarkup(createElement(PermissionPanel, { view: view(locked), onChoose() {} }))
+    expect(html).toMatch(/aria-label="模式2"[^>]*aria-disabled="true"/u)
+    expect(html).toContain('这台设备不能改')
+  })
+
+  it('gives every mode a glyph of its own: documented glyphs where two share a tier, plain shapes for unknown ones', () => {
+    const harness = testHarness('agy', { label: 'Antigravity' })
+    harness.level = 'L3'
+    const option = (values: string[]) => ({
+      id: 'mode',
+      name: 'Mode',
+      category: 'mode' as const,
+      type: 'select' as const,
+      currentValue: values[0]!,
+      options: values.map(value => ({ value, name: value })),
+    })
+    const shown = (values: string[], modeTiers?: Record<string, ModeTier>, modeGlyphs?: Record<string, ModeGlyph>) =>
+      permissionView({
+        harness,
+        config: [option(values)],
+        permission: { approvals: 'prompts', readback: 'mode', ...(modeTiers ? { modeTiers } : {}), ...(modeGlyphs ? { modeGlyphs } : {}) },
+        access: { legacy: false, local: true },
+      })!.rows!.map(row => [row.value, row.icon])
+    // Antigravity: Plan has no tier (it promises nothing about reading only); its profile draws it as writing a plan.
+    expect(
+      shown(
+        ['default', 'accept-edits', 'auto', 'plan'],
+        {
+          default: { tier: 'ask', name: '默认', line: 'a' },
+          'accept-edits': { tier: 'rule', line: 'b' },
+          auto: { tier: 'model', line: 'c' },
+        },
+        { plan: 'plan' },
+      ),
+    ).toEqual([
+      ['default', 'shield'],
+      ['accept-edits', 'list-checks'],
+      ['auto', 'scale'],
+      ['plan', 'plan'],
+    ])
+    // Without that, it would take a plain shape, never a second shield.
+    expect(shown(['default', 'plan'], { default: { tier: 'ask', line: 'a' } }).map(([, icon]) => icon)).toEqual(['shield', 'circle'])
+    // Two modes of one tier: the profile's glyphs tell them apart (Cursor's Ask and Plan); without them, a shape.
+    expect(
+      shown(
+        ['ask', 'plan'],
+        { ask: { tier: 'plan', line: 'a' }, plan: { tier: 'plan', line: 'b' } },
+        { ask: 'question', plan: 'plan' },
+      ).map(([, icon]) => icon),
+    ).toEqual(['question', 'plan'])
+    expect(shown(['a', 'b'], { a: { tier: 'plan', line: 'a' }, b: { tier: 'plan', line: 'b' } }).map(([, icon]) => icon)).toEqual([
+      'eye',
+      'circle',
+    ])
+    // A Harness Latch knows nothing of: the shield for the first, shapes for the rest, nothing guessed from a name.
+    const unknown = shown(['plan', 'default', 'yolo'])
+    expect(unknown.map(([, icon]) => icon)).toEqual(['shield', 'circle', 'square'])
+    for (const [, icon] of unknown) expect(MODE_ICONS[icon as keyof typeof MODE_ICONS]).toBeDefined()
   })
 })
 

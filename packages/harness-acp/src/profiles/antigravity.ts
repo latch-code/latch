@@ -21,6 +21,8 @@ export const antigravityProfile: HarnessProfile = {
       'accept-edits': { tier: 'rule', line: '直接修改目录内文件，命令按自身规则询问' },
       auto: { tier: 'model', line: '自动改文件和评估命令，风险操作询问' },
     },
+    // Plan is drawn as writing a plan, neither a second 默认 nor read-only (its docs: modes, planning).
+    modeGlyphs: { plan: 'plan' },
     readback: 'mode',
     notes: ['Antigravity 的允许规则与 toolPermission 设置仍然生效；规划模式不保证只读'],
   },

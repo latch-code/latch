@@ -686,31 +686,11 @@
   gap: var(--sp-4);
   padding: var(--sp-4);
 }
-.permission-list-title,
 .permission-list-note {
   padding: var(--sp-4) var(--sp-8);
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
-}
-/* The title and, in the desktop app, the keys that open the menu at its end, as a picker's header draws them. */
-.permission-list-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-8);
-}
-.menu-title-keys {
-  display: inline-flex;
-  gap: var(--sp-2);
-}
-/* 不再询问: its title and line in amber too, as on the chip, in the menu and in the phone's sheet. */
-.ui-choice:has(.permission-never) :is(.ui-choice-title, .ui-choice-description),
-.ui-menu-item:has(.permission-never) :is(.ui-menu-item-title, .ui-menu-item-description) {
-  color: var(--amber);
-}
-.permission-never {
-  color: var(--amber-icon);
 }
 .permission-list-head {
   display: flex;

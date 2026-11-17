@@ -59,6 +59,25 @@ describe('the mode strip', () => {
     expect(onChoose).toHaveBeenCalledWith('never')
   })
 
+  it('wraps more than five modes onto a second row of the same segments, the arrows going on through it', async () => {
+    const onChoose = vi.fn()
+    const options = [
+      ...GALLERY_MODES,
+      { ...GALLERY_MODES[0]!, value: 'six', label: '六' },
+      { ...GALLERY_MODES[1]!, value: 'seven', label: '七' },
+    ]
+    const screen = await render(<ModeStrip label="什么时候问你？" value="ask" options={options} onChoose={onChoose} />)
+    const tops = Array.from(document.querySelectorAll('.ui-mode-strip-option'), option => Math.round(option.getBoundingClientRect().top))
+    expect(new Set(tops.slice(0, 5)).size).toBe(1)
+    expect(tops[5]).toBeGreaterThan(tops[0]!)
+    expect(tops[6]).toBe(tops[5])
+    ;(screen.getByRole('radio', { name: '不再询问' }).element() as HTMLElement).focus()
+    await userEvent.keyboard('{ArrowRight}')
+    await expect.element(screen.getByRole('radio', { name: '六' })).toHaveFocus()
+    await userEvent.keyboard('{Enter}')
+    expect(onChoose).toHaveBeenCalledWith('six')
+  })
+
   it('keeps a mode that cannot be chosen focusable, with its reason, and never chooses it', async () => {
     const onChoose = vi.fn()
     const screen = await render(<Strip onChoose={onChoose} />)

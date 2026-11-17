@@ -96,7 +96,9 @@ describe('native permission semantics from the Host', () => {
     const plan = view.rows!.find(row => row.value === 'plan')
     expect(plan).toBeDefined()
     expect(plan?.tier).toBeUndefined()
-    expect(plan?.icon).not.toBe('eye')
+    // Drawn as writing a plan, as its profile documents: neither read-only (the eye) nor a second 默认 (the shield).
+    expect(plan?.icon).toBe('plan')
+    expect(antigravity.permission?.modeGlyphs).toEqual({ plan: 'plan' })
     expect(plan?.name).toBe(antigravity.config!.find(item => item.category === 'mode')!.options.find(item => item.value === 'plan')!.name)
     const source = forkSource(
       qwen,

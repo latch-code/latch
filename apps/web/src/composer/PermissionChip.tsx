@@ -1,12 +1,12 @@
 import type { SessionConfigOption } from '@latch/protocol'
 import { ICON_STROKE, Popover, Tooltip, ChevronDownGlyph } from '@latch/ui'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
-import { MODE_ICONS, PermissionPanel, stripRows } from './PermissionList.tsx'
+import { MODE_ICONS, PermissionPanel } from './PermissionList.tsx'
 import { permissionTip, type PermissionView } from './permission.ts'
 
 /**
- * 权限, always drawn and always opening: the agent's own modes as a row of segments (`PermissionPanel`) when it reports
- * them, otherwise the one row that is true now. What the current row means, whose setting it is and that Latch does not isolate the agent are the chip's tooltip
+ * 权限, always drawn and always opening: the agent's own modes as segments (`PermissionPanel`) when it reports them,
+ * otherwise the one segment that is true now. What the current row means, whose setting it is and that Latch does not isolate the agent are the chip's tooltip
  * on hover and focus; on touch the timeline's first row says it. Amber only where the agent never asks or Latch cannot
  * confirm.
  */
@@ -24,7 +24,7 @@ export function PermissionChip({
   return (
     <Popover
       label="权限"
-      size={stripRows(view) ? 'sm' : 'md'}
+      size="sm"
       side="top"
       onOpenChange={open => {
         onOpenChange?.(open)

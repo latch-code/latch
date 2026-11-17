@@ -269,7 +269,8 @@ describe('the 权限 chip', () => {
     expect(rows('read-only')).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access', 'permission-profile:x'])
     expect(rows('permission-profile:x')).toEqual(rows('read-only'))
     const own = view('read-only').rows!.find(row => row.value === 'permission-profile:x')!
-    expect(own).toMatchObject({ name: 'Profile X', icon: 'shield' })
+    // Its own glyph, a plain shape: the shield is the tier's, and two segments never look alike.
+    expect(own).toMatchObject({ name: 'Profile X', icon: 'circle' })
     expect(own.tier).toBeUndefined()
     expect(view('permission-profile:x')).toMatchObject({ label: 'Profile X', amber: false })
   })

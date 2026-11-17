@@ -718,6 +718,12 @@ export interface TaskDetail {
  */
 export type PermissionTier = 'plan' | 'ask' | 'rule' | 'model' | 'never'
 
+/**
+ * What a harness documents a mode does, for the mode's glyph where its tier would draw it like another or it has no tier:
+ * it writes a plan first (`plan`, which promises nothing about reading only), or it only answers questions (`question`).
+ */
+export type ModeGlyph = 'plan' | 'question'
+
 /** One of a harness's own modes as Latch states it: its tier and one Chinese line on what the harness really does there. */
 export interface ModeTier {
   tier: PermissionTier
@@ -737,6 +743,8 @@ export interface SessionPermission {
   defaultMode?: string
   /** Latch's word for each of the harness's own modes it knows; a mode left out shows under the harness's own name. */
   modeTiers?: Record<string, ModeTier>
+  /** Display only: a glyph for a mode, tiered or not, from what the harness documents it does (`ModeGlyph`). */
+  modeGlyphs?: Record<string, ModeGlyph>
   drift?: { at: string; observed: string }
   /** Display-only Chinese notes on how far the harness's own permissions go. */
   notes: string[]
