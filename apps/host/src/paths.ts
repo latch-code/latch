@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win
 import { fileURLToPath } from 'node:url'
 import { AppError } from '@latch/sdk'
 import { latchEnv } from './env.ts'
+import { PACKAGED } from './distribution.ts'
 
 export interface LatchPaths {
   dataDir: string
@@ -66,6 +67,8 @@ export function resolveLatchPaths(input: {
   exists?: (path: string) => boolean
   /** Tests; default `latchCodeRoot()`. */
   codeRoot?: string
+  /** Installed commands never discover a checkout's old data from the caller's working directory. */
+  legacyRuntime?: boolean
 }): LatchPaths {
   const platform = input.platform ?? process.platform
   const path = pathApi(platform)
@@ -83,7 +86,7 @@ export function resolveLatchPaths(input: {
   } else if (dataDirEnv) {
     dataDir = path.resolve(input.cwd, dataDirEnv)
     dataDirSource = 'env'
-  } else if (exists(path.join(input.cwd, '.runtime'))) {
+  } else if ((input.legacyRuntime ?? !PACKAGED) && exists(path.join(input.cwd, '.runtime'))) {
     dataDir = path.join(input.cwd, '.runtime')
     dataDirSource = 'legacy-runtime'
     warnings.push(

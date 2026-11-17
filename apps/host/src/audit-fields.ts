@@ -262,6 +262,7 @@ export const AUDIT_FIELDS: AuditFieldTable = {
   'policy.changed-outside': { expected: 'short', actual: 'short' },
   'policy.created': { before: 'short', after: 'short', fields: 'show', lowering: 'show' },
   'presence.helper.pinned': { cdhash: 'short' },
+  'presence.helper.identity-pinned': { identityHash: 'short', migration: 'show' },
   'presence.launch-trusted': { keyHash: 'hidden' },
   'presence.result': { confirmationId: 'short', action: 'show', result: 'show' },
   'provider.fallbacks.changed': { providerId: 'short', models: 'show', candidates: 'show', widened: 'show' },

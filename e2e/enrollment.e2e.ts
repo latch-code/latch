@@ -132,7 +132,7 @@ describe('device enrollment in the browser', () => {
     // Loopback is not this computer: without an invitation the page only says where to get one.
     await page.goto(`${testHost.host.loopbackOrigin}/link/`)
     await page.getByText(/^这个浏览器还没连接到 Latch。.*在浏览器中打开/).waitFor()
-    await page.getByText('pnpm latch device invite --loopback', { exact: true }).waitFor()
+    await page.getByText('latch device invite --loopback', { exact: true }).waitFor()
     expect(await page.getByRole('button').count()).toBe(0)
     await captureSizes(page, 'invitation')
 

@@ -33,6 +33,7 @@
     "build:host": "tsx apps/host/scripts/build.ts",
     "build:web": "vite build apps/web",
     "build:presence": "tsx apps/host/scripts/build-presence.ts",
+    "package:desktop": "tsx apps/host/scripts/package-desktop.ts",
     "typecheck": "tsc -b",
     "lint": "oxlint",
     "fmt": "oxfmt",

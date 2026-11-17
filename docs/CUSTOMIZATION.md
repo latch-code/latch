@@ -89,7 +89,7 @@ sources:
 - **限速。** 应用与回退按设备计入设置类操作的限速（`classC`，超过回 429 `rate-limited`）；恢复默认不计，它是出路。
 - **会话与插件页面不能应用自定义**：路由只认设备凭据与 `admin`，页面的桥没有这项能力。
 
-**命令行。** `pnpm latch customization reset --data-dir <目录>`：Host 运行时经 `host.sock` 读取基版并请求，已停止时持数据目录锁读取和写入。结果未知时补发同一请求。
+**命令行。** 应用包使用 `latch customization reset --data-dir <目录>`，源码运行使用 `pnpm latch`。Host 运行时经 `host.sock` 读取基版并请求，已停止时持数据目录锁读取和写入。结果未知时补发同一请求。
 
 ## 页面
 

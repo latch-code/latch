@@ -1,6 +1,8 @@
 import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process'
 import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { releasePresenceIdentity, type PresenceIdentity } from './presence-identity.ts'
+import { CLI_PROGRAM, PACKAGED } from './distribution.ts'
 import type { Readable, Writable } from 'node:stream'
 import {
   escapeSecurityText,
@@ -158,10 +160,11 @@ const defaultExecFile: ExecFileLike = (file, args) =>
 const defaultSpawn: SpawnLike = (file, args, options) => nodeSpawn(file, [...args], options)
 
 const PLATFORM_MESSAGE = '此系统暂不支持本机确认（Touch ID 或登录密码）'
-const MISSING_MESSAGE = '未找到本机确认组件。请运行 pnpm build:presence 后重启 Host。'
-const SIGNATURE_MESSAGE = '本机确认组件的签名或文件权限无效。请运行 pnpm build:presence 后重启 Host。'
-const MISMATCH_MESSAGE = '本机确认组件与记录的签名不一致。如果你重新构建了它，请停止 Host 后运行 pnpm latch presence repin。'
-const PIN_LOST_MESSAGE = '本机确认组件的签名记录已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。'
+const REPAIR_MESSAGE = PACKAGED ? '请重新安装 Latch 应用后重启 Host。' : '请运行 pnpm build:presence 后重启 Host。'
+const MISSING_MESSAGE = `未找到本机确认组件。${REPAIR_MESSAGE}`
+const SIGNATURE_MESSAGE = `本机确认组件的签名或文件权限无效。${REPAIR_MESSAGE}`
+const MISMATCH_MESSAGE = `本机确认组件与记录的签名不一致。如果你重新构建了它，请停止 Host 后运行 ${CLI_PROGRAM} presence repin。`
+const PIN_LOST_MESSAGE = `本机确认组件的签名记录已丢失（policy.json 被修改或删除）。请停止 Host 后运行 ${CLI_PROGRAM} presence repin。`
 
 function noneBackend(availability: Extract<PresenceAvailability, { status: 'unavailable' }>): PresenceBackend {
   return {
@@ -180,6 +183,28 @@ export function presenceHelperPath(codeRoot: string): string {
   return join(codeRoot, 'dist', 'native', 'latch-presence')
 }
 
+export function presenceLauncherPath(codeRoot: string): string {
+  return join(codeRoot, 'dist', 'native', 'latch-presence-launch')
+}
+
+/** Both executables belong to the release, with different identifiers under the same fixed Team ID. */
+export async function verifyPresenceIdentity(
+  codeRoot: string,
+  identity: PresenceIdentity,
+  execFile: ExecFileLike = defaultExecFile,
+): Promise<boolean> {
+  for (const [path, requirement] of [
+    [presenceHelperPath(codeRoot), identity.requirement],
+    [presenceLauncherPath(codeRoot), identity.launcherRequirement],
+  ] as const) {
+    const info = await lstat(path).catch(() => undefined)
+    if (!info?.isFile() || info.isSymbolicLink() || (info.mode & 0o022) !== 0 || (info.uid !== process.getuid?.() && info.uid !== 0))
+      return false
+    if ((await execFile(CODESIGN, ['--verify', '--strict', `-R=${requirement}`, path])).code !== 0) return false
+  }
+  return true
+}
+
 /**
  * The production backends. A test backend is never constructed here: tests inject their own through dependency
  * injection, so a production Host cannot be switched to an always-approving backend.
@@ -190,6 +215,8 @@ export function createPresenceBackend(options: {
   policy: PolicyStore
   execFile?: ExecFileLike
   spawn?: SpawnLike
+  /** Tests inject an identity; production always uses the release constant compiled into this module. */
+  identity?: PresenceIdentity
 }): PresenceBackend {
   const platform = options.platform ?? process.platform
   if (platform !== 'darwin') return noneBackend({ status: 'unavailable', reason: 'platform', message: PLATFORM_MESSAGE })
@@ -201,6 +228,8 @@ export function createPresenceBackend(options: {
     options.policy,
     options.execFile ?? defaultExecFile,
     options.spawn ?? defaultSpawn,
+    options.codeRoot,
+    options.identity ?? releasePresenceIdentity(),
   )
 }
 
@@ -215,6 +244,8 @@ class MacHelperBackend implements PresenceBackend {
     private readonly policy: PolicyStore,
     private readonly execFile: ExecFileLike,
     private readonly spawn: SpawnLike,
+    private readonly codeRoot: string,
+    private readonly identity?: PresenceIdentity,
   ) {}
 
   async availability(): Promise<PresenceAvailability> {
@@ -226,6 +257,27 @@ class MacHelperBackend implements PresenceBackend {
 
   /** File ownership and mode, then the code signature pinned by cdhash (trust on first use). */
   private async check(): Promise<PresenceAvailability> {
+    if (this.identity) {
+      if (!(await verifyPresenceIdentity(this.codeRoot, this.identity, this.execFile)))
+        return {
+          status: 'unavailable',
+          reason: 'helper-signature',
+          message: '本机确认组件不符合 Latch 的发布签名身份，请重新安装已签名的 Latch。',
+        }
+      try {
+        await this.policy.pinHelperIdentity(this.identity.hash)
+      } catch (error) {
+        if (error instanceof AppError) return { status: 'unavailable', reason: 'cdhash-mismatch', message: error.message }
+        throw error
+      }
+      return { status: 'available', backend: 'macos-helper' }
+    }
+    if (this.policy.get().presence.mode === 'identity' || this.policy.presenceIdentityPinned())
+      return {
+        status: 'unavailable',
+        reason: 'helper-signature',
+        message: '此数据目录使用发布确认组件，开发构建不能替代它。请打开已签名的 Latch。',
+      }
     let info
     try {
       info = await lstat(this.path)
@@ -282,7 +334,13 @@ class MacHelperBackend implements PresenceBackend {
     return await new Promise<PresenceOutcome>(resolve => {
       let child: ChildProcessLike
       try {
-        child = this.spawn(this.path, [], { env: {}, cwd: '/', stdio: ['pipe', 'pipe', 'ignore'] })
+        // The launcher remains a path-based spawn after a disk signature check. Its native check binds the suspended
+        // helper child, not this first hop; same-user replacement of the app/launcher is outside the Host's boundary.
+        child = this.spawn(this.identity ? presenceLauncherPath(this.codeRoot) : this.path, [], {
+          env: {},
+          cwd: '/',
+          stdio: ['pipe', 'pipe', 'ignore'],
+        })
       } catch {
         resolve({ result: 'error', message: '无法启动本机确认组件' })
         return

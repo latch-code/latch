@@ -209,7 +209,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - **重启期间的转发。** 主进程自己停止或启动 Host（手动重启、更新、崩溃后等待重启）时，转发失败只回 502 `host-unavailable`，页面显示正在重连，日志不记；其他情况下（例如另一次 `pnpm desktop` 重启了 Host）连不上超过 15 秒才记一次「转发请求失败」，恢复后重新计时。
 - **忙时保持唤醒。** 主进程每 5 秒从 `host-info` 读取运行中与等待审批的会话数。接电源时，有会话运行或有审批等待就持有 `powerSaveBlocker('prevent-app-suspension')`；用电池时只在有会话运行时持有，每次最长 1 小时。Host 未运行或没有响应时释放。开关保存在桌面端数据目录的 0600 `lifecycle.json`。
 - **没有窗口时。** 在 macOS 上关闭最后一个窗口不退出桌面端，重启与保持唤醒照常；退出桌面端后这两项停止，Host 继续运行。
-- **登录项。** 只有打包后的 Latch.app 提供「登录时打开 Latch」：开发运行时登记的会是 Electron 自己的 app 包。打包构建见「尚未实现」。
+- **登录项。** 只有打包后的 Latch.app 提供「登录时打开 Latch」：开发运行时登记的会是 Electron 自己的 app 包。构建与限制见「应用包与命令行」。
 
 **时间机器。** Host 每次启动时把含秘密的条目排除在时间机器备份之外：`auth/`、`identity/`、`mcp/`、`native/`、`providers.json`、`settings.json` 与 `provider.json`；改动快照的目录在打开时排除。
 
@@ -218,6 +218,24 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - 桌面端主进程排除自己数据目录中的 `latch-devices/`。
 - 做法是由 `/usr/bin/xattr` 以固定参数写入扩展属性 `com.apple.metadata:com_apple_backup_excludeItem`，值与 `tmutil addexclusion` 写入的相同；不直接调用 `tmutil`，因为它要等备份守护进程应答。已带该属性的条目不改写，不存在的路径跳过，从不读取文件内容，失败只记日志。
 - 会话、审计、`policy.json` 与 `host.log` 照常进入备份。
+
+### 应用包与命令行
+
+`pnpm package:desktop` 在已完成的 `dist/web` 与本机组件上生成 macOS `Latch.app`，拒绝覆盖已有输出。`Contents/Resources/app` 是独立的代码根：Host、CLI 与启动器打包依赖，构建插件页面需要的 esbuild、TypeScript 原生编译器与声明文件按本机已安装的精确版本复制。Electron 源自锁文件中的安装，不访问注册表。应用没有内置 Node、源码目录、pnpm 或测试确认后端；入口不在运行时编译本机组件。
+
+`Contents/Resources/bin/latch` 是原生入口。它从固定 Homebrew、fnm、nvm 安装目录查找 Node，不解析工作目录或 PATH 上的同名程序；解析真实路径后限制在安装根内，检查文件与父目录的属主、写权限与 Mach-O 头，再在空工作目录中用过滤后的环境探测受支持的安全版本。缺失、过旧或不可核对时只提示安装。Host 与 CLI 始终带 `--disable-sigusr1`，不使用 Electron 的 Node 模式。桌面端首次启动与每次重启均通过该入口重新核对系统 Node。
+
+正式 CLI 默认使用平台数据目录，忽略调用目录下的旧 `.runtime`；显式 `--data-dir` 与 `LATCH_DATA_DIR` 仍适用。源码的 `pnpm latch` 保留原兼容规则。`status` 经 `host.sock` 核对后报告运行状态与构建是否一致，`stop` 复用同一身份核验、忙时保护与 SIGTERM 流程；其他在线命令发现 Host 构建不同则要求重启 Latch。应用自己的终端将包内 `bin` 放入初始 PATH。
+
+设置中的命令行链接只接受本机主窗口的真实手势。只在当前用户拥有、他人不可写、非符号链接的 `~/.local/bin` 中独占创建 `latch` 链接；已有相同目标读作已链接，其他文件或链接读作占用，均不改写。更新同一路径的应用后链接自然指向新版本。移动应用后旧链接需所有者自行移除再重新链接。不会修改 profile 或 shell 配置。
+
+**确认组件身份。** 源码与本机 ad-hoc 签名应用继续固定 CDHash。发布构建将 Apple Developer ID Application 证书类别、公开 Team ID 与 `dev.latch.presence` 标识符编译为固定 requirement，运行时环境和 `policy.json` 均不能提供身份。策略严格校验 `mode`（旧文件缺省为 `cdhash`）与 `identityHash`，不保存可更改的 requirement。第一次发布安装先审计再固定；已有 CDHash 记录须停止 Host，显式运行 `presence repin` 并确认迁移；审计失败不迁移。丢失记录拒绝自动固定，换团队拒绝自动迁移，使用开发构建也不能降低已有身份模式。
+
+每次确认前核对 helper 与同团队的 `dev.latch.presence-launch` 签名和权限。原生启动器以 `POSIX_SPAWN_START_SUSPENDED` 创建确认进程，随后用 Security.framework 对实际子进程进行动态 requirement 校验，成功后才恢复执行；未核验的进程不能读取预览或写出批准。子进程未被回收期间 PID 不会复用。预览、摘要、nonce 与返回协议不变。
+
+信任起点仍是安装的应用与 Host 代码。Host 对启动器本身先做磁盘校验、再按路径执行，二者之间的竞态尚未消除；这不是对启动器实际进程的动态校验。启动器的动态校验覆盖其 helper 在文件检查后、创建进程前被替换，以及恢复执行前的身份不确定，不能用于宣称所有执行替换竞态都已消除。可以改写应用或 Host 的同用户恶意进程不在此边界之内，这仍不是操作系统隔离。
+
+当前产物用 ad-hoc 签名供本机验证，构建时先签内层框架与辅助进程，再签外层应用并递归验证。Electron 进程带 JIT 与库校验例外，以加载没有 Team ID 的本机框架。正式发行要用同一 Team ID 重新签名 Electron 与框架，并去除该 ad-hoc 库校验例外。发布签名、公证、更新源和 asar 完整性尚未完成。`--release` 缺少 Team ID 时直接拒绝；带 Team ID 的产物仍需所有者完成签名，未经正确签名的确认组件拒绝工作。
 
 ## 会话级别与审批风险
 
@@ -232,7 +250,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 | 路径 | 解析顺序 |
 | --- | --- |
-| 数据目录 | `--data-dir` → `LATCH_DATA_DIR` → 当前目录下已存在的 `.runtime`（打印迁移提示）→ macOS `~/Library/Application Support/Latch/Host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`，Windows `%APPDATA%\Latch\Host` |
+| 数据目录 | `--data-dir` → `LATCH_DATA_DIR` → 源码入口当前目录下已存在的 `.runtime`（打印迁移提示；应用包忽略）→ macOS `~/Library/Application Support/Latch/Host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`，Windows `%APPDATA%\Latch\Host` |
 | 启动目录 | `--workspace` → `LATCH_WORKSPACE` → 数据目录内已存在的 `workspace`（打印提示）→ `~/Latch/workspace` |
 | 工作树目录 | `LATCH_WORKTREES_DIR` → 启动目录旁边的 `worktrees`（见 [BRANCHES.md](BRANCHES.md#新建工作树)） |
 | Agent 安装目录 | `LATCH_AGENTS_DIR` → macOS `~/Library/Application Support/Latch/Agents`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/agents`，Windows `%APPDATA%\Latch\Agents`（只用于重叠检查） |
@@ -908,8 +926,8 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | Linux（polkit）与 Windows（Windows Hello）本机确认 | 未实现；这些系统上本机确认不可用，可用离线连接码登记桌面端，回环与 HTTPS 上的登记无法完成 |
 | 在 macOS 以外从桌面端打开浏览器 | 未实现；改用 `pnpm latch device invite --loopback` |
 | 无界面服务器的确认通道（独立系统用户、命令行确认） | 未实现，`policy.json` 的 `operators` 被忽略；Linux 服务器建议用独立系统用户运行 Host |
-| 打包的桌面端与登录项 | 尚无打包构建；登录项只能登记打包后的 Latch.app |
-| Electron fuses、签名安装包、asar 完整性、Secure Enclave 设备密钥 | 尚无打包构建；当前为开发版 |
+| 正式安装包 | 本机未签名 Latch.app 可构建；签名、公证与发布下载尚未提供，登录项只登记应用包 |
+| Electron fuses、asar 完整性、Secure Enclave 设备密钥 | 尚未实现；当前为开发版 |
 | 系统 Keychain 保存 Host 身份与密钥 | 需要签名的 Host 程序；目前为数据目录内的 0600 文件 |
 | 远程客户端的公钥固定、仅 mTLS 入口、证书自动申请与续期、可信反向代理配置 | 未实现；证书由运营者提供并续期（文件更新后 Host 自动重新加载）；从不读取代理请求头 |
 | 操作系统沙箱、Agent 出站代理、项目配置中和、托管安装 | 未实现；因此每个 ACP 与插件 Harness 会话都是 L3 |

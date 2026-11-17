@@ -50,6 +50,8 @@ const {
 const { createFileActions } = require('./files.cjs')
 const { createEditors, readEditorChoice, writeEditorChoice } = require('./editors.cjs')
 const { execFile } = require('node:child_process')
+const { packagedNode, startPackagedHost } = require('./packaged.cjs')
+const { createCliLink } = require('./cli-link.cjs')
 const { createNetworkSink } = require('./network.cjs')
 const { createPreviewBrowser, handleBrowserRequests } = require('./browser.cjs')
 const { createAgentRunner, createBrowserProvider } = require('./browser-agent.cjs')
@@ -114,6 +116,7 @@ function trafficLights() {
 
 /** The Host start script of this checkout: the only script the desktop app starts (see lifecycle.cjs). */
 const HOST_SCRIPT = resolve(__dirname, '../../../dist/start.js')
+const PACKAGED_CLI = resolve(__dirname, '../../../../bin/latch')
 const CHECK_INTERVAL_MS = 5_000
 
 function argument(name) {
@@ -136,7 +139,7 @@ if (app.isPackaged) {
 
 app.setName('Latch')
 app.setPath('userData', resolve(argument('latch-user-data') ?? join(app.getPath('appData'), 'Latch', 'Desktop')))
-const hostStatePath = argument('latch-host-state')
+let hostStatePath = argument('latch-host-state')
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -456,7 +459,8 @@ function hostSupervisor(hostId, statePath, hooks) {
     alive: isAlive,
     readLaunch: () => readLaunchRecord(dataDir, { script: HOST_SCRIPT }),
     writeLaunch: record => writeLaunchRecord(dataDir, record),
-    startHost: launch => spawnHost(launch, { dataDir, env: process.env }),
+    startHost: async launch =>
+      spawnHost(app.isPackaged ? { ...launch, node: await packagedNode(PACKAGED_CLI) } : launch, { dataDir, env: process.env }),
     terminate: pid => process.kill(pid, 'SIGTERM'),
     report: reportToHost,
     log,
@@ -474,6 +478,16 @@ const systemQuit = createSystemQuit()
  * keeps running until it is quit. Resolves whether macOS opened the app at login.
  */
 async function startLifecycle({ supervisor, hooks }) {
+  const cli = createCliLink({ target: PACKAGED_CLI, available: app.isPackaged })
+  ipcMain.handle('latch:cli:get', event => (trusted(event) ? cli.view() : undefined))
+  ipcMain.handle('latch:cli:install', async event => {
+    if (!trusted(event) || gestures.get(event.sender)?.take() !== true) return undefined
+    try {
+      return await cli.install()
+    } catch {
+      return { ...(await cli.view()), error: '无法创建命令行链接，请检查 ~/.local/bin 的权限。' }
+    }
+  })
   const userData = app.getPath('userData')
   const preferences = await readLifecyclePreferences(userData)
   let started = false
@@ -1149,6 +1163,13 @@ async function start() {
   if (process.platform === 'darwin') app.dock?.setIcon(icon)
   const storageProblem = secureStorageProblem(safeStorage)
   if (storageProblem) return fatal(storageProblem)
+  if (app.isPackaged && !hostStatePath) {
+    try {
+      hostStatePath = await startPackagedHost({ launcher: PACKAGED_CLI, dataDir: join(app.getPath('appData'), 'Latch', 'Host') })
+    } catch (error) {
+      return fatal(error instanceof Error ? error.message : '无法启动 Latch。')
+    }
+  }
   if (!hostStatePath) return fatal('缺少 --latch-host-state 参数。请用 pnpm desktop 启动 Latch 桌面端。')
   let state = await readHostStateFile(hostStatePath)
   let checked = state ? await inspectHostState(state) : undefined
@@ -1170,8 +1191,13 @@ async function start() {
       }
     }
   }
-  if (!state) return fatal('找不到正在运行的 Latch Host（host.json 缺失或格式不正确）。请用 pnpm desktop 启动。')
-  if (!checked?.ok) return fatal(`无法验证 Latch Host：${checked?.reason ?? '未知原因'}。请用 pnpm desktop 启动。`)
+  if (!state || !checked?.ok) {
+    const instruction = app.isPackaged ? '请重新打开 Latch 应用。' : '请用 pnpm desktop 启动。'
+    const message = state
+      ? `无法验证 Latch Host：${checked?.reason ?? '未知原因'}。`
+      : '找不到正在运行的 Latch Host（host.json 缺失或格式不正确）。'
+    return fatal(`${message}${instruction}`)
+  }
   previewBrowser.blockHost(state)
   if (!supervisor || supervisedId !== state.hostId) supervisor = hostSupervisor(state.hostId, hostStatePath, hooks)
 

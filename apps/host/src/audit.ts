@@ -122,6 +122,14 @@ export async function verifyAuditFile(path: string): Promise<{ ok: true; head: {
   return { ok: true, head: result.head, records: result.records.length }
 }
 
+/** Read-only snapshot for an offline tool inspecting a running Host; never repairs or appends to its log. */
+export async function readLatestAuditRecord(path: string, actions: readonly AuditAction[]): Promise<AuditRecord | undefined> {
+  const { lines } = splitComplete(await readFile(path, 'utf8'))
+  const verified = verifyLines(lines)
+  if (!verified.ok) throw new AppError(500, 'audit-chain-broken', '审计记录无法核对，未执行本机确认。')
+  return verified.records.findLast(record => actions.includes(record.action))
+}
+
 /** Test seam: the subset of a file handle the log writes through. */
 export interface AuditFileHandle {
   write(data: Buffer): Promise<{ bytesWritten: number }>

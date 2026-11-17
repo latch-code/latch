@@ -42,7 +42,15 @@ async function temporaryDirectory() {
  * each question with what stdout showed by then); `secret` is the key read from stdin either way.
  */
 function cli(
-  options: { tty?: boolean; typed?: boolean; answer?: string | boolean; secret?: string; cwd?: string; env?: NodeJS.ProcessEnv } = {},
+  options: {
+    tty?: boolean
+    typed?: boolean
+    answer?: string | boolean
+    secret?: string
+    cwd?: string
+    env?: NodeJS.ProcessEnv
+    program?: 'latch' | 'pnpm latch'
+  } = {},
 ) {
   const output = { stdout: '', stderr: '', asked: [] as Array<{ prompt: string; shown: string }>, secrets: 0 }
   const io: CliIO = {
@@ -69,9 +77,43 @@ function cli(
     ...(options.answer !== undefined ? { confirm: async () => options.answer === true } : {}),
     env: options.env ?? {},
     cwd: options.cwd ?? tmpdir(),
+    ...(options.program ? { program: options.program } : {}),
   }
   return { io, output, latch: (...argv: string[]) => runLatch(argv, io) }
 }
+
+describe('installed CLI', () => {
+  it('names both installed and source entry points without reading Host data', async () => {
+    const installed = cli({ program: 'latch' })
+    expect(await installed.latch('--help')).toBe(0)
+    expect(installed.output.stdout).toContain('用法：latch <命令>')
+    expect(installed.output.stdout).not.toContain('pnpm')
+    const source = cli()
+    expect(await source.latch('--help')).toBe(0)
+    expect(source.output.stdout).toContain('用法：pnpm latch <命令>')
+    const version = cli({ program: 'latch' })
+    expect(await version.latch('--version')).toBe(0)
+    expect(version.output.stdout).toMatch(/^Latch \d+\.\d+\.\d+\n$/u)
+  })
+
+  it('reports a stopped temporary data directory and stops it without creating state', async () => {
+    const dataDir = join(await temporaryDirectory(), 'absent')
+    const status = cli({ program: 'latch' })
+    expect(await status.latch('status', '--json', '--data-dir', dataDir)).toBe(0)
+    expect(JSON.parse(status.output.stdout)).toEqual({ status: 'stopped', dataDir })
+    const stop = cli({ program: 'latch' })
+    expect(await stop.latch('stop', '--data-dir', dataDir)).toBe(0)
+    expect(stop.output.stdout).toContain('没有正在运行的 Host')
+    await expect(stat(dataDir)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('reports a Host only after verifying its local socket identity', async () => {
+    const host = await runningHost()
+    const status = cli({ program: 'latch' })
+    expect(await status.latch('status', '--json', '--data-dir', host.dataDir)).toBe(0)
+    expect(JSON.parse(status.output.stdout)).toMatchObject({ status: 'running', pid: process.pid })
+  })
+})
 
 /** An in-process Host recorded in host.json, as start.ts would write it. */
 async function runningHost(options: Parameters<typeof startTestHost>[0] = {}): Promise<TestHost> {

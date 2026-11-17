@@ -1,3 +1,4 @@
+import { LATCH_COMMAND } from './commands.ts'
 import {
   escapeSecurityText,
   isAcceptableDeviceName,
@@ -317,13 +318,13 @@ export const ENROLLMENT_COPY = {
   offline: '用离线连接码连接',
   /** Why only the offline code is accepted, with the Host's reason (trailing full stops removed). */
   unavailable: (reason: string) =>
-    `Mac 现在不能确认：${reason || '未知原因'}。停止 Latch 服务后，在 Mac 上运行 pnpm latch device enroll --offline，把生成的离线连接码填在下面。`,
+    `Mac 现在不能确认：${reason || '未知原因'}。停止 Latch 服务后，在 Mac 上运行 ${LATCH_COMMAND} device enroll --offline，把生成的离线连接码填在下面。`,
   /** The same, where the Host takes no offline code (every listener but host.sock): nothing here can be submitted yet. */
   unavailableRemote: (reason: string) => `Mac 现在不能确认：${reason || '未知原因'}。要等它能确认后才能连接。`,
   invitationRequired: '这台设备还没连接到 Latch。用运行 Latch 的人发来的链接打开这一页，就能连接。',
   /** A browser on loopback is not this computer either: the desktop app makes its link, or the command line where there is none. */
   browserNotConnected: '这个浏览器还没连接到 Latch。在 Mac 上的 Latch 里点「在浏览器中打开」，或在终端运行：',
-  browserLinkCommand: 'pnpm latch device invite --loopback',
+  browserLinkCommand: `${LATCH_COMMAND} device invite --loopback`,
   name: '设备名称',
   namePlaceholder: '例如：我的手机',
   connectBrowser: '连接这个浏览器',
@@ -658,7 +659,8 @@ export const PROVIDER_COPY = {
   /** Other devices: the key field becomes this line. */
   keyElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里填写`,
   /** Without Touch ID or a password to confirm with, for an address not confirmed yet: the key goes in with the address. */
-  keyOffline: (id: string) => `地址确认之前不能在这里填写密钥：退出 Latch 后运行 pnpm latch provider set-key ${id}，密钥与地址一起确认。`,
+  keyOffline: (id: string) =>
+    `地址确认之前不能在这里填写密钥：停止 Latch 服务后运行 ${LATCH_COMMAND} provider set-key ${id}，密钥与地址一起确认。`,
   /** The add form on a device that cannot type keys, for a service that needs one. */
   keyAfterSave: (computer = 'Mac') => `保存后在 ${computer} 上填写密钥`,
   /** A saved service at a known address without a key: it is not offered. */
@@ -688,8 +690,8 @@ export const PROVIDER_COPY = {
   confirmElsewhere: (name: string, computer = 'Mac') => `需要在 ${computer} 上确认这个地址：设置 › 模型 › ${name}。`,
   /** A computer without Touch ID or a password to confirm with: the offline command. */
   confirmOffline: (id: string) =>
-    `这台电脑不能用 Touch ID 或登录密码确认。退出 Latch 后运行 pnpm latch provider confirm ${id}（或用 set-key 同时保存密钥），再启动 Latch。`,
-  confirmOfflineNew: '这台电脑不能用 Touch ID 或登录密码确认。先不填密钥保存，再退出 Latch，运行 pnpm latch provider confirm <服务 ID>。',
+    `这台电脑不能用 Touch ID 或登录密码确认。停止 Latch 服务后运行 ${LATCH_COMMAND} provider confirm ${id}（或用 set-key 同时保存密钥），再启动 Latch。`,
+  confirmOfflineNew: `这台电脑不能用 Touch ID 或登录密码确认。先不填密钥保存，再停止 Latch 服务，运行 ${LATCH_COMMAND} provider confirm <服务 ID>。`,
   /** A Mac whose confirmation component needs fixing (rebuilt, signature lost): the given reason, with its fix. */
   presenceBroken: (message: string) => `这台 Mac 暂时不能确认：${message}`,
   savedUnconfirmed: (computer = 'Mac') => `保存后在 ${computer} 上确认这个地址`,
@@ -939,9 +941,9 @@ const FIXED: Record<string, string> = {
   'fingerprint-mismatch': '这台设备的密钥和 Mac 读到的不一致，已停止连接。',
   'host-unavailable': '连不上这台 Mac 上的 Latch，请确认它还在运行。',
   'credential-store-failed': '无法安全保存设备凭据，连接未完成。',
-  'browser-open-unsupported': '此系统上不能从 Latch 应用直接打开浏览器，请运行 pnpm latch device invite --loopback。',
+  'browser-open-unsupported': `此系统上不能从 Latch 应用直接打开浏览器，请运行 ${LATCH_COMMAND} device invite --loopback。`,
   'browser-open-failed': '无法在浏览器中打开 Latch，请重试。',
-  'copy-link-unsupported': '此系统上不能从 Latch 应用复制链接，请运行 pnpm latch device invite。',
+  'copy-link-unsupported': `此系统上不能从 Latch 应用复制链接，请运行 ${LATCH_COMMAND} device invite。`,
   'copy-link-failed': '无法复制链接，请重试。',
   'native-not-configured': '请先在 设置 › 设备 中设置手机的连接方式。',
   'native-config-changed': '手机连接配置已变化。请重新打开设置连接，再核对后保存。',

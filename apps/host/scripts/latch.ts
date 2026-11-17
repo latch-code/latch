@@ -1,11 +1,11 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { constants } from 'node:fs'
+import { constants, realpathSync } from 'node:fs'
 import { lstat, open, readFile, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { createInterface } from 'node:readline/promises'
 import { promisify } from 'node:util'
 import QRCode from 'qrcode'
@@ -21,7 +21,7 @@ import {
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
-import { AuditLog, verifyAuditFile, type AuditActor } from '../src/audit.ts'
+import { AuditLog, readLatestAuditRecord, verifyAuditFile, type AuditActor } from '../src/audit.ts'
 import { RELAY_USAGE, RelayCliError, runRelayCommand } from './latch-relay.ts'
 import { createOfflineTicket } from '../src/auth.ts'
 import { CustomizationStore } from '../src/customization.ts'
@@ -32,6 +32,7 @@ import {
   acquireDataDirLock,
   processAlive,
   readHostState,
+  readDataDirLock,
   readRecordedPid,
   unixRequest,
   verifyHostState,
@@ -59,10 +60,15 @@ import {
   createPresenceBackend,
   presenceHelperPath,
   PRESENCE_ACTIONS,
+  verifyPresenceIdentity,
   type PresenceBackend,
 } from '../src/presence.ts'
 import { isLatchTerminal } from '../src/terminal/environment.ts'
 import { TRAFFIC_KINDS, type TrafficKind, type TrafficSummary } from '../src/traffic.ts'
+import { CLI_PROGRAM, PACKAGED, cliStopCommand } from '../src/distribution.ts'
+import { readCodeBuild } from '../src/ui-build.ts'
+import { runStop } from './stop-core.ts'
+import { releasePresenceIdentity } from '../src/presence-identity.ts'
 
 export interface CliIO {
   stdout: { write(text: string): unknown; isTTY?: boolean }
@@ -77,6 +83,7 @@ export interface CliIO {
   readLine(prompt: string): Promise<string>
   env: NodeJS.ProcessEnv
   cwd: string
+  program?: 'latch' | 'pnpm latch'
 }
 
 class CliError extends Error {
@@ -111,7 +118,7 @@ const STATUS_LABELS: Record<Device['status'], string> = {
   'legacy-pending': '需重新确认',
 }
 const SCOPES = new Set<string>(Object.keys(SCOPE_LABELS))
-const RUNNING = 'Host 正在运行，请先停止（pnpm stop）'
+const RUNNING = `Host 正在运行，请先停止（${cliStopCommand()}）`
 const PROJECT_RUNNING = 'Host 正在运行。请在 Latch 桌面端添加，或先停止 Host。'
 const PROJECT_REMOVE_RUNNING = 'Host 正在运行。请在 Latch 的「设置 → 项目」中移除，或先停止 Host。'
 const OFFLINE_WARNING = '离线连接依赖本机此刻没有恶意的同用户进程。只在无法使用本机确认时使用。'
@@ -122,8 +129,9 @@ const UNPINNED = '本机确认组件尚未记录。请先在这台电脑上打�
  */
 const BROWSER_SCOPES: readonly DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin']
 
-const USAGE = `用法：pnpm latch <命令> [--data-dir <目录>]
-
+const COMMANDS = `  version                                  查看 Latch 版本
+  status [--json]                          查看本机 Host 状态
+  stop [--force]                           停止已核对身份的 Host；忙时需要 --force
   device list [--json]                     列出已连接的设备（Host 运行中）
   device revoke <设备 ID>                   撤销设备（Host 运行中）
   device invite [--loopback] [--scopes view,run,...] [--code-file <路径>]
@@ -215,6 +223,11 @@ async function runningHost(dataDir: string): Promise<{ state: HostState; info: H
   const state = await readHostState(dataDir)
   const info = state && (await verifyHostState(state))
   if (!state || !info) throw new CliError(`没有可确认的运行中 Host（${dataDir}）。请先启动 Host。`)
+  if (PACKAGED) {
+    const root = latchCodeRoot()
+    const build = await readCodeBuild(join(root, 'dist/start.js'), join(root, 'dist/web'))
+    if (!build || info.build !== build) throw new CliError('运行中的 Host 与此 Latch 应用版本不一致，请重启 Latch 后重试。')
+  }
   return { state, info }
 }
 
@@ -524,11 +537,17 @@ async function readOnlyPolicy(dataDir: string): Promise<PolicyStore> {
   } catch {
     throw new CliError('无法读取安全策略文件 policy.json')
   }
-  const view: Pick<PolicyStore, 'get' | 'pinHelperCdhash'> = {
+  const pinned = await readLatestAuditRecord(join(dataDir, 'audit', 'audit.jsonl'), ['presence.helper.identity-pinned'])
+  const view: Pick<PolicyStore, 'get' | 'pinHelperCdhash' | 'pinHelperIdentity' | 'presenceIdentityPinned'> = {
     get: () => structuredClone(policy),
     pinHelperCdhash: () => Promise.reject(new CliError(UNPINNED)),
+    presenceIdentityPinned: () => pinned !== undefined,
+    pinHelperIdentity: hash =>
+      policy.presence.mode === 'identity' && policy.presence.identityHash === hash && pinned?.detail.identityHash === hash
+        ? Promise.resolve()
+        : Promise.reject(new CliError(UNPINNED)),
   }
-  // createPresenceBackend only reads through get() and pins through pinHelperCdhash().
+  // An identity check reads the verified audit snapshot; this view can never append or migrate behind the Host.
   return view as unknown as PolicyStore
 }
 
@@ -686,7 +705,9 @@ async function cdhashOf(path: string): Promise<string> {
   try {
     await run('/usr/bin/codesign', ['--verify', '--strict', path], { env: {} })
   } catch {
-    throw new CliError('latch-presence 签名无效，请重新运行 pnpm build:presence')
+    throw new CliError(
+      PACKAGED ? 'latch-presence 签名无效，请重新安装 Latch 应用' : 'latch-presence 签名无效，请重新运行 pnpm build:presence',
+    )
   }
   const { stderr } = await run('/usr/bin/codesign', ['-dvvv', path], { env: {} }).catch((error: { stderr?: string }) => ({
     stderr: error.stderr ?? '',
@@ -697,19 +718,68 @@ async function cdhashOf(path: string): Promise<string> {
 }
 
 export async function runLatch(argv: string[], io: CliIO): Promise<number> {
+  const program = io.program ?? CLI_PROGRAM
+  const usage = `用法：${program} <命令> [--data-dir <目录>]\n\n${COMMANDS}`
   const out = (text: string) => {
     io.stdout.write(text.endsWith('\n') ? text : text + '\n')
   }
   try {
     const { positional, flags } = parseArgs(argv)
     const [group, command, ...rest] = positional
-    if (!group || flags.has('--help')) {
-      out(USAGE)
-      return group ? 0 : 1
+    if ((!group && !flags.has('--version')) || flags.has('--help')) {
+      out(usage)
+      return flags.has('--help') || group ? 0 : 1
+    }
+    if ((group === 'version' && command === undefined) || flags.has('--version')) {
+      const manifest = JSON.parse(await readFile(join(latchCodeRoot(), 'package.json'), 'utf8')) as { version?: unknown }
+      if (typeof manifest.version !== 'string') throw new CliError('无法读取 Latch 版本')
+      out(`Latch ${manifest.version}`)
+      return 0
     }
     const dataDirFlag = flags.get('--data-dir')
-    const { dataDir } = resolveLatchPaths({ dataDir: typeof dataDirFlag === 'string' ? dataDirFlag : undefined, env: io.env, cwd: io.cwd })
+    const { dataDir } = resolveLatchPaths({
+      dataDir: typeof dataDirFlag === 'string' ? dataDirFlag : undefined,
+      env: io.env,
+      cwd: io.cwd,
+      legacyRuntime: program !== 'latch',
+    })
     const key = `${group} ${command ?? ''}`
+
+    if (group === 'stop' && command === undefined) {
+      return await runStop(['--data-dir', dataDir, ...(flags.has('--force') ? ['--force'] : [])], {
+        cwd: io.cwd,
+        env: io.env,
+        program,
+        out,
+        error: text => io.stderr.write(`${text}\n`),
+      })
+    }
+    if (group === 'status' && command === undefined) {
+      const state = await readHostState(dataDir)
+      const info = state && (await verifyHostState(state))
+      const lock = info ? undefined : await readDataDirLock(dataDir)
+      const recorded = state || info ? undefined : await readRecordedPid(dataDir)
+      const unknown =
+        (state && processAlive(state.pid))
+        || (lock && (!lock.holder || lock.held))
+        || (recorded?.present && (recorded.pid === undefined || processAlive(recorded.pid)))
+      const status = info ? 'running' : unknown ? 'unverified' : 'stopped'
+      let needsRestart = false
+      if (info && program === 'latch') {
+        const build = await readCodeBuild(join(latchCodeRoot(), 'dist/start.js'), join(latchCodeRoot(), 'dist/web'))
+        needsRestart = build === undefined || info.build !== build
+      }
+      out(
+        flags.has('--json')
+          ? JSON.stringify({ status, dataDir, ...(info ? { version: info.version, pid: info.pid, needsRestart } : {}) })
+          : status === 'running'
+            ? `Host 正在运行${needsRestart ? '；请重启 Latch 以使用新版本' : ''}（${dataDir}）。`
+            : status === 'unverified'
+              ? `无法核对 Host 的运行状态（${dataDir}）。`
+              : `没有正在运行的 Host（${dataDir}）。`,
+      )
+      return status === 'unverified' ? 1 : 0
+    }
 
     if (key === 'device list') {
       const { state } = await runningHost(dataDir)
@@ -805,7 +875,8 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
             out(`${expires} 前有效，只能使用一次。`)
           }
           // Only host.sock takes offline codes: a browser's loopback port may be forwarded from elsewhere.
-          out('启动 Latch 桌面端（pnpm desktop）后，在它的连接页面填写离线连接码。浏览器与手机不接受离线连接码。')
+          const launch = program === 'latch' ? '打开 Latch 应用' : '启动 Latch 桌面端（pnpm desktop）'
+          out(`${launch}后，在它的连接页面填写离线连接码。浏览器与手机不接受离线连接码。`)
         } finally {
           await audit.close()
         }
@@ -932,7 +1003,7 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       try {
         const { workspaces } = (await HostConfig.open(dataDir)).settings()
         if (flags.has('--json')) out(JSON.stringify(workspaces, null, 2))
-        else if (workspaces.length === 0) out('还没有项目。用 pnpm latch project add <路径…> 新建，或在 Latch 桌面端新建。')
+        else if (workspaces.length === 0) out(`还没有项目。用 ${program} project add <路径…> 新建，或在 Latch 桌面端新建。`)
         else
           out(
             table([
@@ -1037,16 +1108,35 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       if (process.platform !== 'darwin') throw new CliError('此系统暂不支持本机确认（Touch ID 或登录密码）')
       const lock = await lockStopped(dataDir)
       try {
-        const cdhash = await cdhashOf(presenceHelperPath(latchCodeRoot()))
         const audit = await AuditLog.open(join(dataDir, 'audit'))
         try {
           const policy = await PolicyStore.open({ dataDir, audit })
           const current = policy.get()
-          await policy.update({ ...current, presence: { ...current.presence, helperCdhash: cdhash } }, CLI_ACTOR, 'offline')
+          const identity = releasePresenceIdentity()
+          if (identity) {
+            if (!(await verifyPresenceIdentity(latchCodeRoot(), identity)))
+              throw new CliError('确认组件不符合应用内固定的发布签名身份，未修改记录。')
+            out(
+              `确认组件：${current.presence.mode ?? 'cdhash'} → identity；Apple Team ID：${identity.teamId}；标识符：dev.latch.presence。`,
+            )
+            if (!flags.has('--yes') && !(io.stdin.isTTY && (await io.confirm?.('固定此发布签名身份？[y/N] '))))
+              throw new CliError('未迁移确认组件身份；非交互环境须显式使用 --yes。')
+            await policy.pinHelperIdentity(identity.hash, true)
+            out('已固定本机确认组件的发布签名身份。')
+          } else {
+            if (current.presence.mode === 'identity' || policy.presenceIdentityPinned())
+              throw new CliError('此数据目录已固定发布签名身份，不能改用开发确认组件。')
+            const cdhash = await cdhashOf(presenceHelperPath(latchCodeRoot()))
+            await policy.update(
+              { ...current, presence: { backend: current.presence.backend, mode: 'cdhash', helperCdhash: cdhash } },
+              CLI_ACTOR,
+              'offline',
+            )
+            out(`已记录 latch-presence cdhash ${cdhash}`)
+          }
         } finally {
           await audit.close()
         }
-        out(`已记录 latch-presence cdhash ${cdhash}`)
       } finally {
         await lock.release()
       }
@@ -1124,7 +1214,7 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       io.stderr.write(`审计记录在第 ${result.line} 行校验失败（${result.reason}）。\n`)
       return 1
     }
-    out(USAGE)
+    out(usage)
     return 1
   } catch (error) {
     const message =
@@ -1332,7 +1422,7 @@ async function removeProjectFolder(
 ): Promise<boolean> {
   const [projectId, folderId] = rest
   if (!projectId) throw new CliError('请提供项目 ID')
-  if (folder && !folderId) throw new CliError('请提供文件夹 ID（pnpm latch project list --json 中的 folders[].id）')
+  if (folder && !folderId) throw new CliError(`请提供文件夹 ID（${io.program ?? CLI_PROGRAM} project list --json 中的 folders[].id）`)
   if (projectId === 'default') throw new CliError('默认文件夹由 Host 的启动参数决定，不能移除')
   const ask = io.stdout.isTTY ? io.confirm : undefined
   if (!ask && !flags.has('--yes')) throw new CliError('移除需要确认：在终端中运行，或加上 --yes')
@@ -1476,7 +1566,17 @@ async function readLine(prompt: string): Promise<string> {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+function isCliEntry(): boolean {
+  if (!process.argv[1]) return false
+  try {
+    // macOS resolves /var to /private/var in module URLs; the installed command can also be invoked through a symlink.
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(resolve(process.argv[1]))
+  } catch {
+    return false
+  }
+}
+
+if (isCliEntry()) {
   process.exitCode = await runLatch(process.argv.slice(2), {
     stdout: process.stdout,
     stderr: process.stderr,

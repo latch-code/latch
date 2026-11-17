@@ -14,6 +14,7 @@ import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
 import { CustomizationSettings } from './CustomizationSettings.tsx'
 import { BackdropTiles, DensityTiles, MotionChoice } from './AppearanceTiles.tsx'
+import { CliSettings } from './CliSettings.tsx'
 
 const THEMES: Array<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: '跟随系统' },
@@ -146,6 +147,7 @@ function ThisMac({ hostName, local }: { hostName: string; local: boolean }) {
         />
       )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {local && <CliSettings />}
     </SettingsGroup>
   )
 }

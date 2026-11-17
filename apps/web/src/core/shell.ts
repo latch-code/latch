@@ -81,6 +81,14 @@ export interface ShellLifecycle {
 
 export type ShellLifecycleResult = { ok: true; lifecycle: ShellLifecycle } | { ok: false; error: string; message: string }
 
+export interface ShellCli {
+  status: 'unavailable' | 'unlinked' | 'linked' | 'occupied'
+  path: string
+  target: string
+  inPath: boolean
+  error?: string
+}
+
 /** What the desktop app may do with a file a message refers to, as the Host and this computer decided. */
 export type FileInspection =
   | {
@@ -419,6 +427,10 @@ export interface LatchShell {
     restartHost(): Promise<ShellLifecycleResult>
     /** Main pushes each change; returns the function that stops listening. */
     subscribe(callback: (lifecycle: ShellLifecycle) => void): () => void
+  }
+  cli?: {
+    get(): Promise<ShellCli | undefined>
+    install(): Promise<ShellCli | undefined>
   }
   /** Shells from before file actions do not have it. */
   files?: ShellFiles

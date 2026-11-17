@@ -37,7 +37,10 @@
       // Electron loads these by path; the shell has no package exports.
       "entry": ["src/main.cjs", "src/preload.cjs"]
     },
-    "apps/host": {},
+    "apps/host": {
+      // Compiled into the application and selected by its native launcher.
+      "entry": ["scripts/desktop-launch.ts"]
+    },
     "apps/web": {
       // Static analysis only: running vite.config.ts as a dev-server config would read the default data directory. The
       // page's entry comes from index.html.

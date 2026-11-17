@@ -12,7 +12,9 @@ Latch 在你的电脑上运行一个 Host。Host 持有会话、执行权限、�
 - **模型**：Harness 自己登录的模型，或你在 Latch 里添加的模型服务（Chat Completions、Responses 或 Anthropic Messages 协议）。
 - **项目**：一个或多个文件夹，第一个是主文件夹。
 
-> 当前是开发版：没有签名安装包，从源码运行。
+macOS 可在构建后运行 `pnpm package:desktop -- --out /绝对路径/Latch.app` 生成供本机验收的 ad-hoc 签名应用。它包含 Host、页面、本机组件与 `latch`，运行时不需要源码或 pnpm。请自行安装满足下表版本要求的系统 Node，应用启动时会检测。正式签名、公证和发布下载尚未提供。
+
+包内命令位于 `Latch.app/Contents/Resources/bin/latch`。设置 › 通用 › 这台 Mac › 命令行可将它链接到 `~/.local/bin/latch`；已有命令不会被覆盖，shell 配置不会被修改。应用自己的终端直接可用。`latch status` 查看节点，`latch stop` 停止节点，`latch --help` 列出其他命令；源码入口 `pnpm latch` 保留。关闭应用不等于停止 Host。
 
 ## 要求
 
@@ -66,6 +68,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 
 - `pnpm build` 构建它并做 ad-hoc 签名，也可单独运行 `pnpm build:presence`；`pnpm start` 发现它缺失时会尝试构建。缺少 Xcode 命令行工具时没有本机确认。
 - Host 记录组件的签名。重新构建使签名变化后本机确认不可用：停止 Host，运行 `pnpm latch presence repin`，再启动。
+- 本机 ad-hoc 签名应用沿用上述 CDHash 固定。发布身份构建通过 `--presence-team <公开 Apple Team ID>` 将 Developer ID、团队与 `dev.latch.presence` 要求编入 Host 与启动器；它不会调用钥匙串或代签名，所有者签名完成前确认功能拒绝运行。已有 CDHash 数据目录须在 Host 停止后显式运行 `latch presence repin` 迁移，先写审计；同身份的后续更新不需要重新固定。身份模式不会回退到开发组件。
 - `pnpm latch presence status` 查看状态；`pnpm latch presence test` 显示一次示例确认，确认或拒绝都不改变设置。
 
 **本机确认不可用时**（Linux、未构建组件）用离线连接码连接桌面端：停止 Host，运行 `pnpm latch device enroll --offline`，再 `pnpm desktop`，在桌面端的连接页填写这个码。码 15 分钟内有效、只能用一次，只有桌面端接受；它依赖此刻本机没有恶意的同用户进程。浏览器与手机的连接都需要本机确认，这时无法完成。

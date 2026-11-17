@@ -183,8 +183,9 @@ function writeLifecyclePreferences(directory, preferences) {
  */
 function hostEnvironment(env) {
   const result = {}
+  const allowed = new Set(['HOME', 'USER', 'LOGNAME', 'PATH', 'SHELL', 'TMPDIR', 'LANG', 'SSH_AUTH_SOCK', '__CF_USER_TEXT_ENCODING'])
   for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || /^(?:LATCH|ELECTRON)_/u.test(name) || name === 'NODE_OPTIONS') continue
+    if (value === undefined || (!allowed.has(name) && !name.startsWith('LC_'))) continue
     result[name] = value
   }
   return result
@@ -494,7 +495,7 @@ function createHostSupervisor(options) {
       return {
         ok: false,
         error: 'host-environment',
-        message: '这个 Host 的设置来自环境变量，桌面端无法按原样启动，请重新运行 pnpm desktop。',
+        message: '这个 Host 的设置来自环境变量，桌面端无法按原样启动，请在原启动终端重新启动。',
       }
     if (live) {
       const result = await inspect(live)

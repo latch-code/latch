@@ -21,6 +21,7 @@ import {
 import { AppError } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
 import { localOnly } from '../access.ts'
+import { PACKAGED } from '../distribution.ts'
 import { canonicalPath, isInsidePath, latchCodeRoot } from '../paths.ts'
 import { loginShell, shellRunning, terminalEnvironment, type ShellCommand } from './environment.ts'
 import {
@@ -387,7 +388,12 @@ export class TerminalService {
       resolved.check?.(opened)
       this.options.checkWorkingDirectory?.(terminal.cwd)
       this.refuseWhileHeld()
-      const env = terminalEnvironment({ hostEnv: this.options.hostEnv ?? process.env, shell: shell.file, folder })
+      const env = terminalEnvironment({
+        hostEnv: this.options.hostEnv ?? process.env,
+        shell: shell.file,
+        folder,
+        ...(PACKAGED ? { cliDir: join(latchCodeRoot(), '..', 'bin') } : {}),
+      })
       await new Promise<void>((resolve, reject) => {
         let timer: NodeJS.Timeout | undefined
         const settle = (error?: AppError) => {

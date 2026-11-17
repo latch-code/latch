@@ -1,3 +1,4 @@
+import { LATCH_COMMAND } from './commands.ts'
 import type { UpdateState } from './shell.ts'
 
 declare const __LATCH_BUILD__: string | undefined
@@ -24,7 +25,7 @@ export function oldHostWords(computer: string): { title: string; label: string; 
   return {
     title: `${computer} 上的 Latch 还是旧版本`,
     label: '重启 Latch 后才能用新功能',
-    detail: `在 ${computer} 上停止 Latch；若确认组件也更新了，运行 pnpm latch presence repin；再启动 Latch。`,
+    detail: `在 ${computer} 上停止 Latch 服务；开发确认组件更新后运行 ${LATCH_COMMAND} presence repin；再启动 Latch。`,
   }
 }
 

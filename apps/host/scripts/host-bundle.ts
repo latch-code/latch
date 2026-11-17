@@ -44,7 +44,7 @@ const testCodeGuard: Plugin = {
 }
 
 /** esbuild options for every bundle of a Host entry point: `pnpm build:host` and tests that bundle an entry the same way. */
-export async function hostBundleOptions(): Promise<BuildOptions> {
+export async function hostBundleOptions(options: { packaged?: boolean; presenceTeam?: string } = {}): Promise<BuildOptions> {
   const manifest = Manifest.parse(JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package.json'), 'utf8')))
   // Installed dependencies stay imports that Node resolves at run time from the repository root's node_modules, next to
   // dist/, so the list comes from the root manifest, which declares every package the bundled code loads; a package name
@@ -90,8 +90,17 @@ export async function hostBundleOptions(): Promise<BuildOptions> {
     format: 'esm',
     // The root tsconfig.json is a solution without compiler options, and esbuild does not follow its references.
     tsconfig: join(REPOSITORY_ROOT, 'tsconfig.host.json'),
-    external,
-    define: { __LATCH_EXECUTION_BUILD__: JSON.stringify(digest.digest('hex')) },
+    external: options.packaged ? ['esbuild'] : external,
+    ...(options.packaged
+      ? {
+          banner: { js: "import { createRequire as __latchRequire } from 'node:module'; const require = __latchRequire(import.meta.url);" },
+        }
+      : {}),
+    define: {
+      __LATCH_EXECUTION_BUILD__: JSON.stringify(digest.digest('hex')),
+      __LATCH_PACKAGED__: JSON.stringify(options.packaged === true),
+      __LATCH_PRESENCE_TEAM__: JSON.stringify(options.presenceTeam ?? null),
+    },
     plugins: [testCodeGuard],
   }
 }

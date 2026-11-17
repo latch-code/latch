@@ -63,6 +63,19 @@ describe('terminal environment', () => {
     expect(isLatchTerminal({ TERM_PROGRAM: 'Apple_Terminal', LC_TERMINAL: 'iTerm2' })).toBe(false)
   })
 
+  it('puts the application command before system commands without inheriting a project PATH or loader variables', () => {
+    const cliDir = '/Applications/Latch.app/Contents/Resources/bin'
+    const env = terminalEnvironment({
+      hostEnv: { PATH: '/project', NODE_OPTIONS: '--inspect', LATCH_API_KEY: 'fixture' },
+      shell: '/bin/zsh',
+      folder: '/project',
+      cliDir,
+    })
+    expect(env.PATH).toBe(`${cliDir}:${LOGIN_PATH}`)
+    expect(env.NODE_OPTIONS).toBeUndefined()
+    expect(env.LATCH_API_KEY).toBeUndefined()
+  })
+
   it('gives an environment without a locale a UTF-8 one, and fills in who the user is', () => {
     const env = terminalEnvironment({ hostEnv: {}, shell: '/bin/zsh', folder: '/tmp' })
     expect(env.LANG).toBe('en_US.UTF-8')

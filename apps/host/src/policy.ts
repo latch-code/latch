@@ -1,3 +1,4 @@
+import { CLI_PROGRAM } from './distribution.ts'
 import { isIPv6 } from 'node:net'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -47,13 +48,25 @@ export const policySchema = z.strictObject({
   insecureLan: z.strictObject({ enabled: z.literal(false) }),
   /** The operator channel is not implemented yet; entries are ignored with a startup warning. */
   operators: z.array(z.unknown()).max(16),
-  presence: z.strictObject({
-    backend: z.enum(['macos-helper', 'none']),
-    helperCdhash: z
-      .string()
-      .regex(/^[0-9a-f]{40}$/u)
-      .nullable(),
-  }),
+  presence: z
+    .strictObject({
+      backend: z.enum(['macos-helper', 'none']),
+      /** Absent only in an older policy; it means the original CDHash rule. */
+      mode: z.enum(['cdhash', 'identity']).optional(),
+      identityHash: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/u)
+        .optional(),
+      helperCdhash: z
+        .string()
+        .regex(/^[0-9a-f]{40}$/u)
+        .nullable(),
+    })
+    .refine(
+      value =>
+        value.mode === 'identity' ? value.helperCdhash === null && value.identityHash !== undefined : value.identityHash === undefined,
+      '确认组件的模式与固定值不一致',
+    ),
   hostEgressAllow: z
     .array(z.string().refine(isEgressEntry, '出站白名单条目必须是 host:port'))
     .max(64)
@@ -280,6 +293,12 @@ export class PolicyStore {
    */
   pinHelperCdhash(cdhash: string): Promise<void> {
     const run = this.queue.then(async () => {
+      if (this.policy.presence.mode === 'identity' || this.presenceIdentityPinned())
+        throw new AppError(
+          409,
+          'presence-identity-required',
+          '此数据目录已固定发布签名身份，不能改用开发确认组件。请打开已签名的 Latch 应用。',
+        )
       if (!/^[0-9a-f]{40}$/u.test(cdhash)) throw new AppError(500, 'presence-cdhash-invalid', '本机确认组件的签名摘要格式无效')
       const pinned = this.policy.presence.helperCdhash
       if (pinned === cdhash) return
@@ -287,19 +306,57 @@ export class PolicyStore {
         throw new AppError(
           409,
           'presence-already-pinned',
-          '本机确认组件记录了其他签名；如需更换，请停止 Host 后运行 pnpm latch presence repin。',
+          `本机确认组件记录了其他签名；如需更换，请停止 Host 后运行 ${CLI_PROGRAM} presence repin。`,
         )
       if (this.audit.latest(['presence.helper.pinned'])) {
         throw new AppError(
           409,
           'presence-repin-required',
-          '本机确认组件的签名记录已丢失（policy.json 被修改或删除）。请停止 Host 后运行 pnpm latch presence repin。',
+          `本机确认组件的签名记录已丢失（policy.json 被修改或删除）。请停止 Host 后运行 ${CLI_PROGRAM} presence repin。`,
         )
       }
       await this.audit.append({ action: 'presence.helper.pinned', actor: { listener: 'host', via: 'startup' }, detail: { cdhash } })
       const candidate = structuredClone(this.policy)
       candidate.presence.helperCdhash = cdhash
       await this.commit(candidate, ['presence.helperCdhash'], false, { listener: 'host', via: 'startup' }, 'none')
+    })
+    this.queue = run.catch(() => {})
+    return run
+  }
+
+  presenceIdentityPinned(): boolean {
+    return this.audit.latest(['presence.helper.identity-pinned']) !== undefined
+  }
+
+  /** First release install, or an explicit offline migration. Never silently replace a previous trust decision. */
+  pinHelperIdentity(identityHash: string, migrate = false): Promise<void> {
+    const run = this.queue.then(async () => {
+      if (!/^[0-9a-f]{64}$/u.test(identityHash)) throw new AppError(500, 'presence-identity-invalid', '发布签名要求的摘要无效')
+      const previous = this.audit.latest(['presence.helper.identity-pinned'])
+      const current = this.policy.presence
+      if (previous && previous.detail.identityHash !== identityHash)
+        throw new AppError(409, 'presence-identity-changed', '发布签名身份已变化，必须使用原发布者提供的迁移版本。')
+      if (current.mode === 'identity' && current.identityHash !== identityHash)
+        throw new AppError(409, 'presence-identity-changed', '发布签名身份与此数据目录的记录不符。')
+      if (current.mode === 'identity' && current.identityHash === identityHash && previous) return
+      if (!migrate && (previous || current.helperCdhash !== null || this.audit.latest(['presence.helper.pinned'])))
+        throw new AppError(409, 'presence-repin-required', '本机确认需要迁移到发布签名身份。请停止 Host 后运行 latch presence repin。')
+      const actor: AuditActor = migrate ? { listener: 'cli', via: 'cli' } : { listener: 'host', via: 'startup' }
+      await this.audit.append({
+        action: 'presence.helper.identity-pinned',
+        actor,
+        stepup: migrate ? 'offline' : 'none',
+        detail: { identityHash, migration: migrate },
+      })
+      const candidate = structuredClone(this.policy)
+      candidate.presence = { backend: current.backend, mode: 'identity', helperCdhash: null, identityHash }
+      await this.commit(
+        candidate,
+        ['presence.mode', 'presence.helperCdhash', 'presence.identityHash'],
+        false,
+        actor,
+        migrate ? 'offline' : 'none',
+      )
     })
     this.queue = run.catch(() => {})
     return run

@@ -439,7 +439,15 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 - 原生对话框、`shell.openExternal`、`shell.showItemInFolder`、通知与剪贴板在主进程中替换成记录调用的内存实现：不打开真实面板，不投递系统通知，不读写系统剪贴板。系统剪贴板、原生粘贴快捷键、通知授权与专注模式要实机验证。
 - 模型服务用例阻断外部 DNS，只用本地假服务；终端用例用假终端组件，登录用例运行夹具里的假 `codex login`，从不运行真实 CLI 的登录。
 - 拒绝导航的检查放在用例最后：Playwright 把被拒绝的导航一直当作进行中，所以由主进程触发并监听 `will-frame-navigate`，之后只读取地址、不再驱动页面。
-- 用例以开发模式运行（`devMode: true`）。打包构建尚未实现，仓库中没有可供 e2e 启动的打包产物；打包版本才启用的启动参数与调试开关只有 `desktop-proxy.test.ts` 的单元用例覆盖。
+- 常规用例以开发模式运行（`devMode: true`）。正式打包模式拒绝调试参数与 mock keychain，不能为 Playwright 放宽这条规则。`desktop-cli.e2e.ts` 可通过 `LATCH_PACKAGE_APP` 指向本机应用包，使用复制出的主进程与 preload、临时用户目录和 mock keychain，验证命令行链接与布局；这不等于真实签名应用或钥匙串验收。
+
+### 应用包定向验收
+
+先 `pnpm build`，再运行 `pnpm package:desktop -- --out <新的绝对路径/Latch.app>`。`LATCH_PACKAGE_APP=<该路径> pnpm exec vitest run --config vitest.config.ts apps/host/test/distribution.test.ts` 将包内运行代码与 CLI 复制到临时目录，从不含源码的工作目录启动，使用停用本机确认的临时数据目录、演示模型、端口 0，并经 `latch status`、`device list`、`stop` 核对。它另在项目 PATH 放假 Node、设置假的加载器变量，验证没有执行项目里的程序或 Node 加载器。没有 `LATCH_PACKAGE_APP` 时该部分明确跳过。
+
+同一文件编译原生发布启动器，验证不符固定身份的组件被拒绝，不运行真实确认表单。`presence-identity.test.ts` 验证首次固定、显式迁移、审计失败、身份变化、记录丢失、禁止降级，以及每次调用前重新检查。Apple Team ID 尚未提供时不能完成真实 Developer ID 正向验证与 Touch ID 验收。
+
+`desktop-cli.e2e.ts` 的三种链接状态、三种宽度与浅深色截图默认写 `test-results/desktop-cli`；`LATCH_PACKAGE_SHOTS` 可指定验收目录。用户命令与 shell 配置只用测试自己的临时 home，真实 `~/.local/bin` 不变。
 
 ## 构建产物检查
 
@@ -556,7 +564,7 @@ pnpm latch presence test --data-dir <临时目录>
 - 真实模型服务的兼容矩阵、真实 BYOK，以及真实 ACP Agent 的提示执行。假进程与手写回放不是真实 CLI 的录制。对真实 Agent 只做人工验收；可以在不发送提示的前提下检查握手（`initialize`、`session/new`）。
 - macOS 的系统确认表单（见上一节）、原生文件夹面板、Quick Look、系统通知与系统剪贴板。
 - Linux 与 Windows 上的本机确认尚未实现（没有对应的确认组件），相关用例只覆盖「不可用」路径与桌面端的离线连接码。
-- 打包后的 Electron 应用（尚未实现）。
+- 正式签名、公证后的 Electron 应用、真实系统 Node 安装路径的跨机器矩阵与发布身份的正向验证。
 - 真机 Safari：Playwright WebKit 与 Chromium 的手机尺寸、触控模拟都不代表它。
 
 ## 已执行与未执行

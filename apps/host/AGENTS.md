@@ -5,7 +5,7 @@
 | `src/server.ts`、`routes/`、`src/task-delta.ts`、`src/task-content.ts` | HTTP/SSE、认证、投影与限速（`test/route-guards.test.ts`） |
 | `src/native*.ts`、`relay/` | 原生连接、发现、墓碑与目录 |
 | `src/auth.ts`、`presence*.ts`、`agent-probes.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-*.ts`、`model-gateway/`、`risk.ts`、`paths.ts` | 设备与登记；本机确认与理由；审计；`policy.json`；出站与模型网关；风险分级；路径 |
-| `src/host-state.ts`、`crypto.ts`、`identity.ts`、`hub.ts`、`session-meta.ts`、`prompt-queues.ts`、`questions.ts`、`agent-*.ts`、`config.ts`、`providers.ts` | Host 状态与锁、加密、会话路由及回执、Agent 与接力规则、配置与插件（`plugin-packages.ts`） |
+| `src/host-state.ts`、`hub.ts`、`session-meta.ts`、`agent-*.ts`、`config.ts`、`providers.ts` | 状态与锁、加密、会话路由及回执、Agent 与接力规则、配置与插件（`plugin-packages.ts`） |
 | `src/plugins/<种类>/<id>/` | 内置插件：`providers/` 下各协议与 `demo`（共用 `http.ts`、`service.ts`、`*-wire.ts`）、`tools/{workspace-files,safe-tools}`、`standard` |
 | `scripts/` | 启停、CLI、桌面启动与构建（`build-*.ts`） |
 | `test/` | 夹具：`test/helpers/host.ts` |
@@ -16,9 +16,9 @@
 - 出站经注入的 `fetch` 和策略，限预置或已确认地址；密钥限绑定的源和路径，更新前与锁内复核所见目标（MODEL-CONFIGURATION、`test/providers.test.ts`）。
 - Standard 由 `classifyStandardCall` 分级；`requiresApproval` 不能降级，未列工具（含插件工具）、异常或未知值均按 R2（`test/risk.test.ts`）。
 - 插件目录只用 `@latch/sdk`、`@latch/protocol`、本目录与种类目录下的共用文件，不导入 Host 或其他插件目录；只有 `standard` 用 `@latch/core`（`.oxlintrc.json`）。
-- `latchCodeRoot()` 定位仓库根，不随项目目录（ARCHITECTURE）。
+- `latchCodeRoot()` 定位代码根，不随项目目录（ARCHITECTURE）。
 - 同项目的变更与启动串行、跨项目不等，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。分支与工作树见 BRANCHES。
-- 本机确认只经 `PresenceService` 的系统表单（`PRESENCE_ACTIONS`），没有设备签名批准的路径。
+- 本机确认只经 `PresenceService`，无设备签名批准。开发固定 CDHash；发布固定编译身份、核验子进程，迁移先离线审计、失败不降级（ARCHITECTURE）。
 - 终端限 `host.sock`、`all`，复核目录身份，环境用 `terminalEnvironment`（[TERMINAL](../../docs/TERMINAL.md)）。
 - 本机 MCP 提示先审计、持久化来源再转发；远程拒绝（MCP.md）。
 - 构建禁测试代码；组件自检；私有框架只在 `latch-simulator`（DEVICE-PREVIEW）。

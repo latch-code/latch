@@ -117,6 +117,7 @@ export const HOST_ACTIONS = {
   'policy.changed': policyChange,
   'policy.changed-outside': z.strictObject({ expected: hex64, actual: hex64 }),
   'presence.helper.pinned': z.strictObject({ cdhash: z.string().regex(/^[0-9a-f]{40}$/u) }),
+  'presence.helper.identity-pinned': z.strictObject({ identityHash: z.string().regex(/^[0-9a-f]{64}$/u), migration: z.boolean() }),
   'presence.result': z.strictObject({
     confirmationId: prefixed('cfm'),
     action: presenceAction,

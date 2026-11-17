@@ -16,6 +16,7 @@ export const AUDIT_LABELS: Readonly<Record<AuditAction, readonly [AuditKind, str
   'policy.changed-outside': ['host', '策略在 Latch 外被修改'],
   'presence.launch-trusted': ['host', '确认：信任启动方式'],
   'presence.helper.pinned': ['host', '钉住本机确认组件'],
+  'presence.helper.identity-pinned': ['host', '固定确认组件发布身份'],
   'presence.result': ['host', '本机确认的结果'],
   'settings.changed': ['host', '修改设置'],
   'settings.changed-outside': ['host', '设置在 Latch 外被修改'],

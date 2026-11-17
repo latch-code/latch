@@ -389,10 +389,7 @@ function isAppSender(event) {
 function createBrowserOpener({ invite, open, platform, log = () => {} }) {
   let opening
   return function openInBrowser() {
-    if (platform !== 'darwin')
-      return Promise.resolve(
-        refusal(409, 'browser-open-unsupported', '此系统上不能从桌面端直接打开浏览器，请运行 pnpm latch device invite --loopback。'),
-      )
+    if (platform !== 'darwin') return Promise.resolve(refusal(409, 'browser-open-unsupported', '此系统上不能从桌面端直接打开浏览器。'))
     opening ??= (async () => {
       try {
         const result = await invite()
@@ -442,8 +439,7 @@ function createLinkCopier({ invite, clipboard, platform, log = () => {}, setTime
     }
   }
   return function copyLink() {
-    if (platform !== 'darwin')
-      return Promise.resolve(refusal(409, 'copy-link-unsupported', '此系统上不能从桌面端复制链接，请运行 pnpm latch device invite。'))
+    if (platform !== 'darwin') return Promise.resolve(refusal(409, 'copy-link-unsupported', '此系统上不能从桌面端复制链接。'))
     copying ??= (async () => {
       try {
         const result = await invite()

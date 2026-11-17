@@ -87,6 +87,24 @@ describe('resolveLatchPaths', () => {
     })
   })
 
+  it('installed commands never inspect a legacy runtime in the working directory', () => {
+    const visited: string[] = []
+    const paths = resolveLatchPaths({
+      env: {},
+      cwd: '/project',
+      home: '/Users/me',
+      platform: 'darwin',
+      legacyRuntime: false,
+      exists: path => {
+        visited.push(path)
+        return path === '/project/.runtime'
+      },
+    })
+    expect(paths.dataDirSource).toBe('default')
+    expect(paths.dataDir).toBe('/Users/me/Library/Application Support/Latch/Host')
+    expect(visited).not.toContain('/project/.runtime')
+  })
+
   it('resolves the workspace and agents directory', () => {
     const base = { cwd: '/w', home: '/home/me', platform: 'linux' as const, exists: none }
     expect(resolveLatchPaths({ ...base, env: {}, workspace: 'proj' })).toMatchObject({ workspaceRoot: '/w/proj', workspaceSource: 'flag' })

@@ -26,6 +26,7 @@ import { loadPluginPackage } from '../src/plugin-packages.ts'
 import { createShutdown } from './shutdown.ts'
 import { cleanupPluginGenerations } from './cleanup-plugin-generations.ts'
 import { readCodeBuild } from '../src/ui-build.ts'
+import { CLI_PROGRAM, PACKAGED, cliStopCommand } from '../src/distribution.ts'
 
 const PLAINTEXT_REMOVED = '明文局域网接入已移除：请提供 --tls-cert、--tls-key 和 --public-origin（例如用 tailscale cert 生成的证书）。'
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1'])
@@ -167,7 +168,9 @@ async function refuseHostWithoutLock(dataDir: string): Promise<void> {
   const state = await readHostState(dataDir)
   if (state) {
     if (await verifyHostState(state))
-      throw new StartupError(`这个数据目录已有 Host 在运行（进程 ${state.pid}）。请先停止它（pnpm stop），或使用其他 --data-dir。`)
+      throw new StartupError(
+        `这个数据目录已有 Host 在运行（进程 ${state.pid}）。请先停止它（${cliStopCommand()}），或使用其他 --data-dir。`,
+      )
     return
   }
   const recorded = await readRecordedPid(dataDir)
@@ -206,7 +209,7 @@ async function main(): Promise<void> {
     plugins.push(await loadPluginPackage(path))
   }
   const codeRoot = latchCodeRoot()
-  if (process.platform === 'darwin' && !existsSync(presenceHelperPath(codeRoot)) && !presenceDisabled(paths.dataDir)) {
+  if (!PACKAGED && process.platform === 'darwin' && !existsSync(presenceHelperPath(codeRoot)) && !presenceDisabled(paths.dataDir)) {
     const built = await buildPresenceHelper({ codeRoot, log: (text: string) => console.error(redactKnownSecrets(text)) })
     if (!built.built) console.error(redactKnownSecrets(built.message))
   }
@@ -300,7 +303,7 @@ async function main(): Promise<void> {
   console.log(`Latch ${LATCH_VERSION} · ${demo ? '演示模型 / 真实工具' : '模型服务'}`)
   // Loopback enrollment takes an invitation: the desktop app opens one, or the CLI prints one to a terminal.
   console.log(
-    `浏览器：${server.loopbackOrigin}/link/（新浏览器从 Latch 桌面端「在这台电脑的浏览器中打开」，或运行 pnpm latch device invite --loopback）`,
+    `浏览器：${server.loopbackOrigin}/link/（新浏览器从 Latch 桌面端「在这台电脑的浏览器中打开」，或运行 ${CLI_PROGRAM} device invite --loopback）`,
   )
   console.log(`默认文件夹：${paths.workspaceRoot}`)
   if (sessionFolders) console.log('不在项目中的 Agent 会话各自使用默认文件夹中新建的一个文件夹。')

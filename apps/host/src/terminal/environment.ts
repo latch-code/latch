@@ -85,7 +85,12 @@ export function shellRunning(shell: ShellCommand, command: string): ShellCommand
   return { file: shell.file, argv: [...shell.argv, '-i', '-c', command] }
 }
 
-export function terminalEnvironment(input: { hostEnv: NodeJS.ProcessEnv; shell: string; folder: string }): Record<string, string> {
+export function terminalEnvironment(input: {
+  hostEnv: NodeJS.ProcessEnv
+  shell: string
+  folder: string
+  cliDir?: string
+}): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [name, value] of Object.entries(input.hostEnv)) {
     if (value !== undefined && (INHERITED.has(name) || name.startsWith('LC_'))) env[name] = value
@@ -103,7 +108,7 @@ export function terminalEnvironment(input: { hostEnv: NodeJS.ProcessEnv; shell: 
   // Without a UTF-8 locale the line editor treats Chinese input and output as single bytes. An app started from the
   // Dock has none.
   if (env.LANG === undefined && env.LC_ALL === undefined && env.LC_CTYPE === undefined) env.LANG = 'en_US.UTF-8'
-  env.PATH = LOGIN_PATH
+  env.PATH = input.cliDir ? `${input.cliDir}:${LOGIN_PATH}` : LOGIN_PATH
   env.SHELL = input.shell
   env.PWD = input.folder
   env.TERM = 'xterm-256color'

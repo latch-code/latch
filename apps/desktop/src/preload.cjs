@@ -598,6 +598,10 @@ if (!REMOTE)
       ...(LIGHTS ? { lights: LIGHTS } : {}),
       platform: process.platform,
       previews: Object.freeze({ protocolVersion: 1, htmlScripts: true }),
+      cli: Object.freeze({
+        get: () => ipcRenderer.invoke('latch:cli:get'),
+        install: () => ipcRenderer.invoke('latch:cli:install'),
+      }),
       folders: Object.freeze({
         protocolVersion: 1,
         /** No project: a new project. A project: more folders for it; with a folder, that folder chosen again. */

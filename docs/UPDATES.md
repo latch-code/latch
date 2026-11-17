@@ -144,9 +144,9 @@ Host 在 `host-info` 与安装窗口接口里报告 `protocol`（`HOST_PROTOCOL`
 
 ## 尚未实现与外部阻塞
 
-以下需要所有者提供，仓库里没有，也没有在真实环境验证：
+`pnpm package:desktop` 生成供本机验收的 ad-hoc 签名应用，包内带 Host、网页资源和 `latch`。发布仍需要以下配置与验收。
 
-- **打包配置与发布流水线**：生成 `Latch.app` 及 zip 资产、把 Host 与网页资产放进包内、写入 `update-source.cjs`。
+- **发布流水线**负责生成已签名的 zip 资产、启用并核对 Electron 的完整性保护、写入 `update-source.cjs`。
 - **签名与公证**：Developer ID Application 证书与 notarytool 凭据。Squirrel.Mac 只为签名一致的应用安装更新。
 - **更新托管**：一个固定的 HTTPS 地址，提供签名后的更新源与同源资产。
 - **Ed25519 发布密钥**：私钥由所有者离线保管用于签发更新源，公钥写入构建。

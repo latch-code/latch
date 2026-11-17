@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { writeFileAtomic } from '@latch/core/node-kit'
+import { cliStopCommand } from './distribution.ts'
 
 /** `<data>/host.json`: how local tools find a running Host. It holds no credential. */
 export const hostStateSchema = z
@@ -151,7 +152,7 @@ async function readLockFile(path: string): Promise<{ text: string; holder?: Data
 function lockedError(path: string, holder: DataDirLockHolder): AppError {
   const message =
     holder.role === 'host'
-      ? `这个数据目录已有 Host 在运行或正在启动（进程 ${holder.pid}）。请先停止它（pnpm stop），或使用其他 --data-dir；如果确认没有 Host 在运行，删除锁文件 ${path} 后重试。`
+      ? `这个数据目录已有 Host 在运行或正在启动（进程 ${holder.pid}）。请先停止它（${cliStopCommand()}），或使用其他 --data-dir；如果确认没有 Host 在运行，删除锁文件 ${path} 后重试。`
       : `另一个 latch 命令正在使用这个数据目录（进程 ${holder.pid}），请等它结束后重试；如果确认没有 latch 命令或 Host 在运行，删除锁文件 ${path} 后重试。`
   return new AppError(409, 'data-dir-locked', message, { pid: holder.pid, role: holder.role, path })
 }
@@ -366,14 +367,14 @@ export async function acquireDataDirLock(dataDir: string, role: DataDirLockHolde
     throw new AppError(
       409,
       'data-dir-lock-invalid',
-      `数据目录锁 ${path} 无法读取。请先停止 Host（pnpm stop）；如果确认没有 Host 或 latch 命令在使用这个目录，删除该文件后重试。`,
+      `数据目录锁 ${path} 无法读取。请先停止 Host（${cliStopCommand()}）；如果确认没有 Host 或 latch 命令在使用这个目录，删除该文件后重试。`,
       { path },
     )
   }
   throw new AppError(
     409,
     'data-dir-locked',
-    `无法取得数据目录锁 ${path}，请稍后重试。仍然失败时，先停止 Host（pnpm stop）；如果确认没有 Host 或 latch 命令在使用这个目录，删除该文件后重试。`,
+    `无法取得数据目录锁 ${path}，请稍后重试。仍然失败时，先停止 Host（${cliStopCommand()}）；如果确认没有 Host 或 latch 命令在使用这个目录，删除该文件后重试。`,
     { path },
   )
 }

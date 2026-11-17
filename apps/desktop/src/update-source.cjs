@@ -1,7 +1,7 @@
 'use strict'
-// Where a packaged build looks for updates and the key that signs them. The packaging step (not in this repository yet;
+// Where a release build looks for updates and the key that signs them. The release signing step (not provided yet;
 // see docs/UPDATES.md) writes the fixed HTTPS feed URL, the base64 SPKI of the Ed25519 release key and whether the app
-// is signed. A source checkout carries none, so it reports updates as unsupported. Nothing at run time (the page, a
+// is signed. Source and local unsigned packages carry none, so updates are unsupported. Nothing at run time (the page, a
 // plugin, an argument or the environment) can change these.
 module.exports = Object.freeze({
   /** @type {string | null} */

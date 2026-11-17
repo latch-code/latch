@@ -253,6 +253,8 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 - 底部终端只在这台 Mac 上有终端能力时出现；折叠保留同一个终端，手机与远程浏览器没有入口（[TERMINAL.md](TERMINAL.md)）。
 - 终端分屏：窗格之间一条 `--line` 细线即把手；分屏后每个窗格有 24px 的头（名字、结束状态、×），聚焦窗格的名字是墨色、顶边 2px `--line-strong`，不用主色；窄到放不下两个 40 列时逐个显示为页签（[TERMINAL.md](TERMINAL.md#界面)）。
 
+**命令行。** 应用包在「设置 › 通用 › 这台 Mac」提供一行状态与「链接 latch」按钮。状态为未链接、已链接、被其他命令占用；链接位置与目标放在悬停，冲突时不覆盖。当前 PATH 不含用户 bin 时展示可复制的 `export PATH` 命令，由人自行运行；没有解释段落，不修改 shell 配置。
+
 ## 界面原语
 
 原语在 `@latch/ui`（[index.ts](../packages/ui/src/index.ts)）：React 组件加它们在 ui 层的样式。页面从这里取控件，不各自画一份。类名以 `ui-` 开头，变体与尺寸写在 `data-variant`、`data-size`、`data-tone` 上，状态直接用 ARIA 属性（`aria-pressed`、`aria-checked`、`aria-expanded`、`aria-disabled`、`aria-busy`、`aria-invalid`），不另设状态类。页面负责内容、请求和布局。原语总览页 `packages/ui/test/gallery` 只供测试（[TESTING.md](TESTING.md#组件测试浏览器模式)）。

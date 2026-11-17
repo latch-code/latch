@@ -6,6 +6,7 @@ import { computerState } from '../core/computers.ts'
 import { shellComputers, type ComputersView, type ComputerView } from '../core/shell.ts'
 import { IconTile, Loading, NoteLine, ObjectRow, SettingsGroup } from './common.tsx'
 import { MessageError } from '../core/api.ts'
+import { LATCH_COMMAND } from '../core/commands.ts'
 
 /** The address of a computer as a person reads it: host and port. */
 function host(origin: string): string {
@@ -88,8 +89,8 @@ export function ComputersSettings() {
           api.add ? (
             <div className="settings-note">
               <Hint label="从另一台电脑添加">
-                在那台电脑的 Latch 里打开 设置 › 设备，点「复制链接」，再回到这里点「添加电脑」；或选择 pnpm latch device invite --code-file
-                写出的文件。确认在那台电脑上完成。
+                在那台电脑的 Latch 里打开 设置 › 设备，点「复制链接」，再回到这里点「添加电脑」；或选择 {LATCH_COMMAND} device invite
+                --code-file 写出的文件。确认在那台电脑上完成。
               </Hint>
             </div>
           ) : undefined

@@ -5,7 +5,7 @@ type Tone = 'neutral' | 'warn' | 'error'
 
 /** Why the login item cannot be used here, or what it needs; empty when it works. */
 export function loginItemNote(view: ShellLifecycle['loginItem']): string {
-  if (view.reason === 'development') return '只有打包后的 Latch 应用能设为登录项。当前是开发运行（pnpm desktop），打包版本尚未提供。'
+  if (view.reason === 'development') return '只有打包后的 Latch 应用能设为登录项。当前是源码开发运行。'
   if (view.reason === 'platform') return '只在 macOS 上可用。'
   if (view.needsApproval) return '需要在「系统设置 › 通用 › 登录项」中允许 Latch。'
   return ''
@@ -37,7 +37,7 @@ export function hostLine(view: ShellLifecycle['host']): { text: string; tone: To
       }
     case 'crashed':
       return view.reason === 'environment'
-        ? { text: 'Latch 服务意外退出。它的设置来自环境变量，Latch 应用不能按原样启动它，请重新运行 pnpm desktop。', tone: 'error' }
+        ? { text: 'Latch 服务意外退出。它的设置来自环境变量，请在原启动终端重新启动。', tone: 'error' }
         : { text: 'Latch 服务意外退出。它不是由 Latch 应用启动的，不会自动重新启动。', tone: 'error' }
     case 'stopped':
       return { text: 'Latch 服务已停止。', tone: 'warn' }
