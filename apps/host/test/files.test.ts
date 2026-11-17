@@ -690,7 +690,8 @@ describe('file routes', () => {
     const removed = await desktop.request(`tasks/${sessionId}`, { method: 'DELETE' })
     expect(removed.status).toBe(200)
     const gone = await act(desktop, deck, sessionId, 'reveal')
-    expect(gone.status).toBe(404)
-    expect(await gone.json()).toMatchObject({ error: 'task-not-found' })
+    // Deleting a session drops its file handles first, so the handle answers before the session lookup.
+    expect(gone.status).toBe(410)
+    expect(await gone.json()).toMatchObject({ error: 'file-handle-expired' })
   })
 })
