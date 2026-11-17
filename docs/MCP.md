@@ -408,7 +408,7 @@ detail 只有服务器 ID 与类别。令牌、code、state、verifier、Client 
 ## Harness 自己的 MCP
 
 - **只显示 Harness 经协议报告的。** 从不读写任何 CLI 的配置（`~/.codex/config.toml`、`~/.claude.json`、`~/.cursor/mcp.json` 等），也不代它登录。
-- 只有 Codex 直连报告：app-server 的 `mcpServerStatus/list` 与 `mcpServer/startupStatus/updated`（[HARNESSES.md](HARNESSES.md#codex-的-app-server)）。其他 Harness 写「这个 Harness 不报告自己的 MCP」。
+- 只有 Codex 直连报告：app-server 的 `mcpServerStatus/list` 与 `mcpServer/startupStatus/updated`（[HARNESSES.md](HARNESSES.md#codex-的-app-server)）。其他 Harness 写「这个 Harness 没有报告」。这些列在「设置 › 扩展」每个 Harness 的「MCP」组里（[HARNESSES.md](HARNESSES.md#扩展)），与 Latch 给它的服务器与厂商的 `mcp add`/`mcp remove` 命令在一起；「设置 › MCP」与 Harness 页只留一行通往那里。
 - `HarnessInfo.ownMcp` 只在报告的 Harness 上有：`last`（服务器、时间、来自会话还是读取，读取只得到名字时 `namesOnly`）、`running`、`failed`。只在 Host 内存里，定义变了就作废。
 - 每个服务器只有名字、状态、工具数与远程服务器的源，只读。
 - Codex 报告需要登录时给出它自己的 `codex mcp login <名字>`（名字只有字母、数字、`-`、`_` 且不以 `-` 开头时才给）。Latch 不调用它的 OAuth。

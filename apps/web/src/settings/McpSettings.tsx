@@ -51,7 +51,7 @@ import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 import { dateTime } from '../format.ts'
 import { IconTile, Loading, MiddleEllipsis, NoteLine, ObjectRow, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
-import { HarnessesMcp } from './HarnessMcp.tsx'
+import { ExtensionsLink } from './ExtensionsLink.tsx'
 import { ImportDialog, importedForm } from './McpImport.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
@@ -1905,11 +1905,7 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
           }}
         />
       )}
-      <HarnessesMcp
-        harnesses={snapshot.catalog?.harnesses ?? []}
-        run={access.scopes.has('run')}
-        latchNames={data.servers.map(server => server.name)}
-      />
+      <ExtensionsLink title="Harness 自己的 MCP" />
       {!local && (
         <div className="settings-note">
           <Hint label="只在这台 Mac 上添加和修改">停用可以在任何能管理这台 Mac 的设备上做；添加、修改与移除只在这台 Mac 的 Latch 里。</Hint>

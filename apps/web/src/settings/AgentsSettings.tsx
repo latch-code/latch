@@ -42,7 +42,7 @@ import { FieldDialog } from './dialogs.tsx'
 import { AgentProbe } from './AgentProbe.tsx'
 import { LoginGroup } from './LoginGroup.tsx'
 import { loginSurface, type LoginSurface } from '../panel/terminal/loginRuns.ts'
-import { HarnessMcpGroup } from './HarnessMcp.tsx'
+import { ExtensionsLink } from './ExtensionsLink.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 
@@ -689,7 +689,7 @@ function AgentPage({
         {preset && <InstallRows preset={preset} />}
       </SettingsGroup>
       {harness?.login && <LoginGroup harness={harness} allowed={run} surface={surface} probe={agent.lastProbe} />}
-      {harness && <HarnessMcpGroup harness={harness} title="MCP" run={run} />}
+      {harness && <ExtensionsLink title="技能、命令、MCP 与插件" harnessId={harness.id} />}
       {probe && <AgentProbe agent={agent} disabled={busy} disabledReason={probeDisabledReason} onSaved={onSaved} />}
       <SettingsGroup>
         <SettingsRow

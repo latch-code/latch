@@ -3,6 +3,7 @@ export type SettingsSection =
   | 'providers'
   | 'engines'
   | 'mcp'
+  | 'extensions'
   | 'workspaces'
   | 'plugins'
   | 'devices'
@@ -59,6 +60,7 @@ const WIDE_SECTIONS: readonly SettingsSection[] = [
   'providers',
   'engines',
   'mcp',
+  'extensions',
   'workspaces',
   'plugins',
   'devices',

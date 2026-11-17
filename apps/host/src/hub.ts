@@ -493,6 +493,24 @@ export class HarnessHub implements Bridge {
     return current() ? { ...result, current } : undefined
   }
 
+  /** 设置 › 扩展: the newest previous-session report of the harness's current definition, from a session `accept` takes. */
+  async latestCommandReportOf(
+    harnessId: string,
+    accept: (sourceSessionId: string) => boolean,
+  ): Promise<{ sourceSessionId: string; workspaceId?: string; catalogue: HarnessCommandCatalogue; current(): boolean } | undefined> {
+    const member = this.member(harnessId)
+    if (!member?.bridge.latestCommandReport) return undefined
+    const result = await member.bridge.latestCommandReport(accept)
+    if (!result) return undefined
+    const current = () =>
+      !this.closing
+      && this.member(harnessId) === member
+      && this.ownerOf(result.sourceSessionId) === harnessId
+      && this.meta.has(result.sourceSessionId)
+      && accept(result.sourceSessionId)
+    return current() ? { ...result, current } : undefined
+  }
+
   info(id: string): HarnessInfo | undefined {
     const entry = this.entries.get(id)
     return entry && this.describe(entry)

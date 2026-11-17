@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
-import { Cable } from 'lucide-react'
+import { Blocks, Cable } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
@@ -8,6 +8,7 @@ import { computerName, SETTINGS_ADMIN_HIDDEN } from '../core/securityCopy.ts'
 import { currentShell, shellComputers } from '../core/shell.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { SettingsNavigationProvider, type SettingsNavigation } from './navigation.tsx'
+import { OpenExtensions } from './extensionsLinkContext.ts'
 import { deferredComponent } from '../components/DeferredContent.tsx'
 import { ProvidersSection } from './ProvidersSection.tsx'
 import { ModelSettingsReads, settingsReadAudience } from './modelSettingsReads.ts'
@@ -44,6 +45,10 @@ const PhoneDevicesPage = deferredComponent(
 const ComputersSettings = deferredComponent(async () => ({ default: (await import('./ComputersSettings.tsx')).ComputersSettings }), '电脑')
 const GeneralSettings = deferredComponent(async () => ({ default: (await import('./GeneralSettings.tsx')).GeneralSettings }), '通用设置')
 const PluginsSettings = deferredComponent(async () => ({ default: (await import('./PluginsSettings.tsx')).PluginsSettings }), '插件设置')
+const ExtensionsSettings = deferredComponent(
+  async () => ({ default: (await import('./ExtensionsSettings.tsx')).ExtensionsSettings }),
+  '扩展',
+)
 const McpSettings = deferredComponent(async () => ({ default: (await import('./McpSettings.tsx')).McpSettings }), 'MCP')
 const ShortcutsSettings = deferredComponent(
   async () => ({ default: (await import('./ShortcutsSettings.tsx')).ShortcutsSettings }),
@@ -60,8 +65,9 @@ const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   providers: '服务 密钥 key 添加服务 添加模型服务 单价 预算 显示的模型 已确认的地址 地址 出站',
   engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
   mcp: 'mcp 服务器 工具 连接器 npx 命令',
+  extensions: '技能 命令 插件 mcp 安装 卸载 更新 harness 自带 latch 提供',
   workspaces: '文件夹 添加项目 新建项目 快照',
-  plugins: '工具 技能 扩展',
+  plugins: '工具 技能 页面 数据面板',
   shortcuts: '键盘',
   devices: '设备 手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 在浏览器中打开 关于连接 policy 开始新会话',
   computers: '添加电脑 其他电脑 移除 切换 打开',
@@ -89,12 +95,13 @@ const sections: Array<{
   secured?: boolean
   shell?: boolean
   /** A Host feature the section's routes need. */
-  feature?: 'mcp'
+  feature?: 'mcp' | 'extensions'
 }> = [
   { id: 'general', label: '通用', icon: SettingsGlyph, admin: false },
   { id: 'providers', label: '模型', icon: ModelGlyph, admin: true, catalog: true },
   { id: 'engines', label: 'Harness', icon: HarnessGlyph, admin: true, catalog: true },
   { id: 'mcp', label: 'MCP', icon: Cable, admin: true, catalog: true, feature: 'mcp' },
+  { id: 'extensions', label: '扩展', icon: Blocks, admin: true, catalog: true, feature: 'extensions' },
   { id: 'workspaces', label: '项目', icon: FolderGlyph, admin: true, catalog: true },
   { id: 'plugins', label: '插件', icon: PluginsGlyph, admin: true },
   { id: 'devices', label: '设备', icon: DevicesGlyph, admin: false, secured: true },
@@ -183,6 +190,17 @@ export function SettingsPage({
   const ids = settingsSectionsAt(phone).filter(id => allowed.includes(id))
   const available = ids.flatMap(id => sections.filter(section => section.id === id))
   const [query, setQuery] = useState('')
+  // A Harness's 扩展 page, opened from its 设置 › Harness page or from 设置 › MCP.
+  const [extensionsHarness, setExtensionsHarness] = useState<string>()
+  // Asked for once: leaving the section forgets it, so coming back shows the list.
+  if (extensionsHarness !== undefined && chosen !== 'extensions') setExtensionsHarness(undefined)
+  const openExtensions = useCallback(
+    (harnessId?: string) => {
+      setExtensionsHarness(harnessId)
+      onSection('extensions')
+    },
+    [onSection],
+  )
   const found = searchSections(available, query)
   const searchable = available.length > 1
   const search = useRef<HTMLDivElement>(null)
@@ -290,119 +308,128 @@ export function SettingsPage({
         <IconButton label="关闭设置" icon={CloseGlyph} data-autofocus="" onClick={onClose} />
       </header>
       <SettingsNavigationProvider value={navigation}>
-        <div className="settings-layout" data-level={level}>
-          <div className="settings-nav-pane" inert={pushed || undefined}>
-            {searchable && (
-              <div ref={search} className="settings-search">
-                <SearchField
-                  label="搜索设置"
-                  placeholder="搜索设置"
-                  value={query}
-                  onValueChange={setQuery}
-                  trailing={!phone && !query ? <Kbd>/</Kbd> : undefined}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' && found[0]) open(found[0].id)
-                  }}
-                />
-              </div>
-            )}
-            <div ref={tabs} className="settings-nav" role="tablist" aria-orientation="vertical" aria-label="设置分类" onKeyDown={keydown}>
-              {found.map(section => (
-                <button
-                  key={section.id}
-                  id={`settings-tab-${section.id}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={active === section.id}
-                  aria-controls="settings-panel"
-                  tabIndex={active === section.id || (active === null && section.id === (shown ?? available[0].id)) ? 0 : -1}
-                  onClick={() => {
-                    open(section.id)
-                  }}>
-                  <Icon icon={section.icon} size={phone ? 20 : 16} solid={active === section.id} />
-                  <span>{section.label}</span>
-                  {phone && <Icon icon={ChevronRightGlyph} size={16} className="chevron" />}
-                </button>
-              ))}
-            </div>
-            {found.length === 0 && <p className="settings-nav-caption">没有找到「{query.trim()}」</p>}
-            {caption && (
-              <p className="settings-nav-caption">
-                <Icon icon={LockGlyph} size={14} />
-                <span>{caption}</span>
-              </p>
-            )}
-          </div>
-          {/* On phones the panel is laid out off-screen from the start, so the first section slides in too. */}
-          {(panel !== null || phone) && (
-            <section
-              className="settings-panel"
-              role={panel !== null ? 'tabpanel' : undefined}
-              id="settings-panel"
-              aria-labelledby={panel !== null ? `settings-tab-${panel}` : undefined}
-              aria-hidden={panel === null || undefined}
-              inert={(phone && (!pushed || level === 'page')) || undefined}>
-              {phone && (
-                <header className="settings-bar">
-                  <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
-                  <h2>{current?.label}</h2>
-                </header>
+        <OpenExtensions.Provider value={ids.includes('extensions') ? openExtensions : undefined}>
+          <div className="settings-layout" data-level={level}>
+            <div className="settings-nav-pane" inert={pushed || undefined}>
+              {searchable && (
+                <div ref={search} className="settings-search">
+                  <SearchField
+                    label="搜索设置"
+                    placeholder="搜索设置"
+                    value={query}
+                    onValueChange={setQuery}
+                    trailing={!phone && !query ? <Kbd>/</Kbd> : undefined}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' && found[0]) open(found[0].id)
+                    }}
+                  />
+                </div>
               )}
-              <div className="settings-scroll">
-                {panel !== null && (
-                  // 设备 (its list, a device's permissions, pairing) keeps the product's own tokens under every customisation.
-                  <div
-                    key={panel}
-                    className={panel === 'providers' ? 'settings-content' : 'settings-content settings-enter'}
-                    data-lock={panel === 'devices' ? '' : undefined}>
-                    {/* The section's name heads it; a page opened inside it names itself under its way back. */}
-                    {!phone && depth === 0 && current && <h1 className="settings-title">{current.label}</h1>}
-                    {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
-                    {panel === 'providers' && (
-                      <ProvidersSection key={reads.audience} snapshot={snapshot} access={access} reads={reads} onChanged={onChanged} />
-                    )}
-                    {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}
-                    {panel === 'mcp' && <McpSettings snapshot={snapshot} />}
-                    {panel === 'shortcuts' && (
-                      <ShortcutsSettings
-                        spaces={snapshot.catalog?.features?.customAgents === true}
-                        delegate={canDelegate(snapshot, access)}
-                      />
-                    )}
-                    {panel === 'workspaces' && (
-                      <WorkspacesSettings
-                        snapshot={snapshot}
-                        access={access}
-                        onChanged={onChanged}
-                        initialProjectId={initialProjectId}
-                        {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
-                      />
-                    )}
-                    {panel === 'plugins' && (
-                      <PluginsSettings
-                        snapshot={snapshot}
-                        access={access}
-                        onChanged={onChanged}
-                        {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
-                        {...(onOpenApp ? { onOpenApp } : {})}
-                      />
-                    )}
-                    {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
-                    {panel === 'computers' && <ComputersSettings />}
-                    {panel === 'about' && (
-                      <AboutSettings
-                        snapshot={snapshot}
-                        access={access}
-                        {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
-                      />
-                    )}
-                  </div>
-                )}
+              <div ref={tabs} className="settings-nav" role="tablist" aria-orientation="vertical" aria-label="设置分类" onKeyDown={keydown}>
+                {found.map(section => (
+                  <button
+                    key={section.id}
+                    id={`settings-tab-${section.id}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={active === section.id}
+                    aria-controls="settings-panel"
+                    tabIndex={active === section.id || (active === null && section.id === (shown ?? available[0].id)) ? 0 : -1}
+                    onClick={() => {
+                      open(section.id)
+                    }}>
+                    <Icon icon={section.icon} size={phone ? 20 : 16} solid={active === section.id} />
+                    <span>{section.label}</span>
+                    {phone && <Icon icon={ChevronRightGlyph} size={16} className="chevron" />}
+                  </button>
+                ))}
               </div>
-            </section>
-          )}
-          {phone && <div ref={setLayers} className="settings-levels" data-lock={panel === 'devices' ? '' : undefined} />}
-        </div>
+              {found.length === 0 && <p className="settings-nav-caption">没有找到「{query.trim()}」</p>}
+              {caption && (
+                <p className="settings-nav-caption">
+                  <Icon icon={LockGlyph} size={14} />
+                  <span>{caption}</span>
+                </p>
+              )}
+            </div>
+            {/* On phones the panel is laid out off-screen from the start, so the first section slides in too. */}
+            {(panel !== null || phone) && (
+              <section
+                className="settings-panel"
+                role={panel !== null ? 'tabpanel' : undefined}
+                id="settings-panel"
+                aria-labelledby={panel !== null ? `settings-tab-${panel}` : undefined}
+                aria-hidden={panel === null || undefined}
+                inert={(phone && (!pushed || level === 'page')) || undefined}>
+                {phone && (
+                  <header className="settings-bar">
+                    <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
+                    <h2>{current?.label}</h2>
+                  </header>
+                )}
+                <div className="settings-scroll">
+                  {panel !== null && (
+                    // 设备 (its list, a device's permissions, pairing) keeps the product's own tokens under every customisation.
+                    <div
+                      key={panel}
+                      className={panel === 'providers' ? 'settings-content' : 'settings-content settings-enter'}
+                      data-lock={panel === 'devices' ? '' : undefined}>
+                      {/* The section's name heads it; a page opened inside it names itself under its way back. */}
+                      {!phone && depth === 0 && current && <h1 className="settings-title">{current.label}</h1>}
+                      {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
+                      {panel === 'providers' && (
+                        <ProvidersSection key={reads.audience} snapshot={snapshot} access={access} reads={reads} onChanged={onChanged} />
+                      )}
+                      {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}
+                      {panel === 'mcp' && <McpSettings snapshot={snapshot} />}
+                      {panel === 'extensions' && (
+                        <ExtensionsSettings
+                          snapshot={snapshot}
+                          {...(extensionsHarness ? { initialHarness: extensionsHarness } : {})}
+                          onSection={onSection}
+                        />
+                      )}
+                      {panel === 'shortcuts' && (
+                        <ShortcutsSettings
+                          spaces={snapshot.catalog?.features?.customAgents === true}
+                          delegate={canDelegate(snapshot, access)}
+                        />
+                      )}
+                      {panel === 'workspaces' && (
+                        <WorkspacesSettings
+                          snapshot={snapshot}
+                          access={access}
+                          onChanged={onChanged}
+                          initialProjectId={initialProjectId}
+                          {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
+                        />
+                      )}
+                      {panel === 'plugins' && (
+                        <PluginsSettings
+                          snapshot={snapshot}
+                          access={access}
+                          onChanged={onChanged}
+                          {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
+                          {...(onOpenApp ? { onOpenApp } : {})}
+                        />
+                      )}
+                      {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
+                      {panel === 'computers' && <ComputersSettings />}
+                      {panel === 'about' && (
+                        <AboutSettings
+                          snapshot={snapshot}
+                          access={access}
+                          {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+            {phone && <div ref={setLayers} className="settings-levels" data-lock={panel === 'devices' ? '' : undefined} />}
+          </div>
+        </OpenExtensions.Provider>
       </SettingsNavigationProvider>
     </section>
   )

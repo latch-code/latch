@@ -1359,6 +1359,43 @@ export class AgentRuntime implements Bridge {
     }
   }
 
+  /**
+   * The newest cached report of the current definition from any folder, for 设置 › 扩展: only what a real session of it
+   * reported, still matching that session's own record. Reads the cache in memory; never starts or probes a program.
+   */
+  async latestCommandReport(
+    accept: (sourceSessionId: string) => boolean = () => true,
+  ): Promise<{ sourceSessionId: string; workspaceId?: string; catalogue: HarnessCommandCatalogue } | undefined> {
+    await this.ready()
+    this.assertOpen()
+    const definitionHash = this.definitionNow(true)
+    if (!definitionHash) return undefined
+    for (const record of this.commandCache.reportsOf(definitionHash)) {
+      const source = this.state.tasks[record.sourceSessionId]
+      if (
+        !source?.acp.commandContext
+        || source.acp.launchHash !== record.launchHash
+        || !isDeepStrictEqual(source.commands, record.commands)
+        || !isDeepStrictEqual(source.skills, record.skills)
+        || source.skillsTruncated !== record.skillsTruncated
+        || !accept(record.sourceSessionId)
+      )
+        continue
+      const workspaceId = source.acp.commandContext.workspaceId
+      return {
+        sourceSessionId: record.sourceSessionId,
+        ...(workspaceId ? { workspaceId } : {}),
+        catalogue: {
+          commands: record.commands,
+          ...(record.skills ? { skills: record.skills, ...(record.skillsTruncated ? { skillsTruncated: true } : {}) } : {}),
+          reportedAt: record.reportedAt,
+          source: 'previous-session',
+        },
+      }
+    }
+    return undefined
+  }
+
   catalogue(): HarnessCatalogue | undefined {
     const stored = this.state.catalogue
     if (!this.loaded || !stored || this.definitionNow() !== stored.definitionHash) return undefined

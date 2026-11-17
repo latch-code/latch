@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, McpImportCandidate } from '@latch/protocol'
-import { HarnessMcpGroup, HarnessesMcp, NOT_REPORTED, harnessMcpWord } from '../src/settings/HarnessMcp.tsx'
+import { HarnessMcpGroup, NOT_REPORTED, harnessMcpWord } from '../src/settings/HarnessMcp.tsx'
 import { candidateLine, importedForm } from '../src/settings/McpImport.tsx'
 import { hiddenCharacters } from '../src/settings/McpSettings.tsx'
 
@@ -80,24 +80,6 @@ describe('a Harness’s own MCP', () => {
     expect(html).toContain('github')
     expect(html).not.toContain('状态未知')
     expect(html).toContain('只有名字')
-  })
-
-  it('in 设置 › MCP, gives Codex its own group and lists the rest as not reporting', () => {
-    const html = render(
-      createElement(HarnessesMcp, {
-        harnesses: [
-          harness({ ownMcp: {} }),
-          harness({ id: 'claude', capabilities: { display: { label: 'Claude Agent', mark: 'claude' } } as HarnessInfo['capabilities'] }),
-          harness({ id: 'standard', editable: undefined }),
-        ],
-        run: true,
-        latchNames: [],
-      }),
-    )
-    expect(html).toContain('Codex 自己的 MCP')
-    expect(html).toContain('Claude Agent')
-    expect(html).toContain(NOT_REPORTED)
-    expect(html.match(new RegExp(NOT_REPORTED, 'gu'))).toHaveLength(1)
   })
 })
 

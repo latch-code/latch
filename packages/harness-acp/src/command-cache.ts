@@ -112,6 +112,14 @@ export class CommandCache {
     return known?.launchHash === launchHash && known.definitionHash === definitionHash ? structuredClone(known) : undefined
   }
 
+  /** Every scope's report of this definition, newest first, for an overview that is not tied to one draft's folder. */
+  reportsOf(definitionHash: string): CommandCacheEntry[] {
+    return [...this.entries.values()]
+      .filter(entry => entry.definitionHash === definitionHash)
+      .sort((a, b) => b.order - a.order)
+      .map(entry => structuredClone(entry))
+  }
+
   forget(sourceSessionId: string): void {
     let changed = false
     for (const [key, value] of this.entries)

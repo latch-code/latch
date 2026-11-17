@@ -187,6 +187,7 @@ import { TurnLog, turnLine } from './turn-usage.ts'
 import { createModelUsageRoutes } from './model-usage-routes.ts'
 import { scheduledProvider, scheduledRequest, type ProviderCandidate } from './scheduled-provider.ts'
 import { readSessionSkills, type SessionSkill } from '@latch/protocol'
+import type { ExtensionsResponse, HarnessExtensionReport } from '@latch/protocol'
 import {
   DENY_READ_HOME_PATHS,
   PROJECT_FOLDER_LIMIT,
@@ -2084,12 +2085,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return { ...summary, pendingQuestions: questions.view(task.id).length }
     }
     const workspaceFiles = createWorkspacePlugin({ protectedPaths: guardedPaths })
+    /** Latch's own optional plugins, as 设置 › 扩展 tells them from ones a developer added. */
+    const builtInPlugins = new Set<string>()
     const optional = [
       isWithin(realWorkspace, realDataDir) ? guardDataDir(workspaceFiles, realDataDir, realWorkspace) : workspaceFiles,
       ...(options.demo ? [createToolsPlugin(), createDemoPlugin()] : []),
       ...(options.plugins ?? []),
     ]
     for (const [index, plugin] of optional.entries()) {
+      if (index < optional.length - (options.plugins?.length ?? 0)) builtInPlugins.add(plugin.id)
       registry.register(plugin, {
         revision:
           index < optional.length - (options.plugins?.length ?? 0)
@@ -4084,7 +4088,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       return registry.list().map(plugin => {
         const sessions = pluginHarnesses(plugin.id).reduce((sum, id) => sum + (running.get(id) ?? 0), 0)
-        return { ...plugin, activeRuns: plugin.activeRuns + sessions, ...(pluginAssets.has(plugin.id) ? { editable: true as const } : {}) }
+        return {
+          ...plugin,
+          activeRuns: plugin.activeRuns + sessions,
+          ...(pluginAssets.has(plugin.id) ? { editable: true as const } : {}),
+          ...(builtInPlugins.has(plugin.id) ? { builtIn: true as const } : {}),
+        }
       })
     }
 
@@ -7194,6 +7203,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           runLiveness: true,
           pinnedDefaults: true,
           worktreeLifecycle: true,
+          extensions: true,
           ...routes.features(caller),
         },
         harnesses: [...hub!.drivers(), ...offers].map(harness => {
@@ -10280,6 +10290,48 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           verified?.current() && verified.sourceSessionId === cached?.sourceSessionId && before.stillConfigured() && canReadSource()
         const publicResult = publicCommandCatalogue.safeParse(current && verified ? verified.catalogue : undefined)
         json(res, { catalogue: publicResult.success ? publicResult.data : null })
+        return true
+      }
+      // 设置 › 扩展: per Harness, the newest commands and skills an ordinary session of its current definition reported.
+      // Only Latch's own records: no CLI's configuration or storage is read, and no program is started or probed.
+      if (path === '/link/api/extensions' && method === 'GET') {
+        requireScope(caller, 'admin')
+        limits.classC.take(caller.device.id)
+        const ordinary = (sessionId: string) => !hub!.agentPrivate(sessionId)
+        const harnesses: HarnessExtensionReport[] = []
+        for (const harness of hub!.drivers()) {
+          if (harness.capabilities.permission.enforcement === 'latch') continue
+          const found = await hub!.latestCommandReportOf(harness.id, ordinary).catch(() => undefined)
+          recheck(caller, 'admin')
+          const source = found?.current() ? await sessionTask(found.sourceSessionId).catch(() => undefined) : undefined
+          const usable =
+            !!source
+            && !!found
+            && found.current()
+            && (await assertSessionWorkspace(found.sourceSessionId).then(
+              () => true,
+              () => false,
+            ))
+          recheck(caller, 'admin')
+          const report = usable && found?.current() ? publicCommandCatalogue.safeParse(found.catalogue) : undefined
+          const projectId =
+            found?.workspaceId && found.workspaceId !== 'default' && savedProject(found.workspaceId) ? found.workspaceId : undefined
+          harnesses.push({
+            harnessId: harness.id,
+            ...(report?.success
+              ? {
+                  report: {
+                    commands: report.data.commands,
+                    ...(report.data.skills ? { skills: report.data.skills } : {}),
+                    ...(report.data.skillsTruncated ? { skillsTruncated: true as const } : {}),
+                    reportedAt: report.data.reportedAt,
+                    ...(projectId ? { projectId } : {}),
+                  },
+                }
+              : {}),
+          })
+        }
+        json(res, { harnesses } satisfies ExtensionsResponse)
         return true
       }
       // What a Harness offers, read before a session: the same gate as starting one, since it starts the same program.

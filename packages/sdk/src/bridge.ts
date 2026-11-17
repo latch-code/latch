@@ -351,6 +351,14 @@ export interface Bridge {
     modelRoute?: ModelRoute
     config?: ReadonlyArray<{ configId: string; value: string }>
   }): Promise<{ sourceSessionId: string; catalogue: HarnessCommandCatalogue } | undefined>
+  /**
+   * Optional, with `commandCatalogue`. The newest cached real-session report of the current definition from any folder,
+   * whose source session `accept` takes, with the project that session ran in. Never starts a process or probes; the
+   * Host rechecks the source after awaiting it.
+   */
+  latestCommandReport?(
+    accept?: (sourceSessionId: string) => boolean,
+  ): Promise<{ sourceSessionId: string; workspaceId?: string; catalogue: HarnessCommandCatalogue } | undefined>
   /** Optional. What the harness offered when a session of its current definition last started; see `HarnessCatalogue`. */
   catalogue?(): HarnessCatalogue | undefined
   /**

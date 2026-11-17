@@ -1,5 +1,5 @@
 ---
-description: Latch 怎样启动并驱动用户本机的 Agent（ACP、Codex 的 app-server、pi 的 RPC）：预设与命令、不改原 CLI 配置、完全访问（L3）、权限模式与读回、项目配置与文件夹、启动指纹、进程与环境、经 Latch 使用模型服务、登录、额度、审批、取消、子 Agent、提问、持久化与恢复、接入已有会话、会话命令、错误与尚未实现。
+description: Latch 怎样启动并驱动用户本机的 Agent（ACP、Codex 的 app-server、pi 的 RPC）：预设与命令、不改原 CLI 配置、完全访问（L3）、权限模式与读回、项目配置与文件夹、启动指纹、进程与环境、经 Latch 使用模型服务、登录、额度、审批、取消、子 Agent、提问、持久化与恢复、接入已有会话、会话命令、扩展、错误与尚未实现。
 sources:
   - packages/harness-acp/src
   - packages/protocol/src/agent-presets.ts
@@ -952,6 +952,28 @@ Harness 报告的命令透传，是否报告与执行由 Harness 决定。
 - Codex 的 `$name` 不放进斜杠命令；pi 的 `/skill:name` 保留在 `commands` 里，已列为技能的不重复显示。Web 把技能放在技能组，点按、Tab、Enter 都只插入草稿；最近选择按 Harness 隔离。输入框按同一规则把目录里的技能画成标记（`apps/web/src/composer/prompt-tokens.ts`），线不附加的写法不标记；发送的仍是原文。
 - **Codex 的目录。** 开 thread 或恢复时以实际 cwd 调用 `skills/list {cwds:[cwd],forceReload:true}`。原生路径只留在当前线的 enabled 映射里，不从客户端或提示内容接收路径。`skills/changed` 立即清空映射并重读，旧代次的回答不得恢复旧路径。读取失败或目录不完整时撤下当前目录，错误里的私有路径不外发。
 - **Codex 的调用。** Host 在加人物 brief、文件引用、撤销说明、seed 与历史之前保留本轮原文，只经内部调用上下文传给线，不接受公共 HTTP 的来源声明。线只从这份原文里完整的、空白分隔的 `$name` 匹配官方清单，补充 `{type:'skill',name,path}`；原文照常发送。未知、带前后缀、转义或引号包围的名字保持文字；同名的 enabled 项明确拒绝。没有原文证据时不扫描完整 prompt 兜底。这只限定 Latch 生成的结构化项，不限制 CLI 或模型自己的行为。
+
+## 扩展
+
+「设置 › 扩展」（`admin`，与「Harness」「MCP」相同）按 Harness 列出它的技能、命令、MCP 与插件，每一项标「Harness 自带」或「Latch 提供」，再列 Latch 自己提供的部分。
+
+**只列报告的。** Latch 不读写任何 CLI 的配置或存储来填这一页，只用两样：
+
+- 命令与技能：`GET /extensions`（`admin`）给每个外部 Harness 当前定义下、最新一份普通会话的报告（「上次会话的目录」那份缓存，`Bridge.latestCommandReport`），附报告时间与那次会话所在的项目。我的 Agent、通用、导入与定时的会话（`hub.agentPrivate`）不算；来源会话删掉、启动定义变了或项目目录不再可用时不返回。只读内存，不启动、不探测程序。
+- MCP：`HarnessInfo.ownMcp`（见「Codex 的 app-server」）；「读取」照旧只在人按下时启动它。
+
+每一类有三种说法，不用空列表代替：报告了就列出（报告为空写「没有」）；这个 Harness 报告这一类、但当前定义还没有普通会话时写「还没有会话报告」；它的适配器不报告这一类时写「这个 Harness 没有报告」。报告了命令却没读到技能目录（Codex 的 `skills/list` 失败）写「上次会话没有读到」，不写「没有」。
+
+| Harness | 报告 |
+| --- | --- |
+| Codex 直连 | 命令（`/compact`：Codex 自己的压缩，经它的协议执行，标「Harness 自带」）、技能（`skills/list`）、MCP（`mcpServerStatus/list`） |
+| pi | 命令与技能（`get_commands`） |
+| 其他 ACP Harness | 命令（`available_commands_update`）；技能常作为命令报告 |
+| 都不报告 | 插件。Codex 的 app-server 有 `plugin/installed`，Latch 尚未接入（要在会话或「读取」里多一次请求），所以 Codex 的插件写「尚未实现」，原因在悬停里 |
+
+**安装、更新、卸载。** 只给厂商写明的命令（`HARNESS_EXTENSIONS`，`packages/protocol/src/extensions.ts`，每项记来源：厂商页面或 CLI 自己的 `--help` 及版本）。安装与卸载以空格结尾，人补上名字或来源；列出的项的卸载命令只在名字只含字母、数字、`.`、`_`、`-` 且不以 `-` 开头时给出（`namedExtensionCommand`），否则不给。命令经「在终端里打开」填进 Latch 的终端（[TERMINAL.md](TERMINAL.md)），由人按回车：Host 不运行它们，也不改 CLI 的文件。没有文档化命令的类别不给按钮，原因在悬停里。没有市场：不列第三方目录、不下载、不搜索远端。
+
+**Latch 提供的。** 都是数据：我的 Agent 的技能与「操控这台 Mac」的规则经 `latch-skills`；预览浏览器的工具经 `latch-browser`（桌面端开着时）；Latch 的 MCP 服务器经会话的 `mcpServers`（Codex 为线程配置），只给 `HarnessInfo.skills === 'server'` 的 Harness；提示词模板由 Latch 填进输入框（全部 Harness 的与只给这个 Harness 的）；数据插件（技能与数据面板）与页面在 Latch 里，不交给 Harness。含代码的插件（工具、面板模块、模型、Harness、连接）只在折叠的「本机开发者」里，标「可信的本机代码」，不隔离。Latch 内置的插件（项目文件、演示的工具与模型，`PluginInfo.builtIn`）不列。Latch 自己的 MCP 与插件仍在「设置 › MCP」「设置 › 插件」里管理，改动照旧本机确认；「设置 › MCP」与 Harness 页只留一行通往「扩展」。
 
 ## 错误
 

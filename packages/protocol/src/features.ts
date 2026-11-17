@@ -5,6 +5,8 @@ import type { TokenUsage } from './types.ts'
 export interface HostFeatures {
   /** 设置 › MCP: Latch's own MCP servers (`/mcp/servers`). */
   mcp?: true
+  /** 设置 › 扩展: `GET /extensions`, each Harness's reported commands and skills (docs/HARNESSES.md#扩展). */
+  extensions?: true
   configReceipts?: true
   /** `/customization`: one appearance document for the Host, with revisions (docs/CUSTOMIZATION.md). */
   customization?: true

@@ -513,7 +513,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 
 **设置的各分区。** 分区在 `SettingsPage.tsx` 的 `sections`；设备见「设备与权限」。
 
-- 模型、Harness、MCP、项目与插件需要「管理此 Host」权限；没有该权限的设备看不到它们。
+- 模型、Harness、MCP、扩展、项目与插件需要「管理此 Host」权限；没有该权限的设备看不到它们。「扩展」按 Harness 列出技能、命令、MCP 与插件，每项标「Harness 自带」或「Latch 提供」，见 [HARNESSES.md](HARNESSES.md#扩展)。
 - 模型服务的状态来自打开页面时的模型列表请求（不消耗 tokens），不从是否存了密钥推断。缺密钥与地址未确认是琥珀色，拒绝密钥与连不上是红色。
 - 单价、预算与用量见 [MODEL-CONFIGURATION.md](MODEL-CONFIGURATION.md#单价预算与用量)。
 - Harness：找到了程序但还没有定义的预设只写「已找到」，不画成可用，不用绿色。Latch 不安装任何东西，只给安装命令与「重新检测」。

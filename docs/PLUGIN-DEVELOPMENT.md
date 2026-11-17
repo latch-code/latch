@@ -34,6 +34,8 @@ sources:
 
 签名以这些文件为准，本文只写签名说不出的规则。两个包只在本仓库的 workspace 中使用，带版本承诺的独立 SDK 包尚未发布；本地插件编译为 ESM `.mjs`。内置模型协议的 HTTP 辅助（[providers/http.ts](../apps/host/src/plugins/providers/http.ts)）不属于 SDK。
 
+「设置 › 扩展」把只有技能与数据面板的插件列为「Latch 提供」的数据；含 Host 模块、工具、面板模块、Provider、Harness 或连接载体的插件只列在折叠的「本机开发者」里，标「可信的本机代码」，不隔离（[HARNESSES.md](HARNESSES.md#扩展)）。
+
 ## 加载插件
 
 ```sh
@@ -404,6 +406,7 @@ Driver 上的其他声明：
 | `readCatalogue?` | 不发提示读取开始前的选项，同时只有一次读取。是否自动读取由 `catalogueRead()` 决定，不在需人请求的 Harness 上自动运行 |
 | `classifyConfigChange?` | 修改相对会话预期权限模式是 `neutral`、`stricter` 还是 `wider`；Host 只用它决定是否写放宽模式的审计 |
 | `commandCatalogue?` | 只读上次真实会话报告的命令，不启动或探测程序。`sourceSessionId` 只供 Host 复查来源与草稿授权，不交给设备；目录不授予能力或执行权限（[HARNESSES.md](HARNESSES.md#会话命令)） |
+| `latestCommandReport?(accept?)` | 与 `commandCatalogue` 同一份缓存，不限文件夹：当前定义下最新一份、来源会话被 `accept` 接受的报告，附那次会话的 `workspaceId`；给「设置 › 扩展」，不启动或探测程序（[HARNESSES.md](HARNESSES.md#扩展)） |
 | `launchPreview?` | L3 Driver：描述新建会话将启动什么，用于启动指纹与审计；环境变量只给名字 |
 | `promptCapabilities?` | 能力要启动后才知道的 Driver 返回最近一次为当前定义启动时报告的 `{ images, text }`；返回了就以它为准，之前返回 `undefined` 时用声明 |
 | `listExternalSessions?` 等 | 与 `historyImport` 一起，见 [HARNESSES.md](HARNESSES.md#接入已有会话) |

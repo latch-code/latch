@@ -2210,3 +2210,59 @@
 .clone-status-space {
   flex: 1;
 }
+
+/* 设置 › 扩展: an entry's scope or route, its mark and its vendor command at the row's end; Harnesses as small tiles. */
+.extension-trailing,
+.extension-meta,
+.extension-receivers {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.extension-receivers {
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.extension-receivers > span {
+  display: inline-flex;
+  border-radius: var(--r-4);
+}
+.extension-name {
+  overflow-wrap: anywhere;
+}
+.extension-command .settings-row-description code {
+  overflow-wrap: anywhere;
+}
+.extensions-harness {
+  display: flex;
+  flex-direction: column;
+}
+.extension-developer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+}
+@media (max-width: 767px) {
+  .extension-trailing .settings-row-value {
+    display: none;
+  }
+}
+/* Rows wrapped to carry their name for lookups keep the card's hairlines. */
+.settings-card
+  > :is([data-extension], [data-harness-mcp], [data-latch-plugin], [data-latch-code])
+  + :is(.settings-row, div)
+  > .settings-row:first-child::before,
+.settings-card > :is([data-extension], [data-harness-mcp], [data-latch-plugin], [data-latch-code]) + .settings-row::before,
+.settings-card
+  > .settings-row
+  + :is([data-extension], [data-harness-mcp], [data-latch-plugin], [data-latch-code])
+  > .settings-row:first-child::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  inset-inline: var(--row-rule-inset, 0);
+  height: 1px;
+  background: var(--line);
+}

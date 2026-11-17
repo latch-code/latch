@@ -338,4 +338,6 @@ export interface PluginInfo {
   editable?: true
   /** Set when the Host manages the plugin from settings (model providers, agents). */
   managed?: 'provider' | 'agent' | 'core'
+  /** Shipped with Latch (project files, the demo's tools and model): not a plugin someone added. */
+  builtIn?: true
 }
