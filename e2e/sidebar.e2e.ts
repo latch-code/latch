@@ -336,10 +336,31 @@ describe('session panel', () => {
       expect(await row(id).locator('.session-row-glyph').isVisible()).toBe(true)
       expect(await row(id).locator('.session-meta').isVisible()).toBe(false)
       expect(await row(id).locator('.session-status').isVisible()).toBe(false)
-      expect(await row(id).locator('.session-item-main').ariaSnapshot()).toContain('默认模型')
+      // The leading icon is the session's Harness (the built-in one here); no model is named that none reported.
+      expect(await row(id).locator('.session-row-glyph .brand-tile').isVisible()).toBe(true)
+      expect(await row(id).locator('.session-item-main').ariaSnapshot()).not.toContain('默认模型')
     }
+    // State is a mark on the icon's corner, only where there is one; a row at rest or after a plain stop has none.
+    for (const id of ['read', 'stopped']) expect(await row(id).locator('.session-row-state').count()).toBe(0)
+    for (const id of ['running', 'stopping', 'failed', 'waiting', 'silent', 'forced'])
+      expect(await row(id).locator('.session-row-state').isVisible()).toBe(true)
     expect(await row('waiting').locator('.session-row-glyph').getAttribute('data-tone')).toBe('waiting')
+    expect(await row('silent').locator('.session-row-glyph').getAttribute('data-tone')).toBe('waiting')
+    expect(await row('forced').locator('.session-row-glyph').getAttribute('data-tone')).toBe('waiting')
     expect(await row('failed').locator('.session-row-glyph').getAttribute('data-tone')).toBe('failed')
+    const red = await row('failed').evaluate(item => {
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--red)'
+      item.append(probe)
+      const value = getComputedStyle(probe).color
+      probe.remove()
+      return value
+    })
+    expect(
+      await row('failed')
+        .locator('.session-row-state')
+        .evaluate(item => getComputedStyle(item).color),
+    ).toBe(red)
     expect(await row('running').locator('.session-item-main').ariaSnapshot()).toContain('在等模型')
     expect(await row('forced').locator('.session-item-main').ariaSnapshot()).toContain('2 条结果未知')
   })

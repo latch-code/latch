@@ -358,15 +358,28 @@
 .work-board-priority[data-priority='low'] {
   box-shadow: inset 0 0 0 1px var(--muted);
 }
+/*
+ * The place line: the Harness's mark, who, the project and the branch, each its own item between quiet middle dots.
+ * Short of room the branch gives way first (it shrinks a thousand times faster), then the project's name, each down to
+ * its glyph and a couple of characters; the mark never. Nothing wraps.
+ */
 .work-board-card-place {
   display: flex;
   align-items: center;
   gap: var(--sp-6);
   min-width: 0;
+  overflow: hidden;
   color: var(--muted);
+  white-space: nowrap;
 }
 .work-board-card-place > * {
   flex: none;
+}
+.work-board-place-dot {
+  color: var(--faint);
+}
+.work-board-harness {
+  display: inline-flex;
 }
 .work-board-card-project,
 .work-board-card-branch,
@@ -376,9 +389,13 @@
   gap: var(--sp-4);
   min-width: 0;
 }
-.work-board-card-project,
-.work-board-card-branch {
+/* Each keeps its glyph and a couple of characters, so no middle dot is left standing alone. */
+.work-board-card-place > :is(.work-board-card-project, .work-board-card-branch) {
   flex: 0 1 auto;
+  min-width: calc(12px + var(--sp-4) + 2em);
+}
+.work-board-card-place > .work-board-card-branch {
+  flex-shrink: 1000;
 }
 .work-board-card-project > span,
 .work-board-card-branch > span,
@@ -549,16 +566,15 @@
   white-space: nowrap;
 }
 .work-board-item-session-branch {
+  display: flex;
   flex: 1 1 0;
+  justify-content: flex-end;
   min-width: 0;
   overflow: hidden;
-  color: var(--faint);
-  font-family: var(--mono);
-  font-size: var(--fs-fact);
-  line-height: var(--lh-fact);
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--muted);
+}
+.work-board-item-session-branch > .work-board-card-branch {
+  max-width: 100%;
 }
 .work-board-item-session:focus-visible {
   outline: 2px solid var(--accent);

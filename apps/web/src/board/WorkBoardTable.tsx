@@ -61,7 +61,7 @@ function Row({
         </StatusWord>
         <span className="work-board-row-project">{escapeSecurityText(project?.name ?? '无项目')}</span>
         <span className="work-board-row-harness">
-          <MarkTile mark={harness?.capabilities.display.mark ?? task.harnessId} size={14} />
+          <MarkTile mark={harness?.capabilities.display.mark ?? task.harnessId} size={16} className="bare-mark" />
           <span>{escapeSecurityText(harness?.capabilities.display.label ?? task.harnessId ?? '')}</span>
         </span>
         <span className="work-board-row-who">{whoOf(task) === WHO_CODE ? 'Code' : <WhoMark task={task} shell={shell} />}</span>
@@ -163,7 +163,9 @@ function ItemRow({
           </StatusWord>
           <span className="work-board-row-project">{escapeSecurityText(project?.name ?? '无项目')}</span>
           <span className="work-board-row-harness">
-            {harnessIds.length > 0 && <MarkTile mark={harness?.capabilities.display.mark ?? harnessIds[0]} size={14} />}
+            {harnessIds.length > 0 && (
+              <MarkTile mark={harness?.capabilities.display.mark ?? harnessIds[0]} size={16} className="bare-mark" />
+            )}
             <span>
               {escapeSecurityText(harness?.capabilities.display.label ?? harnessIds[0] ?? '')}
               {harnessIds.length > 1 ? ` +${harnessIds.length - 1}` : ''}

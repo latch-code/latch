@@ -201,19 +201,60 @@
 .session-row-glyph {
   display: none;
 }
+/*
+ * The row's Harness icon, 16 as the board's tiles draw it, with the state on its top-right corner cut out of the row
+ * (as a tile's failure dot is): a 12 disc in the row's own background, at rest, on hover and selected, holding an 8
+ * dot in the state's colour, or the running spinner at 10.
+ */
+@media (hover: hover) {
+  .sidebar .session-item:hover {
+    --row-tint: var(--hover);
+  }
+}
+.sidebar .session-item:not(.is-selected):has(.session-item-more[aria-expanded='true']) {
+  --row-tint: var(--hover);
+}
+.sidebar .session-item.is-selected {
+  --row-base: var(--selected);
+  --row-tint: transparent;
+}
 .sidebar .session-row-glyph {
+  position: relative;
   display: inline-flex;
   order: -1;
   flex: 0 0 16px;
+  height: 16px;
   color: var(--muted);
 }
-.sidebar .session-row-glyph[data-tone='running'] {
+.sidebar .session-row-state {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: var(--row-base, var(--sidebar));
+  background-image: linear-gradient(var(--row-tint, transparent), var(--row-tint, transparent));
+}
+.sidebar .session-row-state > :is(.ui-status-glyph, svg) {
+  zoom: calc(10 / 12);
+}
+.session-row-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.sidebar .session-row-glyph[data-tone='running'] .session-row-state {
   color: var(--work-running);
 }
-.sidebar .session-row-glyph[data-tone='waiting'] {
-  color: var(--amber);
+.sidebar .session-row-glyph[data-tone='waiting'] .session-row-state {
+  color: var(--amber-icon);
 }
-.sidebar .session-row-glyph[data-tone='failed'] {
+.sidebar .session-row-glyph[data-tone='failed'] .session-row-state {
   color: var(--red);
 }
 .sidebar .session-item {

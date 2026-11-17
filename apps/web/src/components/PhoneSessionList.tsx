@@ -185,13 +185,13 @@ const PhoneRow = memo(function PhoneRow({
         </span>
         <span className="phone-row-meta" aria-hidden="true">
           <span className="session-mark">
-            <MarkTile mark={harness.mark} size={16} />
+            <MarkTile mark={harness.mark} size={16} className="bare-mark" />
           </span>
-          <span className="phone-row-meta-text">{meta ? `${engine} · ${meta}` : engine}</span>
+          <span className="phone-row-meta-text">{[engine, meta].filter(Boolean).join(' · ')}</span>
           {handoffWaits && <span className="session-handoff">待交回</span>}
           {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
         </span>
-        <span className="sr-only">{`，${engine}${said ? `，${said}` : ''}${handoffWaits ? '，待交回' : ''}${time ? `，${time}` : ''}`}</span>
+        <span className="sr-only">{`${engine ? `，${engine}` : ''}${said ? `，${said}` : ''}${handoffWaits ? '，待交回' : ''}${time ? `，${time}` : ''}`}</span>
       </button>
       {review && onReview && !leaving && (
         <div className="phone-row-review">

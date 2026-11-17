@@ -12,8 +12,11 @@ import {
   markUnread,
   pruneSeen,
   rowMeta,
+  rowGateway,
+  rowMark,
   rowModel,
   rowStatus,
+  type RowStatus,
   runningWords,
   silentWords,
   waitingCount,
@@ -26,7 +29,10 @@ import {
   writeFolded,
   showsUnread,
 } from '../src/sessions.ts'
-import { statusLabel } from '../src/components/SessionStatus.tsx'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { SessionRowGlyph, statusLabel } from '../src/components/SessionStatus.tsx'
+import { taskHarness } from '../src/components/Sidebar.tsx'
 import { steadyHold } from '../src/hooks/useSteady.ts'
 
 function task(id: string, updatedAt: Date, extra: Partial<TaskSummary> = {}): TaskSummary {
@@ -232,13 +238,69 @@ describe('session row status', () => {
     expect(of({ status: 'idle', permissionDrift: true })).toEqual({ kind: 'read' })
   })
 
-  it('names the model on the second line: the routed one, else the reported one, else 默认模型', () => {
+  it('names the model the session runs on now, as the Host reports it, and nothing while none was reported', () => {
     expect(rowModel({ model: 'deepseek-chat' })).toBe('deepseek-chat')
     expect(rowModel({ model: 'gpt-5.5', modelRoute: { providerId: 'p', model: 'kimi-k2.5' } })).toBe('kimi-k2.5')
-    // An external Harness that has not reported its model yet.
-    expect(rowModel({})).toBe('默认模型')
+    // A switch within the session moves what the Host reports; the row follows it and keeps no earlier model.
+    expect(rowModel({ model: 'claude-opus-5-5' })).toBe('claude-opus-5-5')
+    expect(rowModel({ model: 'gpt-5.5', modelRoute: { providerId: 'p', model: 'kimi-k2.6' } })).toBe('kimi-k2.6')
+    // An external Harness that has not reported its model yet: no guess, not even 默认模型.
+    expect(rowModel({})).toBeUndefined()
+    expect(rowModel({ model: '' })).toBeUndefined()
     // Text from the Host is escaped as anywhere else: an invisible character is shown, not hidden.
     expect(rowModel({ model: 'gpt\u200b-5' })).not.toContain('\u200b')
+  })
+
+  it('names the gateway only for a route no turn bypassed', () => {
+    expect(rowGateway({})).toBe(false)
+    expect(rowGateway({ modelRoute: { providerId: 'p', model: 'kimi-k2.5' } })).toBe(true)
+    expect(rowGateway({ modelRoute: { providerId: 'p', model: 'kimi-k2.5', bypassed: true } })).toBe(false)
+  })
+
+  it('marks the Harness icon with the state: spinning, amber for what waits, red for a failure, nothing at rest', () => {
+    expect(rowMark({ kind: 'running' })).toBe('running')
+    expect(rowMark({ kind: 'stopping' })).toBe('running')
+    expect(rowMark({ kind: 'waiting' })).toBe('waiting')
+    expect(rowMark({ kind: 'silent' })).toBe('silent')
+    expect(rowMark({ kind: 'failed' })).toBe('failed')
+    expect(rowMark({ kind: 'ended', word: '已强制停止', unknown: 2 })).toBe('unknown')
+    expect(rowMark({ kind: 'ended', word: '已停止', unknown: 0 })).toBeUndefined()
+    expect(rowMark({ kind: 'read' })).toBeUndefined()
+    expect(rowMark({ kind: 'unread' })).toBe('unread')
+    expect(rowMark({ kind: 'ended', word: '已停止', unknown: 0, unread: true })).toBe('unread')
+    expect(rowMark({ kind: 'frozen' })).toBeUndefined()
+    const glyph = (status: RowStatus, mark: string | undefined) => renderToStaticMarkup(createElement(SessionRowGlyph, { status, mark }))
+    const tone = (html: string) => /data-tone="([a-z]+)"/u.exec(html)?.[1]
+    const failed = glyph({ kind: 'failed' }, 'codex')
+    expect(tone(failed)).toBe('failed')
+    expect(failed).toContain('session-row-state')
+    expect(failed).toContain('codex')
+    expect(tone(glyph({ kind: 'waiting' }, 'claude-agent'))).toBe('waiting')
+    expect(tone(glyph({ kind: 'silent' }, 'claude-agent'))).toBe('waiting')
+    expect(tone(glyph({ kind: 'ended', word: '已中断', unknown: 1 }, 'qwen'))).toBe('waiting')
+    const running = glyph({ kind: 'running' }, 'opencode')
+    expect(tone(running)).toBe('running')
+    expect(running).toContain('ui-spinner')
+    const rest = glyph({ kind: 'read' }, 'codex')
+    expect(tone(rest)).toBe('neutral')
+    expect(rest).not.toContain('session-row-state')
+    const unread = glyph({ kind: 'unread' }, 'codex')
+    expect(tone(unread)).toBe('neutral')
+    expect(unread).toContain('session-row-state')
+  })
+
+  it('draws the Harness of a session, and the neutral glyph for one without a Harness or without an icon', () => {
+    const snapshot = { catalog: undefined } as unknown as AppSnapshot
+    const legacy = taskHarness(snapshot, task('old', at(1), { harnessId: '' }))
+    expect(legacy.mark).toBeUndefined()
+    expect(legacy.label).toBe('')
+    const removed = taskHarness(snapshot, task('gone', at(1), { harnessId: 'codex-2' }))
+    expect(removed.mark).toBe('codex')
+    const glyph = (mark: string | undefined) => renderToStaticMarkup(createElement(SessionRowGlyph, { status: { kind: 'read' }, mark }))
+    expect(glyph(undefined)).toContain('data-glyph')
+    expect(glyph('my-own-agent')).toContain('data-glyph')
+    expect(glyph('codex')).not.toContain('data-glyph')
+    expect(glyph('codex')).toMatch(/<img[^>]+codex/u)
   })
 
   it('reads the whole run on the Host clock, without the time spent waiting on a person', () => {

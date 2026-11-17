@@ -1,21 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AppSnapshot, RunLive } from '@latch/protocol'
-import {
-  AlertGlyph,
-  CheckGlyph,
-  Icon,
-  MessageGlyph,
-  StatusGlyph,
-  StatusSlot,
-  WaitingGlyph,
-  WarningGlyph,
-  UnknownGlyph,
-  type SlotStatus,
-} from '@latch/ui'
+import { CheckGlyph, Icon, StatusGlyph, StatusSlot, type SlotStatus } from '@latch/ui'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { useSteady } from '../hooks/useSteady.ts'
-import { activityWords, runningWords, silentWords, type RowStatus, type WaitKind } from '../sessions.ts'
+import { activityWords, rowMark, runningWords, silentWords, type RowStatus, type WaitKind } from '../sessions.ts'
+import { MarkTile } from './BrandTile.tsx'
 import { personActivity } from '../agents/personWords.ts'
 
 /**
@@ -53,29 +43,31 @@ const SLOT: Record<RowStatus['kind'], SlotStatus> = {
 
 const statusKey = (status: RowStatus) => (status.kind === 'ended' ? `ended:${status.word}:${status.unknown}` : status.kind)
 
-/** The compact project tree uses a complete glyph; the row's accessible words still name the exact state. */
-export function SessionRowGlyph({ status }: { status: RowStatus }) {
-  const running = status.kind === 'running' || status.kind === 'stopping'
-  const waiting = status.kind === 'waiting' || status.kind === 'silent' || (status.kind === 'ended' && status.unknown > 0)
-  const glyph =
-    status.kind === 'failed'
-      ? AlertGlyph
-      : status.kind === 'waiting'
-        ? WaitingGlyph
-        : status.kind === 'ended' && status.unknown > 0
-          ? UnknownGlyph
-          : waiting
-            ? WarningGlyph
-            : status.kind === 'unread'
-              ? CheckGlyph
-              : MessageGlyph
+/**
+ * The sidebar row's leading icon: the session's Harness (the neutral glyph where it has none), with the row's state on
+ * its top-right corner, cut out of the row as a tile's failure dot is: the spinner while it runs, an amber dot while it
+ * waits on you, a red one when it failed, a muted check for a new answer. The row's accessible words name the Harness and the exact state.
+ */
+export function SessionRowGlyph({ status, mark }: { status: RowStatus; mark: string | undefined }) {
+  const state = rowMark(status)
   return (
     <span
       className="session-row-glyph"
-      data-tone={running ? 'running' : waiting ? 'waiting' : status.kind === 'failed' ? 'failed' : 'neutral'}>
-      <StatusGlyph running={running} state={statusKey(status)}>
-        <Icon icon={glyph} size={12} />
-      </StatusGlyph>
+      data-tone={
+        state === undefined || state === 'unread' ? 'neutral' : state === 'running' ? 'running' : state === 'failed' ? 'failed' : 'waiting'
+      }>
+      <MarkTile mark={mark} size={16} className="bare-mark" />
+      {state !== undefined && (
+        <span className="session-row-state" data-state={state}>
+          {state === 'running' ? (
+            <StatusGlyph running state={state} />
+          ) : state === 'unread' ? (
+            <Icon icon={CheckGlyph} size={12} />
+          ) : (
+            <span className="session-row-dot" />
+          )}
+        </span>
+      )}
     </span>
   )
 }

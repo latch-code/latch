@@ -4,6 +4,7 @@ import { Fragment, memo, useCallback, useMemo, useRef, useState, type ReactNode 
 import { Coffee, FolderGit2 } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
+import { GATEWAY_NAME } from '../composer/ModelControl.tsx'
 import { sessionHarness } from '../composerChoice.ts'
 import { hostView } from '../core/permissions.ts'
 import { otherWaiting, useComputers, type OtherWaiting } from '../core/computers.ts'
@@ -18,6 +19,7 @@ import {
   projectOf,
   readFolded,
   shelvesKey,
+  rowGateway,
   rowModel,
   rowStatus,
   showsUnread,
@@ -65,13 +67,13 @@ export function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarne
   const known = sessionHarness(snapshot.catalog, task)
   return known
     ? { id: known.id, label: known.capabilities.display.label, mark: known.capabilities.display.mark }
-    : { id: task.harnessId, label: task.harnessId, mark: presetOf(task.harnessId, HARNESS_MARKS) }
+    : { id: task.harnessId, label: task.harnessId, mark: task.harnessId ? presetOf(task.harnessId, HARNESS_MARKS) : undefined }
 }
 
 /**
- * A session row, always two lines: the title with the time or what the run is doing, then the Harness's 12px mark and
- * the model (the Harness's name too where its mark is the neutral glyph). In 等你处理 the second line says what waits
- * instead of the model, and the project, since the shelf no longer says where the session belongs.
+ * A session row: the Harness's icon with the row's state on its corner, then the title. The hover names the Harness,
+ * the model the session runs on now where one was reported, and the gateway where the model goes through it. Where the
+ * row has a second line (the other computers' rows), it carries what waits and the project in 等你处理.
  */
 const SessionItem = memo(function SessionItem({
   task,
@@ -115,6 +117,7 @@ const SessionItem = memo(function SessionItem({
   const engine = harness.label
   const named = harnessArt(harness.mark).kind === 'glyph'
   const model = rowModel(task)
+  const gateway = model !== undefined && rowGateway(task)
   const wait = inWaitingShelf && (status.kind === 'waiting' || status.kind === 'silent') ? waitKind(task) : undefined
   const note = unknownNote(task, status)
   // While the connection is down the row says less, not that what it last knew stopped mattering.
@@ -141,12 +144,12 @@ const SessionItem = memo(function SessionItem({
           className="session-item-main"
           data-task-id={leaving ? undefined : task.id}
           aria-current={selected ? 'page' : undefined}
-          title={[engine, model, worktree ?? branch].filter(Boolean).join(' · ')}
+          title={[engine, model, gateway && `经 ${GATEWAY_NAME}`, worktree ?? branch].filter(Boolean).join(' · ')}
           onClick={() => {
             onSelect(task.id)
           }}>
           <span className="session-line">
-            <SessionRowGlyph status={status} />
+            <SessionRowGlyph status={status} mark={harness.mark} />
             {task.pinned && (
               <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />
             )}
@@ -177,9 +180,7 @@ const SessionItem = memo(function SessionItem({
                 <WaitWords wait={wait} live={task.live} />
               </span>
             ) : (
-              <span className="session-model" data-default={task.modelRoute?.model || task.model ? undefined : ''}>
-                {model}
-              </span>
+              model !== undefined && <span className="session-model">{model}</span>
             )}
             {named && <span className="session-harness">{engine}</span>}
             {wait && <span className="session-meta-rest">{`· ${project ?? '无项目'}`}</span>}
@@ -187,7 +188,7 @@ const SessionItem = memo(function SessionItem({
             {from && <span className="session-meta-rest session-from">{`· 来自 ${from}`}</span>}
             {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
           </span>
-          <span className="sr-only">{`，${engine}，${wait?.kind === 'asks' ? wait.words : model}${wait ? `，${project ?? '无项目'}` : ''}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${from ? `，来自 ${from}` : ''}${handoffWaits ? '，待交回' : ''}${status.kind === 'frozen' ? `，${frozen}` : ''}${time ? `，${time}` : ''}`}</span>
+          <span className="sr-only">{`${engine ? `，${engine}` : ''}${wait?.kind === 'asks' ? `，${wait.words}` : model !== undefined ? `，${model}` : ''}${wait ? `，${project ?? '无项目'}` : ''}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${from ? `，来自 ${from}` : ''}${handoffWaits ? '，待交回' : ''}${status.kind === 'frozen' ? `，${frozen}` : ''}${time ? `，${time}` : ''}`}</span>
         </button>
         <span className="session-actions">
           {archive && (

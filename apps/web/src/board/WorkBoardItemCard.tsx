@@ -4,7 +4,6 @@ import {
   Button,
   ChevronDownGlyph,
   ChevronRightGlyph,
-  FolderGlyph,
   Icon,
   IconButton,
   MoreGlyph,
@@ -13,7 +12,7 @@ import {
   type StatusTone,
 } from '@latch/ui'
 import { ListTodo } from 'lucide-react'
-import { MarkTile } from '../components/BrandTile.tsx'
+import { BoardBranch, BoardHarness, BoardPlace } from './BoardPlace.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { api, errorMessage } from '../core/api.ts'
 import { Menu, rowOf, type MenuSection } from '../components/overlays.tsx'
@@ -104,11 +103,15 @@ function SessionRow({ task, shell, onOpen }: { task: TaskSummary; shell: ShellSt
         onClick={() => {
           onOpen(task.id)
         }}>
-        <MarkTile mark={harness?.capabilities.display.mark ?? task.harnessId} size={14} label={label} />
+        <BoardHarness mark={harness?.capabilities.display.mark ?? task.harnessId} label={label} />
         <StatusWord className="work-board-item-session-state" tone={state.tone}>
           {state.words}
         </StatusWord>
-        {branch && <span className="work-board-item-session-branch">{escapeSecurityText(branch)}</span>}
+        {branch && (
+          <span className="work-board-item-session-branch">
+            <BoardBranch branch={escapeSecurityText(branch)} worktree={task.worktree !== undefined} />
+          </span>
+        )}
       </button>
     </li>
   )
@@ -205,16 +208,15 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
           <span className="work-board-card-title">{title}</span>
           <time dateTime={updatedAt}>{relativeTime(updatedAt, new Date(now))}</time>
         </span>
-        <span className="work-board-card-place">
-          {todo && (item.harnessId || harness) && (
-            <MarkTile mark={harness?.capabilities.display.mark ?? item.harnessId} size={14} label={harness?.capabilities.display.label} />
-          )}
-          <span className="work-board-card-project">
-            <Icon icon={FolderGlyph} size={12} />
-            <span>{escapeSecurityText(project?.name ?? '无项目')}</span>
-          </span>
-          {todo && item.worktree === 'new' && <span className="work-board-item-hint">新工作树</span>}
-        </span>
+        <BoardPlace
+          harness={
+            todo && (item.harnessId || harness)
+              ? { mark: harness?.capabilities.display.mark ?? item.harnessId, label: harness?.capabilities.display.label ?? item.harnessId }
+              : undefined
+          }
+          project={project?.name ?? '无项目'}
+          hint={todo && item.worktree === 'new' ? <span className="work-board-item-hint">新工作树</span> : undefined}
+        />
         {headState && (
           <StatusWord className="work-board-card-state" tone={headState.tone}>
             {headState.words}

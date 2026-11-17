@@ -128,13 +128,30 @@ describe('sidebar rows', () => {
         expect(await item.locator('.session-meta').isVisible()).toBe(false)
         expect(await item.locator('.session-status').isVisible()).toBe(false)
       }
-      const glyph = row(page, 'routed').locator('.session-row-glyph .ui-spinner')
-      expect(Math.round((await glyph.boundingBox())!.height)).toBe(12)
+      // The leading icon is each session's Harness; its state is a 10px mark on the icon's corner.
+      const marks: Record<string, RegExp> = { routed: /codex/u, approval: /claude/u, failed: /qwen/u, asking: /opencode/u }
+      for (const [id, file] of Object.entries(marks))
+        expect(await row(page, id).locator('.session-row-glyph img').first().getAttribute('src')).toMatch(file)
+      expect(await row(page, 'read').locator('.session-row-glyph .brand-tile').isVisible()).toBe(true)
+      expect(
+        Math.round(
+          (await row(page, 'routed').locator('.session-row-glyph .brand-tile, .session-row-glyph .ui-tile').first().boundingBox())!.height,
+        ),
+      ).toBe(16)
+      const glyph = row(page, 'routed').locator('.session-row-glyph .session-row-state .ui-spinner')
+      expect(Math.round((await glyph.boundingBox())!.height)).toBe(10)
+      expect(await row(page, 'failed').locator('.session-row-glyph').getAttribute('data-tone')).toBe('failed')
+      expect(await row(page, 'read').locator('.session-row-state').count()).toBe(0)
       // A routed model is authoritative over the Harness-reported default, including in the accessible row name.
       expect(await row(page, 'routed').locator('.session-item-main').ariaSnapshot()).toContain('kimi-k2.5')
       expect(await row(page, 'routed').locator('.session-item-main').ariaSnapshot()).not.toContain('gpt-5.5')
       expect(await row(page, 'read').locator('.session-item-main').ariaSnapshot()).toContain('deepseek-chat')
-      expect(await row(page, 'unreported').locator('.session-item-main').ariaSnapshot()).toContain('默认模型')
+      // A session that reported no model names none, anywhere: no guess, not even 默认模型.
+      expect(await row(page, 'unreported').locator('.session-item-main').ariaSnapshot()).not.toContain('默认模型')
+      expect(await row(page, 'unreported').locator('.session-item-main').getAttribute('title')).toBe('qwen')
+      // The hover names the Harness, the current model and the gateway it goes through.
+      expect(await row(page, 'routed').locator('.session-item-main').getAttribute('title')).toBe('codex · kimi-k2.5 · 经 Latch 网关')
+      expect(await row(page, 'approval').locator('.session-item-main').getAttribute('title')).toBe('claude-agent · claude-sonnet-5-5')
       expect(await row(page, 'read').locator('.session-item-main').getAttribute('title')).toContain('main')
       expect(await row(page, 'command').locator('.sr-only').textContent()).toMatch(/^，Latch 内置，deepseek-chat，在跑命令，/u)
       expect(await row(page, 'approval').locator('.session-item-main').ariaSnapshot()).toContain('claude-agent')

@@ -7,7 +7,6 @@ import {
   type WorkItemSummary,
   type WorkspaceInfo,
 } from '@latch/protocol'
-import { DEFAULT_MODEL } from './composer/modelReasoning.ts'
 import { runClock, runElapsed } from './conversation.ts'
 import { parseTime } from './core/hostClock.ts'
 import { basename } from './format.ts'
@@ -120,6 +119,32 @@ export function rowStatus(task: TaskSummary, { unread = false, stopping = false,
   return { kind: unread ? 'unread' : 'read' }
 }
 
+/**
+ * The state mark on a sidebar row's Harness icon: running work spins, what waits on the person is amber (an approval or
+ * a question, silence, results nobody can vouch for), a failure is red, a new answer is a quiet check. Nothing at rest,
+ * after a stop, or while the connection is down, where the row's words still say it.
+ */
+type RowMark = 'running' | 'waiting' | 'silent' | 'unknown' | 'failed' | 'unread'
+export function rowMark(status: RowStatus): RowMark | undefined {
+  switch (status.kind) {
+    case 'running':
+    case 'stopping':
+      return 'running'
+    case 'waiting':
+      return 'waiting'
+    case 'silent':
+      return 'silent'
+    case 'failed':
+      return 'failed'
+    case 'ended':
+      return status.unknown > 0 ? 'unknown' : status.unread ? 'unread' : undefined
+    case 'unread':
+      return 'unread'
+    default:
+      return undefined
+  }
+}
+
 /** A row drawn as unread: an answered one, or one that ended without an answer and still says how (已停止). */
 export const showsUnread = (status: RowStatus): boolean => status.kind === 'unread' || (status.kind === 'ended' && status.unread === true)
 
@@ -165,13 +190,18 @@ export function rowMeta(task: TaskSummary, status: RowStatus, project: string | 
 }
 
 /**
- * The model a sidebar row names: the one chosen on the model service Latch forwards to, else the one the session or its
- * Harness reported, else 默认模型 (an external Harness may not have reported one yet). Escaped like any text from the Host.
+ * The model a session row names: the one the session runs on now as the Host reports it (an in-session switch moves
+ * both fields), the model of the service Latch forwards to first, else the one the session or its Harness reported.
+ * Undefined while neither reported one: a row names no model it cannot know. Escaped like any text from the Host.
  */
-export function rowModel(task: Pick<TaskSummary, 'model' | 'modelRoute'>): string {
+export function rowModel(task: Pick<TaskSummary, 'model' | 'modelRoute'>): string | undefined {
   const model = task.modelRoute?.model || task.model
-  return model ? escapeSecurityText(model) : DEFAULT_MODEL
+  return model ? escapeSecurityText(model) : undefined
 }
+
+/** Whether the row's model goes through Latch's gateway: a route the Host holds, with no turn seen bypassing it. */
+export const rowGateway = (task: Pick<TaskSummary, 'modelRoute'>): boolean =>
+  task.modelRoute !== undefined && task.modelRoute.bypassed !== true
 
 /**
  * What a row in 等你处理 waits on, from the summary alone: an approval, how many questions, a request Latch could not

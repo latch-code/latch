@@ -1,9 +1,8 @@
 import { memo, type ReactNode } from 'react'
 import { GENERAL_AGENT_ID, escapeSecurityText, type TaskSummary, type WorkbenchDeliveryEntry } from '@latch/protocol'
-import { FolderGlyph, IconButton, Icon, MoreGlyph, RunningEdge, ScheduleGlyph, StatusWord, type StatusTone } from '@latch/ui'
-import { FolderGit2 } from 'lucide-react'
+import { IconButton, Icon, MoreGlyph, RunningEdge, ScheduleGlyph, StatusWord, type StatusTone } from '@latch/ui'
 import { AgentAvatar } from '../agents/AgentAvatar.tsx'
-import { MarkTile } from '../components/BrandTile.tsx'
+import { BoardPlace } from './BoardPlace.tsx'
 import { Menu, rowOf, type MenuSection } from '../components/overlays.tsx'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { relativeTime } from '../format.ts'
@@ -77,11 +76,16 @@ export function TagChips({ tags }: { tags: readonly string[] | undefined }) {
 }
 
 /** Who works on it: nothing for Code, the Agent's face for one of 我的 Agent. */
-export function WhoMark({ task, shell }: { task: TaskSummary; shell: ShellState }) {
+/** Whether `WhoMark` draws anything: a session of 通用 or of an Agent the snapshot still lists. */
+function hasWho(task: TaskSummary, shell: ShellState): boolean {
   const who = whoOf(task)
-  if (who === WHO_CODE) return null
+  return who !== WHO_CODE && (who === GENERAL_AGENT_ID || shell.snapshot.customAgents?.some(item => item.id === who) === true)
+}
+
+export function WhoMark({ task, shell }: { task: TaskSummary; shell: ShellState }) {
+  if (!hasWho(task, shell)) return null
+  const who = whoOf(task)
   const agent = who === GENERAL_AGENT_ID ? undefined : shell.snapshot.customAgents?.find(item => item.id === who)
-  if (who !== GENERAL_AGENT_ID && !agent) return null
   return (
     <span className="work-board-who">
       <AgentAvatar avatar={agent ? agent.avatar : 'general'} size={16} still />
@@ -160,22 +164,16 @@ export const WorkBoardCard = memo(function WorkBoardCard({
             <span className="work-board-card-title">{title}</span>
             <time dateTime={task.updatedAt}>{relativeTime(task.updatedAt, new Date(now))}</time>
           </span>
-          <span className="work-board-card-place">
-            <MarkTile mark={harness?.capabilities.display.mark ?? task.harnessId} size={14} label={harness?.capabilities.display.label} />
-            <WhoMark task={task} shell={shell} />
-            {whoOf(task) === WHO_CODE && (
-              <span className="work-board-card-project">
-                <Icon icon={FolderGlyph} size={12} />
-                <span>{escapeSecurityText(project?.name ?? '无项目')}</span>
-              </span>
-            )}
-            {branch && (
-              <span className="work-board-card-branch">
-                {task.worktree && <FolderGit2 size={12} aria-label="工作树" />}
-                <span>{branch}</span>
-              </span>
-            )}
-          </span>
+          <BoardPlace
+            harness={{
+              mark: harness?.capabilities.display.mark ?? task.harnessId,
+              label: harness?.capabilities.display.label ?? task.harnessId,
+            }}
+            who={hasWho(task, shell) ? <WhoMark task={task} shell={shell} /> : undefined}
+            project={whoOf(task) === WHO_CODE ? (project?.name ?? '无项目') : null}
+            branch={branch || undefined}
+            worktree={task.worktree !== undefined}
+          />
           <StatusWord className="work-board-card-state" tone={state.tone}>
             {state.words}
           </StatusWord>
