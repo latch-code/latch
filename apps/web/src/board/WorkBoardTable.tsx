@@ -11,7 +11,8 @@ import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { ItemWriteState } from './itemWrites.ts'
 import { cardUpdatedAt, GROUP_LABELS, whoOf, WHO_CODE, type BoardCard, type ListState } from './model.ts'
 import { cardState, PriorityMark, TagChips, WhoMark } from './WorkBoardCard.tsx'
-import { ItemWriteLine, itemState, type ItemCard } from './WorkBoardItemCard.tsx'
+import { itemState, type ItemCard } from './WorkBoardItemCard.tsx'
+import { ItemWriteLine } from './WriteLine.tsx'
 
 export const LIST_STATES: readonly ListState[] = ['all', 'todo', 'attention', 'running', 'deliver', 'done', 'archived']
 const STATE_LABELS: Record<ListState, string> = { all: '全部', ...GROUP_LABELS, archived: '已归档' }

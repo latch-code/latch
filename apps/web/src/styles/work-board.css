@@ -633,6 +633,87 @@
   margin-inline-start: auto;
 }
 
+/* ---- Dragging a card between columns ---------------------------------------------------------------------------- */
+/*
+ * A drag is a gesture: the drop performs the card's own action and the Host's group decides where it then stands. While
+ * one is held the cards take no pointer, so the column under it says where the card may go: a target a hairline in the
+ * accent (one more half pixel under the pointer), any other column but its own at 45% with a forbidden mark and the
+ * not-allowed cursor. The card stays put at 45%; a copy follows the pointer, lifted.
+ */
+.work-board[data-dragging] {
+  cursor: grabbing;
+  user-select: none;
+}
+.work-board[data-dragging] * {
+  cursor: inherit;
+}
+.work-board-columns[data-drag] .work-board-cards > li {
+  pointer-events: none;
+}
+.work-board-column {
+  transition: box-shadow var(--m-micro) var(--e-micro);
+}
+.work-board-columns[data-drag] .work-board-column[data-drop='target'] {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.work-board-columns[data-drag] .work-board-column[data-drop='target'][data-over] {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.work-board-columns[data-drag] .work-board-column[data-drop='forbidden'] {
+  cursor: not-allowed;
+}
+.work-board-column[data-drop='forbidden'] .work-board-column-head > :not(.work-board-column-forbidden),
+.work-board-column[data-drop='forbidden'] > :not(.work-board-column-head) {
+  opacity: 0.45;
+  transition: opacity var(--m-micro) var(--e-micro);
+}
+.work-board-column-forbidden {
+  display: inline-grid;
+  place-items: center;
+  margin-inline-start: auto;
+  color: var(--muted);
+}
+.work-board-column-forbidden + .work-board-column-action {
+  margin-inline-start: 0;
+}
+.work-board-card[data-drag-source] {
+  opacity: 0.45;
+}
+.work-board-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  margin: 0;
+  pointer-events: none;
+  box-shadow: var(--sh-lift);
+  cursor: grabbing;
+}
+.work-board-ghost .work-board-card-actions {
+  opacity: 0;
+}
+/* A session card with a write of the board's own (an attend, a stop) keeps its line under the card's button. */
+.work-board-card[data-write] {
+  flex-direction: column;
+}
+.work-board-drop-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+}
+.work-board-drop-confirm p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.work-board-drop-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-6);
+}
+
 /* ---- The list ------------------------------------------------------------------------------------------------- */
 
 .work-board-table {

@@ -12,6 +12,7 @@ import { sessionSource } from '../sessionSource.ts'
 import { deliveryCheckSummary } from '../shell/useWorkbenchEvidence.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { PRIORITY_LABELS, priorityOf, reasonWords, whoOf, WHO_CODE } from './model.ts'
+import { ItemWriteLine, type CardWriteLine } from './WriteLine.tsx'
 
 const SOURCE_WORDS = { handoff: '交接自', fork: '分叉自', schedule: '定时' } as const
 
@@ -99,6 +100,11 @@ export interface CardProps {
   onOpen: (id: string) => void
   /** In place of the card's body: the request the first approval card answers on the board. */
   decision?: ReactNode
+  /** A write the board sent for this session (an attend, a stop): unknown with 重试, or the Host's refusal. */
+  write?: CardWriteLine | undefined
+  onRetry?: ((id: string) => void) | undefined
+  /** Absent for a stop: it has 重试 only. */
+  onDismiss?: ((id: string) => void) | undefined
 }
 
 /**
@@ -115,6 +121,9 @@ export const WorkBoardCard = memo(function WorkBoardCard({
   menu,
   onOpen,
   decision,
+  write,
+  onRetry,
+  onDismiss,
 }: CardProps) {
   const connected = shell.connection === 'connected'
   const live = task.status === 'running' || task.status === 'waiting-approval'
@@ -136,7 +145,8 @@ export const WorkBoardCard = memo(function WorkBoardCard({
       data-work-session={task.id}
       data-marked={marked ? '' : undefined}
       data-tone={state.tone}
-      data-decision={decision ? '' : undefined}>
+      data-decision={decision ? '' : undefined}
+      data-write={write && write.state !== 'sending' ? '' : undefined}>
       {decision ?? (
         <button
           type="button"
@@ -178,6 +188,23 @@ export const WorkBoardCard = memo(function WorkBoardCard({
           )}
           {running && <RunningEdge />}
         </button>
+      )}
+      {write && write.state !== 'sending' && (
+        <div className="work-board-item-foot">
+          <ItemWriteLine
+            state={write}
+            onRetry={() => {
+              onRetry?.(task.id)
+            }}
+            onDismiss={
+              onDismiss
+                ? () => {
+                    onDismiss(task.id)
+                  }
+                : undefined
+            }
+          />
+        </div>
       )}
       <span className="work-board-card-actions">
         <Menu

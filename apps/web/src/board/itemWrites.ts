@@ -1,12 +1,12 @@
 import { useCallback, useRef, useState } from 'react'
-import type { WorkItemPatchInput, WorkItemStartAnswer, WorkItemSummary } from '@latch/protocol'
+import type { BoardAttendInput, WorkItemPatchInput, WorkItemStartAnswer, WorkItemSummary } from '@latch/protocol'
 import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
 
-/** A write to one 待办 from its card, kept as sent until the Host answers it for certain. */
+/** A write to one 待办 (or a session's attend) from its card, kept as sent until the Host answers it for certain. */
 interface ItemRequest {
-  kind: 'start' | 'patch' | 'delete'
+  kind: 'start' | 'patch' | 'delete' | 'attend'
   path: string
   method: 'POST' | 'PATCH' | 'DELETE'
   body: Record<string, unknown>
@@ -23,8 +23,9 @@ export type ItemWriteState =
 
 export type ItemWriteResult = { ok: true; sessionId?: string } | { ok: false; reason?: string; unknown?: true }
 
-/** The Host already holds what an uncertain edit or delete asked for, or moved on: the snapshot says which. */
-const settledOnRetry = (cause: unknown) => cause instanceof ApiError && (cause.code === 'item-changed' || cause.code === 'item-not-found')
+/** The Host already holds what an uncertain edit, delete or attend asked for, or moved on: the snapshot says which. */
+const settledOnRetry = (cause: unknown) =>
+  cause instanceof ApiError && (cause.code === 'item-changed' || cause.code === 'item-not-found' || cause.code === 'attend-stale')
 
 /**
  * The board's writes to 待办 outside 新建: 开始 with its stored choices, 全部开始, 完成, priority, tags, edits and
@@ -124,6 +125,21 @@ export function useItemWrites(refresh: () => Promise<void>) {
     [send],
   )
 
+  /**
+   * A session dropped on 已结束 from 等你处理: `POST /tasks/:id/attend`, the failed run opened or its unknown results
+   * checked, for the settlement the card showed. Kept under the session's ID, as the card's own write.
+   */
+  const attend = useCallback(
+    (sessionId: string, input: BoardAttendInput) =>
+      send(sessionId, {
+        kind: 'attend',
+        path: `tasks/${encodeURIComponent(sessionId)}/attend`,
+        method: 'POST',
+        body: { ...input },
+      }),
+    [send],
+  )
+
   /** 重试: the request as it was sent, a start with its own requestId. */
   const retry = useCallback(
     (id: string) => {
@@ -163,7 +179,7 @@ export function useItemWrites(refresh: () => Promise<void>) {
     [start, startingAll],
   )
 
-  return { states, start, startAll, startingAll, patch, remove, retry, dismiss }
+  return { states, start, startAll, startingAll, patch, remove, attend, retry, dismiss }
 }
 
 export type ItemWrites = ReturnType<typeof useItemWrites>

@@ -6,13 +6,14 @@ import type { SendingMessage } from '../core/sendingMessage.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { ConfirmDialog, type MenuSection } from '../components/overlays.tsx'
 import { knownTags, SessionTagsDialog } from '../components/SessionTagsDialog.tsx'
-import { MessageError } from '../core/api.ts'
+import { errorMessage, isUncertain, MessageError } from '../core/api.ts'
 import { WorkbenchDecision } from '../shell/WorkbenchDecision.tsx'
 import { useWorkbenchDelivery } from '../shell/useWorkbenchEvidence.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import {
   BOARD_GROUPS,
   boardColumns,
+  groupOf,
   boardKey,
   filterOptions,
   filtering,
@@ -31,6 +32,10 @@ import {
   type ListState,
 } from './model.ts'
 import { switchWorkView } from '../preferences.ts'
+import { DropConfirm } from './DropConfirm.tsx'
+import { dropTargets, type DropAction } from './drag.ts'
+import { useBoardDrag } from './useBoardDrag.ts'
+import type { CardWriteLine } from './WriteLine.tsx'
 import { boardMarkSections } from '../sessionMenu.ts'
 import { useBoardRequests } from './requests.ts'
 import { WorkBoard } from './WorkBoard.tsx'
@@ -309,6 +314,68 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     const task = waitingOf(card)
     return task !== undefined && answerable(task, snapshot.approvals)
   })
+  // ---- Dragging between columns: a gesture whose drop performs the card's existing action ----------------------------
+  const [stopAsk, setStopAsk] = useState<{ task: TaskSummary; point: { x: number; y: number } } | null>(null)
+  /** Stops sent from a drop that the Host refused, with its reason; an unknown one is the shell's `cancelUncertain`. */
+  const [stopRefused, setStopRefused] = useState<ReadonlyMap<string, string>>(() => new Map())
+  const forgetStop = (id: string) => {
+    setStopRefused(previous => {
+      if (!previous.has(id)) return previous
+      const next = new Map(previous)
+      next.delete(id)
+      return next
+    })
+  }
+  const stop = (id: string) => {
+    forgetStop(id)
+    // The stop is acknowledged only when the Host says the run settled; until then the card stays where it says.
+    shell.cancelSession(id).catch((cause: unknown) => {
+      if (!isUncertain(cause)) setStopRefused(previous => new Map(previous).set(id, errorMessage(cause)))
+    })
+  }
+  const stopUnknown = (id: string) => shell.cancelUncertain.has(id)
+  const unconfirmed = (id: string) => {
+    const state = writes.states.get(id)
+    return (state !== undefined && state.state !== 'refused') || stopUnknown(id)
+  }
+  const placeOf = (id: string) => {
+    const card = columns.flatMap(item => item.cards).find(item => item.id === id)
+    if (!card) return undefined
+    const stopping = card.kind === 'session' && (shell.stopping.has(id) || card.task.live?.activity === 'cancelling')
+    return { source: groupOf(card), targets: dropTargets(card, { canStart, canMark, unconfirmed: unconfirmed(id), stopping }) }
+  }
+  const onDrop = (action: DropAction, point: { x: number; y: number }) => {
+    switch (action.kind) {
+      case 'start':
+        startItem(action.item)
+        return
+      case 'finish':
+      case 'reopen':
+        void writes.patch(action.item, { closed: action.kind === 'finish' })
+        return
+      case 'stop':
+        setStopAsk({ task: action.task, point })
+        return
+      case 'attend':
+        void writes.attend(action.task.id, action.input)
+    }
+  }
+  const drag = useBoardDrag({
+    root,
+    // A phone shows the list; a narrow desktop window still has the columns (2 + 2 + 1) and a mouse.
+    enabled: !narrow && !showItem && memory.view === 'board',
+    placeOf,
+    onDrop,
+  })
+  /** What a session card says of a write the board sent for it: its attend, or a stop from a drop. */
+  const sessionWrite = (id: string): CardWriteLine | undefined => {
+    const own = writes.states.get(id)
+    if (own) return own
+    if (stopUnknown(id)) return { state: 'unknown', reason: '没有收到停止的确认' }
+    const refused = stopRefused.get(id)
+    return refused === undefined ? undefined : { state: 'refused', reason: refused }
+  }
+
   const renderCard = (card: BoardCard, decide = false) => {
     if (card.kind === 'item') {
       const waiting = decide ? waitingOf(card) : undefined
@@ -358,6 +425,12 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         menu={menuFor(task)}
         onOpen={open}
         decision={decide ? <WorkbenchDecision task={task} shell={decisionShell} /> : undefined}
+        write={sessionWrite(task.id)}
+        onRetry={id => {
+          if (writes.states.has(id)) void writes.retry(id)
+          else stop(id)
+        }}
+        onDismiss={writes.states.has(task.id) ? writes.dismiss : stopRefused.has(task.id) && !stopUnknown(task.id) ? forgetStop : undefined}
       />
     )
   }
@@ -484,6 +557,8 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         now={now}
         renderCard={card => renderCard(card, card === decisionCard)}
         todoAction={startAll}
+        drag={drag.view}
+        onPointerDown={drag.onPointerDown}
       />
     )
   }
@@ -511,6 +586,22 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         onStarted={onNewStarted}
         onKept={setStarted}
       />
+      {stopAsk && (
+        <DropConfirm
+          label="停止会话"
+          question={`停止「${escapeSecurityText(stopAsk.task.title || '未命名会话')}」？`}
+          confirmLabel="停止"
+          point={stopAsk.point}
+          onClose={() => {
+            setStopAsk(null)
+          }}
+          onConfirm={() => {
+            const id = stopAsk.task.id
+            setStopAsk(null)
+            stop(id)
+          }}
+        />
+      )}
       {tagging && (
         <SessionTagsDialog
           task={tagging}

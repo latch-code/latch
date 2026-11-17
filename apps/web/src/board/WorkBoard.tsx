@@ -1,9 +1,20 @@
 import type { AutomationSummary } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
-import { Count, Icon, PullRequestGlyph, RunningGlyph, ScheduleGlyph, StatusWord, WaitingGlyph, type IconComponent } from '@latch/ui'
-import { CircleCheck, ListTodo } from 'lucide-react'
-import type { ReactNode } from 'react'
+import {
+  Count,
+  Icon,
+  PullRequestGlyph,
+  RunningGlyph,
+  ScheduleGlyph,
+  StatusWord,
+  Tooltip,
+  WaitingGlyph,
+  type IconComponent,
+} from '@latch/ui'
+import { Ban, CircleCheck, ListTodo } from 'lucide-react'
+import type { PointerEvent, ReactNode } from 'react'
 import { GROUP_LABELS, type BoardCard, type BoardColumn, type BoardColumnGroup } from './model.ts'
+import type { BoardDragView } from './useBoardDrag.ts'
 
 const GROUP_ICONS: Record<BoardColumnGroup, IconComponent> = {
   todo: ListTodo,
@@ -52,6 +63,13 @@ function Schedules({ schedules, now }: { schedules: readonly AutomationSummary[]
   )
 }
 
+/** While a card is dragged: its own column, one it may be dropped on, or one it may not. */
+function dropState(drag: BoardDragView | null | undefined, group: BoardColumnGroup): 'source' | 'target' | 'forbidden' | undefined {
+  if (!drag) return undefined
+  if (group === drag.source) return 'source'
+  return drag.targets.has(group) ? 'target' : 'forbidden'
+}
+
 /**
  * The five columns, as equal cells that reflow by the board's own width (work-board.css): five in a row from 1280px,
  * 3 + 2 from 776px, 2 + 2 + 1 below. Every cell scrolls its own cards under a fixed head; an empty one is its head and
@@ -64,6 +82,8 @@ export function WorkBoard({
   now,
   renderCard,
   todoAction,
+  drag,
+  onPointerDown,
 }: {
   columns: readonly BoardColumn[]
   filtered: boolean
@@ -72,31 +92,51 @@ export function WorkBoard({
   renderCard: (card: BoardCard, column: BoardColumn, index: number) => ReactNode
   /** In 未开始's head: 全部开始, while it has cards this device may start. */
   todoAction?: ReactNode
+  /** A card being dragged: where it may go. */
+  drag?: BoardDragView | null
+  /** A press on a card's own button that may become a drag (useBoardDrag). */
+  onPointerDown?: (event: PointerEvent<HTMLElement>) => void
 }) {
   return (
-    <div className="work-board-columns" data-columns={columns.length}>
-      {columns.map(column => (
-        <section key={column.group} className="work-board-column" data-group={column.group} aria-label={GROUP_LABELS[column.group]}>
-          <header className="work-board-column-head" tabIndex={-1}>
-            <Icon icon={GROUP_ICONS[column.group]} size={14} />
-            <h3>{GROUP_LABELS[column.group]}</h3>
-            <ColumnCount column={column} filtered={filtered} />
-            {column.group === 'todo' && todoAction && <span className="work-board-column-action">{todoAction}</span>}
-          </header>
-          {column.cards.length ? (
-            <ul className="work-board-cards">
-              {column.cards.map((card, index) => (
-                <li key={card.id}>{renderCard(card, column, index)}</li>
-              ))}
-            </ul>
-          ) : (
-            <div className="work-board-cards" data-empty="">
-              <span className="work-board-empty-line" aria-hidden="true" />
-            </div>
-          )}
-          {column.group === 'running' && <Schedules schedules={schedules} now={now} />}
-        </section>
-      ))}
+    <div className="work-board-columns" data-columns={columns.length} data-drag={drag ? '' : undefined} onPointerDown={onPointerDown}>
+      {columns.map(column => {
+        const drop = dropState(drag, column.group)
+        return (
+          <section
+            key={column.group}
+            className="work-board-column"
+            data-group={column.group}
+            data-drop={drop}
+            data-over={drop === 'target' && drag?.over === column.group ? '' : undefined}
+            aria-label={GROUP_LABELS[column.group]}>
+            <header className="work-board-column-head" tabIndex={-1}>
+              <Icon icon={GROUP_ICONS[column.group]} size={14} />
+              <h3>{GROUP_LABELS[column.group]}</h3>
+              <ColumnCount column={column} filtered={filtered} />
+              {drop === 'forbidden' && (
+                <Tooltip content="不能放到这里">
+                  <span className="work-board-column-forbidden" role="img" aria-label="不能放到这里">
+                    <Icon icon={Ban} size={14} />
+                  </span>
+                </Tooltip>
+              )}
+              {column.group === 'todo' && todoAction && <span className="work-board-column-action">{todoAction}</span>}
+            </header>
+            {column.cards.length ? (
+              <ul className="work-board-cards">
+                {column.cards.map((card, index) => (
+                  <li key={card.id}>{renderCard(card, column, index)}</li>
+                ))}
+              </ul>
+            ) : (
+              <div className="work-board-cards" data-empty="">
+                <span className="work-board-empty-line" aria-hidden="true" />
+              </div>
+            )}
+            {column.group === 'running' && <Schedules schedules={schedules} now={now} />}
+          </section>
+        )
+      })}
     </div>
   )
 }

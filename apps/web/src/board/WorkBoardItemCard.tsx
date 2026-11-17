@@ -24,6 +24,7 @@ import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { ItemWriteState } from './itemWrites.ts'
 import { cardUpdatedAt, GROUP_LABELS, type BoardCard } from './model.ts'
 import { cardState, PriorityMark, TagChips } from './WorkBoardCard.tsx'
+import { ItemWriteLine } from './WriteLine.tsx'
 
 export type ItemCard = Extract<BoardCard, { kind: 'item' }>
 
@@ -48,39 +49,6 @@ export function itemState(card: ItemCard, connected: boolean, now: number): { to
     case 'done':
       return { tone: 'neutral', words: item.closedAt ? '已完成' : 'PR 已合并' }
   }
-}
-
-/** The card's own write: sending, an unknown result with 重试 and 放弃, or the Host's refusal. */
-export function ItemWriteLine({
-  state,
-  onRetry,
-  onDismiss,
-}: {
-  state: ItemWriteState | undefined
-  onRetry: () => void
-  onDismiss: () => void
-}) {
-  if (!state || state.state === 'sending') return null
-  if (state.state === 'refused')
-    return (
-      <span className="work-board-item-write" data-state="refused">
-        <StatusWord tone="failed">{state.reason}</StatusWord>
-        <Button size="xs" variant="ghost" onClick={onDismiss}>
-          知道了
-        </Button>
-      </span>
-    )
-  return (
-    <span className="work-board-item-write" data-state="unknown" title={state.reason}>
-      <StatusWord tone="warn">结果未知</StatusWord>
-      <Button size="xs" onClick={onRetry}>
-        重试
-      </Button>
-      <Button size="xs" variant="ghost" onClick={onDismiss}>
-        放弃
-      </Button>
-    </span>
-  )
 }
 
 /**
