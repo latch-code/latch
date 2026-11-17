@@ -231,33 +231,64 @@
 .composer textarea:disabled {
   color: var(--ink-2);
 }
-.composer-input > textarea,
-.composer-command-mirror {
-  padding-inline-start: var(--sp-16);
-}
 .composer-input > textarea {
   position: relative;
+  padding-inline-start: var(--sp-16);
 }
+/* Under the input with the input's own box, type and padding (PromptMarks copies them), so its lines break alike. */
 .composer-command-mirror {
   position: absolute;
-  inset: 0;
-  padding-block: var(--sp-16) var(--sp-8);
-  padding-inline-end: var(--sp-16);
+  box-sizing: border-box;
   overflow: hidden;
   color: transparent;
-  font-size: var(--fs-prose);
-  line-height: var(--lh-prose);
   white-space: pre-wrap;
   overflow-wrap: break-word;
   pointer-events: none;
   user-select: none;
 }
+/* With a mark shown the mirror paints the text and the input keeps only its caret, selection and IME. */
+.composer-input[data-marks] > textarea {
+  -webkit-text-fill-color: transparent;
+}
+.composer-input[data-marks] > textarea::placeholder {
+  -webkit-text-fill-color: currentColor;
+}
+.composer-input[data-marks] > .composer-command-mirror {
+  color: var(--ink);
+}
+.composer-input[data-marks]:has(> textarea:disabled) > .composer-command-mirror {
+  color: var(--ink-2);
+}
+/* No padding, border or weight: a mark never moves a character. Its tint reaches past the text as shadow. */
+.prompt-mark {
+  position: relative;
+  border-radius: var(--r-4);
+  background: var(--content-path-tint);
+  box-shadow:
+    -3px 0 0 var(--content-path-tint),
+    2px 0 0 var(--content-path-tint);
+  color: var(--content-path-ink);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.prompt-mark-sigil {
+  position: relative;
+  color: transparent;
+}
+.prompt-mark-sigil > svg {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 50%;
+  width: 0.8em;
+  height: 0.8em;
+  color: var(--content-path-ink);
+  transform: translateY(-50%);
+}
 .composer-command-chip {
   border-radius: var(--r-4);
   background: var(--hover);
 }
-.composer-input[data-command] > textarea,
-.composer-input[data-command] > .composer-command-mirror {
+.composer-input[data-command] > textarea {
   font-family: var(--mono);
   font-size: var(--fs-mono);
 }
@@ -823,19 +854,11 @@
     font-size: var(--fs-input);
     line-height: var(--lh-input);
   }
-  .composer-input > textarea,
-  .composer-command-mirror {
+  .composer-input > textarea {
     padding-inline-start: var(--sp-12);
   }
-  .composer-input[data-command] > textarea,
-  .composer-input[data-command] > .composer-command-mirror {
+  .composer-input[data-command] > textarea {
     font-size: var(--fs-input);
-  }
-  .composer-command-mirror {
-    padding-block: var(--sp-12) var(--sp-4);
-    padding-inline-end: var(--sp-12);
-    font-size: var(--fs-input);
-    line-height: var(--lh-input);
   }
   .composer-slash-button {
     display: inline-flex;

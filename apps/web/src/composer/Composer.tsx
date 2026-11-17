@@ -10,6 +10,7 @@ import type { SendKey } from '../preferences.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { SlashCommands, useSlashCommands, type SlashAction } from './SlashCommands.tsx'
 import { latchActionOf } from './latchActions.ts'
+import { deleteText, PromptMirrorText, usePromptMarks } from './PromptMarks.tsx'
 import {
   Button,
   IconButton,
@@ -246,6 +247,7 @@ export function Composer({
   const commandChip = commandHead && commandDefinition ? commandHead[1]! : undefined
   const argumentHint = commandChip && !commandHead?.[3]?.trim() ? commandDefinition?.inputHint : undefined
   const mentions = useFileMentions(draft, onDraft, textareaRef, fileMentions, commandAnchor)
+  const marks = usePromptMarks({ draft, catalogue: { commands, skills, actions }, textareaRef, mirrorRef: commandMirror })
   // The input grows with its content a line at a time, up to eight lines, its height moving over 120ms (composer.css).
   // Measuring needs the height let go for a moment; it is put back without a transition, so the move then starts from
   // the height the input had and not from the measurement.
@@ -370,11 +372,10 @@ export function Composer({
       && [commandChip.length, commandChip.length + 1].includes(event.currentTarget.selectionStart)
     ) {
       event.preventDefault()
-      const end = commandChip.length + (commandHead?.[2]?.length ?? 0)
-      slashSelection.current = { draft: draft.slice(end), start: 0, end: 0 }
-      onDraft(draft.slice(end))
+      deleteText(event.currentTarget, 0, commandChip.length + (commandHead?.[2]?.length ?? 0))
       return
     }
+    if (marks.keydown(event)) return
     if (event.key === 'Escape' && escapeIsLeftover(event)) return
     // Esc belongs to the approval drawer while one waits (it refuses once), or to the text just written.
     if (event.key === 'Escape' && answer?.kind === 'reject') return
@@ -451,6 +452,7 @@ export function Composer({
         onDraft(event.target.value)
       }}
       onKeyDown={keydown}
+      {...marks.inputProps}
       onSelect={event => {
         mentions.setCaret(event.currentTarget.selectionStart)
         setSlashCaret({ draft: event.currentTarget.value, at: event.currentTarget.selectionStart })
@@ -477,12 +479,22 @@ export function Composer({
         </p>
       )
     ) : (
-      <div className="composer-input" data-command={commandChip ? '' : undefined}>
-        {commandChip && (
+      <div className="composer-input" data-command={commandChip ? '' : undefined} data-marks={marks.shown ? '' : undefined}>
+        {(commandChip || marks.shown) && (
           <div ref={commandMirror} className="composer-command-mirror" aria-hidden="true">
-            <span className="composer-command-chip">{commandChip}</span>
-            {draft.slice(commandChip.length)}
-            {argumentHint && <span className="composer-command-hint">{escapeSecurityText(argumentHint)}</span>}
+            {marks.shown ? (
+              <PromptMirrorText
+                text={draft}
+                marks={marks.marks}
+                hint={argumentHint ? <span className="composer-command-hint">{escapeSecurityText(argumentHint)}</span> : undefined}
+              />
+            ) : (
+              <>
+                <span className="composer-command-chip">{commandChip}</span>
+                {draft.slice(commandChip!.length)}
+                {argumentHint && <span className="composer-command-hint">{escapeSecurityText(argumentHint)}</span>}
+              </>
+            )}
           </div>
         )}
         {textarea}
