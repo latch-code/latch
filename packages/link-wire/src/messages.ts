@@ -43,6 +43,13 @@ export type RelayMessage =
   | { type: 'depart'; state: 1 | 2 | 3 }
   | { type: 'unavailable'; state: number; since: number }
   | { type: 'goaway'; reason: 1 | 2 | 3; retryAfterMs: number }
+  // Edge kind only (relay-identity.ts), and only on the v2 wire: a self-hosted node rejects them as unknown tags.
+  | { type: 'edge-hello'; clientNonce: Uint8Array }
+  | { type: 'edge-challenge'; relayId: Uint8Array; nonce: Uint8Array; timeMs: number; requiresToken: boolean; signature: Uint8Array }
+  | { type: 'bound-admit'; proof: AdmissionProof }
+  | { type: 'ping' }
+  | { type: 'pong' }
+const EDGE_TYPES: ReadonlySet<RelayMessage['type']> = new Set(['edge-hello', 'edge-challenge', 'bound-admit', 'ping', 'pong'])
 const tags = {
   data: 0,
   pad: 1,
@@ -64,9 +71,15 @@ const tags = {
   spliced: 81,
   admitted: 96,
   unavailable: 98,
+  'bound-admit': 17,
+  'edge-hello': 39,
+  ping: 40,
+  'edge-challenge': 70,
+  pong: 71,
 } as const
 export function encodeMessage(message: RelayMessage, version: RelayWireVersion = 1): Uint8Array {
   if (version !== 1 && version !== 2) throw new RangeError('Unsupported relay protocol')
+  if (version !== 2 && EDGE_TYPES.has(message.type)) throw new RangeError('Edge relay messages need the v2 wire')
   let body: Uint8Array
   switch (message.type) {
     case 'data':
@@ -103,7 +116,24 @@ export function encodeMessage(message: RelayMessage, version: RelayWireVersion =
     case 'registered':
       body = concat(fixed(message.token, 32), fixed(message.routeId, 16), uint(message.status, 1))
       break
+    case 'edge-hello':
+      body = fixed(message.clientNonce, 32)
+      break
+    case 'edge-challenge':
+      body = concat(
+        fixed(message.relayId, 16),
+        fixed(message.nonce, 32),
+        uint(message.timeMs, 8),
+        uint(message.requiresToken ? 1 : 0, 1),
+        fixed(message.signature, 64),
+      )
+      break
+    case 'ping':
+    case 'pong':
+      body = new Uint8Array()
+      break
     case 'admit':
+    case 'bound-admit':
       body = concat(
         fixed(message.proof.pass, 174),
         uint(message.proof.timeMs, 8),
@@ -156,6 +186,7 @@ export function decodeMessage(bytes: Uint8Array, version: RelayWireVersion = 1):
   if (version !== 1 && version !== 2) throw new RangeError('Unsupported relay protocol')
   const reader = new Reader(bytes, MAX_MESSAGE)
   const tag = reader.number(1)
+  if (version !== 2 && [17, 39, 40, 70, 71].includes(tag)) throw new RangeError('Unknown relay tag')
   let value: RelayMessage
   switch (tag) {
     case 0:
@@ -207,9 +238,28 @@ export function decodeMessage(bytes: Uint8Array, version: RelayWireVersion = 1):
       value = { type: 'registered', token, routeId, status: status as 0 | 1 | 4 | 5 | 6 }
       break
     }
+    case 39:
+      value = { type: 'edge-hello', clientNonce: reader.take(32) }
+      break
+    case 70: {
+      const relayId = reader.take(16),
+        nonce = reader.take(32),
+        timeMs = reader.number(8),
+        flags = reader.number(1)
+      if (flags > 1) throw new RangeError('Reserved flags')
+      value = { type: 'edge-challenge', relayId, nonce, timeMs, requiresToken: flags === 1, signature: reader.take(64) }
+      break
+    }
+    case 40:
+      value = { type: 'ping' }
+      break
+    case 71:
+      value = { type: 'pong' }
+      break
     case 16:
+    case 17:
       value = {
-        type: 'admit',
+        type: tag === 16 ? 'admit' : 'bound-admit',
         proof: { pass: reader.take(174), timeMs: reader.number(8), nonce: reader.take(16), signature: reader.take(64) },
       }
       break

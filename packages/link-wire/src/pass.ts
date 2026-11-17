@@ -66,15 +66,53 @@ export async function proofInput(crypto: LinkCrypto, pass: AdmissionPass, timeMs
     fixed(nonce, 16),
   )
 }
-export async function makeProof(crypto: LinkCrypto, holderKey: Uint8Array, pass: Uint8Array, timeMs: number): Promise<AdmissionProof> {
-  const nonce = crypto.random(16)
-  return { pass, timeMs, nonce, signature: await crypto.sign(holderKey, await proofInput(crypto, decodePass(pass), timeMs, nonce)) }
+/**
+ * The edge kind's admission proof, bound to the node's per-connection challenge nonce so that it is single-use:
+ *
+ *   "latch-relay-proof-v2\0" || relayId[16] || routeId[16] || tag[16] || timeMs[8] || nonce[16] || relayNonce[32]
+ *
+ * Self-hosted nodes keep v1 (`proofInput`): deployed nodes and phones verify v1 only, and a client cannot tell an
+ * upgraded self-hosted node from an old one, so binding there would need a negotiation that does not exist.
+ */
+export async function boundProofInput(
+  crypto: LinkCrypto,
+  pass: AdmissionPass,
+  timeMs: number,
+  nonce: Uint8Array,
+  relayNonce: Uint8Array,
+): Promise<Uint8Array> {
+  return concat(
+    ascii('latch-relay-proof-v2\0'),
+    pass.relayId,
+    await routeId(crypto, pass.routePub),
+    pass.tag,
+    uint(timeMs, 8),
+    fixed(nonce, 16),
+    fixed(relayNonce, 32),
+  )
 }
+/** Without `relayNonce` the v1 proof of self-hosted nodes; with it the bound v2 proof of edge nodes. */
+export async function makeProof(
+  crypto: LinkCrypto,
+  holderKey: Uint8Array,
+  pass: Uint8Array,
+  timeMs: number,
+  relayNonce?: Uint8Array,
+): Promise<AdmissionProof> {
+  const nonce = crypto.random(16),
+    decoded = decodePass(pass)
+  const input = relayNonce
+    ? await boundProofInput(crypto, decoded, timeMs, nonce, relayNonce)
+    : await proofInput(crypto, decoded, timeMs, nonce)
+  return { pass, timeMs, nonce, signature: await crypto.sign(holderKey, input) }
+}
+/** `relayNonce` selects the bound v2 proof; a v1 proof never verifies against it, and the reverse holds too. */
 export async function verifyProof(
   crypto: LinkCrypto,
   relayId: Uint8Array,
   proof: AdmissionProof,
   timeMs: number,
+  relayNonce?: Uint8Array,
 ): Promise<AdmissionPass | null> {
   let pass: AdmissionPass
   try {
@@ -83,7 +121,11 @@ export async function verifyProof(
     return null
   }
   const passValid = await crypto.verify(pass.routePub, concat(ascii('latch-relay-pass-v1\0'), proof.pass.slice(0, 110)), pass.signature)
-  const holderValid = await crypto.verify(pass.holderPub, await proofInput(crypto, pass, proof.timeMs, proof.nonce), proof.signature)
+  if (relayNonce && relayNonce.length !== 32) return null
+  const input = relayNonce
+    ? await boundProofInput(crypto, pass, proof.timeMs, proof.nonce, relayNonce)
+    : await proofInput(crypto, pass, proof.timeMs, proof.nonce)
+  const holderValid = await crypto.verify(pass.holderPub, input, proof.signature)
   const sameRelay = relayId.length === 16 && relayId.every((byte, index) => byte === pass.relayId[index])
   const now = Math.floor(timeMs / 1000)
   const window = pass.day * UTC_DAY

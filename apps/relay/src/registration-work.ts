@@ -1,6 +1,7 @@
 import { scrypt } from 'node:crypto'
 import { z } from 'zod'
 import { REGISTRATION_WORK, workDigestMeetsBits } from '@latch/link-wire'
+import type { RegistrationWorkInput, RegistrationWorkResult } from '@latch/relay-core'
 
 export const REGISTRATION_WORK_MEMORY = REGISTRATION_WORK.maxMemory
 export const registrationWorkSchema = z
@@ -13,12 +14,7 @@ export const registrationWorkSchema = z
   .strict()
   .refine(value => value.minBits <= value.maxBits)
 export type RegistrationWorkPolicy = z.infer<typeof registrationWorkSchema>
-export interface RegistrationWorkInput {
-  input: Uint8Array
-  salt: Uint8Array
-  bits: number
-}
-export type RegistrationWorkResult = boolean | 'overloaded' | 'timeout'
+export type { RegistrationWorkInput, RegistrationWorkResult } from '@latch/relay-core'
 type Derive = (input: Uint8Array, salt: Uint8Array, callback: (error: Error | null, digest?: Uint8Array) => void) => void
 const derive: Derive = (input, salt, callback) => {
   scrypt(

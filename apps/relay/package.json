@@ -13,6 +13,7 @@
   "dependencies": {
     "@latch/link-wire": "workspace:*",
     "@latch/link-client": "workspace:*",
+    "@latch/relay-core": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

@@ -20,7 +20,8 @@ export function createRelayTransportDriver(options: {
     ...options.endpoint,
     url: new URL(options.endpoint.url),
     relayId: options.endpoint.relayId.slice(),
-    spki: options.endpoint.spki.slice(),
+    ...(options.endpoint.spki ? { spki: options.endpoint.spki.slice() } : {}),
+    ...(options.endpoint.edge ? { edge: { relayKey: options.endpoint.edge.relayKey.slice(), shard: options.endpoint.edge.shard } } : {}),
   }
   return {
     id: descriptor.driverId,

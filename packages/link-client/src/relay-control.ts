@@ -12,8 +12,8 @@ import {
 } from '@latch/link-wire'
 import { solveRegistrationWork } from './registration-work.ts'
 import { nodeCrypto } from './crypto.ts'
-import { RelayTunnel, type RelayEndpoint } from './tunnel.ts'
-import { connectRelay, RelayClosed, type RelaySocket } from './websocket.ts'
+import { openRelay, RelayTunnel, type RelayEndpoint } from './tunnel.ts'
+import { RelayClosed, type RelaySocket } from './websocket.ts'
 
 type Registered = Extract<RelayMessage, { type: 'registered' }>
 type Open = Extract<RelayMessage, { type: 'open' }>
@@ -26,14 +26,6 @@ export interface RelaySetup {
   /** Called after native authentication settles; close also releases the bounded setup slot. */
   finishSetup(): void
 }
-async function dial(options: RelayEndpoint, path: string, signal?: AbortSignal): Promise<RelaySocket> {
-  const url = new URL(options.url)
-  url.pathname = path
-  const address = options.resolveAddress ? await options.resolveAddress() : undefined
-  if (signal?.aborted) throw new Error('Relay setup cancelled')
-  return connectRelay({ url, spki: options.spki, ca: options.ca, address, signal, profile: options.profile })
-}
-
 /** One control socket, one receive pump, at most eight route memberships and eight queued/authenticating opens. */
 export class RelayControl {
   readonly closed: Promise<Error>
@@ -41,6 +33,8 @@ export class RelayControl {
   private readonly peer: RelaySocket
   private readonly options: RelayEndpoint & { registrationToken?: Uint8Array }
   private readonly nonce: Uint8Array
+  /** Milliseconds from HELLO to the node's challenge on this connection: the Host's nearest-region measurement. */
+  readonly roundTripMs: number
   private readonly routes = new Map<string, Registered>()
   private readonly opens: Open[] = []
   private readonly waiters: Array<{ resolve(value: Open): void; reject(error: Error): void }> = []
@@ -74,10 +68,16 @@ export class RelayControl {
   private failure?: Error
   private openWindow = Date.now()
   private openCount = 0
-  private constructor(peer: RelaySocket, options: RelayEndpoint & { registrationToken?: Uint8Array }, nonce: Uint8Array) {
+  private constructor(
+    peer: RelaySocket,
+    options: RelayEndpoint & { registrationToken?: Uint8Array },
+    nonce: Uint8Array,
+    roundTripMs: number,
+  ) {
     this.peer = peer
     this.options = options
     this.nonce = nonce
+    this.roundTripMs = roundTripMs
     this.closed = new Promise(resolve => {
       this.resolveClosed = resolve
     })
@@ -86,19 +86,11 @@ export class RelayControl {
   static async connect(
     options: RelayEndpoint & { registrationToken?: Uint8Array; signal?: AbortSignal; guardWrites?: () => boolean },
   ): Promise<RelayControl> {
-    const peer = await dial(options, '/v1/h', options.signal)
-    if (options.guardWrites) peer.guardWrites(options.guardWrites)
+    const started = performance.now()
+    const { peer, hello } = await openRelay(options, 'host', options.signal, options.guardWrites)
     try {
-      await peer.send({ type: 'hello' })
-      const hello = await peer.receive(5000)
-      if (
-        hello.type !== 'challenge'
-        || !equal(hello.relayId, options.relayId)
-        || Math.abs(hello.timeMs - Date.now()) > 86_400_000
-        || (hello.requiresToken && options.registrationToken?.length !== 32)
-      )
-        throw new Error('Relay challenge rejected')
-      return new RelayControl(peer, options, hello.nonce)
+      if (!hello || (hello.requiresToken && options.registrationToken?.length !== 32)) throw new Error('Relay challenge rejected')
+      return new RelayControl(peer, options, hello.nonce, performance.now() - started)
     } catch (error) {
       peer.close()
       throw error
@@ -326,7 +318,7 @@ export class RelayControl {
     try {
       const route = this.routes.get(hex(request.routeId))
       if (!route || this.failure) throw new Error('Relay route unavailable')
-      data = await dial({ ...this.options, profile: request.profile }, '/v1/d')
+      data = (await openRelay({ ...this.options, profile: request.profile }, 'data')).peer
       this.attaching.add(data)
       if (this.failure) throw this.failure
       const nonce = nodeCrypto.random(16)

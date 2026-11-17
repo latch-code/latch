@@ -1,8 +1,12 @@
 import { Duplex } from 'node:stream'
 import {
   attachMac,
+  EDGE_RELAY,
+  edgeRelayPath,
   encodeMessage,
   equal,
+  verifyEdgeChallenge,
+  type EdgeRole,
   makeProof,
   registrationInput,
   registrationMac,
@@ -63,21 +67,140 @@ export class RelayTunnel extends Duplex {
 export interface RelayEndpoint {
   url: URL
   relayId: Uint8Array
-  spki: Uint8Array
+  /** Self-hosted kind: the pinned TLS key. */
+  spki?: Uint8Array
+  /** Edge kind: the relay key that signs every challenge, and the shard all roles of a route dial. */
+  edge?: { relayKey: Uint8Array; shard: number }
   ca?: string | Buffer
   profile?: RelayTransportProfile
-  resolveAddress?(): Promise<string>
+  /** Edge kind: further origins of the same node, raced with `url` (relay-identity binds the node, not the hostname). */
+  extraUrls?: URL[]
+  /** The checked dial address for one role URL; on an edge node each origin is resolved on its own. */
+  resolveAddress?(url: URL): Promise<string>
 }
-async function endpoint(options: RelayEndpoint, path: string): Promise<Parameters<typeof connectRelay>[0]> {
+type Hello = { nonce: Uint8Array; timeMs: number; requiresToken: boolean }
+/** The origin of each edge node that last passed the identity check, tried first next time. Never more than 64. */
+const lastGood = new Map<string, string>()
+/** Staggered start of the further origins of one edge node, as the path race staggers its relay slot. */
+export const EDGE_ORIGIN_STAGGER_MS = 250
+/** The URL of one role: `/v1/{h,d,c}` on a self-hosted node, `/v1/{h,d,c}/<shard>` on an edge node. */
+export function relayRoleUrl(options: Pick<RelayEndpoint, 'url' | 'edge'>, role: EdgeRole): URL {
   const url = new URL(options.url)
-  url.pathname = path
-  return {
-    url,
-    spki: options.spki,
-    ca: options.ca,
-    profile: options.profile,
-    ...(options.resolveAddress ? { address: await options.resolveAddress() } : {}),
+  url.pathname = options.edge ? edgeRelayPath(role, options.edge.shard) : `/v1/${role === 'host' ? 'h' : role === 'data' ? 'd' : 'c'}`
+  return url
+}
+/**
+ * Opens one role's socket. Self-hosted: the one pinned URL, then HELLO (DATA legs have none). Edge: every origin of the
+ * node races, staggered, and the first whose relay-key signature verifies wins; the rest are closed. A connection is
+ * bound to the node only by that signature, so an origin that answers with another key just loses the race.
+ */
+export async function openRelay(
+  options: RelayEndpoint,
+  role: EdgeRole,
+  signal?: AbortSignal,
+  guardWrites?: () => boolean,
+): Promise<{ peer: RelaySocket; hello?: Hello }> {
+  const open = async (origin: URL) => {
+    const url = relayRoleUrl({ url: origin, edge: options.edge }, role)
+    const address = options.resolveAddress ? await options.resolveAddress(url) : undefined
+    if (signal?.aborted) throw new Error('Relay setup cancelled')
+    const peer = await connectRelay({
+      url,
+      ...(options.edge ? { edge: options.edge } : { spki: options.spki }),
+      ca: options.ca,
+      profile: options.profile,
+      ...(address === undefined ? {} : { address }),
+      ...(signal ? { signal } : {}),
+    })
+    if (guardWrites) peer.guardWrites(guardWrites)
+    return peer
   }
+  if (!options.edge) {
+    const peer = await open(options.url)
+    if (role === 'data') return { peer }
+    try {
+      return { peer, hello: await challenge(peer, options.relayId) }
+    } catch (error) {
+      peer.close()
+      throw error
+    }
+  }
+  const key = Buffer.from(options.relayId).toString('hex'),
+    origins = [options.url, ...(options.extraUrls ?? [])].slice(0, 4)
+  const remembered = origins.findIndex(origin => origin.origin === lastGood.get(key))
+  if (remembered > 0) origins.unshift(...origins.splice(remembered, 1))
+  return new Promise((resolve, reject) => {
+    let settled = false,
+      failed = 0
+    const timers: Array<ReturnType<typeof setTimeout>> = []
+    origins.forEach((origin, index) => {
+      const attempt = async () => {
+        if (settled || signal?.aborted) throw new Error('Relay setup cancelled')
+        const peer = await open(origin)
+        try {
+          if (settled) throw new Error('Relay race settled')
+          const hello = await edgeHandshake(peer, options, role)
+          if (settled) throw new Error('Relay race settled')
+          settled = true
+          for (const timer of timers) clearTimeout(timer)
+          if (lastGood.size >= 64 && !lastGood.has(key)) lastGood.delete(lastGood.keys().next().value!)
+          lastGood.set(key, origin.origin)
+          resolve({ peer, hello })
+        } catch (error) {
+          peer.close()
+          throw error
+        }
+      }
+      const run = () =>
+        void attempt().catch(() => {
+          if (++failed === origins.length && !settled) {
+            settled = true
+            reject(new Error('Relay unavailable'))
+          }
+        })
+      if (index === 0) run()
+      else {
+        const timer = setTimeout(run, index * EDGE_ORIGIN_STAGGER_MS)
+        timer.unref()
+        timers.push(timer)
+      }
+    })
+  })
+}
+/**
+ * The edge kind's first exchange on every role: a fresh client nonce out, the node's nonce and its relay-key signature
+ * over both back. Nothing that depends on the relay (REGISTER, ATTACH, ADMIT) is sent before the signature verifies.
+ */
+export async function edgeHandshake(
+  peer: RelaySocket,
+  options: Pick<RelayEndpoint, 'relayId' | 'edge'>,
+  role: EdgeRole,
+): Promise<{ nonce: Uint8Array; timeMs: number; requiresToken: boolean }> {
+  const clientNonce = nodeCrypto.random(32)
+  await peer.send({ type: 'edge-hello', clientNonce })
+  const response = await peer.receive(5000)
+  if (
+    response.type !== 'edge-challenge'
+    || !options.edge
+    || !equal(response.relayId, options.relayId)
+    || Math.abs(response.timeMs - Date.now()) > EDGE_RELAY.clockSkewMs
+    || (role !== 'host' && response.requiresToken)
+    || !(await verifyEdgeChallenge(
+      nodeCrypto,
+      options.edge.relayKey,
+      {
+        relayId: options.relayId,
+        role,
+        clientNonce,
+        relayNonce: response.nonce,
+        timeMs: response.timeMs,
+        requiresToken: response.requiresToken,
+      },
+      response.signature,
+    ))
+  )
+    throw new Error('Relay identity rejected')
+  return { nonce: response.nonce, timeMs: response.timeMs, requiresToken: response.requiresToken }
 }
 async function challenge(peer: RelaySocket, relayId: Uint8Array): Promise<Extract<RelayMessage, { type: 'challenge' }>> {
   await peer.send({ type: 'hello' })
@@ -89,13 +212,17 @@ async function challenge(peer: RelaySocket, relayId: Uint8Array): Promise<Extrac
 export async function connectRelayTunnel(
   options: RelayEndpoint & { pass: Uint8Array; holderKey: Uint8Array; signal?: AbortSignal },
 ): Promise<RelayTunnel> {
-  const peer = await connectRelay({ ...(await endpoint(options, '/v1/c')), signal: options.signal })
+  const { peer, hello } = await openRelay(options, 'client', options.signal)
   const abort = () => peer.close()
   options.signal?.addEventListener('abort', abort, { once: true })
   if (options.signal?.aborted) abort()
   try {
-    const hello = await challenge(peer, options.relayId)
-    await peer.send({ type: 'admit', proof: await makeProof(nodeCrypto, options.holderKey, options.pass, hello.timeMs) })
+    if (!hello) throw new Error('Relay challenge missing')
+    await peer.send(
+      options.edge
+        ? { type: 'bound-admit', proof: await makeProof(nodeCrypto, options.holderKey, options.pass, hello.timeMs, hello.nonce) }
+        : { type: 'admit', proof: await makeProof(nodeCrypto, options.holderKey, options.pass, hello.timeMs) },
+    )
     if ((await peer.receive(5000)).type !== 'admitted' || (await peer.receive(10_000)).type !== 'spliced')
       throw new Error('Relay connection unavailable')
     return new RelayTunnel(peer)
@@ -115,12 +242,12 @@ export async function registerRelay(
   accept(): Promise<{ stream: RelayTunnel; passTag: Uint8Array }>
   close(): void
 }> {
-  const peer = await connectRelay(await endpoint(options, '/v1/h'))
+  const { peer, hello } = await openRelay(options, 'host')
   const abort = new AbortController()
   let work: Promise<Uint8Array> | undefined
   try {
-    const hello = await challenge(peer, options.relayId),
-      routePub = await nodeCrypto.publicKey(options.routeKey)
+    if (!hello) throw new Error('Relay challenge missing')
+    const routePub = await nodeCrypto.publicKey(options.routeKey)
     if (hello.requiresToken && !options.registrationToken) throw new Error('Relay registration token required')
     const input = registrationInput(options.relayId, hello.nonce, options.day, routePub)
     const packet: Extract<RelayMessage, { type: 'register' }> = {
@@ -171,7 +298,7 @@ export async function registerRelay(
       async accept() {
         const request = await peer.receive(0)
         if (request.type !== 'open' || !equal(request.routeId, response.routeId)) throw new Error('Unexpected relay control message')
-        const data = await connectRelay(await endpoint({ ...options, profile: request.profile }, '/v1/d'))
+        const { peer: data } = await openRelay({ ...options, profile: request.profile }, 'data')
         try {
           const nonce = nodeCrypto.random(16)
           await data.send({

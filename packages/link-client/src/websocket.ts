@@ -5,6 +5,7 @@ import { checkServerIdentity } from 'node:tls'
 import { isIP, type LookupFunction } from 'node:net'
 import {
   decodeMessage,
+  EDGE_RELAY,
   encodeFrame,
   encodeMessage,
   equal,
@@ -34,6 +35,11 @@ interface RelaySocketPolicy {
   sendTimeoutMs?: number
   pingIntervalMs?: number
   deadAfterMs?: number
+  /**
+   * Edge kind: the edge, not the node, answers WebSocket pings. Keep-alive is then an application PING the node answers
+   * with PONG, and only relay messages count as signs of life.
+   */
+  applicationPing?: boolean
 }
 export class RelaySocket {
   readonly closed: Promise<void>
@@ -88,9 +94,11 @@ export class RelaySocket {
         this.close(1001)
         return
       }
-      void this.writeFrame(encodeFrame({ opcode: 9, payload: new Uint8Array() }, client ? randomBytes(4) : undefined)).catch(() =>
-        this.close(4302),
-      )
+      void (
+        policy.applicationPing
+          ? this.send({ type: 'ping' })
+          : this.writeFrame(encodeFrame({ opcode: 9, payload: new Uint8Array() }, client ? randomBytes(4) : undefined))
+      ).catch(() => this.close(4302))
     }, policy.pingIntervalMs ?? 20_000)
     this.heartbeat.unref()
     stream.on('data', (chunk: Buffer) => this.feed(chunk))
@@ -104,7 +112,7 @@ export class RelaySocket {
         const frameBytes =
           frame.payload.length + (frame.payload.length <= 125 ? 2 : frame.payload.length <= 65535 ? 4 : 10) + (this.outgoingMask ? 0 : 4)
         this.readWireBytes += frameBytes
-        this.lastSeen = Date.now()
+        if (!this.policy.applicationPing || frame.opcode === 2 || frame.opcode === 8) this.lastSeen = Date.now()
         if (frame.opcode === 8) {
           if (frame.payload.length === 1) throw new Error('Invalid relay close')
           const code = frame.payload.length ? frame.payload[0]! * 256 + frame.payload[1]! : 1000
@@ -125,6 +133,7 @@ export class RelaySocket {
         this.receivedBytes.set(message, frameBytes)
         if (message.type === 'pad') this.readPaddingBytes += frameBytes
         if (message.type === 'pad' && this.outgoingMask && !this.policy.beforeReceive) continue
+        if (message.type === 'pong' && this.policy.applicationPing) continue
         if (this.waiter) {
           const waiter = this.waiter
           this.waiter = undefined
@@ -316,9 +325,14 @@ export function acceptKey(key: string): string {
   return createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
 }
 
+/**
+ * A self-hosted node is reached on `/v1/{h,d,c}` with its TLS key pinned. An edge node is reached on
+ * `/v1/{h,d,c}/<shard>` with ordinary WebPKI TLS; its identity is the relay-key signature checked after the upgrade.
+ */
 export async function connectRelay(options: {
   url: URL
-  spki: Uint8Array
+  spki?: Uint8Array
+  edge?: { relayKey: Uint8Array; shard: number }
   ca?: string | Buffer
   timeoutMs?: number
   signal?: AbortSignal
@@ -334,7 +348,9 @@ export async function connectRelay(options: {
     || url.password
     || url.search
     || url.hash
-    || !['/v1/h', '/v1/d', '/v1/c'].includes(url.pathname)
+    || (options.edge
+      ? !/^\/v1\/[hdc]\/([0-9]|1[0-5])$/u.test(url.pathname) || version !== 2
+      : !['/v1/h', '/v1/d', '/v1/c'].includes(url.pathname) || options.spki?.length !== 32)
   )
     throw new RangeError('Invalid relay endpoint')
   const key = randomBytes(16).toString('base64')
@@ -359,8 +375,9 @@ export async function connectRelay(options: {
       checkServerIdentity(hostname, certificate) {
         const failure = checkServerIdentity(hostname, certificate)
         if (failure) return failure
+        if (options.edge) return undefined
         const spki = new X509Certificate(certificate.raw).publicKey.export({ type: 'spki', format: 'der' })
-        if (!equal(createHash('sha256').update(spki).digest(), options.spki)) return new Error('Relay certificate identity mismatch')
+        if (!equal(createHash('sha256').update(spki).digest(), options.spki!)) return new Error('Relay certificate identity mismatch')
         return undefined
       },
       headers: {
@@ -396,10 +413,11 @@ export async function connectRelay(options: {
       }
       resolve(
         new RelaySocket(socket, true, head, {
-          pingIntervalMs: 25_000,
-          deadAfterMs: 60_000,
+          pingIntervalMs: options.edge ? EDGE_RELAY.pingIntervalMs : 25_000,
+          deadAfterMs: options.edge ? EDGE_RELAY.clientDeadAfterMs : 60_000,
+          applicationPing: Boolean(options.edge),
           version,
-          outerPadding: version === 2 && url.pathname !== '/v1/h',
+          outerPadding: version === 2 && !url.pathname.startsWith('/v1/h'),
         }),
       )
     })
