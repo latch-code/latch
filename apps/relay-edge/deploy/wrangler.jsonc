@@ -36,11 +36,9 @@
         "RELAY_ID": "<keygen 给出的 relayId>",
         "SHARDS": "1",
         "OBJECT_EPOCH": "1",
-        // "false": only Hosts holding the relay file (REGISTRATION_TOKEN secret) may register. Latch's official relay sets "true".
+        // "false": only Hosts holding the relay file (REGISTRATION_TOKEN secret) may register. See README.md before
+        // opening registration to anyone.
         "OPEN_REGISTRATION": "false",
-        // Received WebSocket messages; the platform bills one request per 20.
-        "DAILY_MESSAGES": "4000000",
-        "MONTHLY_MESSAGES": "60000000",
       },
     },
     "se": {
@@ -53,10 +51,9 @@
         "RELAY_ID": "<keygen 给出的 relayId>",
         "SHARDS": "1",
         "OBJECT_EPOCH": "1",
-        // "false": only Hosts holding the relay file (REGISTRATION_TOKEN secret) may register. Latch's official relay sets "true".
+        // "false": only Hosts holding the relay file (REGISTRATION_TOKEN secret) may register. See README.md before
+        // opening registration to anyone.
         "OPEN_REGISTRATION": "false",
-        "DAILY_MESSAGES": "4000000",
-        "MONTHLY_MESSAGES": "60000000",
       },
     },
   },

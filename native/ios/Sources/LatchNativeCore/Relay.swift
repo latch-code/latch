@@ -85,8 +85,10 @@ private final class RelaySetup: @unchecked Sendable {
     let outerSlot: RelayOuterSlot?
     /** Edge kind: this connection's nonce, signed back by the node with its relay key. */
     let clientNonce: Data
-    init(endpoint: NativeRelayAddress, admission: NativeRelayPass, origin: URL) throws {
-        self.endpoint = endpoint; self.admission = admission; self.origin = origin
+    /** Edge kind: the origins of one node race only up to the signature check; one winner then sends the proof. */
+    let race: NativeEdgeRace?
+    init(endpoint: NativeRelayAddress, admission: NativeRelayPass, origin: URL, race: NativeEdgeRace?) throws {
+        self.endpoint = endpoint; self.admission = admission; self.origin = origin; self.race = race
         outerSlot = try endpoint.profile == .outerPadV2 ? RelayOuterSlot() : nil
         key = try LinkBytes.random(16).base64EncodedString()
         clientNonce = try LinkBytes.random(32)
@@ -230,6 +232,8 @@ private final class RelayFramer: NWProtocolFramerImplementation {
                 if let edge {
                     guard needsToken == 0, NativeEdgeChallenge.verify(relayKey: edge.relayKey, relayId: setup.endpoint.relayId, clientNonce: setup.clientNonce,
                         relayNonce: relayNonce, timeMs: relayTime, requiresToken: false, signature: signature) else { throw NativeFailure.identityMismatch }
+                    // Another origin of the same node already passed: only one connection sends a proof and joins.
+                    guard setup.race?.claim() ?? true else { throw NativeFailure.unavailable }
                 }
                 let now = Date().timeIntervalSince1970 * 1000, pass = try AdmissionPass.decode(setup.admission.bytes)
                 guard needsToken <= 1, abs(Double(relayTime) - now) <= 86_400_000,
@@ -307,27 +311,15 @@ extension NativeHTTPConnection {
             return try await relay(endpoint: endpoint, origin: endpoint.url, admission: admission, rootSpki: rootSpki, knockKey: knockKey, identity: identity, trustAnchor: trustAnchor, dialAddress: nil)
         }
         let origins = NativeEdgeOrigins.ordered(endpoint)
-        return try await withThrowingTaskGroup(of: (NativeHTTPConnection, URL)?.self) { group in
-            for (index, origin) in origins.enumerated() {
-                group.addTask {
-                    if index > 0 { try await Task.sleep(for: .milliseconds(250 * index)) }
-                    do {
-                        return (try await relay(endpoint: endpoint, origin: origin, admission: admission, rootSpki: rootSpki, knockKey: knockKey, identity: identity, trustAnchor: trustAnchor, dialAddress: nil), origin)
-                    } catch is CancellationError { throw CancellationError() } catch { return nil }
-                }
-            }
-            var winner: (NativeHTTPConnection, URL)?
-            while let next = try await group.next() {
-                guard let next else { continue }
-                if winner == nil { winner = next; group.cancelAll() } else { await next.0.close() }
-            }
-            guard let winner else { throw NativeFailure.unavailable }
-            NativeEdgeOrigins.remember(endpoint, origin: winner.1)
-            return winner.0
-        }
+        guard let (winner, origin) = await NativeEdgeOrigins.race(origins, attempt: { origin, race in
+            try await relay(endpoint: endpoint, origin: origin, admission: admission, rootSpki: rootSpki, knockKey: knockKey,
+                identity: identity, trustAnchor: trustAnchor, dialAddress: nil, race: race)
+        }, close: { await $0.close() }) else { throw NativeFailure.unavailable }
+        NativeEdgeOrigins.remember(endpoint, origin: origin)
+        return winner
     }
     private static func relay(endpoint: NativeRelayAddress, origin: URL, admission: NativeRelayPass, rootSpki: Data, knockKey: Data,
-        identity: PlatformIdentity?, trustAnchor: Data?, dialAddress: String?) async throws -> NativeHTTPConnection {
+        identity: PlatformIdentity?, trustAnchor: Data?, dialAddress: String?, race: NativeEdgeRace? = nil) async throws -> NativeHTTPConnection {
         _ = try AddressBookCodec.relayURL(origin.absoluteString)
         guard let hostname = origin.host, endpoint.spkiHash.count == 32, endpoint.relayId.count == 16,
               LinkBytes.equal(try AdmissionPass.decode(admission.bytes).relayId, endpoint.relayId) else { throw NativeFailure.invalidRecord }
@@ -351,8 +343,8 @@ extension NativeHTTPConnection {
             }
             // Edge: ordinary WebPKI; the node's identity is checked by its relay-key signature after the upgrade.
             guard SecTrustEvaluateWithError(actual, nil), let chain = SecTrustCopyCertificateChain(actual) as? [SecCertificate],
-                  let leaf = chain.first, let spki = try? certificateSPKI(SecCertificateCopyData(leaf) as Data),
-                  endpoint.edge != nil || LinkBytes.equal(LinkBytes.hash(spki), endpoint.spkiHash),
+                  let leaf = chain.first,
+                  endpoint.edge != nil || (try? certificateSPKI(SecCertificateCopyData(leaf) as Data)).map({ LinkBytes.equal(LinkBytes.hash($0), endpoint.spkiHash) }) == true,
                   sec_protocol_metadata_get_negotiated_tls_protocol_version(metadata) == .TLSv13,
                   let selected = sec_protocol_metadata_get_negotiated_protocol(metadata), String(cString: selected) == "http/1.1" else { complete(false); return }
             complete(true)
@@ -361,7 +353,7 @@ extension NativeHTTPConnection {
         let state = try HandshakeState(root: rootSpki, knockKey: knockKey, binding: binding)
         let inner = try NativeTLS.options(state: state, identity: identity)
         let knock = NWProtocolFramer.Options(definition: KnockFramer.definition); knock["latch.state"] = state
-        let relay = NWProtocolFramer.Options(definition: RelayFramer.definition); relay["latch.relay"] = try RelaySetup(endpoint: endpoint, admission: admission, origin: origin)
+        let relay = NWProtocolFramer.Options(definition: RelayFramer.definition); relay["latch.relay"] = try RelaySetup(endpoint: endpoint, admission: admission, origin: origin, race: race)
         let tcp = NWProtocolTCP.Options(); tcp.noDelay = true; tcp.connectionTimeout = 5
         tcp.enableKeepalive = true; tcp.keepaliveIdle = 60; tcp.keepaliveInterval = 15; tcp.keepaliveCount = 4
         let parameters = NWParameters(tls: outer, tcp: tcp)
@@ -387,5 +379,65 @@ public enum NativeEdgeOrigins {
         lock.lock(); defer { lock.unlock() }
         if lastGood.count >= 64, lastGood[endpoint.relayId] == nil { lastGood.removeAll() }
         lastGood[endpoint.relayId] = origin
+    }
+}
+
+/** The first origin of an edge node to pass the signature check claims the node; later ones stop there. */
+public final class NativeEdgeRace: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+    public init() {}
+    public func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true; return true
+    }
+}
+
+private final class NativeRaceState<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<(T, URL)?, Never>?
+    private var remaining: Int
+    init(count: Int, continuation: CheckedContinuation<(T, URL)?, Never>) { remaining = count; self.continuation = continuation }
+    var resolved: Bool { lock.lock(); defer { lock.unlock() }; return continuation == nil }
+    /** True for the first result: it is handed to the caller; any later result is the caller's to close. */
+    func win(_ value: (T, URL)) -> Bool {
+        lock.lock()
+        guard let continuation else { remaining -= 1; lock.unlock(); return false }
+        self.continuation = nil; remaining -= 1; lock.unlock()
+        continuation.resume(returning: value); return true
+    }
+    func fail() {
+        lock.lock(); remaining -= 1
+        let finished = remaining == 0 ? continuation : nil
+        if finished != nil { continuation = nil }
+        lock.unlock()
+        finished?.resume(returning: nil)
+    }
+}
+
+extension NativeEdgeOrigins {
+    /**
+     * Starts each origin 250 ms after the previous one and returns as soon as one succeeds, without waiting for the rest.
+     * Every child failure, cancellation included, counts as a loss; a late success is closed, never leaked.
+     */
+    public static func race<T: Sendable>(_ origins: [URL], stagger: Duration = .milliseconds(250),
+        attempt: @escaping @Sendable (URL, NativeEdgeRace) async throws -> T,
+        close: @escaping @Sendable (T) async -> Void) async -> (T, URL)? {
+        guard !origins.isEmpty else { return nil }
+        let race = NativeEdgeRace()
+        return await withCheckedContinuation { continuation in
+            let state = NativeRaceState<T>(count: origins.count, continuation: continuation)
+            for (index, origin) in origins.enumerated() {
+                Task {
+                    if index > 0 { try? await Task.sleep(for: stagger * index) }
+                    guard !state.resolved else { state.fail(); return }
+                    do {
+                        let value = try await attempt(origin, race)
+                        if !state.win((value, origin)) { await close(value) }
+                    } catch { state.fail() }
+                }
+            }
+        }
     }
 }

@@ -177,6 +177,7 @@ export type PresenceReasonForm =
   | 'mcp.server.apply-runner'
   | 'mcp.server.apply-remote'
   | 'harness.command.apply'
+  | 'relay.add'
 
 /** The Host-derived facts a confirmation names: one fixed form and the text of each of its slots (escaped). */
 export interface PresenceSubject {

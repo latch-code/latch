@@ -94,8 +94,6 @@ export interface EdgeEnv {
   SHARDS?: string
   /** Changing it starts fresh objects (old ones keep their storage until removed). */
   OBJECT_EPOCH?: string
-  DAILY_MESSAGES?: string
-  MONTHLY_MESSAGES?: string
   /** Optional JSON with numeric limits; see `limits()` in node.ts. */
   LIMITS?: string
   /** Secret: the relay key's 32-byte Ed25519 seed, 64 hex characters. */

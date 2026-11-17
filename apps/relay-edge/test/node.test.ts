@@ -53,8 +53,6 @@ function setup(overrides: Partial<EdgeEnv> = {}) {
     RELAY_ID: hex(relayId),
     OPEN_REGISTRATION: 'true',
     RELAY_SIGNING_SEED: hex(relaySeed),
-    DAILY_MESSAGES: '100000',
-    MONTHLY_MESSAGES: '1000000',
     WORK: service,
     ...overrides,
   }
@@ -62,11 +60,12 @@ function setup(overrides: Partial<EdgeEnv> = {}) {
   cleanup.push(() => {
     for (const name of [...objects.nodes.keys()]) objects.reset(name)
   })
-  async function open(role: EdgeRole, prefix = '192.0.2.0/24', name = 'n'): Promise<ClientSocket> {
+  async function attempt(role: EdgeRole, prefix = '192.0.2.0/24', name = 'n'): Promise<FakeResponse> {
     const node = await objects.object(name)
-    const response = (await node.fetch(
-      request('https://node/ws', 'GET', { 'x-latch-role': role, 'x-latch-prefix': prefix }),
-    )) as FakeResponse
+    return (await node.fetch(request('https://node/ws', 'GET', { 'x-latch-role': role, 'x-latch-prefix': prefix }))) as FakeResponse
+  }
+  async function open(role: EdgeRole, prefix = '192.0.2.0/24', name = 'n'): Promise<ClientSocket> {
+    const response = await attempt(role, prefix, name)
     expect(response.status).toBe(101)
     expect(response.headers['Sec-WebSocket-Protocol']).toBe('latch-relay.2')
     await settle()
@@ -121,16 +120,41 @@ function setup(overrides: Partial<EdgeEnv> = {}) {
     host.send(register)
     return { challenge, register, reply: await host.next(clock, skip + 1) }
   }
+  /** Another holder's pass on the same route: one more phone of the same Host. */
+  async function holderOf(value: Credentials, deviceId: number) {
+    const device = await holder(nodeCrypto, value.seed, relayId, Uint8Array.of(deviceId), value.day)
+    const pass = await issuePass(nodeCrypto, value.key, {
+      pairing: false,
+      relayId,
+      day: value.day,
+      notBefore: value.day * UTC_DAY,
+      notAfter: (value.day + 1) * UTC_DAY,
+      routePub: value.publicKey,
+      holderPub: await nodeCrypto.publicKey(device.seed),
+      tag: device.tag,
+    })
+    return { device, pass }
+  }
   async function join(value: Credentials, prefix = '198.51.100.0/24') {
     const host = await open('host')
     const { reply } = await register(host, value)
     if (reply.type !== 'registered') throw new Error(`expected registered, got ${reply.type}`)
+    return { host, ...(await pair(host, value, reply.token, prefix)) }
+  }
+  async function pair(
+    host: ClientSocket,
+    value: Credentials,
+    token: Uint8Array,
+    prefix = '198.51.100.0/24',
+    who: { device: { seed: Uint8Array }; pass: Uint8Array } = value,
+  ) {
+    const seen = host.messages().filter(message => message.type !== 'pad').length
     const client = await open('client', prefix)
     const challenge = await hello(client, 'client')
-    const proof = await makeProof(nodeCrypto, value.device.seed, value.pass, challenge.timeMs, challenge.nonce)
+    const proof = await makeProof(nodeCrypto, who.device.seed, who.pass, challenge.timeMs, challenge.nonce)
     client.send({ type: 'bound-admit', proof })
     expect((await client.next(clock, 1)).type).toBe('admitted')
-    const open_ = await host.next(clock, 2)
+    const open_ = await host.next(clock, seen)
     if (open_.type !== 'open') throw new Error('expected open')
     const data = await open('data')
     await hello(data, 'data')
@@ -140,14 +164,15 @@ function setup(overrides: Partial<EdgeEnv> = {}) {
       routeId: value.routeId,
       connection: open_.connection,
       nonce,
-      mac: await attachMac(nodeCrypto, reply.token, value.routeId, open_.connection, nonce),
+      mac: await attachMac(nodeCrypto, token, value.routeId, open_.connection, nonce),
     })
     expect((await data.next(clock, 1)).type).toBe('attached')
     expect((await data.next(clock, 2)).type).toBe('spliced')
     expect((await client.next(clock, 2)).type).toBe('spliced')
-    return { host, client, data, proof, token: reply.token }
+    await settle()
+    return { client, data, proof, token }
   }
-  return { clock, objects, env, open, hello, credentials, register, join }
+  return { clock, objects, env, attempt, open, hello, credentials, holderOf, register, join, pair }
 }
 
 describe('edge relay node', () => {
@@ -240,55 +265,42 @@ describe('edge relay node', () => {
     expect(host.closed).toBe(1001)
   })
 
-  it('drains: GOAWAY to Hosts, new sockets refused, health 503', async () => {
+  it('drains: GOAWAY to Hosts and new sockets refused', async () => {
     const t = setup()
     const value = await t.credentials()
     const host = await t.open('host')
     await t.register(host, value)
     const node = await t.objects.object('n')
-    expect((await node.fetch(request('https://node/health'))).status).toBe(200)
+    expect(node.status()).toMatchObject({ ready: true })
     expect((await node.fetch(request('https://node/drain', 'POST'))).status).toBe(200)
     expect(await host.next(t.clock, 2)).toEqual({ type: 'goaway', reason: 1, retryAfterMs: 30_000 })
-    expect((await node.fetch(request('https://node/health'))).status).toBe(503)
+    expect(node.status()).toMatchObject({ ready: false, draining: true })
     const late = await t.open('client')
     expect(late.closed).toBe(4302)
   })
 
-  it('caps spending: refuses every role with 4304 and evicts joined pairs once the budget is spent', async () => {
-    const t = setup({ DAILY_MESSAGES: '30', LIMITS: JSON.stringify({ prefixDailyPercent: 100 }) })
-    const value = await t.credentials()
-    const { client, data, host } = await t.join(value)
-    for (let index = 0; index < 30; index++) client.send({ type: 'data', data: Uint8Array.of(index) })
+  it('bounds what a socket may send before it is authenticated: two messages, cover PAD only, a PING per 15 s', async () => {
+    const t = setup()
+    const chatty = await t.open('host')
+    for (let index = 0; index < 3; index++) chatty.send({ type: 'deny', routeId: new Uint8Array(16), tags: [] })
     await settle()
-    await t.clock.advance(1000)
-    expect(client.closed).toBe(4304)
-    expect(data.closed).toBeDefined()
-    expect(host.messages().some(message => message.type === 'goaway' && message.reason === 3)).toBe(true)
-    // The control socket goes too: an open socket keeps the object, and the bill, running.
-    expect(host.closed).toBe(4304)
-    expect((await t.open('host')).closed).toBe(4304)
-    expect((await t.open('client')).closed).toBe(4304)
-    // The reservation survives a reset: a restarted object is still over the cap.
-    t.objects.reset('n')
-    expect((await t.open('host')).closed).toBe(4304)
-  })
-
-  it('limits one address prefix to its share of the daily budget', async () => {
-    const t = setup({ DAILY_MESSAGES: '100', LIMITS: JSON.stringify({ prefixDailyPercent: 10 }) })
-    const greedy = await t.open('client', '203.0.113.0/24')
-    for (let index = 0; index < 11; index++) greedy.send({ type: 'ping' })
+    expect(chatty.closed).toBe(4400)
+    const padHost = await t.open('host', '198.51.100.0/24')
+    padHost.send({ type: 'pad', data: new Uint8Array(1) })
     await settle()
-    expect(greedy.closed).toBe(4304)
-    const other = await t.open('client', '198.51.100.0/24')
-    other.send({ type: 'ping' })
+    expect(padHost.closed).toBe(4400)
+    const late = await t.open('client', '198.51.100.0/24')
+    await t.clock.advance(3600)
+    late.send({ type: 'pad', data: new Uint8Array(1) })
     await settle()
-    expect(other.closed).toBeUndefined()
-    // The next UTC day starts a fresh share (the clock jumps; no timer needs to run for it).
-    t.clock.now += 86_400_000
-    const again = await t.open('client', '203.0.113.0/24')
-    again.send({ type: 'ping' })
+    expect(late.closed).toBe(4400)
+    const pinger = await t.open('host', '203.0.113.0/24')
+    pinger.send({ type: 'ping' })
     await settle()
-    expect(again.closed).toBeUndefined()
+    expect(pinger.closed).toBeUndefined()
+    pinger.send({ type: 'ping' })
+    await settle()
+    expect(pinger.closed).toBe(4400)
   })
 
   it('keeps the three-second outer cover through the inner handshake after the join', async () => {
@@ -319,11 +331,7 @@ describe('edge relay node', () => {
     expect(t.objects.alarms.has('n')).toBe(false)
   })
 
-  it('fails closed without caps, a seed or a relay ID', async () => {
-    for (const env of [{ DAILY_MESSAGES: undefined }, { MONTHLY_MESSAGES: '0' }]) {
-      const t = setup(env)
-      expect((await t.open('host')).closed).toBe(4304)
-    }
+  it('fails closed without a seed, a relay ID or a registration choice', async () => {
     for (const env of [
       { RELAY_SIGNING_SEED: 'aa' },
       { RELAY_ID: undefined },
@@ -337,7 +345,7 @@ describe('edge relay node', () => {
       expect(
         (await node.fetch(request('https://node/ws', 'GET', { 'x-latch-role': 'host', 'x-latch-prefix': '192.0.2.0/24' }))).status,
       ).toBe(503)
-      expect((await node.fetch(request('https://node/health'))).status).toBe(503)
+      expect(node.status()).toMatchObject({ ready: false })
     }
   })
 
@@ -395,15 +403,35 @@ describe('edge relay node', () => {
     expect(client.closed).toBe(4100)
   })
 
-  it('bounds connections per address prefix and refuses clients once the object is full', async () => {
-    const t = setup({ LIMITS: JSON.stringify({ maxPerPrefix: 2, maxRoutesPerPrefix: 8, maxPairs: 1 }) })
+  it('refuses new phones once the object carries its capacity of joined pairs', async () => {
+    const t = setup({ LIMITS: JSON.stringify({ maxPairs: 1 }) })
+    await t.join(await t.credentials())
+    expect((await t.open('client', '100.64.0.0/24')).closed).toBe(4302)
+  })
+
+  it('bounds connections per address prefix', async () => {
+    const t = setup({ LIMITS: JSON.stringify({ maxPerPrefix: 2, maxRoutesPerPrefix: 8 }) })
     const first = await t.open('client', '203.0.113.0/24')
     await t.open('client', '203.0.113.0/24')
     await t.open('client', '203.0.113.0/24')
     expect(first.closed).toBe(4302)
+  })
+
+  it('bounds the node’s output per socket: the cover queue and the outbound rate', async () => {
+    // The rate leaves room for the cover itself (a 4 KiB bucket every 40 ms is about 100 KiB/s).
+    const t = setup({ LIMITS: JSON.stringify({ outboundBytesPerSecond: 262_144, outboundBurstBytes: 65_536 }) })
     const value = await t.credentials()
-    await t.join(value)
-    expect((await t.open('client', '192.0.2.0/24')).closed).toBe(4302)
+    const { client, data } = await t.join(value)
+    // Still inside the cover: more than 64 KiB queued for the phone closes it, as on the self-hosted relay.
+    for (let index = 0; index < 5; index++) data.send({ type: 'data', data: new Uint8Array(16_000) })
+    await settle()
+    expect(client.closed).toBe(4302)
+    // After the cover, a reader that falls behind its rate is closed rather than buffered for.
+    const second = await t.join(await t.credentials(2), '100.64.9.0/24')
+    await t.clock.advance(3100)
+    for (let index = 0; index < 6; index++) second.client.send({ type: 'data', data: new Uint8Array(16_000) })
+    await settle()
+    expect(second.data.closed).toBe(4302)
   })
 
   it('closes on malformed input: text, unknown tags, oversized and truncated messages', async () => {
@@ -438,4 +466,37 @@ describe('edge relay node', () => {
     await new Promise(resolve => setTimeout(resolve, 500))
     expect(await host.next(t.clock, 2)).toMatchObject({ type: 'registered', status: 0 })
   }, 30_000)
+
+  it('holds a work slot until the work Worker answers, also past the timeout', async () => {
+    let release!: () => void
+    const pending = new Promise<void>(resolve => (release = resolve))
+    const service: EdgeService = {
+      fetch: async () => {
+        await pending
+        return { status: 200, arrayBuffer: async () => Uint8Array.of(0).buffer as ArrayBuffer }
+      },
+    }
+    const t = setup({ WORK: service, LIMITS: JSON.stringify({ softRoutesPerPrefix: 1, maxRoutesPerPrefix: 8, maxConcurrent: 1 }) })
+    const first = await t.open('host')
+    await t.register(first, await t.credentials())
+    const ask = async (index: number) => {
+      const host = await t.open('host')
+      const { reply } = await t.register(host, await t.credentials(index))
+      if (reply.type !== 'registration-work') throw new Error('expected work')
+      host.send({ type: 'registration-proof', routeId: reply.routeId, nonce: reply.nonce, solution: new Uint8Array(8) })
+      await settle()
+      return host
+    }
+    const slow = await ask(2)
+    await t.clock.advance(2000)
+    expect(slow.closed).toBe(4302)
+    // The first job still runs in the work Worker: the next proof finds no free slot.
+    const next = await ask(3)
+    expect(next.closed).toBe(4302)
+    release()
+    await settle()
+    const after = await ask(4)
+    await settle()
+    expect(after.closed).toBe(4100)
+  })
 })

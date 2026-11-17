@@ -29,7 +29,7 @@ import type { HostAddressBooks } from '../relay/address-book.ts'
 import { HostRelayController } from '../relay/controller.ts'
 import type { HostRelayDirectory } from '../relay/directory.ts'
 import { OFFICIAL_RELAYS, type OfficialRelay } from '../relay/official.ts'
-import { relayProfileInput, type RelayProfiles } from '../relay/profiles.ts'
+import { relayKeyHash, relayNodeFields, relayProfileInput, type RelayProfiles } from '../relay/profiles.ts'
 import { signatureSchema } from './devices.ts'
 import { type Caller, type CallerRequest, type RouteContext, type RouteModule, type RouteRequest } from './registry.ts'
 
@@ -475,9 +475,17 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
           caller,
           'policy.change',
           { base: plan.base, requestId, profile: plan.request.requestHash },
-          { form: 'origin.confirm', slots: { target } },
+          // The system sheet names the first address, how many the Host will dial and the key's short hash.
+          {
+            form: 'relay.add',
+            slots: {
+              target,
+              count: String(1 + ('extraUrls' in plan.input ? (plan.input.extraUrls?.length ?? 0) : 0)),
+              hash: relayKeyHash(relayNodeFields(plan.input)),
+            },
+          },
           [
-            { label: '自建中继', value: plan.input.url },
+            { label: '自己的中继', value: plan.input.url },
             ...('extraUrls' in plan.input && plan.input.extraUrls
               ? plan.input.extraUrls.map(value => ({ label: '同一中继的其他地址', value }))
               : []),
@@ -485,6 +493,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
             'relayKey' in plan.input
               ? { label: '中继公钥', value: plan.input.relayKey }
               : { label: '证书公钥 SHA-256', value: plan.input.spkiHash },
+            { label: '密钥短哈希', value: relayKeyHash(relayNodeFields(plan.input)) },
           ],
           [],
           target,

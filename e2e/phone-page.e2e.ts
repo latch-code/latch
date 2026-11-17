@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -281,7 +282,10 @@ describe('设置 › 设备', () => {
         })
         const candidate = section.getByTestId('relay-candidate')
         await candidate.getByText('latch-relay-ne.example.workers.dev、relay.mine.example', { exact: true }).waitFor()
-        await candidate.getByText(`中继公钥 ${'f'.repeat(16)}…`, { exact: true }).waitFor()
+        // The short hash the Mac's sheet shows: the first 8 hex of SHA-256 over the relay key.
+        await candidate
+          .getByText(`密钥 ${createHash('sha256').update(Buffer.from(edge.relayKey, 'hex')).digest('hex').slice(0, 8)}`, { exact: true })
+          .waitFor()
         expect((await section.innerText()).includes(edge.registrationKey)).toBe(false)
         await capture('adding-edge')
         await candidate.getByRole('button', { name: '验证并添加', exact: true }).click()

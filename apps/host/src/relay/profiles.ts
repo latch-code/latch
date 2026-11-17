@@ -6,7 +6,7 @@ import { isIP } from 'node:net'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
-import type { OfficialRelay } from './official.ts'
+import { OFFICIAL_RELAYS, type OfficialRelay } from './official.ts'
 import {
   directoryConfigSchema,
   directoryConfigHash,
@@ -89,6 +89,11 @@ const profileFields = z.strictObject({
   rotations: z.int().min(0).max(2),
   /** Compiled in (`official.ts`); no UI edits it, and it runs only while a phone is paired and the official relay is on. */
   builtIn: z.literal(true).optional(),
+  /**
+   * Added with the Host stopped (`pnpm latch relay add`): kept out of address books until the node has proved its key
+   * and accepted a registration at the next start, as a relay added in settings is before it is saved.
+   */
+  unverified: z.literal(true).optional(),
 })
 const kindRule = (value: { kind?: 'edge'; spkiHash?: string; relayKey?: string; extraUrls?: string[]; shard?: number; url: string }) =>
   value.kind === 'edge'
@@ -129,6 +134,13 @@ const schema = z.strictObject({
     .refine(items => new Set(items.map(item => item.relayId)).size === items.length),
 })
 export type RelayProfile = z.infer<typeof profile>
+/**
+ * The short key hash a person compares on the confirmation sheet, in settings and on the terminal: the first 8 hex of
+ * SHA-256 over the edge relay key, or of the self-hosted node's pinned SPKI hash itself.
+ */
+export function relayKeyHash(node: RelayNodeFields): string {
+  return 'relayKey' in node ? sha256Hex(Buffer.from(node.relayKey, 'hex')).slice(0, 8) : node.spkiHash.slice(0, 8)
+}
 /** How link-client reaches a saved node: the pinned TLS key, or the relay key, shard and every origin. */
 export function relayEndpointOf(value: RelayProfile): {
   url: URL
@@ -231,7 +243,9 @@ export class RelayProfiles {
   relayReceipt(requestId: string): z.infer<typeof receiptSchema> | undefined {
     return this.state.configReceipts?.find(item => item.requestId === requestId)
   }
-  assertNewRelay(input: Pick<RelayProfileInput, 'relayId' | 'url'>): void {
+  assertNewRelay(input: Pick<RelayProfileInput, 'relayId' | 'url'>, official: readonly OfficialRelay[] = OFFICIAL_RELAYS): void {
+    if (official.some(item => item.relayId === input.relayId))
+      throw new AppError(409, 'native-relay-official', '这个中继标识属于官方中继，不能作为自己的中继添加。')
     const urls = (value: { url: string; extraUrls?: string[] }) => [value.url, ...(value.extraUrls ?? [])]
     const wanted = urls(input as { url: string; extraUrls?: string[] })
     if (this.state.profiles.some(profile => profile.relayId === input.relayId || urls(profile).some(url => wanted.includes(url))))
@@ -426,6 +440,27 @@ export class RelayProfiles {
       draft.profiles = [...builtIn, ...custom]
     })
   }
+  /**
+   * `pnpm latch relay add`, with the Host stopped: saved with fresh seeds but marked unverified, so no address book carries
+   * it until the node has proved its key at the next start (`markVerified`).
+   */
+  addUnverified(input: RelayProfileInput, expectedHash: string): Promise<void> {
+    const item = relayProfileInput.parse(input)
+    return this.change(draft => {
+      this.checkBase(expectedHash)
+      this.assertNewRelay(item)
+      this.advanceConfiguration(draft)
+      draft.profiles.push({
+        ...relayNodeFields(item),
+        ...(item.registrationKey ? { registrationKey: item.registrationKey } : {}),
+        seeds: [secret('lrs1'), secret('lrs1')],
+        activeSlot: 0,
+        rotationDay: 0,
+        rotations: 0,
+        unverified: true,
+      })
+    })
+  }
   /** Brings the persisted built-in relays in line with the compiled list. Their seeds survive, and only they change. */
   syncOfficial(official: readonly OfficialRelay[]): Promise<void> {
     const wanted = official.map(item =>
@@ -488,6 +523,17 @@ export class RelayProfiles {
       return { audited }
     }, authorize)
   }
+  /** The node proved its key and registered a route: a CLI-added relay may now enter address books. */
+  markVerified(relayId: string): Promise<void> {
+    if (!this.state.profiles.some(profile => profile.relayId === relayId && profile.unverified)) return Promise.resolve()
+    return this.change(draft => {
+      const node = draft.profiles.find(profile => profile.relayId === relayId)
+      if (!node?.unverified) return
+      delete node.unverified
+      if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
+      draft.generation++
+    })
+  }
   /** Floors come only from verified cache evidence, never from the settings request. Keep them through source removal. */
   saveDirectoryFloor(expectedSourceHash: string, floor: DirectoryFloor): Promise<void> {
     floor = directoryFloorSchema.parse(floor)
@@ -547,9 +593,15 @@ export class RelayProfiles {
   }
 }
 
-/** The relays an address book offers, in the person's order of preference, at most four. */
+/** The relays an address book offers, in the person's order of preference, at most four; never an unverified one. */
 export function bookRelays(state: Pick<z.infer<typeof schema>, 'profiles' | 'officialOff' | 'ownFirst'>): RelayProfile[] {
   const official = state.officialOff ? [] : state.profiles.filter(profile => profile.builtIn),
-    own = state.profiles.filter(profile => !profile.builtIn)
+    own = state.profiles.filter(profile => !profile.builtIn && !profile.unverified)
   return (state.ownFirst ? [...own, ...official] : [...official, ...own]).slice(0, 4)
+}
+
+/** What identifies a node's connection state: the profile without the verification mark, which only gates books. */
+export function profileFingerprint(profile: RelayProfile): string {
+  const { unverified: _unverified, ...rest } = profile
+  return sha256Hex(canonicalJson(rest))
 }

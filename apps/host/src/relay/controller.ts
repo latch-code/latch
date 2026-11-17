@@ -2,10 +2,10 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { Duplex } from 'node:stream'
 import { ascii, hex, holder, routeId, routeKey, UTC_DAY, type KnockBinding } from '@latch/link-wire'
 import { nodeCrypto, RelayClosed, RelayControl } from '@latch/link-client'
-import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
+import { sha256Hex } from '@latch/core/node-kit'
 import type { AuditLog } from '../audit.ts'
 import type { DeviceStore } from '../auth.ts'
-import { relayEndpointOf, RelayProfiles, secretBytes, type RelayProfile } from './profiles.ts'
+import { profileFingerprint, relayEndpointOf, RelayProfiles, secretBytes, type RelayProfile } from './profiles.ts'
 import type { HostRelayDirectory } from './directory.ts'
 
 type Lease = { address: string; permitted(): boolean }
@@ -46,6 +46,7 @@ export class HostRelayController {
   private readonly timer: ReturnType<typeof setInterval>
   private checking?: { state: Pick<NodeState, 'abort' | 'leases'>; done: Promise<Verification> }
   private stopped = false
+  private region?: string
   constructor(options: RelayControllerOptions) {
     this.options = options
     this.timer = setInterval(() => this.reconcile(), 1000)
@@ -65,16 +66,18 @@ export class HostRelayController {
    * address book so that phones try the nearest official node first; it never decides identity or permission.
    */
   nearestRegion(): string | undefined {
-    let best: NodeState | undefined
-    for (const state of this.nodes.values())
-      if (
-        state.status === 'connected'
-        && state.region
-        && state.roundTripMs !== undefined
-        && (!best || state.roundTripMs < best.roundTripMs!)
-      )
-        best = state
-    return best?.region
+    let best: NodeState | undefined, current: NodeState | undefined
+    for (const state of this.nodes.values()) {
+      if (state.status !== 'connected' || !state.region || state.roundTripMs === undefined) continue
+      if (state.region === this.region) current = state
+      if (!best || state.roundTripMs < best.roundTripMs!) best = state
+    }
+    // Hysteresis: the signed region changes only for a clearly nearer node (25% and 20 ms), so that jitter between two
+    // similar round trips does not re-sign every phone's address book.
+    if (current && best && best !== current && best.roundTripMs! > Math.min(current.roundTripMs! * 0.75, current.roundTripMs! - 20))
+      best = current
+    this.region = best?.region
+    return this.region
   }
   /** Called synchronously after policy/config updates; old sockets cannot keep an allowance that was removed. */
   reconcile(): void {
@@ -89,11 +92,11 @@ export class HostRelayController {
       const profile =
         profiles.find(item => item.relayId === id)
         ?? (snapshot.pendingRelay?.profile.relayId === id ? snapshot.pendingRelay.profile : undefined)
-      if (!profile || retained.fingerprint !== sha256Hex(canonicalJson(profile))) this.resumeTokens.delete(id)
+      if (!profile || retained.fingerprint !== profileFingerprint(profile)) this.resumeTokens.delete(id)
     }
     for (const [id, state] of this.nodes) {
       const profile = profiles.find(item => item.relayId === id)
-      if (!profile || state.fingerprint !== sha256Hex(canonicalJson(profile)) || state.leases.some(lease => !lease.permitted())) {
+      if (!profile || state.fingerprint !== profileFingerprint(profile) || state.leases.some(lease => !lease.permitted())) {
         state.abort.abort()
         state.control?.close()
         this.options.closePaths(Buffer.from(id, 'hex'))
@@ -109,7 +112,7 @@ export class HostRelayController {
     }
     for (const profile of profiles) {
       if (this.nodes.has(profile.relayId) || this.retiring.has(profile.relayId) || this.retiring.size >= 16) continue
-      const fingerprint = sha256Hex(canonicalJson(profile)),
+      const fingerprint = profileFingerprint(profile),
         retained = this.resumeTokens.get(profile.relayId) ?? { fingerprint, tokens: new Map<string, Uint8Array>() }
       // A temporary egress removal closes every path, but must not make the same configured node look like a hostile takeover.
       this.resumeTokens.set(profile.relayId, retained)
@@ -209,7 +212,7 @@ export class HostRelayController {
       const routeKeyBytes = await routeKey(nodeCrypto, secretBytes(profile.seeds[profile.activeSlot]), relayId, day)
       const currentRoute = hex(await routeId(nodeCrypto, await nodeCrypto.publicKey(routeKeyBytes)))
       const retained = this.resumeTokens.get(profile.relayId)
-      const previous = retained?.fingerprint === sha256Hex(canonicalJson(profile)) ? retained.tokens.get(currentRoute) : undefined
+      const previous = retained?.fingerprint === profileFingerprint(profile) ? retained.tokens.get(currentRoute) : undefined
       check()
       const { routeId: registeredRoute, token } = await control.register({ routeKey: routeKeyBytes, day, previous, alternate: false })
       check()
@@ -221,7 +224,7 @@ export class HostRelayController {
     }
   }
   rememberVerifiedRegistration(profile: RelayProfile, verification: Verification): void {
-    const fingerprint = sha256Hex(canonicalJson(profile))
+    const fingerprint = profileFingerprint(profile)
     const retained = this.resumeTokens.get(profile.relayId)
     const tokens = retained?.fingerprint === fingerprint ? retained.tokens : new Map<string, Uint8Array>()
     tokens.set(hex(verification.routeId), verification.token)
@@ -365,6 +368,8 @@ export class HostRelayController {
         state.status = 'connected'
         state.connectedAt = Date.now()
         attempts = 0
+        // A relay added with the Host stopped enters address books only now that the node has proved its key.
+        if (profile.unverified) await this.options.profiles.markVerified(profile.relayId).catch(() => {})
         const workers = Array.from({ length: 4 }, () => this.serve(profile, state, control, members).catch(() => control.close()))
         const date = Math.floor(Date.now() / 1000 / UTC_DAY)
         let syncing = false

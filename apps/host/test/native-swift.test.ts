@@ -903,6 +903,46 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(await verifyProof(nodeCrypto, Buffer.from(vectors.relayId, 'hex'), proof, vectors.timeMs, relayNonce)).not.toBeNull()
     expect(await verifyProof(nodeCrypto, Buffer.from(vectors.relayId, 'hex'), proof, vectors.timeMs)).toBeNull()
   })
+  it('races the origins of one edge node to a single claimant, returning the first and leaking none', async () => {
+    const result = await invoke({
+      operation: 'edgeRace',
+      scenarios: [
+        [
+          { delay: 5, valid: true },
+          { delay: 5, valid: true },
+        ],
+        [
+          { delay: 5, valid: false },
+          { delay: 5, valid: true },
+        ],
+        [
+          { delay: 1200, valid: true },
+          { delay: 5, valid: true },
+        ],
+        [
+          { delay: 5, valid: false },
+          { delay: 5, valid: false },
+        ],
+        [
+          { delay: 30, valid: true },
+          { delay: 0, valid: true },
+          { delay: 0, valid: true },
+        ],
+      ],
+    })
+    expect(result).toEqual({
+      rows: [
+        { winner: 'o0.example', fast: true },
+        { winner: 'o1.example', fast: true },
+        // A silent first address does not hold the winner back; it loses its claim when it finally answers.
+        { winner: 'o1.example', fast: true },
+        { winner: '', fast: true },
+        { winner: 'o0.example', fast: true },
+      ],
+      // Only one origin per node ever claims it, so there is never a second connection to close.
+      closed: 0,
+    })
+  })
   it('keeps both directory floors through encrypted restart, revoked online keys and unknown commits in Swift', async () => {
     const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
       directory: { authority: string; addresses: string; root: string; now: number }

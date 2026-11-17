@@ -439,6 +439,9 @@ let reasonForms: [String: ReasonForm] = [
   "mcp.server.apply-remote": ReasonForm(actions: ["mcp.server.apply"], segments: [
     .text("让 Latch 连接 "), slot("target", 40, keepEnd: true), .text("（MCP 服务器「"), slot("server", 16), .text("」）"),
   ]),
+  "relay.add": ReasonForm(actions: ["policy.change"], segments: [
+    .text("添加中继 "), slot("target", 32, keepEnd: true), .text("（"), countSlot, .text(" 个地址，密钥 "), slot("hash", 8), .text("）"),
+  ]),
   "harness.command.apply": ReasonForm(actions: ["harness.command.apply"], segments: [
     .text("让 Harness 运行 "), slot("command", 40, keepEnd: true), .text("（「"), slot("harness", 16), .text("」）"),
   ]),

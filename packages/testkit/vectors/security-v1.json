@@ -693,6 +693,30 @@
         }
       },
       "reason": "让 Latch 连接 127.0.0.1:3845（MCP 服务器「figma」）"
+    },
+    {
+      "action": "policy.change",
+      "subject": {
+        "form": "relay.add",
+        "slots": {
+          "target": "latch-relay-ne.example.workers.dev:443",
+          "count": "2",
+          "hash": "3f2a9c01"
+        }
+      },
+      "reason": "添加中继 …elay-ne.example.workers.dev:443（2 个地址，密钥 3f2a9c01）"
+    },
+    {
+      "action": "policy.change",
+      "subject": {
+        "form": "relay.add",
+        "slots": {
+          "target": "relay.example:8443",
+          "count": "1",
+          "hash": "\u202eevil00"
+        }
+      },
+      "reason": "添加中继 relay.example:8443（1 个地址，密钥 \\u{202E…）"
     }
   ],
   "presenceRequest": [

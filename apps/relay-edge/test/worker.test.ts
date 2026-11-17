@@ -24,8 +24,6 @@ function setup(overrides: Partial<EdgeEnv> = {}) {
     RELAY_ID: hex(new Uint8Array(16).fill(7)),
     OPEN_REGISTRATION: 'true',
     RELAY_SIGNING_SEED: hex(new Uint8Array(32).fill(9)),
-    DAILY_MESSAGES: '1000',
-    MONTHLY_MESSAGES: '10000',
     ADMIN_TOKEN: ADMIN,
     ...overrides,
   }
@@ -102,10 +100,19 @@ describe('edge Worker front', () => {
       t.env,
     )) as FakeResponse
     expect(status.status).toBe(200)
-    expect(JSON.parse(status.body!).shards[0]).toMatchObject({ ready: true, routes: 0, budget: { over: false } })
+    expect(JSON.parse(status.body!).shards[0]).toMatchObject({ ready: true, routes: 0, pairs: 0 })
     expect((await t.worker.fetch(request(`${url}/admin/drain`, 'GET', { authorization: `Bearer ${ADMIN}` }), t.env)).status).toBe(404)
     expect((await t.worker.fetch(request(`${url}/admin/drain`, 'POST', { authorization: `Bearer ${ADMIN}` }), t.env)).status).toBe(200)
-    expect((await t.worker.fetch(request(`${url}/healthz`), t.env)).status).toBe(503)
+    // Health never reaches a node object (no billed request); the drain shows in the admin status.
+    expect((await t.worker.fetch(request(`${url}/healthz`), t.env)).status).toBe(200)
+    const drained = (await t.worker.fetch(
+      request(`${url}/admin/status`, 'GET', { authorization: `Bearer ${ADMIN}` }),
+      t.env,
+    )) as FakeResponse
+    expect(JSON.parse(drained.body!).shards[0]).toMatchObject({ ready: false, draining: true })
+    const requests = t.objects.requests.length
+    await t.worker.fetch(request(`${url}/healthz`), t.env)
+    expect(t.objects.requests.length).toBe(requests)
     const unset = setup({ ADMIN_TOKEN: undefined })
     expect((await unset.worker.fetch(request(`${url}/admin/drain`, 'POST', { authorization: `Bearer ${ADMIN}` }), unset.env)).status).toBe(
       404,

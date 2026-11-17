@@ -73,8 +73,6 @@ async function edgeServer(seed: Uint8Array): Promise<{ url: URL; objects: FakeOb
     RELAY_ID: hex(relayId),
     OPEN_REGISTRATION: 'true',
     RELAY_SIGNING_SEED: hex(seed),
-    DAILY_MESSAGES: '1000000',
-    MONTHLY_MESSAGES: '10000000',
   }
   const worker = createEdgeWorker(platform)
   const server: Server = createServer({ cert: certificate.cert, key: certificate.key, minVersion: 'TLSv1.3', ALPNProtocols: ['http/1.1'] })

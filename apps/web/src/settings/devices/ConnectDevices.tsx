@@ -244,6 +244,14 @@ function readRelayProfile(text: string): NativeRelayProfile {
   }
 }
 
+/** The short key hash the Mac's confirmation sheet shows (Host `relayKeyHash`): compare the two before approving. */
+async function relayKeyHash(profile: NativeRelayProfile): Promise<string> {
+  if (!('relayKey' in profile)) return profile.spkiHash.slice(0, 8)
+  const bytes = Uint8Array.from(profile.relayKey.match(/../gu)!, byte => Number.parseInt(byte, 16))
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+  return Array.from(digest.slice(0, 4), byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
 const RELAY_STATUS = {
   connecting: '正在连接',
   connected: '已连接',
@@ -270,7 +278,7 @@ const since = (at: number | undefined) => (at === undefined ? undefined : `上�
 function SavedRoutes({ manage }: { manage: boolean }) {
   const file = useRef<HTMLInputElement>(null)
   const [info, setInfo] = useState<NativeLinkInfo | null>(null)
-  const [candidate, setCandidate] = useState<{ requestId: string; profile: NativeRelayProfile } | null>(null)
+  const [candidate, setCandidate] = useState<{ requestId: string; profile: NativeRelayProfile; hash: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -344,8 +352,9 @@ function SavedRoutes({ manage }: { manage: boolean }) {
           setBusy(true)
           void chosen
             .text()
-            .then(text => {
-              setCandidate({ requestId: crypto.randomUUID(), profile: readRelayProfile(text) })
+            .then(async text => {
+              const profile = readRelayProfile(text)
+              setCandidate({ requestId: crypto.randomUUID(), profile, hash: await relayKeyHash(profile) })
             })
             .catch(() => {
               setError('这个文件不是中继导出的连接配置。')
@@ -356,7 +365,12 @@ function SavedRoutes({ manage }: { manage: boolean }) {
       <div className="device-saved" data-testid="relay-official">
         <span className="device-saved-text">
           <b>官方中继</b>
-          <Tooltip content={deployed ? 'Latch 提供，部署在 Cloudflare：看得到 IP、时间与流量大小，看不到内容' : '官方中继还没有上线'}>
+          <Tooltip
+            content={
+              deployed
+                ? 'Latch 提供，运行在 Cloudflare。看得到：IP、时间、流量大小，路由标识、哪条路由被接通、通行证字段。看不到：会话内容'
+                : '官方中继还没有上线'
+            }>
             <span>{!deployed ? '尚未部署' : info.official?.enabled ? officialState || '已开启' : '已关闭'}</span>
           </Tooltip>
         </span>
@@ -425,11 +439,9 @@ function SavedRoutes({ manage }: { manage: boolean }) {
                 .map(hostOf)
                 .join('、')}
             </span>
-            <span>
-              {'relayKey' in candidate.profile
-                ? `中继公钥 ${candidate.profile.relayKey.slice(0, 16)}…`
-                : `证书公钥 ${candidate.profile.spkiHash.slice(0, 16)}…`}
-            </span>
+            <Tooltip content={'relayKey' in candidate.profile ? candidate.profile.relayKey : candidate.profile.spkiHash}>
+              <span>{`密钥 ${candidate.hash}`}</span>
+            </Tooltip>
           </span>
           <Button disabled={busy} onClick={() => setCandidate(null)}>
             取消

@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir, uptime } from 'node:os'
@@ -1081,24 +1081,43 @@ describe('latch CLI', () => {
     // Piped input cannot confirm; a wrong expected ID changes nothing.
     const piped = cli({ cwd: directory })
     expect(await piped.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir)).toBe(1)
-    expect(await piped.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir, '--expect-relay-id', 'a'.repeat(32))).toBe(1)
+    expect(await piped.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir, '--expect-key', '00000000')).toBe(1)
+    // A device or anything that is not a regular file is refused without being read to its end.
+    expect(await piped.latch('relay', 'add', '--file', '/dev/zero', '--data-dir', dataDir, '--expect-key', '00000000')).toBe(1)
     const typed = cli({ cwd: directory, typed: true, answer: 'y' })
-    expect(await typed.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir)).toBe(0)
+    const added = await typed.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir)
+    expect(added).toBe(0)
     expect(typed.output.asked[0]!.shown).toContain(`中继公钥：${edge.relayKey}`)
     expect(typed.output.asked[0]!.shown).toContain('地址：https://relay.mine.example/')
+    const edgeHash = createHash('sha256').update(Buffer.from(edge.relayKey, 'hex')).digest('hex').slice(0, 8)
+    expect(typed.output.asked[0]!.shown).toContain(`密钥短哈希：${edgeHash}`)
     expect(`${typed.output.stdout}${typed.output.stderr}`).not.toContain(key)
-    expect(await piped.latch('relay', 'add', '--file', 'self.json', '--data-dir', dataDir, '--expect-relay-id', self.relayId)).toBe(0)
-    expect(await piped.latch('relay', 'add', '--file', 'self.json', '--data-dir', dataDir, '--expect-relay-id', self.relayId)).toBe(1)
+    const selfRun = cli({ cwd: directory })
+    const selfAdded = await selfRun.latch(
+      'relay',
+      'add',
+      '--file',
+      'self.json',
+      '--data-dir',
+      dataDir,
+      '--expect-key',
+      self.spkiHash.slice(0, 8),
+    )
+    expect(selfAdded).toBe(0)
+    expect(await piped.latch('relay', 'add', '--file', 'self.json', '--data-dir', dataDir, '--expect-key', self.spkiHash.slice(0, 8))).toBe(
+      1,
+    )
 
     const list = cli()
     expect(await list.latch('relay', 'list', '--json', '--data-dir', dataDir)).toBe(0)
     expect(JSON.parse(list.output.stdout)).toEqual({
       official: { deployed: false, enabled: true, ownFirst: false },
       relays: [
-        { relayId: edge.relayId, kind: 'edge', urls: [edge.url, ...edge.extraUrls] },
-        { relayId: self.relayId, kind: 'self', urls: [self.url] },
+        { relayId: edge.relayId, kind: 'edge', urls: [edge.url, ...edge.extraUrls], unverified: true },
+        { relayId: self.relayId, kind: 'self', urls: [self.url], unverified: true },
       ],
-      inAddressBook: [edge.relayId, self.relayId],
+      // Not until each node has proved its key at the next Host start.
+      inAddressBook: [],
     })
     expect(list.output.stdout).not.toContain(key)
     expect(await cli().latch('relay', 'order', 'own', '--data-dir', dataDir)).toBe(0)
@@ -1113,11 +1132,13 @@ describe('latch CLI', () => {
     }
     expect(saved).toMatchObject({ officialOff: true, ownFirst: true })
     expect(saved.profiles.map(profile => profile.relayId)).toEqual([self.relayId])
-    const actions = (await readFile(join(dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+    const records = (await readFile(join(dataDir, 'audit', 'audit.jsonl'), 'utf8'))
       .trim()
       .split('\n')
-      .map(line => (JSON.parse(line) as { action: string }).action)
-      .filter(action => action.startsWith('native.'))
+      .map(line => JSON.parse(line) as { action: string; stepup?: string })
+      .filter(record => record.action.startsWith('native.'))
+    expect(records[0]).toMatchObject({ action: 'native.relay.add.requested', stepup: 'offline' })
+    const actions = records.map(record => record.action)
     expect(actions).toEqual([
       'native.relay.add.requested',
       'native.config.changed',

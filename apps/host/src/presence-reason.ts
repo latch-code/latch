@@ -86,6 +86,15 @@ export const REASON_FORMS: Readonly<Record<PresenceReasonForm, ReasonForm>> = {
     actions: ['mcp.server.apply'],
     segments: ['让 Latch 连接 ', { slot: 'target', max: 40, keep: 'end' }, '（MCP 服务器「', { slot: 'server', max: 16 }, '」）'],
   },
+  /**
+   * Adding a relay of either kind: its first address keeps its end (the domain), then how many addresses the Host will
+   * dial for it and the short hash of the key it must prove (`relayKeyHash`), so a page cannot slip in more addresses or
+   * another key under a harmless-looking sheet.
+   */
+  'relay.add': {
+    actions: ['policy.change'],
+    segments: ['添加中继 ', { slot: 'target', max: 32, keep: 'end' }, '（', COUNT, ' 个地址，密钥 ', { slot: 'hash', max: 8 }, '）'],
+  },
   /** The same for a Harness definition: the command as the Host resolved it, then the definition's name. */
   'harness.command.apply': {
     actions: ['harness.command.apply'],

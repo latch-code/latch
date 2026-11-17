@@ -169,7 +169,7 @@ function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, s
     '--expect-url',
     '--out',
     '--file',
-    '--expect-relay-id',
+    '--expect-key',
   ])
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!

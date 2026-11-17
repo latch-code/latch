@@ -69,17 +69,8 @@ export function createEdgeWorker(platform: EdgePlatform): { fetch(request: EdgeR
       const namespace = env.NODE
       const stub = (shard: number) =>
         namespace.get(namespace.idFromName(`${env.RELAY_ID}:${env.OBJECT_EPOCH ?? '1'}:${shard}`), { locationHint: env.LOCATION_HINT })
-      if (path === '/healthz' && request.method === 'GET') {
-        const results = await Promise.all(
-          Array.from({ length: shards }, (_, shard) =>
-            stub(shard)
-              .fetch('https://node/health', { method: 'GET', headers: {} })
-              .then(response => response.status === 200)
-              .catch(() => false),
-          ),
-        )
-        return platform.respond(results.every(Boolean) ? 200 : 503, 'ok\n', { 'Cache-Control': 'no-store' })
-      }
+      // Answered here, never by a node object: probing health costs no object request and touches no budget.
+      if (path === '/healthz' && request.method === 'GET') return platform.respond(200, 'ok\n', { 'Cache-Control': 'no-store' })
       if (path === '/admin/status' || path === '/admin/drain') {
         const bearer = /^Bearer ([\x21-\x7e]{32,256})$/u.exec(request.headers.get('authorization') ?? '')?.[1]
         if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 32 || !bearer || !(await tokenMatches(platform, bearer, env.ADMIN_TOKEN)))

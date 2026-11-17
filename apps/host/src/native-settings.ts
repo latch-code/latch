@@ -223,11 +223,21 @@ export class NativeSettings {
     auditFailed?: () => void,
   ): Promise<{ audited: boolean }> {
     return this.serial(async () => {
+      const entry = (detail: { before: string; after: string; relayCount: number }) => ({
+        action: 'native.config.changed' as const,
+        actor,
+        detail: { ...detail, lowering: change.enabled === false, direct: false },
+      })
+      // Turning the official relay on adds an observer: it is recorded first or not done at all. Lowering never waits.
       const result = await this.options.profiles.setOfficial(change, authorize, detail =>
-        this.recordLowering(
-          { action: 'native.config.changed', actor, detail: { ...detail, lowering: change.enabled === false, direct: false } },
-          auditFailed,
-        ),
+        change.enabled === true
+          ? this.options.audit.append(entry(detail)).then(
+              () => true,
+              () => {
+                throw new AppError(503, 'audit-unavailable', '审计记录写入失败，没有打开官方中继。')
+              },
+            )
+          : this.recordLowering(entry(detail), auditFailed),
       )
       this.options.changed?.()
       this.options.controller.reconcile()

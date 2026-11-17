@@ -884,6 +884,27 @@ do {
         result = ["matches": value == Data((input["expected"] as? String ?? "").utf8),
             "backupExcluded": try directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true]
         await vault.lock()
+    case "edgeRace":
+        // Fake attempts: per origin a delay (ms), whether its signature checks out, and whether it hangs past the test.
+        actor Closed { var count = 0; func add() { count += 1 } }
+        let closed = Closed()
+        var rows: [[String: Any]] = []
+        for scenario in input["scenarios"] as? [[[String: Any]]] ?? [] {
+            let origins = scenario.indices.map { URL(string: "https://o\($0).example/")! }
+            let specs: [(delay: Int, valid: Bool)] = scenario.map { (($0["delay"] as? NSNumber)?.intValue ?? 0, $0["valid"] as? Bool == true) }
+            let started = ContinuousClock.now
+            let won = await NativeEdgeOrigins.race(origins, stagger: .milliseconds(50), attempt: { origin, race in
+                let spec = specs[origins.firstIndex(of: origin)!]
+                try await Task.sleep(for: .milliseconds(spec.delay))
+                guard spec.valid else { throw NativeFailure.identityMismatch }
+                guard race.claim() else { throw NativeFailure.unavailable }
+                return origin.host!
+            }, close: { _ in await closed.add() })
+            let elapsed = started.duration(to: .now).components
+            rows.append(["winner": won?.0 ?? "", "fast": elapsed.seconds < 1])
+        }
+        try await Task.sleep(for: .milliseconds(1500))
+        result = ["rows": rows, "closed": await closed.count]
     case "edgeRelay":
         func value(_ text: Any?) throws -> Data { try LinkBytes.unhex(text as? String ?? "invalid") }
         let edge = input["edgeRelay"] as? [String: Any] ?? [:], time = (input["timeMs"] as? NSNumber)?.uint64Value ?? 0

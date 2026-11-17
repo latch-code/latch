@@ -7,6 +7,7 @@ import { orderRelays, relayUrls, type NativeAddressBook } from '@latch/link-wire
 import { verifyAddressBook } from '@latch/link-client'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { HostAddressBooks } from '../src/relay/address-book.ts'
+import { NativeSettings } from '../src/native-settings.ts'
 import { RelayProfiles } from '../src/relay/profiles.ts'
 import type { OfficialRelay } from '../src/relay/official.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
@@ -155,4 +156,41 @@ it('imports relay files of both kinds, the self-hosted one as written before the
     ['repeat.json', { version: 2, profile: { ...ownEdge, extraUrls: [ownEdge.url] } }],
   ] as const)
     await expect(readRelayFile(await write(name, value))).rejects.toThrow()
+})
+
+it('keeps a relay added with the Host stopped out of books until its node is verified, and refuses an official ID', async () => {
+  const t = await host()
+  await t.profiles.syncOfficial(official)
+  await t.profiles.addUnverified(ownEdge, t.profiles.configHash())
+  expect(ids(await t.book())).toEqual(official.map(item => item.relayId))
+  await t.profiles.markVerified(ownEdge.relayId)
+  expect(ids(await t.book())).toEqual([...official.map(item => item.relayId), ownEdge.relayId])
+  expect(() => t.profiles.assertNewRelay({ relayId: official[0]!.relayId, url: 'https://other.example/' }, official)).toThrow(
+    expect.objectContaining({ code: 'native-relay-official' }),
+  )
+})
+
+it('turns the official relay on only once the audit is written; turning it off never waits', async () => {
+  const t = await host()
+  await t.profiles.syncOfficial(official)
+  const failing = { append: async () => Promise.reject(new Error('disk full')) }
+  const settings = new NativeSettings({
+    profiles: t.profiles,
+    native: {} as never,
+    controller: { reconcile() {} } as never,
+    audit: failing as never,
+    pairing: () => false,
+    reachable: () => false,
+  })
+  let auditFailed = 0
+  await settings.setOfficial(
+    { enabled: false },
+    { listener: 'unix' },
+    () => {},
+    () => auditFailed++,
+  )
+  expect(t.profiles.snapshot().officialOff).toBe(true)
+  expect(auditFailed).toBe(1)
+  await expect(settings.setOfficial({ enabled: true }, { listener: 'unix' }, () => {})).rejects.toMatchObject({ code: 'audit-unavailable' })
+  expect(t.profiles.snapshot().officialOff).toBe(true)
 })

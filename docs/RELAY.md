@@ -111,7 +111,7 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 1. **前提。** Cloudflare 账户与 Workers Paid 计划；自己终端里的 wrangler（`npx wrangler`，不装进本仓库）；本仓库 `pnpm install`。
 2. **构建。** `pnpm build:relay-edge`，之后在 `dist/relay-edge/` 里运行 wrangler。一个节点即可（例如只部署 `--env ne`）。
 3. **中继密钥。** `pnpm --silent relay-edge:keygen | npx wrangler secret put RELAY_SIGNING_SEED --env ne`：私钥经管道进 secret，屏幕上只有公钥与一个新节点标识。
-4. **变量。** 在 `wrangler.jsonc` 填 `NODE_HOSTS`（`latch-relay-ne.<子域>.workers.dev`）、`RELAY_ID`、日与月的消息上限；`OPEN_REGISTRATION` 保持 `false`。
+4. **变量。** 在 `wrangler.jsonc` 填 `NODE_HOSTS`（`latch-relay-ne.<子域>.workers.dev`）、`RELAY_ID`；`OPEN_REGISTRATION` 保持 `false`。没有花费上限，在 Cloudflare 设账单提醒。
 5. **中继文件与注册令牌。** 自己的中继默认只让持有中继文件的 Host 登记：
    ```sh
    pnpm --silent relay-edge:profile --relay-id <relayId> --relay-key <relayKey> \
@@ -125,11 +125,11 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 
 ### 在 Mac 上添加
 
-桌面端「设置 › 设备 › 关于连接」的中继一节选「添加自己的中继」，选中继文件（两种类型都可以），核对地址后选「验证并添加」，再在这台 Mac 的系统窗口确认。系统窗口列出每个地址、节点标识，以及 self 的证书公钥 SHA-256 或 edge 的中继公钥；注册令牌只交给 Host，不显示。
+桌面端「设置 › 设备 › 关于连接」的中继一节选「添加自己的中继」，选中继文件（两种类型都可以），核对地址后选「验证并添加」，再在这台 Mac 的系统窗口确认。系统窗口写明第一个地址、地址总数与密钥短哈希（edge 是中继公钥 SHA-256 的前 8 位十六进制，self 是证书公钥 SHA-256 的前 8 位），与页面上的卡片对照后再确认；页面卡片另列每个地址、节点标识与完整公钥。注册令牌只交给 Host，不显示。
 
 - 只能由这台 Mac 上有 `admin` 的设备添加、移除、开关与排序；其他有 `admin` 的设备只看得到状态。
 - 每个节点只能添加一次，至多四个自己的中继。连接簿最多放四个中继：官方在前时是两个官方节点加前两个自己的。
-- 命令行（Host 已停止）：`pnpm latch relay add --file <中继文件> --data-dir <目录>`，在终端核对后输入 y（非交互用 `--expect-relay-id`）；`relay list`、`relay remove <节点标识>`、`relay official on|off`、`relay order official|own`。命令行添加的中继在 Host 启动后才向节点登记，结果见状态。
+- 命令行（Host 已停止）：`pnpm latch relay add --file <中继文件> --data-dir <目录>`，终端列出每个地址与密钥短哈希，核对后输入 y（非交互用 `--expect-key <密钥短哈希>`）；`relay list`、`relay remove <节点标识>`、`relay official on|off`、`relay order official|own`。命令行添加的中继先标为待核对，Host 启动后节点证明了自己的密钥并接受登记，才进入发给手机的连接簿。
 
 **Host 做什么。**
 
@@ -142,7 +142,7 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 
 ### 手机怎样得到新中继
 
-手机不需要做任何事。Mac 每次发连接簿都按当前设置重新签名；已配对的手机下次连上 Mac（同一网络，或经仍可用的中继）时取得新连接簿，之后在其他网络就会用到新中继。移除的中继不再出现在之后的连接簿里。只在其他网络、而且旧连接簿里没有可用中继的手机，要先回到同一网络连一次。
+手机不需要做任何事（只要 App 支持连接簿 v4：含 edge 中继的连接簿，旧版本的 App 读不了，需要先更新 App）。Mac 每次发连接簿都按当前设置重新签名；已配对的手机下次连上 Mac（同一网络，或经仍可用的中继）时取得新连接簿，之后在其他网络就会用到新中继。移除的中继不再出现在之后的连接簿里。只在其他网络、而且旧连接簿里没有可用中继的手机，要先回到同一网络连一次。
 
 ## 未实测，按文档与保守值
 
@@ -151,11 +151,10 @@ edge 节点上下列行为没有经过实际测量，取保守值，都是可调
 | 假设 | 取值与位置 |
 | --- | --- |
 | 边缘可能在约 100 秒空闲后关闭 WebSocket | 未接合的连接每 20 秒发应用层 PING，节点回 PONG；节点关闭 75 秒无消息的连接，客户端 60 秒（`EDGE_RELAY`，link-wire） |
-| 单个节点对象的容量（文档软上限约每秒 1,000 个请求） | 每对象最多 40 对已接合的连接，满了以 4302 拒绝新的手机连接；分片字段已在格式里，部署用 1 个分片（`LIMITS.maxPairs`、`SHARDS`） |
+| 单个节点对象的容量（文档软上限约每秒 1,000 个请求） | 每对象最多 40 对已接合的连接，满了以 4302 拒绝新的手机连接；分片字段已在格式里，扩容靠加分片，部署用 1 个（`LIMITS.maxPairs`、`SHARDS`） |
 | 连接可能随时被切断 | Mac 退避重连并重新登记，手机退避重连并显示「重新连接」，不报错 |
 | 部署后约 300 秒内重置节点对象 | 每次部署都让经过它的所有连接断开一次；分节点部署，先排空 |
-| 发送端没有背压（平台无 `bufferedAmount`，已实测） | 每连接接收队列上限、每对象接合数上限、日与月消息上限；一个地址前缀最多用掉日上限的 25%（`prefixDailyPercent`），超出以 4304 断开到下一个 UTC 日 |
-| 用完额度时 | 所有连接（含 Mac 的控制连接）以 4304 断开并拒绝新连接，从不放行；空闲的对象不靠自己的 alarm 保持运行 |
+| 发送端没有背压（平台无 `bufferedAmount`，已实测） | 每连接接收队列字节上限；节点发出的前三秒填充与自建中继同样的队列与帧上限；每连接每秒发出字节上限，跟不上的读者被断开而不是替它缓存 |
 
 已实测：经边缘的帧完整、不分片不合并；带 `apac-ne` 与 `apac-se` 提示的对象分别落在东京与新加坡。
 
@@ -166,9 +165,9 @@ edge 节点上下列行为没有经过实际测量，取保守值，都是可调
 | 尚未部署 | 这个版本的官方列表为空 | 用自己的中继 |
 | 正在连接 | Mac 正在连接或登记 | 等几秒 |
 | 已连接 | Mac 已在节点登记，手机可经它连接 | — |
-| 无法连接 | 连不上节点或连接中断，Mac 在退避重试 | 检查地址、DNS、出站规则；`/healthz` |
-| 登记被拒绝 | 节点拒绝了这台 Mac：注册令牌不对或缺失、节点已满或额度用完 | 重新导出中继文件后先移除再添加；查看节点状态与上限 |
+| 无法连接 | 连不上节点或连接中断，Mac 在退避重试 | 检查地址、DNS、出站规则；`/healthz`、`/admin/status` |
+| 登记被拒绝 | 节点拒绝了这台 Mac：注册令牌不对或缺失、节点已满 | 重新导出中继文件后先移除再添加；查看节点状态 |
 | 需要检查 | 同一天两次报告路由冲突 | 在 Mac 上移除后重新添加 |
 | 已关闭 | 官方中继被关掉 | 需要时打开 |
 
-公开的 `/healthz` 只说明节点是否接受连接。完整的验证要用手机在另一个网络实际连接、重连与撤销。
+公开的 `/healthz` 只说明 Worker 已配置（edge）或节点接受连接（self）；edge 节点是否可用看 `/admin/status`。完整的验证要用手机在另一个网络实际连接、重连与撤销。
