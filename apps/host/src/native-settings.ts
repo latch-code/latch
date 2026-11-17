@@ -1,11 +1,18 @@
-import type { NativeLinkInfo } from '@latch/protocol'
+import type { NativeLinkInfo, NativeRelayTest } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { startNativeHost } from './native.ts'
-import type { HostRelayController } from './relay/controller.ts'
+import { classify, type HostRelayController } from './relay/controller.ts'
 import { selectAutoDirect } from './native-network.ts'
 import type { NativeNetworkSnapshot } from './native-network-backend.ts'
-import { relayNodeFields, type RelayProfiles, type NativeDirect, type PendingRelay, type RelayProfileInput } from './relay/profiles.ts'
+import {
+  relayKeyHash,
+  relayNodeFields,
+  type RelayProfiles,
+  type NativeDirect,
+  type PendingRelay,
+  type RelayProfileInput,
+} from './relay/profiles.ts'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
 import type { HostRelayDirectory } from './relay/directory.ts'
 
@@ -30,6 +37,10 @@ export class NativeSettings {
       audit: AuditLog
       directory?: HostRelayDirectory
       managedDirect?: { host: string; port: number }
+      /** The Host runs from a source checkout with the relay setup commands. */
+      sourceCheckout?: boolean
+      /** When a phone last received an address book naming a relay. */
+      deliveredAt?(relayId: string): number | undefined
       /** A QR is out, or a phone it let in has not finished. */
       pairing(): boolean
       /** A paired phone exists, or a removed one has yet to read its tombstone. */
@@ -47,6 +58,7 @@ export class NativeSettings {
       directManaged: Boolean(this.options.managedDirect),
       listening: this.options.native.direct,
       directory: Boolean(state.directory),
+      ...(this.options.sourceCheckout ? { sourceCheckout: true } : {}),
       official: {
         deployed: state.profiles.some(item => item.builtIn),
         enabled: !state.officialOff,
@@ -75,13 +87,18 @@ export class NativeSettings {
         .filter(item => !item.builtIn)
         .map(item => {
           const status = statuses.find(value => value.relayId === item.relayId)
+          const delivered = this.options.deliveredAt?.(item.relayId)
           return {
             relayId: item.relayId,
             url: item.url,
             kind: item.kind ?? 'self',
-            status: status?.status ?? 'connecting',
-            ...(status?.retryAt === undefined ? {} : { retryAt: status.retryAt }),
+            status: item.disabled ? ('disabled' as const) : (status?.status ?? 'connecting'),
+            ...(status?.retryAt === undefined || item.disabled ? {} : { retryAt: status.retryAt }),
             ...(status?.connectedAt === undefined ? {} : { connectedAt: status.connectedAt }),
+            ...(status?.latencyMs === undefined || item.disabled ? {} : { latencyMs: status.latencyMs }),
+            addresses: 1 + (item.extraUrls?.length ?? 0),
+            keyHash: relayKeyHash(relayNodeFields(item)),
+            ...(delivered === undefined ? {} : { deliveredAt: delivered }),
           }
         }),
     }
@@ -191,7 +208,17 @@ export class NativeSettings {
       }
       const proof = await controller.verify(pending.profile, current).catch((error: unknown) => {
         if (error instanceof AppError) throw error
-        throw new AppError(503, 'native-relay-unconfirmed', '无法确认中继可用。请核对地址、证书和注册令牌，再继续原请求或放弃。')
+        // The step that failed, in plain words; the request stays pending and 重试 continues it.
+        const kind = classify(error)
+        if (kind === 'mismatch')
+          throw new AppError(503, 'native-relay-key-mismatch', '中继给出的密钥与文件里的不一致。请确认文件来自这个中继，再重试或放弃。')
+        if (kind === 'refused')
+          throw new AppError(
+            503,
+            'native-relay-registration-refused',
+            '中继拒绝了登记：注册令牌不对或中继已满。请重新导出文件，再重试或放弃。',
+          )
+        throw new AppError(503, 'native-relay-unconfirmed', '连不上这个中继。请核对地址与网络，再重试或放弃。')
       })
       controller.rememberVerifiedRegistration(pending.profile, proof)
       await profiles.installRelay(pending, plan.base, () => {
@@ -214,6 +241,37 @@ export class NativeSettings {
   }
   removeRelay(relayId: string, actor: AuditActor, authorize: () => void, auditFailed?: () => void): Promise<{ audited: boolean }> {
     return this.lower(actor, { relayId }, authorize, auditFailed)
+  }
+  /** 停用 / 启用. Turning a relay off only lowers; turning it on is recorded first or not done at all. */
+  setDisabled(relayId: string, disabled: boolean, actor: AuditActor, authorize: () => void, auditFailed?: () => void) {
+    return this.serial(async () => {
+      const entry = (detail: { before: string; after: string; relayCount: number }) => ({
+        action: 'native.config.changed' as const,
+        actor,
+        detail: { ...detail, lowering: disabled, direct: false },
+      })
+      const result = await this.options.profiles.setDisabled(relayId, disabled, authorize, detail =>
+        disabled
+          ? this.recordLowering(entry(detail), auditFailed)
+          : this.options.audit.append(entry(detail)).then(
+              () => true,
+              () => {
+                throw new AppError(503, 'audit-unavailable', '审计记录写入失败，没有启用这个中继。')
+              },
+            ),
+      )
+      this.options.changed?.()
+      this.options.controller.reconcile()
+      return result
+    })
+  }
+  /** 测试: dial the node now; the four steps of the progress line. */
+  async testRelay(relayId: string, authorize: () => void): Promise<NativeRelayTest> {
+    const profile = this.options.profiles.snapshot().profiles.find(item => item.relayId === relayId)
+    if (!profile) throw new AppError(404, 'native-relay-missing', '中继配置已移除')
+    const result = await this.options.controller.test(profile, authorize)
+    const delivered = this.options.deliveredAt?.(relayId)
+    return { ...result, ...(delivered === undefined ? {} : { deliveredAt: delivered }) }
   }
   /** The official relay switch. Off only removes an observer; on restores the default. Both are audited. */
   setOfficial(

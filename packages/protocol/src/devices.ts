@@ -60,6 +60,11 @@ export interface NativeLinkInfo {
   listening: { host: string; port: number } | null
   /** A saved address directory is in use. */
   directory: boolean
+  /**
+   * The Host runs from a source checkout, where the relay setup commands exist (`pnpm relay-edge:setup`, `pnpm relay`).
+   * An installed app has no such commands yet, so the page offers only 已有中继文件 there.
+   */
+  sourceCheckout?: boolean
   /** The built-in official relay: whether this build has deployed nodes, and whether the person left it on. */
   official?: {
     deployed: boolean
@@ -79,10 +84,29 @@ export interface NativeLinkInfo {
     retryAt?: number
     /** When its control connection last came up (epoch ms). */
     connectedAt?: number
+    /** Round trip of the last HELLO on the control connection while connected. */
+    latencyMs?: number
+    /** How many addresses the Host dials for it, and the key's short hash (as on the confirmation sheet). */
+    addresses?: number
+    keyHash?: string
+    /** When a phone last received an address book naming it. */
+    deliveredAt?: number
   }>
 }
-/** `refused`: the node turned the registration down (a wrong or missing registration token, or a full node). */
-export type NativeRelayStatus = 'connecting' | 'connected' | 'waiting' | 'attention' | 'refused'
+/**
+ * `refused`: the node turned the registration down (a wrong or missing registration token, or a full node).
+ * `mismatch`: the node answered with another relay key or certificate than the relay file names. `disabled`: 停用.
+ */
+export type NativeRelayStatus = 'connecting' | 'connected' | 'waiting' | 'attention' | 'refused' | 'mismatch' | 'disabled'
+/** 测试 and the progress after 确认并连接: how far the Host got with the node. */
+export interface NativeRelayTest {
+  /** `identity`: connected and the node proved its key. `registered`: it also accepted a registration. */
+  reached: 'none' | 'identity' | 'registered'
+  failure?: 'unreachable' | 'mismatch' | 'refused'
+  latencyMs?: number
+  /** When a phone last received an address book naming this relay (this run of the Host). */
+  deliveredAt?: number
+}
 /** The local relay CLI exports this to a private file. The Host never sends it back to any client. */
 export type NativeRelayProfile =
   | { relayId: string; url: string; spkiHash: string; registrationKey?: string }

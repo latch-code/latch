@@ -151,7 +151,7 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
                     setPairing(true)
                   }}
                 />
-                <AboutConnection entry={snapshot.host.tls !== null} canManageRoutes={canPair} />
+                <AboutConnection entry={snapshot.host.tls !== null} />
               </div>
             )}
           </>

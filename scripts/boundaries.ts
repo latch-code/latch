@@ -108,6 +108,7 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
       '@latch/host',
       '@latch/testkit',
       '@latch/relay',
+      '@latch/relay-edge',
       '@latch/link-client',
       '@latch/link-wire',
     ],
@@ -206,7 +207,8 @@ export function checkBoundaries(projects: readonly ProjectManifest[], rules: Rea
           continue
         }
         if (rule.env !== undefined) {
-          const loads = field === 'devDependencies' ? [...LOADS[rule.env], ...LOADS.node] : LOADS[rule.env]
+          // Tests and tools may also load workerd code: it uses only the ES library and the platform it is handed.
+          const loads = field === 'devDependencies' ? [...LOADS[rule.env], ...LOADS.node, 'workerd' as const] : LOADS[rule.env]
           if (!loads.includes(targetRule.env)) problems.push(`${label}：${rule.env} 项目不能依赖 ${targetRule.env} 项目`)
         }
       }

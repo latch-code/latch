@@ -94,6 +94,8 @@ const profileFields = z.strictObject({
    * and accepted a registration at the next start, as a relay added in settings is before it is saved.
    */
   unverified: z.literal(true).optional(),
+  /** Turned off in settings (停用): no control connection and not in address books, until turned on again. */
+  disabled: z.literal(true).optional(),
 })
 const kindRule = (value: { kind?: 'edge'; spkiHash?: string; relayKey?: string; extraUrls?: string[]; shard?: number; url: string }) =>
   value.kind === 'edge'
@@ -523,6 +525,29 @@ export class RelayProfiles {
       return { audited }
     }, authorize)
   }
+  /** 停用 / 启用 one of the person's own relays. Turning one on again adds an observer, so its audit must succeed first. */
+  setDisabled(
+    relayId: string,
+    disabled: boolean,
+    authorize: () => void,
+    record: (detail: { before: string; after: string; relayCount: number }) => Promise<boolean>,
+  ): Promise<{ audited: boolean }> {
+    return this.change(async draft => {
+      authorize()
+      const node = draft.profiles.find(profile => profile.relayId === relayId && !profile.builtIn)
+      if (!node) throw new AppError(404, 'native-relay-missing', '中继配置已移除')
+      const before = this.hashConfiguration(draft)
+      if (disabled) node.disabled = true
+      else delete node.disabled
+      this.advanceConfiguration(draft)
+      const audited = await record({
+        before,
+        after: this.hashConfiguration(draft),
+        relayCount: draft.profiles.filter(profile => !profile.builtIn).length,
+      })
+      return { audited }
+    }, authorize)
+  }
   /** The node proved its key and registered a route: a CLI-added relay may now enter address books. */
   markVerified(relayId: string): Promise<void> {
     if (!this.state.profiles.some(profile => profile.relayId === relayId && profile.unverified)) return Promise.resolve()
@@ -596,12 +621,12 @@ export class RelayProfiles {
 /** The relays an address book offers, in the person's order of preference, at most four; never an unverified one. */
 export function bookRelays(state: Pick<z.infer<typeof schema>, 'profiles' | 'officialOff' | 'ownFirst'>): RelayProfile[] {
   const official = state.officialOff ? [] : state.profiles.filter(profile => profile.builtIn),
-    own = state.profiles.filter(profile => !profile.builtIn && !profile.unverified)
+    own = state.profiles.filter(profile => !profile.builtIn && !profile.unverified && !profile.disabled)
   return (state.ownFirst ? [...own, ...official] : [...official, ...own]).slice(0, 4)
 }
 
 /** What identifies a node's connection state: the profile without the verification mark, which only gates books. */
 export function profileFingerprint(profile: RelayProfile): string {
-  const { unverified: _unverified, ...rest } = profile
+  const { unverified: _unverified, disabled: _disabled, ...rest } = profile
   return sha256Hex(canonicalJson(rest))
 }

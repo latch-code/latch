@@ -7,6 +7,7 @@ export type SettingsSection =
   | 'workspaces'
   | 'plugins'
   | 'devices'
+  | 'relays'
   | 'data'
   | 'computers'
   | 'shortcuts'
@@ -65,6 +66,7 @@ const WIDE_SECTIONS: readonly SettingsSection[] = [
   'workspaces',
   'plugins',
   'devices',
+  'relays',
   'data',
   'computers',
   'shortcuts',

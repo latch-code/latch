@@ -5,7 +5,10 @@
   "type": "module",
   "license": "MIT",
   "exports": {
-    ".": "./src/worker.ts"
+    ".": "./src/worker.ts",
+    "./node": "./src/node.ts",
+    "./edge": "./src/edge.ts",
+    "./platform": "./src/platform.ts"
   },
   "latch": {
     "env": "workerd"

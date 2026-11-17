@@ -20,6 +20,11 @@ export class HostAddressBooks {
   private readonly identity: HostIdentity
   private readonly lan: () => readonly NativeLanAddress[]
   private readonly issuing = new Map<string, Promise<string>>()
+  /** When a phone last received a book naming each relay (this run of the Host only): 手机已拿到. */
+  private readonly delivered = new Map<string, number>()
+  deliveredAt(relayId: string): number | undefined {
+    return this.delivered.get(relayId)
+  }
   constructor(
     profiles: RelayProfiles,
     identity: HostIdentity,
@@ -132,6 +137,8 @@ export class HostAddressBooks {
       )
     )
       throw new AppError(409, 'native-book-changed', '中继配置已变化，请重新取得连接簿')
-    return signAddressBook(book, this.identity)
+    const signed = signAddressBook(book, this.identity)
+    for (const profile of relays) this.delivered.set(profile.relayId, Date.now())
+    return signed
   }
 }

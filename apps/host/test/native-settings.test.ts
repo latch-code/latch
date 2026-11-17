@@ -20,6 +20,8 @@ it('reports phone access and no settings form: the listener is the Host start op
     directManaged: true,
     listening: { host: '127.0.0.1', port: host.host.nativePort },
     directory: false,
+    // The test Host runs from this checkout, where the relay setup commands exist.
+    sourceCheckout: true,
     official: { deployed: false, enabled: true, ownFirst: false, nodes: [] },
     relays: [],
   })

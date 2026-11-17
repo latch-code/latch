@@ -188,8 +188,10 @@ it('refuses a node whose challenge is signed by another key before sending anyth
     profile: 'outer-pad-v2',
     resolveAddress: async () => '127.0.0.1',
   }
-  await expect(connectRelayTunnel({ ...endpoint, pass: value.pass, holderKey: value.device.seed })).rejects.toThrow('Relay unavailable')
-  await expect(RelayControl.connect({ ...endpoint })).rejects.toThrow('Relay unavailable')
+  await expect(connectRelayTunnel({ ...endpoint, pass: value.pass, holderKey: value.device.seed })).rejects.toThrow(
+    'Relay identity rejected',
+  )
+  await expect(RelayControl.connect({ ...endpoint })).rejects.toThrow('Relay identity rejected')
   // The node saw HELLOs and nothing after them: no proof and no registration.
   const node = [...real.objects.nodes.values()][0]!
   expect(node.status()).toMatchObject({ routes: 0, pending: 0 })

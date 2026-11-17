@@ -131,7 +131,8 @@ export async function openRelay(
   if (remembered > 0) origins.unshift(...origins.splice(remembered, 1))
   return new Promise((resolve, reject) => {
     let settled = false,
-      failed = 0
+      failed = 0,
+      mismatched = false
     const timers: Array<ReturnType<typeof setTimeout>> = []
     origins.forEach((origin, index) => {
       const attempt = async () => {
@@ -148,6 +149,7 @@ export async function openRelay(
           resolve({ peer, hello })
         } catch (error) {
           peer.close()
+          if (error instanceof Error && error.message === 'Relay identity rejected') mismatched = true
           throw error
         }
       }
@@ -155,7 +157,8 @@ export async function openRelay(
         void attempt().catch(() => {
           if (++failed === origins.length && !settled) {
             settled = true
-            reject(new Error('Relay unavailable'))
+            // An origin that answered with another key is reported as such: the person's file and the node disagree.
+            reject(new Error(mismatched ? 'Relay identity rejected' : 'Relay unavailable'))
           }
         })
       if (index === 0) run()

@@ -1,5 +1,5 @@
 ---
-description: 手机在其他网络连回 Mac 的中继：何时需要、官方中继、自建中继（Linux 服务器或自己的 Cloudflare 账户）、在 Mac 上添加、手机如何得到、两种类型的身份与谁能看到什么、按状态排查。
+description: 手机在其他网络连回 Mac：先直连，否则经自己的中继（Cloudflare Workers 或 Linux 服务器），三步接入、在 Mac 上核对与测试、两种类型的身份与谁能看到什么、按状态排查。
 sources:
   - apps/relay/src/cli.ts
   - apps/relay/src/config.ts
@@ -11,6 +11,9 @@ sources:
   - apps/relay-edge/deploy/wrangler.jsonc
   - apps/relay-edge/deploy/README.md
   - apps/relay-edge/scripts/profile.ts
+  - apps/relay-edge/scripts/setup-core.ts
+  - apps/web/src/settings/RelaySettings.tsx
+  - apps/web/src/settings/relayCommands.ts
   - packages/link-wire/src/relay-identity.ts
   - packages/link-wire/src/pass.ts
   - apps/host/src/routes/native.ts
@@ -28,15 +31,10 @@ sources:
 - **不在同一网络：经中继。** 手机从 Mac 签名的连接簿里取中继地址，Mac 事先在中继上登记好；中继只把两条连接接在一起。
 - 中继看不到会话正文：手机与 Mac 之间还有一层只在两端建立和验证的 TLS，Host 身份证明与设备授权都在这层里。中继能看到连接 IP、时间、填充后的大小与流向、哪条登记的路由被谁连接。
 
-有两种来源，可以并存：**官方中继**（Latch 提供）与**自己的中继**。自己的中继又有两种运行方式：Linux 服务器（`self`）或自己的 Cloudflare 账户（`edge`）。
+Latch 不提供公共中继：中继由你自己运行，给自己与少数人用。设置 › 中继 第一行是直连的状态（同一网络的手机现在能否直接连这台 Mac，原因在悬停里），下面是你的中继，每行有方式、地址、状态和 ⋯（测试、停用 / 启用、移除），底部是「添加中继」。
 
-## 官方中继
-
-- 运行在 Cloudflare Workers 上：东京与新加坡各一个节点，Mac 测得哪个更近，手机就先试哪个。
-- **尚未部署。** Host 里的官方列表（`apps/host/src/relay/official.ts` 的 `OFFICIAL_EDGE_DEPLOYMENT`）在所有者部署并填入节点公钥前是空的；空着时没有任何 Host 使用官方中继。
-- **谁能看到什么。** Cloudflare 终止外层 TLS，它和运营者都能看到：两端 IP、时间、填充后的大小与方向、路由标识、通行证字段、路由令牌与准入证明。Cloudflare 自己的边缘日志不在 Latch 控制之内；Latch 的代码不写日志、不存完整 IP（只用 /24 或 /48 前缀做公平限额），部署模板关闭日志与观测。看不到：会话正文、Host 身份、设备授权，它们都在端到端的内层。
-- **关闭。** 设置 › 设备 › 关于连接 › 中继 的「官方中继」开关，或 Host 停止时 `pnpm latch relay official off --data-dir <目录>`。关闭后 Mac 不再向它登记，新的连接簿也不再含它；自己的中继照常使用。
-- 手机可以同时有官方与自己的中继；「优先使用」选官方或自己的，一个选项决定先试哪边（`pnpm latch relay order official|own`）。
+- **谁能看到什么。** 中继的运营者（你自己）与平台（Cloudflare，或你的服务器所在的云）能看到：两端 IP、时间、填充后的大小与方向、路由标识、哪条路由被接通、通行证字段、路由令牌与准入证明。看不到：会话正文、Host 身份、设备授权，它们都在端到端的内层。Latch 的中继代码不写日志、不存完整 IP；Cloudflare 自己的边缘日志不在 Latch 控制之内，部署模板关闭了 Workers 的日志与观测。
+- 官方中继的代码路径还在（`apps/host/src/relay/official.ts` 的 `OFFICIAL_EDGE_DEPLOYMENT`），列表为空；为空时设置里不出现官方中继的行、开关与「优先使用」。
 
 ## 两种中继类型的身份
 
@@ -57,7 +55,7 @@ sources:
 
 ### 方式 A：Linux 服务器（self）
 
-在公网 Linux 上运行 Latch Relay。
+「添加中继」› Linux 服务器同样是三步：登录（`ssh` 到你的服务器）、部署（下面的命令，在服务器上运行）、连接（用 `scp` 把中继文件取回这台 Mac，再拖进来）。与 Cloudflare 一样，这些命令目前只在源码目录运行的 Latch 里给出。在公网 Linux 上运行 Latch Relay：
 
 **准备服务器。** 需要一台可直达的 Linux 服务器、指向它的域名与证书。
 
@@ -106,30 +104,26 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 
 ### 方式 B：自己的 Cloudflare 账户（edge）
 
-把官方中继用的同一份 Workers 模板部署到自己的账户。完整步骤见 [apps/relay-edge/deploy/README.md](../apps/relay-edge/deploy/README.md)，要点：
+「添加中继」› Cloudflare Workers 是三步：
 
-1. **前提。** Cloudflare 账户与 Workers Paid 计划；自己终端里的 wrangler（`npx wrangler`，不装进本仓库）；本仓库 `pnpm install`。
-2. **构建。** `pnpm build:relay-edge`，之后在 `dist/relay-edge/` 里运行 wrangler。一个节点即可（例如只部署 `--env ne`）。
-3. **中继密钥。** `pnpm --silent relay-edge:keygen | npx wrangler secret put RELAY_SIGNING_SEED --env ne`：私钥经管道进 secret，屏幕上只有公钥与一个新节点标识。
-4. **变量。** 在 `wrangler.jsonc` 填 `NODE_HOSTS`（`latch-relay-ne.<子域>.workers.dev`）、`RELAY_ID`；`OPEN_REGISTRATION` 保持 `false`。没有花费上限，在 Cloudflare 设账单提醒。
-5. **中继文件与注册令牌。** 自己的中继默认只让持有中继文件的 Host 登记：
-   ```sh
-   pnpm --silent relay-edge:profile --relay-id <relayId> --relay-key <relayKey> \
-     --url https://latch-relay-ne.<子域>.workers.dev/ --output /absolute/path/latch-relay.json \
-     | npx wrangler secret put REGISTRATION_TOKEN --env ne
-   ```
-   文件（版本 2，0600，新文件）含节点标识、所有地址、中继公钥与注册令牌；同一个令牌经管道进 secret，不出现在屏幕上。要让任何 Host 都能登记才加 `--open`（并把 `OPEN_REGISTRATION` 设为 `true`）：开放登记意味着别人的 Host 也能占用你的节点与额度，所以不是默认。既没有令牌也没有明确开放时，节点拒绝服务。
-6. **管理令牌与部署。** 见部署说明的第 4、5 步；`/healthz` 返回 200 即可。
-7. **更新。** 每次部署都会让经过这个节点的所有连接断开一次（约 300 秒内），Mac 自动重新登记，手机自动重连。少部署，选使用少的时候。
-8. **删除。** 先在 Mac 上移除这个中继，再 `npx wrangler delete --env ne`。
+1. **登录**：`wrangler login`，在终端里由你本人完成。Latch 不替你登录，也不读、不存 Cloudflare 的令牌；做完后勾「已登录」。
+2. **部署**：一条命令完成构建、部署校验 Worker 与节点、生成中继密钥和注册令牌（经 wrangler 的标准输入写进 secret，不出现在命令行或屏幕上）、填好 `NODE_HOSTS` 与 `RELAY_ID`、再部署一次、检查 `/healthz`，最后把中继文件写成新建的 0600 文件。它要求 `wrangler` 已在 PATH 上，没有就提示并停下，不代装。地区选东京或新加坡。
+3. **连接**：把中继文件拖进来或选择它，见下面「在 Mac 上添加」。
+
+部署这一步的命令目前只在源码目录运行的 Latch 里提供（`pnpm relay-edge:setup`）；安装版还没有对应的命令行工具，这两种方式在那里显示「尚未实现」，部署好之后仍可用「已有中继文件」添加。手动部署与每一步做了什么见 [apps/relay-edge/deploy/README.md](../apps/relay-edge/deploy/README.md)。
+
+- 节点默认只让持有中继文件的 Mac 登记（注册令牌）；开放登记不建议，见部署说明。
+- 没有花费上限：在 Cloudflare 为账户设账单提醒。
+- 每次重新部署都会让经过这个节点的所有连接断开一次（约 300 秒内），Mac 自动重新登记，手机自动重连。少部署，选使用少的时候。
+- 删除：先在 Mac 上移除这个中继，再 `wrangler delete`。
 
 ### 在 Mac 上添加
 
-桌面端「设置 › 设备 › 关于连接」的中继一节选「添加自己的中继」，选中继文件（两种类型都可以），核对地址后选「验证并添加」，再在这台 Mac 的系统窗口确认。系统窗口写明第一个地址、地址总数与密钥短哈希（edge 是中继公钥 SHA-256 的前 8 位十六进制，self 是证书公钥 SHA-256 的前 8 位），与页面上的卡片对照后再确认；页面卡片另列每个地址、节点标识与完整公钥。注册令牌只交给 Host，不显示。
+读入中继文件后出现核对卡：方式、全部地址、密钥短哈希（edge 是中继公钥 SHA-256 的前 8 位十六进制，self 是证书公钥 SHA-256 的前 8 位）、注册令牌只写「已包含」。选「确认并连接」后这台 Mac 弹出系统确认，窗口写明第一个地址、地址总数与同一个密钥短哈希，对照后再确认。之后一行进度：连上、密钥相符、注册、手机已拿到。任一步失败就停在那一步，写明原因并给「重试」（同一个请求，不重复添加）；结果未知时保留原请求。
 
-- 只能由这台 Mac 上有 `admin` 的设备添加、移除、开关与排序；其他有 `admin` 的设备只看得到状态。
-- 每个节点只能添加一次，至多四个自己的中继。连接簿最多放四个中继：官方在前时是两个官方节点加前两个自己的。
-- 命令行（Host 已停止）：`pnpm latch relay add --file <中继文件> --data-dir <目录>`，终端列出每个地址与密钥短哈希，核对后输入 y（非交互用 `--expect-key <密钥短哈希>`）；`relay list`、`relay remove <节点标识>`、`relay official on|off`、`relay order official|own`。命令行添加的中继先标为待核对，Host 启动后节点证明了自己的密钥并接受登记，才进入发给手机的连接簿。
+- 只有这台 Mac 上有 `admin` 的设备能添加、停用、移除；其他有 `admin` 的设备只看得到列表与状态。
+- 每个节点只能添加一次，至多四个自己的中继。
+- 命令行：`pnpm latch relay add --file <中继文件> --data-dir <目录>`（Host 已停止；终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`；先标为待核对，Host 启动后节点证明了自己的密钥并接受登记，才发给手机），`relay list`，`relay test <节点标识>`（Host 运行中，报告同样的四步），`relay remove <节点标识>`。
 
 **Host 做什么。**
 
@@ -138,7 +132,7 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 3. 实际登记一条随配置保存的真实路由。
 4. 只有登记成功且配置与回执都已写入，才在签名连接簿里发布。
 
-网络或写入失败后页面继续同一个待确认请求，重试复用原路由种子；文件已替换而目录同步未知时（503 `native-relay-write-unknown`）先确认那次保存。放弃会阻止未完成的请求发布。移除与放弃都先尝试留审计，再替换配置；审计写失败时仍完成收紧，响应标明审计失败。局域网或内网的中继需要本机管理员先在出站规则里放行对应的 `host:port`。
+「测试」另登记一条一次性的路由，不影响正在用的那条。文件已替换而目录同步未知时（503 `native-relay-write-unknown`）先确认那次保存。移除与放弃都先尝试留审计，再替换配置；审计写失败时仍完成收紧；启用一个中继与添加一样，审计写不进就不做。局域网或内网的中继需要本机管理员先在出站规则里放行对应的 `host:port`。
 
 ### 手机怎样得到新中继
 
@@ -162,12 +156,13 @@ edge 节点上下列行为没有经过实际测量，取保守值，都是可调
 
 | 状态 | 含义 | 怎么办 |
 | --- | --- | --- |
-| 尚未部署 | 这个版本的官方列表为空 | 用自己的中继 |
-| 正在连接 | Mac 正在连接或登记 | 等几秒 |
-| 已连接 | Mac 已在节点登记，手机可经它连接 | — |
-| 无法连接 | 连不上节点或连接中断，Mac 在退避重试 | 检查地址、DNS、出站规则；`/healthz`、`/admin/status` |
-| 登记被拒绝 | 节点拒绝了这台 Mac：注册令牌不对或缺失、节点已满 | 重新导出中继文件后先移除再添加；查看节点状态 |
-| 需要检查 | 同一天两次报告路由冲突 | 在 Mac 上移除后重新添加 |
-| 已关闭 | 官方中继被关掉 | 需要时打开 |
+| 直连 可用 / 未开启 | 这台 Mac 现在有没有等待同一网络手机的局域网入口 | 没有配对的手机或没有局域网时不开启 |
+| 连接中 | Mac 正在连接或登记 | 等几秒 |
+| 已连接 · 延迟 | Mac 已在节点登记，手机可经它连接 | — |
+| 密钥不符 | 节点给出的密钥或证书与中继文件不一致 | 确认文件来自这个中继；重新生成文件后移除再添加 |
+| 连不上 | 连不上节点或连接中断，Mac 在退避重试（下次重试的时间在悬停里） | 检查地址、DNS、出站规则；`/healthz`、`/admin/status` |
+| 登记被拒绝 | 节点拒绝了这台 Mac：注册令牌不对或缺失、节点已满 | 重新导出中继文件后移除再添加 |
+| 已停用 | 你在 ⋯ 里停用了它 | 需要时启用 |
+| 需要检查 | 同一天两次报告路由冲突 | 移除后重新添加 |
 
 公开的 `/healthz` 只说明 Worker 已配置（edge）或节点接受连接（self）；edge 节点是否可用看 `/admin/status`。完整的验证要用手机在另一个网络实际连接、重连与撤销。

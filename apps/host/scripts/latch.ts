@@ -1085,6 +1085,7 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
         out,
         actor: CLI_ACTOR,
         stopped: () => lockStopped(dataDir),
+        running: async (method, path) => api((await runningHost(dataDir)).state, method, path),
       })
       if (handled !== undefined) return handled
     }

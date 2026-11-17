@@ -4,6 +4,18 @@
 
 机制、谁能看到什么、未实测的假设见 [docs/RELAY.md](../../../docs/RELAY.md)。
 
+## 一条命令（源码目录）
+
+在 Latch 的源码目录，`wrangler login` 之后：
+
+```sh
+pnpm relay-edge:setup --region ne --out "$HOME/latch-relay-ne.json"
+```
+
+它依次：构建两个 Worker；部署校验 Worker `latch-relay-work`；用生成的配置（在 `~/.latch-relay/latch-relay-ne/`，不在仓库里）第一次部署节点并从输出取得 workers.dev 地址；生成中继密钥、注册令牌与管理令牌，经 wrangler 的标准输入写进 secret；填好 `NODE_HOSTS` 与 `RELAY_ID` 再部署一次；检查 `/healthz`；最后写出中继文件（新建，0600）与 `…json.admin-header`（管理令牌，0600）。它只打印进度，不打印任何秘密；`wrangler` 不在 PATH 上就停下，不代装。之后在 Mac 的「设置 › 中继 › 添加中继 › 已有中继文件」选这个文件。
+
+不想用它，或要部署两个节点、自定义域名，就按下面的手动步骤做。
+
 ## 结构
 
 - 每个地区节点是一个独立的 Worker：`latch-relay-ne`（东京，`apac-ne`）与 `latch-relay-se`（新加坡，`apac-se`）。自己的中继通常一个节点就够（只做 `ne` 或只做 `se`）。

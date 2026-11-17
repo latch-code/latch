@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
-import { Blocks, Cable, Database } from 'lucide-react'
+import { Radio, Blocks, Cable, Database } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
@@ -50,6 +50,7 @@ const ExtensionsSettings = deferredComponent(
   '扩展',
 )
 const McpSettings = deferredComponent(async () => ({ default: (await import('./McpSettings.tsx')).McpSettings }), 'MCP')
+const RelaySettings = deferredComponent(async () => ({ default: (await import('./RelaySettings.tsx')).RelaySettings }), '中继')
 const DataSettings = deferredComponent(async () => ({ default: (await import('./DataSettings.tsx')).DataSettings }), '数据')
 const ShortcutsSettings = deferredComponent(
   async () => ({ default: (await import('./ShortcutsSettings.tsx')).ShortcutsSettings }),
@@ -72,6 +73,7 @@ const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   shortcuts: '键盘',
   data: '数据目录 保留 多久 大小 审计 记录 导出 隐私',
   devices: '设备 手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 在浏览器中打开 关于连接 policy 开始新会话',
+  relays: '中继 直连 自建 cloudflare workers linux 服务器 中继文件 添加中继',
   computers: '添加电脑 其他电脑 移除 切换 打开',
   about: '版本 许可与条款',
 }
@@ -109,6 +111,7 @@ const sections: Array<{
   { id: 'workspaces', label: '项目', icon: FolderGlyph, admin: true, catalog: true },
   { id: 'plugins', label: '插件', icon: PluginsGlyph, admin: true },
   { id: 'devices', label: '设备', icon: DevicesGlyph, admin: false, secured: true },
+  { id: 'relays', label: '中继', icon: Radio, admin: true, secured: true },
   { id: 'data', label: '数据', icon: Database, admin: true, catalog: true, feature: 'data', allData: true },
   { id: 'computers', label: '电脑', icon: LaptopGlyph, admin: false, shell: true },
   { id: 'shortcuts', label: '快捷键', icon: KeyboardGlyph, admin: false },
@@ -421,6 +424,7 @@ export function SettingsPage({
                         />
                       )}
                       {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
+                      {panel === 'relays' && <RelaySettings access={access} />}
                       {panel === 'data' && <DataSettings />}
                       {panel === 'computers' && <ComputersSettings />}
                       {panel === 'about' && (

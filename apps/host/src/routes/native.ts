@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
@@ -536,6 +537,31 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       json(res, nativeSettings.info(caller.device.id))
       return true
     }
+    const relayAction = /^\/link\/api\/native\/relays\/([a-f0-9]{32})(\/test)?$/u.exec(path)
+    if (relayAction && ((relayAction[2] && method === 'POST') || (!relayAction[2] && method === 'PATCH'))) {
+      if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+      if (relayAction[2]) {
+        // 测试 changes nothing on this Mac: any admin device here, or `pnpm latch relay test` through host.sock.
+        if (caller.device) requireScope(caller, 'admin')
+        requireLocal(caller)
+        const authorize = () => {
+          if (caller.device) recheck(caller, 'admin')
+        }
+        json(res, await nativeSettings.testRelay(relayAction[1]!, authorize))
+        return true
+      }
+      requireLocal(caller)
+      requireScope(caller, 'admin')
+      const { disabled } = z.strictObject({ disabled: z.boolean() }).parse(await jsonBody(req, KIB))
+      const authorize = () => recheck(caller, 'admin')
+      await nativeSettings.settleRelayWrite()
+      const result = await nativeSettings.setDisabled(relayAction[1]!, disabled, actorOf(caller), authorize, auditFailed)
+      if (!result.audited) res.setHeader('x-latch-audit', 'failed')
+      refresh()
+      authorize()
+      json(res, nativeSettings.info(caller.device.id))
+      return true
+    }
     const relay = /^\/link\/api\/native\/relays\/([a-f0-9]{32})$/u.exec(path)
     if ((relay || path === '/link/api/native/directory') && method === 'DELETE') {
       requireLocal(caller)
@@ -652,6 +678,9 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       ...(options.native ? { managedDirect: options.native } : {}),
       pairing: () => enrollments.nativePairingOpen(),
       reachable: () => devices.nativeReachable(),
+      deliveredAt: relayId => addressBooks.deliveredAt(relayId),
+      // The relay setup scripts exist only in a source checkout; a packaged app ships without apps/.
+      sourceCheckout: existsSync(join(codeRoot, 'apps/relay-edge/scripts/setup.ts')),
       changed: () => nativeNetwork?.invalidate(),
       resolveDirect: async (direct, current) => {
         if (!nativeNetwork) throw new AppError(409, 'native-no-lan', '这台 Mac 没有连接 Wi‑Fi 或有线网络。')

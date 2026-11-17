@@ -7,10 +7,11 @@
   "license": "MIT",
   "devDependencies": {
     "@latch/host": "workspace:*",
-    "@latch/relay": "workspace:*",
     "@latch/link-client": "workspace:*",
     "@latch/link-wire": "workspace:*",
     "@latch/protocol": "workspace:*",
+    "@latch/relay": "workspace:*",
+    "@latch/relay-edge": "workspace:*",
     "@latch/sdk": "workspace:*",
     "@latch/testkit": "workspace:*",
     "@playwright/test": "catalog:",

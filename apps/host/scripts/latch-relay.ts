@@ -1,6 +1,7 @@
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import type { NativeRelayTest } from '@latch/protocol'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AuditLog, type AuditActor } from '../src/audit.ts'
 import {
@@ -17,6 +18,7 @@ export const RELAY_USAGE = `  relay list [--json]                      列出官
                                            添加自己的中继（Host 已停止）：先列出地址与密钥短哈希，再输入 y 确认；
                                            非交互环境用 --expect-key。Host 启动后核对节点密钥并登记成功，才把它发给手机；
                                            文件里的注册令牌只交给 Host，不显示
+  relay test <节点标识>                      现在测试一个中继：连上、密钥相符、注册、手机已拿到（Host 运行中）
   relay remove <节点标识>                    移除自己的中继（Host 已停止）
   relay official on|off                    打开或关闭官方中继（Host 已停止）
   relay order official|own                 优先使用官方中继或自己的中继（Host 已停止）
@@ -86,8 +88,34 @@ export async function runRelayCommand(input: {
   out: Out
   actor: AuditActor
   stopped(): Promise<{ release(): Promise<void> }>
+  /** The running Host's API through host.sock. */
+  running(method: string, path: string): Promise<unknown>
 }): Promise<number | undefined> {
   const { command, rest, flags, dataDir, io, out } = input
+  if (command === 'test') {
+    const relayId = rest[0]
+    if (!relayId || !/^[a-f0-9]{32}$/u.test(relayId)) throw new RelayCliError('用法：relay test <节点标识>')
+    const result = (await input.running('POST', `native/relays/${relayId}/test`)) as NativeRelayTest
+    const order = ['none', 'identity', 'registered'] as const
+    const reached = order.indexOf(result.reached)
+    const mark = (done: boolean, failed: boolean) => (done ? '✓' : failed ? '✗' : '·')
+    const failedAt = result.failure === undefined ? -1 : result.failure === 'refused' ? 2 : result.failure === 'mismatch' ? 1 : 0
+    out(`${mark(reached >= 1, failedAt === 0)} 连上${result.latencyMs === undefined ? '' : `（${result.latencyMs} ms）`}`)
+    out(`${mark(reached >= 1, failedAt === 1)} 密钥相符`)
+    out(`${mark(reached >= 2, failedAt === 2)} 注册`)
+    out(`${mark(result.deliveredAt !== undefined, false)} 手机已拿到`)
+    if (result.failure) {
+      out(
+        result.failure === 'mismatch'
+          ? '中继给出的密钥与文件里的不一致。'
+          : result.failure === 'refused'
+            ? '中继拒绝了登记：注册令牌不对或中继已满。'
+            : '连不上这个中继：检查地址与网络。',
+      )
+      return 1
+    }
+    return 0
+  }
   if (command === 'list') {
     const lock = await input.stopped().catch(() => undefined)
     if (!lock) throw new RelayCliError('Host 运行中时请在桌面端「设置 › 设备 › 关于连接」查看中继，或停止 Host 后再运行')

@@ -9,6 +9,18 @@ import { profileFingerprint, relayEndpointOf, RelayProfiles, secretBytes, type R
 import type { HostRelayDirectory } from './directory.ts'
 
 type Lease = { address: string; permitted(): boolean }
+/** How far a 测试 got: `identity` means connected and the node proved its key; `registered` means all of it. */
+export interface RelayTest {
+  reached: 'none' | 'identity' | 'registered'
+  failure?: 'unreachable' | 'mismatch' | 'refused'
+  latencyMs?: number
+}
+/** A failed dial: the node answered with another key or certificate, or could not be reached at all. */
+export function classify(error: unknown): 'mismatch' | 'refused' | 'unreachable' {
+  if (error instanceof RelayClosed && [4100, 4302, 4304].includes(error.closeCode)) return 'refused'
+  const message = error instanceof Error ? error.message : ''
+  return /identity|certificate/iu.test(message) ? 'mismatch' : 'unreachable'
+}
 type Verification = { routeId: Uint8Array; token: Uint8Array; permitted(): boolean }
 interface NodeState {
   fingerprint: string
@@ -17,7 +29,7 @@ interface NodeState {
   control?: RelayControl
   leases: Lease[]
   tokens: Map<string, Uint8Array>
-  status: 'connecting' | 'connected' | 'waiting' | 'attention' | 'refused'
+  status: 'connecting' | 'connected' | 'waiting' | 'attention' | 'refused' | 'mismatch'
   retryAt?: number
   connectedAt?: number
   /** The node's region and the latest HELLO round trip on its control connection, for the nearest-region hint. */
@@ -53,10 +65,11 @@ export class HostRelayController {
     this.timer.unref()
     this.reconcile()
   }
-  status(): Array<{ relayId: string; status: NodeState['status']; retryAt?: number; connectedAt?: number }> {
+  status(): Array<{ relayId: string; status: NodeState['status']; retryAt?: number; connectedAt?: number; latencyMs?: number }> {
     return [...this.nodes].map(([relayId, state]) => ({
       relayId,
       status: state.status,
+      ...(state.status === 'connected' && state.roundTripMs !== undefined ? { latencyMs: Math.round(state.roundTripMs) } : {}),
       ...(state.retryAt === undefined ? {} : { retryAt: state.retryAt }),
       ...(state.connectedAt === undefined ? {} : { connectedAt: state.connectedAt }),
     }))
@@ -87,7 +100,7 @@ export class HostRelayController {
     // the person has turned the official relay off.
     const reachable = this.options.devices.nativeReachable()
     const snapshot = this.options.profiles.snapshot()
-    const profiles = snapshot.profiles.filter(profile => !profile.builtIn || (reachable && !snapshot.officialOff))
+    const profiles = snapshot.profiles.filter(profile => !profile.disabled && (!profile.builtIn || (reachable && !snapshot.officialOff)))
     for (const [id, retained] of this.resumeTokens) {
       const profile =
         profiles.find(item => item.relayId === id)
@@ -172,10 +185,37 @@ export class HostRelayController {
       this.checking = undefined
     }
   }
+  /**
+   * 测试: dials the node now and reports how far it got: connected and key verified, then a registration. It registers a
+   * throwaway route, never this Host's own, so the live control connection is not superseded.
+   */
+  async test(profile: RelayProfile, authorize: () => void): Promise<RelayTest> {
+    const state = { abort: new AbortController(), leases: [] as Lease[] }
+    if (this.stopped) return { reached: 'none', failure: 'unreachable' }
+    const timer = setTimeout(() => state.abort.abort(), 15_000)
+    timer.unref()
+    const started = performance.now()
+    const progress: { stage: RelayTest['reached'] } = { stage: 'none' }
+    try {
+      await this.verifyRegistration(profile, authorize, state, {
+        probe: true,
+        onIdentity: () => {
+          progress.stage = 'identity'
+        },
+      })
+      return { reached: 'registered', latencyMs: Math.round(performance.now() - started) }
+    } catch (error) {
+      const reached = progress.stage
+      return { reached, failure: reached === 'identity' ? 'refused' : classify(error) === 'mismatch' ? 'mismatch' : 'unreachable' }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
   private async verifyRegistration(
     profile: RelayProfile,
     authorize: () => void,
     state: Pick<NodeState, 'abort' | 'leases'>,
+    options: { probe?: boolean; onIdentity?: () => void } = {},
   ): Promise<Verification> {
     const relayId = Buffer.from(profile.relayId, 'hex')
     const signal = state.abort.signal
@@ -205,11 +245,13 @@ export class HostRelayController {
       },
       signal,
     })
+    options.onIdentity?.()
     const abort = () => control.close()
     signal.addEventListener('abort', abort, { once: true })
     try {
       const day = Math.floor(Date.now() / 1000 / UTC_DAY)
-      const routeKeyBytes = await routeKey(nodeCrypto, secretBytes(profile.seeds[profile.activeSlot]), relayId, day)
+      const seed = options.probe ? nodeCrypto.random(32) : secretBytes(profile.seeds[profile.activeSlot])
+      const routeKeyBytes = await routeKey(nodeCrypto, seed, relayId, day)
       const currentRoute = hex(await routeId(nodeCrypto, await nodeCrypto.publicKey(routeKeyBytes)))
       const retained = this.resumeTokens.get(profile.relayId)
       const previous = retained?.fingerprint === profileFingerprint(profile) ? retained.tokens.get(currentRoute) : undefined
@@ -411,8 +453,10 @@ export class HostRelayController {
             state.status = 'attention'
           }
         }
-        // 4100 on the control connection: the node refused this Host's registration (token, or a full node: 4302/4304).
-        if (error instanceof RelayClosed && [4100, 4302, 4304].includes(error.closeCode)) state.status = 'refused'
+        // The node refused this Host's registration (token, or a full node), or answered with another key.
+        const kind = classify(error)
+        if (kind === 'refused') state.status = 'refused'
+        else if (kind === 'mismatch') state.status = 'mismatch'
         else if (state.status !== 'attention') state.status = 'waiting'
         const wait = Math.min(300_000, 1000 * 2 ** Math.min(attempts++, 9))
         state.retryAt = Date.now() + wait

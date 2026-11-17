@@ -798,7 +798,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `PATCH /devices/:id` | `admin`；授予权限或扩大数据范围需本机与本机确认 | 调整权限与数据范围 |
 | `PATCH /devices/:id/name`、`GET /enrollments` | 本机 `admin` | 重命名任一设备；仍在等待的登记 |
 | `POST /pairings` | 本机 `admin` 或匿名 | 配对邀请 `{ scopes?, target? }`；未配置 HTTPS 入口时 409 `tls-not-configured`。桌面端只由主进程调用 |
-| `GET /native/info`、`/native/pairings…`、`/native/relays…`、`/native/relay-requests/:id`、`PUT /native/official-relay`、`DELETE /native/directory` | 本机 `admin`（`GET /native/info`：任何 `admin` 设备，或本机匿名）；添加中继需本机确认 | 手机配对二维码、官方中继的开关与优先顺序、自己的中继（[RELAY.md](RELAY.md)）。签发二维码要先打开局域网入口：没有网络时 409 `native-no-lan`，完全访问的会话运行或等待时 409 `presence-blocked` |
+| `GET /native/info`、`/native/pairings…`、`/native/relays…`（含 `PATCH /native/relays/:id` 停用与启用、`POST /native/relays/:id/test` 测试）、`/native/relay-requests/:id`、`PUT /native/official-relay`、`DELETE /native/directory` | 本机 `admin`（`GET /native/info`：任何 `admin` 设备，或本机匿名；测试：本机 `admin` 或本机匿名）；添加中继需本机确认 | 手机配对二维码、设置 › 中继（[RELAY.md](RELAY.md)）。签发二维码要先打开局域网入口：没有网络时 409 `native-no-lan`，完全访问的会话运行或等待时 409 `presence-blocked` |
 | `/native/pairing`、`/native/verification…`、`/native/revocation…`、`/native/address-book`、`/native/proximity`、`/native/bulk` | 原生连接上的设备 | 手机 App 的验证窗口、撤销通知、地址簿与文件传输 |
 | `GET`/`DELETE /confirmations/:id` | 发起确认的设备 | 查询或取消本机确认 |
 | `GET /audit/head`、`GET /audit/hash?seq=` | `view` | 审计检查点 |
@@ -925,6 +925,7 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | 跟随移动或改名的文件夹，运行中会话的文件夹变化 | 未实现；Latch 不是 App Sandbox 构建，Electron 只为 Mac App Store 构建创建安全范围书签 |
 | 按设备或文件夹的项目授权、只读文件夹、按文件夹的 Standard 风险级别 | 未实现；设备权限对所有项目生效 |
 | 官方中继的部署 | 代码与模板已就绪（`apps/relay-edge`），官方列表在所有者部署并填入节点公钥前为空；见 [RELAY.md](RELAY.md) |
+| 安装版里引导部署中继 | 未实现；部署命令（`pnpm relay-edge:setup`、`pnpm relay`）只在源码目录有，安装版只能用「已有中继文件」添加 |
 | edge 中继的花费上限 | 未实现；运营者在服务商处设的账单提醒就是上限 |
 | 向公众开放登记的 edge 中继 | 未实现；需要先有对每个用户公平的预算与接合数限制，现在只适合用注册令牌给少数人用 |
 | edge 中继在 WebSocket 内对节点密钥的再一层加密 | 未实现；现在节点身份靠签名挑战，不绑定 TLS 会话，能为域名终止 TLS 的一方可实时转发并看到路由元数据（[RELAY.md](RELAY.md#两种中继类型的身份)） |

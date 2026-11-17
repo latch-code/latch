@@ -439,6 +439,9 @@ importers:
       '@latch/relay':
         specifier: workspace:*
         version: link:../apps/relay
+      '@latch/relay-edge':
+        specifier: workspace:*
+        version: link:../apps/relay-edge
       '@latch/sdk':
         specifier: workspace:*
         version: link:../packages/sdk

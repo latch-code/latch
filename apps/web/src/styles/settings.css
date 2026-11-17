@@ -2401,3 +2401,119 @@
     max-width: 140px;
   }
 }
+/* 设置 › 中继: a relay's row with its state and ⋯, the progress line, 添加中继 and its steps. */
+.relay-row-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.relay-row-test {
+  padding: 0 var(--sp-12) var(--sp-8) var(--sp-48);
+}
+.relay-steps {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4) var(--sp-12);
+}
+.relay-add {
+  margin-block-start: var(--sp-12);
+}
+.relay-ways {
+  display: grid;
+  gap: var(--sp-8);
+}
+.relay-way {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.relay-way:hover {
+  background: var(--hover);
+}
+.relay-steps-list {
+  display: grid;
+  gap: var(--sp-16);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.relay-step {
+  display: flex;
+  gap: var(--sp-12);
+}
+.relay-step-index {
+  flex: none;
+  width: 20px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.relay-step-body {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: var(--sp-8);
+}
+.relay-command {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.relay-command code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  padding: var(--sp-4) var(--sp-8);
+  border-radius: var(--r-8);
+  background: var(--sidebar);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+.relay-drop {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-8);
+  color: var(--muted);
+}
+.relay-drop > span {
+  flex: 1;
+}
+.relay-check {
+  display: grid;
+  gap: var(--sp-12);
+  justify-items: start;
+}
+.relay-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-4) var(--sp-16);
+  margin: 0;
+  font-size: var(--fs-caption);
+}
+.relay-facts dt {
+  color: var(--muted);
+}
+.relay-facts dd {
+  display: grid;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.relay-way[aria-disabled] {
+  color: var(--ink-2);
+  cursor: default;
+}
+.relay-way > span:not(.settings-icon-tile) {
+  flex: 1;
+}

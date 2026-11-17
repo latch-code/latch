@@ -8,6 +8,8 @@ import { verifyAddressBook } from '@latch/link-client'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { HostAddressBooks } from '../src/relay/address-book.ts'
 import { NativeSettings } from '../src/native-settings.ts'
+import { classify } from '../src/relay/controller.ts'
+import { RelayClosed } from '@latch/link-client'
 import { RelayProfiles } from '../src/relay/profiles.ts'
 import type { OfficialRelay } from '../src/relay/official.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
@@ -193,4 +195,39 @@ it('turns the official relay on only once the audit is written; turning it off n
   expect(auditFailed).toBe(1)
   await expect(settings.setOfficial({ enabled: true }, { listener: 'unix' }, () => {})).rejects.toMatchObject({ code: 'audit-unavailable' })
   expect(t.profiles.snapshot().officialOff).toBe(true)
+})
+
+it('keeps a disabled relay out of books and turns it on again only once the audit is written', async () => {
+  const t = await host()
+  await t.profiles.replace([ownSelf, ownEdge])
+  const failing = { append: async () => Promise.reject(new Error('disk full')) }
+  const settings = new NativeSettings({
+    profiles: t.profiles,
+    native: {} as never,
+    controller: { reconcile() {} } as never,
+    audit: failing as never,
+    pairing: () => false,
+    reachable: () => false,
+  })
+  let auditFailed = 0
+  await settings.setDisabled(
+    ownSelf.relayId,
+    true,
+    { listener: 'unix' },
+    () => {},
+    () => auditFailed++,
+  )
+  expect(auditFailed).toBe(1)
+  expect(ids(await t.book())).toEqual([ownEdge.relayId])
+  await expect(settings.setDisabled(ownSelf.relayId, false, { listener: 'unix' }, () => {})).rejects.toMatchObject({
+    code: 'audit-unavailable',
+  })
+  expect(t.profiles.snapshot().profiles.find(item => item.relayId === ownSelf.relayId)?.disabled).toBe(true)
+})
+
+it('names a failed dial by what went wrong: another key, a refused registration, or no answer', () => {
+  expect(classify(new Error('Relay identity rejected'))).toBe('mismatch')
+  expect(classify(new Error('Relay certificate identity mismatch'))).toBe('mismatch')
+  expect(classify(new RelayClosed(4100))).toBe('refused')
+  expect(classify(new Error('connect ECONNREFUSED'))).toBe('unreachable')
 })
