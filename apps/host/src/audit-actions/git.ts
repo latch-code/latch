@@ -32,7 +32,32 @@ export const RESULT_CODES = [
   'gh-failed',
   'pr-exists-elsewhere',
   'pr-create-failed',
+  'git-fetch-auth',
+  'git-fetch-host-key',
+  'git-fetch-unreachable',
+  'git-fetch-timeout',
+  'git-fetch-failed',
+  'git-no-upstream',
+  'git-pull-diverged',
+  'git-pull-local-changes',
+  'git-pull-failed',
+  'git-abort-failed',
 ] as const
+/** Why a clone did not become a project. */
+export const CLONE_CODES = [
+  'clone-auth',
+  'clone-host-key',
+  'clone-unreachable',
+  'clone-not-found-remote',
+  'clone-timeout',
+  'clone-failed',
+  'clone-cancelled',
+  'clone-not-added',
+] as const
+const remoteVia = z.enum(['upstream', 'push-remote', 'origin'])
+/** The one transport your Git was let use. */
+const transport = z.enum(['https', 'http', 'ssh', 'file'])
+const fetch = { ...request, remote: remoteVia, remoteHash: hex64, transport }
 
 /**
  * 交付 (docs/GIT-DELIVERY.md), its pull request included. The write is recorded before Git runs and does not run when the record fails; its outcome
@@ -57,9 +82,39 @@ export const GIT_ACTIONS = {
   'git.pr.create': z.strictObject({ ...request, remoteHash: hex64, headHash: hex64, baseHash: hex64, draft: z.boolean() }),
   /** 创建 PR that found the branch's pull request open and bound it instead. */
   'git.pr.link': z.strictObject({ ...request, number: prNumber, remoteHash: hex64, headHash: hex64 }),
+  /** 获取: which rule chose the remote, its name's hash and the transport it was fetched over; never its address. */
+  'git.fetch': z.strictObject(fetch),
+  /** 拉取: a fetch, then a fast-forward from `preHead`. */
+  'git.pull': z.strictObject({ ...fetch, preHead: oid.optional() }),
+  /** 中止 of the operation under way, with HEAD and the number of conflicted files when it was pressed. */
+  'git.abort': z.strictObject({
+    ...request,
+    operation: z.enum(['merge', 'rebase', 'cherry-pick', 'revert']),
+    preHead: oid.optional(),
+    conflicted: count,
+  }),
+  /**
+   * 克隆 into a new folder that becomes a project, before Git runs: the transport, and hashes of the address (which
+   * holds no credentials: one with them is refused), of its host and of the new folder's path.
+   */
+  'git.clone': z.strictObject({
+    cloneHash: hex64,
+    transport: z.enum(['https', 'ssh']),
+    urlHash: hex64,
+    hostHash: hex64,
+    pathHash: hex64,
+  }),
+  /** After: the project it became, or why not; a failed or cancelled clone's folder was removed (`removed`). */
+  'git.clone.result': z.strictObject({
+    cloneHash: hex64,
+    outcome: z.enum(['done', 'failed', 'cancelled']),
+    code: z.enum(CLONE_CODES).optional(),
+    workspaceId: opaqueId.optional(),
+    removed: z.boolean().optional(),
+  }),
   'git.result': z.strictObject({
     ...request,
-    operation: z.enum(['stage', 'unstage', 'commit', 'push', 'pr']),
+    operation: z.enum(['stage', 'unstage', 'commit', 'push', 'pr', 'fetch', 'pull', 'abort']),
     outcome: z.enum(['done', 'failed', 'unknown']),
     code: z.enum(RESULT_CODES).optional(),
     commit: oid.optional(),

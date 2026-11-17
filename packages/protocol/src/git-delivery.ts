@@ -1,7 +1,11 @@
 import type { ChangeHunk, GitOperation } from './changes.ts'
 
-/** The writes a session's 交付 makes in its repository (`pr` creates or binds its pull request); each takes a `requestId`. */
-export type GitDeliveryKind = 'stage' | 'unstage' | 'commit' | 'push' | 'pr'
+/**
+ * The writes a session's 交付 makes in its repository (`pr` creates or binds its pull request; `fetch` updates its
+ * remote-tracking branches; `pull` fetches and fast-forwards; `abort` ends a merge, rebase, cherry-pick or revert under
+ * way); each takes a `requestId`.
+ */
+export type GitDeliveryKind = 'stage' | 'unstage' | 'commit' | 'push' | 'pr' | 'fetch' | 'pull' | 'abort'
 
 /** A file's state on one side: added, modified, deleted or type changed (a file became a link, or back). */
 export type GitFileStatus = 'A' | 'M' | 'D' | 'T'
@@ -77,6 +81,32 @@ export interface GitPushResult {
   /** The branch had no upstream; this push set it. */
   setUpstream?: true
   replay?: true
+}
+
+/** `POST …/git/fetch`: the remote fetched (by its name in the repository's configuration) and when. */
+export interface GitFetchResult {
+  remote: string
+  fetchedAt: string
+}
+
+/**
+ * `POST …/git/pull`: fetched, then fast-forwarded to the upstream (`updated`), or already there. A branch that has
+ * diverged is refused (409 `git-pull-diverged` with `ahead` and `behind`); nothing is merged or rebased.
+ */
+export interface GitPullResult {
+  remote: string
+  fetchedAt: string
+  updated: boolean
+  /** HEAD after the pull. */
+  head: string
+  /** Commits the fast-forward took in. */
+  commits: number
+}
+
+/** `POST …/git/abort`: the operation that was under way, ended; HEAD is back where it was before it began. */
+export interface GitAbortResult {
+  operation: Exclude<GitOperation, 'unmerged'>
+  head?: string
 }
 
 /** The pull request bound to a session (`sessions-meta.json`): where it is and which branches it joins. */
@@ -212,6 +242,56 @@ export type GitDeliveryError =
   | 'git-result-unknown'
   | 'git-receipt-unsaved'
   | 'git-failed'
+  | 'git-no-upstream'
+  | 'git-remote-form'
+  | 'git-fetch-auth'
+  | 'git-fetch-host-key'
+  | 'git-fetch-unreachable'
+  | 'git-fetch-timeout'
+  | 'git-fetch-failed'
+  | 'git-pull-diverged'
+  | 'git-pull-local-changes'
+  | 'git-pull-failed'
+  | 'git-drivers'
+  | 'git-no-operation'
+  | 'git-operation-changed'
+  | 'git-abort-failed'
+
+/** `POST /link/api/workspaces/clone`'s refusals and a clone's fixed failure reasons (`GitCloneState.code`). */
+export type GitCloneError =
+  | 'clone-url-invalid'
+  | 'clone-url-credentials'
+  | 'clone-name-invalid'
+  | 'clone-folder-exists'
+  | 'clone-busy'
+  | 'clone-not-found'
+  | 'clone-auth'
+  | 'clone-host-key'
+  | 'clone-unreachable'
+  | 'clone-not-found-remote'
+  | 'clone-timeout'
+  | 'clone-failed'
+  | 'clone-cancelled'
+
+/**
+ * A clone into a new project folder (`POST /link/api/workspaces/clone`, then `GET …/clone/:id`). `running` until Git
+ * ends; `done` with the project it became; `failed` or `cancelled` with the folder it made removed.
+ */
+export interface GitCloneState {
+  id: string
+  state: 'running' | 'done' | 'failed' | 'cancelled'
+  /** The folder's name, from the address. */
+  name: string
+  startedAt: string
+  /** Git's progress: the phase it is in and how far it is, when it said. */
+  progress?: { phase: 'connecting' | 'receiving' | 'resolving' | 'checkout'; percent?: number }
+  /** `done`: the project it was added as. */
+  workspaceId?: string
+  /** `failed`: why, as a fixed reason. */
+  code?: GitCloneError | string
+  /** `done`, but the new folder could not be added as a project (its reason as `code`); the folder stays. */
+  notAdded?: true
+}
 
 /** Which two versions of a file a staging diff compares: the work tree against the index, or the index against HEAD. */
 export type GitStagingView = 'unstaged' | 'staged'

@@ -204,6 +204,7 @@ import {
   type FolderGuardContext,
   type FolderProblem,
 } from './paths.ts'
+import { GitClones, parseCloneUrl } from './git-clone.ts'
 import { foldersHash, newProject, planFolders, reorderFolders, type FolderRefusal, type ProjectPrimary } from './projects.ts'
 import { PolicyStore, isLowering, policyDiff, type Policy } from './policy.ts'
 import { PresenceService, createPresenceBackend, paramsHash, policySubject, type PresenceBackend } from './presence.ts'
@@ -686,6 +687,15 @@ const sessionProjectSchema = z
     nonce: z.string().min(1).max(128),
     via: z.literal('session'),
     sessionId: z.string().min(1).max(256),
+  })
+  .strict()
+/** 克隆: signed by the desktop app's main process like a folder add; `parent` is the folder its native picker chose. */
+const cloneSchema = z
+  .object({
+    nonce: z.string().min(1).max(128),
+    via: z.literal('clone'),
+    url: z.string().min(1).max(2048),
+    parent: z.string().min(1).max(4096),
   })
   .strict()
 const folderAddSchema = z
@@ -1697,6 +1707,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const updateWindow = new UpdateWindow(now)
     /** Host writes that run the user's Git (delivery, pull request, worktree removal): the install waits for them. */
     const repositoryHolds = new RepositoryHolds({ closed: () => updateWindow.isCommitted })
+    /** 克隆 into a new project folder: your Git, like a push, with none of the repository's code (docs/GIT-DELIVERY.md). */
+    const clones = new GitClones({
+      holds: repositoryHolds,
+      ...(options.gitDelivery?.git ? { git: options.gitDelivery.git } : {}),
+      ...(options.gitDelivery?.hostEnv ? { hostEnv: options.gitDelivery.hostEnv } : {}),
+      ...(options.gitDelivery?.shell ? { shell: options.gitDelivery.shell } : {}),
+      log,
+    })
     const denyRead = await Promise.all(DENY_READ_HOME_PATHS.map(entry => realpath(join(home, entry)).catch(() => join(home, entry))))
     const guardedPaths = [
       ...(await protectedDataPaths(realDataDir, realWorkspace)),
@@ -10564,6 +10582,52 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { nonce: grant.nonce, expiresAt: new Date(grant.expiresAt).toISOString() })
         return true
       }
+      if (path === '/link/api/workspaces/clone' && method === 'POST') {
+        // Like adding a project: only the desktop app on this computer, its body signed by main after the native picker
+        // chose where the new folder goes; the page never names a folder.
+        requireScope(caller, 'admin')
+        requireDesktop(caller)
+        const input = cloneSchema.parse(await signedFolderBody(req, caller))
+        const address = parseCloneUrl(input.url)
+        const clone = await clones.start({
+          deviceId: caller.device.id,
+          address,
+          parent: input.parent,
+          hooks: {
+            check: async folder => {
+              const plan = await planFolders({ current: [], paths: [folder], primaries: primaries(), guard: workspaceGuard })
+              if (plan.added.length === 0) throw foldersRefused(plan.refused)
+              assertNoHelperProject([await canonicalPath(folder)])
+            },
+            audit: async detail => {
+              recheck(caller, 'admin')
+              await audited({ action: 'git.clone', actor: actorOf(caller), detail })
+            },
+            result: async detail => {
+              await audited({ action: 'git.clone.result', actor: actorOf(caller), detail })
+            },
+            register: async folder => {
+              const workspace = await serial(caller, 'admin', async () => {
+                const plan = await planFolders({ current: [], paths: [folder], primaries: primaries(), guard: workspaceGuard })
+                if (plan.added.length === 0) throw foldersRefused(plan.refused)
+                return saveNewProject(caller, newProject({ folders: plan.folders, taken: takenIds() }), 'clone')
+              })
+              refresh()
+              return workspace.id
+            },
+          },
+        })
+        json(res, { clone }, 202)
+        return true
+      }
+      const cloneMatch = path.match(/^\/link\/api\/workspaces\/clone\/([0-9a-f-]{36})(\/cancel)?$/u)
+      if (cloneMatch && ((method === 'GET' && !cloneMatch[2]) || (method === 'POST' && cloneMatch[2]))) {
+        requireScope(caller, 'admin')
+        requireDesktop(caller)
+        const id = cloneMatch[1]!
+        json(res, { clone: cloneMatch[2] ? await clones.cancel(caller.device.id, id) : clones.get(caller.device.id, id) })
+        return true
+      }
       if (path === '/link/api/workspaces' && method === 'POST') {
         requireScope(caller, 'admin')
         requireDesktop(caller)
@@ -11394,6 +11458,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           await handoffs.close()
           await reviewNotes.close()
           await sessionLifecycle.hostStopping()
+          // A clone under way ends and its folder goes: a half-made folder never becomes a project.
+          await clones.close()
           await nativeRoutes.close()
           clearInterval(heartbeat)
           clearTimeout(eventTimer)

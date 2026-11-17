@@ -63,6 +63,23 @@ export class GitError extends Error {
   }
 }
 
+/**
+ * `-c hook.<name>.enabled=false` for every hook a `config --null --name-only --list` listing names. A name with `=` or a
+ * line break, or a key under `hook.` of a shape not understood here, cannot be switched off that way: `unsafe-config`.
+ */
+export function configHookArgs(listing: string): string[] {
+  const names = new Set<string>()
+  for (const key of listing.split('\0')) {
+    if (!key.toLowerCase().startsWith('hook.')) continue
+    const name = CONFIG_HOOK.exec(key)?.[1]
+    // Any other shape under `hook.` is one this code does not understand, so nothing runs.
+    if (name === undefined || /[=\r\n\0]/u.test(name)) throw new GitError('unsafe-config')
+    // The empty name too: `-c hook..enabled=false` switches off `[hook ""]`.
+    names.add(name)
+  }
+  return [...names].flatMap(name => ['-c', `hook.${name}.enabled=false`])
+}
+
 export function findGit(candidates: readonly string[] = CANDIDATES): string | undefined {
   for (const candidate of candidates) {
     try {
@@ -138,16 +155,7 @@ export class GitReader {
       ...(env ? { env } : {}),
       timeoutMs: this.timeoutMs,
     })
-    const names = new Set<string>()
-    for (const key of listing.toString('utf8').split('\0')) {
-      if (!key.toLowerCase().startsWith('hook.')) continue
-      const name = CONFIG_HOOK.exec(key)?.[1]
-      // Any other shape under `hook.` is one this code does not understand, so nothing runs.
-      if (name === undefined || /[=\r\n\0]/u.test(name)) throw new GitError('unsafe-config')
-      // The empty name too: `-c hook..enabled=false` switches off `[hook ""]`.
-      names.add(name)
-    }
-    return [...names].flatMap(name => ['-c', `hook.${name}.enabled=false`])
+    return configHookArgs(listing.toString('utf8'))
   }
 
   private spawn(layout: GitLayout, args: readonly string[], options: RunOptions): Promise<Buffer> {

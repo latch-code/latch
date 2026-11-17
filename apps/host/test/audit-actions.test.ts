@@ -129,6 +129,11 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'git.pr.create': { sessionId, requestHash: hex, remoteHash: hex, headHash: hex, baseHash: hex, draft: false },
   'git.pr.link': { sessionId, requestHash: hex, number: 12, remoteHash: hex, headHash: hex },
   'git.result': { sessionId, requestHash: hex, operation: 'push', outcome: 'failed', code: 'git-push-non-fast-forward' },
+  'git.fetch': { sessionId, requestHash: hex, remote: 'upstream', remoteHash: hex, transport: 'ssh' },
+  'git.pull': { sessionId, requestHash: hex, remote: 'upstream', remoteHash: hex, transport: 'https', preHead: 'b'.repeat(40) },
+  'git.abort': { sessionId, requestHash: hex, operation: 'merge', preHead: 'b'.repeat(40), conflicted: 2 },
+  'git.clone': { cloneHash: hex, transport: 'ssh', urlHash: hex, hostHash: hex, pathHash: hex },
+  'git.clone.result': { cloneHash: hex, outcome: 'cancelled', code: 'clone-cancelled', removed: true },
   'worktree.remove': {
     workspaceId: 'ws-1',
     sessionId,

@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
+  GitCloneState,
   GitCommitDiff,
   GitDeliveryState,
   GitHistory,
@@ -16,7 +17,9 @@ import type {
 } from '@latch/protocol'
 import { FAKE_ACP_AGENT, installFakeGh, type FakeGh, type TestDevice } from '@latch/testkit'
 import { AuditLog } from '../src/audit.ts'
+import { findGit } from '../src/changes/git.ts'
 import { GitDelivery } from '../src/git-delivery.ts'
+import { installFakeSsh } from './helpers/fake-ssh.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const hosts: TestHost[] = []
@@ -344,6 +347,84 @@ describe('git delivery routes', () => {
     expect(await audited(t)).toEqual([])
   })
 
+  it(
+    'fetches, pulls and aborts with the delivery guards: run, full scope for a private session, no turn for pull or abort',
+    { timeout: 60_000 },
+    async () => {
+      const { t, owner, path, sessionId, git, scratch } = await fixture()
+      const snapshot = await owner.json<{ catalog: { features: { gitSync?: true } } }>('snapshot')
+      expect(snapshot.catalog.features.gitSync).toBe(true)
+      // A bare remote on disk, and a second clone that moves it on.
+      const env = { ...process.env, HOME: join(scratch, 'home'), GIT_CONFIG_NOSYSTEM: '1' }
+      const gitIn = (cwd: string, ...args: string[]) =>
+        execFileSync('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+          .toString('utf8')
+          .trim()
+      const remote = join(scratch, 'remote.git'),
+        other = join(scratch, 'other')
+      gitIn(scratch, 'init', '-q', '--bare', '-b', 'main', remote)
+      git('remote', 'add', 'origin', remote)
+      git('push', '-q', '-u', 'origin', 'main')
+      gitIn(scratch, 'clone', '-q', remote, other)
+      await writeFile(join(other, 'tracked.txt'), 'committed\nupstream\n')
+      gitIn(other, '-c', 'user.name=O', '-c', 'user.email=o@example.invalid', 'commit', '-q', '-am', 'upstream')
+      gitIn(other, 'push', '-q', 'origin', 'main')
+
+      const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+      for (const part of ['fetch', 'pull'])
+        expect(await errorOf(await post(viewer, `${path}/${part}`, { requestId: randomUUID() }))).toEqual({
+          status: 403,
+          error: 'scope-required',
+        })
+      expect(await errorOf(await post(viewer, `${path}/abort`, { requestId: randomUUID(), operation: 'merge' }))).toEqual({
+        status: 403,
+        error: 'scope-required',
+      })
+      // The phone's work scope: they name no file, so run is enough, as for a push.
+      const phone = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'work' })
+      expect(await errorOf(await post(phone, `${path}/abort`, { requestId: randomUUID(), operation: 'merge' }))).toEqual({
+        status: 409,
+        error: 'git-no-operation',
+      })
+      expect(await errorOf(await post(phone, `${path}/abort`, { requestId: randomUUID(), operation: 'unmerged' }))).toEqual({
+        status: 400,
+        error: 'invalid-input',
+      })
+      expect(await errorOf(await post(phone, `${path}/fetch`, { requestId: randomUUID(), remote: 'origin' }))).toEqual({
+        status: 400,
+        error: 'invalid-input',
+      })
+      vi.spyOn(t.host.bridge, 'agentPrivate').mockImplementation(id => id === sessionId)
+      for (const part of ['fetch', 'pull'])
+        expect(await errorOf(await post(phone, `${path}/${part}`, { requestId: randomUUID() }))).toEqual({
+          status: 403,
+          error: 'agent-scope-required',
+        })
+      vi.restoreAllMocks()
+      expect(await audited(t)).toEqual([])
+      expect(await phone.json(`${path}/fetch`, { method: 'POST', body: { requestId: randomUUID() } })).toMatchObject({ remote: 'origin' })
+      expect(await owner.json<GitDeliveryState>(path)).toMatchObject({ behind: 1, fetchedAt: expect.any(String) })
+      expect(await audited(t)).toEqual(['git.fetch', 'git.result'])
+
+      // A turn in the folder: the pull and the abort wait for it; a fetch changes no file.
+      await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'hang', requestId: randomUUID() } })
+      await expect.poll(async () => (await t.host.bridge.summary(sessionId)).status, SLOW).toBe('running')
+      expect(await errorOf(await post(owner, `${path}/pull`, { requestId: randomUUID() }))).toEqual({
+        status: 409,
+        error: 'git-turn-running',
+      })
+      expect((await post(owner, `${path}/fetch`, { requestId: randomUUID() })).status).toBe(200)
+      await owner.json(`tasks/${sessionId}/cancel`, { method: 'POST', body: {} })
+      await expect.poll(async () => (await t.host.bridge.summary(sessionId)).status, SLOW).not.toBe('running')
+      const pulled = await owner.json<{ updated: boolean; head: string }>(`${path}/pull`, {
+        method: 'POST',
+        body: { requestId: randomUUID() },
+      })
+      expect(pulled).toMatchObject({ updated: true, head: gitIn(other, 'rev-parse', 'HEAD') })
+      expect((await audited(t)).slice(-2)).toEqual(['git.pull', 'git.result'])
+    },
+  )
+
   it('runs nothing when the audit record cannot be written', SLOW, async () => {
     const { owner, path, git } = await fixture()
     git('add', 'agent-edit.txt')
@@ -449,4 +530,75 @@ describe('git delivery routes', () => {
       expect(await gh!.violations()).toEqual([])
     },
   )
+})
+
+describe('clone route', () => {
+  it('clones only for the desktop app with a signed body, audits first, and makes the folder a project', SLOW, async () => {
+    const scratch = await realpath(await mkdtemp(join(tmpdir(), 'latch-clone-route-')))
+    cleanups.push(() => rm(scratch, { recursive: true, force: true }))
+    const home = join(scratch, 'home'),
+      served = join(scratch, 'served'),
+      marks = join(scratch, 'marks'),
+      parent = join(scratch, 'projects')
+    await Promise.all([home, served, marks, parent].map(dir => mkdir(dir)))
+    const env = { ...process.env, HOME: home, GIT_CONFIG_NOSYSTEM: '1' }
+    const gitIn = (cwd: string, ...args: string[]) =>
+      execFileSync('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+        .toString('utf8')
+        .trim()
+    const work = join(scratch, 'work')
+    await mkdir(work)
+    gitIn(work, 'init', '-q', '-b', 'main')
+    await writeFile(join(work, 'readme.txt'), 'hello\n')
+    gitIn(work, 'add', '.')
+    gitIn(work, '-c', 'user.name=T', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'first')
+    gitIn(served, 'init', '-q', '--bare', '-b', 'main', 'widgets.git')
+    gitIn(work, 'push', '-q', join(served, 'widgets.git'), 'main')
+    const fake = await installFakeSsh({ root: scratch, served, marks, git: findGit()! })
+    const t = await startTestHost({
+      gitDelivery: { home, hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: scratch }, shell: fake.shell },
+    })
+    hosts.push(t)
+    const desktop = await t.enroll({ listener: 'unix' })
+    const url = 'git@example.test:widgets.git'
+    // Another device, or the page itself without main's signature, cannot clone.
+    const browser = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run', 'admin'] })
+    expect((await post(browser, 'workspaces/clone', { nonce: 'n', via: 'clone', url, parent, signature: 'x' })).status).toBe(403)
+    expect(
+      (await post(desktop, 'workspaces/clone', { nonce: 'n', via: 'clone', url, parent, signature: 'x' })).status,
+    ).toBeGreaterThanOrEqual(400)
+    // A signature over another address is not one for this one.
+    expect(
+      (await desktop.cloneRepository({ url, parent, signedBody: body => ({ ...body, url: 'git@example.test:other.git' }) })).status,
+    ).toBeGreaterThanOrEqual(400)
+    for (const [bad, code] of [
+      ['ext::sh -c touch% /tmp/x', 'clone-url-invalid'],
+      [join(served, 'widgets.git'), 'clone-url-invalid'],
+      ['file://' + join(served, 'widgets.git'), 'clone-url-invalid'],
+      ['https://user:secret@example.test/widgets.git', 'clone-url-credentials'],
+      ['--upload-pack=touch /tmp/x', 'clone-url-invalid'],
+    ] as const)
+      expect(await errorOf(await desktop.cloneRepository({ url: bad, parent }))).toEqual({ status: 400, error: code })
+    expect(await readdir(parent)).toEqual([])
+    const started = await desktop.cloneRepository({ url, parent })
+    expect(started.status).toBe(202)
+    const { clone } = (await started.json()) as { clone: GitCloneState }
+    expect(clone).toMatchObject({ state: 'running', name: 'widgets' })
+    expect((await browser.request(`workspaces/clone/${clone.id}`)).status).toBe(403)
+    let state = clone
+    await expect
+      .poll(async () => (state = (await desktop.json<{ clone: GitCloneState }>(`workspaces/clone/${clone.id}`)).clone).state, SLOW)
+      .toBe('done')
+    const workspaces = (await desktop.json<{ workspaces: Array<{ id: string; path: string }> }>('workspaces')).workspaces
+    expect(workspaces.find(item => item.id === state.workspaceId)?.path).toBe(join(parent, 'widgets'))
+    const log = (await readFile(join(t.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line) as { action: string; detail: Record<string, unknown> })
+    const actions = log.map(entry => entry.action).filter(action => action.startsWith('git.clone') || action === 'workspace.added')
+    expect(actions).toEqual(['git.clone', 'workspace.added', 'git.clone.result'])
+    expect(log.find(entry => entry.action === 'workspace.added')?.detail.via).toBe('clone')
+    expect(JSON.stringify(log)).not.toContain('example.test')
+    expect(JSON.stringify(log)).not.toContain('user:secret')
+  })
 })

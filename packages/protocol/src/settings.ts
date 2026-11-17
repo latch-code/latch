@@ -142,9 +142,10 @@ export type ProjectGlyph = (typeof PROJECT_GLYPHS)[number]
 
 /**
  * How a folder was added: the desktop's native picker, a Finder drop it confirmed natively, `pnpm latch project`, or a
- * session's own folder that the desktop saved as a project after a native confirmation.
+ * session's own folder that the desktop saved as a project after a native confirmation, or a repository cloned into a
+ * new folder inside one the native picker chose.
  */
-export type FolderVia = 'picker' | 'drop' | 'cli' | 'session'
+export type FolderVia = 'picker' | 'drop' | 'cli' | 'session' | 'clone'
 
 export interface WorkspaceFolder {
   /** Stable within the project across reorders and re-selection; never shown. */

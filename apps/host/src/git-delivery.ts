@@ -11,7 +11,11 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AppError } from '@latch/sdk'
 import type {
+  GitAbortResult,
   GitCheckLog,
+  GitFetchResult,
+  GitOperation,
+  GitPullResult,
   GitCommitDiff,
   GitCommitFileDiff,
   GitCommitResult,
@@ -32,7 +36,7 @@ import type {
 import { canonicalJson, redactKnownSecrets, sha256Hex } from '@latch/core/node-kit'
 import type { RESULT_CODES } from './audit-actions/git.ts'
 import { readGitLayout, type GitLayout } from './branch-reader.ts'
-import { GitError, GitReader, findGit, gitOperation } from './changes/git.ts'
+import { GitError, GitReader, configHookArgs, findGit, gitOperation } from './changes/git.ts'
 import { aheadOfBase, baseOfBranch, reachableCommit, readHistory, readTreeDiff, readTreeFile } from './changes/git-history.ts'
 import {
   SelectionError,
@@ -99,7 +103,15 @@ export const MESSAGE_LIMIT = 64 * 1024
 /** What a failure or a hook's output returns at most, after redaction: the end of it. */
 export const TAIL_LIMIT = 256 * 1024
 const REMOTE_LINES = 100
-const TIMEOUTS = { commit: 10 * 60_000, push: 2 * 60_000, stage: 2 * 60_000, gh: 30_000, prCreate: 60_000, log: 60_000 }
+const TIMEOUTS = {
+  commit: 10 * 60_000,
+  push: 2 * 60_000,
+  stage: 2 * 60_000,
+  fetch: 2 * 60_000,
+  gh: 30_000,
+  prCreate: 60_000,
+  log: 60_000,
+}
 /** After a stop's SIGTERM, how long the process group has before SIGKILL. */
 const KILL_GRACE_MS = 5_000
 /** After Git exits, how long its output pipes have to drain before they are closed. */
@@ -125,6 +137,32 @@ const GH_SCRIPT = SHELL_SCRIPT.replace(
 /** How long a `gh auth status --hostname` that said yes is believed. */
 const HOST_LOGIN_MS = 5 * 60_000
 const HOOK_NAMES: ReadonlySet<string> = new Set(KNOWN_HOOKS)
+/** Writes that may run while a merge, rebase, cherry-pick or revert is under way. */
+const OPERATION_FREE: ReadonlySet<GitDeliveryKind> = new Set(['pr', 'fetch', 'abort'])
+/**
+ * Your Git without the repository's code, for a fetch or a clone: no hooks (the directory and, per name, the ones in the
+ * configuration), no fsmonitor, no automatic gc or maintenance, no submodules, no bundle URIs, no alternate-refs command.
+ */
+export const QUIET_CONFIG = [
+  '-c',
+  'core.hooksPath=/dev/null',
+  '-c',
+  'core.fsmonitor=',
+  '-c',
+  'gc.auto=0',
+  '-c',
+  'maintenance.auto=false',
+  '-c',
+  'submodule.recurse=false',
+  '-c',
+  'fetch.recurseSubmodules=false',
+  '-c',
+  'transfer.bundleURI=false',
+  '-c',
+  'core.alternateRefsCommand=',
+]
+/** Restricted writes of the work tree (a fast-forward, an abort): no automatic gc or maintenance, no submodules. */
+const WRITE_CONFIG = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'submodule.recurse=false']
 
 /** The environment your Git starts with: the terminal's, without its terminal marks, and nothing that prompts. */
 export function deliveryEnvironment(input: { hostEnv: NodeJS.ProcessEnv; shell: string; folder: string }): Record<string, string> {
@@ -140,7 +178,7 @@ export function deliveryEnvironment(input: { hostEnv: NodeJS.ProcessEnv; shell: 
 }
 
 export interface DeliveryAuditEvent {
-  action: 'git.stage' | 'git.unstage' | 'git.commit' | 'git.push' | 'git.pr.create' | 'git.pr.link'
+  action: 'git.stage' | 'git.unstage' | 'git.commit' | 'git.push' | 'git.pr.create' | 'git.pr.link' | 'git.fetch' | 'git.pull' | 'git.abort'
   detail: Record<string, unknown>
 }
 export interface DeliveryResultEvent {
@@ -360,21 +398,55 @@ function pushFailure(outcome: Outcome): AppError {
   }
   if (rejected.some(line => /non-fast-forward|fetch first|stale info/u.test(line)))
     return new AppError(422, 'git-push-non-fast-forward', '远端有这里没有的提交，没有推送。先在终端拉取并合并，再推送。')
+  const problem = remoteProblem(stderr)
+  if (problem === 'host-key') return new AppError(422, 'git-push-host-key', '远端主机的密钥没有核实，没有推送。先在终端连接一次这个远端。')
+  if (problem === 'auth')
+    return new AppError(422, 'git-push-auth', '远端没有接受这台电脑上的凭据，没有推送。在终端里登录或配置凭据后再试。')
+  if (problem === 'unreachable') return new AppError(422, 'git-push-unreachable', '连不上远端，没有推送。')
+  return new AppError(422, 'git-push-failed', `推送没有完成（退出码 ${outcome.code ?? '无'}）。`, { exitCode: outcome.code ?? -1 })
+}
+
+/** Why your Git could not talk to a remote, from its own (English) messages; undefined for anything else. */
+export function remoteProblem(stderr: string): 'host-key' | 'auth' | 'unreachable' | undefined {
   if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|host key .*(?:not known|changed)/iu.test(stderr))
-    return new AppError(422, 'git-push-host-key', '远端主机的密钥没有核实，没有推送。先在终端连接一次这个远端。')
+    return 'host-key'
   if (
     /Authentication failed|could not read (?:Username|Password)|Permission denied \(|terminal prompts disabled|Invalid username or password|Access denied|returned error: 40[13]|denied to |Repository not found/iu.test(
       stderr,
     )
   )
-    return new AppError(422, 'git-push-auth', '远端没有接受这台电脑上的凭据，没有推送。在终端里登录或配置凭据后再试。')
+    return 'auth'
   if (
     /Could not resolve host|Connection refused|Connection timed out|Operation timed out|Network is unreachable|No route to host|Connection reset|unable to access|Could not read from remote repository|does not appear to be a git repository/iu.test(
       stderr,
     )
   )
-    return new AppError(422, 'git-push-unreachable', '连不上远端，没有推送。')
-  return new AppError(422, 'git-push-failed', `推送没有完成（退出码 ${outcome.code ?? '无'}）。`, { exitCode: outcome.code ?? -1 })
+    return 'unreachable'
+  return undefined
+}
+
+/**
+ * The transport a remote's URL (as `ls-remote --get-url` resolves it, `insteadOf` applied) uses, when it is one your Git
+ * may fetch over here: `https`, `http`, `ssh` (`ssh://` or `user@host:path`) or `file` (a path or `file://`). Anything
+ * else (`git://`, whose `core.gitProxy` is a program; `ext::`, `fd::` and every other remote helper; an unknown scheme)
+ * is undefined.
+ */
+export function transportOf(url: string): YourTransport | undefined {
+  // eslint-disable-next-line no-control-regex
+  if (!url || /[\u0000-\u001f\u007f]/u.test(url) || url.startsWith('-')) return undefined
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//u.exec(url)?.[1]?.toLowerCase()
+  if (scheme !== undefined) {
+    if (scheme === 'https' || scheme === 'http' || scheme === 'file') return scheme
+    if (scheme === 'ssh' || scheme === 'git+ssh' || scheme === 'ssh+git') return 'ssh'
+    return undefined
+  }
+  // `<helper>::<address>` names a remote helper program.
+  if (url.includes('::')) return undefined
+  // As Git reads it: a colon before the first slash is the scp-like form of ssh; anything else is a local path.
+  const colon = url.indexOf(':'),
+    slash = url.indexOf('/')
+  if (colon > 0 && (slash < 0 || colon < slash)) return 'ssh'
+  return 'file'
 }
 
 type PushVia = 'upstream' | 'push-remote' | 'origin'
@@ -613,8 +685,9 @@ export class GitDelivery {
     this.running.set(common, running)
     this.options.changed?.(caller.sessionId)
     try {
-      // A pull request is made on GitHub and leaves the work tree alone.
-      if (kind !== 'pr' && (await gitOperation(layout).catch(() => 'unmerged' as const)))
+      // A pull request is made on GitHub and a fetch only updates remote-tracking refs: neither touches the work tree.
+      // An abort is how an operation under way ends here.
+      if (!OPERATION_FREE.has(kind) && (await gitOperation(layout).catch(() => 'unmerged' as const)))
         throw refuse('git-operation-in-progress', '仓库正在合并、变基、拣选或还原，在终端里完成后再试。')
       return await work(running, common)
     } finally {
@@ -1376,6 +1449,336 @@ export class GitDelivery {
     }
   }
 
+  /**
+   * 获取: the remote the branch follows (its upstream's, else where a push goes, else `origin`) fetched by your Git,
+   * with the repository's code off (`fetchPlan`, `quietFetch`). Repeat-safe, so no receipt; nothing in the work tree
+   * changes, so it may run during a turn or an operation under way.
+   */
+  async fetch(caller: DeliveryCaller, input: { requestId: string }): Promise<GitFetchResult> {
+    return this.once(caller, input.requestId, payloadHash({ kind: 'fetch' }), async () => {
+      const layout = await this.layout(caller.folder)
+      return this.hold(caller, layout, 'fetch', input.requestId, async (running, common) => {
+        const config = await this.config(layout)
+        const plan = await this.fetchPlan(layout, config)
+        await caller.authorize('fetch')
+        await caller.audit({ action: 'git.fetch', detail: this.fetchDetail(caller, input.requestId, plan) })
+        const fetchedAt = await this.quietFetch(caller, layout, running, common, plan, 'fetch')
+        await this.reportResult(caller, { operation: 'fetch', outcome: 'done' })
+        return { remote: plan.remote, fetchedAt }
+      })
+    })
+  }
+
+  /**
+   * 拉取: a fetch, then a fast-forward of the branch to its upstream by the restricted Git, and nothing else. A branch
+   * with commits of its own the upstream lacks has diverged: refused with both counts, nothing merged or rebased.
+   */
+  async pull(caller: DeliveryCaller, input: { requestId: string }): Promise<GitPullResult> {
+    return this.once(caller, input.requestId, payloadHash({ kind: 'pull' }), async () => {
+      const layout = await this.layout(caller.folder)
+      if (!('branch' in layout.head)) throw refuse('git-detached', 'HEAD 没有指向分支，没有拉取。')
+      return this.hold(caller, layout, 'pull', input.requestId, async (running, common) => {
+        const git = this.git()
+        const config = await this.config(layout)
+        if (!config.upstream) throw refuse('git-no-upstream', '这个分支没有上游，没有可以拉取的。')
+        await this.assertNoDrivers(layout, config)
+        const plan = await this.fetchPlan(layout, config)
+        const preHead = await git.commit(layout, 'HEAD').catch(() => undefined)
+        await caller.authorize('pull')
+        await caller.audit({
+          action: 'git.pull',
+          detail: { ...this.fetchDetail(caller, input.requestId, plan), ...(preHead ? { preHead } : {}) },
+        })
+        const fetchedAt = await this.quietFetch(caller, layout, running, common, plan, 'pull')
+        const failed = async (code: (typeof RESULT_CODES)[number]) => {
+          await this.reportResult(caller, { operation: 'pull', outcome: 'failed', code })
+        }
+        let upstream: string | undefined, head: string | undefined, ahead: number | undefined, behind: number | undefined
+        try {
+          upstream = await this.upstreamCommit(layout)
+          head = await git.commit(layout, 'HEAD')
+          if (upstream && head) {
+            ahead = await git.ahead(layout, upstream, head)
+            behind = await git.ahead(layout, head, upstream)
+          }
+        } catch {
+          await failed('git-pull-failed')
+          throw gitFailed()
+        }
+        if (!upstream) {
+          await failed('git-no-upstream')
+          throw refuse('git-no-upstream', '远端上已没有这个分支的上游，没有拉取。')
+        }
+        if (!head || ahead === undefined || behind === undefined) {
+          await failed('git-pull-failed')
+          throw new AppError(422, 'git-pull-failed', '拉取没有完成：读不出这个分支与上游的关系。')
+        }
+        if (behind === 0) {
+          await this.reportResult(caller, { operation: 'pull', outcome: 'done', commit: head })
+          return { remote: plan.remote, fetchedAt, updated: false, head, commits: 0 }
+        }
+        if (ahead > 0) {
+          await failed('git-pull-diverged')
+          throw refuse('git-pull-diverged', '这个分支与上游各有对方没有的提交，没有拉取。合并或变基要你决定。', { ahead, behind })
+        }
+        // Only a fast-forward: no merge, no rebase, no autostash, no signature program, no hook; checked again right
+        // before it runs, since the fetch may have taken a while.
+        try {
+          await git.run(
+            layout,
+            [
+              ...WRITE_CONFIG,
+              'merge',
+              '--ff-only',
+              '--no-stat',
+              '--no-edit',
+              '--no-autostash',
+              '--no-verify-signatures',
+              '--end-of-options',
+              upstream,
+            ],
+            { maxBytes: 1024 * 1024, timeoutMs: this.timeouts.stage, authorize: () => caller.authorize('pull') },
+          )
+        } catch (error) {
+          if (error instanceof AppError) {
+            await failed('git-pull-failed')
+            throw error
+          }
+          const dirty = await readStatus(git, layout, config.drivers).then(
+            status => status.stagedCount + status.unstaged.length + status.untracked.length > 0,
+            () => false,
+          )
+          const code = dirty ? 'git-pull-local-changes' : 'git-pull-failed'
+          await failed(code)
+          if (dirty) throw refuse(code, '这里的未提交改动会被上游的提交覆盖，没有拉取。先提交或暂存这些改动。')
+          throw new AppError(422, code, '快进没有完成，仓库保持原样。')
+        }
+        const now = await git.commit(layout, 'HEAD').catch(() => undefined)
+        if (now !== upstream) {
+          await failed('git-pull-failed')
+          throw new AppError(422, 'git-pull-failed', '快进没有完成。')
+        }
+        await this.reportResult(caller, { operation: 'pull', outcome: 'done', commit: now })
+        return { remote: plan.remote, fetchedAt, updated: true, head: now, commits: behind }
+      })
+    })
+  }
+
+  /**
+   * 中止: ends the merge, rebase, cherry-pick or revert under way with Git's own `--abort`, run by the restricted Git:
+   * HEAD and the index go back to where they were before it began, and what was resolved so far is lost. `operation`
+   * is the one the person was shown; another one under way by now is refused.
+   */
+  async abort(caller: DeliveryCaller, input: { requestId: string; operation: GitAbortResult['operation'] }): Promise<GitAbortResult> {
+    return this.once(caller, input.requestId, payloadHash({ kind: 'abort', operation: input.operation }), async () => {
+      const layout = await this.layout(caller.folder)
+      return this.hold(caller, layout, 'abort', input.requestId, async () => {
+        const git = this.git()
+        let operation: GitOperation | undefined
+        try {
+          operation = await gitOperation(layout)
+        } catch {
+          throw gitFailed()
+        }
+        if (!operation) throw refuse('git-no-operation', '仓库里没有进行中的合并、变基、拣选或还原。')
+        if (operation !== input.operation) throw refuse('git-operation-changed', '仓库里进行中的操作已经变了，没有中止。', { operation })
+        const config = await this.config(layout)
+        await this.assertNoDrivers(layout, config)
+        let preHead: string | undefined, conflicted: number
+        try {
+          preHead = await git.commit(layout, 'HEAD')
+          conflicted = (await readStatus(git, layout, config.drivers)).conflictedCount
+        } catch {
+          throw gitFailed()
+        }
+        await caller.authorize('abort')
+        await caller.audit({
+          action: 'git.abort',
+          detail: {
+            sessionId: caller.sessionId,
+            requestHash: sha256Hex(input.requestId),
+            operation,
+            ...(preHead ? { preHead } : {}),
+            conflicted,
+          },
+        })
+        try {
+          await git.run(layout, [...WRITE_CONFIG, operation, '--abort'], {
+            maxBytes: 1024 * 1024,
+            timeoutMs: this.timeouts.stage,
+            authorize: () => caller.authorize('abort'),
+          })
+        } catch (error) {
+          if (error instanceof AppError) {
+            await this.reportResult(caller, { operation: 'abort', outcome: 'failed', code: 'git-abort-failed' })
+            throw error
+          }
+          if (error instanceof GitError && error.reason === 'timeout') {
+            await this.reportResult(caller, { operation: 'abort', outcome: 'unknown' })
+            throw unknown()
+          }
+        }
+        const left = await gitOperation(layout).catch(() => 'unmerged' as const)
+        if (left) {
+          await this.reportResult(caller, { operation: 'abort', outcome: 'failed', code: 'git-abort-failed' })
+          throw new AppError(422, 'git-abort-failed', 'Git 没有中止这次操作。在终端里查看。')
+        }
+        const head = await git.commit(layout, 'HEAD').catch(() => undefined)
+        await this.reportResult(caller, { operation: 'abort', outcome: 'done', ...(head ? { commit: head } : {}) })
+        return { operation, ...(head ? { head } : {}) }
+      })
+    })
+  }
+
+  /**
+   * A pull or an abort writes work tree files by the restricted Git, which runs no filter or merge driver: with one
+   * configured (Git LFS, a custom merge driver) the files would not be what your Git makes of them, so it is refused.
+   */
+  private async assertNoDrivers(layout: GitLayout, config: RepositoryConfig): Promise<void> {
+    const merges = await this.git()
+      .run(layout, ['config', '--null', '--name-only', '--get-regexp', '^merge\\..*\\.driver$'], { maxBytes: 64 * 1024, exitCodes: [0, 1] })
+      .then(
+        out => out.length > 0,
+        () => {
+          throw gitFailed()
+        },
+      )
+    if (config.drivers.length > 0 || merges) throw refuse('git-drivers', '仓库配置了 filter 或合并驱动（如 Git LFS），在终端里完成这一步。')
+  }
+
+  /** The commit HEAD's upstream names as this repository has it now, or undefined without one. */
+  private async upstreamCommit(layout: GitLayout): Promise<string | undefined> {
+    const out = await this.git()
+      .run(layout, ['rev-parse', '--verify', '--quiet', '--end-of-options', '@{upstream}^{commit}'], { maxBytes: 256, exitCodes: [0, 1] })
+      .then(buffer => buffer.toString('utf8').trim())
+    return OID.test(out) ? out : undefined
+  }
+
+  /**
+   * Which remote a fetch reads and over what, from the repository's configuration alone (the restricted Git prints it
+   * and contacts nothing): the upstream's remote, else the one a push goes to, else `origin` on a detached HEAD. Refused
+   * when its address is not a transport `transportOf` allows, it names a remote helper (`vcs`), or a fetch refspec
+   * would write outside `refs/remotes/` and `refs/tags/` (a local branch, say).
+   */
+  private async fetchPlan(
+    layout: GitLayout,
+    config: RepositoryConfig,
+  ): Promise<{ remote: string; via: PushVia; transport: YourTransport }> {
+    let remote: string, via: PushVia
+    if (config.upstream) {
+      remote = config.upstream.remote
+      via = 'upstream'
+    } else if ('branch' in layout.head) {
+      ;({ remote, via } = pushTarget(config, layout.head.branch))
+    } else if (config.remotes.has('origin')) {
+      remote = 'origin'
+      via = 'origin'
+    } else throw refuse('git-no-remote', '这个仓库没有远端。')
+    if (!REMOTE_NAME.test(remote) || !config.remotes.has(remote)) throw refuse('git-remote-invalid', '这个远端不是仓库配置的远端。')
+    const read = async (args: string[]) =>
+      (await this.git().run(layout, args, { maxBytes: 64 * 1024, exitCodes: [0, 1] })).toString('utf8').split('\n').filter(Boolean)
+    let url: string[], vcs: string[], refspecs: string[]
+    try {
+      ;[url, vcs, refspecs] = await Promise.all([
+        read(['ls-remote', '--get-url', '--end-of-options', remote]),
+        read(['config', '--get-all', `remote.${remote}.vcs`]),
+        read(['config', '--get-all', `remote.${remote}.fetch`]),
+      ])
+    } catch {
+      throw gitFailed()
+    }
+    const transport = url.length === 1 ? transportOf(url[0]!) : undefined
+    const local = (spec: string) => {
+      if (spec.startsWith('^')) return true
+      const colon = spec.indexOf(':')
+      if (colon < 0) return true
+      const destination = spec.slice(colon + 1)
+      return destination === '' || destination.startsWith('refs/remotes/') || destination.startsWith('refs/tags/')
+    }
+    if (!transport || vcs.length > 0 || !refspecs.every(spec => local(spec.replace(/^\+/u, ''))))
+      throw refuse('git-remote-form', '这个远端的地址或获取规则不能在这里获取，在终端里获取。')
+    return { remote, via, transport }
+  }
+
+  private fetchDetail(caller: DeliveryCaller, requestId: string, plan: { remote: string; via: PushVia; transport: YourTransport }) {
+    return {
+      sessionId: caller.sessionId,
+      requestHash: sha256Hex(requestId),
+      remote: plan.via,
+      remoteHash: sha256Hex(plan.remote),
+      transport: plan.transport,
+    }
+  }
+
+  /**
+   * The fetch itself, after the audit: your Git (your credentials, SSH setup and proxy), with only the planned transport
+   * open, no hook (the configuration's ones listed first, in the same environment, and switched off by name), no
+   * fsmonitor, gc, maintenance, submodule, bundle URI or commit graph, and the remote's `uploadpack` fixed (over a
+   * local path it is a program run here; a `-c` would not do, Git takes the first one configured). Failures are fixed reasons; the time of the fetch is FETCH_HEAD's.
+   */
+  private async quietFetch(
+    caller: DeliveryCaller,
+    layout: GitLayout,
+    running: Running,
+    common: string,
+    plan: { remote: string; transport: YourTransport },
+    operation: 'fetch' | 'pull',
+  ): Promise<string> {
+    const failed = async (code: (typeof RESULT_CODES)[number], error: AppError) => {
+      await this.reportResult(caller, { operation, outcome: 'failed', code })
+      return error
+    }
+    const listing = await this.runAs('git', layout, running, ['config', '--null', '--name-only', '--list'], {
+      timeoutMs: this.timeouts.fetch,
+    })
+    let hooksOff: string[]
+    try {
+      if (listing.timedOut || listing.code !== 0) throw new GitError('failed')
+      hooksOff = configHookArgs(listing.stdout.toString('utf8'))
+    } catch {
+      throw await failed('git-fetch-failed', new AppError(422, 'git-fetch-failed', '读不出 Git 的配置，没有获取。'))
+    }
+    const outcome = await this.runAs(
+      'git',
+      layout,
+      running,
+      [
+        ...QUIET_CONFIG,
+        ...hooksOff,
+        'fetch',
+        // Over a local path, `remote.<name>.uploadpack` is a program run here; the option wins over every configured one.
+        '--upload-pack=git-upload-pack',
+        '--no-auto-maintenance',
+        '--no-recurse-submodules',
+        '--no-write-commit-graph',
+        '--end-of-options',
+        plan.remote,
+      ],
+      { timeoutMs: this.timeouts.fetch, allowProtocol: plan.transport },
+    )
+    if (outcome.timedOut) throw await failed('git-fetch-timeout', new AppError(504, 'git-fetch-timeout', '获取没有在 2 分钟内完成。'))
+    if (outcome.code !== 0) {
+      const problem = remoteProblem(outcome.stderr.toString('utf8'))
+      if (problem === 'host-key')
+        throw await failed(
+          'git-fetch-host-key',
+          new AppError(422, 'git-fetch-host-key', '远端主机的密钥没有核实，没有获取。先在终端连接一次这个远端。'),
+        )
+      if (problem === 'auth')
+        throw await failed(
+          'git-fetch-auth',
+          new AppError(422, 'git-fetch-auth', '远端没有接受这台电脑上的凭据，没有获取。在终端里登录或配置凭据后再试。'),
+        )
+      if (problem === 'unreachable')
+        throw await failed('git-fetch-unreachable', new AppError(422, 'git-fetch-unreachable', '连不上远端，没有获取。'))
+      throw await failed(
+        'git-fetch-failed',
+        new AppError(422, 'git-fetch-failed', `获取没有完成（退出码 ${outcome.code ?? '无'}）。`, { exitCode: outcome.code ?? -1 }),
+      )
+    }
+    return (await lastFetch(layout.gitdir, common)) ?? new Date(this.now()).toISOString()
+  }
+
   /** Where the branch's push goes, on GitHub: the remote 推送 would use, and the repository its URL names. */
   private async pushRepo(layout: GitLayout, sessionId: string): Promise<{ repo: GhRepo; remote: string; branch: string }> {
     if (!('branch' in layout.head)) throw refuse('git-detached', 'HEAD 没有指向分支，没有 PR 可建。')
@@ -1759,122 +2162,171 @@ export class GitDelivery {
    * the one the Host found; `gh` is whichever your profile's PATH finds. `MESSAGE`, `PATHS` and `BODY` in `args` name
    * 0600 files in a fresh 0700 folder; the content is never an argument. Nothing is read from standard input.
    */
-  private async runAs(
+  private runAs(
     program: Program,
     layout: GitLayout,
     running: Running,
     args: string[],
-    options: { timeoutMs: number; message?: string; paths?: readonly string[]; body?: string },
+    options: { timeoutMs: number; message?: string; paths?: readonly string[]; body?: string; allowProtocol?: YourTransport },
   ): Promise<Outcome> {
-    const binary = program === 'git' ? this.binary! : 'gh'
-    const folder = await mkdtemp(join(tmpdir(), 'latch-git-'))
-    try {
-      const file = async (name: string, content: string) => {
-        const path = join(folder, name)
-        await writeFile(path, content, { mode: 0o600, flag: 'wx' })
-        return path
-      }
-      const message = options.message === undefined ? undefined : await file('message', options.message)
-      const paths = options.paths === undefined ? undefined : await file('paths', `${options.paths.join('\0')}\0`)
-      const body = options.body === undefined ? undefined : await file('body', options.body)
-      // Only a whole placeholder argument: a title or a branch that holds `=BODY` stays as it is.
-      const files: Record<string, string | undefined> = {
-        '--file=MESSAGE': message && `--file=${message}`,
-        '--pathspec-from-file=PATHS': paths && `--pathspec-from-file=${paths}`,
-        '--body-file=BODY': body && `--body-file=${body}`,
-      }
-      const resolved = args.map(arg => (Object.hasOwn(files, arg) ? (files[arg] ?? arg) : arg))
-      const trace = join(folder, 'trace')
-      const shell = await (this.options.shell ?? loginShell)()
-      const posix = POSIX_SHELLS.has(shell.argv[0]!.replace(/^-/u, ''))
-      const file0 = posix ? shell.file : '/bin/zsh',
-        argv0 = posix ? shell.argv[0]! : '-zsh'
-      const env = {
-        ...deliveryEnvironment({ hostEnv: this.hostEnv, shell: file0, folder: layout.root }),
-        ...(program === 'git' ? { GIT_TRACE2_EVENT: trace } : {}),
-        ...(options.paths ? { GIT_LITERAL_PATHSPECS: '1' } : {}),
-      }
-      const argv = program === 'git' ? ['-c', SHELL_SCRIPT, binary, '-C', layout.root, ...resolved] : ['-c', GH_SCRIPT, binary, ...resolved]
-      return await new Promise<Outcome>(resolve => {
-        const child = spawn(file0, argv, {
-          argv0,
-          cwd: layout.root,
-          env,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          // Its own process group without a terminal: a stop ends every process it started, and nothing can prompt.
-          detached: true,
-        })
-        running.pid = child.pid
-        const output = new Tail(TAIL_LIMIT),
-          // `gh` answers in JSON, read whole; Git's output is only classified.
-          stdout = new Tail(program === 'gh' ? 8 * 1024 * 1024 : 256 * 1024),
-          stderr = new Tail(256 * 1024)
-        const hooks: Outcome['hooks'] = [],
-          children = new Map<number, number>()
-        let traced = 0,
-          timedOut = false
-        const readOnce = async () => {
-          const text = await readFile(trace).catch(() => Buffer.alloc(0))
-          // Only whole lines, and never past 8 MiB of trace.
-          const end = text.subarray(0, 8 * 1024 * 1024).lastIndexOf(0x0a) + 1
-          if (end <= traced) return
-          traceHooks(text.subarray(traced, end).toString('utf8'), hooks, children)
-          traced = end
-          const current = hooks.findLast(hook => hook.code === undefined)
-          const name = current && HOOK_NAMES.has(current.name) ? current.name : undefined
-          if (name) running.hook = name
-          else delete running.hook
-        }
-        // One read at a time, in order.
-        let reads = Promise.resolve()
-        const readTrace = () => (reads = reads.then(readOnce, readOnce))
-        const poll = setInterval(() => void readTrace(), 500)
-        let last: NodeJS.Timeout | undefined
-        const timer = setTimeout(() => {
-          timedOut = true
-          if (child.pid) {
-            signal(child.pid, 'SIGTERM')
-            setTimeout(() => signal(child.pid!, 'SIGKILL'), KILL_GRACE_MS).unref()
-          }
-          // Whatever still holds the output open, the attempt is over once the kill had its time.
-          last = setTimeout(() => void finish(null), KILL_GRACE_MS + PIPE_GRACE_MS)
-        }, options.timeoutMs)
-        child.stdout.on('data', (chunk: Buffer) => {
-          output.push(chunk)
-          stdout.push(chunk)
-        })
-        child.stderr.on('data', (chunk: Buffer) => {
-          output.push(chunk)
-          stderr.push(chunk)
-        })
-        let finished = false
-        const finish = async (code: number | null) => {
-          if (finished) return
-          finished = true
-          clearInterval(poll)
-          clearTimeout(timer)
-          clearTimeout(last)
-          child.stdout.destroy()
-          child.stderr.destroy()
-          delete running.pid
-          await readTrace().catch(() => {})
-          resolve({ code, timedOut, output: output.bytes(), stdout: stdout.bytes(), stderr: stderr.bytes(), hooks })
-        }
-        child.on('error', () => void finish(null))
-        // Settled when Git exits: a process a hook left running (a daemon in a session of its own) may hold the output
-        // pipes open for as long as it lives, so they get a moment to drain and are then closed.
-        child.on('exit', code => {
-          setTimeout(() => void finish(code), PIPE_GRACE_MS)
-        })
-        child.on('close', code => void finish(code))
-      })
-    } finally {
-      await rm(folder, { recursive: true, force: true })
-    }
+    return runAsYou({
+      program,
+      binary: program === 'git' ? this.binary! : 'gh',
+      cwd: layout.root,
+      args,
+      hostEnv: this.hostEnv,
+      shell: this.options.shell ?? loginShell,
+      running,
+      ...options,
+    })
   }
 }
 
-function signal(pid: number, name: NodeJS.Signals): void {
+/** The one transport a run of your Git without repository code may use (`GIT_ALLOW_PROTOCOL`). */
+export type YourTransport = 'https' | 'http' | 'ssh' | 'file'
+
+/**
+ * Your Git or your `gh`, as you: through your login shell, in the terminal's environment, in `cwd`. `MESSAGE`, `PATHS`
+ * and `BODY` in `args` name 0600 files in a fresh 0700 folder; the content is never an argument. Nothing is read from
+ * standard input. `allowProtocol`: after the profile, `GIT_ALLOW_PROTOCOL` is that one transport, which overrides every
+ * `protocol.*.allow` in any configuration, so no other transport (`ext::`, `fd::`, a remote helper) can be used.
+ */
+export async function runAsYou(input: {
+  program: Program
+  binary: string
+  cwd: string
+  args: string[]
+  hostEnv: NodeJS.ProcessEnv
+  shell: () => Promise<ShellCommand>
+  running: { pid?: number; hook?: string }
+  timeoutMs: number
+  message?: string
+  paths?: readonly string[]
+  body?: string
+  allowProtocol?: YourTransport
+  /** Added to the environment the shell starts with (a profile may still change it). */
+  env?: Record<string, string>
+  /** Git's standard error as it comes, for its progress lines. */
+  onStderr?: (chunk: Buffer) => void
+}): Promise<Outcome> {
+  const { program, binary, running } = input
+  const folder = await mkdtemp(join(tmpdir(), 'latch-git-'))
+  try {
+    const file = async (name: string, content: string) => {
+      const path = join(folder, name)
+      await writeFile(path, content, { mode: 0o600, flag: 'wx' })
+      return path
+    }
+    const message = input.message === undefined ? undefined : await file('message', input.message)
+    const paths = input.paths === undefined ? undefined : await file('paths', `${input.paths.join('\0')}\0`)
+    const body = input.body === undefined ? undefined : await file('body', input.body)
+    // Only a whole placeholder argument: a title or a branch that holds `=BODY` stays as it is.
+    const files: Record<string, string | undefined> = {
+      '--file=MESSAGE': message && `--file=${message}`,
+      '--pathspec-from-file=PATHS': paths && `--pathspec-from-file=${paths}`,
+      '--body-file=BODY': body && `--body-file=${body}`,
+    }
+    const resolved = input.args.map(arg => (Object.hasOwn(files, arg) ? (files[arg] ?? arg) : arg))
+    const trace = join(folder, 'trace')
+    const shell = await input.shell()
+    const posix = POSIX_SHELLS.has(shell.argv[0]!.replace(/^-/u, ''))
+    const file0 = posix ? shell.file : '/bin/zsh',
+      argv0 = posix ? shell.argv[0]! : '-zsh'
+    const env = {
+      ...deliveryEnvironment({ hostEnv: input.hostEnv, shell: file0, folder: input.cwd }),
+      ...input.env,
+      ...(program === 'git' ? { GIT_TRACE2_EVENT: trace } : {}),
+      ...(input.paths ? { GIT_LITERAL_PATHSPECS: '1' } : {}),
+    }
+    const script =
+      program === 'gh'
+        ? GH_SCRIPT
+        : input.allowProtocol
+          ? SHELL_SCRIPT.replace('; exec', ` GIT_ALLOW_PROTOCOL=${TRANSPORT_WORD[input.allowProtocol]}; exec`)
+          : SHELL_SCRIPT
+    const argv = program === 'git' ? ['-c', script, binary, '-C', input.cwd, ...resolved] : ['-c', script, binary, ...resolved]
+    return await new Promise<Outcome>(resolve => {
+      const child = spawn(file0, argv, {
+        argv0,
+        cwd: input.cwd,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // Its own process group without a terminal: a stop ends every process it started, and nothing can prompt.
+        detached: true,
+      })
+      running.pid = child.pid
+      const output = new Tail(TAIL_LIMIT),
+        // `gh` answers in JSON, read whole; Git's output is only classified.
+        stdout = new Tail(program === 'gh' ? 8 * 1024 * 1024 : 256 * 1024),
+        stderr = new Tail(256 * 1024)
+      const hooks: Outcome['hooks'] = [],
+        children = new Map<number, number>()
+      let traced = 0,
+        timedOut = false
+      const readOnce = async () => {
+        const text = await readFile(trace).catch(() => Buffer.alloc(0))
+        // Only whole lines, and never past 8 MiB of trace.
+        const end = text.subarray(0, 8 * 1024 * 1024).lastIndexOf(0x0a) + 1
+        if (end <= traced) return
+        traceHooks(text.subarray(traced, end).toString('utf8'), hooks, children)
+        traced = end
+        const current = hooks.findLast(hook => hook.code === undefined)
+        const name = current && HOOK_NAMES.has(current.name) ? current.name : undefined
+        if (name) running.hook = name
+        else delete running.hook
+      }
+      // One read at a time, in order.
+      let reads = Promise.resolve()
+      const readTrace = () => (reads = reads.then(readOnce, readOnce))
+      const poll = setInterval(() => void readTrace(), 500)
+      let last: NodeJS.Timeout | undefined
+      const timer = setTimeout(() => {
+        timedOut = true
+        if (child.pid) {
+          signal(child.pid, 'SIGTERM')
+          setTimeout(() => signal(child.pid!, 'SIGKILL'), KILL_GRACE_MS).unref()
+        }
+        // Whatever still holds the output open, the attempt is over once the kill had its time.
+        last = setTimeout(() => void finish(null), KILL_GRACE_MS + PIPE_GRACE_MS)
+      }, input.timeoutMs)
+      child.stdout.on('data', (chunk: Buffer) => {
+        output.push(chunk)
+        stdout.push(chunk)
+      })
+      child.stderr.on('data', (chunk: Buffer) => {
+        output.push(chunk)
+        stderr.push(chunk)
+        input.onStderr?.(chunk)
+      })
+      let finished = false
+      const finish = async (code: number | null) => {
+        if (finished) return
+        finished = true
+        clearInterval(poll)
+        clearTimeout(timer)
+        clearTimeout(last)
+        child.stdout.destroy()
+        child.stderr.destroy()
+        delete running.pid
+        await readTrace().catch(() => {})
+        resolve({ code, timedOut, output: output.bytes(), stdout: stdout.bytes(), stderr: stderr.bytes(), hooks })
+      }
+      child.on('error', () => void finish(null))
+      // Settled when Git exits: a process a hook left running (a daemon in a session of its own) may hold the output
+      // pipes open for as long as it lives, so they get a moment to drain and are then closed.
+      child.on('exit', code => {
+        setTimeout(() => void finish(code), PIPE_GRACE_MS)
+      })
+      child.on('close', code => void finish(code))
+    })
+  } finally {
+    await rm(folder, { recursive: true, force: true })
+  }
+}
+
+const TRANSPORT_WORD: Readonly<Record<YourTransport, string>> = { https: 'https', http: 'http', ssh: 'ssh', file: 'file' }
+
+export function signal(pid: number, name: NodeJS.Signals): void {
   try {
     process.kill(-pid, name)
   } catch {

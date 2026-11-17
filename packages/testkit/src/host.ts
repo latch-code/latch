@@ -88,6 +88,12 @@ export interface TestDevice {
   addFolders(input: AddFoldersInput): Promise<Response>
   /** 存为项目 the way the desktop app's main process does it: a new project from the session's own folder, signed. */
   saveSessionFolder(input: SaveSessionFolderInput): Promise<Response>
+  /** 克隆 the way the desktop app's main process starts it: the address and the folder its picker chose, signed. */
+  cloneRepository(input: {
+    url: string
+    parent: string
+    signedBody?: (body: Record<string, unknown>) => Record<string, unknown>
+  }): Promise<Response>
   /**
    * Registers as the browser provider the way the desktop app's main process does: a nonce, then a body naming its
    * purpose signed with this device's key. `body` may alter what is signed, to test refusals.
@@ -340,6 +346,13 @@ export async function startHostFixture<H extends FixtureHost>(
         const signed = input.signedBody ? input.signedBody(body) : body
         const signature = key.sign(foldersSigningText(host.hostId, state.device.id, nonce, foldersBodyHash(signed)))
         return testDevice.request('workspaces', { method: 'POST', body: { ...body, signature } })
+      },
+      async cloneRepository(input) {
+        const { nonce } = await testDevice.json<{ nonce: string }>('folder-grants', { method: 'POST', body: {} })
+        const body: Record<string, unknown> = { nonce, via: 'clone', url: input.url, parent: input.parent }
+        const signed = input.signedBody ? input.signedBody(body) : body
+        const signature = key.sign(foldersSigningText(host.hostId, state.device.id, nonce, foldersBodyHash(signed)))
+        return testDevice.request('workspaces/clone', { method: 'POST', body: { ...body, signature } })
       },
       async registerBrowserProvider(input = {}) {
         const { nonce } = await testDevice.json<{ nonce: string }>('browser-provider/nonce', { method: 'POST', body: {} })

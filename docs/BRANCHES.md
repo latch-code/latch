@@ -65,7 +65,7 @@ Host 写 Git 只在两处：`apps/host/src/worktrees.ts` 新建、沿用与移�
 
 ## 不运行仓库里的程序
 
-每个 Git 进程都经受限的运行器（固定选项、重建的环境与配置钩子的规则见 [GIT-DELIVERY.md](GIT-DELIVERY.md#两类-git-进程)），这里另加：
+每个 Git 进程都经受限的运行器（固定选项、重建的环境与配置钩子的规则见 [GIT-DELIVERY.md](GIT-DELIVERY.md#git-进程)），这里另加：
 
 - 选项 `core.attributesFile=`、`attr.tree=`、`safe.bareRepository=explicit`、`submodule.recurse=false`、`gc.auto=0`、`maintenance.auto=false`。
 - 环境 `GIT_LFS_SKIP_SMUDGE=1`、`GIT_NO_REPLACE_OBJECTS=1`。

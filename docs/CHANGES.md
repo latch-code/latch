@@ -80,7 +80,7 @@ sources:
 
 ## 只读 Git
 
-两个 Git 范围用受限的 Git（运行器的选项、环境与钩子规则见 [GIT-DELIVERY.md](GIT-DELIVERY.md#两类-git-进程)），不运行仓库里的任何程序。
+两个 Git 范围用受限的 Git（运行器的选项、环境与钩子规则见 [GIT-DELIVERY.md](GIT-DELIVERY.md#git-进程)），不运行仓库里的任何程序。
 
 - Git 只解析提交、列出提交的树与索引、返回 blob，从不比较工作区：比较会运行仓库配置的 clean filter。Host 自己按 Git 的方式给工作区文件算哈希，再与树比较，所以带过滤器或换行转换的文件可能显示为已修改。
 - 只有位于工作树顶层、且 Git 元数据通过只读分支检查（[BRANCHES.md](BRANCHES.md)）的文件夹才运行 Git，`GIT_DIR` 来自那次检查。

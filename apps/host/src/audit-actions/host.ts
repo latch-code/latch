@@ -168,7 +168,7 @@ export const HOST_ACTIONS = {
     pathHash: hex64,
     folderCount: count.optional(),
     foldersHash: hex64.optional(),
-    via: z.enum([...folderVia.options, 'session']).optional(),
+    via: z.enum([...folderVia.options, 'session', 'clone']).optional(),
   }),
   'workspace.removed': workspaceChange,
   /** A folder joined a project, or (`replacesFolder`) took the place of one of its folders, keeping its ID. */

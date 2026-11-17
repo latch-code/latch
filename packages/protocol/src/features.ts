@@ -40,6 +40,8 @@ export interface HostFeatures {
   gitDelivery?: true
   /** `…/git/diff`, `stage-lines`, `unstage-lines`, `history` and `compare`: staging by line and the history views. */
   gitHunks?: true
+  /** `…/git/fetch`, `pull` (fast-forward only) and `abort`, and `POST /workspaces/clone` (docs/GIT-DELIVERY.md). */
+  gitSync?: true
   /** Worktree start points (`POST /tasks` `worktree` objects), `…/worktree` inventories and removal (docs/BRANCHES.md). */
   worktreeLifecycle?: true
   terminal?: true

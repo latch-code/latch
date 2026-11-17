@@ -154,7 +154,7 @@ public enum PhoneDelivery {
         if let operation, operation != "unmerged", let word = operationWords[operation] { return word + "进行中，在终端里完成" }
         return "合并/变基进行中，在终端里完成"
     }
-    static let runningWords = ["stage": "暂存中…", "unstage": "取消暂存中…", "commit": "提交中…", "push": "推送中…", "pr": "创建 PR 中…"]
+    static let runningWords = ["stage": "暂存中…", "unstage": "取消暂存中…", "commit": "提交中…", "push": "推送中…", "pr": "创建 PR 中…", "fetch": "获取中…", "pull": "拉取中…", "abort": "中止中…"]
     public static func runningLabel(kind: String, hook: String?) -> String {
         let word = runningWords[kind] ?? "进行中…"
         return hook.map { word + " " + $0 } ?? word

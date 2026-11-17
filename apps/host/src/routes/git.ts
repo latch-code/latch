@@ -10,7 +10,7 @@ import { json, jsonBody, safeDecode } from '../http-util.ts'
 import { isInsidePath } from '../paths.ts'
 import type { Caller, CallerRequest, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 
-const PATH = /^\/link\/api\/tasks\/([^/]+)\/git(?:\/(stage|unstage|commit|push|pr))?$/u
+const PATH = /^\/link\/api\/tasks\/([^/]+)\/git(?:\/(stage|unstage|commit|push|pr|fetch|pull|abort))?$/u
 const LINES_PATH = /^\/link\/api\/tasks\/([^/]+)\/git\/(stage|unstage)-lines$/u
 const READ_PATH = /^\/link\/api\/tasks\/([^/]+)\/git\/(diff|compare|history(?:\/([0-9a-f]{40}|[0-9a-f]{64}))?)$/u
 const LOG_PATH = /^\/link\/api\/tasks\/([^/]+)\/git\/pr\/checks\/(\d{1,20})\/log$/u
@@ -40,6 +40,7 @@ const linesSchema = z.strictObject({
   new: ranges,
 })
 const pushSchema = z.strictObject({ requestId })
+const abortSchema = z.strictObject({ requestId, operation: z.enum(['merge', 'rebase', 'cherry-pick', 'revert']) })
 const workbenchSchema = z.strictObject({ ids: z.array(z.string().min(1).max(256)).max(12) })
 const prSchema = z.strictObject({
   requestId,
@@ -52,8 +53,11 @@ const prSchema = z.strictObject({
 /** Tests: your Git, its home, the environment and shell it starts from, and the time limits. Production never sets it. */
 export type GitRouteOptions = Pick<GitDeliveryOptions, 'git' | 'home' | 'hostEnv' | 'shell' | 'timeouts'>
 
-/** Writes that change files Git compares: an Agent's turn in the same folder could be writing them meanwhile. */
-const TURN_SENSITIVE: ReadonlySet<GitDeliveryKind> = new Set(['stage', 'unstage', 'commit'])
+/**
+ * Writes that change files Git compares (a pull's fast-forward and an abort rewrite the work tree): an Agent's turn in
+ * the same folder could be writing them meanwhile. A fetch, like a push, changes only refs.
+ */
+const TURN_SENSITIVE: ReadonlySet<GitDeliveryKind> = new Set(['stage', 'unstage', 'commit', 'pull', 'abort'])
 /**
  * These list or name files of the session's folder, or (a check's log) may hold its code, so they are for devices that
  * may browse it, like 改动.
@@ -366,10 +370,23 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
       json(res, result)
       return true
     }
+    if (part === 'abort') {
+      const input = abortSchema.parse(body)
+      json(res, await delivery.abort(callerOf(caller, sessionId, folder, input.requestId), input))
+      return true
+    }
     const input = pushSchema.parse(body)
-    json(res, await delivery.push(callerOf(caller, sessionId, folder, input.requestId), input))
+    const target = callerOf(caller, sessionId, folder, input.requestId)
+    json(
+      res,
+      part === 'fetch'
+        ? await delivery.fetch(target, input)
+        : part === 'pull'
+          ? await delivery.pull(target, input)
+          : await delivery.push(target, input),
+    )
     return true
   }
 
-  return { route, features: () => ({ gitDelivery: true, gitHunks: true }) }
+  return { route, features: () => ({ gitDelivery: true, gitHunks: true, gitSync: true }) }
 }

@@ -254,6 +254,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 **谁能添加。** 加入文件夹就是授予权限，只能在 Host 所在的电脑上进行：
 
 - 桌面端：主进程经 `POST /folder-grants` 取一次性 nonce，再用渲染进程拿不到的设备密钥签名请求体后提交；这些路由要 `host.sock` 上的 `admin`，桌面代理拒绝页面自己请求它们。
+- 克隆：同一条路，地址与原生面板选出的位置一起签名，Host 在那里新建文件夹、克隆完成后加为项目（`via: 'clone'`，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#克隆)）。
 - 命令行：`pnpm latch project` 只在 Host 停止时修改，持有数据目录锁。它读取上次成功启动写入的 0600 `project-context.json`（启动目录、Agent 安装目录、程序目录与 TLS 私钥路径），不从当前目录猜测；尚未记录上下文时需显式给 `--workspace`，已有记录时显式目录必须与它相同。
 
 文件夹是授予的范围，不是隔离：只有 Latch 内置的文件工具按所选文件夹检查路径，这也不是操作系统沙箱；ACP Agent 与插件 Harness 仍能访问 Host 用户能访问的任何路径（各 Agent 的做法见 [HARNESSES.md](./HARNESSES.md#项目的多个文件夹)）。
@@ -743,6 +744,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /quota/refresh` | `run` | 有人看「额度」时在后台读已绑定 Harness 缺失或过时的额度，不起模型轮次，立即回答 `asked`（[HARNESSES.md](./HARNESSES.md#额度)） |
 | `GET /workspaces` | `view` | 项目列表，含文件夹与不可用原因 |
 | `POST /folder-grants`、`POST /workspaces`、`POST /workspaces/:id/folders` | 本机 `admin`；后两者另需签名 | 见「谁能添加」 |
+| `POST /workspaces/clone`、`GET /workspaces/clone/:id`、`POST …/clone/:id/cancel` | 本机 `admin`；开始另需签名 | 克隆成新项目（[GIT-DELIVERY.md](GIT-DELIVERY.md#克隆)） |
 | `PATCH /workspaces/:id`、`DELETE /workspaces/:id`、`DELETE /workspaces/:id/folders/:folderId` | `admin` | 重命名、图标、文件夹顺序；移除项目或文件夹（文件不删除） |
 | `GET /plugins`、`POST /plugins/:id`、`PUT /preferences` | `admin` | 插件列表与启停、新会话默认值；`pinned` 及其之后的 Harness 与模型只能经 `host.sock` 修改 |
 | `GET`/`PATCH /policy` | 设备；修改 `admin`，加入出站地址需本机与本机确认 | 安全策略及其哈希；放宽只有 `hostEgressAllow` 一项 |
