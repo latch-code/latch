@@ -4450,7 +4450,8 @@ describe('projects of several folders', () => {
     await settled(t, sessionId)
     expect((await t.host.bridge.detail(sessionId)).summary).toMatchObject({ cwd: paths.api, workspaceId: workspace.id })
     const meta = JSON.parse(await readFile(join(t.dataDir, 'sessions-meta.json'), 'utf8')) as { sessions: unknown[] }
-    expect(meta.sessions).toContainEqual({ id: sessionId, workspaceId: workspace.id })
+    // Other features add their own fields to a session's record; this case is about the project it records.
+    expect(meta.sessions).toContainEqual(expect.objectContaining({ id: sessionId, workspaceId: workspace.id }))
     const inDefault = await start('default')
     await settled(t, inDefault.sessionId)
     expect((await t.host.bridge.detail(inDefault.sessionId)).summary.workspaceId).toBe('default')
