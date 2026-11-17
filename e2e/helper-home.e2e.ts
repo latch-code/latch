@@ -264,14 +264,16 @@ it('keeps one profile, unsaved defaults, focus and an unknown write across deskt
       .click()
     await page.getByRole('button', { name: '保留设置 的资料', exact: true }).filter({ visible: true }).click()
     const panel = page.locator('.agent-profile').filter({ visible: true })
+    // The profile also shows its current chat, with chips of its own: the settings' chips are its form's.
+    const form = panel.getByRole('form', { name: /的设置$/u })
     await panel.getByRole('button', { name: '设置', exact: true }).click()
     await panel.getByLabel('名称', { exact: true }).fill('尚未保存')
     await panel.getByLabel('指令', { exact: true }).fill('跨断点仍然保留这份草稿')
-    await panel.locator('button.thinking-picker').click()
+    await form.locator('button.thinking-picker').click()
     await pick(page, 'High').click()
-    await panel.locator('button.model-picker').click()
+    await form.locator('button.model-picker').click()
     await pick(page, 'Large').click()
-    await panel.locator('button.chip-permission').click()
+    await form.locator('button.chip-permission').click()
     await pick(page, 'plan').click()
     const textarea = await panel.getByLabel('指令', { exact: true }).elementHandle()
     await panel.getByLabel('指令', { exact: true }).focus()
@@ -281,8 +283,8 @@ it('keeps one profile, unsaved defaults, focus and an unknown write across deskt
       await expect.poll(() => page.evaluate(element => element?.isConnected === true, textarea)).toBe(true)
       expect(await panel.getByLabel('名称', { exact: true }).inputValue()).toBe('尚未保存')
       expect(await panel.getByLabel('指令', { exact: true }).inputValue()).toBe('跨断点仍然保留这份草稿')
-      expect(await panel.locator('button.model-picker').innerText()).toContain('Large')
-      expect(await panel.locator('button.chip-permission').innerText()).toContain('plan')
+      expect(await form.locator('button.model-picker').innerText()).toContain('Large')
+      expect(await form.locator('button.chip-permission').innerText()).toContain('plan')
       await expect
         .poll(() =>
           page.evaluate(element => {
@@ -333,7 +335,8 @@ it('keeps one profile, unsaved defaults, focus and an unknown write across deskt
     await page.getByRole('button', { name: '尚未保存 的资料', exact: true }).filter({ visible: true }).click()
     await page.setViewportSize({ width: 390, height: 844 })
     await page.locator('.agent-profile-sheet').waitFor({ state: 'visible' })
-    await page.locator('.agent-profile-sheet .ui-sheet-close').click()
+    // The profile's own sheet: its picture's sheet inside it has a close of its own.
+    await page.locator('.agent-profile-sheet .ui-sheet-close').first().click()
     await page.locator('.agent-profile-sheet').waitFor({ state: 'hidden' })
     await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains('agent-frame-who'))).toBe(true)
     expect(await page.locator('.agent-profile').count()).toBe(0)

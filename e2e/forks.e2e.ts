@@ -160,7 +160,7 @@ describe('conversation forks', () => {
       await page.screenshot({ path: 'test-results/fork-popover-1440.png' })
       await notice.getByRole('button', { name: '取消分叉', exact: true }).click()
 
-      // While the latest turn runs the Host would refuse the fork: the row stays, off, with why.
+      // While the latest turn runs the Host would refuse the fork: the row stays, off, with why on hover.
       await owner.json(`tasks/${source.sessionId}/prompt`, { method: 'POST', body: { prompt: 'hang', requestId: randomUUID() } })
       await expect.poll(status, { timeout: 20_000 }).toBe('running')
       await page.keyboard.press('Meta+k')
@@ -168,8 +168,10 @@ describe('conversation forks', () => {
       await palette.getByRole('option').filter({ hasText: '从弹层分叉' }).first().click()
       await palette.waitFor({ state: 'hidden' })
       await page.getByRole('button', { name: 'Harness：Qwen Code', exact: true }).click()
-      await forkRow.getByText('这一轮结束后才能分叉', { exact: true }).waitFor()
-      expect(await forkRow.getAttribute('aria-disabled')).toBe('true')
+      await expect.poll(() => forkRow.getAttribute('aria-disabled')).toBe('true')
+      // Why it is off is the row's tooltip (753f8ab4; docs/DESIGN.md: 说明在悬停与键盘焦点时的提示框).
+      await forkRow.hover()
+      await page.getByRole('tooltip').getByText('这一轮结束后才能分叉', { exact: true }).waitFor()
       await forkRow.dispatchEvent('click')
       expect(await page.locator('.fork-notice').count()).toBe(0)
       await page.screenshot({ path: 'test-results/fork-popover-running-1440.png' })

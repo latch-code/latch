@@ -78,14 +78,12 @@ it('runs a Harness that is not logged in on a model of a Latch service, and asks
       .first()
     const row = (name: string | RegExp) =>
       page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
+    // The panel lists one source at a time (66e1b331): its rail names Codex and the service.
+    const source = (name: RegExp) => page.getByRole('tablist', { name: '来源', exact: true }).getByRole('tab', { name }).first()
     await chip.click()
+    await source(/^Codex$/u).waitFor()
+    await source(/^Temporary Responses · .*经 Latch/u).click()
     await row(/fake-model/u).waitFor()
-    const menu = page.locator('[role=menu], [role=listbox]').filter({ visible: true }).first()
-    await menu.getByText('Codex', { exact: true }).first().waitFor()
-    await menu
-      .getByText(/Temporary Responses · .*经 Latch/u)
-      .first()
-      .waitFor()
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${OUTPUT}/menu-1440.png`, animations: 'disabled' })
 
@@ -207,6 +205,9 @@ it('shows a Harness that cannot be asked about its login the same login row once
     // A model of a service: the Harness's login is not what the draft depends on, so the row and the word both go.
     const row = (name: string | RegExp) =>
       page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
+    // The panel lists one source at a time (66e1b331): the service's models are on its own entry of the rail.
+    const source = (name: RegExp) => page.getByRole('tablist', { name: '来源', exact: true }).getByRole('tab', { name }).first()
+    await source(/经 Latch/u).click()
     await row(/fake-model/u).click()
     await expect.poll(() => notice.count()).toBe(0)
     await chip.click()
@@ -214,6 +215,7 @@ it('shows a Harness that cannot be asked about its login the same login row once
     expect(await menu.getByText('还没登录', { exact: true }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/unasked-service-model-1440.png`, animations: 'disabled' })
     // Back on its own model the row is back.
+    await source(/^Qwen Code$/u).click()
     await row(/默认模型/u).click()
     await notice.getByText('Qwen Code 还没登录', { exact: true }).waitFor()
     await page.keyboard.press('Escape')

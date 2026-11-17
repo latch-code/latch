@@ -33,7 +33,14 @@ const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1'])
 class StartupError extends Error {}
 
 // Taken as the process starts, from the files it loaded: a rebuild later changes what is on disk, not this.
-const codeBuild = readCodeBuild(fileURLToPath(import.meta.url), resolve(latchCodeRoot(), 'dist/web'))
+// A bundle run outside a checkout has no code root, and so no build to report; it must still start.
+const codeBuild = (() => {
+  try {
+    return readCodeBuild(fileURLToPath(import.meta.url), resolve(latchCodeRoot(), 'dist/web'))
+  } catch {
+    return Promise.resolve(undefined)
+  }
+})()
 const argv = process.argv.slice(2)
 const env = process.env
 

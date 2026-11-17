@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { FAKE_ACP_AGENT, FAKE_PI_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSettings, phoneStartScreen } from './helpers/layout.ts'
 
 const OUTPUT = process.env.LATCH_ACCEPTANCE_DIR ?? 'test-results/harness-connect'
 const NEED = '需要 0.2.2-rc.1 或更高版本（当前 0.1.1-rc.2）'
@@ -92,7 +92,8 @@ describe('a Harness that cannot connect yet', () => {
     it(`says what each one needs at ${width} ${theme}`, async () => {
       const page = await open(width, theme)
       if (width === 390) {
-        // A phone's new session is the home's input, with its options as chips over it.
+        // A phone's new session is the start screen's input over its list (cae787a4), with its options as chips over it.
+        await phoneStartScreen(page)
         await page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
         // DeepSeek Harness is not offered as if it could run.
         expect(await page.getByRole('button', { name: /DeepSeek Harness/u }).count()).toBe(0)
@@ -157,7 +158,7 @@ describe('a Harness that cannot connect yet', () => {
   it('reads the version of a preset only once it is confirmed, refuses a too-old one then, and says it needs an upgrade', async () => {
     const owner = await host.enroll({ listener: 'unix' })
     const asked = host.presence.requests.length
-    // The desktop app saves a preset when it is first used: the program is confirmed before it is run for its version.
+    // The desktop app saves a preset when it is first used: the program is bound before it is run for its version.
     const refused = await owner.confirmed('agents', {
       method: 'POST',
       body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi', args: [], env: {}, enabled: true },
@@ -167,8 +168,9 @@ describe('a Harness that cannot connect yet', () => {
       error: 'harness-version-unsupported',
       message: 'pi 需要 0.84.4 或更高版本（当前 0.84.3）。升级：npm i -g @earendil-works/pi-coding-agent@latest',
     })
-    expect(host.presence.requests).toHaveLength(asked + 1)
-    expect(host.presence.requests.at(-1)?.preview.action).toBe('harness.command.apply')
+    // A preset's own command found on PATH is the program the person installed: bound without a local confirmation
+    // since 200b8c6d (AGENTS.md, 信任在连接时建立一次), and still read for its version only once bound.
+    expect(host.presence.requests).toHaveLength(asked)
     const after = await owner.json<{ agents: Array<{ id: string }> }>('agents')
     expect(after.agents.map(agent => agent.id)).toEqual(['dsh'])
     expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])

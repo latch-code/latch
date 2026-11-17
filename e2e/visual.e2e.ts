@@ -652,14 +652,15 @@ describe('visual capture of the real product', () => {
       await target.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).fill('')
       await expect.poll(() => target.locator('.workbench-home :is(.approval-panel, .question-card)[data-arming]').count()).toBe(0)
     }
-    if ((await target.locator('.phone-tabs').count()) > 0) {
-      // A phone's Code tab is the home; its options are the row of chips over the input.
+    const phone = (await target.locator('.phone-tabs').count()) > 0
+    await target.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+    if (phone) {
+      // A phone pushes the start screen over its list; its options are the row of chips over the input.
       await target.locator('.workbench-home').getByRole('group', { name: '会话选项', exact: true }).waitFor()
       await settled()
       await settleMotion(target)
       return
     }
-    await target.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
     await target.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
     await target.locator('.drawer-backdrop').waitFor({ state: 'detached' })
     await settled()
@@ -859,7 +860,14 @@ describe('visual capture of the real product', () => {
       await target.getByRole('heading', { name: '在 Mac 上确认', exact: true }).waitFor()
       testHost.presence.approveNext()
       await connected(target)
-      await target.locator('.workbench-empty').getByText('还没有会话', { exact: true }).waitFor()
+      if (viewport.name === 'phone') {
+        // A phone opens on its list, empty here; 新建会话 pushes the start screen over it.
+        await target.locator('.phone-list').getByText('还没有会话', { exact: true }).waitFor()
+        await target.locator('.phone-list').getByRole('button', { name: '新建会话', exact: true }).first().click()
+      } else {
+        // The start screen is one input; with nothing on the board its count line stands empty (docs/DESIGN.md 起始页).
+        await target.locator('.workbench-home .start-counts[data-empty]').waitFor({ state: 'attached' })
+      }
       await reachable(target.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
       if (viewport.name === 'phone')
         await reachable(target.locator('.workbench-home .composer-chips').getByRole('button', { name: /^项目：/u }))
@@ -1007,9 +1015,9 @@ describe('visual capture of the real product', () => {
 
     const hidden = await start(PROMPTS.hidden)
     await pendingApproval(hidden)
-    // The first approval reaches Home live: the overview features it as the decision that waits.
+    // The first approval reaches the start screen live: its count line says something waits.
     for (const name of ['desktop', 'tablet'] as const)
-      await pages.get(name)!.page.locator(`.workbench-home [data-work-session="${hidden}"]`).waitFor({ state: 'attached' })
+      await pages.get(name)!.page.locator('.workbench-home .start-count[data-group="attention"]').waitFor({ state: 'attached' })
     const r2 = await start(PROMPTS.r2)
     await pendingApproval(r2)
     expect((await detail(r2)).approvals[0].risk).toBe('R2')

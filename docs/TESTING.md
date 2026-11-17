@@ -395,7 +395,7 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 
 - 页面时钟用 `clock.setFixedTime` 固定，Host 的 `now` 固定在同一时刻；消息与运行的时间用 Host 的 `clock`，由脚本推进。
 - 会话内容、设备名、电脑名称（`hostName`）与项目路径固定。项目放在系统临时目录下固定的 `latch-visual/`，其中的 `.owner` 记录进程号：同一台机器上一次只能有一个视觉运行，跨 worktree 也要串行。
-- 截图用 `data-capture="still"` 冻结动效（`e2e/helpers/visual.ts` 的 `stillMotion`），它独立于设置写的 `data-motion`；隐藏光标，先等字体、图片与两帧，鼠标停在左上角。
+- 截图用 `data-capture="still"` 冻结动效（`e2e/helpers/visual.ts` 的 `stillMotion`，根元素一出现就打上，早于页面脚本），它独立于设置写的 `data-motion`；隐藏光标，先等字体、图片与两帧，鼠标停在左上角。
 - 触控视口也用点击驱动：模拟的轻点会留下 Chrome 的点按高亮。
 - 每个状态都从新开的标签页出发，不依赖上一个状态。
 - 设备指纹与核对码来自每次新生成的密钥，截图时只把这些文字设为透明，布局不变。

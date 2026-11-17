@@ -143,6 +143,16 @@
   min-width: 0;
   -webkit-app-region: no-drag;
 }
+/* Tablets give the rail its own column and hide the lead; 看板 hides the rail, so its row takes the whole width back. */
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  .app-shell[data-view='board'] > .titlebar[data-board] {
+    grid-column: 1 / -1;
+    pointer-events: auto;
+  }
+  .app-shell[data-view='board'] > .titlebar[data-board] .titlebar-lead {
+    display: flex;
+  }
+}
 
 /*
  * 对话's start screen: the input in the middle of the page, and one line of counts under it. The line keeps its height

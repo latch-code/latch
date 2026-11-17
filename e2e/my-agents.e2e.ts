@@ -486,9 +486,7 @@ it('delegates from an Agent with no default project into its fixed home', async 
     page.setDefaultTimeout(15_000)
     await fullScopeBrowser(page, host, owner, '无项目 Agent')
     await place(page, '我的 Agent').click()
-    await agentsNav(page)
-      .getByRole('button', { name: /随手助手/u })
-      .click()
+    await agentsNav(page).getByRole('button', { name: '随手助手', exact: true }).click()
     const sent: unknown[] = []
     page.on('request', request => {
       if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/api/tasks')) sent.push(request.postDataJSON())

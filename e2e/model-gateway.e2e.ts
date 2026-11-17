@@ -7,7 +7,7 @@ import { AGENT_PRESETS, type AppSnapshot, type ProviderSettings, type TaskDetail
 import { FAKE_ACP_AGENT, startFakeModels, type FakeModels, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSession, phoneStartScreen } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/model-gateway'
 const shownText = (page: Page, text: string | RegExp, options?: { exact?: boolean }) =>
@@ -195,7 +195,8 @@ describe('a Harness with its own models on a saved service', () => {
       [768, 'dark'],
     ] as const) {
       const page = await open(width, theme)
-      // On a phone the 模型 chip sits in the row over the home's input and opens its own sheet.
+      // On a phone the 模型 chip sits in the row over the start screen's input (pushed over the list since cae787a4).
+      await phoneStartScreen(page)
       await chip(page, '模型').click()
       await source(page, 'OpenAI · 实验性 · 经 Latch')
       await noHorizontalOverflow(page)

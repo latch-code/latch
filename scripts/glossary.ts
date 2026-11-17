@@ -150,12 +150,24 @@ export const GLOSSARY_ALLOWANCES: readonly GlossaryAllowance[] = [
     words: ['中继'],
     why: 'A relay saved by an earlier build is named only behind 「关于连接」, beside the way to remove it.',
   },
-  ...['FIXED.native-relay-duplicate'].map(key => ({
+  {
     file: COPY_FILE,
-    key,
+    key: 'FIXED.native-relay-',
     words: ['中继'],
     why: 'Only a person adding relay nodes reads it.',
-  })),
+  },
+  {
+    file: 'apps/web/src/settings/devices/ConnectDevices.tsx',
+    key: 'SavedRoutes',
+    words: ['中继'],
+    why: 'Self-hosted relays are imported, verified and removed here, on the managing desktop only (docs/DESIGN.md, 设备).',
+  },
+  {
+    file: 'apps/web/src/core/computers.ts',
+    key: 'connectionTransport',
+    words: ['回环'],
+    why: "The status bar names the loopback browser's transport 「回环 HTTP」 (docs/DESIGN.md, the workbench's foot).",
+  },
   {
     file: 'apps/web/src/palette/ShellPalette.tsx',
     key: 'SETTINGS_ROWS.keywords',

@@ -49,7 +49,17 @@ const CAPTURE_STYLE = `${VOLATILE_TEXT.join(', ')} { color: transparent !importa
  */
 export async function stillMotion(context: BrowserContext): Promise<void> {
   await context.addInitScript(() => {
-    document.documentElement.dataset.capture = 'still'
+    // An init script runs before the parser has made the root element: mark it the moment it exists, before any of
+    // the page's own scripts run.
+    const mark = () => {
+      const root = document.documentElement
+      if (root) root.dataset.capture = 'still'
+      return root !== null
+    }
+    if (!mark())
+      new MutationObserver((_, observer) => {
+        if (mark()) observer.disconnect()
+      }).observe(document, { childList: true })
   })
 }
 

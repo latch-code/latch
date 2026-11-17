@@ -7,7 +7,7 @@ import type { TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { backToPhoneSessions, openSession, settleShell } from './helpers/layout.ts'
+import { backToPhoneSessions, openPanelTab, openSession, settleShell } from './helpers/layout.ts'
 
 it.each([
   [390, 'light'],
@@ -72,7 +72,7 @@ it.each([
       await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
       const header = page.locator('.topbar[data-phone]')
       await header.getByRole('button', { name: '侧边面板', exact: true }).click()
-      await page.getByRole('tab', { name: '文件', exact: true }).click()
+      await openPanelTab(page, '文件')
       await page.getByRole('treeitem', { name: 'old.txt', exact: true }).click()
       await page.getByRole('region', { name: '文件预览', exact: true }).getByText('旧文件页签保留。', { exact: true }).waitFor()
       await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()
@@ -260,7 +260,7 @@ it('browses a saved project before creating a session, previews and quotes real 
         }
         // The home has no title row of its own: the draft's files come back with their key.
         if (!(await page.getByRole('tab', { name: '文件', exact: true }).isVisible())) await page.keyboard.press('Alt+Shift+e')
-        await page.getByRole('tab', { name: '文件', exact: true }).click()
+        await openPanelTab(page, '文件')
         await tree.getByRole('treeitem', { name: 'src', exact: true }).focus()
         await page.keyboard.press('ArrowRight')
         await tree.getByRole('treeitem', { name: 'start.ts', exact: true }).waitFor()

@@ -248,6 +248,23 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
       expect((await cells(page)).map(item => item.name)).toEqual(GROUPS.map(group => LABELS[group]))
       for (const item of await cells(page)) expect(item.width).toBeGreaterThanOrEqual(240)
     }
+    // The title row spans the window at every width: a tablet's rail column is hidden under 看板, so the mark stands at
+    // the window's start as it does wider, with nothing drawn before it.
+    const titleRow = async () =>
+      page.locator('.titlebar[data-board]').evaluate(row => {
+        const mark = row.querySelector('.titlebar-wordmark')!.getBoundingClientRect()
+        return { left: Math.round(row.getBoundingClientRect().left), mark: Math.round(mark.left), shown: mark.width > 0 }
+      })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const wide = await titleRow()
+    for (const width of [768, 900, 1023]) {
+      await page.setViewportSize({ width, height: 900 })
+      expect(await titleRow()).toEqual(wide)
+      // Its computer stays in reach of the pointer there too.
+      await page.locator('.titlebar[data-board] .titlebar-board-computer button').first().click({ trial: true })
+    }
+    await page.mouse.move(0, 0)
+    await page.setViewportSize({ width: 900, height: 900 })
     await shot(page, 'board-3x2', 900, 'light')
     await shot(page, 'board-3x2', 900, 'dark')
     await page.setViewportSize({ width: 400, height: 844 })

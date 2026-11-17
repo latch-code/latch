@@ -63,6 +63,8 @@ async function openBrowser(
   const id = devices.devices.find(item => item.name === name)!.id
   if (options.dataScope === 'all')
     expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+  // A connected browser starts able to read project files (200b8c6d): narrowed for the device that cannot.
+  else expect((await owner.request(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
   await page.reload()
   await choose(page, sessionId)
   return { context, page, deviceId: id }
@@ -75,7 +77,9 @@ async function openChanges(page: Page): Promise<Locator> {
   const toggle = page.getByRole('button', { name: '改动', exact: true }).first()
   if (await toggle.isVisible()) await toggle.click()
   else {
-    await page.getByRole('button', { name: '侧边面板', exact: true }).first().click()
+    // A session opens with its panel already showing 概要 where there is room (382abe25): the toggle would shut it.
+    const panelToggle = page.getByRole('button', { name: '侧边面板', exact: true }).first()
+    if ((await panelToggle.getAttribute('aria-pressed')) !== 'true') await panelToggle.click()
     await openPanelTab(page, '改动')
   }
   await panel.waitFor()
@@ -83,13 +87,10 @@ async function openChanges(page: Page): Promise<Locator> {
 }
 
 async function closeChanges(page: Page, panel: Locator) {
-  const close = page.locator('.session-panel-strip').getByRole('button', { name: '关闭', exact: true }).filter({ visible: true })
-  if (await close.count()) await close.click()
-  else
-    await page
-      .locator('.info-page-head')
-      .getByRole('button', { name: /^返回(?:对话)?$/u })
-      .click()
+  // The panel has no close of its own since its tabs (382abe25): a phone goes back, elsewhere 侧边面板 shuts it.
+  const back = page.locator('.info-page-head').getByRole('button', { name: /^返回(?:对话)?$/u })
+  if (await back.count()) await back.click()
+  else await page.getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true }).first().click()
   await panel.waitFor({ state: 'hidden' })
 }
 
@@ -437,7 +438,8 @@ it('stages and unstages by hunk and by line, settles a lost answer from its rece
     }
 
     // ---- a device whose data scope does not cover the files: no history, no lines, no line writes ----------------------
-    const work = await host.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'] })
+    // A connected browser reads project files by default (200b8c6d): this one is narrowed to work.
+    const work = await host.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'work' })
     const api = `tasks/${sessionId}/git`
     expect((await owner.json<GitHistory>(`${api}/history`)).commits.map(entry => entry.sha)).toEqual([featureHead])
     expect((await owner.json<GitCommitDiff>(`${api}/history/${featureHead}`)).files.map(file => file.path)).toEqual(['notes.txt'])

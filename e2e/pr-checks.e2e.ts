@@ -63,7 +63,9 @@ async function openBrowser(browser: Browser, host: TestHost, owner: TestDevice, 
 async function openDelivery(page: Page): Promise<Locator> {
   const tab = page.getByRole('tab', { name: '交付', exact: true })
   if (!(await tab.isVisible())) {
-    await page.getByRole('button', { name: '侧边面板', exact: true }).first().click()
+    // A session opens with its panel already showing 概要 where there is room (382abe25): the toggle would shut it.
+    const toggle = page.getByRole('button', { name: '侧边面板', exact: true }).first()
+    if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
     await openPanelTab(page, '交付')
   } else await tab.click()
   const panel = page.locator('.delivery-panel').filter({ visible: true })

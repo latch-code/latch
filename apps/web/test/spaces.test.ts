@@ -236,7 +236,7 @@ describe('going between the places', () => {
     })
   })
 
-  it('chooses no place on 应用 and 设置, so either segment goes back to its place', () => {
+  it('chooses no place on 应用, so either segment goes back to its place; 设置 covers the current place', () => {
     const shell = (entry: 'sessions' | 'agents' | 'apps' | 'settings') => ({
       entries: ['sessions', 'agents', 'apps', 'settings'] as const,
       space: 'agents' as const,
@@ -245,7 +245,7 @@ describe('going between the places', () => {
       route: { entry },
     })
     expect(shellSpaces(shell('apps') as never)?.space).toBeNull()
-    expect(shellSpaces(shell('settings') as never)?.space).toBeNull()
+    expect(shellSpaces(shell('settings') as never)?.space).toBe('agents')
     expect(shellSpaces(shell('agents') as never)?.space).toBe('agents')
     expect(shellSpaces({ ...shell('sessions'), entries: ['sessions'] } as never)).toBeUndefined()
   })

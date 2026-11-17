@@ -707,6 +707,8 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
     await panel.getByText('由 Latch 内置 运行').waitFor()
     await shoot(page, 'settings-1440-light')
     await panel.getByRole('button', { name: /^模型：/u }).click()
+    // The model panel lists one source at a time (66e1b331); its search reaches every source.
+    await page.getByRole('searchbox', { name: '搜索模型', exact: true }).filter({ visible: true }).first().fill('fixture-two')
     await modelChoice(page, 'fixture-two').click()
     await panel.getByRole('button', { name: '保存', exact: true }).click()
     await expect

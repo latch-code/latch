@@ -84,7 +84,9 @@ async function openBrowser(
 async function openDelivery(page: Page): Promise<Locator> {
   const tab = page.getByRole('tab', { name: '交付', exact: true })
   if (!(await tab.isVisible())) {
-    await page.getByRole('button', { name: '侧边面板', exact: true }).first().click()
+    // A session opens with its panel already showing 概要 where there is room (382abe25): the toggle would shut it.
+    const toggle = page.getByRole('button', { name: '侧边面板', exact: true }).first()
+    if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
     await openPanelTab(page, '交付')
   } else await tab.click()
   const panel = page.locator('.delivery-panel').filter({ visible: true })
@@ -371,7 +373,7 @@ touch '${control}/commit-ran'`,
 
     // 改动's 未提交 leads here.
     await writeFile(join(repo, 'later.txt'), 'later\n')
-    await page.getByRole('tab', { name: '改动', exact: true }).click()
+    await openPanelTab(page, '改动')
     await page.locator('.changes-scope-button').click()
     await page.getByRole('menuitemradio', { name: /未提交/u }).click()
     await page.getByRole('button', { name: '去交付', exact: true }).click()

@@ -7,7 +7,7 @@ import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protoco
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, phoneStartScreen } from './helpers/layout.ts'
 
 const output = 'test-results/harness-launch-options'
 const cases = [
@@ -73,6 +73,8 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
     ).toBe(201)
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
+    // A phone opens on its list (cae787a4): the draft's chips are on the start screen 新建会话 pushes.
+    await phoneStartScreen(page)
     await chip('模型').click()
     await page
       .getByRole('menuitem', { name: '刷新模型列表', exact: true })

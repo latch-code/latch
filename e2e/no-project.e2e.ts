@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { TaskDetail, TaskSummary } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, phoneStartScreen } from './helpers/layout.ts'
 import { homeInput } from './helpers/workbench.ts'
 
 describe('no project means chat', () => {
@@ -19,6 +19,8 @@ describe('no project means chat', () => {
       const page = await context.newPage()
       page.setDefaultTimeout(15_000)
       await enrollBrowser(page, host, { name: '不选项目 ' + width })
+      // A phone opens on its list (cae787a4): the input is on the start screen 新建会话 pushes.
+      await phoneStartScreen(page)
       const input = homeInput(page)
       // The place of the home's input names no project instead of asking for one, on a phone in its row of chips.
       const place = page.locator('.workbench-home .home-composer-location')

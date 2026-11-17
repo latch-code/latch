@@ -424,7 +424,8 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
           }),
         ).toBe(true)
         await page.locator('.other-computers-label').getByText('其他电脑', { exact: true }).waitFor()
-        await page.locator('.sidebar-host-menu').click()
+        // The computer menu opens from the status bar's computer (54c94894), as in the shots above.
+        await page.getByRole('group', { name: '连接状态', exact: true }).locator('.workbench-computer-button').click()
         const menu = page.getByRole('dialog', { name: '电脑' })
         await menu.locator('[data-computer-here]').waitFor()
         await menu

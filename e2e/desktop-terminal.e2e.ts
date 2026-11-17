@@ -11,7 +11,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import type { AppSnapshot, TerminalListResponse, WorkspaceInfo } from '@latch/protocol'
 import { startTestHost } from './helpers/host.ts'
-import { closeSettings, openSettings } from './helpers/layout.ts'
+import { closeSettings, openPanelTab, openSettings } from './helpers/layout.ts'
 import { homeInput, switchView } from './helpers/workbench.ts'
 
 type Launch = NonNullable<NonNullable<ServerOptions['terminal']>['launch']>
@@ -327,7 +327,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const rightToggle = panes.getByRole('button', { name: '侧边面板', exact: true })
       const rightPanel = page.getByRole('complementary', { name: '侧边面板', exact: true })
       if ((await rightToggle.getAttribute('aria-pressed')) !== 'true') await rightToggle.click()
-      await rightPanel.getByRole('tab', { name: '文件', exact: true }).click()
+      // The panel lists only the tabs opened (382abe25): 文件 comes from its choices or 「+」.
+      await openPanelTab(page, '文件')
       await rightPanel.getByRole('region', { name: '项目文件', exact: true }).waitFor()
       const resizer = terminalDock.getByRole('separator', { name: '调整终端高度', exact: true })
       const dockBefore = (await terminalDock.boundingBox())!
@@ -364,7 +365,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await expect.poll(() => rows.innerText()).toContain('ran echo hi')
       // 看板 covers the dock without unmounting it; back in 对话 the same terminal takes the keys again (below).
       await switchView(page, 'board')
-      await screen.locator('.xterm[data-test-mounted="retained"]').waitFor({ state: 'attached' })
+      // Hidden under 看板, the dock leaves the accessibility tree, so it is found by its markup.
+      await page.locator('.terminal-dock .xterm[data-test-mounted="retained"]').waitFor({ state: 'attached' })
       expect(await page.locator('.terminal-dock').isVisible()).toBe(false)
       await switchView(page, 'chat')
       await screen.locator('.xterm[data-test-mounted="retained"]').waitFor()

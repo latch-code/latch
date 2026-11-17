@@ -6,7 +6,7 @@ import type { CustomAgent, ModelSpend, ModelSpendReceipt, ProviderSettings, Task
 import { startFakeModels, type FakeModels, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSession, openSettings } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSession, openSettings, phoneStartScreen } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/gateway-usage'
 const MODEL = 'fake-model'
@@ -114,6 +114,8 @@ describe('model usage in 额度与用量, prices and budgets in settings', () =>
     await connected(page)
     const surface = page.getByRole('dialog', { name: '额度与用量', exact: true })
     if (admin) return { page, id, settings: await openSettings(page), surface, usage: surface, budgets: surface }
+    // A phone's entry is in the start screen's head, over the list it opens on (cae787a4).
+    await phoneStartScreen(page)
     await page.locator('.usage-entry:visible').first().click()
     await surface.getByRole('radio', { name: '用量', exact: true }).click()
     return {

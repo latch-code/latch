@@ -240,9 +240,11 @@ describe('session panel', () => {
   const now = () => new Date(Date.now()).toISOString()
   const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
   const base = { updatedAt: ago(3_600_000), harnessId: 'standard', mode: 'agent' as const }
+  // As the Host places them (cae787a4): the window title counts the sessions in its 等你处理.
+  const attention = (reason: string) => ({ group: 'attention', reason, card: true })
   const tasks = () => [
     { ...base, id: 'read', title: '已读会话', status: 'idle', branch: 'main' },
-    { ...base, id: 'failed', title: '失败会话', status: 'failed', branch: 'deps' },
+    { ...base, id: 'failed', title: '失败会话', status: 'failed', branch: 'deps', board: attention('failed') },
     { ...base, id: 'stopped', title: '已停的会话', status: 'cancelled', runOutcome: 'cancelled' },
     {
       ...base,
@@ -250,6 +252,7 @@ describe('session panel', () => {
       title: '强制停止的会话',
       status: 'interrupted',
       runEnd: { reason: 'forced-stop', at: now(), unknownResultCount: 2 },
+      board: attention('unknown'),
     },
     {
       ...base,
@@ -272,8 +275,9 @@ describe('session panel', () => {
       title: '没有动静的会话',
       status: 'running',
       live: { runId: 'r3', activity: 'model', since: ago(180_000), lastEventAt: ago(180_000), silent: true },
+      board: attention('silent'),
     },
-    { ...base, id: 'waiting', title: '等你的会话', status: 'waiting-approval' },
+    { ...base, id: 'waiting', title: '等你的会话', status: 'waiting-approval', board: attention('approval') },
   ]
 
   beforeAll(async () => {
@@ -300,21 +304,12 @@ describe('session panel', () => {
   const row = (id: string) => page.locator(`.session-item:has([data-task-id="${id}"])`)
   const height = (id: string) => row(id).evaluate(element => Math.round(element.getBoundingClientRect().height))
 
-  it('gathers work that needs attention on Home while keeping every session in the project tree', async () => {
-    const attention = page.getByRole('region', { name: '当前请求', exact: true })
-    const toggle = attention.getByRole('button', { name: '4 项待处理', exact: true })
-    await toggle.click()
-    expect(
-      await attention
-        .locator('[data-request-session]')
-        .evaluateAll(rows => rows.map(item => item.getAttribute('data-request-session')).toSorted()),
-    ).toEqual(['failed', 'forced', 'silent', 'waiting'])
-    expect(await toggle.getAttribute('aria-expanded')).toBe('true')
-    // Only the two waiting requests count in the tab; failed and unknown results also need review on Home.
-    expect(await page.title()).toBe('(2) Latch')
-    expect(await attention.locator('[data-request-session="silent"]').textContent()).toContain('没有动静 3 分钟')
-    expect(await attention.locator('[data-request-session="forced"]').textContent()).toContain('2 条结果未知')
-    expect(await attention.locator('[data-request-session="failed"]').textContent()).toContain('失败')
+  // The 总览 home's request list went in cae787a4 (看板 shows the Host's groups now, board.e2e); the rows keep what waits.
+  it('keeps what waits on the rows while keeping every session in the project tree', async () => {
+    // The tab counts the Host's 等你处理: the approval, the silent run, the failure and the unknown results.
+    expect(await page.title()).toBe('(4) Latch')
+    expect(await row('forced').locator('.session-item-main').ariaSnapshot()).toContain('2 条结果未知')
+    expect(await row('failed').locator('.session-row-glyph').getAttribute('data-tone')).toBe('failed')
     const project = page.locator('nav.session-list .session-group[data-shelf="other"]')
     expect(await project.locator('[data-task-id]').count()).toBe(8)
     expect(await page.locator('nav.session-list .session-group[data-shelf="waiting"]').count()).toBe(0)

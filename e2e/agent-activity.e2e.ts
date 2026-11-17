@@ -37,7 +37,8 @@ const profileOf = (page: Page) => page.getByRole('region', { name: '资讯 的�
 
 /** Opens the conversation with 资讯 at any width: the phone's tab, the tablet's navigation rail, or the sidebar. */
 async function openConversation(page: Page, width: number, name = '资讯') {
-  const agent = new RegExp(name, 'u')
+  // Anchored: the row's 「更多操作：…」 button (3ac5770a) also carries the name.
+  const agent = new RegExp(`^${name}`, 'u')
   if (width < 768) {
     const tab = page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true })
     if (await tab.isVisible().catch(() => false)) await tab.click()

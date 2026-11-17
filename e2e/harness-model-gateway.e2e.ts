@@ -87,6 +87,22 @@ it.each(['opencode', 'dsh', 'pi'] as const)(
         .first()
     const row = (name: string | RegExp) =>
       page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
+    // The model panel lists one source at a time (66e1b331): the service's models are on its own entry of the rail.
+    const serviceSource = async () =>
+      page
+        .getByRole('tablist', { name: '来源', exact: true })
+        .getByRole('tab', { name: /^Temporary Chat /u })
+        .filter({ visible: true })
+        .first()
+        .click()
+    // A session's switch keeps the panel open on the new model's levels; it is closed before the next chip.
+    const closePanel = async () => {
+      const panel = page.locator('.model-board').filter({ visible: true })
+      if (await panel.count()) {
+        await page.keyboard.press('Escape')
+        await expect.poll(() => panel.count()).toBe(0)
+      }
+    }
     try {
       const added = await owner.confirmed('providers', {
         body: {
@@ -119,6 +135,7 @@ it.each(['opencode', 'dsh', 'pi'] as const)(
       await enrollBrowser(page, host)
       await connected(page)
       await chip('模型').click()
+      await serviceSource()
       await row(names[0]!).waitFor()
       await page.screenshot({ path: `${output}/draft.png`, animations: 'disabled' })
       await row(names[0]!).click()
@@ -145,7 +162,9 @@ it.each(['opencode', 'dsh', 'pi'] as const)(
         const chosen = names[width === 820 ? 0 : 1]!
         await page.setViewportSize({ width, height: 1000 })
         await page.emulateMedia({ colorScheme })
+        await closePanel()
         await chip('模型').click()
+        await serviceSource()
         await row(new RegExp(chosen, 'u')).waitFor()
         await noHorizontalOverflow(page)
         await page.screenshot({ path: `${output}/models-${width}.png`, animations: 'disabled' })
@@ -157,6 +176,7 @@ it.each(['opencode', 'dsh', 'pi'] as const)(
           (await detail()).config?.find(option => option.category === 'thought_level')?.currentValue === 'low' ? 'high' : 'low'
         const thoughtLabel = thought === 'high' ? /^(high|High|高)$/u : /^(low|Low|低)$/u
         selectedThought = thought
+        await closePanel()
         await chip('思考').click()
         await row(thoughtLabel).waitFor()
         await noHorizontalOverflow(page)
@@ -166,6 +186,7 @@ it.each(['opencode', 'dsh', 'pi'] as const)(
           .poll(async () => (await detail()).config?.find(option => option.category === 'thought_level')?.currentValue)
           .toBe(thought)
       }
+      await closePanel()
       await page.setViewportSize({ width: 1440, height: 1000 })
       await host.close()
       host = await startTestHost({ ...options, port })

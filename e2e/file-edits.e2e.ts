@@ -8,7 +8,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { recordClipboardWrites } from './helpers/clipboard.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeActiveFile, openSession, settleShell } from './helpers/layout.ts'
+import { closeActiveFile, openPanelTab, openSession, settleShell } from './helpers/layout.ts'
 
 const OUT = 'test-results/file-edits'
 
@@ -116,7 +116,7 @@ describe('editing a file from its preview', () => {
       await expect.poll(copied).toEqual(['mine\n'])
       await page.screenshot({ path: `${OUT}/conflict-1440-light.png`, animations: 'disabled' })
       // Another tab and back: the conflict and the person's text are still there.
-      await page.getByRole('tab', { name: '文件', exact: true }).click()
+      await openPanelTab(page, '文件')
       await editor.waitFor({ state: 'detached' })
       await page.getByRole('tab', { name: /notes\.txt/u }).click()
       await editor.locator('.file-editor-version-text', { hasText: 'mine' }).waitFor()

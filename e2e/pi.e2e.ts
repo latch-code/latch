@@ -8,7 +8,7 @@ import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_PI_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSettings, phoneStartScreen } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/pi'
 
@@ -234,6 +234,8 @@ describe('pi over its own RPC mode', () => {
 
   it('adds text to a running turn, and fails a turn with what the model service said', async () => {
     const page = await open(390, 'dark')
+    // A phone opens on its list (cae787a4): the draft is on the start screen 新建会话 pushes.
+    await phoneStartScreen(page)
     // Sending from Home with no project opens the real choices sheet and preserves the draft.
     await draft(page).waitFor()
     await start(page, 'build it slowly')
@@ -249,7 +251,8 @@ describe('pi over its own RPC mode', () => {
     await noHorizontalOverflow(page)
     await shot(page, 'steered-390-dark')
     await chip(page, '思考').click()
-    await page.getByRole('radio', { name: '高', exact: true }).waitFor()
+    // One model panel at every width since d0ccdd6e: a phone's levels are its menu's items too.
+    await page.getByRole('menuitemradio', { name: '高', exact: true }).waitFor()
     await shot(page, 'model-menu-390-dark')
     await page.keyboard.press('Escape')
 

@@ -132,7 +132,15 @@ it('uses true image pixels, retains zoom on refresh, refuses unknown or excessiv
         }
         await mkdir('test-results/images', { recursive: true })
         await page.screenshot({ path: `test-results/images/pixels-${width}-${theme}.png`, animations: 'disabled' })
-        const close = () => closeActiveFile(page)
+        // Closing the last file leaves the panel on the session's 概要 (382abe25): on a phone that is still a page over
+        // the conversation, so it goes back to the conversation for the next file.
+        const close = async () => {
+          await closeActiveFile(page)
+          if (width < 768 && (await page.locator('.info-page .session-overview').filter({ visible: true }).count())) {
+            await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()
+            await page.locator('.info-page').waitFor({ state: 'detached' })
+          }
+        }
         await close()
         await open('unknown.jpg')
         await preview.getByText('无法确认图片尺寸，已停止解码。可以下载文件后查看。', { exact: true }).waitFor()

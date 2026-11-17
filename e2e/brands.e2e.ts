@@ -9,7 +9,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, phoneStartScreen } from './helpers/layout.ts'
 
 const output = 'test-results/brands'
 const cases = [320, 820, 1440].flatMap(width => (['light', 'dark'] as const).map(theme => ({ width, theme })))
@@ -150,6 +150,8 @@ it.each(cases)('keeps official marks in the normal Harness menu at $width $theme
       expect({ id: preset.id, status: response.status }).toEqual({ id: preset.id, status: 201 })
     }
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+    // A phone opens on its list (cae787a4); the input and its Harness are on the start screen 新建会话 pushes.
+    await phoneStartScreen(page)
     const picker = page
       .getByRole('button', { name: /^Harness：/u })
       .filter({ visible: true })

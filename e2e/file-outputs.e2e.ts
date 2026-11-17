@@ -115,8 +115,9 @@ describe('files observed during real Harness runs', () => {
           await page.getByRole('region', { name: '文件预览', exact: true }).getByRole('img', { name: 'pixel.png', exact: true }).waitFor()
         }
         await changed.locator('button.summary-file', { hasText: 'report.txt' }).click()
-        const preview = page.getByRole('region', { name: '文件预览', exact: true })
-        await preview.getByText('Observed result', { exact: true }).waitFor()
+        // A connected browser reads project files (200b8c6d), so the turn's file opens in 改动 (as in file-history).
+        const changes = page.locator('.changes-panel').filter({ visible: true })
+        await changes.getByText('Observed result', { exact: false }).first().waitFor()
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
         await page.screenshot({ path: `test-results/file-outputs/${width}-${theme}-preview.png`, animations: 'disabled' })
       } finally {

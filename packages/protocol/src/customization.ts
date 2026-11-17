@@ -171,8 +171,8 @@ const STATE_NAMES: Record<keyof (typeof STATE_COLOURS)['light'], string> = { amb
 export const CUSTOMIZATION_INK = { light: '#17171a', dark: '#ececef' } as const
 /** The workbench's own surfaces, where running work is said in the accent. */
 export const CUSTOMIZATION_WORK_SURFACES = {
-  light: { 'work-canvas': '#eceef1', 'work-raised': '#fbfcfd', 'work-sunken': '#e3e6ea' },
-  dark: { 'work-canvas': '#0e1013', 'work-raised': '#15181c', 'work-sunken': '#0b0d10' },
+  light: { 'work-canvas': '#f7f8fa', 'work-raised': '#fcfcfd', 'work-sunken': '#eceef1' },
+  dark: { 'work-canvas': '#1c1e22', 'work-raised': '#24262b', 'work-sunken': '#17191c' },
 } as const
 /** The opaque surfaces words and focus rings rest on, per theme. */
 export const CUSTOMIZATION_SURFACES = {
@@ -183,9 +183,9 @@ export const CUSTOMIZATION_SURFACES = {
     sunken: '#f3f3f6',
     card: '#ffffff',
     pop: '#ffffff',
-    bubble: '#f1f1f4',
+    bubble: '#e9edf3',
   },
-  dark: { canvas: '#131316', sidebar: '#09090b', raised: '#1b1b1f', sunken: '#0b0b0d', card: '#212126', pop: '#27272c', bubble: '#1e1e22' },
+  dark: { canvas: '#131316', sidebar: '#09090b', raised: '#1b1b1f', sunken: '#0b0b0d', card: '#212126', pop: '#27272c', bubble: '#242831' },
 } as const
 const ON_ACCENT: Rgb = [255, 255, 255]
 

@@ -103,8 +103,8 @@ describe('desktop to phone takeover', () => {
       expect(await desktop.locator('.workbench-home').evaluate(element => element.closest('[inert]') !== null)).toBe(false)
       expect(await desktop.locator('.workspace').evaluate(element => (element as HTMLElement).inert)).toBe(true)
       expect(await desktop.locator('.sidebar').evaluate(element => (element as HTMLElement).inert)).toBe(false)
-      // A phone starts on Home, then opens history as its own page, with no drawer.
-      expect(await mobile.locator('.workbench-home').evaluate(element => element.closest('[inert]') !== null)).toBe(false)
+      // A phone starts on its list (cae787a4), history as its own page, with no drawer.
+      expect(await mobile.locator('.phone-list').evaluate(element => element.closest('[inert]') !== null)).toBe(false)
       await backToPhoneSessions(mobile)
       expect(await mobile.locator('.sidebar').count()).toBe(0)
       expect(await mobile.locator('#session-navigation').evaluate(element => element instanceof HTMLElement && element.inert)).toBe(false)

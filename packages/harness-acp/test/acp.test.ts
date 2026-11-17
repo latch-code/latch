@@ -297,6 +297,11 @@ const userTexts = (detail: DriverTaskDetail) => detail.messages.filter(message =
 const promptPid = (log: LogEntry[], text: string) =>
   received(log, 'session/prompt').find(entry => (entry.params?.prompt as Array<{ text: string }>)[0].text.startsWith(text))!.pid
 const answers = (log: LogEntry[]) => log.filter(entry => entry.event === 'permission-answer').map(entry => entry.outcome)
+/** The step id of call `callId` of the fake's subagent (`<session>:child`): a hash, so ids never collide across sessions. */
+const childStepId = async (fixture: { dataDir: string }, sessionId: string, callId: string) => {
+  const { acpSessionId } = JSON.parse(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')).tasks[sessionId].acp
+  return `tool:${sha256Hex(JSON.stringify([sessionId, `${acpSessionId}:child`, callId]))}`
+}
 
 describe('real ACP attachment exchange', () => {
   it('passes image and embedded text blocks after negotiation and persists Agent image refs across restart', async () => {
@@ -5725,10 +5730,10 @@ describe('ACP subagents', () => {
     await bridge.prompt(sessionId, 'delegate review', rid())
     let detail = await settled(bridge, sessionId)
     let steps = toolSteps(detail)
-    expect(steps.map(step => [step.id.split(':').at(-1), step.state, step.tool?.judged])).toEqual([
-      ['call_1', 'completed', undefined],
-      ['r1', 'completed', { by: 'Fake', outcome: 'approved' }],
-      ['r2', 'failed', { by: 'Fake', outcome: 'denied' }],
+    expect(steps.map(step => [step.id, step.state, step.tool?.judged])).toEqual([
+      [await childStepId(codex, sessionId, 'call_1'), 'completed', undefined],
+      [await childStepId(codex, sessionId, 'guardian_assessment:r1'), 'completed', { by: 'Fake', outcome: 'approved' }],
+      [await childStepId(codex, sessionId, 'guardian_assessment:r2'), 'failed', { by: 'Fake', outcome: 'denied' }],
     ])
     expect(judgedEvents(codex, sessionId)).toEqual([
       {
@@ -5765,11 +5770,11 @@ describe('ACP subagents', () => {
 
     // Past a subagent's 200 steps its calls have no step, and are recorded all the same.
     ;({ sessionId, detail } = await inAuto('delegate long'))
-    const prefix = toolSteps(detail)[0]!.id.slice(0, -'call_1'.length)
+    expect(toolSteps(detail)[0]!.id).toBe(await childStepId(qwen, sessionId, 'call_1'))
     const hashes = judgedEvents(qwen, sessionId).map(event => (event as { callHash: string }).callHash)
     expect(hashes).toHaveLength(201)
-    expect(hashes).toContain(sha256Hex(`${prefix}read_199`))
-    expect(hashes).not.toContain(sha256Hex(`${prefix}call_2`))
+    expect(hashes).toContain(sha256Hex(await childStepId(qwen, sessionId, 'read_199')))
+    expect(hashes).not.toContain(sha256Hex(await childStepId(qwen, sessionId, 'call_2')))
 
     // So are those of a subagent with no row.
     ;({ sessionId } = await inAuto('delegate crowd'))
@@ -6254,11 +6259,11 @@ describe('Claude Agent and Cursor presets', () => {
     await bridge.prompt(sessionId, 'delegate denied', rid())
     const detail = await settled(bridge, sessionId)
     const steps = detail.messages.find(message => message.subagent)!.subagent!.steps.filter(step => step.role === 'tool')
-    expect(steps.map(step => [step.id.split(':').at(-1), step.tool?.blocked?.source, step.tool?.judged?.outcome])).toEqual([
-      ['call_1', undefined, 'unasked'],
-      ['call_rule', 'rule', undefined],
-      ['call_mode', 'rule', undefined],
-      ['call_model', 'model', 'denied'],
+    expect(steps.map(step => [step.id, step.tool?.blocked?.source, step.tool?.judged?.outcome])).toEqual([
+      [await childStepId(fixture, sessionId, 'call_1'), undefined, 'unasked'],
+      [await childStepId(fixture, sessionId, 'call_rule'), 'rule', undefined],
+      [await childStepId(fixture, sessionId, 'call_mode'), 'rule', undefined],
+      [await childStepId(fixture, sessionId, 'call_model'), 'model', 'denied'],
     ])
     expect(fixture.events.filter(event => event.type === 'tool-judged' && event.outcome === 'denied')).toEqual([
       expect.objectContaining({ callHash: sha256Hex(steps[3]!.id), source: 'agent-report' }),

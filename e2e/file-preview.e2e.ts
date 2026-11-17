@@ -157,6 +157,15 @@ describe('authenticated file column', () => {
         await enrollBrowser(page, host, { name: `预览 ${width}`, scopes: ['admin'] })
         await openSession(page, sessionId)
         const transcript = page.locator('.transcript')
+        // Closing the last file leaves the panel on the session's 概要 (382abe25): on a phone that is still a page over the
+        // conversation, so it goes back to the conversation for the next file.
+        const closeFile = async () => {
+          await closeActiveFile(page)
+          if (width < 768 && (await page.locator('.info-page .session-overview').filter({ visible: true }).count())) {
+            await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()
+            await page.locator('.info-page').waitFor({ state: 'detached' })
+          }
+        }
         await transcript.getByRole('button', { name: '预览文件：report.txt', exact: true }).click()
         const preview = page.getByRole('region', { name: '文件预览', exact: true })
         await preview.getByText('second line', { exact: true }).waitFor()
@@ -181,7 +190,7 @@ describe('authenticated file column', () => {
         expect(blocked).toBe(true)
         await mkdir('test-results/file-preview', { recursive: true })
         await page.screenshot({ path: `test-results/file-preview/text-${width}-${theme}.png`, animations: 'disabled' })
-        await closeActiveFile(page)
+        await closeFile()
         await transcript.getByRole('button', { name: '预览文件：letter.docx', exact: true }).click()
         const frame = page.frameLocator('iframe[title="文档预览"]')
         await frame.getByText('Document in isolated frame', { exact: true }).waitFor()
@@ -207,21 +216,21 @@ describe('authenticated file column', () => {
           }),
         ).toBe(true)
         await page.screenshot({ path: `test-results/file-preview/docx-${width}-${theme}.png`, animations: 'disabled' })
-        await closeActiveFile(page)
+        await closeFile()
         await transcript.getByRole('button', { name: '预览文件：table.csv', exact: true }).click()
         await preview.getByRole('gridcell', { name: '=1+1', exact: true }).waitFor()
-        await closeActiveFile(page)
+        await closeFile()
         await transcript.getByRole('button', { name: '预览文件：picture.svg', exact: true }).click()
         await expect.poll(() => preview.locator('img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(40)
         expect(await page.evaluate(() => Reflect.get(globalThis, 'PREVIEW_SCRIPT_RAN'))).toBeUndefined()
-        await closeActiveFile(page)
+        await closeFile()
         await transcript.getByRole('button', { name: '预览文件：tone.wav', exact: true }).click()
         await expect
           .poll(() =>
             preview.locator('audio').evaluate((audio: HTMLAudioElement) => (Number.isFinite(audio.duration) ? audio.duration : 0)),
           )
           .toBe(1)
-        await closeActiveFile(page)
+        await closeFile()
         await transcript.getByRole('button', { name: '预览文件：docs/guide.md', exact: true }).click()
         await preview.getByRole('heading', { name: 'Project guide' }).waitFor()
         await preview.locator('.katex').waitFor()
@@ -242,9 +251,9 @@ describe('authenticated file column', () => {
         await preview.getByRole('button', { name: '源码', exact: true }).click()
         await preview.getByRole('button', { name: 'Read report', exact: true }).click()
         await preview.getByText(width === 1440 ? 'updated second' : 'second line', { exact: true }).waitFor()
-        await closeActiveFile(page)
+        await closeFile()
         await page.getByRole('tab', { name: 'guide.md', exact: true }).click()
-        await closeActiveFile(page)
+        await closeFile()
         await transcript.getByRole('button', { name: '预览文件：.env', exact: true }).click()
         await preview.getByText('这个文件可能包含密钥。', { exact: false }).waitFor()
         expect(await preview.getByRole('button', { name: '显示内容', exact: true }).count()).toBe(0)

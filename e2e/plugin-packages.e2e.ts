@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { loadPluginPackage } from '@latch/host'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
-import { backToPhoneSessions, noHorizontalOverflow, openSession as chooseSession, reachable } from './helpers/layout.ts'
+import { backToPhoneSessions, noHorizontalOverflow, openPanelTab, openSession as chooseSession, reachable } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const OUTPUT = 'test-results/plugin-packages'
@@ -22,7 +22,8 @@ async function openSession(page: Page, id: string) {
 async function openPanel(page: Page, name: string) {
   const toggle = page.getByRole('button', { name: '侧边面板', exact: true })
   if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
-  await page.getByRole('tab', { name, exact: true }).click()
+  // The panel lists only the tabs opened (382abe25): a plugin panel comes from its choices or 「+」.
+  await openPanelTab(page, name)
 }
 
 describe('feature packages in the workbench', () => {

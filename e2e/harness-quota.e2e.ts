@@ -7,7 +7,7 @@ import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSession, phoneStartScreen } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/harness-quota'
 const HOUR = 3_600_000
@@ -322,6 +322,8 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
         page.setDefaultTimeout(15_000)
         try {
           await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+          // A phone's entry is in the start screen's head, over the list it opens on (cae787a4).
+          await phoneStartScreen(page)
           const entry = page.locator('.usage-entry:visible').first()
           if (phone) await entry.tap()
           else {

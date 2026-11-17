@@ -55,6 +55,8 @@ async function phone(
   await enrollBrowser(page, host, { name, scopes: ['admin'] })
   const id = (await owner.json<{ devices: Array<{ id: string; name: string }> }>('devices')).devices.find(item => item.name === name)!.id
   if (scope === 'all') expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+  // A connected browser starts able to read project files (200b8c6d): narrowed for the device that cannot.
+  else expect((await owner.request(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
   await page.reload()
   await connected(page)
   await backToPhoneSessions(page)

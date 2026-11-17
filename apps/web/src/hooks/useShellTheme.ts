@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 
 /** The page's theme: the shell's own choice, else the system's. */
 export function shellTheme(): 'light' | 'dark' {
+  // Rendered to markup there is no page and no choice yet; a mounted page always has both.
+  if (typeof document === 'undefined') return 'light'
   const chosen = document.documentElement.dataset.theme
   if (chosen === 'light' || chosen === 'dark') return chosen
   return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'

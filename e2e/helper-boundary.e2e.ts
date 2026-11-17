@@ -58,7 +58,7 @@ it.each([true, false])('keeps one accessible helper boundary before and after it
     await page.getByRole('radio', { name: '我的 Agent', exact: true }).filter({ visible: true }).click()
     await page
       .getByRole('navigation', { name: '我的 Agent', exact: true })
-      .getByRole('button', { name: /小林/u })
+      .getByRole('button', { name: /^小林/u })
       .click()
     const output = join('test-results', 'helper-boundary', readback ? 'known' : 'unread')
     await mkdir(output, { recursive: true })

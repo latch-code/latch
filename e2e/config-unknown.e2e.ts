@@ -84,19 +84,27 @@ describe('a config change the Harness never answers', () => {
     return page
   }
   const model = async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).config?.find(row => row.id === 'model')?.currentValue
-  const pick = async (page: Page, name: string, phone: boolean) => {
+  const pick = async (page: Page, name: string) => {
     await page.locator('button.model-picker').click()
+    // One model panel at every width since d0ccdd6e, its rows menu items on a phone too.
     await page
-      .getByRole(phone ? 'radio' : 'menuitemradio', { name: new RegExp(`^${name}`, 'u') })
+      .getByRole('menuitemradio', { name: new RegExp(`^${name}`, 'u') })
+      .filter({ visible: true })
       .first()
       .click()
+    // A session's switch keeps the panel open on the new model's levels; closed, the bar under it can be reached.
+    const panel = page.locator('.model-board').filter({ visible: true })
+    if (await panel.count()) {
+      await page.keyboard.press('Escape')
+      await expect.poll(() => panel.count()).toBe(0)
+    }
   }
 
   it('says 结果未知 in place with the time, 核对 settles it from the reading, and a new pick goes through', async () => {
     await writeFile(answer, 'silent')
     const page = await open(1440, 'light')
     const bar = page.locator('[data-config-unknown]')
-    await pick(page, 'opencode/Beam Free', false)
+    await pick(page, 'opencode/Beam Free')
     // While the Harness has not answered: the chip waits on it by name.
     await page.getByText('等 OpenCode 回应…').first().waitFor()
     await page.screenshot({ path: `${OUTPUT}/waiting--light--1440.png`, animations: 'disabled' })
@@ -126,7 +134,7 @@ describe('a config change the Harness never answers', () => {
     await page.screenshot({ path: `${OUTPUT}/settled--light--1440.png`, animations: 'disabled' })
     // Choosing again is a new request, which this time is answered.
     await writeFile(answer, '')
-    await pick(page, 'opencode/Big Pickle', false)
+    await pick(page, 'opencode/Big Pickle')
     await page.getByRole('button', { name: /^模型：opencode\/Big Pickle$/u }).waitFor()
     expect(await model()).toBe('opencode/big-pickle')
     await page.context().close()
@@ -142,7 +150,7 @@ describe('a config change the Harness never answers', () => {
     const bar = page.locator('[data-config-unknown]')
     const before = await model()
     const target = before === 'opencode/beam-free' ? 'opencode/Big Pickle' : 'opencode/Beam Free'
-    await pick(page, target, width < 768)
+    await pick(page, target)
     await bar.waitFor({ timeout: 60_000 })
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${OUTPUT}/unknown--${theme}--${width}.png`, animations: 'disabled' })
@@ -165,7 +173,7 @@ describe('a config change the Harness never answers', () => {
     const bar = page.locator('[data-config-unknown]')
     const before = await model()
     const target = before === 'opencode/beam-free' ? 'opencode/Big Pickle' : 'opencode/Beam Free'
-    await pick(page, target, false)
+    await pick(page, target)
     await bar.waitFor({ timeout: 60_000 })
     expect(await bar.getByRole('button', { name: '放弃这次结果', exact: true }).count()).toBe(0)
     // Meanwhile the session moved to a third model (as another device would): neither the old value nor the asked one.
@@ -181,7 +189,7 @@ describe('a config change the Harness never answers', () => {
     await page.getByRole('button', { name: /^模型：opencode\/Grok Code$/u }).waitFor()
     // Choosing again is a new request; the one set down is never sent again.
     await writeFile(answer, '')
-    await pick(page, 'opencode/Beam Free', false)
+    await pick(page, 'opencode/Beam Free')
     await page.getByRole('button', { name: /^模型：opencode\/Beam Free$/u }).waitFor()
     expect(await model()).toBe('opencode/beam-free')
     expect(sent).toHaveLength(2)

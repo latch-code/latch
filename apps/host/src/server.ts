@@ -9733,7 +9733,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             throw new AppError(409, 'provider-target-required', '请更新并重新打开 Latch 后再修改模型服务的地址、协议或密钥。')
           const checkTarget = (record: ProviderRecord) => {
             if (input.expectedTarget && !sameProviderTarget(record, input.expectedTarget))
-              throw new AppError(409, 'provider-target-changed', '模型服务的地址或协议已变更。请核对当前设置后重试。')
+              throw new AppError(409, 'provider-target-changed', '模型服务的地址或协议已更改。请核对当前设置后重试。')
           }
           checkTarget(current)
           const plannedURL = input.baseURL ?? current.baseURL

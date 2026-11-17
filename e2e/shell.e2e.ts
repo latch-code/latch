@@ -9,7 +9,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { homeInput, switchView } from './helpers/workbench.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { backToPhoneSessions, noHorizontalOverflow, openEntry, openSession, openSessions, settleShell } from './helpers/layout.ts'
+import {
+  backToPhoneSessions,
+  noHorizontalOverflow,
+  openEntry,
+  openPanelTab,
+  openSession,
+  openSessions,
+  settleShell,
+} from './helpers/layout.ts'
 
 const CONNECTION_SHOTS = 'test-results/workbench-connection'
 
@@ -479,7 +487,9 @@ describe('the shell', () => {
     })
   })
 
-  it('lets a sheet be dragged narrower, until it fits beside the conversation', async () => {
+  // docs/DESIGN.md (区域划分): the panel narrows itself to leave the conversation 440px, and floats over it only where
+  // even 360px will not fit beside it.
+  it('narrows a panel dragged wider to keep the conversation, and floats it only where it cannot fit', async () => {
     const page = await open(1200, 850, '壳层面板拖动')
     await allData(page)
     await writeFile(resolve(host.workspaceRoot, '验收文档.txt'), '面板验收文件\n')
@@ -487,7 +497,7 @@ describe('the shell', () => {
     await page.locator(`[data-task-id="${sessionId}"]`).first().click()
     await page.locator('.app-shell[data-inspector="open"]').waitFor()
     await settleShell(page)
-    // The default summary is a column; make it wider through its real handle before testing a sheet becoming a column.
+    // The default summary is a column; drag it wider through its real handle than the conversation can give.
     const initialHandle = page.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
     const divider = () => page.locator('.inspector-column-inner').evaluate(element => getComputedStyle(element).borderInlineStartWidth)
     const highlight = () => initialHandle.evaluate(element => getComputedStyle(element, '::after').opacity)
@@ -515,25 +525,23 @@ describe('the shell', () => {
     await page.mouse.move(1200 - 520, initialY, { steps: 4 })
     await page.mouse.up()
     await settleShell(page)
+    // 1200 less the 264 sidebar and the conversation's 440 leaves 496.
     expect({
       width: await initialHandle.getAttribute('aria-valuenow'),
       placement: await page.locator('.app-shell').getAttribute('data-inspector'),
       sidebar: await page.getByRole('separator', { name: '调整侧栏宽度', exact: true }).getAttribute('aria-valuenow'),
-    }).toEqual({ width: '520', placement: 'sheet', sidebar: '264' })
+    }).toEqual({ width: '496', placement: 'open', sidebar: '264' })
+    expect((await box(page, 'main.workspace')).width).toBe(440)
+    expect(await divider()).toBe('1px')
+    // Narrower than the rail, 360 and 440 together: the open panel floats over the conversation, with no divider.
+    await page.setViewportSize({ width: 800, height: 850 })
     await page.locator('.app-shell[data-inspector="sheet"]').waitFor()
     await settleShell(page)
     expect(await divider()).toBe('0px')
-    const edge = page.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
-    const handle = await edge.boundingBox()
-    expect(handle).not.toBeNull()
-    expect(Math.round(handle!.x + handle!.width / 2)).toBe(1200 - 520)
-    const y = handle!.y + handle!.height / 2
-    await page.mouse.move(handle!.x + handle!.width / 2, y)
-    await page.mouse.down()
-    await page.mouse.move(1200 - 400, y, { steps: 4 })
-    expect((await box(page, 'main.workspace')).width).toBe(1200 - 264)
-    await page.mouse.up()
+    // Wide again, it stands beside the conversation once more.
+    await page.setViewportSize({ width: 1200, height: 850 })
     await page.locator('.app-shell[data-inspector="open"]').waitFor()
+    await settleShell(page)
     expect((await box(page, '.inspector-column')).width).toBeGreaterThanOrEqual(399)
     const output = 'test-results/session-title-icon'
     await mkdir(output, { recursive: true })
@@ -544,7 +552,7 @@ describe('the shell', () => {
       await page.screenshot({ path: `${output}/pane-${colorScheme}.png`, animations: 'disabled' })
     }
     await page.setViewportSize({ width: 1440, height: 900 })
-    await page.getByRole('tab', { name: '文件', exact: true }).click()
+    await openPanelTab(page, '文件')
     await page.getByRole('treeitem', { name: '验收文档.txt', exact: true }).waitFor()
     await page.locator('.app-shell[data-inspector="open"]').waitFor()
     const computer = page.locator('.workspace .topbar-computer .topbar-crumb-text')
@@ -817,7 +825,8 @@ describe('the shell', () => {
  */
 describe('the session menu', () => {
   const OUTPUT = 'test-results/session-menu'
-  const OPEN = ['重命名', '置顶', '标为未读', '复制为 Markdown', '导出 Markdown', '清空上下文', '归档', '删除']
+  // 标签… and the priorities follow the first group where the Host groups sessions (docs/DESIGN.md, 会话菜单).
+  const OPEN = ['重命名', '置顶', '标为未读', '标签…', '高', '中', '低', '复制为 Markdown', '导出 Markdown', '清空上下文', '归档', '删除']
   const OTHER = OPEN.filter(name => name !== '清空上下文')
   let host: TestHost
   let owner: TestDevice

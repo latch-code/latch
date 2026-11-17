@@ -8,7 +8,7 @@ import type { TestDevice } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession, reachable } from './helpers/layout.ts'
+import { noHorizontalOverflow, openPanelTab, openSession, reachable } from './helpers/layout.ts'
 import { motions, tokens } from './helpers/motion.ts'
 import { homeInput, switchView } from './helpers/workbench.ts'
 
@@ -471,7 +471,7 @@ describe('the phone stack', () => {
       // Rotate to the tablet layout to change tabs without discarding the edit, then return to the portrait conversation.
       await page.setViewportSize({ width: 844, height: 390 })
       await page.locator('.info-page').waitFor({ state: 'detached' })
-      await page.locator('.inspector-column').getByRole('tab', { name: '文件', exact: true }).click()
+      await openPanelTab(page, '文件')
       await editor.waitFor({ state: 'detached' })
       await page.setViewportSize({ width: 390, height: 844 })
       await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()

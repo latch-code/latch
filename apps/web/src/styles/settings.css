@@ -2105,7 +2105,7 @@
 }
 .mcp-computer-harness {
   display: inline-flex;
-  opacity: 0.35;
+  opacity: 0.45;
 }
 .mcp-computer-harness[data-usable] {
   opacity: 1;

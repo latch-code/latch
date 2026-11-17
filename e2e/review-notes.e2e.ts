@@ -8,7 +8,7 @@ import type { ReviewNoteList, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { openSession as chooseSession, settleShell } from './helpers/layout.ts'
+import { openPanelTab, openSession as chooseSession, settleShell } from './helpers/layout.ts'
 
 const OUT = 'test-results/review-notes'
 const SLOW = { timeout: 20_000 }
@@ -28,7 +28,10 @@ async function openSession(page: Page, sessionId: string) {
   if (!(await page.locator('.workspace.has-task').count())) {
     await chooseSession(page, sessionId)
   }
-  await page.getByRole('button', { name: '改动', exact: true }).click()
+  // With the panel open beside a narrow conversation, the title row folds 改动 into ⋯: it is the panel's tab then.
+  const toggle = page.getByRole('button', { name: '改动', exact: true })
+  if (await toggle.count()) await toggle.click()
+  else await openPanelTab(page, '改动')
   return page.locator('.changes-panel')
 }
 

@@ -12,7 +12,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { openSession } from './helpers/layout.ts'
+import { openPanelTab, openSession } from './helpers/layout.ts'
 
 const electronE2E = latchEnv(process.env, 'ELECTRON_E2E') === '1'
 const CAPTURES = 'test-results/desktop-browser-agent'
@@ -430,8 +430,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         await mkdir(CAPTURES, { recursive: true })
         await phone.screenshot({ path: join(CAPTURES, `phone-tool-card--390--${scheme}.png`) })
         await phone.locator('.topbar[data-phone]').getByRole('button', { name: '侧边面板', exact: true }).click()
-        const info = phone.getByRole('region', { name: '侧边面板', exact: true })
-        await info.getByText('浏览器', { exact: true }).first().click()
+        // The panel lists only opened tabs (382abe25): the browser comes from its choices or 「+」.
+        await openPanelTab(phone, '浏览器')
         const list = phone.getByRole('region', { name: '浏览器', exact: true })
         await list.getByText('代理夹具', { exact: true }).waitFor()
         expect(await list.innerText()).toContain(`http://localhost:${sitePort}/`)

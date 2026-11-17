@@ -30,20 +30,20 @@ async function openProfile(page: Page, width: number) {
     if (await tab.isVisible().catch(() => false)) await tab.click()
     await page
       .getByRole('list', { name: '我的 Agent', exact: true })
-      .getByRole('button', { name: /晨报助手/u })
+      .getByRole('button', { name: /^晨报助手/u })
       .click()
   } else if (width < 1024) {
     await page.getByRole('button', { name: '我的 Agent', exact: true }).filter({ visible: true }).first().click()
     await page
       .getByRole('list', { name: '我的 Agent', exact: true })
-      .getByRole('button', { name: /晨报助手/u })
+      .getByRole('button', { name: /^晨报助手/u })
       .first()
       .click()
   } else {
     await page.getByRole('radio', { name: '我的 Agent', exact: true }).first().click()
     await page
       .getByRole('navigation', { name: '我的 Agent', exact: true })
-      .getByRole('button', { name: /晨报助手/u })
+      .getByRole('button', { name: /^晨报助手/u })
       .first()
       .click()
   }

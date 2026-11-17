@@ -60,6 +60,11 @@ it('exports only authorized file presentation through the normal session menu, i
     const limitedContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
     const work = await limitedContext.newPage()
     await enrollBrowser(work, host, { name: 'Restricted export' })
+    // A connected browser starts able to read project files (200b8c6d): narrowed to work for the limited device.
+    const workId = await work.evaluate(async () => ((await (await fetch('/link/api/snapshot')).json()) as AppSnapshot).device.id)
+    await owner.json(`devices/${workId}`, { method: 'PATCH', body: { dataScope: 'work' } })
+    await work.reload()
+    await connected(work)
     await openSession(work, sessionId)
     expect(await work.locator('body').innerText()).not.toContain(before.trim())
     expect(await work.locator('body').innerText()).not.toContain(after.trim())

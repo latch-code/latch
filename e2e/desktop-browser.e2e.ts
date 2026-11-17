@@ -457,14 +457,18 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await panel.getByRole('button', { name: /^控制台/u }).click()
       await resize(1440)
 
-      // A reload of the page keeps the tab: hidden meanwhile, listed again and placed when the tab shows.
+      // A reload of the page keeps the tab: listed again and placed when the tab shows. The open session and its
+      // panel's tabs come back with the page (remembered on this device since 382abe25), so the tab may show at once.
       await page.reload()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       expect((await guests()).map(guest => guest.id)).toContain(guestId)
-      expect((await viewOf(guestId))?.visible).toBe(false)
-      await page.locator(`[data-task-id="${sessionId}"]`).click()
-      await page.keyboard.press('Meta+Shift+b')
-      await panel.getByRole('tab', { name: '浏览器夹具', exact: true }).waitFor()
+      const fixtureTab = panel.getByRole('tab', { name: '浏览器夹具', exact: true })
+      if (!(await fixtureTab.isVisible())) {
+        expect((await viewOf(guestId))?.visible).toBe(false)
+        await page.locator(`[data-task-id="${sessionId}"]`).click()
+        await page.keyboard.press('Meta+Shift+b')
+      }
+      await fixtureTab.waitFor()
       await waitFor(async () => (await viewOf(guestId))?.visible === true)
 
       await panel.getByRole('button', { name: '新标签', exact: true }).click()

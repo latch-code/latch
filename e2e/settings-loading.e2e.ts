@@ -648,7 +648,7 @@ describe('model and usage settings reads', () => {
       moved = true
       await address.getByRole('button', { name: '保存', exact: true }).click()
       await address.waitFor({ state: 'hidden' })
-      const error = settings.getByText('模型服务的地址或协议已变更。请核对当前设置后重试。', { exact: true })
+      const error = settings.getByText('模型服务的地址或协议已更改。请核对当前设置后重试。', { exact: true })
       await error.waitFor()
       await expect.poll(() => modify.isEnabled()).toBe(true)
       await settings.getByRole('switch', { name: '启用', exact: true }).click()

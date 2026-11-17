@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { chromium } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
-import { closeSettings, openSection, openSessions, openSettings } from './helpers/layout.ts'
+import { closeSettings, openSection, openSessions, openSettings, phoneStartScreen } from './helpers/layout.ts'
 import type { TaskDetail } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
@@ -113,6 +113,8 @@ describe('session search and workbench navigation', () => {
         const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce' }),
           page = await context.newPage()
         await enrollBrowser(page, host, { name: `模板 ${width}` })
+        // A phone opens on its list (cae787a4): the input is on the start screen 新建会话 pushes.
+        await phoneStartScreen(page)
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await input.fill('/review')
         await page

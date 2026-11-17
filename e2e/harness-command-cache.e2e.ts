@@ -8,7 +8,7 @@ import type { AppSnapshot, HarnessCommandCatalogue, TaskDetail, WorkspaceInfo } 
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, phoneStartScreen } from './helpers/layout.ts'
 
 it('offers previous-session commands in a normal new draft after recovery without starting a CLI or sending the selection', async () => {
   const root = await mkdtemp(join(tmpdir(), 'latch-command-cache-ui-'))
@@ -101,6 +101,8 @@ it('offers previous-session commands in a normal new draft after recovery withou
             if (request.method() === 'POST' && new URL(request.url()).pathname === '/link/api/tasks') submissions++
           })
           await enrollBrowser(currentPage, host)
+          // A phone opens on its list (cae787a4): the input is on the start screen 新建会话 pushes.
+          await phoneStartScreen(currentPage)
           const input = currentPage.getByRole('textbox', { name: '新会话消息', exact: true })
           await input.fill('/')
           const list = currentPage.getByRole('listbox', { name: '命令与提示模板', exact: true })

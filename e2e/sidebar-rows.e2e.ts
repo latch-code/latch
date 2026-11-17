@@ -162,11 +162,13 @@ describe('sidebar rows', () => {
     }
   })
 
+  // The 总览 home that listed sessions went in cae787a4 (docs/DESIGN.md 起始页: one input and a line of counts); the
+  // same words stand on the session's row.
   it('says what the run is doing from the activity in the summary', async () => {
     const page = await open(1440, 900, 'light')
     try {
-      const command = page.locator('.workbench-home [data-work-session="command"]')
-      const routed = page.locator('.workbench-home [data-work-session="routed"]')
+      const command = row(page, 'command')
+      const routed = row(page, 'routed')
       await expect.poll(() => command.locator('.ui-status-word').textContent()).toMatch(/^在跑命令 0:4\d$/u)
       await expect.poll(() => routed.locator('.ui-status-word').textContent()).toMatch(/^在等模型 0:0\d$/u)
     } finally {
@@ -174,18 +176,12 @@ describe('sidebar rows', () => {
     }
   })
 
-  it('keeps attention on Home, and never turns an unverified summary path into request evidence', async () => {
+  // The 总览 home's request list went in cae787a4 (看板 shows the Host's groups now, board.e2e): the rows keep the
+  // attention, and no unverified summary path becomes evidence anywhere on the page.
+  it('keeps attention on the rows, and never turns an unverified summary path into request evidence', async () => {
     const page = await open(1440, 900, 'light')
     try {
-      const waiting = page.getByRole('region', { name: '当前请求', exact: true })
-      await waiting.getByRole('button', { name: '3 项待处理', exact: true }).click()
-      expect(
-        await waiting
-          .locator('[data-request-session]')
-          .evaluateAll(rows => rows.map(item => item.getAttribute('data-request-session')).toSorted()),
-      ).toEqual(['approval', 'asking', 'failed'])
-      expect(await waiting.locator('[data-request-session="asking"]').textContent()).toContain('2 个问题')
-      expect(await waiting.innerText()).not.toContain('secret-place')
+      expect(await page.locator('body').innerText()).not.toContain('secret-place')
       expect(await row(page, 'approval').locator('.session-item-main').ariaSnapshot()).toContain('等你处理')
       expect(await row(page, 'asking').locator('.session-item-main').ariaSnapshot()).toContain('等你处理')
       expect(await row(page, 'approval').locator('.session-row-glyph').getAttribute('data-tone')).toBe('waiting')

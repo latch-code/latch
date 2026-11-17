@@ -243,6 +243,8 @@ describe('what this computer can take back', () => {
     })
     const picker = page.locator('.composer-stack .model-picker').filter({ visible: true })
     await picker.click()
+    // The model panel lists one source at a time (66e1b331); its search reaches every source.
+    await page.getByRole('searchbox', { name: '搜索模型', exact: true }).filter({ visible: true }).first().fill('model-a')
     await page.getByRole('menuitemradio', { name: /model-a/u }).click()
     const harness = page.locator('.composer-stack .harness-picker').filter({ visible: true })
     await harness.click()
@@ -254,6 +256,7 @@ describe('what this computer can take back', () => {
 
     // Another model for this one session.
     await picker.click()
+    await page.getByRole('searchbox', { name: '搜索模型', exact: true }).filter({ visible: true }).first().fill('model-b')
     await page.getByRole('menuitemradio', { name: /model-b/u }).click()
     // A pick is the draft's alone, so a reload is back at the pin.
     await expect.poll(() => picker.textContent()).toContain('model-b')
@@ -261,6 +264,7 @@ describe('what this computer can take back', () => {
     await connected(page)
     await expect.poll(() => picker.textContent()).toContain('model-a')
     await picker.click()
+    await page.getByRole('searchbox', { name: '搜索模型', exact: true }).filter({ visible: true }).first().fill('model-b')
     await page.getByRole('menuitemradio', { name: /model-b/u }).click()
     await page.locator('.composer-stack textarea').filter({ visible: true }).fill('这一次用另一个模型')
     await page

@@ -92,6 +92,13 @@ export async function backToPhoneSessions(page: Page): Promise<void> {
   await settleShell(page)
 }
 
+/** A phone opens on its session list; its 新建会话 pushes the start screen, where the new session's input is. Elsewhere a no-op. */
+export async function phoneStartScreen(page: Page): Promise<void> {
+  if ((page.viewportSize()?.width ?? 1024) >= 768) return
+  await page.locator('.phone-list:not([inert])').getByRole('button', { name: '新建会话', exact: true }).first().click()
+  await page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
+}
+
 /** Opens an exact Host session through the visible history, project tree or tablet drawer. */
 export async function openSession(page: Page, sessionId: string): Promise<void> {
   if ((await page.locator('.phone-tabs').count()) > 0) {

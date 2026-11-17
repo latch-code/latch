@@ -143,16 +143,23 @@ it('hands a reply and a file to a new code session, takes its result back, and c
     await open(page, sourceId)
 
     // Keys alone: the person's message's action opens the card with the keys in 要求, Tab walks the card to its button,
-    // and Escape closes it and puts the keys back on the action. Reduced motion: nothing in the card animates.
+    // and Escape closes it and puts the keys back on the action. Reduced motion: the card only fades in.
     const action = page.locator('.message-user').first().getByRole('button', { name: '交给代码任务…', exact: true })
     await action.focus()
     await page.keyboard.press('Enter')
     const keyed = page.getByRole('dialog', { name: '交给代码任务', exact: true })
     await chip(keyed, '你的消息').waitFor()
     await expect.poll(() => keyed.getByLabel('要求', { exact: true }).evaluate(element => element === document.activeElement)).toBe(true)
+    // The dialog's entrance only fades in under reduced motion (motion.css): nothing moves or scales.
     expect(
-      await keyed.evaluate(element => element.getAnimations({ subtree: true }).filter(item => item.playState === 'running').length),
-    ).toBe(0)
+      await keyed.evaluate(element =>
+        element
+          .getAnimations({ subtree: true })
+          .filter(item => item.playState === 'running')
+          .flatMap(item => (item.effect as KeyframeEffect).getKeyframes().flatMap(frame => Object.keys(frame)))
+          .filter(property => !['offset', 'computedOffset', 'easing', 'composite', 'opacity'].includes(property)),
+      ),
+    ).toEqual([])
     const walked: string[] = []
     for (let step = 0; step < 12 && !walked.includes('button:交给 ledger'); step++) {
       await page.keyboard.press('Tab')

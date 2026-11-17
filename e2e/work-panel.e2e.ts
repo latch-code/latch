@@ -76,7 +76,8 @@ interface Rect {
 /** The actual v8 work canvas; the previous decorative pseudo-panel is no longer drawn. */
 async function canvas(page: Page): Promise<Rect> {
   const shell = page.locator('.app-shell')
-  expect(await shell.evaluate(element => getComputedStyle(element, '::before').display)).toBe('none')
+  // Not drawn: the shell's ::before has no content since the flat window (67435b6c), whatever display a grid gives it.
+  expect(await shell.evaluate(element => getComputedStyle(element, '::before').content)).toBe('none')
   const panel = await page
     .locator('.workbench-home, main.workspace')
     .filter({ visible: true })
@@ -85,7 +86,10 @@ async function canvas(page: Page): Promise<Rect> {
       return { left: Math.round(rect.left), top: Math.round(rect.top), right: Math.round(rect.right), bottom: Math.round(rect.bottom) }
     })
   const window = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
-  expect(panel.bottom).toBe(window.height)
+  // The status bar (54c94894) runs along the window's foot; the canvas ends on its top.
+  const strip = page.locator('.workbench-connection').filter({ visible: true })
+  const foot = (await strip.count()) ? await strip.evaluate(element => Math.round(element.getBoundingClientRect().top)) : window.height
+  expect(panel.bottom).toBe(foot)
   expect(panel.left).toBeGreaterThanOrEqual(0)
   expect(panel.right).toBeLessThanOrEqual(window.width)
   expect(panel.right - panel.left).toBeGreaterThanOrEqual(480)
@@ -242,7 +246,8 @@ describe('the v8 work canvas', () => {
           await changes.click()
           await page.locator('.app-shell[data-inspector]').waitFor()
           await settleShell(page)
-          await title.locator('.topbar-changes-stat', { hasText: '+3' }).waitFor()
+          // A conversation the open 改动 narrows folds the button into ⋯ (ConversationHeader `foldChanges`).
+          if (await changes.count()) await title.locator('.topbar-changes-stat', { hasText: '+3' }).waitFor()
           panel = await canvas(page)
           const placement = await page.locator('.app-shell').getAttribute('data-inspector')
           if (placement === 'open') await titleRowInside(page, panel)
@@ -250,15 +255,19 @@ describe('the v8 work canvas', () => {
             .locator('.inspector-column-inner')
             .evaluate(element => element.getBoundingClientRect().toJSON() as Rect)
           const window = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
-          expect(Math.round(inspector.right)).toBe(window.width)
-          expect(Math.round(inspector.bottom)).toBe(window.height)
-          expect(Math.round(inspector.top)).toBe(placement === 'sheet' ? 52 : 0)
+          // A sheet is a docked layer, 8 in from the window's end, the status bar and the head (docs/DESIGN.md 浮层).
+          const inset = placement === 'sheet' ? 8 : 0
+          expect(Math.round(inspector.right)).toBe(window.width - inset)
+          expect(Math.round(inspector.bottom)).toBe(panel.bottom - inset)
+          // Its top is under the session's head (--panel-top), and a sheet's 8 below that.
+          expect(Math.round(inspector.top)).toBeGreaterThanOrEqual(51 + inset)
           if (placement === 'open') expect(Math.round(inspector.left)).toBe(panel.right)
-          const close = page.locator('.inspector-column').getByRole('button', { name: '关闭', exact: true })
+          // The panel has no close of its own since its tabs (382abe25): the title row's 侧边面板 shuts it.
+          const close = page.getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true }).first()
           await close.click({ trial: true })
           await capture('session-changes')
-          if (placement === 'sheet') await close.click()
-          else await changes.click()
+          if (await changes.count()) await changes.click()
+          else await close.click()
           await page.locator('.app-shell[data-inspector]').waitFor({ state: 'detached' })
           await settleShell(page)
           await title.locator('.topbar-changes-stat').waitFor()
@@ -339,8 +348,9 @@ describe('the v8 work canvas', () => {
         shell: getComputedStyle(shell).transitionDuration,
         workspace: getComputedStyle(shell.querySelector('.workspace')!).transitionDuration,
       }))
-      const still = reducedMotion === 'reduce'
-      for (const duration of Object.values(transitions)) expect(duration === '0s').toBe(still)
+      // The shell's columns glide; the main area has no motion of its own since the flat window (67435b6c).
+      expect(transitions.shell === '0s').toBe(reducedMotion === 'reduce')
+      expect(transitions.workspace).toBe('0s')
     }
   })
 

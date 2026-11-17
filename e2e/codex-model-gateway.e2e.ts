@@ -67,6 +67,17 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
         .filter({ visible: true })
         .first()
     const modelSurface = page.getByRole('menu', { name: '模型', exact: true }).or(page.getByRole('dialog', { name: '模型', exact: true }))
+    // The model panel lists one source at a time (a rail of the Harness's own models and each service): open the service's.
+    const serviceSource = () =>
+      page
+        .getByRole('tablist', { name: '来源', exact: true })
+        .getByRole('tab', { name: new RegExp(`^Temporary ${wire} `, 'u') })
+        .filter({ visible: true })
+        .first()
+    const serviceRow = async (name: string) => {
+      await serviceSource().click()
+      return modelRow(name)
+    }
     const modelRow = (name: string) =>
       modelSurface
         .getByRole('menuitemradio', { name, exact: true })
@@ -106,9 +117,9 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
       await enrollBrowser(page, host)
       await connected(page)
       await chip().click()
-      await modelRow(names[0]!).waitFor()
+      await (await serviceRow(names[0]!)).waitFor()
       if (wire !== 'responses') {
-        await modelSurface.locator('[title*="协议转换，实验性"]').first().waitFor()
+        await modelSurface.locator('[aria-description*="协议转换，实验性"]').first().waitFor()
         await page.keyboard.press('Escape')
         for (const width of [320, 390, 768, 1440]) {
           for (const colorScheme of ['light', 'dark'] as const) {
@@ -116,10 +127,10 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
             await page.emulateMedia({ colorScheme })
             await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
             await chip().click()
-            await modelRow(names[0]!).waitFor()
+            await (await serviceRow(names[0]!)).waitFor()
             await modelRow(names[0]!).scrollIntoViewIfNeeded()
             // The translation is said on the group's heading, with no row of its own.
-            await modelSurface.locator('[title*="协议转换，实验性"]').first().waitFor()
+            await modelSurface.locator('[aria-description*="协议转换，实验性"]').first().waitFor()
             await noHorizontalOverflow(page)
             await page.screenshot({ path: `${output}/menu-${width}-${colorScheme}.png`, animations: 'disabled' })
             await page.keyboard.press('Escape')
@@ -128,6 +139,7 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
         await page.setViewportSize({ width: 1440, height: 1000 })
         await page.emulateMedia({ colorScheme: 'light' })
         await chip().click()
+        await serviceSource().click()
       }
       await noHorizontalOverflow(page)
       await page.screenshot({ path: `${output}/menu.png`, animations: 'disabled' })
@@ -174,13 +186,23 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
       await page.screenshot({ path: `${output}/first.png`, animations: 'disabled' })
 
       await chip().click()
-      await modelRow(names[1]!).click()
+      await (await serviceRow(names[1]!)).click()
       await expect.poll(async () => (await detail()).config?.find(option => option.category === 'model')?.currentValue).toBe(names[1])
+      // A session's model switch keeps the panel open on the new model's levels; close it to open them from their chip.
+      if (await modelSurface.filter({ visible: true }).count()) {
+        await page.keyboard.press('Escape')
+        await expect.poll(() => modelSurface.filter({ visible: true }).count()).toBe(0)
+      }
       const thinking = page.locator('button.thinking-picker').filter({ visible: true }).first()
       await thinking.click()
-      await page.getByRole('menuitemradio', { name: 'High', exact: true }).waitFor()
+      // The thinking chip opens the same panel on its levels.
+      const high = page
+        .getByRole('menu', { name: '思考', exact: true })
+        .getByRole('menuitemradio', { name: 'High', exact: true })
+        .filter({ visible: true })
+      await high.waitFor()
       await page.screenshot({ path: `${output}/declared-thinking.png`, animations: 'disabled' })
-      await page.getByRole('menuitemradio', { name: 'High', exact: true }).click()
+      await high.click()
       await expect.poll(async () => (await detail()).config?.find(option => option.category === 'thought_level')?.currentValue).toBe('high')
       await host.close()
       host = await startTestHost({ ...options, port })
@@ -205,7 +227,7 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
       await noHorizontalOverflow(page)
       await page.screenshot({ path: `${output}/restored.png`, animations: 'disabled' })
       await chip().click()
-      await modelRow(names[0]!).click()
+      await (await serviceRow(names[0]!)).click()
       await expect.poll(async () => (await detail()).config?.find(option => option.category === 'model')?.currentValue).toBe(names[0])
       expect((await detail()).config?.some(option => option.category === 'thought_level')).toBe(false)
       const beforeDefault = service.requests.length

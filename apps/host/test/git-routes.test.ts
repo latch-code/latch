@@ -113,6 +113,9 @@ describe('git delivery routes', () => {
     const { t, sessionId } = await fixture()
     const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
     await t.host.security.devices.setScopes(viewer.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
+    // The board reads the settled session in the background, and a device's read of the same folder joins a read in
+    // flight: one full read first, so the read held below is this request's own.
+    expect((await post(viewer, 'workbench/delivery', { ids: [sessionId] })).status).toBe(200)
     const original = GitDelivery.prototype.state
     let release!: () => void
     const gate = new Promise<void>(resolve => {
@@ -124,7 +127,8 @@ describe('git delivery routes', () => {
       return result
     })
     const request = post(viewer, 'workbench/delivery', { ids: [sessionId] })
-    await expect.poll(() => read.mock.calls.length).toBe(1)
+    // The route reaches the read after its own Git calls, which take more than poll's default second on a busy machine.
+    await expect.poll(() => read.mock.calls.length, { timeout: 10_000 }).toBe(1)
     await t.host.security.devices.setScopes(viewer.id, { dataScope: 'work' }, { listener: 'unix' }, 'lpc-local')
     release()
     expect(await errorOf(await request)).toEqual({ status: 403, error: 'file-scope' })
