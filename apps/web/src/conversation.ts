@@ -130,9 +130,29 @@ export function collapseCompactions(messages: Message[]): Message[] {
   )
 }
 
+/**
+ * A Harness that reports a failed model request writes the error as its reply as well (Claude's 「API Error: 400 …」),
+ * and the turn's failure row says the same. A turn whose whole reply is that text, and nothing else of its own, keeps
+ * only the failure row; a reply that says anything more, thinks or calls a tool stays as it is.
+ */
+export function withoutEchoedFailures(messages: Message[]): Message[] {
+  const echoes = new Set<Message>()
+  for (const turn of turnsOf(messages)) {
+    const replies = turn.replies.filter(message => message.role === 'assistant' || message.role === 'tool')
+    const reply = replies.length === 1 && replies[0]!.role === 'assistant' ? replies[0]! : undefined
+    const said = reply?.text.trim()
+    if (!reply || !said || reply.reasoning) continue
+    const failure = turn.replies.find(
+      message => message.role === 'system' && message.state === 'failed' && message.text.trim().endsWith(`：${said}`),
+    )
+    if (failure) echoes.add(reply)
+  }
+  return echoes.size ? messages.filter(message => !echoes.has(message)) : messages
+}
+
 /** The immutable committed history. A body-only frame can reuse this whole projection. */
 export function projectTurns(messages: Message[], previous: readonly Turn[] = []) {
-  const turns = stableTurns(previous, turnsOf(collapseCompactions(messages)))
+  const turns = stableTurns(previous, turnsOf(withoutEchoedFailures(collapseCompactions(messages))))
   return {
     turns,
     history: turns.slice(0, -1),
@@ -231,6 +251,8 @@ export interface TurnRoute {
   fallback?: { providerId: string; model?: string }
   /** The built-in harness: nothing went through the gateway, and only `fallback` says anything. */
   direct: boolean
+  /** The Harness asked for a thinking level the model does not declare, and Latch sent the nearest one or none. */
+  thinkingAdjusted: boolean
 }
 
 export function turnRoute(turn: Turn): TurnRoute | undefined {
@@ -247,6 +269,7 @@ export function turnRoute(turn: Turn): TurnRoute | undefined {
   const moved = main?.fallback && main.provider ? main : models.find(entry => entry.fallback && entry.provider)
   return {
     direct: routed.direct === true,
+    thinkingAdjusted: routed.dropped?.includes('thinking-level') === true,
     ...(moved ? { fallback: { providerId: moved.provider!, ...(moved.used ? { model: moved.used } : {}) } } : {}),
     requests: routed.requests,
     models,

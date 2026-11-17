@@ -43,6 +43,8 @@ import {
   turnTimeTip,
   turnUsage,
   settingSwitches,
+  withoutEchoedFailures,
+  turnRoute,
 } from '../src/conversation.ts'
 import { Transcript } from '../src/components/Transcript.tsx'
 import { hostNow, observeHostTime, resetHostClock } from '../src/core/hostClock.ts'
@@ -1259,5 +1261,45 @@ describe('lines between turns', () => {
     expect(html.match(/timeline-divider/g)).toHaveLength(1)
     expect(html).toContain('清空了上下文')
     expect(html.indexOf('清空了上下文')).toBeGreaterThan(html.indexOf('one'))
+  })
+})
+
+describe('one failure, one place', () => {
+  const failure: Message = {
+    id: 'note',
+    role: 'system',
+    state: 'failed',
+    text: 'Claude Agent 返回错误：API Error: 400 这个模型服务没有声明所请求的思考档位',
+  }
+  const user: Message = { id: 'u', role: 'user', text: '测试' }
+  const echo: Message = { id: 'msg:1', role: 'assistant', text: 'API Error: 400 这个模型服务没有声明所请求的思考档位' }
+
+  it('keeps only the failure row when the whole reply repeats it', () => {
+    expect(withoutEchoedFailures([user, echo, failure]).map(message => message.id)).toEqual(['u', 'note'])
+    expect(projectTurns([user, echo, failure]).turns[0]!.replies.map(message => message.id)).toEqual(['note'])
+  })
+
+  it('keeps a reply that says more, thinks, or comes with a tool call', () => {
+    const more: Message = { ...echo, text: `我先看看。\n\n${echo.text}` }
+    expect(withoutEchoedFailures([user, more, failure])).toHaveLength(3)
+    expect(withoutEchoedFailures([user, { ...echo, reasoning: '想一想' }, failure])).toHaveLength(3)
+    const tool: Message = { id: 't', role: 'tool', text: '', tool: { name: 'Bash', status: 'failed' } as Message['tool'] }
+    expect(withoutEchoedFailures([user, tool, echo, failure])).toHaveLength(4)
+    expect(withoutEchoedFailures([user, echo, { ...failure, text: 'Claude Agent 返回错误：别的原因' }])).toHaveLength(3)
+  })
+})
+
+describe('a turn whose thinking level Latch changed', () => {
+  it('says so among its requests', () => {
+    const turn = turnsOf([
+      {
+        id: 'u',
+        role: 'user',
+        text: 'hi',
+        turn: { routed: { requests: 1, models: [{ model: 'm', requests: 1 }], dropped: ['thinking-level'] } },
+      },
+      { id: 'a', role: 'assistant', text: 'ok' },
+    ])[0]!
+    expect(turnRoute(turn)?.thinkingAdjusted).toBe(true)
   })
 })

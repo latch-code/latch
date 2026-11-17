@@ -76,7 +76,13 @@ function SettledFacts({
   const stepUsage = person ? undefined : turnUsage(turn)
   const usage = person ? undefined : (stepUsage ?? route?.usage)
   const routedUsage = !stepUsage && route?.usage ? route : undefined
-  const requests = route ? [`这一轮经 Latch ${route.requests} 次请求`, ...route.models.map(modelLine)] : []
+  const requests = route
+    ? [
+        `这一轮经 Latch ${route.requests} 次请求`,
+        ...route.models.map(modelLine),
+        ...(route.thinkingAdjusted ? ['思考档位：已按服务声明调整'] : []),
+      ]
+    : []
   const incomplete = routedUsage && (routedUsage.unmeasured > 0 || routedUsage.open > 0)
   const spent = outcome === 'interrupted' || times.activeMs === undefined ? undefined : formatDuration(times.activeMs)
   // What the Host knows the turn's model requests cost, and a monthly budget of theirs at 80% or used up.
