@@ -1,0 +1,59 @@
+// Latch's official relay: one Worker per regional node, so each can be drained and deployed on its own (a deploy
+// resets every node object of the Worker it replaces). Deploy from dist/relay-edge/ after `pnpm build:relay-edge`:
+//   npx wrangler deploy --env ne      then      npx wrangler deploy --env se
+// No account id and no secrets in this file. Secrets: RELAY_SIGNING_SEED and ADMIN_TOKEN per env (see README.md).
+{
+  "name": "latch-relay",
+  "main": "worker.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-11-01",
+
+  // Reached at https://latch-relay-<env>.<子域>.workers.dev. Custom domains, if added later, are only further
+  // addresses of the same node: clients bind a connection to the node by its relay-key signature, not by the name.
+  "workers_dev": true,
+  "preview_urls": false,
+
+  // No Workers Logs, invocation logs, traces or Logpush. The code itself has no console output.
+  "observability": {
+    "enabled": false,
+    "logs": { "enabled": false, "invocation_logs": false },
+    "traces": { "enabled": false },
+  },
+  "logpush": false,
+
+  // SQLite-backed node objects (DENY tags and the spend counters). Legacy form of an older wrangler.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RelayNode"] }],
+
+  "env": {
+    "ne": {
+      "durable_objects": { "bindings": [{ "name": "NODE", "class_name": "RelayNode" }] },
+      "services": [{ "binding": "WORK", "service": "latch-relay-work" }],
+      // Optional custom domain, a zone on this account (then add its hostname to NODE_HOSTS):
+      // "routes": [{ "pattern": "ne.relay.example.com", "custom_domain": true }],
+      "vars": {
+        "NODE_HOSTS": "latch-relay-ne.<子域>.workers.dev",
+        "LOCATION_HINT": "apac-ne",
+        "RELAY_ID": "<keygen 给出的 relayId>",
+        "SHARDS": "1",
+        "OBJECT_EPOCH": "1",
+        // Received WebSocket messages; the platform bills one request per 20.
+        "DAILY_MESSAGES": "4000000",
+        "MONTHLY_MESSAGES": "60000000",
+      },
+    },
+    "se": {
+      "durable_objects": { "bindings": [{ "name": "NODE", "class_name": "RelayNode" }] },
+      "services": [{ "binding": "WORK", "service": "latch-relay-work" }],
+      // "routes": [{ "pattern": "se.relay.example.com", "custom_domain": true }],
+      "vars": {
+        "NODE_HOSTS": "latch-relay-se.<子域>.workers.dev",
+        "LOCATION_HINT": "apac-se",
+        "RELAY_ID": "<keygen 给出的 relayId>",
+        "SHARDS": "1",
+        "OBJECT_EPOCH": "1",
+        "DAILY_MESSAGES": "4000000",
+        "MONTHLY_MESSAGES": "60000000",
+      },
+    },
+  },
+}

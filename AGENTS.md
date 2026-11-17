@@ -15,7 +15,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | `apps/host/` | Host 组合根、插件与命令 |
 | `apps/web/` | 浏览器与桌面共用页面，构建到 `dist/web` |
 | `apps/desktop/` | `@latch/desktop`：Electron 主进程与 preload（CommonJS） |
-| `packages/link-wire/`、`packages/link-client/`、`apps/relay/` | 原生连接：编码与 KDF、TLS 与 Go、盲中继 |
+| `packages/link-wire/`、`packages/link-client/`、`packages/relay-core/`、`apps/relay/`、`apps/relay-edge/` | 原生连接：编码与 KDF、TLS 与 Go、盲中继 |
 | `packages/protocol/` | 共用 DTO、预设与安全文本 |
 | `packages/ui/` | `@latch/ui`：令牌、层叠层与原语 |
 | `packages/sdk/` | `@latch/sdk`：插件作者面与 `AppError` |
@@ -39,15 +39,15 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 
 ```sh
 pnpm install
-pnpm check:quick             # fmt:check、lint、typecheck、check:boundaries、check:agents
-pnpm check                   # check:quick 加 knip 与 test，逐项汇报
-pnpm check -- --plan         # 按改动列出该跑的检查；--base <ref> 指定比较的提交
+pnpm check:quick     # fmt:check、lint、typecheck、check:boundaries、check:agents
+pnpm check           # check:quick 加 knip 与 test，逐项汇报
+pnpm check -- --plan # 按改动列出该跑的检查；--base <ref> 指定比较的提交
 pnpm exec vitest run --config vitest.config.ts <目录>/<name>.test.ts
-pnpm build                   # 含 host、web 与 presence；e2e 用 dist/web
+pnpm build           # 含 host、web 与 presence；e2e 用 dist/web
 LATCH_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
 LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts
-                             # 仅 macOS，先 pnpm build；用例不碰钥匙串与桌面端数据
-pnpm latch --help            # 列出子命令；都加 --data-dir <临时目录>
+                     # 仅 macOS，先 pnpm build；用例不碰钥匙串与桌面端数据
+pnpm latch --help    # 列出子命令；都加 --data-dir <临时目录>
 pnpm start:demo -- --port 0 --data-dir <临时数据目录> --workspace <临时工作区>
 pnpm stop -- --data-dir <同一数据目录>
 LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 /link/ 地址

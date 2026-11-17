@@ -4,9 +4,9 @@ import { isMap, isScalar, isSeq, parseDocument } from 'yaml'
 import { z } from 'zod'
 
 /** Where a project's code runs, declared in its package.json as `"latch": { "env": … }`. */
-type ProjectEnv = 'isomorphic' | 'browser' | 'node' | 'electron-main'
+type ProjectEnv = 'isomorphic' | 'browser' | 'node' | 'electron-main' | 'workerd'
 
-const ENVS: ReadonlySet<string> = new Set<ProjectEnv>(['isomorphic', 'browser', 'node', 'electron-main'])
+const ENVS: ReadonlySet<string> = new Set<ProjectEnv>(['isomorphic', 'browser', 'node', 'electron-main', 'workerd'])
 
 /**
  * The environments whose packages code in each environment can load. This covers what a project ships; its
@@ -18,6 +18,8 @@ const LOADS: Readonly<Record<ProjectEnv, readonly ProjectEnv[]>> = {
   browser: ['browser', 'isomorphic'],
   node: ['node', 'isomorphic'],
   'electron-main': ['electron-main', 'node', 'isomorphic'],
+  // Cloudflare Workers: the ECMAScript library, WebSockets and fetch, never Node's modules.
+  workerd: ['workerd', 'isomorphic'],
 }
 
 export interface ProjectRule {
@@ -42,10 +44,19 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
   latch: { dir: '.', dependencies: ['@latch/protocol', '@latch/sdk', '@latch/core'], devDependencies: ['@latch/host'] },
   '@latch/link-wire': { dir: 'packages/link-wire', env: 'isomorphic', dependencies: [] },
   '@latch/link-client': { dir: 'packages/link-client', env: 'node', dependencies: ['@latch/link-wire'] },
+  // The relay's state machine without I/O, shared by the self-hosted Node relay and the edge relay.
+  '@latch/relay-core': { dir: 'packages/relay-core', env: 'isomorphic', dependencies: ['@latch/link-wire'] },
   '@latch/relay': {
     dir: 'apps/relay',
     env: 'node',
-    dependencies: ['@latch/link-wire', '@latch/link-client'],
+    dependencies: ['@latch/link-wire', '@latch/link-client', '@latch/relay-core'],
+  },
+  // The official relay on Cloudflare Workers. Its tests drive the adapter in Node against a fake platform.
+  '@latch/relay-edge': {
+    dir: 'apps/relay-edge',
+    env: 'workerd',
+    dependencies: ['@latch/link-wire', '@latch/relay-core'],
+    devDependencies: ['@latch/link-client', '@latch/relay'],
   },
   '@latch/protocol': { dir: 'packages/protocol', env: 'isomorphic', dependencies: [] },
   // The design system of the browser client: design tokens, the order of the cascade layers and the primitive components.

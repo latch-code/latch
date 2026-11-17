@@ -15,6 +15,7 @@
     "e2e",
     "apps/host/test",
     "apps/relay/test",
+    "apps/relay-edge/test",
     "packages/link-wire/test",
     "packages/link-client/test",
     "apps/web/test",

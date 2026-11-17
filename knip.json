@@ -53,6 +53,11 @@
     "packages/link-wire": {},
     "packages/link-client": {},
     "apps/relay": {},
+    "packages/relay-core": {},
+    "apps/relay-edge": {
+      // The owner's own wrangler deploys these entries from deploy/; nothing in the repository imports them.
+      "entry": ["src/worker.ts", "src/work.ts", "scripts/*.ts"]
+    },
     "packages/harness-acp": {},
     "packages/protocol": {},
     "packages/sdk": {},

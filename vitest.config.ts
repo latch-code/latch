@@ -24,6 +24,7 @@ export default defineConfig({
         extends: true,
         test: { name: '@latch/relay', include: ['apps/relay/test/**/*.test.ts'], globalSetup: ['scripts/native-test-setup.ts'] },
       },
+      { extends: true, test: { name: '@latch/relay-edge', include: ['apps/relay-edge/test/**/*.test.ts'] } },
       {
         extends: true,
         test: {

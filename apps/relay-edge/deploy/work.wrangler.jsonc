@@ -1,0 +1,16 @@
+// The registration-work verifier. No route and no workers.dev address: only the relay Workers reach it, through their
+// WORK service binding. Deploy it first: npx wrangler deploy -c work.wrangler.jsonc
+{
+  "name": "latch-relay-work",
+  "main": "work.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false,
+    "logs": { "enabled": false, "invocation_logs": false },
+    "traces": { "enabled": false },
+  },
+  "logpush": false,
+}

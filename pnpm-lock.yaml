@@ -295,6 +295,9 @@ importers:
       '@latch/link-wire':
         specifier: workspace:*
         version: link:../../packages/link-wire
+      '@latch/relay-core':
+        specifier: workspace:*
+        version: link:../../packages/relay-core
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -302,6 +305,22 @@ importers:
       esbuild:
         specifier: 'catalog:'
         version: 0.28.2
+
+  apps/relay-edge:
+    dependencies:
+      '@latch/link-wire':
+        specifier: workspace:*
+        version: link:../../packages/link-wire
+      '@latch/relay-core':
+        specifier: workspace:*
+        version: link:../../packages/relay-core
+    devDependencies:
+      '@latch/link-client':
+        specifier: workspace:*
+        version: link:../../packages/link-client
+      '@latch/relay':
+        specifier: workspace:*
+        version: link:../relay
 
   apps/web:
     dependencies:
@@ -501,6 +520,12 @@ importers:
   packages/link-wire: {}
 
   packages/protocol: {}
+
+  packages/relay-core:
+    dependencies:
+      '@latch/link-wire':
+        specifier: workspace:*
+        version: link:../link-wire
 
   packages/sdk:
     dependencies:

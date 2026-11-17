@@ -11,6 +11,7 @@
     "apps/host/src",
     "apps/relay/src",
     "apps/relay/scripts",
+    "apps/relay-edge/scripts",
     "packages/link-client/src",
     "apps/host/scripts",
     "packages/harness-acp/src",

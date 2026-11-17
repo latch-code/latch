@@ -1,0 +1,21 @@
+{
+  "name": "@latch/relay-edge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/worker.ts"
+  },
+  "latch": {
+    "env": "workerd"
+  },
+  "dependencies": {
+    "@latch/link-wire": "workspace:*",
+    "@latch/relay-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@latch/link-client": "workspace:*",
+    "@latch/relay": "workspace:*"
+  }
+}

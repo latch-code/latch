@@ -1,0 +1,12 @@
+// Cloudflare Workers (apps/relay-edge/src): the ECMAScript library plus the few platform types the adapter declares by hand
+// in its own platform.d.ts. No Node, no DOM and no vendor type package.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": [],
+    "erasableSyntaxOnly": true,
+    "tsBuildInfoFile": "./node_modules/.cache/typescript/workerd.tsbuildinfo"
+  },
+  "include": ["apps/relay-edge/src"]
+}
