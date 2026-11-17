@@ -620,6 +620,7 @@ it('registers a built-in relay from the first phone until the last one has read 
   cleanup.push(() => relay.close())
   const official = {
     relayId: relayId.toString('hex'),
+    kind: 'self' as const,
     url: `https://localhost:${relay.port}/`,
     spkiHash: createHash('sha256').update(tls.spki).digest('hex'),
   }

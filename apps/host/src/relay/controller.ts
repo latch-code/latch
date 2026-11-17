@@ -5,7 +5,7 @@ import { nodeCrypto, RelayClosed, RelayControl } from '@latch/link-client'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import type { AuditLog } from '../audit.ts'
 import type { DeviceStore } from '../auth.ts'
-import { RelayProfiles, secretBytes, type RelayProfile } from './profiles.ts'
+import { relayEndpointOf, RelayProfiles, secretBytes, type RelayProfile } from './profiles.ts'
 import type { HostRelayDirectory } from './directory.ts'
 
 type Lease = { address: string; permitted(): boolean }
@@ -17,8 +17,12 @@ interface NodeState {
   control?: RelayControl
   leases: Lease[]
   tokens: Map<string, Uint8Array>
-  status: 'connecting' | 'connected' | 'waiting' | 'attention'
+  status: 'connecting' | 'connected' | 'waiting' | 'attention' | 'refused'
   retryAt?: number
+  connectedAt?: number
+  /** The node's region and the latest HELLO round trip on its control connection, for the nearest-region hint. */
+  region?: string
+  roundTripMs?: number
 }
 export interface RelayControllerOptions {
   profiles: RelayProfiles
@@ -48,21 +52,39 @@ export class HostRelayController {
     this.timer.unref()
     this.reconcile()
   }
-  status(): Array<{ relayId: string; status: NodeState['status']; retryAt?: number }> {
+  status(): Array<{ relayId: string; status: NodeState['status']; retryAt?: number; connectedAt?: number }> {
     return [...this.nodes].map(([relayId, state]) => ({
       relayId,
       status: state.status,
       ...(state.retryAt === undefined ? {} : { retryAt: state.retryAt }),
+      ...(state.connectedAt === undefined ? {} : { connectedAt: state.connectedAt }),
     }))
+  }
+  /**
+   * The region of the connected node with the shortest measured round trip, if any node has a region. Signed into the
+   * address book so that phones try the nearest official node first; it never decides identity or permission.
+   */
+  nearestRegion(): string | undefined {
+    let best: NodeState | undefined
+    for (const state of this.nodes.values())
+      if (
+        state.status === 'connected'
+        && state.region
+        && state.roundTripMs !== undefined
+        && (!best || state.roundTripMs < best.roundTripMs!)
+      )
+        best = state
+    return best?.region
   }
   /** Called synchronously after policy/config updates; old sockets cannot keep an allowance that was removed. */
   reconcile(): void {
     if (this.stopped) return
     if (this.checking?.state.leases.some(lease => !lease.permitted())) this.checking.state.abort.abort()
-    // The built-in relays run while a phone can use them, and only a phone paired on the LAN can get here.
+    // The built-in relays run while a phone can use them, and only a phone paired on the LAN can get here; never while
+    // the person has turned the official relay off.
     const reachable = this.options.devices.nativeReachable()
     const snapshot = this.options.profiles.snapshot()
-    const profiles = snapshot.profiles.filter(profile => !profile.builtIn || reachable)
+    const profiles = snapshot.profiles.filter(profile => !profile.builtIn || (reachable && !snapshot.officialOff))
     for (const [id, retained] of this.resumeTokens) {
       const profile =
         profiles.find(item => item.relayId === id)
@@ -98,6 +120,7 @@ export class HostRelayController {
         leases: [],
         tokens: retained.tokens,
         status: 'connecting',
+        ...(profile.region ? { region: profile.region } : {}),
       }
       this.nodes.set(profile.relayId, state)
       state.done = this.run(profile, state)
@@ -152,7 +175,6 @@ export class HostRelayController {
     state: Pick<NodeState, 'abort' | 'leases'>,
   ): Promise<Verification> {
     const relayId = Buffer.from(profile.relayId, 'hex')
-    const url = new URL(profile.url)
     const signal = state.abort.signal
     const permitted = () => !signal.aborted && !this.stopped && state.leases.every(lease => lease.permitted())
     const check = () => {
@@ -161,11 +183,9 @@ export class HostRelayController {
     }
     check()
     const control = await RelayControl.connect({
-      url,
-      relayId,
-      spki: Buffer.from(profile.spkiHash, 'hex'),
+      ...relayEndpointOf(profile),
       profile: 'outer-pad-v2',
-      resolveAddress: async () => {
+      resolveAddress: async url => {
         const address = await this.resolve(state, url)
         check()
         return address
@@ -213,11 +233,11 @@ export class HostRelayController {
   private async connect(profile: RelayProfile, state: NodeState): Promise<RelayControl> {
     const create = (url: string, fixed?: { address: string; permitted(): boolean }) =>
       RelayControl.connect({
+        ...relayEndpointOf(profile),
         url: new URL(url),
-        relayId: Buffer.from(profile.relayId, 'hex'),
-        spki: Buffer.from(profile.spkiHash, 'hex'),
         profile: 'outer-pad-v2',
-        resolveAddress: () => this.resolve(state, new URL(url), fixed),
+        // Each origin of an edge node is resolved and checked against the outbound policy on its own.
+        resolveAddress: target => this.resolve(state, fixed ? new URL(url) : target, fixed),
         ...(this.options.ca ? { ca: this.options.ca } : {}),
         registrationToken: profile.registrationKey ? secretBytes(profile.registrationKey) : undefined,
         signal: state.abort.signal,
@@ -225,13 +245,15 @@ export class HostRelayController {
     try {
       return await create(profile.url)
     } catch (original) {
-      if (state.abort.signal.aborted || !this.options.directory) throw original
+      // The address directory pins self-hosted nodes by TLS key and IP; an edge node is reached only by its origins.
+      if (state.abort.signal.aborted || !this.options.directory || profile.kind === 'edge' || !profile.spkiHash) throw original
       await this.options.directory.refresh()
-      for (const candidate of this.options.directory.candidates(profile.relayId, profile.spkiHash)) {
+      const pin = profile.spkiHash
+      for (const candidate of this.options.directory.candidates(profile.relayId, pin)) {
         if (state.abort.signal.aborted) throw original
         const permitted = () =>
           this.options
-            .directory!.candidates(profile.relayId, profile.spkiHash)
+            .directory!.candidates(profile.relayId, pin)
             .some(item => item.url === candidate.url && item.address === candidate.address)
         try {
           return await create(candidate.url, { address: candidate.address, permitted })
@@ -336,10 +358,12 @@ export class HostRelayController {
           return
         }
         state.control = control
+        state.roundTripMs = control.roundTripMs
         const members = await this.register(profile, state, control)
         const delivered = new Set<string>()
         await this.synchronizeDenials(profile, control, members, delivered)
         state.status = 'connected'
+        state.connectedAt = Date.now()
         attempts = 0
         const workers = Array.from({ length: 4 }, () => this.serve(profile, state, control, members).catch(() => control.close()))
         const date = Math.floor(Date.now() / 1000 / UTC_DAY)
@@ -382,7 +406,9 @@ export class HostRelayController {
             state.status = 'attention'
           }
         }
-        if (state.status !== 'attention') state.status = 'waiting'
+        // 4100 on the control connection: the node refused this Host's registration (token, or a full node: 4302/4304).
+        if (error instanceof RelayClosed && [4100, 4302, 4304].includes(error.closeCode)) state.status = 'refused'
+        else if (state.status !== 'attention') state.status = 'waiting'
         const wait = Math.min(300_000, 1000 * 2 ** Math.min(attempts++, 9))
         state.retryAt = Date.now() + wait
         try {

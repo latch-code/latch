@@ -5,7 +5,7 @@ import type { startNativeHost } from './native.ts'
 import type { HostRelayController } from './relay/controller.ts'
 import { selectAutoDirect } from './native-network.ts'
 import type { NativeNetworkSnapshot } from './native-network-backend.ts'
-import type { RelayProfiles, NativeDirect, PendingRelay, RelayProfileInput } from './relay/profiles.ts'
+import { relayNodeFields, type RelayProfiles, type NativeDirect, type PendingRelay, type RelayProfileInput } from './relay/profiles.ts'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
 import type { HostRelayDirectory } from './relay/directory.ts'
 
@@ -47,6 +47,21 @@ export class NativeSettings {
       directManaged: Boolean(this.options.managedDirect),
       listening: this.options.native.direct,
       directory: Boolean(state.directory),
+      official: {
+        deployed: state.profiles.some(item => item.builtIn),
+        enabled: !state.officialOff,
+        ownFirst: Boolean(state.ownFirst),
+        nodes: state.profiles
+          .filter(item => item.builtIn)
+          .map(item => {
+            const status = statuses.find(value => value.relayId === item.relayId)
+            return {
+              relayId: item.relayId,
+              region: item.region ?? '',
+              status: status?.status ?? (state.officialOff ? 'off' : 'connecting'),
+            }
+          }),
+      },
       ...(state.pendingRelay && deviceId
         ? {
             pendingRelay: {
@@ -63,8 +78,10 @@ export class NativeSettings {
           return {
             relayId: item.relayId,
             url: item.url,
+            kind: item.kind ?? 'self',
             status: status?.status ?? 'connecting',
             ...(status?.retryAt === undefined ? {} : { retryAt: status.retryAt }),
+            ...(status?.connectedAt === undefined ? {} : { connectedAt: status.connectedAt }),
           }
         }),
     }
@@ -131,10 +148,10 @@ export class NativeSettings {
       if (pending.requestId !== requestId) throw new AppError(409, 'native-relay-pending', '请先继续或放弃未确认的中继。')
       if (pending.deviceId !== deviceId) throw new AppError(403, 'native-relay-owner', '请使用开始添加的设备继续。')
       if (requestHash !== undefined && pending.requestHash !== requestHash) throw this.relayConflict()
-      const { relayId, url, spkiHash, registrationKey } = pending.profile
+      const { registrationKey } = pending.profile
       return {
         base: profiles.configHash(),
-        input: { relayId, url, spkiHash, ...(registrationKey ? { registrationKey } : {}) },
+        input: { ...relayNodeFields(pending.profile), ...(registrationKey ? { registrationKey } : {}) },
         request: { requestId, deviceId, requestHash: pending.requestHash },
       }
     }
@@ -197,6 +214,25 @@ export class NativeSettings {
   }
   removeRelay(relayId: string, actor: AuditActor, authorize: () => void, auditFailed?: () => void): Promise<{ audited: boolean }> {
     return this.lower(actor, { relayId }, authorize, auditFailed)
+  }
+  /** The official relay switch. Off only removes an observer; on restores the default. Both are audited. */
+  setOfficial(
+    change: { enabled?: boolean; ownFirst?: boolean },
+    actor: AuditActor,
+    authorize: () => void,
+    auditFailed?: () => void,
+  ): Promise<{ audited: boolean }> {
+    return this.serial(async () => {
+      const result = await this.options.profiles.setOfficial(change, authorize, detail =>
+        this.recordLowering(
+          { action: 'native.config.changed', actor, detail: { ...detail, lowering: change.enabled === false, direct: false } },
+          auditFailed,
+        ),
+      )
+      this.options.changed?.()
+      this.options.controller.reconcile()
+      return result
+    })
   }
   removeDirectory(actor: AuditActor, authorize: () => void, auditFailed?: () => void): Promise<{ audited: boolean }> {
     return this.lower(actor, { directory: true }, authorize, auditFailed)

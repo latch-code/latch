@@ -36,12 +36,30 @@ const endpoint = z
       return false
     }
   })
-export const relayProfileInput = z.strictObject({
-  relayId: z.string().regex(/^[a-f0-9]{32}$/u),
-  url: endpoint,
-  spkiHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  registrationKey: key('lrt1').nullable().optional(),
-})
+const relayId = z.string().regex(/^[a-f0-9]{32}$/u),
+  hex64 = z.string().regex(/^[a-f0-9]{64}$/u),
+  region = z.string().regex(/^[a-z0-9-]{1,16}$/u)
+/** Further origins of an edge node: the relay-key signature, not the name, binds a connection to it. */
+const extraUrls = z
+  .array(endpoint)
+  .min(1)
+  .max(3)
+  .refine(values => new Set(values).size === values.length)
+/** A relay file or settings request. A self-hosted node is pinned by its TLS key; an edge node by its relay key. */
+export const relayProfileInput = z
+  .union([
+    z.strictObject({ relayId, url: endpoint, spkiHash: hex64, registrationKey: key('lrt1').nullable().optional() }),
+    z.strictObject({
+      relayId,
+      url: endpoint,
+      kind: z.literal('edge'),
+      relayKey: hex64,
+      extraUrls: extraUrls.optional(),
+      shard: z.int().min(0).max(15).optional(),
+      registrationKey: key('lrt1').nullable().optional(),
+    }),
+  ])
+  .refine(value => !('extraUrls' in value) || !value.extraUrls?.includes(value.url))
 export type RelayProfileInput = z.infer<typeof relayProfileInput>
 export const nativeDirectSchema = z.strictObject({
   host: z
@@ -51,15 +69,32 @@ export const nativeDirectSchema = z.strictObject({
   port: z.int().min(0).max(65535),
 })
 export type NativeDirect = z.infer<typeof nativeDirectSchema>
-const profile = relayProfileInput.omit({ registrationKey: true }).extend({
+/**
+ * A saved node. An absent `kind` is the self-hosted kind, as every profile written before the edge kind existed: those
+ * entries are read unchanged and never rewritten, so their fingerprints and the configuration hash stay the same.
+ */
+const profileFields = z.strictObject({
+  relayId,
+  url: endpoint,
+  spkiHash: hex64.optional(),
+  kind: z.literal('edge').optional(),
+  relayKey: hex64.optional(),
+  extraUrls: extraUrls.optional(),
+  shard: z.int().min(0).max(15).optional(),
+  region: region.optional(),
   registrationKey: key('lrt1').optional(),
   seeds: z.tuple([key('lrs1'), key('lrs1')]),
   activeSlot: z.union([z.literal(0), z.literal(1)]),
   rotationDay: z.int().nonnegative(),
   rotations: z.int().min(0).max(2),
-  /** Compiled in (`official.ts`); no UI edits it, and it runs only while a phone is paired. */
+  /** Compiled in (`official.ts`); no UI edits it, and it runs only while a phone is paired and the official relay is on. */
   builtIn: z.literal(true).optional(),
 })
+const kindRule = (value: { kind?: 'edge'; spkiHash?: string; relayKey?: string; extraUrls?: string[]; shard?: number; url: string }) =>
+  value.kind === 'edge'
+    ? value.relayKey !== undefined && value.spkiHash === undefined && !value.extraUrls?.includes(value.url)
+    : value.spkiHash !== undefined && value.relayKey === undefined && value.extraUrls === undefined && value.shard === undefined
+const profile = profileFields.refine(kindRule)
 const receiptSchema = z.strictObject({
   requestId: z.uuid(),
   requestHash: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -68,7 +103,7 @@ const receiptSchema = z.strictObject({
 })
 const pendingRelaySchema = receiptSchema.omit({ cancelled: true, cancelAuditFailed: true }).extend({
   deviceId: z.string().min(1).max(128),
-  profile: profile.omit({ builtIn: true }),
+  profile: profileFields.omit({ builtIn: true }).refine(kindRule),
 })
 const schema = z.strictObject({
   version: z.literal(1),
@@ -84,12 +119,49 @@ const schema = z.strictObject({
   directoryFloor: directoryFloorSchema.optional(),
   configReceipts: z.array(receiptSchema).max(32).optional(),
   pendingRelay: pendingRelaySchema.optional(),
+  /** The person turned the official relay off; absent means on. Their own relays work either way. */
+  officialOff: z.literal(true).optional(),
+  /** The person's own relays come before the official ones in address books; absent means official first. */
+  ownFirst: z.literal(true).optional(),
   profiles: z
     .array(profile)
     .max(6)
     .refine(items => new Set(items.map(item => item.relayId)).size === items.length),
 })
 export type RelayProfile = z.infer<typeof profile>
+/** How link-client reaches a saved node: the pinned TLS key, or the relay key, shard and every origin. */
+export function relayEndpointOf(value: RelayProfile): {
+  url: URL
+  relayId: Buffer
+  spki?: Buffer
+  edge?: { relayKey: Buffer; shard: number }
+  extraUrls?: URL[]
+} {
+  const base = { url: new URL(value.url), relayId: Buffer.from(value.relayId, 'hex') }
+  return value.kind === 'edge'
+    ? {
+        ...base,
+        edge: { relayKey: Buffer.from(value.relayKey!, 'hex'), shard: value.shard ?? 0 },
+        ...(value.extraUrls ? { extraUrls: value.extraUrls.map(url => new URL(url)) } : {}),
+      }
+    : { ...base, spki: Buffer.from(value.spkiHash!, 'hex') }
+}
+/** The node fields of a profile, without seeds or registration key: what identifies and reaches the node. */
+export type RelayNodeFields =
+  | { relayId: string; url: string; spkiHash: string }
+  | { relayId: string; url: string; kind: 'edge'; relayKey: string; extraUrls?: string[]; shard?: number }
+export function relayNodeFields(input: RelayProfileInput | RelayProfile): RelayNodeFields {
+  if ('kind' in input && input.kind === 'edge')
+    return {
+      relayId: input.relayId,
+      url: input.url,
+      kind: 'edge',
+      relayKey: input.relayKey!,
+      ...(input.extraUrls ? { extraUrls: [...input.extraUrls] } : {}),
+      ...(input.shard === undefined ? {} : { shard: input.shard }),
+    }
+  return { relayId: input.relayId, url: input.url, spkiHash: (input as { spkiHash: string }).spkiHash }
+}
 export type PendingRelay = z.infer<typeof pendingRelaySchema>
 type State = z.infer<typeof schema>
 const writeUnknown = () => new AppError(503, 'native-relay-write-unknown', '中继配置的保存结果尚未确认，请继续原请求。')
@@ -147,6 +219,9 @@ export class RelayProfiles {
         directory: state.directory ?? null,
         profiles: state.profiles,
         revision: state.configRevision ?? 0,
+        // Only when set, so that a Host that never touched the switch keeps the hash it had.
+        ...(state.officialOff ? { officialOff: true } : {}),
+        ...(state.ownFirst ? { ownFirst: true } : {}),
       }),
     )
   }
@@ -157,7 +232,9 @@ export class RelayProfiles {
     return this.state.configReceipts?.find(item => item.requestId === requestId)
   }
   assertNewRelay(input: Pick<RelayProfileInput, 'relayId' | 'url'>): void {
-    if (this.state.profiles.some(profile => profile.relayId === input.relayId || profile.url === input.url))
+    const urls = (value: { url: string; extraUrls?: string[] }) => [value.url, ...(value.extraUrls ?? [])]
+    const wanted = urls(input as { url: string; extraUrls?: string[] })
+    if (this.state.profiles.some(profile => profile.relayId === input.relayId || urls(profile).some(url => wanted.includes(url))))
       throw new AppError(409, 'native-relay-duplicate', '每个中继节点只能添加一次。')
     if (this.state.profiles.filter(profile => !profile.builtIn).length >= 4)
       throw new AppError(409, 'native-relay-limit', '最多添加四个自建中继。')
@@ -181,11 +258,11 @@ export class RelayProfiles {
           return current
         throw new AppError(409, 'native-relay-pending', '请先继续或放弃未确认的中继。')
       }
-      const { registrationKey, ...publicFields } = input
+      const { registrationKey } = input
       return (draft.pendingRelay = {
         ...request,
         profile: {
-          ...publicFields,
+          ...relayNodeFields(input),
           ...(registrationKey ? { registrationKey } : {}),
           seeds: [secret('lrs1'), secret('lrs1')],
           activeSlot: 0,
@@ -332,9 +409,7 @@ export class RelayProfiles {
       const custom = checked.map(item => {
         const previous = draft.profiles.find(old => old.relayId === item.relayId)
         return {
-          relayId: item.relayId,
-          url: item.url,
-          spkiHash: item.spkiHash,
+          ...relayNodeFields(item),
           ...(item.registrationKey === null
             ? {}
             : item.registrationKey !== undefined
@@ -353,11 +428,24 @@ export class RelayProfiles {
   }
   /** Brings the persisted built-in relays in line with the compiled list. Their seeds survive, and only they change. */
   syncOfficial(official: readonly OfficialRelay[]): Promise<void> {
-    const current = this.state.profiles.filter(item => item.builtIn)
-    if (canonicalJson(current.map(({ relayId, url, spkiHash }) => ({ relayId, url, spkiHash }))) === canonicalJson(official))
-      return Promise.resolve()
+    const wanted = official.map(item =>
+      item.kind === 'edge'
+        ? {
+            relayId: item.relayId,
+            url: item.urls[0]!,
+            kind: item.kind,
+            relayKey: item.relayKey,
+            ...(item.urls.length > 1 ? { extraUrls: item.urls.slice(1) } : {}),
+            region: item.region,
+          }
+        : { relayId: item.relayId, url: item.url, spkiHash: item.spkiHash },
+    )
+    const current = this.state.profiles
+      .filter(item => item.builtIn)
+      .map(({ seeds: _seeds, activeSlot: _slot, rotationDay: _day, rotations: _rotations, builtIn: _builtIn, ...node }) => node)
+    if (canonicalJson(current) === canonicalJson(wanted)) return Promise.resolve()
     return this.change(draft => {
-      const builtIn = official.map(item => {
+      const builtIn = wanted.map(item => {
         const previous = draft.profiles.find(old => old.relayId === item.relayId && old.builtIn)
         return {
           ...item,
@@ -375,6 +463,30 @@ export class RelayProfiles {
       if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
       draft.generation++
     })
+  }
+  /**
+   * The official relay switch and the order of preference. Off only lowers who can see traffic; on restores the default.
+   */
+  setOfficial(
+    change: { enabled?: boolean; ownFirst?: boolean },
+    authorize: () => void,
+    record: (detail: { before: string; after: string; relayCount: number }) => Promise<boolean>,
+  ): Promise<{ audited: boolean }> {
+    return this.change(async draft => {
+      authorize()
+      const before = this.hashConfiguration(draft)
+      if (change.enabled === true) delete draft.officialOff
+      if (change.enabled === false) draft.officialOff = true
+      if (change.ownFirst === true) draft.ownFirst = true
+      if (change.ownFirst === false) delete draft.ownFirst
+      this.advanceConfiguration(draft)
+      const audited = await record({
+        before,
+        after: this.hashConfiguration(draft),
+        relayCount: draft.profiles.filter(profile => !profile.builtIn).length,
+      })
+      return { audited }
+    }, authorize)
   }
   /** Floors come only from verified cache evidence, never from the settings request. Keep them through source removal. */
   saveDirectoryFloor(expectedSourceHash: string, floor: DirectoryFloor): Promise<void> {
@@ -433,4 +545,11 @@ export class RelayProfiles {
       draft.generation++
     })
   }
+}
+
+/** The relays an address book offers, in the person's order of preference, at most four. */
+export function bookRelays(state: Pick<z.infer<typeof schema>, 'profiles' | 'officialOff' | 'ownFirst'>): RelayProfile[] {
+  const official = state.officialOff ? [] : state.profiles.filter(profile => profile.builtIn),
+    own = state.profiles.filter(profile => !profile.builtIn)
+  return (state.ownFirst ? [...own, ...official] : [...official, ...own]).slice(0, 4)
 }

@@ -60,17 +60,42 @@ export interface NativeLinkInfo {
   listening: { host: string; port: number } | null
   /** A saved address directory is in use. */
   directory: boolean
+  /** The built-in official relay: whether this build has deployed nodes, and whether the person left it on. */
+  official?: {
+    deployed: boolean
+    enabled: boolean
+    /** The person's own relays come before the official ones. */
+    ownFirst: boolean
+    nodes: Array<{ relayId: string; region: string; status: NativeRelayStatus | 'off' }>
+  }
   /** Local administrators can retry or abandon a reserved addition; its private profile never comes back. */
   pendingRelay?: { requestId: string; url: string; canRetry: boolean }
-  relays: Array<{ relayId: string; url: string; status: 'connecting' | 'connected' | 'waiting' | 'attention'; retryAt?: number }>
+  relays: Array<{
+    relayId: string
+    url: string
+    /** Absent from older Hosts: the self-hosted kind. */
+    kind?: 'self' | 'edge'
+    status: NativeRelayStatus
+    retryAt?: number
+    /** When its control connection last came up (epoch ms). */
+    connectedAt?: number
+  }>
 }
+/** `refused`: the node turned the registration down (a wrong or missing registration token, or a full node). */
+export type NativeRelayStatus = 'connecting' | 'connected' | 'waiting' | 'attention' | 'refused'
 /** The local relay CLI exports this to a private file. The Host never sends it back to any client. */
-export interface NativeRelayProfile {
-  relayId: string
-  url: string
-  spkiHash: string
-  registrationKey?: string
-}
+export type NativeRelayProfile =
+  | { relayId: string; url: string; spkiHash: string; registrationKey?: string }
+  | {
+      relayId: string
+      url: string
+      /** A relay that proves itself with its own key rather than a pinned certificate; several origins may reach it. */
+      kind: 'edge'
+      relayKey: string
+      extraUrls?: string[]
+      shard?: number
+      registrationKey?: string
+    }
 /** One QR on the Mac's pairing sheet. Its payload is the secret: the sheet renders it and closes it, nothing else. */
 export interface NativePairingInvitation {
   id: string

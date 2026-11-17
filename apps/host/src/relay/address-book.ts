@@ -13,7 +13,7 @@ import { nodeCrypto, signAddressBook } from '@latch/link-client'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import type { HostIdentity } from '../identity.ts'
-import { RelayProfiles, secretBytes } from './profiles.ts'
+import { bookRelays, RelayProfiles, secretBytes } from './profiles.ts'
 
 export class HostAddressBooks {
   private readonly profiles: RelayProfiles
@@ -25,6 +25,8 @@ export class HostAddressBooks {
     identity: HostIdentity,
     lan: () => readonly NativeLanAddress[],
     private readonly directory?: () => NativeDirectorySource | undefined,
+    /** The region of the nearest official node as measured by the relay controller, when known. */
+    private readonly region?: () => string | undefined,
   ) {
     this.profiles = profiles
     this.identity = identity
@@ -49,8 +51,17 @@ export class HostAddressBooks {
     const lan = [...this.lan()]
     const source = this.directory?.(),
       sourceHash = (value: NativeDirectorySource | undefined) => (value ? Buffer.from(encodeDirectorySource(value)).toString('hex') : '')
+    const hostRegion = this.region?.()
     const fingerprint = sha256Hex(
-      canonicalJson({ discoveryKey: state.discoveryKey, profiles: state.profiles, lan, directory: sourceHash(source) }),
+      canonicalJson({
+        discoveryKey: state.discoveryKey,
+        profiles: state.profiles,
+        officialOff: state.officialOff ?? false,
+        ownFirst: state.ownFirst ?? false,
+        lan,
+        directory: sourceHash(source),
+        hostRegion: hostRegion ?? null,
+      }),
     )
     const now = Date.now(),
       day = Math.floor(now / 1000 / UTC_DAY)
@@ -65,8 +76,12 @@ export class HostAddressBooks {
       relays: [],
       ...(source ? { directory: source } : {}),
     }
-    // The book holds four relays, the built-in ones first: more would not fit a phone's bounds.
-    for (const profile of state.profiles.slice(0, 4)) {
+    // At most four relays in the person's order of preference (official first unless they chose their own first, and
+    // none while the official relay is off). The Host's region is signed in only when the official nodes lead: phones
+    // try that node first, and it must not jump ahead of relays the person put first.
+    const relays = bookRelays(state)
+    if (!state.ownFirst && hostRegion !== undefined && relays.some(profile => profile.region === hostRegion)) book.hostRegion = hostRegion
+    for (const profile of relays) {
       const relayId = Buffer.from(profile.relayId, 'hex'),
         passes = []
       for (let offset = 0; offset <= 30; offset++)
@@ -86,7 +101,20 @@ export class HostAddressBooks {
           })
           passes.push({ pass, holderSeed: device.seed })
         }
-      book.relays.push({ relayId, url: profile.url, spkiHash: Buffer.from(profile.spkiHash, 'hex'), passes, profile: 'outer-pad-v2' })
+      book.relays.push(
+        profile.kind === 'edge'
+          ? {
+              relayId,
+              url: profile.url,
+              spkiHash: new Uint8Array(32),
+              passes,
+              profile: 'outer-pad-v2',
+              edge: { relayKey: Buffer.from(profile.relayKey!, 'hex'), shard: profile.shard ?? 0 },
+              ...(profile.region ? { region: profile.region } : {}),
+              ...(profile.extraUrls ? { extraUrls: [...profile.extraUrls] } : {}),
+            }
+          : { relayId, url: profile.url, spkiHash: Buffer.from(profile.spkiHash!, 'hex'), passes, profile: 'outer-pad-v2' },
+      )
     }
     const current = this.profiles.snapshot()
     if (
@@ -95,8 +123,11 @@ export class HostAddressBooks {
         canonicalJson({
           discoveryKey: current.discoveryKey,
           profiles: current.profiles,
+          officialOff: current.officialOff ?? false,
+          ownFirst: current.ownFirst ?? false,
           lan: [...this.lan()],
           directory: sourceHash(this.directory?.()),
+          hostRegion: this.region?.() ?? null,
         }),
       )
     )

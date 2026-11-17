@@ -83,6 +83,8 @@ export interface NativeRoutes extends RouteModule {
   invalidate(): void
   /** Lets the relay controller follow a change the Host announced. */
   reconcile(): void
+  /** The region of the nearest connected official node, for the address book's hint. */
+  nearestRelayRegion(): string | undefined
   /** Starts the native entry, plugin transports, relay controller, network watcher and settings. */
   start(host: NativeStart): Promise<void>
   /** Stops them, closing the relay directory between the plugin transports and the relay controller. */
@@ -414,8 +416,9 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
 
   async function handleNative({ req, res, caller, path, method }: CallerRequest): Promise<boolean> {
     if (path === '/link/api/native/info' && method === 'GET') {
-      requireLocal(caller)
+      // Any admin device may read the relay state; changing it stays with this Mac's local administrator.
       if (caller.device) requireScope(caller, 'admin')
+      else requireLocal(caller)
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
       await nativeSettings.settleRelayWrite()
       if (caller.device) recheck(caller, 'admin')
@@ -475,8 +478,13 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
           { form: 'origin.confirm', slots: { target } },
           [
             { label: '自建中继', value: plan.input.url },
+            ...('extraUrls' in plan.input && plan.input.extraUrls
+              ? plan.input.extraUrls.map(value => ({ label: '同一中继的其他地址', value }))
+              : []),
             { label: '中继标识', value: plan.input.relayId },
-            { label: '证书公钥 SHA-256', value: plan.input.spkiHash },
+            'relayKey' in plan.input
+              ? { label: '中继公钥', value: plan.input.relayKey }
+              : { label: '证书公钥 SHA-256', value: plan.input.spkiHash },
           ],
           [],
           target,
@@ -499,6 +507,23 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       const result = await nativeSettings.cancelRelay(id, actorOf(caller), () => recheck(caller, 'admin'), auditFailed)
       if (!result.audited) res.setHeader('x-latch-audit', 'failed')
       recheck(caller, 'admin')
+      json(res, nativeSettings.info(caller.device.id))
+      return true
+    }
+    if (path === '/link/api/native/official-relay' && method === 'PUT') {
+      requireLocal(caller)
+      requireScope(caller, 'admin')
+      if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+      const change = z
+        .strictObject({ enabled: z.boolean().optional(), ownFirst: z.boolean().optional() })
+        .refine(value => value.enabled !== undefined || value.ownFirst !== undefined)
+        .parse(await jsonBody(req, KIB))
+      const authorize = () => recheck(caller, 'admin')
+      await nativeSettings.settleRelayWrite()
+      const result = await nativeSettings.setOfficial(change, actorOf(caller), authorize, auditFailed)
+      if (!result.audited) res.setHeader('x-latch-audit', 'failed')
+      refresh()
+      authorize()
       json(res, nativeSettings.info(caller.device.id))
       return true
     }
@@ -543,7 +568,10 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       devices,
       enrollments,
       ...(options.native ? { bind: options.native } : {}),
-      relayAvailable: () => relayProfiles.snapshot().profiles.some(profile => !profile.builtIn || devices.nativeReachable()),
+      relayAvailable: () => {
+        const state = relayProfiles.snapshot()
+        return state.profiles.some(profile => !profile.builtIn || (devices.nativeReachable() && !state.officialOff))
+      },
       handler(req, res, opening) {
         const permitted = () =>
           (!opening.windowHash || nativeVerifiedUntil(opening) > now()) && (!opening.bulk || opening.bulk.expiresAt > now())
@@ -646,6 +674,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
     },
     invalidate: () => nativeNetwork?.invalidate(),
     reconcile: () => relayController?.reconcile(),
+    nearestRelayRegion: () => relayController?.nearestRegion(),
     start,
     async close() {
       await nativeNetwork?.close()

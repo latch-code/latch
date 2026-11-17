@@ -193,7 +193,7 @@ it('refuses symlink or overly readable configuration while preserving invalid by
 })
 it('keeps compiled-in relays as built-in profiles with lasting seeds, apart from configured ones', async () => {
   const { directory, profiles } = await fixture()
-  const tokyo = { relayId: 'a'.repeat(32), url: 'https://tokyo.relay.example/', spkiHash: 'b'.repeat(64) }
+  const tokyo = { relayId: 'a'.repeat(32), kind: 'self' as const, url: 'https://tokyo.relay.example/', spkiHash: 'b'.repeat(64) }
   const custom = { relayId: 'c'.repeat(32), url: 'https://home.example/', spkiHash: 'd'.repeat(64) }
   await profiles.syncOfficial([])
   expect(profiles.snapshot().profiles).toEqual([])

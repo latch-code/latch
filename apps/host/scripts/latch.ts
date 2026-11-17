@@ -22,6 +22,7 @@ import {
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, redactSecrets } from '@latch/core/node-kit'
 import { AuditLog, verifyAuditFile, type AuditActor } from '../src/audit.ts'
+import { RELAY_USAGE, RelayCliError, runRelayCommand } from './latch-relay.ts'
 import { createOfflineTicket } from '../src/auth.ts'
 import { CustomizationStore } from '../src/customization.ts'
 import { addressOf, HostConfig, keyScopeOf, keyScopeText, originOf, type ProviderRecord, type WorkspaceRecord } from '../src/config.ts'
@@ -151,14 +152,25 @@ const USAGE = `用法：pnpm latch <命令> [--data-dir <目录>]
   customization reset                      把外观恢复默认，历史保留（Host 运行中或已停止都可以）
   audit verify                             校验审计记录
   traffic [--json]                         Host 本次启动以来发出的字节数与帧大小分布（Host 运行中）
-  diagnostics --out <文件>                 导出诊断文件：版本、Harness 与插件状态、近期事件（不含日志原文），
+${RELAY_USAGE}  diagnostics --out <文件>                 导出诊断文件：版本、Harness 与插件状态、近期事件（不含日志原文），
                                            不含对话、文件内容与密钥；写入新建的 0600 文件，不覆盖（Host 运行中）
 `
 
 function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, string | true> } {
   const positional: string[] = []
   const flags = new Map<string, string | true>()
-  const valued = new Set(['--data-dir', '--scopes', '--code-file', '--port', '--name', '--workspace', '--expect-url', '--out'])
+  const valued = new Set([
+    '--data-dir',
+    '--scopes',
+    '--code-file',
+    '--port',
+    '--name',
+    '--workspace',
+    '--expect-url',
+    '--out',
+    '--file',
+    '--expect-relay-id',
+  ])
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!
     if (!arg.startsWith('--')) {
@@ -1063,6 +1075,19 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       }
       return 0
     }
+    if (group === 'relay') {
+      const handled = await runRelayCommand({
+        command,
+        rest,
+        flags,
+        dataDir,
+        io,
+        out,
+        actor: CLI_ACTOR,
+        stopped: () => lockStopped(dataDir),
+      })
+      if (handled !== undefined) return handled
+    }
     if (group === 'diagnostics' && command === undefined) {
       const target = flags.get('--out')
       if (typeof target !== 'string') throw new CliError('请用 --out <文件> 指定诊断文件的位置')
@@ -1102,7 +1127,11 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
     return 1
   } catch (error) {
     const message =
-      error instanceof CliError || error instanceof AppError ? error.message : error instanceof Error ? error.message : String(error)
+      error instanceof CliError || error instanceof AppError || error instanceof RelayCliError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : String(error)
     io.stderr.write(`${redactSecrets(message)}\n`)
     return 1
   }

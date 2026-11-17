@@ -1656,6 +1656,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       identity,
       () => nativeRoutes.lan(),
       () => relayDirectory.sources(),
+      () => nativeRoutes.nearestRelayRegion(),
     )
     const revokedDiscoveryHash = () =>
       sha256Hex(
