@@ -10,6 +10,7 @@ import {
   type FileDiff,
   type FileMention,
   type Message,
+  type RewindPreview,
   readsProjectFiles,
 } from '@latch/protocol'
 import { AppError, type ProjectFolder } from '@latch/sdk'
@@ -20,7 +21,7 @@ import { isInsidePath } from '../paths.ts'
 import { projectIdOf } from '../session-lifecycle.ts'
 import type { Caller, CallerRequest, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 
-const TASK_PATH = /^\/link\/api\/tasks\/([^/]+)\/changes(?:\/(file|patch|turns|discard|discard\/preview))?$/u
+const TASK_PATH = /^\/link\/api\/tasks\/([^/]+)\/changes(?:\/(file|patch|turns|discard|discard\/preview|rewind|rewind\/preview))?$/u
 const TURN_PATH = /^\/link\/api\/tasks\/([^/]+)\/turns\/([^/]+)\/(undo|redo)$/u
 const ACTIVE_STATUSES = new Set(['running', 'waiting-approval'])
 
@@ -28,6 +29,13 @@ const fileSchema = z.custom<FileMention>(isFileMention, '文件引用无效。')
 const files = z.array(fileSchema).min(1).max(1000)
 const undoSchema = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
 const previewSchema = z.strictObject({ files: files.optional() })
+const messageId = z.string().min(1).max(256)
+const rewindPreviewSchema = z.strictObject({ messageId })
+const rewindSchema = z.strictObject({
+  messageId,
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  confirm: z.string().regex(/^[0-9a-f]{64}$/u),
+})
 const discardSchema = z.discriminatedUnion('scope', [
   z.strictObject({ scope: z.literal('turn'), turnId: z.string().min(1).max(256), files }),
   z.strictObject({
@@ -57,6 +65,20 @@ function runEdits(messages: readonly Message[], opener: string | undefined): Fil
   const after = messages.slice(start + 1)
   const end = after.findIndex(message => message.role === 'user')
   return (end < 0 ? after : after.slice(0, end)).flatMap(message => message.tool?.diffs ?? [])
+}
+
+/**
+ * The turns from the person's message on, oldest first, each by the turn ID its opening message carries. Undefined when
+ * one of them carries none, so the record cannot cover it.
+ */
+function turnsFrom(messages: readonly Message[], messageId: string): string[] | undefined {
+  const index = messages.findIndex(message => message.id === messageId)
+  const message = messages[index]
+  if (!message || message.role !== 'user' || message.steered || message.imported)
+    throw new AppError(404, 'change-message-missing', '找不到这条消息，请重新打开会话。')
+  const opened = messages.slice(index).filter(item => item.role === 'user' && !item.steered)
+  if (opened.some(item => !item.turnId)) return undefined
+  return opened.map(item => item.turnId!)
 }
 
 /** Two sessions work in the same place when a folder of one is, or lies inside, a folder of the other. */
@@ -212,7 +234,11 @@ export function createChangeRoutes(context: RouteContext): ChangeRoutes {
     return async plan => {
       assertFilesVisible(caller, 'run')
       if (confirm !== undefined && plan.planHash !== confirm)
-        throw new AppError(409, 'change-confirm-stale', '未提交的改动已变化，请重新确认。')
+        throw new AppError(
+          409,
+          'change-confirm-stale',
+          plan.action === 'rewind' ? '这些文件已变化，请重新确认。' : '未提交的改动已变化，请重新确认。',
+        )
       const { action, sessionId, turnId, scope, restore, remove, skipped, planHash } = plan
       const counts = { sessionId, restore, remove, skipped, planHash }
       const actor = actorOf(caller)
@@ -225,7 +251,7 @@ export function createChangeRoutes(context: RouteContext): ChangeRoutes {
         })
       else
         await audited({
-          action: action === 'undo' ? 'change.undo' : 'change.redo',
+          action: action === 'undo' ? 'change.undo' : action === 'redo' ? 'change.redo' : 'change.rewind',
           actor,
           target: sessionId,
           detail: { ...counts, turnId: turnId! },
@@ -285,6 +311,37 @@ export function createChangeRoutes(context: RouteContext): ChangeRoutes {
       const session = await writable(caller, sessionId)
       const plan = await (await engine()).previewDiscard({ session, ...(input.files ? { files: input.files } : {}) })
       json(res, { ...plan, warning: discardWarning(plan) } satisfies DiscardPreview)
+      return true
+    }
+    if (part === 'rewind/preview') {
+      requireScope(caller, 'run')
+      const input = rewindPreviewSchema.parse(await jsonBody(req))
+      const session = await writable(caller, sessionId)
+      const turnIds = turnsFrom((await hub.detail(sessionId)).messages, input.messageId)
+      const preview: RewindPreview = turnIds
+        ? await (await engine()).previewRewind({ session, turnIds })
+        : { available: false, reason: 'not-recorded' }
+      assertFilesVisible(caller, 'run')
+      json(res, preview)
+      return true
+    }
+    if (part === 'rewind') {
+      requireScope(caller, 'run')
+      const input = rewindSchema.parse(await jsonBody(req))
+      const session = await writable(caller, sessionId)
+      const turnIds = turnsFrom((await hub.detail(sessionId)).messages, input.messageId)
+      if (!turnIds) throw new AppError(409, 'change-not-recorded', '这一条之后有的轮次没有改动记录，文件退不回这一条之前。')
+      const receipt = await (
+        await engine()
+      ).rewind({
+        session,
+        messageId: input.messageId,
+        turnIds,
+        requestId: input.requestId,
+        beforeWrite: auditFirst(caller, input.confirm),
+      })
+      json(res, receipt)
+      refresh(session.id)
       return true
     }
     if (part === 'discard') {

@@ -15,5 +15,7 @@ const turnPlan = z.strictObject({ ...plan, turnId: opaqueId })
 export const CHANGE_ACTIONS = {
   'change.undo': turnPlan,
   'change.redo': turnPlan,
+  // 从这里编辑 with 同时把文件退回: every turn from that message on, `turnId` the first of them.
+  'change.rewind': turnPlan,
   'change.discard': z.strictObject({ ...plan, scope: z.enum(['turn', 'uncommitted']), turnId: opaqueId.optional() }),
 } as const satisfies Record<string, ZodType>

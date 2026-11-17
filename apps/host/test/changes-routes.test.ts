@@ -10,6 +10,8 @@ import {
   type ChangeList,
   type ChangeReceipt,
   type DiscardPreview,
+  type RewindPreview,
+  type RewindReceipt,
   type TaskDetail,
   type TurnChanges,
 } from '@latch/protocol'
@@ -356,6 +358,41 @@ describe('changes routes', () => {
       for (const host of hosts.splice(0)) await host.close()
       await rm(dirs, { recursive: true, force: true })
     }
+  })
+})
+
+describe('putting the files back to before a message (从这里编辑)', () => {
+  it('previews and writes from a message, audited first, for a device that may write the session and see its files', async () => {
+    const { t, owner, sessionId, path, file, turnId } = await fixture()
+    const { messages } = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+    const first = messages.find(message => message.role === 'user')!
+    expect(first.turnId).toBe(turnId)
+    const narrow = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'work' })
+    const refused = await narrow.request(`${path}/rewind/preview`, { method: 'POST', body: { messageId: first.id } })
+    expect(refused.status).toBe(403)
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    await t.host.security.devices.setScopes(viewer.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
+    expect((await viewer.request(`${path}/rewind/preview`, { method: 'POST', body: { messageId: first.id } })).status).toBe(403)
+    const preview = await owner.json<RewindPreview>(`${path}/rewind/preview`, { method: 'POST', body: { messageId: first.id } })
+    expect(preview).toMatchObject({ available: true, remove: 2 })
+    if (!preview.available) throw new Error('unavailable')
+    const missing = await owner.request(`${path}/rewind/preview`, { method: 'POST', body: { messageId: 'nope' } })
+    expect(((await missing.json()) as { error: string }).error).toBe('change-message-missing')
+    const stale = await owner.request(`${path}/rewind`, {
+      method: 'POST',
+      body: { messageId: first.id, requestId: randomUUID(), confirm: 'f'.repeat(64) },
+    })
+    expect(((await stale.json()) as { error: string }).error).toBe('change-confirm-stale')
+    expect(existsSync(file('agent-edit.txt'))).toBe(true)
+    const requestId = randomUUID()
+    const receipt = await owner.json<RewindReceipt>(`${path}/rewind`, {
+      method: 'POST',
+      body: { messageId: first.id, requestId, confirm: preview.planHash },
+    })
+    expect(receipt).toMatchObject({ messageId: first.id, removed: 2 })
+    expect(existsSync(file('agent-edit.txt'))).toBe(false)
+    expect(existsSync(file('command-edit.txt'))).toBe(false)
+    expect(await audited(t)).toEqual(['change.rewind'])
   })
 })
 

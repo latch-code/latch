@@ -113,6 +113,16 @@ sources:
 - 斜杠命令（以 `/` 开头紧跟非空白）不带说明，因为命令必须在消息最前面；说明留给下一条普通消息。
 - 读取说明最多等 15 秒，超时后消息照发，说明留给下一条，这条消息的重试也不带。没有说明要告知时，消息不排在项目的改动队列后面。
 
+## 退回到某一条之前
+
+「从这里编辑」可以同时把文件退回到被编辑那一条之前（[STREAMING.md](STREAMING.md#从这里编辑)）。它是撤销本轮的规则用在那一条起的每一轮上，作为一个计划：
+
+- **覆盖范围。** 那一条起每条开新一轮的用户消息都要带 `turnId`，记录从这一轮起的轮次必须正好是这些（记录里多一轮或少一轮都是 `not-recorded`），且都已结算、不是 `partial`；否则不提供（`not-recorded`、`not-settled`、`partial`）。这些轮次都没有改文件时也不提供（`no-changes`）。
+- **每个文件**回到这些轮次里第一次改它的那一轮开始时的内容；它必须还是最后一次改它的那一轮留下的样子，并且两轮之间没有被别人改过，否则一个文件也不写（`changed-since`）。已撤销的一轮按它开始时的内容算。有一边没有留存的文件不写也不删，列在 `notRestored`；轮次的 `notCovered` 一并列出。
+- **先预览再确认。** `POST changes/rewind/preview { messageId }` 回答 `RewindPreview`（要写回与删除的文件、`planHash`，或不能的原因）；`POST changes/rewind { messageId, requestId, confirm }` 只按这个 `planHash` 执行，计划变了 409 `change-confirm-stale`。审计 `change.rewind` 先写（计数与计划哈希，没有路径）。同一 `requestId` 重试得到同一回执（`replay`）。
+- **之后。** 有文件在退回范围内的每一轮记为已撤销（文件全都没有留存的一轮不动），「恢复」可以逐轮放回；告诉 Agent 的说明按每一轮实际写回与跳过的文件数；原会话的下一条消息照撤销本轮告诉 Agent（分叉出去的新会话从没见过这些改动，不需要）。
+- 权限与撤销本轮相同：`run`、数据范围 `files`、经过发消息的检查，运行中 409 `change-running`。
+
 ## 人的编辑
 
 文件预览的「编辑」（[DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md#编辑)）经 `personEdit` 写文件。
@@ -134,6 +144,7 @@ sources:
 | `GET changes/patch?scope=&turn=` | 复制补丁 |
 | `GET changes/turns` | 保留的轮次 |
 | `POST turns/:turnId/undo`、`redo`（`{ requestId }`） | 撤销本轮、恢复 |
+| `POST changes/rewind/preview`（`{ messageId }`）、`POST changes/rewind`（`{ messageId, requestId, confirm }`） | 把文件退回到这一条之前（「从这里编辑」） |
 | `POST changes/discard`（`{ scope: 'turn', turnId, files }`） | 撤销此文件 |
 | `POST changes/discard/preview`（`{ files? }`） | 撤销未提交改动前的确认内容：要删的文件、`planHash` 与确认框的 `warning` |
 | `POST changes/discard`（`{ scope: 'uncommitted', files?, confirm }`） | 撤销未提交的改动 |

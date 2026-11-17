@@ -5088,7 +5088,10 @@ export class AgentRuntime implements Bridge {
         undefined,
         undefined,
         undefined,
-        run.userText === undefined ? undefined : { userText: run.userText },
+        {
+          ...(run.userText === undefined ? {} : { userText: run.userText }),
+          ...(run.userMessageId ? { messageId: run.userMessageId } : {}),
+        },
       )
       if (brief) this.briefSent(run, brief)
       if (note) this.noteSent(run, note)
@@ -6080,7 +6083,9 @@ export class AgentRuntime implements Bridge {
     let result: unknown
     let carried: string | undefined
     if (!current) {
-      result = (await this.ownFork(taskId, live, setup, mcpServers)) ?? (await setup('session/new', { cwd, mcpServers, ...directories }))
+      result =
+        (await this.ownFork(taskId, live, setup, mcpServers, directories))
+        ?? (await setup('session/new', { cwd, mcpServers, ...directories }))
       const id = sessionState.safeParse(result)
       if (!id.success || !id.data.sessionId) throw new AppError(502, 'agent-protocol', `${this.agent.name} 未返回有效的会话标识`)
       acpSessionId = id.data.sessionId
@@ -6201,6 +6206,7 @@ export class AgentRuntime implements Bridge {
     live: Live,
     setup: (method: string, params: unknown) => Promise<unknown>,
     mcpServers: unknown[],
+    directories: { additionalDirectories?: string[] } = {},
   ): Promise<unknown> {
     const task = this.task(taskId)
     const fork = task.acp.fork
@@ -6217,7 +6223,14 @@ export class AgentRuntime implements Bridge {
     if (typeof point === 'string') reason = point
     else
       try {
-        const result = await setup(FORK_METHOD, { sessionId: point.source, cwd: task.acp.cwd, before: point.before, mcpServers })
+        const result = await setup(FORK_METHOD, {
+          sessionId: point.source,
+          cwd: task.acp.cwd,
+          before: point.before,
+          ...(point.through ? { through: point.through } : {}),
+          mcpServers,
+          ...directories,
+        })
         const forked = this.state.tasks[taskId]
         if (forked?.acp.fork) {
           forked.acp.fork.native = true
@@ -6249,7 +6262,11 @@ export class AgentRuntime implements Bridge {
    * Where the agent's own record of the source session is to be forked: the session to fork and the time its next turn
    * began, before which everything it wrote belongs to the turns up to the fork. Or why it cannot be forked there.
    */
-  private forkPoint(task: AcpTask, fork: NonNullable<AcpRecord['fork']>, live: Live): { source: string; before: string } | string {
+  private forkPoint(
+    task: AcpTask,
+    fork: NonNullable<AcpRecord['fork']>,
+    live: Live,
+  ): { source: string; before: string; through?: string } | string {
     if (!live.wire.forks) return '它不能分叉自己的会话'
     const source = this.state.tasks[fork.taskId]
     if (!source) return '找不到来源会话'
@@ -6263,7 +6280,9 @@ export class AgentRuntime implements Bridge {
     if (!source.acp.acpSessionId) return '来源会话还没有它自己的记录'
     const next = later.find(message => message.role === 'user' && !message.steered)
     if (next && !next.createdAt) return '来源会话没有记下下一轮开始的时间'
-    return { source: source.acp.acpSessionId, before: next?.createdAt ?? this.now() }
+    // The message that opened the last turn kept: a wire that marked its turns with Latch's messages forks after it.
+    const through = source.messages.slice(0, end + 1).findLast(message => message.role === 'user' && !message.steered)?.id
+    return { source: source.acp.acpSessionId, before: next?.createdAt ?? this.now(), ...(through ? { through } : {}) }
   }
 
   /**

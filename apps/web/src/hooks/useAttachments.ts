@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AttachmentCapabilities, AttachmentRef, AttachmentSelection } from '@latch/protocol'
-import { api, ApiError, errorMessage, newRequestId, uploadAttachment } from '../core/api.ts'
+import { api, ApiError, errorMessage, MessageError, newRequestId, uploadAttachment } from '../core/api.ts'
 import { looksLikeImage, SHRINK_INPUT_BYTES, ShrinkRefusal, shrinkImage } from './imageShrink.ts'
 
 export interface DraftAttachment {
@@ -18,7 +18,39 @@ export interface DraftAttachment {
   shrink?: true
   /** The original's size once `file` is its shrunk copy. */
   shrunkFrom?: number
+  /**
+   * 从这里编辑: an attachment of a sent message, which the Host copies into a draft of this device; `file` holds its bytes
+   * once the copy is read back, for the preview.
+   */
+  source?: AttachmentRef
 }
+/** The size of what goes: the copy's, before its bytes are read back. */
+export const draftSize = (item: DraftAttachment): number => item.ref?.size ?? item.source?.size ?? item.file.size
+
+/** A sent attachment copied as this device's draft, and its bytes read back for the preview. */
+async function reuseAttachment(
+  source: AttachmentRef,
+  body: { requestId: string; selection: AttachmentSelection; sessionId?: string; secretAcknowledged?: true },
+  signal: AbortSignal,
+): Promise<{ ref: AttachmentRef; file: File }> {
+  const { attachment: ref } = await api<{ attachment: AttachmentRef }>(`attachments/${encodeURIComponent(source.id)}/reuse`, {
+    method: 'POST',
+    body,
+    signal,
+  })
+  const { file } = await api<{ file: { handle?: unknown } }>(`attachments/${encodeURIComponent(ref.id)}/resolve`, {
+    method: 'POST',
+    signal,
+  })
+  if (typeof file?.handle !== 'string') throw new MessageError('附件响应无效。')
+  const bytes = await api<ArrayBuffer>(`attachments/${encodeURIComponent(file.handle)}/content`, {
+    response: 'bytes',
+    signal,
+    timeoutMs: 60_000,
+  })
+  return { ref, file: new File([bytes], ref.name, { type: ref.kind === 'image' ? ref.mime : 'text/plain' }) }
+}
+
 const IMAGE_BYTES = 5 * 1024 * 1024
 const FILE_BYTES = 25 * 1024 * 1024
 /**
@@ -188,6 +220,62 @@ export function useAttachments({
     const acknowledgedSecret = acknowledged || item.secretAcknowledged === true
     const controller = new AbortController(),
       current = generation.current
+    if (item.source) {
+      const controller = new AbortController(),
+        current = generation.current
+      update(items =>
+        items.map(entry =>
+          entry.key === key
+            ? {
+                ...entry,
+                ...(acknowledged ? { secretAcknowledged: true as const } : {}),
+                status: 'uploading',
+                error: undefined,
+                progress: 0,
+              }
+            : entry,
+        ),
+      )
+      const promise = reuseAttachment(
+        item.source,
+        {
+          requestId: item.requestId,
+          selection,
+          ...(sessionId ? { sessionId } : {}),
+          ...(acknowledged || item.secretAcknowledged ? { secretAcknowledged: true as const } : {}),
+        },
+        controller.signal,
+      )
+        .then(({ ref, file }) => {
+          if (current !== generation.current || !state.current.some(entry => entry.key === key)) {
+            void api(`attachments/${ref.id}`, { method: 'DELETE' }).catch(() => {})
+            return
+          }
+          update(items => items.map(entry => (entry.key === key ? { ...entry, ref, file, status: 'ready', progress: 1 } : entry)))
+        })
+        .catch(cause => {
+          if (current !== generation.current) return
+          const confirm = cause instanceof ApiError && cause.code === 'attachment-secret'
+          // The sent one is gone, or this device may no longer read it: only removing helps.
+          const gone = cause instanceof ApiError && (cause.code === 'attachment-missing' || cause.status === 403)
+          update(items =>
+            items.map(entry =>
+              entry.key === key
+                ? {
+                    ...entry,
+                    status: confirm ? 'confirm' : gone || refusedUpload(cause) ? 'refused' : 'failed',
+                    error: controller.signal.aborted ? '已取消，可以重试。' : errorMessage(cause),
+                  }
+                : entry,
+            ),
+          )
+        })
+        .finally(() => {
+          if (jobs.current.get(key)?.controller === controller) jobs.current.delete(key)
+        })
+      jobs.current.set(key, { controller, promise })
+      return
+    }
     const limit = item.shrink && shrinkLimit(item.file, caps)
     if (limit) {
       update(items => items.map(entry => (entry.key === key ? { ...entry, status: 'uploading', error: undefined, progress: 0 } : entry)))
@@ -304,6 +392,22 @@ export function useAttachments({
     update(items => [...items, ...accepted])
     for (const item of accepted) start(item.key)
   }
+  /** 从这里编辑: a sent message's attachments, copied by the Host as drafts of this device. */
+  const reuse = (refs: readonly AttachmentRef[]) => {
+    if (!enabled || locked || !refs.length) return
+    const room = Math.max(0, 8 - state.current.length)
+    const accepted: DraftAttachment[] = refs.slice(0, room).map(ref => ({
+      key: crypto.randomUUID(),
+      requestId: newRequestId(),
+      file: new File([], ref.name, { type: ref.kind === 'image' ? ref.mime : 'text/plain' }),
+      source: ref,
+      status: 'uploading',
+      progress: 0,
+    }))
+    if (refs.length > room) setError('每条消息最多添加 8 个附件。')
+    update(items => [...items, ...accepted])
+    for (const item of accepted) start(item.key)
+  }
   /** The Host released these uploads: each row says so and can only be removed. */
   const markReleased = (text: string) =>
     update(items => items.map(item => (item.ref ? { ...item, status: 'refused' as const, error: text } : item)))
@@ -330,7 +434,7 @@ export function useAttachments({
         setError('附件尚未准备好。请重试失败的文件，或移除后发送。')
         return
       }
-      if (state.current.some(item => (item.ref?.kind === 'image' ? !caps?.images : !caps?.text || item.file.size > caps.textBytes))) {
+      if (state.current.some(item => (item.ref?.kind === 'image' ? !caps?.images : !caps?.text || draftSize(item) > caps.textBytes))) {
         setError(caps?.reason ?? '当前 Harness 不接受这些附件。请移除附件或更换模型。')
         return
       }
@@ -357,6 +461,7 @@ export function useAttachments({
     error,
     preparing,
     add,
+    reuse,
     remove,
     retry: start,
     markReleased,

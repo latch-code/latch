@@ -197,7 +197,7 @@ function Empty({ title, detail, children }: { title: string; detail?: string | u
   )
 }
 
-function MissedList({ files }: { files: readonly MissedFile[] }) {
+export function MissedList({ files }: { files: readonly MissedFile[] }) {
   return (
     <div className="changes-missed">
       {files.map(file => (

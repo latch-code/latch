@@ -275,8 +275,17 @@ const BUBBLE_CLAMP = 176
 export const TurnEditLocked = createContext(false)
 
 function EditTurnButton({ message, onEdit }: { message: Message; onEdit: (message: Message) => void }) {
-  if (useContext(TurnEditLocked)) return null
-  return <IconButton icon={UndoGlyph} size="xs" label="从这里编辑" onClick={() => onEdit(message)} />
+  const locked = useContext(TurnEditLocked)
+  return (
+    <IconButton
+      icon={UndoGlyph}
+      size="xs"
+      label="从这里编辑"
+      disabled={locked}
+      tooltip={locked ? '这一轮结束后才能编辑' : '从这里编辑 · 原会话保留'}
+      onClick={() => onEdit(message)}
+    />
+  )
 }
 
 function UserMessage({

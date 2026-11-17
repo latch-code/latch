@@ -9,7 +9,7 @@ export type DiscardTarget = { scope: 'turn'; turnId: string; files: FileMention[
  * changes, and the engine writes nothing when that throws. Only ids, counts and a hash: never paths or content.
  */
 export interface ChangeWritePlan {
-  action: 'undo' | 'redo' | 'discard'
+  action: 'undo' | 'redo' | 'discard' | 'rewind'
   sessionId: string
   turnId?: string
   scope?: 'turn' | 'uncommitted'

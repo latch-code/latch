@@ -470,6 +470,15 @@ const createTaskSchema = promptSchema.extend({
     .object({ taskId: z.string().min(1).max(256), upToMessageId: z.string().min(1).max(256) })
     .strict()
     .optional(),
+  /**
+   * 从这里编辑 on a session's first message: a new session with the edited words, which nothing precedes. The Host reads
+   * the source and makes the new session as private as it, and marks it as starting from outside content where the
+   * source did (it may hold handed-over material); the page never builds this start from parts.
+   */
+  editOf: z
+    .object({ taskId: z.string().min(1).max(256) })
+    .strict()
+    .optional(),
   mode: z.enum(['chat', 'agent']).optional(),
   harnessId: z.string().regex(HARNESS_ID).optional(),
   workspaceId: z.string().min(1).max(64).optional(),
@@ -2465,6 +2474,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       capabilities: attachmentCapabilities,
       unused: (caller, reserved) => unusedReservations(caller.device!.id, reserved),
       busy: (caller, requestId) => reservationBusy(caller.device!.id, requestId),
+      limit: caller => limits.classC.take(caller.device!.id),
       sessionAccess: async (caller, id) => {
         requireScope(caller, 'view')
         await assertSessionAccess(caller, id)
@@ -8447,7 +8457,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     ): Promise<{ sessionId: string }> {
       const owner = input.customAgentId!
       const actor = agentAccess(caller, true)
-      if (input.forkOf || input.appDraft) throw new AppError(409, 'agent-chat-fork', '请在 Code 中复制或继续这个会话。')
+      if (input.forkOf || input.editOf || input.appDraft) throw new AppError(409, 'agent-chat-fork', '请在 Code 中复制或继续这个会话。')
       await migrateAgentChats(caller)
       const first: FirstChatStart = {
         deviceId: caller.device.id,
@@ -8513,7 +8523,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (input.customAgentId !== GENERAL_AGENT_ID) return
       if ((input.harnessId !== undefined && input.harnessId !== 'standard') || input.mode === 'chat')
         throw new AppError(503, 'general-start-unconfirmed', '这次旧版通用启动尚未确认。请核对已有话题，或放弃这次提交后再开始。')
-      if (input.forkOf || input.worktree || input.appDraft || (input.workspaceId !== undefined && input.workspaceId !== 'default'))
+      if (
+        input.forkOf
+        || input.editOf
+        || input.worktree
+        || input.appDraft
+        || (input.workspaceId !== undefined && input.workspaceId !== 'default')
+      )
         throw new AppError(400, 'general-chat-project', '和通用的对话不带项目、工作树或分叉。')
       if (input.config?.length) throw new AppError(400, 'config-unsupported', '通用不使用外部 Harness 的设置。')
     }
@@ -8640,6 +8656,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               return { ...forkSeed(detail, input.forkOf!.upToMessageId), source: detail.summary }
             })()
           : undefined
+        if (input.editOf && input.forkOf) throw new AppError(400, 'edit-invalid', '编辑与分叉不能同时使用')
+        // 从这里编辑 on a first message: the source decides how private the new session is and what it starts from.
+        const edited = input.editOf
+          ? await (async () => {
+              requireScope(caller, 'view')
+              checkPrivateSession(caller, input.editOf!.taskId)
+              const summary = await hub!.summary(input.editOf!.taskId)
+              recheck(caller, 'view')
+              privateAccess(caller, summary)
+              return summary
+            })()
+          : undefined
         const prompt = fork ? fork.text + (input.prompt || '请接着这个会话继续。') : input.prompt
         const baseContext: AgentExecutionContext | undefined =
           (customAgentId
@@ -8652,6 +8680,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ?? (fork && privateSession(fork.source)
             ? { instructions: '', revision: sha256Hex(canonicalJson(['fork', fork.source.id])) }
             : undefined)
+          ?? (edited && privateSession(edited) ? { instructions: '', revision: sha256Hex(canonicalJson(['edit', edited.id])) } : undefined)
           ?? (privateFrom ? { instructions: '', revision: sha256Hex(canonicalJson(['handoff', privateFrom])) } : undefined)
         await rereadOutdated(harnessId)
         // A conversation with 通用 may propose memories, on a Harness that can.
@@ -8811,6 +8840,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               || fork.source.automationId !== undefined
               || hub!.outsideStartOf(fork.source.id)
               || hub!.unattended(fork.source.id)))
+          // An edited first message: the source's own words, which may be what a handoff, fork, import or unwatched
+          // run brought in.
+          || (edited
+            && (edited.automationId !== undefined
+              || edited.forkOf !== undefined
+              || edited.imported !== undefined
+              || hub!.outsideStartOf(edited.id)
+              || hub!.unattended(edited.id)))
             ? { outsideStart: true as const }
             : {}),
           harnessId,

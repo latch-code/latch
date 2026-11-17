@@ -15,7 +15,7 @@ import {
   PlusGlyph,
   CloseGlyph,
 } from '@latch/ui'
-import type { AttachmentDraftController, DraftAttachment } from '../hooks/useAttachments.ts'
+import { draftSize, type AttachmentDraftController, type DraftAttachment } from '../hooks/useAttachments.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 
@@ -208,11 +208,11 @@ function DraftAttachmentCard({
       ) : item.status === 'uploading' ? (
         <>
           <Spinner size={12} />
-          {`${uploadBytes(item.file.size * item.progress)} / ${uploadBytes(item.file.size)}`}
+          {item.source ? '取回中' : `${uploadBytes(item.file.size * item.progress)} / ${uploadBytes(item.file.size)}`}
         </>
       ) : item.status === 'ready' ? (
         item.shrunkFrom === undefined ? (
-          `${Math.ceil(item.file.size / 1024)} KB`
+          `${Math.ceil(draftSize(item) / 1024)} KB`
         ) : (
           `已缩小 · ${uploadBytes(item.file.size)}`
         )

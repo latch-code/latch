@@ -4341,7 +4341,7 @@ describe('command cache from real sessions', () => {
       await settled(bridge, sessionId)
       const first = calls.mock.calls.find(call => call[0] === 'session/prompt')!
       expect(JSON.stringify(first[1])).toContain('$brief-only')
-      expect((first as readonly unknown[])[5]).toEqual({ userText: 'echo $actual' })
+      expect((first as readonly unknown[])[5]).toEqual({ userText: 'echo $actual', messageId: expect.any(String) })
       calls.mockClear()
       const seeded = await bridge.createTask({ prompt: '', seed: 'Historical example $history-only\n', requestId: rid() })
       const later = rid()
@@ -4351,11 +4351,14 @@ describe('command cache from real sessions', () => {
       await settled(bridge, seeded.sessionId)
       const second = calls.mock.calls.find(call => call[0] === 'session/prompt')!
       expect(JSON.stringify(second[1])).toContain('$history-only')
-      expect((second as readonly unknown[])[5]).toEqual({ userText: 'echo current' })
+      expect((second as readonly unknown[])[5]).toEqual({ userText: 'echo current', messageId: expect.any(String) })
       calls.mockClear()
       await bridge.prompt(sessionId, 'echo $unproven', rid())
       await settled(bridge, sessionId)
-      expect((calls.mock.calls.find(call => call[0] === 'session/prompt') as readonly unknown[])[5]).toBeUndefined()
+      // No proven input: only the message the prompt opens, never words of the person's.
+      expect((calls.mock.calls.find(call => call[0] === 'session/prompt') as readonly unknown[])[5]).toEqual({
+        messageId: expect.any(String),
+      })
     } finally {
       calls.mockRestore()
     }
@@ -4388,7 +4391,7 @@ describe('command cache from real sessions', () => {
       const sent = calls.mock.calls.find(call => call[0] === 'session/prompt')!
       expect(JSON.stringify(sent[1])).toContain('$file-only')
       expect(JSON.stringify(sent[1])).toContain('$attachment-only')
-      expect((sent as readonly unknown[])[5]).toEqual({ userText: 'echo current' })
+      expect((sent as readonly unknown[])[5]).toEqual({ userText: 'echo current', messageId: expect.any(String) })
       expect(
         (await fixture.log()).filter(row => row.method === 'session/prompt').every(row => !JSON.stringify(row.params).includes('userText')),
       ).toBe(true)
@@ -4401,7 +4404,10 @@ describe('command cache from real sessions', () => {
         bridge.createTask({ prompt: '', requestId: emptyId, attachments: [attachment] }),
       )
       await settled(bridge, empty.sessionId)
-      expect((calls.mock.calls.find(call => call[0] === 'session/prompt') as readonly unknown[])[5]).toEqual({ userText: '' })
+      expect((calls.mock.calls.find(call => call[0] === 'session/prompt') as readonly unknown[])[5]).toEqual({
+        userText: '',
+        messageId: expect.any(String),
+      })
       await bridge.close()
       const saved = JSON.parse(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')) as { tasks: Record<string, { acp: object }> }
       for (const task of Object.values(saved.tasks)) {
@@ -4412,7 +4418,10 @@ describe('command cache from real sessions', () => {
       calls.mockClear()
       await bridge.prompt(first.sessionId, 'echo $unproven-after-recovery', rid())
       await settled(bridge, first.sessionId)
-      expect((calls.mock.calls.find(call => call[0] === 'session/prompt') as readonly unknown[])[5]).toBeUndefined()
+      // No proven input: only the message the prompt opens, never words of the person's.
+      expect((calls.mock.calls.find(call => call[0] === 'session/prompt') as readonly unknown[])[5]).toEqual({
+        messageId: expect.any(String),
+      })
     } finally {
       calls.mockRestore()
     }
@@ -4432,7 +4441,7 @@ describe('command cache from real sessions', () => {
       await settled(bridge, sessionId)
       const sent = calls.mock.calls.find(call => call[0] === 'session/prompt')!
       expect(JSON.stringify(sent[1])).toContain('$history-only')
-      expect((sent as readonly unknown[])[5]).toEqual({ userText: 'echo $current' })
+      expect((sent as readonly unknown[])[5]).toEqual({ userText: 'echo $current', messageId: expect.any(String) })
       calls.mockClear()
       await expect(
         bridge.createTask({

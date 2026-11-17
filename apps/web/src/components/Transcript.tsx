@@ -1,14 +1,6 @@
 import { Fragment, memo, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Eraser, RotateCcw } from 'lucide-react'
-import {
-  splitChangeNote,
-  type Approval,
-  type HarnessInfo,
-  type HarnessLogin,
-  type Message,
-  type TaskDetail,
-  type TurnChanges,
-} from '@latch/protocol'
+import { type Approval, type HarnessInfo, type HarnessLogin, type Message, type TaskDetail, type TurnChanges } from '@latch/protocol'
 import {
   deliveryWords,
   foldWords,
@@ -30,7 +22,6 @@ import {
   turnRoute,
   turnOutcome,
   turnTimes,
-  ownTextStart,
   workFolds,
   type TranscriptProjection,
   type Turn,
@@ -715,6 +706,11 @@ interface TranscriptProps {
   retry?: RetryAccess
   /** Forks up to a message, with a draft in the composer. */
   onFork?: (upToMessageId: string, draft?: string) => void
+  /**
+   * 从这里编辑 on one of the person's messages: `before` is the message it follows (none for the first), where the
+   * conversation goes on from with the edited message.
+   */
+  onEditFrom?: (message: Message, before: string | undefined) => void
   /** This device may mark a run's unknown results checked (已核对). */
   checkUnknown?: boolean
   /** Takes a failure's next step: 设置 › Harness or 模型服务 (only where this device can change them), or the model menu. */
@@ -758,6 +754,7 @@ export function Transcript(props: TranscriptProps) {
     observeStream,
     retry,
     onFork,
+    onEditFrom,
     onSource,
     onCopyError,
     onStop,
@@ -785,8 +782,7 @@ export function Transcript(props: TranscriptProps) {
   const editFrom = useStableCallback((message: Message) => {
     if (active) return
     const index = detail.messages.findIndex(item => item.id === message.id)
-    const before = detail.messages[index - 1]
-    if (before) onFork?.(before.id, splitChangeNote(message.text.slice(ownTextStart(message))).text)
+    if (index >= 0) onEditFrom?.(message, detail.messages[index - 1]?.id)
   })
   const continueRun = useStableCallback(() => {
     const last = detail.messages.at(-1)
@@ -927,7 +923,7 @@ export function Transcript(props: TranscriptProps) {
           reportedContext={latest ? detail.usageReport?.contextUsed : undefined}
           onForkFrom={!trailingLive && onFork ? forkFrom : undefined}
           onCopyUpTo={!trailingLive ? copyUpTo : undefined}
-          {...(onFork && index > 0 ? { onEdit: editFrom } : {})}
+          {...(onEditFrom ? { onEdit: editFrom } : {})}
           {...(onFork ? { onContinue: continueRun } : {})}
           {...(latest && checkUnknown ? { checkUnknown: true } : {})}
           {...(steps ? { onFailureStep: steps } : {})}
@@ -947,6 +943,7 @@ export function Transcript(props: TranscriptProps) {
     detail: historyDetail(detail),
     fallbackElapsed: undefined,
     onFork: !!onFork,
+    onEditFrom: !!onEditFrom,
     onSource: !!onSource,
     onCopyError: !!onCopyError,
     onStop: !!onStop,

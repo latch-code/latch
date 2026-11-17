@@ -215,6 +215,49 @@ export interface DiscardPreview {
   warning: string
 }
 
+/**
+ * Why 从这里编辑 cannot also put the files back to before that message. The rules are 撤销本轮's, over every turn from that
+ * message on: `not-recorded`, a turn among them has no record (none was kept, or it is older than the retained turns);
+ * `partial`, a record may miss files; `changed-since`, a file changed after its last turn or between two of them.
+ */
+export type RewindBlock = 'running' | 'not-recorded' | 'not-settled' | 'partial' | 'changed-since' | 'no-changes' | 'not-retained'
+
+/** A file 退回 writes or removes. */
+export interface RewindFile extends FileMention {
+  /** Removed: it did not exist before that message. */
+  remove?: true
+}
+
+/** What putting the files back to before a message would do, for the confirmation it needs; `planHash` confirms it. */
+export type RewindPreview =
+  | {
+      available: true
+      restore: number
+      remove: number
+      skipped: number
+      planHash: string
+      /** The files it writes or removes, the first of them. */
+      files: RewindFile[]
+      notRestored: NotRestoredFile[]
+      /** Files the turns' own edits name that no snapshot covers: never put back. */
+      notCovered: string[]
+    }
+  | { available: false; reason: RewindBlock }
+
+/** What putting the files back did; a retry with the same `requestId` gets the same receipt with `replay`. */
+export interface RewindReceipt {
+  sessionId: string
+  messageId: string
+  requestId: string
+  restored: number
+  removed: number
+  skipped: number
+  notRestored: NotRestoredFile[]
+  notCovered: string[]
+  at: string
+  replay?: true
+}
+
 /** Opens the note a message carries after an undo, so the conversation and the engine read the same words. */
 export const CHANGE_NOTE_PREFIX = '[Latch] '
 

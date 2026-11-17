@@ -68,7 +68,7 @@ export interface Receipt {
   sessionId: string
   turnId: string
   requestId: string
-  action: 'undo' | 'redo'
+  action: 'undo' | 'redo' | 'rewind'
   restored: number
   removed: number
   skipped: number
@@ -178,7 +178,8 @@ const receiptSchema = z.strictObject({
   sessionId: z.string().min(1).max(256),
   turnId: z.string().regex(RUN_ID),
   requestId,
-  action: z.enum(['undo', 'redo']),
+  // `rewind`: 从这里编辑 put the files back to before a message, over this turn and the ones after it.
+  action: z.enum(['undo', 'redo', 'rewind']),
   restored: count,
   removed: count,
   skipped: count,

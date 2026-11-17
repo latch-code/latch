@@ -262,6 +262,79 @@ export class AttachmentStore {
     if (sha256 !== input.sha256) throw new AppError(400, 'attachment-invalid', '附件内容与开始上传时的摘要不一致。')
     return this.publish({ ...input, name, size, sha256, head, temporary: input.file })
   }
+  /**
+   * A sent attachment taken again as this owner's draft (从这里编辑 puts a message's attachments back in the composer): its
+   * stored bytes, checked against their hash, published as a new draft under the same checks as an upload. The caller
+   * has checked that the owner may read the source.
+   */
+  async copy(input: {
+    owner: string
+    requestId: string
+    source: AttachmentRef
+    remote: boolean
+    secretAcknowledged?: boolean
+    recheck: () => void | Promise<void>
+    accept: (ref: AttachmentRef) => void | Promise<void>
+    audit?: (ref: AttachmentRef) => Promise<void>
+  }): Promise<AttachmentRef> {
+    const { source } = input
+    const name = this.checkInput({ name: source.name, requestId: input.requestId, size: source.size, remote: input.remote })
+    const replay = this.made(input.owner, input.requestId)
+    if (replay) {
+      if (replay.inputHash !== attachmentInputHash(name, source.size, source.sha256))
+        throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同附件。')
+      return replay.ref
+    }
+    await this.prune()
+    await input.recheck()
+    // A copy is an upload: it takes one of the device's and the Host's upload slots and its bytes from the quota, at
+    // once and with nothing awaited in between, as `add` does.
+    this.assertRoom(input.owner, source.size, true)
+    const active = this.uploads.get(input.owner) ?? { count: 0, bytes: 0 }
+    this.uploads.set(input.owner, { count: active.count + 1, bytes: active.bytes + source.size })
+    this.reservedBytes += source.size
+    const temporary = join(this.directory, '_drafts', `.upload-${randomUUID()}`)
+    try {
+      const stored = this.state.entries[source.id]
+      if (!stored || canonicalJson(stored.ref) !== canonicalJson(source)) throw new AppError(404, 'attachment-missing', '附件不可用。')
+      // Streamed from the stored file into the new draft, checked against the size and hash it was stored with.
+      const from = await open(this.path(stored), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => {
+        throw new AppError(409, 'attachment-changed', '附件内容已变化，请重新添加。')
+      })
+      const to = await open(temporary, 'wx', 0o600)
+      const hash = createHash('sha256'),
+        head = Buffer.alloc(Math.min(65536, source.size)),
+        buffer = Buffer.alloc(1024 * 1024)
+      let size = 0
+      try {
+        const info = await from.stat()
+        if (!info.isFile() || info.size !== source.size) throw new AppError(409, 'attachment-changed', '附件内容已变化，请重新添加。')
+        for (;;) {
+          const { bytesRead } = await from.read(buffer, 0, buffer.length, size)
+          if (!bytesRead) break
+          if (size + bytesRead > source.size) throw new AppError(409, 'attachment-changed', '附件内容已变化，请重新添加。')
+          if (size < head.length) buffer.copy(head, size, 0, Math.min(bytesRead, head.length - size))
+          hash.update(buffer.subarray(0, bytesRead))
+          await to.writeFile(buffer.subarray(0, bytesRead))
+          size += bytesRead
+          await input.recheck()
+        }
+        if (size !== source.size || hash.digest('hex') !== source.sha256)
+          throw new AppError(409, 'attachment-changed', '附件内容已变化，请重新添加。')
+        await to.sync()
+      } finally {
+        await from.close()
+        await to.close()
+      }
+      return await this.publish({ ...input, name, size: source.size, sha256: source.sha256, head, temporary })
+    } finally {
+      await rm(temporary, { force: true }).catch(() => {})
+      const current = this.uploads.get(input.owner)!
+      if (current.count <= 1) this.uploads.delete(input.owner)
+      else this.uploads.set(input.owner, { count: current.count - 1, bytes: current.bytes - source.size })
+      this.reservedBytes -= source.size
+    }
+  }
   /** Sniffs, checks and keeps a received file as this owner's draft; `temporary` is moved into the drafts on success. */
   private async publish(input: {
     owner: string

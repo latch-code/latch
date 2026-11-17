@@ -401,6 +401,8 @@ export interface PendingSubmission {
   model?: ModelRef
   workspaceId?: string
   forkOf?: { taskId: string; upToMessageId: string }
+  /** 从这里编辑 on a session's first message: the Host makes the new session from that session (`editOf`). */
+  editOf?: { taskId: string }
   queue?: true
   /** Into the running turn when its harness takes that, queued otherwise. */
   steer?: true
@@ -473,6 +475,7 @@ export function readPending(key: string): PendingSubmission | null {
         || item.itemRevision < 1
         || item.sessionId !== undefined
         || item.forkOf !== undefined
+        || item.editOf !== undefined
         || item.customAgentId !== undefined)
     )
       return null
@@ -485,6 +488,8 @@ export function readPending(key: string): PendingSubmission | null {
     if (item.worktree !== undefined && (worktreeStartOf(item.worktree) === undefined || item.sessionId !== undefined)) return null
     const fork = item.forkOf as { taskId?: unknown; upToMessageId?: unknown } | undefined
     if (fork !== undefined && (!fork || typeof fork.taskId !== 'string' || typeof fork.upToMessageId !== 'string')) return null
+    const edit = item.editOf as { taskId?: unknown } | undefined
+    if (edit !== undefined && (!edit || typeof edit.taskId !== 'string' || fork !== undefined)) return null
     if (
       item.attachmentIds !== undefined
       && (!Array.isArray(item.attachmentIds)
@@ -525,6 +530,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(item.ownModel === true && item.sessionId === undefined ? { ownModel: true as const } : {}),
       ...(worktreeStartOf(item.worktree) ? { worktree: worktreeStartOf(item.worktree)! } : {}),
       ...(fork ? { forkOf: { taskId: fork.taskId as string, upToMessageId: fork.upToMessageId as string } } : {}),
+      ...(edit ? { editOf: { taskId: edit.taskId as string } } : {}),
       ...(Array.isArray(item.fileRefs) ? { fileRefs: item.fileRefs as FileMention[] } : {}),
       ...(Array.isArray(item.attachmentIds) ? { attachmentIds: item.attachmentIds as string[] } : {}),
       ...(Array.isArray(item.config)
@@ -592,6 +598,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
       ...(model ? { model } : {}),
       ...(submission.workspaceId ? { workspaceId: submission.workspaceId } : {}),
       ...(submission.forkOf ? { forkOf: submission.forkOf } : {}),
+      ...(submission.editOf ? { editOf: submission.editOf } : {}),
       ...(submission.config?.length ? { config: submission.config } : {}),
       ...(submission.ownModel && !model ? { ownModel: true } : {}),
       ...(submission.worktree ? { worktree: submission.worktree } : {}),

@@ -21,6 +21,9 @@ import {
   type FileDiff,
   type FileMention,
   type NotRestoredFile,
+  type RewindBlock,
+  type RewindPreview,
+  type RewindReceipt,
   type TurnChanges,
   type UndoBlock,
 } from '@latch/protocol'
@@ -198,6 +201,16 @@ const BLOCKS: Record<UndoBlock, [string, string]> = {
   'not-retained': ['change-not-retained', '这一轮改动的文件没有留存或可能含密钥，无法撤销。'],
 }
 const blocked = (reason: UndoBlock) => new AppError(409, BLOCKS[reason][0], BLOCKS[reason][1])
+const REWIND_BLOCKS: Record<RewindBlock, [string, string]> = {
+  running: ['change-running', '会话运行中，结束后才能退回文件。'],
+  'not-recorded': ['change-not-recorded', '这一条之后有的轮次没有改动记录，文件退不回这一条之前。'],
+  'not-settled': ['change-not-settled', '这一条之后有的轮次还没有记录完，暂时不能退回文件。'],
+  partial: ['change-partial', '这一条之后有的轮次记录不完整，文件退不回这一条之前。'],
+  'changed-since': ['change-files-changed', '之后又改过这些文件。'],
+  'no-changes': ['change-nothing', '这一条之后没有改动文件。'],
+  'not-retained': ['change-not-retained', '这一条之后改动的文件没有留存或可能含密钥，无法退回。'],
+}
+const rewindBlocked = (reason: RewindBlock) => new AppError(409, REWIND_BLOCKS[reason][0], REWIND_BLOCKS[reason][1])
 
 function checkSession(session: ChangesSession): void {
   if (
@@ -1213,7 +1226,7 @@ export class ChangesEngine {
       const turn = state.turns.find(item => item.turnId === turnId)
       if (!turn) throw new AppError(404, 'change-turn-missing', '没有这一轮的改动记录。')
       const answered = turn.receipts.find(receipt => receipt.requestId === requestId && receipt.action === direction)
-      if (answered) return { ...answered, replay: true as const }
+      if (answered) return { ...answered, action: direction, replay: true as const }
       const plan = await this.plan({ project, state }, turn, session, direction)
       if ('block' in plan) throw blocked(plan.block)
       const done = await this.write(
@@ -1241,7 +1254,7 @@ export class ChangesEngine {
       else delete updated.undone
       state.turns = state.turns.map(item => (item === turn ? updated : item))
       await this.save(project, state)
-      return receipt
+      return { ...receipt, action: direction }
     })
   }
 
@@ -1253,6 +1266,211 @@ export class ChangesEngine {
   /** 恢复: puts back what 撤销本轮 took away. */
   redoTurn(input: { session: ChangesSession; turnId: string; requestId: string; beforeWrite: BeforeWrite }): Promise<ChangeReceipt> {
     return this.undoOrRedo('redo', input)
+  }
+
+  /**
+   * What putting the files back to before a message (从这里编辑 with 同时把文件退回) would write: 撤销本轮 over every turn
+   * from that message on (`turnIds`, oldest first), as one plan. Each file goes back to how it was when the first of these
+   * turns that changed it began; it must still be as the last of them left it, and unchanged between them, or nothing is
+   * written. A turn already undone left its files as they were before it. A file with a side not kept is skipped, as
+   * 撤销本轮 skips it.
+   */
+  private async rewindPlan(
+    scoped: { project: ProjectState; state: SessionState },
+    turnIds: readonly string[],
+    session: ChangesSession,
+  ): Promise<
+    | (Plan & { turns: TurnRecord[]; notCovered: string[]; perTurn: Map<string, { written: number; skipped: number; kept: number }> })
+    | { block: RewindBlock }
+  > {
+    const { project, state } = scoped
+    if (state.running) return { block: 'running' }
+    // The record's own turns from the first of them on, which must be exactly the turns the messages opened: a turn the
+    // record holds that no message names would otherwise keep its files where it left them.
+    const from = state.turns.findIndex(item => item.turnId === turnIds[0])
+    if (from < 0) return { block: 'not-recorded' }
+    const turns = state.turns.slice(from)
+    if (turns.length !== turnIds.length || turns.some((turn, index) => turn.turnId !== turnIds[index])) return { block: 'not-recorded' }
+    for (const turn of turns) {
+      if (turn.state !== 'settled') return { block: 'not-settled' }
+      if (turn.partial) return { block: 'partial' }
+    }
+    // What happens to each turn's files: written back, skipped (a side not kept), or kept in reach (written or already so).
+    const perTurn = new Map(turns.map(turn => [turn.turnId, { written: 0, skipped: 0, kept: 0 }]))
+    const count = (entries: Array<{ turn: TurnRecord }>, field: 'written' | 'skipped' | 'kept') => {
+      for (const id of new Set(entries.map(entry => entry.turn.turnId))) perTurn.get(id)![field]++
+    }
+    // Each file's history over these turns, in order.
+    const history = new Map<string, Array<{ turn: TurnRecord; change: Change }>>()
+    for (const turn of turns)
+      for (const change of turn.changes) {
+        const key = fileKey(change.root, change.path)
+        const list = history.get(key) ?? []
+        list.push({ turn, change })
+        history.set(key, list)
+      }
+    if (!history.size) return { block: 'no-changes' }
+    const left = (entry: { turn: TurnRecord; change: Change }) => (entry.turn.undone ? entry.change.before : entry.change.after)
+    const roots = await this.writableRoots(state, session, await ProtectedIndex.of(this.options.protectedPaths))
+    const steps: Step[] = [],
+      notRestored: NotRestoredFile[] = []
+    let skipped = 0
+    for (const entries of history.values()) {
+      const { root: rootId, path } = entries[0]!.change
+      const sides = entries.flatMap(entry => [entry.change.before, entry.change.after])
+      const lost = sides.find(side => side && (side.kept !== 'stored' || !side.hash))
+      if (lost) {
+        skipped++
+        count(entries, 'skipped')
+        if (notRestored.length < NAMED_FILE_LIMIT) notRestored.push({ root: rootId, path, reason: reasonOf(lost) })
+        continue
+      }
+      count(entries, 'kept')
+      // Changed between two of these turns, by anyone: the start of the first is no longer what came before the rest.
+      for (let index = 1; index < entries.length; index++)
+        if (!sameState(left(entries[index - 1]!), entries[index]!.change.before)) return { block: 'changed-since' }
+      const from = left(entries.at(-1)!),
+        to = entries[0]!.change.before
+      const root = roots.find(item => item.id === rootId)
+      if (!root) return { block: 'changed-since' }
+      const current = await this.current(root, path)
+      if (this.matches(current, to)) continue
+      if (!this.matches(current, from)) return { block: 'changed-since' }
+      count(entries, 'written')
+      if (to) {
+        const hash = to.hash!
+        steps.push({
+          root,
+          path,
+          to: {
+            mode: to.mode,
+            hash,
+            source: async () => {
+              const handle = await project.objects.openChecked(hash)
+              if (!handle) throw new AppError(409, 'change-not-retained', '这一轮的内容没有留存，无法写回。')
+              return handle
+            },
+          },
+        })
+      } else
+        steps.push({
+          root,
+          path,
+          expect: async (handle, info) =>
+            this.matches({ mode: Number(info.mode & 0o777n), sig: signature(info), hash: await hashHandle(handle) }, from),
+        })
+    }
+    if (skipped === history.size) return { block: 'not-retained' }
+    const notCovered = [...new Set(turns.flatMap(turn => turn.notCovered ?? []))].slice(0, NAMED_FILE_LIMIT)
+    return { steps, skipped, notRestored, turns, notCovered, perTurn }
+  }
+
+  /** What putting the files back to before the first of `turnIds` would do, for its confirmation. Writes nothing. */
+  async previewRewind(input: { session: ChangesSession; turnIds: readonly string[] }): Promise<RewindPreview> {
+    const { session } = input
+    checkSession(session)
+    return this.mutate(session.projectId, async project => {
+      const plan = await this.rewindPlan({ project, state: await this.session(project, session.id) }, input.turnIds, session)
+      if ('block' in plan) return { available: false, reason: plan.block }
+      const written = this.writePlan('rewind', session, plan.steps, plan.skipped, { turnId: input.turnIds[0] })
+      return {
+        available: true,
+        restore: written.restore,
+        remove: written.remove,
+        skipped: written.skipped,
+        planHash: written.planHash,
+        files: plan.steps
+          .slice(0, NAMED_FILE_LIMIT)
+          .map(step => ({ root: step.root.id, path: step.path, ...(step.to ? {} : { remove: true as const }) })),
+        notRestored: plan.notRestored,
+        notCovered: plan.notCovered,
+      }
+    })
+  }
+
+  /**
+   * Puts the files back to before the first of `turnIds`, as `previewRewind` showed (`beforeWrite` checks its hash). Each
+   * of the turns that changed files is then undone, as 撤销本轮 leaves one: 恢复 brings it back, and the session's next
+   * message says so. A retry with the same `requestId` gets the first answer.
+   */
+  async rewind(input: {
+    session: ChangesSession
+    messageId: string
+    turnIds: readonly string[]
+    requestId: string
+    beforeWrite: BeforeWrite
+  }): Promise<RewindReceipt> {
+    const { session, requestId } = input
+    checkSession(session)
+    if (!REQUEST_ID.test(requestId)) throw new AppError(400, 'change-request-invalid', '请求标识无效。')
+    return this.mutate(session.projectId, async project => {
+      const state = await this.session(project, session.id)
+      for (const turn of state.turns) {
+        const answered = turn.receipts.find(receipt => receipt.requestId === requestId && receipt.action === 'rewind')
+        if (answered) {
+          const { turnId: _turn, action: _action, noteNextTurn: _note, ...rest } = answered
+          return { ...rest, messageId: input.messageId, replay: true as const }
+        }
+      }
+      const plan = await this.rewindPlan({ project, state }, input.turnIds, session)
+      if ('block' in plan) throw rewindBlocked(plan.block)
+      const done = await this.write(
+        plan.steps,
+        this.writePlan('rewind', session, plan.steps, plan.skipped, { turnId: input.turnIds[0] }),
+        input.beforeWrite,
+      )
+      const at = iso(this.now())
+      const receipt: RewindReceipt = {
+        sessionId: session.id,
+        messageId: input.messageId,
+        requestId,
+        ...done,
+        skipped: plan.skipped,
+        notRestored: plan.notRestored,
+        notCovered: plan.notCovered,
+        at,
+      }
+      // Undone: a turn with a file in reach. One whose files were all skipped stays as it was, as 撤销本轮 leaves it.
+      const touched = new Set(
+        plan.turns.filter(turn => !turn.undone && (plan.perTurn.get(turn.turnId)?.kept ?? 0) > 0).map(turn => turn.turnId),
+      )
+      const first = plan.turns.find(turn => touched.has(turn.turnId))
+      state.turns = state.turns.map(turn => {
+        if (!touched.has(turn.turnId)) return turn
+        const counts = plan.perTurn.get(turn.turnId)!
+        const note = nextNote(turn.note, 'undo', counts.written, counts.skipped)
+        const updated: TurnRecord = {
+          ...turn,
+          undone: { at, requestId },
+          // The whole answer is kept on the first turn, for a retry.
+          ...(turn === first
+            ? {
+                receipts: [
+                  ...turn.receipts,
+                  {
+                    sessionId: session.id,
+                    turnId: turn.turnId,
+                    requestId,
+                    action: 'rewind' as const,
+                    restored: done.restored,
+                    removed: done.removed,
+                    skipped: plan.skipped,
+                    notRestored: plan.notRestored,
+                    notCovered: plan.notCovered,
+                    noteNextTurn: note !== undefined,
+                    at,
+                  },
+                ].slice(-8),
+              }
+            : {}),
+        }
+        if (note) updated.note = note
+        else delete updated.note
+        return updated
+      })
+      await this.save(project, state)
+      return receipt
+    })
   }
 
   /**

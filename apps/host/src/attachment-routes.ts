@@ -31,6 +31,7 @@ const metadata = context.extend({
     .max(25 * 1024 * 1024),
   secretAcknowledged: z.boolean().optional(),
 })
+const reuseInput = context.extend({ requestId: z.string().uuid(), secretAcknowledged: z.boolean().optional() }).strict()
 const uploadStart = context.extend({
   requestId: z.string().uuid(),
   name: z.string().min(1).max(200),
@@ -56,6 +57,8 @@ export interface AttachmentRoutesOptions<Caller extends AttachmentCaller> {
   unused(caller: Caller, reserved: ReturnType<AttachmentStore['reserved']>): Promise<ReadonlySet<string>>
   /** A request carrying this ID is on its way or was accepted in this run; asked again at the moment of removal. */
   busy(caller: Caller, requestId: string): boolean
+  /** Counts a person's write against the device's rate (the Host's class C); throws when it is spent. */
+  limit?(caller: Caller): void
 }
 export function assertAttachmentCapability(ref: Pick<AttachmentRef, 'kind' | 'size'>, caps: AttachmentCapabilities): void {
   if (ref.kind === 'image' && !caps.images) throw new AppError(415, 'attachment-image-unsupported', caps.reason ?? '当前模型不能看图片。')
@@ -297,7 +300,7 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
         }
         return true
       }
-      const match = /^\/link\/api\/attachments\/([A-Za-z0-9_-]{22})(?:\/(resolve|content))?$/u.exec(path)
+      const match = /^\/link\/api\/attachments\/([A-Za-z0-9_-]{22})(?:\/(resolve|content|reuse))?$/u.exec(path)
       if (!match) return false
       const id = match[1]!,
         action = match[2]
@@ -305,6 +308,43 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
         options.authorize(caller, 'run')
         await options.store.remove(id, device.id, requestId => options.busy(caller, requestId))
         json(res, { removed: true })
+        return true
+      }
+      if (method === 'POST' && action === 'reuse') {
+        // 从这里编辑: an attachment of a sent message, taken again as this device's draft. Only one it may read now, as a
+        // preview reads it; the Host copies the stored bytes, so nothing is read from the device or the project again.
+        options.authorize(caller, 'run')
+        options.limit?.(caller)
+        const input = reuseInput.parse(await jsonBody(req))
+        const entry = await get(caller, id)
+        if (!entry.taskId) throw new AppError(404, 'attachment-missing', '附件已过期或不存在。')
+        const caps = await options.capabilities(caller, input.selection, input.sessionId)
+        if (!caps.images && !caps.text) throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
+        assertAttachmentCapability(entry.ref, caps)
+        const ref = await options.store.copy({
+          owner: device.id,
+          requestId: input.requestId,
+          source: entry.ref,
+          remote: !isLocalListener(caller.connection.listener),
+          ...(input.secretAcknowledged ? { secretAcknowledged: true } : {}),
+          recheck: async () => {
+            options.recheck(caller, 'run')
+            await get(caller, id)
+          },
+          accept: async ref => {
+            const current = await options.capabilities(caller, input.selection, input.sessionId)
+            assertAttachmentCapability(ref, current)
+          },
+          audit: async ref => {
+            await options.audit.append({
+              action: 'attachment.add',
+              actor: options.actorOf(caller),
+              target: ref.id,
+              detail: { attachmentId: ref.id, contentHash: ref.sha256, bytes: ref.size, type: ref.kind },
+            })
+          },
+        })
+        json(res, { attachment: ref }, 201)
         return true
       }
       if (method === 'POST' && action === 'resolve') {

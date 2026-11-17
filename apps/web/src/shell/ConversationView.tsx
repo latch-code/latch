@@ -32,6 +32,7 @@ import { useTopicResults } from '../agents/TopicResults.tsx'
 import { speakerOf } from '../agents/model.ts'
 import { loginSurface } from '../panel/terminal/loginRuns.ts'
 import { useOpenedMark } from '../core/attend.ts'
+import { useEditFrom } from '../conversation/EditFrom.tsx'
 
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
 export function ConversationView({ shell, visible, backdrop }: { shell: ShellState; visible: boolean; backdrop: BackdropLevel }) {
@@ -190,6 +191,36 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
     workspaceId: projectFor(catalog, current?.summary),
     mode: current?.summary.mode ?? ('agent' as const),
   })
+  const mayEdit = !!current && access.scopes.has('run')
+  const editFrom = useEditFrom({
+    sessionId: current?.summary.id,
+    agentMode: current?.summary.mode !== 'chat',
+    changes: catalog?.features?.changes === true,
+    dataScope: snapshot.device.dataScope,
+    phone,
+    // This device's unconfirmed message holds the composer until it settles; an edit would take its place.
+    held: () => (submission.pending ? '还有一条消息没有确认送达，先处理它再编辑' : undefined),
+    onToast: (text, tone = 'ok') => setToast({ text, tone }),
+    onEdit: (_message, before, draft) => {
+      if (!current) return
+      choose(null)
+      // The first message has nothing before it: in a fork, it goes on from where the fork began; otherwise the Host
+      // starts a new session from this one (`editOf`), as private as it and marked where it began from outside content.
+      const from = before
+        ? { taskId: current.summary.id, upToMessageId: before, title: current.summary.title }
+        : current.summary.forkOf
+          ? {
+              taskId: current.summary.forkOf.taskId,
+              upToMessageId: current.summary.forkOf.upToMessageId,
+              title: current.summary.forkOf.title,
+            }
+          : { taskId: current.summary.id, title: current.summary.title }
+      submission.setFork({ ...from, choice: forkChoice(), source: forkSource(current, harnessInfo) })
+      submission.setDraft(draft.text)
+      shell.seedEdit({ refs: draft.refs, attachments: draft.attachments })
+      shell.showHome()
+    },
+  })
   // Same engine, same project, in a fork when the Host can make one; what was being written goes along.
   const continueInNew = () => {
     if (!current || !catalog?.features?.fork || !access.scopes.has('run')) {
@@ -282,6 +313,9 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
                         checkUnknown={access.scopes.has('run')}
                         onFailureStep={step => takeFailureStep(step, openSettings)}
                         onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
+                        {...(mayEdit && catalog?.features?.fork
+                          ? { onEditFrom: (message, before) => void editFrom.start(message, before) }
+                          : {})}
                         onFork={
                           catalog?.features?.fork && access.scopes.has('run')
                             ? (upToMessageId, draft = '请接着这个会话继续。') => {
@@ -455,6 +489,7 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
           </div>
         </div>
       )}
+      {editFrom.dialog}
     </div>
   )
 }

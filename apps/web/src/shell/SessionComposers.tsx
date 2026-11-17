@@ -892,7 +892,15 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
           }>
           <Hint
             lead={<Icon icon={GitFork} size={14} />}
-            label={<VisibleText text={`从「${submission.fork.title ?? submission.fork.taskId}」分叉`} />}>
+            label={
+              <VisibleText
+                text={
+                  submission.fork.upToMessageId
+                    ? `从「${submission.fork.title ?? submission.fork.taskId}」分叉`
+                    : `改写「${submission.fork.title ?? submission.fork.taskId}」的第一条`
+                }
+              />
+            }>
             文件不会复制或回滚；同一项目中的会话共用项目文件夹。
           </Hint>
           {submission.forkMissed.map(line => (

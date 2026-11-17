@@ -30,6 +30,7 @@ import { CODEX_GATEWAY_PROVIDER, CODEX_MODES, type CodexMode } from '../profiles
 import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
 import {
   CARRY_METHOD,
+  FORK_METHOD,
   MCP_STATUS_METHOD,
   QUOTA_READ_METHOD,
   MCP_STATUS_UPDATE,
@@ -54,7 +55,7 @@ import {
   type ExitInfo,
   type SpawnSpec,
 } from './process.ts'
-import type { AgentWire, WireHandlers, WireModelRoute } from './types.ts'
+import { ForkRefused, type AgentWire, type PromptContext, type WireHandlers, type WireModelRoute } from './types.ts'
 import {
   CodexTeam,
   codexTeamFeatures,
@@ -114,6 +115,38 @@ const ASK_OPTIONS = [
 ]
 
 const text = z.string()
+/** The first Codex whose turns were checked to keep Latch's message ID (`clientUserMessageId`). */
+const MARKED_TURNS = [0, 169, 0]
+/** Whether `version` (`x.y.z`, a pre-release suffix ignored) is at least `floor`. */
+function atLeast(version: string, floor: readonly number[]): boolean {
+  const parts = version.split(/[.-]/u).slice(0, 3).map(Number)
+  for (let index = 0; index < floor.length; index++) {
+    const part = parts[index] ?? 0
+    if (!Number.isFinite(part)) return false
+    if (part !== floor[index]) return part > floor[index]!
+  }
+  return true
+}
+/** Codex's `item/tool/requestUserInput` (0.169, experimental): questions with labelled options, or free text. */
+const userInputParams = z.object({
+  questions: z
+    .array(
+      z.object({
+        id: text.min(1).max(256),
+        header: text.max(4000).nullish(),
+        question: text.max(4000),
+        isOther: z.boolean().nullish(),
+        isSecret: z.boolean().nullish(),
+        options: z
+          .array(z.object({ label: text.max(4000), description: text.max(4000).nullish() }))
+          .max(20)
+          .nullish(),
+      }),
+    )
+    .min(1)
+    .max(10),
+})
+const NO_ANSWERS = { answers: {} }
 const thread = z.object({
   id: text.min(1).max(512),
   cwd: text.max(4096).nullish().catch(undefined),
@@ -148,6 +181,13 @@ const mcpServer = z.object({
     .array(z.object({ name: text.min(1).max(256), value: text.max(16384) }))
     .max(64)
     .default([]),
+})
+const forkParams = z.object({
+  sessionId: text,
+  cwd: text,
+  through: text.max(256).optional(),
+  mcpServers: z.array(z.unknown()).optional(),
+  additionalDirectories: z.array(text.max(4096)).max(64).optional(),
 })
 const sessionParams = z.object({
   sessionId: text.optional(),
@@ -419,6 +459,9 @@ export class CodexWire implements AgentWire {
   readonly exited: Promise<ExitInfo>
   readonly idleCommands = new Set([COMPACT.name])
   readonly carries = true
+  readonly forks = true
+  /** This Codex keeps `clientUserMessageId` on a turn's user message (checked on 0.169); older ones are not sent it. */
+  private marksTurns = false
   readonly commandsWithoutContext = new Set([COMPACT.name, 'review'])
   private listedFor?: string
   private readonly skillPaths = new Map<string, { name: string; path: string }>()
@@ -506,7 +549,7 @@ export class CodexWire implements AgentWire {
     timeoutMs?: number,
     signal?: AbortSignal,
     _onResult?: (result: unknown) => void,
-    context?: { userText: string },
+    context?: PromptContext,
   ): Promise<unknown> {
     const exit = this.process.exit
     if (exit) return Promise.reject(new ConnectionClosed(exit))
@@ -523,6 +566,8 @@ export class CodexWire implements AgentWire {
         return this.open('load', params, timeoutMs, signal)
       case CARRY_METHOD:
         return this.open('carry', params, timeoutMs, signal)
+      case FORK_METHOD:
+        return this.fork(params, timeoutMs, signal)
       case 'session/list':
         return this.list(params, timeoutMs, signal)
       case 'session/prompt':
@@ -608,6 +653,7 @@ export class CodexWire implements AgentWire {
     )
     this.process.write({ method: 'initialized' })
     const version = codexVersion(isRecord(result) ? result.userAgent : undefined)
+    this.marksTurns = version !== undefined && atLeast(version, MARKED_TURNS)
     return {
       protocolVersion: 1,
       agentInfo: { name: 'Codex', ...(version ? { version } : {}) },
@@ -650,8 +696,54 @@ export class CodexWire implements AgentWire {
    * A new thread (`kind` undefined), the session's thread resumed, or loaded: its turns replayed as updates, then resumed.
    * One process runs one thread.
    */
+  /**
+   * Codex's own fork of the source thread, through the turn opened by Latch's message `through` (`FORK_METHOD`): the new
+   * thread holds Codex's own record up to that turn. A `ForkRefused` when the source's turns do not name that message
+   * (a turn started before Latch marked its turns, or a Codex that does not keep the mark) or the fork does not end
+   * there; the session then sends the Host's text record.
+   */
+  private async fork(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+    const parsed = forkParams.safeParse(params)
+    if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
+    if (this.threadId) throw new ForkRefused('这个进程已经打开了别的会话')
+    if (!parsed.data.through) throw new ForkRefused('来源会话没有这一轮的标识')
+    return this.open('fork', params, timeoutMs, signal)
+  }
+
+  /** The source thread's turn that Latch's message opened, read from Codex's record of the thread. */
+  private async markedTurn(threadId: string, messageId: string, timeoutMs?: number, signal?: AbortSignal): Promise<string> {
+    const answer = await this.send('thread/read', { threadId, includeTurns: true }, timeoutMs, signal).catch((error: unknown) => {
+      if (error instanceof RpcError && error.code !== RPC.cancelled)
+        throw new ForkRefused(`它读不到来源的记录（${clip(error.message, 160)}）`)
+      throw error
+    })
+    const read = z.object({ thread }).safeParse(answer)
+    if (!read.success) throw new ForkRefused('它的记录读不懂')
+    const turn = (read.data.thread.turns ?? []).find(
+      item =>
+        isRecord(item)
+        && Array.isArray(item.items)
+        && item.items.some(entry => isRecord(entry) && entry.type === 'userMessage' && entry.clientId === messageId),
+    )
+    if (!isRecord(turn) || typeof turn.id !== 'string') throw new ForkRefused('它的记录里找不到这一轮')
+    if (turn.status === 'inProgress') throw new ForkRefused('这一轮在它那里还没有结束')
+    return turn.id
+  }
+
+  /** Whether the thread's last turn is the one Latch's message opened. */
+  private async endsWith(threadId: string, messageId: string, timeoutMs?: number, signal?: AbortSignal): Promise<boolean> {
+    const answer = await this.send('thread/read', { threadId, includeTurns: true }, timeoutMs, signal).catch(() => undefined)
+    const read = z.object({ thread }).safeParse(answer)
+    const last = read.success ? (read.data.thread.turns ?? []).at(-1) : undefined
+    return (
+      isRecord(last)
+      && Array.isArray(last.items)
+      && last.items.some(entry => isRecord(entry) && entry.type === 'userMessage' && entry.clientId === messageId)
+    )
+  }
+
   private async open(
-    kind: 'resume' | 'load' | 'carry' | undefined,
+    kind: 'resume' | 'load' | 'carry' | 'fork' | undefined,
     params: unknown,
     timeoutMs?: number,
     signal?: AbortSignal,
@@ -697,7 +789,32 @@ export class CodexWire implements AgentWire {
     let answer: unknown
     // A new thread on a route starts on the route's model; every turn names its model after that.
     if (kind === undefined) answer = await this.send('thread/start', settings, timeoutMs, signal)
-    else if (kind === 'carry') {
+    else if (kind === 'fork') {
+      const source = parsed.data.sessionId ?? ''
+      const through = forkParams.parse(params).through!
+      const lastTurnId = await this.markedTurn(source, through, timeoutMs, signal)
+      answer = await this.send(
+        'thread/fork',
+        { threadId: source, lastTurnId, ...settings, ...(this.route ? { modelProvider: CODEX_GATEWAY_PROVIDER } : {}), excludeTurns: true },
+        timeoutMs,
+        signal,
+      ).catch((error: unknown) => {
+        if (error instanceof RpcError && error.code !== RPC.cancelled) throw new ForkRefused(`它回答「${clip(error.message, 200)}」`)
+        throw error
+      })
+      const forked = opened.safeParse(answer)
+      if (!forked.success || forked.data.thread.id === source) throw new ForkRefused('它没有为分叉新建线程')
+      // A Codex that does not know `lastTurnId` forks the whole thread: the copy must end at the turn asked for.
+      if (!(await this.endsWith(forked.data.thread.id, through, timeoutMs, signal))) {
+        const archived = await this.send('thread/archive', { threadId: forked.data.thread.id }, timeoutMs).then(
+          () => true,
+          () => false,
+        )
+        throw new ForkRefused(
+          archived ? '分叉出的线程没有停在这一轮' : '分叉出的线程没有停在这一轮，而且没能归档，它留在 Codex 自己的会话列表里',
+        )
+      }
+    } else if (kind === 'carry') {
       // Codex 0.169 resumes a thread only on the provider it began on, but forks one onto another: a new thread with the
       // same turns, on this process's provider (Latch's on a route, else the one the person configured).
       const threadId = parsed.data.sessionId ?? ''
@@ -716,7 +833,9 @@ export class CodexWire implements AgentWire {
     const read = opened.safeParse(answer)
     if (!read.success) throw new RpcError(RPC.internal, 'Codex answered a thread request in a shape Latch does not read')
     if (
-      kind === 'carry' ? read.data.thread.id === parsed.data.sessionId : kind !== undefined && read.data.thread.id !== parsed.data.sessionId
+      kind === 'carry' || kind === 'fork'
+        ? read.data.thread.id === parsed.data.sessionId
+        : kind !== undefined && read.data.thread.id !== parsed.data.sessionId
     )
       throw new RpcError(RPC.internal, 'Codex 恢复的线程与所选会话不一致。')
     this.threadId = read.data.thread.id
@@ -1208,7 +1327,7 @@ export class CodexWire implements AgentWire {
     if (!this.threadId || sessionId !== this.threadId) throw new RpcError(RPC.notFound, 'Session not found')
   }
 
-  private input(blocks: z.infer<typeof promptParams>['prompt'], context?: { userText: string }): unknown[] {
+  private input(blocks: z.infer<typeof promptParams>['prompt'], context?: PromptContext): unknown[] {
     const input: unknown[] = blocks.map(block => {
       if (block.type === 'text' && block.text !== undefined) return { type: 'text', text: block.text, text_elements: [] }
       if (block.type === 'image' && block.data && block.mimeType)
@@ -1216,7 +1335,7 @@ export class CodexWire implements AgentWire {
       throw new RpcError(RPC.invalidParams, `Codex takes no ${clip(block.type, 64)} content here`)
     })
     const added = new Set<string>()
-    for (const match of context?.userText.matchAll(/(?:^|\s)(\$\S+)/gu) ?? []) {
+    for (const match of context?.userText?.matchAll(/(?:^|\s)(\$\S+)/gu) ?? []) {
       const invocation = match[1]!
       if (this.ambiguousSkills.has(invocation)) throw new RpcError(RPC.invalidParams, '技能名称不唯一，请先在 Codex 中消除重复名称。')
       const skill = this.skillPaths.get(invocation)
@@ -1227,7 +1346,7 @@ export class CodexWire implements AgentWire {
     return input
   }
 
-  private async prompt(params: unknown, timeoutMs?: number, context?: { userText: string }): Promise<unknown> {
+  private async prompt(params: unknown, timeoutMs?: number, context?: PromptContext): Promise<unknown> {
     const parsed = promptParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     this.assertSession(parsed.data.sessionId)
@@ -1271,6 +1390,8 @@ export class CodexWire implements AgentWire {
         {
           threadId: this.threadId,
           input,
+          // Codex keeps it on the turn's user message: a later fork finds the turn by Latch's message.
+          ...(context?.messageId && this.marksTurns ? { clientUserMessageId: context.messageId } : {}),
           ...turnSettings(this.mode, this.cwd, this.folders),
           ...(this.model ? { model: this.model } : {}),
           ...(this.effort ? { effort: this.effort } : {}),
@@ -1317,7 +1438,7 @@ export class CodexWire implements AgentWire {
       throw new RpcError(RPC.invalidParams, 'Codex 当前上下文的模型、思考或权限与选择不一致。请先发送普通消息应用设置，再运行 /compact。')
   }
 
-  private async steer(params: unknown, timeoutMs?: number, signal?: AbortSignal, context?: { userText: string }): Promise<unknown> {
+  private async steer(params: unknown, timeoutMs?: number, signal?: AbortSignal, context?: PromptContext): Promise<unknown> {
     const parsed = promptParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     this.assertSession(parsed.data.sessionId)

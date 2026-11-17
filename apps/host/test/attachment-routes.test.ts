@@ -84,6 +84,67 @@ describe('authenticated attachment routes', () => {
     expect((await other.request(`attachments/${resolved.file.handle}/content`)).status).toBe(404)
     await expect(readFile(join(host.dataDir, 'attachments', created.sessionId, ref.id))).rejects.toMatchObject({ code: 'ENOENT' })
   })
+  it('takes a sent attachment again as a draft (从这里编辑) only for a device that may read its session and write', async () => {
+    const plugin: HarnessPlugin = {
+      id: 'vision-reuse',
+      name: 'fixture',
+      version: '1',
+      description: 'test',
+      activate: ctx =>
+        ctx.registerProvider({
+          id: 'fixture-model',
+          name: 'fixture',
+          model: 'visual',
+          modelCapabilities: { visual: { vision: true } },
+          async *stream() {
+            yield { type: 'text', text: 'seen' }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        }),
+    }
+    const host = await startTestHost({ plugins: [plugin] })
+    hosts.push(host)
+    const local = await host.enroll({ listener: 'unix' }),
+      other = await host.enroll({ listener: 'unix' }),
+      viewer = await host.enroll({ listener: 'unix', scopes: ['view'] })
+    const selection = { harnessId: 'standard', model: { providerId: 'fixture-model', model: 'visual' } }
+    const uploaded = await local.request('attachments', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream',
+        'x-latch-attachment': Buffer.from(
+          JSON.stringify({ requestId: randomUUID(), name: 'image.png', size: png.length, selection }),
+        ).toString('base64url'),
+      },
+      rawBody: png,
+    })
+    const ref = ((await uploaded.json()) as { attachment: AttachmentRef }).attachment
+    // A draft not yet sent is no other device's to take.
+    expect((await other.request(`attachments/${ref.id}/reuse`, { body: { requestId: randomUUID(), selection } })).status).toBe(404)
+    const created = await local.json<{ sessionId: string }>('tasks', {
+      body: { prompt: 'look', requestId: randomUUID(), harnessId: 'standard', model: selection.model, attachmentIds: [ref.id] },
+    })
+    await vi.waitFor(async () => expect((await local.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status).toBe('idle'))
+    expect((await viewer.request(`attachments/${ref.id}/reuse`, { body: { requestId: randomUUID(), selection } })).status).toBe(403)
+    const requestId = randomUUID()
+    const copy = await other.json<{ attachment: AttachmentRef }>(`attachments/${ref.id}/reuse`, { body: { requestId, selection } })
+    expect(copy.attachment).toMatchObject({ name: 'image.png', sha256: ref.sha256 })
+    expect(copy.attachment.id).not.toBe(ref.id)
+    // Sent as a draft of its own, with a new message.
+    const again = await other.json<{ sessionId: string }>('tasks', {
+      body: {
+        prompt: 'again',
+        requestId: randomUUID(),
+        harnessId: 'standard',
+        model: selection.model,
+        attachmentIds: [copy.attachment.id],
+      },
+    })
+    await vi.waitFor(async () =>
+      expect((await other.json<TaskDetail>(`tasks/${again.sessionId}`)).messages[0]!.attachments).toEqual([copy.attachment]),
+    )
+    expect((await local.json<TaskDetail>(`tasks/${created.sessionId}`)).messages[0]!.attachments).toEqual([ref])
+  })
   it('refuses image uploads for a model that never declared vision and supports text-only attachment messages', async () => {
     const host = await startTestHost()
     hosts.push(host)

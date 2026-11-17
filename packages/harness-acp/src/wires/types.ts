@@ -21,6 +21,12 @@ export interface WireHandlers {
  * either sends them as they are or translates them to the agent's own protocol. Failures use the errors of
  * `process.ts` and `RpcError`, so the runtime treats every wire alike.
  */
+/** What a wire knows of a prompt beyond its blocks. */
+export interface PromptContext {
+  userText?: string
+  messageId?: string
+}
+
 export interface AgentWire {
   readonly exited: Promise<ExitInfo>
   readonly closed: boolean
@@ -37,8 +43,11 @@ export interface AgentWire {
     timeoutMs?: number,
     signal?: AbortSignal,
     onResult?: (result: unknown) => void,
-    /** Proven current user input only. Process-local context, never serialized into the agent protocol. */
-    context?: { userText: string },
+    /**
+     * Proven current user input only. Process-local context, never serialized into the agent protocol. `messageId`: the
+     * Latch user message the prompt opens, which a wire that can mark its turn with it does (a later fork finds the turn).
+     */
+    context?: PromptContext,
   ): Promise<unknown>
   notify(method: string, params: unknown): void
   /** `stop`: end stdin, then SIGTERM, then SIGKILL the group. `kill` skips stdin. Resolves once the process is gone. */

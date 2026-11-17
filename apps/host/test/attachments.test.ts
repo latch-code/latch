@@ -117,6 +117,52 @@ describe('private attachment store', () => {
     expect(reopened.get(ref.id)).toBeUndefined()
     await expect(stat(join(path, 'attachments', 'task-one', ref.id))).rejects.toMatchObject({ code: 'ENOENT' })
   })
+  it('takes a sent attachment again as a new draft of another device, by its stored bytes, and replays the same request', async () => {
+    const path = await directory(),
+      store = await AttachmentStore.open(path),
+      sent = await store.add(input('sent once'))
+    await store.bind('device-a', [sent.id], 'task-one')
+    const requestId = randomUUID()
+    const audited: string[] = []
+    const copy = () =>
+      store.copy({
+        owner: 'device-b',
+        requestId,
+        source: sent,
+        remote: true,
+        recheck: () => {},
+        accept: () => {},
+        audit: async ref => {
+          audited.push(ref.id)
+        },
+      })
+    const draft = await copy()
+    expect(draft).toMatchObject({ name: 'note.txt', sha256: sent.sha256, size: sent.size })
+    expect(draft.id).not.toBe(sent.id)
+    expect(store.refs('device-b', [draft.id])).toEqual([draft])
+    expect(() => store.refs('device-a', [draft.id])).toThrow('附件已过期')
+    expect((await store.read(draft)).text).toBe('sent once')
+    expect(await copy()).toEqual(draft)
+    expect(audited).toEqual([draft.id])
+    // The copy is a draft of its own: the sent one stays bound to its session.
+    expect(store.get(sent.id)).toMatchObject({ taskId: 'task-one' })
+  })
+  it('holds a copy to the upload slots and quotas: parallel copies of a large attachment beyond them are refused at once', async () => {
+    const path = await directory(),
+      store = await AttachmentStore.open(path),
+      big = 'a'.repeat(6 * 1024 * 1024),
+      sent = await store.add(input(big, { name: 'big.txt' }))
+    await store.bind('device-a', [sent.id], 'task-one')
+    const copy = () =>
+      store.copy({ owner: 'device-b', requestId: randomUUID(), source: sent, remote: false, recheck: () => {}, accept: () => {} })
+    const results = await Promise.allSettled(Array.from({ length: 10 }, copy))
+    const refused = results.filter(result => result.status === 'rejected')
+    // Two uploads at a time per device, as for any upload; the rest never read a byte.
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(2)
+    expect(refused.map(result => (result as PromiseRejectedResult).reason.code)).toEqual(Array(8).fill('attachment-quota'))
+    // The slots are given back: the next copy goes through.
+    await expect(copy()).resolves.toMatchObject({ sha256: sent.sha256 })
+  })
   it('sniffs bytes, refuses unsupported PDFs and invalid text, and only publishes after acceptance and audit', async () => {
     const path = await directory(),
       store = await AttachmentStore.open(path)

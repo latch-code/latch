@@ -106,6 +106,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'app.data.removed': { pluginId: 'release-check', documents: 3 },
   'change.undo': { sessionId, turnId: 'run-1', restore: 1, remove: 0, skipped: 0, planHash: hex },
   'change.redo': { sessionId, turnId: 'run-1', restore: 1, remove: 0, skipped: 0, planHash: hex },
+  'change.rewind': { sessionId, turnId: 'run-1', restore: 1, remove: 1, skipped: 0, planHash: hex },
   'change.discard': { sessionId, scope: 'uncommitted', restore: 1, remove: 1, skipped: 0, planHash: hex },
   'git.stage': { sessionId, requestHash: hex, files: 2, filtered: false },
   'git.unstage': { sessionId, requestHash: hex, files: 1 },

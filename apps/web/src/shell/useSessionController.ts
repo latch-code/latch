@@ -3,7 +3,7 @@ import { sessionAgent } from '../agents/model.ts'
 import { parseModelChoice, readsProjectFiles, type AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import { hasFileMention } from '../fileMentions.ts'
-import type { FileMention } from '@latch/protocol'
+import type { AttachmentRef, FileMention } from '@latch/protocol'
 import { useAttachments } from '../hooks/useAttachments.ts'
 import { projectScopeCaption } from '../projects.tsx'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -374,9 +374,26 @@ export function useSessionController({
   const newQuotes = useRef(new Map<string, { etag: string; marker: string }>())
   const quoteSnapshots = inputId === null ? newQuotes : sessionQuotes
   const mentionScope = `${choice.workspaceId ?? ''}:${choice.harnessId ?? ''}:${choice.mode}:${snapshot.device.dataScope}`
+  /**
+   * 从这里编辑: the file references and attachments of the message being edited, for the new session's composer. They are
+   * set once the draft's choice has moved to the source's project and Harness, which would otherwise clear them.
+   */
+  const editSeed = useRef<{ refs: FileMention[]; attachments: AttachmentRef[] } | null>(null)
+  const [editTurn, setEditTurn] = useState(0)
   useLayoutEffect(() => {
-    if (submission.pending === null) setNewMentions([])
+    if (submission.pending === null) setNewMentions(editSeed.current?.refs ?? [])
   }, [mentionScope])
+  useEffect(() => {
+    const seed = editSeed.current
+    editSeed.current = null
+    if (seed?.attachments.length) newAttachments.reuse(seed.attachments)
+  }, [editTurn])
+  const seedEdit = (seed: { refs: FileMention[]; attachments: AttachmentRef[] }) => {
+    newAttachments.clear()
+    editSeed.current = seed
+    setNewMentions(seed.refs)
+    setEditTurn(turn => turn + 1)
+  }
   useLayoutEffect(() => {
     if (submission.pending === null) setSessionMentions([])
   }, [selectedId, snapshot.device.dataScope])
@@ -1596,6 +1613,7 @@ export function useSessionController({
     attachmentDraft,
     fileMentions,
     setFileMentions,
+    seedEdit,
     quoteSnapshots,
     mentionScope,
     setSubmissionDraft,

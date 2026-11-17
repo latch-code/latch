@@ -202,7 +202,7 @@ function agentFacts(
     tools: { shell: true, fileMentions: true },
     display: { label: name, ...(isHarnessMark(presetId) ? { mark: presetId } : {}) },
     // Its wire forks pi's own session files.
-    ...(profile?.wire === 'pi' ? { fork: 'native' as const } : {}),
+    ...(profile?.wire === 'pi' || profile?.wire === 'codex' ? { fork: 'native' as const } : {}),
   }
 }
 

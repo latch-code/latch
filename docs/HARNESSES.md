@@ -399,7 +399,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 - **事件。** 回答与推理增量流式显示；`commandExecution`、`fileChange`、`mcpToolCall`、`webSearch` 是工具调用；`turn/plan/updated` 是计划，`thread/tokenUsage/updated` 是用量；`willRetry` 的 `error` 是一条重试提示。推理摘要分段到达而段间没有分隔，Latch 在换段时补一个空行。
 - **命令的解析（`commandActions`）。** 全部动作都是读取、列出或搜索时，作为工具条目的可选字段 `actions` 带给客户端；有一项 `unknown` 或不认得的形状就不带，命令原文照旧保存。这个字段只从 Codex 线接受（[STREAMING.md](STREAMING.md#工作过程的行)）。
 - **模型。** `model/list`（最多 5 页）给出模型与各自的思考深度；开始前的读取用同一个程序的 `codex app-server`，不开 thread。
-- **模型服务与分叉。** 见上节；会话的分叉仍用文字记录。`thread/fork` 只用于会话在自己的登录与服务之间换路线（`CARRY_METHOD`）。
+- **模型服务与分叉。** 见上节。分叉（包括「从这里编辑」）用 Codex 自己的记录：Codex 0.169 起（`initialize` 报告的版本）每轮 `turn/start` 带 `clientUserMessageId`（这一轮用户消息的 Latch ID），Codex 记在这一轮的用户消息上，更早的版本不带；分叉到同一个 Codex 定义、同一个文件夹时，新进程用 `thread/read` 找到这条消息所在的一轮，`thread/fork` 带 `lastTurnId` 分叉到这一轮为止，再读新线程核对它停在这一轮。找不到（这个标记之前的旧轮次、不保留标记的 Codex）、Codex 拒绝或分叉出的线程没有停在这一轮时，归档那条线程（归档失败也写明它留在 Codex 的会话列表里）并退回背景文本，会话里写明原因（`HarnessCapabilities.fork: 'native'`，见 [ARCHITECTURE.md](ARCHITECTURE.md#会话分叉)）。`thread/fork` 另用于会话在自己的登录与服务之间换路线（`CARRY_METHOD`）。
 
 **权限模式。** 四档与 ACP 路线同名同说明，对照在 `profiles/codex.ts`；模式由线保存，thread 开始、恢复与每一轮 `turn/start` 都带上。
 

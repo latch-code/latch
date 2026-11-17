@@ -49,7 +49,8 @@ import {
  * for this draft only; the source's engine may be one the person never picked here, so it stays out of what this device
  * remembers. `source`: what the source ran with, kept where the draft's Harness offers it.
  */
-export type ForkDraft = NonNullable<PendingSubmission['forkOf']> & {
+/** A fork's draft; without `upToMessageId` it is 从这里编辑 on the source's first message (`editOf`). */
+export type ForkDraft = { taskId: string; upToMessageId?: string } & {
   title?: string
   choice?: Partial<ComposerChoice>
   source?: ForkSource
@@ -247,13 +248,14 @@ export function useSubmission({
     if (stored === null) return
     if (owner) {
       setDraft(stored.prompt)
-      setFork(stored.forkOf ? { ...stored.forkOf, choice: restoredChoice(stored) } : null)
+      const from = stored.forkOf ?? stored.editOf
+      setFork(from ? { ...from, choice: restoredChoice(stored) } : null)
       setWorktreePicked(
         stored.worktree ? { projectId: stored.workspaceId, start: stored.worktree === true ? { from: 'head' } : stored.worktree } : null,
       )
     }
     if (stored.sessionId === undefined) {
-      if (!stored.forkOf) {
+      if (!stored.forkOf && !stored.editOf) {
         const restored = restoredChoice(stored)
         setStored(previous => ({ ...previous, ...restored }))
         // Under a pin too, what shows is what this unconfirmed request carries.
@@ -364,7 +366,11 @@ export function useSubmission({
             requestId: newRequestId(),
             prompt: draft.trim(),
             mode: choice.mode,
-            ...(fork ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId } } : {}),
+            ...(fork
+              ? fork.upToMessageId
+                ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId } }
+                : { editOf: { taskId: fork.taskId } }
+              : {}),
             ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
             ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
             ...(service ? { model: service } : choice.model ? { model: choice.model } : {}),

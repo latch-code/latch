@@ -257,6 +257,42 @@ async function play(text) {
     return reply('Ordinary turn completed.')
   }
   if (word === 'echo') return reply(`echo: ${text}`)
+  // What the thread holds before this turn, as Codex's own record: `remembers: a | b`.
+  if (word === 'recall') {
+    const said = thread.turns.flatMap(item =>
+      item.items
+        .filter(entry => entry.type === 'userMessage')
+        .map(entry => entry.content.flatMap(part => (part.type === 'text' ? [part.text] : [])).join('\n')),
+    )
+    return reply(`remembers: ${said.length ? said.join(' | ') : 'nothing'}`)
+  }
+  // `ask-user`: Codex's request_user_input with a choice and a free answer (`ask-user secret`: one marked secret);
+  // the reply is the answers it got.
+  if (word === 'ask-user') {
+    const secret = text.includes('secret')
+    const answer = await ask('item/tool/requestUserInput', {
+      threadId: thread.id,
+      turnId: turn.id,
+      itemId: `ask-${randomUUID()}`,
+      isBlocking: true,
+      autoResolutionMs: null,
+      questions: [
+        {
+          id: 'colour',
+          header: 'Colour',
+          question: 'Which colour?',
+          isOther: true,
+          isSecret: false,
+          options: [
+            { label: 'Red', description: 'Warm' },
+            { label: 'Blue', description: 'Cool' },
+          ],
+        },
+        { id: 'name', header: 'Name', question: 'What is it called?', isOther: false, isSecret: secret, options: null },
+      ],
+    })
+    return reply(`answers: ${JSON.stringify(answer?.answers ?? null)}`)
+  }
   if (word === 'think') {
     const id = `think-${randomUUID()}`
     const end = item({ type: 'reasoning', id, summary: [], content: [] }, () => ({
@@ -881,11 +917,17 @@ async function play(text) {
   return reply(`echo: ${text}`)
 }
 
-async function runTurn(input) {
+async function runTurn(input, clientId = null) {
   const text = input.flatMap(part => (part.type === 'text' ? [part.text] : [])).join('\n')
   if (text === 'skills-changed') notify('skills/changed', {})
   turn.text = text
-  turn.items.push({ type: 'userMessage', id: `user-${randomUUID()}`, clientId: null, content: input })
+  // As Codex 0.169: `clientUserMessageId` stays on the turn's user message, unless FAKE_CODEX_NO_CLIENT_ID drops it.
+  turn.items.push({
+    type: 'userMessage',
+    id: `user-${randomUUID()}`,
+    clientId: env.FAKE_CODEX_NO_CLIENT_ID === '1' ? null : clientId,
+    content: input,
+  })
   notify('turn/started', { threadId: thread.id, turn: { id: turn.id, status: 'inProgress', items: [] } })
   let outcome
   try {
@@ -1137,8 +1179,14 @@ async function handle(method, params) {
       if (!found) throw Object.assign(new Error(`no rollout found for thread id ${params.threadId}`), { code: -32600 })
       // Onto another provider without a model named, the fork takes the process's configured model, as Codex 0.169 does.
       const onto = params.modelProvider ?? providerId ?? 'openai'
+      // `lastTurnId`: through that turn only, as Codex 0.169 forks; FAKE_CODEX_FORK_WHOLE: a Codex that ignores it.
+      const through =
+        env.FAKE_CODEX_FORK_WHOLE === '1' || !params.lastTurnId ? -1 : found.turns.findIndex(item => item.id === params.lastTurnId)
+      if (params.lastTurnId && env.FAKE_CODEX_FORK_WHOLE !== '1' && through < 0)
+        throw Object.assign(new Error(`turn not found: ${params.lastTurnId}`), { code: -32600 })
       thread = {
         ...structuredClone(found),
+        ...(through >= 0 ? { turns: structuredClone(found.turns.slice(0, through + 1)) } : {}),
         id: `thread-${randomUUID()}`,
         provider: onto,
         model: params.model ?? (onto === (found.provider ?? 'openai') ? found.model : (env.FAKE_CODEX_MODEL ?? 'gpt-fake')),
@@ -1150,6 +1198,11 @@ async function handle(method, params) {
       threadWindow = params.config?.model_context_window
       announceMcp(thread.id)
       return opened(thread)
+    }
+    case 'thread/archive': {
+      if (env.FAKE_CODEX_ARCHIVE_FAIL === '1') throw Object.assign(new Error('archive failed'), { code: -32603 })
+      log('archived', { threadId: params.threadId })
+      return {}
     }
     case 'thread/read': {
       const found = threads()[params.threadId]
@@ -1218,7 +1271,7 @@ async function handle(method, params) {
       const id = turn.id
       // A slow answer: a stop sent meanwhile learns the turn's ID from this answer and again from `turn/started`.
       if (env.FAKE_CODEX_START_MS) await new Promise(resolve => setTimeout(resolve, Number(env.FAKE_CODEX_START_MS)))
-      setImmediate(() => void runTurn(params.input))
+      setImmediate(() => void runTurn(params.input, params.clientUserMessageId ?? null))
       return { turn: { id, status: 'inProgress', items: [], error: null } }
     }
     case 'turn/steer': {
