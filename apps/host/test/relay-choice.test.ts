@@ -163,7 +163,7 @@ it('imports relay files of both kinds, the self-hosted one as written before the
 it('keeps a relay added with the Host stopped out of books until its node is verified, and refuses an official ID', async () => {
   const t = await host()
   await t.profiles.syncOfficial(official)
-  await t.profiles.addUnverified(ownEdge, t.profiles.configHash())
+  await t.profiles.addUnverified(ownEdge, t.profiles.configHash(), async () => {})
   expect(ids(await t.book())).toEqual(official.map(item => item.relayId))
   await t.profiles.markVerified(ownEdge.relayId)
   expect(ids(await t.book())).toEqual([...official.map(item => item.relayId), ownEdge.relayId])

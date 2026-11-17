@@ -415,6 +415,7 @@ const ANONYMOUS_UNIX = new Set([
   'DELETE /link/api/devices/:id',
   'POST /link/api/pairings',
   'GET /link/api/native/info',
+  'POST /link/api/native/relays/:id/test',
   'GET /link/api/traffic',
   'POST /link/api/diagnostics',
   'GET /link/api/customization',
@@ -11058,7 +11059,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const authenticated: CallerRequest = { ...request, caller }
       if (await routes.authenticated(authenticated)) return
       if (!caller.device) {
-        const route = `${method} ${path.replace(/^\/link\/api\/devices\/[^/]+$/u, '/link/api/devices/:id')}`
+        const route = `${method} ${path
+          .replace(/^\/link\/api\/devices\/[^/]+$/u, '/link/api/devices/:id')
+          .replace(/^\/link\/api\/native\/relays\/[a-f0-9]{32}\/test$/u, '/link/api/native/relays/:id/test')}`
         if (!ANONYMOUS_UNIX.has(route) || path === '/link/api/devices/current') throw authFailure('unauthorized')
       }
       const privateTaskId = /^\/link\/api\/tasks\/([^/]+)/u.exec(path)?.[1]

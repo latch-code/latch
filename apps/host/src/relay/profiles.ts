@@ -446,9 +446,13 @@ export class RelayProfiles {
    * `pnpm latch relay add`, with the Host stopped: saved with fresh seeds but marked unverified, so no address book carries
    * it until the node has proved its key at the next start (`markVerified`).
    */
-  addUnverified(input: RelayProfileInput, expectedHash: string): Promise<void> {
+  addUnverified(
+    input: RelayProfileInput,
+    expectedHash: string,
+    record: (detail: { before: string; after: string; relayCount: number }) => Promise<unknown>,
+  ): Promise<void> {
     const item = relayProfileInput.parse(input)
-    return this.change(draft => {
+    return this.change(async draft => {
       this.checkBase(expectedHash)
       this.assertNewRelay(item)
       this.advanceConfiguration(draft)
@@ -460,6 +464,11 @@ export class RelayProfiles {
         rotationDay: 0,
         rotations: 0,
         unverified: true,
+      })
+      await record({
+        before: expectedHash,
+        after: this.hashConfiguration(draft),
+        relayCount: draft.profiles.filter(profile => !profile.builtIn).length,
       })
     })
   }

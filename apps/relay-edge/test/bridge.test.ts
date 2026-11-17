@@ -8,7 +8,7 @@ import { encodeFrame, hex, holder, issuePass, routeKey, UTC_DAY, WebSocketParser
 import { connectRelayTunnel, createTransportCertificate, nodeCrypto, RelayControl, type RelayEndpoint } from '@latch/link-client'
 import { acceptKey } from '@latch/link-client/websocket'
 import { createEdgeWorker } from '../src/edge.ts'
-import type { EdgeEnv, EdgePlatform, EdgeSubtle } from '../src/platform.ts'
+import type { EdgeEnv, EdgePlatform, EdgeSubtle, EdgeWebSocket } from '../src/platform.ts'
 import { ClientSocket, FakeObjects, FakeResponse, request } from './harness.ts'
 
 /**
@@ -33,16 +33,18 @@ function realPlatform(): EdgePlatform {
       const server = new (class {
         listeners = new Map<string, Array<(event: { data: unknown }) => void>>()
         closed = false
+        bufferedAmount = 0
+        binaryType: EdgeWebSocket['binaryType'] = 'blob'
         accept() {}
         send(data: Uint8Array) {
           if (this.closed) throw new Error('closed')
-          client.deliver(new Uint8Array(data))
+          this.bufferedAmount += data.length
+          client.deliver(new Uint8Array(data), () => (this.bufferedAmount -= data.length))
         }
         close(code?: number) {
           if (this.closed) return
           this.closed = true
           client.shut(code ?? 1000)
-          setImmediate(() => this.emit('close'))
         }
         addEventListener(type: string, listener: (event: { data: unknown }) => void) {
           this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
@@ -89,8 +91,8 @@ async function edgeServer(seed: Uint8Array): Promise<{ url: URL; objects: FakeOb
         `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(String(incoming.headers['sec-websocket-key']))}\r\nSec-WebSocket-Protocol: latch-relay.2\r\n\r\n`,
       )
       const parser = new WebSocketParser(true)
-      client.deliver = payload => {
-        if (!raw.destroyed) raw.write(encodeFrame({ opcode: 2, payload }))
+      client.deliver = (payload, written) => {
+        if (!raw.destroyed) raw.write(encodeFrame({ opcode: 2, payload }), () => written?.())
       }
       client.shut = code => {
         client.closed = code
@@ -109,7 +111,7 @@ async function edgeServer(seed: Uint8Array): Promise<{ url: URL; objects: FakeOb
       }
       if (head.length) feed(head)
       raw.on('data', feed)
-      raw.on('close', () => client.close())
+      raw.on('close', () => client.server.emit('close'))
       raw.on('error', () => {})
     })
   })

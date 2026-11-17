@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { nodeCrypto } from '@latch/link-client/crypto'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { runSetup, SetupError, type SetupDeps } from '../scripts/setup-core.ts'
 
 const folders: string[] = []
@@ -80,7 +82,11 @@ it('deploys, puts every secret through standard input only, and writes a 0600 re
 })
 
 it('stops before deploying anything when wrangler is missing or the relay file exists', async () => {
-  const missing = await fixture({ wrangler: async () => ({ code: -1, stdout: '' }) })
+  const missing = await fixture()
+  missing.deps.wrangler = async (_args, options) => {
+    await promisify(execFile)(join(missing.root, 'missing-wrangler'), [], { cwd: options.cwd })
+    return { code: 0, stdout: '' }
+  }
   await expect(runSetup(missing.input, missing.deps)).rejects.toThrow(/没有找到 wrangler/u)
   const existing = await fixture()
   await writeFile(existing.input.out, 'x')
@@ -88,6 +94,21 @@ it('stops before deploying anything when wrangler is missing or the relay file e
   expect(existing.calls).toEqual([])
   const relative = await fixture()
   await expect(runSetup({ ...relative.input, out: 'relay.json' }, relative.deps)).rejects.toThrow(/绝对路径/u)
+})
+
+it('creates the working directory before starting the version check in a real child process', async () => {
+  const t = await fixture()
+  await expect(stat(t.input.workDir)).rejects.toMatchObject({ code: 'ENOENT' })
+  const stub = t.deps.wrangler
+  t.deps.wrangler = async (args, options) => {
+    if (args[0] === '--version') {
+      await promisify(execFile)(process.execPath, ['--disable-sigusr1', '-e', ''], { cwd: options.cwd })
+      return { code: 0, stdout: '' }
+    }
+    return stub(args, options)
+  }
+  await runSetup(t.input, t.deps)
+  expect((await stat(t.input.workDir)).isDirectory()).toBe(true)
 })
 
 it('writes no relay file when the node never answers /healthz', async () => {

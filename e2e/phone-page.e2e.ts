@@ -9,7 +9,7 @@ import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToSection, openEntry, openSettings, tooltipText } from './helpers/layout.ts'
 
-const OUTPUT = 'test-results/phone-page'
+const OUTPUT = process.env.LATCH_RELAY_SHOTS ? resolve(process.env.LATCH_RELAY_SHOTS, 'phone-page') : 'test-results/phone-page'
 const SIZES = [
   { width: 1440, height: 900, label: 'desktop' },
   { width: 820, height: 1000, label: 'tablet' },
@@ -142,7 +142,7 @@ describe('设置 › 设备', () => {
         devices: [],
         pairing: { state: 'ready', offNetwork: false },
         create: 'ok',
-        relays: [{ relayId: 'a'.repeat(32), url: 'wss://relay.fixture.test', status: 'connected' }],
+        relays: [{ relayId: 'a'.repeat(32), url: 'https://relay.fixture.test/', status: 'connected' }],
       }
       await asDesktop(page, state)
       await page.reload()
@@ -200,11 +200,17 @@ describe('设置 › 设备', () => {
           '.settings-group[data-secure] .settings-row-description',
           '.settings-group[data-secure] .ui-button',
         ])
-      // A saved relay can be taken back, here and only here.
-      await page.getByText('wss://relay.fixture.test', { exact: true }).waitFor()
-      await capture('about-saved')
-      await page.locator('.device-saved').getByRole('button', { name: '移除', exact: true }).click()
-      await page.getByText('wss://relay.fixture.test', { exact: true }).waitFor({ state: 'hidden' })
+      // A saved relay is managed in its own section.
+      expect(await page.getByText('relay.fixture.test', { exact: true }).count()).toBe(0)
+      await openEntry(page, '中继')
+      const relay = page.getByTestId('relay-own')
+      await relay.getByText('relay.fixture.test', { exact: true }).waitFor()
+      await capture('relays-saved')
+      await relay.getByRole('button', { name: '更多', exact: true }).click()
+      await page.getByRole('menuitem', { name: '移除', exact: true }).click()
+      await relay.waitFor({ state: 'hidden' })
+      expect(state.relays).toHaveLength(0)
+      await openEntry(page, '设备')
       await page.getByRole('button', { name: '在浏览器中打开', exact: true }).click()
       await page.getByText('已在浏览器中打开', { exact: false }).waitFor()
       await capture('browser-opened')

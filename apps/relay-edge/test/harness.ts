@@ -66,8 +66,9 @@ export class ClientSocket {
   readonly received: Uint8Array[] = []
   closed?: number
   private waiters: Array<() => void> = []
-  deliver(payload: Uint8Array): void {
+  deliver(payload: Uint8Array, written?: () => void): void {
     this.received.push(payload)
+    written?.()
     for (const waiter of this.waiters.splice(0)) waiter()
   }
   /** Sends one relay message to the node as a binary WebSocket message. */
@@ -76,7 +77,8 @@ export class ClientSocket {
   }
   raw(data: Uint8Array | string): void {
     if (this.closed !== undefined) return
-    const value = typeof data === 'string' ? data : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+    const value =
+      typeof data === 'string' ? data : this.server.binaryType === 'blob' ? new Blob([Uint8Array.from(data)]) : Uint8Array.from(data).buffer
     void Promise.resolve().then(() => this.server.emit('message', { data: value }))
   }
   close(): void {
@@ -105,7 +107,11 @@ export class ClientSocket {
 }
 export class ServerSocket implements EdgeWebSocket {
   accepted = false
+  bufferedAmount = 0
+  binaryType: EdgeWebSocket['binaryType'] = 'blob'
   closeCode?: number
+  paused = false
+  private pending: Uint8Array[] = []
   private listeners = new Map<string, Array<(event: { data: unknown }) => void>>()
   constructor(readonly client: ClientSocket) {}
   accept(): void {
@@ -113,13 +119,23 @@ export class ServerSocket implements EdgeWebSocket {
   }
   send(data: ArrayBuffer | Uint8Array): void {
     if (this.closeCode !== undefined) throw new Error('closed')
-    this.client.deliver(new Uint8Array(data instanceof Uint8Array ? data.slice() : data))
+    const payload = new Uint8Array(data instanceof Uint8Array ? data.slice() : data)
+    this.bufferedAmount += payload.length
+    this.pending.push(payload)
+    this.flush()
+  }
+  flush(): void {
+    if (this.paused) return
+    for (const payload of this.pending.splice(0)) this.client.deliver(payload, () => (this.bufferedAmount -= payload.length))
+    if (this.closeCode !== undefined) {
+      this.client.shut(this.closeCode)
+      void Promise.resolve().then(() => this.emit('close'))
+    }
   }
   close(code?: number): void {
     if (this.closeCode !== undefined) return
     this.closeCode = code ?? 1000
-    this.client.shut(this.closeCode)
-    void Promise.resolve().then(() => this.emit('close'))
+    this.flush()
   }
   addEventListener(type: string, listener: (event: { data: unknown }) => void): void {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])

@@ -13,7 +13,7 @@ import {
   type RelayProfileInput,
 } from '../src/relay/profiles.ts'
 
-export const RELAY_USAGE = `  relay list [--json]                      列出官方中继与自己的中继、顺序与开关
+export const RELAY_USAGE = `  relay list [--json]                      列出官方中继与自己的中继、顺序与开关（Host 已停止）
   relay add --file <中继文件> [--expect-key <密钥短哈希>]
                                            添加自己的中继（Host 已停止）：先列出地址与密钥短哈希，再输入 y 确认；
                                            非交互环境用 --expect-key。Host 启动后核对节点密钥并登记成功，才把它发给手机；
@@ -27,6 +27,7 @@ type Out = (text: string) => void
 interface RelayCliIO {
   cwd: string
   stdin: { isTTY?: boolean }
+  stderr: { write(text: string): unknown }
   readLine(prompt: string): Promise<string>
 }
 export class RelayCliError extends Error {}
@@ -75,8 +76,8 @@ export function relayFacts(input: RelayProfileInput): string[] {
 }
 
 /**
- * `pnpm latch relay …`. Reading works with the Host running or stopped; every change runs with the data directory locked
- * and the Host stopped, is audited like the same change in settings, and takes effect when the Host starts. An added
+ * `pnpm latch relay …`. Testing uses the running Host. Listing and editing use the data directory lock while the Host
+ * is stopped. Changes are audited like the same change in settings and take effect when the Host starts. An added
  * relay is checked against the node then (its state shows in settings and in `relay list`).
  */
 export async function runRelayCommand(input: {
@@ -118,7 +119,7 @@ export async function runRelayCommand(input: {
   }
   if (command === 'list') {
     const lock = await input.stopped().catch(() => undefined)
-    if (!lock) throw new RelayCliError('Host 运行中时请在桌面端「设置 › 设备 › 关于连接」查看中继，或停止 Host 后再运行')
+    if (!lock) throw new RelayCliError('Host 运行中时请在桌面端「设置 › 中继」查看中继，或停止 Host 后再运行')
     try {
       const state = (await RelayProfiles.open(dataDir)).snapshot()
       const view = {
@@ -148,18 +149,30 @@ export async function runRelayCommand(input: {
   }
   if (command === 'add' || command === 'remove' || command === 'official' || command === 'order') {
     const lock = await input.stopped()
-    const audit = await AuditLog.open(join(dataDir, 'audit'))
+    let audit: AuditLog | undefined
     try {
+      const lowering = command === 'remove' || (command === 'official' && rest[0] === 'off')
+      audit = await AuditLog.open(join(dataDir, 'audit')).catch(error => {
+        if (!lowering) throw error
+        return undefined
+      })
       const profiles = await RelayProfiles.open(dataDir)
-      const record = (detail: { before: string; after: string; relayCount: number }, lowering: boolean) =>
-        audit
-          .append({
+      const record = async (detail: { before: string; after: string; relayCount: number }, lowering: boolean) => {
+        try {
+          if (!audit) throw new RelayCliError('审计记录不可用')
+          await audit.append({
             action: 'native.config.changed',
             actor: input.actor,
             ...(lowering ? {} : { stepup: 'offline' as const }),
             detail: { ...detail, lowering, direct: false },
           })
-          .then(() => true)
+          return true
+        } catch (error) {
+          if (!lowering) throw error
+          io.stderr.write('审计记录写入失败；移除或关闭中继照常进行。\n')
+          return false
+        }
+      }
       if (command === 'add') {
         const path = flags.get('--file')
         if (typeof path !== 'string') throw new RelayCliError('请用 --file <中继文件> 指定要添加的中继')
@@ -177,17 +190,13 @@ export async function runRelayCommand(input: {
           if (answer !== 'y' && answer !== 'yes') throw new RelayCliError('已取消，没有修改任何设置')
         }
         const base = profiles.configHash()
-        await audit.append({
+        await audit!.append({
           action: 'native.relay.add.requested',
           actor: input.actor,
           stepup: 'offline',
           detail: { base, profile: sha256Hex(canonicalJson(relay)) },
         })
-        await profiles.addUnverified(relay, base)
-        await record(
-          { before: base, after: profiles.configHash(), relayCount: profiles.snapshot().profiles.filter(item => !item.builtIn).length },
-          false,
-        )
+        await profiles.addUnverified(relay, base, detail => record(detail, false))
         out('已保存。Host 启动后核对节点的密钥并登记成功，才会把它发给手机；结果在设置与 relay list 中可见。')
         return 0
       }
@@ -223,8 +232,11 @@ export async function runRelayCommand(input: {
       out(value === 'own' ? '优先使用自己的中继。' : '优先使用官方中继。')
       return 0
     } finally {
-      await audit.close()
-      await lock.release()
+      try {
+        await audit?.close()
+      } finally {
+        await lock.release()
+      }
     }
   }
   return undefined

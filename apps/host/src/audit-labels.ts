@@ -44,6 +44,7 @@ export const AUDIT_LABELS: Readonly<Record<AuditAction, readonly [AuditKind, str
   'native.relay.conflict': ['devices', '中继冲突'],
   'native.relay.add.requested': ['devices', '请求添加中继'],
   'native.relay.add.abandoned': ['devices', '放弃添加中继'],
+  'native.relay.test': ['devices', '测试中继'],
   'native.network.remembered': ['devices', '记住网络'],
   'native.config.changed': ['devices', '修改手机连接'],
   'native.inputs.paused': ['devices', '暂停手机输入'],

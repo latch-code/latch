@@ -257,6 +257,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'device.revocations.torn-tail-removed': { bytes: 40 },
   'native.relay.conflict': { relayHash: hex },
   'native.relay.add.requested': { base: hex, profile: hex },
+  'native.relay.test': { relayHash: hex, profile: hex },
   'native.relay.add.abandoned': { profile: hex },
   'native.network.remembered': { networkHash: hex },
   'native.config.changed': { before: hex, after: hex, lowering: false, direct: true, relayCount: 1 },

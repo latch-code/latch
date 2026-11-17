@@ -266,10 +266,26 @@ export class NativeSettings {
     })
   }
   /** 测试: dial the node now; the four steps of the progress line. */
-  async testRelay(relayId: string, authorize: () => void): Promise<NativeRelayTest> {
+  async testRelay(relayId: string, actor: AuditActor, authorize: () => void): Promise<NativeRelayTest> {
+    authorize()
     const profile = this.options.profiles.snapshot().profiles.find(item => item.relayId === relayId)
     if (!profile) throw new AppError(404, 'native-relay-missing', '中继配置已移除')
-    const result = await this.options.controller.test(profile, authorize)
+    const hash = sha256Hex(canonicalJson(profile))
+    await this.options.audit.append({
+      action: 'native.relay.test',
+      actor,
+      stepup: 'none',
+      detail: { relayHash: sha256Hex(relayId), profile: hash },
+    })
+    const current = () => {
+      authorize()
+      const latest = this.options.profiles.snapshot().profiles.find(item => item.relayId === relayId)
+      if (!latest || sha256Hex(canonicalJson(latest)) !== hash)
+        throw new AppError(409, 'native-config-changed', '中继配置已变化，请刷新后重试。')
+    }
+    current()
+    const result = await this.options.controller.test(profile, current)
+    current()
     const delivered = this.options.deliveredAt?.(relayId)
     return { ...result, ...(delivered === undefined ? {} : { deliveredAt: delivered }) }
   }

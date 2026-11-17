@@ -541,13 +541,13 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
     if (relayAction && ((relayAction[2] && method === 'POST') || (!relayAction[2] && method === 'PATCH'))) {
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
       if (relayAction[2]) {
-        // 测试 changes nothing on this Mac: any admin device here, or `pnpm latch relay test` through host.sock.
+        // A test uses the saved registration credential: record its execution before any outbound work.
         if (caller.device) requireScope(caller, 'admin')
         requireLocal(caller)
         const authorize = () => {
           if (caller.device) recheck(caller, 'admin')
         }
-        json(res, await nativeSettings.testRelay(relayAction[1]!, authorize))
+        json(res, await nativeSettings.testRelay(relayAction[1]!, actorOf(caller), authorize))
         return true
       }
       requireLocal(caller)

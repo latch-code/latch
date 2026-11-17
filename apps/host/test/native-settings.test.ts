@@ -1,12 +1,57 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import type { NativeLinkInfo } from '@latch/protocol'
+import { AppError } from '@latch/sdk'
+import type { LookupFunction } from '../src/egress.ts'
 import { startTestHost } from './helpers/host.ts'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const close of cleanup.splice(0).toReversed()) await close()
+})
+
+it('audits a relay test before DNS or connection work, for the local device and anonymous CLI alike', async () => {
+  const node = {
+    relayId: 'a'.repeat(32),
+    kind: 'edge' as const,
+    urls: ['https://relay.example/'],
+    relayKey: 'b'.repeat(64),
+    region: 'apac-ne',
+  }
+  const lookup = vi.fn<LookupFunction>((_hostname, _options, callback) => callback(new Error('fixture refuses network'), []))
+  const host = await startTestHost({ officialRelays: [node], egressLookup: lookup })
+  cleanup.push(() => host.close())
+  const desktop = await host.enroll({ listener: 'unix' })
+  const append = host.host.security.audit.append.bind(host.host.security.audit)
+  const recorded: Parameters<typeof append>[0][] = []
+  let fail = true
+  vi.spyOn(host.host.security.audit, 'append').mockImplementation(async event => {
+    if (event.action === 'native.relay.test') {
+      recorded.push(event)
+      if (fail) throw new AppError(503, 'audit-unavailable', '审计记录写入失败，操作未执行')
+    }
+    return append(event)
+  })
+  const path = `native/relays/${node.relayId}/test`
+  expect((await desktop.request(path, { method: 'POST', body: {} })).status).toBe(503)
+  expect((await host.raw('unix', `api/${path}`, { method: 'POST' })).status).toBe(503)
+  expect(recorded).toHaveLength(2)
+  expect(recorded[0]!.actor).toMatchObject({ deviceId: desktop.id, listener: 'unix', via: 'http' })
+  expect(recorded[1]!.actor).toEqual({ listener: 'unix', via: 'cli' })
+  expect(lookup).not.toHaveBeenCalled()
+  fail = false
+  expect((await desktop.request(path, { method: 'POST', body: {} })).status).toBe(200)
+  expect(lookup).toHaveBeenCalled()
+  const entry = recorded.at(-1)!
+  expect(entry).toMatchObject({
+    action: 'native.relay.test',
+    stepup: 'none',
+    detail: { relayHash: expect.stringMatching(/^[a-f0-9]{64}$/u), profile: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+  })
+  expect(JSON.stringify(entry)).not.toContain(node.urls[0])
+  expect(JSON.stringify(entry)).not.toContain(node.relayKey)
 })
 
 it('reports phone access and no settings form: the listener is the Host start option here, and config and pause are gone', async () => {

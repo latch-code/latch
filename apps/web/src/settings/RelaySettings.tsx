@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Cloud, FileUp, Radio, Server } from 'lucide-react'
 import type { NativeLinkInfo, NativeRelayProfile, NativeRelayTest } from '@latch/protocol'
 import {
@@ -19,8 +19,10 @@ import {
   type IconComponent,
   type StatusTone,
 } from '@latch/ui'
-import { api, inlineError } from '../core/api.ts'
-import { withConfirmation } from '../core/confirmations.ts'
+import { api, inlineError, isUncertain } from '../core/api.ts'
+import { useInlineConfirmation, withConfirmation } from '../core/confirmations.ts'
+import { CONFIRMATION_COPY } from '../core/securityCopy.ts'
+import { ConfirmationContent } from '../components/InlineConfirm.tsx'
 import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
@@ -433,8 +435,20 @@ function AddRelay({
   const [domain, setDomain] = useState('')
   const [candidate, setCandidate] = useState<{ requestId: string; profile: NativeRelayProfile; hash: string } | null>(null)
   const [rejected, setRejected] = useState(false)
-  const [progress, setProgress] = useState<{ test: NativeRelayTest | null; busy: boolean; relayId?: string; message?: string } | null>(null)
+  const [progress, setProgress] = useState<{
+    requestId: string
+    test: NativeRelayTest | null
+    busy: boolean
+    uncertain?: boolean
+    relayId?: string
+    message?: string
+  } | null>(null)
+  // The dialog replaces its children at the phone breakpoint, but the confirmation must stay with the request.
+  const confirmationId = useId()
+  const confirmation = useInlineConfirmation(confirmationId, open && progress?.busy === true, 2)
+  const awaitingConfirmation = confirmation?.view.phase === 'waiting'
   const reset = () => {
+    confirmation?.actions.dismiss()
     setWay(null)
     setCandidate(null)
     setRejected(false)
@@ -454,8 +468,10 @@ function AddRelay({
       setRejected(true)
     }
   }
-  const connect = async (body: { requestId: string; profile?: NativeRelayProfile }) => {
-    setProgress({ test: null, busy: true })
+  const connect = async ({ requestId, profile }: { requestId: string; profile?: NativeRelayProfile }) => {
+    confirmation?.actions.dismiss()
+    const body = { requestId, ...(profile ? { profile } : {}) }
+    setProgress({ requestId, test: null, busy: true })
     try {
       const info = await withConfirmation(confirmation =>
         api<NativeLinkInfo>('native/relays', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }),
@@ -464,6 +480,7 @@ function AddRelay({
       const relayId = body.profile?.relayId ?? info.relays.at(-1)?.relayId
       const added = info.relays.find(relay => relay.relayId === relayId)
       setProgress({
+        requestId,
         test: { reached: 'registered', ...(added?.deliveredAt ? { deliveredAt: added.deliveredAt } : {}) },
         busy: false,
         ...(relayId ? { relayId } : {}),
@@ -471,10 +488,13 @@ function AddRelay({
     } catch (cause) {
       const code = (cause as { code?: string }).code as keyof typeof FAILURE | undefined
       const failure = code && code in FAILURE ? FAILURE[code] : undefined
+      const uncertain = failure === undefined && isUncertain(cause)
       setProgress({
+        requestId,
         test: failure ? { reached: failure === 'refused' ? 'identity' : 'none', failure } : null,
         busy: false,
-        message: inlineError(cause),
+        uncertain,
+        message: uncertain ? '添加结果待确认' : inlineError(cause),
       })
     }
   }
@@ -575,12 +595,13 @@ function AddRelay({
       className="relay-add-dialog"
       title={way === null ? '添加中继' : way === 'file' ? '已有中继文件' : KIND[way].label}
       onClose={() => {
-        reset()
+        if (awaitingConfirmation) confirmation.actions.cancel()
+        if (!progress?.busy && !progress?.uncertain) reset()
         onClose()
       }}
       footer={
         way !== null && !progress?.relayId ? (
-          <Button onClick={reset} disabled={progress?.busy}>
+          <Button onClick={reset} disabled={progress?.busy || progress?.uncertain}>
             返回
           </Button>
         ) : progress?.relayId ? (
@@ -662,14 +683,14 @@ function AddRelay({
           </dl>
           {progress ? (
             <>
-              <RelaySteps test={shown ?? null} busy={progress.busy} />
+              <RelaySteps test={shown ?? null} busy={progress.busy && !awaitingConfirmation} />
               {progress.message && (
-                <InlineNotice tone="error" secure>
+                <InlineNotice tone={progress.uncertain ? 'warn' : 'error'} secure>
                   {progress.message}
                 </InlineNotice>
               )}
               {!progress.busy && !progress.relayId && (
-                <Button variant="primary" onClick={() => void connect({ requestId: candidate.requestId })}>
+                <Button variant="primary" onClick={() => void connect(candidate)}>
                   重试
                 </Button>
               )}
@@ -683,12 +704,27 @@ function AddRelay({
       )}
       {!candidate && progress && (
         <div className="relay-check">
-          <RelaySteps test={shown ?? null} busy={progress.busy} />
+          <RelaySteps test={shown ?? null} busy={progress.busy && !awaitingConfirmation} />
           {progress.message && (
-            <InlineNotice tone="error" secure>
+            <InlineNotice tone={progress.uncertain ? 'warn' : 'error'} secure>
               {progress.message}
             </InlineNotice>
           )}
+          {!progress.busy && !progress.relayId && (
+            <Button variant="primary" onClick={() => void connect({ requestId: progress.requestId })}>
+              重试
+            </Button>
+          )}
+        </div>
+      )}
+      {confirmation && (
+        <div className="inline-confirm" data-secure="">
+          {awaitingConfirmation && (
+            <InlineNotice tone="warn" secure>
+              {CONFIRMATION_COPY.waiting}
+            </InlineNotice>
+          )}
+          <ConfirmationContent view={confirmation.view} actions={confirmation.actions} />
         </div>
       )}
     </Dialog>

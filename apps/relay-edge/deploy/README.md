@@ -28,6 +28,7 @@ pnpm relay-edge:setup --region ne --out "$HOME/latch-relay-ne.json"
 - Cloudflare 账户与 Workers Paid 计划（Durable Objects 与用量）。
 - 在自己的终端用自己的 wrangler（例如 `npx wrangler`，不装进本仓库）；`npx wrangler login` 由你本人完成。
 - 本仓库已 `pnpm install`。
+- 节点运行时提供 workerd v1.20261117.1 新增的 `WebSocket.bufferedAmount`。线上滚动部署是否已具备尚未验收；缺失或非法时节点拒绝 WebSocket 升级，不能降级到只限发送速率。`/healthz` 的 200 不代表这项能力已验证。
 
 ## 1. 构建
 
@@ -94,7 +95,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://latch-relay-ne.<子域>.workers
 curl -s -H @"$HOME/.latch-relay-admin.header" https://latch-relay-ne.<子域>.workers.dev/admin/status
 ```
 
-`healthz` 只说明这个 Worker 已配置（200）或未配置（503），不经过节点对象，不计费、不占预算。`admin/status` 给出每个分片是否可用、路由数、连接数、接合数与花费计数，不含 IP 或秘密；令牌不对时一律 404。模板关闭了 observability、日志与 Logpush，代码不输出日志；Cloudflare 自己的边缘日志不在控制之内。
+`healthz` 只说明这个 Worker 已配置（200）或未配置（503），不经过节点对象。`admin/status` 给出每个分片是否可用、路由数、连接数、接合数、流量及缓冲计数，不含 IP 或秘密；令牌不对时一律 404。模板关闭了 observability、日志与 Logpush，代码不输出日志；Cloudflare 自己的边缘日志不在控制之内。慢读者的缓冲硬上限见 [docs/RELAY.md](../../../docs/RELAY.md#未实测按文档与保守值)；实际部署后仍需验证持续慢读、真实关闭与连接重试期间的对象内存，不能用 Node 夹具替代。
 
 ## 8. 交给 Mac
 

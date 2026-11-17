@@ -21,6 +21,9 @@ export interface EdgeResponse {
 }
 /** The server half of a WebSocketPair, used with accept() (never the hibernation API). */
 export interface EdgeWebSocket {
+  /** Since workerd v1.20261117.1 (PR 8479); live Cloudflare rollout unverified. Missing/invalid counters fail closed. */
+  readonly bufferedAmount?: number
+  binaryType: 'arraybuffer' | 'blob'
   accept(): void
   send(data: ArrayBuffer | Uint8Array): void
   close(code?: number, reason?: string): void

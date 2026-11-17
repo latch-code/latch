@@ -241,6 +241,7 @@ export const AUDIT_FIELDS: AuditFieldTable = {
   'native.network.remembered': { networkHash: 'hidden' },
   'native.relay.add.abandoned': { profile: 'hidden' },
   'native.relay.add.requested': { base: 'hidden', profile: 'hidden' },
+  'native.relay.test': { relayHash: 'hidden', profile: 'hidden' },
   'native.relay.conflict': { relayHash: 'hidden' },
   'offline.ticket.consumed': { ticketId: 'short' },
   'offline.ticket.created': { ticketId: 'short' },

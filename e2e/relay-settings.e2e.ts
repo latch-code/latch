@@ -13,7 +13,7 @@ import { openEntry } from './helpers/layout.ts'
  * 设置 › 中继 against a scripted Host: every state a relay row has, 添加中继 through a relay file with the check card and
  * the progress line, a file that is refused, and a device that only reads. Screenshots at four widths, light and dark.
  */
-const OUTPUT = 'test-results/relay-settings'
+const OUTPUT = process.env.LATCH_RELAY_SHOTS ? resolve(process.env.LATCH_RELAY_SHOTS, 'settings') : 'test-results/relay-settings'
 const SIZES = [
   { width: 390, height: 844, label: '390' },
   { width: 768, height: 1024, label: '768' },

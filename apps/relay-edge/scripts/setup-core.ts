@@ -101,6 +101,7 @@ export async function runSetup(input: SetupInput, deps: SetupDeps): Promise<{ ur
     () => false,
   )
   if (probe) throw new SetupError(`${input.out} 已存在，换一个路径`)
+  await mkdir(input.workDir, { recursive: true, mode: 0o700 })
   const version = await deps.wrangler(['--version'], { cwd: input.workDir }).catch(() => ({ code: -1, stdout: '' }))
   if (version.code !== 0) throw new SetupError('没有找到 wrangler。请先安装 Cloudflare 的 wrangler 并运行 wrangler login，再重试。')
 

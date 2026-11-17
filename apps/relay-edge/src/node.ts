@@ -14,6 +14,7 @@ import { webLinkCrypto } from './crypto.ts'
 import type { EdgeEnv, EdgePlatform, EdgeRequest, EdgeResponse, EdgeState, EdgeWebSocket } from './platform.ts'
 import { encodeWorkRequest } from './scrypt.ts'
 import { EdgeDenials } from './storage.ts'
+import { EdgeBuffers } from './buffers.ts'
 
 export const EDGE_PROTOCOL = 'latch-relay.2'
 type Role = 'host' | 'data' | 'client'
@@ -42,9 +43,6 @@ export interface EdgeLimits {
    * where an idle pair costs about 8 received messages a second and a streaming one up to about 50.
    */
   maxPairs: number
-  /** Outbound bytes per socket per second, and the burst on top: a reader that falls behind is closed, not buffered. */
-  outboundBytesPerSecond: number
-  outboundBurstBytes: number
 }
 const DEFAULT_LIMITS: EdgeLimits = {
   maxConnections: 1024,
@@ -58,8 +56,6 @@ const DEFAULT_LIMITS: EdgeLimits = {
   maxConcurrent: 4,
   maxQueuedBytes: 262_144,
   maxPairs: 40,
-  outboundBytesPerSecond: 2_097_152,
-  outboundBurstBytes: 4_194_304,
 }
 /**
  * Messages a socket may send before the node has authenticated it: HELLO and one REGISTER, ADMIT or ATTACH. The one
@@ -79,12 +75,7 @@ function limits(text: string | undefined): EdgeLimits {
     if (!(key in out) || !Number.isSafeInteger(value) || (value as number) < 0) throw new RangeError('Invalid relay limits')
     out[key as keyof EdgeLimits] = value as number
   }
-  if (
-    out.minBits > out.maxBits
-    || out.maxBits > REGISTRATION_WORK.maxBits
-    || out.softRoutesPerPrefix >= out.maxRoutesPerPrefix
-    || out.outboundBurstBytes < 65_536
-  )
+  if (out.minBits > out.maxBits || out.maxBits > REGISTRATION_WORK.maxBits || out.softRoutesPerPrefix >= out.maxRoutesPerPrefix)
     throw new RangeError('Invalid relay limits')
   return out
 }
@@ -107,10 +98,10 @@ class OuterPadding {
   private timer: unknown
   private stopped = false
   private readonly platform: EdgePlatform
-  private readonly write: (payload: Uint8Array) => void
+  private readonly write: (payload: Uint8Array, reserved: boolean) => void
   private readonly fail: () => void
   paddingBytes = 0
-  constructor(platform: EdgePlatform, write: (payload: Uint8Array) => void, fail: () => void) {
+  constructor(platform: EdgePlatform, write: (payload: Uint8Array, reserved: boolean) => void, fail: () => void) {
     this.platform = platform
     this.write = write
     this.fail = fail
@@ -120,7 +111,7 @@ class OuterPadding {
   /** The bounds of the self-hosted relay's cover (link-client relay-outer-padding.ts): past them the socket closes. */
   send(payload: Uint8Array): void {
     if (this.stopped) {
-      this.write(payload)
+      this.write(payload, true)
       return
     }
     const bytes = frameBytes(payload.length, false)
@@ -151,14 +142,14 @@ class OuterPadding {
       size += next
       this.queuedBytes -= next
     }
-    for (const payload of chosen) this.write(payload)
+    for (const payload of chosen) this.write(payload, true)
     let target = Math.max(OUTER_PADDING.bucketBytes, Math.ceil((size + 3) / OUTER_PADDING.bucketBytes) * OUTER_PADDING.bucketBytes)
     for (;;) {
       const room = target - size
       const payload = room - (room - 2 <= 125 ? 2 : 4)
       if (payload >= 1 && payload - 1 <= 16_384 && frameBytes(payload, false) === room) {
         const pad = encodeMessage({ type: 'pad', data: this.platform.random(payload - 1) }, 2)
-        this.write(pad)
+        this.write(pad, false)
         this.paddingBytes += room
         return
       }
@@ -172,7 +163,7 @@ class OuterPadding {
     this.platform.clearInterval(this.timer)
     const queued = this.queue.splice(0)
     this.queuedBytes = 0
-    if (flush) for (const payload of queued) this.write(payload)
+    if (flush) for (const payload of queued) this.write(payload, true)
   }
 }
 
@@ -193,8 +184,6 @@ interface Socket {
   /** The node asked this socket for registration work, so one REGISTRATION-PROOF is expected. */
   workAsked: boolean
   pads: number
-  tokens: number
-  refilled: number
   outer?: OuterPadding
 }
 
@@ -207,6 +196,7 @@ interface Socket {
 export class EdgeNode {
   private readonly platform: EdgePlatform
   private readonly sockets = new Map<number, Socket>()
+  private readonly buffers = new EdgeBuffers()
   private readonly configured: boolean
   private core?: RelayCore
   private denials?: EdgeDenials
@@ -288,9 +278,18 @@ export class EdgeNode {
     return this.accept(this.core, role, prefix)
   }
   private accept(core: RelayCore, role: Role, prefix: string): EdgeResponse {
+    // Keep the existing connection capacity charged while transports close or their received work settles.
+    if (this.buffers.size >= this.limits.maxConnections) return this.platform.respond(503)
     const now = this.platform.now()
     const [client, ws] = this.platform.pair()
-    ws.accept()
+    if (!this.buffers.accept(ws)) return this.platform.respond(503)
+    try {
+      ws.binaryType = 'arraybuffer'
+      ws.accept()
+    } catch {
+      this.buffers.closed(ws)
+      return this.platform.respond(503)
+    }
     const id = ++this.sequence
     const socket: Socket = {
       role,
@@ -306,8 +305,6 @@ export class EdgeNode {
       preauth: 0,
       workAsked: false,
       pads: 0,
-      tokens: this.limits.outboundBurstBytes,
-      refilled: now,
       peer: {
         id,
         prefix,
@@ -323,14 +320,17 @@ export class EdgeNode {
     if (role !== 'host')
       socket.outer = new OuterPadding(
         this.platform,
-        payload => this.write(socket, payload),
+        (payload, reserved) => this.write(socket, payload, reserved),
         () => this.close(socket, 4302),
       )
     this.sockets.set(id, socket)
     this.armAlarm()
     ws.addEventListener('message', event => this.receive(core, socket, event.data))
-    ws.addEventListener('close', () => this.gone(core, socket))
-    ws.addEventListener('error', () => this.gone(core, socket))
+    ws.addEventListener('close', () => {
+      this.disconnect(socket)
+      this.buffers.closed(ws)
+    })
+    ws.addEventListener('error', () => this.close(socket, 1001))
     if (role === 'client' && this.pairs() >= this.limits.maxPairs) this.close(socket, 4302)
     else core.connect(socket.peer, role)
     return this.platform.upgrade(client, EDGE_PROTOCOL)
@@ -345,27 +345,18 @@ export class EdgeNode {
   }
   private pairs(): number {
     let spliced = 0
-    for (const socket of this.sockets.values()) if (socket.spliced && socket.role === 'client') spliced++
+    for (const socket of this.sockets.values()) if (!socket.closed && socket.spliced && socket.role === 'client') spliced++
     return spliced
   }
-  private write(socket: Socket, payload: Uint8Array): void {
+  private write(socket: Socket, payload: Uint8Array, reserved = false): void {
     if (socket.closed) return
-    const bytes = frameBytes(payload.length, false),
-      now = this.platform.now()
-    // No send-side back-pressure exists on the platform: a socket may not take more than its rate and burst.
-    socket.tokens = Math.min(
-      this.limits.outboundBurstBytes,
-      socket.tokens + ((now - socket.refilled) * this.limits.outboundBytesPerSecond) / 1000,
-    )
-    socket.refilled = now
-    if (bytes > socket.tokens) {
+    if (!reserved && !this.buffers.queue(socket.ws, payload.length)) {
       this.close(socket, 4302)
       return
     }
-    socket.tokens -= bytes
     try {
-      socket.ws.send(payload)
-      this.traffic.bytesOut += bytes
+      this.buffers.write(socket.ws, payload)
+      this.traffic.bytesOut += frameBytes(payload.length, false)
     } catch {
       this.close(socket, 4302)
     }
@@ -375,8 +366,12 @@ export class EdgeNode {
     if (message.type === 'registered' || message.type === 'admitted' || message.type === 'attached') socket.authenticated = true
     if (message.type === 'registration-work') socket.workAsked = true
     const payload = encodeMessage(message, 2)
+    if (!this.buffers.queue(socket.ws, payload.length)) {
+      this.close(socket, 4302)
+      return Promise.reject(new Error('Relay output unavailable'))
+    }
     if (socket.outer) socket.outer.send(payload)
-    else this.write(socket, payload)
+    else this.write(socket, payload, true)
     return Promise.resolve()
   }
   private receive(core: RelayCore, socket: Socket, data: unknown): void {
@@ -416,7 +411,7 @@ export class EdgeNode {
       this.close(socket, 4400)
       return
     }
-    if (socket.queuedBytes + data.byteLength > this.limits.maxQueuedBytes) {
+    if (socket.queuedBytes + data.byteLength > this.limits.maxQueuedBytes || !this.buffers.receive(socket.ws, data.byteLength)) {
       this.close(socket, 4302)
       return
     }
@@ -427,34 +422,35 @@ export class EdgeNode {
       .catch(() => this.close(socket, 4400))
       .finally(() => {
         socket.queuedBytes -= data.byteLength
+        this.buffers.received(socket.ws, data.byteLength)
       })
   }
   private close(socket: Socket, code: number): void {
     if (socket.closed) return
-    socket.closed = true
-    socket.outer?.stop(false)
-    this.sockets.delete(socket.peer.id)
-    this.core?.disconnect(socket.peer.id)
+    this.disconnect(socket)
     try {
       socket.ws.close(code, '')
     } catch {
       /* Already closed by the peer or the runtime. */
     }
   }
-  private gone(core: RelayCore, socket: Socket): void {
-    if (!socket.closed) {
-      socket.closed = true
-      socket.outer?.stop(false)
-      this.sockets.delete(socket.peer.id)
-    }
-    core.disconnect(socket.peer.id)
+  private disconnect(socket: Socket): void {
+    if (socket.closed) return
+    socket.closed = true
+    socket.outer?.stop(false)
+    this.sockets.delete(socket.peer.id)
+    this.buffers.close(socket.ws)
+    this.core?.disconnect(socket.peer.id)
   }
   private sweep(): void {
     const core = this.core
     if (!core) return
     const now = this.platform.now()
     core.sweep()
-    for (const socket of [...this.sockets.values()]) if (now - socket.lastSeen > EDGE_RELAY.nodeDeadAfterMs) this.close(socket, 1001)
+    for (const socket of [...this.sockets.values()]) {
+      if (!this.buffers.current(socket.ws)) this.close(socket, 4302)
+      else if (now - socket.lastSeen > EDGE_RELAY.nodeDeadAfterMs) this.close(socket, 1001)
+    }
   }
   /** The alarm: drop expired denials. Re-arms itself only while sockets are connected. */
   async alarm(): Promise<void> {
@@ -499,6 +495,7 @@ export class EdgeNode {
       ...(this.core ? this.core.status() : {}),
       sockets: this.sockets.size,
       pairs: this.pairs(),
+      buffered: this.buffers.status(),
       traffic: { ...this.traffic },
     }
   }

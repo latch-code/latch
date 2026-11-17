@@ -10,7 +10,8 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Device } from '@latch/protocol'
-import { verifyAuditFile } from '../src/audit.ts'
+import { AuditLog, verifyAuditFile } from '../src/audit.ts'
+import { RelayProfiles } from '../src/relay/profiles.ts'
 import { HostConfig } from '../src/config.ts'
 import { writeProjectContext } from '../src/project-context.ts'
 import { latchCodeRoot } from '../src/paths.ts'
@@ -1149,4 +1150,63 @@ describe('latch CLI', () => {
       'native.config.changed',
     ])
   })
+
+  it('tests a relay through the running Host with the anonymous Unix audit actor', async () => {
+    const relay = {
+      relayId: 'a'.repeat(32),
+      kind: 'edge' as const,
+      urls: ['https://relay.example/'],
+      relayKey: 'b'.repeat(64),
+      region: 'apac-ne',
+    }
+    const host = await runningHost({
+      officialRelays: [relay],
+      egressLookup: (_hostname, _options, callback) => callback(new Error('fixture refuses network'), []),
+    })
+    const client = cli()
+    expect(await client.latch('relay', 'test', relay.relayId, '--data-dir', host.dataDir)).toBe(1)
+    expect(client.output.stdout).toContain('✗ 连上')
+    expect(client.output.stdout).toContain('连不上这个中继：检查地址与网络。')
+    const records = (await auditActions(host.dataDir)).filter(record => record.action === 'native.relay.test')
+    expect(records.map(record => record.actor)).toEqual([{ listener: 'unix', via: 'cli' }])
+  })
+
+  it.each(['open', 'append', 'config append'] as const)(
+    'still removes and switches relays off when audit %s fails, but refuses to grant',
+    async failure => {
+      const dataDir = await stoppedDataDir()
+      const profiles = await RelayProfiles.open(dataDir)
+      const relay = { relayId: 'c'.repeat(32), url: 'https://relay.example/', spkiHash: 'd'.repeat(64) }
+      await profiles.replace([relay])
+      const append = AuditLog.prototype.append
+      const mock =
+        failure === 'open'
+          ? vi.spyOn(AuditLog, 'open').mockRejectedValue(new Error('audit unavailable'))
+          : vi.spyOn(AuditLog.prototype, 'append').mockImplementation(async function (this: AuditLog, entry) {
+              if (failure === 'append' || entry.action === 'native.config.changed') throw new Error('audit unavailable')
+              return append.call(this, entry)
+            })
+      try {
+        const off = cli()
+        expect(await off.latch('relay', 'official', 'off', '--data-dir', dataDir)).toBe(0)
+        expect(off.output.stderr).toContain('审计记录写入失败')
+        expect((await RelayProfiles.open(dataDir)).snapshot().officialOff).toBe(true)
+        expect(await cli().latch('relay', 'official', 'on', '--data-dir', dataDir)).toBe(1)
+        expect((await RelayProfiles.open(dataDir)).snapshot().officialOff).toBe(true)
+
+        const remove = cli()
+        expect(await remove.latch('relay', 'remove', relay.relayId, '--data-dir', dataDir)).toBe(0)
+        expect(remove.output.stderr).toContain('审计记录写入失败')
+        expect((await RelayProfiles.open(dataDir)).snapshot().profiles).toEqual([])
+        const directory = await temporaryDirectory()
+        await writeFile(join(directory, 'relay.json'), JSON.stringify({ version: 1, profile: relay }))
+        expect(
+          await cli({ cwd: directory }).latch('relay', 'add', '--file', 'relay.json', '--expect-key', 'dddddddd', '--data-dir', dataDir),
+        ).toBe(1)
+        expect((await RelayProfiles.open(dataDir)).snapshot().profiles).toEqual([])
+      } finally {
+        mock.mockRestore()
+      }
+    },
+  )
 })

@@ -23,6 +23,7 @@ import {
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { createWorkHandler } from '../src/work-handler.ts'
 import { frameBytes } from '../src/node.ts'
+import { EDGE_BUFFER_LIMITS } from '../src/buffers.ts'
 import type { EdgeEnv, EdgeService } from '../src/platform.ts'
 import { ClientSocket, FakeClock, FakeObjects, FakeResponse, fakePlatform, request, settle } from './harness.ts'
 import { webcrypto } from 'node:crypto'
@@ -172,7 +173,7 @@ function setup(overrides: Partial<EdgeEnv> = {}) {
     await settle()
     return { client, data, proof, token }
   }
-  return { clock, objects, env, attempt, open, hello, credentials, holderOf, register, join, pair }
+  return { clock, platform, objects, env, attempt, open, hello, credentials, holderOf, register, join, pair }
 }
 
 describe('edge relay node', () => {
@@ -417,21 +418,58 @@ describe('edge relay node', () => {
     expect(first.closed).toBe(4302)
   })
 
-  it('bounds the node’s output per socket: the cover queue and the outbound rate', async () => {
-    // The rate leaves room for the cover itself (a 4 KiB bucket every 40 ms is about 100 KiB/s).
-    const t = setup({ LIMITS: JSON.stringify({ outboundBytesPerSecond: 262_144, outboundBurstBytes: 65_536 }) })
+  it('bounds the cover queue before sending it to the runtime', async () => {
+    const t = setup()
     const value = await t.credentials()
     const { client, data } = await t.join(value)
     // Still inside the cover: more than 64 KiB queued for the phone closes it, as on the self-hosted relay.
     for (let index = 0; index < 5; index++) data.send({ type: 'data', data: new Uint8Array(16_000) })
     await settle()
     expect(client.closed).toBe(4302)
-    // After the cover, a reader that falls behind its rate is closed rather than buffered for.
-    const second = await t.join(await t.credentials(2), '100.64.9.0/24')
+  })
+
+  it('bounds a continuous slow reader and retains its memory and slot until pending writes drain after close', async () => {
+    const t = setup({ LIMITS: JSON.stringify({ maxConnections: 3 }) })
+    const { client, data } = await t.join(await t.credentials())
     await t.clock.advance(3100)
-    for (let index = 0; index < 6; index++) second.client.send({ type: 'data', data: new Uint8Array(16_000) })
+    data.server.paused = true
+    // 160 KiB/s, well below the former rate bucket. No amount of elapsed time releases unsent bytes.
+    for (let index = 0; index < 40 && data.server.closeCode === undefined; index++) {
+      client.send({ type: 'data', data: new Uint8Array(16_000) })
+      await t.clock.advance(100)
+      expect(data.server.bufferedAmount).toBeLessThanOrEqual(EDGE_BUFFER_LIMITS.socketBytes)
+    }
+    expect(data.server.closeCode).toBe(4302)
+    expect(data.closed).toBeUndefined()
+    const node = await t.objects.object('n')
+    expect(node.status().buffered).toMatchObject({ bytes: expect.any(Number) })
+    expect((node.status().buffered as { bytes: number }).bytes).toBeGreaterThan(0)
+    await t.open('host', '203.0.113.0/24')
+    expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(503)
+    data.close()
     await settle()
-    expect(second.data.closed).toBe(4302)
+    expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(503)
+    data.server.paused = false
+    data.server.flush()
+    await settle()
+    expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(101)
+  })
+
+  it.each([undefined, -1, Number.NaN, Number.POSITIVE_INFINITY])('refuses an upgrade when bufferedAmount is %s', async amount => {
+    const t = setup()
+    const pair = t.platform.pair
+    let accepted = false
+    t.platform.pair = () => {
+      const [client, server] = pair()
+      Object.defineProperty(server, 'bufferedAmount', { value: amount })
+      server.accept = () => {
+        accepted = true
+      }
+      return [client, server]
+    }
+    expect((await t.attempt('client')).status).toBe(503)
+    expect(accepted).toBe(false)
+    expect((await t.objects.object('n')).status().sockets).toBe(0)
   })
 
   it('closes on malformed input: text, unknown tags, oversized and truncated messages', async () => {
