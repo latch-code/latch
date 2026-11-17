@@ -87,7 +87,7 @@ export async function scrypt(subtle: EdgeSubtle, password: Uint8Array, salt: Uin
 }
 
 /** The work Worker's request: bits[1] || salt[32] || input (16–512 bytes). Bounded before any computation. */
-export function decodeWorkRequest(body: Uint8Array): { bits: number; salt: Uint8Array; input: Uint8Array } | undefined {
+function decodeWorkRequest(body: Uint8Array): { bits: number; salt: Uint8Array; input: Uint8Array } | undefined {
   if (body.length < 1 + 32 + 16 || body.length > 1 + 32 + 512) return undefined
   const bits = body[0]!
   if (bits > REGISTRATION_WORK.maxBits) return undefined

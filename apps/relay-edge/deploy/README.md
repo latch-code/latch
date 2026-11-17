@@ -1,14 +1,19 @@
-# 部署官方中继（edge）
+# 部署 edge 中继（Cloudflare Workers）
 
-两个地区节点：东京 `ne`（`apac-ne`）与新加坡 `se`（`apac-se`），各是一个独立的 Worker（`latch-relay-ne`、`latch-relay-se`），另有一个没有公网地址的校验 Worker `latch-relay-work`。节点在 `workers.dev` 上的地址是 `https://latch-relay-ne.<子域>.workers.dev/` 与 `https://latch-relay-se.<子域>.workers.dev/`。
-
-为什么一个节点一个 Worker：部署会重置这个 Worker 的全部节点对象。分开以后可以先排空、部署一个节点，确认健康后再做另一个，手机与 Mac 在此期间走另一个节点。
+这份模板既是 Latch 的官方中继，也给任何人在自己的 Cloudflare 账户上运行自己的中继。下面写给「中继运营者」：Latch 的所有者部署官方中继，或你部署自己的中继，步骤相同，只在第 5 步「谁能登记」不同。
 
 机制、谁能看到什么、未实测的假设见 [docs/RELAY.md](../../../docs/RELAY.md)。
 
+## 结构
+
+- 每个地区节点是一个独立的 Worker：`latch-relay-ne`（东京，`apac-ne`）与 `latch-relay-se`（新加坡，`apac-se`）。自己的中继通常一个节点就够（只做 `ne` 或只做 `se`）。
+- 另有一个没有公网地址的校验 Worker `latch-relay-work`，只经服务绑定计算注册挑战。
+- 节点地址：`https://latch-relay-ne.<子域>.workers.dev/`。地址只是地址：手机与 Mac 认节点靠它的中继公钥签名，所以以后可以再加自定义域名作为同一节点的另一个地址。
+- 为什么一个节点一个 Worker：部署会重置这个 Worker 的全部节点对象。分开以后可以先排空、部署一个节点，确认健康后再做另一个，其间手机与 Mac 走另一个节点。
+
 ## 前提
 
-- Cloudflare 账户与 Workers Paid 计划（Durable Objects 与每月用量）。
+- Cloudflare 账户与 Workers Paid 计划（Durable Objects 与用量）。
 - 在自己的终端用自己的 wrangler（例如 `npx wrangler`，不装进本仓库）；`npx wrangler login` 由你本人完成。
 - 本仓库已 `pnpm install`。
 
@@ -16,73 +21,82 @@
 
 ```sh
 pnpm build:relay-edge
-cd dist/relay-edge        # worker.js、work.js、wrangler.jsonc、work.wrangler.jsonc；下面的命令都在这里运行
+cd dist/relay-edge        # worker.js、work.js、wrangler.jsonc、work.wrangler.jsonc；之后的 wrangler 命令都在这里运行
 ```
 
-## 2. 生成每个节点的中继密钥
+## 2. 第一次部署（还没有密钥，节点答 503）
 
-每个节点一把。私钥经管道直接交给 `wrangler secret put`，不落盘、不出现在屏幕或命令行参数里；命令只在标准错误打印公钥与一个新的节点标识。标准输出是终端时命令拒绝运行。
+```sh
+npx wrangler deploy -c work.wrangler.jsonc     # 校验 Worker
+npx wrangler deploy --env ne                   # 输出里有 https://latch-relay-ne.<子域>.workers.dev
+```
+
+没有密钥与登记方式时节点一律拒绝服务，部署后暴露在外也没有风险。
+
+## 3. 中继密钥
+
+每个节点一把。私钥经管道直接交给 `wrangler secret put`，不落盘、不出现在屏幕或命令行参数里；命令在标准错误打印公钥 `relayKey` 与一个新的节点标识 `relayId`（都是公开数据，记下来）。标准输出是终端时命令拒绝运行。
 
 ```sh
 pnpm --silent relay-edge:keygen | npx wrangler secret put RELAY_SIGNING_SEED --env ne
-pnpm --silent relay-edge:keygen | npx wrangler secret put RELAY_SIGNING_SEED --env se
 ```
 
-记下每次打印的 `relayKey`（公钥）与 `relayId`（节点标识），二者都是公开数据。
-
-## 3. 填写变量
+## 4. 填写变量
 
 编辑 `dist/relay-edge/wrangler.jsonc`（模板在 `apps/relay-edge/deploy/`）：
 
-- `NODE_HOSTS`：把 `<子域>` 换成账户的 workers.dev 子域。以后加自定义域名时，取消注释 `routes` 并把那个主机名用逗号加进 `NODE_HOSTS`。
-- `RELAY_ID`：上一步的 `relayId`。
-- `DAILY_MESSAGES`、`MONTHLY_MESSAGES`：每个节点收到的 WebSocket 消息上限（平台按 20 条计 1 次请求）。超出后节点拒绝新连接并断开已接合的连接（协议码 4304），到下一个 UTC 日或月恢复。
+- `NODE_HOSTS`：把 `<子域>` 换成第 2 步输出里的子域。以后加自定义域名时，取消注释 `routes` 并把那个主机名用逗号加进来。
+- `RELAY_ID`：第 3 步的 `relayId`。
+- `DAILY_MESSAGES`、`MONTHLY_MESSAGES`：这个节点每天、每月最多收多少条 WebSocket 消息（平台按 20 条计 1 次请求）。用完后节点断开所有连接并拒绝新连接（协议码 4304），到下一个 UTC 日或月恢复；一个地址前缀最多用掉日上限的 25%（`LIMITS` 的 `prefixDailyPercent`）。
 - `SHARDS` 保持 `1`。
 
-## 4. 管理令牌
+## 5. 谁能登记
 
-管理接口（状态与排空）要一个不少于 32 字符的令牌，也只作为 secret：
+**自己的中继（默认）：只有持有中继文件的 Mac 能登记。** `OPEN_REGISTRATION` 保持 `"false"`，生成中继文件，同一个注册令牌经管道进 secret：
+
+```sh
+pnpm --silent relay-edge:profile --relay-id <relayId> --relay-key <relayKey> \
+  --url https://latch-relay-ne.<子域>.workers.dev/ --output /absolute/path/latch-relay.json \
+  | npx wrangler secret put REGISTRATION_TOKEN --env ne
+```
+
+文件是新建的 0600 文件，含节点标识、所有地址（多个就重复 `--url`）、中继公钥与注册令牌；令牌不会显示。把文件私下带到你的 Mac（不上传到公开链接、不提交）。
+
+**Latch 官方中继：开放登记。** 把两个 env 的 `OPEN_REGISTRATION` 改为 `"true"`，不设置 `REGISTRATION_TOKEN`。开放登记意味着任何 Host 都能占用节点与额度，所以只有明确选择才这样做。
+
+## 6. 管理令牌
+
+状态与排空接口要一个不少于 32 字符的令牌，也只作为 secret：
 
 ```sh
 (umask 077; openssl rand -hex 32 | tr -d '\n' > ~/.latch-relay-admin)
 npx wrangler secret put ADMIN_TOKEN --env ne < ~/.latch-relay-admin
-npx wrangler secret put ADMIN_TOKEN --env se < ~/.latch-relay-admin
 ```
 
-令牌文件留在本机、权限 0600，用于下面的管理命令。
-
-## 5. 部署
+## 7. 再部署一次（变量生效）并验证
 
 ```sh
-npx wrangler deploy -c work.wrangler.jsonc     # 先部署校验 Worker
 npx wrangler deploy --env ne
-npx wrangler deploy --env se
-```
-
-模板关闭了 observability、日志与 Logpush；代码不输出日志。Cloudflare 自己的边缘日志不在我们控制之内。
-
-## 6. 验证
-
-```sh
 curl -s -o /dev/null -w '%{http_code}\n' https://latch-relay-ne.<子域>.workers.dev/healthz     # 200
 curl -s -H "Authorization: Bearer $(cat ~/.latch-relay-admin)" https://latch-relay-ne.<子域>.workers.dev/admin/status
 ```
 
-`healthz` 只答 200 或 503。`admin/status` 给出路由数、连接数、接合数与花费计数，不含 IP 或秘密。令牌不对时一律 404。
+`healthz` 只答 200 或 503。`admin/status` 给出路由数、连接数、接合数与花费计数，不含 IP 或秘密；令牌不对时一律 404。模板关闭了 observability、日志与 Logpush，代码不输出日志；Cloudflare 自己的边缘日志不在控制之内。
 
-## 7. 把公钥填进 Host
+## 8. 交给 Mac
 
-在 `apps/host/src/relay/official.ts` 的 `OFFICIAL_EDGE_DEPLOYMENT` 填入两个节点：`relayId`、`relayKey`、地区与地址（workers.dev 地址在前）。它为空时 Host 不使用官方中继。提交、构建并重启 Host 后，已配对的手机在下次取得连接簿时得到新的中继。
+- **自己的中继**：桌面端「设置 › 设备 › 关于连接」选「添加自己的中继」，选第 5 步的文件，核对地址与中继公钥，在 Mac 的系统窗口确认。或在 Host 停止时 `pnpm latch relay add --file /absolute/path/latch-relay.json --data-dir <数据目录>`。之后用手机在另一个网络（例如关掉 Wi‑Fi 用蜂窝网络）打开 Latch 验证。
+- **官方中继**：在 `apps/host/src/relay/official.ts` 的 `OFFICIAL_EDGE_DEPLOYMENT` 填入每个节点的 `relayId`、`relayKey`、地区与地址（workers.dev 地址在前）。它为空时 Host 不使用官方中继。提交、构建并重启 Host 后，已配对的手机在下次取得连接簿时得到它。
 
 ## 部署对现有连接的影响
 
-- 节点对象不休眠。按平台文档，部署后约 300 秒内对象会被重置：经这个节点的所有连接都会断开一次，内存里的路由清空。
-- Mac 会在几秒内重新登记；手机自动重连，界面短暂显示「重新连接」，会话状态都在 Mac 上，不丢失。写入请求按原 `requestId` 保持「结果未知」直到 Host 给出结果。
-- 所以：不要频繁部署，选在使用少的时间；两个节点分开做。
+- 节点对象不休眠。按平台文档，部署后约 300 秒内对象会被重置：经这个节点的所有连接都会断开一次，内存里的路由清空。把每次部署都当作「所有人断开一次」。
+- Mac 几秒内重新登记；手机自动重连，界面短暂显示「重新连接」。会话状态都在 Mac 上，不丢失；写入请求按原 `requestId` 保持「结果未知」直到 Host 给出结果。
+- 所以：少部署，选使用少的时间；多个节点分开做。
 
-## 排空与回退
+## 排空、回退与删除
 
-部署某个节点前先排空它，已登记的 Mac 收到 GOAWAY 并改走另一个节点，新连接被拒绝：
+部署某个节点前先排空它：已登记的 Mac 收到 GOAWAY 改走别的节点，新连接被拒绝。
 
 ```sh
 curl -s -X POST -H "Authorization: Bearer $(cat ~/.latch-relay-admin)" https://latch-relay-ne.<子域>.workers.dev/admin/drain
@@ -90,8 +104,9 @@ npx wrangler deploy --env ne
 curl -s -o /dev/null -w '%{http_code}\n' https://latch-relay-ne.<子域>.workers.dev/healthz
 ```
 
-部署会重置节点对象，排空状态随之结束。回退：`npx wrangler rollback --env ne`（或在控制台选上一个版本），同样会断开一次连接。
+部署会重置节点对象，排空状态随之结束。回退：`npx wrangler rollback --env ne`（或在控制台选上一个版本），同样断开一次。删除：先在 Mac 上移除这个中继，再 `npx wrangler delete --env ne`；`OBJECT_EPOCH` 改动后旧对象不再被使用，空闲时不会自己保持运行。
 
-## 轮换中继密钥
+## 轮换密钥与令牌
 
-重新生成并 `secret put` 新私钥后，旧公钥立刻失效：先在 Host 的 `OFFICIAL_EDGE_DEPLOYMENT` 换上新公钥、发布 Host，再换节点的私钥。两步之间这个节点不可用，手机走另一个节点。
+- **中继密钥**：新私钥 `secret put` 后旧公钥立即失效。官方中继先在 `OFFICIAL_EDGE_DEPLOYMENT` 换上新公钥并发布 Host，再换私钥；自己的中继重新生成中继文件，在 Mac 上移除后再添加。
+- **注册令牌**：重新运行第 5 步生成新文件与新 secret，在 Mac 上移除后用新文件添加。

@@ -1061,4 +1061,71 @@ describe('latch CLI', () => {
     const verified = await run(TSX, [LATCH, 'audit', 'verify', '--data-dir', t.dataDir], { cwd: directory, env })
     expect(verified.stdout).toMatch(/审计记录完整：共 \d+ 条/u)
   })
+
+  it('adds, lists, orders, switches and removes relays with the Host stopped, never showing a registration key', async () => {
+    const dataDir = await stoppedDataDir()
+    const directory = await temporaryDirectory()
+    const key = `lrt1.${'Q'.repeat(43)}`
+    const edge = {
+      relayId: 'c'.repeat(32),
+      url: 'https://latch-relay-ne.mine.example/',
+      kind: 'edge',
+      relayKey: 'd'.repeat(64),
+      extraUrls: ['https://relay.mine.example/'],
+      registrationKey: key,
+    }
+    const self = { relayId: 'e'.repeat(32), url: 'https://home.example/', spkiHash: 'f'.repeat(64) }
+    await writeFile(join(directory, 'edge.json'), JSON.stringify({ version: 2, profile: edge }), { mode: 0o600 })
+    await writeFile(join(directory, 'self.json'), JSON.stringify({ version: 1, profile: self }), { mode: 0o600 })
+
+    // Piped input cannot confirm; a wrong expected ID changes nothing.
+    const piped = cli({ cwd: directory })
+    expect(await piped.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir)).toBe(1)
+    expect(await piped.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir, '--expect-relay-id', 'a'.repeat(32))).toBe(1)
+    const typed = cli({ cwd: directory, typed: true, answer: 'y' })
+    expect(await typed.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir)).toBe(0)
+    expect(typed.output.asked[0]!.shown).toContain(`中继公钥：${edge.relayKey}`)
+    expect(typed.output.asked[0]!.shown).toContain('地址：https://relay.mine.example/')
+    expect(`${typed.output.stdout}${typed.output.stderr}`).not.toContain(key)
+    expect(await piped.latch('relay', 'add', '--file', 'self.json', '--data-dir', dataDir, '--expect-relay-id', self.relayId)).toBe(0)
+    expect(await piped.latch('relay', 'add', '--file', 'self.json', '--data-dir', dataDir, '--expect-relay-id', self.relayId)).toBe(1)
+
+    const list = cli()
+    expect(await list.latch('relay', 'list', '--json', '--data-dir', dataDir)).toBe(0)
+    expect(JSON.parse(list.output.stdout)).toEqual({
+      official: { deployed: false, enabled: true, ownFirst: false },
+      relays: [
+        { relayId: edge.relayId, kind: 'edge', urls: [edge.url, ...edge.extraUrls] },
+        { relayId: self.relayId, kind: 'self', urls: [self.url] },
+      ],
+      inAddressBook: [edge.relayId, self.relayId],
+    })
+    expect(list.output.stdout).not.toContain(key)
+    expect(await cli().latch('relay', 'order', 'own', '--data-dir', dataDir)).toBe(0)
+    expect(await cli().latch('relay', 'official', 'off', '--data-dir', dataDir)).toBe(0)
+    expect(await cli().latch('relay', 'official', 'maybe', '--data-dir', dataDir)).toBe(1)
+    expect(await cli().latch('relay', 'remove', edge.relayId, '--data-dir', dataDir)).toBe(0)
+    expect(await cli().latch('relay', 'remove', edge.relayId, '--data-dir', dataDir)).toBe(1)
+    const saved = JSON.parse(await readFile(join(dataDir, 'native', 'relays.json'), 'utf8')) as {
+      officialOff?: boolean
+      ownFirst?: boolean
+      profiles: Array<{ relayId: string; registrationKey?: string }>
+    }
+    expect(saved).toMatchObject({ officialOff: true, ownFirst: true })
+    expect(saved.profiles.map(profile => profile.relayId)).toEqual([self.relayId])
+    const actions = (await readFile(join(dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => (JSON.parse(line) as { action: string }).action)
+      .filter(action => action.startsWith('native.'))
+    expect(actions).toEqual([
+      'native.relay.add.requested',
+      'native.config.changed',
+      'native.relay.add.requested',
+      'native.config.changed',
+      'native.config.changed',
+      'native.config.changed',
+      'native.config.changed',
+    ])
+  })
 })

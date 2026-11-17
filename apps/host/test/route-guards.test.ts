@@ -251,7 +251,20 @@ describe('route guards', () => {
         'GET',
         'native/info',
         undefined,
-        { member: [403, 'scope-required'], browser: [403, 'local-only'], phone: [403, 'local-only'], anonymous: [200] },
+        // Any admin device reads the relay state; only this Mac changes it.
+        { member: [403, 'scope-required'], browser: [200], phone: [200], anonymous: [200] },
+      ],
+      [
+        'PUT',
+        'native/official-relay',
+        { enabled: false },
+        {
+          loopback: [401, 'unauthorized'],
+          member: [403, 'scope-required'],
+          browser: [403, 'local-only'],
+          phone: [403, 'local-only'],
+          anonymous: [401, 'unauthorized'],
+        },
       ],
       [
         'POST',
@@ -616,8 +629,9 @@ describe('route guards', () => {
       ['DELETE', `devices/${UNKNOWN_DEVICE}`, undefined, { phone: [403, 'scope-required'] }],
       ['GET', 'enrollments', undefined, { phone: [403, 'local-only'] }],
       ['POST', 'pairings', {}, { phone: [403, 'local-only'] }],
-      ['GET', 'native/info', undefined, { phone: [403, 'local-only'] }],
+      ['GET', 'native/info', undefined, { phone: [403, 'scope-required'] }],
       ['POST', 'native/relays', {}, { phone: [403, 'local-only'] }],
+      ['PUT', 'native/official-relay', { enabled: false }, { phone: [403, 'local-only'] }],
       ['POST', 'native/pairings', {}, { phone: [403, 'local-only'] }],
       ['POST', 'native/proximity', { gatewayHash: '0'.repeat(64) }, { phone: [200] }],
     ])

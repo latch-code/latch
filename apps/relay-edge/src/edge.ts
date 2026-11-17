@@ -25,7 +25,7 @@ function shardCount(env: EdgeEnv): number | undefined {
  * The upgrade checks of the self-hosted relay, as far as a Worker sees the request. The edge may consume or rewrite
  * `Sec-WebSocket-Key`, `Sec-WebSocket-Version` and `Connection`, so those are checked only when present.
  */
-export function checkUpgrade(request: EdgeRequest): boolean {
+function checkUpgrade(request: EdgeRequest): boolean {
   const get = (name: string) => request.headers.get(name)
   const key = get('sec-websocket-key'),
     version = get('sec-websocket-version')

@@ -9,6 +9,7 @@ import {
   registrationInput,
   registrationMac,
   registrationWorkInput,
+  decodeMessage,
   encodeMessage,
   REGISTRATION_WORK,
   routeId,
@@ -254,7 +255,7 @@ describe('edge relay node', () => {
   })
 
   it('caps spending: refuses every role with 4304 and evicts joined pairs once the budget is spent', async () => {
-    const t = setup({ DAILY_MESSAGES: '30' })
+    const t = setup({ DAILY_MESSAGES: '30', LIMITS: JSON.stringify({ prefixDailyPercent: 100 }) })
     const value = await t.credentials()
     const { client, data, host } = await t.join(value)
     for (let index = 0; index < 30; index++) client.send({ type: 'data', data: Uint8Array.of(index) })
@@ -263,11 +264,59 @@ describe('edge relay node', () => {
     expect(client.closed).toBe(4304)
     expect(data.closed).toBeDefined()
     expect(host.messages().some(message => message.type === 'goaway' && message.reason === 3)).toBe(true)
+    // The control socket goes too: an open socket keeps the object, and the bill, running.
+    expect(host.closed).toBe(4304)
     expect((await t.open('host')).closed).toBe(4304)
     expect((await t.open('client')).closed).toBe(4304)
     // The reservation survives a reset: a restarted object is still over the cap.
     t.objects.reset('n')
     expect((await t.open('host')).closed).toBe(4304)
+  })
+
+  it('limits one address prefix to its share of the daily budget', async () => {
+    const t = setup({ DAILY_MESSAGES: '100', LIMITS: JSON.stringify({ prefixDailyPercent: 10 }) })
+    const greedy = await t.open('client', '203.0.113.0/24')
+    for (let index = 0; index < 11; index++) greedy.send({ type: 'ping' })
+    await settle()
+    expect(greedy.closed).toBe(4304)
+    const other = await t.open('client', '198.51.100.0/24')
+    other.send({ type: 'ping' })
+    await settle()
+    expect(other.closed).toBeUndefined()
+    // The next UTC day starts a fresh share (the clock jumps; no timer needs to run for it).
+    t.clock.now += 86_400_000
+    const again = await t.open('client', '203.0.113.0/24')
+    again.send({ type: 'ping' })
+    await settle()
+    expect(again.closed).toBeUndefined()
+  })
+
+  it('keeps the three-second outer cover through the inner handshake after the join', async () => {
+    const t = setup()
+    const value = await t.credentials()
+    const { client, data } = await t.join(value)
+    const before = client.received.length
+    data.send({ type: 'data', data: Uint8Array.of(9) })
+    await settle()
+    // Still inside the first three seconds: the DATA waits for the 40 ms grid and leaves with a PAD to the bucket.
+    expect(client.received.length).toBe(before)
+    await t.clock.advance(40)
+    const batch = client.received.slice(before)
+    expect(batch.map(payload => decodeMessage(payload, 2).type)).toEqual(['data', 'pad'])
+    expect(batch.reduce((sum, payload) => sum + frameBytes(payload.length, false), 0) % 4096).toBe(0)
+  })
+
+  it('arms its alarm only while sockets are connected', async () => {
+    const t = setup()
+    await t.objects.object('n')
+    expect(t.objects.alarms.has('n')).toBe(false)
+    const socket = await t.open('host')
+    expect(t.objects.alarms.has('n')).toBe(true)
+    socket.close()
+    await settle()
+    t.objects.alarms.delete('n')
+    await (await t.objects.object('n')).alarm()
+    expect(t.objects.alarms.has('n')).toBe(false)
   })
 
   it('fails closed without caps, a seed or a relay ID', async () => {

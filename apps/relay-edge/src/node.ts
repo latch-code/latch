@@ -42,6 +42,12 @@ export interface EdgeLimits {
    * pair costs about 8 messages a second and a streaming one up to about 50.
    */
   maxPairs: number
+  /**
+   * The share of the daily message cap one address prefix may send, in percent, so that one Host or network cannot spend
+   * the whole node's budget (an open relay admits anyone). Over it, that prefix's sockets close with 4304 until the
+   * next UTC day.
+   */
+  prefixDailyPercent: number
 }
 const DEFAULT_LIMITS: EdgeLimits = {
   maxConnections: 1024,
@@ -55,8 +61,9 @@ const DEFAULT_LIMITS: EdgeLimits = {
   maxConcurrent: 4,
   maxQueuedMessages: 64,
   maxPairs: 40,
+  prefixDailyPercent: 25,
 }
-export function limits(text: string | undefined): EdgeLimits {
+function limits(text: string | undefined): EdgeLimits {
   if (!text) return DEFAULT_LIMITS
   const parsed = JSON.parse(text) as Record<string, unknown>
   const out = { ...DEFAULT_LIMITS }
@@ -64,7 +71,13 @@ export function limits(text: string | undefined): EdgeLimits {
     if (!(key in out) || !Number.isSafeInteger(value) || (value as number) < 0) throw new RangeError('Invalid relay limits')
     out[key as keyof EdgeLimits] = value as number
   }
-  if (out.minBits > out.maxBits || out.maxBits > REGISTRATION_WORK.maxBits || out.softRoutesPerPrefix >= out.maxRoutesPerPrefix)
+  if (
+    out.prefixDailyPercent < 1
+    || out.prefixDailyPercent > 100
+    || out.minBits > out.maxBits
+    || out.maxBits > REGISTRATION_WORK.maxBits
+    || out.softRoutesPerPrefix >= out.maxRoutesPerPrefix
+  )
     throw new RangeError('Invalid relay limits')
   return out
 }
@@ -170,6 +183,9 @@ export class EdgeNode {
   private sequence = 0
   private working = 0
   private overNotified = false
+  private alarmArmed = false
+  /** Messages received today per address prefix (memory only; a restart forgives, the node-wide counter does not). */
+  private prefixDay = { day: -1, counts: new Map<string, number>() }
   private sweeper: unknown
   private readonly limits: EdgeLimits
   private readonly crypto: LinkCrypto
@@ -229,11 +245,6 @@ export class EdgeNode {
           },
         })
       }
-      try {
-        await state.storage.setAlarm(now + ALARM_MS)
-      } catch {
-        /* The sweep timer still enforces the cap; only period rollover waits for the next start. */
-      }
     })
     this.sweeper = platform.setInterval(() => this.sweep(), 1000)
   }
@@ -276,14 +287,15 @@ export class EdgeNode {
         profile: 'outer-pad-v2',
         send: async message => this.send(socket, message),
         close: code => this.close(socket, code),
+        // The cover runs its full three seconds through the inner handshake, as on the self-hosted relay.
         markSpliced: () => {
           socket.spliced = true
-          socket.outer?.stop()
         },
       },
     }
     if (role !== 'host') socket.outer = new OuterPadding(this.platform, payload => this.write(socket, payload))
     this.sockets.set(id, socket)
+    this.armAlarm()
     ws.addEventListener('message', event => this.receive(core, socket, event.data))
     ws.addEventListener('close', () => this.gone(core, socket))
     ws.addEventListener('error', () => this.gone(core, socket))
@@ -292,6 +304,23 @@ export class EdgeNode {
     else if (role === 'client' && this.pairs() >= this.limits.maxPairs) this.close(socket, 4302)
     else core.connect(socket.peer, role)
     return this.platform.upgrade(client, EDGE_PROTOCOL)
+  }
+  private withinPrefixShare(prefix: string, now: number): boolean {
+    const cap = this.budget!.snapshot().dailyCap
+    if (cap === null) return false
+    const day = Math.floor(now / 86_400_000)
+    if (this.prefixDay.day !== day) this.prefixDay = { day, counts: new Map() }
+    const count = (this.prefixDay.counts.get(prefix) ?? 0) + 1
+    this.prefixDay.counts.set(prefix, count)
+    return count <= Math.floor((cap * this.limits.prefixDailyPercent) / 100)
+  }
+  /** One pending alarm while anything is connected; an idle or orphaned object is not kept awake by its own alarm. */
+  private armAlarm(): void {
+    if (this.alarmArmed) return
+    this.alarmArmed = true
+    void this.state.storage.setAlarm(this.platform.now() + ALARM_MS).catch(() => {
+      this.alarmArmed = false
+    })
   }
   private pairs(): number {
     let spliced = 0
@@ -318,6 +347,10 @@ export class EdgeNode {
     if (socket.closed) return
     const now = this.platform.now()
     this.budget!.count(now)
+    if (!this.withinPrefixShare(socket.peer.prefix, now)) {
+      this.close(socket, 4304)
+      return
+    }
     if (!(data instanceof ArrayBuffer) || data.byteLength > MAX_MESSAGE) {
       this.close(socket, 4400)
       return
@@ -380,7 +413,8 @@ export class EdgeNode {
       if (!this.overNotified) {
         this.overNotified = true
         core.notify(3, this.budget!.retryAfterMs(now))
-        for (const peer of core.resources()) if (peer.spliced) core.evict(peer.id, 3)
+        // Every socket goes, Host control sockets included: an open socket keeps the object, and the bill, running.
+        for (const socket of [...this.sockets.values()]) this.close(socket, 4304)
       }
     } else this.overNotified = false
   }
@@ -394,7 +428,8 @@ export class EdgeNode {
       /* Expired rows are only wasted space; the core never admits with a stale pass. */
     }
     this.sweep()
-    await this.state.storage.setAlarm(now + ALARM_MS)
+    this.alarmArmed = false
+    if (this.sockets.size) this.armAlarm()
   }
   /** Runs off this object's thread, in the stateless work Worker; bounded here like the self-hosted pool. */
   private async verifyWork(request: RegistrationWorkInput): Promise<RegistrationWorkResult> {
