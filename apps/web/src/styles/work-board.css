@@ -1198,7 +1198,7 @@ button.work-board-proposed-by:focus-visible {
   border-top: 1px solid var(--hairline);
 }
 .work-board-proposal-entry[data-off] > :not(:first-child) {
-  opacity: 0.5;
+  opacity: 0.45;
 }
 .work-board-proposal-facts {
   display: flex;
