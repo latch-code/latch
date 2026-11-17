@@ -58,7 +58,7 @@ import { openAgent, topicOwner, type ProfileSection } from '../agents/chat.ts'
 import type { SchedulePrefill } from '../agents/activity.ts'
 import { askDelegateFocus } from '../agents/delegateFocus.ts'
 import { readsAgents } from '../agents/model.ts'
-import { rosterRows, rosterTopics } from '../agents/roster.ts'
+import { defaultAddressee, rosterRows, rosterTopics } from '../agents/roster.ts'
 import { useSessionHandoffs } from '../handoffs/useHandoffs.ts'
 import { writeFailure } from '../handoffs/model.ts'
 import { api, newRequestId, setErrorComputer } from '../core/api.ts'
@@ -616,7 +616,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         || deliveryOpen
         || browserOpen
         // A saved layout opens real surfaces on wide windows; a tablet overlay or an empty launcher needs an explicit action.
-        || (!!summary && preferences.rightPanel.open && (infoPage || (hasRememberedSurface && placement.kind === 'column'))))
+        // A helper's chat opens it only on a tab this session kept: its conversation is the page, not a launcher beside it.
+        || (!!summary
+          && preferences.rightPanel.open
+          && (infoPage
+            || (hasRememberedSurface
+              && placement.kind === 'column'
+              && (spaceOf(summary) !== 'agents' || !!fileTabs.active || panelSelected !== undefined)))))
   const inspectorWidth = placement !== null && placement.kind !== 'page' ? placement.width : RIGHT_PANEL_DEFAULT
   // Beside the conversation the panel widens only as far as the conversation keeps its minimum.
   const inspectorMax =
@@ -944,12 +950,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     })
   }
   /**
-   * The key of 新会话 in 我的 Agent: the space's 总览 with its input ready, which addresses the Agent last spoken with (or
-   * the one picked in its chip).
+   * The key of 新会话 in 我的 Agent: the chat of the Agent last spoken with (else 通用), its input ready. Its chat opens as
+   * any opening of it does, a new one or the one the Host keeps.
    */
   const delegate = () => {
     askDelegateFocus()
-    openMyAgent()
+    openMyAgent({ id: defaultAddressee(rosterRows(snapshot, { general: snapshot.device.dataScope === 'all' })) })
   }
   /**
    * 我的 Agent opens its Host-selected chat. The first-message page also holds this device's unconfirmed receipt.

@@ -92,8 +92,11 @@ export function PermissionNote({ words, detail, tone }: { words: string; detail:
           className={`agent-permission-note agent-boundary-trigger is-${tone}`}
           // 不先问你 and 权限没确认 look the same under every customisation (tokens.css).
           data-lock={tone === 'warn' ? '' : undefined}
-          aria-label={`${words}：说明`}>
-          <span>{words}</span>
+          aria-label={`${words}：说明`}
+          // A warning keeps its words beside the name; the neutral boundary is its shield, its words behind it.
+          data-icon-only={tone === 'warn' ? undefined : ''}
+          title={tone === 'warn' ? undefined : words}>
+          {tone === 'warn' && <span>{words}</span>}
         </Button>
       )}>
       <p className="agent-boundary-detail">{detail}</p>

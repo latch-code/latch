@@ -67,7 +67,8 @@ it.each([true, false])('keeps one accessible helper boundary before and after it
       expect(await boundary.count()).toBe(1)
       expect(await page.locator('.transcript .session-start-note').filter({ hasText: '不隔离' }).count()).toBe(0)
       if (!readback && state !== 'new') expect(await boundary.textContent()).toContain('权限没确认')
-      else expect(await boundary.textContent()).toContain('Latch 不隔离 小林')
+      // The neutral boundary is its shield beside the name; its words are its name and its popover's.
+      else expect(await boundary.getAttribute('aria-label')).toBe('Latch 不隔离 小林：说明')
       for (const [width, colorScheme] of [
         [1440, 'light'],
         [768, 'dark'],

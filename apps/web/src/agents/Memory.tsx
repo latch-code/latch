@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import { outsideMemory, type AgentMemory, type AgentMemoryChange, type MemoryProposal } from '@latch/protocol'
+import { outsideMemory, type AgentMemory, type AgentMemoryChange, type CustomAgentSummary, type MemoryProposal } from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
@@ -8,6 +8,7 @@ import {
   Hint,
   IconButton,
   StatusWord,
+  SwitchRow,
   TextAreaField,
   EditGlyph,
   PlusGlyph,
@@ -61,6 +62,55 @@ function MemorySource({
 }
 
 /**
+ * 「认识你」: whether this Agent's turns carry what the person confirmed in 通用, and how many of those go now. Off is
+ * stored on the Agent; the facts themselves stay 通用's and are edited there.
+ */
+function KnowsYou({
+  agent,
+  canRun,
+  disabled,
+  writes,
+}: {
+  agent: CustomAgentSummary
+  canRun: boolean
+  disabled: boolean
+  writes: AgentWrites
+}) {
+  const on = agent.generalFactsOff !== true
+  const facts = agent.generalFacts
+  const state = writeFor(writes.state, `knows-you:${agent.id}`)
+  const words = !facts
+    ? '通用里你确认过的事'
+    : facts.total === 0
+      ? '通用里还没有'
+      : on && facts.sent < facts.total
+        ? `${facts.sent} / ${facts.total} 条`
+        : `${facts.total} 条`
+  return (
+    <div className="agent-knows-you">
+      <SwitchRow
+        title="带上「通用」里关于你的事"
+        description={
+          <Hint label={words}>
+            你在「通用」里写下或保存的记忆，只读地带给这个 Agent，标明是你告诉 Latch 的。导入的和来自外部内容的不带。最多带最近的 24 条、6
+            KB。只给有完整数据范围的设备发出的对话。只在首轮收到上下文的 Harness 上，打开或关掉都在清空上下文后才生效。
+          </Hint>
+        }
+        checked={on}
+        disabled={!canRun || disabled || writes.saving || writes.held}
+        onCheckedChange={next => {
+          void writes.run(`knows-you:${agent.id}`, `custom-agents/${encodeURIComponent(agent.id)}`, 'PATCH', {
+            generalFacts: next,
+            baseRevision: agent.revision,
+          })
+        }}
+      />
+      <WriteNotice state={state} onRetry={() => void writes.retry()} />
+    </div>
+  )
+}
+
+/**
  * 记忆: proposals waiting for the person first, with 保存 and 不要; then what is kept, each with where it came from when
  * it was a proposal, to add, change and delete; the last edit or delete of each can be undone once.
  */
@@ -75,6 +125,7 @@ export function MemoryTab({
   onReload,
   topicTitle = () => undefined,
   onOpenTopic,
+  knowsYou,
 }: {
   owner: string
   memories: AgentMemory[]
@@ -89,6 +140,8 @@ export function MemoryTab({
   /** A topic's title while it is listed on this device; undefined otherwise. */
   topicTitle?: (sessionId: string) => string | undefined
   onOpenTopic?: ((sessionId: string) => void) | undefined
+  /** One of 我的 Agent (not 通用): its 「认识你」 switch. */
+  knowsYou?: { agent: CustomAgentSummary; canRun: boolean } | undefined
 }) {
   const [adding, setAdding] = useState(false)
   const [text, setText] = useState('')
@@ -116,6 +169,7 @@ export function MemoryTab({
   }
   return (
     <div className="agent-memory">
+      {knowsYou && <KnowsYou agent={knowsYou.agent} canRun={knowsYou.canRun} disabled={disabled} writes={writes} />}
       <div className="agent-memory-bar">
         <Hint label="只给这个 Agent">
           只有你能写，只有这个 Agent 会用，工具不会改写它。在这里删除只删 Latch

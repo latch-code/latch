@@ -150,7 +150,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
               <div className="settings-scroll">
                 <div className="settings-content agents-root">
                   {!locked && <WaitingCards shell={shell} />}
-                  <AgentsSpaceList shell={shell} />
+                  <AgentsSpaceList shell={shell} page />
                   {!locked && (
                     <Button
                       variant="ghost"

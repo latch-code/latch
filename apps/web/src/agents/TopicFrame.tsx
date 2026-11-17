@@ -1,10 +1,12 @@
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { Button, ScheduleGlyph, StatusWord } from '@latch/ui'
+import { api } from '../core/api.ts'
 
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { useLastConfirmed } from '../components/SessionStatus.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentFrame } from './AgentFrame.tsx'
+import { personalChat } from './chat.ts'
 import { draftPermission, permissionView } from '../composer/permission.ts'
 import { ACTIVITY_WORDS, agentActivity, agentLiveWord, dutyLine, generalChoice, scheduleWords, sessionAgent } from './model.ts'
 import { ActivityWord, IsolationNote, PermissionNote, Unavailable } from './parts.tsx'
@@ -32,6 +34,21 @@ export function TopicFrame({
 }) {
   const { snapshot, connection, phone, access } = shell
   const frozen = useLastConfirmed(connection, snapshot)
+  // Opening one of your Agents' chat warms its process, so the first words come sooner. The Host decides whether anything
+  // starts (scope, limits, its own chat slot); a refusal or failure changes nothing here.
+  const chatSession = personalChat(snapshot, owner)
+  const warmable =
+    owner !== GENERAL_AGENT_ID
+    && current !== null
+    && chatSession?.state === 'ready'
+    && chatSession.sessionId === current
+    && connection === 'connected'
+    && snapshot.device.dataScope === 'all'
+    && access.scopes.has('run')
+  useEffect(() => {
+    if (!warmable) return
+    void api(`custom-agents/${encodeURIComponent(owner)}/warm`, { method: 'POST', body: {} }).catch(() => undefined)
+  }, [warmable, owner, current])
   const general = owner === GENERAL_AGENT_ID
   const found = general ? undefined : snapshot.customAgents?.find(agent => agent.id === owner)
   const named = sessionAgent(snapshot, general ? { generalChat: true } : { agent: { customAgentId: owner } })

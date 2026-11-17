@@ -62,6 +62,10 @@ function candidate(catalog: HostCatalog | undefined, harness: HarnessInfo): Help
   return { harness, ...(card ? { card } : {}), abilities, unasked: harness.permission?.approvals === 'none' }
 }
 
+/** What a helper on this Harness can really do here: its card's abilities less what the Harness itself lacks. */
+export const helperAbilities = (catalog: HostCatalog | undefined, harness: HarnessInfo): HelperAbility[] =>
+  candidate(catalog, harness).abilities
+
 /** The candidates, Latch 内置 first and then the Host's order, and the Harnesses that are not ready, greyed below. */
 export function helperCandidates(catalog: HostCatalog | undefined): { ready: HelperCandidate[]; waiting: WaitingCandidate[] } {
   const builtin = builtinHarness(catalog)

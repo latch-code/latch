@@ -1164,6 +1164,27 @@ button.agent-library-file:focus-visible {
   max-width: var(--content-width);
   margin-inline: auto;
 }
+/* The Agent speaks first: its first message stands where its replies will, just above the input. */
+.agent-chat-body:has(> .agent-opening) {
+  place-items: end center;
+  align-content: end;
+  gap: var(--sp-16);
+}
+.agent-opening {
+  display: grid;
+  gap: var(--sp-10);
+  width: 100%;
+  max-width: var(--content-width);
+  margin-inline: auto;
+}
+.agent-opening-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.agent-opening-action {
+  max-width: 100%;
+}
 
 /* 动态 and 资料库 in the profile. */
 .agent-activity-bucket {
@@ -1543,6 +1564,10 @@ button.helper-card:focus-visible {
 .agent-boundary-trigger.is-warn {
   color: var(--amber);
 }
+/* The neutral boundary beside a name is its shield alone; its words are in the popover. */
+.agent-boundary-trigger[data-icon-only].ui-button {
+  padding-inline: var(--sp-4);
+}
 .agent-boundary-detail {
   margin: 0;
   padding: var(--sp-16);
@@ -1555,21 +1580,21 @@ button.helper-card:focus-visible {
     font-size: var(--fs-hero);
     line-height: var(--lh-hero);
   }
-  .agent-frame[data-phone]:has(.agent-boundary-trigger) {
+  .agent-frame[data-phone]:has(.agent-boundary-trigger.is-warn) {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     row-gap: 0;
   }
-  .agent-frame[data-phone] > .agent-boundary-trigger {
+  .agent-frame[data-phone] > .agent-boundary-trigger.is-warn {
     grid-column: 1 / -1;
     grid-row: 2;
     justify-self: start;
   }
-  .agent-frame[data-phone]:has(.agent-boundary-trigger) > .agent-frame-actions {
+  .agent-frame[data-phone]:has(.agent-boundary-trigger.is-warn) > .agent-frame-actions {
     grid-column: 2;
     grid-row: 1;
   }
-  .topbar-frame[data-phone]:has(.agent-boundary-trigger) {
+  .topbar-frame[data-phone]:has(.agent-boundary-trigger.is-warn) {
     height: auto;
     min-height: var(--topbar-height);
     padding-block: var(--sp-4);
@@ -1662,15 +1687,106 @@ button.helper-card:focus-visible {
   gap: var(--sp-8);
   min-width: 0;
 }
-.agents-home-row.ui-button {
-  gap: var(--sp-4);
-  padding-block: var(--sp-12);
+/* The helpers as a page: one row each, its face, what it is doing or last did, and when. */
+.agents-home-people,
+.agents-home-waiting {
+  width: 100%;
+  /* Under the input, as wide as it. */
+  max-width: 1088px;
+  margin-block-start: var(--sp-24);
 }
-.agents-home-row :is(.work-running-line, .work-overview-row-context) {
-  margin-left: var(--sp-32);
+.agents-home-waiting {
+  display: grid;
+  gap: var(--sp-8);
+  margin-block-end: var(--sp-24);
 }
-.agents-home-row .work-running-action > .ui-status-glyph {
+.agents-home-people {
+  display: grid;
+  gap: var(--sp-12);
+  justify-items: start;
+}
+.agents-home-people > .space-list {
+  width: 100%;
+}
+/* Wide, the helpers stand on one card, a hairline between rows. */
+.agents-home-people .space-list[data-page] .agent-roster {
+  gap: 0;
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--card);
+}
+.agents-home-people .space-list[data-page] .agent-row + .agent-row {
+  border-top: 1px solid var(--line);
+}
+.space-list[data-page] .agent-roster {
+  display: grid;
+  gap: var(--sp-2);
+}
+.space-list[data-page] .space-agent {
+  gap: var(--sp-12);
+  height: auto;
+  min-height: 56px;
+  padding: var(--sp-10) var(--sp-12);
+  border-radius: var(--r-8);
+  color: var(--ink);
+}
+.space-agent-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: var(--sp-2);
+}
+.space-agent-text > .space-agent-name {
+  font-weight: 600;
+}
+.space-agent-line {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.space-agent[data-state='running'] .space-agent-line {
   color: var(--work-running);
+}
+.space-agent[data-state='waiting'] .space-agent-line {
+  color: var(--amber);
+}
+.space-agent-next {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The row's one action sits before its ⋯, outside the row's own button. */
+.space-list[data-page] .agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.space-list[data-page] .agent-row > .space-agent {
+  flex: 1;
+  min-width: 0;
+}
+.space-list[data-page] .agent-row:has(.agent-row-more) .space-agent {
+  padding-inline-end: var(--sp-12);
+}
+.space-list[data-page] .agent-row:has(.agent-row-more) {
+  padding-inline-end: var(--sp-32);
+}
+.agent-row-action.ui-button {
+  flex-shrink: 0;
+}
+.space-agent-time {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
 }
 .agents-home-loading > li {
   display: flex;

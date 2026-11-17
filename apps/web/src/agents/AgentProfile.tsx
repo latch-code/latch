@@ -302,6 +302,7 @@ export function AgentProfile({
                     onReload={settle}
                     topicTitle={id => snapshot.tasks.find(task => task.id === id)?.title}
                     onOpenTopic={shell.choose}
+                    knowsYou={summary && !general ? { agent: summary, canRun } : undefined}
                   />
                 ) : (
                   <Loading label="正在读取" />
