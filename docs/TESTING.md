@@ -155,7 +155,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 变量 | 用例 |
 | --- | --- |
 | `LATCH_CODEX_GATEWAY_BINARY` | `codex-chat-gateway.live.test.ts`、`codex-anthropic-gateway.live.test.ts`、`e2e/codex-model-gateway.e2e.ts`（不设时用假 app-server） |
-| `LATCH_CLAUDE_GATEWAY_BINARY` | `claude-gateway.live.test.ts`、`e2e/claude-model-gateway.e2e.ts` |
+| `LATCH_CLAUDE_GATEWAY_BINARY` | `claude-gateway.live.test.ts`、`claude-gateway-thinking.live.test.ts`、`e2e/claude-model-gateway.e2e.ts` |
 | `LATCH_OPENCODE_GATEWAY_BINARY`、`LATCH_DSH_GATEWAY_BINARY`、`LATCH_PI_GATEWAY_BINARY` | `opencode-gateway.live.test.ts`、`dsh-gateway.live.test.ts`、`dsh-gateway-auxiliary.live.test.ts`、`pi-gateway.live.test.ts`、`gateway-fallback.live.test.ts`、`e2e/harness-model-gateway.e2e.ts`（不设时用假 CLI） |
 | `LATCH_NO_LOGIN_<ID>=<程序路径>` | `gateway-no-login.live.test.ts`：空的临时 HOME、不带登录 |
 | `LATCH_SLASH_LIVE=1` 加 Codex 或 pi 的上述路径 | `packages/harness-acp/test/` 的 `codex-commands.live.test.ts`、`codex-skills.live.test.ts`；`e2e/codex-compact.e2e.ts`、`e2e/codex-skills.e2e.ts`、`e2e/pi-commands.e2e.ts` |

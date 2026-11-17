@@ -129,7 +129,7 @@ describe('model gateway', () => {
     },
   )
 
-  it('uses only the current Host thinking intent, while undeclared and mismatched explicit efforts still fail', async () => {
+  it('uses only the current Host thinking intent: a level of the harness its model lacks goes as none, a mismatched pick fails', async () => {
     const fake = await models()
     const service = responses(fake, {
       kind: 'openai-compatible',
@@ -139,27 +139,107 @@ describe('model gateway', () => {
     const { server } = await gateway({ svc: service })
     const lease = server.open({ sessionId: 'thinking', route: { ...route(fake), upstream: 'chat-completions' } })
     const body = { model: 'fake-model', input: 'hello', reasoning: { effort: 'medium', summary: 'auto' } }
-    expect((await ask(lease.baseURL, lease.token, body)).status).toBe(400)
-    expect(fake.requests).toHaveLength(0)
-    lease.setThinking!('fake-model', null)
-    const defaulted = await ask(lease.baseURL, lease.token, body)
-    expect(defaulted.status).toBe(200)
-    await defaulted.text()
+    const sent = async (request: unknown, status = 200) => {
+      const response = await ask(lease.baseURL, lease.token, request)
+      expect(response.status).toBe(status)
+      await response.text()
+    }
+    // Codex's own level on a model that declares none: the service's default, recorded on the turn.
+    await sent(body)
     expect(fake.requests[0]?.body).not.toHaveProperty('reasoning_effort')
+    expect(lease.takeTurn().dropped).toContain('thinking-level')
+    lease.setThinking!('fake-model', null)
+    await sent(body)
+    expect(fake.requests[1]?.body).not.toHaveProperty('reasoning_effort')
+    expect(lease.takeTurn().dropped ?? []).not.toContain('thinking-level')
     expect(() => lease.setThinking!('fake-model', 'high')).toThrow('没有声明')
     expect(() => lease.setThinking!('missing', null)).toThrow()
     lease.setThinking!('with-thinking', 'high')
-    expect((await ask(lease.baseURL, lease.token, { ...body, model: 'with-thinking' })).status).toBe(400)
-    expect((await ask(lease.baseURL, lease.token, { model: 'with-thinking', input: 'hello' })).status).toBe(400)
-    expect((await ask(lease.baseURL, lease.token, body)).status).toBe(400)
-    expect(fake.requests).toHaveLength(1)
-    const explicit = await ask(lease.baseURL, lease.token, { ...body, model: 'with-thinking', reasoning: { effort: 'high' } })
-    expect(explicit.status).toBe(200)
-    await explicit.text()
-    expect(fake.requests[1]?.body).toHaveProperty('reasoning_effort', 'high')
+    await sent({ ...body, model: 'with-thinking' }, 400)
+    await sent({ model: 'with-thinking', input: 'hello' }, 400)
+    expect(fake.requests).toHaveLength(2)
+    await sent({ ...body, model: 'with-thinking', reasoning: { effort: 'high' } })
+    expect(fake.requests[2]?.body).toHaveProperty('reasoning_effort', 'high')
     service.fingerprint = 'changed'
     expect(() => lease.setThinking!('with-thinking', null)).toThrow('设置已经变了')
   })
+
+  it.each([
+    { declared: ['low', 'max'], asked: 'high', sent: 'low' },
+    { declared: ['medium', 'max'], asked: 'xhigh', sent: 'max' },
+    { declared: ['max'], asked: 'high', sent: 'max' },
+    { declared: ['none', 'high'], asked: 'none', sent: 'none' },
+    { declared: ['high'], asked: 'none', sent: undefined },
+    { declared: [], asked: 'high', sent: undefined },
+  ])("sends Claude's own $asked to a model declaring $declared as $sent", async ({ declared, asked, sent }) => {
+    const fake = await models()
+    const { server } = await gateway({
+      svc: responses(fake, { kind: 'openai-compatible', modelCapabilities: { 'fake-model': { thinking: declared } } }),
+    })
+    const lease = server.open({ sessionId: 'claude', route: { ...route(fake), wire: 'anthropic-messages', upstream: 'chat-completions' } })
+    const response = await fetch(`${lease.baseURL}/v1/messages`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${lease.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'fake-model',
+        max_tokens: 64,
+        messages: [{ role: 'user', content: '测试' }],
+        ...(asked === 'none' ? { thinking: { type: 'disabled' } } : { thinking: { type: 'adaptive' }, output_config: { effort: asked } }),
+      }),
+    })
+    expect(response.status).toBe(200)
+    await response.text()
+    const forwarded = fake.requests[0]?.body as Record<string, unknown>
+    if (sent === undefined) expect(forwarded).not.toHaveProperty('reasoning_effort')
+    else expect(forwarded.reasoning_effort).toBe(sent)
+    const recorded = lease.takeTurn().dropped ?? []
+    if (sent === asked) expect(recorded).not.toContain('thinking-level')
+    else expect(recorded).toContain('thinking-level')
+  })
+
+  it.each(['chat-completions', 'anthropic-messages'] as const)(
+    "sends no level of Claude's own on 默认 to a %s service, and the picked one as it came",
+    async upstream => {
+      const fake = await models()
+      let forwarded = ''
+      const { server } = await gateway(
+        {
+          svc: responses(fake, {
+            kind: upstream === 'chat-completions' ? 'openai-compatible' : 'anthropic',
+            modelCapabilities: { 'fake-model': { thinking: ['high', 'max'] } },
+          }),
+        },
+        () => async (url, init) => {
+          forwarded = Buffer.from(init?.body as Uint8Array).toString('utf8')
+          return fetch(url, init)
+        },
+      )
+      const lease = server.open({
+        sessionId: 'claude-default',
+        route: { ...route(fake), wire: 'anthropic-messages', ...(upstream === 'chat-completions' ? { upstream } : {}) },
+      })
+      const send = async (effort: string) => {
+        const response = await raw(`${lease.baseURL}/v1/messages`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${lease.token}`, 'content-type': 'application/json' },
+          body: `{"model":"fake-model","max_tokens":64,"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"},"output_config":{"effort":"${effort}"},"metadata":{"exact":9007199254740993}}`,
+        })
+        expect(response.status).toBe(200)
+        return JSON.parse(forwarded) as Record<string, unknown>
+      }
+      lease.setThinking!('fake-model', null)
+      const defaulted = await send('high')
+      if (upstream === 'anthropic-messages') {
+        expect(defaulted).not.toHaveProperty('output_config')
+        expect(forwarded).toContain('9007199254740993')
+      } else expect(defaulted).not.toHaveProperty('reasoning_effort')
+      lease.setThinking!('fake-model', 'max')
+      const picked = await send('max')
+      if (upstream === 'anthropic-messages') expect(picked.output_config).toEqual({ effort: 'max' })
+      else expect(picked.reasoning_effort).toBe('max')
+      expect(lease.takeTurn().dropped ?? []).not.toContain('thinking-level')
+    },
+  )
 
   it('removes an inherited effort without changing other Responses fields or exact number tokens', async () => {
     const fake = await models()

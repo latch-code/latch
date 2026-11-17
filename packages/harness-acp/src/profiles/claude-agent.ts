@@ -100,6 +100,8 @@ export const claudeAgentProfile: HarnessProfile = {
     envNames: ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS', ...Object.keys(GATEWAY_DEFAULTS), ...GATEWAY_MODEL_NAMES],
     templates: { session: 1 },
     models: { value: id => id, id: value => value || undefined, reportedOnly: true },
+    // Default hands effort back to Claude, which then sends `high` of its own (2.1.318).
+    defaultThinking: 'default',
     minimumVersion: {
       args: ['--cli', '--version'],
       read: readClaudeVersion,

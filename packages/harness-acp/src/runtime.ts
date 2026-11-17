@@ -114,6 +114,8 @@ import {
 import { errorCodeOf, interruptedNote, runEndRecord } from '@latch/core/run-end'
 import {
   catalogueReadOf,
+  declaredThinking,
+  gatewayThinkingLevels,
   MAX_START_CHOICES,
   modelListCatalogue,
   serviceDeclarationHash,
@@ -573,6 +575,13 @@ const TOOL_SETTLE_MS = 7_000
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
+/** An agent's error as it said it, without the JSON-RPC class every internal error starts with: 「Internal error: …」. */
+function agentErrorText(error: RpcError): string {
+  if (error.code !== RPC.internal) return error.message
+  const rest = /^Internal error:\s*(\S[\s\S]*)$/u.exec(error.message)?.[1]
+  return rest ?? error.message
+}
+
 function codeOf(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined
 }
@@ -1368,7 +1377,18 @@ export class AgentRuntime implements Bridge {
             const found = kept.find(
               entry => entry.providerId === service.providerId && entry.model === model && entry.declarationHash === declarationHash,
             )
-            return found ? [{ providerId: service.providerId, model, options: structuredClone(found.options), source: 'session' }] : []
+            if (!found) return []
+            // Kept before the levels were filtered, or reported on another of its levels: a draft is offered what a session is.
+            const fallback = this.selection.profile?.gateway?.via === 'launch' ? this.selection.profile.gateway.defaultThinking : undefined
+            const levels = gatewayThinkingLevels({
+              entry: service.entry,
+              ...(service.upstream ? { upstream: service.upstream } : {}),
+              ...(capabilities?.thinking ? { levels: capabilities.thinking } : {}),
+            })
+            const options = structuredClone(found.options).flatMap(option =>
+              fallback && levels && option.category === 'thought_level' ? (declaredThinking(option, levels, fallback) ?? []) : [option],
+            )
+            return [{ providerId: service.providerId, model, options, source: 'session' }]
           }),
         ),
       ) ?? []
@@ -4325,6 +4345,7 @@ export class AgentRuntime implements Bridge {
         task.acp.routeThinking = reported.currentValue
     }
     const hidden = task.acp.route && gateway?.via === 'launch' ? gateway.hiddenConfig : undefined
+    const governed = this.governedThinking(task, modelValue, lease)
     const modes = this.withProcessMode(
       this.lives.get(task.summary.id),
       task.acp.acpSessionId,
@@ -4333,15 +4354,57 @@ export class AgentRuntime implements Bridge {
         if (option.category !== 'thought_level') return [option]
         if (!allowed) return []
         const choices = option.options.filter(item => this.gatewayThinkingAllowed(task, modelValue ?? null, item.value))
-        return choices.length ? [{ ...option, options: choices }] : []
+        if (!choices.length) return []
+        if (!governed) return [{ ...option, options: choices }]
+        const declared = declaredThinking({ ...option, options: choices }, governed.levels, governed.fallback)
+        this.noteGatewayThinking(lease, governed, declared?.currentValue)
+        return declared ? [declared] : []
       }),
     )
+    if (governed && !options.some(option => option.category === 'thought_level')) this.noteGatewayThinking(lease, governed, undefined)
     return this.withLaunchThinking(
       task.acp.route && gateway && lease
         ? routedOptions(modes, lease.models, gateway.via, gateway.via === 'launch' ? gateway.models : undefined, task.acp.route.wire)
         : modes,
       this.launchThinkingChanges.get(task.summary.id)?.selected ?? task.acp.launchThinking,
     )
+  }
+
+  /** The routed model and its levels when the gateway decides what thinking goes to it (`gatewayThinkingLevels`). */
+  private governedThinking(
+    task: AcpTask,
+    modelValue: string | undefined,
+    lease: ModelGatewayLease | undefined,
+  ): { model: string; levels: readonly string[]; fallback: string } | undefined {
+    const route = task.acp.route
+    const gateway = this.selection.profile?.gateway
+    if (!route || !lease || gateway?.via !== 'launch' || !gateway.defaultThinking) return undefined
+    const named = modelValue === undefined ? route.model : gateway.models ? gateway.models.id(modelValue, route.wire) : modelValue
+    const model = named && lease.models.includes(named) ? named : undefined
+    if (!model) return undefined
+    const levels = gatewayThinkingLevels({
+      entry: route.wire,
+      ...(route.upstream ? { upstream: route.upstream } : {}),
+      ...(lease.modelCapabilities?.[model]?.thinking ? { levels: lease.modelCapabilities[model]!.thinking } : {}),
+    })
+    return levels ? { model, levels, fallback: gateway.defaultThinking } : undefined
+  }
+
+  /**
+   * Tells the gateway what the person chose for the model, so that 默认 sends no level of the harness's own: anything
+   * else is a level the model declares. A lease that refuses (closed, or its service changed) leaves the gateway as it
+   * was; the next turn's lease is told again when the session reports.
+   */
+  private noteGatewayThinking(
+    lease: ModelGatewayLease | undefined,
+    governed: { model: string; fallback: string },
+    value: string | undefined,
+  ): void {
+    try {
+      lease?.setThinking?.(governed.model, value === undefined || value === governed.fallback ? null : value)
+    } catch {
+      // The control offers only declared levels; a lease that went away is renewed with the next process.
+    }
   }
 
   private gatewayThinkingAllowed(task: AcpTask, value?: string | null, level?: string): boolean {
@@ -5062,7 +5125,7 @@ export class AgentRuntime implements Bridge {
       notes.push(
         run.attachments?.length || run.sensitiveOutput
           ? `${this.agent.name} 未能处理本轮附件请求。`
-          : `${this.agent.name} 返回错误：${clip(this.redact(error.message), 1000)}`,
+          : `${this.agent.name} 返回错误：${clip(this.redact(agentErrorText(error)), 1000)}`,
       )
       return 'failed'
     }

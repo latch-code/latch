@@ -18,6 +18,7 @@ export const GATEWAY_LOSSES = [
   'logprobs',
   'audio',
   'unsupported-options',
+  'thinking-level',
 ] as const
 export type GatewayLoss = (typeof GATEWAY_LOSSES)[number]
 /**
@@ -44,6 +45,7 @@ export const GATEWAY_LOSS_NAMES: Readonly<Record<GatewayLoss, string>> = {
   logprobs: '概率详情',
   audio: '音频',
   'unsupported-options': '协议专用选项',
+  'thinking-level': '服务没有声明的思考档位',
 }
 
 export function canTranslate(entry: ModelWire, upstream: ModelWire): boolean {

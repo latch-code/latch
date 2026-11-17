@@ -1824,6 +1824,19 @@ describe('ACP permission mode', () => {
     })
   })
 
+  it('says an internal error of the agent without the JSON-RPC class, keeping the reply it wrote', async () => {
+    const queue = join(await mkdtemp(join(tmpdir(), 'latch-acp-replies-')), 'queue.json')
+    cleanups.push(() => rm(dirname(queue), { recursive: true, force: true }))
+    const refusal = 'API Error: 400 这个模型服务没有声明所请求的思考档位'
+    await writeFile(queue, JSON.stringify([{ text: refusal, error: refusal, code: -32603 }]))
+    const bridge = await (await setup({ FAKE_ACP_REPLY_QUEUE: queue })).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'hello', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('failed')
+    expect(detail.messages.filter(message => message.role === 'assistant')).toMatchObject([{ text: refusal }])
+    expect(detail.messages.at(-1)).toMatchObject({ role: 'system', state: 'failed', text: `Fake 返回错误：${refusal}` })
+  })
+
   it('refuses Antigravity input when its reported permission cannot be brought back to default', async () => {
     const fixture = await preset('antigravity', {
       FAKE_ACP_CONFIG: 'options',

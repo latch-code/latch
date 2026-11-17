@@ -190,6 +190,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 **Claude Agent。**
 
 - 自动模式由 Claude 的分类器决定是否执行；计划模式在自动模式可用时，命令也可能由分类器决定。
+- **模型请求失败。** Claude 把错误写成一条回复（「API Error: 400 …」），再以 JSON-RPC 内部错误结束这一轮。失败行去掉每个内部错误都带的「Internal error: 」；一轮的全部回复正好是失败行里的那段错误（没有思考或工具）时，页面只显示失败行，这条回复仍在会话里、沿用原 ID。
 - Claude 不需要批准的调用（工作目录内读取、只读命令）不出现在审批里；Claude Code 设置里的允许规则与 hooks 先于 Latch 生效；项目 `.mcp.json` 的服务器直接连接。
 - **人选的换档（`modeAnswers`）。** Agent 用一次询问来换模式时，人的「仅此一次」回答就是选了那一档：ExitPlanMode 的 `exit-plan-default` 回到 `default`，EnterPlanMode 是 `switch_mode` 调用上的 `allow-once`，进入 `plan`。Latch 在把回答交给 Agent 之前把这一档记为预期模式，随后的换档不算漂移；没有人回答的换档仍是漂移。
 
@@ -663,6 +664,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 
 - `declared`：Codex 直连在 Responses 入口上的思考，按服务为这个模型声明的档位给出「默认」（`~default`）加各档，与 wire 提供、`set_config_option` 接受的完全相同（`gatewayEffortOption`）。没有声明就没有这一项。
 - `session`：其他 Harness 经网关的新会话在 `session/new` 回答里报告的、跟着模型变的选项，按定义 × 服务 × 模型 × 声明摘要（两侧协议与该模型的声明，`serviceDeclarationHash`）存进 `acp.json` 的 `serviceOptions`（最多 32 对，读坏时丢弃）。定义或声明变了就不再下发。
+- Claude Agent（Anthropic 入口，profile 的 `gateway.defaultThinking` 是 `default`）的思考：在转换路线上，或这个模型声明了档位时，只给 Claude 自己的「Default」加服务声明的档位（`gatewayThinkingLevels`、`declaredThinking`，会话与草稿相同）；之前为别的模型选的档位这个模型没有声明时读作 Default，消息记下的思考随之变化。没有可选的档位时没有这一项。同协议转发且没有声明时仍是 Claude 自己的列表。见 [MODEL-GATEWAY](MODEL-GATEWAY.md#harness-交付)。
 - OpenCode、DeepSeek Harness 与 pi 经网关时由 Latch 写入私有配置，但现有录制没有它们经网关时报告的选项 ID 与取值，所以不在 profile 里推导，只用 `session`。
 - 只下发至少有两个取值的项，整份受同样的 64 KiB 上限。开始时所选的值按「不再提供时」处理：拒绝时说出是哪一项（如「思考档位「xhigh」」）。
 

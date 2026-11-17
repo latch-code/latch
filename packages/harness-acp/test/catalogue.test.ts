@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { SessionConfigOption } from '@latch/protocol'
 import {
   catalogueReadOf,
+  declaredThinking,
+  gatewayThinkingLevels,
   serviceDeclarationHash,
   shownCatalogue,
   shownServiceOptions,
@@ -117,5 +119,37 @@ describe('options remembered for a model of a service', () => {
     )
     expect(shown?.map(item => item.model)).toEqual(['a'])
     expect(shownServiceOptions([])).toBeUndefined()
+  })
+})
+
+describe('thinking on a gateway model', () => {
+  const claude = (currentValue: string): SessionConfigOption => ({
+    ...select('effort', 'thought_level', ['default', 'low', 'medium', 'high', 'xhigh', 'max']),
+    currentValue,
+  })
+
+  it('lets the gateway decide on a converted Anthropic route or a declared model, and leaves a plain forward alone', () => {
+    expect(gatewayThinkingLevels({ entry: 'anthropic-messages', upstream: 'chat-completions', levels: ['high', 'max'] })).toEqual([
+      'high',
+      'max',
+    ])
+    expect(gatewayThinkingLevels({ entry: 'anthropic-messages', upstream: 'chat-completions' })).toEqual([])
+    expect(gatewayThinkingLevels({ entry: 'anthropic-messages', levels: ['max'] })).toEqual(['max'])
+    expect(gatewayThinkingLevels({ entry: 'anthropic-messages', upstream: 'anthropic-messages' })).toBeUndefined()
+    expect(gatewayThinkingLevels({ entry: 'chat-completions', upstream: 'responses', levels: ['high'] })).toBeUndefined()
+  })
+
+  it('offers 默认 and the declared levels only, and reads a level the model lacks as 默认', () => {
+    expect(declaredThinking(claude('max'), ['high', 'max'], 'default')).toMatchObject({
+      currentValue: 'max',
+      options: [{ value: 'default' }, { value: 'high' }, { value: 'max' }],
+    })
+    expect(declaredThinking(claude('max'), ['high'], 'default')).toMatchObject({
+      currentValue: 'default',
+      options: [{ value: 'default' }, { value: 'high' }],
+    })
+    expect(declaredThinking(claude('high'), [], 'default')).toBeUndefined()
+    expect(declaredThinking(claude('high'), ['none'], 'default')).toBeUndefined()
+    expect(declaredThinking(select('effort', 'thought_level', ['low', 'high']), ['high'], 'default')).toBeUndefined()
   })
 })

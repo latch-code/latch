@@ -86,6 +86,8 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 - **用量只取上游证据**，不计暂存值；各方向对缺失用量的处理见下。
 - **取消。** 下游取消中止上游。
 
+**思考档位。** 转换后的请求只带模型声明的档位。人在 Latch 里选的档位总是声明过的（控件只给这些，租约的 `setThinking` 拒绝别的）；Harness 自己定的档位（Claude 的「Default」照样发 `output_config.effort: high`，它的标题请求也带）不在声明里时，改用最接近的已声明档位（`minimal` 到 `max` 的顺序，等距取低的），没有可用的或请求的是 `none` 就不带档位、用服务的默认，这一轮记 `thinking-level`，轮次的请求记录里写「思考档位：已按服务声明调整」。不因此拒绝这一轮。同协议透传不改档位，由服务判断。
+
 **思考的来源封装。** 另一协议的思考以 `latch2.` 封装带回（Responses 的 `encrypted_content`、Anthropic 的 `signature`）。
 
 - 它是带 HMAC 的来源封装，不是加密。签名 key 只在当前 Host 内存，绑定同一上游协议、服务与模型。
@@ -104,7 +106,7 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 
 ### Anthropic Messages 转 Chat
 
-- 保留系统与会话中途的系统文字、用户图片、工具调用与结果、错误结果标记、工具选择、并行开关、输出上限、stop sequences 与明确的 effort（仍须在服务的声明中）。
+- 保留系统与会话中途的系统文字、用户图片、工具调用与结果、错误结果标记、工具选择、并行开关、输出上限、stop sequences 与明确的 effort（见下面的「思考档位」）。
 - 服务端工具、服务端容器与压缩状态拒绝。固定的 thinking token 预算不能变成 Chat 的离散 effort，记 `unsupported-options`。
 - Claude Agent 走这条转换时启用 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`，不发送服务端工具搜索、context management 等尚未转换的功能。其他来源仍按收到的内容严格检查。
 - 回复按 Anthropic SSE 的 message/content-block 顺序发送。`message_start` 的零用量只是暂存，最终 `message_delta` 必须用上游实际 usage；缺少时报错且不发 `message_stop`。
@@ -185,7 +187,7 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 - 开线程与恢复线程前，以相同 cwd 调用官方 `config/read`，只投影有效的命令环境过滤规则：旧的 exclude/include_only 与新的 filters 保持原表示，只额外排除 `LMG_TOKEN`。大小写冲突、混合表示、畸形或读取失败都拒绝开线程。规则经线程 config 覆盖，既有规则不被启动参数的数组替换。不复制其他配置值，不读写 Codex 私有文件。
 - 导入历史仍经 `thread/list` 与 `thread/read`，包含自定义 provider 的线程。
 - 模型列表取服务声明，允许 Codex 原生目录之外的模型。目录外模型用 Codex 自己的后备描述；Latch 不改模型 ID 去套另一个型号的能力，也不把后备描述里的容量当作服务声明。
-- **思考。** 「默认」指模型服务的默认。wire 提供的思考选项由 `gatewayEffortOption` 按服务声明生成，Host 用同一个函数给新会话草稿投影（[HARNESSES.md](HARNESSES.md#开始前的选项)），所以开始前就能选。wire 用租约的 `setThinking(model, effort)` 登记当前模型的意图：`null` 时出站只删这个模型请求的 `reasoning.effort`（Codex 自己的 `model_reasoning_effort` 可能补上一个值），其余字段不动；显式选择只允许服务声明的档位，实际请求必须相符。没登记意图的模型按原规则校验。
+- **思考。** 「默认」指模型服务的默认。wire 提供的思考选项由 `gatewayEffortOption` 按服务声明生成，Host 用同一个函数给新会话草稿投影（[HARNESSES.md](HARNESSES.md#开始前的选项)），所以开始前就能选。wire 用租约的 `setThinking(model, effort)` 登记当前模型的意图：`null` 时出站只删这个模型请求的 `reasoning.effort`（Codex 自己的 `model_reasoning_effort` 可能补上一个值），其余字段不动；显式选择只允许服务声明的档位，实际请求必须相符。没登记意图的模型按「思考档位」处理。
 - 显式选择随会话 config 持久化，恢复后优先于 Codex 的旧配置。运行中的选择只保存下一轮意图；换模型清掉原选择。尚未应用的改档不能用 compact 绕过上下文核对。
 - **上下文长度。** 线程开始与恢复时，所选模型声明了长度就写进线程 config 的 `model_context_window`（Codex 配置参考：「Context window tokens available to the active model」）；`model_auto_compact_token_limit` 不写，自动压缩用 Codex 相对这个窗口的默认。不写时 Codex 对它不认识的模型假定 258,400，只在服务以上下文溢出拒绝一轮后才压缩。0.169 实测：声明 64,000 时它报告 `modelContextWindow` 60,800（窗口的 95%），用量过线后在下一轮发出之前先压缩。窗口按线程打开时的模型定下：会话中换到声明了另一长度的模型，下次打开线程才生效。
 - 原生委派的成员继承父轮的 provider 与进程内凭据；角色改用的模型超出会话的服务模型名单时网关拒绝。成员请求与父轮共享会话用量，账本没有成员 ID（[Codex 的 Agent 团队](HARNESSES.md#codex-的-agent-团队)）。
@@ -210,6 +212,7 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 - 会话设置只有公开模型字段与禁用的 `apiKeyHelper`，不写用户的 CLI 设置。主模型、自定义模型项、自动模式分类器与子 Agent 默认值指向所选模型，其他默认别名清空。网关仍拒绝列表外的请求；不承诺未知的辅助调用都遵守配置。
 - `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` 让 Bash、SessionStart hook 与 stdio MCP 子进程不继承凭据。泛化的 scrub 可被设置文件覆盖，不能据此说用户自己配置的秘密都被清除。
 - Claude 对自定义模型假定的上下文容量与价格不作为服务事实显示，只保留它报告的已用上下文 token。
+- **思考。** Claude 对每个自定义模型都报告 low 到 max，选「Default」时自己发 `output_config.effort: high`（2.1.318 真实核对）。在转换路线上，或模型声明了档位时，Host 只给「Default」加声明的档位（[HARNESSES.md](HARNESSES.md#开始前的选项)），并用租约的 `setThinking` 登记当前模型的选择：Default 时出站删去 `output_config.effort`（其余字段与精确数字原样），服务用它自己的默认；选了档位时照 Claude 发来的转发，它别的请求带的其他档位按「思考档位」处理。
 
 ### Qwen Code
 
@@ -281,7 +284,7 @@ pi 的模型注册 API 必须有输入上下文与输出上限。
 - **经 Latch 的会话**在开始时把所选服务每个模型的备选写进 `ModelRoute.fallbacks`（服务 ID、模型、上游协议、来源），随会话持久化，计入 `routeHash` 与启动指纹；没有备选时指纹不变。入口协议不能直接说、也没有已实现转换的备选在这一步略去。之后改设置只影响新会话。
 - 凭据签发时绑定每个候选当时的服务指纹。之后被停用、删除或改了地址、密钥、模型的备选只让那个候选失效并被跳过，不作废会话。
 - **内置 Harness** 每轮可以换模型，它的候选在这一轮第一次请求时按当时的设置定下，这一轮内不变。
-- 透传给备选时只把请求体的 `model` 改成那个服务里的名字。协议不同的备选走同一套转换；思考档位在那个模型没有声明时改用它的默认值。推理封装仍只回放给签发它的服务与模型。token 计数请求只发给会话自己的服务。
+- 透传给备选时只把请求体的 `model` 改成那个服务里的名字。协议不同的备选走同一套转换；思考档位在那个模型没有声明时按「思考档位」改用最接近的已声明档位或它的默认值。推理封装仍只回放给签发它的服务与模型。token 计数请求只发给会话自己的服务。
 
 ### 错误分类与故障切换
 

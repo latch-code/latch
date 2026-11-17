@@ -498,6 +498,28 @@ function authHeaders(wire: ModelWire, apiKey: string): Record<string, string> {
   }
 }
 
+/** Thinking levels from least to most, as the protocols Latch converts between name them. */
+const EFFORT_ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+
+/**
+ * The declared level nearest to one a model does not declare, the lower on a tie; undefined when either is off the
+ * known scale or nothing is declared. `none` is never reached for nor from: turning thinking off or on is not a nearer
+ * level, so a model without `none` runs with its default.
+ */
+function nearestEffort(asked: string, declared: readonly string[]): string | undefined {
+  const at = EFFORT_ORDER.indexOf(asked as (typeof EFFORT_ORDER)[number])
+  if (at < 0) return undefined
+  let best: { level: string; place: number } | undefined
+  for (const level of declared) {
+    const place = EFFORT_ORDER.indexOf(level as (typeof EFFORT_ORDER)[number])
+    if (place < 0) continue
+    const distance = Math.abs(place - at)
+    const known = best ? Math.abs(best.place - at) : Infinity
+    if (distance < known || (distance === known && place < best!.place)) best = { level, place }
+  }
+  return best?.level
+}
+
 /** The session's models in the shape the harness's protocol lists models. */
 function listing(entry: ModelWire, models: Iterable<string>): unknown {
   const ids = [...models]
@@ -666,7 +688,7 @@ export class ModelGatewayServer implements ModelGateway {
       setThinking: (model, effort) => {
         const current = this.current(hash, binding)
         if (!current) throw new AppError(409, 'model-route-changed', '模型服务的设置已经变了，请重新连接。')
-        if (binding.entry !== 'responses' || !binding.models.has(model))
+        if ((binding.entry !== 'responses' && binding.entry !== 'anthropic-messages') || !binding.models.has(model))
           throw new AppError(400, 'model-unavailable', '这个模型不能使用当前的思考设置。')
         if (effort !== null && !current.modelCapabilities?.[model]?.thinking?.includes(effort))
           throw new AppError(400, 'effort-unavailable', '这个模型服务没有声明所请求的思考档位')
@@ -732,9 +754,13 @@ export class ModelGatewayServer implements ModelGateway {
     converted.model = candidate.model
     const allowed = service.modelCapabilities?.[candidate.model]?.thinking
     if (converted.effort && !allowed?.includes(converted.effort)) {
-      if (first) throw new AppError(400, 'effort-unavailable', '这个模型服务没有声明所请求的思考档位')
-      // Another model has its own levels: it runs with its default rather than not at all.
-      delete converted.effort
+      // A level the person picked in Latch is one the model declares (the control offers no other, the lease refuses
+      // any other). One that is not came from the harness itself, such as Claude's own default: it goes as the nearest
+      // declared level, or as none, and the turn records that it did.
+      const nearest = nearestEffort(converted.effort, allowed ?? [])
+      if (nearest) converted.effort = nearest
+      else delete converted.effort
+      if (!converted.dropped.includes('thinking-level')) converted.dropped.push('thinking-level')
     }
     const encoded =
       candidate.upstream === 'responses'
@@ -802,7 +828,27 @@ export class ModelGatewayServer implements ModelGateway {
       failed(entry)
       return refuse(res, 403, 'gateway-model', `模型「${(model ?? '').slice(0, 64)}」不在这个会话的模型服务里，Latch 没有转发`, shape)
     }
-    if (binding.thinking?.model === model) {
+    if (binding.thinking?.model === model && binding.entry === 'anthropic-messages') {
+      // 默认 asks for no level: the effort the harness picked itself stays out, so the service's own default applies. A
+      // level the person picked goes as the harness sends it; one of its own side requests may name another, which
+      // `prepare` treats as any level the person did not pick.
+      const config = fields.output_config
+      const values = config && typeof config === 'object' && !Array.isArray(config) ? (config as Record<string, unknown>) : undefined
+      if (binding.thinking.effort === null && values?.effort !== undefined) {
+        try {
+          const exact = exactJson(body.toString('utf8')) as Record<string, unknown>
+          const kept = exact.output_config as Record<string, unknown>
+          delete kept.effort
+          if (!Object.keys(kept).length) delete exact.output_config
+          delete values.effort
+          if (!Object.keys(values).length) delete fields.output_config
+          body = Buffer.from(JSON.stringify(exact))
+        } catch {
+          failed(entry)
+          return refuse(res, 400, 'gateway-translation-input', '请求包含无法保留的数值，Latch 没有转发。', shape)
+        }
+      }
+    } else if (binding.thinking?.model === model) {
       const reasoning = fields.reasoning
       const values =
         reasoning && typeof reasoning === 'object' && !Array.isArray(reasoning) ? (reasoning as Record<string, unknown>) : undefined

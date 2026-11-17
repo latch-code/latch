@@ -1149,7 +1149,8 @@ function queuedEdit(session, tool) {
 /**
  * FAKE_ACP_REPLY_QUEUE names a JSON file of replies: each prompt takes the first, a text or `{ text, until, error }`, and
  * says it instead of the prompt's scenario; with `until` the turn runs until that file exists, so a test sees it running;
- * `error` fails the turn with that message, as an agent that is not signed in does.
+ * `error` fails the turn with that message, as an agent that is not signed in does; with `code` -32603 as an internal
+ * error after saying `text`, as Claude's adapter does when the model service refuses a request.
  */
 function queuedReply() {
   if (!env.FAKE_ACP_REPLY_QUEUE || !existsSync(env.FAKE_ACP_REPLY_QUEUE)) return undefined
@@ -1159,9 +1160,13 @@ function queuedReply() {
   return typeof entry === 'string' ? { text: entry } : entry
 }
 
-function replying({ text, until, error }) {
+function replying({ text, until, error, code }) {
   return async ({ say }) => {
     while (until && !existsSync(until)) await delay(50)
+    if (error && code === -32603) {
+      if (text) say(text)
+      throw rpcError(code, `Internal error: ${error}`)
+    }
     if (error) throw rpcError(-32000, error)
     say(text)
     return END

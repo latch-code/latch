@@ -237,6 +237,12 @@ type ProfileGateway = {
       readonly templates: { readonly args?: number; readonly files?: number; readonly session?: number }
       /** When present, apply and read back this native model value before the first prompt. */
       readonly models?: GatewayModelValues
+      /**
+       * Its thinking value for 「no level of mine」 (Claude Agent's `default`). Present, the gateway decides what thinking
+       * a route offers where it converts the level (`gatewayThinkingLevels`): this value and the declared levels, and
+       * this value sends none. Absent, the harness's own list stands.
+       */
+      readonly defaultThinking?: string
       /** A verified serializer restriction; false removes the control and refuses retained non-default choices. */
       thinkingAllowed?(model: string, wire: ModelWire, level?: string): boolean
       runtimeBudget?(environment: Readonly<Record<string, string>>): GatewayPlace['budget']

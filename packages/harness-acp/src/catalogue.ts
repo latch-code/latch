@@ -156,6 +156,39 @@ export function serviceDeclarationHash(input: { entry: ModelWire; upstream?: Mod
   )
 }
 
+/**
+ * The levels a session on a route may offer when the gateway decides its thinking, or undefined when the harness's own
+ * list stands. On the Anthropic entry the harness names a level the gateway converts (`output_config.effort`): on a
+ * converted route, or on a model whose levels were declared, only those levels can be asked for. A forwarded route
+ * with nothing declared keeps the harness's own list, as the service reads the request as it came.
+ */
+export function gatewayThinkingLevels(input: {
+  entry: ModelWire
+  upstream?: ModelWire
+  levels?: readonly string[]
+}): readonly string[] | undefined {
+  if (input.entry !== 'anthropic-messages') return undefined
+  if ((input.upstream ?? input.entry) === input.entry && !input.levels?.length) return undefined
+  return input.levels ?? []
+}
+
+/**
+ * A harness's thinking option kept to the declared levels and its default (`fallback`). A value the model does not declare
+ * (one chosen for another model) reads as the default, which is what then goes; with no level left there is nothing to
+ * choose.
+ */
+export function declaredThinking(
+  option: SessionConfigOption,
+  levels: readonly string[],
+  fallback: string,
+): SessionConfigOption | undefined {
+  const choices = option.options.filter(item => item.value === fallback || levels.includes(item.value))
+  const none = choices.find(item => item.value === fallback)
+  if (!none || choices.length < 2) return undefined
+  const currentValue = choices.some(item => item.value === option.currentValue) ? option.currentValue : none.value
+  return { ...option, options: choices, currentValue }
+}
+
 /** The kept options after a session on `entry`'s pair reported its own; the newest first. */
 export function withServiceOptions(prior: readonly AcpServiceOptions[] | undefined, entry: AcpServiceOptions): AcpServiceOptions[] {
   const same = (other: AcpServiceOptions) =>
