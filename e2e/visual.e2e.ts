@@ -73,7 +73,7 @@ const NOTES = `# ACP 会话恢复
 
 | 方法 | 重放历史 | 适用场景 |
 | --- | --- | --- |
-| session/resume | 否 | 客户端已保存完整记录 |
+| session/resume | 否 | 客户端已保存完整记录 resumeSessionWithoutReplayingTheAlreadySavedConversationFromThePreviousWindow |
 | session/load | 是 | 换设备或重建界面 |
 
 ## 结论
@@ -363,6 +363,7 @@ interface Sessions {
   hidden: string
   r1: string
   advisory: string
+  execution: string
   rejected: string
 }
 
@@ -673,7 +674,7 @@ describe('visual capture of the real product', () => {
     if (viewport.name === 'phone') await target.locator('.phone-list[data-covered]').waitFor()
     await target.locator(`[data-task-id="${id}"][aria-current="page"]`).waitFor({ state: 'attached' })
     await target.locator('.transcript-content').waitFor()
-    await target.locator('.transcript .ui-loading').waitFor({ state: 'detached' })
+    await target.locator('.transcript .transcript-skeleton').waitFor({ state: 'detached' })
     // The read marker is stored by an effect after the transcript renders; let it run before anything reloads the page.
     await target.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))))
   }
@@ -1027,11 +1028,13 @@ describe('visual capture of the real product', () => {
 
     // The full-access agent asks; in a browser that question is advisory. It comes last: while a full-access session
     // waits, the Host's local confirmation serves only rejections.
+    const execution = await startAgent(agent.id, 'permission')
+    await pendingApproval(execution)
     const advisory = await startAgent(agent.id, 'plan-ask')
     await pendingApproval(advisory)
     await local.json(`tasks/${advisory}`, { method: 'PATCH', body: { title: '列出项目根目录' } })
 
-    sessions = { plan, thinking, done, failed, cancelled, unread, running, hidden, r2, r1, advisory, rejected }
+    sessions = { plan, thinking, done, failed, cancelled, unread, running, hidden, r2, r1, advisory, execution, rejected }
     for (const { page: target } of pages.values()) await target.locator(`[data-task-id="${running}"]`).waitFor({ state: 'attached' })
   })
 
@@ -1377,6 +1380,7 @@ describe('visual capture of the real product', () => {
           .getByRole('menuitemradio', { name: 'fixture-small' })
           .click()
         const switched = input.getByRole('button', { name: '模型：下一条：fixture-small', exact: true })
+        expect(await target.getByText(/^下一轮起用/u).count()).toBe(0)
         await switched.click()
         const undo = target.getByRole('menuitem', { name: '撤销切换，继续使用 fixture-large', exact: true })
         await reachable(undo)
@@ -1477,6 +1481,7 @@ describe('visual capture of the real product', () => {
         await reachable(toggle)
         expect(await toggle.getAttribute('aria-expanded')).toBe('false')
         expect(await toggle.evaluate(element => element.classList.contains('ui-button'))).toBe(true)
+        expect(await r1.locator('.approval-preview').count()).toBe(0)
       }
       expect(await toggle.count()).toBe(0)
       expect(await r1.locator('.approval-dot').count()).toBe(0)
@@ -1487,6 +1492,11 @@ describe('visual capture of the real product', () => {
       if (viewport.name === 'phone') {
         // The paper stays short: the first rows of the diff and a fold bar for the rest.
         await reachable(r1.getByRole('button', { name: '展开其余 13 行', exact: true }))
+        const line = r1.locator('.diff-text', { hasText: 'resumeSessionWithoutReplayingTheAlreadySavedConversationFromThePreviousWindow' })
+        expect(await line.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+        expect(
+          await line.evaluate(element => element.getBoundingClientRect().height > parseFloat(getComputedStyle(element).lineHeight)),
+        ).toBe(true)
       }
       await settleMotion(target)
       await recorder.capture(target, viewport, 'approval-r1-preview', 'the preview unfolded')
@@ -1515,6 +1525,7 @@ describe('visual capture of the real product', () => {
       await r1.getByText('「拒绝」的结果未知', { exact: true }).waitFor()
       // 重试 is the one clear action: no blue.
       expect(await r1.locator('.ui-button[data-variant="primary"]').count()).toBe(0)
+      expect(await r1.locator('.approval-buttons, .approval-preview').count()).toBe(0)
       await reachable(r1.getByRole('button', { name: '重试', exact: true }))
       await recorder.capture(target, viewport, 'approval-uncertain', 'the outcome of a decision is unknown')
       await target.unroute('**/link/api/approvals/**')
@@ -1540,6 +1551,17 @@ describe('visual capture of the real product', () => {
       await reachable(r2.getByRole('button', { name: /允许/ }).first())
       await reachable(r2.getByRole('button', { name: '拒绝', exact: true }))
       await recorder.capture(target, viewport, 'approval-r2', 'R2 on a connected device, which can answer it')
+
+      await openSession(target, viewport, sessions.execution)
+      const execution = target.locator('[data-approval-id]')
+      await target.locator('[data-approval-id]:not([data-arming])').waitFor()
+      const command = execution.locator('.approval-title .approval-object.is-command')
+      await command.waitFor()
+      await expect.poll(() => command.textContent()).toBe('ls')
+      await expect.poll(() => target.locator('.transcript .tool-card[data-kind="execute"] .process-object').last().textContent()).toBe('ls')
+      expect(await execution.getByRole('tooltip', { includeHidden: true }).first().textContent()).toContain('Run ls')
+      expect(await execution.locator('.argument-list').count()).toBe(0)
+      await recorder.capture(target, viewport, 'approval-execution', 'the ACP command matches its transcript row')
 
       await openSession(target, viewport, sessions.hidden)
       const hidden = target.locator('[data-approval-id]')

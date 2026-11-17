@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 
 import type { Approval, ApprovalOption, FileDiff, Message } from '@latch/protocol'
 import {
@@ -65,7 +65,7 @@ function approvalHidesText(approval: Approval, title: string, diffs: readonly Fi
  * of it lies below what the box shows, the box fades out at its foot and a line under it counts the lines still to
  * read, measured from the box itself, so a command's last line is never out of sight without a word.
  */
-function ApprovalCommand({ className, text }: { className: string; text: string }) {
+function ApprovalCommand({ text, hint }: { text: string; hint: string | undefined }) {
   const box = useRef<HTMLSpanElement>(null)
   const [below, setBelow] = useState(0)
   useLayoutEffect(() => {
@@ -85,9 +85,11 @@ function ApprovalCommand({ className, text }: { className: string; text: string 
   }, [text])
   return (
     <span className="approval-command-box">
-      <span ref={box} className={className} data-more={below > 0 ? '' : undefined} tabIndex={0}>
-        <VisibleText text={text} />
-      </span>
+      <Tooltip content={hint}>
+        <span ref={box} className="approval-object is-command" data-more={below > 0 ? '' : undefined} tabIndex={0}>
+          <VisibleText text={text} />
+        </span>
+      </Tooltip>
       {below > 0 && <span className="approval-more-lines">还有 {below} 行</span>}
     </span>
   )
@@ -394,11 +396,10 @@ function ApprovalPanel({
   const toolName = message?.toolName ?? approval.toolName
   // The tool's own title and ID both remain available to the approver.
   const action = toolHeading(tool, toolName)
-  // A command is read whole before it is allowed: the one a shell wrapper carries, uncut, with the wrapper named under
-  // it. Only where the call's own heading is that command; an agent's description of it stays as the agent wrote it.
-  const reported = tool?.kind === 'execute' ? approvalCommand(tool, approval.arguments) : undefined
-  // A long heading arrives cut with a marker at its end; its first 500 characters are the command's own.
-  const command = reported?.reported.startsWith(action.slice(0, 500)) ? reported : undefined
+  // Show the command carried by the approval in full, with its shell below and the Agent's description on hover.
+  const plan = approval.plan
+  const command =
+    !plan && (approval.tool?.kind ?? tool?.kind) === 'execute' ? approvalCommand(approval.tool, approval.arguments) : undefined
   const what = command?.command ?? action
   const diffs = tool?.diffs ?? approval.tool?.diffs ?? []
   const path = diffs.length === 1 ? diffs[0]?.path : tool?.locations?.[0]
@@ -411,15 +412,14 @@ function ApprovalPanel({
     && (headingPath === path
       || (!tool?.toolTitle
         && (tool?.title === path || (toolName === 'write_file' && (tool?.title === `写入 ${path}` || tool?.title === `写入文件 ${path}`)))))
-  const plan = approval.plan
   const heading = plan
     ? approval.reason.startsWith(`${PLAN_COPY.heading}：`)
       ? approval.reason
       : PLAN_COPY.heading
-    : requester
+    : requester && !command
       ? `${requester} ${tool?.kind === 'execute' ? '想运行一条命令' : tool?.kind === 'edit' && file ? `想改 ${file}` : `想执行：${action}`}`
       : what
-  const hidden = approvalHidesText(approval, action, diffs)
+  const hidden = approvalHidesText(approval, action, diffs) || hasHiddenCharacters(command?.reported)
   const quietReason =
     presentation
     && approval.risk === 'R1'
@@ -431,14 +431,16 @@ function ApprovalPanel({
   const running = busy !== undefined
   const uncertain = status?.uncertain
   const failure = running ? undefined : status?.failure
-  const previewId = useId()
   const args = argumentView(approval.tool?.input ?? approval.arguments)
-  const hasDetail = args.kind !== 'empty' || (!!approval.reason && approval.reason !== action)
-  const hasPreview = hasDetail || diffs.length > 0
-  const covered = diffs.flatMap(diff => [diff.path, diff.newText])
+  const commandOnly = command && command.reported === command.command && args.kind === 'entries' && args.entries.length === 1
   const risky = gate.kind === 'R2'
   // A high-risk request's sentence is the Host's own; it stands beside the red reason, word for word.
-  const riskSentence = risky && approval.reason && approval.reason !== action ? approval.reason : undefined
+  const otherReason = approval.reason && approval.reason !== action ? approval.reason : undefined
+  const riskSentence = risky ? otherReason : undefined
+  const previewReason = !quietReason && !risky ? otherReason : undefined
+  const hasDetail = commandOnly ? previewReason !== undefined : args.kind !== 'empty' || otherReason !== undefined
+  const hasPreview = hasDetail || diffs.length > 0
+  const covered = diffs.flatMap(diff => [diff.path, diff.newText])
   const [open, setOpen] = useState(
     () =>
       presentation !== undefined
@@ -450,6 +452,7 @@ function ApprovalPanel({
         hasDetail,
       }),
   )
+  const previewOpen = hasPreview && open && !uncertain
   const { reject, allow, more } = approvalChoices(gate.options)
   const choose = (option: ApprovalOption) => {
     onDecide(approval, isAllow(option) ? 'allow' : 'reject', gate.explicit ? option.id : undefined)
@@ -524,15 +527,34 @@ function ApprovalPanel({
           },
         }))
       : []),
-    ...(hasPreview && open ? [{ id: '~fold', label: APPROVAL_COPY.hidePreview, onSelect: () => setOpen(false) }] : []),
+    ...(previewOpen ? [{ id: '~fold', label: APPROVAL_COPY.hidePreview, onSelect: () => setOpen(false) }] : []),
     ...(onStop ? [{ id: '~stop', label: APPROVAL_COPY.stopTurn, onSelect: onStop }] : []),
   ]
   const toolId = presentation && toolName && toolName !== action ? toolName : undefined
+  const headingHint = [command && action !== command.reported && action !== command.command ? action : undefined, toolId]
+    .filter((value): value is string => !!value)
+    .map(escapeHiddenCharacters)
+    .join('\n')
   // A work-scope device receives the location without the diff.
   const singleWriteTarget =
     headingPath !== undefined
     && (tool?.locations?.length ?? 0) <= 1
     && (fileInHeading || (diffs.length === 0 && tool?.locations?.[0] === headingPath))
+  const fileReview =
+    presentation === 'workbench'
+    && requester === undefined
+    && approval.risk === 'R1'
+    && gate.kind === 'R1'
+    && !approval.advisory
+    && !hidden
+    && !uncertain
+    && !gate.note
+    && !gate.hint
+    && tool?.kind === 'edit'
+    && toolName === 'write_file'
+    && diffs.length === 0
+    && singleWriteTarget
+    && action === `写入文件 ${headingPath}`
   // A phone can read the known file tool in 更多 when the complete action is visible and the menu is available.
   const toolInMenu =
     presentation === 'workbench'
@@ -581,7 +603,7 @@ function ApprovalPanel({
         showKeys={false}
         tooltip={label === option.label ? undefined : option.label}
         loading={pressed}
-        disabled={!armed || !!uncertain || (running && !pressed)}
+        disabled={!armed || (running && !pressed)}
         onClick={() => {
           choose(option)
         }}>
@@ -594,7 +616,8 @@ function ApprovalPanel({
       className="approval-panel"
       secure
       data-presentation={presentation}
-      data-document-review={documentReview && open ? '' : undefined}
+      data-document-review={documentReview && previewOpen ? '' : undefined}
+      data-file-review={fileReview ? '' : undefined}
       data-single-file={fileInHeading ? '' : undefined}
       data-risky={risky ? '' : undefined}
       data-approval-id={approval.id}
@@ -609,15 +632,15 @@ function ApprovalPanel({
             <span className="approval-kind" aria-hidden="true">
               <Icon icon={kindIcon} size={16} />
             </span>
-            <Tooltip content={toolId && escapeHiddenCharacters(toolId)}>
-              {command && !requester ? (
-                <ApprovalCommand className="approval-object is-command" text={heading} />
-              ) : (
+            {command ? (
+              <ApprovalCommand text={heading} hint={headingHint || undefined} />
+            ) : (
+              <Tooltip content={headingHint || undefined}>
                 <span className="approval-object">
                   <VisibleText text={heading} />
                 </span>
-              )}
-            </Tooltip>
+              </Tooltip>
+            )}
             {stat && (
               <span className="approval-stat">
                 <span className="stat-add">+{stat.add}</span>
@@ -631,15 +654,11 @@ function ApprovalPanel({
             )}
           </div>
           <div className="approval-meta">
-            {requester
-              && heading !== what
-              && (command ? (
-                <ApprovalCommand className="approval-command" text={what} />
-              ) : (
-                <span>
-                  <VisibleText text={what} />
-                </span>
-              ))}
+            {requester && (command || heading !== what) && (
+              <span>
+                <VisibleText text={command ? requester : what} />
+              </span>
+            )}
             {command?.shell && <span className="approval-shell">经 {command.shell}</span>}
             {context}
             {!presentation && toolName && toolName !== action && (
@@ -652,13 +671,12 @@ function ApprovalPanel({
                 子 Agent · <VisibleText text={approval.subagent} />
               </span>
             )}
-            {hasPreview && !open && (
+            {hasPreview && !open && !uncertain && (
               <Button
                 variant="outline"
                 size="xs"
                 className="approval-see"
                 aria-expanded={false}
-                aria-controls={previewId}
                 onClick={() => {
                   setOpen(true)
                 }}>
@@ -690,23 +708,25 @@ function ApprovalPanel({
             )}
           </div>
         </div>
-        <div className="approval-buttons" data-single={allow === undefined ? '' : undefined}>
-          {moreMenu}
-          {reject
-            && button(
-              reject,
-              'outline',
-              plan ? PLAN_COPY.keepPlanning : (rejectLabel ?? optionLabel(reject, gate)),
-              numbered ? (!phone && places.numeric ? ['1'] : undefined) : caps.reject,
-            )}
-          {allow
-            && button(
-              allow,
-              primary ? 'primary' : 'outline',
-              plan ? PLAN_COPY.go : optionLabel(allow, gate),
-              numbered ? (!phone && places.numeric ? ['2'] : undefined) : caps.allow,
-            )}
-        </div>
+        {!uncertain && (
+          <div className="approval-buttons" data-single={allow === undefined ? '' : undefined}>
+            {moreMenu}
+            {reject
+              && button(
+                reject,
+                'outline',
+                plan ? PLAN_COPY.keepPlanning : (rejectLabel ?? optionLabel(reject, gate)),
+                numbered ? (!phone && places.numeric ? ['1'] : undefined) : caps.reject,
+              )}
+            {allow
+              && button(
+                allow,
+                primary ? 'primary' : 'outline',
+                plan ? PLAN_COPY.go : optionLabel(allow, gate),
+                numbered ? (!phone && places.numeric ? ['2'] : undefined) : caps.allow,
+              )}
+          </div>
+        )}
       </div>
       {(risky || gate.note || hidden || previousNotes.length > 0 || gate.hint) && (
         <div className="approval-notes">
@@ -746,9 +766,9 @@ function ApprovalPanel({
           )}
         </div>
       )}
-      {hasPreview && (
-        <div className="approval-preview" id={previewId} data-open={open ? '' : undefined}>
-          <div className="approval-preview-inner" inert={!open}>
+      {previewOpen && (
+        <div className="approval-preview" data-open="">
+          <div className="approval-preview-inner">
             {documentReview && (
               <div className="approval-document-header">
                 {fileInHeading && path && (
@@ -767,12 +787,14 @@ function ApprovalPanel({
               </>
             ) : (
               <>
-                {!quietReason && approval.reason && approval.reason !== action && approval.reason !== riskSentence && (
+                {previewReason && (
                   <p className="approval-reason">
-                    <VisibleText text={approval.reason} />
+                    <VisibleText text={previewReason} />
                   </p>
                 )}
-                <ArgumentList text={approval.tool?.input ?? approval.arguments} covered={covered} quiet={diffs.length > 0} />
+                {!commandOnly && (
+                  <ArgumentList text={approval.tool?.input ?? approval.arguments} covered={covered} quiet={diffs.length > 0} />
+                )}
               </>
             )}
             <DiffView diffs={diffs} fold={phone ? FOLD_ROWS_PHONE : FOLD_ROWS} />
@@ -786,7 +808,7 @@ function ApprovalPanel({
       )}
       {uncertain && (
         <InlineNotice
-          tone="error"
+          tone="warn"
           className="approval-uncertain"
           title={uncertainOption ? APPROVAL_COPY.uncertainTitle(optionLabel(uncertainOption, gate)) : APPROVAL_COPY.uncertainApproval}
           action={

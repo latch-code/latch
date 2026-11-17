@@ -131,7 +131,7 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
     const workContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
     const work = await workContext.newPage()
     work.setDefaultTimeout(20_000)
-    await enrollBrowser(work, host, { name: '工作设备', scopes: ['view', 'run'], dataScope: 'work' })
+    await enrollBrowser(work, host, { name: '工作设备', scopes: ['view', 'run', 'approve:standard'], dataScope: 'work' })
     const phoneContext = await browser.newContext({
       viewport: { width: 390, height: 844 },
       locale: 'zh-CN',
@@ -287,6 +287,14 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
     await board(page).waitFor()
 
     // The first ordinary request is answered on its card.
+    await openBoard(work)
+    const ordinary = card(work, approval).locator('.approval-panel[data-file-review]')
+    await ordinary.getByText('写入文件 settings.ts', { exact: true }).waitFor()
+    await ordinary.locator('.approval-preview .argument-list').getByText('settings.ts', { exact: true }).waitFor()
+    expect(await ordinary.locator('.diff-view').count()).toBe(0)
+    await expect.poll(() => ordinary.getByRole('button', { name: '允许', exact: true }).isEnabled()).toBe(true)
+    await shot(work, 'ordinary-file-work-scope', 1440, 'light')
+    await shot(work, 'ordinary-file-work-scope', 1440, 'dark')
     const decision = card(page, approval)
     await decision.locator('.approval-panel').waitFor()
     await expect.poll(() => decision.locator('.approval-panel[data-arming]').count()).toBe(0)

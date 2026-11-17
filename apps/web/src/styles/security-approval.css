@@ -110,6 +110,24 @@
 .approval-panel[data-presentation] :is(.approval-uncertain, .approval-failure) {
   order: 4;
 }
+@media (min-width: 768px) {
+  .approval-panel[data-file-review] {
+    max-inline-size: 44rem;
+  }
+  .approval-panel[data-file-review] .workbench-tool-name {
+    flex-basis: auto;
+    text-align: start;
+  }
+  .approval-panel[data-file-review] .approval-meta > .work-decision-context {
+    flex: 0 1 auto;
+  }
+  .approval-panel[data-file-review] .approval-buttons {
+    flex-wrap: wrap;
+    justify-content: start;
+    margin-inline-start: 0;
+    padding-inline-start: var(--sp-24);
+  }
+}
 .approval-document-header {
   display: flex !important;
   flex-wrap: wrap;
@@ -204,21 +222,13 @@
 }
 /* A command keeps its own lines and is never cut: what is allowed is what was read. A long one scrolls in its own box,
  * so the choices stay in reach. */
-.approval-object.is-command,
-.approval-command {
+.approval-object.is-command {
   display: block !important;
   max-height: min(40vh, 320px);
   overflow: auto;
   overscroll-behavior: contain;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-.approval-command {
-  min-width: 0;
-  color: var(--ink) !important;
-  font-family: var(--mono) !important;
-  font-size: var(--fs-mono) !important;
-  line-height: var(--lh-mono) !important;
 }
 /* The box and the line that counts what lies below it stand together; in a row they take the room the title had. */
 .approval-command-box {
@@ -236,7 +246,7 @@
   margin-top: var(--sp-6);
 }
 /* More of the command lies below: the box fades out at its foot, and the line under it says how much. */
-:is(.approval-object.is-command, .approval-command)[data-more] {
+.approval-object.is-command[data-more] {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--sp-32)), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - var(--sp-32)), transparent);
 }
@@ -361,12 +371,6 @@
 .approval-preview {
   display: grid !important;
   padding-inline-start: var(--sp-24);
-  grid-template-rows: 0fr;
-  transition: grid-template-rows calc(var(--m-panel) * 0.7) var(--e-exit);
-}
-.approval-preview[data-open] {
-  grid-template-rows: 1fr !important;
-  transition: grid-template-rows var(--m-panel) var(--e-panel);
 }
 /* A plan is read whole before it is answered: more room than a call's arguments, its Markdown as plain prose. */
 .approval-panel:has(.approval-plan) .approval-preview-inner {
@@ -402,17 +406,9 @@
   display: grid !important;
   gap: var(--sp-8);
   min-height: 0;
-  overflow: clip;
-  overflow-clip-margin: var(--sp-6);
-  opacity: 0;
-  transition: opacity calc(var(--m-panel) * 0.7) var(--e-exit);
-}
-.approval-preview[data-open] > .approval-preview-inner {
   /* Everything under review stays reachable: a long diff scrolls here rather than being cut off. */
   overflow: hidden auto;
   padding-top: var(--sp-4);
-  opacity: 1 !important;
-  transition: opacity var(--m-panel) var(--e-panel);
 }
 /* What the approval would do, on paper inside the tray. */
 .approval-preview .argument-list,
@@ -586,6 +582,14 @@
   color: var(--muted);
 }
 @media (max-width: 767.98px) {
+  .approval-preview .diff-table {
+    min-width: 0;
+  }
+  .approval-preview .diff-line {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
   /* On a phone the buttons follow everything that is weighed before pressing them, and come before the details. */
   .approval-row {
     display: contents !important;

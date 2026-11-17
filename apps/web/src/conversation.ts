@@ -444,10 +444,19 @@ export function commandLine(tool: Message['tool']): CommandLine | undefined {
  * nothing is cut, and the wrapper it runs through is named beside it. Undefined when the call reports no command.
  */
 export function approvalCommand(tool: Message['tool'], fallback?: string): CommandLine | undefined {
-  const view = argumentView(tool?.input ?? fallback)
-  if (tool?.toolTitle || view.kind !== 'entries') return undefined
-  const reported = view.entries.find(([key, value]) => COMMAND_KEYS.includes(key) && value.trim())?.[1]
-  return reported === undefined ? undefined : { reported, ...unwrapShell(reported) }
+  const text = tool?.input ?? fallback
+  if (!text) return undefined
+  try {
+    const input: unknown = JSON.parse(text)
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
+    for (const key of COMMAND_KEYS) {
+      const reported = (input as Record<string, unknown>)[key]
+      if (typeof reported === 'string' && reported.trim()) return { reported, ...unwrapShell(reported) }
+    }
+  } catch {
+    /* A plain-text or truncated argument block is kept as evidence but does not identify a command. */
+  }
+  return undefined
 }
 
 /**

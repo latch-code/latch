@@ -48,15 +48,18 @@ const Drawer = ({
   gateFor,
   busy,
   status,
+  presentation,
 }: {
   message: Message | null
   approval: Approval
   gateFor?: (approval: Approval) => ApprovalGate
   busy?: string
   status?: ApprovalStatus
+  presentation?: 'conversation'
   onDecide?: unknown
 }) =>
   createElement(ApprovalDrawer, {
+    ...(presentation ? { presentation } : {}),
     approvals: [approval],
     messages: message ? [message] : [],
     index: 0,
@@ -250,6 +253,7 @@ describe('approval cards', () => {
       createElement(Drawer, {
         message: tool({ tool: { kind: 'edit', title: 'Run ls' } }),
         onDecide: noop,
+        presentation: 'conversation',
         approval: approval({
           reason: 'Run ls',
           arguments: JSON.stringify({ path: 'a.ts', content: 'SECRET_BODY\n' }),
@@ -353,7 +357,7 @@ describe('approval cards', () => {
     const html = approvalCard({ risk: 'R1', options: [...ALWAYS] }, { uncertain: { decision: 'reject', optionId: 'reject_once' } })
     expect(html).toContain(APPROVAL_COPY.uncertainTitle('拒绝'))
     expect(html).toContain('「拒绝」的结果未知')
-    expect(buttonLabels(html)).toEqual(['拒绝', '允许', '重试'])
+    expect(buttonLabels(html)).toEqual(['重试'])
     expect(html).not.toContain('data-variant="primary"')
     expect(offersMore(html)).toBe(false)
   })
@@ -365,7 +369,7 @@ describe('approval cards', () => {
       { kind: 'R1', badge: { label: APPROVAL_COPY.waiting, tone: 'warn' }, explicit: true, options: [ALWAYS[0]] },
     )
     expect(html).toContain(APPROVAL_COPY.uncertainApproval)
-    expect(buttonLabels(html)).toEqual(['拒绝'])
+    expect(buttonLabels(html)).toEqual([])
   })
 
   it("shows an agent's options in the product's words", () => {
@@ -471,11 +475,17 @@ describe('approval cards', () => {
 
   it('keeps the preview short: a long diff shows its first rows and a fold bar for the rest', () => {
     const newText = Array.from({ length: 18 }, (_, index) => `line ${index + 1}`).join('\n') + '\n'
-    const html = approvalCard({
-      risk: 'R1',
-      arguments: JSON.stringify({ path: 'docs/notes.md', content: newText }),
-      tool: { diffs: [{ path: 'docs/notes.md', oldText: '', newText }] },
-    })
+    const html = renderToStaticMarkup(
+      createElement(Drawer, {
+        message: tool(),
+        presentation: 'conversation',
+        approval: approval({
+          risk: 'R1',
+          arguments: JSON.stringify({ path: 'docs/notes.md', content: newText }),
+          tool: { diffs: [{ path: 'docs/notes.md', oldText: '', newText }] },
+        }),
+      }),
+    )
     expect(html).toContain('展开其余 12 行')
     expect(html).toContain('line 6')
     expect(html).not.toContain('line 7<')
@@ -517,7 +527,7 @@ describe('approval cards', () => {
     expect(two).toContain('<span>2/2</span>')
   })
 
-  it('on the workbench marks a command by its glyph, keeps the tool ID for the title’s tooltip and folds from 更多', () => {
+  it('shows the command from the approval with its extra arguments and keeps the tool title in the tooltip', () => {
     const html = renderToStaticMarkup(
       createElement(ApprovalDrawer, {
         presentation: 'workbench',
@@ -525,11 +535,12 @@ describe('approval cards', () => {
           approval({
             risk: 'R1',
             toolName: 'shell',
-            arguments: JSON.stringify({ command: 'pnpm test' }),
-            tool: { kind: 'execute', title: '运行测试', input: JSON.stringify({ command: 'pnpm test' }) },
+            arguments: JSON.stringify({ command: 'pnpm test', cwd: 'projects' }),
           }),
         ],
-        messages: [],
+        messages: [
+          tool({ toolName: 'shell', tool: { kind: 'execute', title: '运行测试', input: JSON.stringify({ command: 'pnpm lint' }) } }),
+        ],
         index: 0,
         onIndex: noop,
         gateFor: item => approvalActions(item, null),
@@ -539,8 +550,10 @@ describe('approval cards', () => {
       }),
     )
     expect(html).toMatch(/<span class="approval-kind" aria-hidden="true"><svg[^>]*latch-glyph-terminal/u)
-    // The ID is the tooltip of the title; the written copy is only for screens that cannot hover.
-    expect(html).toMatch(/role="tooltip" class="ui-tooltip"><span>shell<\/span>/u)
+    expect(html).toMatch(/class="approval-object is-command"[^>]*>pnpm test<\/span>/u)
+    expect(html).toContain('projects')
+    expect(html).not.toContain('pnpm lint')
+    expect(html).toMatch(/role="tooltip" class="ui-tooltip"><span>运行测试\nshell<\/span>/u)
     expect(html).not.toContain('tool-card-name')
     // An open preview has no link under the title: 收起 is one of 更多.
     expect(html).toMatch(/class="approval-preview"[^>]*data-open=""/u)
@@ -627,6 +640,8 @@ describe('approval cards', () => {
       expect(draw({}, { busy: 'allow_once' })).toContain('<code class="workbench-tool-name">write_file</code>')
       const uncertain = draw({}, { status: { uncertain: { decision: 'allow', optionId: 'allow_once' } } })
       expect(uncertain).toContain('<code class="workbench-tool-name">write_file</code>')
+      expect(uncertain).not.toMatch(/approval-buttons|approval-preview/u)
+      expect(uncertain).toContain(APPROVAL_COPY.uncertainApproval)
     } finally {
       viewport.mockReset()
     }
@@ -696,6 +711,7 @@ describe('approval cards', () => {
       createElement(Drawer, {
         message: tool(),
         onDecide: noop,
+        presentation: 'conversation',
         approval: approval({
           arguments: JSON.stringify({ path: 'data.sqlite', content: 'x' }),
           tool: { diffs: [{ path: 'data.sqlite', newText: 'x' }] },
